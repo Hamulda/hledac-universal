@@ -21,13 +21,11 @@ at the build_acquisition_plan entry point (line 2416-2417 in acquisition_strateg
 The "nonfeed_diagnostic180" benchmark alias never reaches the lane eligibility function.
 """
 
-import pytest
 
 from hledac.universal.runtime.acquisition_strategy import (
-    _build_nonfeed_lane_eligibility,
     AcquisitionProfile,
+    _build_nonfeed_lane_eligibility,
 )
-
 
 # ─── Profile under test ────────────────────────────────────────────────────────
 PROFILE = AcquisitionProfile.NONFEED_DIAGNOSTIC  # "nonfeed_diagnostic"

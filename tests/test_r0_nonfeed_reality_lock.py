@@ -10,8 +10,6 @@ Verify:
 """
 from __future__ import annotations
 
-import pytest
-
 
 class TestCanonicalOwner:
     """Q1: Verify core.__main__.run_sprint is sole canonical sprint owner."""
@@ -33,8 +31,6 @@ class TestCanonicalOwner:
     def test_canonical_owner_not_in_legacy_or_facade(self):
         from hledac.universal.runtime_authority_manifest import (
             CANONICAL_SPRINT_OWNER,
-            LEGACY_RUNTIME_FILES,
-            DEPRECATED_FACADE_FILES,
         )
         # canonical owner is a string path, not a file — verify structure is sound
         assert "core.__main__" in CANONICAL_SPRINT_OWNER
@@ -261,14 +257,14 @@ class TestSourceFindingBridge:
 
     def test_rejection_constants_defined(self):
         from hledac.universal.runtime.source_finding_bridge import (
+            REJECTION_CANDIDATE_BUILT_NOT_STORED,
+            REJECTION_DUPLICATE_CANDIDATE,
             REJECTION_MISSING_DOMAIN,
             REJECTION_MISSING_VALUE,
-            REJECTION_WILDCARD_DOMAIN,
             REJECTION_PRIVATE_OR_RESERVED_DOMAIN,
-            REJECTION_DUPLICATE_CANDIDATE,
-            REJECTION_STORAGE_UNAVAILABLE,
             REJECTION_QUALITY_GATE,
-            REJECTION_CANDIDATE_BUILT_NOT_STORED,
+            REJECTION_STORAGE_UNAVAILABLE,
+            REJECTION_WILDCARD_DOMAIN,
         )
         # All expected constants must be non-empty strings
         assert isinstance(REJECTION_MISSING_DOMAIN, str)
@@ -355,11 +351,11 @@ class TestNonfeedCandidateLedger:
 
     def test_ledger_family_constants_defined(self):
         from hledac.universal.runtime.nonfeed_candidate_ledger import (
-            FAMILY_PUBLIC,
             FAMILY_CT,
-            FAMILY_WAYBACK,
             FAMILY_PASSIVE_DNS,
             FAMILY_PIVOT,
+            FAMILY_PUBLIC,
+            FAMILY_WAYBACK,
         )
         assert FAMILY_PUBLIC == "PUBLIC"
         assert FAMILY_CT == "CT"
@@ -369,12 +365,12 @@ class TestNonfeedCandidateLedger:
 
     def test_ledger_stage_constants_defined(self):
         from hledac.universal.runtime.nonfeed_candidate_ledger import (
+            STAGE_ACCEPTED,
             STAGE_DISCOVERED,
+            STAGE_PROVIDER_FAILED,
             STAGE_QUARANTINED,
             STAGE_REJECTED,
             STAGE_STORED,
-            STAGE_ACCEPTED,
-            STAGE_PROVIDER_FAILED,
         )
         assert STAGE_DISCOVERED == "discovered"
         assert STAGE_QUARANTINED == "quarantined"
@@ -397,6 +393,7 @@ class TestCTAdapter:
 
     def test_crtsh_adapter_returns_tuple(self):
         import inspect
+
         from hledac.universal.discovery.crtsh_adapter import call_crtsh
         # Verify async function signature
         assert inspect.iscoroutinefunction(call_crtsh)

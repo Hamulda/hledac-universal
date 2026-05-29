@@ -10,11 +10,10 @@ M1 8GB safe: bounded fixtures, no memory blowup.
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 import sys
 from pathlib import Path
-
-import importlib.util
 
 # ---------------------------------------------------------------------------
 # Project root
@@ -202,7 +201,7 @@ def run_benchmark(hermetic: bool = True) -> tuple[dict, list]:
     skip_js = 0
     fallback_js = 0
     by_source: dict[str, int] = {}
-    score_buckets: dict[str, int] = {b: 0 for b in _BUCKETS}
+    score_buckets: dict[str, int] = dict.fromkeys(_BUCKETS, 0)
     max_bytes = 0
     errors = 0
 

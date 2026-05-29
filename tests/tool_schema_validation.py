@@ -1,25 +1,24 @@
 """
 Testy pro validaci tool schémat.
 """
-import pytest
-from pydantic import ValidationError, BaseModel, Field
-from typing import Dict, Any, Optional, List
 from unittest.mock import Mock
 
-from hledac.universal.tool_registry import ToolRegistry, Tool, CostModel, RiskLevel
+import pytest
+from hledac.universal.tool_registry import ToolRegistry
+from pydantic import BaseModel, Field, ValidationError
 
 
 class WebSearchArgs(BaseModel):
     """Schéma argumentů pro web_search nástroj."""
     query: str = Field(..., min_length=1, max_length=1000)
     max_results: int = Field(default=10, ge=1, le=100)
-    language: Optional[str] = Field(default="en", pattern="^[a-z]{2}$")
+    language: str | None = Field(default="en", pattern="^[a-z]{2}$")
 
 
 class EntityExtractArgs(BaseModel):
     """Schéma argumentů pro entity_extract nástroj."""
     text: str = Field(..., min_length=1)
-    entity_types: List[str] = Field(default=["PERSON", "ORG", "LOC"])
+    entity_types: list[str] = Field(default=["PERSON", "ORG", "LOC"])
     confidence_threshold: float = Field(default=0.5, ge=0.0, le=1.0)
 
 
@@ -120,7 +119,7 @@ class TestToolExecutionFlow:
     @pytest.mark.asyncio
     async def test_valid_plan_executes(self, orchestrator):
         """Valid plan → tool executes → evidence event."""
-        result = await orchestrator.research("test query")
+        await orchestrator.research("test query")
 
         # Tool by měl být volán
         evidence = orchestrator.evidence_log.get_all()
@@ -138,7 +137,7 @@ class TestToolExecutionFlow:
             "final_answer": "Done"
         })
 
-        result = await orchestrator.research("test query")
+        await orchestrator.research("test query")
 
         # Chyba by měla být zaznamenána
         errors = [e for e in orchestrator.evidence_log.get_all() if e.type == "error"]
@@ -199,8 +198,8 @@ class TestSchemaEdgeCases:
     def test_empty_args_for_optional_only(self, registry):
         """Prázdné argumenty když všechny jsou optional."""
         class AllOptional(BaseModel):
-            opt1: Optional[str] = None
-            opt2: Optional[int] = Field(default=10)
+            opt1: str | None = None
+            opt2: int | None = Field(default=10)
 
         reg = ToolRegistry()
         reg.register_with_schema(
@@ -245,7 +244,7 @@ class TestSchemaEdgeCases:
     def test_list_validation(self):
         """Validace listů."""
         class WithList(BaseModel):
-            items: List[str] = Field(..., min_length=1, max_length=10)
+            items: list[str] = Field(..., min_length=1, max_length=10)
 
         reg = ToolRegistry()
         reg.register_with_schema(
@@ -267,10 +266,9 @@ class TestSchemaEdgeCases:
 
     def test_union_types(self):
         """Validace union typů."""
-        from typing import Union
 
         class WithUnion(BaseModel):
-            value: Union[str, int]
+            value: str | int
 
         reg = ToolRegistry()
         reg.register_with_schema(

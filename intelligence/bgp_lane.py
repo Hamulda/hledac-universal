@@ -24,8 +24,9 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from typing import Any, Awaitable, Callable, List, Optional
+from typing import Any
 
 import aiohttp
 
@@ -70,8 +71,8 @@ class BGPFinding:
     asn_name: str
     country_code: str
     prefix: str
-    prefix_name: Optional[str]
-    rir: Optional[str]
+    prefix_name: str | None
+    rir: str | None
     source: str = "bgpview"
 
     def to_finding_dict(self) -> dict:
@@ -89,7 +90,7 @@ class BGPFinding:
 
     def to_canonical_finding(
         self, query: str, _sprint_id: str = ""
-    ) -> Optional["CanonicalFinding"]:
+    ) -> CanonicalFinding | None:
         """Convert to CanonicalFinding for DuckDB ingestion."""
         if CanonicalFinding is None:
             return None
@@ -133,13 +134,13 @@ class BGPFinding:
 class BGPResult:
     """Result of a BGP lane operation."""
     ip: str
-    asn: Optional[int] = None
-    org_name: Optional[str] = None
-    country_code: Optional[str] = None
-    prefix: Optional[str] = None
-    rir: Optional[str] = None
-    prefixes: List[BGPFinding] = field(default_factory=list)
-    error: Optional[str] = None
+    asn: int | None = None
+    org_name: str | None = None
+    country_code: str | None = None
+    prefix: str | None = None
+    rir: str | None = None
+    prefixes: list[BGPFinding] = field(default_factory=list)
+    error: str | None = None
     timeout: bool = False
     duration_s: float = 0.0
 
@@ -186,7 +187,7 @@ def _check_gathered(results: list, stats: dict) -> None:
 async def ip_to_asn(
     ip: str,
     session: aiohttp.ClientSession,
-) -> Optional[BGPFinding]:
+) -> BGPFinding | None:
     """
     Resolve IP address → ASN + org info via BGPView /ip endpoint.
 
@@ -207,7 +208,7 @@ async def ip_to_asn(
                 logger.debug(f"bgpview /ip {ip} → HTTP {resp.status}")
                 return None
             data = (await resp.json()).get("data", {})
-    except asyncio.TimeoutError:
+    except TimeoutError:
         logger.debug(f"bgpview /ip {ip} → timeout")
         return None
     except Exception as e:
@@ -238,7 +239,7 @@ async def ip_to_asn(
 async def asn_to_prefixes(
     asn: int,
     session: aiohttp.ClientSession,
-) -> List[BGPFinding]:
+) -> list[BGPFinding]:
     """
     Fetch all IP prefixes announced by a given ASN.
 
@@ -289,7 +290,7 @@ async def org_to_asns(
     session: aiohttp.ClientSession,
     *,
     limit: int = MAX_ASN_RESULTS,
-) -> List[BGPFinding]:
+) -> list[BGPFinding]:
     """
     Search organisation name → find all associated ASNs.
 
@@ -316,7 +317,7 @@ async def org_to_asns(
                 logger.debug(f"bgpview /search {org_query} → HTTP {resp.status}")
                 return []
             data = (await resp.json()).get("data", {})
-    except asyncio.TimeoutError:
+    except TimeoutError:
         logger.debug(f"bgpview /search {org_query} → timeout")
         return []
     except Exception as e:
@@ -341,12 +342,12 @@ async def org_to_asns(
 
 
 async def ip_bulk_to_asn(
-    ips: List[str],
+    ips: list[str],
     session: aiohttp.ClientSession,
     *,
     rate_limit_s: float = RATE_LIMIT_S,
     concurrency: int = 3,
-) -> List[BGPFinding]:
+) -> list[BGPFinding]:
     """
     Resolve multiple IP addresses to ASNs with rate limiting.
 
@@ -364,7 +365,7 @@ async def ip_bulk_to_asn(
 
     semaphore = asyncio.Semaphore(concurrency)
     last_request = 0.0
-    findings: List[BGPFinding] = []
+    findings: list[BGPFinding] = []
 
     async def _fetch_one(ip: str) -> BGPFinding | None:
         nonlocal last_request
@@ -392,12 +393,12 @@ async def ip_bulk_to_asn(
 
 
 async def org_bulk_to_asns_with_prefixes(
-    org_queries: List[str],
+    org_queries: list[str],
     session: aiohttp.ClientSession,
     *,
     rate_limit_s: float = RATE_LIMIT_S,
     concurrency: int = 2,
-) -> List[BGPFinding]:
+) -> list[BGPFinding]:
     """
     For each org name: find ASNs → fetch their prefixes.
 
@@ -420,7 +421,7 @@ async def org_bulk_to_asns_with_prefixes(
     asn_semaphore = asyncio.Semaphore(concurrency)
     last_request = 0.0
 
-    async def _org_to_asns(org: str) -> List[BGPFinding]:
+    async def _org_to_asns(org: str) -> list[BGPFinding]:
         nonlocal last_request
         async with asn_semaphore:
             elapsed = time.monotonic() - last_request
@@ -436,7 +437,7 @@ async def org_bulk_to_asns_with_prefixes(
     _check_gathered(org_results, {})
 
     # Collect all ASNs
-    all_asns: List[tuple[int, BGPFinding]] = []  # (asn, org_finding)
+    all_asns: list[tuple[int, BGPFinding]] = []  # (asn, org_finding)
     for res in org_results:
         if isinstance(res, list):
             for f in res:
@@ -452,7 +453,7 @@ async def org_bulk_to_asns_with_prefixes(
     # Stage 2: ASN → prefixes
     prefix_semaphore = asyncio.Semaphore(concurrency)
 
-    async def _asn_prefixes(asn: int) -> List[BGPFinding]:
+    async def _asn_prefixes(asn: int) -> list[BGPFinding]:
         nonlocal last_request
         async with prefix_semaphore:
             elapsed = time.monotonic() - last_request
@@ -467,7 +468,7 @@ async def org_bulk_to_asns_with_prefixes(
     )
     _check_gathered(prefix_results, {})
 
-    findings: List[BGPFinding] = []
+    findings: list[BGPFinding] = []
     for res in prefix_results:
         if isinstance(res, list):
             findings.extend(res)
@@ -488,9 +489,9 @@ class BGPAdapter:
 
     def __init__(
         self,
-        session_provider: Optional[Callable[[], Awaitable[aiohttp.ClientSession]]] = None,
+        session_provider: Callable[[], Awaitable[aiohttp.ClientSession]] | None = None,
     ) -> None:
-        self._session: Optional[aiohttp.ClientSession] = None
+        self._session: aiohttp.ClientSession | None = None
         self._session_provider = session_provider
         self._stats: dict[str, int] = {
             "ips_processed": 0,
@@ -536,7 +537,7 @@ class BGPAdapter:
             self._stats["errors"] += 1
             return BGPResult(ip=ip, error=str(e), duration_s=time.monotonic() - start)
 
-    async def enrich_ips(self, ips: List[str]) -> List[BGPResult]:
+    async def enrich_ips(self, ips: list[str]) -> list[BGPResult]:
         """Batch resolve IPs → list of BGPResult."""
         if not ips:
             return []
@@ -563,9 +564,9 @@ class BGPAdapter:
                 results.append(BGPResult(ip=ip, error="not_found"))
         return results
 
-    async def enrich_org(self, org_query: str) -> List[BGPFinding]:
+    async def enrich_org(self, org_query: str) -> list[BGPFinding]:
         """Search org → return all BGPFindings (ASNs + prefixes)."""
-        start = time.monotonic()
+        time.monotonic()
         session = await self._ensure_session()
         self._stats["orgs_processed"] += 1
 

@@ -8,7 +8,7 @@ This module provides:
 
 # Graph Manager (pyvis visualization layer)
 try:
-    from .graph_manager import GraphManager, GRAPH_AVAILABLE
+    from .graph_manager import GRAPH_AVAILABLE, GraphManager
 except ImportError:
     GRAPH_AVAILABLE = False
     GraphManager = None

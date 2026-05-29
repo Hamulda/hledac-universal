@@ -3,9 +3,9 @@ Evidence log pro federated learning (downgrade a security events).
 """
 
 import logging
-from datetime import datetime
-from typing import Dict, Any, Optional, List
 from collections import deque
+from datetime import datetime
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -13,8 +13,8 @@ logger = logging.getLogger(__name__)
 class FederationEvidenceEvent:
     """Evidence event pro federated learning."""
 
-    def __init__(self, kind: str, summary: Dict[str, Any], reasons: List[str],
-                 refs: Dict[str, str], confidence: float):
+    def __init__(self, kind: str, summary: dict[str, Any], reasons: list[str],
+                 refs: dict[str, str], confidence: float):
         self.kind = kind
         self.summary = summary
         self.reasons = reasons
@@ -22,7 +22,7 @@ class FederationEvidenceEvent:
         self.confidence = confidence
         self.timestamp = datetime.utcnow()
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             'kind': self.kind,
             'summary': self.summary,
@@ -39,8 +39,8 @@ class FederationEvidenceLog:
     def __init__(self, max_events: int = 1000):
         self.events = deque(maxlen=max_events)
 
-    def create_decision_event(self, kind: str, summary: Dict[str, Any],
-                              reasons: List[str], refs: Dict[str, str],
+    def create_decision_event(self, kind: str, summary: dict[str, Any],
+                              reasons: list[str], refs: dict[str, str],
                               confidence: float) -> FederationEvidenceEvent:
         """Vytvoří decision event."""
         event = FederationEvidenceEvent(
@@ -54,10 +54,10 @@ class FederationEvidenceLog:
         logger.info(f"Federation event: {kind} - {summary}")
         return event
 
-    def get_recent(self, limit: int = 100) -> List[FederationEvidenceEvent]:
+    def get_recent(self, limit: int = 100) -> list[FederationEvidenceEvent]:
         """Vrátí poslední události."""
         return list(self.events)[-limit:]
 
-    def get_by_kind(self, kind: str) -> List[FederationEvidenceEvent]:
+    def get_by_kind(self, kind: str) -> list[FederationEvidenceEvent]:
         """Vrátí události podle typu."""
         return [e for e in self.events if e.kind == kind]

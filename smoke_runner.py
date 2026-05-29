@@ -39,7 +39,6 @@ import asyncio
 import cProfile
 import importlib.util
 import logging
-import os
 import pstats
 import sys
 import time
@@ -73,8 +72,9 @@ async def run_smoke_test() -> int:
     # 1. Test root package imports
     log.info("[1/6] Testing root package imports...")
     try:
-        import hledac.universal
-        from utils.concurrency import FETCH_SEMAPHORE, AdaptiveSemaphore, adjust_fetch_workers
+        from utils.concurrency import FETCH_SEMAPHORE
+        from resource_allocator import AdaptiveSemaphore
+        from utils.concurrency import adjust_fetch_workers
         log.info("  ✓ Root package and FETCH_SEMAPHORE imports OK")
     except Exception as e:
         errors.append(f"Root package import failed: {e}")
@@ -104,14 +104,14 @@ async def run_smoke_test() -> int:
     # 4. Test adjust_fetch_workers modifies semaphore
     log.info("[4/6] Testing adjust_fetch_workers dynamic adjustment...")
     try:
-        original_limit = FETCH_SEMAPHORE.limit()
+        FETCH_SEMAPHORE.limit()
         await adjust_fetch_workers(5)
         assert FETCH_SEMAPHORE.limit() == 5, f"Expected limit=5, got {FETCH_SEMAPHORE.limit()}"
         log.info(f"  ✓ adjust_fetch_workers(5) worked — limit={FETCH_SEMAPHORE.limit()}")
 
         # Restore original limit
         await adjust_fetch_workers(25)
-        log.info(f"  ✓ Restored FETCH_SEMAPHORE to 25")
+        log.info("  ✓ Restored FETCH_SEMAPHORE to 25")
     except Exception as e:
         errors.append(f"adjust_fetch_workers test failed: {e}")
         log.error(f"  ✗ adjust_fetch_workers test failed: {e}")
@@ -119,7 +119,6 @@ async def run_smoke_test() -> int:
     # 5. Test project_types import
     log.info("[5/6] Testing project_types import (types.py stub)...")
     try:
-        from hledac.universal import project_types
         from hledac.universal.project_types import ResearchMode
         assert ResearchMode is not None
         log.info("  ✓ project_types import OK, ResearchMode accessible")
@@ -130,7 +129,7 @@ async def run_smoke_test() -> int:
     # 6. Test model_manager imports
     log.info("[6/6] Testing model_manager imports...")
     try:
-        from hledac.universal.brain.model_manager import ModelManager, get_model_manager
+        from hledac.universal.brain.model_manager import get_model_manager
         manager = get_model_manager()
         assert manager is not None
         log.info("  ✓ ModelManager singleton accessible")
@@ -223,7 +222,7 @@ async def main(mode: str = "public", query: str = "smoke test query", run_loop: 
                 _run_sprint_mode(query, duration_s=60.0, mode=mode),
                 timeout=120.0,  # 2min timeout
             )
-    except asyncio.TimeoutError:
+    except TimeoutError:
         log.error("Sprint timeout — přesáhl 120s")
         return 1
     except Exception as e:
@@ -291,10 +290,7 @@ def run_sprint_import_test() -> bool:
 
 
 if __name__ == "__main__":
-    if sys.version_info >= (3, 14):
-        parser = argparse.ArgumentParser(description="Hledac Smoke Runner", suggest_on_error=True, color=True)
-    else:
-        parser = argparse.ArgumentParser(description="Hledac Smoke Runner")
+    parser = argparse.ArgumentParser(description="Hledac Smoke Runner", suggest_on_error=True, color=True)
     parser.add_argument("--smoke", action="store_true",
                         help="Run lightweight smoke test without network")
     parser.add_argument("--mode", default="public",

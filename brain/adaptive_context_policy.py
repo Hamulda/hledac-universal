@@ -11,7 +11,6 @@ This module is stdlib-first with optional psutil support.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Optional
 
 
 @dataclass(frozen=True)
@@ -22,7 +21,7 @@ class ContextBudgetDecision:
     max_prompt_chars: int
     max_context_tokens_estimate: int
     reason: str
-    memory_available_mb: Optional[float]
+    memory_available_mb: float | None
     original_chars: int
     final_chars: int
     truncated: bool
@@ -39,7 +38,7 @@ def estimate_tokens(text: str) -> int:
     return max(1, len(text) // 4)
 
 
-def get_available_memory_mb() -> Optional[float]:
+def get_available_memory_mb() -> float | None:
     """
     Get available physical memory in MB.
 
@@ -68,7 +67,7 @@ def decide_context_budget(
     prompt: str,
     *,
     requested_context_window: int = 8192,
-    available_memory_mb: Optional[float] = None,
+    available_memory_mb: float | None = None,
 ) -> ContextBudgetDecision:
     """
     Decide how to budget the context window based on memory availability.

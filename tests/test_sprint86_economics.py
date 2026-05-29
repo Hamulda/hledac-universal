@@ -13,9 +13,10 @@ Truth-validation tests for network_recon economics:
 8. Threshold pass/warn/fail evaluation
 """
 
-import pytest
-import sys
 import os
+import sys
+
+import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
@@ -26,10 +27,11 @@ class TestSprint86EconomicsTracking:
     def test_network_recon_counters_in_source(self):
         """Verify all economics counters are defined in source code."""
         import inspect
+
         from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
 
         source_file = inspect.getsourcefile(FullyAutonomousOrchestrator)
-        with open(source_file, 'r') as f:
+        with open(source_file) as f:
             content = f.read()
 
         # Check counters exist in __init__ section
@@ -42,10 +44,11 @@ class TestSprint86EconomicsTracking:
     def test_action_selection_counts_defined(self):
         """Verify action selection tracking is defined."""
         import inspect
+
         from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
 
         source_file = inspect.getsourcefile(FullyAutonomousOrchestrator)
-        with open(source_file, 'r') as f:
+        with open(source_file) as f:
             content = f.read()
 
         assert '_action_selection_counts' in content
@@ -53,10 +56,11 @@ class TestSprint86EconomicsTracking:
     def test_network_recon_precondition_met_is_counted(self):
         """Verify precondition_met increments correctly."""
         import inspect
+
         from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
 
         source_file = inspect.getsourcefile(FullyAutonomousOrchestrator)
-        with open(source_file, 'r') as f:
+        with open(source_file) as f:
             content = f.read()
 
         # Scorer increments precondition_met_count
@@ -65,10 +69,11 @@ class TestSprint86EconomicsTracking:
     def test_network_recon_selection_tracking(self):
         """Verify network_recon selection increments counter."""
         import inspect
+
         from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
 
         source_file = inspect.getsourcefile(FullyAutonomousOrchestrator)
-        with open(source_file, 'r') as f:
+        with open(source_file) as f:
             content = f.read()
 
         # Selection tracking increments counter
@@ -77,10 +82,11 @@ class TestSprint86EconomicsTracking:
     def test_network_recon_execution_tracking(self):
         """Verify execution tracking increments counters."""
         import inspect
+
         from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
 
         source_file = inspect.getsourcefile(FullyAutonomousOrchestrator)
-        with open(source_file, 'r') as f:
+        with open(source_file) as f:
             content = f.read()
 
         # Execution tracking increments counters
@@ -90,10 +96,11 @@ class TestSprint86EconomicsTracking:
     def test_network_recon_partial_success_reported_truthfully(self):
         """Verify partial success is correctly identified."""
         import inspect
+
         from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
 
         source_file = inspect.getsourcefile(FullyAutonomousOrchestrator)
-        with open(source_file, 'r') as f:
+        with open(source_file) as f:
             content = f.read()
 
         # Partial success is when subdomains_found > 0 but forwarded = 0
@@ -102,10 +109,11 @@ class TestSprint86EconomicsTracking:
     def test_network_recon_candidates_dropped_on_queue_full_counted(self):
         """Verify dropped candidates due to queue full are counted."""
         import inspect
+
         from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
 
         source_file = inspect.getsourcefile(FullyAutonomousOrchestrator)
-        with open(source_file, 'r') as f:
+        with open(source_file) as f:
             content = f.read()
 
         # Queue full tracking exists
@@ -231,10 +239,11 @@ class TestSprint86RegressionTests:
     def test_network_recon_wildcard_still_suppresses_forwarding(self):
         """Verify wildcard still suppresses subdomain forwarding."""
         import inspect
+
         from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
 
         source_file = inspect.getsourcefile(FullyAutonomousOrchestrator)
-        with open(source_file, 'r') as f:
+        with open(source_file) as f:
             content = f.read()
 
         # Find handler
@@ -249,10 +258,11 @@ class TestSprint86RegressionTests:
     def test_network_recon_offline_mode_still_fast_fails(self):
         """Verify offline mode still fast-fails."""
         import inspect
+
         from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
 
         source_file = inspect.getsourcefile(FullyAutonomousOrchestrator)
-        with open(source_file, 'r') as f:
+        with open(source_file) as f:
             content = f.read()
 
         # Find handler

@@ -27,28 +27,25 @@ from __future__ import annotations
 import base64
 import binascii
 import hashlib
-import itertools
 import logging
 import math
 import re
 import string
 from collections import Counter
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from enum import Enum
-from typing import Any, Dict, List, Optional, Set, Tuple, Union
-
-import numpy as np
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
 # Optional cryptographic libraries
 try:
     from cryptography import x509
-    from cryptography.hazmat.primitives import hashes, serialization
-    from cryptography.hazmat.primitives.asymmetric import rsa, ec, padding, dsa
-    from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
     from cryptography.hazmat.backends import default_backend
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import dsa, ec, padding, rsa
+    from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
     CRYPTOGRAPHY_AVAILABLE = True
 except ImportError:
     CRYPTOGRAPHY_AVAILABLE = False
@@ -131,26 +128,26 @@ class HashType(Enum):
 class CryptanalysisResult:
     """Result of cryptanalysis attempt."""
     success: bool
-    plaintext: Optional[str]
+    plaintext: str | None
     cipher_type: CipherType
-    key: Optional[str]
+    key: str | None
     confidence: float
     method: str
     attempts: int
     time_seconds: float
-    alternative_solutions: List[Dict[str, Any]] = field(default_factory=list)
+    alternative_solutions: list[dict[str, Any]] = field(default_factory=list)
 
 
 @dataclass
 class HashAnalysis:
     """Analysis of a hash value."""
     hash_value: str
-    possible_types: List[HashType]
+    possible_types: list[HashType]
     length: int
     charset: str
     entropy: float
     is_salted: bool
-    salt: Optional[str] = None
+    salt: str | None = None
     estimated_complexity: str = "unknown"  # low, medium, high, impossible
 
 
@@ -158,19 +155,19 @@ class HashAnalysis:
 class EncryptionDetection:
     """Detection of encryption type from ciphertext."""
     is_encrypted: bool
-    possible_ciphers: List[CipherType]
+    possible_ciphers: list[CipherType]
     entropy: float
     chi_square: float
     ioc: float  # Index of Coincidence
-    language_detected: Optional[str]
-    block_size_hint: Optional[int] = None
+    language_detected: str | None
+    block_size_hint: int | None = None
 
 
 @dataclass
 class CertificateInfo:
     """Parsed certificate information."""
-    subject: Dict[str, str]
-    issuer: Dict[str, str]
+    subject: dict[str, str]
+    issuer: dict[str, str]
     serial_number: str
     not_before: datetime
     not_after: datetime
@@ -179,7 +176,7 @@ class CertificateInfo:
     signature_algorithm: str
     public_key_algorithm: str
     key_size: int
-    san_domains: List[str]
+    san_domains: list[str]
     is_self_signed: bool
     is_expired: bool
     days_until_expiry: int
@@ -195,7 +192,7 @@ class KeyAnalysis:
     is_private: bool
     fingerprint: str
     strength_rating: str  # weak, moderate, strong, quantum_safe
-    vulnerabilities: List[str]
+    vulnerabilities: list[str]
     recommended_action: str
 
 
@@ -251,7 +248,7 @@ class ClassicalCryptanalysis:
                 result.append(char)
         return ''.join(result)
 
-    def caesar_bruteforce(self, ciphertext: str) -> List[CryptanalysisResult]:
+    def caesar_bruteforce(self, ciphertext: str) -> list[CryptanalysisResult]:
         """
         Brute-force all 25 Caesar shifts and score results.
 
@@ -361,7 +358,7 @@ class ClassicalCryptanalysis:
         row = 0
         direction = 1
 
-        for i in range(len(ciphertext)):
+        for _i in range(len(ciphertext)):
             pattern.append(row)
             row += direction
             if row == 0 or row == rails - 1:
@@ -386,7 +383,7 @@ class ClassicalCryptanalysis:
 
         return ''.join(result)
 
-    def rail_fence_bruteforce(self, ciphertext: str, max_rails: int = 10) -> List[CryptanalysisResult]:
+    def rail_fence_bruteforce(self, ciphertext: str, max_rails: int = 10) -> list[CryptanalysisResult]:
         """Try all rail counts from 2 to max_rails."""
         import time
         start = time.time()
@@ -617,7 +614,7 @@ class HashAnalyzer:
         """
         # Clean input
         hash_clean = hash_value.strip()
-        hash_lower = hash_clean.lower()
+        hash_clean.lower()
 
         possible_types = []
         is_salted = False
@@ -668,9 +665,9 @@ class HashAnalyzer:
     def crack_dictionary(
         self,
         hash_value: str,
-        wordlist: Optional[List[str]] = None,
-        hash_type: Optional[HashType] = None
-    ) -> Optional[str]:
+        wordlist: list[str] | None = None,
+        hash_type: HashType | None = None
+    ) -> str | None:
         """
         Attempt dictionary attack on hash.
 
@@ -762,7 +759,7 @@ class HashAnalyzer:
     def _estimate_complexity(
         self,
         hash_value: str,
-        possible_types: List[HashType],
+        possible_types: list[HashType],
         is_salted: bool
     ) -> str:
         """Estimate cracking complexity."""
@@ -803,7 +800,7 @@ class EncryptionDetector:
     Uses statistical analysis to detect encryption.
     """
 
-    def analyze(self, data: Union[str, bytes]) -> EncryptionDetection:
+    def analyze(self, data: str | bytes) -> EncryptionDetection:
         """
         Analyze data to detect encryption.
         """
@@ -902,7 +899,7 @@ class EncryptionDetector:
             return True
         return False
 
-    def _guess_cipher(self, text: str, entropy: float, ioc: float) -> List[CipherType]:
+    def _guess_cipher(self, text: str, entropy: float, ioc: float) -> list[CipherType]:
         """Guess possible cipher type."""
         possible = []
 
@@ -936,7 +933,7 @@ class EncryptionDetector:
         except Exception:
             return False
 
-    def _detect_language(self, text: str) -> Optional[str]:
+    def _detect_language(self, text: str) -> str | None:
         """Detect language of text."""
         # Simple English detection
         english_words = {'the', 'be', 'to', 'of', 'and', 'a', 'in', 'that', 'have'}
@@ -947,7 +944,7 @@ class EncryptionDetector:
 
         return None
 
-    def _estimate_block_size(self, text: str) -> Optional[int]:
+    def _estimate_block_size(self, text: str) -> int | None:
         """Estimate block cipher block size using Kasiski-like method."""
         if len(text) < 32:
             return None
@@ -967,7 +964,7 @@ class CertificateAnalyzer:
     Parse and analyze SSL/TLS certificates for OSINT.
     """
 
-    def parse_certificate(self, cert_pem: str) -> Optional[CertificateInfo]:
+    def parse_certificate(self, cert_pem: str) -> CertificateInfo | None:
         """
         Parse X.509 certificate from PEM format.
         """
@@ -982,7 +979,7 @@ class CertificateAnalyzer:
             logger.error(f"Certificate parsing failed: {e}")
             return None
 
-    def parse_certificate_der(self, cert_der: bytes) -> Optional[CertificateInfo]:
+    def parse_certificate_der(self, cert_der: bytes) -> CertificateInfo | None:
         """Parse certificate from DER format."""
         if not CRYPTOGRAPHY_AVAILABLE:
             return None
@@ -1037,7 +1034,7 @@ class CertificateAnalyzer:
         is_self_signed = cert.subject == cert.issuer
 
         # Check expiry
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         is_expired = now > cert.not_valid_after
         days_until_expiry = (cert.not_valid_after - now).days
 
@@ -1070,7 +1067,7 @@ class CertificateAnalyzer:
             chain_valid=True  # Would need chain verification
         )
 
-    def analyze_security(self, cert_info: CertificateInfo) -> Dict[str, Any]:
+    def analyze_security(self, cert_info: CertificateInfo) -> dict[str, Any]:
         """Analyze certificate security."""
         issues = []
         warnings = []
@@ -1111,7 +1108,7 @@ class CertificateAnalyzer:
             "recommendations": self._get_recommendations(cert_info, issues)
         }
 
-    def _get_recommendations(self, cert_info: CertificateInfo, issues: List[str]) -> List[str]:
+    def _get_recommendations(self, cert_info: CertificateInfo, issues: list[str]) -> list[str]:
         """Get security recommendations."""
         recs = []
 
@@ -1165,22 +1162,22 @@ class CryptographicIntelligence:
         self.stats["hashes_analyzed"] += 1
         return analysis
 
-    def crack_hash(self, hash_value: str, wordlist: Optional[List[str]] = None) -> Optional[str]:
+    def crack_hash(self, hash_value: str, wordlist: list[str] | None = None) -> str | None:
         """Attempt to crack hash with dictionary attack."""
         return self.hash_analyzer.crack_dictionary(hash_value, wordlist)
 
-    def detect_encryption(self, data: Union[str, bytes]) -> EncryptionDetection:
+    def detect_encryption(self, data: str | bytes) -> EncryptionDetection:
         """Detect if data is encrypted."""
         return self.encryption_detector.analyze(data)
 
-    def parse_certificate(self, cert_pem: str) -> Optional[CertificateInfo]:
+    def parse_certificate(self, cert_pem: str) -> CertificateInfo | None:
         """Parse X.509 certificate."""
         result = self.certificate_analyzer.parse_certificate(cert_pem)
         if result:
             self.stats["certs_parsed"] += 1
         return result
 
-    def analyze_certificate_security(self, cert_info: CertificateInfo) -> Dict[str, Any]:
+    def analyze_certificate_security(self, cert_info: CertificateInfo) -> dict[str, Any]:
         """Analyze certificate security."""
         return self.certificate_analyzer.analyze_security(cert_info)
 
@@ -1215,7 +1212,7 @@ class CryptographicIntelligence:
         self,
         password: str,
         hash_type: HashType = HashType.SHA256,
-        salt: Optional[str] = None
+        salt: str | None = None
     ) -> str:
         """Generate password hash."""
         if salt:
@@ -1227,7 +1224,7 @@ class CryptographicIntelligence:
 
         return hashlib.sha256(password.encode()).hexdigest()
 
-    def get_statistics(self) -> Dict[str, Any]:
+    def get_statistics(self) -> dict[str, Any]:
         """Get cryptographic analysis statistics."""
         return {
             **self.stats,

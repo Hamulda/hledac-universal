@@ -53,7 +53,7 @@ dependencies = [
     "duckdb>=1.2.0",         # Sprint F198A cross-sprint graph accumulation
     # Serialization
     "orjson>=3.9.0",
-    "msgspec>=0.21.1,<0.22.0",   # Canonical DTO/msgspec.Struct serialization
+    "msgspec>=0.21.1",       # Canonical DTO/msgspec.Struct serialization
     # Browser automation
     # camoufox is the primary browser (JA3 fingerprint, JS rendering).
     # Browser binary is bundled with camoufox — NOT a separate chromium dep.
@@ -72,20 +72,34 @@ dependencies = [
     # DISABLED_BY_CP314_CLEANUP: "aiobtcdht>=0.1.0",  # likely typo/dead package; investigate aiobtdht GitHub source
     # Core models
     "pydantic>=2.0.0",
-    "PyYAML>=6.0,<7.0",       # yaml import in utils/execution_optimizer.py
+    "PyYAML>=6.0,<7.0",       # yaml import; 7.x has breaking api changes
     # Required utilities (proven imports)
-    "pyprobables>=0.7.0,<0.8.0",    # url_dedup RotatingBloomFilter
-    "pyzipper>=0.3.6,<0.4.0",       # vault_manager AES/ZIP encryption
+    "pyprobables>=0.7.0",    # url_dedup RotatingBloomFilter
+    "pyzipper>=0.3.6",       # vault_manager AES/ZIP encryption
     "psutil>=5.9.0",         # memory monitoring
-    "pyahocorasick>=2.3.1,<2.4.0",
-    "lmdb>=2.2.0,<3.0.0",
-    # Fallback browser (nodriver — camoufox is primary)
-    # MOVED_TO_BROWSER_EXTRA_BY_F214AD: "nodriver>=0.1.0",
-    # coremltools + pyobjc-framework-coreml MOVED_TO coreml extra (lazy import, fail-soft)
-    # "coremltools==8.2",
-    # "pyobjc-framework-coreml>=12.1",
+    "pyahocorasick>=2.3.1",  # pattern_matcher ahocorasick import
+    "lmdb>=2.2.0",           # persistent dedup/store backend
+    # MLX / Apple Silicon (lazy import — fail-soft without torch)
+    "mlx>=0.31.2",
+    "mlx-lm>=0.31.3",
+    # ONNX support (lazy import, fail-soft)
+    "onnxscript>=0.7.0",
+    "pillow>=12.2.0",         # PIL/Pillow in captcha_solver, metadata_extractor
+    "pymupdf>=1.27.2.3",      # fitz (PyMuPDF) in document_intelligence
+    # Transformers (lazy import — onnxscript path, fail-soft without torch)
     "transformers>=5.8.0",
-    "aiofiles>=25.1.0",
+    # Outlines (lazy import — deterministic generation, fail-soft)
+    "outlines>=1.3.0",
+    "aiofiles>=25.1.0",       # async file I/O in content_miner, exporters
+    "numpy>=2.4.6",           # required by onnxscript, transformers, duckdb
+    "xxhash>=3.7.0",          # fast hashing for RSS/feed/dedup paths
+    "cryptography>=48.0.0",   # encryption in vault_manager, key_manager
+    "fast-langdetect>=1.0.1", # language detection
+    "networkx>=3.6.1",       # graph operations in graph_service
+    "datasketch>=1.10.0",     # MinHash for semantic dedup
+    "flashrank>=0.2.10",      # neural reranking in reranker
+    # NOTE: coremltools + sentence-transformers moved to coreml-export extra
+    # (only needed for mlmodel export scripts, not runtime inference)
 ]
 
 # ------------------------------------------------------------------ optionals
@@ -113,12 +127,8 @@ apple-accel = [
 # --- osint-html: fast HTML parsing + OSINT-specific HTTP ---
 osint-html = [
     "selectolax>=0.3.21",   # Rust parser; 10-50x faster than BS4
-    "xxhash>=3.6.0,<4.0.0", # fast non-crypto hash for IOC deduplication
+    "xxhash>=3.6.0",        # fast non-crypto hash for IOC deduplication
     "curl_cffi>=0.7.0",     # JA3 TLS fingerprint impersonation
-<<<<<<< Updated upstream
-=======
-
->>>>>>> Stashed changes
 ]
 # --- pq: post-quantum cryptography via liboqs (Apple Silicon homebrew) ---
 # Requires: brew install liboqs && uv pip install liboqs-python
@@ -131,6 +141,8 @@ graph-storage = [
     "duckdb>=1.2.0",
     "lancedb>=0.2.5",
     "pyarrow>=16.0.0",
+    "pytest-hypothesis>=10.0.3",
+    "hypothesis>=6.155.0",
     "polars>=1.0.0",
 ]
 
@@ -178,8 +190,16 @@ ocr = [
 # Only needed when VisionEncoder or ANE-capable models are used.
 # Platform-guarded: pyobjc only on Darwin.
 coreml = [
-    "coremltools==8.2",
+    "coremltools>=8.2",
     "pyobjc-framework-coreml>=12.1; sys_platform == 'darwin'",
+]
+
+# --- coreml-export: BGE→CoreML export tools (runtime not needed) ---
+# torch is excluded — must be installed separately for Python 3.14
+# (run: pip install torch --index-url https://download.pytorch.org/whl/cpu)
+coreml-export = [
+    "coremltools>=8.2",
+    "sentence-transformers>=5.5.1",
 ]
 
 # --- search: web search (DuckDuckGo primary, fail-soft) ---
@@ -231,17 +251,9 @@ transport = [
     "aiohttp-socks>=0.8.0",     # SOCKS5 proxy support for aiohttp
 ]
 
-# --- graph-truth: Kuzu IOC graph backend (optional, for truth store) ---
-# Kuzu has no cp314 arm64 wheel — install from source or use graph-truth extra.
-# IOCGraph (Kuzu) is the truth store. DuckPGQGraph (DuckDB) is the canonical
-# analytics backend and is always available in default/m1-local.
-# Default/m1-local: NO kuzu/igraph dependency (both are fully lazy/fail-soft).
-graph-truth = [
-    "kuzu>=0.6.0",
-]
+# --- graph-truth: REMOVED — kuzu has no cp314 arm64 wheel; use duckpgq-graph fallback
 
 # --- dspy: DSPy prompt optimization (optional, for OSINT synthesis) ---
-# Enables MIPROv2-optimized prompts for hypothesis generation and dark queries.
 dspy = [
     "dspy>=2.5.0",
 ]
@@ -254,7 +266,7 @@ m1-local = [
 ]
 # --- all: everything except torch (torch is too heavy for routine dev) ---
 all = [
-    "hledac-universal[light,apple-accel,osint-html,graph-storage,dev,acceleration,nlp,rerank,browser,webkit,security,transport,ocr,coreml,search,tor,legacy-html,m1-local]",
+    "hledac-universal[light,apple-accel,osint-html,graph-storage,dev,acceleration,nlp,rerank,browser,webkit,security,transport,ocr,coreml,coreml-export,search,tor,legacy-html,m1-local]",
 ]
 
 [project.scripts]
@@ -263,6 +275,7 @@ hledac = "hledac.universal.__main__:main"
 # ------------------------------------------------------------------ static analysis
 [tool.setuptools]
 packages = ["hledac.universal"]
+package-dir = { "hledac.universal" = "." }
 
 [tool.setuptools.package-data]
 "hledac.universal" = ["py.typed"]
@@ -273,7 +286,11 @@ target-version = "py314"
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "N", "UP", "B", "C4", "DTZ", "T10", "ISC"]
-ignore = ["E501"]   # line-length handled by formatter
+ignore = [
+    "E501",   # line-length handled by formatter
+    "F821",   # undefined names — false positives with `from __future__ import annotations` + lazy type refs
+    "B027",   # empty abstract methods — intentional in base classes
+]
 
 [tool.mypy]
 python_version = "3.14"
@@ -288,5 +305,10 @@ addopts = "-q --tb=short"
 asyncio_mode = "auto"
 
 [tool.uv]
-python-preference = "only-managed"
-package = false
+python-preference = "managed"
+package = true
+
+[dependency-groups]
+dev = [
+    "pytest-asyncio>=1.4.0",
+]

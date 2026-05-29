@@ -4,10 +4,9 @@ Sprint 6C: 30s Profile Benchmark - Step 0B & Step 3
 Profile before and after fixes
 """
 import asyncio
+import logging
 import sys
 import time
-import logging
-import os
 
 logging.getLogger('hledac').setLevel(logging.WARNING)
 logging.basicConfig(level=logging.INFO, format='%(message)s')
@@ -17,7 +16,7 @@ sys.path.insert(0, '/Users/vojtechhamada/PycharmProjects/Hledac')
 
 async def run_profile():
     from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
-    from hledac.universal.knowledge.atomic_storage import EvidencePacketStorage, EvidencePacket
+    from hledac.universal.knowledge.atomic_storage import EvidencePacket, EvidencePacketStorage
 
     print("=" * 70)
     print("[6C] 30S PROFILE BENCHMARK")
@@ -33,7 +32,7 @@ async def run_profile():
             evidence_id=f"evidence_{i}",
             url=f"http://localhost:{64000+i}/test",
             final_url=f"http://localhost:{64000+i}/test",
-            domain=f"localhost",
+            domain="localhost",
             fetched_at=time.time() - (i * 86400),
             status=200,
             headers_digest="abc123",
@@ -63,7 +62,7 @@ async def run_profile():
     DURATION = 30
     START_TIME = time.monotonic()
 
-    print(f"\n[START] 30s profile benchmark...")
+    print("\n[START] 30s profile benchmark...")
 
     result = await asyncio.wait_for(
         orch.run_benchmark(
@@ -87,7 +86,7 @@ async def run_profile():
     # Action distribution
     action_dist = result.get('actions_selected_distribution', {})
 
-    print(f"\n=== 30S PROFILE RESULTS ===")
+    print("\n=== 30S PROFILE RESULTS ===")
     print(f"ELAPSED: {ELAPSED:.1f}s (target: {DURATION}s)")
     print(f"ITERATIONS: {iterations}")
     print(f"BENCHMARK_FPS: {benchmark_fps:.1f}")
@@ -100,13 +99,13 @@ async def run_profile():
     network_recon_runs = getattr(orch, '_network_recon_selected_count', 0)
     network_recon_exec_rate = (network_recon_runs / iterations * 100) if iterations > 0 else 0
 
-    print(f"\n[NETWORK_RECON]")
+    print("\n[NETWORK_RECON]")
     print(f"  Runs: {network_recon_runs} ({network_recon_exec_rate:.1f}% of total)")
     print(f"  Wildcard hit: {getattr(orch, '_network_recon_wildcard_hit_count', 0)}")
     print(f"  Subdomains suppressed: {getattr(orch, '_network_recon_subdomains_suppressed_by_wildcard_total', 0)}")
 
     # Calibration
-    print(f"\n[CALIBRATION]")
+    print("\n[CALIBRATION]")
     if hasattr(orch, '_compute_ts_calibration'):
         calib = orch._compute_ts_calibration()
         print(f"  ts_healthy: {calib.get('ts_healthy', False)}")
@@ -116,7 +115,7 @@ async def run_profile():
         print(f"  calibrated_poor_count: {calib.get('calibrated_poor_count', 0)}")
 
     # Action distribution
-    print(f"\n[ACTION DISTRIBUTION]")
+    print("\n[ACTION DISTRIBUTION]")
     for name, count in sorted(action_dist.items(), key=lambda x: -x[1])[:8]:
         pct = (count / iterations * 100) if iterations > 0 else 0
         print(f"  {name}: {count} ({pct:.1f}%)")
@@ -124,7 +123,7 @@ async def run_profile():
     # Adaptive exploration
     if hasattr(orch, '_compute_adaptive_exploration_ratio'):
         ratio = orch._compute_adaptive_exploration_ratio()
-        print(f"\n[ADAPTIVE EXPLORATION]")
+        print("\n[ADAPTIVE EXPLORATION]")
         print(f"  Ratio: {ratio:.3f}")
 
     return {

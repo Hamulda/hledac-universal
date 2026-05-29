@@ -20,7 +20,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from hledac.universal.project_types import (
     ActionResult,
@@ -63,7 +63,7 @@ class GhostLayer:
             pass
     """
 
-    def __init__(self, config: Optional[GhostConfig] = None, ghost_director: Optional[Any] = None):
+    def __init__(self, config: GhostConfig | None = None, ghost_director: Any | None = None):
         """
         Initialize GhostLayer.
 
@@ -82,11 +82,11 @@ class GhostLayer:
         self._loot_manager = None
 
         # SystemContext for anti-VM protection (from kernel/context.py)
-        self._system_context: Optional['SystemContext'] = None
+        self._system_context: SystemContext | None = None
 
         # Anti-loop protection
         self._stagnation_counter = 0
-        self._last_results_hash: Optional[str] = None
+        self._last_results_hash: str | None = None
         self._consecutive_empty = 0
         self._consecutive_same = 0
 
@@ -95,39 +95,39 @@ class GhostLayer:
         self._stagnation_events = 0
 
         logger.info(f"GhostLayer initialized (GhostDirector: {'shared' if self._ghost_director_shared else 'lazy'})")
-    
+
     async def initialize(self) -> bool:
         """
         Initialize GhostLayer components.
-        
+
         Returns:
             True if initialization successful
         """
         try:
             logger.info("🚀 Initializing GhostLayer...")
-            
+
             # Initialize SystemContext (anti-VM protection)
             await self._init_system_context()
-            
+
             # Initialize GhostDirector (lazy import)
             if self.config.enable_anti_loop or self.config.max_steps > 0:
                 await self._init_ghost_director()
-            
+
             # Initialize RamDiskVault
             if self.config.enable_vault:
                 await self._init_vault()
-            
+
             # Initialize LootManager
             if self.config.enable_loot_manager:
                 await self._init_loot_manager()
-            
+
             logger.info("✅ GhostLayer initialized successfully")
             return True
-            
+
         except Exception as e:
             logger.error(f"❌ GhostLayer initialization failed: {e}")
             return False
-    
+
     async def _init_system_context(self) -> None:
         """Initialize SystemContext for anti-VM protection and system monitoring."""
         try:
@@ -138,56 +138,56 @@ class GhostLayer:
                 enable_stealth_mode=False,
                 m1_optimization=True
             )
-            
+
             # Check for VM environment
             if self._system_context.is_vm_environment():
                 logger.warning("⚠️ VM environment detected - anti-VM protections active")
             else:
                 logger.info("✅ SystemContext initialized (bare metal detected)")
-                
+
         except Exception as e:
             logger.warning(f"⚠️ SystemContext not available: {e}")
             self._system_context = None
-    
+
     # ====================================================================
     # SystemContext Integration (from kernel/context.py)
     # ====================================================================
-    
+
     def is_vm_environment(self) -> bool:
         """Check if running in virtualized environment."""
         if self._system_context:
             return self._system_context.is_vm_environment()
         return False
-    
-    def get_system_info(self) -> Dict[str, Any]:
+
+    def get_system_info(self) -> dict[str, Any]:
         """Get comprehensive system information."""
         if self._system_context:
             return self._system_context.get_system_info()
         return {"error": "SystemContext not available"}
-    
-    def force_neural_cleanup(self) -> Dict[str, Any]:
+
+    def force_neural_cleanup(self) -> dict[str, Any]:
         """
         M1 Neural Memory Guard - Force cleanup of MLX and system memory.
-        
+
         Returns:
             Cleanup results with memory freed
         """
         if self._system_context:
             return self._system_context.force_neural_cleanup()
         return {"error": "SystemContext not available"}
-    
+
     def activate_stealth_mode(self) -> None:
         """Activate stealth mode for enhanced protection."""
         if self._system_context:
             self._system_context.activate_stealth_mode()
             logger.info("🔒 Stealth mode activated")
-    
-    def get_system_stats(self) -> Dict[str, Any]:
+
+    def get_system_stats(self) -> dict[str, Any]:
         """Get system context statistics."""
         if self._system_context:
             return self._system_context.get_stats()
         return {}
-    
+
     async def _init_ghost_director(self) -> None:
         """Lazy initialization of GhostDirector (only if not shared)"""
         # Skip if GhostDirector was provided by LayerManager (shared instance)
@@ -209,96 +209,96 @@ class GhostLayer:
             except ImportError as e:
                 logger.warning(f"⚠️ GhostDirector not available: {e}")
                 self._ghost_director = None
-    
+
     async def _init_vault(self) -> None:
         """Lazy initialization of RamDiskVault"""
         if self._vault is None:
             try:
                 from hledac.supreme.security.ram_disk_vault import RamDiskVault
-                
+
                 self._vault = RamDiskVault(
                     size_mb=self.config.vault_size_mb
                 )
                 await self._vault.initialize()
                 logger.info(f"✅ RamDiskVault initialized ({self.config.vault_size_mb}MB)")
-                
+
             except ImportError as e:
                 logger.warning(f"⚠️ RamDiskVault not available: {e}")
                 self._vault = None
-    
+
     async def _init_loot_manager(self) -> None:
         """Lazy initialization of LootManager"""
         if self._loot_manager is None:
             try:
                 from hledac.supreme.security.loot_manager import LootManager
-                
+
                 self._loot_manager = LootManager()
                 logger.info("✅ LootManager initialized")
-                
+
             except ImportError as e:
                 logger.warning(f"⚠️ LootManager not available: {e}")
                 self._loot_manager = None
-    
+
     async def execute_action(
         self,
         action_type: ActionType,
-        parameters: Dict[str, Any],
+        parameters: dict[str, Any],
         store_in_vault: bool = True
     ) -> ActionResult:
         """
         Execute a Ghost action with anti-loop protection.
-        
+
         Args:
             action_type: Type of action to execute
             parameters: Action parameters
             store_in_vault: Whether to store result in vault
-            
+
         Returns:
             ActionResult with execution details
-            
+
         Raises:
             StagnationError: If stagnation detected and threshold reached
         """
         self._action_count += 1
         start_time = __import__('time').time()
-        
+
         logger.info(f"🔧 Executing action: {action_type.value}")
-        
+
         try:
             # Check for stagnation before execution
             if self.config.enable_anti_loop:
                 if self._check_stagnation(parameters):
                     self._stagnation_events += 1
                     logger.warning(f"🔄 Stagnation detected (event #{self._stagnation_events})")
-                    
+
                     if self._stagnation_counter >= self.config.stagnation_threshold:
                         raise StagnationError(
                             f"Stagnation threshold ({self.config.stagnation_threshold}) reached. "
                             "Research loop detected."
                         )
-            
+
             # Execute via GhostDirector
             if self._ghost_director:
                 raw_result = await self._execute_via_director(action_type, parameters)
             else:
                 # Fallback: simulate execution
                 raw_result = await self._simulate_execution(action_type, parameters)
-            
+
             # Store in vault if enabled
             vault_id = None
             if store_in_vault and self._vault and raw_result.get("success"):
                 vault_id = await self._store_in_vault(raw_result)
                 raw_result["vault_id"] = vault_id
-            
+
             # Update LootManager
             if self._loot_manager and raw_result.get("success"):
                 await self._update_loot(raw_result)
-            
+
             # Update anti-loop tracking
             self._update_stagnation_tracking(raw_result)
-            
+
             execution_time = __import__('time').time() - start_time
-            
+
             result = ActionResult(
                 action=action_type,
                 success=raw_result.get("success", False),
@@ -307,14 +307,14 @@ class GhostLayer:
                 stagnation_detected=self._stagnation_counter > 0,
                 stored_in_vault=vault_id is not None
             )
-            
+
             logger.info(f"✅ Action completed in {execution_time:.2f}s")
             return result
-            
+
         except Exception as e:
             execution_time = __import__('time').time() - start_time
             logger.error(f"❌ Action failed: {e}")
-            
+
             return ActionResult(
                 action=action_type,
                 success=False,
@@ -323,12 +323,12 @@ class GhostLayer:
                 stagnation_detected=False,
                 stored_in_vault=False
             )
-    
+
     async def _execute_via_director(
         self,
         action_type: ActionType,
-        parameters: Dict[str, Any]
-    ) -> Dict[str, Any]:
+        parameters: dict[str, Any]
+    ) -> dict[str, Any]:
         """Execute action via GhostDirector"""
         # GhostDirector expects specific action format
         action_plan = {
@@ -336,24 +336,24 @@ class GhostLayer:
             "parameters": parameters,
             "vault": self._vault,  # Pass vault for direct storage
         }
-        
+
         # Execute (GhostDirector returns raw results)
         result = await self._ghost_director.execute_action(action_plan)
-        
+
         return {
             "success": result.success if hasattr(result, 'success') else True,
             "data": result.data if hasattr(result, 'data') else result,
             "source": "ghost_director"
         }
-    
+
     async def _simulate_execution(
         self,
         action_type: ActionType,
-        parameters: Dict[str, Any]
-    ) -> Dict[str, Any]:
+        parameters: dict[str, Any]
+    ) -> dict[str, Any]:
         """Simulate action execution when GhostDirector unavailable"""
         logger.debug(f"Simulating action: {action_type.value}")
-        
+
         # Return mock result
         return {
             "success": True,
@@ -365,56 +365,56 @@ class GhostLayer:
             },
             "source": "simulation"
         }
-    
-    async def _store_in_vault(self, data: Dict[str, Any]) -> Optional[str]:
+
+    async def _store_in_vault(self, data: dict[str, Any]) -> str | None:
         """Store data in RamDiskVault"""
         if not self._vault:
             return None
-        
+
         try:
             # Generate unique ID
             data_hash = hashlib.sha256(
                 json.dumps(data, sort_keys=True, default=str).encode()
             ).hexdigest()[:16]
-            
+
             vault_id = f"ghost_{data_hash}"
-            
+
             # Store in vault
             await self._vault.store(vault_id, data)
             logger.debug(f"📦 Stored in vault: {vault_id}")
-            
+
             return vault_id
-            
+
         except Exception as e:
             logger.warning(f"⚠️ Failed to store in vault: {e}")
             return None
-    
-    async def _update_loot(self, data: Dict[str, Any]) -> None:
+
+    async def _update_loot(self, data: dict[str, Any]) -> None:
         """Update LootManager with acquired data"""
         if not self._loot_manager:
             return
-        
+
         try:
             # Extract loot items from result
             items = data.get("data", {}).get("results", [])
-            
+
             for item in items:
                 await self._loot_manager.add_loot(
                     source="ghost_action",
                     content=item,
                     metadata={"action": data.get("action")}
                 )
-            
+
             if items:
                 logger.debug(f"💰 Added {len(items)} items to loot")
-                
+
         except Exception as e:
             logger.warning(f"⚠️ Failed to update loot: {e}")
-    
-    def _check_stagnation(self, parameters: Dict[str, Any]) -> bool:
+
+    def _check_stagnation(self, parameters: dict[str, Any]) -> bool:
         """
         Check if current execution might cause stagnation.
-        
+
         Returns:
             True if stagnation detected
         """
@@ -423,25 +423,25 @@ class GhostLayer:
             self._consecutive_empty += 1
         else:
             self._consecutive_empty = 0
-        
+
         # Detect stagnation
         stagnation_detected = (
             self._consecutive_empty >= 2 or
             self._consecutive_same >= 3 or
             self._stagnation_counter > 0
         )
-        
+
         if stagnation_detected:
             self._stagnation_counter += 1
-        
+
         return stagnation_detected
-    
-    def _update_stagnation_tracking(self, result: Dict[str, Any]) -> None:
+
+    def _update_stagnation_tracking(self, result: dict[str, Any]) -> None:
         """Update stagnation tracking based on result"""
         # Hash the result for comparison
         result_str = json.dumps(result, sort_keys=True, default=str)
         result_hash = hashlib.md5(result_str.encode()).hexdigest()
-        
+
         # Check if same as last
         if result_hash == self._last_results_hash:
             self._consecutive_same += 1
@@ -449,14 +449,14 @@ class GhostLayer:
         else:
             self._consecutive_same = 0
             self._stagnation_counter = 0  # Reset on different result
-        
+
         self._last_results_hash = result_hash
-    
-    def get_loot_summary(self) -> Dict[str, Any]:
+
+    def get_loot_summary(self) -> dict[str, Any]:
         """Get summary of acquired loot"""
         if not self._loot_manager:
             return {"available": False}
-        
+
         try:
             return {
                 "available": True,
@@ -465,18 +465,18 @@ class GhostLayer:
         except Exception as e:
             logger.warning(f"⚠️ Failed to get loot summary: {e}")
             return {"available": False, "error": str(e)}
-    
-    def get_vault_contents(self) -> List[str]:
+
+    def get_vault_contents(self) -> list[str]:
         """Get list of vault item IDs"""
         if not self._vault:
             return []
-        
+
         try:
             return self._vault.list_items()
         except Exception as e:
             logger.warning(f"⚠️ Failed to list vault: {e}")
             return []
-    
+
     def reset_stagnation_counter(self) -> None:
         """Reset stagnation counter (call when changing research direction)"""
         self._stagnation_counter = 0
@@ -484,8 +484,8 @@ class GhostLayer:
         self._consecutive_same = 0
         self._last_results_hash = None
         logger.info("🔄 Stagnation counters reset")
-    
-    def get_statistics(self) -> Dict[str, Any]:
+
+    def get_statistics(self) -> dict[str, Any]:
         """Get GhostLayer statistics"""
         stats = {
             "actions_executed": self._action_count,
@@ -496,29 +496,29 @@ class GhostLayer:
             "ghost_director_enabled": self._ghost_director is not None,
             "system_context_enabled": self._system_context is not None,
         }
-        
+
         # Add system context stats if available
         if self._system_context:
             stats["system"] = self._system_context.get_stats()
-        
+
         return stats
-    
+
     async def cleanup(self) -> None:
         """Cleanup resources"""
         logger.info("🧹 Cleaning up GhostLayer...")
-        
+
         if self._ghost_director:
             try:
                 await self._ghost_director.cleanup()
             except Exception as e:
                 logger.warning(f"⚠️ GhostDirector cleanup error: {e}")
-        
+
         if self._vault:
             try:
                 await self._vault.cleanup()
             except Exception as e:
                 logger.warning(f"⚠️ Vault cleanup error: {e}")
-        
+
         logger.info("✅ GhostLayer cleanup complete")
 
 
@@ -526,12 +526,13 @@ class GhostLayer:
 # SYSTEM CONTEXT - Anti-VM Protection (from kernel/context.py)
 # =============================================================================
 
-import platform
-import psutil
 import gc
+import platform
 import time
-from enum import Enum
 from dataclasses import dataclass
+from enum import Enum
+
+import psutil
 
 
 class VMThreatLevel(Enum):
@@ -556,7 +557,7 @@ class ProcessInfo:
     pid: int
     name: str
     ppid: int
-    cmdline: List[str]
+    cmdline: list[str]
     executable: str
     user: str
     cpu_percent: float
@@ -571,44 +572,44 @@ class SecurityEvent:
     event_type: str
     timestamp: float
     threat_level: VMThreatLevel
-    process_pid: Optional[int]
-    details: Dict[str, Any]
+    process_pid: int | None
+    details: dict[str, Any]
     description: str
 
 
 class SystemContext:
     """
     SystemContext with anti-VM protection for Ghost operations.
-    
+
     Integrated from kernel/context.py - Provides:
     - VM detection via sysctl kern.hv_support
     - Process monitoring and whitelisting
     - System integrity checking
     - M1 Neural Memory Guard (force_neural_cleanup)
     - Stealth mode activation
-    
+
     Example:
         context = SystemContext(enable_anti_vm=True)
-        
+
         if context.is_vm_environment():
             print("Running in VM!")
-        
+
         # Force memory cleanup
         cleanup_results = context.force_neural_cleanup()
         print(f"Freed {cleanup_results['memory_freed_mb']}MB")
     """
-    
-    def __init__(self, 
+
+    def __init__(self,
                  enable_anti_vm: bool = True,
                  enable_process_monitoring: bool = True,
                  enable_integrity_checking: bool = True,
                  enable_stealth_mode: bool = False,
                  m1_optimization: bool = True):
         """Initialize SystemContext with anti-VM protection"""
-        
+
         self.id = f"sysctx_{hashlib.sha256(str(time.time()).encode()).hexdigest()[:8]}"
         self.created_at = time.time()
-        
+
         # Anti-VM settings
         self._anti_vm_config = {
             'enable_anti_vm': enable_anti_vm,
@@ -623,20 +624,20 @@ class SystemContext:
                 'hledac', 'main.py', 'launch_ghost.py',
             ],
         }
-        
+
         # Process monitoring
-        self._monitored_processes: Dict[int, ProcessInfo] = {}
+        self._monitored_processes: dict[int, ProcessInfo] = {}
         self._process_whitelist = set(self._anti_vm_config['process_whitelist'])
-        self._suspicious_activities: Dict[int, Dict] = {}
-        self._security_events: List[SecurityEvent] = []
-        
+        self._suspicious_activities: dict[int, dict] = {}
+        self._security_events: list[SecurityEvent] = []
+
         # System integrity
         self._system_integrity = {
             'kernel_integrity': True,
             'memory_integrity': True,
             'process_integrity': True,
         }
-        
+
         # Performance metrics
         self._stats = {
             'vm_detections': 0,
@@ -645,15 +646,15 @@ class SystemContext:
             'stealth_activations': 0,
             'm1_optimizations': 0,
         }
-        
+
         logger.info(f"SystemContext initialized: {self.id}")
-    
+
     def is_vm_environment(self) -> bool:
         """
         Detect if running in virtualized environment.
-        
+
         Uses sysctl kern.hv_support on macOS to detect hypervisor.
-        
+
         Returns:
             True if VM environment detected
         """
@@ -673,7 +674,7 @@ class SystemContext:
                             return True
                 except (subprocess.TimeoutExpired, Exception):
                     pass
-            
+
             # Check for common VM indicators
             vm_indicators = [
                 '/proc/xen',
@@ -681,20 +682,20 @@ class SystemContext:
                 '/dev/vmmon',  # VMware
                 '/sys/class/hypervisor',
             ]
-            
+
             for indicator in vm_indicators:
                 if __import__('pathlib').Path(indicator).exists():
                     logger.warning(f"VM indicator found: {indicator}")
                     self._stats['vm_detections'] += 1
                     return True
-            
+
             return False
-            
+
         except Exception as e:
             logger.warning(f"VM detection failed: {e}")
             return False
-    
-    def get_system_info(self) -> Dict[str, Any]:
+
+    def get_system_info(self) -> dict[str, Any]:
         """Get comprehensive system information"""
         try:
             system_info = {
@@ -704,7 +705,7 @@ class SystemContext:
                 'python_version': platform.python_version(),
                 'is_vm': self.is_vm_environment(),
             }
-            
+
             # Get M1-specific information
             if self._anti_vm_config['m1_optimization'] and platform.system() == "Darwin":
                 try:
@@ -715,7 +716,7 @@ class SystemContext:
                     )
                     if result.returncode == 0:
                         system_info['cpu_brand'] = result.stdout.strip()
-                    
+
                     # Get performance cores
                     result = subprocess.run(
                         ['sysctl', '-n', 'hw.perflevel0.logicalcpu'],
@@ -723,7 +724,7 @@ class SystemContext:
                     )
                     if result.returncode == 0:
                         system_info['performance_cores'] = int(result.stdout.strip())
-                    
+
                     # Get efficiency cores
                     result = subprocess.run(
                         ['sysctl', '-n', 'hw.perflevel1.logicalcpu'],
@@ -731,10 +732,10 @@ class SystemContext:
                     )
                     if result.returncode == 0:
                         system_info['efficiency_cores'] = int(result.stdout.strip())
-                        
+
                 except Exception as e:
                     logger.debug(f"M1 info gathering failed: {e}")
-            
+
             # Get memory information
             memory = psutil.virtual_memory()
             system_info.update({
@@ -742,20 +743,20 @@ class SystemContext:
                 'available_memory_gb': round(memory.available / (1024**3), 2),
                 'memory_percent': memory.percent,
             })
-            
+
             return system_info
-            
+
         except Exception as e:
             logger.error(f"System info gathering failed: {e}")
             return {'error': str(e)}
-    
-    def force_neural_cleanup(self) -> Dict[str, Any]:
+
+    def force_neural_cleanup(self) -> dict[str, Any]:
         """
         M1 Neural Memory Guard - Force cleanup of MLX and system memory.
-        
+
         Detects if MLX is imported and runs MLX-specific cleanup along with
         garbage collection to prevent memory death spirals on M1 hardware.
-        
+
         Returns:
             Dict with cleanup results and memory freed
         """
@@ -768,12 +769,12 @@ class SystemContext:
             'memory_freed_mb': 0,
             'errors': []
         }
-        
+
         try:
             # Get memory before cleanup
             memory = psutil.virtual_memory()
             cleanup_results['memory_before_mb'] = round(memory.used / (1024**2), 2)
-            
+
             # Check if MLX is imported and clear its cache
             try:
                 import sys
@@ -781,7 +782,7 @@ class SystemContext:
                 if mlx_modules:
                     cleanup_results['mlx_detected'] = True
                     logger.info(f"MLX detected, modules: {mlx_modules}")
-                    
+
                     # Clear MLX Metal cache
                     try:
                         import mlx.core as mx
@@ -794,59 +795,59 @@ class SystemContext:
                         pass
                     except Exception as mlx_error:
                         cleanup_results['errors'].append(f"MLX cache clear failed: {mlx_error}")
-                        
+
             except Exception as import_error:
                 cleanup_results['errors'].append(f"MLX detection failed: {import_error}")
-            
+
             # Force Python garbage collection
             try:
                 gc.collect()
                 cleanup_results['gc_collected'] = True
             except Exception as gc_error:
                 cleanup_results['errors'].append(f"GC collection failed: {gc_error}")
-            
+
             # Get memory after cleanup
             memory_after = psutil.virtual_memory()
             cleanup_results['memory_after_mb'] = round(memory_after.used / (1024**2), 2)
             cleanup_results['memory_freed_mb'] = round(
                 cleanup_results['memory_before_mb'] - cleanup_results['memory_after_mb'], 2
             )
-            
+
             # Update statistics
             self._stats['m1_optimizations'] += 1
-            
+
             logger.info(f"Neural cleanup: {cleanup_results['memory_freed_mb']}MB freed")
-            
+
         except Exception as e:
             cleanup_results['errors'].append(f"Cleanup failed: {e}")
             logger.error(f"Neural cleanup failed: {e}")
-        
+
         return cleanup_results
-    
+
     def activate_stealth_mode(self) -> None:
         """Activate stealth mode for enhanced protection"""
         if self._anti_vm_config['enable_stealth_mode'] and not self._anti_vm_config.get('stealth_active', False):
             self._anti_vm_config['stealth_active'] = True
             self._stats['stealth_activations'] += 1
-            
+
             logger.warning("🔒 Stealth mode activated - enhanced protection enabled")
-            
+
             # Increase threat detection sensitivity
             self._anti_vm_config['threat_detection_sensitivity'] = 1.0
-            
+
             # Enable additional anti-tampering measures
             self._system_integrity.update({
                 'anti_tampering': True,
                 'secure_boot': True,
                 'protected_memory': True,
             })
-    
-    def get_stats(self) -> Dict[str, Any]:
+
+    def get_stats(self) -> dict[str, Any]:
         """Get system context statistics"""
         stats = self._stats.copy()
         stats['uptime_seconds'] = time.time() - self.created_at
         stats.update(self._system_integrity)
-        
+
         # Add current memory info
         try:
             memory = psutil.virtual_memory()
@@ -854,7 +855,7 @@ class SystemContext:
             stats['memory_available_gb'] = round(memory.available / (1024**3), 2)
         except Exception:
             pass
-        
+
         return stats
 
 

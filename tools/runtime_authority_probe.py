@@ -26,7 +26,6 @@ import json
 import sys
 from enum import Enum
 from pathlib import Path
-from typing import Optional
 
 # ------------------------------------------------------------------ #
 # Self-configure Python path
@@ -62,16 +61,16 @@ class ProbeResult:
     def __init__(
         self,
         verdict: AuthorityVerdict,
-        runtime_authority_path: Optional[str] = None,
-        runtime_authority_is_canonical: Optional[bool] = None,
-        sprint_id_match: Optional[bool] = None,
+        runtime_authority_path: str | None = None,
+        runtime_authority_is_canonical: bool | None = None,
+        sprint_id_match: bool | None = None,
         runtime_truth_present: bool = False,
         scheduler_exit_present: bool = False,
         report_path_exists: bool = False,
-        benchmark_path: Optional[str] = None,
-        report_path: Optional[str] = None,
-        errors: Optional[list[str]] = None,
-        evidence: Optional[dict] = None,
+        benchmark_path: str | None = None,
+        report_path: str | None = None,
+        errors: list[str] | None = None,
+        evidence: dict | None = None,
     ):
         self.verdict = verdict
         self.runtime_authority_path = runtime_authority_path
@@ -124,7 +123,7 @@ class ProbeResult:
         return "\n".join(lines)
 
 
-def probe(benchmark_json_path: str, report_json_path: Optional[str] = None) -> ProbeResult:
+def probe(benchmark_json_path: str, report_json_path: str | None = None) -> ProbeResult:
     """
     Probe a live_sprint_measurement benchmark JSON for runtime authority.
 
@@ -183,7 +182,7 @@ def probe(benchmark_json_path: str, report_json_path: Optional[str] = None) -> P
             errors.append(f"Failed to parse report JSON: {exc}")
 
     # Determine sprint_id match
-    sprint_id_match: Optional[bool] = None
+    sprint_id_match: bool | None = None
     if report_sprint_id and benchmark_sprint_id:
         sprint_id_match = (report_sprint_id == benchmark_sprint_id)
     elif report_sprint_id or benchmark_sprint_id:

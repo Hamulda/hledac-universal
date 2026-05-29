@@ -21,7 +21,6 @@ from __future__ import annotations
 import argparse
 import json
 import logging
-import os
 import sys
 from pathlib import Path
 
@@ -180,7 +179,7 @@ def compile_dark_query_program(train_path: Path) -> None:
     import dspy
     from dspy.teleprompt import MIPROv2
 
-    from brain.dspy_programs import DarkQuerySignature, DarkQueryProgram, osint_metric
+    from brain.dspy_programs import DarkQueryProgram, osint_metric
 
     logger.info(f"Loading training data from {train_path}")
     data = _load_training_data(train_path)
@@ -188,7 +187,6 @@ def compile_dark_query_program(train_path: Path) -> None:
 
     trainset = []
     for ex in data:
-        from brain.dspy_programs import DarkQuerySignature
         example = dspy.Example(
             ioc_brief=ex["ioc_brief"],
             available_transports=ex.get("available_transports", "tor+stealth"),
@@ -213,7 +211,7 @@ def compile_dark_query_program(train_path: Path) -> None:
 
     import tracemalloc
     tracemalloc.start()
-    compiled = teleprompter.compile(
+    teleprompter.compile(
         program,
         trainset=trainset,
         valset=None,  # use bootrap split
@@ -242,7 +240,7 @@ def compile_hypothesis_generator_program(train_path: Path) -> None:
     import dspy
     from dspy.teleprompt import MIPROv2
 
-    from brain.dspy_programs import HypothesisGeneratorSignature, HypothesisGeneratorProgram, osint_metric
+    from brain.dspy_programs import HypothesisGeneratorProgram, osint_metric
 
     logger.info(f"Loading training data from {train_path}")
     data = _load_training_data(train_path)
@@ -275,7 +273,7 @@ def compile_hypothesis_generator_program(train_path: Path) -> None:
 
     import tracemalloc
     tracemalloc.start()
-    compiled = teleprompter.compile(
+    teleprompter.compile(
         program,
         trainset=trainset,
         valset=None,
@@ -293,8 +291,8 @@ def compile_hypothesis_generator_program(train_path: Path) -> None:
 
 def compile_builtin_dark_query_program() -> None:
     """Compile DarkQueryProgram using built-in OSINT_DARK_QUERY_TRAINSET (no file needed)."""
-    import dspy
     from dspy.teleprompt import MIPROv2
+
     from brain.dspy_programs import DarkQueryProgram, osint_metric
 
     logger.info("Compiling dark_query from built-in trainset (%d examples)", len(OSINT_DARK_QUERY_TRAINSET))
@@ -315,7 +313,7 @@ def compile_builtin_dark_query_program() -> None:
 
     import tracemalloc
     tracemalloc.start()
-    compiled = teleprompter.compile(
+    teleprompter.compile(
         program,
         trainset=trainset,
         valset=None,

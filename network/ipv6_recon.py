@@ -26,12 +26,13 @@ GHOST_INVARIANTS:
 
 from __future__ import annotations
 
-import aiohttp
 import asyncio
 import logging
 import time
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Any
+
+import aiohttp
 
 logger = logging.getLogger(__name__)
 
@@ -53,7 +54,7 @@ class _RDAPCache:
     def _key(self, rdap_url: str, ip: str) -> str:
         return f"{rdap_url}:{ip}"
 
-    def get(self, rdap_url: str, ip: str) -> Optional[dict]:
+    def get(self, rdap_url: str, ip: str) -> dict | None:
         k = self._key(rdap_url, ip)
         ts = self._timestamps.get(k, 0)
         if time.time() - ts > RDAP_CACHE_TTL_S:
@@ -115,7 +116,7 @@ class IPv6Recon:
     """
 
     def __init__(self):
-        self._session: Optional[aiohttp.ClientSession] = None
+        self._session: aiohttp.ClientSession | None = None
 
     async def _ensure_session(self) -> aiohttp.ClientSession:
         if self._session is None or self._session.closed:
@@ -199,7 +200,7 @@ class IPv6Recon:
             except Exception:
                 pass
 
-    def _whois_server_for_ip(self, ip: str) -> Optional[str]:
+    def _whois_server_for_ip(self, ip: str) -> str | None:
         """Select appropriate WHOIS server based on IP prefix."""
         try:
             first_octet = int(ip.split(".")[0])
@@ -421,7 +422,6 @@ class IPv6ReconAdapter:
 
     async def query(self, target: str) -> list[dict]:
         """Run IPv6 recon on a target (IP or domain)."""
-        from typing import Any
         findings: list[dict[str, Any]] = []
 
         try:

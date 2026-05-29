@@ -87,11 +87,10 @@ Return code: {returncode}
 
 
 def main() -> int:
-    if sys.version_info >= (3, 14):
-        parser = argparse.ArgumentParser(
-            description="Dump asyncio task state for a running process (Python 3.14+).",
-            formatter_class=argparse.RawDescriptionHelpFormatter,
-            epilog="""
+    parser = argparse.ArgumentParser(
+        description="Dump asyncio task state for a running process (Python 3.14+).",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
 Examples:
   # Dump tasks for a stuck sprint (from project root)
   PYTHONPATH="$PWD" python tools/dump_asyncio_tasks.py 12345
@@ -107,30 +106,9 @@ Examples:
   python tools/dump_asyncio_tasks.py $SPRINT_PID
   # 3. Check outputs in reports/runtime_dumps/
         """,
-            suggest_on_error=True,
-            color=True,
-        )
-    else:
-        parser = argparse.ArgumentParser(
-            description="Dump asyncio task state for a running process (Python 3.14+).",
-            formatter_class=argparse.RawDescriptionHelpFormatter,
-            epilog="""
-Examples:
-  # Dump tasks for a stuck sprint (from project root)
-  PYTHONPATH="$PWD" python tools/dump_asyncio_tasks.py 12345
-
-  # With custom output directory
-  python tools/dump_asyncio_tasks.py 12345 --output-dir /tmp/dumps
-
-  # Full workflow:
-  # 1. Start sprint in background
-  PYTHONPATH="$PWD" python -m hledac.universal.__main__ &
-  SPRINT_PID=$!
-  # 2. If stuck, dump tasks
-  python tools/dump_asyncio_tasks.py $SPRINT_PID
-  # 3. Check outputs in reports/runtime_dumps/
-        """,
-        )
+        suggest_on_error=True,
+        color=True,
+    )
     parser.add_argument("pid", type=int, help="Process ID to inspect")
     parser.add_argument(
         "--output-dir", "-o",

@@ -10,19 +10,16 @@ Optimized for M1 8GB with memory-conscious design.
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import json
 import logging
-import os
 import sys
 import time
 from collections import OrderedDict, defaultdict
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, Callable
-
-import numpy as np
+from typing import Any
 
 # Sprint 5N: Lazy MLX import - MLX is optional, not a hard dependency
 _MLX_AVAILABLE = None
@@ -58,10 +55,10 @@ class CacheConfig:
     max_entries: int = 10000
     default_ttl: int = 3600  # 1 hour
     strategy: EvictionStrategy = EvictionStrategy.ADAPTIVE
-    persistence_path: Optional[str] = None
+    persistence_path: str | None = None
     enable_ml: bool = False  # Disabled by default to save memory
-    warm_keys: Optional[List[str]] = None  # Keys to pre-load (Fix 4)
-    warm_loader: Optional[Callable] = None  # Async loader function (Fix 4)
+    warm_keys: list[str] | None = None  # Keys to pre-load (Fix 4)
+    warm_loader: Callable | None = None  # Async loader function (Fix 4)
 
 
 @dataclass
@@ -117,12 +114,12 @@ class _ARC:
         self._current_entries = 0
         self._current_bytes = 0
 
-    def _get_size(self, key: str, cache: Dict[str, CacheEntry]) -> int:
+    def _get_size(self, key: str, cache: dict[str, CacheEntry]) -> int:
         """Get size of entry from cache."""
         entry = cache.get(key)
         return entry.size_bytes if entry else 0
 
-    def on_access(self, key: str, size: int, cache: Dict[str, CacheEntry]) -> None:
+    def on_access(self, key: str, size: int, cache: dict[str, CacheEntry]) -> None:
         """Record cache hit - move from T1 to T2 or update in T2."""
         # Check T1
         if key in self._t1:
@@ -144,7 +141,7 @@ class _ARC:
             self._current_entries += 1
             self._current_bytes += size
 
-    def evict_one(self, cache: Dict[str, CacheEntry]) -> Optional[str]:
+    def evict_one(self, cache: dict[str, CacheEntry]) -> str | None:
         """Evict one item and return its key. Returns None if nothing to evict."""
         # Determine target list (T1 or T2)
         # Simple heuristic: if T1 > T2, evict from T1
@@ -204,7 +201,7 @@ class IntelligentCache:
         result = await cache.get("key")
     """
 
-    def __init__(self, config: Optional[CacheConfig] = None):
+    def __init__(self, config: CacheConfig | None = None):
         """
         Initialize intelligent cache.
 
@@ -214,9 +211,9 @@ class IntelligentCache:
         self.config = config or CacheConfig()
 
         # Main storage
-        self._cache: Dict[str, CacheEntry] = {}
+        self._cache: dict[str, CacheEntry] = {}
         self._access_order: OrderedDict = OrderedDict()  # For LRU
-        self._frequency: Dict[str, int] = defaultdict(int)  # For LFU
+        self._frequency: dict[str, int] = defaultdict(int)  # For LFU
 
         # ARC eviction (Fix 4)
         self._arc = _ARC(self.config.max_entries, self.config.max_size_bytes)
@@ -227,7 +224,7 @@ class IntelligentCache:
         # State
         self._initialized = False
         self._lock = asyncio.Lock()
-        self._cleanup_task: Optional[asyncio.Task] = None
+        self._cleanup_task: asyncio.Task | None = None
 
         # F196B: Track background tasks for proper cleanup
         self._background_tasks: set[asyncio.Task] = set()
@@ -250,18 +247,18 @@ class IntelligentCache:
         self._warm_keys = getattr(self.config, 'warm_keys', None)
         self._warm_loader = getattr(self.config, 'warm_loader', None)
 
-        logger.debug(f"IntelligentCache created (ARC eviction)")
-    
+        logger.debug("IntelligentCache created (ARC eviction)")
+
     async def initialize(self) -> bool:
         """
         Initialize cache and load persisted data.
-        
+
         Returns:
             True if initialization successful
         """
         if self._initialized:
             return True
-        
+
         async with self._lock:
             # Load persisted cache if available
             if self._persistence_path:
@@ -279,7 +276,7 @@ class IntelligentCache:
             self._initialized = True
             logger.info(f"IntelligentCache initialized (max: {self.config.max_size_bytes / 1024 / 1024:.1f} MB)")
             return True
-    
+
     async def close(self) -> None:
         """Close cache and cleanup resources."""
         # F196B: Cancel all tracked background tasks
@@ -307,8 +304,8 @@ class IntelligentCache:
 
         self._initialized = False
         logger.info("IntelligentCache closed")
-    
-    async def get(self, key: str) -> Optional[Any]:
+
+    async def get(self, key: str) -> Any | None:
         """
         Get value from cache.
 
@@ -350,13 +347,13 @@ class IntelligentCache:
             self._update_hit_rate()
 
             return entry.value
-    
+
     async def set(
         self,
         key: str,
         value: Any,
-        ttl: Optional[int] = None,
-        size_bytes: Optional[int] = None
+        ttl: int | None = None,
+        size_bytes: int | None = None
     ) -> bool:
         """
         Set value in cache.
@@ -410,24 +407,24 @@ class IntelligentCache:
             self._stats.entry_count = len(self._cache)
 
             return True
-    
+
     async def delete(self, key: str) -> bool:
         """
         Delete entry from cache.
-        
+
         Args:
             key: Cache key
-            
+
         Returns:
             True if deleted, False if not found
         """
         async with self._lock:
             if key not in self._cache:
                 return False
-            
+
             await self._remove_entry(key)
             return True
-    
+
     async def clear(self) -> None:
         """Clear all cache entries."""
         async with self._lock:
@@ -437,25 +434,25 @@ class IntelligentCache:
             self._stats.total_size_bytes = 0
             self._stats.entry_count = 0
             logger.info("Cache cleared")
-    
+
     def get_stats(self) -> CacheStats:
         """Get cache statistics."""
         self._update_hit_rate()
         self._stats.entry_count = len(self._cache)
         return self._stats
-    
+
     async def _remove_entry(self, key: str) -> None:
         """Remove entry from all data structures."""
         if key not in self._cache:
             return
-        
+
         entry = self._cache[key]
         self._stats.total_size_bytes -= entry.size_bytes
-        
+
         del self._cache[key]
         self._access_order.pop(key, None)
         self._frequency.pop(key, None)
-    
+
     async def _evict_if_needed(self, required_bytes: int) -> None:
         """KVP-based eviction: O(1) scoring of top-10 ARC candidates only."""
         max_size = self.config.max_size_bytes
@@ -513,49 +510,49 @@ class IntelligentCache:
 
             await self._remove_entry(key_to_evict)
             self._stats.evictions += 1
-    
-    def _select_eviction_candidate(self) -> Optional[str]:
+
+    def _select_eviction_candidate(self) -> str | None:
         """Select key to evict based on strategy."""
         if not self._cache:
             return None
-        
+
         if self.config.strategy == EvictionStrategy.LRU:
             # Least Recently Used
             return next(iter(self._access_order))
-        
+
         elif self.config.strategy == EvictionStrategy.LFU:
             # Least Frequently Used
             min_freq = min(self._frequency.values())
             candidates = [k for k, v in self._frequency.items() if v == min_freq]
             return candidates[0] if candidates else None
-        
+
         else:  # ADAPTIVE
             # Hybrid: combination of recency and frequency
             now = time.time()
             min_score = float('inf')
             candidate = None
-            
+
             for key, entry in self._cache.items():
                 recency = now - entry.last_accessed
                 frequency = max(1, self._frequency.get(key, 1))
                 score = recency / frequency  # Lower is better
-                
+
                 if score > min_score:
                     min_score = score
                     candidate = key
-            
+
             return candidate
 
     def _estimate_size(self, value: Any) -> int:
         """Estimate size of value in bytes using sys.getsizeof (Fix 4)."""
         return sys.getsizeof(value)
-    
+
     def _update_hit_rate(self) -> None:
         """Update hit rate statistic."""
         total = self._stats.hits + self._stats.misses
         if total > 0:
             self._stats.hit_rate = self._stats.hits / total
-    
+
     async def _background_cleanup(self) -> None:
         """Background task for periodic cleanup."""
         while True:
@@ -566,7 +563,7 @@ class IntelligentCache:
                 break
             except Exception as e:
                 logger.error(f"Cleanup error: {e}")
-    
+
     async def _cleanup_expired(self) -> None:
         """Remove expired entries."""
         now = time.time()
@@ -574,18 +571,18 @@ class IntelligentCache:
             key for key, entry in self._cache.items()
             if now > entry.expires_at
         ]
-        
+
         for key in expired:
             await self._remove_entry(key)
-        
+
         if expired:
             logger.debug(f"Cleaned up {len(expired)} expired entries")
-    
+
     async def _persist(self) -> None:
         """Persist cache to disk."""
         if not self._persistence_path:
             return
-        
+
         try:
             data = {
                 key: {
@@ -596,32 +593,32 @@ class IntelligentCache:
                 for key, entry in self._cache.items()
                 if time.time() < entry.expires_at  # Only persist non-expired
             }
-            
+
             persist_file = self._persistence_path / "cache_data.json"
             with open(persist_file, 'w') as f:
                 json.dump(data, f, default=str)
-            
+
             logger.info(f"Persisted {len(data)} entries to disk")
-            
+
         except Exception as e:
             logger.error(f"Failed to persist cache: {e}")
-    
+
     async def _load_persisted(self) -> None:
         """Load persisted cache from disk."""
         if not self._persistence_path:
             return
-        
+
         persist_file = self._persistence_path / "cache_data.json"
         if not persist_file.exists():
             return
-        
+
         try:
-            with open(persist_file, 'r') as f:
+            with open(persist_file) as f:
                 data = json.load(f)
-            
+
             now = time.time()
             loaded = 0
-            
+
             for key, item in data.items():
                 if now < item.get("expires_at", 0):
                     await self.set(
@@ -630,23 +627,23 @@ class IntelligentCache:
                         ttl=int(item["expires_at"] - now)
                     )
                     loaded += 1
-            
+
             logger.info(f"Loaded {loaded} persisted entries")
 
         except Exception as e:
             logger.error(f"Failed to load persisted cache: {e}")
 
-    async def _warm_cache(self, keys: List[str], loader: Callable) -> None:
+    async def _warm_cache(self, keys: list[str], loader: Callable) -> None:
         """Warm cache with keys using async loader (Fix 4)."""
         tasks = [loader(key) for key in keys]
         results = await asyncio.gather(*tasks, return_exceptions=True)
-        for key, value in zip(keys, results):
+        for key, value in zip(keys, results, strict=False):
             if not isinstance(value, Exception):
                 await self.set(key, value)
 
 
 # Global cache instance
-_global_cache: Optional[IntelligentCache] = None
+_global_cache: IntelligentCache | None = None
 
 
 async def get_global_cache() -> IntelligentCache:
@@ -666,11 +663,11 @@ async def get_global_cache() -> IntelligentCache:
 class MemoryOptimizedURLSet:
     """
     Memory-efficient URL set with configurable memory limit.
-    
+
     Optimized for M1 8GB - tracks memory usage and enforces limits.
     Used for tracking discovered URLs during deep web scanning
     without consuming excessive memory.
-    
+
     Example:
         >>> url_set = MemoryOptimizedURLSet(max_memory_mb=50)
         >>> url_set.add("https://example.com/page1")
@@ -680,11 +677,11 @@ class MemoryOptimizedURLSet:
         >>> print("https://example.com/page1" in url_set)
         True
     """
-    
+
     def __init__(self, max_memory_mb: int = 50):
         """
         Initialize memory-optimized URL set.
-        
+
         Args:
             max_memory_mb: Maximum memory to use in MB
         """
@@ -692,42 +689,42 @@ class MemoryOptimizedURLSet:
         self.urls: set = set()
         self._memory_usage = 0
         self._overhead_per_url = 72  # Python set overhead estimate
-    
+
     def add(self, url: str) -> bool:
         """
         Add URL if not already present and within memory limit.
-        
+
         Args:
             url: URL to add
-            
+
         Returns:
             True if added, False if already present or memory limit reached
         """
         if url in self.urls:
             return False
-        
+
         # Estimate memory usage (URL bytes + overhead)
         estimated_size = len(url.encode('utf-8')) + self._overhead_per_url
         max_bytes = self.max_memory_mb * 1024 * 1024
-        
+
         if self._memory_usage + estimated_size > max_bytes:
             logger.warning(
                 f"Memory limit reached ({self.max_memory_mb}MB), "
                 f"cannot add more URLs (current: {len(self.urls)})"
             )
             return False
-        
+
         self.urls.add(url)
         self._memory_usage += estimated_size
         return True
-    
-    def update(self, urls: List[str]) -> int:
+
+    def update(self, urls: list[str]) -> int:
         """
         Add multiple URLs.
-        
+
         Args:
             urls: List of URLs to add
-            
+
         Returns:
             Number of URLs actually added
         """
@@ -736,24 +733,24 @@ class MemoryOptimizedURLSet:
             if self.add(url):
                 added += 1
         return added
-    
+
     def __contains__(self, url: str) -> bool:
         """Check if URL is in set."""
         return url in self.urls
-    
+
     def __len__(self) -> int:
         """Get number of URLs in set."""
         return len(self.urls)
-    
+
     def __iter__(self):
         """Iterate over URLs."""
         return iter(self.urls)
-    
+
     def get_memory_usage_mb(self) -> float:
         """Get current memory usage in MB."""
         return self._memory_usage / (1024 * 1024)
-    
-    def get_statistics(self) -> Dict[str, Any]:
+
+    def get_statistics(self) -> dict[str, Any]:
         """Get URL set statistics."""
         return {
             'url_count': len(self.urls),
@@ -761,7 +758,7 @@ class MemoryOptimizedURLSet:
             'max_memory_mb': self.max_memory_mb,
             'usage_percent': (self._memory_usage / (self.max_memory_mb * 1024 * 1024)) * 100
         }
-    
+
     def clear(self) -> None:
         """Clear all URLs and reset memory usage."""
         self.urls.clear()

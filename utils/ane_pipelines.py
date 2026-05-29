@@ -7,8 +7,6 @@ Designed for M1/Apple Silicon with fail-safe fallbacks.
 """
 
 import logging
-from pathlib import Path
-from typing import Optional, Tuple
 
 # MLX import with fallback
 try:
@@ -91,7 +89,7 @@ def _tokenize_texts(texts: list, tokenizer, max_len: int = 512) -> list:
         List of tokenized inputs
     """
     try:
-        if hasattr(tokenizer, '__call__'):
+        if callable(tokenizer):
             # Handle batch tokenization
             encoded = tokenizer(
                 texts,
@@ -126,7 +124,7 @@ def _mlx_embed(tokens: mx.array, model, hidden_size: int) -> mx.array:
     try:
         # Try model forward pass — Metal buffers scoped to with-block for immediate release on UMA
         with get_metal_stream_context():
-            if hasattr(model, '__call__'):
+            if callable(model):
                 return model(tokens)
             if hasattr(model, 'embed'):
                 return model.embed(tokens)

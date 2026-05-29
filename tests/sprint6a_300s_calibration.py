@@ -3,10 +3,10 @@
 Sprint 6A: 300s OFFLINE_REPLAY Calibration Preview
 """
 import asyncio
-import sys
-import time
 import logging
 import os
+import sys
+import time
 
 logging.getLogger('hledac').setLevel(logging.WARNING)
 
@@ -14,7 +14,7 @@ sys.path.insert(0, '/Users/vojtechhamada/PycharmProjects/Hledac')
 
 async def run_300s_test():
     from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
-    from hledac.universal.knowledge.atomic_storage import EvidencePacketStorage, EvidencePacket
+    from hledac.universal.knowledge.atomic_storage import EvidencePacket, EvidencePacketStorage
 
     print("=" * 60)
     print("[6A] 300s OFFLINE_REPLAY CALIBRATION PREVIEW")
@@ -26,7 +26,7 @@ async def run_300s_test():
     packets_dir = os.path.expanduser("~/.hledac/evidence_packets/shards")
     packet_count = 0
     if os.path.exists(packets_dir):
-        for root, dirs, files in os.walk(packets_dir):
+        for _root, _dirs, files in os.walk(packets_dir):
             packet_count += len([f for f in files if f.endswith('.json')])
 
     print(f"[PREFLIGHT] Replay packets: {packet_count}")
@@ -36,7 +36,7 @@ async def run_300s_test():
             evidence_id=f"evidence_{i}",
             url=f"http://localhost:{64000+i}/test",
             final_url=f"http://localhost:{64000+i}/test",
-            domain=f"localhost",
+            domain="localhost",
             fetched_at=time.time() - (i * 86400),
             status=200,
             headers_digest="abc123",
@@ -64,7 +64,7 @@ async def run_300s_test():
     DURATION = 300
     START_TIME = time.monotonic()
 
-    print(f"\n[START] 300s OFFLINE_REPLAY calibration preview...")
+    print("\n[START] 300s OFFLINE_REPLAY calibration preview...")
 
     result = await asyncio.wait_for(
         orch.run_benchmark(
@@ -86,7 +86,7 @@ async def run_300s_test():
     findings_fps = findings / ELAPSED if ELAPSED > 0 else 0
     hhi = result.get('hh_index', 0)
 
-    print(f"\n=== RESULTS ===")
+    print("\n=== RESULTS ===")
     print(f"[ELAPSED] {ELAPSED:.1f}s (target: {DURATION}s)")
     print(f"[ITERATIONS] {iterations}")
     print(f"[BENCHMARK_FPS] {benchmark_fps:.1f}")
@@ -100,7 +100,7 @@ async def run_300s_test():
     print(f"[DURATION_CHECK] {'PASS' if duration_ok else 'FAIL'}")
 
     # Sprint 6A: Extract calibration metrics
-    print(f"\n[CALIBRATION METRICS]")
+    print("\n[CALIBRATION METRICS]")
     if hasattr(orch, '_gc_collected_total') and hasattr(orch, '_gc_time_total_ms'):
         print(f"  GC collected: {orch._gc_collected_total}")
         print(f"  GC time ms: {orch._gc_time_total_ms:.1f}")
@@ -115,7 +115,7 @@ async def run_300s_test():
 
     # Action counts
     if hasattr(orch, '_action_selection_counts'):
-        print(f"\n[ACTION SELECTION]")
+        print("\n[ACTION SELECTION]")
         for name, count in sorted(orch._action_selection_counts.items(), key=lambda x: -x[1])[:5]:
             print(f"  {name}: {count}")
 

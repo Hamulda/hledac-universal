@@ -1,7 +1,7 @@
 """Tests for DSPy optimizer - mock psutil, _memory_mgr, dspy, evidence log."""
+from unittest.mock import MagicMock, patch
+
 import pytest
-import asyncio
-from unittest.mock import patch, MagicMock, AsyncMock
 
 
 class TestDSPyOptimizerInit:

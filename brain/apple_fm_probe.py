@@ -22,12 +22,10 @@ Použití:
 
 from __future__ import annotations
 
-import json
 import platform
 import subprocess
 import sys
 from dataclasses import dataclass, field
-from typing import Optional, Tuple
 
 __all__ = ["apple_fm_probe", "is_afm_available", "AFMProbeResult"]
 
@@ -39,15 +37,15 @@ _AFM_MIN_MACOS_VERSION = (26, 0)
 class AFMProbeResult:
     """Výsledek AFM probe."""
     available: bool
-    macos_version: Tuple[int, int]
+    macos_version: tuple[int, int]
     is_apple_silicon: bool
     apple_intelligence_enabled: bool
     correctness_valid: bool
-    error: Optional[str] = None
+    error: str | None = None
     details: dict = field(default_factory=dict)
 
 
-def _get_macos_version() -> Tuple[int, int]:
+def _get_macos_version() -> tuple[int, int]:
     """Získat macOS verzi jako (major, minor) tuple."""
     try:
         if platform.system() != "Darwin":
@@ -69,7 +67,7 @@ def _check_macos_version() -> bool:
     return (major, minor) >= _AFM_MIN_MACOS_VERSION
 
 
-def _check_apple_intelligence_enabled() -> Tuple[bool, Optional[str]]:
+def _check_apple_intelligence_enabled() -> tuple[bool, str | None]:
     """
     Kontrola Apple Intelligence enabled přes system_profiler.
 
@@ -96,7 +94,7 @@ def _check_apple_intelligence_enabled() -> Tuple[bool, Optional[str]]:
         return (False, f"system_profiler error: {e}")
 
 
-def _structured_correctness_probe() -> Tuple[bool, Optional[str]]:
+def _structured_correctness_probe() -> tuple[bool, str | None]:
     """
     Sprint 7D: Structured correctness probe - validates real JSON generation capability.
 
@@ -110,8 +108,8 @@ def _structured_correctness_probe() -> Tuple[bool, Optional[str]]:
         (True, None) if JSON generation capability confirmed (fail-open on uncertainty)
         (False, error_msg) if clearly unavailable
     """
-    import tempfile
     import subprocess
+    import tempfile
 
     # Probe script that generates JSON via mlx_lm
     probe_script = '''
@@ -171,7 +169,7 @@ except Exception as e:
 
     except subprocess.TimeoutExpired:
         return (True, None)  # Fail-open on timeout
-    except Exception as e:
+    except Exception:
         return (True, None)  # Fail-open on any error
 
 
@@ -283,7 +281,6 @@ def apple_fm_probe() -> AFMProbeResult:
             )
 
         # Všechny kontroly prošly
-        available = True
         return AFMProbeResult(
             available=True,
             macos_version=macos_version,

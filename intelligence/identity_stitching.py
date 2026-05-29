@@ -41,7 +41,7 @@ import time
 from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from typing import Any, Dict, List, Optional, Set, Tuple, Union
+from typing import Any
 
 import numpy as np
 
@@ -60,7 +60,7 @@ def _get_nx():
     return _nx
 
 try:
-    from rapidfuzz import fuzz, distance
+    from rapidfuzz import distance, fuzz
     RAPIDFUZZ_AVAILABLE = True
 except ImportError:
     RAPIDFUZZ_AVAILABLE = False
@@ -90,9 +90,9 @@ class UsernameEntry:
     platform: str
     username: str
     verified: bool = False
-    first_seen: Optional[datetime] = None
-    last_seen: Optional[datetime] = None
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    first_seen: datetime | None = None
+    last_seen: datetime | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self):
         if self.first_seen is None:
@@ -100,7 +100,7 @@ class UsernameEntry:
         if self.last_seen is None:
             self.last_seen = datetime.now()
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary."""
         return {
             "platform": self.platform,
@@ -131,14 +131,14 @@ class IdentityProfile:
     """
     id: str
     primary_name: str
-    aliases: List[str] = field(default_factory=list)
-    emails: List[str] = field(default_factory=list)
-    usernames: List[UsernameEntry] = field(default_factory=list)
+    aliases: list[str] = field(default_factory=list)
+    emails: list[str] = field(default_factory=list)
+    usernames: list[UsernameEntry] = field(default_factory=list)
     confidence: float = 0.5
-    evidence: List[str] = field(default_factory=list)
-    attributes: Dict[str, Any] = field(default_factory=dict)
+    evidence: list[str] = field(default_factory=list)
+    attributes: dict[str, Any] = field(default_factory=dict)
     created_at: datetime = field(default_factory=datetime.now)
-    updated_at: Optional[datetime] = None
+    updated_at: datetime | None = None
 
     def __post_init__(self):
         if self.updated_at is None:
@@ -151,22 +151,22 @@ class IdentityProfile:
         self.updated_at = datetime.now()
         return entry
 
-    def get_username(self, platform: str) -> Optional[str]:
+    def get_username(self, platform: str) -> str | None:
         """Get username for a specific platform."""
         for entry in self.usernames:
             if entry.platform.lower() == platform.lower():
                 return entry.username
         return None
 
-    def get_all_usernames(self) -> List[str]:
+    def get_all_usernames(self) -> list[str]:
         """Get all usernames across platforms."""
         return [entry.username for entry in self.usernames]
 
-    def get_platforms(self) -> Set[str]:
+    def get_platforms(self) -> set[str]:
         """Get set of platforms where this identity appears."""
         return {entry.platform for entry in self.usernames}
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert profile to dictionary."""
         return {
             "id": self.id,
@@ -198,9 +198,9 @@ class IdentityMatch:
     profile_a: str
     profile_b: str
     match_score: float
-    match_signals: Dict[str, float] = field(default_factory=dict)
+    match_signals: dict[str, float] = field(default_factory=dict)
     confidence: float = 0.35  # numeric [0.0, 1.0]: high=0.85, medium=0.60, low=0.35
-    evidence: List[str] = field(default_factory=list)
+    evidence: list[str] = field(default_factory=list)
 
     def __post_init__(self):
         # Determine confidence level based on score
@@ -211,7 +211,7 @@ class IdentityMatch:
         else:
             self.confidence = 0.35
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert match to dictionary."""
         return {
             "profile_a": self.profile_a,
@@ -239,16 +239,16 @@ class StitchedIdentity:
         match_evidence: Evidence supporting the stitch
     """
     id: str
-    profile_ids: List[str]
+    profile_ids: list[str]
     primary_profile: str
-    merged_names: List[str]
-    merged_emails: List[str]
-    merged_usernames: List[UsernameEntry]
+    merged_names: list[str]
+    merged_emails: list[str]
+    merged_usernames: list[UsernameEntry]
     stitch_confidence: float
-    match_evidence: List[str] = field(default_factory=list)
+    match_evidence: list[str] = field(default_factory=list)
     created_at: datetime = field(default_factory=datetime.now)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert stitched identity to dictionary."""
         return {
             "id": self.id,
@@ -318,7 +318,7 @@ class IdentityStitchingEngine:
     def __init__(
         self,
         similarity_threshold: float = 0.7,
-        signal_weights: Optional[Dict[str, float]] = None,
+        signal_weights: dict[str, float] | None = None,
         max_memory_mb: int = 512,
         enable_fuzzy: bool = True,
     ):
@@ -338,18 +338,18 @@ class IdentityStitchingEngine:
         self.enable_fuzzy = enable_fuzzy and RAPIDFUZZ_AVAILABLE
 
         # Core data structures
-        self._profiles: Dict[str, IdentityProfile] = {}
-        self._username_index: Dict[str, Set[str]] = defaultdict(set)  # username -> profile_ids
-        self._email_index: Dict[str, Set[str]] = defaultdict(set)  # email -> profile_ids
-        self._alias_index: Dict[str, Set[str]] = defaultdict(set)  # alias -> profile_ids
-        self._platform_index: Dict[str, Set[str]] = defaultdict(set)  # platform -> profile_ids
+        self._profiles: dict[str, IdentityProfile] = {}
+        self._username_index: dict[str, set[str]] = defaultdict(set)  # username -> profile_ids
+        self._email_index: dict[str, set[str]] = defaultdict(set)  # email -> profile_ids
+        self._alias_index: dict[str, set[str]] = defaultdict(set)  # alias -> profile_ids
+        self._platform_index: dict[str, set[str]] = defaultdict(set)  # platform -> profile_ids
 
         # Graph structure (lazy initialized)
-        self._identity_graph: Optional[Any] = None
+        self._identity_graph: Any | None = None
 
         # Cached computations
-        self._similarity_cache: Dict[Tuple[str, str], float] = {}
-        self._match_cache: Dict[Tuple[str, str], IdentityMatch] = {}
+        self._similarity_cache: dict[tuple[str, str], float] = {}
+        self._match_cache: dict[tuple[str, str], IdentityMatch] = {}
 
         # Statistics
         self._stats = {
@@ -430,7 +430,7 @@ class IdentityStitchingEngine:
         normalized_name = self._normalize_text(profile.primary_name)
         self._alias_index[normalized_name].add(profile.id)
 
-    def get_profile(self, profile_id: str) -> Optional[IdentityProfile]:
+    def get_profile(self, profile_id: str) -> IdentityProfile | None:
         """Get a profile by ID."""
         return self._profiles.get(profile_id)
 
@@ -563,7 +563,7 @@ class IdentityStitchingEngine:
         common = sum((c in s2) for c in s1)
         return (2 * common) / len_sum
 
-    def compute_style_similarity(self, texts1: List[str], texts2: List[str]) -> float:
+    def compute_style_similarity(self, texts1: list[str], texts2: list[str]) -> float:
         """
         Compute writing style similarity between two sets of texts.
 
@@ -611,7 +611,7 @@ class IdentityStitchingEngine:
         # Fallback: simple word overlap
         return self._lexical_similarity(texts1, texts2)
 
-    def _lexical_similarity(self, texts1: List[str], texts2: List[str]) -> float:
+    def _lexical_similarity(self, texts1: list[str], texts2: list[str]) -> float:
         """Compute lexical similarity based on word overlap."""
         words1 = set()
         words2 = set()
@@ -630,7 +630,7 @@ class IdentityStitchingEngine:
         return len(intersection) / len(union) if union else 0.0
 
     @staticmethod
-    def _extract_words(text: str) -> Set[str]:
+    def _extract_words(text: str) -> set[str]:
         """Extract words from text."""
         # Simple word extraction
         words = re.findall(r'\b[a-zA-Z]{3,}\b', text.lower())
@@ -638,8 +638,8 @@ class IdentityStitchingEngine:
 
     def compute_temporal_overlap(
         self,
-        activity1: List[datetime],
-        activity2: List[datetime],
+        activity1: list[datetime],
+        activity2: list[datetime],
         window_days: int = 30,
     ) -> float:
         """
@@ -674,7 +674,7 @@ class IdentityStitchingEngine:
         min_activity = min(len(times1), len(times2))
         return min(1.0, overlap_count / min_activity) if min_activity > 0 else 0.0
 
-    def compute_network_overlap(self, network1: Set[str], network2: Set[str]) -> float:
+    def compute_network_overlap(self, network1: set[str], network2: set[str]) -> float:
         """
         Compute network overlap (shared connections).
 
@@ -724,8 +724,8 @@ class IdentityStitchingEngine:
         if cache_key in self._match_cache:
             return self._match_cache[cache_key]
 
-        signals: Dict[str, float] = {}
-        evidence: List[str] = []
+        signals: dict[str, float] = {}
+        evidence: list[str] = []
 
         # Username similarity
         usernames_a = profile_a.get_all_usernames()
@@ -815,7 +815,7 @@ class IdentityStitchingEngine:
 
         return match
 
-    def find_matches(self, profile_id: str, min_score: Optional[float] = None) -> List[IdentityMatch]:
+    def find_matches(self, profile_id: str, min_score: float | None = None) -> list[IdentityMatch]:
         """
         Find potential matches for a profile.
 
@@ -832,10 +832,10 @@ class IdentityStitchingEngine:
 
         threshold = min_score if min_score is not None else self.similarity_threshold
         profile = self._profiles[profile_id]
-        matches: List[IdentityMatch] = []
+        matches: list[IdentityMatch] = []
 
         # Quick candidate selection using indexes
-        candidates: Set[str] = set()
+        candidates: set[str] = set()
 
         # Add profiles with similar usernames
         for username in profile.get_all_usernames():
@@ -870,7 +870,7 @@ class IdentityStitchingEngine:
 
         return matches
 
-    def find_all_matches(self, min_score: Optional[float] = None) -> List[IdentityMatch]:
+    def find_all_matches(self, min_score: float | None = None) -> list[IdentityMatch]:
         """
         Find all matches across all profiles.
 
@@ -881,8 +881,8 @@ class IdentityStitchingEngine:
             List of IdentityMatch objects
         """
         threshold = min_score if min_score is not None else self.similarity_threshold
-        matches: List[IdentityMatch] = []
-        seen_pairs: Set[Tuple[str, str]] = set()
+        matches: list[IdentityMatch] = []
+        seen_pairs: set[tuple[str, str]] = set()
 
         profile_ids = list(self._profiles.keys())
 
@@ -911,7 +911,7 @@ class IdentityStitchingEngine:
         self,
         match_threshold: float = 0.8,
         transitive_threshold: float = 0.6,
-    ) -> List[StitchedIdentity]:
+    ) -> list[StitchedIdentity]:
         """
         Stitch identities based on matches.
 
@@ -946,7 +946,7 @@ class IdentityStitchingEngine:
             )
 
         # Find connected components (stitched identities)
-        stitched: List[StitchedIdentity] = []
+        stitched: list[StitchedIdentity] = []
 
         for component in nx.connected_components(graph):
             if len(component) == 1:
@@ -957,10 +957,10 @@ class IdentityStitchingEngine:
             primary_id = profile_ids[0]
 
             # Collect all data from constituent profiles
-            all_names: Set[str] = set()
-            all_emails: Set[str] = set()
-            all_usernames: List[UsernameEntry] = []
-            all_evidence: List[str] = []
+            all_names: set[str] = set()
+            all_emails: set[str] = set()
+            all_usernames: list[UsernameEntry] = []
+            all_evidence: list[str] = []
             total_confidence = 0.0
 
             for pid in profile_ids:
@@ -1048,7 +1048,7 @@ class IdentityStitchingEngine:
 
         return graph
 
-    def get_identity_communities(self) -> List[Set[str]]:
+    def get_identity_communities(self) -> list[set[str]]:
         """
         Detect communities in the identity graph.
 
@@ -1073,8 +1073,8 @@ class IdentityStitchingEngine:
 
     def to_entities_and_relationships(
         self,
-        stitched_identities: Optional[List[StitchedIdentity]] = None,
-    ) -> Tuple[List[Any], List[Any]]:
+        stitched_identities: list[StitchedIdentity] | None = None,
+    ) -> tuple[list[Any], list[Any]]:
         """
         Convert stitched identities to Entity and Relationship objects.
 
@@ -1090,8 +1090,8 @@ class IdentityStitchingEngine:
         if stitched_identities is None:
             stitched_identities = self.stitch_identities()
 
-        entities: List[Entity] = []
-        relationships: List[Relationship] = []
+        entities: list[Entity] = []
+        relationships: list[Relationship] = []
 
         for stitched in stitched_identities:
             # Create entity for stitched identity
@@ -1127,7 +1127,7 @@ class IdentityStitchingEngine:
     # Export and Serialization
     # ========================================================================
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Export engine state as dictionary."""
         return {
             "profiles": {k: v.to_dict() for k, v in self._profiles.items()},
@@ -1136,17 +1136,17 @@ class IdentityStitchingEngine:
             "signal_weights": self.signal_weights,
         }
 
-    def export_matches(self) -> List[Dict[str, Any]]:
+    def export_matches(self) -> list[dict[str, Any]]:
         """Export all matches as list of dictionaries."""
         matches = self.find_all_matches()
         return [m.to_dict() for m in matches]
 
-    def export_stitched(self) -> List[Dict[str, Any]]:
+    def export_stitched(self) -> list[dict[str, Any]]:
         """Export stitched identities as list of dictionaries."""
         stitched = self.stitch_identities()
         return [s.to_dict() for s in stitched]
 
-    def get_stats(self) -> Dict[str, Any]:
+    def get_stats(self) -> dict[str, Any]:
         """Get engine statistics."""
         return self._stats.copy()
 
@@ -1177,7 +1177,7 @@ class IdentityStitchingEngine:
 
         logger.debug("Memory optimization completed")
 
-    def get_memory_usage(self) -> Dict[str, int]:
+    def get_memory_usage(self) -> dict[str, int]:
         """Estimate memory usage of key data structures."""
         import sys
 
@@ -1201,7 +1201,7 @@ class IdentityStitchingEngine:
 # Factory function
 def create_identity_stitching_engine(
     similarity_threshold: float = 0.7,
-    signal_weights: Optional[Dict[str, float]] = None,
+    signal_weights: dict[str, float] | None = None,
     max_memory_mb: int = 512,
     enable_fuzzy: bool = True,
 ) -> IdentityStitchingEngine:

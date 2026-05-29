@@ -2,10 +2,11 @@
 Tests for system-prompt cache persistence (Sprint 75).
 """
 
-import pytest
-from unittest.mock import patch, MagicMock, AsyncMock
 import asyncio
 from pathlib import Path
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
 
 
 class TestCachePersistence:
@@ -81,7 +82,7 @@ class TestCacheIntegration:
         engine._inference_executor = MagicMock()
 
         # Mock to avoid actual shutdown
-        with patch.object(engine, '_save_cache', new_callable=AsyncMock) as mock_save:
+        with patch.object(engine, '_save_cache', new_callable=AsyncMock):
             await engine.unload()
             # _save_cache should be called (even if model is None)
 

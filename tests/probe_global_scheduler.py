@@ -16,12 +16,10 @@ Run:
 """
 
 import asyncio
-import multiprocessing as mp
 import queue
 import re
 import sys
 import time
-from unittest.mock import patch
 
 import pytest
 
@@ -31,7 +29,6 @@ from hledac.universal.orchestrator.global_scheduler import (
     GlobalPriorityScheduler,
     register_task,
 )
-
 
 # ---------------------------------------------------------------------------
 # Task helpers (defined at module level so they can be pickled/imported)
@@ -125,7 +122,7 @@ def _drain_until(scheduler, deadline, *statuses):
         try:
             item = scheduler._result_queue.get(timeout=0.1)
             if len(item) >= 3:
-                job_id, status, error = item[0], item[1], item[2]
+                _job_id, status, error = item[0], item[1], item[2]
                 results[status] = (error, item[3] if len(item) > 3 else None)
             else:
                 results[item[1]] = (item[2] if len(item) > 2 else None, None)
@@ -149,7 +146,7 @@ class TestAsyncCoroutineSuccess:
         scheduler.start()
 
         try:
-            job_id = scheduler.schedule(priority=1, task_name="async_succeed", x=21)
+            scheduler.schedule(priority=1, task_name="async_succeed", x=21)
             results = _drain_until(scheduler, time.time() + 10.0, "succeeded", "failed")
 
             assert "succeeded" in results, f"No succeeded found in results: {results}"
@@ -168,7 +165,7 @@ class TestAsyncCoroutineSuccess:
         scheduler.start()
 
         try:
-            job_id = scheduler.schedule(priority=1, task_name="async_raise", x=1)
+            scheduler.schedule(priority=1, task_name="async_raise", x=1)
             results = _drain_until(scheduler, time.time() + 10.0, "succeeded", "failed")
 
             assert "failed" in results, f"No failed found in results: {results}"
@@ -190,7 +187,7 @@ class TestAsyncCoroutineSuccess:
         try:
             # 5s job_timeout — worker loop will kill it after 30s but
             # the timeout checker should fire first at ~5s
-            job_id = scheduler.schedule(priority=1, task_name="async_timeout_long", x=1)
+            scheduler.schedule(priority=1, task_name="async_timeout_long", x=1)
             results = _drain_until(scheduler, time.time() + 20.0, "succeeded", "failed", "timeout")
 
             # Must not be stuck in 'running'
@@ -214,7 +211,7 @@ class TestSyncTaskStillSucceeds:
         scheduler.start()
 
         try:
-            job_id = scheduler.schedule(priority=1, task_name="sync_task", x=21)
+            scheduler.schedule(priority=1, task_name="sync_task", x=21)
             results = _drain_until(scheduler, time.time() + 10.0, "succeeded", "failed")
 
             assert "succeeded" in results, f"Expected succeeded, got: {results}"
@@ -241,7 +238,7 @@ class TestNoUnawaitedCoroutines:
         with warnings.catch_warnings(record=True) as w:
             warnings.simplefilter("always", RuntimeWarning)
 
-            job_id = scheduler.schedule(priority=1, task_name="async_warn", x=1)
+            scheduler.schedule(priority=1, task_name="async_warn", x=1)
 
             # Wait for completion
             deadline = time.time() + 10.0

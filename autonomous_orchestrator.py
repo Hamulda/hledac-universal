@@ -66,8 +66,8 @@ autonomous_orchestrator — ROOT RE-EXPORT FACADE (Sprint F181A)
     - ComprehensiveResearchResult
 """
 
-import sys
 import os
+import sys
 import time as _time_module  # Needed for test surface: patchable time.time
 
 # Re-export ActionResult for backward-compat test surface
@@ -81,6 +81,7 @@ _legacy_path = os.path.join(os.path.dirname(__file__), "legacy", "autonomous_orc
 
 # Create a placeholder so recursive imports find this module already in sys.modules
 import types
+
 _facade_mod = types.ModuleType("hledac.universal.autonomous_orchestrator")
 _facade_mod.__file__ = __file__
 _facade_mod.__package__ = "hledac.universal"
@@ -90,6 +91,7 @@ sys.modules["hledac.universal.autonomous_orchestrator"] = _facade_mod
 # Now do the actual loading - this WON'T trigger __init__.py re-entry
 # because hledac.universal.autonomous_orchestrator is already in sys.modules
 import warnings
+
 warnings.warn(
     "autonomous_orchestrator has been migrated to legacy/. "
     "Import FullyAutonomousOrchestrator from runtime/sprint_scheduler.py instead. "
@@ -100,6 +102,7 @@ warnings.warn(
 
 # Load the legacy module directly
 import importlib.util
+
 _spec = importlib.util.spec_from_file_location("legacy.autonomous_orchestrator", _legacy_path)
 assert _spec is not None, f"Failed to load spec for {_legacy_path}"
 _legacy_mod = importlib.util.module_from_spec(_spec)
@@ -252,20 +255,20 @@ for _name in _for_export:
 
 create_autonomous_orchestrator = getattr(_legacy_mod, "autonomous_research", None)
 globals()["create_autonomous_orchestrator"] = create_autonomous_orchestrator
-setattr(_facade_mod, "create_autonomous_orchestrator", create_autonomous_orchestrator)
+_facade_mod.create_autonomous_orchestrator = create_autonomous_orchestrator
 
 # time module — required for test surface (patchable time.time)
 globals()["time"] = _time_module
-setattr(_facade_mod, "time", _time_module)
+_facade_mod.time = _time_module
 
 # ActionResult — re-exported for backward-compat test surface
 globals()["ActionResult"] = ActionResult
-setattr(_facade_mod, "ActionResult", ActionResult)
+_facade_mod.ActionResult = ActionResult
 
 # logger — re-exported from legacy for test surface (patchable logger)
 _legacy_logger = getattr(_legacy_mod, "logger", None)
 if _legacy_logger is not None:
     globals()["logger"] = _legacy_logger
-    setattr(_facade_mod, "logger", _legacy_logger)
+    _facade_mod.logger = _legacy_logger
 
 __all__ = _for_export + ["create_autonomous_orchestrator", "ActionResult", "time", "logger"]

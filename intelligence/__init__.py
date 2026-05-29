@@ -28,28 +28,28 @@ try:
     from .archive_discovery import (
         ArchiveDiscovery,
         ArchiveResult,
-        SnapshotInfo,
-        WaybackMachineClient,
-        ArchiveTodayClient,
-        IPFSClient,
-        GitHubHistoricalClient,
-        WaybackCDX,
-        WaybackCDXClient,  # DEPRECATED: alias pro WaybackCDX, odstranit po CE-001
-        CDXSnapshot,
-        DiscoveredEndpoint,
-        search_archives,
-        get_wayback_snapshots,
-        discover_from_wayback,
-        wayback_cdx_lookup,  # COMPAT: search-shaped wrapper pro fetch_coordinator
         # From stealth_osint/archive_resurrector.py
         ArchiveResurrector,
+        ArchiveTodayClient,
+        CDXSnapshot,
         ContentSource,
         ContentType,
-        Snapshot,
-        ResurrectionResult,
+        DiscoveredEndpoint,
+        GitHubHistoricalClient,
+        IPFSClient,
         ResurrectionRequest,
-        resurrect_url,
+        ResurrectionResult,
+        Snapshot,
+        SnapshotInfo,
+        WaybackCDX,
+        WaybackCDXClient,  # DEPRECATED: alias pro WaybackCDX, odstranit po CE-001
+        WaybackMachineClient,
+        discover_from_wayback,
         get_archive_resurrector,
+        get_wayback_snapshots,
+        resurrect_url,
+        search_archives,
+        wayback_cdx_lookup,  # COMPAT: search-shaped wrapper pro fetch_coordinator
     )
     ARCHIVE_AVAILABLE = True
 except ImportError:
@@ -58,14 +58,14 @@ except ImportError:
 # Temporal Analysis (from deep_research/temporal_analyzer.py + predictive_modeler.py)
 try:
     from .temporal_analysis import (
-        TemporalAnalyzer,
+        CausalEvent,
+        PatternType,
+        Scenario,
         TemporalAnalysisResult,
+        TemporalAnalyzer,
+        TemporalPattern,
         TrendAnalysis,
         TrendDirection,
-        TemporalPattern,
-        PatternType,
-        CausalEvent,
-        Scenario,
         TurningPoint,
         create_temporal_analyzer,
         # Advanced predictive methods from predictive_modeler.py:
@@ -83,32 +83,32 @@ except ImportError:
 # Enhanced with stealth_toolkit and stealth_osint integration
 try:
     from .stealth_crawler import (
-        StealthCrawler,
-        SearchResult,
-        create_stealth_crawler,
-        # Header Spoofer (from stealth_toolkit integration)
-        HeaderSpoofer,
-        HeaderConfig,
-        get_stealth_headers,
-        # From stealth_osint/stealth_web_scraper.py
-        StealthWebScraper,
-        ScrapingResult,
-        ProxyConfig,
-        FingerprintProfile,
-        ProtectionType,
-        BypassMethod,
-        quick_scrape,
-        get_stealth_web_scraper,
-        # Streaming Monitor (continuous monitoring capabilities)
-        StreamingMonitor,
-        MonitoredSource,
-        StreamEvent,
         Alert,
         AlertRule,
+        BypassMethod,
         Change,
         ChangeType,
+        FingerprintProfile,
+        HeaderConfig,
+        # Header Spoofer (from stealth_toolkit integration)
+        HeaderSpoofer,
+        MonitoredSource,
+        ProtectionType,
+        ProxyConfig,
+        ScrapingResult,
+        SearchResult,
         Severity,
         SourceType,
+        StealthCrawler,
+        # From stealth_osint/stealth_web_scraper.py
+        StealthWebScraper,
+        StreamEvent,
+        # Streaming Monitor (continuous monitoring capabilities)
+        StreamingMonitor,
+        create_stealth_crawler,
+        get_stealth_headers,
+        get_stealth_web_scraper,
+        quick_scrape,
     )
     CRAWLER_AVAILABLE = True
 except ImportError:
@@ -117,11 +117,11 @@ except ImportError:
 # Web Intelligence
 try:
     from .web_intelligence import (
-        UnifiedWebIntelligence,
-        IntelligenceTarget,
-        IntelligenceResult,
         IntelligenceOperationType,
+        IntelligenceResult,
+        IntelligenceTarget,
         OperationStatus,
+        UnifiedWebIntelligence,
     )
     WEB_INTEL_AVAILABLE = True
 except ImportError:
@@ -132,16 +132,16 @@ try:
     from .academic_search import (
         AcademicSearchEngine,
         AcademicSearchResult,
-        SearchResult,
-        SourceResult,
-        QueryAnalysis,
-        SourcePerformance,
-        BaseSourceAdapter,
-        ArxivAdapter,
-        CrossrefAdapter,
-        SemanticScholarAdapter,
-        ResultType,
         AcademicSource,
+        ArxivAdapter,
+        BaseSourceAdapter,
+        CrossrefAdapter,
+        QueryAnalysis,
+        ResultType,
+        SearchResult,
+        SemanticScholarAdapter,
+        SourcePerformance,
+        SourceResult,
         search_academic,
     )
     ACADEMIC_SEARCH_AVAILABLE = True
@@ -151,12 +151,12 @@ except ImportError:
 # Data Leak Hunter (from stealth_osint/data_leak_hunter.py)
 try:
     from .data_leak_hunter import (
+        AlertSeverity,
+        BreachAPIConfig,
         DataLeakHunter,
         LeakAlert,
-        MonitoringTarget,
-        BreachAPIConfig,
-        AlertSeverity,
         LeakSource,
+        MonitoringTarget,
         check_email_breaches,
         get_data_leak_hunter,
     )
@@ -167,16 +167,16 @@ except ImportError:
 # Cryptographic Intelligence (cryptanalysis, hash analysis, certificates)
 try:
     from .cryptographic_intelligence import (
-        CryptographicIntelligence,
-        ClassicalCryptanalysis,
-        HashAnalyzer,
-        EncryptionDetector,
         CertificateAnalyzer,
-        CryptanalysisResult,
-        HashAnalysis,
-        EncryptionDetection,
         CertificateInfo,
         CipherType,
+        ClassicalCryptanalysis,
+        CryptanalysisResult,
+        CryptographicIntelligence,
+        EncryptionDetection,
+        EncryptionDetector,
+        HashAnalysis,
+        HashAnalyzer,
         HashType,
     )
     CRYPTO_AVAILABLE = True
@@ -186,20 +186,20 @@ except ImportError:
 # Document Intelligence (PDF, Office, Images, MLX Long-Context)
 try:
     from .document_intelligence import (
-        DocumentIntelligenceEngine,
-        PDFAnalyzer,
-        OfficeDocumentAnalyzer,
-        ImageAnalyzer,
+        CrossDocumentLink,
         DocumentAnalysis,
+        DocumentIntelligenceEngine,
         DocumentMetadata,
+        DocumentType,
+        EmbeddedObject,
+        EntityMention,
         EXIFData,
         GeoLocation,
-        EmbeddedObject,
-        DocumentType,
-        MLXLongContextAnalyzer,
+        ImageAnalyzer,
         LongContextAnalysis,
-        EntityMention,
-        CrossDocumentLink,
+        MLXLongContextAnalyzer,
+        OfficeDocumentAnalyzer,
+        PDFAnalyzer,
         TimelineEvent,
     )
     DOCUMENT_INTELLIGENCE_AVAILABLE = True
@@ -209,23 +209,23 @@ except ImportError:
 # Temporal Archaeologist (deleted content recovery, timeline reconstruction)
 try:
     from .temporal_archaeologist import (
-        TemporalArchaeologist,
-        ArchivedVersion,
-        EntityTimeline,
-        EntitySnapshot,
-        IdentityChange,
-        TemporalGap,
-        TemporalAnomaly,
-        TemporalCorrelation,
-        ResolvedEntity,
-        RecoveryResult,
-        ArchiveSource,
         AnomalyType,
+        ArchivedVersion,
+        ArchiveSource,
+        EntitySnapshot,
+        EntityTimeline,
         EntityType,
-        recover_deleted_content,
-        reconstruct_timeline,
-        detect_anomalies,
+        IdentityChange,
+        RecoveryResult,
+        ResolvedEntity,
+        TemporalAnomaly,
+        TemporalArchaeologist,
+        TemporalCorrelation,
+        TemporalGap,
         create_temporal_archaeologist,
+        detect_anomalies,
+        reconstruct_timeline,
+        recover_deleted_content,
     )
     TEMPORAL_ARCHAEOLOGIST_AVAILABLE = True
 except ImportError:
@@ -234,13 +234,13 @@ except ImportError:
 # Timeline Synthesizer (Sprint F202E)
 try:
     from .timeline_synthesizer import (
-        TimelineSynthesizer,
+        MAX_EVENT_AGE_DAYS,
+        MAX_TIMELINE_EVENTS,
+        SynthesizedTimeline,
         TimelineEvent,
         TimelineMetadata,
-        SynthesizedTimeline,
+        TimelineSynthesizer,
         create_timeline_synthesizer,
-        MAX_TIMELINE_EVENTS,
-        MAX_EVENT_AGE_DAYS,
     )
     TIMELINE_SYNTHESIZER_AVAILABLE = True
 except ImportError:
@@ -249,10 +249,10 @@ except ImportError:
 # Temporal Archaeologist Adapter (Sprint F202E)
 try:
     from .temporal_archaeologist_adapter import (
+        MAX_TIMELINE_FINDINGS,
         TemporalArchaeologistAdapter,
         TimelineFindingResult,
         create_temporal_archaeologist_adapter,
-        MAX_TIMELINE_FINDINGS,
     )
     TEMPORAL_ARCHAEOLOGIST_ADAPTER_AVAILABLE = True
 except ImportError:
@@ -261,20 +261,20 @@ except ImportError:
 # Exposed Service Hunter (S3, Databases, GraphQL, CT logs, Container APIs)
 try:
     from .exposed_service_hunter import (
-        ExposedServiceHunter,
-        S3BucketEnumerator,
-        DatabasePortScanner,
-        GraphQLIntrospector,
+        CertificateInfo,
         CertificateTransparency,
         ContainerAPIExplorer,
+        DatabasePortScanner,
         ExposedService,
-        S3Bucket,
-        CertificateInfo,
-        ServiceType,
+        ExposedServiceHunter,
         ExposureType,
+        GraphQLIntrospector,
         RiskLevel,
-        quick_hunt,
+        S3Bucket,
+        S3BucketEnumerator,
+        ServiceType,
         check_s3_bucket,
+        quick_hunt,
         scan_graphql_endpoint,
     )
     EXPOSED_SERVICE_HUNTER_AVAILABLE = True
@@ -297,12 +297,12 @@ except ImportError:
 try:
     from .academic_discovery import (
         AcademicPaper,
-        search_arxiv,
-        search_crossref,
-        search_semantic_scholar,
         search_academic_all,
+        search_arxiv,
         search_arxiv_sync,
+        search_crossref,
         search_crossref_sync,
+        search_semantic_scholar,
         search_semantic_scholar_sync,
     )
     ACADEMIC_DISCOVERY_AVAILABLE = True
@@ -314,6 +314,8 @@ except ImportError:
 try:
     from .pastebin_monitor import (
         PasteFinding,
+    )
+    from .pastebin_monitor import (
         run as pastebin_run,
     )
     PASTEBIN_MONITOR_AVAILABLE = True
@@ -324,16 +326,16 @@ except ImportError:
 # Relationship Discovery (Social Network Analysis)
 try:
     from .relationship_discovery import (
-        RelationshipDiscoveryEngine,
-        Entity,
-        Relationship,
-        ConnectionPath,
-        Community,
         AffinityMatrix,
         Communication,
+        Community,
+        ConnectionPath,
         Document,
-        InfluenceModel,
+        Entity,
         EntityType,
+        InfluenceModel,
+        Relationship,
+        RelationshipDiscoveryEngine,
         RelationshipType,
         create_relationship_engine,
     )
@@ -344,23 +346,23 @@ except ImportError:
 # Pattern Mining Engine (behavioral, temporal, communication patterns)
 try:
     from .pattern_mining import (
-        PatternMiningEngine,
-        Pattern,
-        TemporalPattern,
-        BehavioralPattern,
-        CommunicationPattern,
-        FlowPattern,
-        StructuralPattern,
-        SequentialPattern,
-        Anomaly,
-        Event,
         Action,
+        Anomaly,
+        AnomalyType,
+        BehavioralPattern,
         Communication,
-        Transaction,
+        CommunicationPattern,
+        Event,
+        FlowPattern,
+        Pattern,
+        PatternMiningEngine,
         PatternType,
         SeasonalityType,
+        SequentialPattern,
+        StructuralPattern,
+        TemporalPattern,
+        Transaction,
         TrendDirection,
-        AnomalyType,
         create_pattern_mining_engine,
     )
     PATTERN_MINING_AVAILABLE = True
@@ -370,9 +372,9 @@ except ImportError:
 # Identity Stitching Engine (cross-platform identity linking)
 try:
     from .identity_stitching import (
-        IdentityStitchingEngine,
-        IdentityProfile,
         IdentityMatch,
+        IdentityProfile,
+        IdentityStitchingEngine,
         StitchedIdentity,
         UsernameEntry,
         create_identity_stitching_engine,
@@ -385,18 +387,22 @@ except ImportError:
 try:
     from .blockchain_analyzer import (
         BlockchainForensics,
-        WalletAnalysis,
-        TransactionPattern,
+        ChainType,
         Cluster,
         CrossChainResult,
-        Transaction,
-        ChainType,
         EntityType,
-        PatternType as BlockchainPatternType,
-        RiskLevel as BlockchainRiskLevel,
+        Transaction,
+        TransactionPattern,
+        WalletAnalysis,
         analyze_blockchain_address,
         detect_transaction_patterns,
         get_blockchain_forensics,
+    )
+    from .blockchain_analyzer import (
+        PatternType as BlockchainPatternType,
+    )
+    from .blockchain_analyzer import (
+        RiskLevel as BlockchainRiskLevel,
     )
     BLOCKCHAIN_FORENSICS_AVAILABLE = True
 except ImportError:
@@ -405,12 +411,12 @@ except ImportError:
 # Phase 11: Input Detector
 try:
     from .input_detector import (
-        IntelligentInputDetector,
-        InputAnalysis,
-        Pattern,
         ComplexityScore,
-        create_input_detector,
+        InputAnalysis,
         IntelligenceConfig,
+        IntelligentInputDetector,
+        Pattern,
+        create_input_detector,
     )
     INPUT_DETECTOR_AVAILABLE = True
 except ImportError:
@@ -424,12 +430,12 @@ except ImportError:
 # Phase 11: Workflow Orchestrator
 try:
     from .workflow_orchestrator import (
-        WorkflowOrchestrator,
-        ComprehensiveReport,
-        SharedContext,
-        CorrelationReport,
         Anomaly,
+        ComprehensiveReport,
+        CorrelationReport,
         Finding,
+        SharedContext,
+        WorkflowOrchestrator,
         create_workflow_orchestrator,
     )
     WORKFLOW_ORCHESTRATOR_AVAILABLE = True

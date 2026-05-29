@@ -12,11 +12,8 @@ Runtime validation for:
 """
 
 import asyncio
-import gc
 import unittest
-import time
-from unittest.mock import MagicMock, AsyncMock, patch
-from typing import Dict, List, Any
+from unittest.mock import MagicMock, patch
 
 
 class TestSprint82IBoundedContext(unittest.TestCase):
@@ -167,10 +164,7 @@ class TestSprint82IOnionUnavailable(unittest.TestCase):
     def test_onion_skip_without_crash(self):
         """Onion candidates skip cleanly when Tor unavailable."""
         # Test that onion budget tracking exists and is bounded
-        from hledac.universal.autonomous_orchestrator import (
-            _ONION_BUDGET_PER_SPRINT,
-            FullyAutonomousOrchestrator
-        )
+        from hledac.universal.autonomous_orchestrator import _ONION_BUDGET_PER_SPRINT, FullyAutonomousOrchestrator
 
         # Verify budget constant exists and is bounded
         self.assertEqual(_ONION_BUDGET_PER_SPRINT, 5)
@@ -213,9 +207,7 @@ class TestSprint82IContradictionPreservation(unittest.TestCase):
 
     def test_build_structured_fallback_includes_contradictions(self):
         """Structured fallback includes contested claims."""
-        from hledac.universal.autonomous_orchestrator import (
-            FullyAutonomousOrchestrator, SynthesisCompression
-        )
+        from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator, SynthesisCompression
 
         # Create actual instance with minimal mocking
         orch = FullyAutonomousOrchestrator.__new__(FullyAutonomousOrchestrator)
@@ -295,16 +287,16 @@ class TestSprint82IBenchmarkMetrics(unittest.TestCase):
     def test_constants_are_bounded(self):
         """All key constants are bounded."""
         from hledac.universal.autonomous_orchestrator import (
+            _BACKLOG_MAX,
+            _CT_DISCOVERY_MAX_SUBDOMAINS,
             _FINAL_SYNTHESIS_MAX_CHARS,
             _FINAL_SYNTHESIS_MAX_CLAIMS,
             _FINAL_SYNTHESIS_MAX_GAPS,
-            _BACKLOG_MAX,
-            _CT_DISCOVERY_MAX_SUBDOMAINS,
-            _WAYBACK_CDX_MAX_LINES,
+            _GAP_CHECK_BUDGET,
             _NECROMANCER_BUDGET_PER_SPRINT,
             _ONION_BUDGET_PER_SPRINT,
             _PRF_MAX_EXPANSION_TERMS,
-            _GAP_CHECK_BUDGET,
+            _WAYBACK_CDX_MAX_LINES,
         )
 
         # All should be reasonable bounded values
@@ -321,16 +313,12 @@ class TestSprint82IBenchmarkMetrics(unittest.TestCase):
 
     def test_memory_release_method_exists(self):
         """Memory release method has proper cleanup steps."""
-        from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
-
         # Check method has gc.collect()
-        source = FullyAutonomousOrchestrator._release_memory_before_synthesis.__code__
-
         # Should contain gc.collect call
-        gc_collected = 'gc.collect()' in source.co_names or True  # May be imported differently
-
         # Should be async
         import inspect
+
+        from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
         self.assertTrue(
             inspect.iscoroutinefunction(FullyAutonomousOrchestrator._release_memory_before_synthesis)
         )
@@ -343,7 +331,6 @@ class TestSprint82IIntegration(unittest.TestCase):
         """Scenario A: Normal bounded flow works."""
         from hledac.universal.autonomous_orchestrator import (
             SynthesisCompression,
-            FullyAutonomousOrchestrator,
         )
 
         # Create compression state with bounded data

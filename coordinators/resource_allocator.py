@@ -4,20 +4,19 @@ Intelligent Resource Allocator
 Dynamic resource allocation and scaling system for Hledač automation
 """
 import asyncio
-import os
-import psutil
-import logging
 import json
+import logging
+import os
 import subprocess
 import time as time_module
 from collections import deque
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass
+from datetime import datetime
 from enum import Enum
-from typing import Dict, List, Any, Optional, Tuple
+from typing import Any
 
+import psutil
 import yaml
-import numpy as np
-from datetime import datetime, timedelta
 
 # Sprint 72: sklearn lazy import - don't load at module level
 SKLEARN_AVAILABLE = True  # Will be verified on actual use
@@ -61,11 +60,11 @@ class _ResourceCapacitySampler:
     def __init__(self) -> None:
         self._cpu_lock = asyncio.Lock()
         self._metal_lock = asyncio.Lock()
-        self._cpu_cache: Optional[CapacitySnapshot] = None
-        self._metal_cache: Optional[bool] = None
+        self._cpu_cache: CapacitySnapshot | None = None
+        self._metal_cache: bool | None = None
         self._metal_cache_time: float = 0.0
 
-    def _get_cpu_sync(self) -> Tuple[float, float, float]:
+    def _get_cpu_sync(self) -> tuple[float, float, float]:
         """
         Blocking CPU/memory read via psutil.
         MUST be called via asyncio.to_thread, never directly from event loop.
@@ -73,7 +72,7 @@ class _ResourceCapacitySampler:
         Uses interval=0.0 for non-blocking CPU measurement.
         """
         cpu_percent = psutil.cpu_percent(interval=0.0)
-        memory = psutil.virtual_memory()
+        psutil.virtual_memory()
         gpu_memory = 0.0
         gpu_usage = cpu_percent * 0.7  # Rough estimate
         return cpu_percent, gpu_memory, gpu_usage
@@ -165,14 +164,14 @@ class ResourceRequest:
     priority: Priority
     cpu_cores: float
     memory_gb: float
-    gpu_memory: Optional[float] = None
-    storage_gb: Optional[float] = None
-    network_bandwidth: Optional[float] = None
-    estimated_duration: Optional[int] = None  # seconds
-    max_wait_time: Optional[int] = None  # seconds
+    gpu_memory: float | None = None
+    storage_gb: float | None = None
+    network_bandwidth: float | None = None
+    estimated_duration: int | None = None  # seconds
+    max_wait_time: int | None = None  # seconds
     can_preempt: bool = False
-    affinity: Optional[List[str]] = None  # preferred resources
-    anti_affinity: Optional[List[str]] = None  # avoid resources
+    affinity: list[str] | None = None  # preferred resources
+    anti_affinity: list[str] | None = None  # avoid resources
 
 @dataclass
 class ResourceCapacity:
@@ -190,10 +189,10 @@ class ResourceCapacity:
 class ResourceAllocation:
     """Resource allocation record"""
     task_id: str
-    allocated_resources: Dict[str, float]
+    allocated_resources: dict[str, float]
     start_time: datetime
-    end_time: Optional[datetime]
-    actual_usage: Dict[str, float]
+    end_time: datetime | None
+    actual_usage: dict[str, float]
     efficiency_score: float
 
 class IntelligentResourceAllocator:
@@ -202,7 +201,7 @@ class IntelligentResourceAllocator:
     def __init__(self, config_path: str = None):
         self.config = self._load_config(config_path)
         # Sprint F206X: dict keyed by task_id for O(1) removal after allocation, bounded size
-        self._pending_requests_dict: Dict[str, ResourceRequest] = {}
+        self._pending_requests_dict: dict[str, ResourceRequest] = {}
         self.active_allocations = {}
         self.completed_allocations = deque(maxlen=2000)  # M218C: bounded to prevent unbounded growth
         self.resource_history = []
@@ -226,7 +225,7 @@ class IntelligentResourceAllocator:
         self.scale_up_threshnew = self.config.get('scaling', {}).get('scale_up_threshnew', 0.8)
         self.scale_down_threshnew = self.config.get('scaling', {}).get('scale_down_threshnew', 0.3)
 
-    def _load_config(self, config_path: str) -> Dict[str, Any]:
+    def _load_config(self, config_path: str) -> dict[str, Any]:
         """Load resource allocation configuration"""
         default_config = {
             'resources': {
@@ -257,7 +256,7 @@ class IntelligentResourceAllocator:
         }
 
         if config_path and os.path.exists(config_path):
-            with open(config_path, 'r') as f:
+            with open(config_path) as f:
                 config = yaml.safe_load(f)
                 default_config.update(config)
 
@@ -320,7 +319,7 @@ class IntelligentResourceAllocator:
             cpu_count = psutil.cpu_count()
             memory = psutil.virtual_memory()
             disk = psutil.disk_usage('/')
-            network = psutil.net_io_counters()
+            psutil.net_io_counters()
             network_bandwidth = 1000.0  # Default to 1Gbps
 
             return ResourceCapacity(
@@ -445,7 +444,7 @@ class IntelligentResourceAllocator:
             (request.gpu_memory is None or request.gpu_memory <= available_gpu)
         )
 
-    async def _create_allocation(self, request: ResourceRequest, capacity: ResourceCapacity) -> Optional[ResourceAllocation]:
+    async def _create_allocation(self, request: ResourceRequest, capacity: ResourceCapacity) -> ResourceAllocation | None:
         """Create resource allocation"""
         try:
             allocated_resources = {
@@ -498,7 +497,7 @@ class IntelligentResourceAllocator:
         # Sort by efficiency score (lowest first)
         preemptible_tasks.sort(key=lambda x: x[1].efficiency_score)
 
-        for task_id, allocation in preemptible_tasks:
+        for task_id, _allocation in preemptible_tasks:
             logger.info(f"Preempting task {task_id} for high priority task {request.task_name}")
             await self.release_resources(task_id)
 
@@ -641,7 +640,7 @@ class IntelligentResourceAllocator:
 
     async def _optimize_active_allocations(self):
         """Optimize active resource allocations"""
-        for task_id, allocation in self.active_allocations.items():
+        for _task_id, allocation in self.active_allocations.items():
             # Update actual usage based on current system state
             capacity = await self.get_current_capacity()
 
@@ -657,7 +656,7 @@ class IntelligentResourceAllocator:
             if allocated_cpu > 0:
                     allocation.efficiency_score = min(1.0, used_cpu / allocated_cpu)
 
-    def get_allocation_statistics(self) -> Dict[str, Any]:
+    def get_allocation_statistics(self) -> dict[str, Any]:
         """Get resource allocation statistics"""
         stats = {
             'total_requests': len(self._pending_requests_dict) + len(self.active_allocations) + len(self.completed_allocations),
@@ -772,7 +771,7 @@ class ResourceAwareScheduler:
         """Execute a task with allocated resources"""
         try:
             logger.info(f"Executing task {task_id}")
-            result = await task_func()
+            await task_func()
             logger.info(f"Task {task_id} completed successfully")
         except asyncio.CancelledError:
             # Re-raise CancelledError after cleanup
@@ -817,7 +816,7 @@ class ResourceAwareScheduler:
 async def main():
     """Main function for resource allocator testing"""
     allocator = IntelligentResourceAllocator()
-    scheduler = ResourceAwareScheduler(allocator)
+    ResourceAwareScheduler(allocator)
     # Start monitoring
     monitoring_task = asyncio.create_task(allocator.monitor_and_optimize(), name="resource_allocator:monitor")
 

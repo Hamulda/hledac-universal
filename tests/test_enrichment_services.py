@@ -16,7 +16,6 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # Pattern B: EnrichmentServices lifecycle tests (moved from SprintScheduler)
 # ---------------------------------------------------------------------------
@@ -350,11 +349,11 @@ class TestSprintSchedulerDelegation:
 
     def test_scheduler_inject_enrichment_services_wires(self):
         """inject_enrichment_services() sets _enrichment_services."""
+        from hledac.universal.runtime.enrichment_services import EnrichmentServices
         from hledac.universal.runtime.sprint_scheduler import (
             SprintScheduler,
             SprintSchedulerConfig,
         )
-        from hledac.universal.runtime.enrichment_services import EnrichmentServices
 
         config = SprintSchedulerConfig()
         scheduler = SprintScheduler(config)
@@ -367,11 +366,11 @@ class TestSprintSchedulerDelegation:
     @pytest.mark.asyncio
     async def test_scheduler_init_delegates_to_services_init(self):
         """When _enrichment_services is set, run() calls services.init()."""
+        from hledac.universal.runtime.enrichment_services import EnrichmentServices
         from hledac.universal.runtime.sprint_scheduler import (
             SprintScheduler,
             SprintSchedulerConfig,
         )
-        from hledac.universal.runtime.enrichment_services import EnrichmentServices
 
         config = SprintSchedulerConfig()
         scheduler = SprintScheduler(config)

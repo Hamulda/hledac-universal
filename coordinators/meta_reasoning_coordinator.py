@@ -23,9 +23,9 @@ import time
 from collections import deque
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any
 
-from .base import UniversalCoordinator, OperationType, DecisionResponse, OperationResult
+from .base import DecisionResponse, OperationResult, OperationType, UniversalCoordinator
 
 logger = logging.getLogger(__name__)
 
@@ -46,16 +46,16 @@ class ReasoningStep:
     reasoning: str
     conclusion: str
     confidence: float
-    parent_steps: List[str] = field(default_factory=list)
-    sub_steps: List[str] = field(default_factory=list)
+    parent_steps: list[str] = field(default_factory=list)
+    sub_steps: list[str] = field(default_factory=list)
 
 
 @dataclass
 class ReasoningChain:
     """Chain of reasoning steps."""
     chain_id: str
-    steps: List[ReasoningStep] = field(default_factory=list)
-    final_conclusion: Optional[str] = None
+    steps: list[ReasoningStep] = field(default_factory=list)
+    final_conclusion: str | None = None
     overall_confidence: float = 0.0
 
 
@@ -65,8 +65,8 @@ class ThoughtNode:
     node_id: str
     thought: str
     value_estimate: float
-    parent: Optional[str] = None
-    children: List[str] = field(default_factory=list)
+    parent: str | None = None
+    children: list[str] = field(default_factory=list)
     visited: bool = False
     expanded: bool = False
     depth: int = 0
@@ -75,7 +75,7 @@ class ThoughtNode:
 class UniversalMetaReasoningCoordinator(UniversalCoordinator):
     """
     Universal coordinator for meta-reasoning.
-    
+
     Features:
     - Multiple reasoning strategies
     - Automatic strategy selection
@@ -89,9 +89,9 @@ class UniversalMetaReasoningCoordinator(UniversalCoordinator):
             max_concurrent=max_concurrent,
             memory_aware=True
         )
-        
+
         # Strategy configurations
-        self.strategy_configs: Dict[ReasoningStrategy, Dict[str, Any]] = {
+        self.strategy_configs: dict[ReasoningStrategy, dict[str, Any]] = {
             ReasoningStrategy.CHAIN_OF_THOUGHT: {
                 'max_steps': 10,
                 'min_confidence': 0.7,
@@ -109,9 +109,9 @@ class UniversalMetaReasoningCoordinator(UniversalCoordinator):
                 'centrality_metric': 'betweenness'
             }
         }
-        
+
         # Strategy selection keywords
-        self.strategy_keywords: Dict[ReasoningStrategy, List[str]] = {
+        self.strategy_keywords: dict[ReasoningStrategy, list[str]] = {
             ReasoningStrategy.CHAIN_OF_THOUGHT: [
                 'step by step', 'explain', 'how', 'why', 'derive', 'calculate',
                 'sequence', 'process', 'procedure', 'logical'
@@ -125,7 +125,7 @@ class UniversalMetaReasoningCoordinator(UniversalCoordinator):
                 'interconnected', 'linked', 'graph', 'structure'
             ]
         }
-        
+
         # Statistics
         self._stats = {
             'chains_executed': 0,
@@ -134,11 +134,11 @@ class UniversalMetaReasoningCoordinator(UniversalCoordinator):
             'strategy_switches': 0,
             'avg_confidence': 0.0
         }
-        
+
         # History
         self.reasoning_history: deque = deque(maxlen=100)
 
-    def get_supported_operations(self) -> List[OperationType]:
+    def get_supported_operations(self) -> list[OperationType]:
         return [OperationType.REASONING, OperationType.SYNTHESIS]
 
     async def handle_request(
@@ -148,11 +148,11 @@ class UniversalMetaReasoningCoordinator(UniversalCoordinator):
     ) -> OperationResult:
         """Handle meta-reasoning request."""
         start_time = time.time()
-        
+
         try:
             operation = decision.metadata.get('reasoning_operation', 'reason')
             query = decision.metadata.get('query', '')
-            
+
             if operation == 'reason':
                 strategy = self._select_strategy(query)
                 result = await self.reason(query, strategy)
@@ -160,7 +160,7 @@ class UniversalMetaReasoningCoordinator(UniversalCoordinator):
                 result = await self._ensemble_reason(query)
             else:
                 result = {'success': False, 'error': f'Unknown operation: {operation}'}
-            
+
             return OperationResult(
                 operation_id=self.generate_operation_id(),
                 status="completed" if result.get('success') else "failed",
@@ -182,24 +182,24 @@ class UniversalMetaReasoningCoordinator(UniversalCoordinator):
     async def reason(
         self,
         query: str,
-        strategy: Optional[ReasoningStrategy] = None
-    ) -> Dict[str, Any]:
+        strategy: ReasoningStrategy | None = None
+    ) -> dict[str, Any]:
         """
         Perform meta-reasoning on query.
-        
+
         Args:
             query: Query to reason about
             strategy: Reasoning strategy (or auto-select)
-            
+
         Returns:
             Reasoning results
         """
         # Auto-select strategy if not specified
         if strategy is None:
             strategy = self._select_strategy(query)
-        
+
         logger.info(f"Reasoning with strategy: {strategy.value}")
-        
+
         # Execute strategy
         if strategy == ReasoningStrategy.CHAIN_OF_THOUGHT:
             result = await self._chain_of_thought_reasoning(query)
@@ -210,7 +210,7 @@ class UniversalMetaReasoningCoordinator(UniversalCoordinator):
         else:
             # Default to CoT
             result = await self._chain_of_thought_reasoning(query)
-        
+
         # Update statistics
         if strategy == ReasoningStrategy.CHAIN_OF_THOUGHT:
             self._stats['chains_executed'] += 1
@@ -218,7 +218,7 @@ class UniversalMetaReasoningCoordinator(UniversalCoordinator):
             self._stats['trees_explored'] += 1
         elif strategy == ReasoningStrategy.GRAPH_REASONING:
             self._stats['graphs_traversed'] += 1
-        
+
         return {
             'success': True,
             'strategy': strategy.value,
@@ -229,30 +229,30 @@ class UniversalMetaReasoningCoordinator(UniversalCoordinator):
     def _select_strategy(self, query: str) -> ReasoningStrategy:
         """Select best reasoning strategy based on query."""
         query_lower = query.lower()
-        scores: Dict[ReasoningStrategy, int] = {s: 0 for s in ReasoningStrategy}
-        
+        scores: dict[ReasoningStrategy, int] = dict.fromkeys(ReasoningStrategy, 0)
+
         # Score based on keywords
         for strategy, keywords in self.strategy_keywords.items():
             for keyword in keywords:
                 if keyword in query_lower:
                     scores[strategy] += 1
-        
+
         # Select strategy with highest score
         if max(scores.values()) > 0:
             return max(scores, key=scores.get)
-        
+
         # Default to CoT
         return ReasoningStrategy.CHAIN_OF_THOUGHT
 
-    async def _chain_of_thought_reasoning(self, query: str) -> Dict[str, Any]:
+    async def _chain_of_thought_reasoning(self, query: str) -> dict[str, Any]:
         """Execute Chain of Thought reasoning."""
         config = self.strategy_configs[ReasoningStrategy.CHAIN_OF_THOUGHT]
         max_steps = config['max_steps']
         min_confidence = config['min_confidence']
-        
+
         chain = ReasoningChain(chain_id=f"cot_{int(time.time())}")
         steps = []
-        
+
         # Generate reasoning steps
         for i in range(max_steps):
             # Simulate reasoning step generation
@@ -264,17 +264,17 @@ class UniversalMetaReasoningCoordinator(UniversalCoordinator):
                 confidence=0.7 + (0.1 * (max_steps - i) / max_steps)  # Decreasing confidence
             )
             steps.append(step)
-            
+
             # Check if we can stop
             if step.confidence < min_confidence:
                 break
-            
+
             await asyncio.sleep(0.01)  # Simulate thinking time
-        
+
         chain.steps = steps
         chain.final_conclusion = steps[-1].conclusion if steps else "No conclusion"
         chain.overall_confidence = sum(s.confidence for s in steps) / len(steps) if steps else 0
-        
+
         return {
             'type': 'chain_of_thought',
             'steps': len(steps),
@@ -293,13 +293,13 @@ class UniversalMetaReasoningCoordinator(UniversalCoordinator):
             'summary': f"CoT reasoning: {len(steps)} steps, confidence {chain.overall_confidence:.2f}"
         }
 
-    async def _tree_of_thoughts_reasoning(self, query: str) -> Dict[str, Any]:
+    async def _tree_of_thoughts_reasoning(self, query: str) -> dict[str, Any]:
         """Execute Tree of Thoughts reasoning."""
         config = self.strategy_configs[ReasoningStrategy.TREE_OF_THOUGHTS]
         max_depth = config['max_depth']
         branching_factor = config['branching_factor']
         beam_width = config['beam_width']
-        
+
         # Initialize root
         root = ThoughtNode(
             node_id="root",
@@ -307,21 +307,21 @@ class UniversalMetaReasoningCoordinator(UniversalCoordinator):
             value_estimate=0.5,
             depth=0
         )
-        
-        nodes: Dict[str, ThoughtNode] = {"root": root}
+
+        nodes: dict[str, ThoughtNode] = {"root": root}
         leaves = [root]
         best_path = []
         best_value = float('-inf')
-        
+
         # Expand tree
         for depth in range(max_depth):
             new_leaves = []
-            
+
             # Expand each leaf
             for leaf in leaves:
                 if leaf.expanded:
                     continue
-                
+
                 # Generate children
                 for i in range(branching_factor):
                     child = ThoughtNode(
@@ -334,16 +334,16 @@ class UniversalMetaReasoningCoordinator(UniversalCoordinator):
                     leaf.children.append(child.node_id)
                     nodes[child.node_id] = child
                     new_leaves.append(child)
-                
+
                 leaf.expanded = True
-            
+
             # Beam search: keep only top-k leaves
             if len(new_leaves) > beam_width:
                 new_leaves.sort(key=lambda n: n.value_estimate, reverse=True)
                 new_leaves = new_leaves[:beam_width]
-            
+
             leaves = new_leaves
-            
+
             # Update best path
             for leaf in leaves:
                 if leaf.value_estimate > best_value:
@@ -355,7 +355,7 @@ class UniversalMetaReasoningCoordinator(UniversalCoordinator):
                         path.append(current.parent)
                         current = nodes[current.parent]
                     best_path = list(reversed(path))
-        
+
         return {
             'type': 'tree_of_thoughts',
             'nodes': len(nodes),
@@ -365,15 +365,15 @@ class UniversalMetaReasoningCoordinator(UniversalCoordinator):
             'summary': f"ToT reasoning: {len(nodes)} nodes explored, best path found"
         }
 
-    async def _graph_reasoning(self, query: str) -> Dict[str, Any]:
+    async def _graph_reasoning(self, query: str) -> dict[str, Any]:
         """Execute Graph reasoning."""
         config = self.strategy_configs[ReasoningStrategy.GRAPH_REASONING]
         max_nodes = config['max_nodes']
-        
+
         # Build reasoning graph
-        nodes: Dict[str, Dict[str, Any]] = {}
-        edges: List[Tuple[str, str]] = []
-        
+        nodes: dict[str, dict[str, Any]] = {}
+        edges: list[tuple[str, str]] = []
+
         # Create nodes from query aspects
         aspects = query.split()[:max_nodes]
         for i, aspect in enumerate(aspects):
@@ -382,7 +382,7 @@ class UniversalMetaReasoningCoordinator(UniversalCoordinator):
                 'importance': random.uniform(0.3, 1.0),
                 'connections': []
             }
-        
+
         # Create edges
         for i in range(len(aspects)):
             for j in range(i + 1, min(i + 3, len(aspects))):
@@ -390,14 +390,14 @@ class UniversalMetaReasoningCoordinator(UniversalCoordinator):
                     edges.append((f"node_{i}", f"node_{j}"))
                     nodes[f"node_{i}"]['connections'].append(f"node_{j}")
                     nodes[f"node_{j}"]['connections'].append(f"node_{i}")
-        
+
         # Find central nodes
         centrality = {
             node_id: len(data['connections'])
             for node_id, data in nodes.items()
         }
         central_nodes = sorted(centrality.items(), key=lambda x: x[1], reverse=True)[:3]
-        
+
         return {
             'type': 'graph_reasoning',
             'nodes': len(nodes),
@@ -409,35 +409,35 @@ class UniversalMetaReasoningCoordinator(UniversalCoordinator):
             'summary': f"Graph reasoning: {len(nodes)} concepts, {len(edges)} relationships"
         }
 
-    async def _ensemble_reason(self, query: str) -> Dict[str, Any]:
+    async def _ensemble_reason(self, query: str) -> dict[str, Any]:
         """Execute ensemble reasoning with multiple strategies."""
         strategies = [
             ReasoningStrategy.CHAIN_OF_THOUGHT,
             ReasoningStrategy.TREE_OF_THOUGHTS,
             ReasoningStrategy.GRAPH_REASONING
         ]
-        
+
         # Execute all strategies in parallel
         tasks = [self.reason(query, s) for s in strategies]
         results = await asyncio.gather(*tasks, return_exceptions=True)
-        
+
         # Collect successful results
         successful = [
             r for r in results
             if isinstance(r, dict) and r.get('success')
         ]
-        
+
         if not successful:
             return {'success': False, 'error': 'All reasoning strategies failed'}
-        
+
         # Simple majority voting on strategy type
         strategy_counts = {}
         for r in successful:
             s = r.get('strategy', 'unknown')
             strategy_counts[s] = strategy_counts.get(s, 0) + 1
-        
+
         best_strategy = max(strategy_counts, key=strategy_counts.get)
-        
+
         return {
             'success': True,
             'ensemble_size': len(successful),
@@ -447,14 +447,14 @@ class UniversalMetaReasoningCoordinator(UniversalCoordinator):
             'summary': f"Ensemble reasoning: {len(successful)} strategies, selected {best_strategy}"
         }
 
-    def get_statistics(self) -> Dict[str, Any]:
+    def get_statistics(self) -> dict[str, Any]:
         """Get reasoning statistics."""
         return {
             **self._stats,
             'history_size': len(self.reasoning_history)
         }
 
-    def _get_feature_list(self) -> List[str]:
+    def _get_feature_list(self) -> list[str]:
         return [
             "Chain of Thought reasoning",
             "Tree of Thoughts exploration",

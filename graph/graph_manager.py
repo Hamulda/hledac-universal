@@ -211,7 +211,6 @@ class GraphManager:
                     "cve": "#ff4757",
                     "hash": "#a55eea",
                     "email": "#26de81",
-                    "domain": "#00ff88",
                 }
                 color = color_map.get(entity_type.lower(), "#70a1ff")
 
@@ -246,7 +245,7 @@ class GraphManager:
             f.write("# Hledac Entity Graph\n\n")
             f.write(f"# Nodes: {self._node_count}, Edges: {self._graph.number_of_edges()}\n\n")
             f.write("## Nodes\n")
-            for node_id, data in self._graph.nodes(data=True):
+            for node_id, _data in self._graph.nodes(data=True):
                 f.write(f"  {node_id}\n")
             f.write("\n## Edges\n")
             for src, dst, edata in self._graph.edges(data=True):

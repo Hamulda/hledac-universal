@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 from rapidfuzz.distance import Levenshtein
 
@@ -52,8 +52,8 @@ class AttributionFactor:
     factor_type: str  # email_domain_match | username_pattern_similarity | ...
     raw_score: float  # 0-1 raw signal strength
     weighted_score: float  # raw_score * factor_weight
-    evidence: Tuple[str, ...] = field(default_factory=tuple)
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    evidence: tuple[str, ...] = field(default_factory=tuple)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -69,11 +69,11 @@ class AttributionScore:
     """
 
     confidence: float
-    factors: Tuple[AttributionFactor, ...]
-    evidence_ids: Tuple[str, ...]
-    factor_weights: Dict[str, float]
+    factors: tuple[AttributionFactor, ...]
+    evidence_ids: tuple[str, ...]
+    factor_weights: dict[str, float]
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "confidence": round(self.confidence, 4),
             "factors": [
@@ -120,7 +120,7 @@ class AttributionConfidenceScorer:
 
     def __init__(
         self,
-        factor_weights: Optional[Dict[str, float]] = None,
+        factor_weights: dict[str, float] | None = None,
         max_comparisons: int = MAX_FACTOR_COMPARISONS,
     ) -> None:
         self._weights = factor_weights or dict(DEFAULT_FACTOR_WEIGHTS)
@@ -137,7 +137,7 @@ class AttributionConfidenceScorer:
 
     # ── Factor Extraction Methods ─────────────────────────────────────────────
 
-    def _extract_email_domain(self, email: str) -> Optional[str]:
+    def _extract_email_domain(self, email: str) -> str | None:
         """Extract domain from email address."""
         if "@" in email:
             parts = email.split("@")
@@ -149,7 +149,7 @@ class AttributionConfidenceScorer:
         self,
         left: IdentityCandidate,
         right: IdentityCandidate,
-    ) -> Optional[AttributionFactor]:
+    ) -> AttributionFactor | None:
         """
         Compare email domains between two candidates.
         Returns factor if both have emails.
@@ -194,7 +194,7 @@ class AttributionConfidenceScorer:
         self,
         left: IdentityCandidate,
         right: IdentityCandidate,
-    ) -> Optional[AttributionFactor]:
+    ) -> AttributionFactor | None:
         """
         Compare usernames using Levenshtein similarity.
         Returns factor if both have usernames with >0.6 similarity.
@@ -203,7 +203,7 @@ class AttributionConfidenceScorer:
             return None
 
         best_score = 0.0
-        best_evidence: List[str] = []
+        best_evidence: list[str] = []
 
         for lu in left.usernames:
             for ru in right.usernames:
@@ -229,7 +229,7 @@ class AttributionConfidenceScorer:
         self,
         left: IdentityCandidate,
         right: IdentityCandidate,
-    ) -> Optional[AttributionFactor]:
+    ) -> AttributionFactor | None:
         """
         Assess temporal overlap based on finding_ids timestamps.
         Uses finding_ids as proxy for temporal context.
@@ -268,7 +268,7 @@ class AttributionConfidenceScorer:
         self,
         left: IdentityCandidate,
         right: IdentityCandidate,
-    ) -> Optional[AttributionFactor]:
+    ) -> AttributionFactor | None:
         """
         Assess shared infrastructure via platform overlap.
         Platform = where the identity was observed (github, twitter, etc.)
@@ -276,8 +276,8 @@ class AttributionConfidenceScorer:
         if not left.platforms or not right.platforms:
             return None
 
-        left_plat = set(p.lower() for p in left.platforms if p)
-        right_plat = set(p.lower() for p in right.platforms if p)
+        left_plat = {p.lower() for p in left.platforms if p}
+        right_plat = {p.lower() for p in right.platforms if p}
 
         if not left_plat or not right_plat:
             return None
@@ -299,7 +299,7 @@ class AttributionConfidenceScorer:
         self,
         left: IdentityCandidate,
         right: IdentityCandidate,
-    ) -> Optional[AttributionFactor]:
+    ) -> AttributionFactor | None:
         """
         Assess PGP key correlation via email and name patterns.
         Identity signals may contain PGP fingerprints in evidence strings.
@@ -351,7 +351,7 @@ class AttributionConfidenceScorer:
         self,
         left: IdentityCandidate,
         right: IdentityCandidate,
-    ) -> Optional[AttributionFactor]:
+    ) -> AttributionFactor | None:
         """
         Assess social profile overlap between two identity candidates.
 
@@ -395,7 +395,7 @@ class AttributionConfidenceScorer:
         self,
         left: IdentityCandidate,
         right: IdentityCandidate,
-    ) -> Optional[AttributionFactor]:
+    ) -> AttributionFactor | None:
         """
         Assess bio link (domain/email) overlap between candidates.
 
@@ -456,7 +456,7 @@ class AttributionConfidenceScorer:
         self,
         left: IdentityCandidate,
         right: IdentityCandidate,
-        context: Optional[Dict[str, Any]] = None,
+        context: dict[str, Any] | None = None,
     ) -> AttributionScore:
         """
         Score a pair of identity candidates and return explainable AttributionScore.
@@ -488,7 +488,7 @@ class AttributionConfidenceScorer:
                 right = IdentityCandidate(**right)
 
             # Extract all applicable factors
-            factors: List[AttributionFactor] = []
+            factors: list[AttributionFactor] = []
 
             factor_methods = [
                 self._email_domain_match_score,
@@ -537,8 +537,8 @@ class AttributionConfidenceScorer:
 
     def score_candidates(
         self,
-        candidates: List[IdentityCandidate],
-    ) -> Dict[str, AttributionScore]:
+        candidates: list[IdentityCandidate],
+    ) -> dict[str, AttributionScore]:
         """
         Score all pairs of candidates and return scores keyed by candidate pair.
 
@@ -551,7 +551,7 @@ class AttributionConfidenceScorer:
         Returns:
             Dict mapping "left_id|right_id" -> AttributionScore
         """
-        scores: Dict[str, AttributionScore] = {}
+        scores: dict[str, AttributionScore] = {}
 
         if not self._check_limit():
             return scores
@@ -578,7 +578,7 @@ class AttributionConfidenceScorer:
 
         return scores
 
-    def get_factor_breakdown(self, score: AttributionScore) -> Dict[str, Any]:
+    def get_factor_breakdown(self, score: AttributionScore) -> dict[str, Any]:
         """Return human-readable factor breakdown from an AttributionScore."""
         return {
             "total_confidence": round(score.confidence, 4),
@@ -600,7 +600,7 @@ class AttributionConfidenceScorer:
 
 
 def create_attribution_scorer(
-    factor_weights: Optional[Dict[str, float]] = None,
+    factor_weights: dict[str, float] | None = None,
 ) -> AttributionConfidenceScorer:
     """Create a configured AttributionConfidenceScorer instance."""
     return AttributionConfidenceScorer(factor_weights=factor_weights)

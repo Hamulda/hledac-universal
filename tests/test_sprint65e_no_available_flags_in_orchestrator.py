@@ -5,9 +5,10 @@ Tests that verify no *_AVAILABLE flags exist in critical files.
 """
 
 import ast
-import pytest
 import re
 from pathlib import Path
+
+import pytest
 
 # Paths to check
 CHECK_FILES = [
@@ -110,7 +111,7 @@ class TestNoAvailableFlags:
         ]
 
         for pattern in safe_patterns:
-            matches = re.findall(pattern, content)
+            re.findall(pattern, content)
             # These should exist and are allowed - no assertion needed
 
         # Now check for actual feature toggle issues using AST
@@ -125,7 +126,7 @@ class TestNoAvailableFlags:
             # Check function definitions for toggle-like bool parameters
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 for arg, default in zip(node.args.args[-len(node.args.defaults):],
-                                        node.args.defaults):
+                                        node.args.defaults, strict=False):
                     if isinstance(default, ast.Constant) and isinstance(default.value, bool):
                         arg_name = arg.arg
                         # Only flag if it looks like a feature toggle
@@ -151,7 +152,7 @@ class TestNoAvailableFlags:
         # Filter: only report module-level constants (true feature flags)
         # Runtime parameters like use_graph_rag are OK - they're not global toggles
         module_level_issues = [i for i in issues if "Module-level" in i]
-        assert not module_level_issues, f"Found module-level feature toggle constants:\n" + "\n".join(module_level_issues)
+        assert not module_level_issues, "Found module-level feature toggle constants:\n" + "\n".join(module_level_issues)
 
 
 if __name__ == "__main__":

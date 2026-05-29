@@ -20,22 +20,17 @@ Unique Features Integrated:
 
 from __future__ import annotations
 
-import time
 import asyncio
-import psutil
-from typing import Any, Dict, List, Optional, Callable
-from dataclasses import dataclass, field
-from collections import deque
-from enum import Enum
 import logging
+import time
+from collections import deque
+from dataclasses import dataclass
+from enum import Enum
+from typing import Any
 
-from .base import (
-    UniversalCoordinator,
-    OperationType,
-    DecisionResponse,
-    OperationResult,
-    MemoryPressureLevel
-)
+import psutil
+
+from .base import DecisionResponse, MemoryPressureLevel, OperationResult, OperationType, UniversalCoordinator
 
 logger = logging.getLogger(__name__)
 
@@ -60,10 +55,10 @@ class SystemMetrics:
     memory_available_mb: float
     disk_percent: float
     network_connections: int
-    load_average: Optional[tuple] = None
+    load_average: tuple | None = None
     processes: int = 0
-    
-    def to_dict(self) -> Dict[str, Any]:
+
+    def to_dict(self) -> dict[str, Any]:
         return {
             'timestamp': self.timestamp,
             'cpu_percent': self.cpu_percent,
@@ -83,10 +78,10 @@ class MonitoringResult:
     monitoring_type: str  # 'advanced', 'watchdog', 'system', 'performance'
     success: bool
     summary: str
-    metrics: Dict[str, Any]
+    metrics: dict[str, Any]
     execution_time: float
     alert_triggered: bool = False
-    alert_message: Optional[str] = None
+    alert_message: str | None = None
 
 
 @dataclass
@@ -101,18 +96,18 @@ class AlertThreshold:
 class UniversalMonitoringCoordinator(UniversalCoordinator):
     """
     Universal coordinator for monitoring operations.
-    
+
     Integrates three monitoring backends:
     1. AdvancedMonitoring - Advanced system monitoring
     2. Watchdog - Health check monitoring
     3. psutil - Direct system metrics collection
-    
+
     Routing Strategy:
     - 'advanced'/'detailed' → AdvancedMonitoring
     - 'watchdog'/'health' → Watchdog
     - 'system'/'metrics' → System metrics (psutil)
     - 'performance'/'benchmark' → Performance benchmarking
-    
+
     Background Collection:
     - Automatic metrics collection every 30 seconds
     - Maintains history of last 100 entries
@@ -130,42 +125,42 @@ class UniversalMonitoringCoordinator(UniversalCoordinator):
             max_concurrent=max_concurrent,
             memory_aware=True
         )
-        
+
         # Monitoring subsystems
-        self._advanced_monitoring: Optional[Any] = None
-        self._watchdog: Optional[Any] = None
-        
+        self._advanced_monitoring: Any | None = None
+        self._watchdog: Any | None = None
+
         # Availability flags
         self._advanced_available = False
         self._watchdog_available = False
-        
+
         # Background collection
         self._collection_interval = collection_interval
-        self._collection_task: Optional[asyncio.Task] = None
+        self._collection_task: asyncio.Task | None = None
         self._stop_collection = asyncio.Event()
-        
+
         # Metrics storage
         self._metrics_history: deque = deque(maxlen=max_history)
-        self._current_metrics: Optional[SystemMetrics] = None
-        
+        self._current_metrics: SystemMetrics | None = None
+
         # Alert configuration
-        self._alert_thresholds: Dict[str, AlertThreshold] = {
+        self._alert_thresholds: dict[str, AlertThreshold] = {
             'cpu_percent': AlertThreshold('cpu_percent', 70.0, 90.0),
             'memory_percent': AlertThreshold('memory_percent', 75.0, 90.0),
             'disk_percent': AlertThreshold('disk_percent', 80.0, 95.0),
         }
         self._alerts_enabled = True
-        
+
         # Benchmark tracking
         self._benchmark_history: deque = deque(maxlen=50)
-        
+
         # Monitoring stats
         self._collections_count = 0
         self._alerts_triggered = 0
         self._health_checks_performed = 0
-        
+
         # Hermes3: Operation statistics
-        self._operation_stats: Dict[str, Dict[str, Any]] = {}
+        self._operation_stats: dict[str, dict[str, Any]] = {}
 
     # ========================================================================
     # Initialization
@@ -174,7 +169,7 @@ class UniversalMonitoringCoordinator(UniversalCoordinator):
     async def _do_initialize(self) -> bool:
         """Initialize monitoring subsystems with graceful degradation."""
         initialized_any = False
-        
+
         # Try AdvancedMonitoring
         try:
             from hledac.monitoring.advanced_monitoring import AdvancedMonitoring
@@ -188,7 +183,7 @@ class UniversalMonitoringCoordinator(UniversalCoordinator):
             logger.warning("MonitoringCoordinator: AdvancedMonitoring not available")
         except Exception as e:
             logger.warning(f"MonitoringCoordinator: AdvancedMonitoring init failed: {e}")
-        
+
         # Try Watchdog
         try:
             from _shims.core_watchdog import Watchdog
@@ -202,32 +197,32 @@ class UniversalMonitoringCoordinator(UniversalCoordinator):
             logger.warning("MonitoringCoordinator: Watchdog not available")
         except Exception as e:
             logger.warning(f"MonitoringCoordinator: Watchdog init failed: {e}")
-        
+
         # Always have psutil-based monitoring
         initialized_any = True
-        
+
         # Start background collection
         self._start_background_collection()
-        
+
         return initialized_any
 
     async def _do_cleanup(self) -> None:
         """Cleanup monitoring subsystems."""
         # Stop background collection
         self._stop_background_collection()
-        
+
         if self._advanced_monitoring and hasattr(self._advanced_monitoring, 'cleanup'):
             try:
                 await self._advanced_monitoring.cleanup()
             except Exception as e:
                 logger.error(f"Error cleaning up AdvancedMonitoring: {e}")
-        
+
         if self._watchdog and hasattr(self._watchdog, 'cleanup'):
             try:
                 await self._watchdog.cleanup()
             except Exception as e:
                 logger.error(f"Error cleaning up Watchdog: {e}")
-        
+
         self._metrics_history.clear()
         self._benchmark_history.clear()
 
@@ -251,7 +246,7 @@ class UniversalMonitoringCoordinator(UniversalCoordinator):
     # Core Operations
     # ========================================================================
 
-    def get_supported_operations(self) -> List[OperationType]:
+    def get_supported_operations(self) -> list[OperationType]:
         """Return supported operation types."""
         return [OperationType.MONITORING]
 
@@ -262,17 +257,17 @@ class UniversalMonitoringCoordinator(UniversalCoordinator):
     ) -> OperationResult:
         """
         Handle monitoring request with intelligent routing.
-        
+
         Args:
             operation_ref: Unique operation reference
             decision: Monitoring decision with routing info
-            
+
         Returns:
             OperationResult with monitoring outcome
         """
         start_time = time.time()
         operation_id = self.generate_operation_id()
-        
+
         try:
             # Track operation
             self.track_operation(operation_id, {
@@ -280,10 +275,10 @@ class UniversalMonitoringCoordinator(UniversalCoordinator):
                 'decision': decision,
                 'type': 'monitoring'
             })
-            
+
             # Route to appropriate monitoring method
             result = await self._execute_monitoring_decision(decision)
-            
+
             # Create operation result
             operation_result = OperationResult(
                 operation_id=operation_id,
@@ -297,7 +292,7 @@ class UniversalMonitoringCoordinator(UniversalCoordinator):
                     'metrics_collected': len(result.metrics),
                 }
             )
-            
+
         except Exception as e:
             operation_result = OperationResult(
                 operation_id=operation_id,
@@ -309,7 +304,7 @@ class UniversalMonitoringCoordinator(UniversalCoordinator):
             )
         finally:
             self.untrack_operation(operation_id)
-        
+
         # Record metrics
         self.record_operation_result(operation_result)
         return operation_result
@@ -324,18 +319,18 @@ class UniversalMonitoringCoordinator(UniversalCoordinator):
     ) -> MonitoringResult:
         """Route monitoring decision to appropriate backend."""
         chosen = decision.chosen_option.lower()
-        
+
         if 'advanced' in chosen or 'detailed' in chosen:
             if self._advanced_available:
                 return await self._execute_advanced_monitoring(decision)
-        
+
         elif 'watchdog' in chosen or 'health' in chosen:
             if self._watchdog_available:
                 return await self._execute_watchdog_monitoring(decision)
-        
+
         elif 'performance' in chosen or 'benchmark' in chosen:
             return await self._execute_performance_monitoring(decision)
-        
+
         # Default: System monitoring
         return await self._execute_system_monitoring()
 
@@ -345,18 +340,18 @@ class UniversalMonitoringCoordinator(UniversalCoordinator):
     ) -> MonitoringResult:
         """Execute advanced monitoring."""
         start_time = time.time()
-        
+
         if not self._advanced_monitoring:
             raise RuntimeError("AdvancedMonitoring not available")
-        
+
         monitoring_result = await self._advanced_monitoring.perform_monitoring(
             monitoring_type=decision.chosen_option,
             context=decision.reasoning,
             priority=decision.confidence
         )
-        
+
         execution_time = time.time() - start_time
-        
+
         return MonitoringResult(
             monitoring_type='advanced',
             success=monitoring_result.get('success', False),
@@ -371,18 +366,18 @@ class UniversalMonitoringCoordinator(UniversalCoordinator):
     ) -> MonitoringResult:
         """Execute watchdog health monitoring."""
         start_time = time.time()
-        
+
         if not self._watchdog:
             raise RuntimeError("Watchdog not available")
-        
+
         health_result = await self._watchdog.perform_health_check(
             check_type=decision.chosen_option,
             detailed=decision.confidence > 0.7
         )
-        
+
         execution_time = time.time() - start_time
         self._health_checks_performed += 1
-        
+
         return MonitoringResult(
             monitoring_type='watchdog',
             success=health_result.get('healthy', False),
@@ -394,12 +389,12 @@ class UniversalMonitoringCoordinator(UniversalCoordinator):
     async def _execute_system_monitoring(self) -> MonitoringResult:
         """Execute system-level monitoring via psutil."""
         start_time = time.time()
-        
+
         try:
             # Collect system metrics
             memory = psutil.virtual_memory()
             disk = psutil.disk_usage('/')
-            
+
             metrics = SystemMetrics(
                 timestamp=time.time(),
                 cpu_percent=psutil.cpu_percent(interval=1),
@@ -411,19 +406,19 @@ class UniversalMonitoringCoordinator(UniversalCoordinator):
                 load_average=psutil.getloadavg() if hasattr(psutil, 'getloadavg') else None,
                 processes=len(psutil.pids())
             )
-            
+
             # Store metrics
             self._current_metrics = metrics
             self._metrics_history.append(metrics)
             self._collections_count += 1
-            
+
             # Check for alerts
             alert_triggered, alert_message = self._check_alerts(metrics)
             if alert_triggered:
                 self._alerts_triggered += 1
-            
+
             execution_time = time.time() - start_time
-            
+
             return MonitoringResult(
                 monitoring_type='system',
                 success=True,
@@ -433,7 +428,7 @@ class UniversalMonitoringCoordinator(UniversalCoordinator):
                 alert_triggered=alert_triggered,
                 alert_message=alert_message
             )
-            
+
         except Exception as e:
             return MonitoringResult(
                 monitoring_type='system',
@@ -449,14 +444,14 @@ class UniversalMonitoringCoordinator(UniversalCoordinator):
     ) -> MonitoringResult:
         """Execute performance benchmarking."""
         start_time = time.time()
-        
+
         benchmark_type = decision.metadata.get('benchmark_type', 'general')
         duration = min(decision.estimated_duration, 60)  # Max 60 seconds
-        
+
         result = await self._run_performance_benchmark(benchmark_type, duration)
-        
+
         execution_time = time.time() - start_time
-        
+
         return MonitoringResult(
             monitoring_type='performance',
             success=True,
@@ -469,33 +464,33 @@ class UniversalMonitoringCoordinator(UniversalCoordinator):
         self,
         benchmark_type: str,
         duration: int
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Run a performance benchmark."""
         start_time = time.time()
         operations = 0
-        
+
         if benchmark_type.lower().startswith('cpu'):
             # CPU-bound benchmark
             while time.time() - start_time < duration:
                 _ = sum(i * i for i in range(1000))
                 operations += 1
-        
+
         elif benchmark_type.lower().startswith('memory'):
             # Memory-bound benchmark
             data = deque()
             while time.time() - start_time < duration:
-                data.append([i for i in range(1000)])
+                data.append(list(range(1000)))
                 if len(data) > 100:
                     data.popleft()
                 operations += 1
-        
+
         else:
             # General benchmark
             while time.time() - start_time < duration:
                 operations += 1
-        
+
         elapsed = time.time() - start_time
-        
+
         result = {
             'benchmark_type': benchmark_type,
             'duration': elapsed,
@@ -504,7 +499,7 @@ class UniversalMonitoringCoordinator(UniversalCoordinator):
             'start_time': start_time,
             'end_time': time.time()
         }
-        
+
         self._benchmark_history.append(result)
         return result
 
@@ -518,7 +513,7 @@ class UniversalMonitoringCoordinator(UniversalCoordinator):
             try:
                 # Collect metrics
                 await self._execute_system_monitoring()
-                
+
                 # Adjust interval based on memory pressure
                 interval = self._collection_interval
                 if self._current_memory_pressure == MemoryPressureLevel.ELEVATED:
@@ -527,14 +522,14 @@ class UniversalMonitoringCoordinator(UniversalCoordinator):
                     interval *= 2.0
                 elif self._current_memory_pressure == MemoryPressureLevel.CRITICAL:
                     interval *= 3.0
-                
+
                 # Wait with cancellation support (C4: use asyncio.timeout for structured concurrency)
                 try:
                     async with asyncio.timeout(interval):
                         await self._stop_collection.wait()
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     pass  # Normal - continue loop
-                    
+
             except Exception as e:
                 logger.error(f"Background collection error: {e}")
                 await asyncio.sleep(self._collection_interval)
@@ -543,13 +538,13 @@ class UniversalMonitoringCoordinator(UniversalCoordinator):
     # Alert Management
     # ========================================================================
 
-    def _check_alerts(self, metrics: SystemMetrics) -> tuple[bool, Optional[str]]:
+    def _check_alerts(self, metrics: SystemMetrics) -> tuple[bool, str | None]:
         """Check if any alert thresholds are breached."""
         if not self._alerts_enabled:
             return False, None
-        
+
         alerts = []
-        
+
         # Check CPU
         cpu_threshold = self._alert_thresholds.get('cpu_percent')
         if cpu_threshold and cpu_threshold.enabled:
@@ -557,7 +552,7 @@ class UniversalMonitoringCoordinator(UniversalCoordinator):
                 alerts.append(f"CRITICAL: CPU {metrics.cpu_percent:.1f}%")
             elif metrics.cpu_percent >= cpu_threshold.warning:
                 alerts.append(f"WARNING: CPU {metrics.cpu_percent:.1f}%")
-        
+
         # Check Memory
         memory_threshold = self._alert_thresholds.get('memory_percent')
         if memory_threshold and memory_threshold.enabled:
@@ -565,7 +560,7 @@ class UniversalMonitoringCoordinator(UniversalCoordinator):
                 alerts.append(f"CRITICAL: Memory {metrics.memory_percent:.1f}%")
             elif metrics.memory_percent >= memory_threshold.warning:
                 alerts.append(f"WARNING: Memory {metrics.memory_percent:.1f}%")
-        
+
         # Check Disk
         disk_threshold = self._alert_thresholds.get('disk_percent')
         if disk_threshold and disk_threshold.enabled:
@@ -573,7 +568,7 @@ class UniversalMonitoringCoordinator(UniversalCoordinator):
                 alerts.append(f"CRITICAL: Disk {metrics.disk_percent:.1f}%")
             elif metrics.disk_percent >= disk_threshold.warning:
                 alerts.append(f"WARNING: Disk {metrics.disk_percent:.1f}%")
-        
+
         if alerts:
             return True, " | ".join(alerts)
         return False, None
@@ -601,25 +596,25 @@ class UniversalMonitoringCoordinator(UniversalCoordinator):
     # Metrics Access
     # ========================================================================
 
-    def get_current_metrics(self) -> Optional[SystemMetrics]:
+    def get_current_metrics(self) -> SystemMetrics | None:
         """Get current system metrics."""
         return self._current_metrics
 
     def get_metrics_history(
         self,
         limit: int = 10,
-        metric_type: Optional[str] = None
-    ) -> List[Dict[str, Any]]:
+        metric_type: str | None = None
+    ) -> list[dict[str, Any]]:
         """Get historical system metrics."""
         entries = list(self._metrics_history)[-limit:]
         return [m.to_dict() for m in entries]
 
-    def get_average_metrics(self, last_n: int = 10) -> Dict[str, float]:
+    def get_average_metrics(self, last_n: int = 10) -> dict[str, float]:
         """Get average metrics over last N samples."""
         entries = list(self._metrics_history)[-last_n:]
         if not entries:
             return {}
-        
+
         return {
             'avg_cpu_percent': sum(m.cpu_percent for m in entries) / len(entries),
             'avg_memory_percent': sum(m.memory_percent for m in entries) / len(entries),
@@ -627,12 +622,12 @@ class UniversalMonitoringCoordinator(UniversalCoordinator):
             'avg_network_connections': sum(m.network_connections for m in entries) / len(entries),
         }
 
-    def get_peak_metrics(self, last_n: int = 10) -> Dict[str, float]:
+    def get_peak_metrics(self, last_n: int = 10) -> dict[str, float]:
         """Get peak metrics over last N samples."""
         entries = list(self._metrics_history)[-last_n:]
         if not entries:
             return {}
-        
+
         return {
             'peak_cpu_percent': max(m.cpu_percent for m in entries),
             'peak_memory_percent': max(m.memory_percent for m in entries),
@@ -644,20 +639,20 @@ class UniversalMonitoringCoordinator(UniversalCoordinator):
     # Benchmark History
     # ========================================================================
 
-    def get_benchmark_history(self, limit: int = 10) -> List[Dict[str, Any]]:
+    def get_benchmark_history(self, limit: int = 10) -> list[dict[str, Any]]:
         """Get recent benchmark results."""
         return list(self._benchmark_history)[-limit:]
 
-    def get_average_benchmark(self, benchmark_type: str) -> Optional[Dict[str, Any]]:
+    def get_average_benchmark(self, benchmark_type: str) -> dict[str, Any] | None:
         """Get average benchmark results for a specific type."""
         entries = [
             b for b in self._benchmark_history
             if b.get('benchmark_type') == benchmark_type
         ]
-        
+
         if not entries:
             return None
-        
+
         return {
             'benchmark_type': benchmark_type,
             'avg_operations_per_second': sum(
@@ -670,14 +665,14 @@ class UniversalMonitoringCoordinator(UniversalCoordinator):
     # Health Check
     # ========================================================================
 
-    async def perform_health_check(self, detailed: bool = False) -> Dict[str, Any]:
+    async def perform_health_check(self, detailed: bool = False) -> dict[str, Any]:
         """Perform comprehensive health check."""
         health = {
             'status': 'healthy',
             'timestamp': time.time(),
             'checks': {}
         }
-        
+
         # System resources
         if self._current_metrics:
             metrics = self._current_metrics
@@ -689,14 +684,14 @@ class UniversalMonitoringCoordinator(UniversalCoordinator):
                 'memory_percent': metrics.memory_percent,
                 'disk_percent': metrics.disk_percent
             }
-        
+
         # Subsystems
         health['checks']['subsystems'] = {
             'advanced_monitoring': self._advanced_available,
             'watchdog': self._watchdog_available,
             'background_collection': self._collection_task is not None and not self._collection_task.done()
         }
-        
+
         # Determine overall status
         if detailed:
             health['metrics_summary'] = self.get_average_metrics(5)
@@ -706,14 +701,14 @@ class UniversalMonitoringCoordinator(UniversalCoordinator):
                 'alerts_triggered': self._alerts_triggered,
                 'health_checks': self._health_checks_performed
             }
-        
+
         # Overall status
         resource_checks = health['checks'].get('resources', {})
-        if not all([resource_checks.get('cpu_ok', True), 
+        if not all([resource_checks.get('cpu_ok', True),
                     resource_checks.get('memory_ok', True),
                     resource_checks.get('disk_ok', True)]):
             health['status'] = 'degraded'
-        
+
         return health
 
     # ========================================================================
@@ -722,35 +717,35 @@ class UniversalMonitoringCoordinator(UniversalCoordinator):
 
     async def run_security_audit(
         self,
-        target_path: Optional[str] = None,
-        include_patterns: Optional[List[str]] = None,
-        exclude_patterns: Optional[List[str]] = None
-    ) -> Dict[str, Any]:
+        target_path: str | None = None,
+        include_patterns: list[str] | None = None,
+        exclude_patterns: list[str] | None = None
+    ) -> dict[str, Any]:
         """
         Run OWASP security audit on codebase.
-        
+
         Integrated from: tools/audit/security_auditor.py
-        
+
         Detects:
         - SQL injection vulnerabilities
         - XSS vulnerabilities
         - Path traversal issues
         - Hardcoded secrets (API keys, passwords)
         - Weak cryptographic algorithms
-        
+
         Args:
             target_path: Path to audit (default: project root)
             include_patterns: File patterns to include
             exclude_patterns: File patterns to exclude
-            
+
         Returns:
             Security audit report
         """
         try:
             from hledac.tools.audit.security_auditor import SecurityAuditor
-            
+
             auditor = SecurityAuditor()
-            
+
             target = target_path or os.getcwd()
             report = await auditor.audit_directory(
                 path=target,
@@ -760,7 +755,7 @@ class UniversalMonitoringCoordinator(UniversalCoordinator):
                     '**/dist/**', '**/build/**', '**/tests/**'
                 ]
             )
-            
+
             return {
                 'success': True,
                 'target': target,
@@ -772,7 +767,7 @@ class UniversalMonitoringCoordinator(UniversalCoordinator):
                 'issues': report.get('issues', []),
                 'recommendations': report.get('recommendations', [])
             }
-            
+
         except ImportError:
             logger.warning("SecurityAuditor module not available")
             return {'success': False, 'error': 'SecurityAuditor not available'}
@@ -782,45 +777,46 @@ class UniversalMonitoringCoordinator(UniversalCoordinator):
 
     async def verify_codebase_integrity(
         self,
-        target_path: Optional[str] = None,
+        target_path: str | None = None,
         min_lines_of_code: int = 5,
         strict_mode: bool = False
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Validate codebase integrity and detect low-quality code.
-        
+
         Integrated from: tools/diagnostics/codebase_integrity_validator.py
-        
+
         Detects:
         - Dummy/stub functions (pass, return None, NotImplementedError)
         - Empty or near-empty files
         - TODO/FIXME comments
         - High complexity without implementation
         - Unused imports
-        
+
         Args:
             target_path: Path to validate (default: project root)
             min_lines_of_code: Minimum expected LOC for implementation files
             strict_mode: Fail on TODO comments and warnings
-            
+
         Returns:
             Integrity validation report
         """
         try:
             from hledac.tools.diagnostics.codebase_integrity_validator import (
-                CodebaseIntegrityValidator, ValidationConfig
+                CodebaseIntegrityValidator,
+                ValidationConfig,
             )
-            
+
             config = ValidationConfig(
                 min_lines_of_code=min_lines_of_code,
                 strict_mode=strict_mode
             )
-            
+
             validator = CodebaseIntegrityValidator(config)
             target = target_path or os.getcwd()
-            
+
             result = validator.validate_directory(target)
-            
+
             return {
                 'success': True,
                 'target': target,
@@ -834,7 +830,7 @@ class UniversalMonitoringCoordinator(UniversalCoordinator):
                 'recommendations': result.get('recommendations', []),
                 'passed': result['integrity_score'] >= 80
             }
-            
+
         except ImportError:
             logger.warning("CodebaseIntegrityValidator not available")
             return {'success': False, 'error': 'Validator not available'}
@@ -844,39 +840,37 @@ class UniversalMonitoringCoordinator(UniversalCoordinator):
 
     async def verify_syntax_batch(
         self,
-        target_path: Optional[str] = None,
+        target_path: str | None = None,
         auto_fix: bool = True,
         parallel: bool = True
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Verify Python syntax across codebase with optional auto-fix.
-        
+
         Integrated from: tools/audit/syntax_verifier.py
-        
+
         Args:
             target_path: Path to verify (default: project root)
             auto_fix: Automatically fix common issues
             parallel: Use parallel processing
-            
+
         Returns:
             Syntax verification report
         """
         try:
-            from hledac.tools.audit.syntax_verifier import (
-                SyntaxVerifier, VerificationConfig
-            )
-            
+            from hledac.tools.audit.syntax_verifier import SyntaxVerifier, VerificationConfig
+
             config = VerificationConfig(
                 auto_fix=auto_fix,
                 parallel=parallel,
                 max_workers=4
             )
-            
+
             verifier = SyntaxVerifier(config)
             target = target_path or os.getcwd()
-            
+
             result = verifier.verify_directory(target)
-            
+
             return {
                 'success': result.all_valid,
                 'target': target,
@@ -890,7 +884,7 @@ class UniversalMonitoringCoordinator(UniversalCoordinator):
                 ],
                 'all_valid': result.all_valid
             }
-            
+
         except ImportError:
             logger.warning("SyntaxVerifier not available")
             return {'success': False, 'error': 'SyntaxVerifier not available'}
@@ -902,7 +896,7 @@ class UniversalMonitoringCoordinator(UniversalCoordinator):
     # Reporting
     # ========================================================================
 
-    def _get_feature_list(self) -> List[str]:
+    def _get_feature_list(self) -> list[str]:
         """Report available features."""
         features = [
             "System metrics collection (psutil)",
@@ -914,12 +908,12 @@ class UniversalMonitoringCoordinator(UniversalCoordinator):
             "Codebase integrity validation",
             "Batch syntax verification"
         ]
-        
+
         if self._advanced_available:
             features.append("Advanced system monitoring")
         if self._watchdog_available:
             features.append("Health check monitoring")
-        
+
         features.extend([
             "Metrics aggregation and analysis",
             "Peak/average metrics calculation",
@@ -927,10 +921,10 @@ class UniversalMonitoringCoordinator(UniversalCoordinator):
             "Security vulnerability scanning",
             "Dummy/stub code detection"
         ])
-        
+
         return features
 
-    def get_monitoring_stats(self) -> Dict[str, Any]:
+    def get_monitoring_stats(self) -> dict[str, Any]:
         """Get monitoring statistics."""
         return {
             'collections_count': self._collections_count,
@@ -939,20 +933,20 @@ class UniversalMonitoringCoordinator(UniversalCoordinator):
             'metrics_history_size': len(self._metrics_history),
             'benchmark_history_size': len(self._benchmark_history),
             'background_collection_active': (
-                self._collection_task is not None and 
+                self._collection_task is not None and
                 not self._collection_task.done()
             ),
             'current_memory_pressure': self._current_memory_pressure.value
         }
 
-    def get_available_monitoring_systems(self) -> Dict[str, bool]:
+    def get_available_monitoring_systems(self) -> dict[str, bool]:
         """Get availability status of all monitoring systems."""
         return {
             'advanced_monitoring': self._advanced_available,
             'watchdog': self._watchdog_available,
             'system_metrics': True,  # Always available via psutil
             'background_collection': (
-                self._collection_task is not None and 
+                self._collection_task is not None and
                 not self._collection_task.done()
             )
         }
@@ -966,11 +960,11 @@ class UniversalMonitoringCoordinator(UniversalCoordinator):
         operation_type: str,
         success: bool,
         duration: float,
-        metadata: Optional[Dict[str, Any]] = None
+        metadata: dict[str, Any] | None = None
     ) -> None:
         """
         Track operation with statistics (from Hermes3).
-        
+
         Args:
             operation_type: Type of operation
             success: Whether operation succeeded
@@ -988,7 +982,7 @@ class UniversalMonitoringCoordinator(UniversalCoordinator):
                 'max_duration': 0.0,
                 'last_executed': None
             }
-        
+
         stats = self._operation_stats[operation_type]
         stats['total'] += 1
         stats['successful'] += 1 if success else 0
@@ -998,47 +992,47 @@ class UniversalMonitoringCoordinator(UniversalCoordinator):
         stats['min_duration'] = min(stats['min_duration'], duration)
         stats['max_duration'] = max(stats['max_duration'], duration)
         stats['last_executed'] = time.time()
-        
+
         # Also collect system metrics
         await self.collect_system_metrics()
 
     def get_operation_stats(
         self,
-        operation_type: Optional[str] = None
-    ) -> Dict[str, Any]:
+        operation_type: str | None = None
+    ) -> dict[str, Any]:
         """
         Get operation statistics (from Hermes3).
-        
+
         Args:
             operation_type: Specific operation type (None = all)
-            
+
         Returns:
             Operation statistics
         """
         if operation_type:
             return self._operation_stats.get(operation_type, {})
-        
+
         return self._operation_stats.copy()
 
-    def get_health_status(self) -> Dict[str, Any]:
+    def get_health_status(self) -> dict[str, Any]:
         """
         Get health status (from Hermes3).
-        
+
         Returns:
             Health status with metrics
         """
         # Get latest metrics
         latest = self._current_metrics
-        
+
         if latest is None:
             return {
                 'status': 'unknown',
                 'reason': 'No metrics collected yet'
             }
-        
+
         # Determine health based on memory
         memory_percent = latest.memory_percent
-        
+
         if memory_percent > 90:
             health = 'critical'
             reason = f'Memory usage critical: {memory_percent:.1f}%'
@@ -1051,7 +1045,7 @@ class UniversalMonitoringCoordinator(UniversalCoordinator):
         else:
             health = 'healthy'
             reason = f'Memory usage normal: {memory_percent:.1f}%'
-        
+
         return {
             'status': health,
             'reason': reason,
@@ -1068,39 +1062,37 @@ class UniversalMonitoringCoordinator(UniversalCoordinator):
 
     async def run_diagnostics(
         self,
-        component: Optional[str] = None,
+        component: str | None = None,
         auto_fix: bool = False
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Run automated diagnostics and troubleshooting.
-        
+
         Integrated from: tools/preserved_logic/monitoring/diagnostics_engine.py
-        
+
         Features:
         - Automated system diagnostics
         - Component-specific health checks
         - Issue detection and recommendations
         - Auto-fix capabilities (optional)
-        
+
         Args:
             component: Specific component to diagnose (None = all)
             auto_fix: Automatically apply fixes if available
-            
+
         Returns:
             Diagnostics report with issues and recommendations
         """
         try:
-            from hledac.tools.preserved_logic.monitoring.diagnostics_engine import (
-                DiagnosticsEngine, DiagnosticResult
-            )
-            
+            from hledac.tools.preserved_logic.monitoring.diagnostics_engine import DiagnosticResult, DiagnosticsEngine
+
             engine = DiagnosticsEngine(
                 enable_auto_diagnostics=False,  # Manual mode
                 m1_optimization=True
             )
-            
+
             issues = []
-            
+
             if component:
                 # Run diagnostic on specific component
                 component_issues = await engine.run_manual_diagnostic(component)
@@ -1111,7 +1103,7 @@ class UniversalMonitoringCoordinator(UniversalCoordinator):
                 for comp in components:
                     comp_issues = await engine.run_manual_diagnostic(comp)
                     issues.extend(comp_issues)
-            
+
             # Convert issues to dict format
             issues_dict = [
                 {
@@ -1125,13 +1117,13 @@ class UniversalMonitoringCoordinator(UniversalCoordinator):
                 }
                 for issue in issues
             ]
-            
+
             # Critical issues count
             critical_count = sum(
-                1 for i in issues 
+                1 for i in issues
                 if i.severity.value in ['critical', 'error']
             )
-            
+
             return {
                 'success': True,
                 'component': component or 'all',
@@ -1140,11 +1132,11 @@ class UniversalMonitoringCoordinator(UniversalCoordinator):
                 'issues': issues_dict,
                 'auto_fix_enabled': auto_fix,
                 'recommendations': [
-                    rec for issue in issues 
+                    rec for issue in issues
                     for rec in issue.recommendations
                 ]
             }
-            
+
         except ImportError:
             logger.warning("DiagnosticsEngine not available")
             return {
@@ -1164,43 +1156,41 @@ class UniversalMonitoringCoordinator(UniversalCoordinator):
         self,
         interval_seconds: int = 60,
         enable_auto_fix: bool = False
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Start automated diagnostics monitoring.
-        
+
         Args:
             interval_seconds: Diagnostic check interval
             enable_auto_fix: Enable automatic issue fixing
-            
+
         Returns:
             Start confirmation
         """
         try:
-            from hledac.tools.preserved_logic.monitoring.diagnostics_engine import (
-                DiagnosticsEngine
-            )
-            
+            from hledac.tools.preserved_logic.monitoring.diagnostics_engine import DiagnosticsEngine
+
             if not hasattr(self, '_diagnostics_engine'):
                 self._diagnostics_engine = DiagnosticsEngine(
                     enable_auto_diagnostics=True,
                     diagnostic_interval=interval_seconds,
                     m1_optimization=True
                 )
-            
+
             success = await self._diagnostics_engine.start_diagnostics()
-            
+
             return {
                 'success': success,
                 'interval_seconds': interval_seconds,
                 'auto_fix_enabled': enable_auto_fix,
                 'message': 'Auto-diagnostics started' if success else 'Already running'
             }
-            
+
         except Exception as e:
             logger.error(f"Failed to start auto-diagnostics: {e}")
             return {'success': False, 'error': str(e)}
 
-    async def stop_auto_diagnostics(self) -> Dict[str, Any]:
+    async def stop_auto_diagnostics(self) -> dict[str, Any]:
         """Stop automated diagnostics monitoring."""
         if hasattr(self, '_diagnostics_engine'):
             success = await self._diagnostics_engine.stop_diagnostics()

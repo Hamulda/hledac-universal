@@ -21,7 +21,7 @@ import sys
 
 sys.path.insert(0, "hledac/universal")
 
-from transport.transport_router import TransportRouter, route_transport, TransportDecision
+from transport.transport_router import TransportDecision, TransportRouter, route_transport
 
 
 class TestF206ARTransportRouter:
@@ -92,7 +92,7 @@ class TestF206ARTransportRouter:
         """[TR-3] Without HLEDAC_ENABLE_HTTPX_H2=1, httpx_h2 not selected."""
         os.environ.pop("HLEDAC_ENABLE_HTTPX_H2", None)
         d = self.router.route("https://api.github.com/users")
-        assert d.lane != "httpx_h2", f"env-missing got httpx_h2"
+        assert d.lane != "httpx_h2", "env-missing got httpx_h2"
 
     def test_tr3_httpx_h2_with_env_gate_api_url(self):
         """[TR-3] With env=1 + API URL → httpx_h2 selected."""
@@ -172,10 +172,10 @@ class TestF206ARTransportRouter:
     def test_tr6_archive_clients_have_timeout(self):
         """[TR-6] Archive clients set ClientTimeout(total=30)."""
         from intelligence.archive_discovery import (
-            WaybackMachineClient,
             ArchiveTodayClient,
-            IPFSClient,
             GitHubHistoricalClient,
+            IPFSClient,
+            WaybackMachineClient,
         )
         wm = WaybackMachineClient(timeout=30.0)
         assert wm.timeout == 30.0
@@ -307,6 +307,6 @@ class TestF206ARTransportRouter:
         d = self.router.route("https://example.com/")
         try:
             d.lane = "tor_socks"  # type: ignore
-            assert False, "should be frozen"
+            raise AssertionError("should be frozen")
         except Exception:
             pass  # Expected

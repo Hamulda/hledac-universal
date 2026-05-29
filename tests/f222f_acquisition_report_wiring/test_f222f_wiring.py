@@ -1,5 +1,4 @@
 """Probe F222F: Acquisition Report Builder Wiring Verification."""
-import pytest
 from hledac.universal.runtime.acquisition_strategy import build_acquisition_report
 
 

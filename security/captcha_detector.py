@@ -13,7 +13,6 @@ from __future__ import annotations
 import re
 from concurrent.futures import ThreadPoolExecutor
 from io import BytesIO
-from typing import Optional
 
 try:
     from PIL import Image
@@ -21,7 +20,7 @@ except ImportError:
     Image = None  # type: ignore
 
 # Shared executor for PIL ops — single thread is enough for phase 1
-_PIL_EXECUTOR: Optional[ThreadPoolExecutor] = None
+_PIL_EXECUTOR: ThreadPoolExecutor | None = None
 
 
 def _get_pil_executor() -> ThreadPoolExecutor:
@@ -71,7 +70,7 @@ class CaptchaDetector:
     def __init__(self) -> None:
         self._captcha_detections: int = 0
 
-    def is_captcha(self, image_bytes: bytes, url: Optional[str] = None) -> bool:
+    def is_captcha(self, image_bytes: bytes, url: str | None = None) -> bool:
         """
         Returns True if image bytes score as a CAPTCHA signal.
         NEVER raises — exceptions always return False.

@@ -20,7 +20,7 @@ Tests for:
 15. frozenset _HANDLE_PLATFORMS conversion
 """
 
-import os
+import inspect
 import pathlib
 import socket
 import tempfile
@@ -28,7 +28,6 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
-import inspect
 
 
 class TestPathsModule:
@@ -37,7 +36,7 @@ class TestPathsModule:
     def test_paths_falls_back_when_ramdisk_not_mounted(self):
         """FALLBACK: When GHOST_RAMDISK is set but path is not a ramdisk mount, falls back to home."""
         # This is correct behavior - non-mount paths are rejected
-        from hledac.universal.paths import RAMDISK_ACTIVE, FALLBACK_ROOT
+        from hledac.universal.paths import FALLBACK_ROOT, RAMDISK_ACTIVE
         # With no real ramdisk available, should fall back
         assert RAMDISK_ACTIVE is False
         assert FALLBACK_ROOT is not None
@@ -45,9 +44,16 @@ class TestPathsModule:
     def test_paths_all_exported_as_pathlib_path(self):
         """PATH TYPE RULE: All constants are pathlib.Path."""
         from hledac.universal.paths import (
-            RAMDISK_ROOT, FALLBACK_ROOT, DB_ROOT, LMDB_ROOT,
-            EVIDENCE_ROOT, KEYS_ROOT, TOR_ROOT, NYM_ROOT,
-            RUNS_ROOT, SOCKETS_ROOT,
+            DB_ROOT,
+            EVIDENCE_ROOT,
+            FALLBACK_ROOT,
+            KEYS_ROOT,
+            LMDB_ROOT,
+            NYM_ROOT,
+            RAMDISK_ROOT,
+            RUNS_ROOT,
+            SOCKETS_ROOT,
+            TOR_ROOT,
         )
         for const in [RAMDISK_ROOT, FALLBACK_ROOT, DB_ROOT, LMDB_ROOT,
                       EVIDENCE_ROOT, KEYS_ROOT, TOR_ROOT, NYM_ROOT,
@@ -80,7 +86,7 @@ class TestPathsModule:
 
     def test_paths_dirs_created_with_correct_permissions(self):
         """DIRECTORY CREATION: Security dirs have mode 0o700."""
-        from hledac.universal.paths import KEYS_ROOT, TOR_ROOT, NYM_ROOT
+        from hledac.universal.paths import KEYS_ROOT, NYM_ROOT, TOR_ROOT
         for sec_dir in [KEYS_ROOT, TOR_ROOT, NYM_ROOT]:
             if sec_dir.exists():
                 mode = sec_dir.stat().st_mode & 0o777
@@ -105,7 +111,6 @@ class TestKeyManagerPath:
     def test_key_manager_default_uses_keys_root(self):
         """MIGRATION: KeyManager default db_path uses KEYS_ROOT."""
         from hledac.universal.security.key_manager import KeyManager
-        from hledac.universal.paths import KEYS_ROOT
         src = inspect.getsource(KeyManager.__init__)
         assert "KEYS_ROOT" in src
 
@@ -116,7 +121,6 @@ class TestTorTransportPath:
     def test_tor_transport_default_uses_tor_root(self):
         """MIGRATION: TorTransport default data_dir uses TOR_ROOT."""
         from hledac.universal.transport.tor_transport import TorTransport
-        from hledac.universal.paths import TOR_ROOT
         sig = inspect.signature(TorTransport.__init__)
         params = sig.parameters
         assert "data_dir" in params
@@ -141,7 +145,6 @@ class TestFetchCoordinatorLMDBPath:
     def test_fetch_coordinator_session_lmdb_uses_lmdb_root(self):
         """MIGRATION: FetchCoordinator init_session_manager default uses LMDB_ROOT."""
         from hledac.universal.coordinators.fetch_coordinator import FetchCoordinator
-        from hledac.universal.paths import LMDB_ROOT
         src = inspect.getsource(FetchCoordinator.init_session_manager)
         assert "LMDB_ROOT" in src
 
@@ -303,16 +306,18 @@ class TestHandlePlatformsFrozen:
 
     def test_handle_platforms_is_frozenset(self):
         """FROZENSET: _HANDLE_PLATFORMS is frozenset."""
-        from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
         # _HANDLE_PLATFORMS is inside _initialize_actions
         import inspect
+
+        from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
         src = inspect.getsource(FullyAutonomousOrchestrator._initialize_actions)
         assert "frozenset" in src and "_HANDLE_PLATFORMS" in src
 
     def test_handle_platforms_contains_expected_platforms(self):
         """FROZENSET: _HANDLE_PLATFORMS contains expected platforms."""
-        from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
         import inspect
+
+        from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
         src = inspect.getsource(FullyAutonomousOrchestrator._initialize_actions)
         assert "'github.com'" in src
         assert "'twitter.com'" in src
@@ -326,13 +331,13 @@ class TestCleanupFallbackArtifacts:
 
     def test_cleanup_is_noop_when_ramdisk_active(self):
         """FALLBACK CLEANUP: No-op when using real ramdisk."""
-        from hledac.universal.paths import cleanup_fallback_artifacts, RAMDISK_ACTIVE
+        from hledac.universal.paths import RAMDISK_ACTIVE, cleanup_fallback_artifacts
         if RAMDISK_ACTIVE:
             cleanup_fallback_artifacts()  # Should not raise
 
     def test_cleanup_fallback_removes_empty_fallback_dir(self):
         """FALLBACK CLEANUP: Removes empty FALLBACK_ROOT on shutdown."""
-        from hledac.universal.paths import cleanup_fallback_artifacts, FALLBACK_ROOT, RAMDISK_ACTIVE
+        from hledac.universal.paths import FALLBACK_ROOT, RAMDISK_ACTIVE, cleanup_fallback_artifacts
         if RAMDISK_ACTIVE:
             pytest.skip("Not applicable when RAMDISK is active")
         FALLBACK_ROOT.mkdir(parents=True, exist_ok=True)

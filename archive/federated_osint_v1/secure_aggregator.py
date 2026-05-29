@@ -4,11 +4,11 @@ Secure aggregation s dvěma režimy:
 - SHAMIR: Shamir secret sharing v mod p s kvantizací pro toleranci výpadků
 """
 
-import numpy as np
+
 import mlx.core as mx
-from typing import Dict, List, Optional
-from cryptography.hazmat.primitives.kdf.hkdf import HKDF
+import numpy as np
 from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 
 # Prvočíslo pro modulární aritmetiku (2^31 - 1, prime)
 P = 2**31 - 1
@@ -17,15 +17,15 @@ P = 2**31 - 1
 class SecureAggregator:
     """Secure aggregation s masking a Shamir režimy."""
 
-    def __init__(self, node_id: str, peer_ids: List[str], mode: str = 'masking', threshold: int = 2):
+    def __init__(self, node_id: str, peer_ids: list[str], mode: str = 'masking', threshold: int = 2):
         self.node_id = node_id
         self.peer_ids = sorted(peer_ids)
         self.mode = mode
         self.threshold = threshold
-        self.mask_seeds: Dict[tuple, bytes] = {}
-        self.session_keys: Dict[str, bytes] = {}
+        self.mask_seeds: dict[tuple, bytes] = {}
+        self.session_keys: dict[str, bytes] = {}
 
-    def set_peer_ids(self, peer_ids: List[str]):
+    def set_peer_ids(self, peer_ids: list[str]):
         self.peer_ids = sorted(peer_ids)
 
     def set_session_key(self, peer_id: str, key: bytes):
@@ -36,8 +36,8 @@ class SecureAggregator:
     # ===== PRG (HKDF counter mode) =====
     def _hkdf_expand(self, prk: bytes, info: bytes, length: int) -> bytes:
         """HKDF expand v counter módu pro libovolné délky."""
-        from cryptography.hazmat.primitives.hmac import HMAC
         from cryptography.hazmat.primitives import hashes
+        from cryptography.hazmat.primitives.hmac import HMAC
 
         hash_len = hashes.SHA256().digest_size  # 32
         output = b''
@@ -68,7 +68,7 @@ class SecureAggregator:
         return mask_np
 
     # ===== MASKING režim =====
-    def create_masked_update(self, update: Dict[str, mx.array], round: int) -> Dict[str, mx.array]:
+    def create_masked_update(self, update: dict[str, mx.array], round: int) -> dict[str, mx.array]:
         """Vytvoří maskovaný update pro masking režim."""
         # Vyhodnotíme tensory
         mx.eval(*update.values())
@@ -102,7 +102,7 @@ class SecureAggregator:
         """Modulární inverze vzhledem k P (Fermatův teorém)."""
         return pow(a, P - 2, P)
 
-    def create_shamir_shares(self, update: Dict[str, mx.array], round: int) -> Dict[str, Dict]:
+    def create_shamir_shares(self, update: dict[str, mx.array], round: int) -> dict[str, dict]:
         """
         Kvantizace update, rozdělení na threshold shareů v mod p.
         Vrací {peer_id: {tensor_name: share (np.int64)}}
@@ -130,7 +130,7 @@ class SecureAggregator:
 
         return shares
 
-    def aggregate_shamir_shares(self, received_shares: Dict[str, Dict]) -> Optional[Dict[str, mx.array]]:
+    def aggregate_shamir_shares(self, received_shares: dict[str, dict]) -> dict[str, mx.array] | None:
         """
         Agregace shareů, Lagrange interpolace v bodě 0 pomocí modulární aritmetiky.
         """

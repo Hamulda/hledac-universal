@@ -51,13 +51,12 @@ import hashlib
 import logging
 import re
 import time
-from urllib.parse import urlparse
-from collections import defaultdict, deque, OrderedDict
+from collections import OrderedDict, defaultdict, deque
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from decimal import Decimal
 from enum import Enum
-from typing import Any, Dict, List, Optional, Set, Tuple, Union
+from typing import Any
+from urllib.parse import urlparse
 
 import httpx
 
@@ -174,15 +173,15 @@ class Transaction:
     from_address: str
     to_address: str
     value: float
-    gas_used: Optional[int] = None
-    gas_price: Optional[int] = None
-    fee: Optional[float] = None
-    block_number: Optional[int] = None
+    gas_used: int | None = None
+    gas_price: int | None = None
+    fee: float | None = None
+    block_number: int | None = None
     confirmations: int = 0
     chain: str = "ethereum"
     is_contract_creation: bool = False
-    input_data: Optional[str] = None
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    input_data: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -190,19 +189,19 @@ class WalletAnalysis:
     """Comprehensive analysis of a wallet address."""
     address: str
     chain: str
-    first_seen: Optional[datetime] = None
-    last_seen: Optional[datetime] = None
+    first_seen: datetime | None = None
+    last_seen: datetime | None = None
     total_received: float = 0.0
     total_sent: float = 0.0
     transaction_count: int = 0
     incoming_count: int = 0
     outgoing_count: int = 0
-    linked_addresses: List[str] = field(default_factory=list)
-    tags: List[str] = field(default_factory=list)
+    linked_addresses: list[str] = field(default_factory=list)
+    tags: list[str] = field(default_factory=list)
     entity_type: EntityType = EntityType.UNKNOWN
     risk_score: float = 0.0
     balance: float = 0.0
-    known_associations: List[str] = field(default_factory=list)
+    known_associations: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -210,29 +209,29 @@ class TransactionPattern:
     """Detected pattern in transactions."""
     pattern_type: PatternType
     confidence: float
-    transactions: List[str]
+    transactions: list[str]
     description: str
-    addresses_involved: List[str] = field(default_factory=list)
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    addresses_involved: list[str] = field(default_factory=list)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
 class Cluster:
     """A cluster of related addresses."""
     cluster_id: str
-    addresses: List[str]
+    addresses: list[str]
     entity_type: EntityType
     confidence: float
-    label: Optional[str] = None
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    label: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
 class CrossChainResult:
     """Result of cross-chain analysis."""
     primary_address: str
-    related_addresses: Dict[str, List[str]]  # chain -> addresses
-    potential_links: List[Tuple[str, str, float]]  # (addr1, addr2, confidence)
+    related_addresses: dict[str, list[str]]  # chain -> addresses
+    potential_links: list[tuple[str, str, float]]  # (addr1, addr2, confidence)
     risk_assessment: str
     overall_risk_score: float
 
@@ -249,7 +248,7 @@ class APIResponse:
 # KNOWN SERVICES DATABASE
 # =============================================================================
 
-KNOWN_SERVICES: Dict[str, Dict[str, Any]] = {
+KNOWN_SERVICES: dict[str, dict[str, Any]] = {
     # Major Exchanges
     "0x3f5CE5FBFe3E9af3971dD833D26bA9b5C936f0bE": {
         "name": "Binance",
@@ -314,11 +313,11 @@ class BlockchainForensics:
 
     def __init__(
         self,
-        etherscan_api_key: Optional[str] = None,
-        blockchair_api_key: Optional[str] = None,
+        etherscan_api_key: str | None = None,
+        blockchair_api_key: str | None = None,
         cache_ttl_seconds: int = 300,
         max_concurrent_requests: int = 5,
-        fetch_func: Optional[Any] = None,
+        fetch_func: Any | None = None,
     ):
         """
         Initialize BlockchainForensics.
@@ -342,15 +341,15 @@ class BlockchainForensics:
         self.transport_policy = "injected" if fetch_func else "bypass_legacy"
 
         # In-memory cache — F184F: OrderedDict pro LRU eviction, MAX_CACHE_SIZE bounded
-        self._cache: OrderedDict[str, APIResponse] = OrderedDict()
+        self._cache: Ordereddict[str, APIResponse] = OrderedDict()
         self._cache_lock = asyncio.Lock()
 
         # HTTP client (initialized lazily — only used when _fetch_func is None)
-        self._client: Optional[httpx.AsyncClient] = None
-        self._semaphore: Optional[asyncio.Semaphore] = None
+        self._client: httpx.AsyncClient | None = None
+        self._semaphore: asyncio.Semaphore | None = None
 
         # Circuit breaker check result for telemetry
-        self._last_circuit_decision: Optional[Any] = None
+        self._last_circuit_decision: Any | None = None
 
         # Rate limiting
         self._last_etherscan_call = 0.0
@@ -413,7 +412,7 @@ class BlockchainForensics:
 
         return data
 
-    async def _rate_limited_etherscan(self, url: str) -> Dict[str, Any]:
+    async def _rate_limited_etherscan(self, url: str) -> dict[str, Any]:
         """Make rate-limited Etherscan API call."""
         now = time.time()
         elapsed = now - self._last_etherscan_call
@@ -451,7 +450,7 @@ class BlockchainForensics:
                 logger.warning(f"Etherscan API error: {e}")
                 return {"status": "0", "message": str(e)}
 
-    async def _rate_limited_blockchair(self, url: str) -> Dict[str, Any]:
+    async def _rate_limited_blockchair(self, url: str) -> dict[str, Any]:
         """Make rate-limited Blockchair API call."""
         now = time.time()
         elapsed = now - self._last_blockchair_call
@@ -489,7 +488,7 @@ class BlockchainForensics:
                 logger.warning(f"Blockchair API error: {e}")
                 return {"data": {}, "error": str(e)}
 
-    def _generate_cluster_id(self, addresses: List[str]) -> str:
+    def _generate_cluster_id(self, addresses: list[str]) -> str:
         """Generate a unique cluster ID from addresses."""
         sorted_addrs = sorted(addresses)
         hash_input = "".join(sorted_addrs).encode()
@@ -662,7 +661,7 @@ class BlockchainForensics:
         chain: str = "ethereum",
         depth: int = 2,
         max_transactions: int = 100
-    ) -> List[Transaction]:
+    ) -> list[Transaction]:
         """
         Trace transaction chains from an address.
 
@@ -675,8 +674,8 @@ class BlockchainForensics:
         Returns:
             List of Transaction objects
         """
-        all_transactions: List[Transaction] = []
-        visited: Set[str] = set()
+        all_transactions: list[Transaction] = []
+        visited: set[str] = set()
         queue: deque = deque([(address, 0)])  # (address, depth)
 
         while queue and len(all_transactions) < max_transactions:
@@ -707,7 +706,7 @@ class BlockchainForensics:
         self,
         address: str,
         chain: str
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """Fetch raw transactions for an address."""
         if chain == "ethereum" and self.etherscan_api_key:
             return await self._fetch_ethereum_transactions(address)
@@ -718,7 +717,7 @@ class BlockchainForensics:
     async def _fetch_ethereum_transactions(
         self,
         address: str
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """Fetch Ethereum transactions from Etherscan."""
         base_url = "https://api.etherscan.io/api"
         url = (
@@ -741,7 +740,7 @@ class BlockchainForensics:
     async def _fetch_bitcoin_transactions(
         self,
         address: str
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """Fetch Bitcoin transactions from Blockchair."""
         base_url = "https://api.blockchair.com/bitcoin/dashboards/address"
         url = f"{base_url}/{address}?limit=100"
@@ -768,7 +767,7 @@ class BlockchainForensics:
     async def _fetch_bitcoin_transaction_detail(
         self,
         tx_hash: str
-    ) -> Optional[Dict[str, Any]]:
+    ) -> dict[str, Any] | None:
         """Fetch detailed Bitcoin transaction."""
         url = f"https://api.blockchair.com/bitcoin/dashboards/transaction/{tx_hash}"
 
@@ -787,7 +786,7 @@ class BlockchainForensics:
 
     def _parse_transaction(
         self,
-        tx_data: Dict[str, Any],
+        tx_data: dict[str, Any],
         chain: str
     ) -> Transaction:
         """Parse raw transaction data into Transaction object."""
@@ -839,8 +838,8 @@ class BlockchainForensics:
 
     async def detect_patterns(
         self,
-        transactions: List[Transaction]
-    ) -> List[TransactionPattern]:
+        transactions: list[Transaction]
+    ) -> list[TransactionPattern]:
         """
         Detect suspicious patterns in transactions.
 
@@ -850,7 +849,7 @@ class BlockchainForensics:
         Returns:
             List of detected TransactionPattern objects
         """
-        patterns: List[TransactionPattern] = []
+        patterns: list[TransactionPattern] = []
 
         if not transactions:
             return patterns
@@ -887,8 +886,8 @@ class BlockchainForensics:
 
     def _detect_peel_chain(
         self,
-        transactions: List[Transaction]
-    ) -> Optional[TransactionPattern]:
+        transactions: list[Transaction]
+    ) -> TransactionPattern | None:
         """
         Detect peel chain pattern.
 
@@ -930,8 +929,8 @@ class BlockchainForensics:
 
     def _detect_round_amounts(
         self,
-        transactions: List[Transaction]
-    ) -> Optional[TransactionPattern]:
+        transactions: list[Transaction]
+    ) -> TransactionPattern | None:
         """Detect round amount patterns (common in exchange withdrawals)."""
         round_txs = []
 
@@ -961,11 +960,11 @@ class BlockchainForensics:
 
     def _detect_mixing_patterns(
         self,
-        transactions: List[Transaction]
-    ) -> Optional[TransactionPattern]:
+        transactions: list[Transaction]
+    ) -> TransactionPattern | None:
         """Detect potential mixing/tumbling patterns."""
         # Group by time windows
-        time_windows: Dict[str, List[Transaction]] = defaultdict(list)
+        time_windows: dict[str, list[Transaction]] = defaultdict(list)
 
         for tx in transactions:
             window_key = tx.timestamp.strftime("%Y-%m-%d-%H")
@@ -973,7 +972,7 @@ class BlockchainForensics:
 
         mixing_candidates = []
 
-        for window, txs in time_windows.items():
+        for _window, txs in time_windows.items():
             if len(txs) >= 5:  # Many transactions in same hour
                 # Check for similar amounts (characteristic of mixing)
                 amounts = [tx.value for tx in txs if tx.value > 0]
@@ -999,14 +998,14 @@ class BlockchainForensics:
 
     def _detect_layering(
         self,
-        transactions: List[Transaction]
-    ) -> Optional[TransactionPattern]:
+        transactions: list[Transaction]
+    ) -> TransactionPattern | None:
         """Detect layering pattern (multiple hops to obscure trail)."""
         if len(transactions) < 5:
             return None
 
         # Count unique addresses
-        addresses: Set[str] = set()
+        addresses: set[str] = set()
         for tx in transactions:
             addresses.add(tx.from_address)
             addresses.add(tx.to_address)
@@ -1030,8 +1029,8 @@ class BlockchainForensics:
 
     def _detect_rapid_trading(
         self,
-        transactions: List[Transaction]
-    ) -> Optional[TransactionPattern]:
+        transactions: list[Transaction]
+    ) -> TransactionPattern | None:
         """Detect rapid trading pattern."""
         if len(transactions) < 10:
             return None
@@ -1059,9 +1058,9 @@ class BlockchainForensics:
 
     async def cluster_addresses(
         self,
-        addresses: List[str],
+        addresses: list[str],
         chain: str = "ethereum"
-    ) -> List[Cluster]:
+    ) -> list[Cluster]:
         """
         Cluster addresses using heuristics.
 
@@ -1072,13 +1071,13 @@ class BlockchainForensics:
         Returns:
             List of Cluster objects
         """
-        clusters: List[Cluster] = []
+        clusters: list[Cluster] = []
 
         if len(addresses) < 2:
             return clusters
 
         # Fetch transactions for all addresses
-        address_txs: Dict[str, List[Transaction]] = {}
+        address_txs: dict[str, list[Transaction]] = {}
         for addr in addresses:
             txs = await self.trace_transactions(addr, chain, depth=1, max_transactions=50)
             address_txs[addr] = txs
@@ -1108,9 +1107,9 @@ class BlockchainForensics:
 
     def _cluster_by_common_input(
         self,
-        addresses: List[str],
-        address_txs: Dict[str, List[Transaction]]
-    ) -> List[Cluster]:
+        addresses: list[str],
+        address_txs: dict[str, list[Transaction]]
+    ) -> list[Cluster]:
         """
         Cluster by common input ownership.
 
@@ -1118,15 +1117,15 @@ class BlockchainForensics:
         they likely belong to the same entity.
         """
         # Build transaction -> addresses mapping
-        tx_addresses: Dict[str, Set[str]] = defaultdict(set)
+        tx_addresses: dict[str, set[str]] = defaultdict(set)
 
         for addr, txs in address_txs.items():
             for tx in txs:
                 tx_addresses[tx.tx_hash].add(addr)
 
         # Find addresses that share transactions
-        shared: Dict[Tuple[str, str], int] = defaultdict(int)
-        for tx_hash, addrs in tx_addresses.items():
+        shared: dict[tuple[str, str], int] = defaultdict(int)
+        for _tx_hash, addrs in tx_addresses.items():
             addr_list = sorted(addrs)
             for i in range(len(addr_list)):
                 for j in range(i + 1, len(addr_list)):
@@ -1134,7 +1133,7 @@ class BlockchainForensics:
 
         # Create clusters from highly connected addresses
         clusters = []
-        processed: Set[str] = set()
+        processed: set[str] = set()
 
         for (addr1, addr2), count in shared.items():
             if count >= 2 and addr1 not in processed and addr2 not in processed:
@@ -1154,9 +1153,9 @@ class BlockchainForensics:
 
     def _cluster_by_temporal_correlation(
         self,
-        addresses: List[str],
-        address_txs: Dict[str, List[Transaction]]
-    ) -> List[Cluster]:
+        addresses: list[str],
+        address_txs: dict[str, list[Transaction]]
+    ) -> list[Cluster]:
         """
         Cluster by temporal correlation.
 
@@ -1164,7 +1163,7 @@ class BlockchainForensics:
         may belong to the same entity.
         """
         # Calculate activity profiles (hour of day)
-        profiles: Dict[str, List[int]] = {}
+        profiles: dict[str, list[int]] = {}
 
         for addr, txs in address_txs.items():
             hours = [0] * 24
@@ -1175,7 +1174,7 @@ class BlockchainForensics:
 
         # Find correlated profiles
         clusters = []
-        processed: Set[str] = set()
+        processed: set[str] = set()
 
         for i, addr1 in enumerate(addresses):
             if addr1 in processed:
@@ -1211,9 +1210,9 @@ class BlockchainForensics:
 
     def _cluster_by_amount_patterns(
         self,
-        addresses: List[str],
-        address_txs: Dict[str, List[Transaction]]
-    ) -> List[Cluster]:
+        addresses: list[str],
+        address_txs: dict[str, list[Transaction]]
+    ) -> list[Cluster]:
         """
         Cluster by similar amount patterns.
 
@@ -1221,7 +1220,7 @@ class BlockchainForensics:
         may belong to the same entity.
         """
         # Calculate amount statistics
-        stats: Dict[str, Dict[str, float]] = {}
+        stats: dict[str, dict[str, float]] = {}
 
         for addr, txs in address_txs.items():
             amounts = [tx.value for tx in txs if tx.value > 0]
@@ -1235,7 +1234,7 @@ class BlockchainForensics:
 
         # Find addresses with similar patterns
         clusters = []
-        processed: Set[str] = set()
+        processed: set[str] = set()
 
         for addr1 in stats:
             if addr1 in processed:
@@ -1269,7 +1268,7 @@ class BlockchainForensics:
 
         return clusters
 
-    def _calculate_correlation(self, a: List[int], b: List[int]) -> float:
+    def _calculate_correlation(self, a: list[int], b: list[int]) -> float:
         """Calculate Pearson correlation coefficient."""
         n = len(a)
         if n != len(b) or n == 0:
@@ -1287,13 +1286,13 @@ class BlockchainForensics:
 
         return numerator / (denom_a * denom_b)
 
-    def _merge_clusters(self, clusters: List[Cluster]) -> List[Cluster]:
+    def _merge_clusters(self, clusters: list[Cluster]) -> list[Cluster]:
         """Merge overlapping clusters."""
         if not clusters:
             return clusters
 
         # Group by overlapping addresses
-        merged: List[Cluster] = []
+        merged: list[Cluster] = []
 
         for cluster in clusters:
             found_merge = False
@@ -1319,7 +1318,7 @@ class BlockchainForensics:
     # KNOWN SERVICE IDENTIFICATION
     # =========================================================================
 
-    def identify_known_services(self, address: str) -> List[str]:
+    def identify_known_services(self, address: str) -> list[str]:
         """
         Identify known services associated with an address.
 
@@ -1367,7 +1366,7 @@ class BlockchainForensics:
 
     async def cross_chain_analysis(
         self,
-        addresses: Dict[str, str]  # chain -> address
+        addresses: dict[str, str]  # chain -> address
     ) -> CrossChainResult:
         """
         Perform cross-chain analysis.
@@ -1378,14 +1377,14 @@ class BlockchainForensics:
         Returns:
             CrossChainResult with findings
         """
-        related: Dict[str, List[str]] = {}
-        potential_links: List[Tuple[str, str, float]] = []
+        related: dict[str, list[str]] = {}
+        potential_links: list[tuple[str, str, float]] = []
 
         primary_chain = list(addresses.keys())[0] if addresses else "ethereum"
         primary_address = addresses.get(primary_chain, "")
 
         # Analyze each chain
-        analyses: Dict[str, WalletAnalysis] = {}
+        analyses: dict[str, WalletAnalysis] = {}
         for chain, address in addresses.items():
             try:
                 analysis = await self.analyze_wallet(address, chain)
@@ -1525,8 +1524,8 @@ class BlockchainForensics:
 async def analyze_blockchain_address(
     address: str,
     chain: str = "ethereum",
-    etherscan_api_key: Optional[str] = None,
-    blockchair_api_key: Optional[str] = None,
+    etherscan_api_key: str | None = None,
+    blockchair_api_key: str | None = None,
 ) -> WalletAnalysis:
     """
     Convenience function for quick address analysis.
@@ -1551,9 +1550,9 @@ async def detect_transaction_patterns(
     address: str,
     chain: str = "ethereum",
     depth: int = 2,
-    etherscan_api_key: Optional[str] = None,
-    blockchair_api_key: Optional[str] = None,
-) -> List[TransactionPattern]:
+    etherscan_api_key: str | None = None,
+    blockchair_api_key: str | None = None,
+) -> list[TransactionPattern]:
     """
     Convenience function for pattern detection.
 
@@ -1576,8 +1575,8 @@ async def detect_transaction_patterns(
 
 
 def get_blockchain_forensics(
-    etherscan_api_key: Optional[str] = None,
-    blockchair_api_key: Optional[str] = None,
+    etherscan_api_key: str | None = None,
+    blockchair_api_key: str | None = None,
 ) -> BlockchainForensics:
     """
     Get configured BlockchainForensics instance.

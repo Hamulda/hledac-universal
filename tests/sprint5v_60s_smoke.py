@@ -3,16 +3,16 @@
 Sprint 5V: 60s Smoke Test for OFFLINE_REPLAY
 """
 import asyncio
+import os
+import random
 import sys
 import time
-import random
-import os
 
 sys.path.insert(0, '/Users/vojtechhamada/PycharmProjects/Hledac')
 
 async def run_smoke_test():
     from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
-    from hledac.universal.knowledge.atomic_storage import EvidencePacketStorage, EvidencePacket
+    from hledac.universal.knowledge.atomic_storage import EvidencePacket, EvidencePacketStorage
 
     print("=" * 60)
     print("[5V] 60s SMOKE TEST")
@@ -25,7 +25,7 @@ async def run_smoke_test():
     packets_dir = os.path.expanduser("~/.hledac/evidence_packets/shards")
     packet_count = 0
     if os.path.exists(packets_dir):
-        for root, dirs, files in os.walk(packets_dir):
+        for _root, _dirs, files in os.walk(packets_dir):
             packet_count += len([f for f in files if f.endswith('.json')])
 
     print(f"[PREFLIGHT] Replay packets: {packet_count}")
@@ -36,7 +36,7 @@ async def run_smoke_test():
             evidence_id=f"evidence_{i}",
             url=f"http://localhost:{64000+i}/test",
             final_url=f"http://localhost:{64000+i}/test",
-            domain=f"localhost",
+            domain="localhost",
             fetched_at=time.time() - (i * 86400),
             status=200,
             headers_digest="abc123",
@@ -77,7 +77,7 @@ async def run_smoke_test():
 
     ELAPSED = time.monotonic() - START_TIME
 
-    print(f"\n=== SMOKE TEST RESULTS ===")
+    print("\n=== SMOKE TEST RESULTS ===")
     print(f"[ELAPSED] {ELAPSED:.1f}s (target: {DURATION}s)")
     print(f"[ITERATIONS] {result.get('iterations_completed', 0)}")
     print(f"[FINDINGS] {result.get('findings_total', 0)}")

@@ -13,8 +13,8 @@ M1-Optimized: Minimal dependencies, fast signature matching
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, List, Optional, Set
 from dataclasses import dataclass
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -22,12 +22,12 @@ logger = logging.getLogger(__name__)
 @dataclass
 class TechStackResult:
     """Result of technology stack detection."""
-    framework: Optional[str]
+    framework: str | None
     confidence: float
-    indicators: List[str]
-    version: Optional[str] = None
-    additional_tech: List[str] = None
-    
+    indicators: list[str]
+    version: str | None = None
+    additional_tech: list[str] = None
+
     def __post_init__(self):
         if self.additional_tech is None:
             self.additional_tech = []
@@ -36,9 +36,9 @@ class TechStackResult:
 class TechStackSignature:
     """
     Technology stack signature detection for discovered endpoints.
-    
+
     Detects frameworks and CMS from URL patterns and content indicators.
-    
+
     Supported frameworks:
     - CMS: WordPress, Drupal, Joomla
     - Python: Django, Flask
@@ -47,14 +47,14 @@ class TechStackSignature:
     - PHP: Laravel
     - Java: Spring
     - .NET: ASP.NET
-    
+
     Example:
         >>> detector = TechStackSignature()
         >>> result = detector.detect_stack('https://example.com/wp-content/themes/')
         >>> print(result.framework)
         'wordpress'
     """
-    
+
     def __init__(self):
         # Main framework signatures
         self.signatures = {
@@ -115,7 +115,7 @@ class TechStackSignature:
                 'weight': 0.8,
             },
         }
-        
+
         # Version detection patterns
         self.version_patterns = {
             'wordpress': [
@@ -134,21 +134,21 @@ class TechStackSignature:
                 r'rails-([0-9.]+)',
             ],
         }
-    
+
     def detect_stack(
-        self, 
-        url: str, 
-        content: Optional[str] = None,
-        headers: Optional[Dict[str, str]] = None
+        self,
+        url: str,
+        content: str | None = None,
+        headers: dict[str, str] | None = None
     ) -> TechStackResult:
         """
         Detect technology stack from URL and content.
-        
+
         Args:
             url: URL to analyze
             content: Optional page content
             headers: Optional HTTP response headers
-            
+
         Returns:
             TechStackResult with detection info
         """
@@ -158,17 +158,17 @@ class TechStackSignature:
         all_indicators = []
         version = None
         additional_tech = []
-        
+
         for framework, config in self.signatures.items():
             matches = 0
             found_indicators = []
-            
+
             # Check URL indicators
             for indicator in config['indicators']:
                 if indicator.lower() in url_lower:
                     matches += 1
                     found_indicators.append(f"url:{indicator}")
-            
+
             # Check content indicators (weight more)
             if content:
                 content_lower = content.lower()
@@ -176,7 +176,7 @@ class TechStackSignature:
                     if indicator.lower() in content_lower:
                         matches += 2  # Content matches weigh more
                         found_indicators.append(f"content:{indicator}")
-            
+
             # Check headers
             if headers:
                 for header_name, header_value in headers.items():
@@ -185,24 +185,24 @@ class TechStackSignature:
                         if indicator.lower() in header_str:
                             matches += 1
                             found_indicators.append(f"header:{indicator}")
-            
+
             # Calculate confidence
             if matches > 0:
                 base_confidence = matches / len(config['indicators'])
                 confidence = min(base_confidence * config['weight'], 1.0)
-                
+
                 if confidence > max_confidence:
                     max_confidence = confidence
                     detected_framework = framework
                     all_indicators = list(set(found_indicators))
-        
+
         # Detect version if possible
         if detected_framework and content:
             version = self._detect_version(detected_framework, content)
-        
+
         # Detect additional technologies
         additional_tech = self._detect_additional_tech(url_lower, content)
-        
+
         return TechStackResult(
             framework=detected_framework,
             confidence=max_confidence,
@@ -210,29 +210,29 @@ class TechStackSignature:
             version=version,
             additional_tech=additional_tech
         )
-    
-    def _detect_version(self, framework: str, content: str) -> Optional[str]:
+
+    def _detect_version(self, framework: str, content: str) -> str | None:
         """Detect framework version from content."""
         import re
-        
+
         if framework not in self.version_patterns:
             return None
-        
+
         for pattern in self.version_patterns[framework]:
             match = re.search(pattern, content, re.IGNORECASE)
             if match:
                 return match.group(1)
-        
+
         return None
-    
+
     def _detect_additional_tech(
-        self, 
-        url_lower: str, 
-        content: Optional[str]
-    ) -> List[str]:
+        self,
+        url_lower: str,
+        content: str | None
+    ) -> list[str]:
         """Detect additional technologies."""
         additional = []
-        
+
         # CDN detection
         cdns = {
             'cloudflare': ['cloudflare', 'cdnjs.cloudflare'],
@@ -241,46 +241,46 @@ class TechStackSignature:
             'jquery': ['jquery'],
             'bootstrap': ['bootstrap'],
         }
-        
+
         content_lower = content.lower() if content else ''
         combined = url_lower + ' ' + content_lower
-        
+
         for tech, indicators in cdns.items():
             for indicator in indicators:
                 if indicator in combined:
                     additional.append(tech)
                     break
-        
+
         return list(set(additional))
-    
-    def get_framework_info(self, framework: str) -> Dict[str, Any]:
+
+    def get_framework_info(self, framework: str) -> dict[str, Any]:
         """
         Get information about a framework.
-        
+
         Args:
             framework: Framework name
-            
+
         Returns:
             Dictionary with framework info
         """
         if framework not in self.signatures:
             return {}
-        
+
         return {
             'name': framework,
             'indicators': self.signatures[framework]['indicators'],
             'weight': self.signatures[framework]['weight'],
         }
-    
+
     def add_signature(
-        self, 
-        framework: str, 
-        indicators: List[str],
+        self,
+        framework: str,
+        indicators: list[str],
         weight: float = 1.0
     ) -> None:
         """
         Add custom framework signature.
-        
+
         Args:
             framework: Framework name
             indicators: List of URL/content indicators
@@ -295,17 +295,17 @@ class TechStackSignature:
 # Convenience function
 def detect_tech_stack(
     url: str,
-    content: Optional[str] = None,
-    headers: Optional[Dict[str, str]] = None
+    content: str | None = None,
+    headers: dict[str, str] | None = None
 ) -> TechStackResult:
     """
     Quick technology stack detection.
-    
+
     Args:
         url: URL to analyze
         content: Optional page content
         headers: Optional HTTP headers
-        
+
     Returns:
         TechStackResult with detection info
     """

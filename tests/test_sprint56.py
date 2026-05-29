@@ -5,7 +5,6 @@ BranchManager, SpikePriorityNetwork, SharedTensor, ResourceAllocator concurrency
 
 import asyncio
 import sys
-import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -301,13 +300,9 @@ class TestBranchManager(unittest.IsolatedAsyncioTestCase):
 
         scheduler = ParallelResearchScheduler()
 
-        manager = BranchManager(scheduler=scheduler, ane_model_path=None)
+        BranchManager(scheduler=scheduler, ane_model_path=None)
 
         # Nízká centralita – pravděpodobnost < 0.7
-        finding = {
-            'entity': 'low_entity',
-            'source_type': 0.0
-        }
 
         # Fallback pravidlo: 0.5 + 0.2*0 + 0.1*1 + 0.2*0 = 0.6 < 0.7
         # manager by neměl vytvořit větev
@@ -328,7 +323,7 @@ class TestBranchManager(unittest.IsolatedAsyncioTestCase):
         manager.spike_net = spike_net
 
         # Spike s vysokou hodnotou
-        spikes = spike_net.forward(1.5)
+        spike_net.forward(1.5)
 
         scheduler.shutdown(wait=False)
 
@@ -343,12 +338,8 @@ class TestBranchManager(unittest.IsolatedAsyncioTestCase):
         mock_claim_index = MagicMock()
         mock_claim_index.is_contested = MagicMock(return_value=True)
 
-        manager = BranchManager(scheduler=scheduler, claim_index=mock_claim_index)
+        BranchManager(scheduler=scheduler, claim_index=mock_claim_index)
 
-        finding = {
-            'entity': 'contradicted_entity',
-            'source_type': 0.0
-        }
 
         # Kontradikce = 1.0, pravděpodobnost > 0.7
         # 0.5 + 0.2*0 + 0.1*1 + 0.2*1 = 0.9 > 0.7
@@ -363,13 +354,9 @@ class TestBranchManager(unittest.IsolatedAsyncioTestCase):
 
         scheduler = ParallelResearchScheduler()
 
-        manager = BranchManager(scheduler=scheduler)
+        BranchManager(scheduler=scheduler)
 
         # Nový typ zdroje (source_type = 1.0)
-        finding = {
-            'entity': 'new_source_entity',
-            'source_type': 1.0  # Nový typ zdroje
-        }
 
         # novelty = 1.0, pravděpodobnost > 0.7
         # 0.5 + 0.2*0 + 0.1*1 + 0.2*1 = 0.9 > 0.7
@@ -386,7 +373,7 @@ class TestSharedTensor(unittest.IsolatedAsyncioTestCase):
 
     async def test_shared_tensor(self):
         """Test #12: SharedTensor – reference na MLX array."""
-        from hledac.universal.utils.shared_tensor import SharedTensor, create_shared
+        from hledac.universal.utils.shared_tensor import SharedTensor
 
         # Test bez MLX
         tensor = SharedTensor([1.0, 2.0, 3.0])

@@ -2,7 +2,6 @@
 Test Captcha Solver - Sprint 71
 """
 import unittest
-from unittest.mock import patch, MagicMock
 
 
 class TestCaptchaSolver(unittest.TestCase):

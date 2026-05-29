@@ -8,11 +8,10 @@ and resource management.
 
 import asyncio
 import logging
-import os
 import threading
 import time
 from pathlib import Path
-from typing import Any, Dict, Optional, Set
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -21,7 +20,7 @@ _WASMTIME_AVAILABLE = False
 
 try:
     import wasmtime
-    from wasmtime import Config, Engine, Store, Module
+    from wasmtime import Config, Engine, Module, Store
     _WASMTIME_AVAILABLE = True
 except ImportError:
     wasmtime = None
@@ -52,7 +51,7 @@ class WasmSandbox:
         fuel_limit: int = DEFAULT_FUEL_LIMIT,
         epoch_deadline: float = DEFAULT_EPOCH_DEADLINE,
         timeout: float = DEFAULT_TIMEOUT,
-        cache_dir: Optional[Path] = None
+        cache_dir: Path | None = None
     ):
         """
         Initialize WASM sandbox.
@@ -69,15 +68,15 @@ class WasmSandbox:
         self.cache_dir = cache_dir
 
         # Engine and store
-        self._engine: Optional[Engine] = None
-        self._config: Optional[Config] = None
+        self._engine: Engine | None = None
+        self._config: Config | None = None
 
         # Epoch ticker
-        self._epoch_ticker: Optional[threading.Thread] = None
+        self._epoch_ticker: threading.Thread | None = None
         self._epoch_ticker_running = False
 
         # Running instances
-        self._running_instances: Set[int] = set()
+        self._running_instances: set[int] = set()
         self._lock = threading.Lock()
 
         # Initialize if available
@@ -152,8 +151,8 @@ class WasmSandbox:
         self,
         wasm_bytes: bytes,
         function_name: str = "run",
-        args: Optional[Dict[str, Any]] = None
-    ) -> Dict[str, Any]:
+        args: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
         """
         Run WASM module asynchronously with timeout and fuel limits.
 
@@ -194,7 +193,7 @@ class WasmSandbox:
                 timeout=self.timeout
             )
 
-        except asyncio.TimeoutError:
+        except TimeoutError:
             result['error'] = f"Execution timeout ({self.timeout}s)"
             logger.warning(f"WASM execution timeout: {function_name}")
         except Exception as e:
@@ -207,8 +206,8 @@ class WasmSandbox:
         self,
         wasm_bytes: bytes,
         function_name: str,
-        args: Optional[Dict[str, Any]]
-    ) -> Dict[str, Any]:
+        args: dict[str, Any] | None
+    ) -> dict[str, Any]:
         """
         Synchronous WASM execution with fuel tracking.
 
@@ -288,7 +287,7 @@ class WasmSandbox:
 
         return result
 
-    def load_module(self, wasm_path: Path) -> Optional[bytes]:
+    def load_module(self, wasm_path: Path) -> bytes | None:
         """
         Load WASM module from file.
 
@@ -326,7 +325,7 @@ class WasmSandbox:
 
         logger.info("WASM sandbox shutdown complete")
 
-    def get_stats(self) -> Dict[str, Any]:
+    def get_stats(self) -> dict[str, Any]:
         """Get sandbox statistics."""
         return {
             'available': self.is_available(),

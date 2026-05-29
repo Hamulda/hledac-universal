@@ -2,10 +2,10 @@
 Tests for Sprint 73 Thermal Penalty integration.
 """
 
-import pytest
-from unittest.mock import MagicMock, patch
-from pathlib import Path
 import sys
+from pathlib import Path
+
+import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
@@ -127,7 +127,7 @@ class TestResumingGuard:
                 _resuming = False
 
         # Second call should proceed
-        assert _resuming == False
+        assert not _resuming
 
 
 if __name__ == "__main__":

@@ -35,7 +35,7 @@ import asyncio
 import logging
 import time
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from hledac.universal.knowledge.duckdb_store import CanonicalFinding
@@ -139,7 +139,6 @@ async def _fetch_paste_findings(
     Timeout: TIMEOUT_PER_SOURCE seconds.
     Max findings: MAX_FINDINGS_PER_SOURCE.
     """
-    import json
     result = LeakSourceResult(source="pastebin", findings=[], errors=[])
 
     try:
@@ -149,6 +148,8 @@ async def _fetch_paste_findings(
             try:
                 from hledac.universal.intelligence.pastebin_monitor import (
                     PasteFinding,
+                )
+                from hledac.universal.intelligence.pastebin_monitor import (
                     run as run_pastebin,
                 )
             except ImportError:
@@ -162,7 +163,7 @@ async def _fetch_paste_findings(
                     run_pastebin(query),
                     timeout=TIMEOUT_PER_SOURCE,
                 )
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 result.errors.append("pastebin_monitor timeout")
                 return result
             except Exception as e:
@@ -241,7 +242,7 @@ async def _fetch_github_secret_findings(
                     scan_repo(repo_name),
                     timeout=TIMEOUT_PER_SOURCE,
                 )
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 result.errors.append("github_secret_scanner timeout")
                 return result
             except Exception as e:
@@ -293,8 +294,8 @@ async def _fetch_breach_findings(
             start = time.monotonic()
             try:
                 from hledac.universal.intelligence.data_leak_hunter import (
-                    DataLeakHunter,
                     BreachAPIConfig,
+                    DataLeakHunter,
                 )
             except ImportError:
                 result.errors.append("data_leak_hunter not available")
@@ -320,7 +321,7 @@ async def _fetch_breach_findings(
                     hunter.check_target(query, target_type),
                     timeout=TIMEOUT_PER_SOURCE,
                 )
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 result.errors.append("data_leak_hunter timeout")
                 return result
             except Exception as e:
@@ -333,7 +334,7 @@ async def _fetch_breach_findings(
 
             for alert in alerts[:MAX_FINDINGS_PER_SOURCE]:
                 # Redact any leaked_data values that might contain secrets
-                redacted_data: Dict[str, Any] = {}
+                redacted_data: dict[str, Any] = {}
                 raw_data = alert.leaked_data or {}
                 for k, v in raw_data.items():
                     if isinstance(v, str):
@@ -385,7 +386,7 @@ def _build_evidence_envelope(
         text = json.dumps(envelope, separators=(",", ":"))
         if len(text) > _MAX_ENVELOPE_SIZE:
             # Truncate signal_facets if needed
-            signal_facets = {k: v for k, v in list(signal_facets.items())[:5]}
+            signal_facets = dict(list(signal_facets.items())[:5])
             envelope["signal_facets"] = signal_facets
             text = json.dumps(envelope, separators=(",", ":"))
         return text
@@ -408,7 +409,7 @@ def _dict_to_canonical(
     query: str,
     source_type: str,
     index: int,
-) -> "CanonicalFinding":
+) -> CanonicalFinding:
     """
     Convert a leak finding dict to a CanonicalFinding.
 
@@ -420,6 +421,7 @@ def _dict_to_canonical(
     """
     import hashlib
     import json
+
     from hledac.universal.knowledge.duckdb_store import CanonicalFinding
 
     # Build finding_id from source + query hash
@@ -436,7 +438,7 @@ def _dict_to_canonical(
         pointers.append(finding["alert_id"])
 
     # Build signal facets
-    facets: Dict[str, float] = {}
+    facets: dict[str, float] = {}
     if "secrets_count" in finding:
         facets["secrets_count"] = float(finding["secrets_count"])
     if "emails_count" in finding:
@@ -508,7 +510,7 @@ class LeakSentinelAdapter:
         """Return statistics from the last run."""
         return self._stats
 
-    async def scan(self, query: str) -> list["CanonicalFinding"]:
+    async def scan(self, query: str) -> list[CanonicalFinding]:
         """
         Run bounded leak scans across all available sources.
 
@@ -518,8 +520,6 @@ class LeakSentinelAdapter:
         Returns:
             List of CanonicalFinding (redacted, bounded to MAX_TOTAL_FINDINGS)
         """
-        import json
-        from hledac.universal.knowledge.duckdb_store import CanonicalFinding
 
         self._stats = LeakSentinelStats()
         start = time.monotonic()
@@ -552,7 +552,7 @@ class LeakSentinelAdapter:
                 asyncio.gather(*[t for _, t in sources_to_run], return_exceptions=True),
                 timeout=TIMEOUT_PER_SOURCE * 2,
             )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             # Cancel pending tasks
             for _, t in sources_to_run:
                 if not t.done():

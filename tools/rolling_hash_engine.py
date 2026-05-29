@@ -121,19 +121,21 @@ class RollingHashEngine:
     falls back to pure Python.
     """
 
-    __slots__ = ("_impl", "_is_rust")
+    __slots__ = ("_impl", "_is_rust", "_window_size")
 
     def __init__(
         self,
         base: int = DEFAULT_BASE,
         modulus: int = DEFAULT_MODULUS,
+        window_size: int = 8,
     ) -> None:
         if _RUST_RH_AVAILABLE and _RustRhEngine is not None:
-            self._impl = _RustRhEngine(base=base, modulus=modulus)
+            self._impl = _RustRhEngine(base=base, modulus=modulus, window_size=window_size)
             self._is_rust = True
         else:
             self._impl = RollingHashPython(base=base, modulus=modulus)
             self._is_rust = False
+        self._window_size = window_size
 
     @property
     def is_rust(self) -> bool:
@@ -150,7 +152,68 @@ class RollingHashEngine:
 
     def hashes(self, data: bytes, window_size: int = 8) -> list[int]:
         """Compute hashes for all windows."""
+        if self._is_rust:
+            # Rust hashes() takes no window_size — baked at construction
+            return self._impl.hashes(data)
         return self._impl.hashes(data, window_size)
+
+    def chunk_bytes(self, data: bytes, chunk_size: int = 64) -> list[bytes]:
+        """
+        Split data into fixed-size chunks.
+
+        For repetitive text, content-defined chunking produces identical
+        boundaries (same hash = 2^65), defeating MinHash. Fixed-size
+        chunking ensures meaningful variation in chunk content.
+
+        Args:
+            data: Input bytes (e.g. UTF-8 text)
+            chunk_size: Fixed chunk size in bytes (default 64)
+
+        Returns:
+            List of byte chunks, non-empty
+        """
+        if len(data) <= chunk_size:
+            return [data]
+
+        chunks = []
+        for i in range(0, len(data), chunk_size):
+            chunks.append(data[i:i + chunk_size])
+
+        return chunks
+
+    def chunk_signatures(self, chunks: list[bytes]) -> list[int]:
+        """
+        Hash signature for each chunk.
+
+        Args:
+            chunks: List of byte chunks from chunk_bytes()
+
+        Returns:
+            List of int hash signatures (one per chunk)
+        """
+        return [self.hash(chunk) for chunk in chunks]
+
+    def superfeatures(
+        self,
+        signatures: list[int],
+        num_features: int = 6,
+    ) -> frozenset[int]:
+        """
+        MinHash bottom-k sketch — picks num_features smallest hash values.
+
+        Jaccard similarity on superfeatures approximates full document similarity.
+
+        Args:
+            signatures: List of chunk signatures from chunk_signatures()
+            num_features: Number of superfeatures to select (default 6)
+
+        Returns:
+            frozenset of selected hash values (MinHash bottom-k sketch)
+        """
+        if not signatures:
+            return frozenset()
+        k = min(num_features, len(signatures))
+        return frozenset(sorted(signatures)[:k])
 
 
 def rolling_hash_bytes(data: bytes, base: int = DEFAULT_BASE, modulus: int = DEFAULT_MODULUS) -> int:

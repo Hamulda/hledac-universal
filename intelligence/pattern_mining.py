@@ -31,13 +31,13 @@ PROMOTION GATE: requires production call site evidence before activating.
 
 from __future__ import annotations
 
+import heapq
 import logging
 from collections import Counter, defaultdict, deque
-import heapq
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from enum import Enum
-from typing import Any, Dict, List, Optional, Set, Tuple, Union
+from typing import Any
 
 import numpy as np
 
@@ -89,7 +89,7 @@ async def _get_mamba_model():
         return None, None
 
 
-async def forecast_mamba2(series: List[float], horizon: int = 5) -> Optional[List[float]]:
+async def forecast_mamba2(series: list[float], horizon: int = 5) -> list[float] | None:
     """
     Forecast using Mamba2 model with best-effort timeout and circuit breaker.
 
@@ -161,7 +161,7 @@ Next:"""
             _MAMBA_FAILURES = 0  # Reset on success
             return [float(n) for n in numbers[:horizon]]
 
-    except asyncio.TimeoutError:
+    except TimeoutError:
         _MAMBA_FAILURES += 1
         if _MAMBA_FAILURES >= 3:
             _MAMBA_DISABLED_UNTIL = time.time() + 60
@@ -177,7 +177,7 @@ Next:"""
     return None
 
 
-def _ewma_drift(series: List[float], alpha: float = 0.3, threshold: float = 0.5) -> bool:
+def _ewma_drift(series: list[float], alpha: float = 0.3, threshold: float = 0.5) -> bool:
     """EWMA-based drift detection."""
     if len(series) < 10:
         return False
@@ -190,7 +190,7 @@ def _ewma_drift(series: List[float], alpha: float = 0.3, threshold: float = 0.5)
     return abs(series[-1] - ewma) > threshold * (std + 1e-6)
 
 
-def _cusum_change(series: List[float], threshold: float = 2.0) -> bool:
+def _cusum_change(series: list[float], threshold: float = 2.0) -> bool:
     """CUSUM change detection."""
     if len(series) < 10:
         return False
@@ -207,7 +207,7 @@ def _cusum_change(series: List[float], threshold: float = 2.0) -> bool:
     return False
 
 
-async def detect_change_points_wavelet(series: List[float]) -> List[int]:
+async def detect_change_points_wavelet(series: list[float]) -> list[int]:
     """
     Detect change points using wavelet decomposition.
 
@@ -233,7 +233,7 @@ async def detect_change_points_wavelet(series: List[float]) -> List[int]:
         coeffs = pywt.wavedec(data, 'db4', level=3)
         changes = []
 
-        for i, c in enumerate(coeffs[1:]):  # Skip approximation coefficients
+        for _i, c in enumerate(coeffs[1:]):  # Skip approximation coefficients
             threshold = np.std(c) * 3
             if threshold == 0:
                 continue
@@ -304,8 +304,8 @@ class Event:
     timestamp: datetime
     entity_id: str
     event_type: str
-    value: Optional[float] = None
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    value: float | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -314,9 +314,9 @@ class Action:
     timestamp: datetime
     user_id: str
     action_type: str
-    target: Optional[str] = None
-    duration_ms: Optional[int] = None
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    target: str | None = None
+    duration_ms: int | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -326,8 +326,8 @@ class Communication:
     sender: str
     recipient: str
     channel: str  # email, sms, call, etc.
-    size_bytes: Optional[int] = None
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    size_bytes: int | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -338,8 +338,8 @@ class Transaction:
     recipient: str
     amount: float
     currency: str = "USD"
-    transaction_id: Optional[str] = None
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    transaction_id: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 # =============================================================================
@@ -353,20 +353,20 @@ class Pattern:
     description: str
     confidence: float  # 0-1
     support: float  # 0-1, how often it occurs
-    entities: List[str] = field(default_factory=list)
-    evidence: List[str] = field(default_factory=list)
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    entities: list[str] = field(default_factory=list)
+    evidence: list[str] = field(default_factory=list)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
 class TemporalPattern(Pattern):
     """Temporal pattern with time-based characteristics."""
-    period: Optional[timedelta] = None
-    seasonality: Optional[SeasonalityType] = None
-    burst_times: List[datetime] = field(default_factory=list)
+    period: timedelta | None = None
+    seasonality: SeasonalityType | None = None
+    burst_times: list[datetime] = field(default_factory=list)
     trend: TrendDirection = TrendDirection.STABLE
-    start_time: Optional[datetime] = None
-    end_time: Optional[datetime] = None
+    start_time: datetime | None = None
+    end_time: datetime | None = None
 
     def __post_init__(self):
         if self.pattern_type is None:
@@ -376,11 +376,11 @@ class TemporalPattern(Pattern):
 @dataclass
 class BehavioralPattern(Pattern):
     """Behavioral pattern from user actions."""
-    user_id: Optional[str] = None
-    action_sequence: List[str] = field(default_factory=list)
+    user_id: str | None = None
+    action_sequence: list[str] = field(default_factory=list)
     frequency_per_day: float = 0.0
-    preferred_times: List[int] = field(default_factory=list)  # Hours of day (0-23)
-    pattern_duration_ms: Optional[int] = None  # Typical duration
+    preferred_times: list[int] = field(default_factory=list)  # Hours of day (0-23)
+    pattern_duration_ms: int | None = None  # Typical duration
 
     def __post_init__(self):
         if self.pattern_type is None:
@@ -390,11 +390,11 @@ class BehavioralPattern(Pattern):
 @dataclass
 class CommunicationPattern(Pattern):
     """Communication pattern between entities."""
-    response_time_avg: Optional[timedelta] = None
-    response_time_std: Optional[timedelta] = None
+    response_time_avg: timedelta | None = None
+    response_time_std: timedelta | None = None
     frequency: float = 0.0  # Messages per day
     network_centrality: float = 0.0  # 0-1, how central in network
-    cluster_id: Optional[str] = None
+    cluster_id: str | None = None
 
     def __post_init__(self):
         if self.pattern_type is None:
@@ -404,10 +404,10 @@ class CommunicationPattern(Pattern):
 @dataclass
 class FlowPattern(Pattern):
     """Transaction or data flow pattern."""
-    source_clusters: List[str] = field(default_factory=list)
-    destination_clusters: List[str] = field(default_factory=list)
-    flow_volume: Dict[Tuple[str, str], float] = field(default_factory=dict)
-    intermediaries: List[str] = field(default_factory=list)
+    source_clusters: list[str] = field(default_factory=list)
+    destination_clusters: list[str] = field(default_factory=list)
+    flow_volume: dict[tuple[str, str], float] = field(default_factory=dict)
+    intermediaries: list[str] = field(default_factory=list)
     cycle_detected: bool = False
     concentration_index: float = 0.0  # Gini coefficient for flow distribution
 
@@ -420,8 +420,8 @@ class FlowPattern(Pattern):
 class StructuralPattern(Pattern):
     """Structural/organizational pattern."""
     hierarchy_levels: int = 0
-    hierarchy_edges: List[Tuple[str, str]] = field(default_factory=list)
-    cluster_sizes: Dict[str, int] = field(default_factory=dict)
+    hierarchy_edges: list[tuple[str, str]] = field(default_factory=list)
+    cluster_sizes: dict[str, int] = field(default_factory=dict)
     centralization: float = 0.0  # 0-1
     density: float = 0.0  # Network density
 
@@ -433,7 +433,7 @@ class StructuralPattern(Pattern):
 @dataclass
 class SequentialPattern(Pattern):
     """Sequential pattern from ordered events."""
-    sequence: List[str] = field(default_factory=list)
+    sequence: list[str] = field(default_factory=list)
     sequence_length: int = 0
     occurrence_count: int = 0
     is_cyclic: bool = False
@@ -452,18 +452,18 @@ class Anomaly:
     entity_id: str
     description: str
     severity: float  # 0-1
-    expected_value: Optional[float] = None
-    actual_value: Optional[float] = None
-    related_pattern: Optional[str] = None
+    expected_value: float | None = None
+    actual_value: float | None = None
+    related_pattern: str | None = None
 
 
 @dataclass
 class CorrelationMatrix:
     """Cross-pattern correlation results."""
-    pattern_ids: List[str] = field(default_factory=list)
+    pattern_ids: list[str] = field(default_factory=list)
     correlation_matrix: np.ndarray = field(default_factory=lambda: np.array([]))
     p_values: np.ndarray = field(default_factory=lambda: np.array([]))
-    significant_pairs: List[Tuple[str, str, float]] = field(default_factory=list)
+    significant_pairs: list[tuple[str, str, float]] = field(default_factory=list)
 
 
 # =============================================================================
@@ -504,7 +504,7 @@ class SlidingWindowCounter:
         """Get frequency of item in current window."""
         return self.counter.get(item, 0)
 
-    def get_top_k(self, k: int = 10) -> List[Tuple[Any, int]]:
+    def get_top_k(self, k: int = 10) -> list[tuple[Any, int]]:
         """Get top k most frequent items using heapq for O(n log k) performance (Sprint 26)."""
         if not self.counter:
             return []
@@ -584,14 +584,14 @@ class PatternMiningEngine:
         self.min_confidence = min_confidence
 
         # Streaming statistics for each entity type
-        self._streaming_stats: Dict[str, StreamingStatistics] = defaultdict(StreamingStatistics)
+        self._streaming_stats: dict[str, StreamingStatistics] = defaultdict(StreamingStatistics)
 
         # Heavy hitters: top-K patterns (bounded to 200)
-        self._top_patterns: Dict[str, int] = {}
+        self._top_patterns: dict[str, int] = {}
 
         logger.info(f"PatternMiningEngine initialized (MLX: {self.use_mlx})")
 
-    async def detect_change_points(self, series: List[float]) -> List[int]:
+    async def detect_change_points(self, series: list[float]) -> list[int]:
         """
         Detect change points in time series using wavelet + Mamba2 (with fallbacks).
 
@@ -658,9 +658,9 @@ class PatternMiningEngine:
 
     def mine_temporal_patterns(
         self,
-        events: List[Event],
+        events: list[Event],
         min_events: int = 10
-    ) -> List[TemporalPattern]:
+    ) -> list[TemporalPattern]:
         """
         Mine temporal patterns from events.
 
@@ -705,9 +705,9 @@ class PatternMiningEngine:
 
     def _detect_periodicity(
         self,
-        timestamps: List[datetime],
-        values: Optional[List[float]] = None
-    ) -> List[TemporalPattern]:
+        timestamps: list[datetime],
+        values: list[float] | None = None
+    ) -> list[TemporalPattern]:
         """Detect periodic patterns using FFT."""
         patterns = []
 
@@ -729,9 +729,9 @@ class PatternMiningEngine:
 
     def _detect_periodicity_mlx(
         self,
-        time_diffs: List[float],
-        timestamps: List[datetime]
-    ) -> List[TemporalPattern]:
+        time_diffs: list[float],
+        timestamps: list[datetime]
+    ) -> list[TemporalPattern]:
         """Detect periodicity using MLX FFT (M1 optimized)."""
         patterns = []
 
@@ -794,9 +794,9 @@ class PatternMiningEngine:
 
     def _compute_fft_periodicity(
         self,
-        time_diffs: List[float],
-        timestamps: List[datetime]
-    ) -> List[TemporalPattern]:
+        time_diffs: list[float],
+        timestamps: list[datetime]
+    ) -> list[TemporalPattern]:
         """Detect periodicity using FFT (O(n log n) instead of O(n²) autocorrelation)."""
         patterns = []
 
@@ -869,9 +869,9 @@ class PatternMiningEngine:
 
     def _detect_periodicity_autocorr(
         self,
-        time_diffs: List[float],
-        timestamps: List[datetime]
-    ) -> List[TemporalPattern]:
+        time_diffs: list[float],
+        timestamps: list[datetime]
+    ) -> list[TemporalPattern]:
         """Detect periodicity using autocorrelation."""
         patterns = []
 
@@ -922,7 +922,7 @@ class PatternMiningEngine:
 
         return patterns
 
-    def _detect_bursts(self, events: List[Event]) -> Optional[TemporalPattern]:
+    def _detect_bursts(self, events: list[Event]) -> TemporalPattern | None:
         """Detect burst patterns in event timing."""
         if len(events) < 10:
             return None
@@ -962,7 +962,7 @@ class PatternMiningEngine:
                 description=f"Detected {len(bursts)} burst periods",
                 confidence=min(0.9, len(bursts) / 10),
                 support=len(bursts) / len(events),
-                entities=list(set(e.entity_id for e in events)),
+                entities=list({e.entity_id for e in events}),
                 evidence=[f"Burst threshold: {threshold:.2f}s"],
                 burst_times=bursts,
                 trend=TrendDirection.VOLATILE,
@@ -972,7 +972,7 @@ class PatternMiningEngine:
 
         return None
 
-    def _detect_trend(self, events: List[Event]) -> Optional[TemporalPattern]:
+    def _detect_trend(self, events: list[Event]) -> TemporalPattern | None:
         """Detect trend in event values or frequency."""
         if len(events) < 5:
             return None
@@ -1017,7 +1017,7 @@ class PatternMiningEngine:
                 description=f"Trend: {direction.value} (slope={slope:.4f})",
                 confidence=min(0.95, r_squared),
                 support=0.7,
-                entities=list(set(e.entity_id for e in events)),
+                entities=list({e.entity_id for e in events}),
                 evidence=[f"R² = {r_squared:.3f}"],
                 trend=direction,
                 start_time=events[0].timestamp,
@@ -1028,8 +1028,8 @@ class PatternMiningEngine:
 
     def _detect_seasonality(
         self,
-        timestamps: List[datetime]
-    ) -> Optional[TemporalPattern]:
+        timestamps: list[datetime]
+    ) -> TemporalPattern | None:
         """Detect daily/weekly seasonality patterns."""
         if len(timestamps) < 24:
             return None
@@ -1091,9 +1091,9 @@ class PatternMiningEngine:
 
     def mine_behavioral_patterns(
         self,
-        actions: List[Action],
+        actions: list[Action],
         min_actions: int = 5
-    ) -> List[BehavioralPattern]:
+    ) -> list[BehavioralPattern]:
         """
         Mine behavioral patterns from user actions.
 
@@ -1110,7 +1110,7 @@ class PatternMiningEngine:
         patterns = []
 
         # Group actions by user
-        user_actions: Dict[str, List[Action]] = defaultdict(list)
+        user_actions: dict[str, list[Action]] = defaultdict(list)
         for action in actions:
             user_actions[action.user_id].append(action)
 
@@ -1141,8 +1141,8 @@ class PatternMiningEngine:
     def _extract_action_sequence(
         self,
         user_id: str,
-        actions: List[Action]
-    ) -> Optional[BehavioralPattern]:
+        actions: list[Action]
+    ) -> BehavioralPattern | None:
         """Extract common action sequences using sequential pattern mining."""
         if len(actions) < 3:
             return None
@@ -1185,8 +1185,8 @@ class PatternMiningEngine:
     def _extract_temporal_preferences(
         self,
         user_id: str,
-        actions: List[Action]
-    ) -> Optional[BehavioralPattern]:
+        actions: list[Action]
+    ) -> BehavioralPattern | None:
         """Extract temporal preferences (preferred hours of activity)."""
         if len(actions) < 5:
             return None
@@ -1216,8 +1216,8 @@ class PatternMiningEngine:
     def _extract_frequency_pattern(
         self,
         user_id: str,
-        actions: List[Action]
-    ) -> Optional[BehavioralPattern]:
+        actions: list[Action]
+    ) -> BehavioralPattern | None:
         """Extract frequency-based behavioral pattern."""
         if len(actions) < 5:
             return None
@@ -1260,9 +1260,9 @@ class PatternMiningEngine:
 
     def mine_communication_patterns(
         self,
-        communications: List[Communication],
+        communications: list[Communication],
         min_communications: int = 5
-    ) -> List[CommunicationPattern]:
+    ) -> list[CommunicationPattern]:
         """
         Mine communication patterns.
 
@@ -1279,7 +1279,7 @@ class PatternMiningEngine:
         patterns = []
 
         # Build communication graph
-        edges: Dict[Tuple[str, str], List[Communication]] = defaultdict(list)
+        edges: dict[tuple[str, str], list[Communication]] = defaultdict(list)
         for comm in communications:
             key = (comm.sender, comm.recipient)
             edges[key].append(comm)
@@ -1304,8 +1304,8 @@ class PatternMiningEngine:
         self,
         sender: str,
         recipient: str,
-        comms: List[Communication]
-    ) -> Optional[CommunicationPattern]:
+        comms: list[Communication]
+    ) -> CommunicationPattern | None:
         """Analyze communication pattern between a specific pair."""
         if len(comms) < 2:
             return None
@@ -1343,15 +1343,15 @@ class PatternMiningEngine:
 
     def _analyze_network_structure(
         self,
-        communications: List[Communication]
-    ) -> Optional[CommunicationPattern]:
+        communications: list[Communication]
+    ) -> CommunicationPattern | None:
         """Analyze overall network structure."""
         if len(communications) < 10:
             return None
 
         # Build adjacency list
-        adjacency: Dict[str, Set[str]] = defaultdict(set)
-        all_nodes: Set[str] = set()
+        adjacency: dict[str, set[str]] = defaultdict(set)
+        all_nodes: set[str] = set()
 
         for comm in communications:
             adjacency[comm.sender].add(comm.recipient)
@@ -1388,9 +1388,9 @@ class PatternMiningEngine:
 
     def analyze_transaction_flows(
         self,
-        transactions: List[Transaction],
+        transactions: list[Transaction],
         min_transactions: int = 5
-    ) -> Optional[FlowPattern]:
+    ) -> FlowPattern | None:
         """
         Analyze transaction flows for patterns.
 
@@ -1405,13 +1405,13 @@ class PatternMiningEngine:
             return None
 
         # Build flow graph
-        flows: Dict[Tuple[str, str], List[Transaction]] = defaultdict(list)
+        flows: dict[tuple[str, str], list[Transaction]] = defaultdict(list)
         for tx in transactions:
             key = (tx.sender, tx.recipient)
             flows[key].append(tx)
 
         # Calculate flow volumes
-        flow_volume: Dict[Tuple[str, str], float] = {}
+        flow_volume: dict[tuple[str, str], float] = {}
         for key, txs in flows.items():
             total = sum(tx.amount for tx in txs)
             flow_volume[key] = total
@@ -1423,8 +1423,8 @@ class PatternMiningEngine:
             all_entities.add(recipient)
 
         # Simple clustering: entities with multiple mutual connections
-        clusters: Dict[str, Set[str]] = {}
-        entity_cluster: Dict[str, str] = {}
+        clusters: dict[str, set[str]] = {}
+        entity_cluster: dict[str, str] = {}
 
         for entity in all_entities:
             if entity not in entity_cluster:
@@ -1441,8 +1441,8 @@ class PatternMiningEngine:
                             entity_cluster[other] = cluster_id
 
         # Identify intermediaries (entities with high in/out ratio)
-        in_flows: Dict[str, float] = defaultdict(float)
-        out_flows: Dict[str, float] = defaultdict(float)
+        in_flows: dict[str, float] = defaultdict(float)
+        out_flows: dict[str, float] = defaultdict(float)
 
         for (sender, recipient), volume in flow_volume.items():
             out_flows[sender] += volume
@@ -1470,8 +1470,8 @@ class PatternMiningEngine:
             support=len(transactions) / max(1, len(all_entities)),
             entities=list(all_entities),
             evidence=[f"{len(flows)} unique flows", f"Concentration: {concentration:.2f}"],
-            source_clusters=[c for c in clusters.keys()],
-            destination_clusters=[c for c in clusters.keys()],
+            source_clusters=list(clusters.keys()),
+            destination_clusters=list(clusters.keys()),
             flow_volume=flow_volume,
             intermediaries=intermediaries,
             cycle_detected=cycle_detected,
@@ -1480,11 +1480,11 @@ class PatternMiningEngine:
 
     def _detect_cycles(
         self,
-        flows: Dict[Tuple[str, str], List[Transaction]]
+        flows: dict[tuple[str, str], list[Transaction]]
     ) -> bool:
         """Detect cycles in flow graph (simplified)."""
         # Build adjacency
-        adjacency: Dict[str, Set[str]] = defaultdict(set)
+        adjacency: dict[str, set[str]] = defaultdict(set)
         for sender, recipient in flows.keys():
             adjacency[sender].add(recipient)
 
@@ -1501,7 +1501,7 @@ class PatternMiningEngine:
 
         return False
 
-    def _gini_coefficient(self, values: List[float]) -> float:
+    def _gini_coefficient(self, values: list[float]) -> float:
         """Calculate Gini coefficient for concentration."""
         if not values or len(values) < 2:
             return 0.0
@@ -1517,10 +1517,10 @@ class PatternMiningEngine:
 
     def find_sequential_patterns(
         self,
-        sequences: List[List[str]],
-        min_support: Optional[float] = None,
+        sequences: list[list[str]],
+        min_support: float | None = None,
         max_pattern_length: int = 5
-    ) -> List[SequentialPattern]:
+    ) -> list[SequentialPattern]:
         """
         Find frequent sequential patterns using SPADE-like algorithm.
 
@@ -1602,9 +1602,9 @@ class PatternMiningEngine:
     def detect_anomalies_in_pattern(
         self,
         pattern: Pattern,
-        new_data: List[Any],
+        new_data: list[Any],
         threshold: float = 2.0
-    ) -> List[Anomaly]:
+    ) -> list[Anomaly]:
         """
         Detect anomalies relative to an established pattern.
 
@@ -1630,9 +1630,9 @@ class PatternMiningEngine:
     def _detect_temporal_anomalies(
         self,
         pattern: TemporalPattern,
-        new_data: List[Event],
+        new_data: list[Event],
         threshold: float
-    ) -> List[Anomaly]:
+    ) -> list[Anomaly]:
         """Detect anomalies in temporal pattern."""
         anomalies = []
 
@@ -1675,9 +1675,9 @@ class PatternMiningEngine:
     def _detect_behavioral_anomalies(
         self,
         pattern: BehavioralPattern,
-        new_data: List[Action],
+        new_data: list[Action],
         threshold: float
-    ) -> List[Anomaly]:
+    ) -> list[Anomaly]:
         """Detect anomalies in behavioral pattern."""
         anomalies = []
 
@@ -1716,9 +1716,9 @@ class PatternMiningEngine:
     def _detect_flow_anomalies(
         self,
         pattern: FlowPattern,
-        new_data: List[Transaction],
+        new_data: list[Transaction],
         threshold: float
-    ) -> List[Anomaly]:
+    ) -> list[Anomaly]:
         """Detect anomalies in flow pattern."""
         anomalies = []
 
@@ -1771,7 +1771,7 @@ class PatternMiningEngine:
 
     def cross_pattern_correlation(
         self,
-        patterns: List[Pattern],
+        patterns: list[Pattern],
         use_mlx: bool = True
     ) -> CorrelationMatrix:
         """
@@ -1798,7 +1798,7 @@ class PatternMiningEngine:
         else:
             return self._correlation_numpy(features, pattern_ids)
 
-    def _extract_pattern_features(self, patterns: List[Pattern]) -> np.ndarray:
+    def _extract_pattern_features(self, patterns: list[Pattern]) -> np.ndarray:
         """Extract numerical features from patterns for correlation."""
         features = []
 
@@ -1850,7 +1850,7 @@ class PatternMiningEngine:
     def _correlation_mlx(
         self,
         features: np.ndarray,
-        pattern_ids: List[str]
+        pattern_ids: list[str]
     ) -> CorrelationMatrix:
         """Calculate correlation using MLX (M1 optimized)."""
         try:
@@ -1863,7 +1863,7 @@ class PatternMiningEngine:
             standardized = (mx_features - mean) / (std + 1e-10)
 
             # Correlation matrix
-            n = mx_features.shape[0]
+            mx_features.shape[0]
             corr_matrix = mx.matmul(standardized, standardized.T) / standardized.shape[1]
 
             # Convert to numpy
@@ -1889,7 +1889,7 @@ class PatternMiningEngine:
     def _correlation_numpy(
         self,
         features: np.ndarray,
-        pattern_ids: List[str]
+        pattern_ids: list[str]
     ) -> CorrelationMatrix:
         """Calculate correlation using NumPy."""
         # Standardize
@@ -1919,9 +1919,9 @@ class PatternMiningEngine:
 
     def detect_periodicity_mlx(
         self,
-        timestamps: List[datetime],
-        values: Optional[List[float]] = None
-    ) -> List[TemporalPattern]:
+        timestamps: list[datetime],
+        values: list[float] | None = None
+    ) -> list[TemporalPattern]:
         """
         Detect periodicity using MLX FFT (public API).
 
@@ -1943,10 +1943,10 @@ class PatternMiningEngine:
 
     def batch_pattern_matching(
         self,
-        patterns: List[Pattern],
-        data_batch: List[Any],
+        patterns: list[Pattern],
+        data_batch: list[Any],
         batch_size: int = 100
-    ) -> Dict[int, List[Pattern]]:
+    ) -> dict[int, list[Pattern]]:
         """
         Match patterns against data in batches (M1 memory optimized).
 
@@ -1958,7 +1958,7 @@ class PatternMiningEngine:
         Returns:
             Dictionary mapping data index to matched patterns
         """
-        results: Dict[int, List[Pattern]] = {}
+        results: dict[int, list[Pattern]] = {}
 
         for i in range(0, len(data_batch), batch_size):
             batch = data_batch[i:i+batch_size]

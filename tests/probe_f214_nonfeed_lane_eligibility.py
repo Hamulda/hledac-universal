@@ -9,7 +9,6 @@ Synthetic validation of _build_nonfeed_lane_eligibility():
 - Schema: correct required_inputs per lane
 """
 
-import pytest
 
 from hledac.universal.runtime.acquisition_strategy import (
     _build_nonfeed_lane_eligibility,

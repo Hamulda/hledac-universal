@@ -5,9 +5,8 @@ Provides OCR capabilities using macOS Vision framework via ocrmac library.
 Optimized for M1 Mac with fail-safe handling.
 """
 
-import os
 import logging
-from typing import List
+import os
 
 logger = logging.getLogger(__name__)
 
@@ -25,7 +24,7 @@ class VisionOCR:
     - Runtime error handling
     """
 
-    def recognize(self, image_path: str) -> List[str]:
+    def recognize(self, image_path: str) -> list[str]:
         """
         Perform OCR on an image file.
 
@@ -69,7 +68,7 @@ class VisionOCR:
             logger.warning(f"[VisionOCR] OCR failed for {image_path}: {e}")
             return []
 
-    def recognize_bytes(self, image_bytes: bytes) -> List[str]:
+    def recognize_bytes(self, image_bytes: bytes) -> list[str]:
         """
         Perform OCR on image bytes with size guard and temp file.
 
@@ -84,9 +83,10 @@ class VisionOCR:
             logger.warning(f"[VisionOCR] Image too large: {len(image_bytes)} bytes, skipping")
             return []
         try:
-            import ocrmac
-            import tempfile
             import os
+            import tempfile
+
+            import ocrmac
 
             with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as f:
                 f.write(image_bytes)
@@ -105,7 +105,7 @@ class VisionOCR:
             return []
 
 
-async def recognize_async(image_path: str) -> List[str]:
+async def recognize_async(image_path: str) -> list[str]:
     """Async wrapper for OCR recognition."""
     import asyncio
     loop = asyncio.get_running_loop()

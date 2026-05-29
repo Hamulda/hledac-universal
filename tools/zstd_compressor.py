@@ -8,7 +8,6 @@ Provides compression with content-aware levels and passive dictionary building.
 from __future__ import annotations
 
 from collections import deque
-from typing import Optional
 
 try:
     import zstd
@@ -23,7 +22,7 @@ class ZstdCompressor:
 
     def __init__(self):
         self._dctx = zstd.ZstdDecompressor() if ZSTD_AVAILABLE else None
-        self._dictionary_data: Optional[bytes] = None
+        self._dictionary_data: bytes | None = None
         self._response_counter = 0
         self._response_samples: deque[tuple[bytes, str]] = deque(maxlen=100)
 

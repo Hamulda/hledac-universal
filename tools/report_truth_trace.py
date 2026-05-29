@@ -19,8 +19,6 @@ import argparse
 import json
 import sys
 from dataclasses import dataclass, field
-from typing import Optional
-
 
 # F208 fields to trace at each boundary
 F208_FIELDS = [
@@ -65,17 +63,17 @@ class BoundarySnapshot:
 @dataclass
 class TraceResult:
     verdict: str
-    drop_boundary: Optional[str]
+    drop_boundary: str | None
     boundary_snapshots: dict
     acquisition_missing_in: list
     terminality_state: dict
     details: dict
     # Extended classification fields
-    terminality_satisfied: Optional[bool] = None
-    missing_lanes: Optional[list] = None
-    benchmark_shape_gaps: Optional[list] = None
-    internal_runtime_failures: Optional[list] = None
-    terminality_source_outcome_mismatch: Optional[list] = None  # lanes that appear attempted but stale in missing_lanes
+    terminality_satisfied: bool | None = None
+    missing_lanes: list | None = None
+    benchmark_shape_gaps: list | None = None
+    internal_runtime_failures: list | None = None
+    terminality_source_outcome_mismatch: list | None = None  # lanes that appear attempted but stale in missing_lanes
 
 
 def extract_fields(obj: dict, fields: list, source: str) -> BoundarySnapshot:
@@ -95,9 +93,9 @@ def extract_fields(obj: dict, fields: list, source: str) -> BoundarySnapshot:
 
 def trace_verdict(
     snapshots: dict,
-    raw_benchmark: Optional[dict] = None,
-    raw_internal: Optional[dict] = None,
-) -> tuple[str, Optional[str], dict]:
+    raw_benchmark: dict | None = None,
+    raw_internal: dict | None = None,
+) -> tuple[str, str | None, dict]:
     """Determine TRACE verdict from boundary snapshots.
 
     Args:
@@ -214,7 +212,7 @@ def trace_verdict(
 
 
 def _find_terminality_stale_lanes(
-    raw_internal: Optional[dict],
+    raw_internal: dict | None,
 ) -> list:
     """Detect lanes where source_family_outcomes shows attempted but terminality.missing_lanes still lists them.
 
@@ -268,7 +266,7 @@ def _find_terminality_stale_lanes(
     return stale
 
 
-def load_json(path: str) -> Optional[dict]:
+def load_json(path: str) -> dict | None:
     """Load JSON file, return None on error."""
     try:
         with open(path) as fh:
@@ -279,7 +277,7 @@ def load_json(path: str) -> Optional[dict]:
 
 def trace_boundaries(
     benchmark_path: str,
-    validation_path: Optional[str],
+    validation_path: str | None,
     output_json_path: str,
     output_md_path: str,
 ) -> TraceResult:
@@ -465,7 +463,7 @@ def trace_boundaries(
     # Add timing mismatch diagnosis when applicable
     mismatch = result.terminality_source_outcome_mismatch
     if mismatch:
-        parts.append(f"""
+        parts.append("""
 ## Timing Diagnosis
 
 **Likely Cause:** terminality_computed_before_nonfeed_predispatch
@@ -483,10 +481,7 @@ def trace_boundaries(
 
 
 def main():
-    if sys.version_info >= (3, 14):
-        parser = argparse.ArgumentParser(description="F208 Truth Boundary Diagnostic", suggest_on_error=True, color=True)
-    else:
-        parser = argparse.ArgumentParser(description="F208 Truth Boundary Diagnostic")
+    parser = argparse.ArgumentParser(description="F208 Truth Boundary Diagnostic", suggest_on_error=True, color=True)
     parser.add_argument("--benchmark-json", required=True, help="Path to benchmark JSON")
     parser.add_argument("--validation-json", help="Path to optional validation JSON")
     parser.add_argument("--output-json", required=True, help="Output JSON path")

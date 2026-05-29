@@ -487,8 +487,8 @@ class TestDegreeWeightedNoveltyPenalty:
 
         graph_stats = {"domains": [], "node_degrees": {"cdn.provider.com": 50}}
         score = _score_pivot_domain("cdn.provider.com", 0.5, None, graph_stats)
-        # Base: 0.5 * 0.6 = 0.3; novelty +0.2 = 0.5; penalty min(0.15, 50*0.01)=0.15
-        assert score < 0.4  # penalty reduces score
+        # F238A: normalize_source_quality(None)=0.5 → base=0.5, novelty +0.2, degree-0.15
+        assert score < 0.60  # degree penalty still reduces score from 0.70
 
     def test_degree_penalty_cap_at_0_15(self):
         """F229A: Degree penalty capped at 0.15."""
@@ -497,8 +497,8 @@ class TestDegreeWeightedNoveltyPenalty:
         # degree=99 → min(0.15, 0.99) = 0.15
         graph_stats = {"domains": [], "node_degrees": {"massivecdn.com": 99}}
         score = _score_pivot_domain("massivecdn.com", 0.5, None, graph_stats)
-        # Base: 0.3 + 0.2 - 0.15 = 0.35
-        assert score >= 0.30  # penalty doesn't exceed cap
+        # F238A: base=0.5 + novelty=0.2 - degree=0.15 = 0.55
+        assert score >= 0.50  # degree penalty capped at 0.15, score stays >= 0.50
 
     def test_existing_domain_gets_mild_deprioritization(self):
         """F229A: Existing domain gets -0.05 deprioritization."""
@@ -506,8 +506,8 @@ class TestDegreeWeightedNoveltyPenalty:
 
         graph_stats = {"domains": ["already.seen.com"], "node_degrees": {"already.seen.com": 5}}
         score = _score_pivot_domain("already.seen.com", 0.5, None, graph_stats)
-        # Base: 0.3; no novelty bonus; -0.05 existing penalty; degree 5*0.01=0.05 penalty
-        assert score < 0.3  # existing domain penalized
+        # F238A: base=0.5, existing-0.05, degree-0.05 → 0.40
+        assert score < 0.45  # existing domain + degree penalty = 0.40
 
     def test_score_never_exceeds_1_0(self):
         """F229A: Score clamped to [0.0, 1.0] upper bound."""
@@ -539,10 +539,10 @@ class TestDegreeWeightedNoveltyPenalty:
         rare_score = _score_pivot_domain("rare.example.com", 0.8, None, graph_stats)
         cdn_score = _score_pivot_domain("cdn.cloudprovider.com", 0.8, None, graph_stats)
 
-        # rare.example.com: base=0.48, novelty=+0.2, degree_penalty=-0.02 → 0.66
-        # cdn.cloudprovider.com: base=0.48, existing=-0.05, degree_penalty=-0.15 → 0.28
+        # rare.example.com: base=0.80, novelty=+0.2, degree=-0.02 → 0.98
+        # cdn.cloudprovider.com: base=0.80, existing=-0.05, degree=-0.15 → 0.60
         assert rare_score > cdn_score, \
-            f"Low-degree novel domain (0.66) should score higher than high-degree existing (0.28), got {rare_score} vs {cdn_score}"
+            f"Low-degree novel domain (0.98) should score higher than high-degree existing (0.60), got {rare_score} vs {cdn_score}"
 
 
 if __name__ == "__main__":

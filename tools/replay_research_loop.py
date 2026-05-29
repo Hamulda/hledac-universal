@@ -39,7 +39,6 @@ from hledac.universal.runtime.next_seeds_consumption import (
     load_next_sprint_seeds,
 )
 
-
 # ---------------------------------------------------------------------------
 # Built-in hermetic fixtures
 # ---------------------------------------------------------------------------
@@ -621,9 +620,9 @@ def _render_markdown(artifact: dict) -> str:
 
     domains = psi.get("domains", [])
     ips = psi.get("ips", [])
-    urls = psi.get("urls", [])
+    psi.get("urls", [])
     hashes = psi.get("hashes", [])
-    cves = psi.get("cves", [])
+    psi.get("cves", [])
 
     lines = [
         "# Research Loop Replay",

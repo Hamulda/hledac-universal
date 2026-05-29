@@ -13,14 +13,14 @@ Usage:
         python tools/probe_f214m_execution_optimizer_backpressure.py
 """
 import asyncio
+import gc
 import inspect
-import sys
+import os
 import time
 import tracemalloc
-import os
-import gc
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
-from typing import List, Any, Callable
+from typing import Any
 
 # ── Probe Configuration ──────────────────────────────────────────────────────
 
@@ -42,10 +42,10 @@ class MockLoadBalancer:
 # ── Bounded Variants for Comparison (outside production code) ────────────────
 
 async def execute_parallel_bounded(
-    tasks: List[Any],
+    tasks: list[Any],
     max_pending: int,
     thread_pool
-) -> List[Any]:
+) -> list[Any]:
     """Bounded variant — backpressure guard: process max_pending at a time."""
     if not tasks:
         return []
@@ -62,7 +62,7 @@ async def execute_parallel_bounded(
     return results
 
 
-async def execute_parallel_serial(tasks: List[Any]) -> List[Any]:
+async def execute_parallel_serial(tasks: list[Any]) -> list[Any]:
     """Serial baseline — no parallelism."""
     results = []
     for task in tasks:
@@ -115,14 +115,14 @@ async def probe_memory_pressure():
     process = psutil.Process(os.getpid())
 
     # I/O-bound task: async sleep (simulates network I/O)
-    def make_io_tasks(n: int) -> List[Callable]:
+    def make_io_tasks(n: int) -> list[Callable]:
         async def io_task():
             await asyncio.sleep(0.01)  # 10ms I/O wait
-            return f"io_result"
+            return "io_result"
         return [io_task for _ in range(n)]
 
     # CPU-bound task: small computation
-    def make_cpu_tasks(n: int) -> List[Callable]:
+    def make_cpu_tasks(n: int) -> list[Callable]:
         def cpu_task():
             _ = sum(i*i for i in range(100))
             return "cpu_result"
@@ -137,9 +137,9 @@ async def probe_memory_pressure():
 
         tasks = task_factory(task_count)
         if use_bounded:
-            results = await execute_parallel_bounded(tasks, max_pending, thread_pool)
+            await execute_parallel_bounded(tasks, max_pending, thread_pool)
         else:
-            results = await asyncio.gather(*[t() if inspect.iscoroutinefunction(t) else
+            await asyncio.gather(*[t() if inspect.iscoroutinefunction(t) else
                                               asyncio.get_event_loop().run_in_executor(thread_pool, t)
                                               for t in tasks], return_exceptions=True)
 
@@ -157,10 +157,10 @@ async def probe_memory_pressure():
     # Baseline: current (unbounded asyncio.gather)
     print("\n[UNBOUNDED asyncio.gather — current production behavior]")
     for size in IO_WORKLOAD_SIZES:
-        await measure(f"IO-bound (async sleep 10ms)", size, make_io_tasks)
+        await measure("IO-bound (async sleep 10ms)", size, make_io_tasks)
 
     for size in CPU_WORKLOAD_SIZES:
-        await measure(f"CPU-bound (computation)", size, make_cpu_tasks)
+        await measure("CPU-bound (computation)", size, make_cpu_tasks)
 
     # Bounded variants
     for mp in [16, 32]:
@@ -169,7 +169,7 @@ async def probe_memory_pressure():
             await measure(f"IO-bound (bounded={mp})", size, make_io_tasks, use_bounded=True, max_pending=mp)
 
     # Serial baseline
-    print(f"\n[SERIAL BASELINE — no parallelism]")
+    print("\n[SERIAL BASELINE — no parallelism]")
     for size in [4, 8, 16]:
         await measure("Serial IO", size, make_io_tasks)
 
@@ -198,7 +198,7 @@ async def probe_exception_behavior():
     print(f"  Exceptions injected at indices: {[i for i, e in enumerate(errors) if e]}")
     print(f"  Results: {results}")
     print(f"  Exception types: {[type(r).__name__ for r in results if isinstance(r, Exception)]}")
-    print(f"  → return_exceptions=True correctly returns Exception objects, not raises")
+    print("  → return_exceptions=True correctly returns Exception objects, not raises")
 
 
 async def probe_strategy_comparison():
@@ -267,8 +267,8 @@ async def probe_caller_audit():
     for caller, scale, risk, task_type in callers:
         print(f"  {caller:50s} | {scale:30s} | {risk:>6s} | {task_type:>10s}")
 
-    print(f"\n  [VERDICT] Max observed len(tasks) at call site: ~8 tasks")
-    print(f"            P95 = 8, P99 = 8. No backpressure threshold breach.")
+    print("\n  [VERDICT] Max observed len(tasks) at call site: ~8 tasks")
+    print("            P95 = 8, P99 = 8. No backpressure threshold breach.")
 
 
 # ── Main ─────────────────────────────────────────────────────────────────────

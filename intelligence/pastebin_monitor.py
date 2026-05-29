@@ -138,7 +138,7 @@ def _make_snippet(text: str, max_len: int = 200) -> str:
 
 # ---- Per-source scrapers ---------------------------------------------------
 
-async def _scrape_pastebin_raw(paste_id: str, session: "ClientSession") -> str | None:
+async def _scrape_pastebin_raw(paste_id: str, session: ClientSession) -> str | None:
     """Stáhnout obsah pastebin.com/raw/{id}."""
     import aiohttp
     url = f"https://pastebin.com/raw/{paste_id}"
@@ -152,7 +152,7 @@ async def _scrape_pastebin_raw(paste_id: str, session: "ClientSession") -> str |
         return None
 
 
-async def _scrape_paste_gg(paste_id: str, session: "ClientSession") -> str | None:
+async def _scrape_paste_gg(paste_id: str, session: ClientSession) -> str | None:
     """Stáhnout obsah paste.gg/api/v1/pastes/{id}."""
     import aiohttp
     url = f"https://paste.gg/api/v1/pastes/{paste_id}"
@@ -171,7 +171,7 @@ async def _scrape_paste_gg(paste_id: str, session: "ClientSession") -> str | Non
         return None
 
 
-async def _scrape_rentry(raw_path: str, session: "ClientSession") -> str | None:
+async def _scrape_rentry(raw_path: str, session: ClientSession) -> str | None:
     """Stáhnout obsah rentry.co/{raw_path}/raw."""
     import aiohttp
     url = f"https://rentry.co/{raw_path}/raw"
@@ -240,7 +240,7 @@ async def run(query: str) -> list[PasteFinding]:
     return findings
 
 
-async def _search_pastebin(query: str, session: "ClientSession") -> list[PasteFinding]:
+async def _search_pastebin(query: str, session: ClientSession) -> list[PasteFinding]:
     """Search pastebin.com for query, scrape matching pastes."""
     import aiohttp
     findings: list[PasteFinding] = []
@@ -290,7 +290,7 @@ async def _search_pastebin(query: str, session: "ClientSession") -> list[PasteFi
     return findings
 
 
-async def _search_paste_gg(query: str, session: "ClientSession") -> list[PasteFinding]:
+async def _search_paste_gg(query: str, session: ClientSession) -> list[PasteFinding]:
     """Search paste.gg for query via their API."""
     import aiohttp
     findings: list[PasteFinding] = []
@@ -330,7 +330,7 @@ async def _search_paste_gg(query: str, session: "ClientSession") -> list[PasteFi
     return findings
 
 
-async def _search_rentry(query: str, session: "ClientSession") -> list[PasteFinding]:
+async def _search_rentry(query: str, session: ClientSession) -> list[PasteFinding]:
     """Search rentry.co for query via HTML parsing."""
     import aiohttp
     findings: list[PasteFinding] = []

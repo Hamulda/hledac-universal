@@ -21,28 +21,25 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import logging
-import os
 import re
 from collections import defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Optional, Tuple, Union, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from sklearn.decomposition import PCA
-    from sklearn.mixture import GaussianMixture
+    pass
 
 # Secure Enclave abstraction (Sprint F206X)
+import numpy as np
 from hledac.universal.security.secure_enclave import (
-    SecureEnclaveBackend,
-    EnclaveStatus,
     EnclaveAvailability,
+    EnclaveStatus,
+    SecureEnclaveBackend,
+    SecureEnclaveError,
     build_batch_manifest,
     create_secure_enclave_backend,
-    SecureEnclaveError,
 )
-
-import numpy as np
 
 # Sprint F800C: Lazy CoreML import — contained to compat seam only.
 # RAGEngine is grounding authority, NOT model owner.
@@ -87,7 +84,7 @@ class RAGConfig:
     hnsw_M: int = 16  # Number of bi-directional links for each node
     hnsw_ef_construction: int = 200  # Size of dynamic candidate list
     hnsw_ef_search: int = 50  # Size of dynamic candidate list for search
-    hnsw_index_path: Optional[str] = None  # Path for persistent index storage
+    hnsw_index_path: str | None = None  # Path for persistent index storage
     hnsw_space: str = "cosine"  # Distance metric: "cosine", "l2", "ip"
 
 
@@ -97,8 +94,8 @@ class Document:
     id: str
     content: str
     metadata: dict[str, Any] = field(default_factory=dict)
-    embedding: Optional[list[float]] = None
-    
+    embedding: list[float] | None = None
+
     def __hash__(self):
         return hash(self.id)
 
@@ -144,17 +141,17 @@ class BM25Index:
 
         self.documents.append(doc)
         self.doc_lengths.append(doc_length)
-        
+
         # Count term frequencies in document
         term_counts = defaultdict(int)
         for token in tokens:
             term_counts[token] += 1
-        
+
         # Update global statistics
         for term in term_counts:
             self.doc_freqs[term] += 1
             self.term_doc_freqs[term][len(self.documents) - 1] = term_counts[term]
-        
+
         self.doc_count = len(self.documents)
         self.avg_doc_length = sum(self.doc_lengths) / self.doc_count if self.doc_count > 0 else 0
 
@@ -163,7 +160,7 @@ class BM25Index:
             tokenized_corpus = [self._tokenize(doc.content) for doc in self.documents]
             self._rank_bm25 = _RankBM25(tokenized_corpus)
 
-    def search(self, query: str, top_k: int = 10) -> list[Tuple[int, float]]:
+    def search(self, query: str, top_k: int = 10) -> list[tuple[int, float]]:
         """Search documents using BM25"""
         if not self.documents:
             return []
@@ -229,7 +226,7 @@ class HNSWVectorIndex:
         ef_construction: int = 200,
         ef_search: int = 50,
         space: str = "cosine",
-        index_path: Optional[str] = None
+        index_path: str | None = None
     ):
         """
         Initialize HNSW Vector Index.
@@ -345,11 +342,11 @@ class HNSWVectorIndex:
                 logger.error(f"Failed to add vectors to HNSW index: {e}")
                 # Fallback to brute-force
                 self._available = False
-                for id_, vec in zip(ids, vectors):
+                for id_, vec in zip(ids, vectors, strict=False):
                     self._vectors[id_] = vec.copy()
         else:
             # Brute-force fallback
-            for id_, vec in zip(ids, vectors):
+            for id_, vec in zip(ids, vectors, strict=False):
                 self._vectors[id_] = vec.copy()
             logger.debug(f"Added {len(ids)} vectors to brute-force storage")
 
@@ -357,8 +354,8 @@ class HNSWVectorIndex:
         self,
         query_vector: np.ndarray,
         k: int = 10,
-        filter_ids: Optional[list[str]] = None
-    ) -> Tuple[list[str], list[float]]:
+        filter_ids: list[str] | None = None
+    ) -> tuple[list[str], list[float]]:
         """
         Search for k nearest neighbors.
 
@@ -388,7 +385,7 @@ class HNSWVectorIndex:
                     filter_set = set(filter_ids)
                     filtered_ids = []
                     filtered_distances = []
-                    for id_, dist in zip(ids, distances):
+                    for id_, dist in zip(ids, distances, strict=False):
                         if id_ in filter_set:
                             filtered_ids.append(id_)
                             filtered_distances.append(float(dist))
@@ -407,8 +404,8 @@ class HNSWVectorIndex:
         self,
         query_vector: np.ndarray,
         k: int,
-        filter_ids: Optional[list[str]] = None
-    ) -> Tuple[list[str], list[float]]:
+        filter_ids: list[str] | None = None
+    ) -> tuple[list[str], list[float]]:
         """Brute-force search fallback."""
         if not self._vectors:
             return [], []
@@ -453,8 +450,8 @@ class HNSWVectorIndex:
         self,
         query_vectors: np.ndarray,
         k: int = 10,
-        filter_ids: Optional[list[str]] = None
-    ) -> list[Tuple[list[str], list[float]]]:
+        filter_ids: list[str] | None = None
+    ) -> list[tuple[list[str], list[float]]]:
         """
         Batch search for multiple query vectors.
 
@@ -472,7 +469,7 @@ class HNSWVectorIndex:
             results.append((ids, distances))
         return results
 
-    def save_index(self, path: Optional[str] = None) -> None:
+    def save_index(self, path: str | None = None) -> None:
         """
         Save index to disk.
 
@@ -513,10 +510,10 @@ class HNSWVectorIndex:
         if self._vectors:
             np.savez(
                 save_path / "vectors.npz",
-                **{id_: vec for id_, vec in self._vectors.items()}
+                **dict(self._vectors.items())
             )
 
-    def load_index(self, path: Optional[str] = None) -> None:
+    def load_index(self, path: str | None = None) -> None:
         """
         Load index from disk.
 
@@ -693,7 +690,7 @@ class RAGEngine:
         self._retriever = None
 
         # HNSW Vector Index
-        self._hnsw_index: Optional[HNSWVectorIndex] = None
+        self._hnsw_index: HNSWVectorIndex | None = None
         self._document_map: dict[str, Document] = {}
         self._use_hnsw = self.config.use_hnsw
 
@@ -731,7 +728,7 @@ class RAGEngine:
         """
         # Lazy import: attempt to resolve CoreML availability at runtime
         try:
-            from ..brain.model_manager import get_model_manager, COREML_MODEL_PATH
+            from ..brain.model_manager import COREML_MODEL_PATH, get_model_manager
             coreml_available = COREML_MODEL_PATH is not None and COREML_MODEL_PATH.exists()
         except ImportError:
             coreml_available = False
@@ -760,7 +757,7 @@ class RAGEngine:
             logger.warning(f"[COREML] Failed to initialize embedder: {e}")
             self._mlx_embedder = None
             self._coreml_embedder = None
-    
+
     async def _init_ultra_context(self) -> None:
         """Inicializovat InfiniteContextEngine"""
         try:
@@ -769,7 +766,7 @@ class RAGEngine:
             logger.info("✓ Ultra Context initialized")
         except Exception as e:
             logger.warning(f"Ultra Context not available: {e}")
-    
+
     async def _init_spr_compressor(self) -> None:
         """Inicializovat SPR Compressor"""
         try:
@@ -780,7 +777,7 @@ class RAGEngine:
             logger.info("✓ SPR Compressor initialized (50% target)")
         except Exception as e:
             logger.warning(f"SPR Compressor not available: {e}")
-    
+
     async def _init_secure_enclave(self) -> None:
         """Inicializovat Secure Enclave"""
         self._secure_enclave, self._enclave_status = await create_secure_enclave_backend(
@@ -795,7 +792,7 @@ class RAGEngine:
             logger.info(f"✓ Secure Enclave initialized ({self._enclave_status.backend_name})")
         else:
             logger.warning(f"Secure Enclave fail-soft: {self._enclave_status.error_message}")
-    
+
     async def query(
         self,
         query: str,
@@ -805,36 +802,36 @@ class RAGEngine:
     ) -> dict[str, Any]:
         """
         Procesovat RAG query.
-        
+
         Args:
             query: Uživatelský dotaz
             context_chunks: Kontextové chunky
             use_compression: Použít kompresi (auto-detect pokud None)
             secure: Použít secure enclave
-            
+
         Returns:
             Výsledek RAG query
         """
         # Auto-detect komprese
         if use_compression is None:
             use_compression = len(context_chunks) > self.config.compression_threshold
-        
+
         logger.info(f"RAG query: {len(context_chunks)} chunks, compression={use_compression}")
-        
+
         # 1. Komprese pokud je potřeba
         if use_compression and self._spr_compressor:
             context_chunks = await self._compress_chunks(context_chunks)
-        
+
         # 2. Secure enclave pokud je požadováno
         if secure and self._secure_enclave:
             context_chunks = await self._secure_process(context_chunks)
-        
+
         # 3. Sestavit kontext
         context = "\n\n".join(context_chunks)
-        
+
         # 4. Detekovat komplexní query pro ToT
         is_complex = self._is_complex_query(query)
-        
+
         return {
             "query": query,
             "context": context,
@@ -843,12 +840,12 @@ class RAGEngine:
             "secure": secure,
             "complex": is_complex,
         }
-    
+
     async def _compress_chunks(self, chunks: list[str]) -> list[str]:
         """Komprimovat chunky pomocí SPR"""
         if not self._spr_compressor:
             return chunks
-        
+
         compressed = []
         for chunk in chunks:
             try:
@@ -857,9 +854,9 @@ class RAGEngine:
             except Exception as e:
                 logger.warning(f"Compression failed: {e}")
                 compressed.append(chunk)
-        
+
         return compressed
-    
+
     async def _secure_process(self, chunks: list[str]) -> list[str]:
         """
         Process chunks through Secure Enclave for batch attestation.
@@ -902,7 +899,7 @@ class RAGEngine:
 
         # Always return chunks unchanged
         return chunks
-    
+
     def _is_complex_query(self, query: str) -> bool:
         """Detekovat komplexní dotaz pro Tree of Thoughts"""
         complex_indicators = [
@@ -910,25 +907,25 @@ class RAGEngine:
             "why", "how does", "relationship", "impact"
         ]
         return any(ind in query.lower() for ind in complex_indicators)
-    
+
     # ============== HYBRID RETRIEVAL METHODS ==============
-    
+
     async def hybrid_retrieve(
         self,
         query: str,
         documents: list[Document],
-        top_k: Optional[int] = None,
-        filters: Optional[dict[str, Any]] = None
+        top_k: int | None = None,
+        filters: dict[str, Any] | None = None
     ) -> list[RetrievedChunk]:
         """
         Retrieve relevant documents using hybrid search (dense + sparse).
-        
+
         Args:
             query: Search query
             documents: List of documents to search
             top_k: Number of results to return
             filters: Optional metadata filters
-            
+
         Returns:
             List of retrieved chunks with scores
         """
@@ -942,58 +939,58 @@ class RAGEngine:
                 )
                 for doc in documents[:top_k or 5]
             ]
-        
+
         top_k = top_k or 10
-        
+
         # Index documents
         bm25 = BM25Index(k1=self.config.bm25_k1, b=self.config.bm25_b)
         embeddings: dict[str, list[float]] = {}
-        
+
         for doc in documents:
             bm25.add_document(doc)
-        
+
         # Generate embeddings
         embeddings = await self._generate_embeddings([d.content for d in documents])
         doc_embeddings = {doc.id: embeddings[i] for i, doc in enumerate(documents)}
-        
+
         # Dense retrieval (cosine similarity)
         query_embedding = (await self._generate_embeddings([query]))[0]
         dense_results = self._dense_retrieval(query_embedding, doc_embeddings, top_k * 2)
-        
+
         # Sparse retrieval (BM25)
         sparse_results = bm25.search(query, top_k=top_k * 2)
         sparse_doc_ids = [(bm25.documents[idx].id, score) for idx, score in sparse_results]
-        
+
         # Combine using weighted fusion
         doc_scores: dict[str, dict[str, float]] = defaultdict(lambda: {'dense': 0.0, 'sparse': 0.0})
-        
+
         for doc_id, score in dense_results:
             doc_scores[doc_id]['dense'] = score
-        
+
         # Normalize BM25 scores to 0-1
         max_sparse = max([s for _, s in sparse_doc_ids], default=1.0)
         for doc_id, score in sparse_doc_ids:
             doc_scores[doc_id]['sparse'] = score / max_sparse if max_sparse > 0 else 0
-        
+
         # Calculate final scores
         results: list[RetrievedChunk] = []
         doc_map = {d.id: d for d in documents}
-        
+
         for doc_id, scores in doc_scores.items():
             if doc_id not in doc_map:
                 continue
-            
+
             doc = doc_map[doc_id]
-            
+
             # Check filters
             if filters and not self._matches_filters(doc, filters):
                 continue
-            
+
             final_score = (
                 self.config.dense_weight * scores['dense'] +
                 self.config.sparse_weight * scores['sparse']
             )
-            
+
             chunk = RetrievedChunk(
                 document=doc,
                 chunk_text=doc.content[:self.config.chunk_size],
@@ -1002,11 +999,11 @@ class RAGEngine:
                 final_score=final_score
             )
             results.append(chunk)
-        
+
         # Sort by final score
         results.sort(key=lambda x: x.final_score, reverse=True)
         return results[:top_k]
-    
+
     async def _generate_embeddings(self, texts: list[str]) -> list[list[float]]:
         """Generate embeddings for texts using cached FastEmbed or MLXEmbeddingManager.
 
@@ -1056,19 +1053,19 @@ class RAGEngine:
             for t in texts
             for digest in [hashlib.sha256(t.encode()).digest()]
         ]
-    
+
     def _dense_retrieval(
         self,
         query_embedding: list[float],
         doc_embeddings: dict[str, list[float]],
         top_k: int
-    ) -> list[Tuple[str, float]]:
+    ) -> list[tuple[str, float]]:
         """Dense retrieval using cosine similarity."""
         import numpy as np
-        
+
         scores = []
         query_norm = np.linalg.norm(query_embedding)
-        
+
         for doc_id, doc_embedding in doc_embeddings.items():
             doc_norm = np.linalg.norm(doc_embedding)
             if doc_norm == 0 or query_norm == 0:
@@ -1076,10 +1073,10 @@ class RAGEngine:
             else:
                 similarity = np.dot(query_embedding, doc_embedding) / (query_norm * doc_norm)
             scores.append((doc_id, float(similarity)))
-        
+
         scores.sort(key=lambda x: x[1], reverse=True)
         return scores[:top_k]
-    
+
     def _matches_filters(self, doc: Document, filters: dict[str, Any]) -> bool:
         """Check if document matches filters."""
         for key, value in filters.items():
@@ -1092,7 +1089,7 @@ class RAGEngine:
     def build_hnsw_index(
         self,
         documents: list[Document],
-        embeddings: Optional[dict[str, list[float]]] = None
+        embeddings: dict[str, list[float]] | None = None
     ) -> None:
         """
         Build HNSW index from documents.
@@ -1136,7 +1133,7 @@ class RAGEngine:
                         self._generate_embeddings([d.content for d in documents])
                     )
                     embeddings_list = future.result(timeout=300)
-                embeddings = {doc.id: emb for doc, emb in zip(documents, embeddings_list)}
+                embeddings = {doc.id: emb for doc, emb in zip(documents, embeddings_list, strict=False)}
             except Exception as e:
                 logger.error(f"Failed to generate embeddings: {e}")
                 return
@@ -1176,9 +1173,9 @@ class RAGEngine:
 
     def _hnsw_retrieval(
         self,
-        query_embedding: Union[list[float], np.ndarray],
+        query_embedding: list[float] | np.ndarray,
         top_k: int = 10,
-        filters: Optional[dict[str, Any]] = None
+        filters: dict[str, Any] | None = None
     ) -> list[RetrievedChunk]:
         """
         Retrieve documents using HNSW index.
@@ -1214,7 +1211,7 @@ class RAGEngine:
 
         # Convert to RetrievedChunk
         results = []
-        for doc_id, distance in zip(ids, distances):
+        for doc_id, distance in zip(ids, distances, strict=False):
             if doc_id not in self._document_map:
                 continue
 
@@ -1245,10 +1242,10 @@ class RAGEngine:
     async def hybrid_retrieve_with_hnsw(
         self,
         query: str,
-        documents: Optional[list[Document]] = None,
-        top_k: Optional[int] = None,
-        filters: Optional[dict[str, Any]] = None,
-        use_hnsw: Optional[bool] = None
+        documents: list[Document] | None = None,
+        top_k: int | None = None,
+        filters: dict[str, Any] | None = None,
+        use_hnsw: bool | None = None
     ) -> list[RetrievedChunk]:
         """
         Retrieve relevant documents using hybrid search (dense + sparse) with optional HNSW.
@@ -1281,8 +1278,8 @@ class RAGEngine:
     async def _hybrid_retrieve_hnsw(
         self,
         query: str,
-        top_k: Optional[int] = None,
-        filters: Optional[dict[str, Any]] = None
+        top_k: int | None = None,
+        filters: dict[str, Any] | None = None
     ) -> list[RetrievedChunk]:
         """
         Internal hybrid retrieval using HNSW for dense search.
@@ -1346,7 +1343,7 @@ class RAGEngine:
         results.sort(key=lambda x: x.final_score, reverse=True)
         return results[:top_k]
 
-    def save_hnsw_index(self, path: Optional[str] = None) -> None:
+    def save_hnsw_index(self, path: str | None = None) -> None:
         """
         Save HNSW index to disk.
 
@@ -1376,7 +1373,7 @@ class RAGEngine:
 
         logger.info(f"HNSW index and document map saved to {save_path}")
 
-    def load_hnsw_index(self, path: Optional[str] = None) -> None:
+    def load_hnsw_index(self, path: str | None = None) -> None:
         """
         Load HNSW index from disk.
 
@@ -1410,12 +1407,12 @@ class RAGEngine:
                     self._document_map = orjson.loads(f.read())
             except ImportError:
                 import json
-                with open(doc_map_path, 'r') as f:
+                with open(doc_map_path) as f:
                     self._document_map = json.load(f)
 
         logger.info(f"HNSW index loaded from {load_path}")
 
-    def get_hnsw_stats(self) -> Optional[dict[str, Any]]:
+    def get_hnsw_stats(self) -> dict[str, Any] | None:
         """
         Get HNSW index statistics.
 
@@ -1528,10 +1525,10 @@ class RAGEngine:
 
     async def _build_raptor_tree(
         self,
-        documents: list["Document"],
+        documents: list[Document],
         max_levels: int = 2,
         max_docs: int = 50
-    ) -> dict[str, "RaptorNode"]:
+    ) -> dict[str, RaptorNode]:
         """Build RAPTOR summarization tree. Returns node_id -> RaptorNode dict."""
         docs = documents[:max_docs]
         if len(docs) < 3:
@@ -1640,9 +1637,9 @@ class RAGEngine:
     def _raptor_retrieve(
         self,
         query_embedding: list[float],
-        nodes: dict[str, "RaptorNode"],
+        nodes: dict[str, RaptorNode],
         top_k: int = 5
-    ) -> list["RaptorNode"]:
+    ) -> list[RaptorNode]:
         """Retrieve top-K nodes from all RAPTOR levels by cosine similarity."""
         if not nodes:
             return []
@@ -1650,7 +1647,7 @@ class RAGEngine:
         q_norm = np.linalg.norm(q)
         if q_norm == 0:
             return []
-        scores: list[Tuple[float, RaptorNode]] = []
+        scores: list[tuple[float, RaptorNode]] = []
         for node in nodes.values():
             if not node.embedding:
                 continue

@@ -2,9 +2,10 @@
 Tests for structured output generation with retry (Sprint 75).
 """
 
-import pytest
-from unittest.mock import patch, MagicMock, AsyncMock
 import asyncio
+from unittest.mock import AsyncMock
+
+import pytest
 
 
 class TestStructuredOutput:
@@ -74,8 +75,9 @@ class TestJSONRetry:
 
     def test_retry_param_exists(self):
         """Test max_retries parameter is in signature."""
-        from hledac.universal.brain.hermes3_engine import Hermes3Engine
         import inspect
+
+        from hledac.universal.brain.hermes3_engine import Hermes3Engine
 
         sig = inspect.signature(Hermes3Engine.generate_structured)
         params = list(sig.parameters.keys())

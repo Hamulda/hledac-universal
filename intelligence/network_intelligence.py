@@ -9,10 +9,9 @@ M1 Optimized: Async I/O, bounded RAM (<300MB for BGP data), no blocking sync cal
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import os
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import aiohttp
 
@@ -26,7 +25,7 @@ CLOUDFLARE_DOH = "https://cloudflare-dns.com/dns-query"
 GOOGLE_DOH = "https://dns.google/dns-query"
 
 
-async def get_bgp_info(prefix: str) -> Dict[str, Any]:
+async def get_bgp_info(prefix: str) -> dict[str, Any]:
     """
     Look up BGP information for a prefix using pybgpstream.
     Returns ASN, prefix, origin AS name, country.
@@ -40,7 +39,7 @@ async def get_bgp_info(prefix: str) -> Dict[str, Any]:
     Returns:
         Dict with keys: prefix, asn, as_name, country, announced, found
     """
-    result: Dict[str, Any] = {
+    result: dict[str, Any] = {
         "prefix": prefix,
         "asn": None,
         "as_name": None,
@@ -97,12 +96,12 @@ async def get_bgp_info(prefix: str) -> Dict[str, Any]:
     return result
 
 
-async def _get_bgp_via_ipinfo(prefix: str) -> Dict[str, Any]:
+async def _get_bgp_via_ipinfo(prefix: str) -> dict[str, Any]:
     """
     Fallback BGP lookup via ipinfo.io API.
     Requires IPINFO_API_KEY env var or uses free tier.
     """
-    result: Dict[str, Any] = {
+    result: dict[str, Any] = {
         "prefix": prefix,
         "asn": None,
         "as_name": None,
@@ -150,7 +149,7 @@ async def _get_bgp_via_ipinfo(prefix: str) -> Dict[str, Any]:
     return result
 
 
-async def resolve_dns_doh(domain: str) -> Dict[str, List[str]]:
+async def resolve_dns_doh(domain: str) -> dict[str, list[str]]:
     """
     Resolve DNS via DoH (DNS-over-HTTPS) using Cloudflare (1.1.1.1)
     and Google (8.8.8.8) resolvers via dnspython with cloudflare/google DoH endpoints.
@@ -162,7 +161,7 @@ async def resolve_dns_doh(domain: str) -> Dict[str, List[str]]:
     Returns:
         Dict with keys: a (list of IPv4), aaaa (list of IPv6), mx, txt, found
     """
-    result: Dict[str, Any] = {
+    result: dict[str, Any] = {
         "domain": domain,
         "a": [],
         "aaaa": [],
@@ -247,12 +246,12 @@ async def resolve_dns_doh(domain: str) -> Dict[str, List[str]]:
     return result
 
 
-async def _resolve_doh_direct(domain: str) -> Dict[str, List[str]]:
+async def _resolve_doh_direct(domain: str) -> dict[str, list[str]]:
     """
     Direct DoH resolution via aiohttp when dnspython is unavailable.
     Uses JSON-mode DoH endpoints.
     """
-    result: Dict[str, Any] = {
+    result: dict[str, Any] = {
         "domain": domain,
         "a": [],
         "aaaa": [],
@@ -307,8 +306,8 @@ async def _resolve_doh_direct(domain: str) -> Dict[str, List[str]]:
 
 
 def integrate_bgp_doh_to_graph(
-    ip_addresses: List[str],
-    asn_info: Dict[str, Any],
+    ip_addresses: list[str],
+    asn_info: dict[str, Any],
     graph: Any,
 ) -> None:
     """

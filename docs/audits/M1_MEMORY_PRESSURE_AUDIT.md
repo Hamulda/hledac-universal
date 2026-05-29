@@ -212,6 +212,17 @@
 
 > **Note:** `semantic_store.py` and `duckdb_store.py` findings were false positives — both are already properly bounded.
 
+## May 2026 Fixes
+
+| Date | File | Change | Rationale |
+|-------|------|--------|-----------|
+| 2026-05-28 | `context_optimization/context_cache.py` | L1 cache: 256MB → 128MB | M1 8GB UMA headroom: LLM=2GB, KV=768MB, DuckDB=200MB, L1=128MB, other≈200MB, sprint≈200MB, headroom≈300MB |
+| 2026-05-28 | `context_optimization/context_cache.py` | L2 load: 20MB size guard added | Prevents multi-MB JSON deserialization on corrupted cache |
+| 2026-05-28 | `coordinators/memory_coordinator.py` | L2 load: 50MB size guard added | Protects against unbounded deserialization |
+| 2026-05-28 | `utils/uma_budget.py` | `MAX_L2_CACHE_SIZE_MB = 50` added | Central constant for L2 cache load protection |
+
+**Invariant:** L1 reduction must not cause cache-miss storm. If sprint results visibly degrade, revert to 192MB as compromise.
+
 ---
 
 ## M1 RAM Budget Reference

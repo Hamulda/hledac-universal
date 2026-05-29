@@ -11,10 +11,11 @@ import time
 sys.path.insert(0, '/Users/vojtechhamada/PycharmProjects/Hledac')
 
 async def diagnose_p95_offline():
-    from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
-    from hledac.universal.knowledge.atomic_storage import EvidencePacketStorage, EvidencePacket
-    import psutil
     import random
+
+    import psutil
+    from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
+    from hledac.universal.knowledge.atomic_storage import EvidencePacket, EvidencePacketStorage
 
     print("=" * 60)
     print("[DIAGNOSTIC] P95 Latency - OFFLINE_REPLAY Mode")
@@ -36,7 +37,7 @@ async def diagnose_p95_offline():
             evidence_id=f"evidence_{i}",
             url=f"http://localhost:{64000+i}/test",
             final_url=f"http://localhost:{64000+i}/test",
-            domain=f"localhost",
+            domain="localhost",
             fetched_at=time.time() - (i * 86400),  # Spread across days
             status=200,
             headers_digest="abc123",
@@ -105,7 +106,7 @@ async def diagnose_p95_offline():
     latency_by_action_p95 = result.get('latency_by_action_p95_ms', {})
     action_selection_counts = result.get('action_selection_counts', {})
 
-    print(f"\n[Action Latency Breakdown]:")
+    print("\n[Action Latency Breakdown]:")
     print(f"{'Action':<25} {'Avg (ms)':<12} {'P95 (ms)':<12} {'Count':<8}")
     print("-" * 60)
     for action in sorted(latency_by_action_avg.keys(), key=lambda x: latency_by_action_avg.get(x, 0), reverse=True):

@@ -198,7 +198,7 @@ def render_sprint_markdown(
     generated = _time.strftime('%Y-%m-%d %H:%M:%S UTC', _time.gmtime())
 
     parts = [
-        f"# Ghost Prime — Sprint Report",
+        "# Ghost Prime — Sprint Report",
         f"**Sprint ID:** `{sprint_id}`  ",
         f"**Generated:** {generated}",
         "",
@@ -505,7 +505,7 @@ def _render_identity_candidates(identity_candidates: list) -> str:
     platforms, and evidence pointers. Bounded at 10 candidates displayed.
 
     identity_candidates format:
-        List[dict] with keys: candidate_id, primary_name, confidence, signals,
+        list[dict] with keys: candidate_id, primary_name, confidence, signals,
         emails, usernames, platforms, evidence, finding_ids
     """
     if not identity_candidates:
@@ -609,7 +609,7 @@ def _render_timeline_section(timeline_findings: list) -> str:
     Bounded at MAX_TIMELINE_EVENTS=200 events, displaying first 50.
 
     timeline_findings format:
-        List[dict] with keys: finding_id, entity_id, events (list of event dicts),
+        list[dict] with keys: finding_id, entity_id, events (list of event dicts),
         metadata (dict with total_events, oldest_event_ts, newest_event_ts,
         event_types, sources)
     """
@@ -728,7 +728,7 @@ def _render_sprint_diff_section(sprint_diff_findings: list) -> str:
     Bounded at MAX_DIFF_FINDINGS=100 displayed, first 20 shown.
 
     sprint_diff_findings format:
-        List[dict] with keys: diff_action, target_id, previous_sprint_id,
+        list[dict] with keys: diff_action, target_id, previous_sprint_id,
         current_sprint_id, ioc_type, ioc_value, finding_id
     """
     if not sprint_diff_findings:
@@ -772,7 +772,7 @@ def _render_kill_chain_section(kill_chain_findings: list) -> str:
 
     Groups findings by tactic and technique, showing counts and confidence.
     kill_chain_findings format:
-        List[dict] with keys: kill_chain_tags (list of tag dicts with
+        list[dict] with keys: kill_chain_tags (list of tag dicts with
         tactic, technique_id, phase, confidence), ioc_type, ioc_value.
     """
     if not kill_chain_findings:
@@ -838,7 +838,7 @@ def _render_evidence_chains_section(evidence_chains: list) -> str:
     to derived findings. Enables analyst to answer "proč tomu věříme".
 
     evidence_chains format:
-        List[EvidenceChain] (as dicts with keys:
+        list[EvidenceChain] (as dicts with keys:
         root_finding_id, steps: list[ChainStep], conclusion).
         ChainStep dict: step_type, input_ids, output_id, confidence, reason.
     """
@@ -866,7 +866,7 @@ def _render_evidence_chains_section(evidence_chains: list) -> str:
 
         lines.append(f"### Chain {i}: `{root_id[:32]}...`")
 
-        for j, step in enumerate(steps):
+        for _j, step in enumerate(steps):
             if isinstance(step, dict):
                 step_type = step.get("step_type", "?")
                 output_id = step.get("output_id", "?")

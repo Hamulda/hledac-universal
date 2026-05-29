@@ -1,4 +1,4 @@
 # ResourceGovernor modul
-from .resource_governor import ResourceGovernor, Priority
+from .resource_governor import Priority, ResourceGovernor
 
 __all__ = ['ResourceGovernor', 'Priority']

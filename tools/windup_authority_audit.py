@@ -28,7 +28,6 @@ import ast
 import json
 import sys
 from pathlib import Path
-from typing import Dict, List, Tuple
 
 # ── Config ──────────────────────────────────────────────────────────────────
 REPO_ROOT = Path("/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal")
@@ -96,10 +95,10 @@ class WindupSite:
 class WindupAuthorityVisitor(ast.NodeVisitor):
     """AST visitor that finds windup authority patterns."""
 
-    def __init__(self, filepath: str, source_lines: List[str]):
+    def __init__(self, filepath: str, source_lines: list[str]):
         self.filepath = filepath
         self.source_lines = source_lines
-        self.sites: List[WindupSite] = []
+        self.sites: list[WindupSite] = []
         self._current_function = None
         self._in_test = "test_" in filepath or "probe_" in filepath
 
@@ -232,10 +231,10 @@ class WindupAuthorityVisitor(ast.NodeVisitor):
             ))
 
 
-def scan_file_asts(filepath: Path) -> List[WindupSite]:
+def scan_file_asts(filepath: Path) -> list[WindupSite]:
     """Parse a Python file as AST and extract windup authority sites."""
     try:
-        with open(filepath, "r", errors="ignore") as f:
+        with open(filepath, errors="ignore") as f:
             source = f.read()
         lines = source.split("\n")
         tree = ast.parse(source, filename=str(filepath))
@@ -271,11 +270,11 @@ def scan_file_asts(filepath: Path) -> List[WindupSite]:
 
 # ── Keyword scan (fallback for non-AST patterns) ───────────────────────────────
 
-def keyword_scan(filepath: Path, keywords: List[str]) -> List[Tuple[int, str]]:
+def keyword_scan(filepath: Path, keywords: list[str]) -> list[tuple[int, str]]:
     """Line-level keyword scan for references missed by AST."""
     matches = []
     try:
-        with open(filepath, "r", errors="ignore") as f:
+        with open(filepath, errors="ignore") as f:
             for i, line in enumerate(f, 1):
                 for kw in keywords:
                     if kw in line:
@@ -287,8 +286,8 @@ def keyword_scan(filepath: Path, keywords: List[str]) -> List[Tuple[int, str]]:
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 
-def build_matrix() -> List[WindupSite]:
-    all_sites: Dict[Tuple[str, str], WindupSite] = {}
+def build_matrix() -> list[WindupSite]:
+    all_sites: dict[tuple[str, str], WindupSite] = {}
 
     for scan_path in PROD_SCAN_PATHS:
         if scan_path.is_file():
@@ -369,13 +368,13 @@ def main():
         f.write("REPORT_ONLY (prewindup_barrier_* functions)\n")
         f.write("```\n")
         f.write("\n## Key Findings\n\n")
-        f.write(f"- Canonical windup guard: `SprintLifecycleRunner.windup_guard()` (L89, sprint_lifecycle_runner.py)\n")
-        f.write(f"- Scheduler callsite: `SprintScheduler.run()` at ~L1246, calls `self._runner.windup_guard(now_monotonic)`\n")
-        f.write(f"- Lifecycle authority: `SprintLifecycle.request_windup()` (L300, sprint_lifecycle.py) — sets signal flag\n")
-        f.write(f"- Phase transition: `SprintLifecycle.transition_to(SprintPhase.WINDUP)` (L92, sprint_lifecycle.py)\n")
-        f.write(f"- Pre-windup barriers: `_attempt_public_prewindup_barrier()`, `_attempt_ct_prewindup_barrier()` called from SprintScheduler.run()\n")
-        f.write(f"- report_only mentions found: NO actual transition authority outside lifecycle/transition_to\n")
-        f.write(f"- LEGACY_OR_DORMANT: NONE confirmed — all matches are active production code\n")
+        f.write("- Canonical windup guard: `SprintLifecycleRunner.windup_guard()` (L89, sprint_lifecycle_runner.py)\n")
+        f.write("- Scheduler callsite: `SprintScheduler.run()` at ~L1246, calls `self._runner.windup_guard(now_monotonic)`\n")
+        f.write("- Lifecycle authority: `SprintLifecycle.request_windup()` (L300, sprint_lifecycle.py) — sets signal flag\n")
+        f.write("- Phase transition: `SprintLifecycle.transition_to(SprintPhase.WINDUP)` (L92, sprint_lifecycle.py)\n")
+        f.write("- Pre-windup barriers: `_attempt_public_prewindup_barrier()`, `_attempt_ct_prewindup_barrier()` called from SprintScheduler.run()\n")
+        f.write("- report_only mentions found: NO actual transition authority outside lifecycle/transition_to\n")
+        f.write("- LEGACY_OR_DORMANT: NONE confirmed — all matches are active production code\n")
 
     print(f"Report written → {report_path}")
     return 0

@@ -29,14 +29,14 @@ GHOST_INVARIANTS:
 
 from __future__ import annotations
 
-import aiohttp
-import asyncio
 import logging
 import time
 from collections import OrderedDict
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Final
+
+import aiohttp
 
 logger = logging.getLogger(__name__)
 
@@ -370,7 +370,7 @@ def domain_breaker_check(domain: str) -> CircuitDecision:
 
 
 async def checked_aiohttp_get(
-    session: "aiohttp.ClientSession",
+    session: aiohttp.ClientSession,
     url: str,
     *,
     params: dict | None = None,
@@ -413,7 +413,7 @@ async def checked_aiohttp_get(
                 failure_kind=f"{failure_kind}:{resp.status}"
             )
             return resp, None
-    except asyncio.TimeoutError:
+    except TimeoutError:
         get_breaker(domain).record_failure(is_timeout=True, failure_kind=f"{failure_kind}:timeout")
         return None, "timeout"
     except aiohttp.ClientError:
@@ -425,7 +425,9 @@ async def checked_aiohttp_get(
 
 
 import time as _time
-from dataclasses import dataclass, field as _field
+from dataclasses import dataclass
+from dataclasses import field as _field
+
 
 @dataclass
 class ModelCircuitBreaker:
@@ -500,7 +502,7 @@ class ModelCircuitBreaker:
 
 
 async def checked_aiohttp_post(
-    session: "aiohttp.ClientSession",
+    session: aiohttp.ClientSession,
     url: str,
     *,
     json: dict | None = None,
@@ -537,7 +539,7 @@ async def checked_aiohttp_post(
                 failure_kind=f"{failure_kind}:{resp.status}"
             )
             return None, f"http_error:{resp.status}"
-    except asyncio.TimeoutError:
+    except TimeoutError:
         get_breaker(domain).record_failure(is_timeout=True, failure_kind=f"{failure_kind}:timeout")
         return None, "timeout"
     except aiohttp.ClientError:

@@ -2,7 +2,7 @@
 Test ANE pipelines - Sprint 71
 """
 import unittest
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock
 
 
 class TestANEPipelines(unittest.TestCase):

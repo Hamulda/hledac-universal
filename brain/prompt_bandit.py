@@ -1,21 +1,21 @@
 """Contextual bandit (LinUCB) for prompt selection."""
-import json
-import time
-import os
-import math
-import random
-import logging
-from pathlib import Path
-from collections import defaultdict
-from typing import Optional, List, Dict, Any
 import asyncio
+import json
+import logging
+import math
+import os
+import random
+import time
+from collections import defaultdict
+from pathlib import Path
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
 
 class PromptBandit:
     # Sprint 8TD: UCB1 prompt arms
-    PROMPT_ARMS: List[str] = [
+    PROMPT_ARMS: list[str] = [
         "default",      # baseline
         "adversarial",  # zaměřit na threat actors
         "temporal",     # zaměřit na timeline a TTP evolution
@@ -29,10 +29,10 @@ class PromptBandit:
         self._alpha = alpha
         self._lambda = lambda_reg
         self._d = context_dim
-        self._A: Dict[int, any] = {}          # A_i = lambda*I + sum x x^T
-        self._b: Dict[int, any] = {}          # b_i = sum reward * x
-        self._counts: Dict[int, int] = defaultdict(int)
-        self._rewards: Dict[int, float] = defaultdict(float)
+        self._A: dict[int, any] = {}          # A_i = lambda*I + sum x x^T
+        self._b: dict[int, any] = {}          # b_i = sum reward * x
+        self._counts: dict[int, int] = defaultdict(int)
+        self._rewards: dict[int, float] = defaultdict(float)
         self._n_variants = 0
         self._persist_path = persist_path or Path.home() / '.hledac' / 'prompt_bandit.json'
         self._save_counter = 0
@@ -45,8 +45,8 @@ class PromptBandit:
         self._ab_test_duration = 24 * 3600
 
         # Sprint 8TD: UCB1 arm state
-        self._arm_counts: Dict[str, int] = {a: 0 for a in self.PROMPT_ARMS}
-        self._arm_rewards: Dict[str, float] = {a: 0.0 for a in self.PROMPT_ARMS}
+        self._arm_counts: dict[str, int] = dict.fromkeys(self.PROMPT_ARMS, 0)
+        self._arm_rewards: dict[str, float] = dict.fromkeys(self.PROMPT_ARMS, 0.0)
         self._total_pulls: int = 0
         self._ucb_c: float = 1.414  # sqrt(2) = standard UCB1
 
@@ -56,7 +56,7 @@ class PromptBandit:
         if self._persist_path.exists():
             try:
                 import numpy as np
-                with open(self._persist_path, 'r') as f:
+                with open(self._persist_path) as f:
                     data = json.load(f)
 
                 self._counts = defaultdict(int, data.get('counts', {}))
@@ -85,7 +85,6 @@ class PromptBandit:
         """Atomický save s temp file a fsync."""
         async with self._save_lock:
             try:
-                import numpy as np
                 # Převedeme numpy array na seznamy pro JSON
                 A_json = {str(k): v.tolist() for k, v in self._A.items()}
                 b_json = {str(k): v.tolist() for k, v in self._b.items()}
@@ -251,7 +250,7 @@ class PromptBandit:
         await self._save()
 
     # A/B test methods (optional)
-    def start_ab_test(self, variant_ids: List[int], duration_hours: int = 24):
+    def start_ab_test(self, variant_ids: list[int], duration_hours: int = 24):
         self._ab_test_active = True
         self._ab_test_variants = {vid: {'impressions': 0, 'conversions': 0} for vid in variant_ids}
         self._ab_test_start_time = time.time()
@@ -278,7 +277,7 @@ class PromptBandit:
                 }
         return results
 
-    def check_ab_test_complete(self) -> Optional[int]:
+    def check_ab_test_complete(self) -> int | None:
         if not self._ab_test_active:
             return None
         if time.time() - self._ab_test_start_time < self._ab_test_duration:
@@ -334,7 +333,7 @@ class PromptBandit:
         }
         return modifiers.get(arm, "")
 
-    def get_stats(self) -> Dict[str, Any]:
+    def get_stats(self) -> dict[str, Any]:
         """Sprint 8TD: Vrátit arm statistics for DuckDB persistence."""
         return {
             "arm_counts": dict(self._arm_counts),

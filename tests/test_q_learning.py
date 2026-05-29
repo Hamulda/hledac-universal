@@ -9,10 +9,9 @@ Anti-patterns covered:
 - E-greedy action selection with deterministic tie-break
 """
 
-import pytest
-import asyncio
 
-from hledac.universal.loops.research_loop import QTable, ResearchState, ResearchLoop, ResearchResult
+import pytest
+from hledac.universal.loops.research_loop import QTable, ResearchLoop, ResearchResult, ResearchState
 
 
 class TestQTableUpdate:

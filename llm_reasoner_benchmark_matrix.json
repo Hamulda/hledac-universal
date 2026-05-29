@@ -7,7 +7,7 @@
     "role": "production_reasoner",
     "memory_gb_approx": 2.0,
     "quantization": "4bit",
-    "note": "F217A benchmark baseline — Hermes was production default before F217C swap to DeepHermes"
+    "note": "F217A benchmark baseline \u2014 Hermes was production default before F217C swap to DeepHermes"
   },
   "primary_reasoners": [
     {
@@ -17,50 +17,9 @@
       "memory_gb_approx": 2.1,
       "quantization": "4bit",
       "notes": "Novel Hermes fine-tune, strong reasoning"
-    },
-    {
-      "model_key": "nanbeige4",
-      "model_id": "mlx-community/Nanbeige4.1-3B-4bit",
-      "role": "reasoner",
-      "memory_gb_approx": 2.0,
-      "quantization": "4bit",
-      "notes": "Bilingual Chinese/English, efficient"
-    },
-    {
-      "model_key": "smollm3",
-      "model_id": "mlx-community/SmolLM3-3B-4bit",
-      "role": "reasoner",
-      "memory_gb_approx": 2.0,
-      "quantization": "4bit",
-      "notes": "Smallest 3B family, fast inference"
-    },
-    {
-      "model_key": "phi4mini",
-      "model_id": "microsoft/Phi-4-mini-4bit",
-      "role": "reasoner_optional",
-      "memory_gb_approx": 2.2,
-      "quantization": "4bit",
-      "notes": "Optional only if locally configured"
     }
   ],
-  "fast_router_candidates": [
-    {
-      "model_key": "qwen3_0b6",
-      "model_id": "mlx-community/Qwen3-0.6B-4bit",
-      "role": "fast_router_structured",
-      "memory_gb_approx": 0.4,
-      "quantization": "4bit",
-      "notes": "Ultra-fast, good for simple routing"
-    },
-    {
-      "model_key": "qwen3_1b7",
-      "model_id": "mlx-community/Qwen3-1.7B-4bit",
-      "role": "fast_router_structured",
-      "memory_gb_approx": 1.1,
-      "quantization": "4bit",
-      "notes": "Balanced speed/quality for JSON output"
-    }
-  ],
+  "fast_router_candidates": [],
   "metrics": [
     "load_latency_ms",
     "ttft_ms",

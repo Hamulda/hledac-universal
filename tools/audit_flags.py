@@ -9,7 +9,6 @@ import json
 import re
 import sys
 from pathlib import Path
-from typing import Dict, List, Set
 
 # Root folder = hledac/universal
 ROOT = Path(__file__).parent.parent
@@ -17,7 +16,7 @@ BASELINE_FILE = ROOT / ".flags_baseline.json"
 IGNORE_DIRS = {"tests", "venv", "__pycache__", ".git"}
 
 
-def extract_module_flags(filepath: Path) -> Set[str]:
+def extract_module_flags(filepath: Path) -> set[str]:
     """Returns set of module-level variable names matching pattern."""
     with open(filepath, "rb") as f:
         try:
@@ -40,7 +39,7 @@ def extract_module_flags(filepath: Path) -> Set[str]:
     return flags
 
 
-def scan_all_flags() -> Dict[str, List[str]]:
+def scan_all_flags() -> dict[str, list[str]]:
     """Scans all .py files and returns dict {file: [flags]}."""
     result = {}
     for py_file in ROOT.rglob("*.py"):

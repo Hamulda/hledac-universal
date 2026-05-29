@@ -12,9 +12,9 @@ No runtime import side effects — only schema definitions.
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from enum import Enum
-import json
 
 from hledac.universal.utils.serialization import _safe_dataclass_to_dict
 

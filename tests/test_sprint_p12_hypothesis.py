@@ -24,9 +24,7 @@ Invariant table:
 
 from __future__ import annotations
 
-import asyncio
 import inspect
-from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -361,7 +359,8 @@ class TestP12DILoadWire:
         SprintScheduler passes hermes_engine into async_run_live_public_pipeline.
         Verifies DI wire: scheduler._hermes_engine → pipeline P12 gate.
         """
-        import ast, inspect
+        import inspect
+
         from hledac.universal.runtime.sprint_scheduler import SprintScheduler
 
         # Check that _run_public_discovery_in_cycle passes hermes_engine
@@ -376,6 +375,7 @@ class TestP12DILoadWire:
         Verifies bounded M1 8GB lifecycle: load at BOOT, release at TEARDOWN.
         """
         import inspect
+
         from hledac.universal.runtime.sprint_scheduler import SprintScheduler
 
         # Check that run() calls _prewarm_hermes_for_sprint (mode-aware prewarm)
@@ -390,6 +390,7 @@ class TestP12DILoadWire:
         Verifies bounded M1 8GB lifecycle: load at BOOT, release at TEARDOWN.
         """
         import inspect
+
         from hledac.universal.runtime.sprint_scheduler import SprintScheduler
 
         source = inspect.getsource(SprintScheduler.run)
@@ -420,6 +421,7 @@ class TestP12HermesLifecycleUnderModelManager:
         Verifies canonical Hermes lifecycle owner is ModelManager.
         """
         import inspect
+
         from hledac.universal.runtime.sprint_scheduler import SprintScheduler
 
         source = inspect.getsource(SprintScheduler._load_hermes_for_sprint)
@@ -440,6 +442,7 @@ class TestP12HermesLifecycleUnderModelManager:
         Verifies canonical Hermes unload authority is ModelManager.
         """
         import inspect
+
         from hledac.universal.runtime.sprint_scheduler import SprintScheduler
 
         source = inspect.getsource(SprintScheduler._unload_hermes_at_teardown)
@@ -457,10 +460,8 @@ class TestP12HermesLifecycleUnderModelManager:
         Verifies fail-soft skip — sprint continues, ToT is skipped.
         """
         import sys
-        from unittest.mock import AsyncMock, MagicMock
 
-        from hledac.universal.runtime.sprint_scheduler import SprintScheduler
-        from hledac.universal.runtime.sprint_scheduler import SprintSchedulerConfig
+        from hledac.universal.runtime.sprint_scheduler import SprintScheduler, SprintSchedulerConfig
 
         # Create minimal scheduler instance using proper config
         config = SprintSchedulerConfig(
@@ -501,10 +502,8 @@ class TestP12HermesLifecycleUnderModelManager:
         Verifies DI wire to public pipeline.
         """
         import sys
-        from unittest.mock import AsyncMock, MagicMock
 
-        from hledac.universal.runtime.sprint_scheduler import SprintScheduler
-        from hledac.universal.runtime.sprint_scheduler import SprintSchedulerConfig
+        from hledac.universal.runtime.sprint_scheduler import SprintScheduler, SprintSchedulerConfig
 
         config = SprintSchedulerConfig(
             sprint_duration_s=30.0,
@@ -545,6 +544,7 @@ class TestP12HermesLifecycleUnderModelManager:
         Verifies bounded M1 8GB lifecycle: load at BOOT, release at TEARDOWN.
         """
         import inspect
+
         from hledac.universal.runtime.sprint_scheduler import SprintScheduler
 
         source = inspect.getsource(SprintScheduler.run)
@@ -559,10 +559,8 @@ class TestP12HermesLifecycleUnderModelManager:
         Verifies canonical unload authority.
         """
         import sys
-        from unittest.mock import AsyncMock, MagicMock
 
-        from hledac.universal.runtime.sprint_scheduler import SprintScheduler
-        from hledac.universal.runtime.sprint_scheduler import SprintSchedulerConfig
+        from hledac.universal.runtime.sprint_scheduler import SprintScheduler, SprintSchedulerConfig
 
         config = SprintSchedulerConfig(
             sprint_duration_s=30.0,
@@ -703,6 +701,7 @@ class TestP12HermesPrewarmPolicy:
         The prewarm call is synchronous from run() — no async fan-out until prewarm completes.
         """
         import inspect
+
         from hledac.universal.runtime.sprint_scheduler import SprintScheduler
 
         # _prewarm_hermes_for_sprint is an async method that blocks until load completes
@@ -725,11 +724,9 @@ class TestP12HermesPrewarmPolicy:
         Hard headroom rule: RSS > 4GB means insufficient headroom for safe prewarm.
         """
         import sys
-        from unittest.mock import AsyncMock, MagicMock, patch
 
-        from hledac.universal.runtime.sprint_scheduler import SprintScheduler
-        from hledac.universal.runtime.sprint_scheduler import SprintSchedulerConfig
         from hledac.universal.brain import model_manager
+        from hledac.universal.runtime.sprint_scheduler import SprintScheduler, SprintSchedulerConfig
 
         # Aggressive mode config
         config = SprintSchedulerConfig(
@@ -742,7 +739,7 @@ class TestP12HermesPrewarmPolicy:
         # Mock load_model to track if it gets called
         mock_mm_instance = MagicMock()
         mock_mm_instance.load_model = AsyncMock()
-        original_mm = sys.modules.get("hledac.universal.brain.model_manager")
+        sys.modules.get("hledac.universal.brain.model_manager")
 
         # Create a proper callable mock that returns 4.5 when called
         rss_mock = MagicMock(return_value=4.5)
@@ -767,6 +764,7 @@ class TestP12HermesPrewarmPolicy:
         Verifies bounded lifecycle: load at BOOT, release at TEARDOWN.
         """
         import inspect
+
         from hledac.universal.runtime.sprint_scheduler import SprintScheduler
 
         # run() must call _unload_hermes_at_teardown at teardown

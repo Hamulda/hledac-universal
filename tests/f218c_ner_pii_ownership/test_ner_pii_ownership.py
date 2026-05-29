@@ -6,9 +6,8 @@ no new models are activated, and diagnostic helpers work without loading heavy m
 
 Run: pytest tests/probe_f218c_ner_pii_ownership -q
 """
-import pytest
-import sys
 import os
+import sys
 
 # Add project root to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
@@ -40,7 +39,7 @@ class TestCanonicalNEROwner:
 
     def test_ner_diagnostic_does_not_load_model(self):
         # Importing diagnostic helpers should NOT load the GLiNER model
-        from brain.ner_engine import get_ner_backend, get_extraction_status, _default_engine
+        from brain.ner_engine import _default_engine, get_ner_backend
         initial = _default_engine
         backend = get_ner_backend()  # Should return "unavailable" without loading
         assert backend == "unavailable"
@@ -54,7 +53,7 @@ class TestCanonicalNEROwner:
 
     def test_coreml_ner_not_activated(self):
         """CoreML NER path is not activated by this sprint."""
-        from brain.ner_engine import NEREngine, _NL_AVAILABLE
+        from brain.ner_engine import NEREngine
         eng = NEREngine()
         # _coreml_ner_model should be None (lazy, not loaded)
         assert eng._coreml_ner_model is None
@@ -86,7 +85,7 @@ class TestCanonicalPIIOwner:
         assert get_pii_backend() == "regex"
 
     def test_quick_sanitize_does_not_load_models(self):
-        from security.pii_gate import quick_sanitize, _DEFAULT_GATE
+        from security.pii_gate import _DEFAULT_GATE, quick_sanitize
         initial = _DEFAULT_GATE
         result = quick_sanitize("test@example.com")
         assert "@" not in result or result == "test@example.com"
@@ -138,7 +137,7 @@ class TestNoNewModels:
 
     def test_nltagger_ner_not_forced_active(self):
         """NLTagger ANE path is documented but not forced active."""
-        from brain.ner_engine import NEREngine, _NL_AVAILABLE
+        from brain.ner_engine import _NL_AVAILABLE, NEREngine
         # _NL_AVAILABLE is a read-only detection flag
         eng = NEREngine()
         if not _NL_AVAILABLE:

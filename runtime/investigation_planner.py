@@ -38,7 +38,6 @@ Rules:
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Optional
 
 __all__ = [
     "InvestigationAction",
@@ -112,7 +111,7 @@ def _is_url(value: str) -> bool:
     return value.startswith("http://") or value.startswith("https://")
 
 
-def _extract_domains_from_seed(seed_context: Optional[dict]) -> list[str]:
+def _extract_domains_from_seed(seed_context: dict | None) -> list[str]:
     """Extract domain IOC values from seed_context."""
     if not seed_context:
         return []
@@ -132,7 +131,7 @@ def _extract_domains_from_seed(seed_context: Optional[dict]) -> list[str]:
     return domains
 
 
-def _extract_ips_from_seed(seed_context: Optional[dict]) -> list[str]:
+def _extract_ips_from_seed(seed_context: dict | None) -> list[str]:
     """Extract IP IOC values from seed_context."""
     if not seed_context:
         return []
@@ -152,7 +151,7 @@ def _extract_ips_from_seed(seed_context: Optional[dict]) -> list[str]:
     return ips
 
 
-def _extract_urls_from_seed(seed_context: Optional[dict]) -> list[str]:
+def _extract_urls_from_seed(seed_context: dict | None) -> list[str]:
     """Extract URL IOC values from seed_context."""
     if not seed_context:
         return []
@@ -281,7 +280,7 @@ def plan_next_investigation_actions(
 
     current_query: str = state.get("current_query", "") or ""
     source_family_outcomes: dict = state.get("source_family_outcomes", {})
-    seed_context: Optional[dict] = state.get("seed_context")
+    seed_context: dict | None = state.get("seed_context")
     corroboration_scores: dict = state.get("corroboration_scores", {})
     missing_lanes: list = state.get("missing_lanes", [])
     public_provider_status: dict = state.get("public_provider_status", {})

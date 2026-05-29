@@ -13,11 +13,9 @@ public FTP resources (e.g., academic data archives, government data).
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import re
 from dataclasses import dataclass
-from typing import Optional
 from urllib.parse import urlparse
 
 logger = logging.getLogger(__name__)
@@ -45,8 +43,8 @@ class FTPListingItem:
     """Represents a single item in FTP directory listing."""
     path: str
     is_dir: bool
-    size: Optional[int] = None
-    modified: Optional[str] = None
+    size: int | None = None
+    modified: str | None = None
 
 
 class FTPExplorer:
@@ -81,8 +79,8 @@ class FTPExplorer:
     async def list(
         self,
         ftp_url: str,
-        max_depth: Optional[int] = None,
-        max_entries: Optional[int] = None
+        max_depth: int | None = None,
+        max_entries: int | None = None
     ) -> list[FTPListingItem]:
         """
         List directory contents from FTP server.
@@ -119,7 +117,7 @@ class FTPExplorer:
                 items = await self._list_recursive(client, path, depth, entries_limit)
                 return items
 
-        except asyncio.TimeoutError:
+        except TimeoutError:
             self.logger.warning(f"FTP timeout for {ftp_url}")
             return []
         except Exception as e:
@@ -128,7 +126,7 @@ class FTPExplorer:
 
     async def _list_recursive(
         self,
-        client: 'aioftp.Client',
+        client: aioftp.Client,
         path: str,
         remaining_depth: int,
         entries_limit: int
@@ -174,7 +172,7 @@ class FTPExplorer:
     async def fetch_text_file(
         self,
         ftp_url: str,
-        max_bytes: Optional[int] = None
+        max_bytes: int | None = None
     ) -> str:
         """
         Fetch small text file from FTP server.
@@ -223,7 +221,7 @@ class FTPExplorer:
                     content = content[:bytes_limit]  # Double-check bounds
                     return content.decode('utf-8', errors='replace')
 
-        except asyncio.TimeoutError:
+        except TimeoutError:
             self.logger.warning(f"FTP timeout for {ftp_url}")
             return ""
         except Exception as e:

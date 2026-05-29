@@ -13,8 +13,6 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass, field
 from enum import Enum, auto
-from typing import Optional
-
 
 # ── Phase enum ───────────────────────────────────────────────────────────────
 
@@ -67,19 +65,19 @@ class SprintLifecycleManager:
     checkpoint_path: str = ""                    # metadata only — no I/O here
 
     # Mutable state
-    _started_at: Optional[float] = field(default=None, repr=False)
+    _started_at: float | None = field(default=None, repr=False)
     _current_phase: SprintPhase = field(default=SprintPhase.BOOT, repr=False)
-    _entered_phase_at: Optional[float] = field(default=None, repr=False)
+    _entered_phase_at: float | None = field(default=None, repr=False)
     _phase_history: dict = field(default_factory=dict, repr=False)  # phase→entered_at timestamp
     _export_started: bool = field(default=False, repr=False)
     _teardown_started: bool = field(default=False, repr=False)
     _abort_requested: bool = field(default=False, repr=False)
     _abort_reason: str = field(default="", repr=False)
-    _last_checkpoint_at: Optional[float] = field(default=None, repr=False)
+    _last_checkpoint_at: float | None = field(default=None, repr=False)
 
     # ── start ────────────────────────────────────────────────────────────────
 
-    def start(self, now_monotonic: Optional[float] = None) -> None:
+    def start(self, now_monotonic: float | None = None) -> None:
         """Transition from BOOT → WARMUP and record start time."""
         if self._started_at is not None:
             raise SprintLifecycleError("Sprint has already been started.")
@@ -89,7 +87,7 @@ class SprintLifecycleManager:
 
     # ── transition_to ────────────────────────────────────────────────────────
 
-    def transition_to(self, phase: SprintPhase, now_monotonic: Optional[float] = None) -> None:
+    def transition_to(self, phase: SprintPhase, now_monotonic: float | None = None) -> None:
         """Transition to the given phase if it respects monotonic ordering."""
         now = _now(now_monotonic)
         if self._started_at is None:
@@ -107,7 +105,7 @@ class SprintLifecycleManager:
 
     # ── tick ─────────────────────────────────────────────────────────────────
 
-    def tick(self, now_monotonic: Optional[float] = None) -> SprintPhase:
+    def tick(self, now_monotonic: float | None = None) -> SprintPhase:
         """
         Advance the state machine.
 
@@ -126,7 +124,7 @@ class SprintLifecycleManager:
 
     # ── remaining_time ───────────────────────────────────────────────────────
 
-    def remaining_time(self, now_monotonic: Optional[float] = None) -> float:
+    def remaining_time(self, now_monotonic: float | None = None) -> float:
         """Seconds remaining in the sprint (0 if elapsed)."""
         now = _now(now_monotonic)
         return self._remaining_time_unlocked(now)
@@ -138,7 +136,7 @@ class SprintLifecycleManager:
 
     # ── should_enter_windup ───────────────────────────────────────────────────
 
-    def should_enter_windup(self, now_monotonic: Optional[float] = None) -> bool:
+    def should_enter_windup(self, now_monotonic: float | None = None) -> bool:
         """True when remaining time is at or below the windup lead threshold."""
         now = _now(now_monotonic)
         remaining = self._remaining_time_unlocked(now)
@@ -158,7 +156,7 @@ class SprintLifecycleManager:
 
     # ── mark_export_started / mark_teardown_started ─────────────────────────
 
-    def mark_export_started(self, now_monotonic: Optional[float] = None) -> None:
+    def mark_export_started(self, now_monotonic: float | None = None) -> None:
         now = _now(now_monotonic)
         if self._current_phase != SprintPhase.WINDUP:
             raise InvalidPhaseTransitionError(
@@ -167,7 +165,7 @@ class SprintLifecycleManager:
         self._export_started = True
         self._transition_to_unlocked(SprintPhase.EXPORT, now)
 
-    def mark_teardown_started(self, now_monotonic: Optional[float] = None) -> None:
+    def mark_teardown_started(self, now_monotonic: float | None = None) -> None:
         now = _now(now_monotonic)
         if self._current_phase not in (SprintPhase.EXPORT, SprintPhase.WINDUP):
             raise InvalidPhaseTransitionError(
@@ -209,7 +207,7 @@ class SprintLifecycleManager:
 
     def recommended_tool_mode(
         self,
-        now_monotonic: Optional[float] = None,
+        now_monotonic: float | None = None,
         thermal_state: str = "nominal",
     ) -> str:
         """
@@ -465,7 +463,7 @@ class SprintLifecycleManager:
         """
         return phase in self._phase_history
 
-    def entered_phase_at(self, phase: SprintPhase) -> Optional[float]:
+    def entered_phase_at(self, phase: SprintPhase) -> float | None:
         """
         Monotonic timestamp when the given phase was first entered.
 
@@ -477,8 +475,8 @@ class SprintLifecycleManager:
 
     def phase_durations_so_far(
         self,
-        now_monotonic: Optional[float] = None,
-    ) -> dict[str, Optional[float]]:
+        now_monotonic: float | None = None,
+    ) -> dict[str, float | None]:
         """
         Seconds each phase has been active so far.
 
@@ -491,7 +489,7 @@ class SprintLifecycleManager:
         DIAGNOSTIC ONLY — read-only seam for observability.
         """
         now = _now(now_monotonic)
-        result: dict[str, Optional[float]] = {}
+        result: dict[str, float | None] = {}
         for ph in _PHASE_ORDER:
             entered = self._phase_history.get(ph)
             if entered is None:
@@ -506,7 +504,7 @@ class SprintLifecycleManager:
 
     # ── Private helpers ─────────────────────────────────────────────────────
 
-    def _transition_to_unlocked(self, phase: SprintPhase, now: Optional[float] = None) -> None:
+    def _transition_to_unlocked(self, phase: SprintPhase, now: float | None = None) -> None:
         if now is None:
             now = _now(None)
         self._current_phase = phase
@@ -524,7 +522,7 @@ class SprintLifecycleManager:
 
 # ── Clock helper ─────────────────────────────────────────────────────────────
 
-def _now(m: Optional[float]) -> float:
+def _now(m: float | None) -> float:
     if m is not None:
         return m
     return time.monotonic()

@@ -11,15 +11,14 @@ from collections import deque
 from unittest import mock
 
 import pytest
-
+from hledac.universal.knowledge.duckdb_store import DuckDBShadowStore
 from hledac.universal.runtime.acquisition_strategy import AcquisitionLane
 from hledac.universal.runtime.nonfeed_candidate_ledger import (
     FAMILY_CT,
-    NonfeedCandidateLedger,
     STAGE_DISCOVERED,
     STAGE_STORED,
+    NonfeedCandidateLedger,
 )
-from hledac.universal.knowledge.duckdb_store import DuckDBShadowStore
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -135,7 +134,6 @@ async def test_ct_lane_ct_results_to_findings_in_path():
 
     call_log = []
 
-    original_ct_results = acq.ct_results_to_findings
 
     def patched_ct_results(batch_result, _outcome, query, sprint_id):
         call_log.append({
@@ -170,8 +168,8 @@ async def test_ct_lane_ct_results_to_findings_in_path():
         with mock.patch.object(acq, "_get_ct_adapter", return_value=fake_ct_adapter):
             # Run the full lane pipeline for CT only
             from hledac.universal.runtime.acquisition_strategy import (
-                AcquisitionStrategySnapshot,
                 AcquisitionLane,
+                AcquisitionStrategySnapshot,
             )
 
             class MockLanePlan:
@@ -460,7 +458,7 @@ def test_source_family_outcomes_contains_ct():
         accepted_findings=0, produced_items=2, timeout=False,
         error=None, duration_s=0.1, source_family="ct",
         ct_query="example.com", ct_results_raw=5,
-        candidate_findings=tuple([_fake_finding("a.example.com"), _fake_finding("b.example.com")]),
+        candidate_findings=(_fake_finding("a.example.com"), _fake_finding("b.example.com")),
         rejection_reasons=(), rejected_count=0, sample_rejections=(),
         wayback_raw_count=0, passive_dns_raw_count=0,
     )
@@ -534,7 +532,6 @@ def test_no_mlx_model_load_in_ct_path():
 
     before = {m for m in sys.modules if "mlx" in m.lower()}
     # Trigger acquisition_strategy import
-    from hledac.universal.runtime import acquisition_strategy as acq
     after = {m for m in sys.modules if "mlx" in m.lower()}
     new_modules = after - before
     # Should not load new MLX modules just by importing acquisition_strategy
@@ -677,7 +674,7 @@ async def test_ct_adapter_error_provider_failed():
         accepted_findings=0, produced_items=1, timeout=False,
         error="connection refused", duration_s=0.1, source_family="ct",
         ct_query="example.com", ct_results_raw=1,
-        candidate_findings=tuple([_fake_finding("fail.example.com")]),
+        candidate_findings=(_fake_finding("fail.example.com"),),
         rejection_reasons=(), rejected_count=0, sample_rejections=(),
         wayback_raw_count=0, passive_dns_raw_count=0,
     )
@@ -719,7 +716,7 @@ async def test_wayback_pdns_not_processed_by_ct_ingest():
         accepted_findings=0, produced_items=0, timeout=False,
         error=None, duration_s=0.1, source_family="wayback_archive",
         ct_query="", ct_results_raw=0,
-        candidate_findings=tuple([_fake_finding("wayback.example.com")]),
+        candidate_findings=(_fake_finding("wayback.example.com"),),
         rejection_reasons=(), rejected_count=0, sample_rejections=(),
         wayback_raw_count=2, passive_dns_raw_count=0,
     )
@@ -729,7 +726,7 @@ async def test_wayback_pdns_not_processed_by_ct_ingest():
         accepted_findings=0, produced_items=0, timeout=False,
         error=None, duration_s=0.1, source_family="passive_dns",
         ct_query="", ct_results_raw=0,
-        candidate_findings=tuple([_fake_finding("pdns.example.com")]),
+        candidate_findings=(_fake_finding("pdns.example.com"),),
         rejection_reasons=(), rejected_count=0, sample_rejections=(),
         wayback_raw_count=0, passive_dns_raw_count=3,
     )

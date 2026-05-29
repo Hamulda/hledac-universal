@@ -104,39 +104,10 @@ GHOST_INVARIANTS:
 
 from __future__ import annotations
 
-
-
-
-
-
-
 import asyncio
-
-
-
 import logging
-
-
-
 import time
-
-
-
-from collections import deque
-
-
-
 from dataclasses import dataclass
-
-
-
-from typing import Optional
-
-
-
-
-
-
 
 logger = logging.getLogger(__name__)
 
@@ -570,7 +541,7 @@ class BannerGrabber:
 
 
 
-                    except asyncio.TimeoutError:
+                    except TimeoutError:
 
 
 
@@ -602,7 +573,7 @@ class BannerGrabber:
 
 
 
-        except asyncio.TimeoutError:
+        except TimeoutError:
 
 
 
@@ -738,7 +709,7 @@ class BannerGrabber:
 
 
 
-                    proxy_addr = await tor.get_circuit()
+                    await tor.get_circuit()
 
 
 
@@ -882,7 +853,7 @@ class BannerGrabber:
 
 
 
-        except asyncio.TimeoutError:
+        except TimeoutError:
 
 
 
@@ -1070,7 +1041,7 @@ class BannerGrabber:
 
 
 
-        except asyncio.TimeoutError:
+        except TimeoutError:
 
 
 
@@ -1546,7 +1517,7 @@ async def grab_batch_as_findings(
 
 
 
-        List[CanonicalFinding]
+        list[CanonicalFinding]
 
 
 
@@ -1567,12 +1538,7 @@ async def grab_batch_as_findings(
 
 
         import hashlib
-
-
-
         import time
-
-
 
         from hledac.universal.knowledge.duckdb_store import CanonicalFinding
 
@@ -1718,7 +1684,7 @@ async def banner_grab_to_canonical(host: str, ports: list[int], query: str) -> l
 
     """Banner grab adapter — mapuje banner grab output na CanonicalFinding.
 
-    
+
 
     Args:
 
@@ -1736,23 +1702,23 @@ async def banner_grab_to_canonical(host: str, ports: list[int], query: str) -> l
 
     import time
 
-    
+
 
     if len(ports) > 5:
 
         ports = ports[:5]
 
-    
+
 
     grabber = BannerGrabber()
 
     findings = []
 
-    
+
 
     sem = asyncio.Semaphore(1)  # One at a time -- TCP probes are heavyweight
 
-    
+
 
     async def _grab_one(port: int) -> BannerResult | None:
 
@@ -1766,7 +1732,7 @@ async def banner_grab_to_canonical(host: str, ports: list[int], query: str) -> l
 
             return None
 
-    
+
 
     try:
 
@@ -1778,7 +1744,7 @@ async def banner_grab_to_canonical(host: str, ports: list[int], query: str) -> l
 
         results = []
 
-    
+
 
     for result in results:
 
@@ -1822,6 +1788,6 @@ async def banner_grab_to_canonical(host: str, ports: list[int], query: str) -> l
 
             continue
 
-    
+
 
     return findings[:100]

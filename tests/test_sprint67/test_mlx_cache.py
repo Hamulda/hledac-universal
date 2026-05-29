@@ -2,9 +2,10 @@
 Test mlx_cache - Sprint 67
 Tests for MLX model cache and semaphore.
 """
-import pytest
 import asyncio
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
+
+import pytest
 
 
 class TestMLXCache:

@@ -48,6 +48,16 @@ Sprint F150P: Finish-layer truth fields — canonical surfaces from scheduler/co
 
 from __future__ import annotations
 
+# Sprint F214Q: Re-export from narrative_builder for backward compat
+from hledac.universal.export.components.narrative_builder import (
+    _build_operator_brief,
+    _build_sprint_summary,
+    _derive_why_this_run_matters,
+    _derive_best_first_move,
+    _derive_branch_truth,
+    _get_branch_value,
+)
+
 import asyncio
 import json
 import logging
@@ -63,27 +73,6 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Sprint F232A: Component imports — narrative, scorecard, pivot, signal, hypothesis
 # ---------------------------------------------------------------------------
-from hledac.universal.export.components.narrative_builder import (
-    _build_operator_brief,
-    _build_sprint_summary,
-    _derive_confidence_band,
-    _derive_follow_ups,
-    _derive_high_value_findings,
-    _derive_next_step,
-    _derive_priority_stack,
-    _derive_trust_note,
-    _derive_what_not_to_do,
-    _derive_why_this_run_matters,
-    _enrich_follow_ups,
-    _get_branch_value,
-)
-from hledac.universal.export.components.pivot_builder import (
-    _derive_branch_seeds,
-    _derive_focus_expand,
-    _derive_trend_seeds,
-    _get_correlation_from_handoff,
-    _get_runtime_truth,
-)
 from hledac.universal.export.components.signal_builder import (
     _compute_runtime_diagnosis,
     _extract_runtime_timing,
@@ -91,13 +80,19 @@ from hledac.universal.export.components.signal_builder import (
 from hledac.universal.export.components.hypothesis_builder import (
     _derive_hypothesis_queries,
 )
+from hledac.universal.export.components.pivot_builder import (
+    _derive_branch_seeds,
+    _derive_focus_expand,
+    _derive_trend_seeds,
+    _get_runtime_truth,
+    _get_correlation_from_handoff,
+)
 
 # ---------------------------------------------------------------------------
 # Sprint F232A: Investigation Packet builder
 # Connects existing reconciliation + planner into report enrichment.
 # No new storage, no new model deps, no live network calls.
 # ---------------------------------------------------------------------------
-
 from hledac.universal.runtime.acquisition_telemetry_reconcile import (
     complete_source_family_outcomes_from_lane_details,
     complete_source_family_outcomes_from_prelude,
@@ -666,7 +661,7 @@ def _pvs_n(scorecard: dict, key: str, default: float | int) -> float | int:
 
 async def export_partial_sprint(
     store: Any,
-    handoff: "ExportHandoff | dict",  # type: ignore[name-defined]
+    handoff: ExportHandoff | dict,  # type: ignore[name-defined]
     sprint_id: str | None = None,
     finding_count: int = 0,
 ) -> dict:
@@ -686,8 +681,8 @@ async def export_partial_sprint(
 
     Never raises. Fail-soft: write errors are logged but do not crash the sprint.
     """
-    from hledac.universal.paths import get_sprint_json_report_path
     from hledac.universal.export.COMPAT_HANDOFF import ensure_export_handoff
+    from hledac.universal.paths import get_sprint_json_report_path
 
     _sprint_id = sprint_id or "unknown"
     try:
@@ -742,7 +737,7 @@ async def export_partial_sprint(
             logger.info(f"[PARTIAL-EXPORT] {partial_path_zst} — findings={finding_count} (zstd sidecar)")
         except ImportError:
             # zstd unavailable — only write .json (already done below)
-            logger.warning(f"[PARTIAL-EXPORT] zstd unavailable, plain JSON only")
+            logger.warning("[PARTIAL-EXPORT] zstd unavailable, plain JSON only")
         # Always write .json for backward compatibility with existing readers
         partial_path.write_text(_text_data)
     except Exception as ex:
@@ -753,7 +748,7 @@ async def export_partial_sprint(
 
 async def export_sprint(
     store: Any,
-    handoff: "ExportHandoff",  # type: ignore[name-defined]
+    handoff: ExportHandoff,  # type: ignore[name-defined]
     sprint_id: str | None = None,
     enable_security_enrichment: bool = False,
     export_mode: str = "slim",
@@ -1612,7 +1607,7 @@ def _type_aware_seeds(value: str, ioc_type: str, reason: str = "top_graph_node")
 
 def _build_product_value_summary(
     store: Any,
-    eh: "ExportHandoff",  # type: ignore[name-defined]
+    eh: ExportHandoff,  # type: ignore[name-defined]
     sprint_id: str,
 ) -> dict[str, Any]:
     """
@@ -2193,7 +2188,7 @@ def _build_expected_evidence(
     # ----- malware_family / wallet_recon -----
     if intent in ("malware_family", "wallet_recon"):
         expected = ["public"] + (["ct"] if intent == "wallet_recon" else [])
-        public_status = _family_status("public")
+        _family_status("public")
 
         # minimum: public yields candidate domains (accepted > 0)
         public_accepted = _family_accepted("public")
@@ -2351,7 +2346,11 @@ def _corroboration_reason_str(scorecard: dict) -> str:
 
 def _corroboration_penalties_list(scorecard: dict) -> list:
     """Return list of active penalties."""
-    from hledac.universal.runtime.corroboration_score import _NONFEED_FAMILIES, _TERMINAL_COMPLETED, _TERMINAL_NO_RESULTS
+    from hledac.universal.runtime.corroboration_score import (
+        _NONFEED_FAMILIES,
+        _TERMINAL_COMPLETED,
+        _TERMINAL_NO_RESULTS,
+    )
     outcomes = _get_corrob_outcomes(scorecard)
     penalties = []
 
@@ -2452,7 +2451,7 @@ def _compute_provider_yield_signals(
     pub_errors = public_provider_errors or []
     missing = nonfeed_missing_expected_lanes or []
     sfo_list = scorecard.get("source_family_outcomes", []) if isinstance(scorecard, dict) else []
-    nonfeed_expected = scorecard.get("nonfeed_expected_lanes", []) or []
+    scorecard.get("nonfeed_expected_lanes", []) or []
 
     # Detect feed-only: only feed family has accepted findings, no nonfeed attempted
     nonfeed_families = {"ct", "doh", "wayback", "passive_dns", "shodan", "hunter"}
@@ -2653,7 +2652,7 @@ async def _get_source_leaderboard(store: Any, days: int = 7) -> list[dict]:
     # [IMPORTED from components] def placeholder at L2956
 
 
-def _get_acquisition_truth(eh: "ExportHandoff") -> dict[str, Any]:
+def _get_acquisition_truth(eh: ExportHandoff) -> dict[str, Any]:
     """
     Sprint F208J-C: Acquisition truth pass-through — handoff-first truth order.
 
@@ -2923,7 +2922,7 @@ def _reconcile_acquisition_terminality_from_source_outcomes(report_dict: dict) -
     return report_dict
 
 
-def _get_feed_verdict(eh: "ExportHandoff") -> dict[str, Any] | None:  # type: ignore[name-defined]
+def _get_feed_verdict(eh: ExportHandoff) -> dict[str, Any] | None:  # type: ignore[name-defined]
     """
     Sprint F150P: feed_verdict z ExportHandoff.scorecard.
 
@@ -2940,7 +2939,7 @@ def _get_feed_verdict(eh: "ExportHandoff") -> dict[str, Any] | None:  # type: ig
     return None
 
 
-def _get_public_verdict(eh: "ExportHandoff") -> dict[str, Any] | None:  # type: ignore[name-defined]
+def _get_public_verdict(eh: ExportHandoff) -> dict[str, Any] | None:  # type: ignore[name-defined]
     """
     Sprint F150P: public_verdict z ExportHandoff.scorecard.
 
@@ -2957,7 +2956,7 @@ def _get_public_verdict(eh: "ExportHandoff") -> dict[str, Any] | None:  # type: 
     return None
 
 
-def _get_signal_path(eh: "ExportHandoff") -> dict[str, Any] | None:  # type: ignore[name-defined]
+def _get_signal_path(eh: ExportHandoff) -> dict[str, Any] | None:  # type: ignore[name-defined]
     """
     Sprint F150P: signal_path z ExportHandoff.scorecard.
 
@@ -2974,7 +2973,7 @@ def _get_signal_path(eh: "ExportHandoff") -> dict[str, Any] | None:  # type: ign
     return None
 
 
-def _get_hypothesis_pack(eh: "ExportHandoff") -> dict[str, Any] | None:  # type: ignore[name-defined]
+def _get_hypothesis_pack(eh: ExportHandoff) -> dict[str, Any] | None:  # type: ignore[name-defined]
     """
     Sprint F150P: hypothesis_pack z ExportHandoff.scorecard.
 
@@ -2991,7 +2990,7 @@ def _get_hypothesis_pack(eh: "ExportHandoff") -> dict[str, Any] | None:  # type:
     return None
 
 
-def _get_canonical_run_summary(eh: "ExportHandoff") -> dict[str, Any] | None:  # type: ignore[name-defined]
+def _get_canonical_run_summary(eh: ExportHandoff) -> dict[str, Any] | None:  # type: ignore[name-defined]
     """
     Sprint F150P §2 + F157: canonical_run_summary — handoff-first truth order.
 
@@ -3017,7 +3016,7 @@ def _get_canonical_run_summary(eh: "ExportHandoff") -> dict[str, Any] | None:  #
     return None
 
 
-def _get_sprint_verdict(eh: "ExportHandoff") -> dict[str, Any] | None:  # type: ignore[name-defined]
+def _get_sprint_verdict(eh: ExportHandoff) -> dict[str, Any] | None:  # type: ignore[name-defined]
     """
     Sprint F150P §2 + F157: sprint_verdict — handoff-first truth order.
 
@@ -3042,7 +3041,7 @@ def _get_sprint_verdict(eh: "ExportHandoff") -> dict[str, Any] | None:  # type: 
     return None
 
 
-def _get_synthesis_outcome_payload(eh: "ExportHandoff") -> dict[str, Any] | None:  # type: ignore[name-defined]
+def _get_synthesis_outcome_payload(eh: ExportHandoff) -> dict[str, Any] | None:  # type: ignore[name-defined]
     """
     Sprint F157: synthesis_outcome_payload — handoff-first truth order.
 
@@ -3101,7 +3100,7 @@ _SOURCE_TIER: dict[str, int] = {
 
 
 def _compute_research_depth(
-    eh: "ExportHandoff",  # type: ignore[name-defined]
+    eh: ExportHandoff,  # type: ignore[name-defined]
     pvs: dict[str, Any] | None,
     signal_path: dict[str, Any] | None,
     hypothesis_pack: dict[str, Any] | None,
@@ -3546,9 +3545,9 @@ def _derive_run_truth_note(
         is_meaningful = runtime_truth.get("is_meaningful")
         evidence_note = runtime_truth.get("evidence_note") or ""
         if is_meaningful is True:
-            return f"meaningful_run" + (f": {evidence_note}" if evidence_note else "")
+            return "meaningful_run" + (f": {evidence_note}" if evidence_note else "")
         elif is_meaningful is False:
-            return f"smoke_run" + (f": {evidence_note}" if evidence_note else "")
+            return "smoke_run" + (f": {evidence_note}" if evidence_note else "")
         elif isinstance(is_meaningful, str):
             return f"{is_meaningful}" + (f": {evidence_note}" if evidence_note else "")
 
@@ -3758,7 +3757,6 @@ def _derive_best_first_move(
 # Sprint F238E Phase C: Optional runtime_timing section in JSON export
 _MAX_RUNTIME_TIMING_EVENTS = 500  # mirror of _MAX_TELEMETRY_EVENTS in sprint_timer.py
 
-from hledac.universal.runtime.sprint_timer import compute_runtime_loop_telemetry
 
 
     # [IMPORTED from components] def placeholder at L4489

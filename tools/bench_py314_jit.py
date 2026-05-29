@@ -16,10 +16,10 @@ Exit codes:
 from __future__ import annotations
 
 import os
-import sys
-import time
 import subprocess
+import sys
 import textwrap
+import time
 from pathlib import Path
 from typing import NamedTuple
 
@@ -57,9 +57,9 @@ def check_jit(python: Path) -> JTStatus:
     if has_jit != "True":
         return JTStatus(
             False,
-            f"sys.jit attribute NOT_FOUND. "
-            f"Python 3.14.4 was built WITHOUT --with-jit. "
-            f"PYTHON_JIT=1 has no effect on this interpreter.",
+            "sys.jit attribute NOT_FOUND. "
+            "Python 3.14.4 was built WITHOUT --with-jit. "
+            "PYTHON_JIT=1 has no effect on this interpreter.",
         )
 
     try:
@@ -205,16 +205,13 @@ def bench_content_miner(python: Path, env: dict[str, str] | None) -> BenchResult
         )
         _stdout, stderr_data = proc.communicate(timeout=60)
         wall_s = time.perf_counter() - t0
-        exit_code = proc.returncode
         stderr_text = stderr_data.decode(errors="replace")
     except subprocess.TimeoutExpired:
         proc.kill()
         wall_s = time.perf_counter() - t0
-        exit_code = 124
         stderr_text = "TIMEOUT"
     except Exception as e:
         wall_s = time.perf_counter() - t0
-        exit_code = 65
         stderr_text = str(e)
 
     warnings = sum(1 for line in stderr_text.splitlines() if "Warning" in line)

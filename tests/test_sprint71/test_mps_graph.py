@@ -2,7 +2,6 @@
 Test MPS Graph - Sprint 71
 """
 import unittest
-from unittest.mock import patch, MagicMock
 
 
 class TestMPSGraph(unittest.TestCase):

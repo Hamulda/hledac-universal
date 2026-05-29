@@ -35,15 +35,13 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import time as _time
 from dataclasses import dataclass
-from typing import Optional
 
 from hledac.universal.core.resource_governor import (
-    sample_uma_status,
     UMA_STATE_CRITICAL,
     UMA_STATE_EMERGENCY,
     UMA_STATE_WARN,
+    sample_uma_status,
 )
 
 logger = logging.getLogger(__name__)
@@ -207,13 +205,11 @@ class M1ResourceGovernor:
             try:
                 uma = sample_uma_status()
                 self._uma_state = uma.state
-                system_used_gib = uma.system_used_gib
                 # F203J: Extract free UMA GiB for QuantizationSelector
                 free_uma_gib = uma.system_available_gib
             except Exception as exc:
                 logger.debug("[Governor] sample_uma_status failed: %s", exc)
                 self._uma_state = "ok"
-                system_used_gib = 0.0
 
             # Get model lifecycle status via canonical read-only API
             try:
@@ -625,7 +621,7 @@ class M1ResourceGovernor:
 
 
 # Singleton instance
-_governor: Optional[M1ResourceGovernor] = None
+_governor: M1ResourceGovernor | None = None
 
 
 def get_governor() -> M1ResourceGovernor:

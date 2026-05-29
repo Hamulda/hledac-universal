@@ -2,8 +2,9 @@
 Malá spiking neuronová síť (LIF) implementovaná v MLX pro impulzivní změny priorit.
 """
 
+from __future__ import annotations
+
 import time
-from typing import List
 
 # MLX import s fallback
 try:
@@ -57,7 +58,7 @@ class SpikePriorityNetwork:
             for i in range(n_neurons)
         ]
 
-    def forward(self, input_val: float) -> List[float]:
+    def forward(self, input_val: float) -> list[float]:
         """
         Provede forward pass přes všechny neurony.
         Vrací seznam spike hodnot.
@@ -88,7 +89,7 @@ class MLXSpikeNetwork:
         self.taus = mx.array([0.05 + i * 0.02 for i in range(n_neurons)])
         self.potentials = mx.zeros(n_neurons)
 
-    def forward(self, input_val: float) -> List[float]:
+    def forward(self, input_val: float) -> list[float]:
         """MLX-forward pass."""
         # Broadcast input
         inputs = mx.full(self.n_neurons, input_val)
@@ -104,7 +105,7 @@ class MLXSpikeNetwork:
         mask = spikes > 0
         self.potentials = mx.where(mask, mx.zeros(self.n_neurons), self.potentials)
 
-        return spikes.tolist()
+        return list(spikes)
 
     def reset(self):
         """Resetuje potenciály."""

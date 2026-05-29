@@ -2,8 +2,6 @@
 Tests for Sprint 80 - Progressive-deepening evidence engine.
 """
 import asyncio
-import time
-from collections import OrderedDict
 
 import pytest
 
@@ -82,8 +80,9 @@ class TestHostTelemetry:
 
     def test_host_telemetry_slots(self):
         """Test __slots__ are defined."""
-        from hledac.universal.stealth.stealth_manager import HostTelemetry
         import asyncio
+
+        from hledac.universal.stealth.stealth_manager import HostTelemetry
 
         sem = asyncio.Semaphore(2)
         ht = HostTelemetry(sem)

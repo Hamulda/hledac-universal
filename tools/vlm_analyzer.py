@@ -12,14 +12,15 @@ import asyncio
 import logging
 import os
 import tempfile
-from typing import Any, Optional
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
 # Lazy import guard — mlx-vlm is optional
 MLX_VLM_AVAILABLE = False
 try:
-    from mlx_vlm import load as vlm_load, generate as vlm_generate
+    from mlx_vlm import generate as vlm_generate
+    from mlx_vlm import load as vlm_load
     MLX_VLM_AVAILABLE = True
 except ImportError:
     logger.debug("mlx-vlm not available")
@@ -42,9 +43,9 @@ class VLMAnalyzer:
     No automatic loading occurs — explicit configuration required.
     """
 
-    _model: Optional[Any] = None
-    _processor: Optional[Any] = None
-    _lock: Optional[asyncio.Lock] = None
+    _model: Any | None = None
+    _processor: Any | None = None
+    _lock: asyncio.Lock | None = None
 
     @classmethod
     def _get_lock(cls) -> asyncio.Lock:
@@ -54,7 +55,7 @@ class VLMAnalyzer:
         return cls._lock
 
     @classmethod
-    def _get_model_id(cls) -> Optional[str]:
+    def _get_model_id(cls) -> str | None:
         """
         Get configured VLM model ID from environment.
 

@@ -75,8 +75,9 @@ def check_llm() -> dict:
     notes.append(f"rollback={ROLLBACK_LLM}")
 
     # Check kv_bits / max_kv_size are valid mlx_lm.generate kwargs
-    import mlx_lm.generate as _gen
     import inspect
+
+    import mlx_lm.generate as _gen
     sig = inspect.getfullargspec(_gen)
     gen_kwargs = sig.args + sig.kwonlyargs
     has_kv = "kv_bits" in gen_kwargs
@@ -118,13 +119,13 @@ def check_embeddings() -> dict:
         return {"status": "FAIL", "component": "embeddings", "error": f"EmbeddingRouter import failed: {e}"}
 
     try:
-        from hledac.universal.brain.ane_embedder import ANEEmbedder, ANE_AVAILABLE
+        from hledac.universal.brain.ane_embedder import ANE_AVAILABLE
         notes.append(f"ANEEmbedder import=OK (ANE_AVAILABLE={ANE_AVAILABLE})")
 
         # Sprint F216B: CoreMLEmbedder (BGE on ANE) check via embedding_pipeline
         coreml_active_path = "unavailable"
         try:
-            from hledac.universal.embedding_pipeline import get_ane_embedder, COREML_AVAILABLE
+            from hledac.universal.embedding_pipeline import COREML_AVAILABLE, get_ane_embedder
 
             notes.append(f"CoreML available={COREML_AVAILABLE}")
             bge = get_ane_embedder()
@@ -225,7 +226,7 @@ def check_reranker(mode: str = "check") -> dict:
     status = "OK"
 
     try:
-        from hledac.universal.tools.reranker import LightweightReranker as _lr, FLASHRANK_AVAILABLE
+        from hledac.universal.tools.reranker import FLASHRANK_AVAILABLE
         notes.append(f"LightweightReranker=OK (FLASHRANK_AVAILABLE={FLASHRANK_AVAILABLE})")
     except Exception as e:
         return {"status": "FAIL", "component": "reranker", "error": f"Reranker import failed: {e}"}
@@ -250,7 +251,7 @@ def check_reranker(mode: str = "check") -> dict:
             if cached_model.exists():
                 try:
                     flashrank.Ranker(cache_dir=str(cache_dir))
-                    notes.append(f"FlashRank Ranker instantiated (cache found)")
+                    notes.append("FlashRank Ranker instantiated (cache found)")
                 except Exception as e:
                     notes.append(f"FlashRank Ranker init (cached): {e}")
             else:
@@ -271,7 +272,7 @@ def check_pii() -> dict:
     notes = []
 
     try:
-        from hledac.universal.security.pii_gate import SecurityGate, create_security_gate
+        from hledac.universal.security.pii_gate import create_security_gate
         notes.append("SecurityGate=OK")
     except Exception as e:
         return {"status": "FAIL", "component": "pii", "error": f"SecurityGate import failed: {e}"}
@@ -375,7 +376,7 @@ def print_download_commands() -> None:
     print("# LLM models (MLX, downloaded via mlx_lm on first use or explicit prefetch):")
     print(f"#   Primary:  {PRIMARY_LLM}")
     print(f"#   Rollback: {ROLLBACK_LLM}")
-    print(f"#   Download/cache dir: ~/.cache/mlx/")
+    print("#   Download/cache dir: ~/.cache/mlx/")
     print()
     print("#   # Prefetch primary model:")
     print(f"#   python -c \"from mlx_lm import load; load('{PRIMARY_LLM}')\"")
@@ -396,7 +397,7 @@ def print_download_commands() -> None:
     print("#   Cache: ~/.cache/huggingface/hub/")
     print()
     print("#   # Pre-download:")
-    print(f"#   python -c \"from transformers import AutoModelForTokenClassification, AutoTokenizer; \\")
+    print("#   python -c \"from transformers import AutoModelForTokenClassification, AutoTokenizer; \\")
     print(f"#   m = AutoModelForTokenClassification.from_pretrained('{NER_MODEL}'); \\")
     print(f"#   t = AutoTokenizer.from_pretrained('{NER_MODEL}')\"")
     print()

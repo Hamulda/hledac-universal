@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import re
 import time
 import urllib.parse as urlparse
@@ -25,16 +26,14 @@ from typing import TYPE_CHECKING
 
 import aiohttp
 import msgspec
-
-from hledac.universal.transport.circuit_breaker import (
-    checked_aiohttp_get,
-)
-
 from hledac.universal.tools.discovery_replay import (
     read_cassette,
     replay_enabled,
     replay_strict_enabled,
     write_cassette,
+)
+from hledac.universal.transport.circuit_breaker import (
+    checked_aiohttp_get,
 )
 
 _PUBLIC_REPLAY_ADAPTER = "public_duckduckgo"
@@ -749,7 +748,24 @@ def _build_query_variants(query: str) -> list[str]:
     - Mixed query ("mozilla.org certificate transparency") → extract domain token + CT-aware variants
 
     Returns [query] (single variant, no expansion) when no domain token found.
+
+    Phase A (DSPy): if HLEDAC_ENABLE_DSPY=1, call brain.dspy_service.expand_query
+    first for semantic query expansion before structural variants are built.
     """
+    # Phase A: DSPy query expansion (semantic variants before structural ones)
+    dspy_variants: list = []
+    if os.getenv("HLEDAC_ENABLE_DSPY", "0") == "1":
+        try:
+            import asyncio
+
+            from hledac.universal.brain.dspy_service import expand_query
+            dspy_variants = asyncio.run(expand_query(query)) or []
+            if dspy_variants:
+                logger.debug("dspy_service: expand_query added %d semantic variants", len(dspy_variants))
+        except Exception:
+            dspy_variants = []
+
+    # Original structural variant logic follows
     # Fast path: already a clean domain
     if _query_looks_like_domain(query):
         domain = query.strip()
@@ -759,12 +775,13 @@ def _build_query_variants(query: str) -> list[str]:
             f'"{domain}" infrastructure',
             f'"{domain}" subdomain',
         ]
-        return variants[:_MAX_QUERY_VARIANTS]
+        combined = dspy_variants + variants
+        return combined[:_MAX_QUERY_VARIANTS]
 
     # F232: extract domain token from mixed query
     domain = _extract_domain_token(query)
     if domain is None:
-        return [query]
+        return dspy_variants[:5] if dspy_variants else [query]
 
     # Build CT-aware variants for extracted domain
     variants = [
@@ -773,7 +790,8 @@ def _build_query_variants(query: str) -> list[str]:
         f'"{domain}" subdomains',
         f'"{domain}" SSL certificate',
     ]
-    return variants[:_MAX_QUERY_VARIANTS]
+    combined = dspy_variants + variants
+    return combined[:_MAX_QUERY_VARIANTS]
 
 
 # ---------------------------------------------------------------------------
@@ -882,7 +900,7 @@ async def async_search_public_web(
                     raw = await _ddgs_text_search(var_query, per_variant_results, timeout_s, proxy)
             except asyncio.CancelledError:
                 return ([], "cancelled")
-            except (asyncio.TimeoutError, TimeoutError):
+            except TimeoutError:
                 return ([], "timeout")
             except Exception as e:
                 return ([], f"variant_error:{type(e).__name__}")
@@ -1022,7 +1040,7 @@ async def async_search_public_web(
     except asyncio.CancelledError:
         _last_error = "cancelled"
         raise  # always re-raise — do NOT swallow
-    except (asyncio.TimeoutError, TimeoutError):
+    except TimeoutError:
         # asyncio.timeout raises TimeoutError from stdlib in __aexit__
         _last_error = "timeout"
         return DiscoveryBatchResult(

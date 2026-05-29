@@ -2,9 +2,10 @@
 Tests for Tor connection pooling (Sprint 76).
 """
 
-import pytest
-from unittest.mock import patch, MagicMock, AsyncMock
 import asyncio
+from unittest.mock import AsyncMock, MagicMock
+
+import pytest
 
 
 class TestTorPool:

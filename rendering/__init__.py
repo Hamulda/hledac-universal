@@ -18,10 +18,10 @@ Invariant: max 1 concurrent render via module-level semaphore.
 from __future__ import annotations
 
 from hledac.universal.rendering.macos_webkit_renderer import (
-    WebKitRenderResult,
-    is_macos_webkit_available,
-    fetch_with_macos_webkit,
     MACOS_WEBKIT_REASONS,
+    WebKitRenderResult,
+    fetch_with_macos_webkit,
+    is_macos_webkit_available,
 )
 
 __all__ = [

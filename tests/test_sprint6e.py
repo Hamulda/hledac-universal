@@ -2,10 +2,11 @@
 """
 Sprint 6E Tests - ThreadSafeBoundedQueue + Score Hack Removal
 """
-import pytest
-import sys
 import asyncio
+import sys
 import time
+
+import pytest
 
 sys.path.insert(0, '/Users/vojtechhamada/PycharmProjects/Hledac')
 
@@ -75,7 +76,7 @@ class TestScoreHackRemoval:
 
             # Find network_recon in registry
             network_recon = None
-            for name, (handler, scorer) in orch._action_registry.items():
+            for name, (_handler, scorer) in orch._action_registry.items():
                 if name == 'network_recon':
                     network_recon = (name, scorer)
                     break
@@ -105,7 +106,7 @@ class TestScoreHackRemoval:
 
             # Find academic_search in registry
             academic_search = None
-            for name, (handler, scorer) in orch._action_registry.items():
+            for name, (_handler, scorer) in orch._action_registry.items():
                 if name == 'academic_search':
                     academic_search = (name, scorer)
                     break
@@ -132,7 +133,7 @@ class TestTargetQueueMetrics:
 
         async def run():
             from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
-            from hledac.universal.knowledge.atomic_storage import EvidencePacketStorage, EvidencePacket
+            from hledac.universal.knowledge.atomic_storage import EvidencePacket, EvidencePacketStorage
 
             orch = FullyAutonomousOrchestrator()
             orch._evidence_packet_storage = EvidencePacketStorage()
@@ -142,7 +143,7 @@ class TestTargetQueueMetrics:
                     evidence_id=f'evidence_{i}',
                     url=f'http://localhost:{64000+i}/test',
                     final_url=f'http://localhost:{64000+i}/test',
-                    domain=f'localhost',
+                    domain='localhost',
                     fetched_at=time.time() - (i * 86400),
                     status=200,
                     headers_digest='abc123',
@@ -190,7 +191,7 @@ class TestUCB1Warmup:
             assert hasattr(orch, '_UCB1_WARMUP_MIN_EXECUTIONS')
             assert hasattr(orch, '_UCB1_WARMUP_ENABLED')
             assert orch._UCB1_WARMUP_MIN_EXECUTIONS == 20
-            assert orch._UCB1_WARMUP_ENABLED == True
+            assert orch._UCB1_WARMUP_ENABLED
 
         asyncio.run(run())
 
@@ -304,14 +305,14 @@ class TestOfflineGuard:
             orch._data_mode = 'OFFLINE_REPLAY'
 
             # Find and call academic_search handler
-            for name, (handler, scorer) in orch._action_registry.items():
+            for name, (handler, _scorer) in orch._action_registry.items():
                 if name == 'academic_search':
                     result = await handler('test query')
                     # Should succeed with mock findings (no real HTTP)
                     assert result.success, f"Expected success in OFFLINE_REPLAY, got {result.error}"
                     assert len(result.findings) > 0, "Should return mock findings"
                     # Verify offline_replay flag
-                    assert result.metadata.get('offline_replay') == True
+                    assert result.metadata.get('offline_replay')
                     break
 
         asyncio.run(run())

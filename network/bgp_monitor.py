@@ -24,21 +24,63 @@ Anti-patterns prevented:
 
 from __future__ import annotations
 
-
-
 import asyncio
-
 import logging
-
+import re
 import time
-
 from collections import deque
-
-from typing import Callable
-
-
+from collections.abc import Callable
 
 logger = logging.getLogger(__name__)
+
+# ── Rust fast-path (IOC extraction) ─────────────────────────────────────────
+_RUST_IOC_AVAILABLE = False
+try:
+    from hledac_rust_extensions import fast_ioc_extract
+
+    _RUST_IOC_AVAILABLE = True
+except ImportError:
+    fast_ioc_extract = None  # type: ignore[assignment]
+
+# ── F234: IP Extraction ─────────────────────────────────────────────────────────
+_IPV4_PATTERN = re.compile(
+    r'\b(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\b'
+)
+_PRIVATE_RANGES = re.compile(
+    r'^(?:10\.|172\.(?:1[6-9]|2\d|3[01])\.|192\.168\.|127\.|::1|fe80)'
+)
+
+
+def extract_public_ips_from_text(text: str) -> list[str]:
+    """Extract public IPv4 addresses from text. Filters RFC1918/loopback/link-local.
+
+    F234 INVARIANT: Private IPs (RFC1918, loopback, link-local) are NEVER sent to
+    BGP enrichment. Max 20 IPs per sprint (dedup + cap).
+
+    Rust fast-path: uses pre-compiled OnceCell regex via hledac_rust_extensions.
+    Python fallback: uses module-level _IPV4_PATTERN.
+    """
+    if not text:
+        return []
+
+    if _RUST_IOC_AVAILABLE:
+        # Rust fast-path: extract all ipv4 types, then filter private IPs
+        candidates = fast_ioc_extract(text)
+        ips = [v for v, t in candidates if t == "ipv4"]
+    else:
+        # Python fallback
+        ips = _IPV4_PATTERN.findall(text)
+
+    # Deduplicate while preserving order, then filter RFC1918 private IPs
+    seen: set[str] = set()
+    result: list[str] = []
+    for ip in ips:
+        if ip in seen:
+            continue
+        seen.add(ip)
+        if not _PRIVATE_RANGES.match(ip):
+            result.append(ip)
+    return result
 
 
 
@@ -172,7 +214,6 @@ async def monitor_bgp(
 
 
 
-    events: list[dict] = []
 
     event_buffer: deque[dict] = deque(maxlen=1000)  # Bounded memory
 
@@ -286,7 +327,7 @@ async def monitor_bgp(
 
 
 
-    except asyncio.TimeoutError:
+    except TimeoutError:
 
         logger.debug(f"BGP monitor reached duration limit ({duration_seconds}s)")
 
@@ -352,7 +393,7 @@ async def monitor_bgp_as_findings(
 
     Returns:
 
-        List[CanonicalFinding] — one per BGP event
+        list[CanonicalFinding] — one per BGP event
 
     """
 
@@ -457,7 +498,7 @@ async def monitor_bgp_as_findings(
 
 async def bgp_enrich_to_canonical(ip_or_asn: str, query: str) -> list[CanonicalFinding]:
     """BGP enrichment adapter — mapuje BGP monitor output na CanonicalFinding.
-    
+
     Args:
         ip_or_asn: IP adresa nebo ASN (např. "8.8.8.8" nebo "AS15169")
         query: kontextový dotaz pro BGP lookup
@@ -470,5 +511,133 @@ async def bgp_enrich_to_canonical(ip_or_asn: str, query: str) -> list[CanonicalF
         for f in findings:
             object.__setattr__(f, 'source_type', 'bgp_enrichment')
         return findings
+    except Exception:
+        return []
+
+
+# ── F234: RIPE Stat API lazy import ─────────────────────────────────────────────
+_aiohttp = None
+
+
+def _get_aiohttp():
+    global _aiohttp
+    if _aiohttp is None:
+        import aiohttp as _mod
+        _aiohttp = _mod
+    return _aiohttp
+
+
+# ── F234: RIPE Stat API client ──────────────────────────────────────────────────
+_RIPE_PREFIX_URL = "https://stat.ripe.net/data/prefix-overview/data.json"
+_RIPE_WHOIS_URL = "https://stat.ripe.net/data/whois/data.json"
+_RIPE_TIMEOUT = 30.0  # seconds per IP
+
+
+async def enrich_ip_as_finding(ip: str) -> list[CanonicalFinding]:
+    """
+    F234: Enrich a single IP with live BGP data from RIPE Stat API.
+
+    Invariants (F234):
+      - RFC1918/loopback IPs are NEVER sent to RIPE (gate: extract_public_ips_from_text)
+      - Max 20 IPs per sprint (enforced by caller)
+      - 30s timeout per IP
+      - Fail-soft: any error → return []
+
+    RIPE Stat API (no auth required):
+      - GET prefix-overview → ASN, prefix, holder
+      - GET whois (per ASN) → org name, country, abuse contact
+
+    Returns:
+        list[CanonicalFinding] with source_type="bgp_ripe_stat", confidence=0.88
+    """
+    # Gate: extract_public_ips_from_text is the canonical RFC1918 filter
+    public_ips = extract_public_ips_from_text(ip)
+    if not public_ips:
+        return []
+
+    actual_ip = public_ips[0]
+    aiohttp = _get_aiohttp()
+
+    try:
+        async with aiohttp.ClientSession(
+            timeout=aiohttp.ClientTimeout(total=_RIPE_TIMEOUT)
+        ) as session:
+            # Fetch prefix-overview and whois concurrently
+            async with session.get(
+                f"{_RIPE_PREFIX_URL}?resource={actual_ip}",
+                headers={"Accept": "application/json"},
+            ) as pref_resp:
+                pref_data = await pref_resp.json()
+
+            # Extract ASN from prefix-overview
+            asns = pref_data.get("data", {}).get("prefixes", [])
+            if not asns:
+                return []
+
+            # Use the most-specific (first) prefix entry
+            entry = asns[0]
+            asn = entry.get("asn")
+            prefix = entry.get("prefix")
+            holder = entry.get("holder")
+
+            if not asn:
+                return []
+
+            # Fetch whois for ASN — country, org, abuse contact
+            country = ""
+            org_name = ""
+            abuse_contact = ""
+            try:
+                async with session.get(
+                    f"{_RIPE_WHOIS_URL}?resource={asn}",
+                    headers={"Accept": "application/json"},
+                ) as whois_resp:
+                    whois_data = (await whois_resp.json()).get("data", {})
+                    if "objects" in whois_data:
+                        for obj in whois_data["objects"].get("object", []):
+                            for attr in obj.get("attributes", {}).get("attribute", []):
+                                name = attr.get("name", "")
+                                value = attr.get("value", "")
+                                if name == "country":
+                                    country = value
+                                elif name == "org-name":
+                                    org_name = value
+                                elif name == "abuse-mailbox":
+                                    abuse_contact = value
+            except Exception:
+                pass  # fail-soft: whois is supplementary
+
+            from hledac.universal.knowledge.duckdb_store import CanonicalFinding
+            import hashlib
+            import time as _time_module
+
+            ts = _time_module.monotonic()
+
+            content_hash = hashlib.sha256(
+                f"{actual_ip}:{asn}:{prefix}:{holder}".encode()
+            ).hexdigest()[:16]
+            finding_id = f"bgp_ripe_{asn}_{actual_ip.replace('.', '_')}_{content_hash}"
+
+            metadata = {
+                "asn": str(asn),
+                "prefix": prefix or "",
+                "holder": holder or "",
+                "country": country,
+                "org_name": org_name,
+                "abuse_contact": abuse_contact,
+            }
+
+            return [
+                CanonicalFinding(
+                    finding_id=finding_id,
+                    query=f"bgp_ripe:{actual_ip}",
+                    source_type="bgp_ripe_stat",
+                    confidence=0.88,
+                    ts=ts,
+                    provenance=("bgp_ripe_stat", str(asn), actual_ip),
+                    payload_text=str(metadata),
+                )
+            ]
+
     except Exception:
         return []

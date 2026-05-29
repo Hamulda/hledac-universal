@@ -11,9 +11,8 @@ Optimization Strategy:
 
 import logging
 import re
-import asyncio
-from typing import Any, Dict, List, Optional, Tuple
 from dataclasses import dataclass, field
+from typing import Any
 from urllib.parse import urljoin, urlparse
 
 # Sprint 33: selectolax for secure/fast link extraction
@@ -49,7 +48,7 @@ except ImportError:
 
 
 # Module-level compiled regex patterns for _clean_html_basic (compiled once at import time)
-_CLEAN_PATTERNS: List[Tuple[re.Pattern, str]] = [
+_CLEAN_PATTERNS: list[tuple[re.Pattern, str]] = [
     (re.compile(r'<script[^>]*>.*?</script>', flags=re.DOTALL | re.IGNORECASE), ' '),
     (re.compile(r'<style[^>]*>.*?</style>', flags=re.DOTALL | re.IGNORECASE), ' '),
     (re.compile(r'<head[^>]*>.*?</head>', flags=re.DOTALL | re.IGNORECASE), ' '),
@@ -74,10 +73,10 @@ class MiningResult:
     content: str
     title: str = ""
     url: str = ""
-    metadata: Dict[str, Any] = None
+    metadata: dict[str, Any] = None
     success: bool = True
-    error: Optional[str] = None
-    
+    error: str | None = None
+
     def __post_init__(self):
         if self.metadata is None:
             self.metadata = {}
@@ -86,32 +85,32 @@ class MiningResult:
 class RustMiner:
     """
     Lightweight content miner using Rust-backed libraries.
-    
+
     Strategy:
     1. Try trafilex (Rust, fastest) - minimal DOM
     2. Fallback to traflatura (minimal mode) - streaming
     3. Ultimate fallback to regex (no dependencies)
     """
-    
+
     def __init__(self, prefer_rust: bool = True):
         """
         Initialize RustMiner.
-        
+
         Args:
             prefer_rust: Prefer Rust-based libraries (trafilex) over Python
         """
         self.prefer_rust = prefer_rust
-        
+
         self._trafilex_available = self._check_trafilex()
         self._traflatura_available = self._check_traflatura()
-        
+
         self._use_ultimate_fallback = not (self._trafilex_available or self._traflatura_available)
-        
+
         logger.info("✓ RustMiner initialized")
         logger.info(f"  trafilex: {self._trafilex_available}")
         logger.info(f"  traflatura: {self._traflatura_available}")
         logger.info(f"  fallback: {self._use_ultimate_fallback}")
-    
+
     def _check_trafilex(self) -> bool:
         """Check if trafilex (Rust-based) is available"""
         try:
@@ -119,7 +118,7 @@ class RustMiner:
             return True
         except ImportError:
             return False
-    
+
     def _check_traflatura(self) -> bool:
         """Check if traflatura is available"""
         try:
@@ -127,7 +126,7 @@ class RustMiner:
             return True
         except ImportError:
             return False
-    
+
     def mine_html(
         self,
         html_content: str,
@@ -171,7 +170,7 @@ class RustMiner:
                 success=False,
                 error=str(e)
             )
-    
+
     def _mine_with_trafilex(
         self,
         html_content: str,
@@ -180,26 +179,26 @@ class RustMiner:
     ) -> MiningResult:
         """
         Mine using trafilex (Rust-based, minimal memory).
-        
+
         trafilex is a Rust wrapper that processes HTML in streaming mode
         without building large DOM trees.
         """
         try:
             import trafilex
-            
+
             result = trafilex.extract(
                 html_content,
                 include_comments=False,
                 include_tables=False,
                 no_fallback=False
             )
-            
+
             title = result.title or ""
             content = result.content or ""
-            
+
             if not content:
                 content = self._clean_html_basic(html_content)
-            
+
             metadata = {}
             if include_metadata:
                 metadata.update({
@@ -212,9 +211,9 @@ class RustMiner:
                 jsonld = self.extract_jsonld(html_content)
                 if jsonld:
                     metadata['jsonld'] = jsonld
-            
+
             logger.debug(f"trafilex extracted {len(content)} chars from {url}")
-            
+
             return MiningResult(
                 content=content,
                 title=title,
@@ -222,13 +221,13 @@ class RustMiner:
                 metadata=metadata,
                 success=True
             )
-        
+
         except Exception as e:
             logger.warning(f"trafilex failed: {e}, falling back")
             if self._traflatura_available:
                 return self._mine_with_traflatura(html_content, url, include_metadata)
             return self._mine_with_fallback(html_content, url, include_metadata)
-    
+
     def _mine_with_traflatura(
         self,
         html_content: str,
@@ -237,7 +236,7 @@ class RustMiner:
     ) -> MiningResult:
         """
         Mine using traflatura in minimal mode.
-        
+
         Memory optimization:
         - disable_comments: Don't store comment nodes
         - no_tables: Skip table extraction (expensive)
@@ -246,16 +245,16 @@ class RustMiner:
         """
         try:
             import traflatura
-            
+
             settings = traflatura.settings.use_settings()
-            
+
             settings.output_format = 'txt'
             settings.include_comments = False
             settings.include_tables = False
             settings.include_formatting = False
             settings.include_images = False
             settings.deduplicate = True
-            
+
             result = traflatura.extract(
                 html_content,
                 settings=settings,
@@ -264,13 +263,13 @@ class RustMiner:
                 include_tables=False,
                 no_fallback=False
             )
-            
+
             title = self._extract_title_fallback(html_content)
             content = result or ""
-            
+
             if not content:
                 content = self._clean_html_basic(html_content)
-            
+
             metadata = {}
             if include_metadata:
                 metadata.update({
@@ -285,7 +284,7 @@ class RustMiner:
                     metadata['jsonld'] = jsonld
 
             logger.debug(f"traflatura extracted {len(content)} chars from {url}")
-            
+
             return MiningResult(
                 content=content,
                 title=title,
@@ -293,11 +292,11 @@ class RustMiner:
                 metadata=metadata,
                 success=True
             )
-        
+
         except Exception as e:
             logger.warning(f"traflatura failed: {e}, using fallback")
             return self._mine_with_fallback(html_content, url, include_metadata)
-    
+
     def _mine_with_fallback(
         self,
         html_content: str,
@@ -306,13 +305,13 @@ class RustMiner:
     ) -> MiningResult:
         """
         Ultimate fallback using regex-based extraction.
-        
+
         No dependencies - pure Python regex for maximum compatibility.
         """
         try:
             title = self._extract_title_fallback(html_content)
             content = self._clean_html_basic(html_content)
-            
+
             metadata = {}
             if include_metadata:
                 metadata.update({
@@ -327,7 +326,7 @@ class RustMiner:
                     metadata['jsonld'] = jsonld
 
             logger.debug(f"Regex fallback extracted {len(content)} chars from {url}")
-            
+
             return MiningResult(
                 content=content,
                 title=title,
@@ -335,7 +334,7 @@ class RustMiner:
                 metadata=metadata,
                 success=True
             )
-        
+
         except Exception as e:
             logger.error(f"Fallback extraction failed: {e}")
             return MiningResult(
@@ -344,7 +343,7 @@ class RustMiner:
                 success=False,
                 error=str(e)
             )
-    
+
     def _clean_html_basic(self, html: str) -> str:
         """
         Basic HTML cleaning — delegates to canonical html_text_fast when available.
@@ -371,7 +370,7 @@ class RustMiner:
         except Exception as e:
             logger.warning(f"HTML cleaning failed: {e}")
             return ""
-    
+
     def _extract_title_fallback(self, html: str) -> str:
         """Extract title using regex (fallback)"""
         try:
@@ -382,21 +381,21 @@ class RustMiner:
             return ""
         except Exception:
             return ""
-    
+
     def mine_text(self, text: str, url: str = "") -> MiningResult:
         """
         Mine plain text (minimal processing).
-        
+
         Args:
             text: Plain text content
             url: Source URL
-            
+
         Returns:
             MiningResult with cleaned text
         """
         try:
             cleaned = re.sub(r'\s+', ' ', text).strip()
-            
+
             return MiningResult(
                 content=cleaned,
                 url=url,
@@ -406,7 +405,7 @@ class RustMiner:
                     'char_count': len(cleaned)
                 }
             )
-        
+
         except Exception as e:
             logger.error(f"Text mining failed: {e}")
             return MiningResult(
@@ -417,7 +416,7 @@ class RustMiner:
             )
 
     # Sprint 33: Private helper for link scoring
-    def _score_link(self, href: str, base_domain: str, rel_flags: List[str]) -> float:
+    def _score_link(self, href: str, base_domain: str, rel_flags: list[str]) -> float:
         """Calculate link score (0-1)."""
         score = 0.5
         # Cross-domain boost
@@ -438,7 +437,7 @@ class RustMiner:
         html: str,
         base_url: str,
         max_links: int = 50
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """Extract links using selectolax (fast, safe CSS selectors)."""
         if not SELECTOLAX_AVAILABLE:
             return []
@@ -474,7 +473,7 @@ class RustMiner:
             return []
 
     # Sprint 33: Extract JSON-LD from HTML
-    def extract_jsonld(self, html: str, max_bytes: int = 20000) -> List[Dict]:
+    def extract_jsonld(self, html: str, max_bytes: int = 20000) -> list[dict]:
         """Extract JSON-LD script blocks from HTML."""
         import json
         results = []
@@ -495,16 +494,16 @@ class RustMiner:
 
     def batch_mine(
         self,
-        html_list: List[tuple[str, str]],
+        html_list: list[tuple[str, str]],
         include_metadata: bool = False
-    ) -> List[MiningResult]:
+    ) -> list[MiningResult]:
         """
         Batch mine multiple HTML documents.
-        
+
         Args:
             html_list: List of (html_content, url) tuples
             include_metadata: Extract metadata
-            
+
         Returns:
             List of MiningResult objects
         """
@@ -520,7 +519,7 @@ class RustMiner:
         html_content: str,
         base_url: str = "",
         max_links: int = 50
-    ) -> List[Dict[str, str]]:
+    ) -> list[dict[str, str]]:
         """
         Extract links from HTML with anchor context and scoring - M1 8GB optimized.
 
@@ -687,7 +686,7 @@ class RustMiner:
             return []
 
 
-def extract_source_map_url(html: str) -> Optional[str]:
+def extract_source_map_url(html: str) -> str | None:
     """
     Find //# sourceMappingURL= in HTML (usually on last lines).
     Returns URL or None.
@@ -711,7 +710,7 @@ def extract_embedded_json(
     max_scripts: int = 3,
     max_bytes_per_script: int = 10240,
     max_total_chars: int = 2000
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Extract embedded JSON states from HTML (Next.js, React, etc.)
 
@@ -825,7 +824,7 @@ def _extract_strings_from_json(
     max_len: int = 300,
     max_depth: int = 10,
     current_depth: int = 0
-) -> List[str]:
+) -> list[str]:
     """
     Recursively extract string values from JSON that look like content (20-300 chars).
 
@@ -888,7 +887,7 @@ def create_rust_miner(prefer_rust: bool = True) -> RustMiner:
 @dataclass
 class FeedDiscoveryResult:
     """Result of feed discovery."""
-    feed_urls: List[str]
+    feed_urls: list[str]
     source_url: str
     discovery_method: str  # 'link_tag', 'heuristic'
 
@@ -935,7 +934,7 @@ class FeedDiscoverer:
             discovery_method=discovery_method
         )
 
-    def _extract_from_link_tags(self, html_content: str, base_url: str) -> List[str]:
+    def _extract_from_link_tags(self, html_content: str, base_url: str) -> list[str]:
         """Extract feed URLs from <link rel="alternate"> tags."""
         feeds = []
 
@@ -959,7 +958,7 @@ class FeedDiscoverer:
 
         return feeds
 
-    def _heuristic_discovery(self, html_content: str, base_url: str) -> List[str]:
+    def _heuristic_discovery(self, html_content: str, base_url: str) -> list[str]:
         """Heuristic feed discovery based on common paths."""
         from urllib.parse import urljoin, urlparse
 
@@ -983,7 +982,7 @@ class FeedDiscoverer:
 
     def _resolve_url(self, href: str, base_url: str) -> str:
         """Resolve relative URL to absolute."""
-        from urllib.parse import urljoin, urlparse
+        from urllib.parse import urljoin
 
         if not href:
             return ""
@@ -1006,15 +1005,15 @@ class ExtractedMetadata:
     """Metadata extracted from non-HTML documents."""
     content_type: str
     file_size: int
-    title: Optional[str] = None
-    author: Optional[str] = None
-    creation_date: Optional[str] = None
-    modification_date: Optional[str] = None
-    page_count: Optional[int] = None
-    keywords: List[str] = field(default_factory=list)
-    entities: List[Dict[str, Any]] = field(default_factory=list)
-    gps_coords: Optional[Tuple[float, float]] = None
-    timeline_events: List[Dict[str, Any]] = field(default_factory=list)
+    title: str | None = None
+    author: str | None = None
+    creation_date: str | None = None
+    modification_date: str | None = None
+    page_count: int | None = None
+    keywords: list[str] = field(default_factory=list)
+    entities: list[dict[str, Any]] = field(default_factory=list)
+    gps_coords: tuple[float, float] | None = None
+    timeline_events: list[dict[str, Any]] = field(default_factory=list)
     extracted_text_preview: str = ""
 
 
@@ -1075,8 +1074,9 @@ class MetadataExtractor:
             return metadata
 
         try:
-            import fitz
             import asyncio
+
+            import fitz
 
             def _extract():
                 doc = fitz.open(stream=content_bytes, filetype="pdf")
@@ -1124,9 +1124,10 @@ class MetadataExtractor:
             return metadata
 
         try:
-            import exifread
-            from io import BytesIO
             import asyncio
+            from io import BytesIO
+
+            import exifread
 
             def _extract():
                 result = {
@@ -1192,7 +1193,6 @@ import sys
 import time
 from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
-from typing import Any, Dict, List, Optional, Set, Tuple
 
 
 def build_structure_map(root_dir: str, *, limits: dict, state: dict) -> dict:
@@ -1220,14 +1220,14 @@ def build_structure_map(root_dir: str, *, limits: dict, state: dict) -> dict:
     parallel_threshold = limits.get("parallel_scan_threshold", 5000)
     max_workers = limits.get("max_workers", min(4, os.cpu_count() or 4))
 
-    errors: List[str] = []
+    errors: list[str] = []
     truncated = False
-    truncation_reason: Optional[str] = None
+    truncation_reason: str | None = None
     total_bytes = 0
-    seen_inodes: Set[Tuple[int, int]] = set()  # (st_dev, st_ino) for cycle detection
+    seen_inodes: set[tuple[int, int]] = set()  # (st_dev, st_ino) for cycle detection
 
     # A3: FAST WALK with os.scandir
-    candidates: List[Tuple[str, os.DirEntry]] = []
+    candidates: list[tuple[str, os.DirEntry]] = []
 
     def _scan_recursive(entry: os.DirEntry, depth: int = 0):
         nonlocal total_bytes, truncated, truncation_reason
@@ -1287,10 +1287,10 @@ def build_structure_map(root_dir: str, *, limits: dict, state: dict) -> dict:
     # A10: PARALLEL SCAN for large projects
     use_parallel = len(candidates) > parallel_threshold
 
-    files_data: List[Dict[str, Any]] = []
+    files_data: list[dict[str, Any]] = []
     file_cache = state.get("file_cache", OrderedDict())
 
-    def _process_file(path: str, entry: os.DirEntry) -> Optional[Dict[str, Any]]:
+    def _process_file(path: str, entry: os.DirEntry) -> dict[str, Any] | None:
         nonlocal errors
         try:
             stat = entry.stat(follow_symlinks=False)
@@ -1310,7 +1310,7 @@ def build_structure_map(root_dir: str, *, limits: dict, state: dict) -> dict:
                 except Exception:
                     pass
 
-            imports: List[str] = []
+            imports: list[str] = []
             if text:
                 try:
                     tree = ast.parse(text, type_comments=False)
@@ -1375,7 +1375,7 @@ def build_structure_map(root_dir: str, *, limits: dict, state: dict) -> dict:
 
     # A6: Changed modules
     changed_files = [f for f in files_data if f.get("changed", False)]
-    changed_modules = sorted(set(f["module"] for f in changed_files if f["module"]))
+    changed_modules = sorted({f["module"] for f in changed_files if f["module"]})
 
     # A7: Update L1 cache
     for f in files_data:
@@ -1398,7 +1398,7 @@ def build_structure_map(root_dir: str, *, limits: dict, state: dict) -> dict:
     module_set = {f["module"] for f in files_data if f["module"]}
     prev_edges = state.get("prev_edges", [])
 
-    edges: List[Dict[str, Any]] = []
+    edges: list[dict[str, Any]] = []
 
     if incremental and prev_edges:
         # Keep stable edges
@@ -1472,7 +1472,7 @@ def build_structure_map(root_dir: str, *, limits: dict, state: dict) -> dict:
     }
 
 
-def _read_prefix_bytes(path: str, n: int, errors: List[str], *, stat_result=None) -> bytes:
+def _read_prefix_bytes(path: str, n: int, errors: list[str], *, stat_result=None) -> bytes:
     """Read first n bytes using mmap with fail-safe."""
     try:
         size = stat_result.st_size if stat_result else 0
@@ -1502,9 +1502,9 @@ def _hash_bytes(data: bytes) -> str:
         return hashlib.sha256(data).hexdigest()[:16]
 
 
-def _extract_imports_ast(tree: ast.AST) -> List[str]:
+def _extract_imports_ast(tree: ast.AST) -> list[str]:
     """Extract imports using AST."""
-    imports: List[str] = []
+    imports: list[str] = []
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             for alias in node.names:
@@ -1523,9 +1523,9 @@ def _extract_imports_ast(tree: ast.AST) -> List[str]:
     return imports
 
 
-def _extract_imports_regex(text: str) -> List[str]:
+def _extract_imports_regex(text: str) -> list[str]:
     """Fallback: extract imports using regex."""
-    imports: List[str] = []
+    imports: list[str] = []
     # import X
     for match in re.finditer(r'^import\s+(\S+)', text, re.MULTILINE):
         imports.append(sys.intern(match.group(1)))
@@ -1562,7 +1562,7 @@ def _path_to_module(rel_path: str) -> str:
     return ".".join(parts)
 
 
-def _compute_fingerprint(data: Dict) -> str:
+def _compute_fingerprint(data: dict) -> str:
     """Compute stable fingerprint from canonical JSON."""
     import json
     canonical = json.dumps(data, ensure_ascii=True, sort_keys=True)

@@ -17,7 +17,7 @@ Callers use the protocol, not concrete classes.
 
 from __future__ import annotations
 
-from typing import Any, Callable, List, Optional, TypeVar
+from typing import Any, TypeVar
 
 from pydantic import BaseModel
 
@@ -65,9 +65,9 @@ class ModelEngine:
     async def generate(
         self,
         prompt: str,
-        temperature: Optional[float] = None,
-        max_tokens: Optional[int] = None,
-        system_msg: Optional[str] = None,
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+        system_msg: str | None = None,
     ) -> str:
         """
         Generate text from a prompt.
@@ -90,9 +90,9 @@ class ModelEngine:
         self,
         prompt: str,
         response_model: type[T],
-        temperature: Optional[float] = None,
-        max_tokens: Optional[int] = None,
-        system_msg: Optional[str] = None,
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+        system_msg: str | None = None,
         max_retries: int = 2,
         priority: float = 1.0,
     ) -> T:
@@ -115,7 +115,7 @@ class ModelEngine:
 
     # ── Identity ───────────────────────────────────────────────────────────────
 
-    def get_current_model_name(self) -> Optional[str]:
+    def get_current_model_name(self) -> str | None:
         """
         Return the currently loaded model identifier.
 
@@ -129,7 +129,7 @@ class ModelEngine:
     async def generate_report(
         self,
         query: str,
-        context: List[str],
+        context: list[str],
     ) -> str:
         """
         Synthesize an OSINT report from findings/hypotheses.

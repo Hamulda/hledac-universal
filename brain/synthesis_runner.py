@@ -30,7 +30,7 @@ import time
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any
 
 try:
     import msgspec as _msgspec
@@ -50,8 +50,8 @@ logger = logging.getLogger(__name__)
 # Sprint 8UF B.1: xgrammar grammar cache — compile ONCE per schema lifetime
 # ---------------------------------------------------------------------------
 import hashlib
-import threading as _threading
 import re as _re_synth
+import threading as _threading
 
 _MAX_VALIDATION_FINDINGS = 100  # bounded — M1 8GB guard
 
@@ -80,7 +80,7 @@ def _extract_text_iocs_from_finding(finding: dict) -> set[str]:
 
 
 def validate_evidence_grounding(
-    report: "OSINTReport",
+    report: OSINTReport,
     findings: list[dict],
 ) -> tuple[bool, list[str]]:
     """GAP-8: Validate that IOCEntity values in report appear in source findings.
@@ -112,7 +112,7 @@ def validate_evidence_grounding(
         return (True, [])
 
 
-def validate_report_semantics(report: "OSINTReport") -> tuple[bool, list[str]]:
+def validate_report_semantics(report: OSINTReport) -> tuple[bool, list[str]]:
     """GAP-7: Semantic constraint validation for OSINTReport fields.
 
     Validates value ranges that msgspec.Struct cannot enforce.
@@ -218,14 +218,15 @@ _PROMPT_BANDIT = None
 _DSPY_OPTIMIZER = None
 
 
-def _get_dspy_optimizer():
+def _get_dspy_optimizer(lifecycle=None):
     """Lazy init DSPyOptimizer — starts background optimization loop on first call."""
     global _DSPY_OPTIMIZER
     if _DSPY_OPTIMIZER is not None:
         return _DSPY_OPTIMIZER
     try:
         from brain.dspy_optimizer import DSPyOptimizer
-        _DSPY_OPTIMIZER = DSPyOptimizer(brain_manager=None)
+        # F234: Pass lifecycle for memory_mgr access (battery/thermal guards)
+        _DSPY_OPTIMIZER = DSPyOptimizer(brain_manager=lifecycle)
         # Sprint F234: Start background optimization loop (non-blocking)
         import asyncio
         asyncio.create_task(_DSPY_OPTIMIZER.start(), name="dspy_optimizer")
@@ -245,7 +246,8 @@ def _get_dspy_prompts() -> dict:
     prompts: dict = {}
     try:
         # Sprint F234: Try optimizer first, then fallback to load_optimized_prompts
-        dspy_opt = _get_dspy_optimizer()
+        # Use cached optimizer which already has lifecycle attached
+        dspy_opt = _DSPY_OPTIMIZER
         if dspy_opt is not None and dspy_opt._optimized_prompts:
             prompts = dspy_opt._optimized_prompts
         else:
@@ -452,16 +454,16 @@ class SynthesisRunner:
                  "_compression_threshold", "_compressor",
                  "_hypothesis_engine")
 
-    def __init__(self, lifecycle: "ModelLifecycle") -> None:
+    def __init__(self, lifecycle: ModelLifecycle) -> None:
         self._lifecycle = lifecycle
-        self._ioc_graph: Optional[Any] = None
-        self._cached_model_path: Optional[Path] = None
+        self._ioc_graph: Any | None = None
+        self._cached_model_path: Path | None = None
         self._last_outlines_used: bool = False
         # Sprint 8TD: Custom prompt support
-        self._custom_synthesis_prompt: Optional[str] = None
+        self._custom_synthesis_prompt: str | None = None
         self._prompt_modifier: str = ""
         # Sprint 8UC B.2: DuckDB store for episode recall
-        self._duckdb_store: Optional[Any] = None
+        self._duckdb_store: Any | None = None
         # Sprint 8UC B.3: Last synthesis engine used
         self._last_synthesis_engine: str = "none"
         # Sprint 8VH: Bandit tracking
@@ -486,10 +488,10 @@ class SynthesisRunner:
         # F234: Context compression — opt-in threshold (0 = disabled)
         # Default 0 means compression is disabled unless explicitly enabled
         self._compression_threshold: int = 0
-        self._compressor: Optional[Any] = None
+        self._compressor: Any | None = None
 
         # F214: HypothesisEngine — optional synthesis step
-        self._hypothesis_engine: Optional[Any] = None
+        self._hypothesis_engine: Any | None = None
 
     def inject_graph(self, graph: Any) -> None:
         """Inject IOCGraph instance from 8QA for STIX context injection."""
@@ -746,9 +748,10 @@ class SynthesisRunner:
         ]
         if top_iocs:
             try:
-                from knowledge.graph_rag import GraphRAGOrchestrator
                 # GraphRAGOrchestrator vyžaduje knowledge_layer — zkusíme najít
                 from hledac.universal.legacy.persistent_layer import PersistentKnowledgeLayer
+
+                from knowledge.graph_rag import GraphRAGOrchestrator
                 kl = PersistentKnowledgeLayer()
                 _grag = GraphRAGOrchestrator(kl)
                 # Sprint 8VA: GraphRAGOrchestrator.find_connections() — ne extract_subgraph/verbalize
@@ -798,7 +801,7 @@ class SynthesisRunner:
         # Sprint F234: DSPy optimized prompts — try to load from cache first
         dspy_prompts = _get_dspy_prompts()
         if dspy_prompts:
-            dspy_opt = _get_dspy_optimizer()
+            dspy_opt = _get_dspy_optimizer(self._lifecycle)
             if dspy_opt is not None:
                 try:
                     # Check for optimized prompt for analysis task
@@ -1025,8 +1028,8 @@ class SynthesisRunner:
         Returns:
             (dict | None, outlines_used: bool) — stejný formát jako structured_generate
         """
-        import re as _re
         import json as _json
+        import re as _re
 
         try:
             model, tokenizer, _model_path = await self._lifecycle._ensure_loaded()
@@ -1132,8 +1135,8 @@ class SynthesisRunner:
 
         def _xgrammar_sync() -> tuple[dict | None, bool]:
             try:
-                import xgrammar as xgr
                 import mlx_lm
+                import xgrammar as xgr
 
                 # Use cached grammar compilation (Sprint 8UF B.1)
                 schema = _build_osint_json_schema()
@@ -1209,7 +1212,7 @@ class SynthesisRunner:
     # Helpers
     # ------------------------------------------------------------------
 
-    async def _ensure_model(self) -> Optional[Path]:
+    async def _ensure_model(self) -> Path | None:
         """
         Sprint 8SB: 3-tier model discovery with conditional download.
 
@@ -1277,7 +1280,7 @@ class SynthesisRunner:
 
     def _compute_confidence(
         self,
-        report: "OSINTReport",
+        report: OSINTReport,
         used_outlines: bool,
     ) -> float:
         """
@@ -1464,14 +1467,17 @@ class SynthesisRunner:
 
         PROMPT = (
             "You are a security OSINT assistant. "
-            "Generate 3-5 specific search queries for: {q}\n"
+            f"Generate 3-5 specific search queries for: {query}\n"
             "Output ONLY a JSON array of strings, no explanation.\n"
             'Example: ["LockBit IOCs 2026","LockBit C2 infra","LockBit victims list"]'
-        ).format(q=query)
+        )
 
         def _gen() -> list[str]:
             try:
-                import re, json, mlx_lm
+                import json
+                import re
+
+                import mlx_lm
                 msgs = [{"role": "user", "content": PROMPT}]
                 prompt_str = tokenizer.apply_chat_template(
                     msgs, tokenize=False, add_generation_prompt=True,
@@ -1500,7 +1506,6 @@ class SynthesisRunner:
             return [query]
 
         loop = asyncio.get_running_loop()
-        from concurrent.futures import ThreadPoolExecutor
         _CPU_EXECUTOR = ThreadPoolExecutor(max_workers=1)
         try:
             result = await loop.run_in_executor(_CPU_EXECUTOR, _gen)
@@ -1518,8 +1523,9 @@ class SynthesisRunner:
         Returns empty string if DB doesn't exist or on any error.
         """
         try:
-            from ..paths import RAMDISK_ROOT
             import duckdb
+
+            from ..paths import RAMDISK_ROOT
 
             ghost_path = RAMDISK_ROOT / "db" / "ghost_global.duckdb"
             if not ghost_path.exists():

@@ -6,8 +6,8 @@ Test bounded_map, map_as_completed, TaskResult
 """
 
 import asyncio
+
 import pytest
-import time
 
 
 class TestTaskResult:

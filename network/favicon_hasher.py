@@ -1,7 +1,6 @@
 """Favicon hashing using MurmurHash3 for service fingerprinting."""
-import logging
 import hashlib
-from typing import Optional
+import logging
 
 logger = logging.getLogger(__name__)
 
@@ -16,7 +15,7 @@ except ImportError:
 class _FaviconHasher:
     """Compute stable favicon hash (MurmurHash3 preferred, fallback SHA256)."""
 
-    def hash_favicon(self, favicon_bytes: bytes) -> Optional[str]:
+    def hash_favicon(self, favicon_bytes: bytes) -> str | None:
         """Return hash string (e.g., 'mmh3:1234567890' or 'sha256:abc123...')."""
         if not favicon_bytes:
             return None

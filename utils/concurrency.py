@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -64,10 +63,14 @@ async def adjust_fetch_workers(new_limit: int) -> None:
     """
     Backward-compatible alias for production clearnet fetch concurrency.
 
-    Historically this mutated _FETCH_SEMAPHORE, but production public fetch
-    uses _clearnet_semaphore via get_clearnet_semaphore().
+    Adjusts BOTH _FETCH_SEMAPHORE and _clearnet_semaphore to new_limit.
     """
-    await adjust_clearnet_workers(new_limit)
+    global _FETCH_SEMAPHORE, _clearnet_semaphore
+    old_fetch = _FETCH_SEMAPHORE._value if _FETCH_SEMAPHORE else 0
+    old_clearnet = _clearnet_semaphore._value if _clearnet_semaphore else 0
+    _FETCH_SEMAPHORE = asyncio.Semaphore(new_limit)
+    _clearnet_semaphore = asyncio.Semaphore(max(1, new_limit))
+    logger.info(f"[FETCH_WORKERS] Adjusted fetch {old_fetch}→{new_limit}, clearnet {old_clearnet}→{new_limit}")
 
 
 # =============================================================================

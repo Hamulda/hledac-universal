@@ -34,7 +34,7 @@ import logging
 import time as _time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from knowledge.duckdb_store import CanonicalFinding
@@ -42,8 +42,8 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 # Lazy-loaded modules
-_VisionEncoder: Optional[type] = None
-_MambaFusion: Optional[type] = None
+_VisionEncoder: type | None = None
+_MambaFusion: type | None = None
 _MOBILECLIP_AVAILABLE = False
 
 
@@ -105,12 +105,12 @@ _MAX_ENVELOPE_SIZE = 4098
 
 
 # Lazy-loaded document extraction modules
-_PdfReader: Optional[type] = None
+_PdfReader: type | None = None
 _PYPDF2_AVAILABLE = False
 _PIL_AVAILABLE = False
 
 
-def _extract_file_path_from_payload(payload_text: str | None) -> Optional[str]:
+def _extract_file_path_from_payload(payload_text: str | None) -> str | None:
     """
     Extract a local file path from payload_text.
 
@@ -248,8 +248,8 @@ class MultimodalEnricher:
         self._embedding_dim = embedding_dim
         self._batch_size = batch_size
 
-        self._vision_encoder: Optional[Any] = None
-        self._fusion_model: Optional[Any] = None
+        self._vision_encoder: Any | None = None
+        self._fusion_model: Any | None = None
         self._initialized = False
         self._lock = asyncio.Lock()
 
@@ -300,7 +300,7 @@ class MultimodalEnricher:
             self._fusion_model = None
             self._initialized = False
 
-    async def enrich(self, finding: Any) -> Optional[dict[str, Any]]:
+    async def enrich(self, finding: Any) -> dict[str, Any] | None:
         """
         Enrich a CanonicalFinding with multimodal analysis.
 
@@ -439,7 +439,7 @@ class MultimodalEnricher:
             # Fail-open: if governor check errors, allow the operation
             return True
 
-    async def _load_file_bytes(self, file_path: str) -> Optional[bytes]:
+    async def _load_file_bytes(self, file_path: str) -> bytes | None:
         """Load file bytes from path. Fail-safe — returns None on error."""
         try:
             loop = asyncio.get_running_loop()
@@ -451,7 +451,7 @@ class MultimodalEnricher:
             log.debug("Failed to read file %s: %s", file_path, exc)
             return None
 
-    async def _clip_similarity_score(self, file_path: str, vision_embedding: list[float]) -> Optional[float]:
+    async def _clip_similarity_score(self, file_path: str, vision_embedding: list[float]) -> float | None:
         """
         Compute CLIP text↔image similarity score.
         Returns a float in [0.0, 1.0] or None on failure.
@@ -460,8 +460,8 @@ class MultimodalEnricher:
             return None
 
         try:
-            from mobileclip import create_model_and_transforms, get_tokenizer
             import mlx.core as mx
+            from mobileclip import create_model_and_transforms, get_tokenizer
             from PIL import Image
 
             loop = asyncio.get_running_loop()
@@ -508,7 +508,7 @@ class MultimodalEnricher:
 
         semaphore = asyncio.Semaphore(3)  # Max 3 concurrent (M1 8GB safe)
 
-        async def enrich_one(finding: Any) -> tuple[str, Optional[dict[str, Any]]]:
+        async def enrich_one(finding: Any) -> tuple[str, dict[str, Any] | None]:
             async with semaphore:
                 finding_id = getattr(finding, "finding_id", "unknown")
                 try:
@@ -536,7 +536,6 @@ class MultimodalEnricher:
 # DOCUMENT EXTRACTION — Sprint F198C
 # =============================================================================
 
-from dataclasses import dataclass
 
 
 @dataclass
@@ -559,7 +558,7 @@ class DocumentResult:
     finding_id: str
     file_path: str
     file_type: str
-    text_content: Optional[str] = None
+    text_content: str | None = None
     page_count: int = 0
     metadata: dict[str, Any] = field(default_factory=dict)
     extraction_ok: bool = False
@@ -656,7 +655,7 @@ class DocumentExtractor:
         file_path: str,
         query: str,
         finding_id: str | None = None,
-    ) -> Optional[CanonicalFinding]:
+    ) -> CanonicalFinding | None:
         """
         Extract text from a document and return as CanonicalFinding.
 
@@ -704,10 +703,9 @@ class DocumentExtractor:
             finding_id = hashlib.sha256(file_bytes).hexdigest()[:16]
 
         # Extract text based on file type
-        text_content: Optional[str] = None
+        text_content: str | None = None
         page_count = 0
         metadata: dict[str, Any] = {}
-        extraction_ok = False
 
         try:
             if ext == ".pdf":
@@ -717,7 +715,7 @@ class DocumentExtractor:
                 text_content = await self._extract_image_text(file_path)
                 metadata["extracted_chars"] = len(text_content) if text_content else 0
 
-            extraction_ok = text_content is not None and len(text_content) > 0
+            text_content is not None and len(text_content) > 0
         except Exception as exc:
             log.debug("DocumentExtractor: extraction failed for %s: %s", file_path, exc)
 
@@ -788,7 +786,7 @@ class DocumentExtractor:
 
         semaphore = asyncio.Semaphore(4)  # Max 4 concurrent
 
-        async def extract_one(fp: str) -> Optional[CanonicalFinding]:
+        async def extract_one(fp: str) -> CanonicalFinding | None:
             async with semaphore:
                 try:
                     return await self.extract(fp, query)
@@ -808,7 +806,7 @@ class DocumentExtractor:
 
         return findings
 
-    async def _extract_pdf(self, file_path: str) -> tuple[Optional[str], int]:
+    async def _extract_pdf(self, file_path: str) -> tuple[str | None, int]:
         """
         Extract text from PDF using PyPDF2.
 
@@ -843,7 +841,7 @@ class DocumentExtractor:
             log.debug("DocumentExtractor: PDF extraction failed for %s: %s", file_path, exc)
             return None, 0
 
-    async def _extract_image_text(self, file_path: str) -> Optional[str]:
+    async def _extract_image_text(self, file_path: str) -> str | None:
         """
         Extract text from image using PIL.
 
@@ -857,7 +855,7 @@ class DocumentExtractor:
         try:
             loop = asyncio.get_running_loop()
 
-            def _read_image() -> Optional[str]:
+            def _read_image() -> str | None:
                 try:
                     from PIL import Image
 

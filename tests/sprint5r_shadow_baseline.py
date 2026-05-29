@@ -9,11 +9,11 @@ import time
 sys.path.insert(0, '/Users/vojtechhamada/PycharmProjects/Hledac')
 
 async def run_shadow_baseline():
-    from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
-    from hledac.universal.knowledge.atomic_storage import EvidencePacketStorage, EvidencePacket
-    import random
     import gc
-    import psutil
+    import random
+
+    from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
+    from hledac.universal.knowledge.atomic_storage import EvidencePacket, EvidencePacketStorage
 
     print("=" * 60)
     print("[SPRINT 5R] SHADOW BASELINE RECONFIRM - 3×60s OFFLINE_REPLAY")
@@ -36,7 +36,7 @@ async def run_shadow_baseline():
                 evidence_id=f"evidence_{i}",
                 url=f"http://localhost:{64000+i}/test",
                 final_url=f"http://localhost:{64000+i}/test",
-                domain=f"localhost",
+                domain="localhost",
                 fetched_at=time.time() - (i * 86400),
                 status=200,
                 headers_digest="abc123",

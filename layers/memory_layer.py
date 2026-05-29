@@ -34,8 +34,9 @@ import logging
 import subprocess
 import time
 from collections import deque
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any
 
 # Sprint 5N: Lazy MLX import - MLX is optional for M1 compatibility
 _MLX_CORE = None
@@ -72,7 +73,7 @@ logger = logging.getLogger(__name__)
 @dataclass(slots=True, frozen=True)
 class ThermalSnapshot:
     """Immutable snapshot of thermal reading with TTL tracking."""
-    celsius: Optional[float]
+    celsius: float | None
     sampled_at_monotonic: float  # time.monotonic() at sample time
 
 
@@ -87,16 +88,16 @@ class _ThermalSampler:
     def __init__(self, ttl_s: float = 10.0) -> None:
         self._ttl_s = ttl_s
         self._lock = asyncio.Lock()
-        self._cache: Optional[ThermalSnapshot] = None
+        self._cache: ThermalSnapshot | None = None
 
-    def _read_temperature_sync(self) -> Optional[float]:
+    def _read_temperature_sync(self) -> float | None:
         """
         Blocking thermal read via ioreg (M1 MacBook Air).
         MUST be called via asyncio.to_thread, never directly from event loop.
         Returns None on any error (fail-soft).
         """
         try:
-            result = subprocess.run(
+            subprocess.run(
                 ["ioreg", "-r", "-c", "AppleSmartBattery", "-w0"],
                 capture_output=True, text=True, timeout=1
             )
@@ -105,7 +106,7 @@ class _ThermalSampler:
         except (subprocess.TimeoutExpired, OSError, ValueError):
             return None
 
-    async def sample(self) -> Optional[float]:
+    async def sample(self) -> float | None:
         """
         Get temperature with TTL caching and double-check locking.
 
@@ -160,10 +161,10 @@ class _MemoryStateManager:
         self._current_state = SystemState.HEALTHY
         self._max_history = 100
         self._metrics_history: deque = deque(maxlen=self._max_history)  # F206L: bounded
-        self._health_check_task: Optional[asyncio.Task] = None
+        self._health_check_task: asyncio.Task | None = None
         self._running = False
-        self._state_change_callbacks: List[Callable[[SystemState, SystemState], None]] = []
-        self._state_transitions: Dict[str, int] = {s.value: 0 for s in SystemState}
+        self._state_change_callbacks: list[Callable[[SystemState, SystemState], None]] = []
+        self._state_transitions: dict[str, int] = {s.value: 0 for s in SystemState}
         # Thermal sampler: offload-only, not canonical Uma owner
         self._thermal_sampler = _ThermalSampler(ttl_s=10.0)
 
@@ -235,7 +236,7 @@ class _MemoryStateManager:
                 timestamp=__import__('time').time()
             )
 
-    async def _get_temperature(self) -> Optional[float]:
+    async def _get_temperature(self) -> float | None:
         """
         Get M1 temperature (if available).
 
@@ -300,7 +301,7 @@ class _MemoryStateManager:
             timestamp=__import__('time').time()
         )
 
-    def get_statistics(self) -> Dict[str, Any]:
+    def get_statistics(self) -> dict[str, Any]:
         """Get state manager statistics."""
         return {
             "current_state": self._current_state.value,
@@ -320,8 +321,8 @@ class _StorageCoordinator:
 
     def __init__(self, config: MemoryConfig):
         self.config = config
-        self._ramdisk_manager: Optional['RAMDiskManager'] = None
-        self._shared_memory_manager: Optional['SharedMemoryManager'] = None
+        self._ramdisk_manager: RAMDiskManager | None = None
+        self._shared_memory_manager: SharedMemoryManager | None = None
 
     async def initialize(self) -> None:
         """Initialize storage coordinators."""
@@ -338,18 +339,18 @@ class _StorageCoordinator:
             logger.warning(f"⚠️ SharedMemoryManager not available: {e}")
             self._shared_memory_manager = None
 
-    def create_ramdisk(self, size_mb: Optional[int] = None) -> 'RAMDiskManager':
+    def create_ramdisk(self, size_mb: int | None = None) -> RAMDiskManager:
         """Create a RAM disk for high-speed temporary storage."""
         config = RAMDiskConfig(size_mb=size_mb or 512)
         self._ramdisk_manager = RAMDiskManager(config)
         return self._ramdisk_manager
 
-    def get_ramdisk(self) -> Optional['RAMDiskManager']:
+    def get_ramdisk(self) -> RAMDiskManager | None:
         """Get current RAM disk manager if active."""
         return self._ramdisk_manager
 
     def create_shared_block(self, data: bytes, data_type: str,
-                           metadata: Optional[Dict[str, Any]] = None) -> Optional[str]:
+                           metadata: dict[str, Any] | None = None) -> str | None:
         """Create a shared memory block for zero-copy data sharing."""
         if self._shared_memory_manager:
             try:
@@ -358,7 +359,7 @@ class _StorageCoordinator:
                 logger.error(f"Failed to create shared block: {e}")
         return None
 
-    def get_shared_data(self, block_id: str) -> Optional[bytes]:
+    def get_shared_data(self, block_id: str) -> bytes | None:
         """Retrieve data from shared memory block."""
         if self._shared_memory_manager:
             return self._shared_memory_manager.get_shared_data(block_id)
@@ -378,7 +379,7 @@ class _StorageCoordinator:
         if hasattr(self, '_ramdisk_manager') and self._ramdisk_manager:
             self._ramdisk_manager.shutdown()
 
-    def get_statistics(self) -> Dict[str, Any]:
+    def get_statistics(self) -> dict[str, Any]:
         """Get storage coordinator statistics."""
         stats = {}
         if self._shared_memory_manager:
@@ -396,7 +397,7 @@ class _StealthMemoryManager:
     """
 
     def __init__(self):
-        self._entropy_masking_manager: Optional['EntropyMaskingManager'] = None
+        self._entropy_masking_manager: EntropyMaskingManager | None = None
 
     async def initialize(self) -> None:
         """Initialize stealth memory manager."""
@@ -411,7 +412,7 @@ class _StealthMemoryManager:
             logger.warning(f"⚠️ EntropyMaskingManager not available: {e}")
             self._entropy_masking_manager = None
 
-    def inject_entropy_noise(self) -> Optional[str]:
+    def inject_entropy_noise(self) -> str | None:
         """Inject entropy noise to reduce Shannon entropy."""
         if self._entropy_masking_manager:
             try:
@@ -420,7 +421,7 @@ class _StealthMemoryManager:
                 logger.error(f"Failed to inject entropy noise: {e}")
         return None
 
-    def get_entropy_stats(self) -> Dict[str, Any]:
+    def get_entropy_stats(self) -> dict[str, Any]:
         """Get entropy masking statistics."""
         if self._entropy_masking_manager:
             return self._entropy_masking_manager.get_entropy_reduction_stats()
@@ -431,7 +432,7 @@ class _StealthMemoryManager:
         if self._entropy_masking_manager:
             self._entropy_masking_manager.clear_noise_blocks()
 
-    def get_statistics(self) -> Dict[str, Any]:
+    def get_statistics(self) -> dict[str, Any]:
         """Get stealth memory statistics."""
         if self._entropy_masking_manager:
             return self._entropy_masking_manager.get_entropy_reduction_stats()
@@ -475,7 +476,7 @@ class MemoryLayer:
         memory.on_state_change(lambda old, new: print(f"{old} → {new}"))
     """
 
-    def __init__(self, config: Optional[MemoryConfig] = None):
+    def __init__(self, config: MemoryConfig | None = None):
         """
         Initialize MemoryLayer.
 
@@ -490,8 +491,8 @@ class MemoryLayer:
         self._stealth = _StealthMemoryManager()
 
         # Loaded models tracking (for context swap)
-        self._loaded_models: Dict[str, Any] = {}
-        self._model_states: Dict[str, Dict[str, Any]] = {}
+        self._loaded_models: dict[str, Any] = {}
+        self._model_states: dict[str, dict[str, Any]] = {}
 
         # Statistics
         self._context_swaps = 0
@@ -506,7 +507,7 @@ class MemoryLayer:
     def _on_state_change(self, old_state: SystemState, new_state: SystemState) -> None:
         """Handle state changes from internal state manager."""
         logger.debug(f"MemoryLayer state change: {old_state.value} → {new_state.value}")
-    
+
     async def initialize(self) -> bool:
         """
         Initialize MemoryLayer and start health monitoring.
@@ -546,7 +547,7 @@ class MemoryLayer:
     # RAM Disk Operations (delegated to _StorageCoordinator)
     # ====================================================================
 
-    def create_ramdisk(self, size_mb: Optional[int] = None) -> 'RAMDiskManager':
+    def create_ramdisk(self, size_mb: int | None = None) -> RAMDiskManager:
         """
         Create a RAM disk for high-speed temporary storage.
 
@@ -563,7 +564,7 @@ class MemoryLayer:
         """
         return self._storage.create_ramdisk(size_mb)
 
-    def get_ramdisk(self) -> Optional['RAMDiskManager']:
+    def get_ramdisk(self) -> RAMDiskManager | None:
         """Get current RAM disk manager if active."""
         return self._storage.get_ramdisk()
 
@@ -572,7 +573,7 @@ class MemoryLayer:
     # ====================================================================
 
     def create_shared_block(self, data: bytes, data_type: str,
-                           metadata: Optional[Dict[str, Any]] = None) -> Optional[str]:
+                           metadata: dict[str, Any] | None = None) -> str | None:
         """
         Create a shared memory block for zero-copy data sharing.
 
@@ -586,7 +587,7 @@ class MemoryLayer:
         """
         return self._storage.create_shared_block(data, data_type, metadata)
 
-    def get_shared_data(self, block_id: str) -> Optional[bytes]:
+    def get_shared_data(self, block_id: str) -> bytes | None:
         """Retrieve data from shared memory block."""
         return self._storage.get_shared_data(block_id)
 
@@ -598,7 +599,7 @@ class MemoryLayer:
     # Entropy Masking (Stealth) - delegated to _StealthMemoryManager
     # ====================================================================
 
-    def inject_entropy_noise(self) -> Optional[str]:
+    def inject_entropy_noise(self) -> str | None:
         """
         Inject entropy noise to reduce Shannon entropy (stealth operations).
 
@@ -607,10 +608,10 @@ class MemoryLayer:
         """
         return self._stealth.inject_entropy_noise()
 
-    def get_entropy_stats(self) -> Dict[str, Any]:
+    def get_entropy_stats(self) -> dict[str, Any]:
         """Get entropy masking statistics."""
         return self._stealth.get_entropy_stats()
-    
+
     async def transition_state(
         self,
         old_state: OrchestratorState,
@@ -618,79 +619,79 @@ class MemoryLayer:
     ) -> None:
         """
         Transition between orchestrator states with context swap.
-        
+
         This method:
         1. Unloads models from old state
         2. Clears MLX cache
         3. Runs garbage collection
         4. Loads models for new state
-        
+
         Args:
             old_state: Previous orchestrator state
             new_state: New orchestrator state
         """
         logger.info(f"🔄 Context swap: {old_state.value} → {new_state.value}")
-        
+
         try:
             # Step 1: Unload models from old state
             await self._unload_models_for_state(old_state)
-            
+
             # Step 2: Force garbage collection
             await self._force_gc()
-            
+
             # Step 3: Clear MLX cache
             await self._clear_mlx_cache()
-            
+
             # Step 4: Load models for new state
             await self._load_models_for_state(new_state)
-            
+
             self._context_swaps += 1
             logger.info(f"✅ Context swap complete (#{self._context_swaps})")
-            
+
         except MemoryPressureError:
             logger.error("❌ Memory pressure during transition")
             # Trigger recovery
             await self._enter_recovery_mode()
             raise
-        
+
         except Exception as e:
             logger.error(f"❌ Context swap failed: {e}")
             raise
-    
+
     async def _unload_models_for_state(self, state: OrchestratorState) -> None:
         """Unload models associated with given state"""
         models_to_unload = self._get_models_for_state(state)
-        
+
         for model_name in models_to_unload:
             if model_name in self._loaded_models:
                 logger.info(f"📤 Unloading model: {model_name}")
-                
+
                 # Save state if needed
                 self._model_states[model_name] = self._save_model_state(model_name)
-                
+
                 # Unload
                 await self._unload_model(model_name)
                 del self._loaded_models[model_name]
-    
+
     async def _load_models_for_state(self, state: OrchestratorState) -> None:
         """Load models required for given state"""
         models_to_load = self._get_models_for_state(state)
-        
+
         for model_name in models_to_load:
             if model_name not in self._loaded_models:
                 logger.info(f"📥 Loading model: {model_name}")
-                
+
                 # Check memory before loading
                 if not await self._check_memory_available():
                     raise MemoryPressureError(
                         f"Not enough memory to load {model_name}"
                     )
-                
+
                 # Load model
                 model = await self._load_model(model_name)
                 self._loaded_models[model_name] = model
-    
-    def _get_models_for_state(self, state: OrchestratorState) -> List[str]:
+
+    def _get_models_for_state(self, state: OrchestratorState) -> list[str]:
         """Get list of models required for given state"""
         # Map states to required models
         state_models = {
@@ -702,13 +703,13 @@ class MemoryLayer:
             OrchestratorState.ERROR: [],
         }
         return state_models.get(state, [])
-    
+
     async def _load_model(self, model_name: str) -> Any:
         """Load a model by name"""
         # This would integrate with M1ModelManager
         # For now, placeholder
         logger.debug(f"Loading model: {model_name}")
-        
+
         if model_name == "hermes-3":
             # Lazy import
             try:
@@ -718,26 +719,26 @@ class MemoryLayer:
             except Exception as e:
                 logger.error(f"Failed to load Hermes-3: {e}")
                 return None
-        
+
         # Note: qwen-cleaner model removed (deprecated)
         return None
-    
+
     async def _unload_model(self, model_name: str) -> None:
         """Unload a model"""
         logger.debug(f"Unloading model: {model_name}")
         # Model will be garbage collected
-    
-    def _save_model_state(self, model_name: str) -> Dict[str, Any]:
+
+    def _save_model_state(self, model_name: str) -> dict[str, Any]:
         """Save model state for later restoration"""
         # Placeholder for state saving
         return {"name": model_name, "timestamp": __import__('time').time()}
-    
+
     async def _force_gc(self) -> None:
         """Force garbage collection"""
         gc.collect()
         self._gc_calls += 1
         logger.debug(f"🗑️ Garbage collection #{self._gc_calls}")
-    
+
     async def _clear_mlx_cache(self) -> None:
         """Clear MLX cache"""
         mx = _get_mlx()
@@ -758,34 +759,34 @@ class MemoryLayer:
         await self._force_gc()
         await self._clear_mlx_cache()
         # Could also unload non-essential models here
-    
+
     async def _apply_thermal_mitigation(self) -> None:
         """Apply thermal throttling mitigation"""
         logger.warning("🌡️ Applying thermal mitigation...")
         # Could reduce ASIC frequency, throttle processing, etc.
-    
+
     async def _enter_recovery_mode(self) -> None:
         """Enter recovery mode"""
         # Get metrics from state manager
-        metrics = self._state_manager.get_metrics()
+        self._state_manager.get_metrics()
         await self._apply_recovery_mode()
-    
+
     async def _apply_recovery_mode(self) -> None:
         """Apply recovery mode actions"""
         logger.warning("🚑 Entering recovery mode...")
-        
+
         # Aggressive cleanup
         await self._force_gc()
         await self._clear_mlx_cache()
-        
+
         # Unload all models
         for model_name in list(self._loaded_models.keys()):
             await self._unload_model(model_name)
             del self._loaded_models[model_name]
-        
+
         # Wait a bit
         await asyncio.sleep(2)
-    
+
     async def _check_memory_available(self) -> bool:
         """Check if enough memory is available for operation"""
         metrics = self._state_manager.get_metrics()
@@ -793,7 +794,7 @@ class MemoryLayer:
 
         # Require at least 500MB free
         return available > 500
-    
+
     def on_state_change(self, callback: Callable[[SystemState, SystemState], None]) -> None:
         """
         Register callback for system state changes.
@@ -811,7 +812,7 @@ class MemoryLayer:
         """Get current system metrics"""
         return self._state_manager.get_metrics()
 
-    def get_statistics(self) -> Dict[str, Any]:
+    def get_statistics(self) -> dict[str, Any]:
         """Get memory layer statistics"""
         stats = {
             "current_state": self._state_manager.get_current_state().value,
@@ -861,19 +862,16 @@ class MemoryLayer:
 # KERNEL MEMORY MANAGEMENT (from kernel/memory.py)
 # =============================================================================
 
-import os
-import shutil
-import multiprocessing as mp
-import multiprocessing.shared_memory as shm
-import struct
-import uuid
 import math
 import mmap
+import multiprocessing as mp
+import multiprocessing.shared_memory as shm
+import os
 import secrets
+import shutil
+import uuid
+from dataclasses import dataclass
 from pathlib import Path
-from dataclasses import dataclass, asdict
-from concurrent.futures import ProcessPoolExecutor
-import threading
 
 
 @dataclass
@@ -894,18 +892,18 @@ class SharedMemoryBlock:
     created_at: float
     process_id: int
     data_type: str  # 'artifact', 'entities', 'analysis', 'ai_insight'
-    metadata: Dict[str, Any]
+    metadata: dict[str, Any]
 
 
 @dataclass
 class ProcessMessage:
     """Inter-process communication message."""
     message_type: str  # 'data_ready', 'processing_complete', 'shutdown'
-    block_id: Optional[str] = None
+    block_id: str | None = None
     sender_process: str = ''
     receiver_process: str = ''
-    metadata: Dict[str, Any] = None
-    
+    metadata: dict[str, Any] = None
+
     def __post_init__(self):
         if self.metadata is None:
             self.metadata = {}
@@ -914,67 +912,67 @@ class ProcessMessage:
 class RAMDiskManager:
     """
     macOS M1 specific RAM disk manager for stealth operations.
-    
+
     Provides forensic-clean, high-speed temporary storage that
     leaves no traces on disk when destroyed.
-    
+
     Example:
         with RAMDiskManager(RAMDiskConfig(size_mb=512)) as ramdisk:
             paths = ramdisk.setup_integration_directories()
             # Use paths for TantivyStore, VisionSentry
         # Auto-nuked on exit
     """
-    
-    def __init__(self, config: Optional[RAMDiskConfig] = None):
+
+    def __init__(self, config: RAMDiskConfig | None = None):
         self.config = config or RAMDiskConfig()
-        self.device_path: Optional[str] = None
-        self.mount_path: Optional[Path] = None
+        self.device_path: str | None = None
+        self.mount_path: Path | None = None
         self.is_attached = False
         self._sectors_per_mb = 2048  # 512-byte sectors
-    
+
     def get_available_memory_mb(self) -> int:
         """Get available memory in MB"""
         import psutil
         memory = psutil.virtual_memory()
         return int(memory.available / 1024 / 1024)
-    
+
     def calculate_optimal_size(self) -> int:
         """Calculate optimal RAM disk size based on available memory"""
         available_mb = self.get_available_memory_mb()
-        
+
         # Ensure minimum memory requirement
         if available_mb < self.config.min_memory_mb:
             raise MemoryError(
                 f"Insufficient memory: {available_mb}MB available, "
                 f"{self.config.min_memory_mb}MB required"
             )
-        
+
         # Calculate max size based on percentage limit
         max_size_mb = int(available_mb * self.config.max_memory_usage_percent)
         optimal_size = min(self.config.size_mb, max_size_mb)
-        
+
         logger.info(f"Available memory: {available_mb}MB, RAM disk size: {optimal_size}MB")
         return optimal_size
-    
-    def create_ramdisk(self, size_mb: Optional[int] = None) -> str:
+
+    def create_ramdisk(self, size_mb: int | None = None) -> str:
         """
         Create a RAM disk using hdiutil.
-        
+
         Args:
             size_mb: Size in MB, if None uses config size
-            
+
         Returns:
             Mount path of the RAM disk
         """
         if self.is_attached:
             raise RuntimeError("RAM disk already attached")
-        
+
         # Calculate size
         if size_mb is None:
             size_mb = self.calculate_optimal_size()
-        
+
         sectors = size_mb * self._sectors_per_mb
-        
+
         try:
             # Create RAM disk (not mounted yet)
             cmd_attach = ["hdiutil", "attach", "-nomount", f"ram://{sectors}"]
@@ -984,64 +982,64 @@ class RAMDiskManager:
                 text=True,
                 check=True
             )
-            
+
             # Extract device path from output
             self.device_path = result.stdout.strip()
-            
+
             if not self.device_path.startswith("/dev/"):
                 raise RuntimeError(f"Invalid device path: {self.device_path}")
-            
+
             # Format the volume
             cmd_format = [
-                "diskutil", 
-                "erasevolume", 
+                "diskutil",
+                "erasevolume",
                 self.config.filesystem,
                 self.config.volume_name,
                 self.device_path
             ]
-            
+
             subprocess.run(cmd_format, capture_output=True, text=True, check=True)
-            
+
             # Set mount path
             self.mount_path = Path(f"/Volumes/{self.config.volume_name}")
             self.is_attached = True
-            
+
             logger.info(f"RAM disk created: {self.device_path} -> {self.mount_path}")
             logger.info(f"Size: {size_mb}MB, Speed: ~60GB/s")
-            
+
             return str(self.mount_path)
-            
+
         except subprocess.CalledProcessError as e:
             self.cleanup_on_error()
             raise RuntimeError(f"RAM disk creation failed: {e.stderr}") from e
-    
-    def get_integration_paths(self) -> Dict[str, str]:
+
+    def get_integration_paths(self) -> dict[str, str]:
         """Get paths for component integration."""
         if not self.is_attached or not self.mount_path:
             raise RuntimeError("RAM disk not attached")
-        
+
         return {
             "tantivy_store": str(self.mount_path / "tantivy_indexes"),
             "vision_sentry": str(self.mount_path / "vision_temp"),
             "temp_files": str(self.mount_path / "temp"),
             "cache": str(self.mount_path / "cache")
         }
-    
-    def setup_integration_directories(self) -> Dict[str, str]:
+
+    def setup_integration_directories(self) -> dict[str, str]:
         """Create directories for component integration."""
         paths = self.get_integration_paths()
-        
+
         for name, path in paths.items():
             Path(path).mkdir(parents=True, exist_ok=True)
             logger.debug(f"Created directory: {name} -> {path}")
-        
+
         return paths
-    
-    def get_performance_stats(self) -> Dict[str, Any]:
+
+    def get_performance_stats(self) -> dict[str, Any]:
         """Get RAM disk performance statistics"""
         if not self.is_attached:
             return {"status": "not_attached"}
-        
+
         try:
             # Get disk usage
             if self.mount_path and self.mount_path.exists():
@@ -1059,43 +1057,43 @@ class RAMDiskManager:
                 }
             else:
                 stats = {"status": "attached_no_mount"}
-                
+
             return stats
-            
+
         except Exception as e:
             logger.error(f"Error getting stats: {e}")
             return {"status": "error", "error": str(e)}
-    
+
     def nuke(self) -> bool:
         """
         Immediately and irretrievably destroy the RAM disk.
-        
+
         This method provides instant forensic cleanup by disconnecting
         the memory cells, causing immediate and complete data loss.
-        
+
         Returns:
             True if successful, False otherwise
         """
         if not self.is_attached:
             logger.warning("RAM disk not attached, nothing to nuke")
             return True
-        
+
         try:
             # Force detach - this immediately loses all data
             if self.device_path:
                 cmd_detach = ["hdiutil", "detach", self.device_path, "-force"]
                 subprocess.run(cmd_detach, capture_output=True, text=True, check=True)
-                
+
                 logger.critical(f"RAM disk nuked: {self.device_path}")
                 logger.critical("All data irretrievably lost - forensic clean")
-            
+
             # Reset state
             self.is_attached = False
             self.device_path = None
             self.mount_path = None
-            
+
             return True
-            
+
         except subprocess.CalledProcessError as e:
             logger.error(f"RAM disk nuke failed: {e.stderr}")
             # Force reset state even on error
@@ -1103,7 +1101,7 @@ class RAMDiskManager:
             self.device_path = None
             self.mount_path = None
             return False
-    
+
     def cleanup_on_error(self):
         """Cleanup in case of errors during creation"""
         if self.device_path:
@@ -1115,16 +1113,16 @@ class RAMDiskManager:
                 )
             except Exception:
                 pass
-        
+
         self.is_attached = False
         self.device_path = None
         self.mount_path = None
-    
+
     def __enter__(self):
         """Context manager entry"""
         self.create_ramdisk()
         return self
-    
+
     def __exit__(self, exc_type, exc_val, exc_tb):
         """Context manager exit - always nuke on exit"""
         self.nuke()
@@ -1141,18 +1139,18 @@ class RAMDiskManager:
 class SharedMemoryManager:
     """
     Advanced shared memory manager for zero-copy data sharing between processes.
-    
+
     Manages shared memory blocks, inter-process communication, and resource cleanup.
     Optimized for M1 architecture with dedicated core assignment.
     """
-    
+
     def __init__(self, max_memory_mb: int = 1024):
         self.max_memory_bytes = max_memory_mb * 1024 * 1024
-        self.active_blocks: Dict[str, SharedMemoryBlock] = {}
-        self.shared_memory_objects: Dict[str, shm.SharedMemory] = {}
-        self.process_queues: Dict[str, mp.Queue] = {}
+        self.active_blocks: dict[str, SharedMemoryBlock] = {}
+        self.shared_memory_objects: dict[str, shm.SharedMemory] = {}
+        self.process_queues: dict[str, mp.Queue] = {}
         self.shutdown_event = mp.Event()
-        
+
         # M1 Core assignment
         self.core_assignments = {
             'network': 0,      # Efficiency Core
@@ -1160,7 +1158,7 @@ class SharedMemoryManager:
             'ai': 2,          # Performance Core 2 (with GPU)
             'orchestrator': 3  # Performance Core 3
         }
-        
+
         # Statistics
         self.stats = {
             'total_blocks_created': 0,
@@ -1169,19 +1167,19 @@ class SharedMemoryManager:
             'peak_memory_usage': 0,
             'cleanup_operations': 0
         }
-        
+
         logger.info("SharedMemoryManager initialized for M1 architecture")
-    
-    def create_shared_block(self, data: bytes, data_type: str, 
-                           metadata: Dict[str, Any] = None) -> str:
+
+    def create_shared_block(self, data: bytes, data_type: str,
+                           metadata: dict[str, Any] = None) -> str:
         """
         Create a shared memory block with zero-copy data sharing.
-        
+
         Args:
             data: Raw data to share (bytes)
             data_type: Type of data ('artifact', 'entities', 'analysis', 'ai_insight')
             metadata: Additional metadata for the block
-            
+
         Returns:
             Block ID for referencing the shared memory
         """
@@ -1189,14 +1187,14 @@ class SharedMemoryManager:
             # Check memory limits
             if len(data) > self.max_memory_bytes:
                 raise ValueError(f"Data size {len(data)} exceeds maximum {self.max_memory_bytes}")
-            
+
             # Generate unique block ID
             block_id = str(uuid.uuid4())
-            
+
             # Create shared memory block
             shared_mem = shm.SharedMemory(create=True, size=len(data))
             shared_mem.buf[:len(data)] = data  # Zero-copy operation
-            
+
             # Store block metadata
             block_info = SharedMemoryBlock(
                 block_id=block_id,
@@ -1206,91 +1204,91 @@ class SharedMemoryManager:
                 data_type=data_type,
                 metadata=metadata or {}
             )
-            
+
             # Store references
             self.active_blocks[block_id] = block_info
             self.shared_memory_objects[block_id] = shared_mem
-            
+
             # Update statistics
             self.stats['total_blocks_created'] += 1
             self.stats['total_bytes_shared'] += len(data)
             self.stats['active_blocks'] = len(self.active_blocks)
-            
+
             current_usage = sum(block.size for block in self.active_blocks.values())
             if current_usage > self.stats['peak_memory_usage']:
                 self.stats['peak_memory_usage'] = current_usage
-            
+
             logger.info(f"Created shared block {block_id}: {len(data)} bytes ({data_type})")
             return block_id
-            
+
         except Exception as e:
             logger.error(f"Failed to create shared block: {e}")
             raise
-    
-    def get_shared_data(self, block_id: str) -> Optional[bytes]:
+
+    def get_shared_data(self, block_id: str) -> bytes | None:
         """Retrieve data from shared memory block (zero-copy read)."""
         try:
             if block_id not in self.shared_memory_objects:
                 logger.warning(f"Shared block {block_id} not found")
                 return None
-            
+
             shared_mem = self.shared_memory_objects[block_id]
             block_info = self.active_blocks[block_id]
-            
+
             # Zero-copy read access - create new bytes object from memoryview
             data = bytes(shared_mem.buf[:block_info.size])
-            
+
             logger.debug(f"Retrieved {len(data)} bytes from block {block_id}")
             return data
-            
+
         except Exception as e:
             logger.error(f"Failed to retrieve shared data from {block_id}: {e}")
             return None
-    
+
     def release_block(self, block_id: str) -> bool:
         """Release a shared memory block."""
         try:
             if block_id in self.shared_memory_objects:
                 shared_mem = self.shared_memory_objects[block_id]
                 block_info = self.active_blocks[block_id]
-                
+
                 # Close and unlink shared memory
                 shared_mem.close()
                 shared_mem.unlink()
-                
+
                 # Remove from tracking
                 del self.shared_memory_objects[block_id]
                 del self.active_blocks[block_id]
-                
+
                 # Update statistics
                 self.stats['active_blocks'] = len(self.active_blocks)
                 self.stats['cleanup_operations'] += 1
-                
+
                 logger.info(f"Released shared block {block_id}: {block_info.size} bytes")
                 return True
-            
+
             return False
-            
+
         except Exception as e:
             logger.error(f"Failed to release block {block_id}: {e}")
             return False
-    
+
     def cleanup_all_blocks(self) -> int:
         """Clean up all shared memory blocks."""
         cleaned_count = 0
-        
+
         block_ids = list(self.active_blocks.keys())
         for block_id in block_ids:
             if self.release_block(block_id):
                 cleaned_count += 1
-        
+
         logger.info(f"Cleaned up {cleaned_count} shared memory blocks")
         return cleaned_count
-    
-    def get_statistics(self) -> Dict[str, Any]:
+
+    def get_statistics(self) -> dict[str, Any]:
         """Get comprehensive statistics about shared memory usage."""
         current_usage = sum(block.size for block in self.active_blocks.values())
-        
+
         return {
             **self.stats,
             'current_memory_usage_bytes': current_usage,
@@ -1298,20 +1296,20 @@ class SharedMemoryManager:
             'memory_utilization_percent': (current_usage / self.max_memory_bytes) * 100,
             'active_block_types': {
                 data_type: len([b for b in self.active_blocks.values() if b.data_type == data_type])
-                for data_type in set(b.data_type for b in self.active_blocks.values())
+                for data_type in {b.data_type for b in self.active_blocks.values()}
             }
         }
-    
+
     def shutdown(self):
         """Shutdown shared memory manager and clean up all resources."""
         logger.info("Shutting down SharedMemoryManager...")
-        
+
         # Signal shutdown
         self.shutdown_event.set()
-        
+
         # Clean up all blocks
         self.cleanup_all_blocks()
-        
+
         # Close queues
         for queue in self.process_queues.values():
             try:
@@ -1319,31 +1317,31 @@ class SharedMemoryManager:
                 queue.join_thread()
             except Exception:
                 pass
-        
+
         # Clear references
         self.active_blocks.clear()
         self.shared_memory_objects.clear()
         self.process_queues.clear()
-        
+
         logger.info("SharedMemoryManager shutdown complete")
 
 
 class EntropyMaskingManager:
     """
     Gray Matter Entropy Masking for stealth operations.
-    
+
     Reduces Shannon entropy to make encrypted operations appear
     as normal application activity to EDR scanners.
     """
-    
+
     def __init__(self, noise_size_mb: int = 50):
         self.noise_size_bytes = noise_size_mb * 1024 * 1024
-        self.noise_blocks: Dict[str, mmap.mmap] = {}
+        self.noise_blocks: dict[str, mmap.mmap] = {}
         self.noise_content = self._generate_noise_content()
         self.active_masking = False
-        
+
         logger.info(f"EntropyMaskingManager initialized with {noise_size_mb}MB noise buffer")
-    
+
     def _generate_noise_content(self) -> bytes:
         """Generate repetitive content that appears as normal application data."""
         mit_license = """MIT License
@@ -1404,14 +1402,14 @@ That makes calamity of so long life.
 
         # Return exactly the requested byte size
         return repeated_content.encode()[:self.noise_size_bytes]
-    
+
     def inject_entropy_noise(self, block_id: str = None) -> str:
         """
         Inject entropy noise into memory to reduce overall Shannon entropy.
-        
+
         Args:
             block_id: Optional block ID for tracking
-            
+
         Returns:
             ID of the injected noise block
         """
@@ -1419,49 +1417,49 @@ That makes calamity of so long life.
             # Generate unique block ID if not provided
             if block_id is None:
                 block_id = f"entropy_noise_{secrets.token_hex(8)}"
-            
+
             # Create temporary file for noise
             temp_path = f"/tmp/hledac_entropy_{block_id}.bin"
-            
+
             with open(temp_path, 'wb') as f:
                 f.write(self.noise_content)
-            
+
             # Memory map the file for zero-copy operations
             with open(temp_path, 'r+b') as f:
                 noise_mmap = mmap.mmap(f.fileno(), 0)
                 self.noise_blocks[block_id] = noise_mmap
-            
+
             logger.info(f"Injected entropy noise block {block_id}: {self.noise_size_bytes} bytes")
             self.active_masking = True
-            
+
             return block_id
-            
+
         except Exception as e:
             logger.error(f"Failed to inject entropy noise: {e}")
             raise
-    
+
     def calculate_shannon_entropy(self, data: bytes) -> float:
         """Calculate Shannon entropy of data."""
         if not data:
             return 0.0
-        
+
         # Count byte frequencies
         byte_counts = [0] * 256
         for byte in data:
             byte_counts[byte] += 1
-        
+
         # Calculate entropy
         entropy = 0.0
         data_len = len(data)
-        
+
         for count in byte_counts:
             if count > 0:
                 probability = count / data_len
                 entropy -= probability * math.log2(probability) if probability > 0 else 0
-        
+
         return entropy
-    
-    def get_entropy_reduction_stats(self) -> Dict[str, Any]:
+
+    def get_entropy_reduction_stats(self) -> dict[str, Any]:
         """Get statistics about entropy reduction."""
         if not self.noise_blocks:
             return {
@@ -1469,14 +1467,14 @@ That makes calamity of so long life.
                 'noise_blocks_count': 0,
                 'total_noise_bytes': 0
             }
-        
+
         # Calculate entropy of noise content
         noise_entropy = self.calculate_shannon_entropy(self.noise_content)
-        
+
         # Calculate theoretical entropy reduction
         total_noise_bytes = len(self.noise_blocks) * self.noise_size_bytes
         entropy_reduction = noise_entropy * (total_noise_bytes / (1024 * 1024))  # MB
-        
+
         return {
             'active_masking': self.active_masking,
             'noise_blocks_count': len(self.noise_blocks),
@@ -1485,15 +1483,15 @@ That makes calamity of so long life.
             'theoretical_entropy_reduction_mb': entropy_reduction,
             'stealth_effectiveness': 'HIGH' if noise_entropy < 4.0 else 'MEDIUM'
         }
-    
+
     def clear_noise_blocks(self):
         """Clear all entropy noise blocks"""
-        for block_id, noise_mmap in self.noise_blocks.items():
+        for _block_id, noise_mmap in self.noise_blocks.items():
             try:
                 noise_mmap.close()
             except Exception:
                 pass
-        
+
         # Clean up temporary files
         try:
             import glob
@@ -1505,12 +1503,12 @@ That makes calamity of so long life.
                 os.unlink(temp_file)
             except Exception:
                 pass
-        
+
         self.noise_blocks.clear()
         self.active_masking = False
-        
+
         logger.info("All entropy noise blocks cleared")
-    
+
     def __del__(self):
         """Cleanup on deletion"""
         self.clear_noise_blocks()

@@ -7,9 +7,9 @@ Tests:
   - test_bucket_generator_memory: _generate_bucket_candidates returns Generator, not list
 """
 
-import asyncio
 import inspect
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
+
 import pytest
 
 
@@ -27,8 +27,8 @@ class TestS3OpenBucket:
     async def test_s3_open_bucket(self):
         """HEAD returning 200 produces result dict with is_open=True."""
         from hledac.universal.intelligence.exposure_correlator import (
-            _check_bucket_head,
             _CLOUD_BUCKET_TEMPLATES,
+            _check_bucket_head,
         )
 
         s3_template = [t for t in _CLOUD_BUCKET_TEMPLATES if t[1] == "s3"][0]
@@ -56,8 +56,8 @@ class TestS3OpenBucket:
     async def test_s3_bucket_403_exists_but_denied(self):
         """HEAD 403 produces is_open=False."""
         from hledac.universal.intelligence.exposure_correlator import (
-            _check_bucket_head,
             _CLOUD_BUCKET_TEMPLATES,
+            _check_bucket_head,
         )
 
         s3_template = [t for t in _CLOUD_BUCKET_TEMPLATES if t[1] == "s3"][0]
@@ -86,8 +86,8 @@ class TestSubdomainTakeover:
     def test_subdomain_takeover_github_pages(self):
         """CNAME pointing to user.github.io matches github_io takeover provider."""
         from hledac.universal.intelligence.exposure_correlator import (
-            _check_takeover_provider,
             _SUBDOMAIN_TAKEOVER_PROVIDERS,
+            _check_takeover_provider,
         )
 
         provider_names = [p[0] for p in _SUBDOMAIN_TAKEOVER_PROVIDERS]
@@ -141,7 +141,7 @@ class TestBucketGenerator:
         result = _generate_bucket_candidates("acmecorp")
 
         count = 0
-        for candidate in result:
+        for _candidate in result:
             count += 1
             if count >= 3:
                 break

@@ -16,12 +16,10 @@ Tests verify:
 11. DLH findings populate all provenance fields
 """
 
-import asyncio
 import inspect
 import unittest
 from collections import OrderedDict
 from dataclasses import fields
-from typing import List
 
 
 class TestResearchFindingProvenanceFields(unittest.TestCase):
@@ -75,7 +73,6 @@ class TestEmailNormalizationAndFiltering(unittest.TestCase):
 
     def test_generic_service_emails_filtered(self):
         """Generic service emails should be filtered from DLH queue."""
-        from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
 
         # Create minimal mock
         class MockSelf:
@@ -86,7 +83,7 @@ class TestEmailNormalizationAndFiltering(unittest.TestCase):
         GENERIC_PREFIXES = ('info@', 'support@', 'admin@', 'noreply@', 'no-reply@', 'postmaster@', 'test@')
 
         # Test function directly
-        def _dlh_collect_emails(emails: List[str]) -> None:
+        def _dlh_collect_emails(emails: list[str]) -> None:
             if not getattr(MockSelf(), '_dlh_available', False):
                 return
             if not emails:
@@ -119,7 +116,6 @@ class TestEmailNormalizationAndFiltering(unittest.TestCase):
 
     def test_mailing_list_emails_preserved(self):
         """Project/mailing-list emails should NOT be filtered."""
-        from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
 
         class MockSelf:
             _dlh_available = True
@@ -128,7 +124,7 @@ class TestEmailNormalizationAndFiltering(unittest.TestCase):
 
         GENERIC_PREFIXES = ('info@', 'support@', 'admin@', 'noreply@', 'no-reply@', 'postmaster@', 'test@')
 
-        def _dlh_collect_emails(emails: List[str]) -> None:
+        def _dlh_collect_emails(emails: list[str]) -> None:
             if not getattr(MockSelf(), '_dlh_available', False):
                 return
             if not emails:

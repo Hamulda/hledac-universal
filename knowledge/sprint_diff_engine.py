@@ -17,9 +17,12 @@ Profile logic:
     velocity    = cumulative / max(days_since_first, 1)
 """
 
-from dataclasses import dataclass, field
-import orjson
+from __future__ import annotations
+
 import logging
+from dataclasses import dataclass, field
+
+import orjson
 
 logger = logging.getLogger(__name__)
 
@@ -309,9 +312,26 @@ class SprintDiffEngine:
 
         # ANE entity fuzzy merge — consolidate near-identical entity names (cosine >= 0.97)
         try:
-            from hledac.universal.brain.ane_embedder import _coreml_embed, get_ane_embedder
             import numpy as np
+            from hledac.universal.brain.ane_embedder import _coreml_embed, get_ane_embedder
             _embedder = get_ane_embedder()
+            # Sprint F228B: ensure model is initialized before first embed() call
+            if _embedder is not None and not _embedder.is_loaded:
+                import asyncio
+                try:
+                    loop = asyncio.get_running_loop()
+                    loop.run_until_complete(_embedder.initialize())
+                except RuntimeError:
+                    # No running loop — initialize in thread
+                    import threading
+                    def _init_bg():
+                        loop = asyncio.new_event_loop()
+                        asyncio.set_event_loop(loop)
+                        loop.run_until_complete(_embedder.initialize())
+                        loop.close()
+                    t = threading.Thread(target=_init_bg, daemon=True)
+                    t.start()
+                    t.join(timeout=5.0)
             if _embedder and _embedder.is_loaded and len(summary) > 1:
                 _keys   = list(summary.keys())
                 _vecs   = np.array([_coreml_embed(_embedder.model, k) for k in _keys])

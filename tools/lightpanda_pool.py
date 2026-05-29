@@ -47,7 +47,7 @@ class LightpandaPool:
         self._started = True
         logger.info(f"[POOL] Started {len(self._all_instances)} Lightpanda instances")
 
-    async def get_instance(self) -> "LightpandaManager":
+    async def get_instance(self) -> LightpandaManager:
         """Get available instance or wait."""
         if not self._started:
             await self.start()
@@ -55,7 +55,7 @@ class LightpandaPool:
         # Wait for available instance
         return await self._available.get()
 
-    async def release(self, instance: "LightpandaManager") -> None:
+    async def release(self, instance: LightpandaManager) -> None:
         """Return instance to pool."""
         await self._available.put(instance)
 

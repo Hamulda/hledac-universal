@@ -5,10 +5,9 @@ Sprint 46: Access to Unreachable Data (Sessions + Paywall + OSINT + Darknet)
 
 import asyncio
 import json
-import os
 import logging
+import os
 import tempfile
-from typing import List, Dict, Any, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -19,7 +18,7 @@ class OSINTFrameworkRunner:
     def __init__(self):
         self._timeout = 30
 
-    async def run_theharvester(self, target: str) -> List[Dict]:
+    async def run_theharvester(self, target: str) -> list[dict]:
         """Spustí theHarvester na doménu/jméno."""
         # Check if theHarvester is available
         try:
@@ -29,7 +28,7 @@ class OSINTFrameworkRunner:
                 stderr=asyncio.subprocess.PIPE
             )
             await asyncio.wait_for(proc_check.communicate(), timeout=5)
-        except (FileNotFoundError, asyncio.TimeoutError):
+        except (TimeoutError, FileNotFoundError):
             logger.debug("[theHarvester] Not installed, skipping")
             return []
 
@@ -72,7 +71,7 @@ class OSINTFrameworkRunner:
                     continue
 
             return findings
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.warning(f"[theHarvester] Timeout for {target}")
             return []
         except Exception as e:
@@ -87,7 +86,7 @@ class OSINTFrameworkRunner:
                 except FileNotFoundError:
                     pass
 
-    async def run_sherlock(self, username: str) -> List[Dict]:
+    async def run_sherlock(self, username: str) -> list[dict]:
         """Spustí Sherlock na username s --json flagem pro strukturální výstup."""
         # Check if sherlock is available
         try:
@@ -97,7 +96,7 @@ class OSINTFrameworkRunner:
                 stderr=asyncio.subprocess.PIPE
             )
             await asyncio.wait_for(proc_check.communicate(), timeout=5)
-        except (FileNotFoundError, asyncio.TimeoutError):
+        except (TimeoutError, FileNotFoundError):
             logger.debug("[Sherlock] Not installed, skipping")
             return []
 
@@ -136,14 +135,14 @@ class OSINTFrameworkRunner:
                             })
 
             return findings
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.warning(f"[Sherlock] Timeout for {username}")
             return []
         except Exception as e:
             logger.warning(f"[Sherlock] Failed: {e}")
             return []
 
-    async def run_maigret(self, username: str) -> List[Dict]:
+    async def run_maigret(self, username: str) -> list[dict]:
         """Spustí Maigret na username (modernější než Sherlock)."""
         try:
             proc_check = await asyncio.create_subprocess_exec(
@@ -152,7 +151,7 @@ class OSINTFrameworkRunner:
                 stderr=asyncio.subprocess.PIPE
             )
             await asyncio.wait_for(proc_check.communicate(), timeout=5)
-        except (FileNotFoundError, asyncio.TimeoutError):
+        except (TimeoutError, FileNotFoundError):
             logger.debug("[Maigret] Not installed, skipping")
             return []
 
@@ -180,14 +179,14 @@ class OSINTFrameworkRunner:
                 pass
 
             return findings
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.warning(f"[Maigret] Timeout for {username}")
             return []
         except Exception as e:
             logger.warning(f"[Maigret] Failed: {e}")
             return []
 
-    async def search_username(self, username: str) -> List[Dict]:
+    async def search_username(self, username: str) -> list[dict]:
         """Search username across all available tools."""
         results = []
 
@@ -201,6 +200,6 @@ class OSINTFrameworkRunner:
 
         return results
 
-    async def search_domain(self, domain: str) -> List[Dict]:
+    async def search_domain(self, domain: str) -> list[dict]:
         """Search domain for emails and hosts."""
         return await self.run_theharvester(domain)

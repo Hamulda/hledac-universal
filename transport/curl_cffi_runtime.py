@@ -13,20 +13,20 @@ Invariant: close is idempotent.
 from __future__ import annotations
 
 import asyncio
-from collections import deque
 import logging
-from typing import Any, Dict, Optional
+from collections import deque
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
 # Module-level guard — set once at first availability check
-_CURL_CFFI_AVAILABLE: Optional[bool] = None
-_CURL_CFFI_IMPORT_ERROR: Optional[str] = None
+_CURL_CFFI_AVAILABLE: bool | None = None
+_CURL_CFFI_IMPORT_ERROR: str | None = None
 
 # Bounded session cache: profile -> AsyncSession
 # max 3 profiles as specified
 _MAX_CURL_CFFI_PROFILES = 3
-_curl_cffi_sessions: Dict[str, Any] = {}
+_curl_cffi_sessions: dict[str, Any] = {}
 _curl_cffi_lock = asyncio.Lock()
 _curl_cffi_profiles_order: deque[str] = deque()  # track access order for LRU via popleft()
 
@@ -98,7 +98,7 @@ async def async_get_curl_cffi_session(profile: str = "chrome110") -> tuple[bool,
     return False, None, f"session_creation_failed: {last_error}"
 
 
-async def _get_or_create_session(profile: str) -> Optional[Any]:
+async def _get_or_create_session(profile: str) -> Any | None:
     """Internal: get from cache or create new, with bounded LRU."""
     global _curl_cffi_sessions, _curl_cffi_profiles_order
 
@@ -188,7 +188,7 @@ async def close_curl_cffi_sessions_async() -> None:
     logger.debug(f"curl_cffi sessions closed: {len(sessions_to_close)}")
 
 
-def get_curl_cffi_runtime_status() -> Dict[str, Any]:
+def get_curl_cffi_runtime_status() -> dict[str, Any]:
     """
     Return runtime status for telemetry.
     """

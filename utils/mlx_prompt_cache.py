@@ -1,4 +1,5 @@
 """
+from __future__ import annotations
 MLX Prompt Cache - Explicit size tracking for KV cache.
 
 Provides:
@@ -11,7 +12,6 @@ Provides:
 import asyncio
 import logging
 from collections import OrderedDict
-from typing import Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -19,8 +19,8 @@ logger = logging.getLogger(__name__)
 class MLXPromptCache:
     """LRU cache for MLX prompt cache states with explicit size tracking."""
 
-    def __init__(self, max_entries: int = 10, max_size_gb: Optional[float] = None):
-        self._cache: OrderedDict[str, Tuple[list, int]] = OrderedDict()  # (cache_state, size_bytes)
+    def __init__(self, max_entries: int = 10, max_size_gb: float | None = None):
+        self._cache: Ordereddict[str, tuple[list, int]] = OrderedDict()  # (cache_state, size_bytes)
         self._max_entries = max_entries
         self._lock = asyncio.Lock()
         self._hits = 0
@@ -40,7 +40,7 @@ class MLXPromptCache:
 
         self._current_size = 0
 
-    async def get(self, prompt_hash: str) -> Optional[list]:
+    async def get(self, prompt_hash: str) -> list | None:
         """Get cached prompt state by hash."""
         async with self._lock:
             if prompt_hash in self._cache:

@@ -2,13 +2,11 @@
 Sprint 58B tests – Federated Learning with Post‑Quantum Crypto, Sketches, DP.
 """
 
-import asyncio
 import sys
-import unittest
 import tempfile
+import unittest
+
 import numpy as np
-from pathlib import Path
-from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, '/Users/vojtechhamada/PycharmProjects/Hledac')
 
@@ -53,7 +51,7 @@ class TestPQCProvider(unittest.IsolatedAsyncioTestCase):
         public, _ = pqc.generate_kem_keypair()
 
         ciphertext, shared1 = pqc.encapsulate(public)
-        shared2 = pqc.decapsulate(ciphertext, b'')
+        pqc.decapsulate(ciphertext, b'')
 
         # Pro X25519 fallback je ciphertext prázdný a shared je rovnou vrácen
         self.assertIsNotNone(shared1)
@@ -133,7 +131,7 @@ class TestSecureAggregator(unittest.IsolatedAsyncioTestCase):
 
     async def test_modular_inverse(self):
         """Test #9: SecureAggregator – modulární inverze."""
-        from hledac.universal.federated.secure_aggregator import SecureAggregator, P
+        from hledac.universal.federated.secure_aggregator import P, SecureAggregator
 
         agg = SecureAggregator("node1", ["node1"])
 
@@ -144,7 +142,7 @@ class TestSecureAggregator(unittest.IsolatedAsyncioTestCase):
 
     async def test_shamir_lagrange(self):
         """Test #10: SecureAggregator – Lagrangeovy koeficienty modulo p."""
-        from hledac.universal.federated.secure_aggregator import SecureAggregator, P
+        from hledac.universal.federated.secure_aggregator import SecureAggregator
 
         agg = SecureAggregator("node1", ["node1", "node2", "node3"], threshold=2)
 
@@ -355,8 +353,8 @@ class TestFederatedIntegration(unittest.IsolatedAsyncioTestCase):
 
         # Každý node vytvoří maskovaný update
         masked1 = agg1.create_masked_update(mx_update, round=1)
-        masked2 = agg2.create_masked_update(mx_update, round=1)
-        masked3 = agg3.create_masked_update(mx_update, round=1)
+        agg2.create_masked_update(mx_update, round=1)
+        agg3.create_masked_update(mx_update, round=1)
 
         # Po sečtení by se masky měly vyrušit (při správném klíči)
         # Toto je zjednodušný test - reálná agregace by vyžadovala síťovou komunikaci

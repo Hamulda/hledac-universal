@@ -14,8 +14,8 @@ so metadata can be collected even when text parsing fails.
 
 from __future__ import annotations
 
-import re
 import html as _html
+import re
 from typing import Optional
 
 try:
@@ -140,7 +140,7 @@ def _decode_entities(text: str) -> str:
 # ---------------------------------------------------------------------------
 
 
-def _selectolax_extract(html: str, *, max_chars: Optional[int] = None) -> str:
+def _selectolax_extract(html: str, *, max_chars: int | None = None) -> str:
     """selectolax-based extraction (fastest, Rust parser)."""
     try:
         tree = _SelectolaxHTMLParser(html)
@@ -171,7 +171,7 @@ def _selectolax_extract(html: str, *, max_chars: Optional[int] = None) -> str:
 
 
 def _regex_fallback_extract(
-    html: str, *, max_chars: Optional[int] = None
+    html: str, *, max_chars: int | None = None
 ) -> str:
     """
     Pure-regex fallback when neither selectolax nor BeautifulSoup are available.
@@ -208,7 +208,7 @@ opt: type = Optional
 def html_to_text_fast(
     html: str,
     *,
-    max_chars: Optional[int] = None,
+    max_chars: int | None = None,
 ) -> str:
     """
     Convert HTML to plain text using the best available parser.

@@ -21,107 +21,107 @@ Obsahuje:
 """
 
 from .action_result import ActionResult  # NEW from sprint 68
-from .performance_monitor import PerformanceMonitor, QualityValidator, PerformanceMetrics
-from .workflow_engine import WorkflowEngine, Workflow, Task, TaskType, TaskStatus
-from .predictive_planner import PredictivePlanner, Prediction, RollbackManager
+from .async_utils import TaskResult, bounded_gather, bounded_map, map_as_completed  # Sprint 81 Fáze 2
+from .bloom_filter import (
+    BloomFilter,
+    BloomFilterStats,
+    ScalableBloomFilter,
+    create_content_fingerprint,
+    create_url_deduplicator,
+)  # NEW from utils
+from .deduplication import (
+    ContentDeduplicator,
+    DeduplicationConfig,
+    DeduplicationEngine,
+    DeduplicationMatch,
+    DeduplicationResult,
+    DeduplicationStats,
+    DeduplicationStrategy,
+    MetadataDeduplicator,
+    QueryItem,
+    SemanticDeduplicator,
+    SimilarityScore,
+)
+from .encryption import DataEncryption, DecryptionResult, EncryptionResult  # NEW from utils
+from .entity_extractor import EntityExtractor, ExtractedEntity, PatternType  # NEW from utils
+from .execution_optimizer import (
+    AnomalyDetector,
+    ExecutionStrategy,
+    IntelligentResourceAllocator,
+    OptimizationLevel,
+    ParallelExecutionOptimizer,
+    PredictiveScaler,
+    ResourceLimits,
+    ResourceMetrics,
+    ResourceType,
+    TaskMetrics,
+    TaskType,
+    WorkerMetrics,
+    create_m1_resource_allocator,
+)
 from .filtering import (
-    FastFilter,
     EfficientFrontier,
+    FastFilter,
     FilterStats,
     FrontierStats,
     get_fast_filter,
     get_frontier,
 )
-from .language import LanguageDetector, create_language_detector
-from .execution_optimizer import (
-    ParallelExecutionOptimizer,
-    ExecutionStrategy,
-    TaskType,
-    TaskMetrics,
-    WorkerMetrics,
-    IntelligentResourceAllocator,
-    create_m1_resource_allocator,
-    ResourceType,
-    OptimizationLevel,
-    ResourceMetrics,
-    ResourceLimits,
-    AnomalyDetector,
-    PredictiveScaler,
+from .intelligent_cache import (
+    CacheConfig,
+    CacheEntry,
+    CacheStats,
+    EvictionStrategy,
+    IntelligentCache,
+    MemoryOptimizedURLSet,  # NEW from utils
+    get_global_cache,
 )
+from .language import LanguageDetector, create_language_detector
+from .lazy_imports import LazyImportManager, LazyLoader, lazy_import  # NEW from utils
+from .performance_monitor import PerformanceMetrics, PerformanceMonitor, QualityValidator
+from .predictive_planner import Prediction, PredictivePlanner, RollbackManager
+from .query_expansion import (
+    DomainSpecificExpansionStrategy,
+    ExpansionConfig,
+    # MSQES Expansion Strategies
+    ExpansionStrategy,
+    MultiStrategyExpander,
+    QueryExpander,
+    QueryVariation,
+    SemanticExpansionStrategy,
+    SyntacticExpansionStrategy,
+    expand_query,
+)
+from .ranking import (
+    RankedResult,
+    ReciprocalRankFusion,
+    RRFConfig,
+    ScoreAggregator,
+    fuse_results,
+)
+from .rate_limiter import (
+    RateLimitConfig,
+    RateLimiter,
+    RateLimitExceeded,
+    with_rate_limit,
+)  # NEW from stealth_toolkit integration
+from .robots_parser import RobotsDocument, RobotsParser, Rule  # NEW from utils
+from .semantic import (
+    FilterResult,
+    KeywordFilter,
+    LightweightTokenizer,
+    Model2VecEmbedding,
+    SemanticFilter,
+    SimpleEmbedding,
+)
+from .tech_detection import TechStackResult, TechStackSignature  # NEW from scanners
 from .validation import (
     DataValidator,
     ValidationError,
     ValidationSeverity,
     create_sample_schema,
 )
-from .semantic import (
-    SemanticFilter,
-    KeywordFilter,
-    FilterResult,
-    SimpleEmbedding,
-    Model2VecEmbedding,
-    LightweightTokenizer,
-)
-from .query_expansion import (
-    QueryExpander, 
-    ExpansionConfig, 
-    expand_query,
-    # MSQES Expansion Strategies
-    ExpansionStrategy,
-    QueryVariation,
-    SemanticExpansionStrategy,
-    SyntacticExpansionStrategy,
-    DomainSpecificExpansionStrategy,
-    MultiStrategyExpander,
-)
-from .ranking import (
-    ReciprocalRankFusion,
-    RRFConfig,
-    RankedResult,
-    ScoreAggregator,
-    fuse_results,
-)
-from .deduplication import (
-    DeduplicationStrategy,
-    DeduplicationConfig,
-    QueryItem,
-    SimilarityScore,
-    DeduplicationMatch,
-    DeduplicationResult,
-    DeduplicationStats,
-    SemanticDeduplicator,
-    ContentDeduplicator,
-    MetadataDeduplicator,
-    DeduplicationEngine,
-)
-from .intelligent_cache import (
-    IntelligentCache,
-    CacheConfig,
-    CacheEntry,
-    CacheStats,
-    EvictionStrategy,
-    get_global_cache,
-    MemoryOptimizedURLSet,  # NEW from utils
-)
-from .bloom_filter import (
-    BloomFilter,
-    BloomFilterStats,
-    ScalableBloomFilter,
-    create_url_deduplicator,
-    create_content_fingerprint,
-)  # NEW from utils
-from .entity_extractor import EntityExtractor, ExtractedEntity, PatternType  # NEW from utils
-from .lazy_imports import LazyImportManager, LazyLoader, lazy_import  # NEW from utils
-from .robots_parser import RobotsParser, RobotsDocument, Rule  # NEW from utils
-from .tech_detection import TechStackSignature, TechStackResult  # NEW from scanners
-from .encryption import DataEncryption, EncryptionResult, DecryptionResult  # NEW from utils
-from .rate_limiter import (
-    RateLimiter,
-    RateLimitConfig,
-    RateLimitExceeded,
-    with_rate_limit,
-)  # NEW from stealth_toolkit integration
-from .async_utils import bounded_map, map_as_completed, bounded_gather, TaskResult  # Sprint 81 Fáze 2
+from .workflow_engine import Task, TaskStatus, TaskType, Workflow, WorkflowEngine
 
 
 def _uuid7_stdlib() -> bool:

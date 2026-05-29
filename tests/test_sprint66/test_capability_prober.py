@@ -1,6 +1,7 @@
-import pytest
 import time
 from unittest.mock import patch
+
+import pytest
 from hledac.universal.utils.capability_prober import CapabilityProber
 
 

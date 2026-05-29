@@ -34,13 +34,12 @@ from __future__ import annotations
 
 import json
 import os
-import sys
-import time
 import threading
+import time
 from collections import deque
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any
 
 # ============================================================================
 # Canonical Enums (Sprint 8C3)
@@ -82,7 +81,7 @@ _MAX_BUFFER_SIZE = 100
 # ============================================================================
 
 _trace_lock = threading.Lock()
-_run_id: Optional[str] = None
+_run_id: str | None = None
 _session_start: float = time.time()
 _event_count: int = 0
 _drop_count: int = 0
@@ -91,15 +90,15 @@ _drop_count: int = 0
 _event_buffer: deque = deque(maxlen=_MAX_BUFFER_SIZE)
 
 # Trace file handles (opened lazily)
-_trace_jsonl_path: Optional[Path] = None
+_trace_jsonl_path: Path | None = None
 _trace_jsonl_file = None
-_trace_summary_path: Optional[Path] = None
+_trace_summary_path: Path | None = None
 
 # Span stack for nested span tracking
-_span_stack: Dict[str, float] = {}  # span_id -> start_time
+_span_stack: dict[str, float] = {}  # span_id -> start_time
 
 # Counters
-_counters: Dict[str, int] = {}
+_counters: dict[str, int] = {}
 
 # ============================================================================
 # Path resolution (fail-safe)
@@ -152,12 +151,12 @@ def trace_event(
     component: str,
     stage: str,
     event_type: str,
-    item_id: Optional[str] = None,
-    url: Optional[str] = None,
-    target: Optional[str] = None,
+    item_id: str | None = None,
+    url: str | None = None,
+    target: str | None = None,
     status: str = "ok",
-    duration_ms: Optional[float] = None,
-    metadata: Optional[Dict[str, Any]] = None,
+    duration_ms: float | None = None,
+    metadata: dict[str, Any] | None = None,
 ) -> None:
     """
     Record a trace event.
@@ -211,7 +210,7 @@ def trace_event(
             _drop_count += 1
             # Fail-open: tracing error never crashes runtime
 
-def trace_span_start(span_id: str, metadata: Optional[Dict[str, Any]] = None) -> float:
+def trace_span_start(span_id: str, metadata: dict[str, Any] | None = None) -> float:
     """
     Start a trace span.
 
@@ -236,8 +235,8 @@ def trace_span_end(
     component: str,
     stage: str,
     status: str = "ok",
-    metadata: Optional[Dict[str, Any]] = None,
-) -> Optional[float]:
+    metadata: dict[str, Any] | None = None,
+) -> float | None:
     """
     End a trace span.
 
@@ -275,7 +274,7 @@ def trace_span_end(
 
     return duration_ms
 
-def trace_counter(name: str, value: int = 1, metadata: Optional[Dict[str, Any]] = None) -> None:
+def trace_counter(name: str, value: int = 1, metadata: dict[str, Any] | None = None) -> None:
     """
     Increment a named counter.
 
@@ -302,7 +301,7 @@ def flush() -> None:
             except Exception:
                 pass
 
-def get_summary() -> Dict[str, Any]:
+def get_summary() -> dict[str, Any]:
     """
     Generate trace summary statistics.
 
@@ -337,7 +336,7 @@ def _ensure_file_open() -> None:
         except Exception:
             _trace_jsonl_file = None
 
-def _safe_metadata(metadata: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+def _safe_metadata(metadata: dict[str, Any] | None) -> dict[str, Any]:
     """Sanitize metadata dict for trace safety."""
     if metadata is None:
         return {}
@@ -360,7 +359,7 @@ def _safe_metadata(metadata: Optional[Dict[str, Any]]) -> Dict[str, Any]:
 # Convenience wrappers for common patterns
 # ============================================================================
 
-def trace_fetch_start(url: str, transport: str, metadata: Optional[Dict[str, Any]] = None) -> None:
+def trace_fetch_start(url: str, transport: str, metadata: dict[str, Any] | None = None) -> None:
     """Trace fetch start event."""
     trace_event(
         component="fetch_coordinator",
@@ -373,7 +372,7 @@ def trace_fetch_start(url: str, transport: str, metadata: Optional[Dict[str, Any
     )
 
 def trace_fetch_end(url: str, transport: str, status: str, duration_ms: float,
-                    metadata: Optional[Dict[str, Any]] = None) -> None:
+                    metadata: dict[str, Any] | None = None) -> None:
     """Trace fetch end event."""
     trace_event(
         component="fetch_coordinator",
@@ -397,7 +396,7 @@ def trace_dedup_decision(url: str, is_deduped: bool) -> None:
     )
 
 def trace_evidence_append(event_type: str, queue_size: int, status: str,
-                           metadata: Optional[Dict[str, Any]] = None) -> None:
+                           metadata: dict[str, Any] | None = None) -> None:
     """Trace evidence append request."""
     trace_event(
         component="evidence_log",
@@ -409,7 +408,7 @@ def trace_evidence_append(event_type: str, queue_size: int, status: str,
     )
 
 def trace_evidence_flush(batch_size: int, flush_latency_ms: float, status: str,
-                         rows_persisted: Optional[int] = None) -> None:
+                         rows_persisted: int | None = None) -> None:
     """Trace evidence flush worker batch."""
     trace_event(
         component="evidence_log",
@@ -443,7 +442,7 @@ def trace_source_dedup_dropped(
     url: str,
     source_family: str,
     dedup_reason: str,
-    metadata: Optional[Dict[str, Any]] = None,
+    metadata: dict[str, Any] | None = None,
 ) -> None:
     """Trace when a source is dropped due to deduplication."""
     if source_family not in SOURCE_FAMILY_ENUM:
@@ -467,7 +466,7 @@ def trace_provider_fallback(
     from_transport: str,
     to_transport: str,
     fallback_reason: str,
-    metadata: Optional[Dict[str, Any]] = None,
+    metadata: dict[str, Any] | None = None,
 ) -> None:
     """Trace provider fallback event (e.g., 403, 429, timeout)."""
     if source_family not in SOURCE_FAMILY_ENUM:
@@ -491,7 +490,7 @@ def trace_fallback_after_403(
     url: str,
     source_family: str,
     transport: str,
-    metadata: Optional[Dict[str, Any]] = None,
+    metadata: dict[str, Any] | None = None,
 ) -> None:
     """Trace fallback triggered by HTTP 403."""
     if source_family not in SOURCE_FAMILY_ENUM:
@@ -511,8 +510,8 @@ def trace_fallback_after_429(
     url: str,
     source_family: str,
     transport: str,
-    retry_after: Optional[int] = None,
-    metadata: Optional[Dict[str, Any]] = None,
+    retry_after: int | None = None,
+    metadata: dict[str, Any] | None = None,
 ) -> None:
     """Trace fallback triggered by HTTP 429."""
     if source_family not in SOURCE_FAMILY_ENUM:
@@ -536,7 +535,7 @@ def trace_challenge_issued(
     source_family: str,
     challenge_type: str,
     transport: str,
-    metadata: Optional[Dict[str, Any]] = None,
+    metadata: dict[str, Any] | None = None,
 ) -> None:
     """Trace anti-bot challenge issued by server."""
     if source_family not in SOURCE_FAMILY_ENUM:
@@ -559,7 +558,7 @@ def trace_challenge_passed(
     source_family: str,
     challenge_type: str,
     transport: str,
-    metadata: Optional[Dict[str, Any]] = None,
+    metadata: dict[str, Any] | None = None,
 ) -> None:
     """Trace anti-bot challenge passed."""
     if source_family not in SOURCE_FAMILY_ENUM:
@@ -582,7 +581,7 @@ def trace_challenge_failed(
     source_family: str,
     challenge_type: str,
     transport: str,
-    metadata: Optional[Dict[str, Any]] = None,
+    metadata: dict[str, Any] | None = None,
 ) -> None:
     """Trace anti-bot challenge failed."""
     if source_family not in SOURCE_FAMILY_ENUM:
@@ -604,7 +603,7 @@ def trace_challenge_loop_detected(
     url: str,
     source_family: str,
     transport: str,
-    metadata: Optional[Dict[str, Any]] = None,
+    metadata: dict[str, Any] | None = None,
 ) -> None:
     """Trace challenge loop detected (same challenge repeatedly)."""
     if source_family not in SOURCE_FAMILY_ENUM:
@@ -624,7 +623,7 @@ def trace_clearance_reused(
     url: str,
     source_family: str,
     transport: str,
-    metadata: Optional[Dict[str, Any]] = None,
+    metadata: dict[str, Any] | None = None,
 ) -> None:
     """Trace clearance cookie/session reused."""
     if source_family not in SOURCE_FAMILY_ENUM:
@@ -644,15 +643,15 @@ def trace_source_accepted(
     url: str,
     source_family: str,
     acquisition_mode: str,
-    content_type: Optional[str] = None,
-    bytes_in: Optional[int] = None,
-    bytes_out: Optional[int] = None,
+    content_type: str | None = None,
+    bytes_in: int | None = None,
+    bytes_out: int | None = None,
     is_hidden_service: bool = False,
     is_archive_hit: bool = False,
     is_passive_hit: bool = False,
     is_unindexed_candidate: bool = False,
     is_decentralized_hit: bool = False,
-    metadata: Optional[Dict[str, Any]] = None,
+    metadata: dict[str, Any] | None = None,
 ) -> None:
     """Trace source accepted into evidence funnel."""
     if source_family not in SOURCE_FAMILY_ENUM:
@@ -691,10 +690,10 @@ def trace_evidence_append_ext(
     event_type: str,
     queue_size: int,
     status: str,
-    source_family: Optional[str] = None,
-    evidence_quality_tier: Optional[str] = None,
-    corroboration_key: Optional[str] = None,
-    metadata: Optional[Dict[str, Any]] = None,
+    source_family: str | None = None,
+    evidence_quality_tier: str | None = None,
+    corroboration_key: str | None = None,
+    metadata: dict[str, Any] | None = None,
 ) -> None:
     """Trace evidence append with extended Sprint 8C3 metadata."""
     meta = dict(metadata) if metadata else {}
@@ -718,7 +717,7 @@ def trace_evidence_emitted(
     finding_id: str,
     source_family: str,
     evidence_quality_tier: str,
-    metadata: Optional[Dict[str, Any]] = None,
+    metadata: dict[str, Any] | None = None,
 ) -> None:
     """Trace evidence emitted to downstream consumer."""
     if source_family not in SOURCE_FAMILY_ENUM:
@@ -738,7 +737,7 @@ def trace_evidence_corroborated(
     finding_id: str,
     source_family: str,
     corroboration_key: str,
-    metadata: Optional[Dict[str, Any]] = None,
+    metadata: dict[str, Any] | None = None,
 ) -> None:
     """Trace evidence corroborated by another source."""
     if source_family not in SOURCE_FAMILY_ENUM:
@@ -758,7 +757,7 @@ def trace_evidence_rejected_low_quality(
     finding_id: str,
     source_family: str,
     reason: str,
-    metadata: Optional[Dict[str, Any]] = None,
+    metadata: dict[str, Any] | None = None,
 ) -> None:
     """Trace evidence rejected due to low quality."""
     if source_family not in SOURCE_FAMILY_ENUM:
@@ -778,11 +777,11 @@ def trace_evidence_flush_persisted(
     batch_size: int,
     flush_latency_ms: float,
     status: str,
-    rows_persisted: Optional[int] = None,
-    bytes_written: Optional[int] = None,
+    rows_persisted: int | None = None,
+    bytes_written: int | None = None,
 ) -> None:
     """Trace evidence flush that persisted data."""
-    meta: Dict[str, Any] = {"batch_size": batch_size}
+    meta: dict[str, Any] = {"batch_size": batch_size}
     if rows_persisted is not None:
         meta["rows_persisted"] = rows_persisted
     if bytes_written is not None:
@@ -801,8 +800,8 @@ def trace_periodic_flow_snapshot(
     queue_depth: int,
     frontier_size: int,
     active_fetches: int,
-    rss_mb: Optional[float] = None,
-    metadata: Optional[Dict[str, Any]] = None,
+    rss_mb: float | None = None,
+    metadata: dict[str, Any] | None = None,
 ) -> None:
     """Trace periodic system snapshot for flow health."""
     meta = dict(metadata) if metadata else {}
@@ -823,9 +822,9 @@ def trace_periodic_flow_snapshot(
 def trace_queue_snapshot(
     queue_name: str,
     depth: int,
-    enqueue_rate: Optional[float] = None,
-    dequeue_rate: Optional[float] = None,
-    metadata: Optional[Dict[str, Any]] = None,
+    enqueue_rate: float | None = None,
+    dequeue_rate: float | None = None,
+    metadata: dict[str, Any] | None = None,
 ) -> None:
     """Trace queue depth snapshot."""
     meta = dict(metadata) if metadata else {}
@@ -845,8 +844,8 @@ def trace_queue_snapshot(
 
 
 def trace_transport_mix_snapshot(
-    transport_counts: Dict[str, int],
-    metadata: Optional[Dict[str, Any]] = None,
+    transport_counts: dict[str, int],
+    metadata: dict[str, Any] | None = None,
 ) -> None:
     """Trace transport mix snapshot (curl/tor/lightpanda counts)."""
     # Safe transport counts - bounded to 20 entries
@@ -861,8 +860,8 @@ def trace_transport_mix_snapshot(
 
 
 def trace_source_family_counts(
-    family_counts: Dict[str, int],
-    metadata: Optional[Dict[str, Any]] = None,
+    family_counts: dict[str, int],
+    metadata: dict[str, Any] | None = None,
 ) -> None:
     """Trace source family distribution snapshot."""
     safe_counts = {k: max(0, v) for k, v in list(family_counts.items())[:30]}
@@ -880,9 +879,9 @@ def trace_source_family_counts(
 # ============================================================================
 
 def _merge_metadata(
-    base: Optional[Dict[str, Any]],
-    additions: Dict[str, Any],
-) -> Dict[str, Any]:
+    base: dict[str, Any] | None,
+    additions: dict[str, Any],
+) -> dict[str, Any]:
     """Merge additions into a copy of base, or {} if base is None."""
     result = dict(base) if base else {}
     for k, v in additions.items():
@@ -896,6 +895,7 @@ def _merge_metadata(
 # ============================================================================
 
 import atexit
+
 
 def _flush_atexit() -> None:
     """Ensure trace flush on interpreter exit."""

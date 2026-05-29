@@ -6,9 +6,9 @@ Migrated from: intelligence/ (parent/donor)
 Canonical path: hledac.universal.intelligence.academic_discovery
 
 P14: Provides standalone functions for searching academic databases:
-- search_arxiv(query) -> List[dict]
-- search_crossref(query) -> List[dict]
-- search_semantic_scholar(query) -> List[dict]
+- search_arxiv(query) -> list[dict]
+- search_crossref(query) -> list[dict]
+- search_semantic_scholar(query) -> list[dict]
 
 Returns structured output: title, authors, year, link.
 
@@ -31,7 +31,7 @@ import logging
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -57,17 +57,17 @@ MAX_HOPS = 2
 class AcademicPaper:
     """Structured academic paper result."""
     title: str
-    authors: List[str]
-    year: Optional[int]
+    authors: list[str]
+    year: int | None
     link: str
     source: str
     abstract: str = ""
-    doi: Optional[str] = None
+    doi: str | None = None
     citations: int = 0
-    tags: List[str] = field(default_factory=list)
-    affiliations: List[str] = field(default_factory=list)
+    tags: list[str] = field(default_factory=list)
+    affiliations: list[str] = field(default_factory=list)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary."""
         return {
             "title": self.title,
@@ -98,11 +98,11 @@ class AcademicPaper:
 # STANDALONE SEARCH FUNCTIONS — NEW SOURCES
 # =============================================================================
 
-async def search_openalex(query: str, max_results: int = 20) -> List[AcademicPaper]:
+async def search_openalex(query: str, max_results: int = 20) -> list[AcademicPaper]:
     """Search OpenAlex for academic papers."""
     try:
-        from hledac.universal.fetching.public_fetcher import async_fetch_public_text
         import orjson
+        from hledac.universal.fetching.public_fetcher import async_fetch_public_text
         url = f"{OPENALEX_BASE}/works?search={query}&per-page={max_results}&mailto=research@hledac.ai"
         result = await async_fetch_public_text(url, timeout_s=30.0, use_stealth=True)
         if not result or not result.content:
@@ -129,11 +129,11 @@ async def search_openalex(query: str, max_results: int = 20) -> List[AcademicPap
         return []
 
 
-async def search_ia_scholar(query: str, max_results: int = 20) -> List[AcademicPaper]:
+async def search_ia_scholar(query: str, max_results: int = 20) -> list[AcademicPaper]:
     """Search Internet Archive Scholar for academic papers."""
     try:
-        from hledac.universal.fetching.public_fetcher import async_fetch_public_text
         import orjson
+        from hledac.universal.fetching.public_fetcher import async_fetch_public_text
         url = f"{IARCHIVE_SCHOLAR}/search?q={query}&limit={max_results}"
         result = await async_fetch_public_text(url, timeout_s=30.0, use_stealth=True)
         if not result or not result.content:
@@ -155,11 +155,11 @@ async def search_ia_scholar(query: str, max_results: int = 20) -> List[AcademicP
         return []
 
 
-async def search_core(query: str, max_results: int = 20) -> List[AcademicPaper]:
+async def search_core(query: str, max_results: int = 20) -> list[AcademicPaper]:
     """Search CORE.ac.uk for academic papers."""
     try:
-        from hledac.universal.fetching.public_fetcher import async_fetch_public_text
         import orjson
+        from hledac.universal.fetching.public_fetcher import async_fetch_public_text
         url = f"{CORE_API}/v3/search/works/{query}?limit={max_results}"
         result = await async_fetch_public_text(url, timeout_s=30.0, use_stealth=True)
         if not result or not result.content:
@@ -182,11 +182,11 @@ async def search_core(query: str, max_results: int = 20) -> List[AcademicPaper]:
         return []
 
 
-async def search_biorxiv(query: str, max_results: int = 20) -> List[AcademicPaper]:
+async def search_biorxiv(query: str, max_results: int = 20) -> list[AcademicPaper]:
     """Search bioRxiv preprints."""
     try:
-        from hledac.universal.fetching.public_fetcher import async_fetch_public_text
         import orjson
+        from hledac.universal.fetching.public_fetcher import async_fetch_public_text
         url = f"{BIORXIV_API}/v2/server/search?query={query}&count={max_results}&format=json"
         result = await async_fetch_public_text(url, timeout_s=30.0, use_stealth=True)
         if not result or not result.content:
@@ -209,11 +209,11 @@ async def search_biorxiv(query: str, max_results: int = 20) -> List[AcademicPape
         return []
 
 
-async def search_medrxiv(query: str, max_results: int = 20) -> List[AcademicPaper]:
+async def search_medrxiv(query: str, max_results: int = 20) -> list[AcademicPaper]:
     """Search medRxiv preprints."""
     try:
-        from hledac.universal.fetching.public_fetcher import async_fetch_public_text
         import orjson
+        from hledac.universal.fetching.public_fetcher import async_fetch_public_text
         url = f"{MEDRXIV_API}/v2/server/search?query={query}&count={max_results}&format=json"
         result = await async_fetch_public_text(url, timeout_s=30.0, use_stealth=True)
         if not result or not result.content:
@@ -241,9 +241,9 @@ async def search_medrxiv(query: str, max_results: int = 20) -> List[AcademicPape
 # =============================================================================
 
 async def traverse_citation_graph(
-    seed_papers: List[AcademicPaper],
+    seed_papers: list[AcademicPaper],
     max_hops: int = MAX_HOPS,
-) -> List[AcademicPaper]:
+) -> list[AcademicPaper]:
     """
     2-hop citation graph traversal from seed papers.
 
@@ -321,13 +321,13 @@ async def traverse_citation_graph(
 # INTELLIGENCE CROSSLINKING
 # =============================================================================
 
-async def intelligence_crosslink(papers: List[AcademicPaper]) -> Dict[str, List[Dict[str, Any]]]:
+async def intelligence_crosslink(papers: list[AcademicPaper]) -> dict[str, list[dict[str, Any]]]:
     """
     Extract emails from author strings, check breach APIs, extract institutions,
     and find relationships via RelationshipDiscoveryEngine.
     """
     email_pattern = re.compile(r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}")
-    results: Dict[str, List[Dict[str, Any]]] = {"breach_alerts": [], "relationships": []}
+    results: dict[str, list[dict[str, Any]]] = {"breach_alerts": [], "relationships": []}
 
     try:
         # Extract emails and institutions
@@ -396,7 +396,7 @@ def _get_academic_search_engine():
 # SEARCH FUNCTIONS
 # =============================================================================
 
-async def search_arxiv(query: str, max_results: int = 10) -> List[Dict[str, Any]]:
+async def search_arxiv(query: str, max_results: int = 10) -> list[dict[str, Any]]:
     """
     Search arXiv for academic papers.
 
@@ -447,7 +447,7 @@ async def search_arxiv(query: str, max_results: int = 10) -> List[Dict[str, Any]
         return []
 
 
-async def search_crossref(query: str, max_results: int = 10) -> List[Dict[str, Any]]:
+async def search_crossref(query: str, max_results: int = 10) -> list[dict[str, Any]]:
     """
     Search Crossref for academic papers.
 
@@ -498,7 +498,7 @@ async def search_crossref(query: str, max_results: int = 10) -> List[Dict[str, A
         return []
 
 
-async def search_semantic_scholar(query: str, max_results: int = 10) -> List[Dict[str, Any]]:
+async def search_semantic_scholar(query: str, max_results: int = 10) -> list[dict[str, Any]]:
     """
     Search Semantic Scholar for academic papers.
 
@@ -549,7 +549,7 @@ async def search_academic_all(
     query: str,
     max_results: int = 20,
     _rate_limit: int = 100
-) -> Dict[str, List[Dict[str, Any]]]:
+) -> dict[str, list[dict[str, Any]]]:
     """
     Search all academic sources concurrently.
 
@@ -580,14 +580,14 @@ async def search_academic_all(
         return_exceptions=True,
     )
 
-    arxiv_result: List[Dict[str, Any]] = results_raw[0] if not isinstance(results_raw[0], Exception) else []
-    crossref_result: List[Dict[str, Any]] = results_raw[1] if not isinstance(results_raw[1], Exception) else []
-    semantic_result: List[Dict[str, Any]] = results_raw[2] if not isinstance(results_raw[2], Exception) else []
-    openalex_result: List[Dict[str, Any]] = results_raw[3] if not isinstance(results_raw[3], Exception) else []
-    ia_result: List[Dict[str, Any]] = results_raw[4] if not isinstance(results_raw[4], Exception) else []
-    core_result: List[Dict[str, Any]] = results_raw[5] if not isinstance(results_raw[5], Exception) else []
-    biorxiv_result: List[Dict[str, Any]] = results_raw[6] if not isinstance(results_raw[6], Exception) else []
-    medrxiv_result: List[Dict[str, Any]] = results_raw[7] if not isinstance(results_raw[7], Exception) else []
+    arxiv_result: list[dict[str, Any]] = results_raw[0] if not isinstance(results_raw[0], Exception) else []
+    crossref_result: list[dict[str, Any]] = results_raw[1] if not isinstance(results_raw[1], Exception) else []
+    semantic_result: list[dict[str, Any]] = results_raw[2] if not isinstance(results_raw[2], Exception) else []
+    openalex_result: list[dict[str, Any]] = results_raw[3] if not isinstance(results_raw[3], Exception) else []
+    ia_result: list[dict[str, Any]] = results_raw[4] if not isinstance(results_raw[4], Exception) else []
+    core_result: list[dict[str, Any]] = results_raw[5] if not isinstance(results_raw[5], Exception) else []
+    biorxiv_result: list[dict[str, Any]] = results_raw[6] if not isinstance(results_raw[6], Exception) else []
+    medrxiv_result: list[dict[str, Any]] = results_raw[7] if not isinstance(results_raw[7], Exception) else []
 
     return {
         "arxiv": arxiv_result,
@@ -627,7 +627,7 @@ def _run_sync(async_func, /, *args, **kwargs):
     )
 
 
-def search_arxiv_sync(query: str, max_results: int = 10) -> List[Dict[str, Any]]:
+def search_arxiv_sync(query: str, max_results: int = 10) -> list[dict[str, Any]]:
     """Synchronous wrapper for search_arxiv.
 
     Deprecated for async callers: use `await search_arxiv(...)` inside an event loop.
@@ -635,7 +635,7 @@ def search_arxiv_sync(query: str, max_results: int = 10) -> List[Dict[str, Any]]
     return _run_sync(search_arxiv, query, max_results)
 
 
-def search_crossref_sync(query: str, max_results: int = 10) -> List[Dict[str, Any]]:
+def search_crossref_sync(query: str, max_results: int = 10) -> list[dict[str, Any]]:
     """Synchronous wrapper for search_crossref.
 
     Deprecated for async callers: use `await search_crossref(...)` inside an event loop.
@@ -643,7 +643,7 @@ def search_crossref_sync(query: str, max_results: int = 10) -> List[Dict[str, An
     return _run_sync(search_crossref, query, max_results)
 
 
-def search_semantic_scholar_sync(query: str, max_results: int = 10) -> List[Dict[str, Any]]:
+def search_semantic_scholar_sync(query: str, max_results: int = 10) -> list[dict[str, Any]]:
     """Synchronous wrapper for search_semantic_scholar.
 
     Deprecated for async callers: use `await search_semantic_scholar(...)` inside an event loop.

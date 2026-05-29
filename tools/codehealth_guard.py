@@ -15,8 +15,8 @@ Checks:
 
 from __future__ import annotations
 
-import ast
 import argparse
+import ast
 import json
 import sys
 from dataclasses import dataclass

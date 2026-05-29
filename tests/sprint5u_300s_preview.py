@@ -3,16 +3,16 @@
 Sprint 5U: 300s OFFLINE_REPLAY Preview + Long-Run Validation
 """
 import asyncio
+import os
+import random
 import sys
 import time
-import random
-import os
 
 sys.path.insert(0, '/Users/vojtechhamada/PycharmProjects/Hledac')
 
 async def run_300s_preview():
     from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
-    from hledac.universal.knowledge.atomic_storage import EvidencePacketStorage, EvidencePacket
+    from hledac.universal.knowledge.atomic_storage import EvidencePacket, EvidencePacketStorage
 
     print("=" * 70)
     print("[PREVIEW] 300s OFFLINE_REPLAY Benchmark - Sprint 5U")
@@ -26,7 +26,7 @@ async def run_300s_preview():
     packets_dir = os.path.expanduser("~/.hledac/evidence_packets/shards")
     packet_count = 0
     if os.path.exists(packets_dir):
-        for root, dirs, files in os.walk(packets_dir):
+        for _root, _dirs, files in os.walk(packets_dir):
             packet_count += len([f for f in files if f.endswith('.json')])
 
     print(f"[PREFLIGHT] Replay packets: {packet_count}")
@@ -37,7 +37,7 @@ async def run_300s_preview():
             evidence_id=f"evidence_{i}",
             url=f"http://localhost:{64000+i}/test",
             final_url=f"http://localhost:{64000+i}/test",
-            domain=f"localhost",
+            domain="localhost",
             fetched_at=time.time() - (i * 86400),
             status=200,
             headers_digest="abc123",

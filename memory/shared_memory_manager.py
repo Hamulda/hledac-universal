@@ -7,9 +7,8 @@ Provides ArrowSharedMemory for efficient serialization/deserialization.
 """
 
 import logging
-import tempfile
 import os
-from typing import Any, Optional
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -84,8 +83,8 @@ class ArrowSharedMemory:
         """
         self.name = name
         self.size = size
-        self._file_path: Optional[str] = None
-        self._buffer: Optional[bytes] = None
+        self._file_path: str | None = None
+        self._buffer: bytes | None = None
         self._closed = False
 
     def serialize(self, data: Any) -> int:

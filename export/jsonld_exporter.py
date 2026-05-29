@@ -12,16 +12,17 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+from collections.abc import Mapping
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Mapping, Union, cast
+from typing import Any, cast
 
 from hledac.universal.security.pq_crypto import (
+    PostQuantumBackend,
     PQAvailability,
     PQSignature,
     PQStatus,
-    PostQuantumBackend,
     create_post_quantum_backend,
 )
 
@@ -146,7 +147,7 @@ def normalize_export_input(report: object) -> dict[str, Any]:
     For Mapping objects, dict(report) is safe.
     """
     if hasattr(report, "__struct_fields__"):
-        return {f: getattr(report, f) for f in getattr(report, "__struct_fields__")}
+        return {f: getattr(report, f) for f in report.__struct_fields__}
     if isinstance(report, dict):
         return dict(report)
     if hasattr(report, "keys"):
@@ -177,7 +178,7 @@ def get_recommendation(report: dict[str, Any]) -> str:
 def _iso_timestamp(ts: Any) -> str:
     """Convert unix timestamp to RFC3339 ISO string."""
     try:
-        return datetime.fromtimestamp(float(ts), tz=timezone.utc).isoformat()
+        return datetime.fromtimestamp(float(ts), tz=UTC).isoformat()
     except (TypeError, ValueError):
         return "unknown"
 
@@ -455,7 +456,7 @@ def render_jsonld_str(report: object) -> str:
 # ---------------------------------------------------------------------------
 def render_jsonld_to_path(
     report: object,
-    path: Union[str, Path, None] = None,
+    path: str | Path | None = None,
 ) -> Path:
     """
     Render report as JSON-LD and write to ``path``.
@@ -580,7 +581,7 @@ def render_analyst_evidence_jsonld(
         "ghost:contextBytes": context_bytes,
         "ghost:modelUsed": model_used,
         "ghost:timingMs": timing_ms,
-        "ghost:generatedAt": datetime.now(timezone.utc).isoformat(),
+        "ghost:generatedAt": datetime.now(UTC).isoformat(),
     }
 
 

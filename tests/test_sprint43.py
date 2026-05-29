@@ -22,10 +22,9 @@ import pytest
 
 pytest.importorskip("lmdb")
 import lmdb
-
 from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
 from hledac.universal.layers.communication_layer import CommunicationLayer
-from hledac.universal.tools.source_bandit import SourceBandit, extract_context_features, N_FEATURES
+from hledac.universal.tools.source_bandit import N_FEATURES, SourceBandit, extract_context_features
 
 
 class TestSprint43A_Tracing:

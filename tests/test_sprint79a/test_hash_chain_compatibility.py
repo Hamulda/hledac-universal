@@ -7,6 +7,7 @@ as the legacy json.dumps approach used for hashing.
 import datetime
 import hashlib
 import json
+
 import pytest
 
 
@@ -103,7 +104,7 @@ class TestHashChainCompatibility:
 
     def test_storage_serialization_readable(self):
         """Verify storage serialization produces readable JSON."""
-        from hledac.universal.tools.serialization import serialize_storage, deserialize_storage
+        from hledac.universal.tools.serialization import deserialize_storage, serialize_storage
 
         original = {
             'event_type': 'test',
@@ -120,9 +121,7 @@ class TestHashChainCompatibility:
 
     def test_storage_with_orjson_fallback(self):
         """Test storage works with orjson or fallback."""
-        from hledac.universal.tools.serialization import (
-            serialize_storage, deserialize_storage, ORJSON_AVAILABLE
-        )
+        from hledac.universal.tools.serialization import deserialize_storage, serialize_storage
 
         data = {'test': 'value', 'number': 123, 'nested': {'a': 1}}
 
@@ -135,8 +134,8 @@ class TestHashChainCompatibility:
 
     def test_evidence_log_event_hash(self):
         """Test that EvidenceEvent hash is computed correctly."""
+
         from hledac.universal.evidence_log import EvidenceEvent
-        from datetime import datetime
 
         # Create an event - use valid event_type
         event = EvidenceEvent(
@@ -157,9 +156,10 @@ class TestHashChainCompatibility:
     @pytest.mark.skip(reason="Integration test - EvidenceLog API issue unrelated to Sprint 79a")
     def test_hash_chain_integration(self):
         """Integration test: verify hash chain works end-to-end."""
-        from hledac.universal.evidence_log import EvidenceLog
-        import tempfile
         import os
+        import tempfile
+
+        from hledac.universal.evidence_log import EvidenceLog
 
         with tempfile.TemporaryDirectory() as tmpdir:
             log_path = os.path.join(tmpdir, 'test_log')

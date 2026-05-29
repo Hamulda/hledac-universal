@@ -24,8 +24,8 @@ Uses regex patterns for fast, lightweight PII detection.
 import logging
 import re
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional
 from enum import Enum
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -60,10 +60,10 @@ class PIIMatch:
 class SanitizationResult:
     """Result of sanitization operation"""
     sanitized_text: str
-    pii_found: List[PIIMatch]
+    pii_found: list[PIIMatch]
     pii_count: int
     success: bool
-    error: Optional[str] = None
+    error: str | None = None
     risk_level: str = "low"
     risk_score: int = 0
 
@@ -111,7 +111,7 @@ class SecurityGate:
 
         logger.info("SecurityGate initialized (regex-based)")
 
-    def _compile_regex_patterns(self) -> Dict[PIICategory, re.Pattern]:
+    def _compile_regex_patterns(self) -> dict[PIICategory, re.Pattern]:
         """Compile regex patterns for common PII"""
         patterns = {
             PIICategory.EMAIL: re.compile(
@@ -177,7 +177,7 @@ class SecurityGate:
 
             logger.info("[SECURITY] Scanning content for PII...")
 
-            pii_matches: List[PIIMatch] = []
+            pii_matches: list[PIIMatch] = []
 
             # Use regex detection
             regex_matches = self._detect_with_regex(text)
@@ -213,7 +213,7 @@ class SecurityGate:
                 error=str(e)
             )
 
-    def _detect_with_regex(self, text: str) -> List[PIIMatch]:
+    def _detect_with_regex(self, text: str) -> list[PIIMatch]:
         """Detect PII using regex patterns"""
         matches = []
 
@@ -232,7 +232,7 @@ class SecurityGate:
         logger.debug(f"Regex detected {len(matches)} PII entities")
         return matches
 
-    def _deduplicate_matches(self, matches: List[PIIMatch]) -> List[PIIMatch]:
+    def _deduplicate_matches(self, matches: list[PIIMatch]) -> list[PIIMatch]:
         """Remove duplicate PII matches, preferring higher confidence"""
         # Sort by start position and confidence
         sorted_matches = sorted(
@@ -240,7 +240,7 @@ class SecurityGate:
             key=lambda m: (m.start, -m.confidence)
         )
 
-        unique: List[PIIMatch] = []
+        unique: list[PIIMatch] = []
         for match in sorted_matches:
             # Check for overlap with existing matches
             is_overlapping = any(
@@ -257,7 +257,7 @@ class SecurityGate:
         """Check if two matches overlap"""
         return not (m1.end <= m2.start or m2.end <= m1.start)
 
-    def _mask_pii(self, text: str, matches: List[PIIMatch]) -> str:
+    def _mask_pii(self, text: str, matches: list[PIIMatch]) -> str:
         """Mask PII in text"""
         # Sort by position in reverse order to preserve indices
         sorted_matches = sorted(matches, key=lambda m: m.start, reverse=True)
@@ -272,7 +272,7 @@ class SecurityGate:
         segments.append(text[:last_pos])
         return ''.join(reversed(segments))
 
-    def analyze_risk(self, text: str) -> Dict[str, Any]:
+    def analyze_risk(self, text: str) -> dict[str, Any]:
         """
         Analyze PII risk in text.
 
@@ -314,7 +314,7 @@ class SecurityGate:
         """Unload resources (no-op for regex-based detection)"""
         pass
 
-    def get_stats(self) -> Dict[str, Any]:
+    def get_stats(self) -> dict[str, Any]:
         """Get security gate statistics"""
         return {
             "threshold": self.threshold,
@@ -324,7 +324,7 @@ class SecurityGate:
 
 
 # Lazy singleton for quick_sanitize
-_DEFAULT_GATE: Optional["SecurityGate"] = None
+_DEFAULT_GATE: SecurityGate | None = None
 
 
 # Convenience functions

@@ -42,7 +42,7 @@ import logging
 import re
 import time
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from knowledge.evidence_chain import EvidenceChain
@@ -167,7 +167,7 @@ class EvidencePointer:
     ts: float
     provenance: tuple[str, ...]
     envelope_available: bool
-    snippet: Optional[str] = None
+    snippet: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -209,7 +209,7 @@ class AnalystAnswer:
 
     question: str
     extractive_answer: str
-    llm_answer: Optional[str] = None
+    llm_answer: str | None = None
     evidence_pointers: list[EvidencePointer] = field(default_factory=list)
     related_entities: list[RelatedEntity] = field(default_factory=list)
     context_bytes: int = 0
@@ -235,7 +235,7 @@ def _truncate_to_bytes(text: str, max_bytes: int = MAX_CONTEXT_BYTES) -> tuple[s
     return truncated, max_bytes
 
 
-def _extract_snippet(payload_text: Optional[str], query: str, max_len: int = 200) -> Optional[str]:
+def _extract_snippet(payload_text: str | None, query: str, max_len: int = 200) -> str | None:
     """
     Extract relevant snippet from payload_text using keyword proximity.
 
@@ -281,7 +281,7 @@ def _keyword_score(text: str, keywords: list[str]) -> float:
 
 def _build_evidence_pointer(
     finding: dict[str, Any],
-    snippet: Optional[str] = None,
+    snippet: str | None = None,
 ) -> EvidencePointer:
     """Build EvidencePointer from a finding dict."""
     return EvidencePointer(
@@ -350,7 +350,7 @@ class AnalystWorkbench:
         self,
         query: str,
         limit: int = MAX_TOP_K,
-        source_type: Optional[str] = None,
+        source_type: str | None = None,
     ) -> list[dict[str, Any]]:
         """
         Query recent findings using keyword/BM25 search.
@@ -539,7 +539,7 @@ class AnalystWorkbench:
         self,
         question: str,
         use_model: bool = False,
-        model_name: Optional[str] = None,
+        model_name: str | None = None,
     ) -> AnalystAnswer:
         """
         Answer an analyst question using local data sources.
@@ -612,8 +612,8 @@ class AnalystWorkbench:
         evidence_pointers = self._build_evidence_pointers(findings)
 
         # Phase 7: Optional LLM answer
-        llm_answer: Optional[str] = None
-        sources_used = list(set(f.get("source_type", "unknown") for f in findings))
+        llm_answer: str | None = None
+        sources_used = list({f.get("source_type", "unknown") for f in findings})
         if use_model and model_name:
             llm_answer = await self._generate_llm_answer(
                 question, truncated_context, model_name
@@ -673,7 +673,7 @@ class AnalystWorkbench:
         question: str,
         context: str,
         model_name: str,
-    ) -> Optional[str]:
+    ) -> str | None:
         """
         Generate LLM answer using brain/model_lifecycle.py.
 
@@ -762,7 +762,7 @@ class AnalystWorkbench:
         self,
         question: str,
         use_model: bool = False,
-        model_name: Optional[str] = None,
+        model_name: str | None = None,
     ) -> AnalystAnswer:
         """
         Synchronous wrapper around ask().
@@ -787,7 +787,7 @@ class AnalystWorkbench:
     # F203D: Evidence Chain lookup
     # -------------------------------------------------------------------------
 
-    async def get_evidence_chain(self, finding_id: str) -> "EvidenceChain | None":
+    async def get_evidence_chain(self, finding_id: str) -> EvidenceChain | None:
         """
         F203D: Retrieve the evidence chain for a given finding_id.
 
@@ -816,7 +816,7 @@ class AnalystWorkbench:
     # F204D: Target memory read helper
     # -------------------------------------------------------------------------
 
-    async def get_target_memory_summary(self, target_id: str) -> Optional[dict]:
+    async def get_target_memory_summary(self, target_id: str) -> dict | None:
         """
         F204D: Get target memory summary for a target.
 
@@ -1475,7 +1475,6 @@ class AnalystWorkbench:
                 else:
                     nonfeed_findings.append(f)
 
-            clusters: list[tuple[str, list[str]]] = []  # (cluster_key, finding_ids)
 
             # Helper: extract IOC tokens from a finding
             def _extract_tokens(f: Any) -> set[str]:
@@ -1550,7 +1549,7 @@ class AnalystWorkbench:
                 if clusters_used >= max_clusters:
                     break
                 tokens = key_to_tokens.get(key, set())
-                texts = key_to_texts.get(key, [])
+                key_to_texts.get(key, [])
                 sample_ids = fids[:MAX_SAMPLE_IDS_PER_CLUSTER]
                 count = len(fids)
 
@@ -1645,7 +1644,6 @@ class AnalystWorkbench:
         no multi-IOC type, missing graph connectivity.
         """
         gaps: list[str] = []
-        seen: set[str] = set()
 
         if not findings:
             gaps.append("No findings produced — possible quality gate or target exhaustion")

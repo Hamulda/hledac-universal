@@ -25,8 +25,9 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, AsyncIterator
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     import aiohttp
@@ -72,7 +73,7 @@ class CTFinding:
 
 async def fetch_ct_findings(
     query: str,
-    session: "aiohttp.ClientSession",
+    session: aiohttp.ClientSession,
     *,
     limit: int = MAX_BRIDGE_OUTPUT,
     deduplicate: bool = True,
@@ -148,7 +149,7 @@ async def fetch_ct_findings(
 
 async def stream_ct_findings(
     query: str,
-    session: "aiohttp.ClientSession",
+    session: aiohttp.ClientSession,
     *,
     rate_limit_s: float = _CT_RATE_LIMIT_S,
     max_findings: int = MAX_BRIDGE_OUTPUT,

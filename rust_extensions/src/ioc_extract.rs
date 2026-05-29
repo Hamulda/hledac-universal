@@ -1,6 +1,7 @@
 /// High-performance IOC extraction and URL normalization.
 /// Uses OnceCell for one-time regex compilation (performance critical).
 
+use crate::url_engine;
 use once_cell::sync::Lazy;
 use pyo3::prelude::*;
 use regex::Regex;
@@ -16,29 +17,21 @@ static IPV6_RE: Lazy<Regex> = Lazy::new(|| {
 static DOMAIN_RE: Lazy<Regex> = Lazy::new(|| {
     Regex::new(r"\b(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}\b").unwrap()
 });
-static MD5_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"\b[a-fA-F0-9]{32}\b").unwrap());
-static SHA1_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"\b[a-fA-F0-9]{40}\b").unwrap());
-static SHA256_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"\b[a-fA-F0-9]{64}\b").unwrap());
+static MD5_RE: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"\b[a-fA-F0-9]{32}\b").unwrap()
+});
+static SHA1_RE: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"\b[a-fA-F0-9]{40}\b").unwrap()
+});
+static SHA256_RE: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"\b[a-fA-F0-9]{64}\b").unwrap()
+});
 static EMAIL_RE: Lazy<Regex> = Lazy::new(|| {
     Regex::new(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b").unwrap()
 });
 static CVE_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"\bCVE-\d{4}-\d{4,}\b").unwrap());
-static TRACKING_PARAMS: Lazy<HashSet<&'static str>> = Lazy::new(|| {
-    let mut s = HashSet::new();
-    s.insert("utm_source");
-    s.insert("utm_medium");
-    s.insert("utm_campaign");
-    s.insert("utm_term");
-    s.insert("utm_content");
-    s.insert("fbclid");
-    s.insert("gclid");
-    s.insert("mc_cid");
-    s.insert("mc_eid");
-    s.insert("ref");
-    s.insert("ref_src");
-    s.insert("ref_url");
-    s
-});
+// WARNING: Do not add duplicate code here.
+// TRACKING_PARAMS lives in url_engine.rs. All URL normalization now delegates to url_engine::normalize().
 
 /// Register all IOC extraction functions with Python module.
 pub fn register_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
@@ -46,7 +39,11 @@ pub fn register_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(url_normalize, m)?)?;
     m.add_function(wrap_pyfunction!(batch_dedup_urls, m)?)?;
     m.add_function(wrap_pyfunction!(fast_ioc_extract_batch, m)?)?;
+    m.add_function(wrap_pyfunction!(extract_iocs, m)?)?;
     m.add_function(wrap_pyfunction!(url_normalize_batch, m)?)?;
+    m.add_function(wrap_pyfunction!(chi_square, m)?)?;
+    m.add_function(wrap_pyfunction!(entropy, m)?)?;
+    m.add_function(wrap_pyfunction!(batch_sha256, m)?)?;
     Ok(())
 }
 
@@ -123,88 +120,97 @@ fn fast_ioc_extract_batch(text: &str) -> Vec<(String, String)> {
     fast_ioc_extract(text)
 }
 
-fn urlencoding_encode(s: &str) -> String {
-    let mut result = String::new();
-    for c in s.chars() {
-        match c {
-            'A'..='Z' | 'a'..='z' | '0'..='9' | '-' | '_' | '.' | '~' => result.push(c),
-            _ => {
-                for b in c.to_string().as_bytes() {
-                    result.push_str(&format!("%{:02X}", b));
-                }
-            }
-        }
-    }
-    result
+/// Public IOC extraction — delegates to fast_ioc_extract for DRY.
+#[pyfunction]
+pub fn extract_iocs(text: &str) -> Vec<(String, String)> {
+    fast_ioc_extract(text)
 }
 
-/// URL normalizer with canonical form enforcement.
+/// URL normalizer — delegates to url_engine::normalize() for canonical form.
 #[pyfunction]
 fn url_normalize(url: &str) -> String {
-    let parsed = match url::Url::parse(url) {
-        Ok(p) => p,
-        Err(_) => return url.to_string(),
-    };
-
-    let scheme = parsed.scheme().to_lowercase();
-    let host = parsed.host_str().unwrap_or("").to_lowercase();
-    let port = parsed.port();
-
-    let mut result = format!("{}://{}", scheme, host);
-    if let Some(p) = port {
-        let strip_port = (scheme == "http" && p == 80) || (scheme == "https" && p == 443);
-        if !strip_port {
-            result.push_str(&format!(":{}", p));
-        }
-    }
-
-    let path = parsed.path();
-    result.push_str(path);
-    if result.is_empty() || !result.contains('.') {
-        result.push('/');
-    }
-
-    let mut params: Vec<(String, String)> = parsed
-        .query_pairs()
-        .map(|(k, v)| (k.to_string(), v.to_string()))
-        .filter(|(k, _)| !TRACKING_PARAMS.contains(k.as_str()))
-        .collect();
-    params.sort_by(|a, b| a.0.cmp(&b.0));
-
-    if !params.is_empty() {
-        result.push('?');
-        for (i, (k, v)) in params.iter().enumerate() {
-            if i > 0 {
-                result.push('&');
-            }
-            result.push_str(&urlencoding_encode(k));
-            result.push('=');
-            result.push_str(&urlencoding_encode(v));
-        }
-    }
-
-    result
+    url_engine::normalize(url)
 }
 
 /// Alias for backwards compatibility.
 #[pyfunction]
 fn url_normalize_batch(url: &str) -> String {
-    url_normalize(url)
+    url_engine::normalize(url)
 }
 
 /// In-memory URL deduplication with normalization.
 /// Returns unique URLs with normalized forms used for dedup.
 #[pyfunction]
 fn batch_dedup_urls(urls: Vec<String>) -> Vec<String> {
-    let mut seen: HashSet<String> = HashSet::new();
-    let mut result: Vec<String> = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    urls.into_iter()
+        .filter(|url| seen.insert(url_engine::normalize(url)))
+        .collect()
+}
 
-    for url in urls {
-        let normalized = url_normalize(&url);
-        if seen.insert(normalized.clone()) {
-            result.push(url);
-        }
+/// Shannon entropy of byte data.
+/// Returns value in bits (0.0 for empty, ~8.0 for random data).
+#[pyfunction]
+pub fn entropy(data: &[u8]) -> f64 {
+    if data.is_empty() {
+        return 0.0;
     }
+    let mut counts = [0u64; 256];
+    for &b in data {
+        counts[b as usize] += 1;
+    }
+    let n = data.len() as f64;
+    counts
+        .iter()
+        .filter(|&&c| c > 0)
+        .map(|&c| {
+            let p = c as f64 / n;
+            -p * p.log2()
+        })
+        .sum()
+}
 
-    result
+/// Chi-square uniformity test for byte distribution.
+/// Low value = uniform (encrypted/random), high = non-uniform.
+#[pyfunction]
+pub fn chi_square(data: &[u8]) -> f64 {
+    if data.is_empty() {
+        return 0.0;
+    }
+    let mut counts = [0u64; 256];
+    for &b in data {
+        counts[b as usize] += 1;
+    }
+    let expected = data.len() as f64 / 256.0;
+    counts
+        .iter()
+        .map(|&c| {
+            let diff = c as f64 - expected;
+            (diff * diff) / expected
+        })
+        .sum()
+}
+
+/// SHA256 hash each string — for fast dedup fingerprinting.
+/// Returns list of hex-encoded SHA256 digests.
+#[pyfunction]
+pub fn batch_sha256(items: Vec<String>) -> Vec<String> {
+    
+    items
+        .iter()
+        .map(|s| sha256_hex(s.as_bytes()))
+        .collect()
+}
+
+fn sha256_hex(data: &[u8]) -> String {
+    use std::fmt::Write;
+    use sha2::{Sha256, Digest};
+    let mut hasher = Sha256::new();
+    hasher.update(data);
+    let result = hasher.finalize();
+    let mut hex = String::with_capacity(64);
+    for byte in result.iter() {
+        write!(hex, "{:02x}", byte).unwrap();
+    }
+    hex
 }

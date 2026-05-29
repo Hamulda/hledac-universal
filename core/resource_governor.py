@@ -19,20 +19,23 @@ Sprint 8AB: Unified UMA accountant surface (WARN/CRITICAL/EMERGENCY + I/O-only m
 Threshold driver: system_used_gib (total - available), NOT process rss_gib.
 """
 
+from __future__ import annotations
+
 import asyncio
 import contextlib
 import logging
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
-from typing import Dict, Any, Optional, Callable
+from typing import Any
 
 import psutil
 
 _mx = None  # lazy singleton
 
 # Sprint 8AB: cached psutil.Process() — single syscall point per status sample
-_process_cache: Optional[psutil.Process] = None
+_process_cache: psutil.Process | None = None
 
 
 def _get_cached_process() -> psutil.Process:
@@ -53,12 +56,21 @@ def _get_mx():
 logger = logging.getLogger(__name__)
 
 # Sprint 8AB: M1 8GB calibrated thresholds (GiB = bytes / 1024**3)
+# Threshold ladder for M1 8GB UMA:
+#   5.5 GiB → soft ceiling (fetch hard-cap, see uma_budget.py M1_FETCH_SOFT_CEILING_GB)
+#   5.8 GiB → SOFT_WARN (reduce concurrency 50%)
+#   6.0 GiB → WARN (reduce concurrency 75%)
+#   6.5 GiB → CRITICAL (stop new fetches)
+#   7.0 GiB → EMERGENCY (flush + GC)
+_THRESHOLD_SOFT_WARN_GIB: float = 5.8  # F220K: new — between soft ceiling and WARN
 _THRESHOLD_WARN_GIB: float = 6.0
 _THRESHOLD_CRITICAL_GIB: float = 6.5
 _THRESHOLD_EMERGENCY_GIB: float = 7.0
-_HYSTERESIS_EXIT_GIB: float = 5.8  # exit io_only only when system drops below this
+_HYSTERESIS_EXIT_GIB: float = 5.8
 
 # Sprint 8AK: SSOT UMA state labels (plain string constants, no StrEnum)
+# F220K: SOFT_WARN state (between soft ceiling 5.5GiB and WARN 6.0GiB)
+UMA_STATE_SOFT_WARN: str = "soft_warn"
 UMA_STATE_OK: str = "ok"
 UMA_STATE_WARN: str = "warn"
 UMA_STATE_CRITICAL: str = "critical"
@@ -156,7 +168,7 @@ _telemetry = {
 }
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class UMAStatus:
     """
     Sprint 8AB + F163F: Unified UMA accounting snapshot.
@@ -182,12 +194,12 @@ class UMAStatus:
     system_used_gib: float
     system_available_gib: float
     swap_used_gib: float
-    metal_cache_limit_bytes: Optional[int]
-    metal_wired_limit_bytes: Optional[int]
+    metal_cache_limit_bytes: int | None
+    metal_wired_limit_bytes: int | None
     state: str
     io_only: bool
     swap_detected: bool = False
-    last_error: Optional[str] = None
+    last_error: str | None = None
 
 
 class Priority(Enum):
@@ -201,7 +213,7 @@ class ResourceGovernor:
     """
     Hlídá zdroje a rozhoduje, zda je možné provést náročnou operaci.
     """
-    def __init__(self, memory_high_water_mb: float = 6000, thermal_threshold: float = 82.0):
+    def __init__(self, memory_high_water_mb: float = 5632, thermal_threshold: float = 82.0):
         self.high_water = memory_high_water_mb
         self.thermal_threshold = thermal_threshold
         self._active_tasks = 0
@@ -226,7 +238,7 @@ class ResourceGovernor:
         """Nastaví cost model pro predikci rizika překročení budgetu."""
         self._cost_model = cost_model
 
-    def can_afford_sync(self, cost_estimate: Dict[str, Any], priority: Priority = Priority.NORMAL) -> bool:
+    def can_afford_sync(self, cost_estimate: dict[str, Any], priority: Priority = Priority.NORMAL) -> bool:
         """
         Synchronní kontrola zdrojů bez rezervace.
         """
@@ -283,7 +295,7 @@ class ResourceGovernor:
 
         return True
 
-    def reserve(self, cost_estimate: Dict[str, Any], priority: Priority = Priority.NORMAL):
+    def reserve(self, cost_estimate: dict[str, Any], priority: Priority = Priority.NORMAL):
         """
         Vrací async context manager pro rezervaci zdrojů. Samotná metoda je synchronní.
         """
@@ -316,7 +328,8 @@ def evaluate_uma_state(system_used_gib: float) -> str:
     Sprint 8AB: Map system_used_gib to UMA state.
 
     Calibrated for M1 8GB UMA:
-        < 6.0 GiB → "ok"
+        < 5.8 GiB → "ok"
+        >= 5.8   → "soft_warn"  (F220K: approaching WARN, reduce 50%)
         >= 6.0   → "warn"
         >= 6.5   → "critical"
         >= 7.0   → "emergency"
@@ -325,15 +338,17 @@ def evaluate_uma_state(system_used_gib: float) -> str:
         system_used_gib: (total - available) in GiB, THRESHOLD DRIVER.
 
     Returns:
-        State string from SSOT constants: "ok" | "warn" | "critical" | "emergency".
+        State string from SSOT constants: "ok" | "soft_warn" | "warn" | "critical" | "emergency".
     """
     if system_used_gib >= _THRESHOLD_EMERGENCY_GIB:
-        return UMA_STATE_EMERGENCY
+        return "emergency"
     if system_used_gib >= _THRESHOLD_CRITICAL_GIB:
-        return UMA_STATE_CRITICAL
+        return "critical"
     if system_used_gib >= _THRESHOLD_WARN_GIB:
-        return UMA_STATE_WARN
-    return UMA_STATE_OK
+        return "warn"
+    if system_used_gib >= _THRESHOLD_SOFT_WARN_GIB:
+        return "soft_warn"
+    return "ok"
 
 
 def should_enter_io_only_mode(system_used_gib: float, previous_io_only: bool = False, swap_detected: bool = False) -> bool:
@@ -362,16 +377,20 @@ def should_enter_io_only_mode(system_used_gib: float, previous_io_only: bool = F
     Returns:
         True if caller should enter / stay in I/O-only mode.
     """
+    # F220K: enter io_only at SOFT_WARN (5.8 GiB) if swap present — earliest proactive signal
     if previous_io_only:
         # Stay in io_only while above hysteresis floor
         return system_used_gib > _HYSTERESIS_EXIT_GIB
-    # Enter io_only: CRITICAL by default, WARN if swap present (one tier sooner)
+    # Enter io_only: CRITICAL by default, WARN if swap present (one tier sooner),
+    # SOFT_WARN if swap detected (earliest proactive tier)
     if swap_detected:
+        if system_used_gib >= _THRESHOLD_SOFT_WARN_GIB:
+            return True
         return system_used_gib >= _THRESHOLD_WARN_GIB
     return system_used_gib >= _THRESHOLD_CRITICAL_GIB
 
 
-def _get_metal_limits_status_8ab() -> tuple[Optional[int], Optional[int]]:
+def _get_metal_limits_status_8ab() -> tuple[int | None, int | None]:
     """
     Sprint 8AB: Read-only diagnostic surface from 8T mlx_cache.
     Returns (cache_limit_bytes, wired_limit_bytes) or (None, None) on failure.
@@ -407,9 +426,9 @@ def sample_uma_status() -> UMAStatus:
     Returns:
         UMAStatus frozen dataclass.
     """
-    last_error: Optional[str] = None
-    metal_cache_limit_bytes: Optional[int] = None
-    metal_wired_limit_bytes: Optional[int] = None
+    last_error: str | None = None
+    metal_cache_limit_bytes: int | None = None
+    metal_wired_limit_bytes: int | None = None
 
     # 1. Process RSS (cached Process object — no per-call allocation)
     rss_gib: float = 0.0
@@ -488,7 +507,7 @@ def sample_uma_status() -> UMAStatus:
     )
 
 
-def get_uma_telemetry() -> Dict[str, Any]:
+def get_uma_telemetry() -> dict[str, Any]:
     """Sprint 8AB: Read-only telemetry snapshot (transition counts, last state)."""
     return dict(_telemetry)
 
@@ -516,21 +535,21 @@ class UMAAlarmDispatcher:
 
     def __init__(self) -> None:
         self._lock = asyncio.Lock()
-        self._callbacks: Dict[str, list] = {
+        self._callbacks: dict[str, list] = {
             UMA_STATE_CRITICAL: [],
             UMA_STATE_EMERGENCY: [],
         }
-        self._task: Optional[asyncio.Task] = None
+        self._task: asyncio.Task | None = None
         self._running = False
         self._interval_s: float = 5.0
         # B.2: hysteresis cooldown — prevent callback storm
         # float("-inf") ensures first dispatch always fires (now - (-inf) = +inf > 2.0)
-        self._last_dispatch_time: Dict[str, float] = {
+        self._last_dispatch_time: dict[str, float] = {
             UMA_STATE_CRITICAL: float("-inf"),
             UMA_STATE_EMERGENCY: float("-inf"),
         }
 
-    def register_callback(self, state: str, callback: "Callable[[], Any]") -> None:
+    def register_callback(self, state: str, callback: Callable[[], Any]) -> None:
         """
         Register an async callback for CRITICAL or EMERGENCY state.
 

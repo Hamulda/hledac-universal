@@ -15,11 +15,11 @@ import asyncio
 import hashlib
 import html.parser
 import json
+import logging
 import os
 import re
 import sys
 import time
-import logging
 import urllib.parse
 
 logger = logging.getLogger(__name__)
@@ -637,7 +637,6 @@ def _extract_domain_from_query(query: str) -> str | None:
 from dataclasses import dataclass, field
 
 
-
 @dataclass(frozen=True)
 class FetchPolicy:
     """Bounded fetch policy for canonical public sprint."""
@@ -646,16 +645,16 @@ class FetchPolicy:
     use_stealth: bool = False
 
     @classmethod
-    def default(cls) -> "FetchPolicy":
+    def default(cls) -> FetchPolicy:
         return cls()
 
 
     @classmethod
-    def js_capable(cls) -> "FetchPolicy":
+    def js_capable(cls) -> FetchPolicy:
         return cls(use_js=True)
 
     @classmethod
-    def tor_like(cls) -> "FetchPolicy":
+    def tor_like(cls) -> FetchPolicy:
         return cls(use_doh=True, use_stealth=True)
 
 
@@ -768,7 +767,7 @@ def _extract_provider_surface(
 
     # Provider-level errors from DiscoveryBatchResult fields
     error_type = getattr(discovery_result, "error_type", None) or ""
-    provider_name = getattr(discovery_result, "provider_name", None) or ""
+    getattr(discovery_result, "provider_name", None) or ""
 
     if error_str:
         if error_type == "timeout" or "timeout" in error_str.lower():
@@ -1055,7 +1054,6 @@ def _get_uma_state() -> tuple[str, bool]:
     from hledac.universal.core.resource_governor import (
         evaluate_uma_state,
         sample_uma_status,
-        UMA_STATE_EMERGENCY,
     )
 
     status = sample_uma_status()
@@ -1143,7 +1141,12 @@ def _make_finding_id(
     hash() is forbidden (non-deterministic across processes).
     """
     key = f"{query}\x00{url}\x00{label}\x00{pattern}\x00{value}"
-    return hashlib.sha256(key.encode("utf-8")).hexdigest()[:16]
+    # xxhash — non-cryptographic, 10-20× faster than sha256 for dedup keys
+    try:
+        from hledac_rust_extensions import content_hash_hex as _xxh
+        return _xxh(key)
+    except Exception:
+        return hashlib.sha256(key.encode("utf-8")).hexdigest()[:16]
 
 
 # -----------------------------------------------------------------------------
@@ -1729,7 +1732,7 @@ async def _fetch_and_process_page(
                 ),
                 timeout=effective_timeout + 5.0,
             )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             usable_signal, value_tier, resolution_reason, discovery_false_positive, waste_category, structural_quality = _compute_page_usable_fields(
                 fetched=False, matched_patterns=0, stored_findings=0,
                 quality_reason=None, discovery_signal=has_signal,
@@ -2199,8 +2202,8 @@ async def _fetch_and_process_page(
             # Uses model_manager.embedding_lifecycle() for M1 memory discipline.
             if vector_store is not None and unique_findings and accepted_count > 0:
                 try:
-                    from hledac.universal.embedding_pipeline import generate_embeddings_async
                     from hledac.universal.brain.model_manager import get_model_manager
+                    from hledac.universal.embedding_pipeline import generate_embeddings_async
 
                     # Build list of (finding_id, payload_text) for accepted findings only
                     # Sprint F206P: temporal signal observation (advisory only, fail-soft)
@@ -2213,7 +2216,7 @@ async def _fetch_and_process_page(
 
                     accepted_ids: list[str] = []
                     accepted_texts: list[str] = []
-                    for finding, sr in zip(unique_findings, store_results):
+                    for finding, sr in zip(unique_findings, store_results, strict=False):
                         is_accepted = False
                         if isinstance(sr, dict):
                             is_accepted = bool(sr.get("accepted"))
@@ -2261,8 +2264,8 @@ async def _fetch_and_process_page(
             # Only for html/text content, not binary
             if vector_store is not None and extracted_text and len(extracted_text) > 50:
                 try:
-                    from hledac.universal.embedding_pipeline import generate_embeddings_async
                     from hledac.universal.brain.model_manager import get_model_manager
+                    from hledac.universal.embedding_pipeline import generate_embeddings_async
 
                     # Use extracted_text (not enriched scan_text) for embedding
                     # P16: Wrap with embedding_lifecycle() for proper M1 memory management
@@ -2406,7 +2409,12 @@ def _make_finding_id(
     hash() is forbidden (non-deterministic across processes).
     """
     key = f"{query}\x00{url}\x00{label}\x00{pattern}\x00{value}"
-    return hashlib.sha256(key.encode("utf-8")).hexdigest()[:16]
+    # xxhash — non-cryptographic, 10-20× faster than sha256 for dedup keys
+    try:
+        from hledac_rust_extensions import content_hash_hex as _xxh
+        return _xxh(key)
+    except Exception:
+        return hashlib.sha256(key.encode("utf-8")).hexdigest()[:16]
 
 
 async def _generate_and_store_report(
@@ -2442,10 +2450,10 @@ async def _generate_and_store_report(
     vector_candidates: list[tuple[str, float]] = []
     if vector_store is not None:
         try:
-            from hledac.universal.embedding_pipeline import embed_query_async
-            from hledac.universal.context_optimization.mmr import maximal_marginal_relevance
-            from utils.ranking import rrf_fuse
             from hledac.universal.brain.model_manager import get_model_manager
+            from hledac.universal.embedding_pipeline import embed_query_async
+
+            from utils.ranking import rrf_fuse
 
             # Generate query embedding with proper lifecycle management
             model_manager = get_model_manager()
@@ -2545,7 +2553,7 @@ async def _generate_and_store_report(
     # P16: Route via MoERouter.route() to get expert IDs for generator selection
     expert_ids: list[str] = []
     try:
-        from hledac.universal.brain.moe_router import create_moe_router, MoERouter
+        from hledac.universal.brain.moe_router import create_moe_router
         router = await create_moe_router()
         if router is not None:
             expert_ids = await router.route(query, context_items)
@@ -2625,8 +2633,8 @@ async def _generate_and_store_report(
         # Guard: need store (for CanonicalFinding) + hermes_engine + non-empty report_text
         if store is not None and hermes_engine is not None and report_text:
             try:
-                from hledac.universal.runtime.hermes_pivot_contract import HermesInferenceOutput
                 from hledac.universal.brain.ner_engine import extract_iocs_from_text
+                from hledac.universal.runtime.hermes_pivot_contract import HermesInferenceOutput
 
                 # F256K: Try structured IOC_JSON block first, fall back to NER extraction
                 key_iocs: tuple[str, ...] = ()
@@ -2968,7 +2976,7 @@ def _onion_circuit_record_failure() -> None:
 async def _inject_onion_hits(
     hits: tuple,
     query: str,
-    store: "DuckDBShadowStore",
+    store: DuckDBShadowStore,
 ) -> int:
     """
     Sprint F193A: Onion discovery + scraping via Tor.
@@ -3051,7 +3059,7 @@ async def _inject_onion_hits(
 
 async def async_run_live_public_pipeline(
     query: str,
-    store: "DuckDBShadowStore | None" = None,
+    store: DuckDBShadowStore | None = None,
     max_results: int = 10,
     fetch_timeout_s: float = 35.0,
     fetch_max_bytes: int = 2_000_000,
@@ -3241,7 +3249,6 @@ async def async_run_live_public_pipeline(
             # Sprint F213B: stage failure accounting
             public_stage_failure: str | None = None
             public_stage_failure_reason: str | None = None
-            public_discovery_raw_count: int = 0
             public_discovery_deduped_count: int = 0
             _discovery_start: float | None = None
             # F207I-A: discovery telemetry counters (initialized before try block)
@@ -3262,7 +3269,6 @@ async def async_run_live_public_pipeline(
             _pub_build_success_count: int = 0
             _pub_build_failure_count: int = 0
             _pub_duplicate_count: int = 0
-            public_acceptance_reject_reasons: dict[str, int] = {}
 
             # F232: Provider surface telemetry — local accumulators (reset each run)
             _pub_provider_selected: list[str] = []
@@ -3660,8 +3666,8 @@ async def async_run_live_public_pipeline(
     # ---- UMA check -----------------------------------------------------------
     # Sprint 8AK: SSOT labels from resource_governor — no local string literals
     from hledac.universal.core.resource_governor import (
-        UMA_STATE_EMERGENCY,
         UMA_STATE_CRITICAL,
+        UMA_STATE_EMERGENCY,
         UMA_STATE_OK,
     )
 
@@ -3839,7 +3845,7 @@ async def async_run_live_public_pipeline(
     hits, noise_rejections = _filter_public_noise(hits, is_threat)
     # Track noise rejections separately (will merge into public_acceptance_reject_reasons later)
     public_noise_reject_reasons: dict[str, int] = {}
-    for noise_url, noise_reason in noise_rejections:
+    for _noise_url, noise_reason in noise_rejections:
         if noise_reason not in public_noise_reject_reasons:
             public_noise_reject_reasons[noise_reason] = 0
         public_noise_reject_reasons[noise_reason] += 1
@@ -3893,7 +3899,7 @@ async def async_run_live_public_pipeline(
     raw_results = await asyncio.gather(*tasks, return_exceptions=True)
 
     # _check_gathered propagates CancelledError [I6] and BaseException [I7]
-    from hledac.universal.network.session_runtime import _check_gathered
+    from hledac.universal.utils.async_helpers import _check_gathered
     ok_results, error_results = _check_gathered(raw_results)
 
     # Assemble page results in discovery order (skipping exceptions)
@@ -4574,8 +4580,8 @@ async def async_run_live_public_pipeline(
     # Supports either rl_steps count (--rl-steps N) or time limit (default 5 min)
     if run_loop and hermes_engine is not None:
         try:
-            from hledac.universal.loops.research_loop import ResearchLoop, ResearchResult
             from hledac.universal.knowledge.duckdb_store import CanonicalFinding
+            from hledac.universal.loops.research_loop import ResearchLoop, ResearchResult
 
             # P17: Default RL loop time limit (5 minutes)
             _RL_LOOP_TIME_LIMIT_S = 300.0
@@ -4590,7 +4596,6 @@ async def async_run_live_public_pipeline(
             # P17: Run either N steps or until time limit
             rl_start_time = time.monotonic()
             step_count = 0
-            prev_reward = 0.0
 
             while True:
                 # Check step limit first
@@ -4642,7 +4647,6 @@ async def async_run_live_public_pipeline(
                     except Exception:
                         pass  # Fail-soft
 
-                prev_reward = loop_result.reward
                 step_count += 1
 
                 logger.info(
@@ -4768,7 +4772,7 @@ async def async_run_live_public_pipeline(
                         """Run ToT solve with per-hypothesis timeout. Fail-soft: returns empty string on timeout/error."""
                         try:
                             return await asyncio.wait_for(tot_layer.solve_with_tot(hypo), timeout=timeout_s)
-                        except asyncio.TimeoutError:
+                        except TimeoutError:
                             logger.debug(f"[P12] ToT timed out after {timeout_s}s for hypothesis: {hypo[:50]}...")
                             return ""
                         except Exception as e:
@@ -4803,7 +4807,7 @@ async def async_run_live_public_pipeline(
                             if enqueue_hypothesis_pivot is not None:
                                 try:
                                     pivot_seed = tot_result[:200].split()[:5]
-                                    for i, term in enumerate(pivot_seed):
+                                    for _i, term in enumerate(pivot_seed):
                                         enqueue_hypothesis_pivot(
                                             ioc_value=term.lower(),
                                             ioc_type="hypothesis",
@@ -4819,7 +4823,6 @@ async def async_run_live_public_pipeline(
     # Sprint F198C: Document discovery — extract text from PDF/image files
     # Produces CanonicalFinding(source_type="document") findings.
     # Bounded: max 10 files, RAM guard check, fail-soft.
-    document_findings_count = 0
     if store is not None:
         try:
             # Import DocumentExtractor lazily to avoid import-time side effects
@@ -5015,7 +5018,7 @@ _ensure_discovery_patched()
 
 
 def _patch_ct_scanner(get_subdomains_fn: Any) -> None:
-    """Patch in a CT scanner get_subdomains(domain, async_session) -> List[str]."""
+    """Patch in a CT scanner get_subdomains(domain, async_session) -> list[str]."""
     global _CT_SCANNER_GET_SUBDOMAINS
     _CT_SCANNER_GET_SUBDOMAINS = get_subdomains_fn
 

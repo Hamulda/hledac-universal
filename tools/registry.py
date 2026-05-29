@@ -19,15 +19,14 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable
-from dataclasses import dataclass
-from enum import Enum
-from typing import TYPE_CHECKING, Any, Optional, Set
+from enum import StrEnum
+from typing import TYPE_CHECKING, Any
 
 import msgspec
 from pydantic import BaseModel, Field
 
 if TYPE_CHECKING:
-    from .tool_exec_log import ToolExecLog
+    pass
 
 
 # ============================================================================
@@ -35,7 +34,7 @@ if TYPE_CHECKING:
 # ============================================================================
 
 
-class RiskLevel(str, Enum):
+class RiskLevel(StrEnum):
     """Risk levels for tool execution."""
 
     LOW = "low"
@@ -101,7 +100,7 @@ class SourceReputation(msgspec.Struct):
     """Source reliability scoring from own data."""
 
     domain: str
-    path_prefix: Optional[str] = None
+    path_prefix: str | None = None
 
     total_claims: int = 0
     corroborated_count: int = 0
@@ -114,7 +113,7 @@ class SourceReputation(msgspec.Struct):
     drift_rate: float = 0.0
     blocked_rate: float = 0.0
     overall_score: float = 0.5
-    last_updated: Optional[str] = None
+    last_updated: str | None = None
 
     def compute_rates(self) -> None:
         """Compute rates from counts, handling division by zero."""
@@ -204,7 +203,7 @@ class Tool(BaseModel):
     rate_limits: RateLimits = Field(default_factory=RateLimits)
     handler: Callable[..., Any] = Field(description="Tool implementation")
 
-    required_capabilities: Set[str] = Field(
+    required_capabilities: set[str] = Field(
         default_factory=set,
         description="Capabilities required for this tool"
     )
@@ -421,8 +420,6 @@ class ToolRegistry:
         for name in self._call_counts:
             self._call_counts[name] = 0
 
-
-from enum import Enum
 
 
 __all__ = [

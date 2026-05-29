@@ -2,9 +2,10 @@
 Tests for ANE-accelerated NER (Sprint 76).
 """
 
-import pytest
-from unittest.mock import patch, MagicMock, AsyncMock
 import asyncio
+from unittest.mock import MagicMock
+
+import pytest
 
 
 class TestNERANE:
@@ -67,7 +68,7 @@ class TestNERANE:
             'entities': [{'text': 'Test', 'type': 'ORG'}]
         })
 
-        result = await engine.predict_async("Test company", [])
+        await engine.predict_async("Test company", [])
 
         assert engine._ane_predictions == 1
 

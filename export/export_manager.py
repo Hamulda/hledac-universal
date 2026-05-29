@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 import os
 import time
+from datetime import UTC
 from pathlib import Path
 from typing import Any
 
@@ -243,7 +244,6 @@ class ExportManager:
         # Fallback: try to export via to_networkx if available
         if hasattr(graph_manager, "to_networkx"):
             try:
-                import networkx as nx
                 from pyvis.network import Network
 
                 nx_graph = graph_manager.to_networkx()
@@ -552,7 +552,7 @@ class ExportManager:
             for ioc_type, iocs in sorted(by_type.items()):
                 lines.append(f"### {ioc_type.upper()} ({len(iocs)} findings)\n")
                 for f in iocs[:10]:  # Cap at 10 per type
-                    fid = f.get("finding_id", "unknown")
+                    f.get("finding_id", "unknown")
                     value = f.get("ioc_value", "")
                     confidence = f.get("confidence", "")
                     source_type = f.get("source_type", "")
@@ -599,8 +599,8 @@ class ExportManager:
             med_conf = confidence_summary.get("medium", 0)
             low_conf = confidence_summary.get("low", 0)
 
-            lines.append(f"| Level | Count | Percentage |\n")
-            lines.append(f"|-------|-------|------------|\n")
+            lines.append("| Level | Count | Percentage |\n")
+            lines.append("|-------|-------|------------|\n")
             lines.append(f"| High (≥0.8) | {high_conf} | {high_conf/total*100:.1f}% |\n")
             lines.append(f"| Medium (0.5-0.8) | {med_conf} | {med_conf/total*100:.1f}% |\n")
             lines.append(f"| Low (<0.5) | {low_conf} | {low_conf/total*100:.1f}% |\n")
@@ -700,7 +700,7 @@ def render_gexf(
         nodes_data = list(nx_g.nodes(data=True))
         edges_data = list(nx_g.edges(data=True))
     else:
-        return f'<?xml version="1.0" encoding="UTF-8"?><gexf xmlns="http://gexf.net/1.3"><graph mode="static"><nodes></nodes><edges></edges></graph></gexf>'
+        return '<?xml version="1.0" encoding="UTF-8"?><gexf xmlns="http://gexf.net/1.3"><graph mode="static"><nodes></nodes><edges></edges></graph></gexf>'
 
     # Build GEXF XML
     gexf_el = ET.Element("gexf", xmlns="http://gexf.net/1.3", version="1.3")
@@ -1330,7 +1330,7 @@ def _iso_ts(val: Any) -> str:
     if isinstance(val, str):
         return val
     try:
-        from datetime import datetime, timezone
-        return datetime.fromtimestamp(float(val), tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        from datetime import datetime
+        return datetime.fromtimestamp(float(val), tz=UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
     except (TypeError, ValueError):
         return str(val)

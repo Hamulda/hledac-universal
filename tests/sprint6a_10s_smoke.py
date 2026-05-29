@@ -3,10 +3,10 @@
 Sprint 6A: 10s Smoke Test for preflight telemetry validation
 """
 import asyncio
-import sys
-import time
 import logging
 import os
+import sys
+import time
 
 # Suppress verbose logging
 logging.getLogger('hledac').setLevel(logging.WARNING)
@@ -15,7 +15,7 @@ sys.path.insert(0, '/Users/vojtechhamada/PycharmProjects/Hledac')
 
 async def run_smoke_test():
     from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
-    from hledac.universal.knowledge.atomic_storage import EvidencePacketStorage, EvidencePacket
+    from hledac.universal.knowledge.atomic_storage import EvidencePacket, EvidencePacketStorage
 
     print("=" * 60)
     print("[6A] 10s PREFLIGHT SMOKE TEST")
@@ -29,7 +29,7 @@ async def run_smoke_test():
     packets_dir = os.path.expanduser("~/.hledac/evidence_packets/shards")
     packet_count = 0
     if os.path.exists(packets_dir):
-        for root, dirs, files in os.walk(packets_dir):
+        for _root, _dirs, files in os.walk(packets_dir):
             packet_count += len([f for f in files if f.endswith('.json')])
 
     print(f"[PREFLIGHT] Replay packets: {packet_count}")
@@ -40,7 +40,7 @@ async def run_smoke_test():
             evidence_id=f"evidence_{i}",
             url=f"http://localhost:{64000+i}/test",
             final_url=f"http://localhost:{64000+i}/test",
-            domain=f"localhost",
+            domain="localhost",
             fetched_at=time.time() - (i * 86400),
             status=200,
             headers_digest="abc123",
@@ -58,7 +58,7 @@ async def run_smoke_test():
     random.seed(42)
 
     # Verify new telemetry attributes exist
-    print(f"\n[TELEMETRY CHECK]")
+    print("\n[TELEMETRY CHECK]")
     telemetry_attrs = [
         '_latency_window', '_gc_collected_total', '_gc_time_total_ms',
         '_action_success_counts', '_unique_sources_this_cycle',
@@ -83,14 +83,14 @@ async def run_smoke_test():
             elif hasattr(getattr(orch, attr), 'clear'):
                 getattr(orch, attr).clear()
 
-    print(f"\n[TS CHECK]")
+    print("\n[TS CHECK]")
     print(f"  _TS_SHADOW_MODE: {orch._TS_SHADOW_MODE}")
 
     # Run 10s benchmark
     DURATION = 10
     START_TIME = time.monotonic()
 
-    print(f"\n[START] 10s OFFLINE_REPLAY smoke test...")
+    print("\n[START] 10s OFFLINE_REPLAY smoke test...")
 
     result = await asyncio.wait_for(
         orch.run_benchmark(
@@ -112,7 +112,7 @@ async def run_smoke_test():
     findings_fps = findings / ELAPSED if ELAPSED > 0 else 0
     hhi = result.get('hh_index', 0)
 
-    print(f"\n=== RESULTS ===")
+    print("\n=== RESULTS ===")
     print(f"[ELAPSED] {ELAPSED:.1f}s (target: {DURATION}s)")
     print(f"[ITERATIONS] {iterations}")
     print(f"[BENCHMARK_FPS] {benchmark_fps:.1f}")
@@ -127,7 +127,7 @@ async def run_smoke_test():
     print(f"[DURATION_CHECK] {'PASS' if duration_ok else 'FAIL'}")
 
     # Anti-mock check
-    print(f"\n[ANTI-MOCK CHECK]")
+    print("\n[ANTI-MOCK CHECK]")
     anti_mock_ok = packet_count >= 100 and benchmark_fps < 50
     print(f"  packets >= 100: {packet_count >= 100}")
     print(f"  benchmark_fps < 50: {benchmark_fps < 50}")

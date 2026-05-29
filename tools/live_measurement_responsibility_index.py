@@ -211,7 +211,6 @@ def get_index() -> ResponsibilityIndex:
 def detect_symbol(source_path: str, symbol_name: str) -> bool:
     """Return True if symbol_name appears in the AST of source_path."""
     import ast
-
     from pathlib import Path
     source = Path(source_path).read_text()
     tree = ast.parse(source)

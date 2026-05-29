@@ -12,13 +12,13 @@ Anti-patterns:
 
 from __future__ import annotations
 
-import aiohttp
 import asyncio
 import logging
 import re
-from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, AsyncGenerator
+from collections.abc import AsyncGenerator
+from dataclasses import dataclass
 
+import aiohttp
 from hledac.universal.transport.circuit_breaker import (
     checked_aiohttp_get,
 )
@@ -87,7 +87,7 @@ _rate_lock = asyncio.Lock()
 
 async def _gh_search(
     q: str,
-    session: "aiohttp.ClientSession",
+    session: aiohttp.ClientSession,
     max_results: int = 30,
 ) -> list[dict]:
     """Execute unauthenticated GitHub code search, return items list."""
@@ -136,7 +136,7 @@ async def _gh_search(
 
 
 async def _fetch_file_content(
-    raw_url: str | None, session: "aiohttp.ClientSession"
+    raw_url: str | None, session: aiohttp.ClientSession
 ) -> str | None:
     """Fetch raw file content from GitHub API."""
     if not raw_url:
@@ -160,7 +160,7 @@ async def _fetch_file_content(
 
 async def _gh_get(
     url: str,
-    session: "aiohttp.ClientSession",
+    session: aiohttp.ClientSession,
     params: dict | None = None,
 ) -> dict | None:
     """Execute GET request to GitHub API with rate limiting."""
@@ -227,7 +227,7 @@ def _scan_line_for_secrets(line: str, file_path: str, line_no: int) -> list[Secr
 
 async def _scan_fork_network(
     repo_full_name: str,
-    session: "aiohttp.ClientSession",
+    session: aiohttp.ClientSession,
 ) -> list[SecretFinding]:
     """Scan fork network for diverged commits containing secrets.
 
@@ -284,8 +284,8 @@ async def _scan_fork_network(
 
 async def _scan_commit_diffs(
     repo_full_name: str,
-    session: "aiohttp.ClientSession",
-) -> AsyncGenerator[SecretFinding, None]:
+    session: aiohttp.ClientSession,
+) -> AsyncGenerator[SecretFinding]:
     """Scan recent commits for secrets in added lines (one at a time).
 
     Yields SecretFinding objects for secrets found in commit diffs.

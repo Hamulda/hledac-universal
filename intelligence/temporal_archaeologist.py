@@ -35,15 +35,15 @@ import hashlib
 import logging
 import re
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime
 from difflib import SequenceMatcher
 from enum import Enum
-from typing import Any, Dict, List, Optional, Set, Tuple, AsyncIterator
+from typing import Any
 from urllib.parse import quote, urlparse
 
-from ..utils.rate_limiter import RateLimiter, RateLimitConfig
-
 import numpy as np
+
+from ..utils.rate_limiter import RateLimitConfig, RateLimiter
 
 logger = logging.getLogger(__name__)
 
@@ -95,10 +95,10 @@ class ArchivedVersion:
     url: str
     timestamp: datetime
     content_hash: str
-    content: Optional[str]
+    content: str | None
     source: str  # wayback, archive_today, google_cache, etc.
     is_deleted: bool
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self):
         if not self.content_hash and self.content:
@@ -109,7 +109,7 @@ class ArchivedVersion:
         """Calculate age in days from now."""
         return (datetime.now() - self.timestamp).days
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "url": self.url,
             "timestamp": self.timestamp.isoformat(),
@@ -128,7 +128,7 @@ class EntitySnapshot:
     identifier: str
     content_hash: str
     content_preview: str
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -139,7 +139,7 @@ class IdentityChange:
     timestamp: datetime
     change_type: str
     confidence: float
-    evidence: List[str] = field(default_factory=list)
+    evidence: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -157,22 +157,22 @@ class EntityTimeline:
     """Complete timeline for an entity."""
     entity_id: str
     entity_type: str
-    snapshots: List[EntitySnapshot]
-    identity_changes: List[IdentityChange]
-    temporal_gaps: List[TemporalGap]
+    snapshots: list[EntitySnapshot]
+    identity_changes: list[IdentityChange]
+    temporal_gaps: list[TemporalGap]
     confidence_score: float
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self):
         if self.snapshots:
             self.snapshots.sort(key=lambda x: x.timestamp)
 
     @property
-    def first_seen(self) -> Optional[datetime]:
+    def first_seen(self) -> datetime | None:
         return self.snapshots[0].timestamp if self.snapshots else None
 
     @property
-    def last_seen(self) -> Optional[datetime]:
+    def last_seen(self) -> datetime | None:
         return self.snapshots[-1].timestamp if self.snapshots else None
 
     @property
@@ -192,11 +192,11 @@ class TemporalAnomaly:
     type: str  # disappearance, identity_change, content_wipe, activity_gap
     description: str
     severity: float
-    timestamp: Optional[datetime]
-    evidence: List[str] = field(default_factory=list)
-    affected_snapshots: List[str] = field(default_factory=list)
+    timestamp: datetime | None
+    evidence: list[str] = field(default_factory=list)
+    affected_snapshots: list[str] = field(default_factory=list)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "type": self.type,
             "description": self.description,
@@ -213,16 +213,16 @@ class TemporalCorrelation:
     entity_a: str
     entity_b: str
     correlation_score: float
-    overlapping_periods: List[Tuple[datetime, datetime]]
-    shared_attributes: Dict[str, Any] = field(default_factory=dict)
-    temporal_proximity: List[Dict[str, Any]] = field(default_factory=list)
+    overlapping_periods: list[tuple[datetime, datetime]]
+    shared_attributes: dict[str, Any] = field(default_factory=dict)
+    temporal_proximity: list[dict[str, Any]] = field(default_factory=list)
 
 
 @dataclass
 class ResolvedEntity:
     """Result of temporal entity resolution."""
     canonical_id: str
-    all_identifiers: Set[str]
+    all_identifiers: set[str]
     timeline: EntityTimeline
     resolution_confidence: float
     resolution_method: str
@@ -232,11 +232,11 @@ class ResolvedEntity:
 class RecoveryResult:
     """Result of content recovery operation."""
     success: bool
-    recovered_versions: List[ArchivedVersion]
+    recovered_versions: list[ArchivedVersion]
     total_sources_checked: int
     sources_succeeded: int
-    errors: List[str] = field(default_factory=list)
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    errors: list[str] = field(default_factory=list)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 # =============================================================================
@@ -291,14 +291,14 @@ class TemporalArchaeologist:
         self.cache_enabled = cache_enabled
         self.max_content_size = max_content_size_mb * 1024 * 1024
 
-        self._session: Optional[Any] = None
-        self._cache: Dict[str, Any] = {}
+        self._session: Any | None = None
+        self._cache: dict[str, Any] = {}
 
         # Rate limiter for archive queries (Fix 1)
         self._rate_limiter = RateLimiter(RateLimitConfig(base_rate=1.0))
 
         # Snapshot deduplication (Fix 1)
-        self._fetched_snapshots: Set[str] = set()
+        self._fetched_snapshots: set[str] = set()
 
         # Statistics
         self._queries_made = 0
@@ -332,9 +332,9 @@ class TemporalArchaeologist:
     async def recover_deleted_content(
         self,
         url: str,
-        sources: Optional[List[str]] = None,
-        from_date: Optional[datetime] = None,
-        to_date: Optional[datetime] = None,
+        sources: list[str] | None = None,
+        from_date: datetime | None = None,
+        to_date: datetime | None = None,
         include_content: bool = True,
     ) -> RecoveryResult:
         """
@@ -356,14 +356,14 @@ class TemporalArchaeologist:
         logger.info(f"Recovering deleted content for: {url}")
         self._queries_made += 1
 
-        recovered_versions: List[ArchivedVersion] = []
-        errors: List[str] = []
+        recovered_versions: list[ArchivedVersion] = []
+        errors: list[str] = []
         sources_succeeded = 0
 
         # Create semaphore for concurrency control
         semaphore = asyncio.Semaphore(self.max_concurrent_requests)
 
-        async def check_source(source: str) -> Tuple[List[ArchivedVersion], Optional[str]]:
+        async def check_source(source: str) -> tuple[list[ArchivedVersion], str | None]:
             async with semaphore:
                 try:
                     if source == "wayback":
@@ -390,7 +390,7 @@ class TemporalArchaeologist:
         tasks = [check_source(source) for source in sources]
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
-        for source, result in zip(sources, results):
+        for source, result in zip(sources, results, strict=False):
             if isinstance(result, Exception):
                 errors.append(f"{source}: {result}")
             else:
@@ -439,8 +439,8 @@ class TemporalArchaeologist:
         self,
         identifier: str,
         id_type: str = "url",
-        from_date: Optional[datetime] = None,
-        to_date: Optional[datetime] = None,
+        from_date: datetime | None = None,
+        to_date: datetime | None = None,
     ) -> EntityTimeline:
         """
         Reconstruct version history for an entity.
@@ -516,7 +516,7 @@ class TemporalArchaeologist:
             },
         )
 
-    def detect_temporal_anomalies(self, timeline: EntityTimeline) -> List[TemporalAnomaly]:
+    def detect_temporal_anomalies(self, timeline: EntityTimeline) -> list[TemporalAnomaly]:
         """
         Detect temporal anomalies in a timeline.
 
@@ -608,7 +608,7 @@ class TemporalArchaeologist:
 
     def temporal_entity_resolution(
         self,
-        snapshots: List[ArchivedVersion],
+        snapshots: list[ArchivedVersion],
         resolution_threshold: float = 0.8,
     ) -> ResolvedEntity:
         """
@@ -685,9 +685,9 @@ class TemporalArchaeologist:
     async def deep_historical_search(
         self,
         query: str,
-        time_range: Tuple[datetime, datetime],
-        sources: Optional[List[str]] = None,
-    ) -> List[ArchivedVersion]:
+        time_range: tuple[datetime, datetime],
+        sources: list[str] | None = None,
+    ) -> list[ArchivedVersion]:
         """
         Perform deep historical search across archives.
 
@@ -758,10 +758,10 @@ class TemporalArchaeologist:
     async def _recover_from_wayback(
         self,
         url: str,
-        from_date: Optional[datetime],
-        to_date: Optional[datetime],
+        from_date: datetime | None,
+        to_date: datetime | None,
         include_content: bool,
-    ) -> List[ArchivedVersion]:
+    ) -> list[ArchivedVersion]:
         """Recover content from Wayback Machine."""
         if not self._session:
             raise RuntimeError("Session not initialized")
@@ -847,7 +847,7 @@ class TemporalArchaeologist:
 
         return versions
 
-    async def _fetch_wayback_content(self, wayback_url: str) -> Optional[str]:
+    async def _fetch_wayback_content(self, wayback_url: str) -> str | None:
         """Fetch content from Wayback Machine URL."""
         if not self._session:
             return None
@@ -870,7 +870,7 @@ class TemporalArchaeologist:
         self,
         url: str,
         include_content: bool,
-    ) -> List[ArchivedVersion]:
+    ) -> list[ArchivedVersion]:
         """Recover content from Archive.today."""
         if not self._session:
             raise RuntimeError("Session not initialized")
@@ -911,7 +911,7 @@ class TemporalArchaeologist:
 
         return versions
 
-    async def _fetch_archive_today_content(self, archive_url: str) -> Optional[str]:
+    async def _fetch_archive_today_content(self, archive_url: str) -> str | None:
         """Fetch content from Archive.today."""
         if not self._session:
             return None
@@ -931,7 +931,7 @@ class TemporalArchaeologist:
         self,
         url: str,
         include_content: bool,
-    ) -> List[ArchivedVersion]:
+    ) -> list[ArchivedVersion]:
         """Recover content from Google Cache."""
         if not self._session:
             raise RuntimeError("Session not initialized")
@@ -969,7 +969,7 @@ class TemporalArchaeologist:
         self,
         url: str,
         include_content: bool,
-    ) -> List[ArchivedVersion]:
+    ) -> list[ArchivedVersion]:
         """Recover content from Bing Cache via jina.ai."""
         if not self._session:
             raise RuntimeError("Session not initialized")
@@ -1007,14 +1007,14 @@ class TemporalArchaeologist:
         self,
         url: str,
         include_content: bool,
-    ) -> List[ArchivedVersion]:
+    ) -> list[ArchivedVersion]:
         """Recover content from Common Crawl index."""
         # Common Crawl requires index querying - simplified implementation
         # In production, this would query the Common Crawl Index API
         logger.debug("Common Crawl recovery not fully implemented")
         return []
 
-    async def _recover_from_git_history(self, repo_path: str) -> List[ArchivedVersion]:
+    async def _recover_from_git_history(self, repo_path: str) -> list[ArchivedVersion]:
         """Recover content from Git history."""
         versions = []
 
@@ -1054,7 +1054,7 @@ class TemporalArchaeologist:
 
         return versions
 
-    async def _search_by_entity(self, identifier: str, id_type: str) -> List[ArchivedVersion]:
+    async def _search_by_entity(self, identifier: str, id_type: str) -> list[ArchivedVersion]:
         """Search for archived versions by entity identifier."""
         # This would search for URLs associated with the entity
         # For now, return empty list
@@ -1063,8 +1063,8 @@ class TemporalArchaeologist:
     async def _search_wayback_by_query(
         self,
         query: str,
-        time_range: Tuple[datetime, datetime],
-    ) -> List[ArchivedVersion]:
+        time_range: tuple[datetime, datetime],
+    ) -> list[ArchivedVersion]:
         """Search Wayback by query string."""
         # Wayback CDX doesn't support full-text search directly
         # This would require additional indexing
@@ -1073,8 +1073,8 @@ class TemporalArchaeologist:
     async def _search_common_crawl(
         self,
         query: str,
-        time_range: Tuple[datetime, datetime],
-    ) -> List[ArchivedVersion]:
+        time_range: tuple[datetime, datetime],
+    ) -> list[ArchivedVersion]:
         """Search Common Crawl index."""
         # Requires Common Crawl Index API access
         return []
@@ -1083,7 +1083,7 @@ class TemporalArchaeologist:
     # ANOMALY DETECTION METHODS
     # ==========================================================================
 
-    def _detect_disappearances(self, timeline: EntityTimeline) -> List[TemporalAnomaly]:
+    def _detect_disappearances(self, timeline: EntityTimeline) -> list[TemporalAnomaly]:
         """Detect content disappearances."""
         anomalies = []
 
@@ -1106,7 +1106,7 @@ class TemporalArchaeologist:
 
         return anomalies
 
-    def _detect_content_wipes(self, timeline: EntityTimeline) -> List[TemporalAnomaly]:
+    def _detect_content_wipes(self, timeline: EntityTimeline) -> list[TemporalAnomaly]:
         """Detect sudden content wipes."""
         anomalies = []
 
@@ -1137,7 +1137,7 @@ class TemporalArchaeologist:
 
         return anomalies
 
-    def _detect_activity_gaps(self, timeline: EntityTimeline) -> List[TemporalAnomaly]:
+    def _detect_activity_gaps(self, timeline: EntityTimeline) -> list[TemporalAnomaly]:
         """Detect unusual gaps in activity."""
         anomalies = []
 
@@ -1173,7 +1173,7 @@ class TemporalArchaeologist:
 
         return anomalies
 
-    def _detect_sudden_changes(self, timeline: EntityTimeline) -> List[TemporalAnomaly]:
+    def _detect_sudden_changes(self, timeline: EntityTimeline) -> list[TemporalAnomaly]:
         """Detect sudden changes in metadata or content."""
         anomalies = []
 
@@ -1181,7 +1181,7 @@ class TemporalArchaeologist:
         # for other types of sudden changes
         return anomalies
 
-    def _detect_frequency_shifts(self, timeline: EntityTimeline) -> List[TemporalAnomaly]:
+    def _detect_frequency_shifts(self, timeline: EntityTimeline) -> list[TemporalAnomaly]:
         """Detect shifts in update frequency."""
         anomalies = []
 
@@ -1230,7 +1230,7 @@ class TemporalArchaeologist:
     # HELPER METHODS
     # ==========================================================================
 
-    def _detect_identity_changes(self, snapshots: List[EntitySnapshot]) -> List[IdentityChange]:
+    def _detect_identity_changes(self, snapshots: list[EntitySnapshot]) -> list[IdentityChange]:
         """Detect identity changes in snapshots."""
         changes = []
 
@@ -1251,7 +1251,7 @@ class TemporalArchaeologist:
 
         return changes
 
-    def _detect_temporal_gaps(self, snapshots: List[EntitySnapshot]) -> List[TemporalGap]:
+    def _detect_temporal_gaps(self, snapshots: list[EntitySnapshot]) -> list[TemporalGap]:
         """Detect temporal gaps in snapshots."""
         gaps = []
 
@@ -1286,8 +1286,8 @@ class TemporalArchaeologist:
 
     def _calculate_timeline_confidence(
         self,
-        snapshots: List[EntitySnapshot],
-        gaps: List[TemporalGap],
+        snapshots: list[EntitySnapshot],
+        gaps: list[TemporalGap],
     ) -> float:
         """Calculate confidence score for timeline."""
         if not snapshots:
@@ -1312,7 +1312,7 @@ class TemporalArchaeologist:
         self,
         timeline_a: EntityTimeline,
         timeline_b: EntityTimeline,
-    ) -> List[Tuple[datetime, datetime]]:
+    ) -> list[tuple[datetime, datetime]]:
         """Find overlapping time periods between two timelines."""
         overlaps = []
 
@@ -1338,7 +1338,7 @@ class TemporalArchaeologist:
         self,
         timeline_a: EntityTimeline,
         timeline_b: EntityTimeline,
-        overlapping_periods: List[Tuple[datetime, datetime]],
+        overlapping_periods: list[tuple[datetime, datetime]],
     ) -> float:
         """Calculate correlation score between two timelines."""
         if not overlapping_periods:
@@ -1362,7 +1362,7 @@ class TemporalArchaeologist:
         self,
         timeline_a: EntityTimeline,
         timeline_b: EntityTimeline,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Find shared attributes between two timelines."""
         shared = {}
 
@@ -1381,7 +1381,7 @@ class TemporalArchaeologist:
         self,
         timeline_a: EntityTimeline,
         timeline_b: EntityTimeline,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """Find events that are temporally close."""
         proximity_events = []
 
@@ -1404,14 +1404,14 @@ class TemporalArchaeologist:
 
     def _group_similar_snapshots(
         self,
-        snapshots: List[ArchivedVersion],
+        snapshots: list[ArchivedVersion],
         threshold: float,
-    ) -> List[List[ArchivedVersion]]:
+    ) -> list[list[ArchivedVersion]]:
         """Group similar snapshots using clustering."""
         if not snapshots:
             return []
 
-        groups: List[List[ArchivedVersion]] = []
+        groups: list[list[ArchivedVersion]] = []
 
         for snapshot in snapshots:
             added = False
@@ -1435,7 +1435,7 @@ class TemporalArchaeologist:
     # STATISTICS AND UTILITIES
     # ==========================================================================
 
-    def get_statistics(self) -> Dict[str, Any]:
+    def get_statistics(self) -> dict[str, Any]:
         """Get archaeologist statistics."""
         return {
             "queries_made": self._queries_made,
@@ -1466,7 +1466,7 @@ async def reconstruct_timeline(identifier: str, **kwargs) -> EntityTimeline:
         return await archaeologist.reconstruct_version_history(identifier, **kwargs)
 
 
-async def detect_anomalies(timeline: EntityTimeline) -> List[TemporalAnomaly]:
+async def detect_anomalies(timeline: EntityTimeline) -> list[TemporalAnomaly]:
     """Quick function to detect anomalies."""
     archaeologist = TemporalArchaeologist()
     return archaeologist.detect_temporal_anomalies(timeline)

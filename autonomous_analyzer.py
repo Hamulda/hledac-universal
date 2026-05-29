@@ -28,9 +28,7 @@ from __future__ import annotations
 import logging
 import re
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Set, Tuple, Union
-
-from .project_types import ComplexityAnalysis
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -48,17 +46,17 @@ class AutoResearchProfile:
     tot_mode: str = "standard"  # "standard" | "hybrid" | "full"
 
     # Tool Selection
-    tools: Set[str] = field(default_factory=set)
+    tools: set[str] = field(default_factory=set)
 
     # Source Selection
-    sources: Set[str] = field(default_factory=set)  # "surface" | "archive" | "academic" | "dark" | "leaked"
+    sources: set[str] = field(default_factory=set)  # "surface" | "archive" | "academic" | "dark" | "leaked"
 
     # Privacy Configuration
     privacy_level: str = "STANDARD"  # "STANDARD" | "HIGH" | "MAXIMUM"
     use_tor: bool = False
 
     # Model Selection
-    models_needed: Set[str] = field(default_factory=set)  # "hermes" | "modernbert" | "gliner"
+    models_needed: set[str] = field(default_factory=set)  # "hermes" | "modernbert" | "gliner"
 
     # Execution Parameters
     depth: str = "STANDARD"  # "QUICK" | "STANDARD" | "DEEP" | "EXHAUSTIVE"
@@ -67,7 +65,7 @@ class AutoResearchProfile:
     # Explanation
     reasoning: str = ""
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert profile to dictionary for serialization."""
         return {
             "use_tot": self.use_tot,
@@ -83,7 +81,7 @@ class AutoResearchProfile:
         }
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "AutoResearchProfile":
+    def from_dict(cls, data: dict[str, Any]) -> AutoResearchProfile:
         """Create profile from dictionary."""
         return cls(
             use_tot=data.get("use_tot", False),
@@ -123,7 +121,7 @@ class AutonomousAnalyzer:
     # TOOL KEYWORD MAPPINGS (21 intelligence tools)
     # ==========================================================================
 
-    TOOL_KEYWORDS: Dict[str, List[str]] = {
+    TOOL_KEYWORDS: dict[str, list[str]] = {
         # Dark Web & Stealth
         "stealth_crawler": [
             "dark web", "tor", "onion", "hidden service", ".onion",
@@ -276,7 +274,7 @@ class AutonomousAnalyzer:
     # PRIVACY LEVEL KEYWORD MAPPINGS
     # ==========================================================================
 
-    PRIVACY_KEYWORDS: Dict[str, List[str]] = {
+    PRIVACY_KEYWORDS: dict[str, list[str]] = {
         "MAXIMUM": [
             "dark web", "tor", "onion", "hidden service", "leak", "breach",
             "whistleblower", "sensitive", "classified", "confidential",
@@ -297,7 +295,7 @@ class AutonomousAnalyzer:
     # SOURCE TYPE KEYWORD MAPPINGS
     # ==========================================================================
 
-    SOURCE_KEYWORDS: Dict[str, List[str]] = {
+    SOURCE_KEYWORDS: dict[str, list[str]] = {
         "surface": [
             "web", "website", "internet", "google", "search",
             "news", "article", "blog", "forum", "social media",
@@ -325,7 +323,7 @@ class AutonomousAnalyzer:
     # DEPTH LEVEL KEYWORD MAPPINGS
     # ==========================================================================
 
-    DEPTH_KEYWORDS: Dict[str, List[str]] = {
+    DEPTH_KEYWORDS: dict[str, list[str]] = {
         "EXHAUSTIVE": [
             "comprehensive", "exhaustive", "complete", "thorough",
             "everything", "all information", "full analysis", "deep dive",
@@ -349,7 +347,7 @@ class AutonomousAnalyzer:
     }
 
     # Tool-to-Source mapping for inference
-    TOOL_SOURCE_MAPPING: Dict[str, Set[str]] = {
+    TOOL_SOURCE_MAPPING: dict[str, set[str]] = {
         "stealth_crawler": {"dark"},
         "archive_discovery": {"archive"},
         "leak_hunter": {"leaked"},
@@ -374,7 +372,7 @@ class AutonomousAnalyzer:
     }
 
     # Tool-to-Model mapping
-    TOOL_MODEL_MAPPING: Dict[str, Set[str]] = {
+    TOOL_MODEL_MAPPING: dict[str, set[str]] = {
         "identity_stitching": {"gliner"},
         "relationship_discovery": {"gliner"},
         "pattern_mining": {"hermes"},
@@ -384,7 +382,7 @@ class AutonomousAnalyzer:
         "academic_search": {"modernbert"},
     }
 
-    def __init__(self, tot_integration: Optional[Any] = None):
+    def __init__(self, tot_integration: Any | None = None):
         """
         Initialize AutonomousAnalyzer.
 
@@ -392,10 +390,10 @@ class AutonomousAnalyzer:
             tot_integration: Optional TotIntegrationLayer for complexity analysis
         """
         self.tot_integration = tot_integration
-        self._compiled_tool_patterns: Dict[str, List[re.Pattern]] = {}
-        self._compiled_privacy_patterns: Dict[str, List[re.Pattern]] = {}
-        self._compiled_source_patterns: Dict[str, List[re.Pattern]] = {}
-        self._compiled_depth_patterns: Dict[str, List[re.Pattern]] = {}
+        self._compiled_tool_patterns: dict[str, list[re.Pattern]] = {}
+        self._compiled_privacy_patterns: dict[str, list[re.Pattern]] = {}
+        self._compiled_source_patterns: dict[str, list[re.Pattern]] = {}
+        self._compiled_depth_patterns: dict[str, list[re.Pattern]] = {}
 
         self._compile_patterns()
         logger.info("AutonomousAnalyzer initialized (v1.0.0)")
@@ -487,11 +485,11 @@ class AutonomousAnalyzer:
 
         # Step 10: Generate reasoning
         profile.reasoning = self._generate_reasoning(profile)
-        logger.info(f"🎯 AUTONOMOUS DECISION: Reasoning generated")
+        logger.info("🎯 AUTONOMOUS DECISION: Reasoning generated")
 
         return profile
 
-    def _detect_tools(self, query: str) -> Set[str]:
+    def _detect_tools(self, query: str) -> set[str]:
         """
         Detect which intelligence tools should be activated.
 
@@ -501,7 +499,7 @@ class AutonomousAnalyzer:
         Returns:
             Set of tool names to activate
         """
-        detected_tools: Set[str] = set()
+        detected_tools: set[str] = set()
         query_lower = query.lower()
 
         for tool, patterns in self._compiled_tool_patterns.items():
@@ -520,7 +518,7 @@ class AutonomousAnalyzer:
 
         return detected_tools
 
-    def _infer_sources(self, tools: Set[str], query: str) -> Set[str]:
+    def _infer_sources(self, tools: set[str], query: str) -> set[str]:
         """
         Infer which sources to search based on selected tools.
 
@@ -531,7 +529,7 @@ class AutonomousAnalyzer:
         Returns:
             Set of source types
         """
-        sources: Set[str] = set()
+        sources: set[str] = set()
 
         # Map tools to sources
         for tool in tools:
@@ -551,7 +549,7 @@ class AutonomousAnalyzer:
 
         return sources
 
-    def _determine_privacy(self, query: str, tools: Set[str]) -> Tuple[str, bool]:
+    def _determine_privacy(self, query: str, tools: set[str]) -> tuple[str, bool]:
         """
         Determine privacy level and Tor activation.
 
@@ -581,7 +579,7 @@ class AutonomousAnalyzer:
 
         return "STANDARD", False
 
-    def _analyze_complexity(self, query: str) -> Tuple[float, bool]:
+    def _analyze_complexity(self, query: str) -> tuple[float, bool]:
         """
         Analyze query complexity and determine ToT activation.
 
@@ -603,7 +601,7 @@ class AutonomousAnalyzer:
         # Fallback: Simple complexity estimation
         return self._fallback_complexity_analysis(query)
 
-    def _fallback_complexity_analysis(self, query: str) -> Tuple[float, bool]:
+    def _fallback_complexity_analysis(self, query: str) -> tuple[float, bool]:
         """
         Fallback complexity analysis without ToT integration.
 
@@ -719,7 +717,7 @@ class AutonomousAnalyzer:
             return "QUICK"
         return "STANDARD"
 
-    def _determine_models(self, profile: AutoResearchProfile) -> Set[str]:
+    def _determine_models(self, profile: AutoResearchProfile) -> set[str]:
         """
         Determine which models are needed based on profile.
 
@@ -729,7 +727,7 @@ class AutonomousAnalyzer:
         Returns:
             Set of model names
         """
-        models: Set[str] = set()
+        models: set[str] = set()
 
         # Map tools to models
         for tool in profile.tools:
@@ -829,7 +827,7 @@ class AutonomousAnalyzer:
 
         return "; ".join(reasoning_parts)
 
-    def get_capabilities(self) -> Dict[str, Any]:
+    def get_capabilities(self) -> dict[str, Any]:
         """Get analyzer capabilities."""
         return {
             "name": "autonomous_analyzer",
@@ -855,7 +853,7 @@ class AutonomousAnalyzer:
 
 
 # Factory function
-def create_autonomous_analyzer(tot_integration: Optional[Any] = None) -> AutonomousAnalyzer:
+def create_autonomous_analyzer(tot_integration: Any | None = None) -> AutonomousAnalyzer:
     """
     Create AutonomousAnalyzer with optional ToT integration.
 

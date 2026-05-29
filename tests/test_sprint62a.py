@@ -1,5 +1,6 @@
+from unittest.mock import AsyncMock, MagicMock
+
 import pytest
-from unittest.mock import MagicMock, AsyncMock
 
 # mlx transitively required by vision_encoder.py and fusion.py imports
 # — importorskip at module top is insufficient; skip at test level.
@@ -9,8 +10,8 @@ except ImportError:
     pytest.skip("mlx not available", allow_module_level=True)
 
 from hledac.universal.core.resource_governor import ResourceGovernor
-from hledac.universal.multimodal.vision_encoder import VisionEncoder
 from hledac.universal.multimodal.fusion import MambaFusion
+from hledac.universal.multimodal.vision_encoder import VisionEncoder
 
 
 @pytest.fixture

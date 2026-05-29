@@ -15,7 +15,6 @@ Reference:
 from __future__ import annotations
 
 import logging
-from typing import List, Tuple
 
 import numpy as np
 
@@ -24,10 +23,10 @@ logger = logging.getLogger(__name__)
 
 def maximal_marginal_relevance(
     query_vector: np.ndarray,
-    candidate_vectors: List[np.ndarray],
+    candidate_vectors: list[np.ndarray],
     top_k: int = 5,
     lambda_param: float = 0.5
-) -> List[int]:
+) -> list[int]:
     """
     Select top-k diverse candidates using Maximal Marginal Relevance.
 
@@ -73,7 +72,7 @@ def maximal_marginal_relevance(
         cand_norms.append(c / c_norm)
     cand_matrix = np.stack(cand_norms, axis=0) if cand_norms else np.array([])
 
-    selected: List[int] = []
+    selected: list[int] = []
     remaining = set(range(len(candidate_vectors)))
 
     # Pre-normalize all candidates into a matrix (vectorized)
@@ -110,10 +109,10 @@ def maximal_marginal_relevance(
 
 def rerank_with_mmr(
     query_vector: np.ndarray,
-    candidates: List[Tuple[str, np.ndarray]],
+    candidates: list[tuple[str, np.ndarray]],
     top_k: int = 5,
     lambda_param: float = 0.5
-) -> List[Tuple[str, float]]:
+) -> list[tuple[str, float]]:
     """
     Rerank candidates using MMR and return with relevance scores.
 

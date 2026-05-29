@@ -23,7 +23,6 @@ Options:
 import argparse
 import asyncio
 import cProfile
-import io
 import json
 import os
 import pstats
@@ -33,7 +32,6 @@ import sys
 import tempfile
 import time
 from pathlib import Path
-from typing import Any
 
 # --------------------------------------------------------------------------- #
 # Workload result dataclasses
@@ -134,7 +132,7 @@ def p95(values: list) -> float:
 def workload_hash_detection(tempfile_path: str, profile_top: int) -> WorkloadResult:
     """HashIdentifier.identify_in_file() on 5k-line mixed hash file."""
     try:
-        from text.hash_identifier import HashIdentifier, HashConfig
+        from text.hash_identifier import HashConfig, HashIdentifier
     except Exception as e:
         return WorkloadResult("hash_detection", "skip", f"import error: {e}")
 
@@ -164,7 +162,7 @@ def workload_hash_detection(tempfile_path: str, profile_top: int) -> WorkloadRes
 def workload_pattern_matcher(payload_text: str, profile_top: int) -> WorkloadResult:
     """PatternMatcher.match_text + extract_high_precision_entities on mixed payload."""
     try:
-        from patterns.pattern_matcher import match_text, extract_high_precision_entities
+        from patterns.pattern_matcher import extract_high_precision_entities, match_text
     except Exception as e:
         return WorkloadResult("pattern_matcher", "skip", f"import error: {e}")
 
@@ -248,7 +246,6 @@ def workload_target_memory_roundtrip(tempfile_dir: str, profile_top: int) -> Wor
         return WorkloadResult("target_memory", "skip", f"import error: {e}")
 
     try:
-        import orjson
 
         def run_once():
             svc = TargetMemoryService()
@@ -289,7 +286,6 @@ def workload_temporal_topk(profile_top: int) -> WorkloadResult:
     try:
         # Direct file import using importlib.machinery to bypass __init__ chain
         import importlib.machinery
-        import sys
         loader = importlib.machinery.SourceFileLoader(
             "temporal_signal_layer",
             str(Path(__file__).parent.parent / "layers" / "temporal_signal_layer.py")
@@ -351,13 +347,12 @@ def workload_import_timing(runs: int, profile_top: int) -> WorkloadResult:
                 # duckdb_store.__init__ imports hledac.universal.* so it needs the full package
                 # We cannot measure cold import in-process without hledac being installed
                 # Instead measure getattr latency on already-loaded modules
-                from knowledge import duckdb_store
                 return 0
 
             try:
                 _, top_run = run_cprofile(run_imports, profile_top=profile_top)
                 end = time.perf_counter()
-                mem_after = get_memory_mib()
+                get_memory_mib()
                 sample_ms = (end - start) * 1000
                 timings.append(sample_ms)
                 if not top:
@@ -406,7 +401,7 @@ def generate_hash_test_file(path: str, num_lines: int = 5000) -> None:
     ]
 
     lines = []
-    for i in range(num_lines):
+    for _i in range(num_lines):
         pattern_fn = random.choice(patterns)
         lines.append(pattern_fn())
 
@@ -525,7 +520,7 @@ def run_workloads(args) -> list[WorkloadResult]:
 # --------------------------------------------------------------------------- #
 
 async def _hash_detection_async(file_path: str):
-    from text.hash_identifier import HashIdentifier, HashConfig
+    from text.hash_identifier import HashConfig, HashIdentifier
     config = HashConfig()
     hi = HashIdentifier(config)
     return await hi.identify_in_file(file_path)
@@ -536,7 +531,7 @@ def _hash_detection_sync(file_path: str):
 
 
 def _pattern_matcher_sync(payload: str):
-    from patterns.pattern_matcher import match_text, extract_high_precision_entities
+    from patterns.pattern_matcher import extract_high_precision_entities, match_text
     hits = match_text(payload)
     entities = extract_high_precision_entities(payload)
     return len(hits) + len(entities)
@@ -544,6 +539,7 @@ def _pattern_matcher_sync(payload: str):
 
 def _zstd_cache_sync(tmpdir: str):
     import compression.zstd as _zstd
+
     import orjson
     items = [f"item_{i}_" + "x" * 4000 for i in range(100)]
     compressed = []
@@ -616,7 +612,7 @@ def measure_workload(func, runs: int) -> list:
             pass
         end = time.perf_counter()
         mem_after = get_memory_mib()
-        delta_mem = mem_after - mem_before
+        mem_after - mem_before
         sample_ms = (end - start) * 1000
         samples.append(sample_ms)
         # Track memory delta per result (approximate per sample)

@@ -22,13 +22,11 @@ import asyncio
 import json
 import logging
 import re
-import socket
-import ssl
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from enum import Enum
-from typing import Any, Dict, List, Optional, Set, Tuple
-from urllib.parse import urljoin, urlparse
+from typing import Any
+from urllib.parse import urlparse
 
 import aiohttp
 
@@ -72,11 +70,11 @@ class ExposedService:
     host: str
     port: int
     exposure_type: str
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
     risk_level: str = RiskLevel.MEDIUM.value
-    discovered_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    discovered_at: datetime = field(default_factory=lambda: datetime.now(UTC))
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary."""
         return {
             "service_type": self.service_type,
@@ -93,12 +91,12 @@ class ExposedService:
 class S3Bucket:
     """S3 bucket information."""
     bucket_name: str
-    region: Optional[str]
+    region: str | None
     is_listable: bool
     has_files: bool
-    file_count: Optional[int]
-    total_size: Optional[int]
-    permissions: List[str]
+    file_count: int | None
+    total_size: int | None
+    permissions: list[str]
 
 
 @dataclass
@@ -108,7 +106,7 @@ class CertificateInfo:
     issuer: str
     not_before: datetime
     not_after: datetime
-    san_domains: List[str]
+    san_domains: list[str]
     fingerprint: str
 
 
@@ -178,7 +176,7 @@ class S3BucketEnumerator:
         "ca-central-1", "sa-east-1"
     ]
 
-    def __init__(self, session: Optional[aiohttp.ClientSession] = None):
+    def __init__(self, session: aiohttp.ClientSession | None = None):
         self.session = session
         self._owned_session = session is None
 
@@ -199,7 +197,7 @@ class S3BucketEnumerator:
         self,
         target: str,
         max_concurrent: int = 20
-    ) -> List[ExposedService]:
+    ) -> list[ExposedService]:
         """
         Enumerate S3 buckets using naming patterns.
 
@@ -227,7 +225,7 @@ class S3BucketEnumerator:
 
         semaphore = asyncio.Semaphore(max_concurrent)
 
-        async def check_bucket(bucket_name: str) -> Optional[ExposedService]:
+        async def check_bucket(bucket_name: str) -> ExposedService | None:
             async with semaphore:
                 try:
                     result = await self._check_bucket_exists(bucket_name)
@@ -248,7 +246,7 @@ class S3BucketEnumerator:
 
         return findings
 
-    async def _check_bucket_exists(self, bucket_name: str) -> Optional[ExposedService]:
+    async def _check_bucket_exists(self, bucket_name: str) -> ExposedService | None:
         """Check if an S3 bucket exists and is accessible."""
         if not self.session:
             return None
@@ -299,7 +297,7 @@ class S3BucketEnumerator:
                         # Bucket doesn't exist in this region
                         continue
 
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 continue
             except Exception as e:
                 logger.debug(f"Error checking bucket {bucket_name}: {e}")
@@ -310,7 +308,7 @@ class S3BucketEnumerator:
     async def check_bucket_permissions(
         self,
         bucket_name: str
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Check specific permissions on an S3 bucket."""
         if not self.session:
             return {}
@@ -369,10 +367,10 @@ class DatabasePortScanner:
 
     async def scan_hosts(
         self,
-        hosts: List[str],
-        ports: Optional[List[int]] = None,
+        hosts: list[str],
+        ports: list[int] | None = None,
         max_concurrent: int = 50
-    ) -> List[ExposedService]:
+    ) -> list[ExposedService]:
         """
         Scan hosts for exposed database ports.
 
@@ -391,7 +389,7 @@ class DatabasePortScanner:
 
         semaphore = asyncio.Semaphore(max_concurrent)
 
-        async def check_port(host: str, port: int) -> Optional[ExposedService]:
+        async def check_port(host: str, port: int) -> ExposedService | None:
             async with semaphore:
                 try:
                     result = await self._check_port(host, port)
@@ -417,7 +415,7 @@ class DatabasePortScanner:
 
         return findings
 
-    async def _check_port(self, host: str, port: int) -> Optional[ExposedService]:
+    async def _check_port(self, host: str, port: int) -> ExposedService | None:
         """Check if a specific port is open and identify service."""
         try:
             reader, writer = await asyncio.wait_for(
@@ -458,7 +456,7 @@ class DatabasePortScanner:
                 }
             )
 
-        except asyncio.TimeoutError:
+        except TimeoutError:
             return None
         except ConnectionRefusedError:
             return None
@@ -466,7 +464,7 @@ class DatabasePortScanner:
             logger.debug(f"Error checking {host}:{port}: {e}")
             return None
 
-    async def test_mongodb_auth(self, host: str, port: int = 27017) -> Dict[str, Any]:
+    async def test_mongodb_auth(self, host: str, port: int = 27017) -> dict[str, Any]:
         """Test MongoDB for authentication requirements."""
         result = {"auth_required": None, "version": None}
 
@@ -505,7 +503,7 @@ class DatabasePortScanner:
 
         return result
 
-    async def test_redis_auth(self, host: str, port: int = 6379) -> Dict[str, Any]:
+    async def test_redis_auth(self, host: str, port: int = 6379) -> dict[str, Any]:
         """Test Redis for authentication requirements."""
         result = {"auth_required": None, "version": None}
 
@@ -589,7 +587,7 @@ class GraphQLIntrospector:
     }
     """
 
-    def __init__(self, session: Optional[aiohttp.ClientSession] = None):
+    def __init__(self, session: aiohttp.ClientSession | None = None):
         self.session = session
         self._owned_session = session is None
 
@@ -609,7 +607,7 @@ class GraphQLIntrospector:
         self,
         base_url: str,
         max_concurrent: int = 10
-    ) -> List[ExposedService]:
+    ) -> list[ExposedService]:
         """
         Discover GraphQL endpoints on a target.
 
@@ -625,7 +623,7 @@ class GraphQLIntrospector:
 
         semaphore = asyncio.Semaphore(max_concurrent)
 
-        async def check_endpoint(endpoint: str) -> Optional[ExposedService]:
+        async def check_endpoint(endpoint: str) -> ExposedService | None:
             async with semaphore:
                 try:
                     result = await self._check_endpoint(f"{base_url}{endpoint}")
@@ -646,7 +644,7 @@ class GraphQLIntrospector:
 
         return findings
 
-    async def _check_endpoint(self, url: str) -> Optional[ExposedService]:
+    async def _check_endpoint(self, url: str) -> ExposedService | None:
         """Check if a URL is a GraphQL endpoint with introspection enabled."""
         if not self.session:
             return None
@@ -722,7 +720,7 @@ class GraphQLIntrospector:
 
         return None
 
-    async def introspect_endpoint(self, url: str) -> Optional[Dict[str, Any]]:
+    async def introspect_endpoint(self, url: str) -> dict[str, Any] | None:
         """Perform full introspection on a GraphQL endpoint."""
         if not self.session:
             return None
@@ -758,7 +756,7 @@ class CertificateTransparency:
 
     CRTSH_API = "https://crt.sh/json"
 
-    def __init__(self, session: Optional[aiohttp.ClientSession] = None):
+    def __init__(self, session: aiohttp.ClientSession | None = None):
         self.session = session
         self._owned_session = session is None
 
@@ -778,7 +776,7 @@ class CertificateTransparency:
         self,
         domain: str,
         include_subdomains: bool = True
-    ) -> List[str]:
+    ) -> list[str]:
         """
         Query certificate transparency logs for a domain.
 
@@ -827,12 +825,12 @@ class CertificateTransparency:
         except Exception as e:
             logger.error(f"CT log query failed for {domain}: {e}")
 
-        return sorted(list(subdomains))
+        return sorted(subdomains)
 
     async def get_certificate_details(
         self,
         domain: str
-    ) -> List[CertificateInfo]:
+    ) -> list[CertificateInfo]:
         """Get detailed certificate information from CT logs."""
         certificates = []
 
@@ -888,7 +886,7 @@ class ContainerAPIExplorer:
     DOCKER_ENDPOINTS = ["/version", "/info", "/containers/json", "/images/json"]
     K8S_ENDPOINTS = ["/api", "/api/v1", "/apis", "/version", "/healthz"]
 
-    def __init__(self, session: Optional[aiohttp.ClientSession] = None):
+    def __init__(self, session: aiohttp.ClientSession | None = None):
         self.session = session
         self._owned_session = session is None
 
@@ -906,15 +904,15 @@ class ContainerAPIExplorer:
 
     async def scan_docker_apis(
         self,
-        hosts: List[str],
+        hosts: list[str],
         max_concurrent: int = 20
-    ) -> List[ExposedService]:
+    ) -> list[ExposedService]:
         """Scan for exposed Docker APIs."""
         findings = []
 
         semaphore = asyncio.Semaphore(max_concurrent)
 
-        async def check_host(host: str, port: int) -> Optional[ExposedService]:
+        async def check_host(host: str, port: int) -> ExposedService | None:
             async with semaphore:
                 try:
                     result = await self._check_docker_api(host, port)
@@ -938,7 +936,7 @@ class ContainerAPIExplorer:
 
         return findings
 
-    async def _check_docker_api(self, host: str, port: int) -> Optional[ExposedService]:
+    async def _check_docker_api(self, host: str, port: int) -> ExposedService | None:
         """Check if a Docker API is exposed."""
         if not self.session:
             return None
@@ -989,15 +987,15 @@ class ContainerAPIExplorer:
 
     async def scan_kubernetes_apis(
         self,
-        hosts: List[str],
+        hosts: list[str],
         max_concurrent: int = 20
-    ) -> List[ExposedService]:
+    ) -> list[ExposedService]:
         """Scan for exposed Kubernetes APIs."""
         findings = []
 
         semaphore = asyncio.Semaphore(max_concurrent)
 
-        async def check_host(host: str, port: int) -> Optional[ExposedService]:
+        async def check_host(host: str, port: int) -> ExposedService | None:
             async with semaphore:
                 try:
                     result = await self._check_kubernetes_api(host, port)
@@ -1021,7 +1019,7 @@ class ContainerAPIExplorer:
 
         return findings
 
-    async def _check_kubernetes_api(self, host: str, port: int) -> Optional[ExposedService]:
+    async def _check_kubernetes_api(self, host: str, port: int) -> ExposedService | None:
         """Check if a Kubernetes API is exposed."""
         if not self.session:
             return None
@@ -1098,12 +1096,12 @@ class ExposedServiceHunter:
     """
 
     def __init__(self):
-        self.session: Optional[aiohttp.ClientSession] = None
-        self._s3_enumerator: Optional[S3BucketEnumerator] = None
+        self.session: aiohttp.ClientSession | None = None
+        self._s3_enumerator: S3BucketEnumerator | None = None
         self._db_scanner = DatabasePortScanner()
-        self._graphql_introspector: Optional[GraphQLIntrospector] = None
-        self._ct_logs: Optional[CertificateTransparency] = None
-        self._container_explorer: Optional[ContainerAPIExplorer] = None
+        self._graphql_introspector: GraphQLIntrospector | None = None
+        self._ct_logs: CertificateTransparency | None = None
+        self._container_explorer: ContainerAPIExplorer | None = None
 
     async def __aenter__(self):
         """Async context manager entry."""
@@ -1128,7 +1126,7 @@ class ExposedServiceHunter:
             await self.session.close()
             self.session = None
 
-    async def enumerate_s3_buckets(self, target: str) -> List[ExposedService]:
+    async def enumerate_s3_buckets(self, target: str) -> list[ExposedService]:
         """
         Enumerate S3 buckets for a target.
 
@@ -1143,7 +1141,7 @@ class ExposedServiceHunter:
 
         return await self._s3_enumerator.enumerate_buckets(target)
 
-    async def scan_database_ports(self, hosts: List[str]) -> List[ExposedService]:
+    async def scan_database_ports(self, hosts: list[str]) -> list[ExposedService]:
         """
         Scan hosts for exposed database ports.
 
@@ -1155,7 +1153,7 @@ class ExposedServiceHunter:
         """
         return await self._db_scanner.scan_hosts(hosts)
 
-    async def query_certificate_transparency(self, domain: str) -> List[str]:
+    async def query_certificate_transparency(self, domain: str) -> list[str]:
         """
         Query certificate transparency logs.
 
@@ -1170,7 +1168,7 @@ class ExposedServiceHunter:
 
         return await self._ct_logs.query_domain(domain)
 
-    async def check_graphql_introspection(self, endpoint: str) -> Optional[Dict]:
+    async def check_graphql_introspection(self, endpoint: str) -> dict | None:
         """
         Check GraphQL endpoint for introspection.
 
@@ -1188,7 +1186,7 @@ class ExposedServiceHunter:
             return result.to_dict()
         return None
 
-    async def discover_graphql_endpoints(self, base_url: str) -> List[ExposedService]:
+    async def discover_graphql_endpoints(self, base_url: str) -> list[ExposedService]:
         """
         Discover GraphQL endpoints on a target.
 
@@ -1203,7 +1201,7 @@ class ExposedServiceHunter:
 
         return await self._graphql_introspector.discover_endpoints(base_url)
 
-    async def scan_container_apis(self, hosts: List[str]) -> List[ExposedService]:
+    async def scan_container_apis(self, hosts: list[str]) -> list[ExposedService]:
         """
         Scan for exposed Docker and Kubernetes APIs.
 
@@ -1228,7 +1226,7 @@ class ExposedServiceHunter:
 
         return findings
 
-    async def hunt(self, target: str) -> Dict[str, List[ExposedService]]:
+    async def hunt(self, target: str) -> dict[str, list[ExposedService]]:
         """
         Perform comprehensive exposed service hunt.
 
@@ -1319,7 +1317,7 @@ class ExposedServiceHunter:
 
         return results
 
-    def get_statistics(self) -> Dict[str, Any]:
+    def get_statistics(self) -> dict[str, Any]:
         """Get hunter statistics."""
         return {
             "session_active": self.session is not None,
@@ -1340,7 +1338,7 @@ class APICache:
     Used for rate-limited APIs like Shodan and Censys.
     """
 
-    def __init__(self, cache_dir: Optional[str] = None, ttl_seconds: int = 3600):
+    def __init__(self, cache_dir: str | None = None, ttl_seconds: int = 3600):
         """
         Initialize API cache.
 
@@ -1349,7 +1347,6 @@ class APICache:
             ttl_seconds: Cache TTL in seconds (default: 1 hour)
         """
         import sqlite3
-        import os
         from pathlib import Path
 
         self.ttl_seconds = ttl_seconds
@@ -1373,7 +1370,7 @@ class APICache:
         """)
         self._conn.commit()
 
-    def get(self, key: str) -> Optional[str]:
+    def get(self, key: str) -> str | None:
         """
         Get cached value if not expired.
 
@@ -1431,8 +1428,8 @@ class APICache:
 
 async def search_shodan(
     query: str,
-    api_key: Optional[str] = None
-) -> List[Dict[str, Any]]:
+    api_key: str | None = None
+) -> list[dict[str, Any]]:
     """
     Search Shodan using free API (no key or community key).
 
@@ -1449,9 +1446,8 @@ async def search_shodan(
       - No API key hardcoded (uses .env)
     """
     import os
-    import json
 
-    results: List[Dict[str, Any]] = []
+    results: list[dict[str, Any]] = []
 
     # Get API key from env if not provided
     if not api_key:
@@ -1525,9 +1521,9 @@ async def search_shodan(
 
 async def search_censys(
     query: str,
-    api_id: Optional[str] = None,
-    api_secret: Optional[str] = None
-) -> List[Dict[str, Any]]:
+    api_id: str | None = None,
+    api_secret: str | None = None
+) -> list[dict[str, Any]]:
     """
     Search Censys using free API (Censys data API).
 
@@ -1546,9 +1542,8 @@ async def search_censys(
     """
     import base64
     import os
-    import json
 
-    results: List[Dict[str, Any]] = []
+    results: list[dict[str, Any]] = []
 
     # Get credentials from env if not provided
     if not api_id:
@@ -1633,20 +1628,20 @@ async def search_censys(
 
 
 # Convenience functions
-async def quick_hunt(target: str) -> Dict[str, List[ExposedService]]:
+async def quick_hunt(target: str) -> dict[str, list[ExposedService]]:
     """Quick exposed service hunt."""
     async with ExposedServiceHunter() as hunter:
         return await hunter.hunt(target)
 
 
-async def check_s3_bucket(bucket_name: str) -> Optional[ExposedService]:
+async def check_s3_bucket(bucket_name: str) -> ExposedService | None:
     """Check if a specific S3 bucket exists and is exposed."""
     async with S3BucketEnumerator() as enumerator:
         results = await enumerator.enumerate_buckets(bucket_name)
         return results[0] if results else None
 
 
-async def scan_graphql_endpoint(url: str) -> Optional[Dict]:
+async def scan_graphql_endpoint(url: str) -> dict | None:
     """Scan a specific GraphQL endpoint."""
     async with GraphQLIntrospector() as introspector:
         result = await introspector._check_endpoint(url)

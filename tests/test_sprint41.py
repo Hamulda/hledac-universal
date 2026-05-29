@@ -9,20 +9,17 @@ Tests for:
 """
 
 import asyncio
-import hashlib
 import heapq
 import time
 import unittest
-from collections import deque
 from unittest.mock import AsyncMock, MagicMock, patch
-import psutil
 
 import pytest
+from hledac.universal.brain.hermes3_engine import Hermes3Engine
+from hledac.universal.coordinators.fetch_coordinator import FetchCoordinator, ZstdCompressor
 
 # Import the modules under test
 from hledac.universal.layers.communication_layer import CommunicationLayer, _BatchItem
-from hledac.universal.brain.hermes3_engine import Hermes3Engine
-from hledac.universal.coordinators.fetch_coordinator import FetchCoordinator, ZstdCompressor
 from hledac.universal.project_types import CommunicationConfig
 
 

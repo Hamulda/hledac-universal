@@ -42,9 +42,10 @@ import resource
 import sys
 import tempfile
 import time
-from datetime import datetime, timezone
+from collections.abc import AsyncIterator
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, AsyncIterator
+from typing import Any
 
 # ── paths ────────────────────────────────────────────────────────────────────────
 BENCH_FILE = Path(__file__).resolve()
@@ -542,7 +543,7 @@ def _build_record(
         # metadata
         "type": "benchmark_record",
         "name": name,
-        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "timestamp": datetime.now(UTC).isoformat(),
         "python_version": interpreter_flags["python_version"],
         "platform": interpreter_flags["platform"],
         "free_threaded": interpreter_flags["free_threaded"],
@@ -578,7 +579,7 @@ def main() -> int:
 
     # Ensure output dir
     REPORTS_DIR.mkdir(parents=True, exist_ok=True)
-    ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    ts = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
     out_path = REPORTS_DIR / f"bench_m1_runtime_gates_{ts}.jsonl"
 
     interpreter_flags = _detect_interpreter_flags()

@@ -22,15 +22,14 @@ import contextlib
 import hashlib
 import logging
 import time
-
-import orjson
 from collections import OrderedDict, defaultdict, deque
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 import lmdb
 import numpy as np
+import orjson
 
 from context_optimization.mmr import maximal_marginal_relevance
 
@@ -191,7 +190,7 @@ class LanceDBIdentityStore:
 
         # Sprint 77: Embedder and MRL
         self._embedder = None
-        self._embedder_type: Optional[str] = None
+        self._embedder_type: str | None = None
         self._embed_lock = asyncio.Lock()
         self._current_mrl_dim = 768
         self._mrl_enabled = False
@@ -206,7 +205,7 @@ class LanceDBIdentityStore:
         self._access_counts = defaultdict(int)
 
         # Sprint 77: Index build status
-        self._index_build_status: Dict[str, Any] = {
+        self._index_build_status: dict[str, Any] = {
             'in_progress': False,
             'started_at': None,
             'completed_at': None,
@@ -214,7 +213,7 @@ class LanceDBIdentityStore:
             'index_type': None,
             'progress_percent': 0
         }
-        self._index_cache: Optional[bool] = None
+        self._index_cache: bool | None = None
         self._index_cache_time: float = 0.0
         self._index_build_deferred = False
 
@@ -235,7 +234,7 @@ class LanceDBIdentityStore:
     # Sprint 76: LMDB Embedding Cache Methods
     # =============================================================================
 
-    def _lmdb_put(self, key: str, data: Dict) -> None:
+    def _lmdb_put(self, key: str, data: dict) -> None:
         """Synchronous LMDB put operation - zero-copy via orjson."""
         try:
             with self._cache_env.begin(write=True) as txn:
@@ -312,7 +311,7 @@ class LanceDBIdentityStore:
         self._fallback_dim = self._current_mrl_dim
         return True
 
-    async def _embed_single(self, text: str) -> List[float]:
+    async def _embed_single(self, text: str) -> list[float]:
         """Embed single text via current embedder (for indexing - uses embed_document)."""
         # Sprint 81 Fáze 4: Support MLXEmbeddingManager, CoreML, and numpy fallback
         if self._embedder_type == 'numpy_fallback':
@@ -347,7 +346,7 @@ class LanceDBIdentityStore:
             logger.warning(f"[EMBED] Single embed failed: {e}")
             return []
 
-    async def _embed_batch(self, texts: List[str], batch_size: int = 16) -> List[List[float]]:
+    async def _embed_batch(self, texts: list[str], batch_size: int = 16) -> list[list[float]]:
         """Generate embeddings in batches - thread-safe (uses embed_document for indexing)."""
         # Sprint 81 Fáze 4: Support MLXEmbeddingManager, CoreML, and numpy fallback
         if not texts:
@@ -408,13 +407,13 @@ class LanceDBIdentityStore:
                         all_embs.append(await self._embed_single(t))
         return all_embs
 
-    def _compute_binary_signature(self, embedding: List[float]) -> int:
+    def _compute_binary_signature(self, embedding: list[float]) -> int:
         """64-bit binary signature - numpy packbits (faster for 64 elements)."""
         arr = np.array(embedding[:64], dtype=np.float32) > 0
         packed = np.packbits(arr, bitorder='little')
         return int.from_bytes(packed.tobytes()[:8], 'little')
 
-    def _compute_binary_signatures_batch(self, embeddings: List[List[float]]) -> List[int]:
+    def _compute_binary_signatures_batch(self, embeddings: list[list[float]]) -> list[int]:
         """MLX version for batched calculations."""
         try:
             import mlx.core as mx
@@ -437,10 +436,10 @@ class LanceDBIdentityStore:
             return 'vector'
         return 'hybrid'
 
-    def _rrf_fusion(self, fts_results: List[Dict], vec_results: List[Dict], top_k: int, k: int = 60) -> List[Dict]:
+    def _rrf_fusion(self, fts_results: list[dict], vec_results: list[dict], top_k: int, k: int = 60) -> list[dict]:
         """Reciprocal Rank Fusion with robust keying."""
-        scores: Dict[str, float] = defaultdict(float)
-        docs: Dict[str, Dict] = {}
+        scores: dict[str, float] = defaultdict(float)
+        docs: dict[str, dict] = {}
 
         for rank, doc in enumerate(fts_results):
             key = doc.get('id') or doc.get('_rowid') or hashlib.md5(doc.get('text', '').encode()).hexdigest()
@@ -481,7 +480,7 @@ class LanceDBIdentityStore:
             except Exception:
                 pass
 
-    async def _warm_embedding_cache(self, queries: List[str], top_k: int = 50) -> None:
+    async def _warm_embedding_cache(self, queries: list[str], top_k: int = 50) -> None:
         """Pre-load embeddings for frequently used queries."""
         if not queries:
             return
@@ -505,7 +504,7 @@ class LanceDBIdentityStore:
             except Exception:
                 pass
 
-    async def health_check(self) -> Dict[str, Any]:
+    async def health_check(self) -> dict[str, Any]:
         """Check embedding store health."""
         result = {
             'healthy': True,
@@ -535,7 +534,7 @@ class LanceDBIdentityStore:
             result['errors'].append(str(e))
         return result
 
-    def get_cache_telemetry(self) -> Dict[str, Any]:
+    def get_cache_telemetry(self) -> dict[str, Any]:
         """F214OPT-C: Telemetry accessor for LanceDB cache bounds and stats."""
         result = {
             'lancedb_cache_limit_mb': self._MAX_CACHE_SIZE / (1024 * 1024),
@@ -597,7 +596,7 @@ class LanceDBIdentityStore:
             logger.warning(f"Failed to init embedding cache: {e}")
             self._cache_env = None
 
-    async def _get_cached_embedding(self, text_hash: str) -> Optional[List[float]]:
+    async def _get_cached_embedding(self, text_hash: str) -> list[float] | None:
         """Get embedding from LMDB cache with writeback buffer."""
         if self._cache_env is None:
             return None
@@ -667,7 +666,7 @@ class LanceDBIdentityStore:
         self._metrics['cache_hits'] += 1
         return data
 
-    async def _store_embedding(self, text_hash: str, embedding: List[float], ttl: Optional[float] = None) -> None:
+    async def _store_embedding(self, text_hash: str, embedding: list[float], ttl: float | None = None) -> None:
         """Store embedding with float16 quantization (50% memory savings) and writeback buffer."""
         if self._cache_env is None:
             return
@@ -777,7 +776,7 @@ class LanceDBIdentityStore:
             logger.debug(f"Compilation failed: {e}")
             self._compiled_similarity = None
 
-    async def _mlx_rerank(self, query_emb: List[float], candidates: List[Dict], top_k: int) -> List[Dict]:
+    async def _mlx_rerank(self, query_emb: list[float], candidates: list[dict], top_k: int) -> list[dict]:
         """Rerank candidates using MLX cosine similarity."""
         if self._mlx_embeddings is None or len(candidates) == 0:
             return candidates[:top_k]
@@ -810,7 +809,7 @@ class LanceDBIdentityStore:
         sorted_idx = np.argsort(scores_np)[::-1][:top_k]
         return [valid_candidates[i] for i in sorted_idx]
 
-    async def _binary_prefilter(self, query_emb: List[float], candidates: List[Dict], count: int = 500) -> List[Dict]:
+    async def _binary_prefilter(self, query_emb: list[float], candidates: list[dict], count: int = 500) -> list[dict]:
         """Fast pre-filter using binary embeddings (Hamming distance)."""
         if self._binary_embeddings is None or len(candidates) == 0:
             return candidates
@@ -846,7 +845,7 @@ class LanceDBIdentityStore:
             logger.debug(f"Binary prefilter failed: {e}")
             return candidates
 
-    def _mmr(self, candidates: List[Dict], query_emb: List[float], lambda_param: float = 0.5, top_k: int = 30) -> List[Dict]:
+    def _mmr(self, candidates: list[dict], query_emb: list[float], lambda_param: float = 0.5, top_k: int = 30) -> list[dict]:
         """Maximal Marginal Relevance - reduce duplicates in results."""
         if len(candidates) <= top_k:
             return candidates
@@ -897,7 +896,6 @@ class LanceDBIdentityStore:
             pass
 
         try:
-            import usearch
             from usearch.index import Index
 
             if self._table.count_rows() < 1000:
@@ -924,7 +922,7 @@ class LanceDBIdentityStore:
             self._usearch_index = None
         self._usearch_loaded = True
 
-    async def _usearch_search(self, query_emb: List[float], count: int = 200) -> List[Dict]:
+    async def _usearch_search(self, query_emb: list[float], count: int = 200) -> list[dict]:
         """Search using usearch (if available)."""
         if self._usearch_index is None:
             return []
@@ -1095,8 +1093,8 @@ class LanceDBIdentityStore:
     async def add_entity(
         self,
         entity_id: str,
-        embedding: List[float],
-        aliases: List[str]
+        embedding: list[float],
+        aliases: list[str]
     ) -> bool:
         """
         Add entity to identity store.
@@ -1113,9 +1111,8 @@ class LanceDBIdentityStore:
             return False
 
         try:
-            import pyarrow as pa
 
-            now = datetime.now(timezone.utc)
+            now = datetime.now(UTC)
 
             # Convert to pyarrow format
             data = [{
@@ -1141,11 +1138,11 @@ class LanceDBIdentityStore:
 
     async def search_similar(
         self,
-        embedding: List[float],
+        embedding: list[float],
         text_hint: str = "",
         threshold: float = 0.85,
         limit: int = 20
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """
         Search for similar entities.
 
@@ -1162,7 +1159,6 @@ class LanceDBIdentityStore:
             return []
 
         try:
-            import pandas as pd
 
             loop = asyncio.get_running_loop()
 
@@ -1228,8 +1224,8 @@ class LanceDBIdentityStore:
 
     async def compute_similarity(
         self,
-        emb1: List[float],
-        emb2: List[float]
+        emb1: list[float],
+        emb2: list[float]
     ) -> float:
         """
         Compute cosine similarity between two embeddings.
@@ -1278,9 +1274,9 @@ class LanceDBIdentityStore:
     async def search_similar_adaptive(
         self,
         query_text: str,
-        query_emb: List[float],
+        query_emb: list[float],
         top_k: int = 10
-    ) -> List[Dict]:
+    ) -> list[dict]:
         """
         Hybrid search with adaptive reranking and MMR (Sprint 76).
 
@@ -1361,11 +1357,11 @@ class LanceDBIdentityStore:
     async def search_with_mmr(
         self,
         query_text: str,
-        query_emb: List[float],
+        query_emb: list[float],
         top_k: int = 10,
         lambda_mult: float = 0.5,
         fetch_k: int = 30,
-    ) -> List[Dict]:
+    ) -> list[dict]:
         """
         Diversity-aware search using Maximal Marginal Relevance from context_optimization.
 
@@ -1392,7 +1388,7 @@ class LanceDBIdentityStore:
             return []
 
         # Stage 2: Extract candidate embeddings for MMR
-        candidate_embs: List[np.ndarray] = []
+        candidate_embs: list[np.ndarray] = []
         for c in candidates:
             emb = c.get('_embedding')
             if emb is None:
@@ -1421,7 +1417,7 @@ class LanceDBIdentityStore:
 
 
 # Module-level singleton
-_identity_store: Optional[LanceDBIdentityStore] = None
+_identity_store: LanceDBIdentityStore | None = None
 
 
 def get_identity_store() -> LanceDBIdentityStore:

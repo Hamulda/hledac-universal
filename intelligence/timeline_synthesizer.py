@@ -22,7 +22,7 @@ import logging
 import time
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -59,7 +59,7 @@ class TimelineEvent:
     confidence: float = 1.0
     evidence: list[str] = field(default_factory=list)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "ts": self.ts,
             "event_type": self.event_type,
@@ -77,10 +77,10 @@ class TimelineMetadata:
     Metadata about the synthesized timeline.
     """
     total_events: int = 0
-    oldest_event_ts: Optional[float] = None
-    newest_event_ts: Optional[float] = None
-    event_types: Dict[str, int] = field(default_factory=dict)
-    sources: Dict[str, int] = field(default_factory=dict)
+    oldest_event_ts: float | None = None
+    newest_event_ts: float | None = None
+    event_types: dict[str, int] = field(default_factory=dict)
+    sources: dict[str, int] = field(default_factory=dict)
 
 
 @dataclass
@@ -88,11 +88,11 @@ class SynthesizedTimeline:
     """
     Complete synthesized timeline with events and metadata.
     """
-    events: List[TimelineEvent]
+    events: list[TimelineEvent]
     metadata: TimelineMetadata
     entity_id: str  # primary entity this timeline is about
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "entity_id": self.entity_id,
             "metadata": {
@@ -136,8 +136,8 @@ class TimelineSynthesizer:
     """
 
     def __init__(self) -> None:
-        self._events: List[TimelineEvent] = []
-        self._stats: Dict[str, int] = {
+        self._events: list[TimelineEvent] = []
+        self._stats: dict[str, int] = {
             "ct_events_added": 0,
             "archive_events_added": 0,
             "document_events_added": 0,
@@ -148,7 +148,7 @@ class TimelineSynthesizer:
 
     # ── Event Sources ─────────────────────────────────────────────────────────
 
-    def add_ct_events(self, findings: List[Any]) -> int:
+    def add_ct_events(self, findings: list[Any]) -> int:
         """
         Add Certificate Transparency timestamp events from findings.
 
@@ -200,7 +200,7 @@ class TimelineSynthesizer:
         self._stats["ct_events_added"] += count
         return count
 
-    def add_archive_events(self, archive_results: List[Any]) -> int:
+    def add_archive_events(self, archive_results: list[Any]) -> int:
         """
         Add archive snapshot events from archive discovery results.
 
@@ -252,7 +252,7 @@ class TimelineSynthesizer:
         self._stats["archive_events_added"] += count
         return count
 
-    def add_document_timestamps(self, doc_metadata: List[Any]) -> int:
+    def add_document_timestamps(self, doc_metadata: list[Any]) -> int:
         """
         Add document creation/modification timestamp events.
 
@@ -305,7 +305,7 @@ class TimelineSynthesizer:
         self._stats["document_events_added"] += count
         return count
 
-    def add_finding_events(self, findings: List[Any], source_label: str = "finding") -> int:
+    def add_finding_events(self, findings: list[Any], source_label: str = "finding") -> int:
         """
         Add finding acceptance timestamp events.
 
@@ -373,7 +373,7 @@ class TimelineSynthesizer:
         cutoff = now - (MAX_EVENT_AGE_DAYS * 86400)
 
         # Filter and validate
-        valid_events: List[TimelineEvent] = []
+        valid_events: list[TimelineEvent] = []
         for event in self._events:
             if event.ts < cutoff:
                 self._stats["invalid_skipped"] += 1
@@ -396,8 +396,8 @@ class TimelineSynthesizer:
         oldest = valid_events[0].ts if valid_events else None
         newest = valid_events[-1].ts if valid_events else None
 
-        event_types: Dict[str, int] = {}
-        sources: Dict[str, int] = {}
+        event_types: dict[str, int] = {}
+        sources: dict[str, int] = {}
         for e in valid_events:
             event_types[e.event_type] = event_types.get(e.event_type, 0) + 1
             sources[e.source] = sources.get(e.source, 0) + 1
@@ -449,14 +449,14 @@ class TimelineSynthesizer:
 
     # ── Stats ────────────────────────────────────────────────────────────────
 
-    def get_stats(self) -> Dict[str, int]:
+    def get_stats(self) -> dict[str, int]:
         """Return synthesizer statistics."""
         return self._stats.copy()
 
     def clear(self) -> None:
         """Clear all events and reset stats."""
         self._events.clear()
-        self._stats = {k: 0 for k in self._stats}
+        self._stats = dict.fromkeys(self._stats, 0)
 
 
 # ── Factory ───────────────────────────────────────────────────────────────────

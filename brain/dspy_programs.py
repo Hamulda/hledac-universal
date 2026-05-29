@@ -17,11 +17,11 @@ Persistence: ~/.hledac/dspy/{name}.json (max 10 versions per task).
 
 from __future__ import annotations
 
-import os
 import json
 import logging
+import os
 from pathlib import Path
-from typing import List, Optional, Dict, Any
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -116,7 +116,7 @@ class HypothesisGeneratorProgram:
         rag_context: str = "",
         graph_summary: str = "",
         reward_context: str = "",
-        existing_hypotheses: Optional[List[str]] = None,
+        existing_hypotheses: list[str] | None = None,
     ) -> dspy.Prediction:
         return self.program(
             research_query=research_query,
@@ -137,7 +137,7 @@ class HypothesisRankProgram:
 
     def forward(
         self,
-        hypotheses: List[str],
+        hypotheses: list[str],
         sprint_context: str = "",
     ) -> dspy.Prediction:
         return self.program(
@@ -148,7 +148,7 @@ class HypothesisRankProgram:
 
 # ── Loader ────────────────────────────────────────────────────────────────────
 
-def load_compiled_program(name: str) -> Optional[Any]:
+def load_compiled_program(name: str) -> Any | None:
     """
     Load a compiled DSPy program from ~/.hledac/dspy/{name}.json.
 
@@ -197,7 +197,7 @@ def load_compiled_program(name: str) -> Optional[Any]:
         return None
 
 
-def save_compiled_program(name: str, state: Dict[str, Any]) -> None:
+def save_compiled_program(name: str, state: dict[str, Any]) -> None:
     """Save compiled program state to ~/.hledac/dspy/{name}.json."""
     path = _DSPY_DIR / f"{name}.json"
     path.write_text(json.dumps(state, indent=2))
@@ -206,14 +206,14 @@ def save_compiled_program(name: str, state: Dict[str, Any]) -> None:
 
 # ── Program Registry ─────────────────────────────────────────────────────────
 
-_PROGRAMS: Dict[str, Optional[Any]] = {
+_PROGRAMS: dict[str, Any | None] = {
     "dark_query": None,
     "hypothesis_generator": None,
     "hypothesis_ranker": None,
 }
 
 
-def get_program(name: str) -> Optional[Any]:
+def get_program(name: str) -> Any | None:
     """Get (or lazy-load) a compiled DSPy program."""
     if name not in _PROGRAMS:
         return None

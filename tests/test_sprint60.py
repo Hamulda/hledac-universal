@@ -2,11 +2,8 @@
 Testy pro Sprint 60 – HTN plánování, cost model, explainer a hypothesis.
 """
 
-import asyncio
 import tempfile
-import time
-from pathlib import Path
-from unittest.mock import MagicMock, AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import numpy as np
 import pytest
@@ -34,7 +31,7 @@ class TestResourceGovernor:
 
     def test_governor_init(self):
         """Test inicializace ResourceGovernor."""
-        from hledac.universal.core.resource_governor import ResourceGovernor, Priority
+        from hledac.universal.core.resource_governor import Priority, ResourceGovernor
         gov = ResourceGovernor(memory_high_water_mb=5000, thermal_threshold=80.0)
         assert gov.high_water == 5000
         assert gov.thermal_threshold == 80.0
@@ -43,7 +40,7 @@ class TestResourceGovernor:
 
     def test_can_afford_sync_no_resources(self):
         """Test can_afford_sync když nejsou dostupné zdroje."""
-        from hledac.universal.core.resource_governor import ResourceGovernor, Priority
+        from hledac.universal.core.resource_governor import Priority, ResourceGovernor
 
         with patch('hledac.universal.core.resource_governor.psutil.virtual_memory') as mock_mem:
             mock_mem.return_value = MagicMock(used=7000 * 1024 * 1024)  # 7GB used
@@ -54,7 +51,7 @@ class TestResourceGovernor:
 
     def test_can_afford_sync_with_resources(self):
         """Test can_afford_sync když jsou dostupné zdroje."""
-        from hledac.universal.core.resource_governor import ResourceGovernor, Priority
+        from hledac.universal.core.resource_governor import Priority, ResourceGovernor
 
         with patch('hledac.universal.core.resource_governor.psutil.virtual_memory') as mock_mem:
             mock_mem.return_value = MagicMock(used=2000 * 1024 * 1024)  # 2GB used
@@ -66,7 +63,7 @@ class TestResourceGovernor:
     @pytest.mark.asyncio
     async def test_reserve_context_manager(self):
         """Test async context manager pro rezervaci."""
-        from hledac.universal.core.resource_governor import ResourceGovernor, Priority
+        from hledac.universal.core.resource_governor import Priority, ResourceGovernor
 
         with patch('hledac.universal.core.resource_governor.psutil.virtual_memory') as mock_mem:
             mock_mem.return_value = MagicMock(used=2000 * 1024 * 1024)
@@ -219,8 +216,8 @@ class TestSearch:
 
     def test_anytime_beam_search_simple(self):
         """Test simple beam search."""
-        from hledac.universal.planning.search import anytime_beam_search, SearchNode
         from hledac.universal.core.resource_governor import ResourceGovernor
+        from hledac.universal.planning.search import anytime_beam_search
 
         gov = ResourceGovernor(memory_high_water_mb=6000)
 
@@ -269,8 +266,8 @@ class TestHTNPlanner:
         """Vytvoří mock komponenty."""
         from hledac.universal.core.resource_governor import ResourceGovernor
         from hledac.universal.planning.cost_model import AdaptiveCostModel
-        from hledac.universal.planning.task_cache import TaskCache
         from hledac.universal.planning.slm_decomposer import SLMDecomposer
+        from hledac.universal.planning.task_cache import TaskCache
 
         gov = ResourceGovernor(memory_high_water_mb=6000)
         cost_model = AdaptiveCostModel(gov, None, feature_dim=16)
@@ -360,8 +357,8 @@ class TestHypothesis:
 
     def test_eig_calculator(self):
         """Test EIG calculator."""
-        from hledac.universal.hypothesis.eig import EIGCalculator
         from hledac.universal.hypothesis.dempster_shafer import DempsterShafer
+        from hledac.universal.hypothesis.eig import EIGCalculator
 
         calc = EIGCalculator()
 
@@ -389,8 +386,8 @@ class TestExplainer:
 
     def test_fast_explainer_init(self, mock_graph_rag):
         """Test inicializace FastExplainer."""
-        from hledac.universal.knowledge.explainer.fast import FastExplainer
         from hledac.universal.core.resource_governor import ResourceGovernor
+        from hledac.universal.knowledge.explainer.fast import FastExplainer
 
         gov = ResourceGovernor(memory_high_water_mb=6000)
         explainer = FastExplainer(mock_graph_rag, gov)
@@ -401,8 +398,8 @@ class TestExplainer:
     @pytest.mark.asyncio
     async def test_fast_explainer_explain_path(self, mock_graph_rag):
         """Test explain_path."""
-        from hledac.universal.knowledge.explainer.fast import FastExplainer
         from hledac.universal.core.resource_governor import ResourceGovernor
+        from hledac.universal.knowledge.explainer.fast import FastExplainer
 
         gov = ResourceGovernor(memory_high_water_mb=6000)
         explainer = FastExplainer(mock_graph_rag, gov)
@@ -413,8 +410,8 @@ class TestExplainer:
 
     def test_deep_explainer_init(self):
         """Test inicializace DeepExplainer."""
-        from hledac.universal.knowledge.explainer.deep import DeepExplainer
         from hledac.universal.core.resource_governor import ResourceGovernor
+        from hledac.universal.knowledge.explainer.deep import DeepExplainer
 
         gov = ResourceGovernor(memory_high_water_mb=6000)
         gnn = MagicMock()
@@ -432,8 +429,8 @@ class TestSLMDecomposer:
     def decomposer(self):
         """Vytvoří SLMDecomposer."""
         from hledac.universal.core.resource_governor import ResourceGovernor
-        from hledac.universal.planning.task_cache import TaskCache
         from hledac.universal.planning.slm_decomposer import SLMDecomposer
+        from hledac.universal.planning.task_cache import TaskCache
 
         gov = ResourceGovernor(memory_high_water_mb=6000)
 

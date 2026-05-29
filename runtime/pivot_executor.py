@@ -28,9 +28,10 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from hledac.universal.utils.uuid7 import new_runtime_id
 from dataclasses import dataclass
 from typing import Any
+
+from hledac.universal.utils.uuid7 import new_runtime_id
 
 __all__ = [
     "PivotExecutionRequest",
@@ -252,7 +253,7 @@ class AutonomousPivotExecutor:
                     elapsed_ms=elapsed_ms,
                 )
 
-        except asyncio.TimeoutError:
+        except TimeoutError:
             elapsed_ms = (time.monotonic() - start) * 1000
             return PivotExecutionResult(
                 pivot_id=pivot_id,

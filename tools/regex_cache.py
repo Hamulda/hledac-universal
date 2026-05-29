@@ -3,10 +3,9 @@ Regex cache with LRU for compiled patterns.
 Sprint 79a: Avoid recompiling regex patterns in hot paths.
 """
 
-from functools import lru_cache
-from typing import Pattern, Optional
-
 import re
+from functools import lru_cache
+from re import Pattern
 
 
 @lru_cache(maxsize=100)

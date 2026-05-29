@@ -37,8 +37,7 @@ import logging
 import re
 from collections import deque
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Set, Tuple, TYPE_CHECKING
-from enum import Enum
+from typing import TYPE_CHECKING, Any
 
 try:
     import numpy as np
@@ -72,10 +71,10 @@ class CentralityScores:
 class Community:
     """Detected community in the graph."""
     community_id: int
-    nodes: List[str] = field(default_factory=list)
+    nodes: list[str] = field(default_factory=list)
     cohesion_score: float = 0.0
     dominant_type: str = "mixed"
-    key_characteristics: List[str] = field(default_factory=list)
+    key_characteristics: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -87,7 +86,7 @@ class GraphContradiction:
     node_b_content: str
     contradiction_type: str  # factual, opinion, statistical
     severity: float  # 0-1
-    resolution_suggestions: List[str] = field(default_factory=list)
+    resolution_suggestions: list[str] = field(default_factory=list)
 
 
 class GraphRAGOrchestrator:
@@ -150,9 +149,9 @@ class GraphRAGOrchestrator:
 
     async def score_path(
         self,
-        path: List[str],
+        path: list[str],
         hypothesis: str,
-        hypothesis_emb: Optional[List[float]] = None,
+        hypothesis_emb: list[float] | None = None,
         max_nodes: int = 10
     ) -> float:
         """
@@ -249,12 +248,12 @@ class GraphRAGOrchestrator:
         hops: int = 2,
         max_nodes: int = 20,
         timeline: bool = False,
-        time_min: Optional[str] = None,
-        time_max: Optional[str] = None,
+        time_min: str | None = None,
+        time_max: str | None = None,
         prefer_recent: bool = True,
         bucket: str = "month",
         max_timeline_points: int = 12
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Perform multi-hop search over the knowledge graph with path evidence.
 
@@ -289,17 +288,17 @@ class GraphRAGOrchestrator:
                     f"timeline={timeline}, prefer_recent={prefer_recent}")
 
         # Collect seed entities from initial results for novelty check
-        seed_entities: Set[str] = set()
-        visited: Set[str] = set()
-        paths: List[Dict[str, Any]] = []
-        all_facts: List[Dict[str, Any]] = []
+        seed_entities: set[str] = set()
+        visited: set[str] = set()
+        paths: list[dict[str, Any]] = []
+        all_facts: list[dict[str, Any]] = []
 
         # Hop 0: Initial semantic search
         initial_results = await self.knowledge_layer.search(query, limit=10)
         logger.info(f"  Hop 0: Found {len(initial_results)} initial nodes")
 
         # Collect seed document entities
-        seed_doc_entities: Set[str] = set()
+        seed_doc_entities: set[str] = set()
         if initial_results:
             top_doc = initial_results[0][0]
             seed_doc_entities = self._extract_entities_from_node(top_doc)
@@ -445,12 +444,12 @@ class GraphRAGOrchestrator:
         hops: int = 2,
         max_nodes: int = 20,
         timeline: bool = False,
-        time_min: Optional[str] = None,
-        time_max: Optional[str] = None,
+        time_min: str | None = None,
+        time_max: str | None = None,
         prefer_recent: bool = True,
         bucket: str = "month",
         max_timeline_points: int = 12
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Synchronous version of multi-hop search with path evidence.
 
@@ -475,10 +474,10 @@ class GraphRAGOrchestrator:
                     f"timeline={timeline}")
 
         # Collect seed entities from initial results for novelty check
-        seed_entities: Set[str] = set()
-        visited: Set[str] = set()
-        paths: List[Dict[str, Any]] = []
-        all_facts: List[Dict[str, Any]] = []
+        seed_entities: set[str] = set()
+        visited: set[str] = set()
+        paths: list[dict[str, Any]] = []
+        all_facts: list[dict[str, Any]] = []
 
         # Use sync version of search if available, otherwise run async
         if hasattr(self.knowledge_layer, 'search_sync'):
@@ -492,7 +491,7 @@ class GraphRAGOrchestrator:
         logger.info(f"  Hop 0: Found {len(initial_results)} initial nodes")
 
         # Collect seed document entities
-        seed_doc_entities: Set[str] = set()
+        seed_doc_entities: set[str] = set()
         if initial_results:
             top_doc = initial_results[0][0]
             seed_doc_entities = self._extract_entities_from_node(top_doc)
@@ -611,11 +610,11 @@ class GraphRAGOrchestrator:
 
     def _traverse_hop(
         self,
-        visited: Set[str],
+        visited: set[str],
         hop: int,
         max_nodes: int,
         max_edges: int = 500
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """
         Traverse one hop in the graph with RAM-efficient frontier management.
 
@@ -681,7 +680,7 @@ class GraphRAGOrchestrator:
 
         return new_facts
 
-    def _deduplicate_facts(self, facts: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    def _deduplicate_facts(self, facts: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """
         Remove duplicate facts based on content.
 
@@ -703,7 +702,7 @@ class GraphRAGOrchestrator:
         logger.debug(f"Deduplicated: {len(facts)} -> {len(unique_facts)} facts")
         return unique_facts
 
-    def _rank_facts(self, facts: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    def _rank_facts(self, facts: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """
         Rank facts by relevance (similarity, hop distance, type).
 
@@ -713,7 +712,7 @@ class GraphRAGOrchestrator:
         Returns:
             Ranked list of facts
         """
-        def calculate_score(fact: Dict[str, Any]) -> float:
+        def calculate_score(fact: dict[str, Any]) -> float:
             similarity = fact.get('similarity', 0.5)
             hop = fact.get('hop', 0)
 
@@ -740,7 +739,7 @@ class GraphRAGOrchestrator:
         question: str,
         hops: int = 2,
         max_nodes: int = 20
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Ask a question with multi-hop reasoning.
 
@@ -789,7 +788,7 @@ class GraphRAGOrchestrator:
         entity1: str,
         entity2: str,
         max_hops: int = 3
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """
         Find connection paths between two entities.
 
@@ -820,9 +819,9 @@ class GraphRAGOrchestrator:
         start_id: str,
         target_id: str,
         max_hops: int,
-        current_path: List[str],
-        visited: Set[str],
-        paths: List[Dict[str, Any]]
+        current_path: list[str],
+        visited: set[str],
+        paths: list[dict[str, Any]]
     ):
         """
         BFS to find paths between nodes.
@@ -854,7 +853,7 @@ class GraphRAGOrchestrator:
             })
         else:
             related = self.knowledge_layer.get_related(start_id, max_depth=1)
-            for related_id, related_node in related.get('nodes', {}).items():
+            for related_id, _related_node in related.get('nodes', {}).items():
                 if related_id not in visited:
                     self._find_paths_bfs(
                         related_id,
@@ -868,7 +867,7 @@ class GraphRAGOrchestrator:
         current_path.pop()
         visited.discard(start_id)
 
-    def get_statistics(self) -> Dict[str, Any]:
+    def get_statistics(self) -> dict[str, Any]:
         """
         Get GraphRAG orchestrator statistics.
 
@@ -893,12 +892,12 @@ class GraphRAGOrchestrator:
 
     def calculate_centrality(
         self,
-        node_ids: Optional[List[str]] = None,
+        node_ids: list[str] | None = None,
         top_k: int = 10
-    ) -> List[CentralityScores]:
+    ) -> list[CentralityScores]:
         """
         Calculate centrality measures for nodes in the graph.
-        
+
         From evidence_network_analyzer.py comments:
         "Step 3: Perform centrality analysis"
         - Degree centrality
@@ -906,46 +905,46 @@ class GraphRAGOrchestrator:
         - Closeness centrality
         - Eigenvector centrality
         - PageRank centrality
-        
+
         Args:
             node_ids: Specific nodes to analyze (None = all)
             top_k: Return top K most central nodes
-            
+
         Returns:
             List of CentralityScores sorted by overall influence
         """
         if node_ids is None:
             # Get all nodes from knowledge layer
-            stats = self.knowledge_layer.get_statistics()
+            self.knowledge_layer.get_statistics()
             node_ids = self._get_all_node_ids()
-        
+
         if not node_ids:
             return []
-        
+
         # Build adjacency list
         adjacency = self._build_adjacency_list(node_ids)
-        
+
         centrality_scores = []
-        
+
         for node_id in node_ids:
             scores = CentralityScores(node_id=node_id)
-            
+
             # Degree centrality (normalized)
             if node_id in adjacency:
                 scores.degree = len(adjacency[node_id]) / max(len(node_ids) - 1, 1)
-            
+
             # Betweenness centrality (simplified approximation)
             scores.betweenness = self._calculate_betweenness(node_id, adjacency, node_ids)
-            
+
             # Closeness centrality
             scores.closeness = self._calculate_closeness(node_id, adjacency, node_ids)
-            
+
             # Eigenvector centrality (simplified)
             scores.eigenvector = self._calculate_eigenvector(node_id, adjacency, node_ids)
-            
+
             # PageRank (simplified)
             scores.pagerank = self._calculate_pagerank(node_id, adjacency, node_ids)
-            
+
             # Overall influence score (weighted average)
             scores.overall_influence = (
                 scores.degree * 0.15 +
@@ -954,42 +953,42 @@ class GraphRAGOrchestrator:
                 scores.eigenvector * 0.20 +
                 scores.pagerank * 0.20
             )
-            
+
             centrality_scores.append(scores)
-        
+
         # Sort by overall influence
         centrality_scores.sort(key=lambda x: x.overall_influence, reverse=True)
-        
+
         logger.info(f"Calculated centrality for {len(centrality_scores)} nodes")
         return centrality_scores[:top_k]
 
     def detect_communities(
         self,
         num_communities: int = 3
-    ) -> List[Community]:
+    ) -> list[Community]:
         """
         Detect communities in the knowledge graph.
-        
+
         From evidence_network_analyzer.py comments:
         "Step 4: Detect communities in the network"
         "Use community detection algorithms"
         "Louvain community detection"
-        
+
         Args:
             num_communities: Target number of communities
-            
+
         Returns:
             List of detected communities
         """
         node_ids = self._get_all_node_ids()
         if len(node_ids) < 3:
             return []
-        
+
         adjacency = self._build_adjacency_list(node_ids)
-        
+
         # Simple label propagation for community detection
         communities = self._label_propagation(adjacency, node_ids, num_communities)
-        
+
         # Enrich community data
         enriched_communities = []
         for comm_id, node_list in communities.items():
@@ -997,12 +996,12 @@ class GraphRAGOrchestrator:
                 community_id=comm_id,
                 nodes=node_list
             )
-            
+
             # Calculate cohesion
             community.cohesion_score = self._calculate_community_cohesion(
                 node_list, adjacency
             )
-            
+
             # Determine dominant type
             type_counts = {}
             for node_id in node_list:
@@ -1010,68 +1009,68 @@ class GraphRAGOrchestrator:
                 if node:
                     node_type = node.node_type.value
                     type_counts[node_type] = type_counts.get(node_type, 0) + 1
-            
+
             if type_counts:
                 community.dominant_type = max(type_counts, key=type_counts.get)
-            
+
             # Identify key characteristics
             community.key_characteristics = self._extract_community_characteristics(
                 node_list
             )
-            
+
             enriched_communities.append(community)
-        
+
         # Sort by cohesion
         enriched_communities.sort(key=lambda x: x.cohesion_score, reverse=True)
-        
+
         logger.info(f"Detected {len(enriched_communities)} communities")
         return enriched_communities
 
     def find_contradictions(
         self,
         confidence_threshold: float = 0.7
-    ) -> List[GraphContradiction]:
+    ) -> list[GraphContradiction]:
         """
         Find contradictions between nodes in the graph.
-        
+
         From evidence_network_analyzer.py comments:
         "Step 5: Identify contradictions"
         "Find contradiction edges"
         "Assess severity"
-        
+
         Args:
             confidence_threshold: Minimum confidence to report
-            
+
         Returns:
             List of detected contradictions
         """
         contradictions = []
         node_ids = self._get_all_node_ids()
-        
+
         # Get all edges and check for contradictions
         checked_pairs = set()
-        
+
         for node_id in node_ids:
             node = self.knowledge_layer._backend.get_node(node_id)
             if not node:
                 continue
-            
+
             related = self.knowledge_layer.get_related(node_id, max_depth=1)
-            
+
             for related_id, related_node in related.get('nodes', {}).items():
                 pair_key = tuple(sorted([node_id, related_id]))
                 if pair_key in checked_pairs:
                     continue
                 checked_pairs.add(pair_key)
-                
+
                 # Check for contradiction
                 contradiction = self._analyze_contradiction(node, related_node)
                 if contradiction and contradiction.severity >= confidence_threshold:
                     contradictions.append(contradiction)
-        
+
         # Sort by severity
         contradictions.sort(key=lambda x: x.severity, reverse=True)
-        
+
         logger.info(f"Found {len(contradictions)} contradictions")
         return contradictions
 
@@ -1080,21 +1079,21 @@ class GraphRAGOrchestrator:
         start_node_id: str,
         target_node_id: str,
         max_hops: int = 3
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """
         Analyze key paths between two nodes.
-        
+
         From evidence_network_analyzer.py comments:
         "Step 6: Analyze key paths in the network"
         "Find shortest paths between central nodes"
         "Look for paths that might be important reasoning chains"
         "Calculate path confidence"
-        
+
         Args:
             start_node_id: Starting node
             target_node_id: Target node
             max_hops: Maximum path length
-            
+
         Returns:
             List of paths with confidence scores
         """
@@ -1103,55 +1102,55 @@ class GraphRAGOrchestrator:
             self._get_node_content(target_node_id) or target_node_id,
             max_hops=max_hops
         )
-        
+
         # Add confidence scores to paths
         for path in paths:
             path_length = path.get('length', 0)
             # Shorter paths have higher confidence
             path['confidence'] = max(0.3, 1.0 - (path_length * 0.2))
             path['is_key_path'] = path_length <= 2
-        
+
         # Sort by confidence
         paths.sort(key=lambda x: x.get('confidence', 0), reverse=True)
-        
+
         return paths
 
-    def calculate_network_metrics(self) -> Dict[str, Any]:
+    def calculate_network_metrics(self) -> dict[str, Any]:
         """
         Calculate comprehensive network metrics.
-        
+
         From evidence_network_analyzer.py comments:
         "Step 7: Calculate network metrics"
         "Basic metrics"
         "Clustering metrics"
         "Path metrics"
         "Evidence-specific metrics"
-        
+
         Returns:
             Dictionary of network metrics
         """
         node_ids = self._get_all_node_ids()
         if not node_ids:
             return {}
-        
+
         adjacency = self._build_adjacency_list(node_ids)
-        
+
         num_nodes = len(node_ids)
         num_edges = sum(len(neighbors) for neighbors in adjacency.values()) // 2
-        
+
         # Calculate density
         max_edges = (num_nodes * (num_nodes - 1)) // 2
         density = num_edges / max_edges if max_edges > 0 else 0
-        
+
         # Calculate average degree
         avg_degree = (2 * num_edges) / num_nodes if num_nodes > 0 else 0
-        
+
         # Clustering coefficient (simplified)
         clustering = self._calculate_clustering_coefficient(adjacency, node_ids)
-        
+
         # Path metrics (average shortest path)
         avg_path_length = self._calculate_average_path_length(adjacency, node_ids)
-        
+
         metrics = {
             'num_nodes': num_nodes,
             'num_edges': num_edges,
@@ -1161,7 +1160,7 @@ class GraphRAGOrchestrator:
             'average_path_length': avg_path_length,
             'connectivity': 'high' if density > 0.3 else 'medium' if density > 0.1 else 'low'
         }
-        
+
         logger.info(f"Network metrics: {metrics}")
         return metrics
 
@@ -1169,24 +1168,24 @@ class GraphRAGOrchestrator:
     # HELPER METHODS FOR NETWORK ANALYSIS
     # =============================================================================
 
-    def _get_all_node_ids(self) -> List[str]:
+    def _get_all_node_ids(self) -> list[str]:
         """Get all node IDs from knowledge layer."""
         # Query the backend directly for all node IDs
         return self.knowledge_layer._backend.get_all_node_ids()
 
-    def _build_adjacency_list(self, node_ids: List[str]) -> Dict[str, Set[str]]:
+    def _build_adjacency_list(self, node_ids: list[str]) -> dict[str, set[str]]:
         """Build adjacency list for graph analysis."""
         adjacency = {node_id: set() for node_id in node_ids}
-        
+
         for node_id in node_ids:
             related = self.knowledge_layer.get_related(node_id, max_depth=1)
             for related_id in related.get('nodes', {}).keys():
                 if related_id in adjacency:
                     adjacency[node_id].add(related_id)
-        
+
         return adjacency
 
-    def _get_node_content(self, node_id: str) -> Optional[str]:
+    def _get_node_content(self, node_id: str) -> str | None:
         """Get node content by ID."""
         node = self.knowledge_layer._backend.get_node(node_id)
         return node.content if node else None
@@ -1194,28 +1193,28 @@ class GraphRAGOrchestrator:
     def _calculate_betweenness(
         self,
         node_id: str,
-        adjacency: Dict[str, Set[str]],
-        all_nodes: List[str]
+        adjacency: dict[str, set[str]],
+        all_nodes: list[str]
     ) -> float:
         """Calculate betweenness centrality (simplified)."""
         if len(all_nodes) < 3:
             return 0.0
-        
+
         # Count how many shortest paths go through this node
         betweenness_count = 0
         total_paths = 0
-        
+
         for source in all_nodes:
             for target in all_nodes:
                 if source != target and source != node_id and target != node_id:
                     # Simple path counting (not true shortest paths)
                     paths_through = self._count_paths_through(source, target, node_id, adjacency)
                     total_paths_through = self._count_all_paths(source, target, adjacency, max_depth=3)
-                    
+
                     if total_paths_through > 0:
                         betweenness_count += paths_through / total_paths_through
                         total_paths += 1
-        
+
         return betweenness_count / max(total_paths, 1)
 
     def _count_paths_through(
@@ -1223,26 +1222,26 @@ class GraphRAGOrchestrator:
         source: str,
         target: str,
         through: str,
-        adjacency: Dict[str, Set[str]]
+        adjacency: dict[str, set[str]]
     ) -> int:
         """Count paths from source to target that go through 'through'."""
         count = 0
         visited = {source}
-        
-        def dfs(current: str, path: List[str]):
+
+        def dfs(current: str, path: list[str]):
             nonlocal count
             if current == target and through in path:
                 count += 1
                 return
             if len(path) > 4:  # Limit depth
                 return
-            
+
             for neighbor in adjacency.get(current, set()):
                 if neighbor not in visited:
                     visited.add(neighbor)
                     dfs(neighbor, path + [neighbor])
                     visited.discard(neighbor)
-        
+
         dfs(source, [source])
         return count
 
@@ -1250,13 +1249,13 @@ class GraphRAGOrchestrator:
         self,
         source: str,
         target: str,
-        adjacency: Dict[str, Set[str]],
+        adjacency: dict[str, set[str]],
         max_depth: int = 3
     ) -> int:
         """Count all paths between two nodes."""
         count = 0
         visited = {source}
-        
+
         def dfs(current: str, depth: int):
             nonlocal count
             if current == target:
@@ -1264,43 +1263,43 @@ class GraphRAGOrchestrator:
                 return
             if depth >= max_depth:
                 return
-            
+
             for neighbor in adjacency.get(current, set()):
                 if neighbor not in visited:
                     visited.add(neighbor)
                     dfs(neighbor, depth + 1)
                     visited.discard(neighbor)
-        
+
         dfs(source, 0)
         return count
 
     def _calculate_closeness(
         self,
         node_id: str,
-        adjacency: Dict[str, Set[str]],
-        all_nodes: List[str]
+        adjacency: dict[str, set[str]],
+        all_nodes: list[str]
     ) -> float:
         """Calculate closeness centrality."""
         distances = self._calculate_distances(node_id, adjacency, all_nodes)
-        
+
         if not distances:
             return 0.0
-        
+
         total_distance = sum(distances.values())
         n = len(all_nodes)
-        
+
         if total_distance == 0 or n <= 1:
             return 0.0
-        
+
         # Closeness = (n-1) / sum of distances
         return (n - 1) / total_distance
 
     def _calculate_distances(
         self,
         start: str,
-        adjacency: Dict[str, Set[str]],
-        all_nodes: List[str]
-    ) -> Dict[str, int]:
+        adjacency: dict[str, set[str]],
+        all_nodes: list[str]
+    ) -> dict[str, int]:
         """Calculate shortest distances from start to all nodes using BFS."""
         distances = {start: 0}
         queue = deque([start])
@@ -1315,39 +1314,39 @@ class GraphRAGOrchestrator:
                     visited.add(neighbor)
                     distances[neighbor] = current_distance + 1
                     queue.append(neighbor)
-        
+
         return distances
 
     def _calculate_eigenvector(
         self,
         node_id: str,
-        adjacency: Dict[str, Set[str]],
-        all_nodes: List[str],
+        adjacency: dict[str, set[str]],
+        all_nodes: list[str],
         iterations: int = 10
     ) -> float:
         """Calculate eigenvector centrality (simplified power iteration)."""
-        scores = {n: 1.0 for n in all_nodes}
-        
+        scores = dict.fromkeys(all_nodes, 1.0)
+
         for _ in range(iterations):
             new_scores = {}
             for node in all_nodes:
                 score = sum(scores.get(neighbor, 0) for neighbor in adjacency.get(node, set()))
                 new_scores[node] = score
-            
+
             # Normalize
             max_score = max(new_scores.values()) if new_scores else 1
             if max_score > 0:
                 new_scores = {k: v / max_score for k, v in new_scores.items()}
-            
+
             scores = new_scores
-        
+
         return scores.get(node_id, 0.0)
 
     def _calculate_pagerank(
         self,
         node_id: str,
-        adjacency: Dict[str, Set[str]],
-        all_nodes: List[str],
+        adjacency: dict[str, set[str]],
+        all_nodes: list[str],
         damping: float = 0.85,
         iterations: int = 10
     ) -> float:
@@ -1355,73 +1354,73 @@ class GraphRAGOrchestrator:
         n = len(all_nodes)
         if n == 0:
             return 0.0
-        
-        scores = {node: 1.0 / n for node in all_nodes}
-        
+
+        scores = dict.fromkeys(all_nodes, 1.0 / n)
+
         for _ in range(iterations):
             new_scores = {}
             for node in all_nodes:
                 rank = (1 - damping) / n
-                
+
                 # Add contribution from neighbors
                 for neighbor in all_nodes:
                     if node in adjacency.get(neighbor, set()):
                         neighbor_out_degree = len(adjacency.get(neighbor, set()))
                         if neighbor_out_degree > 0:
                             rank += damping * scores[neighbor] / neighbor_out_degree
-                
+
                 new_scores[node] = rank
-            
+
             scores = new_scores
-        
+
         return scores.get(node_id, 0.0)
 
     def _label_propagation(
         self,
-        adjacency: Dict[str, Set[str]],
-        node_ids: List[str],
+        adjacency: dict[str, set[str]],
+        node_ids: list[str],
         num_communities: int
-    ) -> Dict[int, List[str]]:
+    ) -> dict[int, list[str]]:
         """Simple label propagation for community detection."""
         # Initialize each node with its own label
         labels = {node: i for i, node in enumerate(node_ids)}
-        
+
         # Propagate labels
         for _ in range(10):  # Iterations
             for node in node_ids:
                 if not adjacency[node]:
                     continue
-                
+
                 # Count labels of neighbors
                 label_counts = {}
                 for neighbor in adjacency[node]:
                     label = labels[neighbor]
                     label_counts[label] = label_counts.get(label, 0) + 1
-                
+
                 # Assign most common label
                 if label_counts:
                     labels[node] = max(label_counts, key=label_counts.get)
-        
+
         # Group nodes by label
-        communities: Dict[int, List[str]] = {}
+        communities: dict[int, list[str]] = {}
         for node, label in labels.items():
             if label not in communities:
                 communities[label] = []
             communities[label].append(node)
-        
+
         # Limit to num_communities largest
         sorted_communities = sorted(
             communities.items(),
             key=lambda x: len(x[1]),
             reverse=True
         )
-        
+
         return {i: nodes for i, (_, nodes) in enumerate(sorted_communities[:num_communities])}
 
     def _calculate_community_cohesion(
         self,
-        node_list: List[str],
-        adjacency: Dict[str, Set[str]]
+        node_list: list[str],
+        adjacency: dict[str, set[str]]
     ) -> float:
         """Calculate cohesion score for a community."""
         if len(node_list) < 2:
@@ -1442,10 +1441,10 @@ class GraphRAGOrchestrator:
 
         return internal_edges / possible_edges if possible_edges > 0 else 0.0
 
-    def _extract_community_characteristics(self, node_list: List[str]) -> List[str]:
+    def _extract_community_characteristics(self, node_list: list[str]) -> list[str]:
         """Extract key characteristics of a community."""
         characteristics = []
-        
+
         # Count node types
         type_counts = {}
         for node_id in node_list:
@@ -1453,28 +1452,28 @@ class GraphRAGOrchestrator:
             if node:
                 node_type = node.node_type.value
                 type_counts[node_type] = type_counts.get(node_type, 0) + 1
-        
+
         # Add characteristics based on dominant types
         if type_counts:
             dominant = max(type_counts, key=type_counts.get)
             characteristics.append(f"dominant_type:{dominant}")
-            
+
             if len(type_counts) > 1:
                 characteristics.append("mixed_types")
-        
+
         characteristics.append(f"size:{len(node_list)}")
-        
+
         return characteristics
 
     def _analyze_contradiction(
         self,
         node_a: KnowledgeNode,
         node_b: KnowledgeNode
-    ) -> Optional[GraphContradiction]:
+    ) -> GraphContradiction | None:
         """Analyze if two nodes contradict each other."""
         content_a = node_a.content.lower()
         content_b = node_b.content.lower()
-        
+
         # Simple contradiction detection
         contradiction_indicators = [
             ('not ', ''),  # negation vs positive
@@ -1483,17 +1482,17 @@ class GraphRAGOrchestrator:
             ('false', 'true'),
             ('impossible', 'possible'),
         ]
-        
+
         for neg_a, neg_b in contradiction_indicators:
             has_neg_a = neg_a in content_a if neg_a else neg_a not in content_a
             has_neg_b = neg_b in content_b if neg_b else neg_b not in content_b
-            
+
             if has_neg_a and not has_neg_b:
                 # Check if they talk about the same subject
                 words_a = set(content_a.split())
                 words_b = set(content_b.split())
                 common_words = words_a & words_b
-                
+
                 if len(common_words) > 3:  # Significant overlap
                     return GraphContradiction(
                         node_a_id=node_a.id,
@@ -1508,38 +1507,38 @@ class GraphRAGOrchestrator:
                             "Consider scope differences"
                         ]
                     )
-        
+
         return None
 
     def _calculate_clustering_coefficient(
         self,
-        adjacency: Dict[str, Set[str]],
-        node_ids: List[str]
+        adjacency: dict[str, set[str]],
+        node_ids: list[str]
     ) -> float:
         """Calculate average clustering coefficient."""
         coefficients = []
-        
+
         for node in node_ids:
             neighbors = adjacency.get(node, set())
             if len(neighbors) < 2:
                 continue
-            
+
             # Count triangles
             triangles = 0
             for neighbor1 in neighbors:
                 for neighbor2 in neighbors:
                     if neighbor1 != neighbor2 and neighbor2 in adjacency.get(neighbor1, set()):
                         triangles += 1
-            
+
             # Each triangle counted twice
             triangles //= 2
-            
+
             # Possible triangles
             possible = len(neighbors) * (len(neighbors) - 1) // 2
-            
+
             if possible > 0:
                 coefficients.append(triangles / possible)
-        
+
         # Use numpy if available, otherwise pure Python fallback
         if NUMPY_AVAILABLE and coefficients:
             return float(np.mean(coefficients))
@@ -1547,8 +1546,8 @@ class GraphRAGOrchestrator:
 
     def _calculate_average_path_length(
         self,
-        adjacency: Dict[str, Set[str]],
-        node_ids: List[str]
+        adjacency: dict[str, set[str]],
+        node_ids: list[str]
     ) -> float:
         """Calculate average shortest path length."""
         path_lengths = []
@@ -1568,7 +1567,7 @@ class GraphRAGOrchestrator:
     # PATH EVIDENCE AND NOVELTY FILTER METHODS
     # =============================================================================
 
-    def _extract_entities_from_node(self, node: KnowledgeNode) -> Set[str]:
+    def _extract_entities_from_node(self, node: KnowledgeNode) -> set[str]:
         """
         Extract entity mentions from a node for novelty detection.
 
@@ -1607,13 +1606,13 @@ class GraphRAGOrchestrator:
 
     def _traverse_hop_with_paths(
         self,
-        visited: Set[str],
+        visited: set[str],
         hop: int,
         max_nodes: int,
-        seed_entities: Set[str],
-        seed_doc_entities: Set[str],
+        seed_entities: set[str],
+        seed_doc_entities: set[str],
         max_edges: int = 500
-    ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
         """
         Traverse one hop with full path tracking.
 
@@ -1633,7 +1632,7 @@ class GraphRAGOrchestrator:
         edges_traversed = 0
 
         # Build path context from visited nodes
-        path_context: Dict[str, Tuple[List[str], List[str]]] = {}  # node_id -> (path_ids, path_content)
+        path_context: dict[str, tuple[list[str], list[str]]] = {}  # node_id -> (path_ids, path_content)
 
         # Initialize with hop 0 nodes
         for node_id in list(visited):
@@ -1745,7 +1744,7 @@ class GraphRAGOrchestrator:
         node = self.knowledge_layer._backend.get_node(node_id)
         return node.node_type.value if node else 'unknown'
 
-    def _rank_facts_with_novelty(self, facts: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    def _rank_facts_with_novelty(self, facts: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """
         Rank facts considering novelty score.
 
@@ -1755,7 +1754,7 @@ class GraphRAGOrchestrator:
         Returns:
             Ranked list with novelty bonus
         """
-        def calculate_score(fact: Dict[str, Any]) -> float:
+        def calculate_score(fact: dict[str, Any]) -> float:
             similarity = fact.get('similarity', 0.5)
             hop = fact.get('hop', 0)
             novelty = fact.get('novelty_score', 0.0)
@@ -1783,8 +1782,8 @@ class GraphRAGOrchestrator:
 
     def _detect_contradictions(
         self,
-        facts: List[Dict[str, Any]]
-    ) -> Tuple[bool, List[Dict[str, Any]], List[Dict[str, Any]]]:
+        facts: list[dict[str, Any]]
+    ) -> tuple[bool, list[dict[str, Any]], list[dict[str, Any]]]:
         """
         Detect contradictions in facts using lightweight heuristics.
 
@@ -1799,7 +1798,7 @@ class GraphRAGOrchestrator:
             Tuple of (contested: bool, primary_paths: list, counter_paths: list)
         """
         # Extract claims from facts: (subject, predicate, object, fact)
-        claims: List[Tuple[str, str, str, Dict[str, Any]]] = []
+        claims: list[tuple[str, str, str, dict[str, Any]]] = []
 
         for fact in facts:
             content = fact.get('content', '').lower().strip()
@@ -1842,10 +1841,10 @@ class GraphRAGOrchestrator:
                     break  # Only extract first claim per fact
 
         # Check for contradictions
-        contradictions: List[Tuple[Dict[str, Any], Dict[str, Any], str]] = []
+        contradictions: list[tuple[dict[str, Any], dict[str, Any], str]] = []
 
         # Group by (subject, predicate)
-        claim_groups: Dict[Tuple[str, str], List[Tuple[str, Dict[str, Any]]]] = {}
+        claim_groups: dict[tuple[str, str], list[tuple[str, dict[str, Any]]]] = {}
         for subject, predicate, obj, fact in claims:
             key = (subject, predicate)
             if key not in claim_groups:
@@ -1939,10 +1938,10 @@ class GraphRAGOrchestrator:
 
     def _generate_path_summary(
         self,
-        facts: List[Dict[str, Any]],
+        facts: list[dict[str, Any]],
         query: str,
         contested: bool = False,
-        counter_paths: List[Dict[str, Any]] = None
+        counter_paths: list[dict[str, Any]] = None
     ) -> str:
         """
         Generate human-readable summary of graph paths.
@@ -1966,12 +1965,12 @@ class GraphRAGOrchestrator:
             lines.append("⚠️  CONTRADICTORY EVIDENCE DETECTED:")
             lines.append("Multiple sources provide conflicting information:")
             for i, counter in enumerate(counter_paths[:2], 1):  # Show top 2 contradictions
-                reason = counter.get('contradiction_reason', 'conflict')
+                counter.get('contradiction_reason', 'conflict')
                 lines.append(f"  Variant {i}: {counter.get('content', '')[:80]}...")
             lines.append("")
 
         # Group by hop
-        by_hop: Dict[int, List[Dict[str, Any]]] = {}
+        by_hop: dict[int, list[dict[str, Any]]] = {}
         for fact in facts:
             hop = fact.get('hop', 0)
             by_hop.setdefault(hop, []).append(fact)
@@ -2008,10 +2007,10 @@ class GraphRAGOrchestrator:
 
     def _filter_by_time(
         self,
-        facts: List[Dict[str, Any]],
-        time_min: Optional[str],
-        time_max: Optional[str]
-    ) -> List[Dict[str, Any]]:
+        facts: list[dict[str, Any]],
+        time_min: str | None,
+        time_max: str | None
+    ) -> list[dict[str, Any]]:
         """
         Filter facts by time range.
 
@@ -2025,7 +2024,7 @@ class GraphRAGOrchestrator:
         """
         from datetime import datetime
 
-        def get_timestamp(fact: Dict[str, Any]) -> Optional[datetime]:
+        def get_timestamp(fact: dict[str, Any]) -> datetime | None:
             """Extract timestamp from fact metadata."""
             metadata = fact.get('metadata', {})
             # Try fetched_at first, then published_at
@@ -2057,7 +2056,7 @@ class GraphRAGOrchestrator:
 
         return filtered
 
-    def _apply_recency_boost(self, facts: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    def _apply_recency_boost(self, facts: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """
         Boost scores of more recent facts.
 
@@ -2067,9 +2066,9 @@ class GraphRAGOrchestrator:
         Returns:
             Facts with boosted scores
         """
-        from datetime import datetime, timedelta
+        from datetime import datetime
 
-        def get_timestamp(fact: Dict[str, Any]) -> datetime:
+        def get_timestamp(fact: dict[str, Any]) -> datetime:
             """Extract timestamp from fact metadata."""
             metadata = fact.get('metadata', {})
             ts_str = metadata.get('fetched_at') or metadata.get('published_at')
@@ -2105,10 +2104,10 @@ class GraphRAGOrchestrator:
 
     def _generate_timeline(
         self,
-        facts: List[Dict[str, Any]],
+        facts: list[dict[str, Any]],
         bucket: str,
         max_points: int
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """
         Generate timeline points from facts.
 
@@ -2120,12 +2119,12 @@ class GraphRAGOrchestrator:
         Returns:
             List of timeline points
         """
-        from datetime import datetime
         from collections import defaultdict
+        from datetime import datetime
 
         max_points = min(max_points, 12)  # Hard limit
 
-        def get_bucket_key(fact: Dict[str, Any]) -> Optional[str]:
+        def get_bucket_key(fact: dict[str, Any]) -> str | None:
             """Get time bucket key for fact."""
             metadata = fact.get('metadata', {})
             ts_str = metadata.get('fetched_at') or metadata.get('published_at')
@@ -2141,7 +2140,7 @@ class GraphRAGOrchestrator:
                 return None
 
         # Group facts by bucket
-        bucket_facts: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+        bucket_facts: dict[str, list[dict[str, Any]]] = defaultdict(list)
         for fact in facts:
             key = get_bucket_key(fact)
             if key:
@@ -2197,9 +2196,9 @@ class GraphRAGOrchestrator:
 
     def _detect_drift(
         self,
-        facts: List[Dict[str, Any]],
+        facts: list[dict[str, Any]],
         bucket: str
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """
         Detect drift events - when claims about same (subject, predicate) change over time.
 
@@ -2210,8 +2209,8 @@ class GraphRAGOrchestrator:
         Returns:
             List of drift events (max 10)
         """
-        from datetime import datetime
         from collections import defaultdict
+        from datetime import datetime
 
         # Extract claims with timestamps
         claims_with_ts = []
@@ -2233,7 +2232,7 @@ class GraphRAGOrchestrator:
                 continue
 
         # Group by (subject, predicate)
-        claim_groups: Dict[tuple, List[tuple]] = defaultdict(list)
+        claim_groups: dict[tuple, list[tuple]] = defaultdict(list)
         for (subject, predicate, obj), bucket_key, fact in claims_with_ts:
             claim_groups[(subject, predicate)].append((obj, bucket_key, fact))
 
@@ -2248,7 +2247,7 @@ class GraphRAGOrchestrator:
 
             # Check for different objects
             prev_obj = obj_facts[0][0]
-            prev_bucket = obj_facts[0][1]
+            obj_facts[0][1]
 
             for obj, bucket_key, fact in obj_facts[1:]:
                 if obj != prev_obj:
@@ -2272,7 +2271,7 @@ class GraphRAGOrchestrator:
 
         return drift_events
 
-    def _extract_claim(self, content: str) -> Optional[tuple]:
+    def _extract_claim(self, content: str) -> tuple | None:
         """
         Extract (subject, predicate, object) claim from content.
 
@@ -2310,7 +2309,7 @@ class GraphRAGOrchestrator:
 
     def _detect_contradictions_with_narratives(
         self,
-        facts: List[Dict[str, Any]]
+        facts: list[dict[str, Any]]
     ) -> tuple:
         """
         Detect contradictions and generate competing narratives with confidence.
@@ -2334,9 +2333,9 @@ class GraphRAGOrchestrator:
 
     def _build_narratives(
         self,
-        primary_paths: List[Dict[str, Any]],
-        counter_paths: List[Dict[str, Any]]
-    ) -> List[Dict[str, Any]]:
+        primary_paths: list[dict[str, Any]],
+        counter_paths: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
         """
         Build competing narratives from contradictory evidence.
 
@@ -2412,9 +2411,9 @@ class GraphRAGOrchestrator:
 
     def _calculate_narrative_confidence(
         self,
-        paths: List[Dict[str, Any]],
-        evidence_ids: List[str],
-        domains: Set[str]
+        paths: list[dict[str, Any]],
+        evidence_ids: list[str],
+        domains: set[str]
     ) -> float:
         """
         Calculate narrative confidence score (0-1).
@@ -2455,7 +2454,7 @@ class GraphRAGOrchestrator:
         confidence = evidence_score + domain_score + similarity_score - echo_penalty
         return max(0.0, min(1.0, confidence))
 
-    def _summarize_narrative(self, paths: List[Dict[str, Any]]) -> str:
+    def _summarize_narrative(self, paths: list[dict[str, Any]]) -> str:
         """
         Generate 1-3 sentence summary of narrative.
         """
@@ -2534,8 +2533,8 @@ class GraphRAGOrchestrator:
             max_nodes: Maximum nodes to discover
             queue: Queue to push discovered nodes to
         """
-        visited: Set[str] = set()
-        seed_entities: Set[str] = set()
+        visited: set[str] = set()
+        seed_entities: set[str] = set()
 
         try:
             # Hop 0: Initial semantic search

@@ -2,9 +2,9 @@
 Tests for adaptive reranking (Sprint 76).
 """
 
+from unittest.mock import AsyncMock, patch
+
 import pytest
-from unittest.mock import patch, MagicMock, AsyncMock
-import asyncio
 
 
 class TestAdaptiveReranking:
@@ -33,7 +33,6 @@ class TestAdaptiveReranking:
         """Test MMR reduces duplicates."""
         try:
             from hledac.universal.knowledge.lancedb_store import LanceDBIdentityStore
-            import numpy as np
 
             store = LanceDBIdentityStore.__new__(LanceDBIdentityStore)
 

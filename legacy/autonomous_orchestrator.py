@@ -37,30 +37,30 @@ M1 8GB Optimalizace:
 
 from __future__ import annotations
 
-import atexit
 import asyncio
+import atexit
 import concurrent.futures
-import inspect
 import gc
 import hashlib
 import importlib
+import inspect
 import json
 import logging
+import math
 import os
 import re
 import socket
 import sys
-import time
-import math
-import traceback
 import threading
-import uuid
+import time
+import traceback
 import unicodedata
-from collections import defaultdict, deque, OrderedDict
+import uuid
+from collections import OrderedDict, defaultdict, deque
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum, IntEnum, auto
-from heapq import heappush, heappop, nsmallest, nlargest
+from heapq import heappop, heappush, nsmallest
 
 # Sprint 82H: Optional msgspec for lightweight structs
 try:
@@ -83,7 +83,7 @@ except ImportError:
 from hledac.universal.utils.action_result import ActionResult
 
 # Sprint 1A: SprintLifecycleManager for state machine + SIGINT/SIGTERM
-from hledac.universal.utils.sprint_lifecycle import SprintLifecycleManager, SprintLifecycleState
+from hledac.universal.utils.sprint_lifecycle import SprintLifecycleManager
 
 # Sprint 7B: Precompiled regex patterns for hot path
 _HANDLE_PATTERN = re.compile(r'@([a-zA-Z][a-zA-Z0-9_]{2,15})')
@@ -92,7 +92,6 @@ _HANDLE_PATTERN = re.compile(r'@([a-zA-Z][a-zA-Z0-9_]{2,15})')
 # Sprint 6E: Thread-safe bounded queue for target queue (rule 19-22)
 # Non-blocking FIFO with bounded maxsize and drop counting
 import collections
-import threading
 
 
 class ThreadSafeBoundedQueue:
@@ -138,7 +137,7 @@ class TokenBucket:
         self._last_refill = time.monotonic()
         self._rate = rate  # tokens per second
         self._burst = burst
-        self._lock: Optional[asyncio.Lock] = None
+        self._lock: asyncio.Lock | None = None
 
     def _ensure_lock(self):
         if self._lock is None:
@@ -180,7 +179,6 @@ class TokenBucket:
 
 
 # Sprint 6E: Welford stats for running mean/stddev + percentile
-from collections import deque
 
 
 class WelfordStats:
@@ -221,7 +219,7 @@ class ReservoirSampler:
 
     def __init__(self, k: int = 128):
         self._k = k
-        self._reservoir: List[float] = []
+        self._reservoir: list[float] = []
         self._n = 0
 
     def update(self, x: float) -> None:
@@ -247,17 +245,17 @@ class ReservoirSampler:
 
 
 # Sprint 5M: Safe wrapper for shard packet loading with asyncio.to_thread
-async def _load_shard_packet_safe(packet_file: "Path") -> Tuple[Optional[Dict], Optional[str], float]:
+async def _load_shard_packet_safe(packet_file: Path) -> tuple[dict | None, str | None, float]:
     """Safe wrapper for shard packet loading. Returns (data, error, latency_ms)."""
     start = time.perf_counter()
     try:
         def _sync_load():
-            with open(packet_file, 'r') as f:
+            with open(packet_file) as f:
                 return json.load(f)
         data = await asyncio.to_thread(_sync_load)
         latency_ms = (time.perf_counter() - start) * 1000
         return data, None, latency_ms
-    except FileNotFoundError as e:
+    except FileNotFoundError:
         latency_ms = (time.perf_counter() - start) * 1000
         return None, f"FileNotFound: {packet_file}", latency_ms
     except Exception as e:
@@ -323,7 +321,7 @@ if MSGSPEC_AVAILABLE:
             contradiction_value: float,
             enqueued_at_cycle: int,
             lane_id: str,
-        ) -> "BacklogCandidate":
+        ) -> BacklogCandidate:
             """Create with title_snippet enforced to 150 chars."""
             return cls(
                 url=url,
@@ -368,7 +366,7 @@ else:
             contradiction_value: float,
             enqueued_at_cycle: int,
             lane_id: str,
-        ) -> "BacklogCandidate":
+        ) -> BacklogCandidate:
             """Create with title_snippet enforced to 150 chars."""
             return cls(
                 url=url,
@@ -517,7 +515,8 @@ if MSGSPEC_AVAILABLE:
         synthesis_fallback_used: bool = False
 else:
     # Fallback to dataclass if msgspec not available
-    from dataclasses import dataclass, field as dc_field
+    from dataclasses import dataclass
+    from dataclasses import field as dc_field
 
     @dataclass
     class SynthesisCompression:
@@ -587,8 +586,8 @@ _UPSTREAM_API_ERROR_CODES = {429, 403, 451, 502, 503, 504, 529}
 
 
 def _map_exception_to_result_type(
-    exception: Optional[Exception],
-    http_status: Optional[int] = None,
+    exception: Exception | None,
+    http_status: int | None = None,
     is_mock_derived: bool = False,
 ) -> str:
     """
@@ -734,7 +733,8 @@ if MSGSPEC_AVAILABLE:
 
 else:
     # Fallback to dataclass
-    from dataclasses import dataclass, field as dc_field
+    from dataclasses import dataclass
+    from dataclasses import field as dc_field
 
     @dataclass
     class IterationTrace:
@@ -819,7 +819,8 @@ if MSGSPEC_AVAILABLE:
         queue_size_at_score_time: int = 0
 
 else:
-    from dataclasses import dataclass, field as dc_field
+    from dataclasses import dataclass
+    from dataclasses import field as dc_field
 
     @dataclass
     class NetworkReconRunTrace:
@@ -889,7 +890,8 @@ if MSGSPEC_AVAILABLE:
         git_hash: str = ""
 
 else:
-    from dataclasses import dataclass, field as dc_field
+    from dataclasses import dataclass
+    from dataclasses import field as dc_field
 
     @dataclass
     class CapabilityHealth:
@@ -982,7 +984,7 @@ async def _check_tor_available_cached(
     return cache['available']
 
 
-def _prf_expand(query: str, top_k: int = _PRF_MAX_EXPANSION_TERMS) -> List[str]:
+def _prf_expand(query: str, top_k: int = _PRF_MAX_EXPANSION_TERMS) -> list[str]:
     """
     Sprint 82F: Bounded PRF / RM3-style expansion (CPU-only, standard library).
 
@@ -1012,7 +1014,7 @@ async def _ct_quick_discover(
     domain: str,
     stealth: Any = None,
     timeout: float = _CT_DISCOVERY_TIMEOUT_SEC
-) -> List[str]:
+) -> list[str]:
     """
     Sprint 82F: CT discovery with strict short timeout.
 
@@ -1037,7 +1039,7 @@ async def _ct_quick_discover(
         data = orjson.loads(text)
 
         # Parse subdomains (bounded)
-        subdomains: Set[str] = set()
+        subdomains: set[str] = set()
         for entry in data[:_CT_DISCOVERY_MAX_SUBDOMAINS]:
             name = entry.get('name_value', '')
             if name.endswith(f".{domain}"):
@@ -1050,7 +1052,7 @@ async def _ct_quick_discover(
 
         return list(subdomains)[:_CT_DISCOVERY_MAX_SUBDOMAINS]
 
-    except asyncio.TimeoutError:
+    except TimeoutError:
         logger.warning(f"[CT] Timeout for {domain}")
         return []
     except Exception as e:
@@ -1065,7 +1067,7 @@ async def _wayback_quick_check(
     url: str,
     stealth: Any = None,
     timeout: float = _WAYBACK_QUICK_TIMEOUT_SEC
-) -> Optional[dict]:
+) -> dict | None:
     """
     Sprint 82F: Wayback fast availability check (first step).
 
@@ -1168,7 +1170,7 @@ async def _fetch_archive_today(url: str, timeout: float = 10.0) -> dict:
             'timestamp': None,
         }
 
-    except asyncio.TimeoutError:
+    except TimeoutError:
         return {'rescued': False, 'reason': 'timeout'}
     except Exception as e:
         logger.debug(f"[archive.today] Error: {e}")
@@ -1180,7 +1182,7 @@ async def _wayback_cdx_stream(
     stealth: Any = None,
     max_lines: int = _WAYBACK_CDX_MAX_LINES,
     timeout: float = _WAYBACK_CDX_TIMEOUT_SEC
-) -> List[dict]:
+) -> list[dict]:
     """
     Sprint 82F: Wayback CDX with streaming parse and HARD line cap.
 
@@ -1215,7 +1217,7 @@ async def _wayback_cdx_stream(
                     'wayback_url': f"https://web.archive.org/web/{row[1]}/{row[2]}",
                 })
 
-    except asyncio.TimeoutError:
+    except TimeoutError:
         logger.warning(f"[WaybackCDX] Timeout for {domain}")
     except Exception as e:
         logger.warning(f"[WaybackCDX] Error for {domain}: {e}")
@@ -1228,7 +1230,7 @@ async def _commoncrawl_cdx_stream(
     stealth: Any = None,
     max_lines: int = _COMMONS_CRAWL_MAX_LINES,
     timeout: float = _COMMONS_CRAWL_TIMEOUT_SEC
-) -> List[dict]:
+) -> list[dict]:
     """
     Sprint 82F: Common Crawl CDX with streaming parse and HARD line cap.
 
@@ -1279,7 +1281,7 @@ async def _commoncrawl_cdx_stream(
             except Exception:
                 continue
 
-    except asyncio.TimeoutError:
+    except TimeoutError:
         logger.warning(f"[CommonCrawlCDX] Timeout for {domain}")
     except Exception as e:
         logger.warning(f"[CommonCrawlCDX] Error for {domain}: {e}")
@@ -1335,7 +1337,7 @@ async def _necromancer_rescue_chain(
     stealth: Any = None,
     max_attempts: int = _NECROMANCER_MAX_ATTEMPTS,
     budget_remaining: int = 0
-) -> Optional[dict]:
+) -> dict | None:
     """
     Sprint 82F: Deterministic Necromancer rescue chain.
 
@@ -1491,8 +1493,8 @@ class _EntityGraph:
     """Interní knowledge graph pro entity, používaný orchestrátorem."""
 
     def __init__(self, max_nodes: int = 10000):
-        self._out: OrderedDict[str, set] = OrderedDict()
-        self._in: OrderedDict[str, int] = OrderedDict()
+        self._out: Ordereddict[str, set] = OrderedDict()
+        self._in: Ordereddict[str, int] = OrderedDict()
         self._max_nodes = max_nodes
 
     def add_edge(self, src: str, dst: str, depth: int):
@@ -1533,13 +1535,13 @@ class _EntityGraph:
 # Sprint 76: Analysis Schema for structured LLM output
 class AnalysisSchema:
     """Pydantic-like schema for query analysis."""
-    def __init__(self, intent: str, complexity: str, suggested_sources: List[str]):
+    def __init__(self, intent: str, complexity: str, suggested_sources: list[str]):
         self.intent = intent
         self.complexity = complexity
         self.suggested_sources = suggested_sources
 
     @classmethod
-    def from_dict(cls, data: Dict) -> 'AnalysisSchema':
+    def from_dict(cls, data: dict) -> AnalysisSchema:
         return cls(
             intent=data.get('intent', 'general'),
             complexity=data.get('complexity', 'medium'),
@@ -1547,10 +1549,11 @@ class AnalysisSchema:
         )
 
 
-from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Set, Tuple, Type, Union
-from urllib.parse import urlparse, urlunparse, parse_qs, urlencode
 import ipaddress
+from collections.abc import Callable
+from pathlib import Path
+from typing import Any
+from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
 # M1 8GB RAM monitoring
 try:
@@ -1643,19 +1646,14 @@ mlx_generate = None
 mlx_load = None
 
 # Config and types
-from .config import UniversalConfig, create_config
-from .project_types import (
-    ActionType, AgentState, DecisionContext, DecisionRequest,
-    ExecutionContext, ExplorationStrategy, GhostConfig, MemoryConfig,
-    ModelConfig, ObfuscationLevel, OperationType, OrchestratorState,
-    ResearchConfig, ResearchMode, ResearchResult, SubAgentResult,
-    SubAgentType, SystemState, WipeStandard, Severity, SecurityLevel,
-    SecurityConfig, StealthConfig, PrivacyLevel
-)
+from .config import UniversalConfig
 from .layers import (
-    CommunicationLayer, CoordinationLayer, GhostLayer, MemoryLayer,
-    PrivacyLayer, ResearchLayer, SecurityLayer, StealthLayer,
+    MemoryLayer,
+    PrivacyLayer,
+    SecurityLayer,
+    StealthLayer,
 )
+from .project_types import ExecutionContext, OrchestratorState, PrivacyLevel, ResearchMode, ResearchResult
 
 # Sprint 82A: Role-Pruned Lanes & Adaptive Phases - Lazy imports to avoid circular import
 # These will be imported lazily in __init__ or when needed
@@ -1678,7 +1676,7 @@ def _get_lane_manager_class():
 def _get_phase_controller_class():
     global _PhaseController, _Phase, _PhaseSignals
     if _PhaseController is None:
-        from .orchestrator.phase_controller import PhaseController, Phase, PhaseSignals
+        from .orchestrator.phase_controller import Phase, PhaseController, PhaseSignals
         _PhaseController = PhaseController
         _Phase = Phase
         _PhaseSignals = PhaseSignals
@@ -1696,7 +1694,7 @@ def _get_phase_signals_class():
 def _get_subsystem_semaphores_class():
     global _SubsystemSemaphores, _Subsystem
     if _SubsystemSemaphores is None:
-        from .orchestrator.subsystem_semaphores import SubsystemSemaphores, Subsystem
+        from .orchestrator.subsystem_semaphores import Subsystem, SubsystemSemaphores
         _SubsystemSemaphores = SubsystemSemaphores
         _Subsystem = Subsystem
     return _SubsystemSemaphores, _Subsystem
@@ -1728,34 +1726,30 @@ def _get_subsystem_semaphores_class():
 #   - meta_reasoning_coordinator.py: Not used
 #
 # NOTE: PrivacyEnhancedResearch lazy-loaded to reduce import overhead
-from .coordinators.agent_coordination_engine import (
-    AgentCoordinationEngine, AgentType, AgentCapability,
-    TaskRequest, TaskPriority, CoordinationStrategy
-)
-from .coordinators.research_optimizer import (
-    ResearchOptimizer, OptimizationConfig, OptimizationStrategy
-)
-from .coordinators.fetch_coordinator import FetchCoordinator, apply_fcntl_nocache
-from .coordinators.claims_coordinator import ClaimsCoordinator
-from .coordinators.graph_coordinator import GraphCoordinator
-from .coordinators.archive_coordinator import ArchiveCoordinator
-
-# Utils
-from .utils.query_expansion import QueryExpander, ExpansionConfig
-from .utils.ranking import ReciprocalRankFusion, RankedResult
-from .utils.intelligent_cache import IntelligentCache, CacheConfig, EvictionStrategy
-from .utils.validation import ValidationSeverity
-from .utils.language import LanguageDetector
-
 # Capability System (M1 8GB optimization)
 from .capabilities import (
-    Capability, CapabilityRegistry, CapabilityRouter,
-    ModelLifecycleManager, create_default_registry
+    Capability,
+    CapabilityRegistry,
+    CapabilityRouter,
+    ModelLifecycleManager,
+    create_default_registry,
 )
+from .coordinators.agent_coordination_engine import AgentCapability, AgentCoordinationEngine, AgentType, TaskRequest
+from .coordinators.archive_coordinator import ArchiveCoordinator
+from .coordinators.claims_coordinator import ClaimsCoordinator
+from .coordinators.fetch_coordinator import FetchCoordinator, apply_fcntl_nocache
+from .coordinators.graph_coordinator import GraphCoordinator
+from .coordinators.research_optimizer import OptimizationStrategy, ResearchOptimizer
+from .utils.intelligent_cache import IntelligentCache
+from .utils.language import LanguageDetector
+
+# Utils
+from .utils.query_expansion import QueryExpander
+from .utils.ranking import ReciprocalRankFusion
 
 # Tree of Thoughts integration
 try:
-    from .tot_integration import TotIntegrationLayer, TotConfig, TotResult, ComplexityAnalysis
+    from .tot_integration import ComplexityAnalysis, TotConfig, TotIntegrationLayer, TotResult
     TOT_INTEGRATION_AVAILABLE = True
 except ImportError:
     TOT_INTEGRATION_AVAILABLE = False
@@ -1774,14 +1768,21 @@ except ImportError:
     AutoResearchProfile = None
 
 # Knowledge
-from .knowledge.rag_engine import RAGEngine, Document
-from hledac.universal.legacy.atomic_storage import AtomicJSONKnowledgeGraph, SnapshotStorage, SnapshotEntry, PatternStatsManager, Claim, ClaimCluster, ClaimClusterIndex
+from hledac.universal.legacy.atomic_storage import (
+    Claim,
+    ClaimClusterIndex,
+    PatternStatsManager,
+    SnapshotEntry,
+    SnapshotStorage,
+)
 from hledac.universal.legacy.persistent_layer import PersistentKnowledgeLayer  # Sprint 28: unified graph storage
+
+from .knowledge.rag_engine import RAGEngine
 from .tool_registry import SourceReputation, ToolRegistry
-from .utils.deduplication import SimHash, DomainStats, DomainStatsManager
-from .utils.sketches import HybridFrequencySketch, MLX_AVAILABLE, LMDB_AVAILABLE  # Sprint 31: hybrid sketches
-from .tools.content_miner import MetadataExtractor, ExtractedMetadata, FeedDiscoverer
+from .tools.content_miner import ExtractedMetadata, FeedDiscoverer, MetadataExtractor
 from .tools.metadata_dedup import MetadataDeduplicator, MetadataEntry
+from .utils.deduplication import DomainStats, DomainStatsManager, SimHash
+from .utils.sketches import MLX_AVAILABLE  # Sprint 31: hybrid sketches
 
 # Sprint 39: Deep web hints extraction
 try:
@@ -1791,38 +1792,39 @@ except ImportError:
     DeepWebHintsExtractor = None
     HINTS_AVAILABLE = False
 
+# Brain
+from .brain.decision_engine import DecisionEngine
+from .brain.dspy_optimizer import DSPyOptimizer
+from .brain.hermes3_engine import Hermes3Engine
+from .brain.prompt_bandit import PromptBandit
+from .brain.prompt_cache import PromptCache
+from .dht import KademliaNode, LocalGraphStore, SketchExchange
 from .knowledge.context_graph import ContextGraph
 
 # Metrics (Priority 20 - Prometheus-style memory metrics)
 from .metrics_registry import MetricsRegistry
 
+# Sprint 62: Multimodal and DHT imports
+from .multimodal import MambaFusion, MobileCLIPFusion, VisionEncoder
+from .security.pii_gate import fallback_sanitize
+
 # ToolExecLog - Tamper-evident tool execution logging (Priority 25 - Wiring)
 from .tool_exec_log import ToolExecLog
-
-# Brain
-from .brain.decision_engine import DecisionEngine, DecisionType, Decision
-from .brain.hermes3_engine import Hermes3Engine
-from .brain.prompt_cache import PromptCache
-from .brain.prompt_bandit import PromptBandit
-from .brain.dspy_optimizer import DSPyOptimizer
-from .utils.signpost_profiler import signpost_interval
-from .utils.mlx_memory import clear_mlx_cache  # Sprint 8AY: MLX memory hygiene
-from .security.pii_gate import fallback_sanitize
-from .tools.reranker import LightweightReranker, MAX_RERANK_DOCS
-from .tools.source_bandit import SourceBandit  # Sprint 34: UCB1 bandit for source selection
-from .tools.osint_frameworks import OSINTFrameworkRunner  # Sprint 46: OSINT tools
 from .tools.darknet import DarknetConnector  # Sprint 46: Darknet access
-from .tools.policies import BasePolicy, AuthorityPolicy, TemporalPolicy, DiscoursePolicy
+from .tools.osint_frameworks import OSINTFrameworkRunner  # Sprint 46: OSINT tools
+from .tools.policies import AuthorityPolicy, BasePolicy, DiscoursePolicy, TemporalPolicy
 from .tools.reputation import get_reputation_score
-from .tools.scoring import LeadScore, has_contradiction, normalize_text
+from .tools.reranker import MAX_RERANK_DOCS, LightweightReranker
+from .tools.scoring import LeadScore, normalize_text
+from .tools.source_bandit import SourceBandit  # Sprint 34: UCB1 bandit for source selection
 from .tools.temporal import (
-    detect_drift, record_previous_version, should_trigger_archive_fallback,
-    increment_archive_fallback, is_high_value_url
+    detect_drift,
+    increment_archive_fallback,
+    is_high_value_url,
+    record_previous_version,
+    should_trigger_archive_fallback,
 )
-# Sprint 62: Multimodal and DHT imports
-from .multimodal import VisionEncoder, MambaFusion, MobileCLIPFusion
-from .dht import KademliaNode, LocalGraphStore, SketchExchange
-from typing import Optional
+from .utils.mlx_memory import clear_mlx_cache  # Sprint 8AY: MLX memory hygiene
 
 logger = logging.getLogger(__name__)
 
@@ -1926,25 +1928,25 @@ class BudgetManager:
         self._start_time = time.time()
         self._consecutive_novelty_failures = 0
 
-    def check_network_allowed(self) -> Tuple[bool, str]:
+    def check_network_allowed(self) -> tuple[bool, str]:
         """Check if network call is allowed, with fallback reason."""
         if self._network_calls >= self.max_network_calls:
             return False, f"network_budget_exceeded({self._network_calls}/{self.max_network_calls})"
         return True, ""
 
-    def check_snapshot_allowed(self) -> Tuple[bool, str]:
+    def check_snapshot_allowed(self) -> tuple[bool, str]:
         """Check if snapshot write is allowed."""
         if self._snapshot_writes >= self.max_snapshot_writes:
             return False, f"snapshot_budget_exceeded({self._snapshot_writes}/{self.max_snapshot_writes})"
         return True, ""
 
-    def check_ram_allowed(self, needed_mb: int) -> Tuple[bool, str]:
+    def check_ram_allowed(self, needed_mb: int) -> tuple[bool, str]:
         """Check if RAM allocation is allowed."""
         if self._used_ram_mb + needed_mb > self.max_ram_mb:
             return False, f"ram_budget_exceeded({self._used_ram_mb + needed_mb}/{self.max_ram_mb})"
         return True, ""
 
-    def check_time_allowed(self) -> Tuple[bool, str]:
+    def check_time_allowed(self) -> tuple[bool, str]:
         """Check if time budget allows continuation."""
         elapsed = time.time() - self._start_time
         if elapsed >= self.max_time_s:
@@ -1990,7 +1992,7 @@ class BudgetManager:
         }
         return fallback_map.get(requested_action, 'skip')
 
-    def get_status(self) -> Dict[str, Any]:
+    def get_status(self) -> dict[str, Any]:
         """Get current budget status."""
         elapsed = time.time() - self._start_time
         return {
@@ -2016,9 +2018,7 @@ def _load_archive_discovery():
     if ArchiveDiscovery is not None:
         return
     try:
-        from .intelligence.archive_discovery import (
-            ArchiveDiscovery, ArchiveResult, WaybackMachineClient
-        )
+        from .intelligence.archive_discovery import ArchiveDiscovery, ArchiveResult, WaybackMachineClient
         ARCHIVE_DISCOVERY_AVAILABLE = True
         ARCHIVE_AVAILABLE = True  # Alias
     except ImportError:
@@ -2049,7 +2049,7 @@ def _load_stego():
     if StegoDetector is not None:
         return
     try:
-        from .security.stego_detector import StegoDetector, StegoAnalysisResult
+        from .security.stego_detector import StegoAnalysisResult, StegoDetector
     except (ImportError, NameError, SyntaxError):
         pass
 
@@ -2062,7 +2062,7 @@ def _load_temporal():
     if TemporalAnalyzer is not None:
         return
     try:
-        from .intelligence.temporal_analysis import TemporalAnalyzer, TemporalAnalysisResult
+        from .intelligence.temporal_analysis import TemporalAnalysisResult, TemporalAnalyzer
     except ImportError:
         pass
 
@@ -2077,7 +2077,7 @@ def _load_insight():
         return
     try:
         INSIGHT_AVAILABLE = True
-        from .brain.insight_engine import InsightEngine, InsightAnalysisResult
+        from .brain.insight_engine import InsightAnalysisResult, InsightEngine
 
     except ImportError:
         INSIGHT_AVAILABLE = False
@@ -2141,9 +2141,7 @@ def _load_privacy_research():
         return
     try:
         PRIVACY_RESEARCH_AVAILABLE = True
-        from .coordinators.privacy_enhanced_research import (
-            PrivacyEnhancedResearch, PrivacyConfig, DataRetention
-        )
+        from .coordinators.privacy_enhanced_research import DataRetention, PrivacyConfig, PrivacyEnhancedResearch
 
     except ImportError:
         PRIVACY_RESEARCH_AVAILABLE = False
@@ -2163,7 +2161,7 @@ class _LazyImportCoordinator:
     Eliminates duplicate import boilerplate across the codebase.
     """
 
-    _REGISTRY: Dict[str, Dict[str, Any]] = {
+    _REGISTRY: dict[str, dict[str, Any]] = {
         'self_healing': {
             'flag': 'SELF_HEALING_AVAILABLE',
             'classes': ['SelfHealingManager'],
@@ -2305,7 +2303,7 @@ def _load_deep_probe():
         return
     try:
         DEEP_PROBE_AVAILABLE = True
-        from .deep_probe import DeepProbeScanner, ShadowWalkerAlgorithm, WaybackCDXClient, TechStackSignature
+        from .deep_probe import DeepProbeScanner, ShadowWalkerAlgorithm, TechStackSignature, WaybackCDXClient
 
     except ImportError:
         DEEP_PROBE_AVAILABLE = False
@@ -2334,7 +2332,7 @@ def _load_hypothesis_engine():
         return
     try:
         HYPOTHESIS_ENGINE_AVAILABLE = True
-        from .brain.hypothesis_engine import HypothesisEngine, AdversarialVerifier
+        from .brain.hypothesis_engine import AdversarialVerifier, HypothesisEngine
 
     except ImportError:
         HYPOTHESIS_ENGINE_AVAILABLE = False
@@ -2400,9 +2398,7 @@ def _load_document_intelligence():
         return
     try:
         DOCUMENT_INTELLIGENCE_AVAILABLE = True
-        from .intelligence.document_intelligence import (
-            DocumentIntelligenceEngine, MLXLongContextAnalyzer
-        )
+        from .intelligence.document_intelligence import DocumentIntelligenceEngine, MLXLongContextAnalyzer
 
     except ImportError:
         DOCUMENT_INTELLIGENCE_AVAILABLE = False
@@ -2455,7 +2451,7 @@ def _load_snn_engine():
         SNN_ENGINE_AVAILABLE = True
         from ..neuromorphic.snn_engine import SNNEngine
         SNN_ENGINE_AVAILABLE = True
-        from .project_types import SNNConfig, STDPParams, NeuronParameters
+        from .project_types import NeuronParameters, SNNConfig, STDPParams
 
     except ImportError:
         SNN_ENGINE_AVAILABLE = False
@@ -2472,7 +2468,7 @@ def _load_federated_engine():
         return
     try:
         FEDERATED_ENGINE_AVAILABLE = True
-        from ..federated.federated_engine import FederatedEngine, FederatedConfig
+        from ..federated.federated_engine import FederatedConfig, FederatedEngine
 
     except ImportError:
         FEDERATED_ENGINE_AVAILABLE = False
@@ -2559,7 +2555,7 @@ def _load_dns_tunnel_detector():
         return
     try:
         DNS_TUNNEL_DETECTOR_AVAILABLE = True
-        from .network.dns_tunnel_detector import DNSTunnelDetector, DNSTunnelConfig, TunnelingFinding
+        from .network.dns_tunnel_detector import DNSTunnelConfig, DNSTunnelDetector, TunnelingFinding
 
     except ImportError:
         DNS_TUNNEL_DETECTOR_AVAILABLE = False
@@ -2577,7 +2573,7 @@ def _load_unicode_analyzer():
         return
     try:
         UNICODE_ANALYZER_AVAILABLE = True
-        from .text.unicode_analyzer import UnicodeAttackAnalyzer, UnicodeConfig, UnicodeAnalysisResult
+        from .text.unicode_analyzer import UnicodeAnalysisResult, UnicodeAttackAnalyzer, UnicodeConfig
 
     except ImportError:
         UNICODE_ANALYZER_AVAILABLE = False
@@ -2596,7 +2592,7 @@ def _load_metadata_extractor():
         METADATA_EXTRACTOR_AVAILABLE = True
         from .forensics import METADATA_EXTRACTOR_AVAILABLE as _META_AVAIL
         METADATA_EXTRACTOR_AVAILABLE = True
-        from .forensics import UniversalMetadataExtractor, MetadataResult
+        from .forensics import MetadataResult, UniversalMetadataExtractor
         METADATA_EXTRACTOR_AVAILABLE = _META_AVAIL
     except ImportError:
         METADATA_EXTRACTOR_AVAILABLE = False
@@ -2615,7 +2611,7 @@ def _load_encoding_detector():
         return
     try:
         ENCODING_DETECTOR_AVAILABLE = True
-        from .text.encoding_detector import BaseEncodingDetector, EncodingConfig, EncodingFinding, EncodingChain
+        from .text.encoding_detector import BaseEncodingDetector, EncodingChain, EncodingConfig, EncodingFinding
 
     except ImportError:
         ENCODING_DETECTOR_AVAILABLE = False
@@ -2634,7 +2630,7 @@ def _load_hash_identifier():
         return
     try:
         HASH_IDENTIFIER_AVAILABLE = True
-        from .text.hash_identifier import HashIdentifier, HashConfig, HashMatch, HashFinding
+        from .text.hash_identifier import HashConfig, HashFinding, HashIdentifier, HashMatch
 
     except ImportError:
         HASH_IDENTIFIER_AVAILABLE = False
@@ -2653,7 +2649,7 @@ def _load_pii_gate():
         return
     try:
         PII_GATE_AVAILABLE = True
-        from .security.pii_gate import SecurityGate, PIICategory, PIIMatch, SanitizationResult
+        from .security.pii_gate import PIICategory, PIIMatch, SanitizationResult, SecurityGate
 
     except ImportError:
         PII_GATE_AVAILABLE = False
@@ -2671,7 +2667,7 @@ def _load_unicode_analyzer():
         return
     try:
         UNICODE_ANALYZER_AVAILABLE = True
-        from .text.unicode_analyzer import UnicodeAttackAnalyzer, UnicodeConfig, UnicodeAnalysisResult
+        from .text.unicode_analyzer import UnicodeAnalysisResult, UnicodeAttackAnalyzer, UnicodeConfig
 
     except ImportError:
         UNICODE_ANALYZER_AVAILABLE = False
@@ -2688,7 +2684,7 @@ def _load_destruction():
         return
     try:
         DESTRUCTION_AVAILABLE = True
-        from .security.destruction import SecureDestructor, DestructionConfig
+        from .security.destruction import DestructionConfig, SecureDestructor
 
     except ImportError:
         DESTRUCTION_AVAILABLE = False
@@ -2704,7 +2700,7 @@ def _load_digital_ghost_detector():
     if DIGITAL_GHOST_AVAILABLE:
         return
     try:
-        from .security.digital_ghost_detector import DigitalGhostDetector, DigitalGhostAnalysis
+        from .security.digital_ghost_detector import DigitalGhostAnalysis, DigitalGhostDetector
 
     except ImportError:
         pass
@@ -2772,12 +2768,13 @@ def _load_supreme_components():
         return
 
     try:
-        from hledac.universal.legacy.persistent_layer import PersistentKnowledgeLayer, NodeType, EdgeType
-        from .knowledge.graph_rag import GraphRAGOrchestrator
+        from hledac.universal.legacy.persistent_layer import EdgeType, NodeType, PersistentKnowledgeLayer
+
+        from .autonomy.planner import SerializedTreePlanner, Thought, TreeNodeStatus
         from .knowledge.graph_builder import KnowledgeGraphBuilder
+        from .knowledge.graph_rag import GraphRAGOrchestrator
+        from .security import LootManager, RamDiskVault, SecurityGate
         from .tools import LightweightReranker, RustMiner
-        from .security import SecurityGate, LootManager, RamDiskVault
-        from .autonomy.planner import SerializedTreePlanner, TreeNodeStatus, Thought
 
     except ImportError:
         pass
@@ -2926,8 +2923,8 @@ class ToolCategory(Enum):
 class AutonomousStrategy:
     """Kompletní strategie pro autonomní výzkum."""
     depth: DiscoveryDepth
-    selected_sources: List[SourceType]
-    selected_agents: List[AgentType]
+    selected_sources: list[SourceType]
+    selected_agents: list[AgentType]
     optimization: OptimizationStrategy
     privacy_level: PrivacyLevel
     use_archive_mining: bool
@@ -2948,8 +2945,8 @@ class ResearchSource:
     content: str
     source_type: SourceType
     confidence: float
-    timestamp: Optional[float] = None
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    timestamp: float | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -2959,13 +2956,13 @@ class ResearchFinding:
     source: ResearchSource
     confidence: float
     category: str = "fact"  # fact, opinion, speculation, evidence
-    related_findings: List[str] = field(default_factory=list)
+    related_findings: list[str] = field(default_factory=list)
     # Sprint 4F: Extended metadata for identity propagation
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
     # Sprint 8AH: Provenance schema for finding quality attribution
     extraction_method: str = ""   # direct_harvest, dlh_breach, identity_stitching, manual
     source_type_finding: str = "" # personal_email, project_mailing_list, breach, social, unknown
-    entity_links: List[str] = field(default_factory=list)  # Correlated identity IDs
+    entity_links: list[str] = field(default_factory=list)  # Correlated identity IDs
 
 
 @dataclass
@@ -2973,23 +2970,23 @@ class ComprehensiveResearchResult:
     """Kompletní výsledek autonomního výzkumu."""
     query: str
     strategy: AutonomousStrategy
-    findings: List[ResearchFinding]
-    sources: List[ResearchSource]
-    temporal_analysis: Optional[Dict[str, Any]] = None
-    insights: Optional[List[str]] = None
-    steganography_findings: Optional[List[Dict]] = None
+    findings: list[ResearchFinding]
+    sources: list[ResearchSource]
+    temporal_analysis: dict[str, Any] | None = None
+    insights: list[str] | None = None
+    steganography_findings: list[dict] | None = None
     synthesized_report: str = ""
     execution_time: float = 0.0
     total_sources_checked: int = 0
     confidence_score: float = 0.0
-    statistics: Dict[str, Any] = field(default_factory=dict)
+    statistics: dict[str, Any] = field(default_factory=dict)
     # Offline replay fields
     offline_mode: bool = False
     evidence_count: int = 0
-    timeline: Optional[List[Dict]] = None
+    timeline: list[dict] | None = None
     synthesis: str = ""
     # Claim-level analysis
-    claim_ids: List[str] = field(default_factory=list)
+    claim_ids: list[str] = field(default_factory=list)
     contested_claims: int = 0
 
 
@@ -3016,9 +3013,9 @@ class WorkflowState:
     query: str
     depth: DiscoveryDepth
     phase: ResearchPhase
-    findings: List[ResearchFinding] = field(default_factory=list)
-    sources: List[ResearchSource] = field(default_factory=list)
-    tools_used: List[str] = field(default_factory=list)
+    findings: list[ResearchFinding] = field(default_factory=list)
+    sources: list[ResearchSource] = field(default_factory=list)
+    tools_used: list[str] = field(default_factory=list)
     iterations: int = 0
     max_iterations: int = 10
     confidence: float = 0.0
@@ -3030,12 +3027,12 @@ class QuickScanReport:
     """Quick scan report with preliminary findings."""
     verdict: str
     confidence: float
-    key_findings: List[str]
-    recommended_modules: List[str]
+    key_findings: list[str]
+    recommended_modules: list[str]
     elapsed_time: float
     timestamp: float
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert report to dictionary."""
         return {
             'verdict': self.verdict,
@@ -3057,15 +3054,15 @@ class ResilientExecutionManager:
     def __init__(self, max_retries: int = 3, backoff_base: float = 2.0):
         self.max_retries = max_retries
         self.backoff_base = backoff_base
-        self.circuit_states: Dict[str, str] = defaultdict(lambda: "closed")
-        self.failure_counts: Dict[str, int] = defaultdict(int)
-        self.last_failure: Dict[str, float] = defaultdict(float)
+        self.circuit_states: dict[str, str] = defaultdict(lambda: "closed")
+        self.failure_counts: dict[str, int] = defaultdict(int)
+        self.last_failure: dict[str, float] = defaultdict(float)
 
     async def execute_with_resilience(
         self,
         operation_id: str,
         operation: Callable,
-        fallback: Optional[Callable] = None,
+        fallback: Callable | None = None,
         *args,
         **kwargs
     ) -> Any:
@@ -3141,7 +3138,7 @@ class FullyAutonomousOrchestrator:
         ... )
     """
 
-    def __init__(self, config: Optional[UniversalConfig] = None):
+    def __init__(self, config: UniversalConfig | None = None):
         self.config = config or UniversalConfig.for_mode(ResearchMode.AUTONOMOUS)
 
         # Sprint 72: Thermal monitoring state - initialize early
@@ -3154,39 +3151,39 @@ class FullyAutonomousOrchestrator:
         self._lifecycle_export_fired: bool = False  # Export signal flag
 
         # Internal coordinators - initialized after class definitions
-        self._state_mgr: Optional['_StateManager'] = None
-        self._memory_mgr: Optional['_MemoryManager'] = None
-        self._brain_mgr: Optional['_BrainManager'] = None
-        self._security_mgr: Optional['_SecurityManager'] = None
-        self._forensics_mgr: Optional['_ForensicsManager'] = None
-        self._tool_mgr: Optional['_ToolRegistryManager'] = None
-        self._research_mgr: Optional['_ResearchManager'] = None
-        self._synthesis_mgr: Optional['_SynthesisManager'] = None
-        self._intelligence_mgr: Optional['_IntelligenceManager'] = None
+        self._state_mgr: _StateManager | None = None
+        self._memory_mgr: _MemoryManager | None = None
+        self._brain_mgr: _BrainManager | None = None
+        self._security_mgr: _SecurityManager | None = None
+        self._forensics_mgr: _ForensicsManager | None = None
+        self._tool_mgr: _ToolRegistryManager | None = None
+        self._research_mgr: _ResearchManager | None = None
+        self._synthesis_mgr: _SynthesisManager | None = None
+        self._intelligence_mgr: _IntelligenceManager | None = None
 
         # Layer Manager (lazy initialized)
-        self._layer_manager: Optional[Any] = None
+        self._layer_manager: Any | None = None
         self._layers_initialized: bool = False
 
         # Execution history
         self._execution_history: deque = deque(maxlen=100)
 
         # Supreme components (lazy loaded)
-        self._tree_planner: Optional[Any] = None
-        self._rust_miner: Optional[Any] = None
-        self._security_gate: Optional[Any] = None
-        self._graph_rag: Optional[Any] = None
+        self._tree_planner: Any | None = None
+        self._rust_miner: Any | None = None
+        self._security_gate: Any | None = None
+        self._graph_rag: Any | None = None
 
         # Tree of Thoughts integration (lazy loaded)
-        self._tot_integration: Optional[Any] = None
-        self._tot_config: Optional[Dict[str, Any]] = None
+        self._tot_integration: Any | None = None
+        self._tot_config: dict[str, Any] | None = None
 
         # ToT executor for MLX inference offloading (Sprint 26)
-        self._tot_executor: Optional[concurrent.futures.ThreadPoolExecutor] = None
-        self._tot_semaphore: Optional[asyncio.Semaphore] = None
+        self._tot_executor: concurrent.futures.ThreadPoolExecutor | None = None
+        self._tot_semaphore: asyncio.Semaphore | None = None
 
         # (1) Embedding dimension invariants - auto-learned and locked per run
-        self._EXPECTED_EMBED_DIM: Optional[int] = None
+        self._EXPECTED_EMBED_DIM: int | None = None
         self._EMBED_DIM_LOCKED: bool = False
         self._EMBED_MISMATCH_COUNT: int = 0
 
@@ -3211,7 +3208,7 @@ class FullyAutonomousOrchestrator:
         }
 
         # Sprint 82X: Bandit context tracking (missing from prior sprints)
-        self._bandit_contexts: Dict[str, Any] = {}
+        self._bandit_contexts: dict[str, Any] = {}
         self._bandit_initialized: bool = False
         self._BANDIT_MAX_ACTIONS = 8
         self._BANDIT_MAX_CHOSEN = 2
@@ -3228,7 +3225,7 @@ class FullyAutonomousOrchestrator:
         ]
 
         # (2) Scorecard metrics - counters updated throughout execution
-        self._metrics: Dict[str, Any] = {
+        self._metrics: dict[str, Any] = {
             'coverage': {
                 'unique_domains': 0,
                 'unique_evidence_packets': 0,
@@ -3250,13 +3247,13 @@ class FullyAutonomousOrchestrator:
         }
 
         # (3) Autonomous playbooks - internal policy state
-        self._policy_state: Dict[str, Any] = {
+        self._policy_state: dict[str, Any] = {
             'PRIMARY_HUNT': {'enabled': False, 'reason': '', 'actions': []},
             'DRIFT_MONITOR': {'enabled': False, 'reason': '', 'actions': []},
             'LANG_SHIFT': {'enabled': False, 'reason': '', 'script': '', 'expanded_queries': 0},
             'DOC_MODE': {'enabled': False, 'reason': '', 'doc_ratio': 0.0},
         }
-        self._playbook_trigger_counts: Dict[str, int] = {
+        self._playbook_trigger_counts: dict[str, int] = {
             'PRIMARY_HUNT': 0,
             'DRIFT_MONITOR': 0,
             'LANG_SHIFT': 0,
@@ -3279,7 +3276,7 @@ class FullyAutonomousOrchestrator:
             io_limit=6,
         )
         # Sprint 82A: Mid-sprint state (machine-readable, not prose)
-        self._sprint_state: Dict[str, Any] = {
+        self._sprint_state: dict[str, Any] = {
             "confirmed": [],
             "falsified": [],
             "open_gaps": [],
@@ -3330,18 +3327,18 @@ class FullyAutonomousOrchestrator:
         self._streaming_findings_queue: asyncio.Queue = asyncio.Queue(maxsize=1000)
         self._streaming_findings_max_size: int = _FINDINGS_QUEUE_MAX
         # Sprint 82A: Convergence tracking
-        self._convergence_signals: Dict[str, Any] = {
+        self._convergence_signals: dict[str, Any] = {
             "score_variance": 1.0,
             "winner_streak": 0,
             "contradiction_frontier_growth": 0.0,
             "novelty_slope": 1.0,
         }
         # Sprint 82A: Lane role assignments (A=expansion, B=falsification, C=winner-deepening)
-        self._lane_roles: Dict[str, str] = {}  # lane_id -> role
+        self._lane_roles: dict[str, str] = {}  # lane_id -> role
 
         # Sprint 82D: Hold backlog for two-stage gating
         # Bounded heap-like structure (synchronous, pointer-only)
-        self._hold_backlog: List[BacklogCandidate] = []
+        self._hold_backlog: list[BacklogCandidate] = []
         self._hold_backlog_counter: int = 0  # for expiry tracking
 
         # Sprint 82E: Pre-fetch xxhash echo suppression
@@ -3349,7 +3346,7 @@ class FullyAutonomousOrchestrator:
 
         # Sprint 82Q Phase 3: Query diversification (bounded)
         self._seen_query_hashes: set[int] = set()
-        self._query_term_counts: Dict[str, int] = {}  # term -> count
+        self._query_term_counts: dict[str, int] = {}  # term -> count
         self._query_mutation_index: int = 0
 
         # Phase 5: PRF Anchored Fresh - original query anchor
@@ -3360,10 +3357,10 @@ class FullyAutonomousOrchestrator:
         self._prf_activation_count: int = 0  # Track PRF activations
 
         # Phase 5: Handler observability
-        self._handler_latency_by_action: Dict[str, float] = {}
-        self._handler_success_count_by_action: Dict[str, int] = {}
-        self._handler_failure_count_by_action: Dict[str, int] = {}
-        self._handler_error_type_by_action: Dict[str, str] = {}
+        self._handler_latency_by_action: dict[str, float] = {}
+        self._handler_success_count_by_action: dict[str, int] = {}
+        self._handler_failure_count_by_action: dict[str, int] = {}
+        self._handler_error_type_by_action: dict[str, str] = {}
         # Deterministic OSINT dorking modifiers (algorithmic selection)
         self._OSINT_MODIFIERS = [
             "filetype:pdf", "filetype:doc", "filetype:xls",
@@ -3373,38 +3370,38 @@ class FullyAutonomousOrchestrator:
         ]
 
         # Sprint 82Q Phase 3: Action decay for monopoly breaking
-        self._action_repeat_counts: Dict[str, int] = {}  # action -> consecutive repeats
+        self._action_repeat_counts: dict[str, int] = {}  # action -> consecutive repeats
         self._ACTION_DECAY_THRESHOLD: int = 3  # Start decay after 3 repeats
         self._ACTION_DECAY_BASE: float = 0.85  # decay factor
 
         # Sprint 82F: Deep Acquisition state
-        self._tor_availability_cache: Dict[str, Any] = {}  # {available, timestamp}
+        self._tor_availability_cache: dict[str, Any] = {}  # {available, timestamp}
         self._cross_archive_digests: set[int] = set()  # Bounded dedup for rescue
         self._necromancer_budget_used: int = 0
         self._onion_budget_used: int = 0
 
         # Sprint 82D: Deep-read budget tracking
         self._deep_reads_used: int = 0
-        self._deep_reads_by_lane: Dict[str, int] = {}
+        self._deep_reads_by_lane: dict[str, int] = {}
         # Explicit budget constants (per sprint)
         self._MAX_DEEP_READS_PER_SPRINT: int = 25
         self._WINNER_DEEP_READ_RESERVE: int = 10
         self._FALSIFICATION_DEEP_READ_MIN: int = 2
 
         # Sprint 71: Metal memory limits for macOS
-        self._metal_memory_limit: Optional[int] = None
-        self._wired_memory_limit: Optional[int] = None
+        self._metal_memory_limit: int | None = None
+        self._wired_memory_limit: int | None = None
 
         # Sprint 82G: Synthesis compression state (built in final phase)
-        self._compression_state: Optional[Any] = None  # SynthesisCompression or None
+        self._compression_state: Any | None = None  # SynthesisCompression or None
         self._gap_check_remaining: int = _GAP_CHECK_BUDGET
 
         # Sprint 82L: Initialize attributes referenced in _initialize_coordinators
         # These are defined later in the class but need to be initialized here
         self._run_id: str = ""
-        self._metrics_registry: Optional[Any] = None
-        self._tool_exec_log: Optional[Any] = None
-        self._evidence_log: Optional[Any] = None
+        self._metrics_registry: Any | None = None
+        self._tool_exec_log: Any | None = None
+        self._evidence_log: Any | None = None
         self._bandit_dir: Path = Path.home() / '.hledac' / 'bandit'
         self._attribution_dir: Path = Path.home() / '.hledac' / 'attribution'
 
@@ -3419,10 +3416,10 @@ class FullyAutonomousOrchestrator:
         self._fp_stats: OrderedDict = OrderedDict()
         self._fp_stats_loaded: bool = False
 
-        self._fetch_coordinator: Optional[Any] = None
-        self._claims_coordinator: Optional[Any] = None
-        self._graph_coordinator: Optional[Any] = None
-        self._archive_coordinator: Optional[Any] = None
+        self._fetch_coordinator: Any | None = None
+        self._claims_coordinator: Any | None = None
+        self._graph_coordinator: Any | None = None
+        self._archive_coordinator: Any | None = None
         self._coordinators_initialized: bool = False
 
         # Backward compatibility: allow coordinator classes to reference self._orch
@@ -3437,16 +3434,16 @@ class FullyAutonomousOrchestrator:
 
         # Sprint 86F: Per-source attribution (fixed keys, no dynamic dict growth)
         # Sources: surface_search, scan_ct, fallback, other
-        self._network_recon_produced_by_source: Dict[str, int] = {
+        self._network_recon_produced_by_source: dict[str, int] = {
             'surface_search': 0, 'scan_ct': 0, 'fallback': 0, 'other': 0
         }
-        self._network_recon_consumed_by_source: Dict[str, int] = {
+        self._network_recon_consumed_by_source: dict[str, int] = {
             'surface_search': 0, 'scan_ct': 0, 'fallback': 0, 'other': 0
         }
-        self._network_recon_wildcard_hit_by_source: Dict[str, int] = {
+        self._network_recon_wildcard_hit_by_source: dict[str, int] = {
             'surface_search': 0, 'scan_ct': 0, 'fallback': 0, 'other': 0
         }
-        self._network_recon_total_runs_by_source: Dict[str, int] = {
+        self._network_recon_total_runs_by_source: dict[str, int] = {
             'surface_search': 0, 'scan_ct': 0, 'fallback': 0, 'other': 0
         }
 
@@ -3462,10 +3459,10 @@ class FullyAutonomousOrchestrator:
         self._network_recon_runs_trace: deque = deque(maxlen=20)
 
         # Sprint 86F: Score history for percentiles (post-mortem only)
-        self._score_history: Dict[str, Any] = {}
+        self._score_history: dict[str, Any] = {}
 
         # Sprint 73: Thermal penalty with adaptive learning
-        self._action_thermal_penalty: Dict[str, float] = {
+        self._action_thermal_penalty: dict[str, float] = {
             "render_page": 0.3,
             "crawl_onion": 0.3,
             "build_structure_map": 0.4,
@@ -3474,7 +3471,7 @@ class FullyAutonomousOrchestrator:
             "scan_open_storage": 0.7,
             "fingerprint_jarm": 0.8,
         }
-        self._action_thermal_impact: Dict[str, float] = {}  # action -> EMA of thermal delta
+        self._action_thermal_impact: dict[str, float] = {}  # action -> EMA of thermal delta
 
         # Sprint 82C: Falsification anti-starvation tracking
         self._falsification_iterations: int = 0  # iterations since falsification lane last executed
@@ -3485,14 +3482,14 @@ class FullyAutonomousOrchestrator:
         self._resuming: bool = False  # guard for resume recursion
 
         # Sprint 43: Decision Ledger
-        self._decision_counts_by_kind: Dict[str, int] = defaultdict(int)
+        self._decision_counts_by_kind: dict[str, int] = defaultdict(int)
 
         # Sprint 68: Plně autonomní orchestrátor - nové atributy
-        self._active_hypotheses: OrderedDict[str, Any] = OrderedDict()  # max 100
+        self._active_hypotheses: Ordereddict[str, Any] = OrderedDict()  # max 100
         self._contradiction_queue: deque = deque(maxlen=20)
-        self._last_action_success: OrderedDict[str, float] = OrderedDict()    # max 50
+        self._last_action_success: Ordereddict[str, float] = OrderedDict()    # max 50
         self._stagnation_counter: int = 0
-        self._main_hypothesis: Optional[Any] = None
+        self._main_hypothesis: Any | None = None
         self._last_iteration_new_findings: int = 0
         self._last_preview: str = ""   # pro is_js_gated
         self._last_url: str = ""       # pro aktuální URL
@@ -3500,15 +3497,15 @@ class FullyAutonomousOrchestrator:
         self._iter_count: int = 0
 
         # Registry akcí (instanční)
-        self._action_registry: Dict[str, Tuple[Any, Any]] = {}
+        self._action_registry: dict[str, tuple[Any, Any]] = {}
 
         # Sprint 68B: Cooldown struktury (max 100 položek)
-        self._action_cooldowns: OrderedDict[str, int] = OrderedDict()  # name -> remaining_iters
+        self._action_cooldowns: Ordereddict[str, int] = OrderedDict()  # name -> remaining_iters
 
         # Sprint 5E: Action quality tracking (required by _decide_next_action)
-        self._action_total_runs: Dict[str, int] = {}  # action_name -> total runs
-        self._action_success_count: Dict[str, int] = {}  # action_name -> success count
-        self._action_last_selected_iteration: Dict[str, int] = {}  # action_name -> last selected iteration
+        self._action_total_runs: dict[str, int] = {}  # action_name -> total runs
+        self._action_success_count: dict[str, int] = {}  # action_name -> success count
+        self._action_last_selected_iteration: dict[str, int] = {}  # action_name -> last selected iteration
 
         self._last_action_name: str = ""
         self._repeat_action_count: int = 0
@@ -3519,16 +3516,16 @@ class FullyAutonomousOrchestrator:
 
         # Sprint 11: Decision Ledger
         self._decision_ring: deque = deque(maxlen=100)
-        self._decision_samples: List[Dict[str, Any]] = []  # Max 12 for report
+        self._decision_samples: list[dict[str, Any]] = []  # Max 12 for report
 
         # Sprint 8: Entity cache
-        self._entity_cache: OrderedDict[str, Dict[str, Any]] = OrderedDict()
+        self._entity_cache: Ordereddict[str, dict[str, Any]] = OrderedDict()
 
         # Sprint 12: Fingerprint diversity
         self._FP_STATS_RAM_MAX = 200
         self._FP_STATS_DISK_MAX = 5000
         self._fp_dir: Path = Path.home() / '.hledac' / 'fp_stats'
-        self._fp_stats: OrderedDict[str, Dict[str, Any]] = OrderedDict()  # fp -> stats
+        self._fp_stats: Ordereddict[str, dict[str, Any]] = OrderedDict()  # fp -> stats
         self._fp_stats_loaded: bool = False
 
         # Sprint 6D: Target queue for contextual routing (replay-only)
@@ -3542,35 +3539,35 @@ class FullyAutonomousOrchestrator:
         # Target extraction metrics
         self._targets_extracted_total: int = 0
         self._targets_enqueued_total: int = 0
-        self._target_type_distribution: Dict[str, int] = {}  # type -> count
+        self._target_type_distribution: dict[str, int] = {}  # type -> count
         self._target_queue_drop_count: int = 0
 
         # Sprint 7A: M1 Thread Pool + Rate Limiter Wiring
         # IO thread pool for non-blocking I/O operations
-        self._io_executor: Optional[concurrent.futures.ThreadPoolExecutor] = None
+        self._io_executor: concurrent.futures.ThreadPoolExecutor | None = None
         self._io_thread_pool_size: int = 6  # IO_THREAD_POOL_SIZE
 
         # CPU thread pool for CPU-bound operations
-        self._cpu_executor: Optional[concurrent.futures.ThreadPoolExecutor] = None
+        self._cpu_executor: concurrent.futures.ThreadPoolExecutor | None = None
         self._cpu_thread_pool_size: int = 2  # CPU_THREAD_POOL_SIZE
 
         # DNS thread pool (subset/safe executor usage)
-        self._dns_executor: Optional[concurrent.futures.ThreadPoolExecutor] = None
+        self._dns_executor: concurrent.futures.ThreadPoolExecutor | None = None
         self._dns_thread_pool_size: int = 3  # DNS_THREAD_POOL_SIZE
 
         # Domain Rate Limiter Registry (central, shared)
-        self._domain_rate_limiter_registry: Dict[str, 'TokenBucket'] = {}
+        self._domain_rate_limiter_registry: dict[str, TokenBucket] = {}
         self._domain_rate_limiter_lock: asyncio.Lock = asyncio.Lock()
         self._domains_tracked: int = 0
 
         # Sprint 7A: HTTP Client for Tier-1 API paths (httpx)
-        self._httpx_client: Optional[Any] = None  # httpx.AsyncClient for API paths
+        self._httpx_client: Any | None = None  # httpx.AsyncClient for API paths
         self._http_client_backend: str = "none"  # curl_cffi / httpx / none
         self._http_connections: int = 0  # MAX_HTTP_CONNECTIONS
 
         # Sprint 7A: LIVE_TIER1 configuration
         self._live_tier1_mode: bool = False
-        self._live_tier1_targets: List[str] = ["example.com", "python.org", "github.com"]
+        self._live_tier1_targets: list[str] = ["example.com", "python.org", "github.com"]
         self._live_execution_confirmed: bool = False
         self._live_http_calls_count: int = 0
 
@@ -3580,7 +3577,7 @@ class FullyAutonomousOrchestrator:
 
         self._structure_map_lock: asyncio.Lock = asyncio.Lock()
         self._kqueue_dirty_lock: threading.Lock = threading.Lock()
-        self._structure_map_state: Dict[str, Any] = {
+        self._structure_map_state: dict[str, Any] = {
             "file_cache": OrderedDict(),
             "prev_edges": [],
             "last_fingerprint": None,
@@ -3593,7 +3590,7 @@ class FullyAutonomousOrchestrator:
             "cooldown_until": 0.0,
             "kqueue_dirty": False,
         }
-        self._warming_task: Optional[asyncio.Task] = None
+        self._warming_task: asyncio.Task | None = None
         self._project_root: str = ""  # Set during initialize()
 
         # Sprint 82: Delta tracking and change-point detection
@@ -3602,7 +3599,7 @@ class FullyAutonomousOrchestrator:
         self._change_points: deque = deque(maxlen=20)
         self._primary_chase_triggers_count: int = 0
         self._delta_recrawl_count: int = 0
-        self._primary_chase_state: Dict[str, Any] = {}
+        self._primary_chase_state: dict[str, Any] = {}
         self._ENTITY_CACHE_MAX = 500
         self._EVIDENCE_RING_MAX = 50
 
@@ -3621,14 +3618,14 @@ class FullyAutonomousOrchestrator:
         self._PRIMARY_CANDIDATES_MAX = 50
         self._PRIMARY_VISITED_RING_MAX = 50
         self._PRIMARY_CHOSEN_MAX = 50
-        self._delta_ema: Dict[str, float] = {}
+        self._delta_ema: dict[str, float] = {}
         self._archive_lookups_count: int = 0
         self._ARCHIVE_ESCALATION_LOOKUPS_MAX: int = 10
         self._ARCHIVE_ESCALATION_RESULTS_MAX: int = 5
-        self._autonomy_monitor_task: Optional[asyncio.Task] = None
-        self._alignment_results: Dict[str, Any] = {}
-        self._last_input_analysis: OrderedDict[str, Any] = OrderedDict()
-        self._blacklist_cache: OrderedDict[str, bool] = OrderedDict()
+        self._autonomy_monitor_task: asyncio.Task | None = None
+        self._alignment_results: dict[str, Any] = {}
+        self._last_input_analysis: Ordereddict[str, Any] = OrderedDict()
+        self._blacklist_cache: Ordereddict[str, bool] = OrderedDict()
 
         self._HIGH_PRIORITY_STRUCTURE_MAP_LIMITS = {
             "max_files": 2500,
@@ -3658,11 +3655,11 @@ class FullyAutonomousOrchestrator:
         # (16) SPRINT 70: Rozšíření autonomního systému
         # =========================================================================
         # B1: Background task handly
-        self._meta_optimizer_task: Optional[asyncio.Task] = None
-        self._dns_monitor_task: Optional[asyncio.Task] = None
+        self._meta_optimizer_task: asyncio.Task | None = None
+        self._dns_monitor_task: asyncio.Task | None = None
 
         # B2: ThreadPoolExecutor pro CPU-bound background úlohy
-        self._background_executor: Optional[concurrent.futures.ThreadPoolExecutor] = concurrent.futures.ThreadPoolExecutor(
+        self._background_executor: concurrent.futures.ThreadPoolExecutor | None = concurrent.futures.ThreadPoolExecutor(
             max_workers=2,
             thread_name_prefix="bg_qos"
         )
@@ -3679,14 +3676,14 @@ class FullyAutonomousOrchestrator:
         self._mlx_bg_semaphore: asyncio.Semaphore = asyncio.Semaphore(1)
 
         # B2: CoreML classifier pro input analysis (lazy loaded)
-        self._coreml_classifier: Optional[Any] = None
+        self._coreml_classifier: Any | None = None
 
         # B3: Background task management (already initialized in __init__)
 
         # B4: Blacklist cache pro bezpečnostní scanning
         self._blacklist_cache: set = set()
         self._blacklist_loaded_at: float = float('-inf')  # ensures first refresh
-        self._blacklist_refresh_task: Optional[asyncio.Task] = None
+        self._blacklist_refresh_task: asyncio.Task | None = None
 
         # Sprint 71E: Bounded blacklist
         self._MAX_BLACKLIST_SIZE = 50_000
@@ -3704,15 +3701,15 @@ class FullyAutonomousOrchestrator:
         self._network_recon_queue_had_items_at_score_time = 0
         self._network_recon_lost_domains_in_analyze_state = 0
         # Sprint 86E-R2: Queue size sampling for diagnostics
-        self._network_recon_queue_size_samples: List[int] = []
+        self._network_recon_queue_size_samples: list[int] = []
 
         # Sprint 86: Action selection tracking for HHI
-        self._action_selection_counts: Dict[str, int] = {}
+        self._action_selection_counts: dict[str, int] = {}
 
         # Sprint 5M: Thompson Sampling - separate selected vs executed
-        self._action_executed_counts: Dict[str, int] = {}
-        self._action_skipped_cooldown_counts: Dict[str, int] = {}
-        self._action_skipped_gate_counts: Dict[str, int] = {}
+        self._action_executed_counts: dict[str, int] = {}
+        self._action_skipped_cooldown_counts: dict[str, int] = {}
+        self._action_skipped_gate_counts: dict[str, int] = {}
 
         # Sprint 5M: Thompson Sampling constants and state
         self._TS_MAX_INIT_RUNS = 20
@@ -3745,21 +3742,21 @@ class FullyAutonomousOrchestrator:
         self._rolling_hhi: float = 0.0
         self._MONOPOLY_GUARD_ENABLED = True  # master kill-switch
         # Last selection timestamps for time-decayed exploration bonus
-        self._action_last_selected_time: Dict[str, float] = {}  # action_name -> monotonic time
+        self._action_last_selected_time: dict[str, float] = {}  # action_name -> monotonic time
         # Sprint 8AI: Time-weighted EMA for family yield (tau = 60s)
         self._EMA_TAU_SEC = 60.0
-        self._family_yield_ema: Dict[str, float] = {}  # family -> EMA value
-        self._family_yield_prev_time: Dict[str, float] = {}  # family -> last update time
+        self._family_yield_ema: dict[str, float] = {}  # family -> EMA value
+        self._family_yield_prev_time: dict[str, float] = {}  # family -> last update time
 
         # Sprint 6F: UCB1 warmup constants
         self._UCB1_WARMUP_MIN_EXECUTIONS = 20  # Minimum execution floor for warmup
         self._UCB1_WARMUP_ENABLED = True
 
         # Sprint 5M: TS posteriors - action_name -> {"alpha": float, "beta": float}
-        self._ts_posteriors: Dict[str, Dict[str, float]] = {}
+        self._ts_posteriors: dict[str, dict[str, float]] = {}
 
         # Sprint 5M: Shadow mode disagreement tracking
-        self._ts_shadow_disagreements: Dict[str, int] = {}
+        self._ts_shadow_disagreements: dict[str, int] = {}
 
         # Sprint 5M: TS decay applied counter
         self._ts_decay_applied_count: int = 0
@@ -3787,12 +3784,12 @@ class FullyAutonomousOrchestrator:
         self._latency_window: deque = deque(maxlen=1000)
 
         # Sprint 6A: Action success counts (distinct from executed)
-        self._action_success_counts: Dict[str, int] = {}
+        self._action_success_counts: dict[str, int] = {}
 
         # Sprint 6A: Posterior calibration snapshots
-        self._calibration_snapshots: List[Dict] = []
-        self._calib_success_snap: Optional[Dict[str, int]] = None
-        self._calib_executed_snap: Optional[Dict[str, int]] = None
+        self._calibration_snapshots: list[dict] = []
+        self._calib_success_snap: dict[str, int] | None = None
+        self._calib_executed_snap: dict[str, int] | None = None
 
         # Sprint 6A: Task leak monitoring
         self._active_task_baseline: int = 0
@@ -3802,10 +3799,10 @@ class FullyAutonomousOrchestrator:
         self._exploration_budget_triggers: int = 0
 
         # Sprint 6B: Contextual Thompson Sampling tracking
-        self._contextual_ts_data: Dict[str, Dict[str, Dict]] = {}  # context_key -> action -> {alpha, beta, executed, success}
+        self._contextual_ts_data: dict[str, dict[str, dict]] = {}  # context_key -> action -> {alpha, beta, executed, success}
         self._contextual_ts_usage_count: int = 0
         self._contextual_ts_fallback_count: int = 0
-        self._contextual_ts_context_distribution: Dict[str, int] = {}
+        self._contextual_ts_context_distribution: dict[str, int] = {}
         self._contextual_keys = ["domain", "url", "email", "username", "handle", "ip", "academic", "unknown"]
 
         # Sprint 72: Thermal monitoring state (already initialized in __init__)
@@ -3816,7 +3813,7 @@ class FullyAutonomousOrchestrator:
 
         # Sprint 7D: State snapshot cache for _analyze_state
         # Sprint 7E: Revision-based cache invalidation (replaces length-based)
-        self._state_snapshot: Optional[Dict[str, Any]] = None
+        self._state_snapshot: dict[str, Any] | None = None
         self._snapshot_findings_rev: int = -1
         self._snapshot_domains_rev: int = -1
         self._snapshot_posteriors_rev: int = -1
@@ -3831,9 +3828,9 @@ class FullyAutonomousOrchestrator:
         self._last_input_analysis_max = 100
 
         # B6: Pattern mining a identity stitching tasky
-        self._pattern_miner_task: Optional[asyncio.Task] = None
-        self._identity_stitcher_task: Optional[asyncio.Task] = None
-        self._leak_hunter_task: Optional[asyncio.Task] = None
+        self._pattern_miner_task: asyncio.Task | None = None
+        self._identity_stitcher_task: asyncio.Task | None = None
+        self._leak_hunter_task: asyncio.Task | None = None
 
         # Sprint 5C: Capability Radar - autonomous transport and federated decision
         # EMA formula: ema_new = 0.2 * outcome + 0.8 * ema_prev (outcome: 1.0 success, 0.0 failure)
@@ -3844,17 +3841,17 @@ class FullyAutonomousOrchestrator:
         self._nym_ema: float = 0.5  # init value
         self._default_transport_ema: float = 0.5  # init value
         # Sprint 5D: Transport selection tracking
-        self._transport_selected_count: Dict[str, int] = {}  # counts by transport type
+        self._transport_selected_count: dict[str, int] = {}  # counts by transport type
         self._federated_load_ema: float = 0.5  # init value
         self._federated_persist_ema: float = 0.5  # init value
         self._capability_radar_initialized: bool = False
         # Sprint 5E: Action quality EMA (bounded adaptivity)
-        self._action_quality_ema: Dict[str, float] = {}  # action_name -> EMA
-        self._action_total_runs: Dict[str, int] = {}  # action_name -> total runs
-        self._action_last_selected_iteration: Dict[str, int] = {}  # action_name -> iteration
-        self._action_success_count: Dict[str, int] = {}  # action_name -> success count
+        self._action_quality_ema: dict[str, float] = {}  # action_name -> EMA
+        self._action_total_runs: dict[str, int] = {}  # action_name -> total runs
+        self._action_last_selected_iteration: dict[str, int] = {}  # action_name -> iteration
+        self._action_success_count: dict[str, int] = {}  # action_name -> success count
         # Sprint 6F: Pre-execution status for blocked actions (used in UCB1 warmup)
-        self._action_pre_execution_status: Dict[str, Dict[str, bool]] = {}  # action_name -> {blocked: bool}
+        self._action_pre_execution_status: dict[str, dict[str, bool]] = {}  # action_name -> {blocked: bool}
 
         # Circuit breaker for transports (3 consecutive failures = open)
         self._tor_circuit_open: bool = False
@@ -3864,21 +3861,21 @@ class FullyAutonomousOrchestrator:
         # Resource pressure signal (computed from active tasks + queue pressure)
         self._resource_pressure: float = 0.0  # 0.0 = normal, 1.0 = critical
         # Sprint 5C: Federated task tracking (max 1 concurrent)
-        self._federated_task: Optional[asyncio.Task] = None
+        self._federated_task: asyncio.Task | None = None
 
         # =========================================================================
         # Sprint 5G: Single-Writer Collector for Safe Parallelism
         # =========================================================================
         # Bounded result queue - producer puts, single consumer writes to shared state
         self._result_queue: asyncio.Queue = asyncio.Queue(maxsize=100)
-        self._collector_task: Optional[asyncio.Task] = None
+        self._collector_task: asyncio.Task | None = None
         self._collector_running: bool = False
         # Telemetry for queue backpressure
         self._queue_backpressure_events: int = 0
         self._queue_fallback_count: int = 0
         self._collector_processed_count: int = 0
         # Queue size tracking for observability
-        self._queue_size_samples: List[int] = []
+        self._queue_size_samples: list[int] = []
         # Debug flag
         self._debug_collector: bool = os.environ.get('HLEDAC_DEBUG_COLLECTOR', '0') == '1'
 
@@ -3995,7 +3992,7 @@ class FullyAutonomousOrchestrator:
         except Exception:
             return False
 
-    def _select_transport_for_target(self, target: str, context: Optional[Dict] = None) -> str:
+    def _select_transport_for_target(self, target: str, context: dict | None = None) -> str:
         """
         Sprint 5C: Autonomous transport selection based on target and availability.
         Returns: 'tor', 'nym', 'default', or 'unavailable'
@@ -4059,7 +4056,7 @@ class FullyAutonomousOrchestrator:
         else:
             self._default_transport_ema = alpha * outcome + (1 - alpha) * self._default_transport_ema
 
-    def _is_high_value_finding(self, finding: Dict) -> bool:
+    def _is_high_value_finding(self, finding: dict) -> bool:
         """Sprint 5C: Determine if finding is high-value for federated activation."""
         confidence = finding.get('confidence', 0.0)
         if confidence > 0.8:
@@ -4072,7 +4069,7 @@ class FullyAutonomousOrchestrator:
 
         return False
 
-    def _should_activate_federated(self, findings: List[Dict], evidence_count: int) -> bool:
+    def _should_activate_federated(self, findings: list[dict], evidence_count: int) -> bool:
         """Sprint 5C: Autonomous federated activation decision."""
         if self._federated_task is not None and not self._federated_task.done():
             return False
@@ -4174,7 +4171,7 @@ class FullyAutonomousOrchestrator:
                     if self._debug_collector:
                         logger.info(f'[COLLECTOR] Processed {action_name}, queue_size={qsize}')
 
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     continue
                 except asyncio.CancelledError:
                     logger.info('[COLLECTOR] Collector cancelled')
@@ -4203,7 +4200,7 @@ class FullyAutonomousOrchestrator:
         if self._collector_task and not self._collector_task.done():
             try:
                 await asyncio.wait_for(self._collector_task, timeout=timeout)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 logger.warning(f'[COLLECTOR] Drain timeout, remaining: {self._result_queue.qsize()}')
                 if not self._collector_task.done():
                     self._collector_task.cancel()
@@ -4214,7 +4211,7 @@ class FullyAutonomousOrchestrator:
 
         logger.info(f'[COLLECTOR] Stopped, processed={self._collector_processed_count}')
 
-    async def _enqueue_action_result(self, action_name: str, action_result: Optional[ActionResult]) -> None:
+    async def _enqueue_action_result(self, action_name: str, action_result: ActionResult | None) -> None:
         """Producer: enqueue action result with backpressure handling."""
         if action_result is None:
             return
@@ -4231,7 +4228,7 @@ class FullyAutonomousOrchestrator:
             if self._debug_collector:
                 logger.debug(f'[COLLECTOR] Enqueued {action_name}, queue_size={self._result_queue.qsize()}')
 
-        except asyncio.TimeoutError:
+        except TimeoutError:
             self._queue_backpressure_events += 1
 
             if self._debug_collector:
@@ -4348,7 +4345,7 @@ class FullyAutonomousOrchestrator:
                             recon.detect_wildcard(domain),
                             timeout=2.0  # NETWORK_RECON_DNS_TIMEOUT_S
                         )
-                    except asyncio.TimeoutError:
+                    except TimeoutError:
                         return {'wildcard_suspected': False, 'probe_method': 'timeout'}
                     except Exception:
                         return {'wildcard_suspected': False, 'probe_method': 'error_fallback'}
@@ -4356,7 +4353,7 @@ class FullyAutonomousOrchestrator:
                 # Sprint 5S: Safe DNS lookup
                 try:
                     dns_result = await safe_dns_lookup()
-                except Exception as e:
+                except Exception:
                     dns_result = {'wildcard_suspected': False, 'probe_method': 'error_conservative'}
 
                 # Get results from recon
@@ -4404,7 +4401,7 @@ class FullyAutonomousOrchestrator:
                     }
                 )
 
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 latency_ms = (time.perf_counter_ns() - start_ns) / 1_000_000
                 return ActionResult(success=False, error="Timeout", findings=[], metadata={'timeout': True, 'v2': True, 'handler_latency_ms': round(latency_ms, 2)})
             except Exception as e:
@@ -4414,7 +4411,7 @@ class FullyAutonomousOrchestrator:
                     return ActionResult(success=False, error=f"ExceptionGroup: {e}", findings=[], metadata={'v2': True, 'handler_latency_ms': round(latency_ms, 2)})
                 return ActionResult(success=False, error=str(e), findings=[], metadata={'v2': True, 'handler_latency_ms': round(latency_ms, 2)})
 
-    def _get_queue_stats(self) -> Dict[str, Any]:
+    def _get_queue_stats(self) -> dict[str, Any]:
         """Get collector queue statistics."""
         qsize = self._result_queue.qsize()
         return {
@@ -4558,7 +4555,7 @@ class FullyAutonomousOrchestrator:
             pass
 
         # Also call module-level cleanup
-        from .utils.mlx_cache import mlx_cleanup_sync, mlx_cleanup_aggressive
+        from .utils.mlx_cache import mlx_cleanup_aggressive, mlx_cleanup_sync
         if aggressive:
             await asyncio.to_thread(mlx_cleanup_aggressive)
         else:
@@ -4592,7 +4589,7 @@ class FullyAutonomousOrchestrator:
     # =========================================================================
     # Sprint 71: Background Task Management
     # =========================================================================
-    def _task_is_alive(self, task: Optional[asyncio.Task]) -> bool:
+    def _task_is_alive(self, task: asyncio.Task | None) -> bool:
         """Check if task is alive."""
         return task is not None and not task.done()
 
@@ -4629,7 +4626,7 @@ class FullyAutonomousOrchestrator:
     # =========================================================================
     # Sprint 71: Unified Input Analysis (LRU bounded)
     # =========================================================================
-    async def _analyze_input(self, query: str) -> Dict[str, Any]:
+    async def _analyze_input(self, query: str) -> dict[str, Any]:
         """Analyze input query with CoreML first, then Hermes fallback."""
         # LRU cache lookup (bounded)
         cache_key = hash(query[:200])
@@ -4639,7 +4636,7 @@ class FullyAutonomousOrchestrator:
 
         # Try CoreML first (ANE)
         await self._load_coreml_classifier()
-        result_dict: Dict[str, Any] = {}
+        result_dict: dict[str, Any] = {}
         if self._coreml_classifier:
             try:
                 result = self._coreml_classifier.predict({"text": query[:512]})
@@ -4670,7 +4667,7 @@ class FullyAutonomousOrchestrator:
 
         return result_dict
 
-    async def _mlx_analyze_input(self, query: str) -> Dict[str, Any]:
+    async def _mlx_analyze_input(self, query: str) -> dict[str, Any]:
         """MLX-based input analysis using Hermes-3."""
         # Simple heuristic analysis as fallback
         query_lower = query.lower()
@@ -4695,14 +4692,14 @@ class FullyAutonomousOrchestrator:
 
     # Sprint 71E: DNS Rebinding Defense
     @staticmethod
-    def _resolve_host_ips(host: str) -> List[str]:
+    def _resolve_host_ips(host: str) -> list[str]:
         """Resolve hostname to IPs (deterministically sorted)."""
         import socket
         try:
             # getaddrinfo returns list of (family, type, proto, canonname, sockaddr)
             results = socket.getaddrinfo(host, None, proto=socket.IPPROTO_TCP)
             # Extract IP string from sockaddr (index 4 is (ip, port))
-            ips = sorted(set(r[4][0] for r in results))
+            ips = sorted({r[4][0] for r in results})
             return ips
         except socket.gaierror:
             return []
@@ -4728,7 +4725,7 @@ class FullyAutonomousOrchestrator:
         except Exception:
             return False
 
-    def _validate_resolved_ips(self, host: str) -> Tuple[bool, Dict[str, Any]]:
+    def _validate_resolved_ips(self, host: str) -> tuple[bool, dict[str, Any]]:
         """Validate resolved IPs are all public. Returns (is_safe, meta)."""
         ips = self._resolve_host_ips(host)
         if not ips:
@@ -4838,7 +4835,7 @@ class FullyAutonomousOrchestrator:
             return True
         return elapsed > self._STRUCTURE_MAP_MIN_INTERVAL_S
 
-    def _compute_structure_map_cooldown(self, *, churn_ratio: float, now: float, truncated: bool, trunc_reason: Optional[str]) -> float:
+    def _compute_structure_map_cooldown(self, *, churn_ratio: float, now: float, truncated: bool, trunc_reason: str | None) -> float:
         """B6: Compute cooldown based on churn and truncation."""
         if churn_ratio > 0.30:
             base = now + 7200.0
@@ -4853,7 +4850,7 @@ class FullyAutonomousOrchestrator:
 
     async def _build_structure_map_async(self, *, limits: dict) -> dict:
         """B7: Async wrapper - TOCTOU fix + fail-safe."""
-        now = time.monotonic()
+        time.monotonic()
         limits = dict(limits)
 
         # SINGLE LOCK: circuit check + deep snapshot together
@@ -5062,7 +5059,7 @@ class FullyAutonomousOrchestrator:
         """Vrátí poslední zpracovanou URL."""
         return self._last_url
 
-    def _pick_url_for_archive(self) -> Optional[str]:
+    def _pick_url_for_archive(self) -> str | None:
         """Vybere URL z sources heap pro archivaci."""
         if not hasattr(self, '_sources_heap') or not self._sources_heap:
             return None
@@ -5143,11 +5140,11 @@ class FullyAutonomousOrchestrator:
     def _capture_iteration_trace(
         self,
         iteration: int,
-        state: 'WorkflowState',
+        state: WorkflowState,
         chosen_action: str,
         chosen_score: float,
-        all_scores: Dict[str, float],
-        zero_score_reasons: Dict[str, str],
+        all_scores: dict[str, float],
+        zero_score_reasons: dict[str, str],
         action_result_type: str,
         new_findings: int,
         new_sources: int,
@@ -5277,7 +5274,7 @@ class FullyAutonomousOrchestrator:
 
         return trace
 
-    def _compute_capability_reachability_report(self) -> Dict[str, Any]:
+    def _compute_capability_reachability_report(self) -> dict[str, Any]:
         """
         Compute capability reachability report from trace data.
 
@@ -5292,15 +5289,14 @@ class FullyAutonomousOrchestrator:
             return {"error": "No trace data"}
 
         # Aggregate from trace buffer
-        action_selection_count: Dict[str, int] = defaultdict(int)
-        action_execution_count: Dict[str, int] = defaultdict(int)
-        action_findings: Dict[str, int] = defaultdict(int)
-        action_sources: Dict[str, int] = defaultdict(int)
-        zero_score_reasons: Dict[str, Dict[str, int]] = defaultdict(lambda: defaultdict(int))
-        result_types: Dict[str, int] = defaultdict(int)
-        consecutive_streaks: List[int] = []
+        action_selection_count: dict[str, int] = defaultdict(int)
+        action_execution_count: dict[str, int] = defaultdict(int)
+        action_findings: dict[str, int] = defaultdict(int)
+        action_sources: dict[str, int] = defaultdict(int)
+        zero_score_reasons: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
+        result_types: dict[str, int] = defaultdict(int)
+        consecutive_streaks: list[int] = []
 
-        prev_action = None
         for trace in self._iteration_trace_buffer:
             action_selection_count[trace.chosen_action] += 1
 
@@ -5329,7 +5325,7 @@ class FullyAutonomousOrchestrator:
             "total_iterations": len(self._iteration_trace_buffer),
         }
 
-    def _termination_reason(self) -> Optional[str]:
+    def _termination_reason(self) -> str | None:
         """Vrátí důvod ukončení nebo None pokud nemá končit."""
         # Budget termination
         budget_ok, _ = self._budget_manager.check_time_allowed()
@@ -5469,7 +5465,7 @@ class FullyAutonomousOrchestrator:
             except Exception as e:
                 return ActionResult(success=False, error=str(e))
 
-        def surface_search_scorer(state: Dict[str, Any]) -> Tuple[float, Dict[str, Any]]:
+        def surface_search_scorer(state: dict[str, Any]) -> tuple[float, dict[str, Any]]:
             score = 0.5
             if state.get('recent_novelty', 0) < 0.2:
                 score += 0.2
@@ -5542,7 +5538,7 @@ class FullyAutonomousOrchestrator:
             except Exception as e:
                 return ActionResult(success=False, error=str(e))
 
-        def archive_fetch_scorer(state: Dict[str, Any]) -> Tuple[float, Dict[str, Any]]:
+        def archive_fetch_scorer(state: dict[str, Any]) -> tuple[float, dict[str, Any]]:
             if state.get('archive_available') and state.get('recent_novelty', 1) < 0.3:
                 url = self._pick_url_for_archive()
                 if url:
@@ -5579,7 +5575,7 @@ class FullyAutonomousOrchestrator:
             except Exception as e:
                 return ActionResult(success=False, error=str(e))
 
-        def render_page_scorer(state: Dict[str, Any]) -> Tuple[float, Dict[str, Any]]:
+        def render_page_scorer(state: dict[str, Any]) -> tuple[float, dict[str, Any]]:
             if state.get('browser_available') and state.get('js_gated'):
                 url = self._current_url()
                 if url:
@@ -5592,7 +5588,7 @@ class FullyAutonomousOrchestrator:
         async def investigate_handler(claim_id: str) -> ActionResult:
             return await self._investigate_contradiction(claim_id)
 
-        def investigate_scorer(state: Dict[str, Any]) -> Tuple[float, Dict[str, Any]]:
+        def investigate_scorer(state: dict[str, Any]) -> tuple[float, dict[str, Any]]:
             if state.get('contradictions', 0) > 0 and self._contradiction_queue:
                 first = self._contradiction_queue[0]
                 claim_id = first.get('claim_id', '')
@@ -5639,7 +5635,7 @@ class FullyAutonomousOrchestrator:
                     metadata={"structure_map_error": True}
                 )
 
-        def build_structure_map_scorer(state: Dict[str, Any]) -> Tuple[float, Dict[str, Any]]:
+        def build_structure_map_scorer(state: dict[str, Any]) -> tuple[float, dict[str, Any]]:
             """Scorer for build_structure_map action - NON-BLOCKING.
 
             Reads gating values from state dict (pre-computed in _analyze_state).
@@ -5681,7 +5677,7 @@ class FullyAutonomousOrchestrator:
             except Exception as e:
                 return ActionResult(success=False, error=str(e), findings=[], metadata={'ct_error': True})
 
-        def _ct_scorer(state: Dict[str, Any]) -> Tuple[float, Dict[str, Any]]:
+        def _ct_scorer(state: dict[str, Any]) -> tuple[float, dict[str, Any]]:
             if state.get('new_domain_detected'):
                 return (0.7, {"domain": state['new_domain']})
             return (0.0, {})
@@ -5703,7 +5699,7 @@ class FullyAutonomousOrchestrator:
             except Exception as e:
                 return ActionResult(success=False, error=str(e), findings=[], metadata={'jarm_error': True})
 
-        def _jarm_scorer(state: Dict[str, Any]) -> Tuple[float, Dict[str, Any]]:
+        def _jarm_scorer(state: dict[str, Any]) -> tuple[float, dict[str, Any]]:
             if state.get('new_domain_detected'):
                 return (0.6, {"domain": state['new_domain']})
             return (0.0, {})
@@ -5726,7 +5722,7 @@ class FullyAutonomousOrchestrator:
             except Exception as e:
                 return ActionResult(success=False, error=str(e), findings=[], metadata={'open_storage_error': True})
 
-        def _open_storage_scorer(state: Dict[str, Any]) -> Tuple[float, Dict[str, Any]]:
+        def _open_storage_scorer(state: dict[str, Any]) -> tuple[float, dict[str, Any]]:
             domain = state.get('new_domain') or state.get('last_url', '')
             if domain and state.get('recent_novelty', 1.0) < 0.2:
                 return (0.5, {"domain": domain})
@@ -5776,7 +5772,7 @@ class FullyAutonomousOrchestrator:
                 self._update_transport_ema('tor', success=False)
                 return ActionResult(success=False, error=str(e), findings=[], metadata={'onion_error': True})
 
-        def _onion_scorer(state: Dict[str, Any]) -> Tuple[float, Dict[str, Any]]:
+        def _onion_scorer(state: dict[str, Any]) -> tuple[float, dict[str, Any]]:
             if state.get('has_onion_targets'):
                 return (0.8, {"onion_address": state['onion_target']})
             return (0.0, {})
@@ -5801,7 +5797,7 @@ class FullyAutonomousOrchestrator:
             except Exception as e:
                 return ActionResult(success=False, error=str(e), findings=[], metadata={'path_discovery_error': True})
 
-        def _path_discovery_scorer(state: Dict[str, Any]) -> Tuple[float, Dict[str, Any]]:
+        def _path_discovery_scorer(state: dict[str, Any]) -> tuple[float, dict[str, Any]]:
             if state.get('has_known_paths'):
                 return (0.4, {"base_url": state['base_url'], "known_paths": state['known_paths']})
             return (0.0, {})
@@ -5846,7 +5842,7 @@ class FullyAutonomousOrchestrator:
                     self._metrics_registry.inc("ct_discovery_failures", 1)
                 return ActionResult(success=False, error=str(e), findings=[])
 
-        def ct_discovery_scorer(state: Dict[str, Any]) -> Tuple[float, Dict[str, Any]]:
+        def ct_discovery_scorer(state: dict[str, Any]) -> tuple[float, dict[str, Any]]:
             if state.get('new_domain_detected') and state.get('phase', 0) < 3:
                 score = 0.7
                 # Sprint 86F: Track score history
@@ -5902,7 +5898,7 @@ class FullyAutonomousOrchestrator:
             except Exception as e:
                 return ActionResult(success=False, error=str(e), findings=[])
 
-        def wayback_rescue_scorer(state: Dict[str, Any]) -> Tuple[float, Dict[str, Any]]:
+        def wayback_rescue_scorer(state: dict[str, Any]) -> tuple[float, dict[str, Any]]:
             if state.get('dead_but_promising') and state.get('phase', 0) < 4:
                 return (0.6, {"url": state.get('dead_url', '')})
             return (0.0, {})
@@ -5934,7 +5930,7 @@ class FullyAutonomousOrchestrator:
             except Exception as e:
                 return ActionResult(success=False, error=str(e), findings=[])
 
-        def commoncrawl_rescue_scorer(state: Dict[str, Any]) -> Tuple[float, Dict[str, Any]]:
+        def commoncrawl_rescue_scorer(state: dict[str, Any]) -> tuple[float, dict[str, Any]]:
             if state.get('contradiction_relevant') and state.get('phase', 0) < 4:
                 return (0.5, {"domain": state.get('new_domain', '')})
             return (0.0, {})
@@ -5978,7 +5974,7 @@ class FullyAutonomousOrchestrator:
                     self._metrics_registry.inc("necromancer_failures", 1)
                 return ActionResult(success=False, error=str(e), findings=[])
 
-        def necromancer_scorer(state: Dict[str, Any]) -> Tuple[float, Dict[str, Any]]:
+        def necromancer_scorer(state: dict[str, Any]) -> tuple[float, dict[str, Any]]:
             if state.get('dead_but_promising') and state.get('contradiction_relevant'):
                 return (0.8, {"url": state.get('dead_url', '')})
             return (0.0, {})
@@ -6011,8 +6007,8 @@ class FullyAutonomousOrchestrator:
 
                 # Extract terms from recent findings for PRF
                 if recent_findings:
-                    from collections import Counter
                     import re
+                    from collections import Counter
                     all_tokens = []
                     for f in recent_findings:
                         content = getattr(f, 'content', '') or ''
@@ -6077,7 +6073,7 @@ class FullyAutonomousOrchestrator:
                 self._handler_error_type_by_action['prf_expand'] = type(e).__name__
                 return ActionResult(success=False, error=str(e), findings=[])
 
-        def prf_expand_scorer(state: Dict[str, Any]) -> Tuple[float, Dict[str, Any]]:
+        def prf_expand_scorer(state: dict[str, Any]) -> tuple[float, dict[str, Any]]:
             # Phase 5: PRF needs recent novelty AND not at activation limit
             # Handle phase as either int or string (benchmark passes "DISCOVERY" as string)
             phase_val = state.get('phase', 0)
@@ -6100,12 +6096,12 @@ class FullyAutonomousOrchestrator:
         self._register_action('prf_expand', prf_expand_handler, prf_expand_scorer)
 
         # ---- Sprint 8AH: DLH Email Collection + DLH Action ----
-        self._dlh_email_queue: 'OrderedDict' = None
-        self._dlh_seen_emails: 'OrderedDict' = None
+        self._dlh_email_queue: OrderedDict = None
+        self._dlh_seen_emails: OrderedDict = None
         self._dlh_available: bool = True
         self._dlh_invocations_this_run: int = 0
 
-        def _dlh_collect_emails(emails: List[str]) -> None:
+        def _dlh_collect_emails(emails: list[str]) -> None:
             if not getattr(self, '_dlh_available', False):
                 return
             if not emails:
@@ -6122,7 +6118,7 @@ class FullyAutonomousOrchestrator:
                     self._dlh_email_queue.popitem(last=False)
                 self._dlh_email_queue[normalized] = None
 
-        async def _dlh_check_batch() -> Tuple[List[Tuple[str, Dict]], int]:
+        async def _dlh_check_batch() -> tuple[list[tuple[str, dict]], int]:
             if not getattr(self, '_dlh_available', False):
                 return [], 0
             if self._dlh_invocations_this_run >= 2:
@@ -6167,7 +6163,7 @@ class FullyAutonomousOrchestrator:
                 logger.warning(f"DLH: error during check, disabling: {e}")
                 return [], 0
 
-        def _dlh_identity_scorer(state: Dict[str, Any]) -> Tuple[float, Dict[str, Any]]:
+        def _dlh_identity_scorer(state: dict[str, Any]) -> tuple[float, dict[str, Any]]:
             if not getattr(self, '_dlh_available', False):
                 return (0.0, {})
             queue_size = len(getattr(self, '_dlh_email_queue', OrderedDict()) or {})
@@ -6232,7 +6228,7 @@ class FullyAutonomousOrchestrator:
             'https://raw.githubusercontent.com/torvalds/linux/master/README',
             'https://raw.githubusercontent.com/kernel/kernel/master/MAINTAINERS',
         ]
-        _DIRECT_HARVEST_SEEN_URLS: 'OrderedDict' if False else None  # Forward ref
+        _DIRECT_HARVEST_SEEN_URLS: OrderedDict if False else None  # Forward ref
 
         async def direct_harvest_handler(**kwargs) -> ActionResult:
             """Sprint 8AF: Provider-independent direct harvest of text-rich URLs."""
@@ -6280,7 +6276,7 @@ class FullyAutonomousOrchestrator:
                 # Sprint 8AF: Bounded fetch with semaphore (M1 memory safety)
                 enrichment_semaphore = asyncio.Semaphore(2)
 
-                async def _fetch_and_extract(url: str) -> Optional[Tuple[ResearchFinding, ResearchSource]]:
+                async def _fetch_and_extract(url: str) -> tuple[ResearchFinding, ResearchSource] | None:
                     """Fetch URL and extract findings with email."""
                     async with enrichment_semaphore:
                         try:
@@ -6350,7 +6346,7 @@ class FullyAutonomousOrchestrator:
                                 _dlh_collect_emails(emails)
 
                                 return (finding, source)
-                        except asyncio.TimeoutError:
+                        except TimeoutError:
                             logger.debug(f"direct_harvest timeout: {url[:50]}")
                         except Exception as e:
                             logger.debug(f"direct_harvest failed: {url[:50]} - {e}")
@@ -6395,7 +6391,7 @@ class FullyAutonomousOrchestrator:
                 logger.warning(f"direct_harvest error: {e}")
                 return ActionResult(success=False, error=str(e), findings=[])
 
-        def direct_harvest_scorer(state: Dict[str, Any]) -> Tuple[float, Dict[str, Any]]:
+        def direct_harvest_scorer(state: dict[str, Any]) -> tuple[float, dict[str, Any]]:
             """Sprint 8AF: Run direct_harvest when other actions are starved or for enrichment boost."""
             # Run if queue is empty (starvation signal) or always with low priority for diversity
             queue_size = 0
@@ -6465,7 +6461,7 @@ class FullyAutonomousOrchestrator:
                 self._update_transport_ema('tor', success=False)
                 return ActionResult(success=False, error=str(e), findings=[], metadata={'onion_error': True})
 
-        def onion_fetch_scorer(state: Dict[str, Any]) -> Tuple[float, Dict[str, Any]]:
+        def onion_fetch_scorer(state: dict[str, Any]) -> tuple[float, dict[str, Any]]:
             if state.get('onion_candidate') and state.get('phase', 0) < 3:
                 return (0.5, {"url": state.get('onion_url', '')})
             return (0.0, {})
@@ -6633,7 +6629,7 @@ class FullyAutonomousOrchestrator:
                     }
                 )
 
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 latency_ms = (time.perf_counter_ns() - start_ns) / 1_000_000
                 return ActionResult(success=False, error="Timeout", findings=[], metadata={'timeout': True, 'handler_latency_ms': round(latency_ms, 2), 'downstream_flow_state': 'TIMEOUT'})
 
@@ -6641,7 +6637,7 @@ class FullyAutonomousOrchestrator:
                 latency_ms = (time.perf_counter_ns() - start_ns) / 1_000_000
                 return ActionResult(success=False, error=str(e), findings=[], metadata={'handler_latency_ms': round(latency_ms, 2), 'downstream_flow_state': 'PROCESSING_FAILED'})
 
-        def network_recon_scorer(state: Dict[str, Any]) -> Tuple[float, Dict[str, Any]]:
+        def network_recon_scorer(state: dict[str, Any]) -> tuple[float, dict[str, Any]]:
             """
             Scorer for network_recon action.
 
@@ -6781,7 +6777,6 @@ class FullyAutonomousOrchestrator:
         }
 
         # Timeout for sync engine
-        IDENTITY_STITCHING_TIMEOUT_S = 8.0
 
         # Sprint: Identity Propagation via Scoring Injection
         PROPAGATION_HINT_TTL_ITERATIONS = 20  # Sprint 4A: increased from 5 to 20
@@ -6790,7 +6785,6 @@ class FullyAutonomousOrchestrator:
         # base_budget = 3, corroborated_bonus = +1 if corroboration_count >= 2, hard_cap = 5
         # Sprint 5J: Identity stitching bounding
         IDENTITY_STITCHING_COOLDOWN_ITERS = 5  # Hard cooldown between runs
-        IDENTITY_STITCHING_MIN_NEW_FINDINGS = 1  # Must have at least 1 new finding
 
         PROPAGATION_YIELD_BUDGET = 3  # base budget, adjusted dynamically in handler
         PROPAGATION_YIELD_BUDGET_HARD_CAP = 5
@@ -6858,15 +6852,15 @@ class FullyAutonomousOrchestrator:
             self._consumed_hints_skipped_in_fallback: int = 0
         # Sprint 4G: Match type tracking (bounded by enum, not hint count)
         if not hasattr(self, '_hints_generated_by_match_type'):
-            self._hints_generated_by_match_type: Dict[str, int] = {}
+            self._hints_generated_by_match_type: dict[str, int] = {}
         if not hasattr(self, '_hints_consumed_by_match_type'):
-            self._hints_consumed_by_match_type: Dict[str, int] = {}
+            self._hints_consumed_by_match_type: dict[str, int] = {}
         if not hasattr(self, '_last_selected_iteration'):
-            self._last_selected_iteration: Dict[str, int] = {}
+            self._last_selected_iteration: dict[str, int] = {}
 
         # Sprint 4E: Drop reasons (bounded keys only)
         if not hasattr(self, '_propagation_generation_drop_reasons'):
-            self._propagation_generation_drop_reasons: Dict[str, int] = {
+            self._propagation_generation_drop_reasons: dict[str, int] = {
                 'generic_prefix_filtered': 0,
                 'low_value_domain_filtered': 0,
                 'duplicate_filtered_local': 0,
@@ -6896,7 +6890,7 @@ class FullyAutonomousOrchestrator:
 
         # Sprint 4E: Signal quality scoring
         if not hasattr(self, '_identity_signal_score_buckets'):
-            self._identity_signal_score_buckets: Dict[str, int] = {
+            self._identity_signal_score_buckets: dict[str, int] = {
                 '0-20': 0, '21-40': 0, '41-60': 0, '61-80': 0, '81-100': 0
             }
 
@@ -6912,11 +6906,11 @@ class FullyAutonomousOrchestrator:
         if not hasattr(self, '_identity_singleton_profiles_total'):
             self._identity_singleton_profiles_total: int = 0
         if not hasattr(self, '_identity_profiles_per_cluster_buckets'):
-            self._identity_profiles_per_cluster_buckets: Dict[str, int] = {
+            self._identity_profiles_per_cluster_buckets: dict[str, int] = {
                 '1': 0, '2': 0, '3': 0, '4': 0, '5+': 0
             }
         if not hasattr(self, '_identity_match_score_buckets'):
-            self._identity_match_score_buckets: Dict[str, int] = {
+            self._identity_match_score_buckets: dict[str, int] = {
                 '0.0-0.2': 0, '0.2-0.4': 0, '0.4-0.6': 0, '0.6-0.8': 0, '0.8-1.0': 0
             }
 
@@ -6958,7 +6952,7 @@ class FullyAutonomousOrchestrator:
 
         # Sprint 4F: Raw Match Quality Gate
         if not hasattr(self, '_raw_match_quality_score_buckets'):
-            self._raw_match_quality_score_buckets: Dict[str, int] = {
+            self._raw_match_quality_score_buckets: dict[str, int] = {
                 '0.0-0.2': 0, '0.2-0.4': 0, '0.4-0.6': 0, '0.6-0.8': 0, '0.8-1.0': 0
             }
         if not hasattr(self, '_raw_match_quality_gate_pass_total'):
@@ -6993,7 +6987,7 @@ class FullyAutonomousOrchestrator:
 
         # Sprint 4E: Bounded corroboration index (O(1) lookups)
         if not hasattr(self, '_corroboration_index'):
-            self._corroboration_index: Dict[str, int] = {}  # domain/handle/org -> count
+            self._corroboration_index: dict[str, int] = {}  # domain/handle/org -> count
         if not hasattr(self, '_pending_corroboration_candidates'):
             from collections import OrderedDict
             self._pending_corroboration_candidates: OrderedDict = OrderedDict()  # max 50
@@ -7014,7 +7008,7 @@ class FullyAutonomousOrchestrator:
         # Sprint KROK 2: Selected hint context for hard execution contract
         # Stores the hint that caused the current action selection
         if not hasattr(self, '_selected_hint'):
-            self._selected_hint: Optional[Dict[str, Any]] = None
+            self._selected_hint: dict[str, Any] | None = None
 
         # Sprint: Fair A/B Propagation Benchmark
         # Feature flag for propagation scoring - controls whether hints affect action selection
@@ -7029,7 +7023,7 @@ class FullyAutonomousOrchestrator:
         # Sprint: Hard Causal Attribution
         # Outcome tracking for each hint (action-level attribution)
         if not hasattr(self, '_hint_outcomes'):
-            self._hint_outcomes: Dict[str, Dict] = {}
+            self._hint_outcomes: dict[str, dict] = {}
 
         # Sprint: Hard Causal Attribution
         # Next local index for generating unique hint IDs
@@ -7039,7 +7033,7 @@ class FullyAutonomousOrchestrator:
         # Sprint: Hard Causal Attribution
         # Entity discovery tracking for benchmark
         if not hasattr(self, '_benchmark_seen_entities'):
-            self._benchmark_seen_entities: Dict[str, Set[str]] = {
+            self._benchmark_seen_entities: dict[str, set[str]] = {
                 "emails": set(),
                 "handles": set(),
                 "profile_urls": set(),
@@ -7067,7 +7061,7 @@ class FullyAutonomousOrchestrator:
             'settings', 'account', 'messages', 'comments', 'submit'
         })
 
-        def _extract_handles_from_content(self, content: str) -> List[str]:
+        def _extract_handles_from_content(self, content: str) -> list[str]:
             """Extract handles from known platform URLs."""
             handles = []
             try:
@@ -7142,7 +7136,7 @@ class FullyAutonomousOrchestrator:
                 domain = domain[4:]
             return domain
 
-        def _filter_generic_emails(emails: List[str]) -> List[str]:
+        def _filter_generic_emails(emails: list[str]) -> list[str]:
             """Filter generic email prefixes."""
             filtered = []
             for email in emails:
@@ -7158,9 +7152,9 @@ class FullyAutonomousOrchestrator:
                 filtered.append(email)
             return filtered
 
-        def _domain_dedup(emails: List[str], max_per_domain: int = 2) -> List[str]:
+        def _domain_dedup(emails: list[str], max_per_domain: int = 2) -> list[str]:
             """Domain-level deduplication."""
-            domain_counts: Dict[str, int] = {}
+            domain_counts: dict[str, int] = {}
             result = []
             for email in emails:
                 domain = _normalize_domain(email)  # Use closure variable, not self attribute
@@ -7174,10 +7168,10 @@ class FullyAutonomousOrchestrator:
 
         def _compute_evidence_score(
             self,
-            emails: List[str],
-            handles: List[str],
+            emails: list[str],
+            handles: list[str],
             seen_identifiers: set
-        ) -> Tuple[float, Dict[str, Any]]:
+        ) -> tuple[float, dict[str, Any]]:
             """Evidence-weighted scorer for identity stitching."""
             # Filter generic emails
             valid_emails = self._filter_generic_emails(emails)
@@ -7199,7 +7193,7 @@ class FullyAutonomousOrchestrator:
             handle_score = len(valid_handles) * self._SCORER_WEIGHTS['handle_per_item']
 
             # Cross-domain bonus
-            domains = set(self._normalize_domain(e) for e in valid_emails if self._normalize_domain(e))
+            domains = {self._normalize_domain(e) for e in valid_emails if self._normalize_domain(e)}
             cross_domain_bonus = self._SCORER_WEIGHTS['cross_domain_bonus'] if len(domains) >= 2 else 0.0
 
             # Diversity bonus (mix of email + handle)
@@ -7231,12 +7225,11 @@ class FullyAutonomousOrchestrator:
             # Sprint 7E: Offline fast-fail guard
             if _HLEDAC_OFFLINE and getattr(self, '_data_mode', None) != "OFFLINE_REPLAY":
                 return ActionResult(success=False, error="HLEDAC_OFFLINE=1: identity_stitching unavailable")
-            logger.info(f"[HANDLER] === IDENTITY STITCHING HANDLER START ===")
+            logger.info("[HANDLER] === IDENTITY STITCHING HANDLER START ===")
             import asyncio
             import time
-            from functools import lru_cache
+
             from hledac.universal.tools.regex_cache import extract_emails
-            from hledac.universal.intelligence.identity_stitching import IdentityProfile
 
             start_time = time.perf_counter_ns()
             cpu_start = time.process_time_ns()
@@ -7271,7 +7264,7 @@ class FullyAutonomousOrchestrator:
                 else:
                     # Extract from recent findings - read from state passed via handler context
                     # Sprint BENCHMARK FIX: Read from identifiers if it's a findings list, not from _findings_heap
-                    logger.info(f"[HANDLER IDENTITY] extracting from identifiers (findings list)")
+                    logger.info("[HANDLER IDENTITY] extracting from identifiers (findings list)")
 
                     # Check if identifiers is actually a list of findings (from benchmark scorer)
                     if isinstance(identifiers, list) and identifiers:
@@ -7377,7 +7370,7 @@ class FullyAutonomousOrchestrator:
                     logger.warning(f"[HANDLER IDENTITY] NOT ENOUGH IDENTIFIERS: {len(all_identifiers)} - returning early")
 
                 # Track seen identifiers
-                current_seen = set(self._identity_seen_identifiers)
+                set(self._identity_seen_identifiers)
                 for ident in all_identifiers:
                     self._identity_seen_identifiers.add(ident)
                 if len(self._identity_seen_identifiers) > self._IDENTITY_SEEN_MAX:
@@ -7426,7 +7419,7 @@ class FullyAutonomousOrchestrator:
                     else:
                         stitched = stitch_result
                         stitch_telemetry = {'profiles_input': 0, 'raw_matches': 0, 'raw_matches_above_threshold': 0, 'stitched_clusters': 0, 'singleton_profiles': 0, 'match_scores': []}
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     latency_ms = (time.perf_counter_ns() - start_time) / 1_000_000
                     cpu_ms = (time.process_time_ns() - cpu_start) / 1_000_000
                     return ActionResult(
@@ -7464,7 +7457,7 @@ class FullyAutonomousOrchestrator:
                 logger.info(f"[HANDLER IDENTITY] stitched count: {stitched_len}")
 
                 # Sprint 4H DEBUG: Log immediately after stitched count
-                logger.info(f"[HANDLER IDENTITY] DEBUG AFTER STITCHED: about to check depth and enter propagation")
+                logger.info("[HANDLER IDENTITY] DEBUG AFTER STITCHED: about to check depth and enter propagation")
 
                 # Sprint 4H DEBUG: Wrap in try-except to catch any error
                 try:
@@ -7507,7 +7500,7 @@ class FullyAutonomousOrchestrator:
                 try:
                     findings_list = []
                     for s in stitched:
-                        # Sprint 4H FIX: merged_usernames is List[UsernameEntry], extract strings
+                        # Sprint 4H FIX: merged_usernames is list[UsernameEntry], extract strings
                         username_strs = [u.username if hasattr(u, 'username') else str(u) for u in s.merged_usernames[:5]]
                         content = f"Linked identities: {', '.join(username_strs)}"
                         merged_emails_val = list(s.merged_emails) if hasattr(s, 'merged_emails') else []
@@ -7688,7 +7681,7 @@ class FullyAutonomousOrchestrator:
                         # Sprint 4G: Track match_type for generation
                         match_type = c.get('match_type', 'metadata_only')
                         if not hasattr(self, '_hints_generated_by_match_type'):
-                            self._hints_generated_by_match_type: Dict[str, int] = {}
+                            self._hints_generated_by_match_type: dict[str, int] = {}
                         self._hints_generated_by_match_type[match_type] = self._hints_generated_by_match_type.get(match_type, 0) + 1
 
                         # Sprint 4E: Track high-quality signal generation
@@ -7781,11 +7774,11 @@ class FullyAutonomousOrchestrator:
                 )
 
         # NOTE: self is captured in closure - no self parameter needed
-        def _run_stitching(engine, identifiers: List[str]) -> Tuple[List, Dict]:
+        def _run_stitching(engine, identifiers: list[str]) -> tuple[list, dict]:
             """Run sync stitching in executor. Returns (stitched, telemetry)."""
             # Import IdentityProfile inside closure
+
             from hledac.universal.intelligence.identity_stitching import IdentityProfile
-            import traceback
 
             telemetry = {
                 'profiles_input': 0,
@@ -7849,7 +7842,7 @@ class FullyAutonomousOrchestrator:
                                 if hasattr(p, 'emails') and p.emails:
                                     self.merged_emails.extend(p.emails)
                                 if hasattr(p, 'usernames') and p.usernames:
-                                    # usernames is List[UsernameEntry], iterate directly
+                                    # usernames is list[UsernameEntry], iterate directly
                                     self.merged_usernames.extend(p.usernames)
                             self.merged_emails = list(set(self.merged_emails))  # dedup
                             self.merged_usernames = self.merged_usernames[:10]
@@ -7859,7 +7852,7 @@ class FullyAutonomousOrchestrator:
                 return stitched, telemetry
             return [], {'profiles_input': 0, 'raw_matches': 0, 'raw_matches_above_threshold': 0, 'stitched_clusters': 0, 'singleton_profiles': 0, 'match_scores': []}
 
-        def identity_stitching_scorer(state: Dict[str, Any]) -> Tuple[float, Dict[str, Any]]:
+        def identity_stitching_scorer(state: dict[str, Any]) -> tuple[float, dict[str, Any]]:
             """Evidence-weighted scorer for identity stitching action."""
             from hledac.universal.tools.regex_cache import extract_emails
 
@@ -7882,8 +7875,8 @@ class FullyAutonomousOrchestrator:
                 raw_findings = []
 
             # Get helper functions - with fallback for missing attributes
-            filter_func = getattr(self, '_identity_filter_emails', None) or getattr(self, '_filter_generic_emails', None)
-            dedup_func = getattr(self, '_identity_domain_dedup', None) or getattr(self, '_domain_dedup', None)
+            getattr(self, '_identity_filter_emails', None) or getattr(self, '_filter_generic_emails', None)
+            getattr(self, '_identity_domain_dedup', None) or getattr(self, '_domain_dedup', None)
 
             # DEBUG: show raw findings type
             if hasattr(self, '_iter_count') and self._iter_count < 3:
@@ -7995,9 +7988,10 @@ class FullyAutonomousOrchestrator:
             nonlocal _arxiv_client
             if _arxiv_client is None:
                 try:
-                    import aiohttp
                     import urllib.parse
                     import xml.etree.ElementTree as ET
+
+                    import aiohttp
 
                     class ArxivClient:
                         BASE_URL = "http://export.arxiv.org/api/query"
@@ -8154,7 +8148,7 @@ class FullyAutonomousOrchestrator:
                     metadata={"reason": "search_failed"}
                 )
 
-        def academic_search_scorer(state: Dict[str, Any]) -> Tuple[float, Dict[str, Any]]:
+        def academic_search_scorer(state: dict[str, Any]) -> tuple[float, dict[str, Any]]:
             """
             Scorer for academic_search action.
             Base score LOW - only selected when no surface results available.
@@ -8197,7 +8191,7 @@ class FullyAutonomousOrchestrator:
     # =========================================================================
     # Sprint 82Q Phase 3: Query Diversification (bounded, no LLM)
     # =========================================================================
-    def _diversify_query(self, base_query: str, state: Dict[str, Any]) -> str:
+    def _diversify_query(self, base_query: str, state: dict[str, Any]) -> str:
         """
         Deterministic query diversification bez LLM volání.
         Používá bounded xxhash pro dedup a lightweight TF-IDF-like term counting.
@@ -8293,7 +8287,7 @@ class FullyAutonomousOrchestrator:
         variance = (alpha * beta) / (total * total * (total + 1))
         return variance ** 0.5
 
-    def _init_ts_posterior(self, action_name: str) -> Dict[str, float]:
+    def _init_ts_posterior(self, action_name: str) -> dict[str, float]:
         """
         Initialize Thompson Sampling posterior from EMA or default.
         Uses MAX_INIT_RUNS cap to prevent posterior collapse.
@@ -8400,7 +8394,7 @@ class FullyAutonomousOrchestrator:
 
         self._ts_decay_applied_count += 1
 
-    def _get_ts_info(self, action_name: str) -> Dict[str, float]:
+    def _get_ts_info(self, action_name: str) -> dict[str, float]:
         """
         Get Thompson Sampling info for an action.
         Returns alpha, beta, mean, and uncertainty.
@@ -8427,7 +8421,7 @@ class FullyAutonomousOrchestrator:
         }
 
     # Sprint 6A: TS Calibration - measure posterior accuracy
-    def _compute_ts_calibration(self) -> Dict:
+    def _compute_ts_calibration(self) -> dict:
         """
         Compute TS calibration metrics: posterior_mean vs observed_rate.
         Excludes low-data actions (< MIN_EXECUTED_FOR_CALIBRATION).
@@ -8552,7 +8546,7 @@ class FullyAutonomousOrchestrator:
         # Check contextual warmup maturity
         contextual_pairs = 0
         if hasattr(self, '_contextual_ts_data'):
-            for ctx_key, action_data in self._contextual_ts_data.items():
+            for _ctx_key, action_data in self._contextual_ts_data.items():
                 if isinstance(action_data, dict):
                     total_runs = sum(action_data.get(a, {}).get('executed', 0) for a in action_data)
                     if total_runs >= CONTEXTUAL_WARMUP_THRESHOLD:
@@ -8566,7 +8560,7 @@ class FullyAutonomousOrchestrator:
 
         # Compute mean variance across actions
         variances = []
-        for action_name, posterior in self._ts_posteriors.items():
+        for _action_name, posterior in self._ts_posteriors.items():
             alpha = posterior.get('alpha', 1.0)
             beta = posterior.get('beta', 1.0)
             # Beta variance formula: a*b / (((a+b)^2) * (a+b+1))
@@ -8610,7 +8604,7 @@ class FullyAutonomousOrchestrator:
         return ratio
 
     # Sprint 6B: Contextual Thompson Sampling
-    def _extract_context_key(self, state: Dict[str, Any]) -> str:
+    def _extract_context_key(self, state: dict[str, Any]) -> str:
         """Extract context key from current state for contextual TS."""
         # Priority order for context extraction
         if state.get('domain'):
@@ -8632,7 +8626,7 @@ class FullyAutonomousOrchestrator:
     # =========================================================================
     # Sprint 6D: Replay-only target extractor + target queue
     # =========================================================================
-    def _extract_targets_from_replay(self, content_or_packet: Any, source_id: str) -> List[Dict]:
+    def _extract_targets_from_replay(self, content_or_packet: Any, source_id: str) -> list[dict]:
         """
         Extract targets from OFFLINE_REPLAY packet using precompiled regex.
         Bounded, zero-network, regex-only extraction.
@@ -8642,7 +8636,6 @@ class FullyAutonomousOrchestrator:
         - str (content from finding): extract from text content
         """
         import re as re_module
-        from collections import OrderedDict
 
         # Handle both string content and dict packet
         text_parts = []
@@ -8733,7 +8726,7 @@ class FullyAutonomousOrchestrator:
         self._targets_extracted_total += len(targets)
         return targets
 
-    async def _enqueue_targets(self, targets: List[Dict]) -> int:
+    async def _enqueue_targets(self, targets: list[dict]) -> int:
         """
         Enqueue extracted targets into bounded target queue.
         Returns count of successfully enqueued targets.
@@ -8753,7 +8746,7 @@ class FullyAutonomousOrchestrator:
         self._targets_enqueued_total += enqueued
         return enqueued
 
-    def _get_next_target(self) -> Optional[Dict]:
+    def _get_next_target(self) -> dict | None:
         """Get next target from queue (non-blocking). Sprint 6E: ThreadSafeBoundedQueue."""
         return self._target_queue.get()
 
@@ -8761,7 +8754,7 @@ class FullyAutonomousOrchestrator:
     # End Sprint 6D target extraction
     # =========================================================================
 
-    def _get_contextual_posterior(self, context_key: str, action_name: str) -> Dict:
+    def _get_contextual_posterior(self, context_key: str, action_name: str) -> dict:
         """
         Get contextual posterior for (context_key, action) pair.
         Falls back to global posterior if insufficient data.
@@ -8871,8 +8864,8 @@ class FullyAutonomousOrchestrator:
         Returns True on success, False on failure.
         """
         try:
-            import tempfile
             import os
+            import tempfile
             # Write to temp file first
             with tempfile.NamedTemporaryFile(mode='w', dir=path.parent, delete=False) as f:
                 import json
@@ -8891,7 +8884,7 @@ class FullyAutonomousOrchestrator:
                 pass  # Cleanup temp file failure
             return False
 
-    def _load_ts_posteriors_safe(self, path: Path) -> Optional[dict]:
+    def _load_ts_posteriors_safe(self, path: Path) -> dict | None:
         """
         Load TS posteriors safely with corruption/stale detection.
         Returns None if load fails or data is stale/invalid.
@@ -8901,7 +8894,7 @@ class FullyAutonomousOrchestrator:
                 return None
 
             import json
-            with open(path, 'r') as f:
+            with open(path) as f:
                 data = json.load(f)
 
             # Check for stale data (>24h old)
@@ -8939,12 +8932,11 @@ class FullyAutonomousOrchestrator:
     # Sprint 68: Autonomní smyčka (KROK 5)
     # =========================================================================
 
-    async def _analyze_state(self, query: str) -> Dict[str, Any]:
+    async def _analyze_state(self, query: str) -> dict[str, Any]:
         """Analyzuje aktuální stav pro rozhodování."""
         # Sprint 7D: Snapshot cache - return cached state if nothing changed
-        findings_len = len(getattr(self, '_findings_heap', []))
-        sources_len = len(getattr(getattr(self, '_research_mgr', None), '_sources_heap', []))
-        current_iteration = self._iteration_counter
+        len(getattr(self, '_findings_heap', []))
+        len(getattr(getattr(self, '_research_mgr', None), '_sources_heap', []))
 
         # Check if snapshot is still valid (Sprint 7E: revision-based)
         if (self._state_snapshot is not None and
@@ -9352,7 +9344,7 @@ class FullyAutonomousOrchestrator:
             "timestamp": time.time(),
         })
 
-    def _compute_phase_signals(self, state: Dict[str, Any]):
+    def _compute_phase_signals(self, state: dict[str, Any]):
         """
         Sprint 82A: Compute phase promotion signals from current state.
         """
@@ -9465,7 +9457,7 @@ class FullyAutonomousOrchestrator:
                 except Exception:
                     pass  # fail-safe
 
-    def _decide_next_action(self, state: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
+    def _decide_next_action(self, state: dict[str, Any]) -> tuple[str, dict[str, Any]]:
         """Rozhodne o další akci na základě stavu (synchronní)."""
         # Sprint 6B: Extract context key for contextual TS
         context_key = self._extract_context_key(state) if hasattr(self, '_extract_context_key') else None
@@ -9488,12 +9480,10 @@ class FullyAutonomousOrchestrator:
         # Sprint 5M: Split tracking into selected vs executed vs skipped
         actions_considered = 0
         actions_skipped_cooldown_count = 0
-        actions_skipped_dedup_count = 0
-        actions_skipped_gate_count = 0
         candidates = []
         # Phase 5: Debug logging for scorer evaluation
         scorer_debug = []
-        for name, (handler, scorer) in self._action_registry.items():
+        for name, (_handler, scorer) in self._action_registry.items():
             actions_considered += 1
             # Skip akce v cooldownu
             if self._action_cooldowns.get(name, 0) > 0:
@@ -9547,10 +9537,10 @@ class FullyAutonomousOrchestrator:
 
         # Apply score boost to candidates based on valid hints
         # Sprint KROK 2: Track which hint causes the boost
-        winning_hint_for_action: Dict[str, Dict] = {}  # action_name -> hint
+        winning_hint_for_action: dict[str, dict] = {}  # action_name -> hint
 
         # Sprint KROK 4: Store original scores for audit
-        original_scores: Dict[str, float] = {}
+        original_scores: dict[str, float] = {}
 
         # Sprint: Fair A/B Propagation Benchmark - apply boost only when enabled
         prop_enabled = getattr(self, '_propagation_enabled', True)
@@ -9732,7 +9722,6 @@ class FullyAutonomousOrchestrator:
         # Sprint 6B: Adaptive exploration budget replaces fixed 20%
         # Uses posterior uncertainty to determine exploration ratio
         exploration_budget_triggered = False
-        exploration_action = None
         warmup_iters = getattr(self, '_TS_WARMUP_ITERATIONS', 50)
         if self._iter_count >= warmup_iters and len(candidates_scored) > 1:
             # Compute adaptive exploration ratio based on uncertainty
@@ -9758,7 +9747,7 @@ class FullyAutonomousOrchestrator:
                         least_explored = (score, name, params)
                 if least_explored:
                     exploration_budget_triggered = True
-                    exploration_action = least_explored[1]
+                    least_explored[1]
                     candidates_scored = [least_explored]  # Override with least explored
 
         # Sprint 5T: Track exploration budget usage
@@ -9858,7 +9847,7 @@ class FullyAutonomousOrchestrator:
 
         # Sprint 8AI: Compute rolling HHI visible during run (HHI on action families in time window)
         if len(self._rolling_action_history) >= 5:
-            family_counts: Dict[str, int] = collections.Counter(a for _, a in self._rolling_action_history)
+            family_counts: dict[str, int] = collections.Counter(a for _, a in self._rolling_action_history)
             total = sum(family_counts.values())
             hhi_sum = sum((c / total) ** 2 for c in family_counts.values())
             self._rolling_hhi = hhi_sum
@@ -10134,7 +10123,7 @@ class FullyAutonomousOrchestrator:
         # Sprint 82E: Explicit deterministic admission score formula
         # score = 0.40 * relevance_hint + 0.30 * novelty + 0.20 * family_coverage + 0.10 * contradiction_value
         echo_density = 1.0 - echo_penalty  # 0.0 = no echo, 0.2 = 20% echo
-        novelty = 1.0 - min(echo_density, 0.95)
+        1.0 - min(echo_density, 0.95)
         final_score = self._compute_admission_score(
             relevance_hint=base_score,
             echo_density=echo_density,
@@ -10372,7 +10361,7 @@ class FullyAutonomousOrchestrator:
         else:
             self._hold_backlog.append(candidate)
 
-    def _promote_from_backlog(self, lane_id: str, source_family: str) -> Optional[BacklogCandidate]:
+    def _promote_from_backlog(self, lane_id: str, source_family: str) -> BacklogCandidate | None:
         """
         Sprint 82D: Promote best candidate from backlog for given lane/family.
         """
@@ -10438,7 +10427,7 @@ class FullyAutonomousOrchestrator:
 
     # =====================================================================
 
-    async def _execute_action(self, name: str, **params) -> Optional[ActionResult]:
+    async def _execute_action(self, name: str, **params) -> ActionResult | None:
         """Exekuuje akci z registru."""
         # Sprint 82Q: Thermal pacing delay - slow down at elevated thermal
         thermal = ThermalState.NORMAL
@@ -10545,7 +10534,7 @@ class FullyAutonomousOrchestrator:
             self._last_action_success[name] = old * 0.8
             return ActionResult(success=False, error=str(e))
 
-    async def _process_result(self, result: Optional[ActionResult], action_name: Optional[str] = None) -> None:
+    async def _process_result(self, result: ActionResult | None, action_name: str | None = None) -> None:
         """Zpracuje výsledek akce."""
         # Sprint 3D DEBUG
         selected_hint = getattr(self, '_selected_hint', None)
@@ -10588,7 +10577,7 @@ class FullyAutonomousOrchestrator:
             if source_url:
                 # Get active lane for this source
                 active_lane = self._get_active_winner_lane()
-                lane_role = self._lane_roles.get(active_lane, "")
+                self._lane_roles.get(active_lane, "")
 
                 # Get contradiction value if available
                 contradition_val = 0.0
@@ -10903,7 +10892,7 @@ class FullyAutonomousOrchestrator:
 
                 # Initialize hint outcomes dict if needed
                 if not hasattr(self, '_hint_outcomes'):
-                    self._hint_outcomes: Dict[str, Dict] = {}
+                    self._hint_outcomes: dict[str, dict] = {}
 
                 # KROK 4B: Bounded FIFO eviction - prevent unbounded growth
                 _HINT_OUTCOMES_MAX = 200
@@ -10938,7 +10927,7 @@ class FullyAutonomousOrchestrator:
                 # Sprint 4G: Track match_type for consumption
                 match_type = selected_hint.get('match_type', 'unknown')
                 if not hasattr(self, '_hints_consumed_by_match_type'):
-                    self._hints_consumed_by_match_type: Dict[str, int] = {}
+                    self._hints_consumed_by_match_type: dict[str, int] = {}
                 self._hints_consumed_by_match_type[match_type] = self._hints_consumed_by_match_type.get(match_type, 0) + 1
 
                 # Sprint 4A: Track hint consumption lag (iterations between created and consumed)
@@ -11067,41 +11056,41 @@ class FullyAutonomousOrchestrator:
     # -------------------------------------------------------------------------
 
     @property
-    def _state(self) -> '_StateCoordinator':
+    def _state(self) -> _StateCoordinator:
         """State-related property coordinator."""
         return _StateCoordinator(self._state_mgr)
 
     @property
-    def _memory(self) -> '_MemoryCoordinator':
+    def _memory(self) -> _MemoryCoordinator:
         """Memory-related property coordinator."""
         return _MemoryCoordinator(self._memory_mgr)
 
     @property
-    def _brain(self) -> '_BrainCoordinator':
+    def _brain(self) -> _BrainCoordinator:
         """Brain/AI-related property coordinator."""
         return _BrainCoordinator(self._brain_mgr)
 
     @property
-    def _security_props(self) -> '_SecurityCoordinator':
+    def _security_props(self) -> _SecurityCoordinator:
         """Security-related property coordinator."""
         return _SecurityCoordinator(self._security_mgr)
 
     @property
-    def metadata_extractor(self) -> Optional['UniversalMetadataExtractor']:
+    def metadata_extractor(self) -> UniversalMetadataExtractor | None:
         """Metadata extractor for forensic analysis."""
         if self._forensics_mgr:
             return self._forensics_mgr.metadata_extractor
         return None
 
     @property
-    def encoding_detector(self) -> Optional['BaseEncodingDetector']:
+    def encoding_detector(self) -> BaseEncodingDetector | None:
         """Base encoding detector for text analysis."""
         if self._forensics_mgr:
             return self._forensics_mgr.encoding_detector
         return None
 
     @property
-    def hash_identifier(self) -> Optional['HashIdentifier']:
+    def hash_identifier(self) -> HashIdentifier | None:
         """Hash identifier for cryptographic analysis."""
         if self._forensics_mgr:
             return self._forensics_mgr.hash_identifier
@@ -11114,61 +11103,61 @@ class FullyAutonomousOrchestrator:
     # -------------------------------------------------------------------------
 
     @property
-    def fetch_coordinator(self) -> Optional['FetchCoordinator']:
+    def fetch_coordinator(self) -> FetchCoordinator | None:
         """Fetch coordinator for URL fetching delegation."""
         if self._fetch_coordinator is None:
             self._initialize_spine_coordinators()
         return self._fetch_coordinator
 
     @property
-    def claims_coordinator(self) -> Optional['ClaimsCoordinator']:
+    def claims_coordinator(self) -> ClaimsCoordinator | None:
         """Claims coordinator for claim extraction delegation."""
         if self._claims_coordinator is None:
             self._initialize_spine_coordinators()
         return self._claims_coordinator
 
     @property
-    def graph_coordinator(self) -> Optional['GraphCoordinator']:
+    def graph_coordinator(self) -> GraphCoordinator | None:
         """Graph coordinator for graph reasoning delegation."""
         if self._graph_coordinator is None:
             self._initialize_spine_coordinators()
         return self._graph_coordinator
 
     @property
-    def archive_coordinator(self) -> Optional['ArchiveCoordinator']:
+    def archive_coordinator(self) -> ArchiveCoordinator | None:
         """Archive coordinator for archive escalation delegation."""
         if self._archive_coordinator is None:
             self._initialize_spine_coordinators()
         return self._archive_coordinator
 
     @property
-    def intelligence_coordinator(self) -> Optional['_IntelligenceManager']:
+    def intelligence_coordinator(self) -> _IntelligenceManager | None:
         """Intelligence manager for autonomous module orchestration."""
         return self._intelligence_mgr
 
     @property
-    def decision_engine_intelligent(self) -> Optional['IntelligentDecisionEngine']:
+    def decision_engine_intelligent(self) -> IntelligentDecisionEngine | None:
         """Intelligent decision engine for module selection."""
         if self._intelligence_mgr:
             return self._intelligence_mgr.decision_engine
         return None
 
     @property
-    def input_detector(self) -> Optional['IntelligentInputDetector']:
+    def input_detector(self) -> IntelligentInputDetector | None:
         """Intelligent input detector for automatic input type detection."""
         if self._intelligence_mgr:
             return self._intelligence_mgr.input_detector
         return None
 
     @property
-    def workflow_orchestrator(self) -> Optional['WorkflowOrchestrator']:
+    def workflow_orchestrator(self) -> WorkflowOrchestrator | None:
         """Workflow orchestrator for coordinated module execution."""
         if self._intelligence_mgr:
             return self._intelligence_mgr.workflow_orchestrator
         return None
 
     @property
-    def _research_props(self) -> '_ResearchCoordinator':
+    def _research_props(self) -> _ResearchCoordinator:
         """Research-related property coordinator."""
         return _ResearchCoordinator(self._research_mgr)
 
@@ -11182,182 +11171,182 @@ class FullyAutonomousOrchestrator:
         return self._state.phase
 
     @property
-    def memory(self) -> Optional[MemoryLayer]:
+    def memory(self) -> MemoryLayer | None:
         return self._memory.memory
 
     @property
-    def cache(self) -> Optional[IntelligentCache]:
+    def cache(self) -> IntelligentCache | None:
         return self._memory.cache
 
     @property
-    def rag(self) -> Optional[RAGEngine]:
+    def rag(self) -> RAGEngine | None:
         return self._memory.rag
 
     @property
-    def knowledge_graph(self) -> Optional[PersistentKnowledgeLayer]:
+    def knowledge_graph(self) -> PersistentKnowledgeLayer | None:
         return self._memory.knowledge_graph
 
     @property
-    def context_graph(self) -> Optional[ContextGraph]:
+    def context_graph(self) -> ContextGraph | None:
         return self._memory.context_graph
 
     @property
-    def decision_engine(self) -> Optional[DecisionEngine]:
+    def decision_engine(self) -> DecisionEngine | None:
         return self._brain.decision_engine
 
     @property
-    def hermes(self) -> Optional[Hermes3Engine]:
+    def hermes(self) -> Hermes3Engine | None:
         return self._brain.hermes
 
     @property
-    def moe_router(self) -> Optional[Any]:
+    def moe_router(self) -> Any | None:
         """Access MoE router for mixture-of-experts generation."""
         return self._brain.moe_router
 
     @property
-    def security(self) -> Optional[SecurityLayer]:
+    def security(self) -> SecurityLayer | None:
         return self._security_props.security
 
     @property
-    def stealth(self) -> Optional[StealthLayer]:
+    def stealth(self) -> StealthLayer | None:
         return self._security_props.stealth
 
     @property
-    def privacy_layer(self) -> Optional[PrivacyLayer]:
+    def privacy_layer(self) -> PrivacyLayer | None:
         return self._security_props.privacy
 
     @property
-    def privacy_mgr(self) -> Optional[Any]:
+    def privacy_mgr(self) -> Any | None:
         return self._security_props.privacy_mgr
 
     @property
-    def obfuscator(self) -> Optional[Any]:
+    def obfuscator(self) -> Any | None:
         return self._security_props.obfuscator
 
     @property
-    def agent_engine(self) -> Optional[AgentCoordinationEngine]:
+    def agent_engine(self) -> AgentCoordinationEngine | None:
         return self._research_props.agent_engine
 
     @property
-    def optimizer(self) -> Optional[ResearchOptimizer]:
+    def optimizer(self) -> ResearchOptimizer | None:
         return self._research_props.optimizer
 
     @property
-    def expander(self) -> Optional[QueryExpander]:
+    def expander(self) -> QueryExpander | None:
         return self._research_props.expander
 
     @property
-    def ranking(self) -> Optional[ReciprocalRankFusion]:
+    def ranking(self) -> ReciprocalRankFusion | None:
         return self._research_props.ranking
 
     @property
-    def language_detector(self) -> Optional[LanguageDetector]:
+    def language_detector(self) -> LanguageDetector | None:
         return self._research_props.language_detector
 
     @property
-    def archive_discovery(self) -> Optional[Any]:
+    def archive_discovery(self) -> Any | None:
         return self._research_props.archive_discovery
 
     @property
-    def dark_web(self) -> Optional[Any]:
+    def dark_web(self) -> Any | None:
         return self._research_props.dark_web
 
     @property
-    def stego_detector(self) -> Optional[Any]:
+    def stego_detector(self) -> Any | None:
         return self._research_props.stego_detector
 
     @property
-    def temporal_analyzer(self) -> Optional[Any]:
+    def temporal_analyzer(self) -> Any | None:
         return self._research_props.temporal_analyzer
 
     @property
-    def insight_generator(self) -> Optional[Any]:
+    def insight_generator(self) -> Any | None:
         return self._research_mgr._insight_engine if self._research_mgr else None
 
     @property
-    def resilience(self) -> Optional['ResilientExecutionManager']:
+    def resilience(self) -> ResilientExecutionManager | None:
         return self._research_mgr._resilience if self._research_mgr else None
 
     # PHASE 1 & 2: Advanced OSINT Module Properties
 
     @property
-    def exposed_service_hunter(self) -> Optional[Any]:
+    def exposed_service_hunter(self) -> Any | None:
         return self._research_mgr._exposed_service_hunter if self._research_mgr else None
 
     @property
-    def inference_engine(self) -> Optional[Any]:
+    def inference_engine(self) -> Any | None:
         return self._research_mgr._inference_engine if self._research_mgr else None
 
     @property
-    def multi_hop_reasoner(self) -> Optional[Any]:
+    def multi_hop_reasoner(self) -> Any | None:
         return self._research_mgr._multi_hop_reasoner if self._research_mgr else None
 
     @property
-    def relationship_discovery(self) -> Optional[Any]:
+    def relationship_discovery(self) -> Any | None:
         return self._research_mgr._relationship_discovery if self._research_mgr else None
 
     @property
-    def temporal_archaeologist(self) -> Optional[Any]:
+    def temporal_archaeologist(self) -> Any | None:
         return self._research_mgr._temporal_archaeologist if self._research_mgr else None
 
     @property
-    def pattern_mining(self) -> Optional[Any]:
+    def pattern_mining(self) -> Any | None:
         return self._research_mgr._pattern_mining if self._research_mgr else None
 
     @property
-    def hypothesis_engine(self) -> Optional[Any]:
+    def hypothesis_engine(self) -> Any | None:
         return self._research_mgr._hypothesis_engine if self._research_mgr else None
 
     @property
-    def adversarial_verifier(self) -> Optional[Any]:
+    def adversarial_verifier(self) -> Any | None:
         return self._research_mgr._adversarial_verifier if self._research_mgr else None
 
     @property
-    def identity_stitching(self) -> Optional[Any]:
+    def identity_stitching(self) -> Any | None:
         return self._research_mgr._identity_stitching if self._research_mgr else None
 
     @property
-    def entity_linker(self) -> Optional[Any]:
+    def entity_linker(self) -> Any | None:
         return self._research_mgr._entity_linker if self._research_mgr else None
 
     @property
-    def blockchain_forensics(self) -> Optional[Any]:
+    def blockchain_forensics(self) -> Any | None:
         return self._research_mgr._blockchain_forensics if self._research_mgr else None
 
     @property
-    def document_intelligence(self) -> Optional[Any]:
+    def document_intelligence(self) -> Any | None:
         return self._research_mgr._document_intelligence if self._research_mgr else None
 
     @property
-    def crypto_intelligence(self) -> Optional[Any]:
+    def crypto_intelligence(self) -> Any | None:
         return self._research_mgr._crypto_intelligence if self._research_mgr else None
 
     @property
-    def network_recon(self) -> Optional[Any]:
+    def network_recon(self) -> Any | None:
         return self._research_mgr._network_recon if self._research_mgr else None
 
     @property
-    def quantum_pathfinder(self) -> Optional['QuantumInspiredPathFinder']:
+    def quantum_pathfinder(self) -> QuantumInspiredPathFinder | None:
         """Access quantum pathfinder for relationship discovery."""
         return self._research_mgr._quantum_pathfinder if self._research_mgr else None
 
     @property
-    def distillation_engine(self) -> Optional['DistillationEngine']:
+    def distillation_engine(self) -> DistillationEngine | None:
         """Access distillation engine for reasoning chain scoring."""
         return self._brain_mgr.distillation_engine if self._brain_mgr else None
 
     @property
-    def agent_meta_optimizer(self) -> Optional['AgentMetaOptimizer']:
+    def agent_meta_optimizer(self) -> AgentMetaOptimizer | None:
         """Access agent meta-optimizer for performance tuning."""
         return self._research_mgr._meta_optimizer if self._research_mgr else None
 
     # Tree of Thoughts Integration Property
     @property
-    def tot_integration(self) -> Optional[Any]:
+    def tot_integration(self) -> Any | None:
         """Access Tree of Thoughts integration layer."""
         if self._tot_integration is None:
             try:
-                from .tot_integration import TotIntegrationLayer, TotConfig
+                from .tot_integration import TotConfig, TotIntegrationLayer
                 config = TotConfig(
                     enable_tot_autonomous=self._tot_config.get('enable_tot_autonomous', True) if self._tot_config else True,
                     tot_complexity_threshold=self._tot_config.get('tot_complexity_threshold', 0.75) if self._tot_config else 0.75,
@@ -11380,17 +11369,17 @@ class FullyAutonomousOrchestrator:
     # PHASE 6: Security & Network Analysis Properties
 
     @property
-    def statistical_stego_detector(self) -> Optional['StatisticalStegoDetector']:
+    def statistical_stego_detector(self) -> StatisticalStegoDetector | None:
         """Access statistical steganography detector for image analysis."""
         return self._research_mgr._stego_detector if self._research_mgr else None
 
     @property
-    def dns_tunnel_detector(self) -> Optional['DNSTunnelDetector']:
+    def dns_tunnel_detector(self) -> DNSTunnelDetector | None:
         """Access DNS tunneling detector for network analysis."""
         return self._research_mgr._dns_tunnel_detector if self._research_mgr else None
 
     @property
-    def unicode_analyzer(self) -> Optional['UnicodeAttackAnalyzer']:
+    def unicode_analyzer(self) -> UnicodeAttackAnalyzer | None:
         """Access Unicode attack analyzer for text security."""
         return self._research_mgr._unicode_analyzer if self._research_mgr else None
 
@@ -11519,21 +11508,28 @@ class FullyAutonomousOrchestrator:
         # One-time GC after all lazy imports
         import gc
         gc.collect()
-        logger.info(f"All lazy modules loaded, GC collected after imports")
+        logger.info("All lazy modules loaded, GC collected after imports")
 
         # Sprint 8AJ: Boot hygiene - stale artifact cleanup BEFORE any DB/session init
         # These use narrow, idempotent cleanup helpers from paths module
         try:
             from hledac.universal.paths import (
-                LMDB_ROOT, SOCKETS_ROOT, RAMDISK_ACTIVE,
-                cleanup_stale_lmdb_locks, cleanup_stale_sockets,
-                assert_ramdisk_alive, RAMDISK_ROOT,
+                LMDB_ROOT,
+                RAMDISK_ACTIVE,
+                RAMDISK_ROOT,
+                SOCKETS_ROOT,
+                assert_ramdisk_alive,
+                cleanup_stale_lmdb_locks,
+                cleanup_stale_sockets,
             )
             # Verify RAMDISK is still alive if it was active at import
             assert_ramdisk_alive()
 
             # Sprint 8AJ: FD baseline telemetry
-            import resource, psutil, os as _os
+            import os as _os
+            import resource
+
+            import psutil
             _proc = psutil.Process(_os.getpid())
             _soft, _hard = resource.getrlimit(resource.RLIMIT_NOFILE)
             self._runtime_nofile_soft = _soft
@@ -11770,7 +11766,7 @@ class FullyAutonomousOrchestrator:
     # =============================================================================
     # Sprint 82G: Final Synthesis Methods (Missing Implementation)
     # =============================================================================
-    def _build_compression_state(self) -> 'SynthesisCompression':
+    def _build_compression_state(self) -> SynthesisCompression:
         """
         Build compression state from runtime evidence.
 
@@ -11792,7 +11788,7 @@ class FullyAutonomousOrchestrator:
 
         return compression
 
-    async def _run_gap_check(self, compression: 'SynthesisCompression', query: str) -> dict:
+    async def _run_gap_check(self, compression: SynthesisCompression, query: str) -> dict:
         """Run bounded gap-check (only in final phase, winner-only)."""
         # Minimal gap-check for M1 safety
         gap_results = {
@@ -11803,7 +11799,7 @@ class FullyAutonomousOrchestrator:
         compression.gap_check_invoked = True
         return gap_results
 
-    def _build_final_context(self, compression: 'SynthesisCompression', query: str) -> dict:
+    def _build_final_context(self, compression: SynthesisCompression, query: str) -> dict:
         """Build bounded winner-only synthesis context."""
         # Build bounded context for final synthesis
         context = {
@@ -11824,7 +11820,7 @@ class FullyAutonomousOrchestrator:
 
         return context
 
-    async def _synthesize_results_bounded(self, query: str, context: dict, compression: 'SynthesisCompression') -> str:
+    async def _synthesize_results_bounded(self, query: str, context: dict, compression: SynthesisCompression) -> str:
         """Run final synthesis with bounded context."""
         # Simple bounded synthesis - just return structured report
         confirmed_count = len(context.get("confirmed", []))
@@ -11833,7 +11829,7 @@ class FullyAutonomousOrchestrator:
 
         return f"Research report for: {query}\n\nConfirmed findings: {confirmed_count}\nFalsified: {falsified_count}\nOpen gaps: {gaps_count}\nTotal sources covered: {len(compression.source_family_coverage)}"
 
-    def _build_structured_fallback(self, compression: 'SynthesisCompression', query: str) -> str:
+    def _build_structured_fallback(self, compression: SynthesisCompression, query: str) -> str:
         """Return structured fallback when synthesis fails."""
         compression.synthesis_fallback_used = True
         return f"Research completed for: {query}\nFindings: {len(compression.confirmed)}, Falsified: {len(compression.falsified)}, Gaps: {len(compression.open_gaps)}"
@@ -11849,7 +11845,7 @@ class FullyAutonomousOrchestrator:
                 self._autonomy_monitor_task.cancel()
                 try:
                     await asyncio.wait_for(self._autonomy_monitor_task, timeout=2.0)
-                except (asyncio.CancelledError, asyncio.TimeoutError):
+                except (TimeoutError, asyncio.CancelledError):
                     pass
                 logger.info("✅ Autonomy monitor stopped")
 
@@ -11858,7 +11854,7 @@ class FullyAutonomousOrchestrator:
                 self._warming_task.cancel()
                 try:
                     await asyncio.wait_for(self._warming_task, timeout=2.0)
-                except (asyncio.CancelledError, asyncio.TimeoutError):
+                except (TimeoutError, asyncio.CancelledError):
                     pass
                 logger.info("✅ Structure Map warming task stopped")
 
@@ -11868,7 +11864,7 @@ class FullyAutonomousOrchestrator:
                     t.cancel()
                     try:
                         await asyncio.wait_for(t, timeout=2.0)
-                    except (asyncio.CancelledError, asyncio.TimeoutError):
+                    except (TimeoutError, asyncio.CancelledError):
                         pass
             logger.info("✅ Sprint 70 background tasks stopped")
 
@@ -11881,7 +11877,7 @@ class FullyAutonomousOrchestrator:
                     if t.get_name() == "thermal_monitor":
                         try:
                             await asyncio.wait_for(t, timeout=2.0)
-                        except (asyncio.CancelledError, asyncio.TimeoutError):
+                        except (TimeoutError, asyncio.CancelledError):
                             pass
                         break
                 logger.info("✅ Thermal monitor stopped")
@@ -11898,7 +11894,7 @@ class FullyAutonomousOrchestrator:
                     t.cancel()
                     try:
                         await asyncio.wait_for(t, timeout=2.0)
-                    except (asyncio.CancelledError, asyncio.TimeoutError):
+                    except (TimeoutError, asyncio.CancelledError):
                         pass
             # Sprint 71E: Cancel bg_tasks set
             # Sprint 8H: Aggressive parallel cancellation
@@ -11913,7 +11909,7 @@ class FullyAutonomousOrchestrator:
                             asyncio.gather(*tasks_to_cancel, return_exceptions=True),
                             timeout=3.0
                         )
-                    except (asyncio.TimeoutError, asyncio.CancelledError):
+                    except (TimeoutError, asyncio.CancelledError):
                         pass
                 self._bg_tasks.clear()
             logger.info("✅ Sprint 71E background tasks stopped")
@@ -11997,7 +11993,7 @@ class FullyAutonomousOrchestrator:
     RSS_CRITICAL_THRESHOLD = 80
     RSS_RECOVERY_THRESHOLD = 60
 
-    async def _autonomy_monitor_step(self, current_rss: Optional[float] = None) -> None:
+    async def _autonomy_monitor_step(self, current_rss: float | None = None) -> None:
         """Sprint 38: Jedna iterace monitoru – testovatelná bez smyčky.
         Sprint 42: Added EMA and predictive throttle.
         Sprint 48: MLX instead of numpy, Holt's double EMA, psutil singleton, adaptive interval.
@@ -12371,7 +12367,7 @@ class FullyAutonomousOrchestrator:
         try:
             if hasattr(self, '_checkpoint_manager') and self._checkpoint_manager:
                 # Collect frontier data
-                frontier_data: List[Dict[str, Any]] = []
+                frontier_data: list[dict[str, Any]] = []
                 try:
                     if hasattr(self, '_url_frontier') and self._url_frontier:
                         frontier_data = self._url_frontier.to_list()
@@ -12379,15 +12375,15 @@ class FullyAutonomousOrchestrator:
                     pass
 
                 # Collect microplan head
-                microplan_head: List[Dict[str, Any]] = []
+                microplan_head: list[dict[str, Any]] = []
                 try:
                     microplan_head = self._export_microplan_head(max_k=10)
                 except Exception:
                     pass
 
                 # Collect host penalties and domain cooldowns
-                host_penalties: Dict[str, float] = {}
-                domain_cooldowns: Dict[str, float] = {}
+                host_penalties: dict[str, float] = {}
+                domain_cooldowns: dict[str, float] = {}
                 try:
                     if hasattr(self, '_synthesis_mgr') and self._synthesis_mgr:
                         if hasattr(self._synthesis_mgr, '_host_penalty_tracker'):
@@ -12440,7 +12436,7 @@ class FullyAutonomousOrchestrator:
         thermal_is_warn = False
         thermal_is_critical = False
         try:
-            from .utils.thermal import get_thermal_state, is_thermal_warn, is_thermal_critical
+            from .utils.thermal import get_thermal_state, is_thermal_critical, is_thermal_warn
             thermal_level, thermal_name = get_thermal_state()
             thermal_is_warn = is_thermal_warn()
             thermal_is_critical = is_thermal_critical()
@@ -12453,7 +12449,7 @@ class FullyAutonomousOrchestrator:
         uma_is_warn = False
         uma_is_critical = False
         try:
-            from .utils.uma_budget import get_uma_pressure_level, is_uma_warn, is_uma_critical
+            from .utils.uma_budget import get_uma_pressure_level, is_uma_critical, is_uma_warn
             uma_pct, uma_level = get_uma_pressure_level()
             uma_is_warn = is_uma_warn()
             uma_is_critical = is_uma_critical()
@@ -12614,7 +12610,6 @@ class FullyAutonomousOrchestrator:
 
         try:
             import json
-            import os
 
             # Determine run_id
             run_id = "unknown"
@@ -12626,7 +12621,7 @@ class FullyAutonomousOrchestrator:
             # Collect summary data
             url_count = 0
             processed_count = 0
-            frontier_summary: List[str] = []
+            frontier_summary: list[str] = []
 
             if hasattr(self, '_last_checkpoint') and self._last_checkpoint:
                 try:
@@ -12640,7 +12635,7 @@ class FullyAutonomousOrchestrator:
                     pass
 
             # Synthesis stats if available
-            synthesis_stats: Dict[str, Any] = {}
+            synthesis_stats: dict[str, Any] = {}
             try:
                 if hasattr(self, '_synthesis_mgr') and self._synthesis_mgr:
                     if hasattr(self._synthesis_mgr, '_findings'):
@@ -12748,21 +12743,20 @@ class FullyAutonomousOrchestrator:
     # Sprint 4H: Hermetic Self-Seeding for OFFLINE_REPLAY
     # -------------------------------------------------------------------------
 
-    def _self_seed_replay_data(self) -> Tuple[bool, str]:
+    def _self_seed_replay_data(self) -> tuple[bool, str]:
         """
         Create minimal golden replay dataset for hermetic benchmark.
         Creates deterministic seed packets in temp directory.
         Returns: (success, reason)
         """
-        import tempfile
         import json
-        import os
-        from pathlib import Path
+        import tempfile
         import time as time_module
+        from pathlib import Path
 
         try:
             # Use deterministic seed for reproducibility
-            rng = random.Random(42)
+            random.Random(42)
 
             # Create temporary directory for seed packets
             temp_dir = tempfile.mkdtemp(prefix="hledac_seed_", dir=tempfile.gettempdir())
@@ -12871,7 +12865,7 @@ class FullyAutonomousOrchestrator:
         num_runs: int = 3,
         query: str = "artificial intelligence research",
         prefer_offline_replay: bool = True,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Run repeatability benchmark suite with warm-up + N measurement runs.
         Sprint 5A-R2: True time-based baseline with inter-run state reset.
@@ -12887,9 +12881,10 @@ class FullyAutonomousOrchestrator:
             Dict with warmup results, measurement runs, and repeatability summary
         """
         import gc
-        import time as time_module
-        import psutil
         import resource
+        import time as time_module
+
+        import psutil
 
         # Best-effort: clear MLX cache between runs
         try:
@@ -12916,7 +12911,7 @@ class FullyAutonomousOrchestrator:
         }
 
         # Sprint 5A-R2: Add wrapper for _check_replay_available (same as run_benchmark)
-        def _check_replay_available_wrapper() -> Tuple[bool, str]:
+        def _check_replay_available_wrapper() -> tuple[bool, str]:
             """Check if offline replay data is available - wrapper for repeatability benchmark."""
             try:
                 if not hasattr(self, '_evidence_packet_storage') or self._evidence_packet_storage is None:
@@ -12945,7 +12940,7 @@ class FullyAutonomousOrchestrator:
 
         # WARM-UP RUN (not counted in repeatability)
         logger.info(f"[REPEATABILITY] Starting warm-up run ({warmup_seconds}s)...")
-        warmup_start = time_module.perf_counter()
+        time_module.perf_counter()
 
         try:
             # Run warm-up with shorter duration
@@ -12965,8 +12960,8 @@ class FullyAutonomousOrchestrator:
                 "completed": warmup_result.get("completed_normally", False),
             }
             logger.info(f"[REPEATABILITY] Warm-up: {warmup_result.get('iterations_completed', 0)} iters, {warmup_result.get('findings_total', 0)} findings")
-        except asyncio.TimeoutError:
-            logger.warning(f"[REPEATABILITY] Warm-up timed out")
+        except TimeoutError:
+            logger.warning("[REPEATABILITY] Warm-up timed out")
             results["warmup_result"] = {"error": "timeout"}
         except Exception as e:
             logger.warning(f"[REPEATABILITY] Warm-up failed: {e}")
@@ -13033,7 +13028,7 @@ class FullyAutonomousOrchestrator:
                     ),
                     timeout=duration_seconds + 10
                 )
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 logger.warning(f"[REPEATABILITY] Run {run_idx + 1} timed out")
                 run_result = {"error": "timeout", "completed_normally": False}
             except Exception as e:
@@ -13185,7 +13180,7 @@ class FullyAutonomousOrchestrator:
         warmup_iterations: int = 3,
         query: str = "artificial intelligence research",
         prefer_offline_replay: bool = False,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Run fair A/B benchmark comparing baseline vs propagation-enabled behavior.
         Uses main orchestrator's methods directly.
@@ -13205,7 +13200,7 @@ class FullyAutonomousOrchestrator:
         from collections import deque
 
         # Sprint 3C: Add wrapper for _check_replay_available
-        def _check_replay_available_wrapper() -> Tuple[bool, str]:
+        def _check_replay_available_wrapper() -> tuple[bool, str]:
             """Check if offline replay data is available - wrapper for benchmark."""
             try:
                 if not hasattr(self, '_evidence_packet_storage') or self._evidence_packet_storage is None:
@@ -13396,9 +13391,9 @@ class FullyAutonomousOrchestrator:
         logger.info(f"[NET_RECON_V2] readiness check: {self._network_recon_v2_ready}")
 
         # Initialize metrics
-        from collections import Counter, deque
         import resource
         import tracemalloc
+        from collections import Counter, deque
 
         benchmark_metrics = {
             "mode": mode,
@@ -13512,7 +13507,7 @@ class FullyAutonomousOrchestrator:
         if hasattr(self, '_hint_outcomes'):
             self._hint_outcomes.clear()
         else:
-            self._hint_outcomes: Dict[str, Dict] = {}
+            self._hint_outcomes: dict[str, dict] = {}
         if hasattr(self, '_iteration_trace_buffer'):
             self._iteration_trace_buffer.clear()
 
@@ -13558,7 +13553,7 @@ class FullyAutonomousOrchestrator:
         # WARMUP phase
         logger.info(f"[BENCHMARK] Starting {mode} warmup ({warmup_iterations} iterations)...")
         warmup_start = time_module.perf_counter()
-        for i in range(warmup_iterations):
+        for _i in range(warmup_iterations):
             try:
                 await self._execute_action("surface_search", {"query": query}, state={})
             except Exception:
@@ -13596,7 +13591,7 @@ class FullyAutonomousOrchestrator:
                 {'type': 'email', 'value': 'osint@benchmark.test', 'source': 'mock'},
                 {'type': 'host', 'value': 'osint-benchmark.example', 'source': 'mock'},
             ]
-            logger.debug(f"[BENCHMARK] Using mock OSINT findings for benchmark")
+            logger.debug("[BENCHMARK] Using mock OSINT findings for benchmark")
 
         if osint_findings and self._research_mgr:
             logger.info(f"[BENCHMARK] Routing {len(osint_findings)} OSINT findings to findings flow")
@@ -13630,7 +13625,7 @@ class FullyAutonomousOrchestrator:
                 osint_findings_count = 0
                 if hasattr(self._research_mgr, '_findings_heap') and self._research_mgr._findings_heap:
                     # Count findings with OSINT source type
-                    # _findings_heap is List[Tuple[float, str, Any]] = (score, unique_id, finding)
+                    # _findings_heap is list[tuple[float, str, Any]] = (score, unique_id, finding)
                     for item in self._research_mgr._findings_heap:
                         finding = item[2]  # Extract finding from tuple
                         src = getattr(finding, 'source', None)
@@ -13674,7 +13669,7 @@ class FullyAutonomousOrchestrator:
                 # First iteration: use minimal state; subsequent: use previous result
                 # Rotate mock domains for network_recon scorer
                 mock_domains = ["example.com", "test.org", "demo.net", "sample.io", "mock.dev"]
-                mock_domain = mock_domains[self._iter_count % len(mock_domains)]
+                mock_domains[self._iter_count % len(mock_domains)]
 
                 # Use minimal state that works with surface_search only
                 # This ensures findings are generated for propagation logic
@@ -14188,12 +14183,12 @@ class FullyAutonomousOrchestrator:
     async def research(
         self,
         query: str,
-        depth: Optional[DiscoveryDepth] = None,
-        timeout: Optional[float] = None,
-        language: Optional[str] = None,
+        depth: DiscoveryDepth | None = None,
+        timeout: float | None = None,
+        language: str | None = None,
         offline_replay: bool = False,
-        replay_run_id: Optional[str] = None,
-        replay_evidence_ids: Optional[List[str]] = None
+        replay_run_id: str | None = None,
+        replay_evidence_ids: list[str] | None = None
     ) -> ComprehensiveResearchResult:
         """
         Proveď KOMPLETNÍ autonomní výzkum.
@@ -14365,10 +14360,10 @@ class FullyAutonomousOrchestrator:
             "novelty_slope": 1.0,
         }
 
-        logger.info(f"[SPRINT82A] Initialized 3 role-pruned lanes: expansion, falsification, winner_deepening")
+        logger.info("[SPRINT82A] Initialized 3 role-pruned lanes: expansion, falsification, winner_deepening")
 
         # Sprint 82P: Debug - log before seed action
-        logger.info(f"[RESEARCH] About to execute seed action 'surface_search'")
+        logger.info("[RESEARCH] About to execute seed action 'surface_search'")
         logger.info(f"[RESEARCH] _action_registry has {len(self._action_registry) if self._action_registry else 0} actions")
 
         # Seed akce
@@ -14396,7 +14391,6 @@ class FullyAutonomousOrchestrator:
         # Sprint 8B: Per-action latency tracking (action_name -> WelfordStats)
         if not hasattr(self, '_action_latency_stats'):
             self._action_latency_stats = {}
-        from collections import defaultdict
 
         try:
             # Sprint KROK 3: Cleanup expired propagation hints before each iteration
@@ -14462,7 +14456,7 @@ class FullyAutonomousOrchestrator:
 
                 # 2) Thompson-style lane prioritization + QoS routing
                 thermal = state.get("thermal_state", "normal")
-                throttle = state.get("throttle_factor", 1.0)
+                state.get("throttle_factor", 1.0)
 
                 # Adjust beam width based on thermal state
                 beam_width = 3
@@ -14513,17 +14507,16 @@ class FullyAutonomousOrchestrator:
                 PhaseEnum = _get_phase_enum()
 
                 # Determine QoS priority based on phase and lane role
-                qos_priority = "normal"
                 if current_phase == PhaseEnum.DEEPEN or current_phase == PhaseEnum.SYNTHESIS:
-                    qos_priority = "high"
+                    pass
                 elif current_phase == PhaseEnum.DISCOVERY:
-                    qos_priority = "low"
+                    pass
 
                 # 7) Check if we should emit streaming findings
                 await self._maybe_emit_streaming_findings()
 
                 # Sprint 82Q Phase 2: Track iteration timing
-                iter_start_time = time.time()
+                time.time()
 
                 state = await self._analyze_state(query)
                 action_name, params = self._decide_next_action(state)
@@ -14704,7 +14697,7 @@ class FullyAutonomousOrchestrator:
         compression = self._build_compression_state()
 
         # Step 3: Run bounded gap-check (only in final phase, winner-only)
-        gap_results = await self._run_gap_check(compression, query)
+        await self._run_gap_check(compression, query)
 
         # Step 4: Build bounded winner-only synthesis context
         final_context = self._build_final_context(compression, query)
@@ -14731,7 +14724,7 @@ class FullyAutonomousOrchestrator:
         # Sprint 8B: Record synthesis elapsed for truthful breakdown
         self._synthesis_elapsed_s = time.time() - synthesis_start_time
 
-        logger.info(f"\n✅ Autonomous research complete!")
+        logger.info("\n✅ Autonomous research complete!")
         logger.info(f"   Total time: {execution_time:.1f}s")
         logger.info(f"   Iterations: {self._iter_count}")
 
@@ -14796,7 +14789,7 @@ class FullyAutonomousOrchestrator:
         if profile.use_tot and self._tot_integration:
             try:
                 logger.info("=" * 80)
-                logger.info(f"🌲 ToT AUTO-ACTIVATED (via autonomous profile)")
+                logger.info("🌲 ToT AUTO-ACTIVATED (via autonomous profile)")
                 logger.info("=" * 80)
                 tot_used = True  # S48-P4: Mark ToT as used
 
@@ -14839,9 +14832,9 @@ class FullyAutonomousOrchestrator:
             language = self._research_mgr._language_detector.detect(query)
             logger.info(f"🌍 Detected language: {language}")
 
-        findings: List[ResearchFinding] = []
-        sources: List[ResearchSource] = []
-        tools_used: List[AutonomousStrategy] = []
+        findings: list[ResearchFinding] = []
+        sources: list[ResearchSource] = []
+        tools_used: list[AutonomousStrategy] = []
         temporal_analysis = None
         insights = None
         stego_findings = None
@@ -14895,7 +14888,6 @@ class FullyAutonomousOrchestrator:
             if self._rag:
                 try:
                     # Query RAG for relevant context with strict bounds
-                    from .knowledge.rag_engine import Document
                     # Check if we have documents indexed
                     if hasattr(self._rag, '_documents') and self._rag._documents:
                         # Use existing documents for retrieval
@@ -15297,7 +15289,7 @@ class FullyAutonomousOrchestrator:
     # Workflow Methods
     # -------------------------------------------------------------------------
 
-    async def _analyze_query(self, query: str, language: str) -> Dict[str, Any]:
+    async def _analyze_query(self, query: str, language: str) -> dict[str, Any]:
         """Analyzuje dotaz pomocí AI."""
         intent = 'general'
         query_lower = query.lower()
@@ -15340,7 +15332,7 @@ class FullyAutonomousOrchestrator:
         self,
         query: str,
         depth: DiscoveryDepth,
-        analysis: Dict[str, Any]
+        analysis: dict[str, Any]
     ) -> AutonomousStrategy:
         """Vybere optimální strategii."""
         intent = analysis.get('intent', 'general')
@@ -15389,9 +15381,9 @@ class FullyAutonomousOrchestrator:
             SourceType.DARK_WEB: AgentType.DARK_WEB,
         }
 
-        selected_agents = list(set(
+        selected_agents = list({
             source_to_agent[s] for s in selected_sources if s in source_to_agent
-        ))
+        })
 
         if SourceType.DARK_WEB in selected_sources or intent == 'sensitive':
             privacy_level = PrivacyLevel.MAXIMUM
@@ -15443,7 +15435,7 @@ class FullyAutonomousOrchestrator:
             tot_confidence=tot_confidence
         )
 
-    def _analyze_query_complexity(self, query: str) -> Dict[str, Any]:
+    def _analyze_query_complexity(self, query: str) -> dict[str, Any]:
         """
         Analyze query complexity for ToT suitability.
 
@@ -15482,7 +15474,7 @@ class FullyAutonomousOrchestrator:
                 'error': str(e)
             }
 
-    def _should_activate_tot(self, query: str, context: Optional[Dict[str, Any]] = None) -> Tuple[bool, float]:
+    def _should_activate_tot(self, query: str, context: dict[str, Any] | None = None) -> tuple[bool, float]:
         """
         Determine if Tree of Thoughts should be activated.
 
@@ -15669,7 +15661,7 @@ class FullyAutonomousOrchestrator:
         self._seen_fingerprints.add(fp)
         return False
 
-    def _fuse_findings(self, findings: List[ResearchFinding]) -> List[ResearchFinding]:
+    def _fuse_findings(self, findings: list[ResearchFinding]) -> list[ResearchFinding]:
         """Fúzuje duplicitní nálezy pomocí SimHash near-duplicate detection (Sprint 26)."""
         if not findings:
             return []
@@ -15685,7 +15677,7 @@ class FullyAutonomousOrchestrator:
 
         return fused
 
-    def _get_tool_by_name(self, tool_name: str) -> Optional[Callable]:
+    def _get_tool_by_name(self, tool_name: str) -> Callable | None:
         """
         Maps tool name to actual method on self.researchmgr.
 
@@ -15701,7 +15693,7 @@ class FullyAutonomousOrchestrator:
         self,
         query: str,
         profile: AutoResearchProfile,
-        language: Optional[str]
+        language: str | None
     ) -> ComprehensiveResearchResult:
         """
         Execute research using autonomous profile configuration.
@@ -15715,8 +15707,8 @@ class FullyAutonomousOrchestrator:
             ComprehensiveResearchResult with findings
         """
         start_time = time.time()
-        findings: List[ResearchFinding] = []
-        sources: List[ResearchSource] = []
+        findings: list[ResearchFinding] = []
+        sources: list[ResearchSource] = []
 
         logger.info("=" * 80)
         logger.info("🔧 EXECUTING WITH AUTONOMOUS PROFILE")
@@ -15854,7 +15846,7 @@ class FullyAutonomousOrchestrator:
             }
         )
 
-    def _map_tools_to_sources(self, tools: List[str]) -> List[SourceType]:
+    def _map_tools_to_sources(self, tools: list[str]) -> list[SourceType]:
         """Map tool names to source types."""
         tool_to_source = {
             'surface_web': SourceType.SURFACE_WEB,
@@ -15876,7 +15868,7 @@ class FullyAutonomousOrchestrator:
             sources = [SourceType.SURFACE_WEB]
         return list(set(sources))  # Remove duplicates
 
-    def _gather_statistics(self) -> Dict[str, Any]:
+    def _gather_statistics(self) -> dict[str, Any]:
         """Shromáždí statistiky."""
         return {
             'execution_count': self._state_mgr._execution_count if self._state_mgr else 0,
@@ -15907,7 +15899,6 @@ class FullyAutonomousOrchestrator:
         start_time = time.time()
 
         vault = None
-        loot_manager = None
         if enable_vault:
             _load_supreme_components()
             if SUPREME_AVAILABLE and RamDiskVault:
@@ -15915,7 +15906,7 @@ class FullyAutonomousOrchestrator:
                 vault = RamDiskVault(size_mb=256, name="GhostVault")
                 mount_point = vault.mount()
                 if mount_point and LootManager:
-                    loot_manager = LootManager(vault_path=mount_point)
+                    LootManager(vault_path=mount_point)
                     logger.info(f"✓ Ghost Vault mounted at: {mount_point}")
 
         try:
@@ -16086,7 +16077,7 @@ class FullyAutonomousOrchestrator:
     async def _synthesize_execution_results(
         self,
         query: str,
-        execution_results: List[Dict[str, Any]],
+        execution_results: list[dict[str, Any]],
         graph_context: str = ""
     ) -> str:
         """Synthesize execution results into final report."""
@@ -16116,10 +16107,10 @@ Provide a detailed synthesis with key findings and conclusions."""
 
     async def analyze_comprehensive(
         self,
-        input_data: Union[str, bytes, 'Path'],
+        input_data: str | bytes | Path,
         mode: str = "auto",
-        export_format: Optional[str] = None
-    ) -> Optional['ComprehensiveReport']:
+        export_format: str | None = None
+    ) -> ComprehensiveReport | None:
         """Single entry point for comprehensive autonomous analysis.
 
         Automatically detects input type, selects appropriate modules,
@@ -16199,7 +16190,7 @@ Provide a detailed synthesis with key findings and conclusions."""
             logger.error(f"❌ Comprehensive analysis failed: {e}")
             return None
 
-    async def quick_scan(self, input_data: Union[str, bytes, 'Path']) -> Optional['QuickScanReport']:
+    async def quick_scan(self, input_data: str | bytes | Path) -> QuickScanReport | None:
         """Fast preliminary scan (< 5 seconds).
 
         Args:
@@ -16228,7 +16219,7 @@ Provide a detailed synthesis with key findings and conclusions."""
             )
         return None
 
-    async def deep_analysis(self, input_data: Union[str, bytes, 'Path']) -> Optional['ComprehensiveReport']:
+    async def deep_analysis(self, input_data: str | bytes | Path) -> ComprehensiveReport | None:
         """Thorough analysis using all relevant modules.
 
         Args:
@@ -16241,9 +16232,9 @@ Provide a detailed synthesis with key findings and conclusions."""
 
     async def analyze_batch(
         self,
-        inputs: List[Union[str, bytes, 'Path']],
-        progress_callback: Optional[Callable[[int, int, str], None]] = None
-    ) -> List[Optional['ComprehensiveReport']]:
+        inputs: list[str | bytes | Path],
+        progress_callback: Callable[[int, int, str], None] | None = None
+    ) -> list[ComprehensiveReport | None]:
         """Analyze multiple inputs with progress tracking.
 
         Args:
@@ -16270,8 +16261,8 @@ Provide a detailed synthesis with key findings and conclusions."""
 
     async def _execute_basic_analysis(
         self,
-        input_data: Union[str, bytes, 'Path']
-    ) -> Optional['ComprehensiveReport']:
+        input_data: str | bytes | Path
+    ) -> ComprehensiveReport | None:
         """Basic analysis without intelligence layer (fallback)."""
         logger.warning("Executing basic analysis without intelligence layer")
 
@@ -16417,7 +16408,7 @@ Provide a detailed synthesis with key findings and conclusions."""
         self,
         query: str,
         depth: DiscoveryDepth,
-        language: Optional[str],
+        language: str | None,
         timeout: float
     ) -> ComprehensiveResearchResult:
         """
@@ -16556,7 +16547,7 @@ Provide a detailed synthesis with key findings and conclusions."""
             }
         )
 
-    def _format_reasoning_trace(self, trace: List[Dict]) -> str:
+    def _format_reasoning_trace(self, trace: list[dict]) -> str:
         """Format ToT reasoning trace for display."""
         if not trace:
             return "No reasoning trace available."
@@ -16575,7 +16566,7 @@ Provide a detailed synthesis with key findings and conclusions."""
         self,
         query: str,
         depth: DiscoveryDepth,
-        language: Optional[str],
+        language: str | None,
         timeout: float
     ) -> ComprehensiveResearchResult:
         """
@@ -16625,8 +16616,8 @@ Provide a detailed synthesis with key findings and conclusions."""
     def compute_primary_score(
         self,
         url: str,
-        page_type: Optional[str] = None,
-        metadata: Optional[Dict[str, Any]] = None
+        page_type: str | None = None,
+        metadata: dict[str, Any] | None = None
     ) -> float:
         """Compute primary-source score for URL (0..1)."""
         score = 0.5
@@ -16669,8 +16660,8 @@ Provide a detailed synthesis with key findings and conclusions."""
     def get_first_seen_evidence(
         self,
         cluster_id: str,
-        evidence_store: Dict[str, Any]
-    ) -> Tuple[Optional[str], Optional[str]]:
+        evidence_store: dict[str, Any]
+    ) -> tuple[str | None, str | None]:
         """Get first-seen evidence for a cluster."""
         if not hasattr(self, '_claim_index'):
             return None, None
@@ -16693,7 +16684,7 @@ Provide a detailed synthesis with key findings and conclusions."""
         timestamped.sort(key=lambda x: x[1])
         return timestamped[0][0], timestamped[0][2]
 
-    def get_reputation_for_scoring(self, domain: str, path_prefix: Optional[str] = None) -> float:
+    def get_reputation_for_scoring(self, domain: str, path_prefix: str | None = None) -> float:
         """Get reputation score for URL frontier scoring (default implementation)."""
         # Default neutral score - override in subclasses with actual reputation tracking
         return 0.5
@@ -16701,8 +16692,8 @@ Provide a detailed synthesis with key findings and conclusions."""
     def get_authoritative_evidence(
         self,
         cluster_id: str,
-        evidence_store: Dict[str, Any]
-    ) -> Tuple[Optional[str], Optional[str], Optional[str]]:
+        evidence_store: dict[str, Any]
+    ) -> tuple[str | None, str | None, str | None]:
         """Get authoritative evidence for a cluster."""
         if not hasattr(self, '_claim_index'):
             return None, None, None
@@ -16746,7 +16737,7 @@ Provide a detailed synthesis with key findings and conclusions."""
             'kana': (0x3040, 0x309F), 'hangul': (0xAC00, 0xD7AF),
             'devanagari': (0x0900, 0x097F),
         }
-        counts = {script: 0 for script in ranges}
+        counts = dict.fromkeys(ranges, 0)
         for char in sample:
             code = ord(char)
             for script, (start, end) in ranges.items():
@@ -16762,7 +16753,7 @@ Provide a detailed synthesis with key findings and conclusions."""
             return 'unknown'
         return dominant[0]
 
-    def expand_queries(self, base_query: str, script: str, context_terms: List[str]) -> List[str]:
+    def expand_queries(self, base_query: str, script: str, context_terms: list[str]) -> list[str]:
         """Expand queries for multi-lingual crawling."""
         terms = context_terms[:10]
         expanded = [base_query]
@@ -16818,12 +16809,12 @@ Provide a detailed synthesis with key findings and conclusions."""
     # DISK-FIRST VECTOR-LITE RETRIEVAL
     # -------------------------------------------------------------------------
 
-    _EMBEDDING_CACHE: OrderedDict[str, Any] = OrderedDict()
+    _EMBEDDING_CACHE: Ordereddict[str, Any] = OrderedDict()
     _EMBEDDING_CACHE_MAX = 50
     _SIG_STAGE0_MAX = 50
     _SIG_STAGE0_KEEP = 50
-    _centroid_cache: OrderedDict[str, List[float]] = OrderedDict()
-    _centroid_counts: Dict[str, int] = {}
+    _centroid_cache: Ordereddict[str, list[float]] = OrderedDict()
+    _centroid_counts: dict[str, int] = {}
     _CENTROID_CACHE_MAX = 100
 
     def _get_embedding_dir(self) -> Path:
@@ -16831,7 +16822,7 @@ Provide a detailed synthesis with key findings and conclusions."""
         embed_dir.mkdir(parents=True, exist_ok=True)
         return embed_dir
 
-    def store_embedding(self, evidence_id: str, text_preview: str, budget_manager: Optional[Any] = None) -> Optional[Dict[str, Any]]:
+    def store_embedding(self, evidence_id: str, text_preview: str, budget_manager: Any | None = None) -> dict[str, Any] | None:
         """Store embedding for evidence preview disk-first."""
         if budget_manager:
             allowed, reason = budget_manager.check_network_allowed()
@@ -16877,19 +16868,19 @@ Provide a detailed synthesis with key findings and conclusions."""
 
         return {'path': str(embed_path), 'text_hash': text_hash, 'dim': current_dim, 'dtype': 'float32', 'model_id': 'hash-lite-v1'}
 
-    def load_embedding(self, evidence_id: str) -> Optional[Any]:
+    def load_embedding(self, evidence_id: str) -> Any | None:
         """Load embedding from disk or cache."""
         if evidence_id in self._EMBEDDING_CACHE:
             cached = self._EMBEDDING_CACHE[evidence_id]
             self._EMBEDDING_CACHE.move_to_end(evidence_id)
             path, dim = cached['path'], cached['dim']
-            dtype = cached.get('dtype', 'float32')
+            cached.get('dtype', 'float32')
         else:
             shard = evidence_id[:2]
             embed_path = self._get_embedding_dir() / shard / f"{evidence_id}.bin"
             if not embed_path.exists():
                 return None
-            path, dim, dtype = str(embed_path), 128, 'float32'
+            path, dim, _dtype = str(embed_path), 128, 'float32'
 
         # (1) Verify embedding dimension consistency
         consistent, action = self._check_embedding_dim_consistency(dim, evidence_id)
@@ -16905,18 +16896,18 @@ Provide a detailed synthesis with key findings and conclusions."""
         except Exception:
             return None  # Binary file read failure
 
-    def compute_similarity(self, query_emb: List[float], doc_emb: List[float]) -> float:
+    def compute_similarity(self, query_emb: list[float], doc_emb: list[float]) -> float:
         """Compute cosine similarity between embeddings."""
         if not query_emb or not doc_emb:
             return 0.0
-        dot = sum(a * b for a, b in zip(query_emb, doc_emb))
+        dot = sum(a * b for a, b in zip(query_emb, doc_emb, strict=False))
         norm_q = sum(a * a for a in query_emb) ** 0.5
         norm_d = sum(a * a for a in doc_emb) ** 0.5
         if norm_q == 0 or norm_d == 0:
             return 0.0
         return dot / (norm_q * norm_d)
 
-    def vector_retrieve(self, query_text: str, candidate_evidence_ids: List[str], top_k: int = 20, evidence_store: Optional[Dict[str, Any]] = None) -> List[Tuple[str, float]]:
+    def vector_retrieve(self, query_text: str, candidate_evidence_ids: list[str], top_k: int = 20, evidence_store: dict[str, Any] | None = None) -> list[tuple[str, float]]:
         """Vector-lite retrieval for semantic recall."""
         candidates = candidate_evidence_ids[:200]
         top_k = min(top_k, 20)
@@ -16942,7 +16933,7 @@ Provide a detailed synthesis with key findings and conclusions."""
         results = [(ev_id, score) for score, ev_id in heap]
         return sorted(results, key=lambda x: x[1], reverse=True)
 
-    def _compute_query_embedding(self, text: str) -> Optional[List[float]]:
+    def _compute_query_embedding(self, text: str) -> list[float] | None:
         """Compute query embedding (placeholder)."""
         text = text[:2000]
         hash_bytes = hashlib.sha256(text.encode()).digest()
@@ -16963,7 +16954,7 @@ Provide a detailed synthesis with key findings and conclusions."""
             return True
         return False
 
-    def _check_embedding_dim_consistency(self, dim: int, evidence_id: str) -> Tuple[bool, str]:
+    def _check_embedding_dim_consistency(self, dim: int, evidence_id: str) -> tuple[bool, str]:
         """Check if embedding dimension is consistent with expected. Returns (consistent, action)."""
         if self._EXPECTED_EMBED_DIM is None:
             self._lock_embedding_dim(dim)
@@ -16980,7 +16971,7 @@ Provide a detailed synthesis with key findings and conclusions."""
 
         return True, "consistent"
 
-    def get_embedding_status(self) -> Dict[str, Any]:
+    def get_embedding_status(self) -> dict[str, Any]:
         """Get embedding invariant status for reporting."""
         return {
             'expected_dim': self._EXPECTED_EMBED_DIM,
@@ -16997,7 +16988,7 @@ Provide a detailed synthesis with key findings and conclusions."""
         url: str,
         domain: str,
         primary_score: float,
-        candidate_clusters: List[Tuple[str, float]],
+        candidate_clusters: list[tuple[str, float]],
     ) -> float:
         """
         Compute expected uncertainty reduction (gain score) for a URL.
@@ -17018,7 +17009,6 @@ Provide a detailed synthesis with key findings and conclusions."""
 
         # Check claim index for domain coverage
         claim_index = getattr(self, '_claim_index', None)
-        has_new_domain = False
 
         for cluster_id, _ in top_clusters:
             if claim_index:
@@ -17026,7 +17016,6 @@ Provide a detailed synthesis with key findings and conclusions."""
                 if cluster:
                     # Check if this domain is new for cluster
                     if domain not in cluster.domains:
-                        has_new_domain = True
                         gain += 0.3 * (1.0 / (len(cluster.domains) + 1))
 
                     # High primary score bonus
@@ -17071,7 +17060,7 @@ Provide a detailed synthesis with key findings and conclusions."""
             if isinstance(self._metrics[category][key], (int, float)):
                 self._metrics[category][key] += delta
 
-    def _build_scorecard(self) -> Dict[str, Any]:
+    def _build_scorecard(self) -> dict[str, Any]:
         """Build unified scorecard from collected metrics."""
         # Finalize time metric
         if hasattr(self, '_budget_manager') and self._budget_manager:
@@ -17131,7 +17120,7 @@ Provide a detailed synthesis with key findings and conclusions."""
 
         return scorecard
 
-    def get_scorecard(self) -> Dict[str, Any]:
+    def get_scorecard(self) -> dict[str, Any]:
         """Get current scorecard metrics."""
         return self._metrics.copy()
 
@@ -17220,10 +17209,10 @@ Provide a detailed synthesis with key findings and conclusions."""
 
     def _execute_playbook_actions(
         self,
-        budget_manager: Optional[Any] = None,
-        claim_index: Optional[Any] = None,
-        frontier: Optional[Any] = None,
-    ) -> List[str]:
+        budget_manager: Any | None = None,
+        claim_index: Any | None = None,
+        frontier: Any | None = None,
+    ) -> list[str]:
         """Execute playbook actions respecting budget and hard limits."""
         actions_taken = []
 
@@ -17232,7 +17221,7 @@ Provide a detailed synthesis with key findings and conclusions."""
             if claim_index and hasattr(claim_index, '_clusters'):
                 # Get top contested cluster
                 clusters = list(claim_index._clusters.items())[:5]
-                for cluster_id, cluster in clusters:
+                for cluster_id, _cluster in clusters:
                     first_seen_id, _ = self.get_first_seen_evidence(cluster_id, {})
                     if first_seen_id and frontier:
                         # Add as seed with boost
@@ -17265,7 +17254,7 @@ Provide a detailed synthesis with key findings and conclusions."""
 
         return actions_taken
 
-    def get_playbook_state(self) -> Dict[str, Any]:
+    def get_playbook_state(self) -> dict[str, Any]:
         """Get current playbook state for reporting."""
         return {
             'policies': self._policy_state.copy(),
@@ -17285,7 +17274,6 @@ Provide a detailed synthesis with key findings and conclusions."""
 
     def normalize_entity_name(self, name: str) -> str:
         """Normalize entity name: NFKC, casefold, strip punctuation."""
-        import unicodedata
         # NFKC normalization
         normalized = unicodedata.normalize('NFKC', name)
         # Casefold
@@ -17306,9 +17294,9 @@ Provide a detailed synthesis with key findings and conclusions."""
         self,
         entity_id: str,
         name: str,
-        entity_type: Optional[str] = None,
+        entity_type: str | None = None,
         confidence: float = 0.5,
-        evidence_id: Optional[str] = None,
+        evidence_id: str | None = None,
     ) -> None:
         """Add entity to cache with LRU eviction."""
         if entity_id in self._entity_cache:
@@ -17339,8 +17327,8 @@ Provide a detailed synthesis with key findings and conclusions."""
     def _resolve_entity_alias(
         self,
         normalized_name: str,
-        entity_type: Optional[str] = None,
-    ) -> Tuple[Optional[str], bool]:
+        entity_type: str | None = None,
+    ) -> tuple[str | None, bool]:
         """Resolve entity alias - returns (entity_id, is_exact_match)."""
         entity_id = self._generate_entity_id(normalized_name)
 
@@ -17411,9 +17399,9 @@ Provide a detailed synthesis with key findings and conclusions."""
     def extract_and_resolve_entities(
         self,
         text: str,
-        ner_results: Optional[List[Dict[str, Any]]] = None,
-        evidence_id: Optional[str] = None,
-    ) -> List[Dict[str, Any]]:
+        ner_results: list[dict[str, Any]] | None = None,
+        evidence_id: str | None = None,
+    ) -> list[dict[str, Any]]:
         """Extract and resolve entities from text and NER results."""
         extracted = []
         unique_ids = set()
@@ -17448,7 +17436,7 @@ Provide a detailed synthesis with key findings and conclusions."""
         logger.debug(f"[ENTITY RESOLVE] extracted={len(extracted)} unique={len(unique_ids)} packets={1 if evidence_id else 0}")
         return extracted
 
-    def get_entity_for_reporting(self, max_entities: int = 10) -> List[Dict[str, Any]]:
+    def get_entity_for_reporting(self, max_entities: int = 10) -> list[dict[str, Any]]:
         """Get top entities for reporting."""
         entities = []
         for entity_id, data in list(self._entity_cache.items())[:max_entities]:
@@ -17478,7 +17466,7 @@ Provide a detailed synthesis with key findings and conclusions."""
         path = self._get_bandit_path()
         if path.exists():
             try:
-                with open(path, 'r') as f:
+                with open(path) as f:
                     data = json.load(f)
                 contexts = data.get('contexts', {})
                 for ctx, stats in contexts.items():
@@ -17503,10 +17491,9 @@ Provide a detailed synthesis with key findings and conclusions."""
         key = f"{script[:10]}:{page_type[:20]}:{domain_bucket[:40]}"
         return key[:80]
 
-    def _select_actions_ucb1(self, context: str, budget_state: Dict[str, Any], rng: Any) -> Tuple[List[str], str]:
+    def _select_actions_ucb1(self, context: str, budget_state: dict[str, Any], rng: Any) -> tuple[list[str], str]:
         """UCB1 action selection."""
         ctx_stats = self._bandit_contexts.get(context, {})
-        actions = []
         reasons = []
 
         # Get available actions (filter by budget)
@@ -17524,7 +17511,7 @@ Provide a detailed synthesis with key findings and conclusions."""
             return [], "no_available_actions"
 
         # UCB1 selection
-        n_actions = len(available)
+        len(available)
         pulls = {a: ctx_stats.get(a, {}).get('pulls', 0) for a in available}
         total_pulls = sum(pulls.values())
 
@@ -17555,8 +17542,8 @@ Provide a detailed synthesis with key findings and conclusions."""
         script: str = "latin",
         page_type: str = "article",
         domain_bucket: str = "general",
-        budget_state: Optional[Dict[str, Any]] = None,
-    ) -> Tuple[List[str], str]:
+        budget_state: dict[str, Any] | None = None,
+    ) -> tuple[list[str], str]:
         """
         Select bandit actions for current context.
         Returns: (list of action names, reason trace)
@@ -17695,14 +17682,14 @@ Provide a detailed synthesis with key findings and conclusions."""
 
         logger.debug(f"[ATTR] rel={rel} src={src_type}:{src_id[:20]} dst={dst_type}:{dst_id[:20]}")
 
-    def get_attribution_summary(self) -> Dict[str, int]:
+    def get_attribution_summary(self) -> dict[str, int]:
         """Get summary counts by relation type."""
         summary = defaultdict(int)
         for edge in self._attribution_ring:
             summary[edge['rel']] += 1
         return dict(summary)
 
-    def get_top_attribution_edges(self, topk: int = 5) -> List[Dict[str, Any]]:
+    def get_top_attribution_edges(self, topk: int = 5) -> list[dict[str, Any]]:
         """Get top attribution edges for reporting."""
         return self._attribution_ring[-topk:]
 
@@ -17710,11 +17697,11 @@ Provide a detailed synthesis with key findings and conclusions."""
     # (8) TEMPORAL DIFFERENTIAL CRAWLING - delta-focused recrawl
     # =========================================================================
 
-    def _delta_recrawl(self, url: str, previous_packet_ref: Dict[str, Any], budget: float = 1.0) -> Dict[str, Any]:
+    def _delta_recrawl(self, url: str, previous_packet_ref: dict[str, Any], budget: float = 1.0) -> dict[str, Any]:
         """
         Delta-focused recrawl: detect what CHANGED with minimal bandwidth.
 
-        Returns: {delta: float, reason: str, changed_fields: List[str]}
+        Returns: {delta: float, reason: str, changed_fields: list[str]}
         """
         if self._delta_recrawl_count >= self._DELTA_MAX_RECRAWLS:
             return {'delta': 0.0, 'reason': 'max_recrawls_reached', 'changed_fields': []}
@@ -17724,9 +17711,9 @@ Provide a detailed synthesis with key findings and conclusions."""
         delta = 0.0
 
         # Get previous packet data (disk reference)
-        prev_headers = previous_packet_ref.get('headers_digest', '')
-        prev_content_hash = previous_packet_ref.get('content_hash', '')
-        prev_simhash = previous_packet_ref.get('simhash', '')
+        previous_packet_ref.get('headers_digest', '')
+        previous_packet_ref.get('content_hash', '')
+        previous_packet_ref.get('simhash', '')
         prev_page_type = previous_packet_ref.get('page_type', '')
         prev_embedded_state = previous_packet_ref.get('metadata_digests', {}).get('embedded_state_hash', '')
 
@@ -17799,7 +17786,7 @@ Provide a detailed synthesis with key findings and conclusions."""
             'page_type': current_page_type,
         }
 
-    def _add_delta_event(self, url: str, prev_evidence_id: str, delta: float, changed_fields: List[str], cluster_id: str = "") -> None:
+    def _add_delta_event(self, url: str, prev_evidence_id: str, delta: float, changed_fields: list[str], cluster_id: str = "") -> None:
         """Add delta event for reporting (max 12 events)."""
         evidence_id = f"ev_{hash(url) % 1000000:06x}"
         event = {
@@ -17842,7 +17829,7 @@ Provide a detailed synthesis with key findings and conclusions."""
         # Update metrics
         self._metrics['quality']['drift_events'] += 1
 
-    def get_delta_summary(self) -> Dict[str, Any]:
+    def get_delta_summary(self) -> dict[str, Any]:
         """Get delta recrawl summary for scorecard."""
         total = self._delta_recrawl_count
         hits = sum(1 for e in self._delta_events if e['delta_score'] > 0.35)
@@ -17857,7 +17844,7 @@ Provide a detailed synthesis with key findings and conclusions."""
     # =========================================================================
 
     def compute_source_fingerprint(self, domain: str, opengraph_hash: str, json_ld_hash: str,
-                                  embedded_state_hash: str, author_entity_id: Optional[str] = None) -> str:
+                                  embedded_state_hash: str, author_entity_id: str | None = None) -> str:
         """
         Compute source fingerprint for independence tracking.
         fp = sha256(domain + og_hash + json_ld_hash + embedded_state_hash + author)[:16]
@@ -17867,7 +17854,7 @@ Provide a detailed synthesis with key findings and conclusions."""
             fp_input += f":{author_entity_id}"
         return hashlib.sha256(fp_input.encode()).hexdigest()[:16]
 
-    def get_alignment_table(self, clusters: List[str]) -> List[Dict[str, Any]]:
+    def get_alignment_table(self, clusters: list[str]) -> list[dict[str, Any]]:
         """
         Get alignment table for top clusters (bounded).
         Returns: [{cluster_id, uncertainty, stance_counts, independent_support_count, sample_domains}]
@@ -17940,7 +17927,7 @@ Provide a detailed synthesis with key findings and conclusions."""
         self._PRIMARY_DIR.mkdir(parents=True, exist_ok=True)
         return self._PRIMARY_DIR / f'{self._primary_run_id}.json'
 
-    def _load_primary_chase_state(self, cluster_id: str) -> Dict[str, Any]:
+    def _load_primary_chase_state(self, cluster_id: str) -> dict[str, Any]:
         """Load primary chase state from disk (disk-first)."""
         # Check RAM cache first
         if cluster_id in self._primary_chase_state:
@@ -17950,7 +17937,7 @@ Provide a detailed synthesis with key findings and conclusions."""
         path = self._get_primary_chase_path()
         if path.exists():
             try:
-                with open(path, 'r') as f:
+                with open(path) as f:
                     all_states = json.load(f)
                     if cluster_id in all_states:
                         state = all_states[cluster_id]
@@ -17968,7 +17955,7 @@ Provide a detailed synthesis with key findings and conclusions."""
             'run_count': 0
         }
 
-    def _save_primary_chase_state(self, cluster_id: str, state: Dict[str, Any]) -> None:
+    def _save_primary_chase_state(self, cluster_id: str, state: dict[str, Any]) -> None:
         """Save primary chase state to disk."""
         # Update RAM cache (LRU - keep only few)
         self._primary_chase_state[cluster_id] = state
@@ -17984,7 +17971,7 @@ Provide a detailed synthesis with key findings and conclusions."""
         try:
             all_states = {}
             if path.exists():
-                with open(path, 'r') as f:
+                with open(path) as f:
                     all_states = json.load(f)
             all_states[cluster_id] = state
             with open(path, 'w') as f:
@@ -17992,7 +17979,7 @@ Provide a detailed synthesis with key findings and conclusions."""
         except Exception as e:
             logger.warning(f"[PRIMARY CHASE] Failed to save state: {e}")
 
-    def _generate_primary_candidates(self, cluster_id: str, evidence_ids: List[str]) -> List[Dict[str, Any]]:
+    def _generate_primary_candidates(self, cluster_id: str, evidence_ids: list[str]) -> list[dict[str, Any]]:
         """
         Generate primary source candidates from evidence packets.
         Uses: canonical_url, og:url, json_ld sameAs, embedded_state links, feeds.
@@ -18037,8 +18024,8 @@ Provide a detailed synthesis with key findings and conclusions."""
         self._save_primary_chase_state(cluster_id, state)
         return candidates[:self._PRIMARY_CANDIDATES_MAX]
 
-    def _select_primary_candidates(self, cluster_id: str, candidates: List[Dict[str, Any]],
-                                   domain_limiter: Any = None, budget: float = 1.0) -> List[Dict[str, Any]]:
+    def _select_primary_candidates(self, cluster_id: str, candidates: list[dict[str, Any]],
+                                   domain_limiter: Any = None, budget: float = 1.0) -> list[dict[str, Any]]:
         """
         Select max 2 candidates per cycle respecting domain limiter and budget.
         """
@@ -18047,7 +18034,7 @@ Provide a detailed synthesis with key findings and conclusions."""
         for candidate in candidates[:self._PRIMARY_CHOSEN_MAX]:
             # Check domain limiter (if available)
             if domain_limiter:
-                domain = urlparse(candidate['url']).netloc
+                urlparse(candidate['url']).netloc
                 # Simplified - would check domain_limiter.is_allowed(domain)
                 pass
 
@@ -18120,13 +18107,13 @@ Provide a detailed synthesis with key findings and conclusions."""
         self._create_decision_event(
             kind='primary_chase',
             summary={'cluster_id': cluster_id[:30], 'status': 'hit', 'score': str(primary_score)},
-            reasons=[f"hit_primary_source", f"score_{primary_score:.2f}"],
+            reasons=["hit_primary_source", f"score_{primary_score:.2f}"],
             refs={'evidence_ids': [evidence_id], 'cluster_ids': [cluster_id], 'url_hashes': []},
             confidence=primary_score,
         )
 
-    def run_primary_chase_cycle(self, cluster_id: str, evidence_ids: List[str],
-                                domain_limiter: Any = None) -> Dict[str, Any]:
+    def run_primary_chase_cycle(self, cluster_id: str, evidence_ids: list[str],
+                                domain_limiter: Any = None) -> dict[str, Any]:
         """
         Run one primary chase cycle for a cluster.
         Returns: {candidates_generated: int, candidates_selected: int, hit: bool}
@@ -18151,7 +18138,7 @@ Provide a detailed synthesis with key findings and conclusions."""
             'hit': hit
         }
 
-    def get_primary_chase_summary(self) -> Dict[str, Any]:
+    def get_primary_chase_summary(self) -> dict[str, Any]:
         """Get primary chase summary for reporting."""
         total_chases = sum(s.get('run_count', 0) for s in self._primary_chase_state.values())
         hits = sum(1 for s in self._primary_chase_state.values() if s.get('best_primary_evidence_id'))
@@ -18168,9 +18155,9 @@ Provide a detailed synthesis with key findings and conclusions."""
     def _create_decision_event(
         self,
         kind: str,
-        summary: Dict[str, Any],
-        reasons: List[str],
-        refs: Dict[str, List[str]],
+        summary: dict[str, Any],
+        reasons: list[str],
+        refs: dict[str, list[str]],
         confidence: float = 1.0,
     ) -> None:
         """
@@ -18243,7 +18230,7 @@ Provide a detailed synthesis with key findings and conclusions."""
         refs_summary = f"ev={len(trimmed_refs.get('evidence_ids', []))} cl={len(trimmed_refs.get('cluster_ids', []))} url={len(trimmed_refs.get('url_hashes', []))}"
         logger.info(f"[DECISION] kind={kind} reasons={trimmed_reasons[:2]} refs={refs_summary}")
 
-    def get_decision_summary(self) -> Dict[str, Any]:
+    def get_decision_summary(self) -> dict[str, Any]:
         """Get decision ledger summary for reporting."""
         return {
             'decision_counts_by_kind': dict(self._decision_counts_by_kind),
@@ -18266,7 +18253,7 @@ Provide a detailed synthesis with key findings and conclusions."""
         path = self._get_fp_stats_path()
         if path.exists():
             try:
-                with open(path, 'r') as f:
+                with open(path) as f:
                     data = json.load(f)
                 fps = data.get('fingerprints', {})
                 for fp, stats in fps.items():
@@ -18320,7 +18307,7 @@ Provide a detailed synthesis with key findings and conclusions."""
         if len(self._fp_stats) % 50 == 0:
             self._save_fp_stats()
 
-    def get_fp_diversity_factor(self, fp: Optional[str]) -> float:
+    def get_fp_diversity_factor(self, fp: str | None) -> float:
         """
         Get fingerprint diversity factor for frontier scoring.
 
@@ -18351,7 +18338,7 @@ Provide a detailed synthesis with key findings and conclusions."""
         # Clamp to 0.5-1.2
         return max(0.5, min(1.2, factor))
 
-    def get_fp_stats_summary(self) -> Dict[str, Any]:
+    def get_fp_stats_summary(self) -> dict[str, Any]:
         """Get fingerprint stats summary."""
         return {
             'total_fingerprints': len(self._fp_stats),
@@ -18387,7 +18374,7 @@ Provide a detailed synthesis with key findings and conclusions."""
             old_ema = self._delta_ema[cluster_id]
             self._delta_ema[cluster_id] = 0.7 * old_ema + 0.3 * delta_score
 
-    def _detect_change_point(self, cluster_id: str) -> Optional[Dict[str, Any]]:
+    def _detect_change_point(self, cluster_id: str) -> dict[str, Any] | None:
         """
         Detect change-point for cluster.
 
@@ -18424,7 +18411,7 @@ Provide a detailed synthesis with key findings and conclusions."""
 
         return None
 
-    def _trigger_change_point_response(self, change_point: Dict[str, Any]) -> None:
+    def _trigger_change_point_response(self, change_point: dict[str, Any]) -> None:
         """Trigger autonomous response to change-point."""
         cluster_id = change_point['cluster_id']
 
@@ -18455,10 +18442,10 @@ Provide a detailed synthesis with key findings and conclusions."""
         self,
         url: str,
         reason: str,
-        http_status: Optional[int] = None,
+        http_status: int | None = None,
         js_gated: bool = False,
         empty_preview: bool = False,
-    ) -> Optional[Dict[str, Any]]:
+    ) -> dict[str, Any] | None:
         """
         Trigger archival escalation - search web archives for content.
 
@@ -18554,7 +18541,7 @@ Provide a detailed synthesis with key findings and conclusions."""
             logger.warning(f"Archive escalation failed for {url}: {e}")
             return None
 
-    def get_change_points_summary(self) -> Dict[str, Any]:
+    def get_change_points_summary(self) -> dict[str, Any]:
         """Get change-points summary for reporting."""
         return {
             'change_points': list(self._change_points)[:self._CHANGE_POINTS_REPORT_MAX],
@@ -18568,9 +18555,8 @@ Provide a detailed synthesis with key findings and conclusions."""
     # (7) VECTOR-LITE v2 - signature prefilter + cluster centroid caching
     # =========================================================================
 
-    def _compute_embedding_signature(self, embedding: List[float]) -> str:
+    def _compute_embedding_signature(self, embedding: list[float]) -> str:
         """Compute 64-bit signature from embedding (sign bits of first 64 dims)."""
-        import struct
         sig_bits = 0
         for i, val in enumerate(embedding[:64]):
             if val > 0:
@@ -18587,8 +18573,8 @@ Provide a detailed synthesis with key findings and conclusions."""
         self,
         evidence_id: str,
         text_preview: str,
-        budget_manager: Optional[Any] = None,
-    ) -> Optional[Dict[str, Any]]:
+        budget_manager: Any | None = None,
+    ) -> dict[str, Any] | None:
         """Store embedding with signature for v2 retrieval."""
         result = self.store_embedding(evidence_id, text_preview, budget_manager)
         if result is None:
@@ -18609,8 +18595,8 @@ Provide a detailed synthesis with key findings and conclusions."""
     def signature_prefilter(
         self,
         query_signature: str,
-        candidate_ids: List[str],
-    ) -> List[str]:
+        candidate_ids: list[str],
+    ) -> list[str]:
         """
         Stage 0: Fast signature prefiltering.
         Returns top candidates by Hamming distance (max 50).
@@ -18683,10 +18669,10 @@ Provide a detailed synthesis with key findings and conclusions."""
 
     def retrieve_by_centroid(
         self,
-        query_emb: List[float],
-        cluster_ids: List[str],
+        query_emb: list[float],
+        cluster_ids: list[str],
         top_clusters: int = 10,
-    ) -> Tuple[List[str], List[str]]:
+    ) -> tuple[list[str], list[str]]:
         """
         Retrieve relevant clusters by centroid similarity.
         Returns: (sorted cluster_ids, evidence_ids from top clusters)
@@ -18948,12 +18934,12 @@ class _MemoryManager:
 
     def __init__(self, orchestrator: FullyAutonomousOrchestrator):
         self._orch = orchestrator
-        self._memory: Optional[MemoryLayer] = None
-        self._cache: Optional[IntelligentCache] = None
-        self._rag: Optional[RAGEngine] = None
+        self._memory: MemoryLayer | None = None
+        self._cache: IntelligentCache | None = None
+        self._rag: RAGEngine | None = None
         # Sprint 28: Use PersistentKnowledgeLayer instead of AtomicJSONKnowledgeGraph
-        self._knowledge_graph: Optional[PersistentKnowledgeLayer] = None
-        self._context_graph: Optional[ContextGraph] = None
+        self._knowledge_graph: PersistentKnowledgeLayer | None = None
+        self._context_graph: ContextGraph | None = None
         self._initialized = False
         self._use_persistent_layer = True  # Sprint 28: fallback flag
 
@@ -19025,23 +19011,23 @@ class _MemoryManager:
         await self.aggressive_cleanup()
 
     @property
-    def memory(self) -> Optional[MemoryLayer]:
+    def memory(self) -> MemoryLayer | None:
         return self._memory
 
     @property
-    def cache(self) -> Optional[IntelligentCache]:
+    def cache(self) -> IntelligentCache | None:
         return self._cache
 
     @property
-    def rag(self) -> Optional[RAGEngine]:
+    def rag(self) -> RAGEngine | None:
         return self._rag
 
     @property
-    def knowledge_graph(self) -> Optional[PersistentKnowledgeLayer]:
+    def knowledge_graph(self) -> PersistentKnowledgeLayer | None:
         return self._knowledge_graph
 
     @property
-    def context_graph(self) -> Optional[ContextGraph]:
+    def context_graph(self) -> ContextGraph | None:
         return self._context_graph
 
     def add_evidence_packet_edge_ref(self, evidence_id: str, edge_id: str) -> bool:
@@ -19077,7 +19063,7 @@ class _MemoryManager:
         """
         return self._evidence_packet_storage.load_packet(evidence_id)
 
-    def get_stats(self) -> Dict[str, Any]:
+    def get_stats(self) -> dict[str, Any]:
         """Get memory statistics."""
         stats = {}
         if self._cache and hasattr(self._cache, 'get_stats'):
@@ -19093,18 +19079,18 @@ class _BrainManager:
     def __init__(self, orchestrator: FullyAutonomousOrchestrator):
         self._orch = orchestrator
         self.decision_engine = DecisionEngine()
-        self.hermes: Optional[Hermes3Engine] = None
+        self.hermes: Hermes3Engine | None = None
         self._hermes_initialized = False
         # MoE Router
-        self.moe_router: Optional['MoERouter'] = None  # Forward reference
+        self.moe_router: MoERouter | None = None  # Forward reference
         self._moe_initialized = False
-        self.distillation_engine: Optional['DistillationEngine'] = None
+        self.distillation_engine: DistillationEngine | None = None
         # Sprint 35: InferenceEngine for abductive reasoning
-        self.inference_engine: Optional['InferenceEngine'] = None
+        self.inference_engine: InferenceEngine | None = None
         self._inference_initialized = False
         # Sprint 75: Adaptive inference profile
         self._profile = "full"  # full, no-draft, short-context
-        self._profile_task: Optional[asyncio.Task] = None
+        self._profile_task: asyncio.Task | None = None
         self._stop_profile = asyncio.Event()
         self._profile_lock = asyncio.Lock()
         self._coreml_classifier = None
@@ -19294,7 +19280,7 @@ class _BrainManager:
         if self._profile_task:
             try:
                 await asyncio.wait_for(self._profile_task, timeout=timeout)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 self._profile_task.cancel()
                 try:
                     await self._profile_task
@@ -19400,23 +19386,23 @@ class _SecurityManager:
 
     def __init__(self, orchestrator: FullyAutonomousOrchestrator):
         self._orch = orchestrator
-        self._security: Optional[SecurityLayer] = None
-        self._stealth: Optional[StealthLayer] = None
-        self._privacy: Optional[PrivacyLayer] = None
-        self._privacy_mgr: Optional[Any] = None
-        self._deep_security: Optional[Any] = None
-        self._obfuscator: Optional[Any] = None
+        self._security: SecurityLayer | None = None
+        self._stealth: StealthLayer | None = None
+        self._privacy: PrivacyLayer | None = None
+        self._privacy_mgr: Any | None = None
+        self._deep_security: Any | None = None
+        self._obfuscator: Any | None = None
         # New security pipeline components
-        self._pii_gate: Optional[Any] = None
+        self._pii_gate: Any | None = None
         self._pii_fallback_used: bool = False  # Track if fallback was used (for ledger event)
-        self._unicode: Optional[Any] = None
-        self._encoding: Optional[Any] = None
-        self._hash_id: Optional[Any] = None
-        self._ghost: Optional[Any] = None
-        self._stego: Optional[Any] = None
-        self._destructor: Optional[Any] = None
-        self._net_breaker: Optional[Any] = None
-        self._model_breaker: Optional[Any] = None
+        self._unicode: Any | None = None
+        self._encoding: Any | None = None
+        self._hash_id: Any | None = None
+        self._ghost: Any | None = None
+        self._stego: Any | None = None
+        self._destructor: Any | None = None
+        self._net_breaker: Any | None = None
+        self._model_breaker: Any | None = None
         self._initialized = False
         # Sprint 41: Tool registry for DNS tunnel detection
         self._tool_registry = ToolRegistry()
@@ -19464,7 +19450,6 @@ class _SecurityManager:
 
     async def _initialize_security_pipeline(self) -> None:
         """Initialize the security & text safety pipeline components."""
-        import hashlib
 
         # PII Gate
         _load_pii_gate()
@@ -19590,59 +19575,59 @@ class _SecurityManager:
             await self._deep_security.cleanup()
 
     @property
-    def security(self) -> Optional[SecurityLayer]:
+    def security(self) -> SecurityLayer | None:
         return self._security
 
     @property
-    def stealth(self) -> Optional[StealthLayer]:
+    def stealth(self) -> StealthLayer | None:
         return self._stealth
 
     @property
-    def privacy(self) -> Optional[PrivacyLayer]:
+    def privacy(self) -> PrivacyLayer | None:
         return self._privacy
 
     @property
-    def privacy_mgr(self) -> Optional[Any]:
+    def privacy_mgr(self) -> Any | None:
         return self._privacy_mgr
 
     @property
-    def obfuscator(self) -> Optional[Any]:
+    def obfuscator(self) -> Any | None:
         return self._obfuscator
 
     @property
-    def pii_gate(self) -> Optional[Any]:
+    def pii_gate(self) -> Any | None:
         return self._pii_gate
 
     @property
-    def unicode_analyzer(self) -> Optional[Any]:
+    def unicode_analyzer(self) -> Any | None:
         return self._unicode
 
     @property
-    def encoding_detector(self) -> Optional[Any]:
+    def encoding_detector(self) -> Any | None:
         return self._encoding
 
     @property
-    def hash_identifier(self) -> Optional[Any]:
+    def hash_identifier(self) -> Any | None:
         return self._hash_id
 
     @property
-    def ghost_detector(self) -> Optional[Any]:
+    def ghost_detector(self) -> Any | None:
         return self._ghost
 
     @property
-    def stego_detector(self) -> Optional[Any]:
+    def stego_detector(self) -> Any | None:
         return self._stego
 
     @property
-    def destructor(self) -> Optional[Any]:
+    def destructor(self) -> Any | None:
         return self._destructor
 
     @property
-    def net_breaker(self) -> Optional[Any]:
+    def net_breaker(self) -> Any | None:
         return self._net_breaker
 
     @property
-    def model_breaker(self) -> Optional[Any]:
+    def model_breaker(self) -> Any | None:
         return self._model_breaker
 
     # =========================================================================
@@ -19682,7 +19667,6 @@ class _SecurityManager:
         # This ensures PII beyond MAX_SANITIZE_LENGTH is detected
         try:
             # Use the pii_gate to detect PII on full text (before trim)
-            from .security.pii_gate import PIICategory
             result = self._pii_gate.detect(text)
 
             if not result or not hasattr(result, 'matches'):
@@ -19908,10 +19892,10 @@ class _SecurityManager:
 
         return result
 
-    def should_trigger_digital_ghost(self, http_status: Optional[int] = None,
+    def should_trigger_digital_ghost(self, http_status: int | None = None,
                                        drift_detected: bool = False,
-                                       contradiction_rate: Optional[float] = None,
-                                       stance_entropy: Optional[float] = None) -> bool:
+                                       contradiction_rate: float | None = None,
+                                       stance_entropy: float | None = None) -> bool:
         """
         Determine if digital ghost recovery should be triggered.
         Only triggers on specific conditions (404, drift, contradiction).
@@ -19933,7 +19917,7 @@ class _SecurityManager:
 
         return False
 
-    async def run_digital_ghost_recovery(self, url: str, context: str) -> Optional[dict]:
+    async def run_digital_ghost_recovery(self, url: str, context: str) -> dict | None:
         """
         Run digital ghost recovery using MementoResolver.
         Returns bounded results (URLs, timestamps, hashes only).
@@ -19985,7 +19969,7 @@ class _SecurityManager:
             logger.warning(f"Digital ghost recovery failed: {e}")
             return None
 
-    def maybe_run_stego(self, image_bytes: bytes, meta: dict) -> Optional[dict]:
+    def maybe_run_stego(self, image_bytes: bytes, meta: dict) -> dict | None:
         """
         Run steganography detection on images.
         Only runs on high-value images within size limits.
@@ -20034,7 +20018,6 @@ class _SecurityManager:
 
         for path in temp_paths:
             try:
-                import os
                 from pathlib import Path
 
                 p = Path(path)
@@ -20071,7 +20054,7 @@ class _SecurityManager:
             except Exception:
                 pass  # Circuit breaker record success failure
 
-    async def _check_dns_tunneling(self, domains: List[str]) -> Dict[str, Any]:
+    async def _check_dns_tunneling(self, domains: list[str]) -> dict[str, Any]:
         """Sprint 41: Check list of domains for DNS tunneling indicators. Returns dict with findings."""
         try:
             if not self._tool_registry.has_tool("dns_tunnel_check"):
@@ -20107,9 +20090,9 @@ class _ForensicsManager:
 
     def __init__(self, orchestrator: FullyAutonomousOrchestrator):
         self._orch = orchestrator
-        self._metadata_extractor: Optional['UniversalMetadataExtractor'] = None
-        self._encoding_detector: Optional['BaseEncodingDetector'] = None
-        self._hash_identifier: Optional['HashIdentifier'] = None
+        self._metadata_extractor: UniversalMetadataExtractor | None = None
+        self._encoding_detector: BaseEncodingDetector | None = None
+        self._hash_identifier: HashIdentifier | None = None
         self._initialized = False
 
     async def initialize(self) -> None:
@@ -20162,17 +20145,17 @@ class _ForensicsManager:
             await self._metadata_extractor.close()
 
     @property
-    def metadata_extractor(self) -> Optional['UniversalMetadataExtractor']:
+    def metadata_extractor(self) -> UniversalMetadataExtractor | None:
         """Get metadata extractor instance."""
         return self._metadata_extractor
 
     @property
-    def encoding_detector(self) -> Optional['BaseEncodingDetector']:
+    def encoding_detector(self) -> BaseEncodingDetector | None:
         """Get encoding detector instance."""
         return self._encoding_detector
 
     @property
-    def hash_identifier(self) -> Optional['HashIdentifier']:
+    def hash_identifier(self) -> HashIdentifier | None:
         """Get hash identifier instance."""
         return self._hash_identifier
 
@@ -20182,9 +20165,9 @@ class _IntelligenceManager:
 
     def __init__(self, orchestrator: FullyAutonomousOrchestrator):
         self._orch = orchestrator
-        self._decision_engine: Optional['IntelligentDecisionEngine'] = None
-        self._input_detector: Optional['IntelligentInputDetector'] = None
-        self._workflow_orchestrator: Optional['WorkflowOrchestrator'] = None
+        self._decision_engine: IntelligentDecisionEngine | None = None
+        self._input_detector: IntelligentInputDetector | None = None
+        self._workflow_orchestrator: WorkflowOrchestrator | None = None
         self._initialized = False
 
     async def initialize(self) -> None:
@@ -20204,7 +20187,7 @@ class _IntelligenceManager:
                 WORKFLOW_ORCHESTRATOR_AVAILABLE,
                 create_decision_engine,
                 create_input_detector,
-                create_workflow_orchestrator
+                create_workflow_orchestrator,
             )
 
             # Initialize decision engine
@@ -20246,17 +20229,17 @@ class _IntelligenceManager:
         pass  # No cleanup needed for intelligence layer
 
     @property
-    def decision_engine(self) -> Optional['IntelligentDecisionEngine']:
+    def decision_engine(self) -> IntelligentDecisionEngine | None:
         """Get decision engine instance."""
         return self._decision_engine
 
     @property
-    def input_detector(self) -> Optional['IntelligentInputDetector']:
+    def input_detector(self) -> IntelligentInputDetector | None:
         """Get input detector instance."""
         return self._input_detector
 
     @property
-    def workflow_orchestrator(self) -> Optional['WorkflowOrchestrator']:
+    def workflow_orchestrator(self) -> WorkflowOrchestrator | None:
         """Get workflow orchestrator instance."""
         return self._workflow_orchestrator
 
@@ -20271,7 +20254,7 @@ class _ToolRegistryManager:
 
     def __init__(self, orchestrator: FullyAutonomousOrchestrator):
         self._orch = orchestrator
-        self._tools: Dict[str, ToolCapability] = {}
+        self._tools: dict[str, ToolCapability] = {}
         self._initialized = False
         # Reference to ToolExecLog for tamper-evident logging
         self._tool_exec_log = None
@@ -20446,21 +20429,21 @@ class _ToolRegistryManager:
         """Register a tool."""
         self._tools[tool.name] = tool
 
-    def get_tools_for_depth(self, depth: DiscoveryDepth) -> List[ToolCapability]:
+    def get_tools_for_depth(self, depth: DiscoveryDepth) -> list[ToolCapability]:
         """Get all tools available for given depth."""
         return [
             tool for tool in self._tools.values()
             if tool.max_depth.value >= depth.value
         ]
 
-    def get_tools_by_category(self, category: ToolCategory) -> List[ToolCapability]:
+    def get_tools_by_category(self, category: ToolCategory) -> list[ToolCapability]:
         """Get tools by category."""
         return [
             tool for tool in self._tools.values()
             if tool.category == category
         ]
 
-    async def execute(self, tool_name: str, **kwargs) -> Dict[str, Any]:
+    async def execute(self, tool_name: str, **kwargs) -> dict[str, Any]:
         """Execute a tool by name."""
         if tool_name not in self._tools:
             raise ValueError(f"Unknown tool: {tool_name}")
@@ -20520,9 +20503,9 @@ class _ToolRegistryManager:
         self,
         tool_name: str,
         input_hash: str,
-        output_result: Dict[str, Any],
+        output_result: dict[str, Any],
         status: str,
-        error: Optional[Exception] = None
+        error: Exception | None = None
     ) -> None:
         """Log tool execution to ToolExecLog (tamper-evident)."""
         # Get ToolExecLog reference from orchestrator
@@ -20532,7 +20515,7 @@ class _ToolRegistryManager:
         # Compute output hash (never store raw output)
         output_bytes = str(output_result).encode('utf-8')
         output_hash = hashlib.sha256(output_bytes).hexdigest()
-        output_len = len(output_bytes)
+        len(output_bytes)
 
         # Bound error class
         error_class = None
@@ -20562,7 +20545,7 @@ class _ToolRegistryManager:
             # Never let ToolExecLog failure break tool execution
             logger.warning(f"ToolExecLog logging failed: {e}")
 
-    async def execute_parallel(self, tool_names: List[str], **common_kwargs) -> List[Dict[str, Any]]:
+    async def execute_parallel(self, tool_names: list[str], **common_kwargs) -> list[dict[str, Any]]:
         """Execute multiple tools in parallel."""
         tasks = [
             self.execute(name, **common_kwargs)
@@ -20570,43 +20553,43 @@ class _ToolRegistryManager:
         ]
         return await asyncio.gather(*tasks, return_exceptions=True)
 
-    def list_tools(self) -> List[str]:
+    def list_tools(self) -> list[str]:
         """List all available tool names."""
         return list(self._tools.keys())
 
     # --- Tool Handlers ---
 
-    async def _surface_search_handler(self, query: str, **kwargs) -> Dict[str, Any]:
+    async def _surface_search_handler(self, query: str, **kwargs) -> dict[str, Any]:
         """Surface web search."""
         result = await self._orch._research_mgr.execute_surface_search(query)
         return {'success': True, 'data': result}
 
-    async def _deep_crawl_handler(self, url: str, **kwargs) -> Dict[str, Any]:
+    async def _deep_crawl_handler(self, url: str, **kwargs) -> dict[str, Any]:
         """Deep crawling."""
         result = await self._orch._research_mgr.deep_read(url)
         return {'success': result.get('success', False), 'data': result}
 
-    async def _archive_handler(self, query: str, **kwargs) -> Dict[str, Any]:
+    async def _archive_handler(self, query: str, **kwargs) -> dict[str, Any]:
         """Archive mining."""
         result = await self._orch._research_mgr.execute_archive_search(query)
         return {'success': True, 'data': result}
 
-    async def _academic_handler(self, query: str, **kwargs) -> Dict[str, Any]:
+    async def _academic_handler(self, query: str, **kwargs) -> dict[str, Any]:
         """Academic search."""
         result = await self._orch._research_mgr.execute_academic_search(query)
         return {'success': True, 'data': result}
 
-    async def _osint_handler(self, query: str, **kwargs) -> Dict[str, Any]:
+    async def _osint_handler(self, query: str, **kwargs) -> dict[str, Any]:
         """OSINT gathering."""
         result = await self._orch._research_mgr.execute_osint_search(query)
         return {'success': True, 'data': result}
 
-    async def _dark_web_handler(self, query: str, **kwargs) -> Dict[str, Any]:
+    async def _dark_web_handler(self, query: str, **kwargs) -> dict[str, Any]:
         """Dark web search (with privacy)."""
         result = await self._orch._research_mgr.execute_dark_web_search(query)
         return {'success': True, 'data': result}
 
-    async def _entity_handler(self, text: str, **kwargs) -> Dict[str, Any]:
+    async def _entity_handler(self, text: str, **kwargs) -> dict[str, Any]:
         """Entity extraction."""
         try:
             from .utils.entity_extractor import EntityExtractor
@@ -20616,30 +20599,30 @@ class _ToolRegistryManager:
         except Exception as e:
             return {'success': False, 'error': str(e)}
 
-    async def _fact_check_handler(self, claim: str, **kwargs) -> Dict[str, Any]:
+    async def _fact_check_handler(self, claim: str, **kwargs) -> dict[str, Any]:
         """Fact checking."""
         results = await self._orch._research_mgr.execute_surface_search(claim)
         confidence = min(0.9, len(results.get('sources', [])) * 0.2)
         return {'success': True, 'verified': confidence > 0.5, 'confidence': confidence}
 
-    async def _temporal_handler(self, query: str, findings: List, **kwargs) -> Dict[str, Any]:
+    async def _temporal_handler(self, query: str, findings: list, **kwargs) -> dict[str, Any]:
         """Temporal analysis."""
         result = await self._orch._research_mgr.analyze_temporal_context(findings, query)
         return {'success': True, 'data': result}
 
-    async def _stego_handler(self, content: str, **kwargs) -> Dict[str, Any]:
+    async def _stego_handler(self, content: str, **kwargs) -> dict[str, Any]:
         """Steganography detection."""
         result = await self._orch._research_mgr.detect_steganography([content])
         return {'success': True, 'findings': result}
 
-    async def _hermes_handler(self, prompt: str, **kwargs) -> Dict[str, Any]:
+    async def _hermes_handler(self, prompt: str, **kwargs) -> dict[str, Any]:
         """Hermes reasoning."""
         if self._orch._brain_mgr and self._orch._brain_mgr.hermes:
             result = await self._orch._brain_mgr.generate("", prompt)
             return {'success': True, 'response': result}
         return {'success': False, 'error': 'Hermes not available'}
 
-    async def _synthesize_handler(self, query: str, findings: List, **kwargs) -> Dict[str, Any]:
+    async def _synthesize_handler(self, query: str, findings: list, **kwargs) -> dict[str, Any]:
         """Synthesis."""
         result = await self._orch._synthesis_mgr.synthesize_report(
             query=query,
@@ -20651,7 +20634,7 @@ class _ToolRegistryManager:
         )
         return {'success': True, 'report': result}
 
-    async def _rag_handler(self, query: str, **kwargs) -> Dict[str, Any]:
+    async def _rag_handler(self, query: str, **kwargs) -> dict[str, Any]:
         """RAG query."""
         rag = self._orch._memory_mgr.rag if self._orch._memory_mgr else None
         if rag and hasattr(rag, 'query'):
@@ -20659,14 +20642,14 @@ class _ToolRegistryManager:
             return {'success': True, 'result': result}
         return {'success': False, 'error': 'RAG not available'}
 
-    async def _graph_handler(self, query: str, **kwargs) -> Dict[str, Any]:
+    async def _graph_handler(self, query: str, **kwargs) -> dict[str, Any]:
         """Graph reasoning."""
         if hasattr(self._orch, '_graph_rag') and self._orch._graph_rag:
             result = self._orch._graph_rag.ask_with_reasoning(query)
             return {'success': True, 'result': result}
         return {'success': False, 'error': 'Graph RAG not available'}
 
-    async def _stealth_handler(self, url: str, **kwargs) -> Dict[str, Any]:
+    async def _stealth_handler(self, url: str, **kwargs) -> dict[str, Any]:
         """Stealth browsing."""
         stealth = self._orch._security_mgr.stealth if self._orch._security_mgr else None
         if stealth and hasattr(stealth, 'browse'):
@@ -20674,7 +20657,7 @@ class _ToolRegistryManager:
             return {'success': True, 'data': result}
         return {'success': False, 'error': 'Stealth layer not available'}
 
-    async def _obfuscate_handler(self, data: str, **kwargs) -> Dict[str, Any]:
+    async def _obfuscate_handler(self, data: str, **kwargs) -> dict[str, Any]:
         """Obfuscation."""
         obfuscator = self._orch._security_mgr.obfuscator if self._orch._security_mgr else None
         if obfuscator and hasattr(obfuscator, 'obfuscate'):
@@ -20688,25 +20671,25 @@ class HttpCacheEntry:
     """HTTP cache entry for disk-first caching."""
     url: str
     status: int
-    headers: Dict[str, str]
+    headers: dict[str, str]
     body_preview: str
     text_preview: str
     text_hash: str
     fetched_at: float
-    etag: Optional[str] = None
-    last_modified: Optional[str] = None
+    etag: str | None = None
+    last_modified: str | None = None
     # Stale cache tracking
     stale_used_count: int = 0  # How many times this entry was used as stale fallback
-    last_stale_access: Optional[float] = None  # Last time used as stale
+    last_stale_access: float | None = None  # Last time used as stale
 
 
 @dataclass
 class StaleCacheResult:
     """Result from stale cache lookup."""
     content: str
-    metadata: Dict[str, Any]
+    metadata: dict[str, Any]
     is_stale: bool
-    stale_reason: Optional[str] = None
+    stale_reason: str | None = None
     stale_count: int = 0
 
 
@@ -20721,23 +20704,23 @@ class HttpDiskCache:
     # Default cache TTL (24 hours)
     DEFAULT_TTL_SECONDS = 86400
 
-    def __init__(self, cache_dir: Optional[Path] = None, max_ram_entries: int = 100,
+    def __init__(self, cache_dir: Path | None = None, max_ram_entries: int = 100,
                  ttl_seconds: int = DEFAULT_TTL_SECONDS):
         self._cache_dir = cache_dir or Path.home() / '.hledac' / 'http_cache'
         self._cache_dir.mkdir(parents=True, exist_ok=True)
         self._max_ram_entries = max_ram_entries
         self._ttl_seconds = ttl_seconds
-        self._ram_cache: Dict[str, HttpCacheEntry] = {}
+        self._ram_cache: dict[str, HttpCacheEntry] = {}
         self._access_order: deque = deque()  # Simple LRU
         # Stale usage tracking for domain health
-        self._stale_usage_log: Dict[str, List[float]] = {}  # domain -> list of timestamps
+        self._stale_usage_log: dict[str, list[float]] = {}  # domain -> list of timestamps
 
     def _get_cache_path(self, url: str) -> Path:
         """Generate cache file path from URL."""
         url_hash = hashlib.sha256(url.encode()).hexdigest()[:16]
         return self._cache_dir / f"{url_hash}.json"
 
-    def get(self, url: str) -> Optional[HttpCacheEntry]:
+    def get(self, url: str) -> HttpCacheEntry | None:
         """Get cached entry (from RAM or disk)."""
         cache_key = hashlib.sha256(url.encode()).hexdigest()[:16]
 
@@ -20750,7 +20733,7 @@ class HttpDiskCache:
         cache_path = self._get_cache_path(url)
         if cache_path.exists():
             try:
-                with open(cache_path, 'r') as f:
+                with open(cache_path) as f:
                     data = json.load(f)
                 entry = HttpCacheEntry(**data)
                 self._add_to_ram(cache_key, entry)
@@ -20760,7 +20743,7 @@ class HttpDiskCache:
 
         return None
 
-    def get_stale(self, url: str) -> Optional[StaleCacheResult]:
+    def get_stale(self, url: str) -> StaleCacheResult | None:
         """
         Get cached entry even if expired (stale fallback).
 
@@ -20782,7 +20765,7 @@ class HttpDiskCache:
             cache_path = self._get_cache_path(url)
             if cache_path.exists():
                 try:
-                    with open(cache_path, 'r') as f:
+                    with open(cache_path) as f:
                         data = json.load(f)
                     entry = HttpCacheEntry(**data)
                     from_disk = True
@@ -20864,7 +20847,7 @@ class HttpDiskCache:
             return
 
         try:
-            with open(cache_path, 'r') as f:
+            with open(cache_path) as f:
                 data = json.load(f)
 
             data['stale_used_count'] = entry.stale_used_count
@@ -20902,7 +20885,7 @@ class HttpDiskCache:
         except Exception as e:
             logger.debug(f"Failed to persist cache: {e}")
 
-    def get_revalidation_headers(self, url: str) -> Dict[str, str]:
+    def get_revalidation_headers(self, url: str) -> dict[str, str]:
         """Get If-None-Match / If-Modified-Since headers for revalidation."""
         entry = self.get(url)
         if not entry:
@@ -20944,7 +20927,7 @@ class FrontierEntry:
     priority: float  # Higher = process first (negated for min-heap)
     url: str = field(compare=False)
     depth: int = field(compare=False, default=0)
-    score_components: Dict[str, float] = field(compare=False, default_factory=dict)
+    score_components: dict[str, float] = field(compare=False, default_factory=dict)
     rss_feed: bool = field(compare=False, default=False)
     snapshot_priority: float = field(compare=False, default=0.5)  # Priority for snapshot
     anchor_hint: str = field(compare=False, default="")  # Anchor text + context
@@ -20963,13 +20946,13 @@ class UrlFrontier:
     def __init__(
         self,
         max_ram_entries: int = 200,
-        disk_spill_dir: Optional[Path] = None,
+        disk_spill_dir: Path | None = None,
         refill_threshold: int = 50,
         spill_batch_size: int = 100,
-        domain_stats_manager: Optional['DomainStatsManager'] = None
+        domain_stats_manager: DomainStatsManager | None = None
     ):
-        self._heap: List[Tuple[float, str, FrontierEntry]] = []  # (priority, url_hash, entry)
-        self._url_hashes: Set[str] = set()  # For deduplication
+        self._heap: list[tuple[float, str, FrontierEntry]] = []  # (priority, url_hash, entry)
+        self._url_hashes: set[str] = set()  # For deduplication
         self._max_ram_entries = max_ram_entries
         self._processed_count = 0
 
@@ -21134,7 +21117,7 @@ class UrlFrontier:
 
         return True
 
-    def pop(self) -> Optional[FrontierEntry]:
+    def pop(self) -> FrontierEntry | None:
         """Pop highest priority URL from frontier."""
         while self._heap:
             _, url_hash, entry = heappop(self._heap)
@@ -21173,7 +21156,7 @@ class UrlFrontier:
         except Exception as e:
             logger.warning(f"[FRONTIER SPILL] Failed: {e}")
 
-    def _refill_from_disk(self, batch_size: Optional[int] = None) -> int:
+    def _refill_from_disk(self, batch_size: int | None = None) -> int:
         """Refill frontier from disk spill files. Returns count of refilled entries."""
         if not self._disk_spill_dir or not list(self._disk_spill_dir.glob('spill_*.jsonl')):
             return 0
@@ -21190,10 +21173,9 @@ class UrlFrontier:
                     break
 
                 # Read entries and re-add to frontier
-                new_entries = []
                 remaining_entries = []
 
-                with open(spill_file, 'r') as f:
+                with open(spill_file) as f:
                     for line in f:
                         try:
                             data = json.loads(line.strip())
@@ -21268,13 +21250,13 @@ class UrlFrontier:
     def __len__(self) -> int:
         return len(self._heap)
 
-    def get_stats(self) -> Dict[str, Any]:
+    def get_stats(self) -> dict[str, Any]:
         # Count spilled entries on disk
         disk_spill_count = 0
         if self._disk_spill_dir and self._disk_spill_dir.exists():
             for spill_file in self._disk_spill_dir.glob('spill_*.jsonl'):
                 try:
-                    with open(spill_file, 'r') as f:
+                    with open(spill_file) as f:
                         disk_spill_count += sum(1 for _ in f)
                 except Exception:
                     pass
@@ -21287,7 +21269,7 @@ class UrlFrontier:
             'disk_spill_enabled': self._disk_spill_dir is not None
         }
 
-    def to_list(self) -> List[Dict[str, Any]]:
+    def to_list(self) -> list[dict[str, Any]]:
         """Export frontier to list for checkpointing."""
         return [
             {
@@ -21300,7 +21282,7 @@ class UrlFrontier:
             if url_hash in self._url_hashes
         ]
 
-    def from_list(self, data: List[Dict[str, Any]]) -> int:
+    def from_list(self, data: list[dict[str, Any]]) -> int:
         """Import frontier from list (checkpoint restore)."""
         count = 0
         for item in data:
@@ -21315,7 +21297,7 @@ class UrlFrontier:
                 count += 1
         return count
 
-    def add_seeds(self, seeds: List[Tuple[str, float, Dict[str, Any]]]) -> int:
+    def add_seeds(self, seeds: list[tuple[str, float, dict[str, Any]]]) -> int:
         """
         Add seed URLs from deep_probe to frontier.
 
@@ -21330,7 +21312,7 @@ class UrlFrontier:
         max_per_domain = 10
 
         # Track domain counts for per-domain limit
-        domain_counts: Dict[str, int] = defaultdict(int)
+        domain_counts: dict[str, int] = defaultdict(int)
 
         added = 0
         for url, novelty_score, metadata in seeds:
@@ -21369,15 +21351,15 @@ class Checkpoint:
     """Checkpoint pro resume deep crawlu napříč běhy."""
     run_id: str
     timestamp: float
-    frontier_data: List[Dict[str, Any]]
-    visited_hashes: List[str]  # Bloom filter approximation
-    domain_cooldowns: Dict[str, float]  # domain -> last_request_at
+    frontier_data: list[dict[str, Any]]
+    visited_hashes: list[str]  # Bloom filter approximation
+    domain_cooldowns: dict[str, float]  # domain -> last_request_at
     processed_count: int
     url_count: int
-    host_penalties: Dict[str, float] = field(default_factory=dict)  # host -> penalty
-    microplan_head: List[Dict[str, Any]] = field(default_factory=list)  # microplan queue head
+    host_penalties: dict[str, float] = field(default_factory=dict)  # host -> penalty
+    microplan_head: list[dict[str, Any]] = field(default_factory=list)  # microplan queue head
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             'run_id': self.run_id,
             'timestamp': self.timestamp,
@@ -21391,7 +21373,7 @@ class Checkpoint:
         }
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> 'Checkpoint':
+    def from_dict(cls, data: dict[str, Any]) -> Checkpoint:
         return cls(
             run_id=data['run_id'],
             timestamp=data['timestamp'],
@@ -21408,7 +21390,7 @@ class Checkpoint:
 class CheckpointManager:
     """Spravuje checkpointy pro deep crawl."""
 
-    def __init__(self, storage_dir: Optional[Path] = None, encrypt_at_rest: bool = False):
+    def __init__(self, storage_dir: Path | None = None, encrypt_at_rest: bool = False):
         import os
 
         self._storage_dir = storage_dir or Path.home() / '.hledac' / 'checkpoints'
@@ -21442,7 +21424,7 @@ class CheckpointManager:
         ext = '.enc' if self._encrypt_at_rest else '.json'
         return self._storage_dir / f"checkpoint_{run_id}{ext}"
 
-    def _bound_host_penalties(self, obj: Dict[str, Any]) -> Dict[str, Any]:
+    def _bound_host_penalties(self, obj: dict[str, Any]) -> dict[str, Any]:
         """
         Bound host_penalties dict to MAX_HOST_PENALTIES entries.
         Keeps top-K highest penalties.
@@ -21485,6 +21467,7 @@ class CheckpointManager:
             if self._encrypt_at_rest and self._cipher:
                 try:
                     import secrets
+
                     from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 
                     nonce = secrets.token_bytes(12)
@@ -21505,7 +21488,7 @@ class CheckpointManager:
             logger.error(f"[CHECKPOINT] Failed to save: {e}")
             return False
 
-    def load_checkpoint(self, run_id: str) -> Optional[Checkpoint]:
+    def load_checkpoint(self, run_id: str) -> Checkpoint | None:
         """Načte checkpoint z disku."""
         try:
             path = self._get_checkpoint_path(run_id)
@@ -21538,7 +21521,7 @@ class CheckpointManager:
             logger.error(f"[CHECKPOINT] Failed to load: {e}")
             return None
 
-    def list_checkpoints(self) -> List[str]:
+    def list_checkpoints(self) -> list[str]:
         """Vrátí seznam dostupných checkpoint run_id."""
         try:
             return [p.stem.replace('checkpoint_', '')
@@ -21558,12 +21541,12 @@ class RecrawlItem:
     evidence_id: str
     priority: float
     last_crawled_at: float
-    content_hash: Optional[str] = None
+    content_hash: str | None = None
     drift_detected: bool = False
     contested: bool = False
     high_value: bool = False
 
-    def __lt__(self, other: 'RecrawlItem') -> bool:
+    def __lt__(self, other: RecrawlItem) -> bool:
         return self.priority > other.priority  # Higher priority first
 
 
@@ -21571,8 +21554,8 @@ class RecrawlPlanner:
     """Plánuje recrawl na základě drift/contested/high-value."""
 
     def __init__(self, max_queue_size: int = 100):
-        self._heap: List[RecrawlItem] = []
-        self._url_to_item: Dict[str, RecrawlItem] = {}
+        self._heap: list[RecrawlItem] = []
+        self._url_to_item: dict[str, RecrawlItem] = {}
         self._max_queue_size = max_queue_size
 
     def schedule_recheck(
@@ -21580,7 +21563,7 @@ class RecrawlPlanner:
         url: str,
         evidence_id: str,
         last_crawled_at: float,
-        content_hash: Optional[str] = None,
+        content_hash: str | None = None,
         drift_detected: bool = False,
         contested: bool = False,
         high_value: bool = False
@@ -21623,7 +21606,7 @@ class RecrawlPlanner:
 
         return True
 
-    def pop_next(self) -> Optional[RecrawlItem]:
+    def pop_next(self) -> RecrawlItem | None:
         """Vrátí další URL k rechecku."""
         while self._heap:
             item = heappop(self._heap)
@@ -21650,7 +21633,7 @@ class DomainStats:
     total_latency_ms: float = 0.0
     http_errors: int = 0
     robots_blocked: int = 0
-    last_request_at: Optional[float] = None
+    last_request_at: float | None = None
     yield_score: float = 1.0  # 0-1, klesá při nízkém yieldu
 
     @property
@@ -21686,11 +21669,11 @@ class DomainStats:
 class DomainStatsManager:
     """Spravuje DomainStats s persistencí na disk."""
 
-    def __init__(self, storage_dir: Optional[Path] = None, max_domains: int = 500):
+    def __init__(self, storage_dir: Path | None = None, max_domains: int = 500):
         self._storage_dir = storage_dir or Path.home() / '.hledac' / 'domain_stats'
         self._storage_dir.mkdir(parents=True, exist_ok=True)
         self._max_domains = max_domains
-        self._stats: Dict[str, DomainStats] = {}
+        self._stats: dict[str, DomainStats] = {}
         self._load_stats()
 
     def _get_storage_path(self) -> Path:
@@ -21701,7 +21684,7 @@ class DomainStatsManager:
         path = self._get_storage_path()
         if path.exists():
             try:
-                with open(path, 'r') as f:
+                with open(path) as f:
                     data = json.load(f)
                 for domain, stats_data in data.items():
                     self._stats[domain] = DomainStats(**stats_data)
@@ -21752,7 +21735,7 @@ class DomainStatsManager:
             return 0.2  # 20% penalty
         return 0.0
 
-    def get_all_stats(self) -> Dict[str, DomainStats]:
+    def get_all_stats(self) -> dict[str, DomainStats]:
         return dict(self._stats)
 
 
@@ -21811,11 +21794,11 @@ class DomainLimiter:
 
     def __init__(self, max_domains: int = 500, timing_profile: TimingProfile = TimingProfile.NORMAL):
         self._max_domains = max_domains
-        self._domains: Dict[str, _DomainState] = {}
+        self._domains: dict[str, _DomainState] = {}
         self._lock = asyncio.Lock()
         self._timing_profile = timing_profile
         # Seedable RNG for deterministic behavior in tests
-        self._rng_seed: Optional[int] = None
+        self._rng_seed: int | None = None
 
     def set_timing_profile(self, profile: TimingProfile) -> None:
         """Set timing profile for behavior simulation."""
@@ -21877,7 +21860,7 @@ class DomainLimiter:
             )
         return delay
 
-    def compute_final_delay(self, domain: str, now_ts: Optional[float] = None) -> Tuple[float, float]:
+    def compute_final_delay(self, domain: str, now_ts: float | None = None) -> tuple[float, float]:
         """
         Compute final delay including behavior jitter.
 
@@ -21902,7 +21885,7 @@ class DomainLimiter:
         self,
         domain: str,
         status: int,
-        retry_after: Optional[float] = None,
+        retry_after: float | None = None,
         latency_ms: float = 0.0,
         robots_delay: float = 0.0
     ) -> None:
@@ -22025,7 +22008,7 @@ class DomainLimiter:
         state = self._get_or_create_state(domain)
         state.yield_score = yield_score
 
-    def get_stats(self, domain: str) -> Dict[str, Any]:
+    def get_stats(self, domain: str) -> dict[str, Any]:
         """Get current stats for domain (for monitoring)."""
         state = self._domains.get(domain)
         if not state:
@@ -22040,7 +22023,7 @@ class DomainLimiter:
             "last_status": state.last_status,
         }
 
-    def get_all_domains(self) -> Set[str]:
+    def get_all_domains(self) -> set[str]:
         """Get all tracked domains."""
         return set(self._domains.keys())
 
@@ -22056,7 +22039,7 @@ class SimHash:
     def __init__(self, hashbits: int = 64):
         self.hashbits = hashbits
 
-    def _tokenize(self, text: str) -> List[str]:
+    def _tokenize(self, text: str) -> list[str]:
         """Simple tokenization - shingle by 3 words."""
         words = text.lower().split()
         if len(words) < 3:
@@ -22123,7 +22106,7 @@ class SnapshotEntry:
     size_bytes: int
     compressed: bool
     created_at: float
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 class SnapshotStorage:
@@ -22133,10 +22116,10 @@ class SnapshotStorage:
     MAX_SNAPSHOT_SIZE = 5 * 1024 * 1024  # 5MB hard limit
     MAX_TOTAL_SNAPSHOTS = 100  # Max počet snapshotů v RAM indexu
 
-    def __init__(self, storage_dir: Optional[Path] = None):
+    def __init__(self, storage_dir: Path | None = None):
         self._storage_dir = storage_dir or Path.home() / '.hledac' / 'snapshots'
         self._storage_dir.mkdir(parents=True, exist_ok=True)
-        self._index: Dict[str, SnapshotEntry] = {}  # evidence_id -> metadata only
+        self._index: dict[str, SnapshotEntry] = {}  # evidence_id -> metadata only
 
     def _get_snapshot_path(self, evidence_id: str) -> Path:
         """Generate path for snapshot file."""
@@ -22148,7 +22131,7 @@ class SnapshotStorage:
 
     async def store_snapshot(self, evidence_id: str, url: str,
                             content_bytes: bytes, content_type: str,
-                            metadata: Optional[Dict[str, Any]] = None) -> Optional[SnapshotEntry]:
+                            metadata: dict[str, Any] | None = None) -> SnapshotEntry | None:
         """Uloží snapshot na disk (nikdy ne do RAM)."""
         import gzip
 
@@ -22200,7 +22183,7 @@ class SnapshotStorage:
             logger.error(f"[SNAPSHOT] Failed to store: {e}")
             return None
 
-    async def load_snapshot(self, evidence_id: str) -> Optional[bytes]:
+    async def load_snapshot(self, evidence_id: str) -> bytes | None:
         """Načte snapshot z disku (on-demand, ne cache)."""
         import gzip
 
@@ -22216,7 +22199,7 @@ class SnapshotStorage:
             logger.error(f"[SNAPSHOT] Failed to load: {e}")
             return None
 
-    def get_entry(self, evidence_id: str) -> Optional[SnapshotEntry]:
+    def get_entry(self, evidence_id: str) -> SnapshotEntry | None:
         """Vrátí metadata snapshotu (bez obsahu)."""
         return self._index.get(evidence_id)
 
@@ -22233,15 +22216,15 @@ class ExtractedMetadata:
     """Metadata extrahovaná z non-HTML dokumentů."""
     content_type: str
     file_size: int
-    title: Optional[str] = None
-    author: Optional[str] = None
-    creation_date: Optional[str] = None
-    modification_date: Optional[str] = None
-    page_count: Optional[int] = None
-    keywords: List[str] = field(default_factory=list)
-    entities: List[Dict[str, Any]] = field(default_factory=list)
-    gps_coords: Optional[Tuple[float, float]] = None
-    timeline_events: List[Dict[str, Any]] = field(default_factory=list)
+    title: str | None = None
+    author: str | None = None
+    creation_date: str | None = None
+    modification_date: str | None = None
+    page_count: int | None = None
+    keywords: list[str] = field(default_factory=list)
+    entities: list[dict[str, Any]] = field(default_factory=list)
+    gps_coords: tuple[float, float] | None = None
+    timeline_events: list[dict[str, Any]] = field(default_factory=list)
     extracted_text_preview: str = ""
 
 
@@ -22303,8 +22286,9 @@ class MetadataExtractor:
             return metadata
 
         try:
-            import fitz
             import asyncio
+
+            import fitz
 
             def _extract():
                 doc = fitz.open(stream=content_bytes, filetype="pdf")
@@ -22362,8 +22346,9 @@ class MetadataExtractor:
 
                 # Try exifread first
                 if self._check_exifread():
-                    import exifread
                     from io import BytesIO
+
+                    import exifread
 
                     tags = exifread.process_file(BytesIO(content_bytes), details=False)
 
@@ -22463,72 +22448,72 @@ class _ResearchManager:
         self._language_detector = LanguageDetector()
 
         # M1 8GB: Top-K heaps místo nekonečných listů
-        self._findings_heap: List[Tuple[float, str, Any]] = []  # (score, unique_id, finding)
-        self._sources_heap: List[Tuple[float, str, Any]] = []   # (score, unique_id, source)
+        self._findings_heap: list[tuple[float, str, Any]] = []  # (score, unique_id, finding)
+        self._sources_heap: list[tuple[float, str, Any]] = []   # (score, unique_id, source)
         self._processed_hashes: OrderedDict = OrderedDict()  # Pro deduplikaci, maxlen=5000
-        self._url_dedup: Set[str] = set()  # URL dedup set
+        self._url_dedup: set[str] = set()  # URL dedup set
 
         # Deep research tools (lazy loaded)
-        self._archive_discovery: Optional[Any] = None
-        self._dark_web: Optional[Any] = None
-        self._stego_detector: Optional[Any] = None
-        self._temporal_analyzer: Optional[Any] = None
-        self._insight_engine: Optional[Any] = None
+        self._archive_discovery: Any | None = None
+        self._dark_web: Any | None = None
+        self._stego_detector: Any | None = None
+        self._temporal_analyzer: Any | None = None
+        self._insight_engine: Any | None = None
 
         # PHASE 1 & 2: Advanced OSINT Modules (lazy loaded)
-        self._exposed_service_hunter: Optional[Any] = None
-        self._inference_engine: Optional[Any] = None
-        self._multi_hop_reasoner: Optional[Any] = None
-        self._relationship_discovery: Optional[Any] = None
-        self._temporal_archaeologist: Optional[Any] = None
-        self._pattern_mining: Optional[Any] = None
-        self._hypothesis_engine: Optional[Any] = None
-        self._adversarial_verifier: Optional[Any] = None
-        self._identity_stitching: Optional[Any] = None
-        self._blockchain_forensics: Optional[Any] = None
-        self._streaming_monitor: Optional[Any] = None
-        self._document_intelligence: Optional[Any] = None
-        self._crypto_intelligence: Optional[Any] = None
-        self._network_recon: Optional[Any] = None
+        self._exposed_service_hunter: Any | None = None
+        self._inference_engine: Any | None = None
+        self._multi_hop_reasoner: Any | None = None
+        self._relationship_discovery: Any | None = None
+        self._temporal_archaeologist: Any | None = None
+        self._pattern_mining: Any | None = None
+        self._hypothesis_engine: Any | None = None
+        self._adversarial_verifier: Any | None = None
+        self._identity_stitching: Any | None = None
+        self._blockchain_forensics: Any | None = None
+        self._streaming_monitor: Any | None = None
+        self._document_intelligence: Any | None = None
+        self._crypto_intelligence: Any | None = None
+        self._network_recon: Any | None = None
 
         # PHASE 3: Neuromorphic SNN Engine (lazy loaded)
-        self._snn_engine: Optional[Any] = None
+        self._snn_engine: Any | None = None
         self._snn_initialized: bool = False
 
         # PHASE 3: Federated Learning Engine (lazy loaded)
-        self._federated_engine: Optional[Any] = None
+        self._federated_engine: Any | None = None
         self._federated_initialized: bool = False
 
         # New modules: Quantum Pathfinder and Agent Meta-Optimizer
-        self._quantum_pathfinder: Optional['QuantumInspiredPathFinder'] = None
+        self._quantum_pathfinder: QuantumInspiredPathFinder | None = None
         self._quantum_pathfinder_available: bool = False  # Sprint 40: lazy load flag
-        self._quantum_pathfinder_config: Optional[Any] = None
-        self._meta_optimizer: Optional['AgentMetaOptimizer'] = None
+        self._quantum_pathfinder_config: Any | None = None
+        self._meta_optimizer: AgentMetaOptimizer | None = None
 
         # PHASE 6: Network and Text Analysis
-        self._stego_detector: Optional['StatisticalStegoDetector'] = None
-        self._dns_tunnel_detector: Optional['DNSTunnelDetector'] = None
-        self._unicode_analyzer: Optional['UnicodeAttackAnalyzer'] = None
+        self._stego_detector: StatisticalStegoDetector | None = None
+        self._dns_tunnel_detector: DNSTunnelDetector | None = None
+        self._unicode_analyzer: UnicodeAttackAnalyzer | None = None
 
         # Graph Stack (lazy loaded for M1 8GB)
-        self._knowledge_layer: Optional[Any] = None
-        self._graph_rag: Optional[Any] = None
-        self._graph_builder: Optional[Any] = None
-        self._entity_linker: Optional[Any] = None
+        self._knowledge_layer: Any | None = None
+        self._graph_rag: Any | None = None
+        self._graph_builder: Any | None = None
+        self._entity_linker: Any | None = None
 
         # Sprint 51: JARM TLS Fingerprinter (lazy loaded)
-        self._jarm_fingerprinter: Optional[Any] = None
+        self._jarm_fingerprinter: Any | None = None
         self._jarm_seen_domains: set = set()  # Per-session dedup
 
         # Sprint 52: Document Metadata Extractor (lazy loaded)
-        self._doc_meta_extractor: Optional[Any] = None
+        self._doc_meta_extractor: Any | None = None
 
         # Resilience
         self._resilience = ResilientExecutionManager()
 
         # Statistics
-        self._tool_effectiveness: Dict[str, float] = defaultdict(lambda: 1.0)
-        self._source_reliability: Dict[str, float] = defaultdict(lambda: 0.5)
+        self._tool_effectiveness: dict[str, float] = defaultdict(lambda: 1.0)
+        self._source_reliability: dict[str, float] = defaultdict(lambda: 0.5)
 
         # M1 8GB: DomainStats pro yield tracking napříč běhy
         self._domain_stats = DomainStatsManager()
@@ -22540,7 +22525,7 @@ class _ResearchManager:
 
         # Sprint 26: SimHash near-duplicate detection
         self._simhash = SimHash(hashbits=64)
-        self._seen_fingerprints: Set[int] = set()
+        self._seen_fingerprints: set[int] = set()
         self._near_dup_threshold = 3  # Hamming distance threshold
 
         # Sprint 80: EntityGraph pro VoI scoring
@@ -22554,13 +22539,13 @@ class _ResearchManager:
         self._evidence_packet_storage = EvidencePacketStorage()
 
         # Reranker pro reranking výsledků
-        self._reranker: Optional[LightweightReranker] = None
+        self._reranker: LightweightReranker | None = None
 
         # Relevance gating - bounded URL filtering before deep_read
         self._gating_eval_count = 0
         self.MAX_GATING_EVALS_PER_RUN = 100
         self.GATING_THRESHOLD = 0.3
-        self._run_started_at: Optional[float] = None
+        self._run_started_at: float | None = None
 
         # M1 8GB: PatternStatsManager for frontier pattern/prefix learning
         self._pattern_stats = PatternStatsManager(
@@ -22581,13 +22566,13 @@ class _ResearchManager:
         )
 
         # M1 8GB: Source reputation tracking (LRU max 200)
-        self._source_reputation: Dict[str, SourceReputation] = {}
+        self._source_reputation: dict[str, SourceReputation] = {}
         self._reputation_lru_order: deque = deque()  # For LRU eviction
         self._max_reputation_ram = 200
 
         # M1 8GB: EvidenceLog pro event tracing
+
         from .evidence_log import EvidenceLog
-        import uuid
         run_id = f"orchestrator_{int(time.time())}"
         self._evidence_log = EvidenceLog(run_id=run_id)
 
@@ -22604,11 +22589,11 @@ class _ResearchManager:
 
         # M1 8GB: Metadata-based deduplication (syndicated/near-duplicate suppression)
         self._metadata_dedup = MetadataDeduplicator(threshold=0.85)
-        self._metadata_entries: List[MetadataEntry] = []  # Bounded <=200
+        self._metadata_entries: list[MetadataEntry] = []  # Bounded <=200
         # Sprint 79c: Bounded loser hashes - set for membership + deque for LRU eviction
         # Growth: 847/30min → extrapolace 24h = 40k, cap by 4MB budget (4MB/85B = 48k)
         METADATA_LOSER_MAX = min(40000, int(4 * 1024 * 1024 / 85))  # ~40k
-        self._metadata_loser_set: Set[str] = set()  # Membership test
+        self._metadata_loser_set: set[str] = set()  # Membership test
         self._metadata_loser_deque: deque = deque(maxlen=METADATA_LOSER_MAX)  # LRU order
 
         # M1 8GB: CheckpointManager pro resume deep crawlu
@@ -22619,8 +22604,8 @@ class _ResearchManager:
         self._offline_mode = False
 
         # Sprint 46: Fingerprinting components (lazy loaded)
-        self._ct_log_scanner: Optional[Any] = None
-        self._favicon_hasher: Optional[Any] = None
+        self._ct_log_scanner: Any | None = None
+        self._favicon_hasher: Any | None = None
 
         # M1 8GB: Crawl-trap firewall counters
         self._trap_stats = {
@@ -22630,23 +22615,23 @@ class _ResearchManager:
             'canonical_rewrites': 0,
         }
         # Crawl-trap patterns (RAM-safe: small ring buffer of recent URL patterns)
-        self._trap_pattern_ring: List[str] = []  # Ring buffer for pattern detection
+        self._trap_pattern_ring: list[str] = []  # Ring buffer for pattern detection
         self._trap_pattern_max = 100  # Max patterns to track
 
         # Sprint 34: SearXNG client for federated search
-        self._searxng_client: Optional[Any] = None
+        self._searxng_client: Any | None = None
         self._searxng_available = False
 
         # Sprint 47: Tor Manager and escalation (lazy loaded)
-        self._tor_manager: Optional[Any] = None
-        self._tor_request_counts: Dict[str, int] = {}  # per-URL counter
+        self._tor_manager: Any | None = None
+        self._tor_request_counts: dict[str, int] = {}  # per-URL counter
 
         # Sprint 47: JS Bundle extractor (lazy loaded)
-        self._js_bundle_extractor: Optional[Any] = None
+        self._js_bundle_extractor: Any | None = None
 
         # Sprint 49: JS Source Maps & Open Storage Scanner (lazy loaded)
-        self._js_map_extractor: Optional[Any] = None
-        self._storage_scanner: Optional[Any] = None
+        self._js_map_extractor: Any | None = None
+        self._storage_scanner: Any | None = None
 
     # Sprint 47: AIOHTTP availability flag
     try:
@@ -22655,7 +22640,7 @@ class _ResearchManager:
     except ImportError:
         _aiohttp = None
         AIOHTTP_AVAILABLE = False
-    def _rrf_merge(self, result_lists: List[List[Dict]], k: int = 60) -> List[Dict]:
+    def _rrf_merge(self, result_lists: list[list[dict]], k: int = 60) -> list[dict]:
         """
         Reciprocal Rank Fusion merge of multiple result lists.
 
@@ -22694,13 +22679,13 @@ class _ResearchManager:
             except Exception as e:
                 logger.warning(f"Error closing SearXNG client: {e}")
 
-    def _is_crawl_trap(self, url: str) -> Tuple[bool, str, float]:
+    def _is_crawl_trap(self, url: str) -> tuple[bool, str, float]:
         """
         Detect crawl traps using heuristics - M1 8GB optimized.
 
         Returns: (is_trap, reason, trap_score)
         """
-        from urllib.parse import urlparse, parse_qs
+        from urllib.parse import parse_qs, urlparse
 
         parsed = urlparse(url)
         query_params = parse_qs(parsed.query)
@@ -22712,7 +22697,7 @@ class _ResearchManager:
         if query_params:
             # Calculate entropy of parameter values
             total_entropy = 0
-            for key, values in query_params.items():
+            for _key, values in query_params.items():
                 for val in values:
                     if len(val) > 20:  # Long values = high entropy
                         # Calculate Shannon entropy
@@ -22789,7 +22774,7 @@ class _ResearchManager:
     # M1 8GB RAM Management Methods
     # ========================================================================
 
-    def _check_memory_usage(self) -> Tuple[float, bool]:
+    def _check_memory_usage(self) -> tuple[float, bool]:
         """
         Zkontroluje využití RAM a vrátí stav.
 
@@ -22806,7 +22791,7 @@ class _ResearchManager:
         except Exception:
             return 0.0, False
 
-    def _check_swap_usage(self) -> Tuple[float, bool]:
+    def _check_swap_usage(self) -> tuple[float, bool]:
         """
         Sprint 81 Fáze 3: Zkontroluje swap usage.
 
@@ -22844,7 +22829,7 @@ class _ResearchManager:
         while len(self._processed_hashes) > 5000:
             self._processed_hashes.popitem(last=False)
 
-    def _estimate_bytes(self, obj: Any) -> Optional[int]:
+    def _estimate_bytes(self, obj: Any) -> int | None:
         """
         Odhadne velikost objektu v bytech (fail-safe).
         Return None pokud nelze odhadnout.
@@ -23019,7 +23004,7 @@ class _ResearchManager:
             self._metadata_loser_set.add(result.loser_hash)
             self._metadata_loser_deque.append(result.loser_hash)
 
-    def _get_top_findings(self, k: Optional[int] = None) -> List[Any]:
+    def _get_top_findings(self, k: int | None = None) -> list[Any]:
         """
         Vrátí top-K findings z heapu.
 
@@ -23037,7 +23022,7 @@ class _ResearchManager:
         top_entries = nsmallest(k, self._findings_heap)
         return [entry[2] for entry in top_entries]
 
-    def _get_top_sources(self, k: Optional[int] = None) -> List[Any]:
+    def _get_top_sources(self, k: int | None = None) -> list[Any]:
         """Vrátí top-K sources z heapu."""
         if k is None:
             k = len(self._sources_heap)
@@ -23050,12 +23035,11 @@ class _ResearchManager:
         """Vyčistí data po fázi dočasná pro RAM šetření."""
         # Zachovej jen top findings a sources v heapu
         # Vyčisti všechny dočasné listy pokud existují
-        import sys
         # Vynutí garbage collection
         self._aggressive_gc()
 
     # FIX 2: Async wrapper for inference engine (multi_hop mode)
-    async def _infer_hypotheses(self, observations: List[str], query: str = "") -> Dict[str, Any]:
+    async def _infer_hypotheses(self, observations: list[str], query: str = "") -> dict[str, Any]:
         """Run inference engine on research observations (max 20)."""
         try:
             # Get tool registry from orchestrator
@@ -23262,7 +23246,7 @@ class _ResearchManager:
                 except Exception as e:
                     logger.warning(f"Unicode Analyzer failed to initialize: {e}")
 
-        logger.info(f"✅ Advanced OSINT Modules initialized")
+        logger.info("✅ Advanced OSINT Modules initialized")
 
     async def _init_snn_engine(self) -> bool:
         """Initialize SNN Engine for neuromorphic prioritization."""
@@ -23275,7 +23259,7 @@ class _ResearchManager:
             return False
 
         try:
-            from .project_types import SNNConfig, STDPParams, NeuronParameters
+            from .project_types import NeuronParameters, SNNConfig, STDPParams
 
             config = SNNConfig(
                 n_neurons=500,  # Reduced for M1 8GB
@@ -23334,8 +23318,8 @@ class _ResearchManager:
 
     async def prioritize_findings_with_snn(
         self,
-        findings: List[ResearchFinding]
-    ) -> List[Tuple[ResearchFinding, float]]:
+        findings: list[ResearchFinding]
+    ) -> list[tuple[ResearchFinding, float]]:
         """
         Prioritize findings using neuromorphic SNN.
 
@@ -23374,7 +23358,7 @@ class _ResearchManager:
 
     async def collect_federated_training_data(
         self,
-        findings: List[ResearchFinding],
+        findings: list[ResearchFinding],
         report: str,
         query: str
     ) -> int:
@@ -23407,7 +23391,7 @@ class _ResearchManager:
             logger.warning(f"Failed to collect federated training data: {e}")
             return 0
 
-    async def run_federated_round(self) -> Optional[Dict[str, Any]]:
+    async def run_federated_round(self) -> dict[str, Any] | None:
         """
         Run one federated learning round.
 
@@ -23676,7 +23660,7 @@ class _ResearchManager:
 
         logger.info(f"✅ Registered {len(self._agent_engine._capabilities)} agents")
 
-    async def _surface_web_search(self, request: TaskRequest) -> Dict[str, Any]:
+    async def _surface_web_search(self, request: TaskRequest) -> dict[str, Any]:
         """Surface web search using stealth crawler."""
         if self._dark_web:
             results = self._dark_web.search(request.query, num_results=10)
@@ -23687,7 +23671,7 @@ class _ResearchManager:
             }
         return {'source': 'surface_web', 'results': [], 'count': 0}
 
-    async def _academic_search(self, request: TaskRequest) -> Dict[str, Any]:
+    async def _academic_search(self, request: TaskRequest) -> dict[str, Any]:
         """Academic search with citation analysis."""
         await asyncio.sleep(0.3)
         return {
@@ -23699,7 +23683,7 @@ class _ResearchManager:
             'databases': ['arxiv', 'scholar']
         }
 
-    async def _archive_search(self, request: TaskRequest) -> Dict[str, Any]:
+    async def _archive_search(self, request: TaskRequest) -> dict[str, Any]:
         """Archive mining via Wayback Machine."""
         if not self._archive_discovery:
             return {'source': 'archive', 'results': []}
@@ -23715,7 +23699,7 @@ class _ResearchManager:
             'count': len(results)
         }
 
-    async def _osint_search(self, request: TaskRequest) -> Dict[str, Any]:
+    async def _osint_search(self, request: TaskRequest) -> dict[str, Any]:
         """OSINT gathering."""
         await asyncio.sleep(0.2)
         return {
@@ -23724,7 +23708,7 @@ class _ResearchManager:
             'mentions': 15
         }
 
-    async def _dark_web_search(self, request: TaskRequest) -> Dict[str, Any]:
+    async def _dark_web_search(self, request: TaskRequest) -> dict[str, Any]:
         """Dark web search (privacy protected)."""
         if not self._dark_web:
             return {'source': 'dark_web', 'results': []}
@@ -23743,7 +23727,7 @@ class _ResearchManager:
 
     # PHASE 1 & 2: Advanced OSINT Agent Handlers
 
-    async def _exposed_service_search(self, request: TaskRequest) -> Dict[str, Any]:
+    async def _exposed_service_search(self, request: TaskRequest) -> dict[str, Any]:
         """Exposed service hunting (S3, databases, GraphQL, CT logs)."""
         if not self._exposed_service_hunter:
             return {'source': 'exposed_services', 'results': []}
@@ -23761,7 +23745,7 @@ class _ResearchManager:
             logger.warning(f"Exposed service search failed: {e}")
             return {'source': 'exposed_services', 'results': [], 'error': str(e)}
 
-    async def _inference_search(self, request: TaskRequest) -> Dict[str, Any]:
+    async def _inference_search(self, request: TaskRequest) -> dict[str, Any]:
         """Inference engine for reasoning and evidence chaining."""
         if not self._inference_engine:
             return {'source': 'inference', 'results': []}
@@ -23785,7 +23769,7 @@ class _ResearchManager:
             logger.warning(f"Inference search failed: {e}")
             return {'source': 'inference', 'results': [], 'error': str(e)}
 
-    async def _relationship_search(self, request: TaskRequest) -> Dict[str, Any]:
+    async def _relationship_search(self, request: TaskRequest) -> dict[str, Any]:
         """Relationship discovery for social network analysis."""
         if not self._relationship_discovery:
             return {'source': 'relationships', 'results': []}
@@ -23806,7 +23790,7 @@ class _ResearchManager:
             logger.warning(f"Relationship search failed: {e}")
             return {'source': 'relationships', 'results': [], 'error': str(e)}
 
-    async def _temporal_archaeology_search(self, request: TaskRequest) -> Dict[str, Any]:
+    async def _temporal_archaeology_search(self, request: TaskRequest) -> dict[str, Any]:
         """Temporal archaeology for deleted content recovery."""
         if not self._temporal_archaeologist:
             return {'source': 'temporal_archaeology', 'results': []}
@@ -23832,7 +23816,7 @@ class _ResearchManager:
             logger.warning(f"Temporal archaeology search failed: {e}")
             return {'source': 'temporal_archaeology', 'results': [], 'error': str(e)}
 
-    async def _pattern_mining_search(self, request: TaskRequest) -> Dict[str, Any]:
+    async def _pattern_mining_search(self, request: TaskRequest) -> dict[str, Any]:
         """Pattern mining for temporal and behavioral patterns."""
         if not self._pattern_mining:
             return {'source': 'pattern_mining', 'results': []}
@@ -23853,7 +23837,7 @@ class _ResearchManager:
             logger.warning(f"Pattern mining search failed: {e}")
             return {'source': 'pattern_mining', 'results': [], 'error': str(e)}
 
-    async def _hypothesis_search(self, request: TaskRequest) -> Dict[str, Any]:
+    async def _hypothesis_search(self, request: TaskRequest) -> dict[str, Any]:
         """Hypothesis engine for automated hypothesis generation and testing."""
         if not self._hypothesis_engine:
             return {'source': 'hypothesis', 'results': []}
@@ -23878,7 +23862,7 @@ class _ResearchManager:
             logger.warning(f"Hypothesis search failed: {e}")
             return {'source': 'hypothesis', 'results': [], 'error': str(e)}
 
-    async def _identity_stitching_search(self, request: TaskRequest) -> Dict[str, Any]:
+    async def _identity_stitching_search(self, request: TaskRequest) -> dict[str, Any]:
         """Identity stitching for cross-platform identity linking."""
         if not self._identity_stitching:
             return {'source': 'identity_stitching', 'results': []}
@@ -23905,7 +23889,7 @@ class _ResearchManager:
             logger.warning(f"Identity stitching search failed: {e}")
             return {'source': 'identity_stitching', 'results': [], 'error': str(e)}
 
-    async def _entity_linking_search(self, request: TaskRequest) -> Dict[str, Any]:
+    async def _entity_linking_search(self, request: TaskRequest) -> dict[str, Any]:
         """Entity linking for disambiguation and canonicalization."""
         if not self._entity_linker:
             return {'source': 'entity_linking', 'results': []}
@@ -23921,7 +23905,7 @@ class _ResearchManager:
             logger.warning(f"Entity linking search failed: {e}")
             return {'source': 'entity_linking', 'results': [], 'error': str(e)}
 
-    async def _blockchain_search(self, request: TaskRequest) -> Dict[str, Any]:
+    async def _blockchain_search(self, request: TaskRequest) -> dict[str, Any]:
         """Blockchain forensics for transaction analysis."""
         if not self._blockchain_forensics:
             return {'source': 'blockchain', 'results': []}
@@ -23958,7 +23942,7 @@ class _ResearchManager:
             logger.warning(f"Blockchain search failed: {e}")
             return {'source': 'blockchain', 'results': [], 'error': str(e)}
 
-    async def _document_intelligence_search(self, request: TaskRequest) -> Dict[str, Any]:
+    async def _document_intelligence_search(self, request: TaskRequest) -> dict[str, Any]:
         """Document intelligence for file analysis."""
         if not self._document_intelligence:
             return {'source': 'document_intelligence', 'results': []}
@@ -23979,7 +23963,7 @@ class _ResearchManager:
             logger.warning(f"Document intelligence search failed: {e}")
             return {'source': 'document_intelligence', 'results': [], 'error': str(e)}
 
-    async def _crypto_search(self, request: TaskRequest) -> Dict[str, Any]:
+    async def _crypto_search(self, request: TaskRequest) -> dict[str, Any]:
         """Cryptographic intelligence for cryptanalysis."""
         if not self._crypto_intelligence:
             return {'source': 'crypto_intelligence', 'results': []}
@@ -24005,7 +23989,7 @@ class _ResearchManager:
             logger.warning(f"Crypto search failed: {e}")
             return {'source': 'crypto_intelligence', 'results': [], 'error': str(e)}
 
-    async def _network_recon_search(self, request: TaskRequest) -> Dict[str, Any]:
+    async def _network_recon_search(self, request: TaskRequest) -> dict[str, Any]:
         """Network reconnaissance for DNS, WHOIS, SSL analysis."""
         if not self._network_recon:
             return {'source': 'network_recon', 'results': []}
@@ -24029,7 +24013,7 @@ class _ResearchManager:
             logger.warning(f"Network recon search failed: {e}")
             return {'source': 'network_recon', 'results': [], 'error': str(e)}
 
-    async def execute_surface_search(self, query: str) -> Dict[str, Any]:
+    async def execute_surface_search(self, query: str) -> dict[str, Any]:
         """Execute surface web search."""
         findings = []
         sources = []
@@ -24049,7 +24033,7 @@ class _ResearchManager:
                 shards_dir = storage._storage_dir / 'shards'
                 if shards_dir.exists():
                     # Sprint 5M: Sequential loading (file I/O is OS-cached, parallel doesn't help)
-                    all_packets: List[Dict] = []
+                    all_packets: list[dict] = []
                     max_packets = 50  # Hard limit for M1 safety
                     for shard in shards_dir.iterdir():
                         if shard.is_dir() and len(all_packets) < max_packets:
@@ -24059,7 +24043,7 @@ class _ResearchManager:
                                 try:
                                     # Sprint 5M: Use asyncio.to_thread for file I/O to release event loop
                                     def _sync_load():
-                                        with open(packet_file, 'r') as f:
+                                        with open(packet_file) as f:
                                             return json.load(f)
                                     data = await asyncio.to_thread(_sync_load)
                                     if data:
@@ -24323,7 +24307,7 @@ class _ResearchManager:
                                 )
                                 return (enriched_finding, source)
 
-                        except asyncio.TimeoutError:
+                        except TimeoutError:
                             logger.debug(f"Enrichment timeout for {source.url[:50]}")
                             return None
                         except Exception as e:
@@ -24449,7 +24433,7 @@ class _ResearchManager:
 
         return {'findings': findings, 'sources': sources}
 
-    async def execute_academic_search(self, query: str) -> Dict[str, Any]:
+    async def execute_academic_search(self, query: str) -> dict[str, Any]:
         """Execute academic search."""
         findings = []
         sources = []
@@ -24492,7 +24476,7 @@ class _ResearchManager:
 
         return {'findings': findings, 'sources': sources}
 
-    async def execute_searxng_search(self, query: str) -> Dict[str, Any]:
+    async def execute_searxng_search(self, query: str) -> dict[str, Any]:
         """Execute search via SearXNG meta-search engine."""
         # Initialize client if needed
         if not self._searxng_available:
@@ -24537,7 +24521,7 @@ class _ResearchManager:
             logger.warning(f"SearXNG search failed: {e}")
             return {'findings': [], 'sources': []}
 
-    async def execute_archive_search(self, query: str) -> Dict[str, Any]:
+    async def execute_archive_search(self, query: str) -> dict[str, Any]:
         """Execute archive search."""
         if not self._archive_discovery:
             return {'findings': [], 'sources': []}
@@ -24579,7 +24563,7 @@ class _ResearchManager:
 
         return {'findings': findings, 'sources': sources}
 
-    async def execute_osint_search(self, query: str) -> Dict[str, Any]:
+    async def execute_osint_search(self, query: str) -> dict[str, Any]:
         """Execute OSINT search."""
         findings = []
         sources = []
@@ -24603,7 +24587,7 @@ class _ResearchManager:
 
         return {'findings': findings, 'sources': sources}
 
-    async def execute_dark_web_search(self, query: str) -> Dict[str, Any]:
+    async def execute_dark_web_search(self, query: str) -> dict[str, Any]:
         """Execute dark web search."""
         if not self._dark_web:
             return {'findings': [], 'sources': []}
@@ -24639,9 +24623,9 @@ class _ResearchManager:
 
     async def deep_excavation(
         self,
-        sources: List[ResearchSource],
+        sources: list[ResearchSource],
         strategy: AutonomousStrategy
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Deep excavation - následování odkazů a citací."""
         findings = []
         new_sources = []
@@ -24675,7 +24659,7 @@ class _ResearchManager:
     async def _maybe_trigger_deep_probe(
         self,
         reason: str,
-        target_domains: Optional[List[str]] = None
+        target_domains: list[str] | None = None
     ) -> int:
         """
         Trigger deep_probe to generate seed URLs for frontier.
@@ -24703,10 +24687,10 @@ class _ResearchManager:
             domains = target_domains
             if not domains:
                 # Extract domains from frontier or visited URLs
-                domains = list(set(
+                domains = list({
                     urlparse(u).netloc
                     for u in getattr(self._url_frontier, '_url_hashes', set())
-                ))[:5]  # Max 5 domains
+                })[:5]  # Max 5 domains
 
             if not domains:
                 return 0
@@ -24783,11 +24767,11 @@ class _ResearchManager:
 
     async def deep_frontier_crawl(
         self,
-        seed_urls: List[str],
+        seed_urls: list[str],
         max_depth: int = 2,
         max_urls: int = 20,
         use_cache: bool = True
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Deep crawling using priority frontier - M1 8GB optimized.
 
@@ -24837,7 +24821,6 @@ class _ResearchManager:
             try:
                 # Check cache first
                 cached = self._http_cache.get(entry.url) if use_cache else None
-                stale_while_revalidate = False
                 scheduled_recrawl = False
 
                 if cached:
@@ -24862,7 +24845,6 @@ class _ResearchManager:
                             'stale_while_revalidate': True,
                             'cache_age_seconds': cache_age_seconds
                         }
-                        stale_while_revalidate = True
 
                         # Schedule low-priority recrawl (not aggressive)
                         # Respect DomainLimiter and budget
@@ -25035,7 +25017,7 @@ class _ResearchManager:
                 # PAGE-TYPE ROUTING: Adjust link extraction based on page_type
                 if entry.depth < max_depth:
                     page_type = result.get('page_type', 'unknown')
-                    high_value = result.get('metadata', {}).get('high_value', False)
+                    result.get('metadata', {}).get('high_value', False)
 
                     # Link extraction limits based on page_type
                     if page_type == 'listing':
@@ -25136,9 +25118,9 @@ class _ResearchManager:
 
     async def analyze_temporal_context(
         self,
-        findings: List[ResearchFinding],
+        findings: list[ResearchFinding],
         query: str
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Analyzuje temporální kontext nálezů."""
         if not self._temporal_analyzer:
             return {'range': 'unknown', 'timeline': []}
@@ -25168,7 +25150,7 @@ class _ResearchManager:
             logger.warning(f"Temporal analysis failed: {e}")
             return {'range': 'error', 'timeline': []}
 
-    async def detect_steganography(self, sources: List) -> List[Dict]:
+    async def detect_steganography(self, sources: list) -> list[dict]:
         """Detekuje steganografické vzory."""
         if not self._stego_detector:
             return []
@@ -25190,7 +25172,7 @@ class _ResearchManager:
 
         return findings
 
-    async def generate_insights(self, findings: List[ResearchFinding], query: str) -> List[str]:
+    async def generate_insights(self, findings: list[ResearchFinding], query: str) -> list[str]:
         """Generuje insighty z nálezů."""
         if not self._insight_engine:
             return []
@@ -25206,10 +25188,10 @@ class _ResearchManager:
             return []
 
     async def deep_read(self, url: str, fetch_snapshot: bool = False,
-                        evidence_id: Optional[str] = None,
+                        evidence_id: str | None = None,
                         high_value: bool = False,
-                        value_estimate_override: Optional[Dict[str, Any]] = None,
-                        context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+                        value_estimate_override: dict[str, Any] | None = None,
+                        context: dict[str, Any] | None = None) -> dict[str, Any]:
         """
         Deep read a URL with HEAD → Preview → Snapshot decision flow - M1 8GB optimized.
 
@@ -25228,8 +25210,8 @@ class _ResearchManager:
         # Offline mode guard - block network calls
         if self._offline_mode:
             raise RuntimeError(
-                f"[REPLAY] Offline mode active - network calls blocked. "
-                f"Use research() with offline_replay=True for disk-only analysis."
+                "[REPLAY] Offline mode active - network calls blocked. "
+                "Use research() with offline_replay=True for disk-only analysis."
             )
 
         # Flow (v7.0 - HEAD/Preview/Snapshot Decision Flow):
@@ -25256,9 +25238,10 @@ class _ResearchManager:
         # - max_links: 50
         # - text_preview: 5k chars
 
-        from urllib.parse import urlparse, urljoin, parse_qs, urlencode, urlunparse
-        import hashlib
         import gzip
+        import hashlib
+        from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
+
         import aiohttp
 
         start_time = time.time()
@@ -25442,7 +25425,7 @@ class _ResearchManager:
 
                     if not miner:
                         # Fallback: use content_extractor for text extraction (no raw HTML)
-                        from .tools.content_extractor import extract_main_text_from_html, extract_content_bounded
+                        from .tools.content_extractor import extract_content_bounded, extract_main_text_from_html
                         text_preview = extract_main_text_from_html(preview_html, max_chars=5000)
                         # Extract title/links as fallback
                         extracted = extract_content_bounded(url=normalized_url, html=preview_html, max_text_chars=20000)
@@ -26313,8 +26296,8 @@ class _ResearchManager:
         self,
         query: str,
         depth: DiscoveryDepth,
-        analysis: Dict[str, Any]
-    ) -> List[str]:
+        analysis: dict[str, Any]
+    ) -> list[str]:
         """Generuje varianty dotazů."""
         variants = [query]
 
@@ -26352,11 +26335,11 @@ class _ResearchManager:
 
     async def execute_parallel_search(
         self,
-        queries: List[str],
+        queries: list[str],
         strategy: AutonomousStrategy,
         depth: DiscoveryDepth,
         max_results: int = 20
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """
         Provede paralelní vyhledávání napříč všemi zdroji - M1 8GB optimized.
 
@@ -26470,7 +26453,7 @@ class _ResearchManager:
                 if completed_count % 5 == 0:
                     self._maybe_gc()
 
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 logger.warning("⏱️ Search task timed out")
             except Exception as e:
                 logger.warning(f"Source failed: {e}")
@@ -26493,18 +26476,18 @@ class _ResearchManager:
     async def _search_source_with_resilience(
         self,
         source_type: SourceType,
-        queries: List[str],
+        queries: list[str],
         strategy: AutonomousStrategy,
         depth: DiscoveryDepth
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Vyhledávání s resilience patternem - M1 8GB optimized.
 
         Používá top-K heaps místo listů a respektuje hard limity.
         """
-        local_findings: List[Tuple[float, Any]] = []  # (score, finding)
-        local_sources: List[Tuple[float, Any]] = []   # (score, source)
-        processed_urls: Set[str] = set()
+        local_findings: list[tuple[float, Any]] = []  # (score, finding)
+        local_sources: list[tuple[float, Any]] = []   # (score, source)
+        processed_urls: set[str] = set()
 
         try:
             if source_type == SourceType.SURFACE_WEB:
@@ -26631,7 +26614,7 @@ class _ResearchManager:
     # RERANKER METHODS
     # =====================================================================
 
-    async def _rerank_findings(self, query: str, findings: List) -> List:
+    async def _rerank_findings(self, query: str, findings: list) -> list:
         """
         Rerank findings using LightweightReranker.
         Pracuje se slice findings[:MAX_RERANK_DOCS] a vrací tento nový list.
@@ -26694,7 +26677,7 @@ class _ResearchManager:
     # REPUTATION & TEMPORAL ENRICHMENT METHODS
     # =====================================================================
 
-    def _apply_reputation(self, findings: List) -> List:
+    def _apply_reputation(self, findings: list) -> list:
         """
         Multiply confidence by domain reputation.
         Mutates only the 'confidence' attribute of each finding.
@@ -26711,7 +26694,7 @@ class _ResearchManager:
                 pass
         return findings
 
-    async def _maybe_archive_fallback(self, url: str) -> Optional[Dict]:
+    async def _maybe_archive_fallback(self, url: str) -> dict | None:
         """If drift detected and we have budget, attempt archive retrieval."""
         if should_trigger_archive_fallback():
             increment_archive_fallback()
@@ -26760,7 +26743,7 @@ class _ResearchManager:
         # No query – can't judge, allow by default
         return True
 
-    async def _enrich_result(self, query: str, result: Dict) -> Dict:
+    async def _enrich_result(self, query: str, result: dict) -> dict:
         """
         Central seam for post‑processing a result dictionary.
         Modifies result in‑place (findings confidence, adds metadata).
@@ -26854,10 +26837,10 @@ class _ResearchManager:
             return True
 
         try:
-            from hledac.universal.knowledge.persistent_layer import PersistentKnowledgeLayer
-            from hledac.universal.knowledge.graph_rag import GraphRAGOrchestrator
-            from hledac.universal.knowledge.graph_builder import KnowledgeGraphBuilder
             from hledac.universal.knowledge.entity_linker import EntityLinker
+            from hledac.universal.knowledge.graph_builder import KnowledgeGraphBuilder
+            from hledac.universal.knowledge.graph_rag import GraphRAGOrchestrator
+            from hledac.universal.knowledge.persistent_layer import PersistentKnowledgeLayer
 
             # Sprint 28: Reuse the same PersistentKnowledgeLayer instance from _MemoryManager
             # This ensures unified graph storage across the orchestrator
@@ -26895,8 +26878,8 @@ class _ResearchManager:
 
     async def _graph_ingest_documents(
         self,
-        documents: List[Dict[str, Any]]
-    ) -> Dict[str, int]:
+        documents: list[dict[str, Any]]
+    ) -> dict[str, int]:
         """
         Ingest documents into knowledge graph with deduplication.
 
@@ -26912,7 +26895,7 @@ class _ResearchManager:
         if not await self._ensure_knowledge_layer():
             return {'nodes_added': 0, 'edges_added': 0, 'docs_total': 0, 'docs_new': 0, 'docs_dedup': 0}
 
-        from hledac.universal.knowledge.persistent_layer import NodeType, EdgeType
+        from hledac.universal.knowledge.persistent_layer import EdgeType, NodeType
 
         nodes_added = 0
         edges_added = 0
@@ -26921,7 +26904,7 @@ class _ResearchManager:
         docs_dedup = 0
 
         # Track edge hashes for runtime deduplication within this batch
-        edge_hashes: Set[str] = set()
+        edge_hashes: set[str] = set()
 
         try:
             for doc in documents:
@@ -26994,7 +26977,7 @@ class _ResearchManager:
                 content_hash = hashlib.sha256(content.encode()).hexdigest()[:16]
 
                 # Add document as knowledge node with temporal metadata
-                node_id = self._knowledge_layer.add_knowledge(
+                self._knowledge_layer.add_knowledge(
                     content=content[:5000],  # Limit content for M1 8GB
                     node_type=NodeType.DOCUMENT,
                     metadata={
@@ -27069,10 +27052,10 @@ class _ResearchManager:
 
     async def _graph_enrich_entities(
         self,
-        texts: List[str],
+        texts: list[str],
         max_entities: int = 25,
         max_link_calls: int = 10
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Extract entities from texts and link to knowledge graph.
 
@@ -27095,10 +27078,10 @@ class _ResearchManager:
         entities_merged = 0
 
         # Track processed entity keys for deduplication
-        processed_entities: Set[str] = set()
+        processed_entities: set[str] = set()
 
         try:
-            from hledac.universal.knowledge.persistent_layer import NodeType, EdgeType
+            from hledac.universal.knowledge.persistent_layer import EdgeType, NodeType
 
             # Collect all text
             all_text = ' '.join(texts)[:50000]  # Limit text for M1 8GB
@@ -27257,7 +27240,7 @@ class _ResearchManager:
                 logger.warning(f"[JS] Extractor init failed: {e}")
                 self._js_bundle_extractor = None
 
-    async def _fetch_favicon(self, url: str) -> Optional[bytes]:
+    async def _fetch_favicon(self, url: str) -> bytes | None:
         """Sprint 47: Fetch favicon bytes with timeout and size limit."""
         if not self.AIOHTTP_AVAILABLE:
             return None
@@ -27271,7 +27254,7 @@ class _ResearchManager:
             return None
         return None
 
-    async def _fetch_bundle(self, url: str) -> Optional[str]:
+    async def _fetch_bundle(self, url: str) -> str | None:
         """Sprint 47: Fetch JS bundle with timeout and size limit."""
         if not self.AIOHTTP_AVAILABLE:
             return None
@@ -27285,7 +27268,7 @@ class _ResearchManager:
             return None
         return None
 
-    def _guess_favicon_url(self, url: str) -> Optional[str]:
+    def _guess_favicon_url(self, url: str) -> str | None:
         """Sprint 47: Guess favicon URL from page URL."""
         from urllib.parse import urljoin
         return urljoin(url, "/favicon.ico")
@@ -27458,7 +27441,7 @@ class _ResearchManager:
         query: str,
         max_hops: int = 2,
         top_k: int = 10
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """
         Perform multi-hop graph search for deep reasoning with path evidence.
 
@@ -27608,7 +27591,7 @@ class _ResearchManager:
         drift_detected: bool = False,
         high_value: bool = False,
         novelty_stagnation: int = 0
-    ) -> Tuple[bool, str]:
+    ) -> tuple[bool, str]:
         """
         Determine if investigative mode should be triggered.
 
@@ -27644,7 +27627,7 @@ class _ResearchManager:
 
         return False, "no_trigger"
 
-    def _get_claim_evidence_urls(self, claim_ids: List[str]) -> List[str]:
+    def _get_claim_evidence_urls(self, claim_ids: list[str]) -> list[str]:
         """
         Get unique URLs from claim evidence for digital ghost recovery.
 
@@ -27710,7 +27693,7 @@ class _ResearchManager:
             logger.warning(f"[CIRCUIT BREAKER] {operation_name} failed: {e}")
             raise
 
-    def check_claim_contested_drift(self) -> Tuple[bool, bool, List[str]]:
+    def check_claim_contested_drift(self) -> tuple[bool, bool, list[str]]:
         """
         Check claim clusters for contested/drift detection.
 
@@ -27749,10 +27732,10 @@ class _ResearchManager:
     async def infer_api_endpoints(
         self,
         url: str,
-        embedded_json: Optional[Dict[str, Any]] = None,
+        embedded_json: dict[str, Any] | None = None,
         max_candidates: int = 6,
         max_fetches: int = 2
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """
         Infer API endpoints from embedded JSON data (Next.js, React, etc.)
 
@@ -27771,7 +27754,7 @@ class _ResearchManager:
             logger.info(f"[BUDGET] action=api_fetch allowed=False reason={reason}")
             return []
 
-        logger.info(f"[BUDGET] action=api_fetch allowed=True")
+        logger.info("[BUDGET] action=api_fetch allowed=True")
         if not embedded_json:
             return []
 
@@ -27779,7 +27762,7 @@ class _ResearchManager:
         parsed = urlparse(url)
 
         # Extract URLs from embedded JSON
-        def extract_urls(obj: Any, path: str = "") -> List[str]:
+        def extract_urls(obj: Any, path: str = "") -> list[str]:
             urls = []
             if isinstance(obj, dict):
                 for key, value in obj.items():
@@ -27846,7 +27829,7 @@ class _ResearchManager:
 
         return results
 
-    async def _fetch_api_preview(self, url: str, max_bytes: int = 131072) -> Optional[Dict[str, Any]]:
+    async def _fetch_api_preview(self, url: str, max_bytes: int = 131072) -> dict[str, Any] | None:
         """Fetch small JSON preview from API endpoint."""
         try:
             import aiohttp
@@ -27907,10 +27890,10 @@ class _ResearchManager:
 
     def extract_entity_anchors(
         self,
-        evidence_ids: Optional[List[str]] = None,
+        evidence_ids: list[str] | None = None,
         max_evidence: int = 20,
         max_entities: int = 200
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """
         Extract entity anchors from recent EvidencePackets.
 
@@ -27927,7 +27910,7 @@ class _ResearchManager:
         Returns:
             List of entity anchors with metadata
         """
-        entities: Dict[str, Dict[str, Any]] = {}
+        entities: dict[str, dict[str, Any]] = {}
 
         # Load evidence packets
         if evidence_ids:
@@ -27951,7 +27934,7 @@ class _ResearchManager:
                         # Load small preview for entity extraction
                         preview_path = Path(snapshot_ref['path'])
                         if preview_path.exists():
-                            with open(preview_path, 'r', encoding='utf-8', errors='ignore') as f:
+                            with open(preview_path, encoding='utf-8', errors='ignore') as f:
                                 preview_text = f.read()[:5000]  # Max 5KB for entity extraction
 
                             # Simple entity heuristics from preview
@@ -27989,7 +27972,7 @@ class _ResearchManager:
         logger.info(f"[INVESTIGATE] Extracted {len(entity_list)} entity anchors from {len(packets_to_load)} packets")
         return entity_list
 
-    def _get_recent_evidence_ids(self, max_count: int = 50) -> List[str]:
+    def _get_recent_evidence_ids(self, max_count: int = 50) -> list[str]:
         """Get recent evidence IDs from evidence log."""
         try:
             # Get recent evidence_packet events
@@ -28003,10 +27986,10 @@ class _ResearchManager:
 
     def generate_investigative_seeds(
         self,
-        entities: List[Dict[str, Any]],
+        entities: list[dict[str, Any]],
         per_domain_limit: int = 10,
         total_limit: int = 80
-    ) -> List[Tuple[str, Dict[str, Any]]]:
+    ) -> list[tuple[str, dict[str, Any]]]:
         """
         Generate targeted seeds for investigative mode.
 
@@ -28023,8 +28006,8 @@ class _ResearchManager:
         Returns:
             List of (url, metadata) tuples
         """
-        seeds: List[Tuple[str, Dict[str, Any]]] = []
-        domains_seen: Dict[str, int] = {}
+        seeds: list[tuple[str, dict[str, Any]]] = []
+        domains_seen: dict[str, int] = {}
 
         # Primary source path heuristics
         primary_paths = [
@@ -28109,7 +28092,7 @@ class _ResearchManager:
         entities = self.extract_entity_anchors(max_evidence=20, max_entities=200)
 
         if not entities:
-            logger.warning(f"[INVESTIGATE] No entities found for investigation")
+            logger.warning("[INVESTIGATE] No entities found for investigation")
             return 0
 
         # Generate investigative seeds
@@ -28145,7 +28128,7 @@ class _ResearchManager:
 
     def schedule_contested_recheck(
         self,
-        counter_paths: List[Dict[str, Any]],
+        counter_paths: list[dict[str, Any]],
         priority_boost: float = 1.5
     ) -> int:
         """
@@ -28192,7 +28175,7 @@ class _ResearchManager:
     # KROK 2: Replay Availability Check - Truth-Grade Contract
     # -------------------------------------------------------------------------
 
-    def _check_replay_available(self) -> Tuple[bool, str]:
+    def _check_replay_available(self) -> tuple[bool, str]:
         """
         Check if offline replay data is available.
 
@@ -28231,7 +28214,7 @@ class _ResearchManager:
         warmup_iterations: int = 3,
         query: str = "artificial intelligence research",
         prefer_offline_replay: bool = False,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Run fair A/B benchmark comparing baseline vs propagation-enabled behavior.
 
@@ -28247,7 +28230,6 @@ class _ResearchManager:
         """
         import gc
         import time as time_module
-        from collections import deque
 
         # Reset all propagation state for fair comparison
         self._propagation_enabled = (mode == "propagation_on")
@@ -28361,7 +28343,7 @@ class _ResearchManager:
         if hasattr(self, '_hint_outcomes'):
             self._hint_outcomes.clear()
         else:
-            self._hint_outcomes: Dict[str, Dict] = {}
+            self._hint_outcomes: dict[str, dict] = {}
 
         # Sprint: Hard Causal Attribution - Reset entity discovery tracking
         if hasattr(self, '_benchmark_seen_entities'):
@@ -28372,7 +28354,7 @@ class _ResearchManager:
                 "domains": set()
             }
         else:
-            self._benchmark_seen_entities: Dict[str, Set[str]] = {
+            self._benchmark_seen_entities: dict[str, set[str]] = {
                 "emails": set(),
                 "handles": set(),
                 "profile_urls": set(),
@@ -28389,7 +28371,7 @@ class _ResearchManager:
         # Sprint KROK 5: WARMUP phase
         logger.info(f"[BENCHMARK] Starting {mode} warmup ({warmup_iterations} iterations)...")
         warmup_start = time_module.perf_counter()
-        for i in range(warmup_iterations):
+        for _i in range(warmup_iterations):
             try:
                 # Run minimal action to warm up - use self._orch to call main orchestrator methods
                 await self._orch._execute_action("surface_search", {"query": query}, state={})
@@ -28481,7 +28463,7 @@ class _ResearchManager:
             has_evicted = hasattr(self._orch, '_propagation_hints_evicted')
 
             if has_hint_outcomes:
-                outcomes_count = len(self._orch._hint_outcomes)
+                len(self._orch._hint_outcomes)
                 consumed = sum(1 for v in self._orch._hint_outcomes.values() if v.get('consumed'))
                 successful_count = sum(1 for v in self._orch._hint_outcomes.values() if v.get('successful'))
                 benchmark_metrics["propagation_hints_consumed"] = consumed
@@ -28548,7 +28530,7 @@ class _ResearchManager:
                     }
 
                 # Success by action type
-                success_by_type: Dict[str, int] = {}
+                success_by_type: dict[str, int] = {}
                 for o in self._hint_outcomes.values():
                     action = o.get("action", "unknown")
                     if o.get("successful", False):
@@ -28576,8 +28558,8 @@ class _ResearchManager:
         self,
         query: str,
         run_id: str,
-        replay_run_id: Optional[str] = None,
-        replay_evidence_ids: Optional[List[str]] = None
+        replay_run_id: str | None = None,
+        replay_evidence_ids: list[str] | None = None
     ) -> ComprehensiveResearchResult:
         """
         Run research in offline mode using disk artifacts only.
@@ -28592,11 +28574,10 @@ class _ResearchManager:
             ComprehensiveResearchResult with offline synthesis
         """
         from pathlib import Path
-        from datetime import datetime
 
         # Set offline mode to block network calls
         self._offline_mode = True
-        logger.info(f"[REPLAY] Offline mode activated - network calls blocked")
+        logger.info("[REPLAY] Offline mode activated - network calls blocked")
 
         try:
             logger.info(f"[REPLAY] Offline research started for query: {query}")
@@ -28621,7 +28602,7 @@ class _ResearchManager:
                         snapshot_path = Path(packet.snapshot_ref['path'])
                         if snapshot_path.exists():
                             # Load max 256KB preview
-                            with open(snapshot_path, 'r', encoding='utf-8', errors='ignore') as f:
+                            with open(snapshot_path, encoding='utf-8', errors='ignore') as f:
                                 preview_text = f.read(256 * 1024)
                                 total_bytes += len(preview_text.encode())
                     except Exception as e:
@@ -28701,7 +28682,7 @@ class _ResearchManager:
 
             # Reset offline mode
             self._offline_mode = False
-            logger.info(f"[REPLAY] Offline mode deactivated")
+            logger.info("[REPLAY] Offline mode deactivated")
 
             return result
 
@@ -28712,9 +28693,9 @@ class _ResearchManager:
 
     def _select_evidence_for_replay(
         self,
-        replay_run_id: Optional[str],
-        replay_evidence_ids: Optional[List[str]]
-    ) -> List[str]:
+        replay_run_id: str | None,
+        replay_evidence_ids: list[str] | None
+    ) -> list[str]:
         """
         Select evidence for offline replay.
 
@@ -28749,9 +28730,9 @@ class _ResearchManager:
     async def _offline_synthesis(
         self,
         query: str,
-        observations: List[Dict[str, Any]],
+        observations: list[dict[str, Any]],
         run_id: str
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Perform offline synthesis using Hermes (LLM) over observations.
 
@@ -28807,17 +28788,17 @@ Respond in JSON format:
                 # Parse JSON response
                 try:
                     result = json.loads(response)
-                    logger.info(f"[REPLAY] Synthesis complete via Hermes")
+                    logger.info("[REPLAY] Synthesis complete via Hermes")
                     return result
                 except json.JSONDecodeError:
-                    logger.warning(f"[REPLAY] Hermes response not JSON, using fallback")
+                    logger.warning("[REPLAY] Hermes response not JSON, using fallback")
                     # Fallback to simple extraction
 
             except Exception as e:
                 logger.warning(f"[REPLAY] Hermes synthesis failed: {e}")
 
         # Fallback: Simple synthesis without LLM
-        logger.info(f"[REPLAY] Using fallback synthesis")
+        logger.info("[REPLAY] Using fallback synthesis")
 
         # Build simple timeline
         timeline = []
@@ -28843,7 +28824,7 @@ Respond in JSON format:
         insights = [
             f"Offline analysis of {len(observations)} evidence packets",
             f"Timeline spans {len(timeline)} events",
-            f"Domains: {', '.join(set(o['domain'] for o in observations if o.get('domain')))}"
+            f"Domains: {', '.join({o['domain'] for o in observations if o.get('domain')})}"
         ]
 
         return {
@@ -28858,7 +28839,7 @@ Respond in JSON format:
     # AUTONOMOUS CONTRADICTION CHASE - Micro-loop on high-uncertainty clusters
     # =========================================================================
 
-    async def execute_contradiction_chase(self, base_query: str) -> Dict[str, Any]:
+    async def execute_contradiction_chase(self, base_query: str) -> dict[str, Any]:
         """
         Execute autonomous contradiction chase targeting high-uncertainty clusters.
 
@@ -28870,7 +28851,6 @@ Respond in JSON format:
         Returns:
             Dict with clusters_targeted, followup_queries, urls_fetched, stopped_reason
         """
-        from .evidence_log import EvidenceEvent
 
         # Get budget status
         budget_ok = self._budget_manager.can_make_network_call()
@@ -28906,7 +28886,7 @@ Respond in JSON format:
         max_urls_per_query = 3
         max_deep_reads = 5  # Total budget cap
 
-        for claim_id, uncertainty in uncertain_clusters:
+        for claim_id, _uncertainty in uncertain_clusters:
             if urls_fetched >= max_deep_reads:
                 stopped_reason = 'budget_limit'
                 break
@@ -29032,7 +29012,7 @@ class _SynthesisManager:
         # Then bound the length for the synthesis prompt
         return sanitized[:self.MAX_FINDING_PREVIEW_LENGTH]
 
-    async def _mine_patterns(self, findings: List[Any]) -> Dict[str, Any]:
+    async def _mine_patterns(self, findings: list[Any]) -> dict[str, Any]:
         """Sprint 40: Discover patterns in research findings using PatternMiningEngine."""
         try:
             from hledac.universal.intelligence.pattern_mining import PatternMiningEngine
@@ -29067,12 +29047,12 @@ class _SynthesisManager:
     async def synthesize_report(
         self,
         query: str,
-        findings: List[ResearchFinding],
-        sources: List[ResearchSource],
-        insights: Optional[List[str]],
-        temporal_analysis: Optional[Dict],
+        findings: list[ResearchFinding],
+        sources: list[ResearchSource],
+        insights: list[str] | None,
+        temporal_analysis: dict | None,
         language: str,
-        contradiction_info: Optional[Dict] = None
+        contradiction_info: dict | None = None
     ) -> str:
         """Syntetizuje finální report."""
         # Sprint 36: Adversarial verification for low-confidence findings
@@ -29118,7 +29098,7 @@ class _SynthesisManager:
 
         return self._fallback_synthesis(context, contradictions)
 
-    async def _ai_synthesize(self, context: Dict, language: str, contradictions: List[Dict] = None) -> str:
+    async def _ai_synthesize(self, context: dict, language: str, contradictions: list[dict] = None) -> str:
         """AI-powered synthesis using MoE router if available, otherwise Hermes."""
         # Sprint 36: Add contradictions section if available
         if contradictions:
@@ -29161,7 +29141,7 @@ Top Findings:
 
         return await self._orch._brain_mgr.generate(system_prompt, ''.join(user_prompt_parts), max_tokens=4096)
 
-    async def _moe_synthesize(self, context: Dict, language: str, contradictions: List[Dict] = None) -> str:
+    async def _moe_synthesize(self, context: dict, language: str, contradictions: list[dict] = None) -> str:
         """Synthesis using MoE router with multiple experts."""
         # Sprint 36: Add contradictions section if available
         if contradictions:
@@ -29209,7 +29189,7 @@ Use markdown formatting. Be thorough, cite sources, and acknowledge limitations.
             system_prompt=system_prompt
         )
 
-    def _fallback_synthesis(self, context: Dict, contradictions: List[Dict] = None) -> str:
+    def _fallback_synthesis(self, context: dict, contradictions: list[dict] = None) -> str:
         """Fallback synthesis když AI není dostupná."""
         # Sprint 36: Add contradictions section if available
         if contradictions:
@@ -29251,7 +29231,7 @@ Use markdown formatting. Be thorough, cite sources, and acknowledge limitations.
 
         return "\n".join(lines)
 
-    def _breakdown_sources(self, sources: List[ResearchSource]) -> Dict[str, int]:
+    def _breakdown_sources(self, sources: list[ResearchSource]) -> dict[str, int]:
         """Rozdělí zdroje podle typu."""
         breakdown = defaultdict(int)
         for s in sources:
@@ -29260,15 +29240,15 @@ Use markdown formatting. Be thorough, cite sources, and acknowledge limitations.
 
     def calculate_overall_confidence(
         self,
-        findings: List[ResearchFinding],
-        sources: List[ResearchSource]
+        findings: list[ResearchFinding],
+        sources: list[ResearchSource]
     ) -> float:
         """Vypočítá celkovou confidence."""
         if not findings:
             return 0.0
 
         avg_confidence = sum(f.confidence for f in findings) / len(findings)
-        source_types = len(set(s.source_type for s in sources))
+        source_types = len({s.source_type for s in sources})
         diversity = min(1.0, source_types / 5)
         volume = min(1.0, len(findings) / 20)
 
@@ -29280,9 +29260,9 @@ Use markdown formatting. Be thorough, cite sources, and acknowledge limitations.
     # =========================================================================
     async def _adversarial_verify(
         self,
-        findings: List[ResearchFinding],
+        findings: list[ResearchFinding],
         query: str
-    ) -> Tuple[List[ResearchFinding], List[Dict[str, Any]]]:
+    ) -> tuple[list[ResearchFinding], list[dict[str, Any]]]:
         """
         Pro findings s nízkou jistotou (<0.9) nechá Hermes vygenerovat counter-argument
         a upraví confidence. Vrací upravené findings a seznam kontradikcí pro report.
@@ -29392,16 +29372,16 @@ class AutonomousWorkflowEngine:
 
     def __init__(self, orchestrator: FullyAutonomousOrchestrator):
         self.orchestrator = orchestrator
-        self.tool_registry: Optional[_ToolRegistryManager] = None
+        self.tool_registry: _ToolRegistryManager | None = None
 
         # Policy beam for URL scoring
-        self._run_started_at: Optional[float] = None
+        self._run_started_at: float | None = None
         self._rr_idx = 0
         factories = [AuthorityPolicy, TemporalPolicy, DiscoursePolicy]
-        self._policies: List[BasePolicy] = [factories[i % len(factories)]() for i in range(BEAM_WIDTH)]
+        self._policies: list[BasePolicy] = [factories[i % len(factories)]() for i in range(BEAM_WIDTH)]
 
         # Micro-plan queue for speculative exploration
-        self._microplan_queue: List[Tuple[float, float, str, MicroPlan]] = []  # heap: (-priority, created_at, plan_id, plan)
+        self._microplan_queue: list[tuple[float, float, str, MicroPlan]] = []  # heap: (-priority, created_at, plan_id, plan)
         self._claim_index_ref = None  # will be set from orchestrator if available
 
     async def initialize(self) -> None:
@@ -29460,7 +29440,7 @@ class AutonomousWorkflowEngine:
         try:
             while not state.satisfied and state.iterations < state.max_iterations:
                 state.iterations += 1
-                iter_start = time.time()
+                time.time()
                 logger.info(f"\n🔄 Iteration {state.iterations}/{state.max_iterations}")
 
                 action = await self._decide_next_action(state)
@@ -29570,7 +29550,7 @@ class AutonomousWorkflowEngine:
 
             execution_time = time.time() - start_time
 
-            logger.info(f"\n✅ Autonomous research complete!")
+            logger.info("\n✅ Autonomous research complete!")
             logger.info(f"   Total time: {execution_time:.1f}s")
             logger.info(f"   Iterations: {state.iterations}")
             logger.info(f"   Final confidence: {state.confidence:.1%}")
@@ -29579,7 +29559,7 @@ class AutonomousWorkflowEngine:
                 query=query,
                 strategy=AutonomousStrategy(
                     depth=depth,
-                    selected_sources=list(set(s.source_type for s in state.sources)),
+                    selected_sources=list({s.source_type for s in state.sources}),
                     selected_agents=[],
                     optimization=OptimizationStrategy.ADAPTIVE,
                     privacy_level=PrivacyLevel.STANDARD,
@@ -29637,7 +29617,7 @@ class AutonomousWorkflowEngine:
         self._rr_idx = (self._rr_idx + 1) % len(self._policies)
         return p
 
-    def _score_urls_with_policy(self, urls: List[str], state: Any, policy: BasePolicy) -> List[Tuple[float, str]]:
+    def _score_urls_with_policy(self, urls: list[str], state: Any, policy: BasePolicy) -> list[tuple[float, str]]:
         """Score a list of URLs using the given policy. Returns (score, url) sorted desc by score, asc by URL."""
         scored = []
         for url in urls:
@@ -29653,7 +29633,7 @@ class AutonomousWorkflowEngine:
         scored.sort(key=lambda t: (-t[0], t[1]))
         return scored
 
-    def _calculate_info_gain(self, result: Any) -> Dict[str, int]:
+    def _calculate_info_gain(self, result: Any) -> dict[str, int]:
         """Extract info gain from a result dict (sources, findings, contradictions)."""
         if not isinstance(result, dict):
             return {"sources": 0, "findings": 0, "contradictions": 0}
@@ -29669,7 +29649,7 @@ class AutonomousWorkflowEngine:
             "contradictions": int(contradictions),
         }
 
-    async def _update_policy_score(self, policy: BasePolicy, info_gain: Dict[str, int]) -> None:
+    async def _update_policy_score(self, policy: BasePolicy, info_gain: dict[str, int]) -> None:
         """Update policy score using exponential moving average."""
         total = sum(info_gain.values())
         policy.score = 0.7 * float(policy.score) + 0.3 * float(total)
@@ -29703,7 +29683,7 @@ class AutonomousWorkflowEngine:
             # nsmallest returns the smallest items, which correspond to highest priority (due to negative score)
             self._microplan_queue = nsmallest(MAX_MICROPLANS, self._microplan_queue)
 
-    def _pop_next_microplan(self) -> Optional[MicroPlan]:
+    def _pop_next_microplan(self) -> MicroPlan | None:
         """Pop the highest-priority micro-plan."""
         if not self._microplan_queue:
             return None
@@ -29807,7 +29787,7 @@ class AutonomousWorkflowEngine:
 
         return True  # keep plan
 
-    def _generate_microplans_from_clusters(self, clusters_data: List[Dict[str, Any]], state: Any) -> None:
+    def _generate_microplans_from_clusters(self, clusters_data: list[dict[str, Any]], state: Any) -> None:
         """
         Generate micro-plans from cluster data (passed from orchestrator).
         Expects each cluster dict with keys: claim_id, subject, predicate, object_variants, domains_list, first_seen.
@@ -29831,7 +29811,7 @@ class AutonomousWorkflowEngine:
                     plan = self._create_microplan_for_lead(query, "query", score)
                     self._push_microplan(plan)
 
-    def _export_microplan_head(self, max_k: int = 5) -> List[Dict[str, Any]]:
+    def _export_microplan_head(self, max_k: int = 5) -> list[dict[str, Any]]:
         """
         Export the head of microplan queue for checkpointing.
         Supports both 4-tuple (-prio, created_at, plan_id, plan) and
@@ -29885,7 +29865,7 @@ class AutonomousWorkflowEngine:
 
         return out
 
-    def _restore_microplans_from_head(self, microplan_head: List[Dict[str, Any]]) -> None:
+    def _restore_microplans_from_head(self, microplan_head: list[dict[str, Any]]) -> None:
         """
         Restore microplans from checkpoint head.
         If deadline_at is in the past, reset it to now + MICROPLAN_DEADLINE_SEC.
@@ -29980,7 +29960,7 @@ class AutonomousWorkflowEngine:
         elif action == "synthesize":
             state.phase = ResearchPhase.SYNTHESIS
 
-    async def _process_tool_result(self, tool_name: str, result: Dict, state: WorkflowState) -> None:
+    async def _process_tool_result(self, tool_name: str, result: dict, state: WorkflowState) -> None:
         """Process and integrate tool results."""
         data = result.get('result', {}).get('data', {})
 
@@ -30024,7 +30004,7 @@ class AutonomousWorkflowEngine:
         """Evaluate if we're satisfied with results."""
         has_enough_findings = len(state.findings) >= 10
         has_good_confidence = state.confidence >= 0.7
-        used_multiple_sources = len(set(s.source_type for s in state.sources)) >= 2
+        used_multiple_sources = len({s.source_type for s in state.sources}) >= 2
 
         return has_enough_findings and has_good_confidence and used_multiple_sources
 
@@ -30034,7 +30014,7 @@ class AutonomousWorkflowEngine:
             return 0.0
 
         avg_confidence = sum(f.confidence for f in state.findings) / len(state.findings)
-        source_types = len(set(s.source_type for s in state.sources))
+        source_types = len({s.source_type for s in state.sources})
         diversity = min(1.0, source_types / 4)
         volume = min(1.0, len(state.findings) / 20)
 
@@ -30083,13 +30063,13 @@ class AutonomousWorkflowEngine:
         self,
         query: str,
         strategy: AutonomousStrategy,
-        findings: List[Any],
-        sources: List[Any],
-        state: Optional[WorkflowState] = None,
+        findings: list[Any],
+        sources: list[Any],
+        state: WorkflowState | None = None,
         offline_replay: bool = False,
-        replay_run_id: Optional[str] = None,
-        replay_evidence_ids: Optional[List[str]] = None
-    ) -> Dict[str, Any]:
+        replay_run_id: str | None = None,
+        replay_evidence_ids: list[str] | None = None
+    ) -> dict[str, Any]:
         """
         Build audit-ready structured final report.
 
@@ -30106,7 +30086,6 @@ class AutonomousWorkflowEngine:
         Returns:
             Structured report dict
         """
-        from datetime import datetime
         from urllib.parse import urlparse
 
         # Generate run_id if not provided
@@ -30133,7 +30112,7 @@ class AutonomousWorkflowEngine:
 
         # Build key findings from findings (NOT fulltext)
         # Also populate evidence store for primary/first-seen selection
-        evidence_store: Dict[str, Any] = {}
+        evidence_store: dict[str, Any] = {}
         if hasattr(self, '_evidence_store'):
             evidence_store = self._evidence_store
         elif hasattr(self, '_current_evidence'):
@@ -30344,16 +30323,15 @@ class AutonomousWorkflowEngine:
 
     def _persist_report(
         self,
-        report: Dict[str, Any],
+        report: dict[str, Any],
         run_id: str
-    ) -> Tuple[str, str]:
+    ) -> tuple[str, str]:
         """
         Persist report to disk.
 
         Returns:
             Tuple of (json_path, md_path)
         """
-        import os
         from pathlib import Path
 
         # Create runs directory
@@ -30381,7 +30359,7 @@ class AutonomousWorkflowEngine:
 
         return str(json_path), str(md_path)
 
-    def _generate_markdown_report(self, report: Dict[str, Any]) -> str:
+    def _generate_markdown_report(self, report: dict[str, Any]) -> str:
         """Generate human-readable markdown report."""
         lines = [
             f"# Research Report: {report.get('query', 'Unknown')}",
@@ -30404,13 +30382,13 @@ class AutonomousWorkflowEngine:
         # Add findings
         for i, finding in enumerate(report.get('key_findings', [])[:12], 1):
             lines.append(f"### {i}. Finding")
-            lines.append(f"")
+            lines.append("")
             lines.append(f"**Confidence:** {finding.get('confidence', 0):.1%}")
             if finding.get('contested'):
-                lines.append(f"**Status:** ⚠️ Contested")
-            lines.append(f"")
+                lines.append("**Status:** ⚠️ Contested")
+            lines.append("")
             lines.append(f"**Notes:** {finding.get('notes', 'No notes')}")
-            lines.append(f"")
+            lines.append("")
             if finding.get('urls'):
                 lines.append("**Sources:**")
                 for url in finding.get('urls', [])[:5]:
@@ -30427,9 +30405,9 @@ class AutonomousWorkflowEngine:
                 side = narrative.get('side', 'neutral')
                 side_label = {'A': 'Supporting', 'B': 'Counter', 'neutral': 'Neutral'}.get(side, side)
                 lines.append(f"### {side_label}")
-                lines.append(f"")
+                lines.append("")
                 lines.append(narrative.get('summary', ''))
-                lines.append(f"")
+                lines.append("")
                 lines.append(f"**Confidence:** {narrative.get('confidence', 0):.1%}")
                 lines.append("")
 
@@ -30466,7 +30444,7 @@ class AutonomousWorkflowEngine:
     def update_source_reputation(
         self,
         domain: str,
-        path_prefix: Optional[str] = None,
+        path_prefix: str | None = None,
         corroborated: bool = False,
         contested: bool = False,
         drift: bool = False,
@@ -30526,13 +30504,13 @@ class AutonomousWorkflowEngine:
     def get_source_reputation(
         self,
         domain: str,
-        path_prefix: Optional[str] = None
-    ) -> Optional[SourceReputation]:
+        path_prefix: str | None = None
+    ) -> SourceReputation | None:
         """Get reputation for a domain/prefix."""
         key = f"{domain}:{path_prefix or '*'}"
         return self._source_reputation.get(key)
 
-    def get_reputation_for_scoring(self, domain: str, path_prefix: Optional[str] = None) -> float:
+    def get_reputation_for_scoring(self, domain: str, path_prefix: str | None = None) -> float:
         """
         Get reputation score for URL frontier scoring.
 
@@ -30544,20 +30522,20 @@ class AutonomousWorkflowEngine:
             return rep.overall_score
         return 0.5  # Default neutral score
 
-    def _aggregate_domain_reputation(self) -> Dict[str, Dict[str, Any]]:
+    def _aggregate_domain_reputation(self) -> dict[str, dict[str, Any]]:
         """
         Aggregate domain-level reputation from claim clusters.
 
         Returns:
             Dict of domain -> reputation dict
         """
-        domain_stats: Dict[str, Dict[str, int]] = defaultdict(lambda: {
+        domain_stats: dict[str, dict[str, int]] = defaultdict(lambda: {
             'total': 0, 'corroborated': 0, 'contested': 0, 'drift': 0, 'blocked': 0
         })
 
         # Get stats from claim clusters
         if hasattr(self, '_claim_index'):
-            for claim_id, cluster in self._claim_index._ram_cache.items():
+            for _claim_id, cluster in self._claim_index._ram_cache.items():
                 for domain in cluster.domains:
                     domain_stats[domain]['total'] += 1
                     if cluster.is_contested(threshold=2):
@@ -30588,7 +30566,7 @@ class AutonomousWorkflowEngine:
         max_packets: int = 200,
         max_clusters: int = 200,
         max_domains: int = 100
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Compact run index - create summary without loading all data into RAM.
 
@@ -30606,8 +30584,8 @@ class AutonomousWorkflowEngine:
         Returns:
             Summary dict
         """
-        from pathlib import Path
         import json
+        from pathlib import Path
 
         runs_dir = Path.home() / '.hledac' / 'runs' / run_id
         runs_dir.mkdir(parents=True, exist_ok=True)
@@ -30640,7 +30618,7 @@ class AutonomousWorkflowEngine:
         packet_refs = []
         if hasattr(self, '_findings_heap'):
             # Extract evidence IDs from findings
-            for score, uid, finding in self._findings_heap[:max_packets]:
+            for score, _uid, finding in self._findings_heap[:max_packets]:
                 evidence_ids = getattr(finding, 'evidence_ids', [])
                 for eid in evidence_ids[:5]:  # Max 5 per finding
                     if len(packet_refs) >= max_packets:
@@ -30687,7 +30665,7 @@ class AutonomousWorkflowEngine:
 
         return summary
 
-    def apply_backpressure(self) -> Dict[str, Any]:
+    def apply_backpressure(self) -> dict[str, Any]:
         """
         Apply backpressure based on runtime metrics.
 
@@ -30874,7 +30852,7 @@ async def deep_research(
 class _StateCoordinator:
     """Coordinates state-related property access."""
 
-    def __init__(self, state_mgr: Optional['_StateManager']):
+    def __init__(self, state_mgr: _StateManager | None):
         self._mgr = state_mgr
 
     @property
@@ -30889,116 +30867,116 @@ class _StateCoordinator:
 class _MemoryCoordinator:
     """Coordinates memory-related property access."""
 
-    def __init__(self, memory_mgr: Optional['_MemoryManager']):
+    def __init__(self, memory_mgr: _MemoryManager | None):
         self._mgr = memory_mgr
 
     @property
-    def memory(self) -> Optional[MemoryLayer]:
+    def memory(self) -> MemoryLayer | None:
         return self._mgr.memory if self._mgr else None
 
     @property
-    def cache(self) -> Optional[IntelligentCache]:
+    def cache(self) -> IntelligentCache | None:
         return self._mgr.cache if self._mgr else None
 
     @property
-    def rag(self) -> Optional[RAGEngine]:
+    def rag(self) -> RAGEngine | None:
         return self._mgr.rag if self._mgr else None
 
     @property
-    def knowledge_graph(self) -> Optional[PersistentKnowledgeLayer]:
+    def knowledge_graph(self) -> PersistentKnowledgeLayer | None:
         return self._mgr.knowledge_graph if self._mgr else None
 
     @property
-    def context_graph(self) -> Optional[ContextGraph]:
+    def context_graph(self) -> ContextGraph | None:
         return self._mgr.context_graph if self._mgr else None
 
 
 class _BrainCoordinator:
     """Coordinates brain/AI-related property access."""
 
-    def __init__(self, brain_mgr: Optional['_BrainManager']):
+    def __init__(self, brain_mgr: _BrainManager | None):
         self._mgr = brain_mgr
 
     @property
-    def decision_engine(self) -> Optional[DecisionEngine]:
+    def decision_engine(self) -> DecisionEngine | None:
         return self._mgr.decision_engine if self._mgr else None
 
     @property
-    def hermes(self) -> Optional[Hermes3Engine]:
+    def hermes(self) -> Hermes3Engine | None:
         return self._mgr.hermes if self._mgr else None
 
     @property
-    def moe_router(self) -> Optional[Any]:
+    def moe_router(self) -> Any | None:
         return self._mgr.moe_router if self._mgr else None
 
 
 class _SecurityCoordinator:
     """Coordinates security-related property access."""
 
-    def __init__(self, security_mgr: Optional['_SecurityManager']):
+    def __init__(self, security_mgr: _SecurityManager | None):
         self._mgr = security_mgr
 
     @property
-    def security(self) -> Optional[SecurityLayer]:
+    def security(self) -> SecurityLayer | None:
         return self._mgr.security if self._mgr else None
 
     @property
-    def stealth(self) -> Optional[StealthLayer]:
+    def stealth(self) -> StealthLayer | None:
         return self._mgr.stealth if self._mgr else None
 
     @property
-    def privacy(self) -> Optional[PrivacyLayer]:
+    def privacy(self) -> PrivacyLayer | None:
         return self._mgr.privacy if self._mgr else None
 
     @property
-    def privacy_mgr(self) -> Optional[Any]:
+    def privacy_mgr(self) -> Any | None:
         return self._mgr.privacy_mgr if self._mgr else None
 
     @property
-    def obfuscator(self) -> Optional[Any]:
+    def obfuscator(self) -> Any | None:
         return self._mgr.obfuscator if self._mgr else None
 
 
 class _ResearchCoordinator:
     """Coordinates research-related property access."""
 
-    def __init__(self, research_mgr: Optional['_ResearchManager']):
+    def __init__(self, research_mgr: _ResearchManager | None):
         self._mgr = research_mgr
 
     @property
-    def agent_engine(self) -> Optional[AgentCoordinationEngine]:
+    def agent_engine(self) -> AgentCoordinationEngine | None:
         return self._mgr._agent_engine if self._mgr else None
 
     @property
-    def optimizer(self) -> Optional[ResearchOptimizer]:
+    def optimizer(self) -> ResearchOptimizer | None:
         return self._mgr._optimizer if self._mgr else None
 
     @property
-    def expander(self) -> Optional[QueryExpander]:
+    def expander(self) -> QueryExpander | None:
         return self._mgr._expander if self._mgr else None
 
     @property
-    def ranking(self) -> Optional[ReciprocalRankFusion]:
+    def ranking(self) -> ReciprocalRankFusion | None:
         return self._mgr._ranking if self._mgr else None
 
     @property
-    def language_detector(self) -> Optional[LanguageDetector]:
+    def language_detector(self) -> LanguageDetector | None:
         return self._mgr._language_detector if self._mgr else None
 
     @property
-    def archive_discovery(self) -> Optional[Any]:
+    def archive_discovery(self) -> Any | None:
         return self._mgr._archive_discovery if self._mgr else None
 
     @property
-    def dark_web(self) -> Optional[Any]:
+    def dark_web(self) -> Any | None:
         return self._mgr._dark_web if self._mgr else None
 
     @property
-    def stego_detector(self) -> Optional[Any]:
+    def stego_detector(self) -> Any | None:
         return self._mgr._stego_detector if self._mgr else None
 
     @property
-    def temporal_analyzer(self) -> Optional[Any]:
+    def temporal_analyzer(self) -> Any | None:
         return self._mgr._temporal_analyzer if self._mgr else None
 
 

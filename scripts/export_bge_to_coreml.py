@@ -23,7 +23,6 @@ import sys
 if sys.platform != "darwin":
     raise RuntimeError("CoreML export only supported on macOS")
 
-import json
 from pathlib import Path
 
 try:
@@ -34,7 +33,10 @@ except ImportError as e:
 
 # Model paths — use HuggingFace Hub cache or local
 DEFAULT_MODEL_ID = "BAAI/bge-small-en-v1.5"
-OUTPUT_NAME = "bge-small-en-v1.5"
+OUTPUT_NAME = "bge-small-ane"
+
+# Inline MODELS_ROOT — utils/paths.py doesn't exist yet
+_MODELS_ROOT = Path.home() / ".hledac" / "models"
 
 
 def _get_hf_cache_path(model_id: str) -> Path:
@@ -120,10 +122,8 @@ def export_bge_to_coreml(
     from sentence_transformers import SentenceTransformer
 
     # Resolve output path
-    from hledac.universal.utils.paths import MODELS_ROOT
-
     if output_path is None:
-        output_path = MODELS_ROOT / f"{OUTPUT_NAME}.mlpackage"
+        output_path = _MODELS_ROOT / f"{OUTPUT_NAME}.mlpackage"
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -134,8 +134,8 @@ def export_bge_to_coreml(
     # Load via sentence-transformers (FastEmbed backend)
     model = SentenceTransformer(model_id)
 
-    print(f"[EXPORT] Model loaded. Embedding dim: {model.get_sentence_embedding_dimension()}")
-    embedding_dim = model.get_sentence_embedding_dimension()
+    print(f"[EXPORT] Model loaded. Embedding dim: {model.get_embedding_dimension()}")
+    embedding_dim = model.get_embedding_dimension()
 
     # dry_run: validate config only, no save
     if dry_run:
@@ -153,12 +153,37 @@ def export_bge_to_coreml(
         print("[DRY-RUN] No mlmodel saved (dry_run=True)")
         return result
 
-    # Convert to CoreML
-    # coremltools.convert() accepts a HuggingFace model or local path
+    # Convert to CoreML — requires TorchScript tracing in coremltools 9.0
+    import torch
+
+    print("[EXPORT] Tracing model with dummy input...")
+    dummy_text = ["test text"]
+    model.eval()
+    model.to("cpu")
+    # Detach all parameters before tracing
+    for p in model.parameters():
+        p.requires_grad_(False)
+        p.grad = None
+    with torch.no_grad():
+        features = model.tokenizer(dummy_text, return_tensors="pt", padding=True, truncation=True, max_length=512)
+        plain_dict = {k: v.clone().detach() for k, v in features.items() if k in ("input_ids", "attention_mask")}
+
+        class TracedTransformer(torch.nn.Module):
+            def __init__(self, transformer):
+                super().__init__()
+                self.transformer = transformer
+
+            def forward(self, x):
+                return self.transformer(x)
+
+        traced_mod = TracedTransformer(model[0])
+        traced = torch.jit.trace(traced_mod, (plain_dict,), strict=False)
+
+    print("[EXPORT] Converting traced model to CoreML...")
     mlmodel = ct.convert(
-        model,
+        traced,
         compute_units=compute_units,
-        pass_pipeline_tokens_to_itself=True,
+        source="pytorch",
     )
 
     # Quantize if requested (reduces size ~4x, may affect quality)
@@ -195,9 +220,7 @@ def main() -> int:
     print(f"coremltools version: {ct.__version__}")
 
     # Check for existing export
-    from hledac.universal.utils.paths import MODELS_ROOT
-
-    output_path = MODELS_ROOT / f"{OUTPUT_NAME}.mlpackage"
+    output_path = _MODELS_ROOT / f"{OUTPUT_NAME}.mlpackage"
     if output_path.exists():
         size_mb = output_path.stat().st_size / (1024 * 1024)
         print(f"[EXPORT] Already exists: {output_path} ({size_mb:.1f}MB)")

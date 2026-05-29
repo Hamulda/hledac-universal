@@ -19,9 +19,9 @@ Exit codes:
 
 from __future__ import annotations
 
-import sys
-import pathlib
 import argparse
+import pathlib
+import sys
 
 
 def find_torrc() -> str | None:
@@ -49,7 +49,7 @@ def check_isolate_socks_auth(torrc_path: str) -> bool:
       - inline comments (after directive)
     """
     try:
-        with open(torrc_path, "r", encoding="utf-8", errors="replace") as f:
+        with open(torrc_path, encoding="utf-8", errors="replace") as f:
             content = f.read()
     except OSError:
         return False
@@ -78,7 +78,7 @@ def check_hidden_service_statistics(torrc_path: str) -> bool:
     improving anonymity by preventing traffic timing analysis.
     """
     try:
-        with open(torrc_path, "r", encoding="utf-8", errors="replace") as f:
+        with open(torrc_path, encoding="utf-8", errors="replace") as f:
             content = f.read()
     except OSError:
         return False
@@ -101,10 +101,7 @@ def check_hidden_service_statistics(torrc_path: str) -> bool:
 
 
 def main() -> int:
-    if sys.version_info >= (3, 14):
-        parser = argparse.ArgumentParser(description="Check torrc for anonymity directives", suggest_on_error=True, color=True)
-    else:
-        parser = argparse.ArgumentParser(description="Check torrc for anonymity directives")
+    parser = argparse.ArgumentParser(description="Check torrc for anonymity directives", suggest_on_error=True, color=True)
     parser.add_argument(
         "--torrc",
         dest="torrc_path",

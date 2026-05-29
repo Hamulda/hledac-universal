@@ -11,10 +11,10 @@ Usage:
 """
 from __future__ import annotations
 
+import logging
 import math
 import random
-from typing import Dict, Any
-import logging
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -30,7 +30,7 @@ class DPNoise:
         self.noise_scale = sensitivity * math.sqrt(2 * math.log(1.25 / delta)) / epsilon
         logger.info(f"DPNoise: epsilon={epsilon}, delta={delta}, noise_scale={self.noise_scale:.4f}")
 
-    def clip_update(self, weights: Dict[str, Any], max_norm: float = 1.0) -> Dict[str, Any]:
+    def clip_update(self, weights: dict[str, Any], max_norm: float = 1.0) -> dict[str, Any]:
         """Clip gradient/model update to max L2 norm."""
         clipped = {}
         for k, v in weights.items():
@@ -52,7 +52,7 @@ class DPNoise:
                 clipped[k] = v
         return clipped
 
-    def add_noise(self, weights: Dict[str, Any]) -> Dict[str, Any]:
+    def add_noise(self, weights: dict[str, Any]) -> dict[str, Any]:
         """Add Gaussian noise to weights/counts using stdlib random."""
         noisy = {}
         for k, v in weights.items():
@@ -61,7 +61,7 @@ class DPNoise:
                 noisy[k] = v + noise
             elif isinstance(v, (list, tuple)):
                 noise = [random.gauss(0, self.noise_scale) for _ in v]
-                noisy[k] = [a + b for a, b in zip(v, noise)]
+                noisy[k] = [a + b for a, b in zip(v, noise, strict=False)]
             else:
                 noisy[k] = v
         return noisy

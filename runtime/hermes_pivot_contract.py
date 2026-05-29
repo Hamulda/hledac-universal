@@ -62,7 +62,7 @@ class HermesInferenceOutput:
         }
 
     @classmethod
-    def from_dict(cls, payload: dict[str, Any]) -> "HermesInferenceOutput":
+    def from_dict(cls, payload: dict[str, Any]) -> HermesInferenceOutput:
         return cls(
             output_id=payload.get("output_id", ""),
             source_finding_id=payload.get("source_finding_id", ""),

@@ -17,12 +17,11 @@ from __future__ import annotations
 
 import json
 import logging
-from collections import defaultdict
-from dataclasses import dataclass, field
-from pathlib import Path
-from typing import Optional, Dict, Any
 import math
 import os
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any
 
 try:
     import compression.zstd as _zstd
@@ -58,17 +57,16 @@ class SprintPolicyState:
     total_reward: float = 0.0
     sprint_rewards: list[float] = field(default_factory=list)
     # QMIX network weights (serialized MLX arrays when MLX available)
-    qmix_weights: Optional[Dict[str, Any]] = None
+    qmix_weights: dict[str, Any] | None = None
     last_train_sprint: int = -1
     last_action: int = 0  # F228F: last RL action taken
 
 
-def _serialize_weights(weights: Any) -> Dict[str, Any]:
+def _serialize_weights(weights: Any) -> dict[str, Any]:
     """Serialize MLX array weights to JSON-compatible dict. Returns {} if weights is None."""
     if weights is None:
         return {"flat": []}
     try:
-        import mlx.core as mx
         flat = []
         for key, val in weights.items():
             flat.append({"key": key, "value": val.tolist()})
@@ -77,7 +75,7 @@ def _serialize_weights(weights: Any) -> Dict[str, Any]:
         return {"flat": []}
 
 
-def _deserialize_weights(data: Dict[str, Any]) -> Any:
+def _deserialize_weights(data: dict[str, Any]) -> Any:
     """Reconstruct MLX array weights from serialized dict."""
     if not data or "flat" not in data:
         return None
@@ -105,7 +103,7 @@ class SprintPolicyManager:
     def __init__(
         self,
         enabled: bool = os.environ.get("HLEDAC_DISABLE_RL") != "1",
-        policy_path: Optional[Path] = None,
+        policy_path: Path | None = None,
         epsilon: float = _DEFAULT_EPSILON,
         exploration_interval: int = _EXPLORATION_INTERVAL,
         qmix_train_interval: int = _QMIX_TRAIN_INTERVAL,
@@ -128,9 +126,38 @@ class SprintPolicyManager:
         self._rl_train_mode = rl_train_mode
         self._state = SprintPolicyState()
         self._loaded = False
+        self._pending_feedback: dict[str, dict[str, int]] = {}  # F228A: per-source quality feedback pending delegation
+
+    @property
+    def enabled(self) -> bool:
+        """Expose _enabled for external callers (e.g., SprintScheduler F228A block)."""
+        return self._enabled
+
+    def inject_scheduler(self, scheduler: Any) -> None:
+        """Inject SprintPolicyManager ref (opt-in RL layer)."""
+        # No-op when disabled — F228A invariant: policy must be enabled before wiring
+        if not self._enabled:
+            return
+        self._policy_manager = scheduler
+        # Bidirectional wiring: allow policy manager to delegate quality feedback
+        # adaptation back to this scheduler's _adapt_source_weights_from_feedback
+        if hasattr(scheduler, "_adapt_source_weights_from_feedback"):
+            self._scheduler = scheduler
+            self._pending_feedback = {}  # F228A: reset pending on re-inject
 
         # QMIX components — initialized lazily on first enable
         self._replay_buffer = None
+        self._state_extractor = None
+        self._qmix_trainer = None
+        self._agents = None
+        self._reward_history: list = []  # F257FIX: always initialize (used in update regardless of rl_train_mode)
+        if self._enabled:
+            self._load()
+            # F228F: initialize reward_history from loaded sprint_rewards
+            if self._state.sprint_rewards:
+                self._reward_history = list(self._state.sprint_rewards[-100:])
+
+    def _init_qmix(self) -> None:
         self._state_extractor = None
         self._qmix_trainer = None
         self._agents = None
@@ -149,9 +176,9 @@ class SprintPolicyManager:
         if not self._enabled:
             return
         try:
+            from rl.qmix import QMIXAgent, QMixer, QMIXJointTrainer
             from rl.replay_buffer import MARLReplayBuffer
             from rl.state_extractor import StateExtractor
-            from rl.qmix import QMIXAgent, QMixer, QMIXJointTrainer
 
             self._state_extractor = StateExtractor(state_dim=12)
 
@@ -220,7 +247,7 @@ class SprintPolicyManager:
                     else:
                         return
                 else:
-                    with open(self._policy_path, "r", encoding="utf-8") as f:
+                    with open(self._policy_path, encoding="utf-8") as f:
                         data = json.load(f)
                 self._state = SprintPolicyState(**data)
                 log.debug(
@@ -259,7 +286,7 @@ class SprintPolicyManager:
 
     # ── Reward computation ───────────────────────────────────────────────────
 
-    def _get_finding_count(self, result: "SprintSchedulerResult", prefix: str) -> int:
+    def _get_finding_count(self, result: SprintSchedulerResult, prefix: str) -> int:
         """F235: Fallback chain for finding count fields — M1 memory safe."""
         for suffix in ("accepted", "produced", "ingested"):
             val = getattr(result, f"{prefix}_findings_{suffix}", None)
@@ -267,7 +294,7 @@ class SprintPolicyManager:
                 return val
         return 0
 
-    def _compute_reward(self, result: "SprintSchedulerResult") -> float:
+    def _compute_reward(self, result: SprintSchedulerResult) -> float:
         """
         Compute reward from real SprintSchedulerResult fields.
 
@@ -339,7 +366,7 @@ class SprintPolicyManager:
 
     # ── Public API ──────────────────────────────────────────────────────────
 
-    def update(self, result: "SprintSchedulerResult") -> None:
+    def update(self, result: SprintSchedulerResult) -> None:
         """
         Update policy state from the completed sprint result.
 
@@ -528,7 +555,7 @@ class SprintPolicyManager:
                                 best_q = q_val
                                 best_action = int(agent_id)
                         # Map to action constants
-                        from rl.actions import ACTION_CONTINUE, ACTION_FETCH_MORE, ACTION_BRANCH, ACTION_YIELD
+                        from rl.actions import ACTION_BRANCH, ACTION_CONTINUE, ACTION_FETCH_MORE, ACTION_YIELD
                         ACTION_MAP = {0: ACTION_CONTINUE, 1: ACTION_FETCH_MORE, 2: ACTION_BRANCH, 3: ACTION_YIELD, 4: ACTION_CONTINUE}
                         return ACTION_MAP.get(best_action, ACTION_CONTINUE)
             except Exception:
@@ -568,8 +595,51 @@ class SprintPolicyManager:
                 if accepted:
                     accepted_count += 1
 
-                # Update source quality tracking (placeholder for future weight adaptation)
-                # F228A: source weight adaptation would go here if needed
+                # F228A: source weight adaptation — mirror B.6 clamped delta logic from scheduler
+            _ratio = accepted_count / total_count if total_count > 0 else 0.0
+            if _ratio >= 0.7:
+                _delta = 1.10  # +10%
+            elif _ratio >= 0.4:
+                _delta = 1.05  # +5%
+            elif _ratio >= 0.15:
+                _delta = 1.00  # neutral
+            else:
+                _delta = 0.95  # -5%
+
+            _src = source_family or feed_url or "unknown"
+            _cur = getattr(self, "_src_quality_weights", {}).get(_src, 1.0)
+            _new = max(0.3, min(2.5, _cur * _delta))
+            if not hasattr(self, "_src_quality_weights"):
+                self._src_quality_weights: dict[str, float] = {}
+            self._src_quality_weights[_src] = _new
+
+            _delta_abs = abs(_new - _cur)
+            if _delta_abs > 0.05:
+                log.debug(
+                    "[F228A] src weight adaptation: %s (%d/%d=%.0f%%) %.3f → %.3f",
+                    _src, accepted_count, total_count, _ratio * 100, _cur, _new,
+                )
+
+            # F228A: accumulate per-source feedback into _pending_feedback
+            # Bounded at 200 unique sources (fail-soft on overflow)
+            _src_key = source_family or feed_url or "unknown"
+            if len(self._pending_feedback) < 200 or _src_key in self._pending_feedback:
+                if _src_key not in self._pending_feedback:
+                    self._pending_feedback[_src_key] = {"fetched": 0, "accepted": 0}
+                self._pending_feedback[_src_key]["fetched"] += total_count
+                self._pending_feedback[_src_key]["accepted"] += accepted_count
+
+            # F228A: delegate accumulated feedback to scheduler when available
+            if self._scheduler is not None:
+                try:
+                    for _fk, _fv in self._pending_feedback.items():
+                        if _fk not in self._scheduler._source_quality_feedback:
+                            self._scheduler._source_quality_feedback[_fk] = {"fetched": 0, "accepted": 0}
+                        self._scheduler._source_quality_feedback[_fk]["fetched"] += _fv["fetched"]
+                        self._scheduler._source_quality_feedback[_fk]["accepted"] += _fv["accepted"]
+                    self._pending_feedback.clear()
+                except Exception:
+                    pass  # fail-soft: delegation is best-effort
 
             log.debug(
                 "[SprintPolicyManager] quality feedback: src=%s total=%d accepted=%d",
@@ -580,7 +650,7 @@ class SprintPolicyManager:
         except Exception as e:
             log.debug("[SprintPolicyManager] update_with_quality_decisions failed: %s", e)
 
-    def get_qmix_stats(self) -> Dict[str, Any]:
+    def get_qmix_stats(self) -> dict[str, Any]:
         """Return QMIX training stats for observability."""
         return {
             "sprint_sequence": self._state.sprint_sequence_number,

@@ -25,14 +25,13 @@ Derived from canonical surfaces (Sprint F192H §1):
   - correlation["campaign_hints"]
   - hypothesis_pack["hypothesis_count"]
 """
-import pytest
 from unittest.mock import MagicMock
 
+import pytest
 from hledac.universal.export.sprint_exporter import (
-    _compute_research_depth,
     _SOURCE_TIER,
+    _compute_research_depth,
 )
-
 
 # =============================================================================
 # Contract: output shape is stable
@@ -416,7 +415,7 @@ class TestBranchDiversityComponent:
 
     def test_single_branch_gives_5_points(self):
         """1 active branch → 5 points."""
-        result = _compute_research_depth(
+        _compute_research_depth(
             eh=_mock_handoff({"rss_atom_pipeline": 10}),
             pvs=None,
             signal_path=None,
@@ -579,10 +578,11 @@ class TestResearchDepthInExportReturn:
 
     def test_export_sprint_includes_research_depth_metric(self):
         """The export_sprint return dict must contain research_depth_metric key."""
+        import asyncio
+        from unittest.mock import AsyncMock, MagicMock, patch
+
         from hledac.universal.export.sprint_exporter import export_sprint
         from hledac.universal.project_types import ExportHandoff
-        from unittest.mock import AsyncMock, MagicMock, patch
-        import asyncio
 
         mock_store = MagicMock()
         mock_store.async_healthcheck = AsyncMock(return_value=True)
@@ -638,8 +638,9 @@ class TestArchiveAcademicContributionSurface:
     def test_pvs_commoncrawl_field_present(self):
         """product_value_summary includes commoncrawl_archive_augmented when CC is active."""
         # Simulate: _build_product_value_summary receives canonical_run_summary with cc_archive_injected
-        from hledac.universal.export.sprint_exporter import _build_product_value_summary
         from unittest.mock import MagicMock
+
+        from hledac.universal.export.sprint_exporter import _build_product_value_summary
 
         mock_store = MagicMock()
         mock_store.get_dedup_runtime_status = MagicMock(return_value=None)
@@ -661,8 +662,9 @@ class TestArchiveAcademicContributionSurface:
 
     def test_pvs_academic_field_present(self):
         """product_value_summary includes academic_discovery_contribution when academic is active."""
-        from hledac.universal.export.sprint_exporter import _build_product_value_summary
         from unittest.mock import MagicMock
+
+        from hledac.universal.export.sprint_exporter import _build_product_value_summary
 
         mock_store = MagicMock()
         mock_store.get_dedup_runtime_status = MagicMock(return_value=None)
@@ -682,8 +684,9 @@ class TestArchiveAcademicContributionSurface:
 
     def test_pvs_zero_when_missing_canonical_run_summary(self):
         """Both fields default to 0 when canonical_run_summary is absent."""
-        from hledac.universal.export.sprint_exporter import _build_product_value_summary
         from unittest.mock import MagicMock
+
+        from hledac.universal.export.sprint_exporter import _build_product_value_summary
 
         mock_store = MagicMock()
         mock_store.get_dedup_runtime_status = MagicMock(return_value=None)

@@ -13,12 +13,12 @@ Tests for:
 9. real fetched page can contribute to findings
 """
 
-import pytest
 import asyncio
-import time
-import sys
 import os
+import sys
+import time
 
+import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 
@@ -153,6 +153,7 @@ class TestSprint8XDeepReadEquivalence:
     def test_deep_read_exists_in_research_manager(self):
         """Test that deep_read() exists in _ResearchManager."""
         import inspect
+
         from hledac.universal.autonomous_orchestrator import _ResearchManager
 
         # Check that the class has the deep_read method
@@ -178,6 +179,7 @@ class TestSprint8XOrchestratorIntegration:
     def test_surface_web_search_is_async_method(self):
         """Test that execute_surface_search is an async method in _ResearchManager."""
         import inspect
+
         from hledac.universal.autonomous_orchestrator import _ResearchManager
 
         method = getattr(_ResearchManager, 'execute_surface_search', None)

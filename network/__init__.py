@@ -18,10 +18,10 @@ M1 8GB Optimized: Streaming algorithms, <1GB memory regardless of PCAP size
 DNS_TUNNEL_DETECTOR_AVAILABLE = False
 try:
     from .dns_tunnel_detector import (
-        DNSTunnelDetector,
         DNSTunnelConfig,
-        TunnelingFinding,
+        DNSTunnelDetector,
         NGramScore,
+        TunnelingFinding,
         create_dns_tunnel_detector,
     )
     DNS_TUNNEL_DETECTOR_AVAILABLE = True
@@ -36,9 +36,9 @@ except ImportError:
 PASSIVE_DNS_AVAILABLE = False
 try:
     from .passive_dns import (
-        PassiveDNSResolver,
-        PassiveDNSAdapter,
         DOH_RESOLVERS,
+        PassiveDNSAdapter,
+        PassiveDNSResolver,
     )
     PASSIVE_DNS_AVAILABLE = True
 except ImportError:
@@ -62,11 +62,11 @@ except ImportError:
 BANNER_GRABBER_AVAILABLE = False
 try:
     from .banner_grabber import (
+        MAX_BANNER_GRABS,
+        PORT_TIMEOUTS,
         BannerGrabber,
         BannerGrabberAdapter,
         BannerResult,
-        MAX_BANNER_GRABS,
-        PORT_TIMEOUTS,
     )
     BANNER_GRABBER_AVAILABLE = True
 except ImportError:
@@ -80,10 +80,10 @@ except ImportError:
 IPV6_RECON_AVAILABLE = False
 try:
     from .ipv6_recon import (
+        MAX_IPV6_TARGETS,
         IPv6Recon,
         IPv6ReconAdapter,
         IPv6Result,
-        MAX_IPV6_TARGETS,
     )
     IPV6_RECON_AVAILABLE = True
 except ImportError:
@@ -96,9 +96,9 @@ except ImportError:
 NETWORK_INTEL_AVAILABLE = False
 try:
     from .network_intelligence import (
+        MAX_NETWORKINTEL_TARGETS,
         NetworkIntelAdapter,
         NetworkIntelResult,
-        MAX_NETWORKINTEL_TARGETS,
     )
     NETWORK_INTEL_AVAILABLE = True
 except ImportError:

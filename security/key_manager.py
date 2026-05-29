@@ -1,16 +1,16 @@
 import asyncio
 import logging
-import orjson
-from pathlib import Path
-from typing import Dict, Optional, Tuple, List
-import secrets
 import os
+import secrets
+from pathlib import Path
+
+import orjson
 
 try:
+    from cryptography.hazmat.backends import default_backend
+    from cryptography.hazmat.primitives import hashes
     from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
     from cryptography.hazmat.primitives.kdf.hkdf import HKDF
-    from cryptography.hazmat.primitives import hashes
-    from cryptography.hazmat.backends import default_backend
     CRYPTO_AVAILABLE = True
 except ImportError:
     Cipher = None
@@ -51,7 +51,7 @@ def _try_mlock(buf: bytearray) -> bool:
 
 
 class KeyManager:
-    def __init__(self, db_path: Optional[str] = None, master_key_id: str = "master"):
+    def __init__(self, db_path: str | None = None, master_key_id: str = "master"):
         if not CRYPTO_AVAILABLE:
             raise ImportError("cryptography package is required for KeyManager")
         from hledac.universal.paths import KEYS_ROOT
@@ -64,9 +64,9 @@ class KeyManager:
         from hledac.universal.paths import open_lmdb
         self.env = open_lmdb(self.db_path.parent, map_size=10 * 1024 * 1024)
         self.master_key_id = master_key_id
-        self._master_keys: Dict[int, bytes] = {}
-        self._master_salts: Dict[int, bytes] = {}
-        self._bucket_key_cache: Dict[str, bytes] = {}
+        self._master_keys: dict[int, bytes] = {}
+        self._master_salts: dict[int, bytes] = {}
+        self._bucket_key_cache: dict[str, bytes] = {}
         self._lock = asyncio.Lock()
         self._current_version = 0  # 0 znamená, že ještě není načteno/vygenerováno
 
@@ -124,7 +124,7 @@ class KeyManager:
         logger.info(f"Generated new master key (version {new_version})")
         return new_version
 
-    async def get_master_key(self, version: Optional[int] = None) -> Tuple[bytes, bytes, int]:
+    async def get_master_key(self, version: int | None = None) -> tuple[bytes, bytes, int]:
         """
         Vrátí (klíč, salt, verze) pro požadovanou verzi (nebo aktuální, pokud None).
         """
@@ -139,7 +139,7 @@ class KeyManager:
                 raise ValueError(f"Master key version {version} not found")
             return self._master_keys[version], self._master_salts.get(version, b''), version
 
-    async def get_bucket_key(self, bucket_id: str, version: Optional[int] = None) -> Tuple[bytes, int]:
+    async def get_bucket_key(self, bucket_id: str, version: int | None = None) -> tuple[bytes, int]:
         """
         Odvodí klíč pro bucket z master klíče dané verze.
         Vrací (klíč, skutečná verze). Výsledek je cachován.

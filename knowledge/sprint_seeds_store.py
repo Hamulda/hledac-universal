@@ -16,14 +16,13 @@ Rationale:
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 import orjson
-
 from hledac.universal.paths import LMDB_ROOT
 
 if TYPE_CHECKING:
-    from .tools.lmdb_kv import AsyncLMDBKVStore
+    pass
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -40,7 +39,7 @@ _KEY_PREFIX: bytes = b"seeds:"
 
 def _make_key(sprint_id: str) -> bytes:
     """Encode sprint_id as LMDB key."""
-    return f"{_KEY_PREFIX.decode()}{sprint_id}".encode("utf-8")
+    return f"{_KEY_PREFIX.decode()}{sprint_id}".encode()
 
 
 # ---------------------------------------------------------------------------

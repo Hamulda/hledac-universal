@@ -32,7 +32,7 @@ import hashlib
 import heapq
 import re
 import time
-from typing import Any, List, Optional, Tuple
+from typing import Any
 
 try:
     from hledac.universal.knowledge.duckdb_store import CanonicalFinding
@@ -139,9 +139,9 @@ def _canonical_finding(
     query: str,
     confidence: float,
     ts: float,
-    provenance: Tuple[str, ...],
-    payload_text: Optional[str] = None,
-) -> Optional[Any]:
+    provenance: tuple[str, ...],
+    payload_text: str | None = None,
+) -> Any | None:
     """
     Build a CanonicalFinding or return None if CanonicalFinding unavailable.
 
@@ -152,7 +152,7 @@ def _canonical_finding(
         return None
 
     prov = provenance[:MAX_PROVENANCE_ITEMS]
-    payload: Optional[str] = None
+    payload: str | None = None
     if payload_text:
         payload = payload_text[:MAX_PAYLOAD_TEXT_CHARS]
 
@@ -241,7 +241,7 @@ def _normalize_domain(domain: str) -> str:
     return d
 
 
-def _extract_domain_from_ct_hit(url: str, title: str) -> Optional[str]:
+def _extract_domain_from_ct_hit(url: str, title: str) -> str | None:
     """
     Extract the domain/subdomain from a CT DiscoveryHit URL or title.
 
@@ -410,11 +410,11 @@ def _build_ct_provenance(
     sprint_id: str,
     issuer_name: str | None,
     entry_timestamp: str | None,
-) -> Tuple[str, ...]:
+) -> tuple[str, ...]:
     """Build provenance tuple for CT finding."""
     prov: list[str] = [
-        f"source_family:ct",
-        f"crtsh",
+        "source_family:ct",
+        "crtsh",
         f"query:{query[:200]}",
         f"domain:{domain}",
     ]
@@ -467,7 +467,7 @@ def ct_results_to_findings(
     _outcome: Any,  # intentionally kept for backward API compat; CT telemetry from _outcome is not needed
     query: str,
     sprint_id: str,
-) -> Tuple[List[Any], List[RejectionReason], dict[str, Any]]:
+) -> tuple[list[Any], list[RejectionReason], dict[str, Any]]:
     # Backward compat: _outcome kept in signature; telemetry comes from hits, not outcome
     del _outcome
     """
@@ -502,8 +502,8 @@ def ct_results_to_findings(
         duplicate_candidate     — same domain already seen in this batch
         low_information        — single-label domain with no TLD
     """
-    findings: List[Any] = []
-    rejections: List[RejectionReason] = []
+    findings: list[Any] = []
+    rejections: list[RejectionReason] = []
     seen_domains: set[str] = set()
     ct_quarantine_entries: list[dict[str, Any]] = []
 
@@ -891,7 +891,7 @@ def wayback_results_to_findings(
     diff_result: Any,
     query: str,
     sprint_id: str,
-) -> Tuple[List[Any], List[RejectionReason], dict[str, Any]]:
+) -> tuple[list[Any], list[RejectionReason], dict[str, Any]]:
     """
     Convert WaybackDiffResult to finding candidates.
 
@@ -912,8 +912,8 @@ def wayback_results_to_findings(
         missing_value    — event has no digest or url
         low_information  — change_type is "unchanged" (no signal)
     """
-    findings: List[Any] = []
-    rejections: List[RejectionReason] = []
+    findings: list[Any] = []
+    rejections: list[RejectionReason] = []
 
     if not hasattr(diff_result, "change_events"):
         rejections.append(REJECTION_UNSUPPORTED_SHAPE)
@@ -975,8 +975,8 @@ def wayback_results_to_findings(
         blake2_id = _make_blake2b_hex(digest, _WAYBACK_SALT)
         finding_id = f"wdiff-{blake2_id}-{timestamp[:8]}"[:64]
 
-        provenance: Tuple[str, ...] = (
-            f"source_family:wayback_diff",
+        provenance: tuple[str, ...] = (
+            "source_family:wayback_diff",
             f"url:{url[:300]}",
             f"digest:{digest[:64]}",
             f"change:{change_type}",
@@ -1061,13 +1061,13 @@ _PRIVATE_IP_PREFIXES: tuple[str, ...] = (
 
 
 def passive_dns_results_to_findings(
-    ips: List[str],
+    ips: list[str],
     _outcome: Any,
     query: str,
     sprint_id: str,
     *,
     trigger_confidence: float | None = None,
-) -> Tuple[List[Any], List[RejectionReason], dict[str, Any]]:
+) -> tuple[list[Any], list[RejectionReason], dict[str, Any]]:
     """
     Convert PassiveDNS IP list + PassiveDNSOutcome to finding candidates.
 
@@ -1104,8 +1104,8 @@ def passive_dns_results_to_findings(
         inherited = max(0.0, min(1.0, inherited))
     else:
         inherited = _PDNS_CONFIDENCE
-    findings: List[Any] = []
-    rejections: List[RejectionReason] = []
+    findings: list[Any] = []
+    rejections: list[RejectionReason] = []
 
     # [F213C] Validate input shape before iterating
     if not isinstance(ips, list):
@@ -1171,12 +1171,12 @@ def passive_dns_results_to_findings(
         blake2_id = _make_blake2b_hex(pair_key, _PDNS_SALT)
         finding_id = f"pdns-{blake2_id}-{sprint_id[:8]}"
 
-        provenance: Tuple[str, ...] = (
-            f"source_family:passive_dns",
+        provenance: tuple[str, ...] = (
+            "source_family:passive_dns",
             f"domain:{query_stripped}",
             f"ip:{ip_stripped}",
             f"sprint:{sprint_id[:16]}",
-            f"source:circl_pdns",
+            "source:circl_pdns",
         )
 
         payload_text = f"domain: {query_stripped}\nip: {ip_stripped}\nsource: CIRCL PDNS"
@@ -1212,8 +1212,8 @@ def passive_dns_results_to_findings(
 
 def summarize_bridge_conversion(
     family: str,
-    findings: List[Any],
-    rejections: List[RejectionReason],
+    findings: list[Any],
+    rejections: list[RejectionReason],
 ) -> dict[str, Any]:
     """
     Summarize bridge conversion results.
@@ -1252,8 +1252,8 @@ def summarize_bridge_conversion(
 
 
 def summarize_wayback_conversion(
-    findings: List[Any],
-    rejections: List[RejectionReason],
+    findings: list[Any],
+    rejections: list[RejectionReason],
     telemetry: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """
@@ -1314,8 +1314,8 @@ def summarize_wayback_conversion(
 
 
 def summarize_passive_dns_conversion(
-    findings: List[Any],
-    rejections: List[RejectionReason],
+    findings: list[Any],
+    rejections: list[RejectionReason],
     telemetry: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """
@@ -1380,8 +1380,8 @@ def summarize_passive_dns_conversion(
 
 def summarize_ct_conversion(
     raw_hits_count: int,
-    findings: List[Any],
-    rejections: List[RejectionReason],
+    findings: list[Any],
+    rejections: list[RejectionReason],
     telemetry: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """
@@ -1478,7 +1478,6 @@ def summarize_ct_conversion(
     # F214A: ct_raw_sample — up to 5 sanitized raw entries (first 5 hits)
     ct_raw_sample = []
     # Shape keys from all hits (for diagnostics)
-    shape_keys: set[str] = set()
 
     # F214A: ct_conversion_summary — narrative of what happened to raw entries
 
@@ -1534,7 +1533,7 @@ def doh_results_to_findings(
     _outcome: Any,
     query: str,
     sprint_id: str,
-) -> Tuple[List[Any], List[RejectionReason], dict[str, Any]]:
+) -> tuple[list[Any], list[RejectionReason], dict[str, Any]]:
     """
     F234A: Convert DOHFinding list + DOHOutcome to finding candidates.
 
@@ -1561,7 +1560,6 @@ def doh_results_to_findings(
     Non-raising — invalid records are skipped with rejection tracking.
     Pure function — no network, no MLX.
     """
-    import hashlib
     import time as _time
 
     capped = findings[:MAX_BRIDGE_OUTPUT]
@@ -1610,8 +1608,8 @@ def doh_results_to_findings(
         blake2_id = _make_blake2b_hex(pair_key, _DOH_SOURCE_TYPE)
         finding_id = f"doh-{blake2_id}-{sprint_id[:8]}"
 
-        provenance: Tuple[str, ...] = (
-            f"source_family:doh",
+        provenance: tuple[str, ...] = (
+            "source_family:doh",
             f"domain:{domain}",
             f"record_type:{record_type}",
             f"provider:{provider}",
@@ -1680,8 +1678,8 @@ def doh_results_to_findings(
 
 
 def summarize_doh_conversion(
-    findings: List[Any],
-    rejections: List[RejectionReason],
+    findings: list[Any],
+    rejections: list[RejectionReason],
     telemetry: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """
@@ -1847,7 +1845,7 @@ def rdap_result_to_findings(
         finding_id: str,
         sub_type: str,
         payload_text: str,
-        provenance: Tuple[str, ...],
+        provenance: tuple[str, ...],
     ) -> Any:
         return _canonical_finding(
             finding_id=finding_id,
@@ -1920,8 +1918,8 @@ def rdap_result_to_findings(
             pass
 
         # Build structured payload for domain/registrar
-        reg_provenance: Tuple[str, ...] = (
-            f"source_family:rdap_enrichment",
+        reg_provenance: tuple[str, ...] = (
+            "source_family:rdap_enrichment",
             f"domain:{domain_name}",
             f"sprint:{sprint_id[:16]}",
         )
@@ -1957,8 +1955,8 @@ def rdap_result_to_findings(
             break
         blake2_id = _make_blake2b_hex(ns_name, "rdapns")
         fid = f"rdap-ns-{blake2_id[:16]}"
-        ns_provenance: Tuple[str, ...] = (
-            f"source_family:rdap_enrichment",
+        ns_provenance: tuple[str, ...] = (
+            "source_family:rdap_enrichment",
             f"nameserver:{ns_name}",
             f"sprint:{sprint_id[:16]}",
         )
@@ -1977,8 +1975,8 @@ def rdap_result_to_findings(
                 continue
             blake2_id = _make_blake2b_hex(s_str, "rdapstatus")
             fid = f"rdap-stat-{blake2_id[:16]}"
-            st_provenance: Tuple[str, ...] = (
-                f"source_family:rdap_enrichment",
+            st_provenance: tuple[str, ...] = (
+                "source_family:rdap_enrichment",
                 f"status:{s_str}",
                 f"sprint:{sprint_id[:16]}",
             )
@@ -2006,8 +2004,8 @@ def rdap_result_to_findings(
             ev_str = f"{action}:{date}" + (f":{actor}" if actor else "")
             blake2_id = _make_blake2b_hex(ev_str, "rdapevent")
             fid = f"rdap-ev-{blake2_id[:16]}"
-            ev_provenance: Tuple[str, ...] = (
-                f"source_family:rdap_enrichment",
+            ev_provenance: tuple[str, ...] = (
+                "source_family:rdap_enrichment",
                 f"event:{ev_str}",
                 f"sprint:{sprint_id[:16]}",
             )
@@ -2025,9 +2023,9 @@ def rdap_result_to_findings(
         if ds_data is not None:
             blake2_id = _make_blake2b_hex("dnssec", "rdapdnssec")
             fid = f"rdap-dnssec-{blake2_id[:16]}"
-            dnssec_provenance: Tuple[str, ...] = (
-                f"source_family:rdap_enrichment",
-                f"dnssec:delegation_signed",
+            dnssec_provenance: tuple[str, ...] = (
+                "source_family:rdap_enrichment",
+                "dnssec:delegation_signed",
                 f"sprint:{sprint_id[:16]}",
             )
             dnssec_payload = f"dnssec: delegation_signed={ds_data}"
@@ -2067,8 +2065,8 @@ def rdap_result_to_findings(
             roles_str = ",".join(roles) if roles else "unknown"
             blake2_id = _make_blake2b_hex(org_name, "rdapentity")
             fid = f"rdap-ent-{blake2_id[:16]}"
-            ent_provenance: Tuple[str, ...] = (
-                f"source_family:rdap_enrichment",
+            ent_provenance: tuple[str, ...] = (
+                "source_family:rdap_enrichment",
                 f"entity:{org_name}",
                 f"roles:{roles_str}",
                 f"sprint:{sprint_id[:16]}",
@@ -2097,8 +2095,8 @@ def rdap_result_to_findings(
             net_key = net_name or net_handle
             blake2_id = _make_blake2b_hex(net_key, "rdapnet")
             fid = f"rdap-net-{blake2_id[:16]}"
-            net_provenance: Tuple[str, ...] = (
-                f"source_family:rdap_enrichment",
+            net_provenance: tuple[str, ...] = (
+                "source_family:rdap_enrichment",
                 f"network:{net_key}",
                 f"sprint:{sprint_id[:16]}",
             )
@@ -2120,8 +2118,8 @@ def rdap_result_to_findings(
                 continue
             blake2_id = _make_blake2b_hex(str(asn), "rdapautnum")
             fid = f"rdap-as-{blake2_id[:16]}"
-            aut_provenance: Tuple[str, ...] = (
-                f"source_family:rdap_enrichment",
+            aut_provenance: tuple[str, ...] = (
+                "source_family:rdap_enrichment",
                 f"autnum:{asn}",
                 f"sprint:{sprint_id[:16]}",
             )
@@ -2310,7 +2308,6 @@ def academic_results_to_findings(
 
             payload_text = "\n".join(parts)
 
-            import time as _time
 
             url_hash = url_hash if 'url_hash' in dir() else url[:16]
             finding_id_str = f"acad-{url_hash[:20]}"
@@ -2525,10 +2522,10 @@ def network_recon_result_to_findings(
         if whois_dict and built < max_findings:
             registrar = _safe_str(whois_dict.get("registrar"))
             registrant_org = _safe_str(whois_dict.get("registrant_org"))
-            registrant_name = _safe_str(whois_dict.get("registrant_name"))
-            tech_org = _safe_str(whois_dict.get("tech_name"))
-            admin_org = _safe_str(whois_dict.get("admin_name"))
-            status_list = _safe_list(whois_dict.get("status", []))
+            _safe_str(whois_dict.get("registrant_name"))
+            _safe_str(whois_dict.get("tech_name"))
+            _safe_str(whois_dict.get("admin_name"))
+            _safe_list(whois_dict.get("status", []))
             name_servers = _safe_list(whois_dict.get("name_servers", []))[:16]
             dnssec = whois_dict.get("dnssec")
 
@@ -2614,7 +2611,7 @@ def network_recon_result_to_findings(
             san_domains = _safe_list(ssl_dict.get("san_domains", []))[:16]
             is_valid = ssl_dict.get("is_valid", True)
             days_until_expiry = ssl_dict.get("days_until_expiry")
-            not_after = ssl_dict.get("not_after")
+            ssl_dict.get("not_after")
 
             # Issuer
             if issuer and built < max_findings:

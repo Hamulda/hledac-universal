@@ -25,7 +25,6 @@ import pytest
 sys.path.insert(0, "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal")
 from hledac.universal.knowledge.duckdb_store import DuckDBShadowStore
 
-
 # ---------------------------------------------------------------------------
 # Tests 1-2: Boot isolation
 # ---------------------------------------------------------------------------

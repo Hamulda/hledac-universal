@@ -22,8 +22,6 @@ Features:
 """
 
 import asyncio
-import inspect
-import hashlib
 import json
 import logging
 import os
@@ -33,9 +31,9 @@ import tempfile
 import threading
 from collections import deque
 from dataclasses import dataclass, field
-from pathlib import Path
-from typing import Dict, List, Optional, Any
 from functools import partial
+from pathlib import Path
+from typing import Any
 
 # Sprint 7B: Lazy torch import for M1 8GB memory optimization
 # Sprint 8G: Made truly lazy - torch import deferred until first use
@@ -86,7 +84,7 @@ class NEREngine:
 
     def __init__(self, model_name: str = "knowledgator/gliner-relex-large-v0.5"):
         self.model_name = model_name
-        self._model: Optional[Any] = None
+        self._model: Any | None = None
         self._lock = threading.RLock()
         self._initialized = False
 
@@ -110,14 +108,14 @@ class NEREngine:
         except Exception as e:
             logger.debug(f"CoreML NER load failed: {e}")
 
-    def _nl_process_sync(self, text: str) -> List[Dict]:
+    def _nl_process_sync(self, text: str) -> list[Dict]:
         """Synchronní volání NaturalLanguage.framework přes PyObjC."""
         if not self._nl_available:
             return []
 
         try:
-            from NaturalLanguage import NLTagger, NLTagScheme, NLTokenUnit
             from Foundation import NSString
+            from NaturalLanguage import NLTagger, NLTagScheme, NLTokenUnit
 
             entities = []
             ns_string = NSString.stringWithString_(text)
@@ -218,9 +216,9 @@ n        Pokud je model již načten, nic nedělá.
     def predict(
         self,
         text: str,
-        labels: List[str],
+        labels: list[str],
         threshold: float = 0.5
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """
         Extrahuje entity z textu.
 
@@ -230,7 +228,7 @@ n        Pokud je model již načten, nic nedělá.
             threshold: Minimální confidence score (0.0 - 1.0)
 
         Returns:
-            List[Dict]: Seznam nalezených entit s klíči:
+            list[Dict]: Seznam nalezených entit s klíči:
                 - entity: text entity
                 - label: typ entity
                 - span: (start, end) pozice v textu
@@ -277,7 +275,6 @@ n        Pokud je model již načten, nic nedělá.
         if NEREngine._MLX_AVAILABLE:
             return
         try:
-            import outlines
             from outlines.models import mlx as mlx_outlines
             NEREngine._MLX_EXTRACTOR = mlx_outlines("mlx-community/Llama-3.2-3B-Instruct-4bit")
             NEREngine._MLX_AVAILABLE = True
@@ -286,7 +283,7 @@ n        Pokud je model již načten, nic nedělá.
             logger.debug(f"MLX outlines load failed: {e}")
             NEREngine._MLX_AVAILABLE = False
 
-    async def _extract_with_mlx(self, text: str) -> List[Dict]:
+    async def _extract_with_mlx(self, text: str) -> list[Dict]:
         """Extract entities using MLX outlines structured generation."""
         if not NEREngine._MLX_AVAILABLE:
             await self._load_mlx_extractor()
@@ -297,7 +294,7 @@ n        Pokud je model již načten, nic nedělá.
             import msgspec
 
             class EntityList(msgspec.Struct):
-                entities: List[dict]
+                entities: list[dict]
 
             generator = outlines.generate.json(NEREngine._MLX_EXTRACTOR, EntityList)
             prompt = f"Extract named entities from text:\n{text[:2000]}"
@@ -310,9 +307,9 @@ n        Pokud je model již načten, nic nedělá.
     async def predict_async(
         self,
         text: str,
-        labels: List[str],
+        labels: list[str],
         threshold: float = 0.5
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """
         Asynchronní varianta predict - běží v thread poolu.
 
@@ -325,7 +322,7 @@ n        Pokud je model již načten, nic nedělá.
             threshold: Minimální confidence score
 
         Returns:
-            List[Dict]: Seznam nalezených entit
+            list[Dict]: Seznam nalezených entit
         """
         # Sprint 76: ANE-first via NaturalLanguage framework
         if self._nl_available:
@@ -353,10 +350,10 @@ n        Pokud je model již načten, nic nedělá.
     def predict_with_relations(
         self,
         text: str,
-        labels: List[str],
-        relations: List[Dict[str, Any]] = None,
+        labels: list[str],
+        relations: list[dict[str, Any]] = None,
         threshold: float = 0.5
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Extrahuje entity a volitelně vztahy z textu pomocí gliner-relex.
 
@@ -403,11 +400,11 @@ n        Pokud je model již načten, nic nedělá.
 
     def predict_batch(
         self,
-        texts: List[str],
-        labels: List[str],
+        texts: list[str],
+        labels: list[str],
         threshold: float = 0.5,
         batch_size: int = 8
-    ) -> List[List[Dict[str, Any]]]:
+    ) -> list[list[dict[str, Any]]]:
         """
         Batch predikce pro více textů.
 
@@ -418,7 +415,7 @@ n        Pokud je model již načten, nic nedělá.
             batch_size: Velikost batch (pro budoucí optimalizaci)
 
         Returns:
-            List[List[Dict]]: Seznam výsledků pro každý text
+            list[list[Dict]]: Seznam výsledků pro každý text
         """
         self._ensure_loaded()
 
@@ -442,11 +439,11 @@ n        Pokud je model již načten, nic nedělá.
 
     async def predict_batch_async(
         self,
-        texts: List[str],
-        labels: List[str],
+        texts: list[str],
+        labels: list[str],
         threshold: float = 0.5,
         batch_size: int = 8
-    ) -> List[List[Dict[str, Any]]]:
+    ) -> list[list[dict[str, Any]]]:
         """
         Asynchronní batch predikce.
 
@@ -457,7 +454,7 @@ n        Pokud je model již načten, nic nedělá.
             batch_size: Velikost batch
 
         Returns:
-            List[List[Dict]]: Seznam výsledků pro každý text
+            list[list[Dict]]: Seznam výsledků pro každý text
         """
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(
@@ -494,10 +491,10 @@ n        Pokud je model již načten, nic nedělá.
     async def predict_strict(
         self,
         text: str,
-        labels: List[str],
+        labels: list[str],
         threshold: float = 0.5,
         timeout: int = 60
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """
         MEMORY_STRICT mód - GLiNER běží v izolovaném subprocessu.
 
@@ -508,7 +505,7 @@ n        Pokud je model již načten, nic nedělá.
             timeout: Timeout v sekundách
 
         Returns:
-            List[Dict]: Seznam nalezených entit
+            list[Dict]: Seznam nalezených entit
         """
         # Hard limity
         if len(text) > MAX_STRICT_TEXT_LENGTH:
@@ -533,11 +530,11 @@ n        Pokud je model již načten, nic nedělá.
 
     async def predict_batch_strict(
         self,
-        texts: List[str],
-        labels: List[str],
+        texts: list[str],
+        labels: list[str],
         threshold: float = 0.5,
         timeout: int = 120
-    ) -> List[List[Dict[str, Any]]]:
+    ) -> list[list[dict[str, Any]]]:
         """
         MEMORY_STRICT batch mód.
 
@@ -548,7 +545,7 @@ n        Pokud je model již načten, nic nedělá.
             timeout: Timeout v sekundách
 
         Returns:
-            List[List[Dict]]: Seznam výsledků pro každý text
+            list[list[Dict]]: Seznam výsledků pro každý text
         """
         # Hard limity
         if len(texts) > MAX_STRICT_TEXTS:
@@ -574,8 +571,8 @@ n        Pokud je model již načten, nic nedělá.
 
     async def _run_in_subprocess(
         self,
-        texts: List[str],
-        labels: List[str],
+        texts: list[str],
+        labels: list[str],
         threshold: float,
         timeout: int
     ) -> Any:
@@ -687,7 +684,7 @@ except Exception as e:
             except Exception:
                 pass
 
-    def get_info(self) -> Dict[str, Any]:
+    def get_info(self) -> dict[str, Any]:
         """Vrátí informace o engine včetně MEMORY_STRICT podpory."""
         num_threads = 0
         if _TORCH_AVAILABLE:
@@ -711,7 +708,7 @@ except Exception as e:
         }
 
 # Singleton instance pro snadné použití
-_default_engine: Optional[NEREngine] = None
+_default_engine: NEREngine | None = None
 
 
 def get_ner_engine(model_name: str = "knowledgator/gliner-relex-large-v0.5") -> NEREngine:
@@ -784,8 +781,8 @@ def get_extraction_status() -> dict:
 # Sprint 8VF + 8VG: IOC Extraction — kanonické místo pro NER/IOC
 # ============================================================================
 
-import re as _re
 import math as _math
+import re as _re
 
 # ── Regex patterns — PRIMARY for technical IOC ──────────────────────────
 _IOC_PATTERNS: list[tuple[str, _re.Pattern]] = [
@@ -952,7 +949,7 @@ def _guess_entity_type(ioc_type: str | None, raw_text: str) -> str:
     if ioc_type:
         return ioc_type
     # Fallback heuristics
-    raw_lower = raw_text.lower()
+    raw_text.lower()
     if _re.search(r'\b(?:Corp|LLC|Inc|Ltd|Technologies|Software|Systems|Security)\b', raw_text):
         return "organization"
     if _re.search(r'\b(?:Mr|Mrs|Ms|Dr|Prof)\.\s+\w+', raw_text):
@@ -1049,7 +1046,7 @@ def extract_entities_from_texts(
 
     # 2. Filter and rank
     entities = []
-    for (value, etype), ent in entity_map.items():
+    for (_value, etype), ent in entity_map.items():
         if include_types and etype not in include_types:
             continue
         if ent["count"] < min_count:
@@ -1156,7 +1153,7 @@ def extract_entities_from_findings(
 
     # 2. Filter and rank
     entities = []
-    for (value, etype), ent in entity_map.items():
+    for (_value, etype), ent in entity_map.items():
         if include_types and etype not in include_types:
             continue
         if ent["count"] < min_count:
@@ -1511,11 +1508,6 @@ class FeedbackPack:
         seen_queries = set()
 
         # Priority order for pivot_type
-        pivot_order = {
-            "ioc": 0, "ioc_lookup": 0, "entity_pair": 1,
-            "relationship": 2, "ioc_entity": 3, "entity": 4,
-            "source": 6, "organization": 7, "temporal": 8, "general": 9,
-        }
 
         def _add(item):
             query = item.get("query", "")
@@ -1622,7 +1614,7 @@ def feedback_compact(
     entity_summary = build_entity_summary(findings, max_entities=20)
 
     # Step 2: Hypothesis pack (heuristic path, _evidence not needed)
-    # Extract texts from findings (hypothesis_engine expects List[str])
+    # Extract texts from findings (hypothesis_engine expects list[str])
     finding_texts = [f.get("text", "") if isinstance(f, dict) else str(f) for f in findings]
 
     from hledac.universal.brain.hypothesis_engine import HypothesisEngine

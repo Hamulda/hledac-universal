@@ -5,13 +5,15 @@ Sprint 4D Runtime Benchmark - Propagation Funnel Truth Audit
 import asyncio
 import gc
 import os
-import psutil
 import sys
 import time
+
+import psutil
 
 sys.path.insert(0, '/Users/vojtechhamada/PycharmProjects/Hledac')
 
 from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
+
 
 async def run_benchmark():
     process = psutil.Process(os.getpid())
@@ -101,7 +103,7 @@ async def run_benchmark():
         pending_estimate = min(50, cons * 2)  # rough estimate
         total_accounted = cons + exp + evic + pending_estimate
 
-        print(f"\n--- ACCOUNTING CHECK ---")
+        print("\n--- ACCOUNTING CHECK ---")
         print(f"Generated: {gen}")
         print(f"Consumed: {cons}")
         print(f"Expired: {exp}")
@@ -121,7 +123,7 @@ async def run_benchmark():
 
         return metrics
 
-    except asyncio.TimeoutError:
+    except TimeoutError:
         print("[BENCHMARK] TIMEOUT - benchmark took too long")
         return {'error': 'timeout'}
     except Exception as e:

@@ -13,12 +13,11 @@ claims logic to this coordinator.
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import re
 from collections import deque
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Set
+from typing import Any
 
 from ..intelligence.confidence_policy import (
     compute_confidence,
@@ -68,7 +67,7 @@ class ClaimsCoordinator(UniversalCoordinator):
 
     def __init__(
         self,
-        config: Optional[ClaimsCoordinatorConfig] = None,
+        config: ClaimsCoordinatorConfig | None = None,
         max_concurrent: int = 3,
     ):
         super().__init__(name="ClaimsCoordinator", max_concurrent=max_concurrent)
@@ -76,11 +75,11 @@ class ClaimsCoordinator(UniversalCoordinator):
 
         # State - Bounded pending evidence using deque+set for O(1) membership + keep-last determinism
         self._pending_evidence_ids: deque = deque(maxlen=MAX_PENDING_EVIDENCE_IDS)
-        self._pending_evidence_set: Set[str] = set()  # O(1) membership check
+        self._pending_evidence_set: set[str] = set()  # O(1) membership check
         self._clusters_updated: int = 0
         self._evidence_processed: int = 0
-        self._uncertain_clusters: List[str] = []
-        self._stop_reason: Optional[str] = None
+        self._uncertain_clusters: list[str] = []
+        self._stop_reason: str | None = None
 
         # F225A: Claims runtime surface counters
         self._claims_extracted_count: int = 0
@@ -92,10 +91,10 @@ class ClaimsCoordinator(UniversalCoordinator):
         self._claims_extraction_packets_with_claims: int = 0
 
         # Orchestrator reference (set via start)
-        self._orchestrator: Optional[Any] = None
-        self._ctx: Dict[str, Any] = {}
+        self._orchestrator: Any | None = None
+        self._ctx: dict[str, Any] = {}
 
-    def get_supported_operations(self) -> List[Any]:
+    def get_supported_operations(self) -> list[Any]:
         """Return supported operation types."""
         from .base import OperationType
         return [OperationType.SYNTHESIS, OperationType.RESEARCH]
@@ -120,12 +119,12 @@ class ClaimsCoordinator(UniversalCoordinator):
         logger.info("ClaimsCoordinator initialized")
         return True
 
-    async def _do_start(self, ctx: Dict[str, Any]) -> None:
+    async def _do_start(self, ctx: dict[str, Any]) -> None:
         """
         Start coordinator with context from orchestrator.
 
         Expected ctx keys:
-        - pending_evidence: List[str] - evidence IDs to process
+        - pending_evidence: list[str] - evidence IDs to process
         - orchestrator: reference to orchestrator instance
         - claim_index: ClaimClusterIndex instance
         """
@@ -141,7 +140,7 @@ class ClaimsCoordinator(UniversalCoordinator):
 
         logger.info(f"ClaimsCoordinator started with {len(self._pending_evidence_ids)} pending evidence")
 
-    async def _do_step(self, ctx: Dict[str, Any]) -> Dict[str, Any]:
+    async def _do_step(self, ctx: dict[str, Any]) -> dict[str, Any]:
         """
         Execute one claims processing step.
 
@@ -193,8 +192,8 @@ class ClaimsCoordinator(UniversalCoordinator):
     def _get_step_result(
         self,
         clusters_updated: int = 0,
-        uncertain_clusters: Optional[List[str]] = None
-    ) -> Dict[str, Any]:
+        uncertain_clusters: list[str] | None = None
+    ) -> dict[str, Any]:
         """Get bounded step result."""
         return {
             'clusters_updated': clusters_updated,
@@ -205,7 +204,7 @@ class ClaimsCoordinator(UniversalCoordinator):
             'pending_evidence': len(self._pending_evidence_ids),
         }
 
-    async def _process_evidence(self, evidence_id: str) -> Optional[Dict[str, Any]]:
+    async def _process_evidence(self, evidence_id: str) -> dict[str, Any] | None:
         """
         Process a single evidence ID for claims.
 
@@ -224,7 +223,7 @@ class ClaimsCoordinator(UniversalCoordinator):
                     claim_index = rm._claim_index
 
             if not claim_index:
-                logger.warning(f"ClaimsCoordinator: no claim_index available")
+                logger.warning("ClaimsCoordinator: no claim_index available")
                 return None
 
             # Load evidence packet from disk (not in memory)
@@ -283,7 +282,7 @@ class ClaimsCoordinator(UniversalCoordinator):
             logger.warning(f"ClaimsCoordinator: failed to process {evidence_id}: {e}")
             return None
 
-    def _load_evidence_packet(self, evidence_id: str) -> Optional[Dict[str, Any]]:
+    def _load_evidence_packet(self, evidence_id: str) -> dict[str, Any] | None:
         """Load evidence packet from disk (RAM-safe)."""
         if not self._orchestrator:
             return None
@@ -300,7 +299,7 @@ class ClaimsCoordinator(UniversalCoordinator):
             logger.debug(f"ClaimsCoordinator: failed to load packet {evidence_id}: {e}")
             return None
 
-    async def _extract_claims(self, evidence_packet: Dict[str, Any]) -> List[Dict[str, Any]]:
+    async def _extract_claims(self, evidence_packet: dict[str, Any]) -> list[dict[str, Any]]:
         """
         Deterministic claim extraction from evidence packet.
 
@@ -354,7 +353,7 @@ class ClaimsCoordinator(UniversalCoordinator):
 
         return claims
 
-    def _extract_json_claims(self, evidence_packet: Dict[str, Any]) -> List[Dict[str, Any]]:
+    def _extract_json_claims(self, evidence_packet: dict[str, Any]) -> list[dict[str, Any]]:
         """Extract claims from JSON claims field if present."""
         claims_field = evidence_packet.get('claims')
         if isinstance(claims_field, list) and claims_field:
@@ -371,7 +370,7 @@ class ClaimsCoordinator(UniversalCoordinator):
             return result
         return []
 
-    def _extract_text_content(self, evidence_packet: Dict[str, Any]) -> str:
+    def _extract_text_content(self, evidence_packet: dict[str, Any]) -> str:
         """Extract text content from evidence packet fields."""
         fields = ['claim', 'claims', 'title', 'summary', 'text', 'payload_text', 'content']
         parts = []
@@ -389,7 +388,7 @@ class ClaimsCoordinator(UniversalCoordinator):
 
         return ' '.join(parts)
 
-    def _split_into_sentences(self, text: str) -> List[str]:
+    def _split_into_sentences(self, text: str) -> list[str]:
         """Split text into sentence-like units deterministically."""
         # Normalize whitespace
         text = ' '.join(text.split())
@@ -425,7 +424,7 @@ class ClaimsCoordinator(UniversalCoordinator):
     def _derive_confidence(
         self,
         text: str,
-        evidence_packet: Dict[str, Any],
+        evidence_packet: dict[str, Any],
         title: str,
         summary: str
     ) -> float:
@@ -493,7 +492,7 @@ class ClaimsCoordinator(UniversalCoordinator):
             'claims_extraction_packets_with_claims': self._claims_extraction_packets_with_claims,
         }
 
-    async def _do_shutdown(self, ctx: Dict[str, Any]) -> None:
+    async def _do_shutdown(self, ctx: dict[str, Any]) -> None:
         """Cleanup on shutdown."""
         logger.info(f"ClaimsCoordinator shutting down: {self._evidence_processed} evidence processed")
         self._pending_evidence_ids.clear()

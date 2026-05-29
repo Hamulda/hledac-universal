@@ -13,11 +13,10 @@ Tests verify:
 8. Rolling HHI visible in sprint state during run
 """
 
-import unittest
-import asyncio
-import time
-import sys
 import os
+import sys
+import time
+import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 

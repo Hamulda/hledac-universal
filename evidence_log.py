@@ -49,22 +49,19 @@ M1 8GB Optimalizace:
 from __future__ import annotations
 
 import asyncio
-import collections
 import hashlib
 import json
 import logging
 import os
 import secrets
-import threading
 import time
 import uuid
 from collections import deque
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Dict, List, Literal, Optional, Set
+from typing import Any, Literal
 
 import aiosqlite
-
 from pydantic import BaseModel, Field, field_validator
 
 # =============================================================================
@@ -97,8 +94,11 @@ from pydantic import BaseModel, Field, field_validator
 # Sprint 8C1: Flow trace
 try:
     from .utils.flow_trace import (
-        trace_evidence_append, trace_evidence_flush, trace_queue_drop,
-        trace_counter, is_enabled,
+        is_enabled,
+        trace_counter,
+        trace_evidence_append,
+        trace_evidence_flush,
+        trace_queue_drop,
     )
 except ImportError:
     # Fallback if flow_trace not available
@@ -123,16 +123,16 @@ class EvidenceEvent(BaseModel):
     event_type: Literal["tool_call", "observation", "synthesis", "error", "decision", "evidence_packet"] = Field(
         ..., description="Typ události"
     )
-    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    payload: Dict[str, Any] = Field(default_factory=dict, description="Data události")
-    source_ids: List[str] = Field(default_factory=list, description="ID zdrojových událostí")
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    payload: dict[str, Any] = Field(default_factory=dict, description="Data události")
+    source_ids: list[str] = Field(default_factory=list, description="ID zdrojových událostí")
     confidence: float = Field(default=1.0, ge=0.0, le=1.0, description="Spolehlivost 0-1")
     content_hash: str = Field(..., description="SHA-256 hash pro verifikaci")
     run_id: str = Field(..., description="ID běhu výzkumu")
     # Tamper-evident hash-chain fields (optional for backward compatibility with legacy JSONL)
     seq_no: int = Field(default=0, description="Sequence number in chain")
-    prev_chain_hash: Optional[str] = Field(default=None, description="Previous event's chain hash")
-    chain_hash: Optional[str] = Field(default=None, description="Chain hash for tamper detection")
+    prev_chain_hash: str | None = Field(default=None, description="Previous event's chain hash")
+    chain_hash: str | None = Field(default=None, description="Chain hash for tamper detection")
 
     @field_validator('source_ids', mode='before')
     @classmethod
@@ -157,7 +157,7 @@ class EvidenceEvent(BaseModel):
         json_str = json.dumps(data, sort_keys=True, separators=(',', ':'))
         return hashlib.sha256(json_str.encode('utf-8')).hexdigest()
 
-    def _normalize_payload(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+    def _normalize_payload(self, payload: dict[str, Any]) -> dict[str, Any]:
         """Normalizuje payload pro konzistentní hashování"""
         normalized = {}
         for key in sorted(payload.keys()):
@@ -177,7 +177,7 @@ class EvidenceEvent(BaseModel):
         if isinstance(value, float):
             return round(value, 6)  # Zaokrouhlení floatů
         elif isinstance(value, (set, frozenset)):
-            return sorted(list(value))
+            return sorted(value)
         elif isinstance(value, bytes):
             return value.decode('utf-8', errors='replace')
         return value
@@ -187,7 +187,7 @@ class EvidenceEvent(BaseModel):
         calculated = self.calculate_hash()
         return calculated == self.content_hash
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Převede událost na dictionary"""
         result = {
             "event_id": self.event_id,
@@ -209,7 +209,7 @@ class EvidenceEvent(BaseModel):
         return result
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "EvidenceEvent":
+    def from_dict(cls, data: dict[str, Any]) -> EvidenceEvent:
         """Vytvoří událost z dictionary"""
         # Převeď timestamp string na datetime
         if isinstance(data.get("timestamp"), str):
@@ -251,7 +251,7 @@ class EvidenceLog:
     def __init__(
         self,
         run_id: str,
-        persist_path: Optional[Path] = None,
+        persist_path: Path | None = None,
         enable_persist: bool = True,
         encrypt_at_rest: bool = False
     ):
@@ -268,7 +268,7 @@ class EvidenceLog:
 
         self._run_id: str = run_id
         self._log: deque = deque(maxlen=self.MAX_RAM_EVENTS)  # Ring buffer (max MAX_RAM_EVENTS)
-        self._index_by_type: Dict[str, List[int]] = {
+        self._index_by_type: dict[str, list[int]] = {
             "tool_call": [],
             "observation": [],
             "synthesis": [],
@@ -276,8 +276,8 @@ class EvidenceLog:
             "decision": [],
             "evidence_packet": [],
         }
-        self._index_by_source: Dict[str, List[int]] = {}
-        self._created_at: datetime = datetime.now(timezone.utc)
+        self._index_by_source: dict[str, list[int]] = {}
+        self._created_at: datetime = datetime.now(UTC)
         self._frozen: bool = False
         self._closed: bool = False  # H1: closed flag for post-close guards
         self._total_count: int = 0  # Celkový počet událostí (včetně na disku)
@@ -302,7 +302,7 @@ class EvidenceLog:
 
         # Persistencer setup
         self._enable_persist: bool = enable_persist
-        self._persist_path: Optional[Path] = None
+        self._persist_path: Path | None = None
         self._persist_file = None
 
         if enable_persist:
@@ -332,9 +332,9 @@ class EvidenceLog:
 
         # SQLite async batching components
         self._queue: asyncio.Queue = asyncio.Queue(maxsize=500)
-        self._flush_task: Optional[asyncio.Task] = None
-        self._db_path: Optional[Path] = None
-        self._db: Optional[aiosqlite.Connection] = None
+        self._flush_task: asyncio.Task | None = None
+        self._db_path: Path | None = None
+        self._db: aiosqlite.Connection | None = None
         self._initialized = False
         self._closing = False  # Flag: aclose in progress, block queue access
 
@@ -398,7 +398,7 @@ class EvidenceLog:
             return
 
         try:
-            with open(old_file, 'r', encoding='utf-8') as f:
+            with open(old_file, encoding='utf-8') as f:
                 for line in f:
                     line = line.strip()
                     if not line:
@@ -437,7 +437,7 @@ class EvidenceLog:
                     if event is None:  # Shutdown signal
                         break
                     batch.append(event)
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     pass
 
                 # Flush if batch full or timeout reached
@@ -466,7 +466,7 @@ class EvidenceLog:
             flush_latency_ms = (time.perf_counter() - flush_start) * 1000
             trace_evidence_flush(len(batch), flush_latency_ms, "ok", len(batch))
 
-    async def _flush_batch(self, batch: List[Dict[str, Any]]) -> None:
+    async def _flush_batch(self, batch: list[dict[str, Any]]) -> None:
         """Flush a batch of events to SQLite."""
         if not batch or not self._db:
             return
@@ -501,7 +501,7 @@ class EvidenceLog:
             self._encrypt_at_rest = False
             self._cipher = None
 
-    def _trim_payload(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+    def _trim_payload(self, payload: dict[str, Any]) -> dict[str, Any]:
         """
         Trim payload pro RAM šetření - odstraň fulltexty.
 
@@ -553,7 +553,7 @@ class EvidenceLog:
         return len(self._log)
 
     @property
-    def persist_path(self) -> Optional[Path]:
+    def persist_path(self) -> Path | None:
         """Cesta k persistovanému souboru"""
         return self._persist_path
 
@@ -706,7 +706,7 @@ class EvidenceLog:
             if event.event_type == "evidence_packet":
                 payload = event.payload or {}
                 # Extract correlation from payload if present (flattened by create_event)
-                _corr: Optional[Dict[str, Any]] = payload.get("_correlation")
+                _corr: dict[str, Any] | None = payload.get("_correlation")
                 shadow_record_finding(
                     finding_id=event.event_id,
                     query=payload.get("query", ""),
@@ -747,10 +747,10 @@ class EvidenceLog:
     def create_event(
         self,
         event_type: Literal["tool_call", "observation", "synthesis", "error", "decision", "evidence_packet"],
-        payload: Dict[str, Any],
-        source_ids: Optional[List[str]] = None,
+        payload: dict[str, Any],
+        source_ids: list[str] | None = None,
         confidence: float = 1.0,
-        correlation: Optional[Dict[str, Optional[str]]] = None,
+        correlation: dict[str, str | None] | None = None,
     ) -> EvidenceEvent:
         """
         Vytvoří a přidá novou událost.
@@ -803,8 +803,8 @@ class EvidenceLog:
         self,
         evidence_id: str,
         packet_path: str,
-        summary: Dict[str, Any],
-        source_ids: Optional[List[str]] = None,
+        summary: dict[str, Any],
+        source_ids: list[str] | None = None,
         confidence: float = 1.0,
     ) -> EvidenceEvent:
         """
@@ -850,9 +850,9 @@ class EvidenceLog:
     def create_decision_event(
         self,
         kind: str,
-        summary: Dict[str, Any],
-        reasons: List[str],
-        refs: Dict[str, List[str]],
+        summary: dict[str, Any],
+        reasons: list[str],
+        refs: dict[str, list[str]],
         confidence: float = 1.0,
     ) -> EvidenceEvent:
         """
@@ -921,7 +921,7 @@ class EvidenceLog:
             confidence=confidence,
         )
 
-    def get(self, index: int) -> Optional[EvidenceEvent]:
+    def get(self, index: int) -> EvidenceEvent | None:
         """
         Vrátí událost na daném indexu.
 
@@ -935,7 +935,7 @@ class EvidenceLog:
             return self._log[index]
         return None
 
-    def get_by_id(self, event_id: str) -> Optional[EvidenceEvent]:
+    def get_by_id(self, event_id: str) -> EvidenceEvent | None:
         """
         Najde událost podle ID.
 
@@ -952,12 +952,12 @@ class EvidenceLog:
 
     def query(
         self,
-        event_type: Optional[str] = None,
+        event_type: str | None = None,
         min_confidence: float = 0.0,
-        after_timestamp: Optional[datetime] = None,
-        before_timestamp: Optional[datetime] = None,
-        limit: Optional[int] = None,
-    ) -> List[EvidenceEvent]:
+        after_timestamp: datetime | None = None,
+        before_timestamp: datetime | None = None,
+        limit: int | None = None,
+    ) -> list[EvidenceEvent]:
         """
         Dotazuje se na události v logu.
 
@@ -1017,11 +1017,11 @@ class EvidenceLog:
             "=" * 60,
             "EVIDENCE LOG SUMMARY",
             "=" * 60,
-            f"",
+            "",
             f"Run ID: {self._run_id}",
             f"Total Events: {self.size}",
             f"Created: {self._created_at.isoformat()}",
-            f"",
+            "",
             "Event Counts by Type:",
         ]
 
@@ -1031,7 +1031,7 @@ class EvidenceLog:
                 lines.append(f"  {event_type}: {count}")
 
         lines.extend([
-            f"",
+            "",
             "-" * 40,
             f"Last {last_n} Events (newest first):",
             "-" * 40,
@@ -1065,7 +1065,7 @@ class EvidenceLog:
 
         return "\n".join(lines)
 
-    def _summarize_payload(self, payload: Dict[str, Any], max_length: int = 60) -> str:
+    def _summarize_payload(self, payload: dict[str, Any], max_length: int = 60) -> str:
         """Vytvoří stručné shrnutí payloadu"""
         if not payload:
             return "(no payload)"
@@ -1087,7 +1087,7 @@ class EvidenceLog:
         value = str(payload[first_key])[:max_length]
         return f"{first_key}={value}{'...' if len(str(payload[first_key])) > max_length else ''}"
 
-    def to_jsonl(self, path: Optional[Path] = None) -> None:
+    def to_jsonl(self, path: Path | None = None) -> None:
         """
         Exportuje log do JSONL souboru pro replay mode.
 
@@ -1122,10 +1122,10 @@ class EvidenceLog:
     def from_jsonl(
         cls,
         path: Path,
-        run_id: Optional[str] = None,
+        run_id: str | None = None,
         load_to_ram: bool = False,
         max_ram_events: int = 100
-    ) -> "EvidenceLog":
+    ) -> EvidenceLog:
         """
         Načte log z JSONL souboru - M1 8GB optimized.
 
@@ -1146,7 +1146,7 @@ class EvidenceLog:
         # Nejprve zjisti run_id z prvního řádku
         detected_run_id = run_id
         if detected_run_id is None:
-            with open(path, 'r', encoding='utf-8') as f:
+            with open(path, encoding='utf-8') as f:
                 first_line = f.readline().strip()
                 if first_line:
                     data = json.loads(first_line)
@@ -1160,14 +1160,14 @@ class EvidenceLog:
 
         # Spočítej celkový počet řádků
         total_lines = 0
-        with open(path, 'r', encoding='utf-8') as f:
+        with open(path, encoding='utf-8') as f:
             for _ in f:
                 total_lines += 1
 
         log._total_count = total_lines
 
         # Načti události do RAM - pouze poslední N pro ring buffer
-        with open(path, 'r', encoding='utf-8') as f:
+        with open(path, encoding='utf-8') as f:
             lines = f.readlines()
 
             # Pokud nechceme vše v RAM, vem jen poslední max_ram_events
@@ -1196,7 +1196,7 @@ class EvidenceLog:
         """Zmrazí log - přepne do read-only režimu"""
         self._frozen = True
 
-    def write_manifest(self) -> Optional[Path]:
+    def write_manifest(self) -> Path | None:
         """
         Writes a manifest JSON file next to the persist path.
 
@@ -1362,7 +1362,7 @@ class EvidenceLog:
 
         logger.info(f"[EVIDENCE] Log finalized: run_id={self._run_id}, events={self._total_count}, chain_head={self._chain_head[:16]}...")
 
-    def verify_all(self) -> Dict[str, Any]:
+    def verify_all(self) -> dict[str, Any]:
         """
         Ověří integritu všech událostí v logu.
 
@@ -1447,7 +1447,7 @@ class EvidenceLog:
             "last_seq_no": self._seq,
         }
 
-    def get_event_funnel(self) -> Dict[str, Any]:
+    def get_event_funnel(self) -> dict[str, Any]:
         """
         Vrací funnel událostí: počty a průměrná confidence per typ.
 
@@ -1476,7 +1476,7 @@ class EvidenceLog:
 
         return result
 
-    def get_decision_summary(self) -> Dict[str, Any]:
+    def get_decision_summary(self) -> dict[str, Any]:
         """
         Vrací shrnutí decision událostí pro sprint retro.
 
@@ -1491,9 +1491,9 @@ class EvidenceLog:
         if not decisions:
             return {"count": 0, "kinds": {}, "avg_confidence": 0.0}
 
-        kind_counts: Dict[str, int] = {}
-        all_reasons: List[str] = []
-        confidences: List[float] = []
+        kind_counts: dict[str, int] = {}
+        all_reasons: list[str] = []
+        confidences: list[float] = []
 
         for e in decisions:
             payload = e.payload or {}
@@ -1504,7 +1504,7 @@ class EvidenceLog:
             confidences.append(e.confidence)
 
         # Top reason fragments (first 40 chars)
-        top_reasons: Dict[str, int] = {}
+        top_reasons: dict[str, int] = {}
         for r in all_reasons:
             fragment = r[:40] if len(r) > 40 else r
             top_reasons[fragment] = top_reasons.get(fragment, 0) + 1
@@ -1519,7 +1519,7 @@ class EvidenceLog:
             "top_reasons": top_reasons,
         }
 
-    def get_error_rate(self) -> Dict[str, Any]:
+    def get_error_rate(self) -> dict[str, Any]:
         """
         Vrací error rate a low-confidence event breakdown.
 
@@ -1557,7 +1557,7 @@ class EvidenceLog:
             "recent_errors": recent_errors,
         }
 
-    def get_statistics(self) -> Dict[str, Any]:
+    def get_statistics(self) -> dict[str, Any]:
         """
         Vrátí statistiky o logu - M1 8GB optimized.
 
@@ -1595,7 +1595,7 @@ class EvidenceLog:
             "persistence_enabled": self._enable_persist,
         }
 
-    def get_sprint_health_summary(self) -> Dict[str, Any]:
+    def get_sprint_health_summary(self) -> dict[str, Any]:
         """
         Compact retrospective seam for sprint health assessment.
 
@@ -1687,7 +1687,7 @@ class EvidenceLog:
             health = "degraded" if health == "healthy" else health
 
         # ---- 5. TOP WEAK SPOTS (bounded raw access) ----
-        weak_spots: Dict[str, int] = {}
+        weak_spots: dict[str, int] = {}
         error_events = self.query(event_type="error", limit=100)
         for e in error_events:
             payload = e.payload or {}
@@ -1799,7 +1799,7 @@ class EvidenceLog:
             return "moderate"
         return "high"
 
-    def get_retrospective_bundle(self) -> Dict[str, Any]:
+    def get_retrospective_bundle(self) -> dict[str, Any]:
         """
         Single-call retrospective seam for private sprint retro.
 
@@ -1827,10 +1827,10 @@ class EvidenceLog:
 
         # ---- Secondary bounded raw scan: only where helpers don't suffice ----
         # Scan last 200 events for "what_worked" and "breakdown" signals
-        recent = list(self._log)[-200:] if self._log else []
+        list(self._log)[-200:] if self._log else []
 
         # What worked: event types with high avg_conf and high count
-        what_worked: List[str] = []
+        what_worked: list[str] = []
         funnel = health.get("event_funnel") or {}
         for et, data in funnel.items():
             if data.get("avg_conf", 0) >= 0.85 and data.get("count", 0) >= 2:
@@ -1839,7 +1839,7 @@ class EvidenceLog:
         what_worked = what_worked[:4]  # Cap at 4
 
         # Breakdown: low-conf event types and error weak spots
-        breakdown: List[str] = []
+        breakdown: list[str] = []
         for break_item in health.get("quality_breaks", []):
             breakdown.append(
                 f"{break_item['event_type']} conf={break_item['avg_conf']:.2f}"
@@ -1911,7 +1911,7 @@ class EvidenceLog:
             operator_takeaway = f"sprint status={health_status}, verdict={verdict[:80]}"
 
         # ---- Top retro actions: 2-3 condensed items ----
-        top_retro_actions: List[str] = []
+        top_retro_actions: list[str] = []
 
         if continue_or_pivot == "pivot":
             top_retro_actions.append("pivot: root-cause errors blocking progress — investigate before continuing")
@@ -1978,7 +1978,7 @@ class EvidenceLog:
             "_health": health,
         }
 
-    def get_chain(self, event_id: str) -> List[EvidenceEvent]:
+    def get_chain(self, event_id: str) -> list[EvidenceEvent]:
         """
         Získá řetězec událostí vedoucí k dané události.
 

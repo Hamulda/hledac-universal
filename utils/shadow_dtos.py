@@ -14,13 +14,11 @@ Live DTO source: autonomous_orchestrator.py lines 285-306
 
 from __future__ import annotations
 
-import time
-import json as _json
 import dataclasses
-from typing import Literal, Any
+import time
+from typing import Any, Literal
 
 import msgspec
-
 
 # ---------------------------------------------------------------------------
 # Shadow twins

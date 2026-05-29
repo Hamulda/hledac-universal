@@ -21,7 +21,7 @@ from __future__ import annotations
 import logging
 import resource as _resource
 import time
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from .sprint_scheduler import SprintScheduler
@@ -39,7 +39,7 @@ def _safe_get_breaker_states() -> dict:
 
 
 async def run_windup(
-    scheduler: "SprintScheduler",
+    scheduler: SprintScheduler,
     sprint_query: str,
     t_warmup_end: float,
     t_active_end: float,
@@ -60,7 +60,7 @@ async def run_windup(
     Nikdy nevyhodí výjimku.
     """
     # 1. Parquet dedup + ranking
-    ranked_path: Optional[str] = None
+    ranked_path: str | None = None
     try:
         ranked_path = scheduler.deduplicate_and_rank_findings()
         logger.info(f"[WINDUP] Dedup ranked → {ranked_path}")
@@ -71,7 +71,7 @@ async def run_windup(
     gnn_predictions: list = []
     anomalies: list = []
     try:
-        from brain.gnn_predictor import predict_from_edge_list, get_anomaly_scores
+        from brain.gnn_predictor import get_anomaly_scores, predict_from_edge_list
         if hasattr(scheduler, "_ioc_graph") and scheduler._ioc_graph is not None:
             edge_list = scheduler._ioc_graph.export_edge_list()
             if edge_list:
@@ -102,7 +102,7 @@ async def run_windup(
     all_findings = getattr(scheduler, "_all_findings", [])
     deduped = all_findings
     try:
-        from brain.ane_embedder import semantic_dedup_findings, get_ane_embedder
+        from brain.ane_embedder import get_ane_embedder, semantic_dedup_findings
         if all_findings:
             deduped = await semantic_dedup_findings(all_findings)
             engine = "ANE-MiniLM" if get_ane_embedder() else "hash-fallback"
@@ -138,8 +138,8 @@ async def run_windup(
         scheduler._synthesis_engine = engine
         logger.info(f"[MOE] synthesis engine: {engine}")
 
-        from brain.synthesis_runner import SynthesisRunner
         from brain.model_lifecycle import ModelLifecycle
+        from brain.synthesis_runner import SynthesisRunner
 
         runner = SynthesisRunner(ModelLifecycle())
         if hasattr(scheduler, "_ioc_graph") and scheduler._ioc_graph is not None:
@@ -157,7 +157,7 @@ async def run_windup(
         await runner.synthesize_findings(
             query=sprint_query,
             findings=[{"text": t, "ioc": f.get("ioc", ""), "source": f.get("source", "")}
-                      for t, f in zip(finding_texts, deduped or [])],
+                      for t, f in zip(finding_texts, deduped or [], strict=False)],
             force_synthesis=True,
         )
         synthesis_meta = runner.last_synthesis_meta

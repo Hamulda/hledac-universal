@@ -10,10 +10,11 @@ Minimal truth-validation tests for:
 5. Score percentiles N/A when insufficient samples
 """
 
-import pytest
-import sys
 import os
+import sys
 from collections import deque
+
+import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
@@ -69,11 +70,11 @@ class TestSprint86FWildcardMetrics:
         valuable_types = {'MX', 'NS', 'TXT', 'CAA'}
 
         has_valuable = any(t in valuable_types for t in dns_types)
-        assert has_valuable == True
+        assert has_valuable
 
         dns_types_no_valuable = ['A', 'AAAA', 'CNAME']
         has_valuable_no = any(t in valuable_types for t in dns_types_no_valuable)
-        assert has_valuable_no == False
+        assert not has_valuable_no
 
 
 class TestSprint86FPerSourceAttribution:

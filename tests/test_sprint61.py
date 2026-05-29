@@ -3,14 +3,16 @@ Testy pro Sprint 61 - Advanced Stealth & Post-Quantum Everything
 """
 
 import pytest
+
 pytest.importorskip("aiohttp_socks", reason="optional dependency not installed")
 
 import asyncio
-import tempfile
-import shutil
-from pathlib import Path
-from unittest.mock import MagicMock, AsyncMock, patch
 import os
+import shutil
+import tempfile
+from pathlib import Path
+from unittest.mock import MagicMock, patch
+
 
 # Test transport base
 class TestTransportBase:
@@ -176,7 +178,7 @@ class TestNymPolicy:
 
 class TestEncryption:
     def test_encrypt_decrypt_aes_gcm(self):
-        from hledac.universal.security.encryption import encrypt_aes_gcm, decrypt_aes_gcm
+        from hledac.universal.security.encryption import decrypt_aes_gcm, encrypt_aes_gcm
 
         key = os.urandom(32)  # 256-bit key
         plaintext = b"Hello, World!"
@@ -189,7 +191,7 @@ class TestEncryption:
         assert decrypted == plaintext
 
     def test_encrypt_decrypt_different_aad(self):
-        from hledac.universal.security.encryption import encrypt_aes_gcm, decrypt_aes_gcm
+        from hledac.universal.security.encryption import decrypt_aes_gcm, encrypt_aes_gcm
 
         key = os.urandom(32)
         plaintext = b"Secret message"
@@ -296,9 +298,9 @@ class TestModelStore:
 
     @pytest.mark.asyncio
     async def test_model_store_save_load(self, temp_dir):
-        from hledac.universal.security.key_manager import KeyManager
-        from hledac.universal.federated.model_store_v2 import ModelStore
         import mlx.core as mx
+        from hledac.universal.federated.model_store_v2 import ModelStore
+        from hledac.universal.security.key_manager import KeyManager
 
         km = KeyManager(db_path=f"{temp_dir}/keys.lmdb")
         store = ModelStore(km, db_path=f"{temp_dir}/models.lmdb")
@@ -329,8 +331,8 @@ class TestFederatedCoordinatorV2:
 
     @pytest.mark.asyncio
     async def test_federated_coordinator_init(self, temp_dir):
-        from hledac.universal.security.key_manager import KeyManager
         from hledac.universal.federated.federated_coordinator_v2 import FederatedCoordinatorV2
+        from hledac.universal.security.key_manager import KeyManager
         from hledac.universal.transport.inmemory_transport import InMemoryTransport
 
         km = KeyManager(db_path=f"{temp_dir}/keys.lmdb")
@@ -356,8 +358,8 @@ class TestFederatedCoordinatorV2:
 
     @pytest.mark.asyncio
     async def test_federated_coordinator_start_stop(self, temp_dir):
-        from hledac.universal.security.key_manager import KeyManager
         from hledac.universal.federated.federated_coordinator_v2 import FederatedCoordinatorV2
+        from hledac.universal.security.key_manager import KeyManager
         from hledac.universal.transport.inmemory_transport import InMemoryTransport
 
         km = KeyManager(db_path=f"{temp_dir}/keys.lmdb")

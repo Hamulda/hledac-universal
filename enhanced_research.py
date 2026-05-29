@@ -63,27 +63,29 @@ import hashlib
 import logging
 import random
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum, auto
-from typing import Any, Callable, Dict, List, Optional, Set, Tuple, Union
+from typing import Any
 
+from .knowledge.rag_engine import Document
+from .layers.stealth_layer import BehaviorPattern, BehaviorSimulator, SimulationConfig
 from .project_types import (
-    UniversalResearchOrchestrator,
+    CanonicalGroundingHints,
     ResearchConfig,
     ResearchMode,
     ResearchResult,
-    ExecutionContext,
     RunCorrelation,
-    CanonicalGroundingHints,
+    UniversalResearchOrchestrator,
 )
-from .utils import WorkflowEngine, Workflow, Task, TaskType, PredictivePlanner, PerformanceMonitor
+from .utils import PerformanceMonitor, PredictivePlanner, Task, Workflow, WorkflowEngine
+from .utils.query_expansion import ExpansionConfig as WordlistConfig
+from .utils.query_expansion import QueryExpander as IntelligentWordlistGenerator
+from .utils.ranking import RankedResult as SearchResult
 
 # Extended imports for research enhancements (from universal)
-from .utils.ranking import ReciprocalRankFusion, RRFConfig, RankedResult as SearchResult
-from .knowledge.rag_engine import RAGConfig, Document
-from .utils.query_expansion import QueryExpander as IntelligentWordlistGenerator, ExpansionConfig as WordlistConfig
-from .layers.stealth_layer import BehaviorSimulator, SimulationConfig, BehaviorPattern
+from .utils.ranking import ReciprocalRankFusion, RRFConfig
 
 # Intelligence tools (lazy loaded)
 try:
@@ -91,14 +93,14 @@ try:
         AcademicSearchEngine,
         ArchiveDiscovery,
         ArchiveResurrector,
+        DataLeakHunter,
         StealthCrawler,
         StealthWebScraper,
-        UnifiedWebIntelligence,
-        DataLeakHunter,
         TemporalAnalyzer,
+        UnifiedWebIntelligence,
+        quick_scrape,
         search_academic,
         search_archives,
-        quick_scrape,
     )
     INTELLIGENCE_AVAILABLE = True
 except ImportError:
@@ -198,10 +200,10 @@ class UnifiedResearchConfig:
     cache_ttl_seconds: int = 3600
 
     # Sources configuration
-    academic_sources: List[str] = field(default_factory=lambda: [
+    academic_sources: list[str] = field(default_factory=lambda: [
         'arxiv', 'crossref', 'semantic_scholar'
     ])
-    archive_sources: List[str] = field(default_factory=lambda: [
+    archive_sources: list[str] = field(default_factory=lambda: [
         'wayback', 'archive_today'
     ])
 
@@ -226,16 +228,16 @@ class ResearchFinding:
     id: str
     title: str
     content: str
-    url: Optional[str]
+    url: str | None
     source: str  # Tool that found it
     source_type: str  # academic, web, archive, etc.
     timestamp: datetime
     relevance_score: float = 0.0
     credibility_score: float = 0.5
-    temporal_relevance: Optional[datetime] = None
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    temporal_relevance: datetime | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             'id': self.id,
             'title': self.title,
@@ -258,28 +260,28 @@ class UnifiedResearchResult:
     query_type: QueryType
 
     # Results
-    findings: List[ResearchFinding] = field(default_factory=list)
-    fused_results: List[Dict[str, Any]] = field(default_factory=list)
+    findings: list[ResearchFinding] = field(default_factory=list)
+    fused_results: list[dict[str, Any]] = field(default_factory=list)
 
     # Correlation context (canonical RunCorrelation for cross-component tracing)
     # This enables F11 activation path: correlation flows through result
     # so downstream components (EvidenceLog, BudgetManager) can correlate.
-    correlation: Optional["RunCorrelation"] = None
+    correlation: RunCorrelation | None = None
 
     # Analysis
-    temporal_analysis: Optional[Dict[str, Any]] = None
-    cross_references: List[Dict[str, Any]] = field(default_factory=list)
-    validation_report: Optional[Dict[str, Any]] = None
+    temporal_analysis: dict[str, Any] | None = None
+    cross_references: list[dict[str, Any]] = field(default_factory=list)
+    validation_report: dict[str, Any] | None = None
 
     # Sources and metadata
-    sources_used: List[str] = field(default_factory=list)
+    sources_used: list[str] = field(default_factory=list)
     total_sources_found: int = 0
     unique_sources: int = 0
 
     # Performance
     execution_time_seconds: float = 0.0
     memory_peak_mb: float = 0.0
-    tools_executed: List[str] = field(default_factory=list)
+    tools_executed: list[str] = field(default_factory=list)
 
     # Quality metrics
     confidence_score: float = 0.0
@@ -288,7 +290,7 @@ class UnifiedResearchResult:
     # Timestamp
     completed_at: datetime = field(default_factory=datetime.now)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             'query': self.query,
             'depth': self.depth.name,
@@ -338,7 +340,7 @@ class EnhancedResearchConfig:
     behavior_pattern: BehaviorPattern = BehaviorPattern.RESEARCHER
 
     # Sources configuration
-    sources: List[str] = field(default_factory=lambda: [
+    sources: list[str] = field(default_factory=lambda: [
         'web', 'scholar', 'arxiv', 'semantic_scholar', 'news'
     ])
 
@@ -386,8 +388,8 @@ class UnifiedResearchEngine:
 
     def __init__(
         self,
-        config: Optional[UnifiedResearchConfig] = None,
-        research_config: Optional[ResearchConfig] = None
+        config: UnifiedResearchConfig | None = None,
+        research_config: ResearchConfig | None = None
     ):
         """
         Initialize Unified Research Engine.
@@ -401,17 +403,17 @@ class UnifiedResearchEngine:
 
         # Performance monitoring
         self._performance_monitor = PerformanceMonitor()
-        self._start_time: Optional[float] = None
+        self._start_time: float | None = None
 
         # Lazy-loaded tool instances (initialized on first use)
-        self._academic_engine: Optional[Any] = None
-        self._archive_discovery: Optional[Any] = None
-        self._archive_resurrector: Optional[Any] = None
-        self._stealth_crawler: Optional[Any] = None
-        self._stealth_scraper: Optional[Any] = None
-        self._web_intelligence: Optional[Any] = None
-        self._data_leak_hunter: Optional[Any] = None
-        self._temporal_analyzer: Optional[Any] = None
+        self._academic_engine: Any | None = None
+        self._archive_discovery: Any | None = None
+        self._archive_resurrector: Any | None = None
+        self._stealth_crawler: Any | None = None
+        self._stealth_scraper: Any | None = None
+        self._web_intelligence: Any | None = None
+        self._data_leak_hunter: Any | None = None
+        self._temporal_analyzer: Any | None = None
 
         # RRF for result fusion
         self._rrf = ReciprocalRankFusion(RRFConfig(k=self.config.rrf_k))
@@ -420,7 +422,7 @@ class UnifiedResearchEngine:
         self._semaphore = asyncio.Semaphore(self.config.max_concurrent_tools)
 
         # Results cache
-        self._cache: Dict[str, Tuple[Any, float]] = {}
+        self._cache: dict[str, tuple[Any, float]] = {}
 
         # Statistics
         self._stats = {
@@ -596,7 +598,7 @@ class UnifiedResearchEngine:
 
         return QueryType.GENERAL
 
-    def _select_tools_for_query(self, query_type: QueryType) -> List[str]:
+    def _select_tools_for_query(self, query_type: QueryType) -> list[str]:
         """
         Select appropriate tools based on query type and depth.
 
@@ -644,11 +646,11 @@ class UnifiedResearchEngine:
     async def deep_research(
         self,
         query: str,
-        depth: Optional[ResearchDepth] = None,
-        query_type: Optional[QueryType] = None,
+        depth: ResearchDepth | None = None,
+        query_type: QueryType | None = None,
         max_results: int = 50,
-        correlation: Optional[RunCorrelation] = None,
-        grounding_hints: Optional[CanonicalGroundingHints] = None,
+        correlation: RunCorrelation | None = None,
+        grounding_hints: CanonicalGroundingHints | None = None,
     ) -> UnifiedResearchResult:
         """
         Execute deep research across all integrated tools.
@@ -691,7 +693,7 @@ class UnifiedResearchEngine:
         logger.info(f"Selected tools: {tools_to_use}")
 
         # Execute tools (parallel where possible)
-        all_findings: List[ResearchFinding] = []
+        all_findings: list[ResearchFinding] = []
 
         try:
             # Phase 1: Search (Academic + Web) - can run in parallel
@@ -763,8 +765,8 @@ class UnifiedResearchEngine:
 
             # Update metadata
             result.total_sources_found = len(all_findings)
-            result.unique_sources = len(set(f.url for f in result.findings if f.url))
-            result.sources_used = list(set(f.source for f in result.findings))
+            result.unique_sources = len({f.url for f in result.findings if f.url})
+            result.sources_used = list({f.source for f in result.findings})
             result.tools_executed = tools_to_use
 
             # Calculate quality metrics
@@ -792,7 +794,7 @@ class UnifiedResearchEngine:
     # TASK IMPLEMENTATIONS (replacing TODOs)
     # ========================================================================
 
-    async def _task_search(self, query: str, source_type: str) -> List[ResearchFinding]:
+    async def _task_search(self, query: str, source_type: str) -> list[ResearchFinding]:
         """
         Execute search task using academic or web sources.
 
@@ -863,8 +865,8 @@ class UnifiedResearchEngine:
     async def _task_analyze(
         self,
         query: str,
-        findings: List[ResearchFinding]
-    ) -> Dict[str, Any]:
+        findings: list[ResearchFinding]
+    ) -> dict[str, Any]:
         """
         Perform temporal and content analysis on findings.
 
@@ -882,7 +884,7 @@ class UnifiedResearchEngine:
             timestamps = []
             values = []
 
-            for i, f in enumerate(findings):
+            for _i, f in enumerate(findings):
                 # Use finding timestamp or metadata
                 ts = f.temporal_relevance or f.timestamp
                 timestamps.append(ts)
@@ -917,8 +919,8 @@ class UnifiedResearchEngine:
     async def _task_synthesize(
         self,
         query: str,
-        findings: List[ResearchFinding]
-    ) -> List[Dict[str, Any]]:
+        findings: list[ResearchFinding]
+    ) -> list[dict[str, Any]]:
         """
         Synthesize findings using RRF fusion and knowledge extraction.
 
@@ -934,7 +936,7 @@ class UnifiedResearchEngine:
 
         try:
             # Group findings by source for RRF
-            source_results: Dict[str, List[SearchResult]] = {}
+            source_results: dict[str, list[SearchResult]] = {}
 
             for i, f in enumerate(findings):
                 source = f.source_type
@@ -995,8 +997,8 @@ class UnifiedResearchEngine:
     async def _task_cross_reference(
         self,
         query: str,
-        existing_findings: List[ResearchFinding]
-    ) -> List[ResearchFinding]:
+        existing_findings: list[ResearchFinding]
+    ) -> list[ResearchFinding]:
         """
         Cross-reference findings with archive sources.
 
@@ -1055,7 +1057,7 @@ class UnifiedResearchEngine:
 
         return cross_ref_findings
 
-    async def _task_data_leak_check(self, query: str) -> List[ResearchFinding]:
+    async def _task_data_leak_check(self, query: str) -> list[ResearchFinding]:
         """
         Check for data leaks related to query.
 
@@ -1116,8 +1118,8 @@ class UnifiedResearchEngine:
     async def _task_validate(
         self,
         query: str,
-        findings: List[ResearchFinding]
-    ) -> Dict[str, Any]:
+        findings: list[ResearchFinding]
+    ) -> dict[str, Any]:
         """
         Validate findings across multiple sources.
 
@@ -1133,7 +1135,7 @@ class UnifiedResearchEngine:
 
         try:
             # Group by URL for cross-validation
-            url_groups: Dict[str, List[ResearchFinding]] = {}
+            url_groups: dict[str, list[ResearchFinding]] = {}
             for f in findings:
                 if f.url:
                     url_groups.setdefault(f.url, []).append(f)
@@ -1148,7 +1150,7 @@ class UnifiedResearchEngine:
                     cross_validated.append({
                         'url': url,
                         'sources': [f.source for f in group],
-                        'agreement_score': len(group) / len(set(f.source for f in findings))
+                        'agreement_score': len(group) / len({f.source for f in findings})
                     })
 
             # Calculate overall validity
@@ -1161,7 +1163,7 @@ class UnifiedResearchEngine:
                 'total_findings': len(findings),
                 'cross_validated_count': validated_count,
                 'cross_validated_urls': cross_validated[:10],
-                'source_diversity': len(set(f.source for f in findings)),
+                'source_diversity': len({f.source for f in findings}),
                 'high_credibility_count': len([f for f in findings if f.credibility_score > 0.7]),
             }
 
@@ -1169,7 +1171,7 @@ class UnifiedResearchEngine:
             logger.warning(f"Validation task failed: {e}")
             return {'valid': False, 'error': str(e)}
 
-    async def _task_enhance(self, query: str, context: Dict[str, Any]) -> str:
+    async def _task_enhance(self, query: str, context: dict[str, Any]) -> str:
         """
         Generate enhanced/reformulated query based on context.
 
@@ -1201,11 +1203,11 @@ class UnifiedResearchEngine:
     # UTILITY METHODS
     # ========================================================================
 
-    def _deduplicate_findings(self, findings: List[ResearchFinding]) -> List[ResearchFinding]:
+    def _deduplicate_findings(self, findings: list[ResearchFinding]) -> list[ResearchFinding]:
         """Deduplicate findings based on URL and content similarity."""
-        seen_urls: Set[str] = set()
-        seen_hashes: Set[str] = set()
-        unique: List[ResearchFinding] = []
+        seen_urls: set[str] = set()
+        seen_hashes: set[str] = set()
+        unique: list[ResearchFinding] = []
 
         for f in findings:
             # URL-based dedup
@@ -1227,9 +1229,9 @@ class UnifiedResearchEngine:
 
     def _rank_findings(
         self,
-        findings: List[ResearchFinding],
+        findings: list[ResearchFinding],
         query: str
-    ) -> List[ResearchFinding]:
+    ) -> list[ResearchFinding]:
         """Rank findings by relevance to query."""
         query_terms = set(query.lower().split())
 
@@ -1309,7 +1311,7 @@ class UnifiedResearchEngine:
 
         logger.info("UnifiedResearchEngine cleanup completed")
 
-    def get_statistics(self) -> Dict[str, Any]:
+    def get_statistics(self) -> dict[str, Any]:
         """Get engine statistics."""
         return {
             **self._stats,
@@ -1325,7 +1327,7 @@ class UnifiedResearchEngine:
 class EnhancedResearchOrchestrator(UniversalResearchOrchestrator):
     """
     Rozšířený orchestrátor s workflow a prediktivním plánováním.
-    
+
     Rozšiřuje UniversalResearchOrchestrator o:
     - DAG-based workflow execution
     - Speculative execution
@@ -1335,67 +1337,67 @@ class EnhancedResearchOrchestrator(UniversalResearchOrchestrator):
     - Result fusion from multiple sources (RRF)
     - Hybrid RAG for context retrieval
     - Stealth behavior simulation for protected sources
-    
+
     Example:
         >>> orchestrator = EnhancedResearchOrchestrator()
-        >>> 
+        >>>
         >>> # Definovat workflow
         >>> workflow = orchestrator.create_research_workflow("My query")
-        >>> 
+        >>>
         >>> # Vykonat s monitoringem
         >>> result = await orchestrator.execute_workflow(workflow)
-        
+
         >>> # Or use enhanced research with all features
         >>> result = await orchestrator.research("machine learning", domain="academic")
     """
-    
+
     def __init__(
         self,
-        config: Optional[ResearchConfig] = None,
-        enhanced_config: Optional[EnhancedResearchConfig] = None
+        config: ResearchConfig | None = None,
+        enhanced_config: EnhancedResearchConfig | None = None
     ):
         super().__init__(config)
-        
+
         # Store enhanced configuration
         self.enhanced_config = enhanced_config or EnhancedResearchConfig()
-        
+
         # Nové komponenty
         self.workflow_engine = WorkflowEngine(max_concurrency=3)
         self.predictive_planner = PredictivePlanner(min_confidence=0.7)
         self.performance_monitor = PerformanceMonitor()
-        
+
         # Extended research enhancement components
         self._init_enhancement_components()
-        
+
         # Statistics tracking
-        self._stats: Dict[str, Any] = {
+        self._stats: dict[str, Any] = {
             'queries_expanded': 0,
             'sources_fused': 0,
             'documents_retrieved': 0,
             'stealth_operations': 0,
         }
-        
+
         logger.info("EnhancedResearchOrchestrator initialized")
         logger.info("Features: Workflow Engine, Predictive Planning, Performance Monitoring")
         logger.info("Extended Features: Query Expansion, Result Fusion, Hybrid RAG, Stealth Mode")
-    
+
     def _init_enhancement_components(self) -> None:
         """Initialize research enhancement components based on configuration."""
         cfg = self.enhanced_config
-        
+
         # Reciprocal Rank Fusion for multi-source result fusion
         if cfg.enable_fusion:
             self.rrf = ReciprocalRankFusion(RRFConfig(k=cfg.rrf_k))
         else:
             self.rrf = None
-        
+
         # Hybrid RAG for context retrieval
         if cfg.enable_rag:
-            from .knowledge.rag_engine import RAGEngine, RAGConfig
+            from .knowledge.rag_engine import RAGConfig, RAGEngine
             self.rag = RAGEngine(RAGConfig())
         else:
             self.rag = None
-        
+
         # Query expansion with intelligent wordlist
         if cfg.enable_expansion:
             self.wordlist = IntelligentWordlistGenerator(WordlistConfig(
@@ -1404,7 +1406,7 @@ class EnhancedResearchOrchestrator(UniversalResearchOrchestrator):
             ))
         else:
             self.wordlist = None
-        
+
         # Behavior simulator for stealth operations
         if cfg.enable_stealth:
             self.behavior = BehaviorSimulator(SimulationConfig(
@@ -1412,25 +1414,25 @@ class EnhancedResearchOrchestrator(UniversalResearchOrchestrator):
             ))
         else:
             self.behavior = None
-    
+
     async def expand_research_query(
         self,
         query: str,
-        domain: Optional[str] = None
-    ) -> List[str]:
+        domain: str | None = None
+    ) -> list[str]:
         """
         Expand research query into multiple variations for broader coverage.
-        
+
         Uses the IntelligentWordlistGenerator to create domain-specific query
         variations that can improve search coverage and recall.
-        
+
         Args:
             query: Original research query
             domain: Domain context ('academic', 'medical', 'tech', 'legal')
-            
+
         Returns:
             List of query variations including the original query
-            
+
         Example:
             >>> variations = await orchestrator.expand_research_query(
             ...     "machine learning",
@@ -1440,9 +1442,9 @@ class EnhancedResearchOrchestrator(UniversalResearchOrchestrator):
         """
         if not self.enhanced_config.enable_expansion or self.wordlist is None:
             return [query]
-        
+
         variations = self.wordlist.generate(query)
-        
+
         # Add domain-specific variations
         if domain:
             domain_variations = []
@@ -1452,32 +1454,32 @@ class EnhancedResearchOrchestrator(UniversalResearchOrchestrator):
                     modifiers=['paper', 'research', 'study', 'review']
                 ))
             variations.extend(domain_variations)
-        
+
         # Remove duplicates and limit
         unique = list(dict.fromkeys(variations))
-        
+
         self._stats['queries_expanded'] += len(unique)
-        
+
         logger.info(f"Expanded query '{query}' into {len(unique)} variations")
         return unique[:self.enhanced_config.max_query_variations]
-    
+
     async def fuse_research_results(
         self,
-        source_results: Dict[str, List[Dict[str, Any]]]
-    ) -> List[SearchResult]:
+        source_results: dict[str, list[dict[str, Any]]]
+    ) -> list[SearchResult]:
         """
         Fuse results from multiple research sources using Reciprocal Rank Fusion.
-        
+
         RRF combines ranked results from different sources without requiring
         score normalization, producing a single unified ranking.
-        
+
         Args:
             source_results: Dict mapping source name to list of results.
                 Each result should have: title, content, url, score
-            
+
         Returns:
             Fused and ranked SearchResult objects
-            
+
         Example:
             >>> sources = {
             ...     'web': [{'title': '...', 'content': '...', 'url': '...', 'score': 0.9}],
@@ -1486,7 +1488,7 @@ class EnhancedResearchOrchestrator(UniversalResearchOrchestrator):
             >>> fused = await orchestrator.fuse_research_results(sources)
         """
         cfg = self.enhanced_config
-        
+
         if not cfg.enable_fusion or self.rrf is None:
             # Just flatten results without fusion
             all_results = []
@@ -1501,10 +1503,10 @@ class EnhancedResearchOrchestrator(UniversalResearchOrchestrator):
                         score=r.get('score', 0.0)
                     ))
             return all_results
-        
+
         # Convert to SearchResult objects
-        search_results: Dict[str, List[SearchResult]] = {}
-        
+        search_results: dict[str, list[SearchResult]] = {}
+
         for source, results in source_results.items():
             search_results[source] = []
             for i, r in enumerate(results):
@@ -1519,36 +1521,36 @@ class EnhancedResearchOrchestrator(UniversalResearchOrchestrator):
                     metadata=r.get('metadata', {})
                 )
                 search_results[source].append(result)
-        
+
         # Apply RRF
         fused = await self.rrf.fuse(search_results)
-        
+
         self._stats['sources_fused'] += len(source_results)
-        
+
         logger.info(
             f"Fused {len(source_results)} sources into {len(fused)} unique results"
         )
-        
+
         return fused
-    
+
     async def retrieve_research_context(
         self,
         query: str,
-        documents: List[Dict[str, Any]]
-    ) -> List[str]:
+        documents: list[dict[str, Any]]
+    ) -> list[str]:
         """
         Retrieve relevant context from research documents using Hybrid RAG.
-        
+
         Combines semantic search with keyword matching to find the most
         relevant text chunks from the provided documents.
-        
+
         Args:
             query: Research query for context retrieval
             documents: List of documents (dict with 'content' and optional 'metadata')
-            
+
         Returns:
             List of relevant text chunks ordered by relevance
-            
+
         Example:
             >>> docs = [
             ...     {'id': '1', 'content': 'Machine learning is...', 'metadata': {...}},
@@ -1560,11 +1562,11 @@ class EnhancedResearchOrchestrator(UniversalResearchOrchestrator):
             ... )
         """
         cfg = self.enhanced_config
-        
+
         if not cfg.enable_rag or self.rag is None:
             # Return first N documents as-is when RAG is disabled
             return [d.get('content', '') for d in documents[:cfg.rag_top_k]]
-        
+
         # Convert to Document objects
         docs = []
         for i, d in enumerate(documents):
@@ -1574,40 +1576,40 @@ class EnhancedResearchOrchestrator(UniversalResearchOrchestrator):
                 metadata=d.get('metadata', {})
             )
             docs.append(doc)
-        
+
         # Retrieve relevant chunks using hybrid retrieval
         results = await self.rag.hybrid_retrieve(query, docs, top_k=cfg.rag_top_k)
-        
+
         self._stats['documents_retrieved'] += len(results)
-        
+
         return [r.chunk_text for r in results]
-    
+
     async def stealth_research(
         self,
         query: str,
         url: str,
-        scrape_func: Optional[Callable] = None
-    ) -> Dict[str, Any]:
+        scrape_func: Callable | None = None
+    ) -> dict[str, Any]:
         """
         Perform stealth research on protected or academic sites.
-        
+
         Uses behavior simulation to mimic human browsing patterns,
         helping to avoid detection when accessing protected resources.
-        
+
         Args:
             query: Research query
             url: URL to scrape
             scrape_func: Optional async function to scrape with behavior simulation.
                 Should accept (url, behavior_simulator) arguments.
-            
+
         Returns:
             Dictionary with scraped content, behavior statistics, and success status
-            
+
         Example:
             >>> async def scrape(url, behavior):
             ...     # Custom scraping logic with behavior simulation
             ...     pass
-            >>> 
+            >>>
             >>> result = await orchestrator.stealth_research(
             ...     "research paper",
             ...     "https://example.com/paper",
@@ -1615,19 +1617,19 @@ class EnhancedResearchOrchestrator(UniversalResearchOrchestrator):
             ... )
         """
         cfg = self.enhanced_config
-        
+
         if not cfg.enable_stealth or self.behavior is None:
             logger.warning("Stealth mode disabled, falling back to normal research")
             return await self.research(query, domain="academic")
-        
+
         logger.info(f"Starting stealth research: {url}")
-        
+
         # Simulate human behavior before accessing
         behavior_stats = await self.behavior.simulate_page_visit(
             num_scrolls=random.randint(2, 5),
             read_time=random.uniform(10, 20)
         )
-        
+
         content = None
         if scrape_func:
             try:
@@ -1635,9 +1637,9 @@ class EnhancedResearchOrchestrator(UniversalResearchOrchestrator):
                 content = await scrape_func(url, self.behavior)
             except Exception as e:
                 logger.error(f"Stealth scrape failed: {e}")
-        
+
         self._stats['stealth_operations'] += 1
-        
+
         return {
             'query': query,
             'url': url,
@@ -1645,39 +1647,39 @@ class EnhancedResearchOrchestrator(UniversalResearchOrchestrator):
             'behavior_simulation': behavior_stats,
             'success': content is not None
         }
-    
+
     async def research(
         self,
         query: str,
-        search_func: Optional[Callable] = None,
-        domain: Optional[str] = None
-    ) -> Dict[str, Any]:
+        search_func: Callable | None = None,
+        domain: str | None = None
+    ) -> dict[str, Any]:
         """
         Execute enhanced research workflow with all available features.
-        
+
         This is the main research method that combines:
         1. Query expansion for broader coverage
         2. Multi-source search with result fusion
         3. Hybrid RAG for context retrieval
         4. Performance monitoring
-        
+
         Args:
             query: Research query
             search_func: Optional async function to perform search.
                 Should accept a query string and return results dict.
             domain: Domain context ('academic', 'medical', 'tech', 'legal')
-            
+
         Returns:
             Comprehensive research results including:
             - Original and expanded queries
             - Fused and ranked results
             - Relevant context chunks
             - Statistics about the research process
-            
+
         Example:
             >>> async def search(q):
             ...     return {'source': 'web', 'results': [...]}
-            >>> 
+            >>>
             >>> result = await orchestrator.research(
             ...     "machine learning in healthcare",
             ...     search_func=search,
@@ -1685,15 +1687,15 @@ class EnhancedResearchOrchestrator(UniversalResearchOrchestrator):
             ... )
         """
         logger.info(f"Starting enhanced research for: {query}")
-        
+
         start_time = self.performance_monitor.start_timer()
-        
+
         # 1. Expand query for broader coverage
         queries = await self.expand_research_query(query, domain)
-        
+
         # 2. Search using provided search function
-        all_results: Dict[str, List[Dict[str, Any]]] = {}
-        
+        all_results: dict[str, list[dict[str, Any]]] = {}
+
         if search_func:
             # Limit to top variations to avoid overwhelming the search function
             for q in queries[:3]:
@@ -1705,12 +1707,12 @@ class EnhancedResearchOrchestrator(UniversalResearchOrchestrator):
                     all_results[source].extend(results.get('results', []))
                 except Exception as e:
                     logger.warning(f"Search failed for '{q}': {e}")
-        
+
         # 3. Fuse results from multiple sources
         fused_results = []
         if all_results:
             fused_results = await self.fuse_research_results(all_results)
-        
+
         # 4. Retrieve context using Hybrid RAG
         context = []
         if fused_results:
@@ -1723,15 +1725,15 @@ class EnhancedResearchOrchestrator(UniversalResearchOrchestrator):
                 for r in fused_results[:20]  # Top 20 for context
             ]
             context = await self.retrieve_research_context(query, documents)
-        
+
         # Record performance
         perf_stats = self.performance_monitor.record(
             tokens=sum(len(r.content.split()) for r in fused_results[:10]),
             start_time=start_time,
         )
-        
+
         logger.info(f"Research completed in {perf_stats['duration']:.2f}s")
-        
+
         # 5. Compile final results
         return {
             'query': query,
@@ -1757,7 +1759,7 @@ class EnhancedResearchOrchestrator(UniversalResearchOrchestrator):
                 'tokens_processed': perf_stats.get('tokens', 0),
             }
         }
-    
+
     def create_research_workflow(
         self,
         query: str,
@@ -1765,22 +1767,22 @@ class EnhancedResearchOrchestrator(UniversalResearchOrchestrator):
     ) -> Workflow:
         """
         Vytvořit výzkumný workflow.
-        
+
         Args:
             query: Výzkumný dotaz
             mode: Režim výzkumu
-            
+
         Returns:
             Workflow definice
         """
         mode = mode or self.config.mode
-        
+
         workflow = Workflow(
             id=f"research_{hash(query) % 10000}",
             name=f"Research: {query[:50]}",
             context={"query": query, "mode": mode.value},
         )
-        
+
         # Task 1: Initial Search
         task_search = Task(
             id="search",
@@ -1789,7 +1791,7 @@ class EnhancedResearchOrchestrator(UniversalResearchOrchestrator):
             params={"query": query},
         )
         workflow.add_task(task_search)
-        
+
         # Task 2: OSINT Discovery (paralelní s archive check)
         task_osint = Task(
             id="osint",
@@ -1798,7 +1800,7 @@ class EnhancedResearchOrchestrator(UniversalResearchOrchestrator):
             params={"query": query},
         )
         workflow.add_task(task_osint)
-        
+
         # Task 3: Academic Search (závisí na search)
         task_academic = Task(
             id="academic",
@@ -1808,7 +1810,7 @@ class EnhancedResearchOrchestrator(UniversalResearchOrchestrator):
             dependencies=["search"],
         )
         workflow.add_task(task_academic)
-        
+
         # Task 4: Deep Read (závisí na OSINT)
         task_deep_read = Task(
             id="deep_read",
@@ -1819,7 +1821,7 @@ class EnhancedResearchOrchestrator(UniversalResearchOrchestrator):
             max_retries=2,
         )
         workflow.add_task(task_deep_read)
-        
+
         # Task 5: Fact Check (závisí na academic a deep_read)
         task_fact_check = Task(
             id="fact_check",
@@ -1829,7 +1831,7 @@ class EnhancedResearchOrchestrator(UniversalResearchOrchestrator):
             dependencies=["academic", "deep_read"],
         )
         workflow.add_task(task_fact_check)
-        
+
         # Task 6: Synthesis (závisí na všem)
         task_synthesis = Task(
             id="synthesis",
@@ -1839,9 +1841,9 @@ class EnhancedResearchOrchestrator(UniversalResearchOrchestrator):
             dependencies=["fact_check"],
         )
         workflow.add_task(task_synthesis)
-        
+
         return workflow
-    
+
     async def execute_workflow(
         self,
         workflow: Workflow,
@@ -1849,18 +1851,18 @@ class EnhancedResearchOrchestrator(UniversalResearchOrchestrator):
     ) -> ResearchResult:
         """
         Vykonat workflow s prediktivním plánováním.
-        
+
         Args:
             workflow: Workflow k vykonání
             use_predictions: Použít prediktivní plánování
-            
+
         Returns:
             Výsledek výzkumu
         """
         logger.info(f"Executing workflow: {workflow.name}")
-        
+
         start_time = self.performance_monitor.start_timer()
-        
+
         if use_predictions:
             # Prediktivní vykonávání
             result = await self._execute_with_prediction(workflow)
@@ -1868,55 +1870,55 @@ class EnhancedResearchOrchestrator(UniversalResearchOrchestrator):
             # Standardní vykonávání
             results = await self.workflow_engine.execute(workflow)
             result = self._compile_results(workflow, results)
-        
+
         # Zaznamenat výkon
         perf_stats = self.performance_monitor.record(
             tokens=len(result.final_answer.split()),
             start_time=start_time,
         )
-        
+
         logger.info(f"Workflow completed in {perf_stats['duration']:.2f}s")
         logger.info(f"Speedup: {perf_stats.get('speedup', 0):.1f}×")
-        
+
         return result
-    
+
     async def _execute_with_prediction(self, workflow: Workflow) -> ResearchResult:
         """Vykonat s prediktivním plánováním"""
-        
+
         async def planner(ctx):
             # Jednoduchý plán z workflow
             return [
                 {"action": task.id, "params": task.params}
                 for task in workflow.tasks.values()
             ]
-        
+
         async def executor(action, params, ctx):
             # Vykonat úkol
             if action in workflow.tasks:
                 task = workflow.tasks[action]
                 return await task.execute(ctx)
             return None
-        
+
         # Prediktivní plánování
         predictive_result = await self.predictive_planner.plan_with_prediction(
             planner_func=planner,
             executor_func=executor,
             context=workflow.context,
         )
-        
+
         # Zkompilovat výsledky
         return self._compile_results(workflow, predictive_result.get("results", {}))
-    
+
     def _compile_results(
         self,
         workflow: Workflow,
-        results: Dict[str, Any]
+        results: dict[str, Any]
     ) -> ResearchResult:
         """Zkompilovat výsledky do ResearchResult"""
-        
+
         # Získat syntézu
         synthesis = results.get("synthesis", "")
-        
+
         # Získat zdroje
         sources = []
         for task_id, result in results.items():
@@ -1926,7 +1928,7 @@ class EnhancedResearchOrchestrator(UniversalResearchOrchestrator):
                     "title": result.get("title", ""),
                     "type": task_id,
                 })
-        
+
         return ResearchResult(
             success=True,
             query=workflow.context.get("query", ""),
@@ -1943,7 +1945,7 @@ class EnhancedResearchOrchestrator(UniversalResearchOrchestrator):
                 ),
             },
         )
-    
+
     # Task implementace
     async def _task_search(self, query: str, context: Dict) -> Dict:
         """Task: Initial Search using query expansion and RAG"""
@@ -2073,7 +2075,7 @@ class EnhancedResearchOrchestrator(UniversalResearchOrchestrator):
             "count": len(papers),
         }
 
-    async def _task_deep_read(self, urls: List[str], context: Dict) -> Dict:
+    async def _task_deep_read(self, urls: list[str], context: Dict) -> Dict:
         """Task: Deep Read using RAG and content extraction"""
         logger.info(f"Task: Deep read {len(urls)} URLs")
 
@@ -2224,18 +2226,18 @@ class EnhancedResearchOrchestrator(UniversalResearchOrchestrator):
                     title = result.get('title', result.get('url', 'Untitled'))
                     parts.append(f"{i}. {title}\n")
         return "".join(parts)
-    
-    def get_performance_stats(self) -> Dict[str, Any]:
+
+    def get_performance_stats(self) -> dict[str, Any]:
         """Získat statistiky výkonu"""
         return {
             "performance": self.performance_monitor.get_stats(),
             "predictions": self.predictive_planner.get_stats(),
         }
-    
-    def get_enhanced_statistics(self) -> Dict[str, Any]:
+
+    def get_enhanced_statistics(self) -> dict[str, Any]:
         """
         Get comprehensive statistics for all enhanced research features.
-        
+
         Returns:
             Dictionary with statistics for query expansion, result fusion,
             RAG retrieval, and stealth operations.
@@ -2256,10 +2258,10 @@ class EnhancedResearchOrchestrator(UniversalResearchOrchestrator):
 # Convenience function for quick enhanced research
 async def enhanced_research(
     query: str,
-    search_func: Optional[Callable] = None,
+    search_func: Callable | None = None,
     domain: str = 'academic',
-    config: Optional[EnhancedResearchConfig] = None
-) -> Dict[str, Any]:
+    config: EnhancedResearchConfig | None = None
+) -> dict[str, Any]:
     """
     Convenience helper — NON-CANONICAL, backward-compat only.
 
@@ -2381,13 +2383,13 @@ class SourcePlan:
         conditions: Runtime conditions that trigger inclusion
         excluded: SourceFamily values explicitly excluded and why
     """
-    families: Tuple[SourceFamily, ...]
-    engines: Tuple[str, ...]
+    families: tuple[SourceFamily, ...]
+    engines: tuple[str, ...]
     reasoning: str
-    conditions: Tuple[str, ...]
-    excluded: Tuple[SourceFamily, ...] = field(default_factory=())
+    conditions: tuple[str, ...]
+    excluded: tuple[SourceFamily, ...] = field(default_factory=())
 
-    def to_display_dict(self) -> Dict[str, Any]:
+    def to_display_dict(self) -> dict[str, Any]:
         """Human-readable dict for debugging/logging."""
         return {
             'families': [f.value for f in self.families],
@@ -2401,7 +2403,7 @@ class SourcePlan:
 def _build_source_plan(
     query_type: QueryType,
     depth: ResearchDepth,
-    config: Optional[UnifiedResearchConfig] = None,
+    config: UnifiedResearchConfig | None = None,
 ) -> SourcePlan:
     """
     Build deterministic source plan for query_type + depth combination.
@@ -2464,8 +2466,8 @@ def _build_source_plan(
 
     families = list(base_families)
     engines = list(base_engines)
-    excluded: List[SourceFamily] = []
-    conditions: List[str] = [f'depth={depth.name}']
+    excluded: list[SourceFamily] = []
+    conditions: list[str] = [f'depth={depth.name}']
 
     # Query-type specific routing
     if query_type == QueryType.ACADEMIC:
@@ -2563,14 +2565,14 @@ class DeepResearchRequest:
     """
     query: str
     depth: ResearchDepth = ResearchDepth.ADVANCED
-    query_type: Optional[QueryType] = None
+    query_type: QueryType | None = None
     max_results: int = 50
     # Minimal grounding hints — internal, read-only.
     # Carries topic/domain hints for future retrieval alignment.
     # NOT a correlation field; correlation via seam parameter.
-    grounding_hints: Optional[Dict[str, List[str]]] = None
+    grounding_hints: dict[str, list[str]] | None = None
 
-    def to_engine_kwargs(self) -> Dict[str, Any]:
+    def to_engine_kwargs(self) -> dict[str, Any]:
         """Convert to UnifiedResearchEngine.deep_research() kwargs."""
         kwargs = {
             'query': self.query,
@@ -2608,15 +2610,15 @@ class DeepResearchResponse:
     Canonical ProviderRequest/ProviderResult z types.py bude použito
     AŽ PO napojení na triádu a session seams.
     """
-    findings: List[ResearchFinding]
-    fused_results: List[Dict[str, Any]]
+    findings: list[ResearchFinding]
+    fused_results: list[dict[str, Any]]
     confidence_score: float
     execution_time_seconds: float
-    sources_used: List[str]
-    tools_executed: List[str]
+    sources_used: list[str]
+    tools_executed: list[str]
 
     @classmethod
-    def from_unified_result(cls, result: UnifiedResearchResult) -> "DeepResearchResponse":
+    def from_unified_result(cls, result: UnifiedResearchResult) -> DeepResearchResponse:
         """Create from UnifiedResearchResult."""
         return cls(
             findings=result.findings,
@@ -2693,13 +2695,13 @@ class DeepResearchGroundingShim:
     Shrink wrap: This is intentionally minimal. Do NOT expand unless
     activation blockers are resolved.
     """
-    topic_hints: List[str] = field(default_factory=list)
-    domain_tags: List[str] = field(default_factory=list)
-    correlation: Optional[RunCorrelation] = None
+    topic_hints: list[str] = field(default_factory=list)
+    domain_tags: list[str] = field(default_factory=list)
+    correlation: RunCorrelation | None = None
     # Session context hints (read-only, optional, no side effects)
-    budget_hints: Optional[_BudgetHints] = None
-    evidence_hints: Optional[_EvidenceHints] = None
-    policy_flags: Optional[_PolicyFlags] = None
+    budget_hints: _BudgetHints | None = None
+    evidence_hints: _EvidenceHints | None = None
+    policy_flags: _PolicyFlags | None = None
 
     def is_empty(self) -> bool:
         """Returns True if no grounding metadata is set."""
@@ -2712,7 +2714,7 @@ class DeepResearchGroundingShim:
             and self.policy_flags is None
         )
 
-    def merge(self, other: "DeepResearchGroundingShim") -> "DeepResearchGroundingShim":
+    def merge(self, other: DeepResearchGroundingShim) -> DeepResearchGroundingShim:
         """Merge another shim into this one (deduplicates + concatenates)."""
         return DeepResearchGroundingShim(
             topic_hints=list(set(self.topic_hints + other.topic_hints)),
@@ -2726,7 +2728,7 @@ class DeepResearchGroundingShim:
 
 async def deep_research_provider_seam(
     request: DeepResearchRequest,
-    grounding: Optional[DeepResearchGroundingShim] = None,
+    grounding: DeepResearchGroundingShim | None = None,
 ) -> DeepResearchResponse:
     """
     Úzký provider seam pro deep research.
@@ -2825,7 +2827,7 @@ class TriadAdmissionDescriptor:
     # Admission blockers (what must be resolved before F11 activation)
     # REASON: Blockers declare existence status, not just TBD.
     # "exists, not wired" = component exists but DeepResearch is not connected.
-    blockers: Tuple[str, ...] = (
+    blockers: tuple[str, ...] = (
         "Session seams (BudgetManager, EvidenceLog): exists, not wired to DeepResearch",
         "Security gate (PII gate): exists, not wired to DeepResearch",
         "Minimal grounding seam (ProviderRequest/ProviderResult): exists, not wired to DeepResearch",
@@ -2908,13 +2910,13 @@ class LocalCorpusConsumerDescriptor:
     is_not_search_plane_owner: bool = True
 
     # What the consumer wants from local corpus
-    would_query_for_depths: Tuple[str, ...] = (
+    would_query_for_depths: tuple[str, ...] = (
         "BASIC",    # Light corpus touch for factual queries
         "ADVANCED", # Deeper corpus for investigative queries
         "EXHAUSTIVE",  # Full corpus sweep for exhaustive research
     )
 
-    would_query_for_query_types: Tuple[str, ...] = (
+    would_query_for_query_types: tuple[str, ...] = (
         "GENERAL",      # Factual lookup with local grounding
         "ACADEMIC",     # Literature comparison with corpus
         "PERSON",       # Entity-centric with local context
@@ -2922,7 +2924,7 @@ class LocalCorpusConsumerDescriptor:
     )
 
     # What conditions trigger consumer interest
-    conditions_for_consumption: Tuple[str, ...] = (
+    conditions_for_consumption: tuple[str, ...] = (
         "local_corpus_plane_exists=True",       # Search plane is initialized
         "corpus_populated=True",                # At least one document ingested
         "query_has_local_context=True",         # Query benefits from local grounding
@@ -2931,7 +2933,7 @@ class LocalCorpusConsumerDescriptor:
     )
 
     # What blocks wiring (pre-F11 activation)
-    blockers: Tuple[str, ...] = (
+    blockers: tuple[str, ...] = (
         "LocalSearchSeam ingestion plane: exists, not yet connected to DeepResearch",
         "Corpus population: documents need to be ingested first",
         "BudgetManager seam: exists, no consumer-side budget tracking for corpus queries",

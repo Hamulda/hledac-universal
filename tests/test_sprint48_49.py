@@ -6,12 +6,11 @@ Tests all invariants from Sprint 48 and Sprint 49 implementation.
 import asyncio
 import inspect
 import os
+import sys
 import tempfile
 import unittest
-from collections import deque
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import sys
 sys.path.insert(0, '/Users/vojtechhamada/PycharmProjects/Hledac')
 
 
@@ -105,6 +104,7 @@ class TestSprint48(unittest.IsolatedAsyncioTestCase):
         """S48-P8: Použití orjson pro rychlejší serializaci v LMDB"""
         try:
             import orjson
+
             # If orjson is available, SessionManager should use it
             from hledac.universal.tools.session_manager import USE_ORJSON
             self.assertTrue(USE_ORJSON)
@@ -118,8 +118,8 @@ class TestSprint49(unittest.IsolatedAsyncioTestCase):
     # S49-B: LMDB operations async via executor
     async def test_lmdb_async_no_block(self):
         """S49-B: Všechny LMDB operace async přes executor"""
-        from hledac.universal.tools.session_manager import SessionManager
         import lmdb
+        from hledac.universal.tools.session_manager import SessionManager
 
         with tempfile.TemporaryDirectory() as tmpdir:
             env = lmdb.Environment(os.path.join(tmpdir, "test.lmdb"), map_size=10*1024*1024)
@@ -127,7 +127,7 @@ class TestSprint49(unittest.IsolatedAsyncioTestCase):
 
             # Test async get_session
             start = asyncio.get_event_loop().time()
-            result = await mgr.get_session("test.com")
+            await mgr.get_session("test.com")
             elapsed = asyncio.get_event_loop().time() - start
 
             # Should be non-blocking (async)
@@ -203,7 +203,7 @@ class TestSprint49(unittest.IsolatedAsyncioTestCase):
     # S49-C: Flag manipulated image updates credibility
     async def test_manipulation_reduces_credibility(self):
         """S49-C: Snížení credibility při vysokém ELA skóre"""
-        from hledac.universal.intelligence.relationship_discovery import RelationshipDiscoveryEngine, Entity, EntityType
+        from hledac.universal.intelligence.relationship_discovery import Entity, EntityType, RelationshipDiscoveryEngine
 
         engine = RelationshipDiscoveryEngine()
 

@@ -3,13 +3,10 @@ Sprint 54 tests – Global priority queue, zero-copy Arrow, MLX Holt,
 HNSW fallback, predictive allocator, emergency brake.
 """
 
-import asyncio
-import sys
-import time
-import unittest
-from unittest.mock import AsyncMock, MagicMock, patch
 import os
-import psutil
+import sys
+import unittest
+from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, '/Users/vojtechhamada/PycharmProjects/Hledac')
 
@@ -23,7 +20,7 @@ class TestTaskRegistry(unittest.IsolatedAsyncioTestCase):
 
     async def test_task_registry_exists(self):
         """Ověří, že registr úloh existuje."""
-        from hledac.universal.orchestrator.global_scheduler import _TASK_REGISTRY, register_task
+        from hledac.universal.orchestrator.global_scheduler import _TASK_REGISTRY
         self.assertIsInstance(_TASK_REGISTRY, dict)
 
     async def test_register_task(self):
@@ -198,7 +195,7 @@ class TestArrowSharedMemory(unittest.IsolatedAsyncioTestCase):
         data = {"key": "value", "number": 42, "list": [1, 2, 3]}
 
         with ArrowSharedMemory("test_shm") as shm:
-            size = shm.serialize(data)
+            shm.serialize(data)
             loaded = shm.deserialize()
 
         self.assertEqual(loaded["key"], "value")
@@ -283,7 +280,7 @@ class TestResourceAllocator(unittest.IsolatedAsyncioTestCase):
             alloc.active_requests["test2"] = req2
 
             # Emergency brake should cancel the highest priority number (3), keep lowest (1)
-            result = alloc.emergency_brake()
+            alloc.emergency_brake()
 
             # test1 (priority 3) should be cancelled, test2 (priority 1) kept
             self.assertIn("test2", alloc.active_requests)
@@ -342,8 +339,8 @@ class TestHNSWFallback(unittest.IsolatedAsyncioTestCase):
 
     async def test_find_similar_vectors_small_graph(self):
         """Pro malé grafy (<100 uzlů) se použije lineární vyhledávání."""
+
         from hledac.universal.knowledge.persistent_layer import PersistentKnowledgeLayer
-        from pathlib import Path
 
         # Create a minimal mock
         layer = PersistentKnowledgeLayer.__new__(PersistentKnowledgeLayer)

@@ -17,8 +17,9 @@ from __future__ import annotations
 import heapq
 import math
 from collections import deque
+from collections.abc import Iterable
 from dataclasses import dataclass, field
-from typing import Any, Iterable
+from typing import Any
 
 # No numpy, no pandas, no mlx — pure Python only
 
@@ -189,7 +190,7 @@ class TemporalSignalLayer:
         self._lru_order.append(key)
 
         family = event.family
-        weight = event.weight * state.confirmation_weight
+        event.weight * state.confirmation_weight
 
         event_count = state.event_count + 1
         reason = ""
@@ -477,7 +478,7 @@ class TemporalSignalLayer:
         }
 
     @classmethod
-    def from_snapshot(cls, snapshot: dict[str, Any]) -> "TemporalSignalLayer":
+    def from_snapshot(cls, snapshot: dict[str, Any]) -> TemporalSignalLayer:
         layer = cls(
             max_keys=snapshot.get("max_keys", DEFAULT_MAX_KEYS),
             ring_size=snapshot.get("ring_size", DEFAULT_RING_SIZE),
@@ -603,7 +604,7 @@ class TemporalSignalLayer:
         if source_synchrony_score > 0.4:
             recent_keys = set()
             window_start = ts - self._synchrony_window_s
-            for w_ts, src, keys in self._sync_window:
+            for w_ts, _src, keys in self._sync_window:
                 if w_ts >= window_start:
                     recent_keys |= keys
             if len(recent_keys) >= 2:

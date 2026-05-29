@@ -2,9 +2,9 @@
 Testy pro Sprint 68 - Decision Logic
 """
 
+from collections import OrderedDict, deque
+
 import pytest
-from collections import deque, OrderedDict
-from unittest.mock import AsyncMock, MagicMock, patch
 
 
 def test_decision_logic_contradiction_priority():
@@ -148,7 +148,6 @@ def test_novelty_score_calculation():
 
 def test_cooldown_skip_action():
     """Test že akce v cooldownu je přeskočena."""
-    from collections import OrderedDict
     from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
 
     orch = FullyAutonomousOrchestrator.__new__(FullyAutonomousOrchestrator)

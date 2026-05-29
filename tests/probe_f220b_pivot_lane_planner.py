@@ -13,18 +13,16 @@ Tests:
 """
 
 import sys
-from pathlib import Path
 
 # Ensure the package root is on the path (same pattern as existing probe tests)
 sys.path.insert(0, "hledac/universal")
 
 from dataclasses import dataclass as _dataclass
-from pipeline.pivot_lane_planner import (
-    plan_lanes_for_pivot_seeds,
-    PivotLanePlan,
-    LanePlanItem,
-)
 
+from pipeline.pivot_lane_planner import (
+    PivotLanePlan,
+    plan_lanes_for_pivot_seeds,
+)
 
 # ----------------------------------------------------------------------
 # Test helpers
@@ -230,6 +228,7 @@ def test_dedupe_different_domains():
 
 def test_no_heavy_imports():
     import importlib
+
     import pipeline.pivot_lane_planner as m
 
     # Should import without hitting network, LMDB, MLX, etc.

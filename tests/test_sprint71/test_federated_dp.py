@@ -2,7 +2,6 @@
 Test Federated DP - Sprint 71
 """
 import unittest
-from unittest.mock import patch, MagicMock
 
 
 class TestFederatedDP(unittest.TestCase):
@@ -12,8 +11,6 @@ class TestFederatedDP(unittest.TestCase):
         """Test that federated modules can be imported."""
         # This test verifies the imports work
         try:
-            import logging
-            from unittest.mock import patch
             # Basic imports work
             self.assertTrue(True)
         except Exception as e:

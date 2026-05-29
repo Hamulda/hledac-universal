@@ -1,14 +1,12 @@
 from __future__ import annotations
 
-import asyncio
 import logging
-import time
-import numpy as np
-from typing import Dict, Optional, Tuple
 from enum import Enum
 
-from hledac.universal.core.resource_governor import ResourceGovernor, Priority
-from transport.transport_resolver import Transport, TransportResolver, TransportContext
+import numpy as np
+from hledac.universal.core.resource_governor import ResourceGovernor
+
+from transport.transport_resolver import Transport
 
 logger = logging.getLogger(__name__)
 
@@ -73,7 +71,7 @@ class NymPolicy:
         self.bandit_tor = LinUCBArm(dim=4, alpha=alpha)
         self.bandit_nym = LinUCBArm(dim=4, alpha=alpha)
 
-        self._last_context: Dict[str, Tuple[str, np.ndarray]] = {}
+        self._last_context: dict[str, tuple[str, np.ndarray]] = {}
 
         self.tor_latency = 1.0
         self.nym_latency = 2.0
@@ -90,7 +88,7 @@ class NymPolicy:
 
     async def select_transport(self, risk_level: RiskLevel, time_budget: float,
                                sensitivity: float, need_cover_traffic: bool = False,
-                               request_id: Optional[str] = None) -> Tuple[Transport, Dict]:
+                               request_id: str | None = None) -> tuple[Transport, dict]:
         if risk_level == RiskLevel.CRITICAL and time_budget > 30:
             transport = self.nym
             params = {'cover_traffic': need_cover_traffic}

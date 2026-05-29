@@ -24,9 +24,9 @@ import re
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 import xxhash
 
@@ -134,7 +134,7 @@ class IOCGraph:
     - NOT analytics backend — DuckPGQGraph serves that role.
     """
 
-    def __init__(self, db_path: Optional[Path] = None) -> None:
+    def __init__(self, db_path: Path | None = None) -> None:
         if not _KUZU_AVAILABLE:
             raise GraphBackendUnavailable(
                 "kuzu is not installed. Install via: pip install hledac-universal[kuzu-graph]"
@@ -143,8 +143,8 @@ class IOCGraph:
             _KUZU_DB_ROOT.mkdir(parents=True, exist_ok=True)
             db_path = _KUZU_DB_ROOT / _IOC_GRAPH_FILENAME
         self._db_path: Path = Path(db_path)
-        self._db: Optional[Any] = None
-        self._conn: Optional[Any] = None
+        self._db: Any | None = None
+        self._conn: Any | None = None
         self._executor: ThreadPoolExecutor = _DB_EXECUTOR
         self._closed: bool = False
 
@@ -326,7 +326,7 @@ class IOCGraph:
         ioc_type: str,
         value: str,
         confidence: float = 1.0,
-    ) -> Optional[str]:
+    ) -> str | None:
         """
         Idempotent upsert of an IOC node.
 
@@ -509,7 +509,7 @@ class IOCGraph:
         conn = self._conn
         assert conn is not None
         created: list[str] = []
-        for node_id, (ioc_type, value, confidence) in zip(node_ids, iocs):
+        for node_id, (ioc_type, value, confidence) in zip(node_ids, iocs, strict=False):
             res = conn.execute(
                 "MATCH (n:IOC) WHERE n.id = $id RETURN n.first_seen",
                 {"id": node_id},
@@ -648,7 +648,7 @@ class IOCGraph:
             row = res.get_next()
             # row is a list of column values
             col_names = res.get_column_names()
-            node_data: dict[str, Any] = dict(zip(col_names, row))
+            node_data: dict[str, Any] = dict(zip(col_names, row, strict=False))
             nid = node_data.get("id", "")
             if nid and nid not in seen_ids:
                 seen_ids.add(nid)
@@ -737,7 +737,7 @@ class IOCGraph:
                 node_id, ioc_type, value, confidence, first_seen = (
                     row[0], row[1], row[2], row[3], row[4]
                 )
-                valid_from = datetime.fromtimestamp(first_seen or 0, tz=timezone.utc)
+                valid_from = datetime.fromtimestamp(first_seen or 0, tz=UTC)
                 conf = int((confidence or 1.0) * 100)
 
                 try:

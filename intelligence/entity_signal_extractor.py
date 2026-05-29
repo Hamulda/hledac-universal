@@ -25,7 +25,7 @@ import logging
 import re
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Set
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -83,15 +83,15 @@ class EntitySignalProfile:
     """
     id: str
     primary_name: str          # extracted from payload or finding_id
-    emails: List[str] = field(default_factory=list)
-    usernames: List[str] = field(default_factory=list)
-    domain_handles: List[str] = field(default_factory=list)
-    platforms: Set[str] = field(default_factory=set)
-    finding_ids: List[str] = field(default_factory=list)   # source findings
+    emails: list[str] = field(default_factory=list)
+    usernames: list[str] = field(default_factory=list)
+    domain_handles: list[str] = field(default_factory=list)
+    platforms: set[str] = field(default_factory=set)
+    finding_ids: list[str] = field(default_factory=list)   # source findings
     confidence: float = 0.5
     created_at: datetime = field(default_factory=datetime.now)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "id": self.id,
             "primary_name": self.primary_name,
@@ -128,7 +128,7 @@ def _extract_platform_from_finding(finding: Any) -> str:
     return src
 
 
-def _extract_domain_from_payload(payload_text: Optional[str]) -> Optional[str]:
+def _extract_domain_from_payload(payload_text: str | None) -> str | None:
     """Extract a domain from payload text (URL host)."""
     if not payload_text:
         return None
@@ -138,7 +138,7 @@ def _extract_domain_from_payload(payload_text: Optional[str]) -> Optional[str]:
 
 # ── Extraction ────────────────────────────────────────────────────────────────
 
-def extract_entities_from_finding(finding: Any) -> List[ExtractedEntity]:
+def extract_entities_from_finding(finding: Any) -> list[ExtractedEntity]:
     """
     Extract all entity signals from a single CanonicalFinding.
 
@@ -148,7 +148,7 @@ def extract_entities_from_finding(finding: Any) -> List[ExtractedEntity]:
     Returns:
         List of ExtractedEntity objects
     """
-    entities: List[ExtractedEntity] = []
+    entities: list[ExtractedEntity] = []
     fid = getattr(finding, 'finding_id', None)
     if not fid:
         return entities
@@ -184,7 +184,7 @@ def extract_entities_from_finding(finding: Any) -> List[ExtractedEntity]:
             ))
 
     # 3. Username handles (bare @username)
-    seen_usernames: Set[str] = set()
+    seen_usernames: set[str] = set()
     for match in _HANDLE_RE.finditer(payload):
         raw = match.group(1)
         if len(raw) >= 2 and raw.lower() not in seen_usernames:
@@ -220,9 +220,9 @@ def extract_entities_from_finding(finding: Any) -> List[ExtractedEntity]:
 
 
 def extract_entities_from_findings(
-    findings: List[Any],
+    findings: list[Any],
     max_profiles: int = MAX_PROFILES,
-) -> List[EntitySignalProfile]:
+) -> list[EntitySignalProfile]:
     """
     Extract entity signals from a batch of CanonicalFinding objects.
 
@@ -240,7 +240,7 @@ def extract_entities_from_findings(
         List of EntitySignalProfile objects, bounded to max_profiles
     """
     # Group entities by normalized email or value
-    profile_map: Dict[str, EntitySignalProfile] = {}
+    profile_map: dict[str, EntitySignalProfile] = {}
 
     for finding in findings:
         entities = extract_entities_from_finding(finding)
@@ -310,7 +310,7 @@ def reset_extractor_stats() -> None:
     _extracted_entities_total = 0
 
 
-def get_extractor_stats() -> Dict[str, int]:
+def get_extractor_stats() -> dict[str, int]:
     """Return extractor statistics."""
     return {
         "profiles_extracted": _extracted_profiles_total,

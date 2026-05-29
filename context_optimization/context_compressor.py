@@ -13,14 +13,13 @@ and minimal memory footprint (~50MB vs ~420MB for PyTorch).
 
 import asyncio
 import hashlib
-import json
 import logging
 import re
 import time
 from dataclasses import asdict, dataclass, is_dataclass
 from enum import Enum
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union
+from typing import Any
 
 try:
     import orjson
@@ -83,7 +82,7 @@ def _list_to_ndarray(obj: Any) -> Any:
     return obj
 
 
-def _serialize_compressed(data: Dict[str, CompressedContext]) -> bytes:
+def _serialize_compressed(data: dict[str, CompressedContext]) -> bytes:
     """Serialize compressed context data to bytes using orjson."""
     serializable = {}
     for k, v in data.items():
@@ -108,7 +107,7 @@ def _serialize_compressed(data: Dict[str, CompressedContext]) -> bytes:
     return _json.dumps(serializable).encode()
 
 
-def _deserialize_compressed(data: bytes) -> Dict[str, CompressedContext]:
+def _deserialize_compressed(data: bytes) -> dict[str, CompressedContext]:
     """Deserialize compressed context data from bytes using orjson."""
     if ORJSON_AVAILABLE:
         raw = orjson.loads(data)
@@ -153,11 +152,11 @@ class CompressedContext:
     important_summary: str
     abstract_summary: str
     full_compressed: bytes
-    metadata: Dict[str, Any]
+    metadata: dict[str, Any]
     timestamp: float
-    embeddings: Optional[Dict[str, np.ndarray]] = None
-    sentence_scores: Optional[List[float]] = None
-    cluster_info: Optional[Dict[str, Any]] = None
+    embeddings: dict[str, np.ndarray] | None = None
+    sentence_scores: list[float] | None = None
+    cluster_info: dict[str, Any] | None = None
 
 
 @dataclass
@@ -173,11 +172,11 @@ class DecompressionResult:
 class ContextCompressor:
     """
     Context compressor with FastEmbed (ONNX) backend.
-    
+
     Model: BAAI/bge-small-en-v1.5 or snowflake/snowflake-arctic-embed-xs (~50-130MB)
     Backend: ONNX Runtime (quantized)
     Purpose: Multi-level context compression with semantic analysis
-    
+
     Advantages:
     - ~50MB vs ~420MB for PyTorch-based all-mpnet-base-v2
     - ONNX Runtime for M1 optimization
@@ -185,7 +184,7 @@ class ContextCompressor:
     - Low memory footprint (~100MB peak)
     - LZ4 compression for storage
     """
-    
+
     def __init__(
         self,
         embedding_model: str = "snowflake/snowflake-arctic-embed-xs",
@@ -196,7 +195,7 @@ class ContextCompressor:
     ):
         """
         Initialize context compressor.
-        
+
         Args:
             embedding_model: FastEmbed model name
             storage_path: Path for compressed storage
@@ -233,29 +232,29 @@ class ContextCompressor:
         else:
             logger.warning("FastEmbed not available, using dummy embeddings")
             self.embedding_dim = 384
-        
+
         # Storage
         self.storage_path = Path(storage_path)
         self.storage_path.mkdir(parents=True, exist_ok=True)
-        self.compressed_storage: Dict[str, CompressedContext] = {}
-        
+        self.compressed_storage: dict[str, CompressedContext] = {}
+
         # Configuration
         self.max_critical_tokens = max_critical_tokens
         self.max_important_tokens = max_important_tokens
         self.max_abstract_tokens = max_abstract_tokens
-        
+
         # Performance metrics
-        self.compression_stats: Dict[str, Any] = {
+        self.compression_stats: dict[str, Any] = {
             "total_compressed": 0,
             "total_original_tokens": 0,
             "total_compressed_tokens": 0,
             "compression_time": 0.0,
             "decompression_time": 0.0
         }
-        
+
         # Load existing compressed contexts
         self._load_compressed_storage()
-    
+
     def _initialize_embedder(self):
         """Initialize FastEmbed embedder with minimal memory usage."""
         try:
@@ -277,7 +276,7 @@ class ContextCompressor:
             self.embedding_dim = 384
             self._embedder_type = None
 
-    def _get_embeddings(self, texts: List[str]) -> List[np.ndarray]:
+    def _get_embeddings(self, texts: list[str]) -> list[np.ndarray]:
         """Get embeddings for texts (uses query task for retrieval/similarity)."""
         if self.embedder is None:
             return []
@@ -294,7 +293,7 @@ class ContextCompressor:
         except Exception as e:
             logger.warning(f"Embedding failed: {e}")
             return []
-    
+
     def _load_compressed_storage(self):
         """Load existing compressed contexts from disk."""
         try:
@@ -317,27 +316,27 @@ class ContextCompressor:
                 f.write(_serialize_compressed(self.compressed_storage))
         except Exception as e:
             logger.warning(f"Could not save compressed storage: {e}")
-    
+
     def _generate_context_id(self, content: str) -> str:
         """Generate unique ID for content."""
         return hashlib.md5(content.encode()).hexdigest()[:16]
-    
+
     def _estimate_tokens(self, text: str) -> int:
         """Estimate token count (approximate)."""
         return len(text) // 4
-    
-    def _split_sentences(self, text: str) -> List[str]:
+
+    def _split_sentences(self, text: str) -> list[str]:
         """Split text into sentences."""
         sentences = re.split(r'[.!?]+', text)
         return [s.strip() for s in sentences if s.strip()]
-    
-    def _chunk_text(self, text: str, chunk_size: int = 1024) -> List[str]:
+
+    def _chunk_text(self, text: str, chunk_size: int = 1024) -> list[str]:
         """Split text into chunks for processing."""
         words = text.split()
         chunks = []
         current_chunk = []
         current_length = 0
-        
+
         for word in words:
             if current_length + len(word) + 1 > chunk_size:
                 chunks.append(' '.join(current_chunk))
@@ -346,62 +345,62 @@ class ContextCompressor:
             else:
                 current_chunk.append(word)
                 current_length += len(word) + 1
-        
+
         if current_chunk:
             chunks.append(' '.join(current_chunk))
-        
+
         return chunks
-    
+
     async def compress_context(
         self,
         full_context: str,
-        metadata: Optional[Dict[str, Any]] = None
+        metadata: dict[str, Any] | None = None
     ) -> CompressedContext:
         """
         Compress context with multi-level compression.
-        
+
         Args:
             full_context: Full context to compress
             metadata: Optional metadata
-            
+
         Returns:
             CompressedContext object
         """
         start_time = time.time()
         if metadata is None:
             metadata = {}
-        
+
         # Generate context ID
         context_id = self._generate_context_id(full_context)
-        
+
         # Check if already compressed
         if context_id in self.compressed_storage:
             return self.compressed_storage[context_id]
-        
+
         original_tokens = self._estimate_tokens(full_context)
-        
+
         # Level 1: Extract critical information (verbatim)
         critical_content = self._extract_critical_content(
-            full_context, 
+            full_context,
             self.max_critical_tokens
         )
-        
+
         # Level 2: Summarize important information
         important_summary = self._create_summary(
-            full_context, 
+            full_context,
             self.max_important_tokens
         )
-        
+
         # Level 3: Create high-level abstract
         abstract_summary = self._create_abstract(
-            full_context, 
+            full_context,
             self.max_abstract_tokens
         )
-        
+
         # Compress full context with LZ4
         import lz4.frame
         full_compressed = lz4.frame.compress(full_context.encode('utf-8'))
-        
+
         # Calculate compression ratio
         compressed_tokens = (
             self._estimate_tokens(critical_content) +
@@ -409,7 +408,7 @@ class ContextCompressor:
             self._estimate_tokens(abstract_summary)
         )
         compression_ratio = compressed_tokens / max(original_tokens, 1)
-        
+
         # Create compressed context object
         compressed_ctx = CompressedContext(
             context_id=context_id,
@@ -423,61 +422,61 @@ class ContextCompressor:
             metadata=metadata,
             timestamp=time.time()
         )
-        
+
         # Store compressed context
         self.compressed_storage[context_id] = compressed_ctx
         self._save_compressed_storage()
-        
+
         # Update statistics
         compression_time = time.time() - start_time
         self.compression_stats["total_compressed"] += 1
         self.compression_stats["total_original_tokens"] += original_tokens
         self.compression_stats["total_compressed_tokens"] += compressed_tokens
         self.compression_stats["compression_time"] += compression_time
-        
+
         return compressed_ctx
-    
+
     def _extract_critical_content(
-        self, 
-        content: str, 
+        self,
+        content: str,
         max_tokens: int
     ) -> str:
         """Extract most critical sentences using embedding-based scoring."""
         sentences = self._split_sentences(content)
-        
+
         if not sentences:
             return ""
-        
+
         # Score sentences based on multiple factors
         scored_sentences = []
         for idx, sentence in enumerate(sentences):
             score = self._score_sentence(sentence, idx, len(sentences))
             scored_sentences.append((sentence, score))
-        
+
         # Sort by score and select top sentences
         scored_sentences.sort(key=lambda x: x[1], reverse=True)
-        
+
         selected_sentences = []
         current_tokens = 0
-        
+
         for sentence, score in scored_sentences:
             sentence_tokens = self._estimate_tokens(sentence)
             if current_tokens + sentence_tokens > max_tokens:
                 break
             selected_sentences.append(sentence)
             current_tokens += sentence_tokens
-        
+
         return ' '.join(selected_sentences)
-    
+
     def _score_sentence(
-        self, 
-        sentence: str, 
-        position: int, 
+        self,
+        sentence: str,
+        position: int,
         total_sentences: int
     ) -> float:
         """Score sentence based on multiple factors."""
         score = 0.0
-        
+
         # Length score (medium-length sentences often more informative)
         length = len(sentence.split())
         if 10 <= length <= 30:
@@ -486,7 +485,7 @@ class ContextCompressor:
             score += 0.2
         else:
             score += 0.1
-        
+
         # Position score (beginning and end often important)
         total_sentences = max(total_sentences - 1, 1)
         position_ratio = position / total_sentences
@@ -494,67 +493,67 @@ class ContextCompressor:
             score += 0.3
         elif position_ratio < 0.4 or position_ratio > 0.6:
             score += 0.2
-        
+
         # Keyword indicators
         sentence_lower = sentence.lower()
         if any(kw in sentence_lower for kw in ['important', 'critical', 'key', 'main', 'primary']):
             score += 0.1
-        
+
         # Numerical data presence (often important)
         if re.search(r'\d+', sentence):
             score += 0.1
-        
+
         # Question or citation presence
         if '?' in sentence or '"' in sentence:
             score += 0.1
-        
+
         return score
-    
+
     def _create_summary(
-        self, 
-        content: str, 
+        self,
+        content: str,
         max_tokens: int
     ) -> str:
         """Create summary of content."""
         # Split content into manageable chunks
         chunks = self._chunk_text(content, chunk_size=1024)
-        
+
         summaries = []
-        
+
         # Generate summary for each chunk
         for chunk in chunks:
             # Simple extractive summarization
             sentences = self._split_sentences(chunk)
             chunk_summary = sentences[:5]  # Top 5 sentences
             summaries.append(' '.join(chunk_summary))
-        
+
         # Combine summaries and ensure length constraint
         combined_summary = ' '.join(summaries)
-        
+
         # Truncate if still too long
         sentences = self._split_sentences(combined_summary)
         result_sentences = []
         current_tokens = 0
-        
+
         for sentence in sentences:
             tokens = self._estimate_tokens(sentence)
             if current_tokens + tokens > max_tokens:
                 break
             result_sentences.append(sentence)
             current_tokens += tokens
-        
+
         return ' '.join(result_sentences)
-    
+
     def _create_abstract(
-        self, 
-        content: str, 
+        self,
+        content: str,
         max_tokens: int
     ) -> str:
         """Create high-level abstract of content."""
         sentences = self._split_sentences(content)
         abstract_sentences = []
         current_tokens = 0
-        
+
         # Select sentences at strategic positions
         total_sentences = len(sentences)
         for idx, sentence in enumerate(sentences):
@@ -564,41 +563,41 @@ class ContextCompressor:
                 if current_tokens + tokens <= max_tokens:
                     abstract_sentences.append(sentence)
                     current_tokens += tokens
-        
+
         return ' '.join(abstract_sentences)
-    
+
     async def decompress_context(
         self,
         context_id: str,
-        detail_level: Optional[str] = None,
-        query: Optional[str] = None
+        detail_level: str | None = None,
+        query: str | None = None
     ) -> DecompressionResult:
         """
         Decompress context at specified detail level.
-        
+
         Args:
             context_id: ID of compressed context
             detail_level: Level of detail (critical, important, abstract, full)
             query: Optional query for relevance scoring
-            
+
         Returns:
             DecompressionResult object
         """
         start_time = time.time()
-        
+
         if context_id not in self.compressed_storage:
             raise ValueError(f"Context ID {context_id} not found")
-        
+
         compressed_ctx = self.compressed_storage[context_id]
-        
+
         # Determine detail level
         if detail_level is None:
             detail_level = self._determine_detail_level(query)
-        
+
         # Get content based on detail level
         content = ""
         source_level = None
-        
+
         if detail_level == "critical":
             content = compressed_ctx.critical_content
             source_level = CompressionLevel.CRITICAL
@@ -613,15 +612,15 @@ class ContextCompressor:
             import lz4.frame
             content = lz4.frame.decompress(compressed_ctx.full_compressed).decode('utf-8')
             source_level = None
-        
+
         # Calculate relevance score if query provided
         relevance_score = 0.0
         if query and self.embedder:
             relevance_score = await self._calculate_relevance(query, content)
-        
+
         decompression_time = time.time() - start_time
         self.compression_stats["decompression_time"] += decompression_time
-        
+
         return DecompressionResult(
             content=content,
             detail_level=detail_level,
@@ -629,52 +628,52 @@ class ContextCompressor:
             decompression_time=decompression_time,
             source_level=source_level
         )
-    
-    def _determine_detail_level(self, query: Optional[str]) -> str:
+
+    def _determine_detail_level(self, query: str | None) -> str:
         """Determine appropriate detail level based on query."""
         if query is None:
             return "important"
-        
+
         # Check if query needs specific details
         query_lower = query.lower()
-        
+
         detail_indicators = [
-            'detailed', 'specific', 'exact', 'verbatim', 
+            'detailed', 'specific', 'exact', 'verbatim',
             'quote', 'precise', 'comprehensive'
         ]
-        
+
         if any(indicator in query_lower for indicator in detail_indicators):
             return "important"
         else:
             return "abstract"
-    
+
     async def _calculate_relevance(self, query: str, content: str) -> float:
         """Calculate relevance score between query and content."""
         if not self.embedder:
             return 0.5
-        
+
         try:
             # Generate embeddings
             query_embeddings = self._get_embeddings([query])
             content_embeddings = self._get_embeddings([content])
-            
+
             if not query_embeddings or not content_embeddings:
                 return 0.5
-            
+
             query_embedding = np.array(query_embeddings[0])
             content_embedding = np.array(content_embeddings[0])
-            
+
             # Calculate cosine similarity
             similarity = float(np.dot(query_embedding, content_embedding) / (
                 np.linalg.norm(query_embedding) * np.linalg.norm(content_embedding)
             ))
-            
+
             return max(0.0, min(1.0, similarity))
         except Exception as e:
             logger.warning(f"Relevance calculation failed: {e}")
             return 0.5
-    
-    async def get_compression_stats(self) -> Dict[str, Any]:
+
+    async def get_compression_stats(self) -> dict[str, Any]:
         """Get compression performance statistics."""
         if self.compression_stats["total_compressed"] > 0:
             avg_compression = (
@@ -682,40 +681,40 @@ class ContextCompressor:
                 self.compression_stats["total_original_tokens"]
             )
             self.compression_stats["average_compression_ratio"] = avg_compression
-        
+
         return self.compression_stats.copy()
-    
+
     async def batch_compress(
         self,
-        contexts: List[str],
-        metadata_list: Optional[List[Dict[str, Any]]] = None
-    ) -> List[CompressedContext]:
+        contexts: list[str],
+        metadata_list: list[dict[str, Any]] | None = None
+    ) -> list[CompressedContext]:
         """Batch compress multiple contexts."""
         if metadata_list is None:
             metadata_list = [{} for _ in range(len(contexts))]
-        
+
         tasks = []
-        for context, metadata in zip(contexts, metadata_list):
+        for context, metadata in zip(contexts, metadata_list, strict=False):
             task = self.compress_context(context, metadata=metadata)
             tasks.append(task)
-        
+
         return await asyncio.gather(*tasks, return_exceptions=True)
-    
+
     async def batch_decompress(
         self,
-        context_ids: List[str],
-        detail_level: Optional[str] = None,
-        query: Optional[str] = None
-    ) -> List[DecompressionResult]:
+        context_ids: list[str],
+        detail_level: str | None = None,
+        query: str | None = None
+    ) -> list[DecompressionResult]:
         """Batch decompress multiple contexts."""
         tasks = []
         for context_id in context_ids:
             task = self.decompress_context(context_id, detail_level, query)
             tasks.append(task)
-        
+
         return await asyncio.gather(*tasks, return_exceptions=True)
-    
-    def list_compressed_contexts(self) -> List[Dict[str, Any]]:
+
+    def list_compressed_contexts(self) -> list[dict[str, Any]]:
         """List all compressed contexts with metadata."""
         contexts = []
         for ctx in self.compressed_storage.values():
@@ -728,23 +727,23 @@ class ContextCompressor:
                 "metadata": ctx.metadata
             })
         return contexts
-    
+
     def delete_compressed_context(self, context_id: str):
         """Delete a compressed context."""
         if context_id in self.compressed_storage:
             del self.compressed_storage[context_id]
             self._save_compressed_storage()
-    
+
     def clear_all(self):
         """Clear all compressed contexts."""
         self.compressed_storage.clear()
         self._save_compressed_storage()
-    
+
     @property
     def total_compressed(self) -> int:
         """Number of compressed contexts."""
         return len(self.compressed_storage)
-    
+
     def __repr__(self) -> str:
         """String representation."""
         return (f"ContextCompressor(compressed={self.total_compressed}, "

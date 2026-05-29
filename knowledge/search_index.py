@@ -5,7 +5,7 @@ import re
 from collections import defaultdict
 from dataclasses import dataclass, field
 from time import perf_counter
-from typing import Any, Optional
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -135,7 +135,7 @@ class BM25Index:
             return [(int(idx), float(scores[idx])) for idx in top_indices if scores[idx] > 0]
 
         # Pure Python fallback
-        doc_count = len(self._documents)
+        len(self._documents)
         scores: dict[int, float] = defaultdict(float)
 
         for token in query_tokens:
@@ -156,7 +156,7 @@ class MetadataStore:
     def __init__(self) -> None:
         self._data: dict[str, dict[str, Any]] = {}
 
-    def get(self, url: str) -> Optional[dict[str, Any]]:
+    def get(self, url: str) -> dict[str, Any] | None:
         """Get metadata for URL, returns None if not found."""
         return self._data.get(url)
 

@@ -24,10 +24,10 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from security.vault_manager import (
-    LootManager,
-    VaultManager,
     CRYPTO_AVAILABLE,
     PYZIPPER_AVAILABLE,
+    LootManager,
+    VaultManager,
 )
 
 

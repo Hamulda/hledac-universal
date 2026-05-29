@@ -11,10 +11,9 @@ Tests verify:
 6. targeted regression subset passes
 """
 
-import unittest
-import asyncio
-import sys
 import os
+import sys
+import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 
@@ -158,6 +157,7 @@ class TestSprint8ADAuditTables(unittest.TestCase):
     def test_preflight_enrichment_wiring_exists(self):
         """Enrichment wiring code must exist in autonomous_orchestrator.py."""
         import inspect
+
         from hledac.universal.autonomous_orchestrator import _ResearchManager
 
         # Verify execute_surface_search has enrichment code
@@ -177,6 +177,7 @@ class TestSprint8ADAuditTables(unittest.TestCase):
     def test_preflight_research_manager_initialization(self):
         """_ResearchManager.initialize() must set _dark_web."""
         import inspect
+
         from hledac.universal.autonomous_orchestrator import _ResearchManager
 
         source = inspect.getsource(_ResearchManager.initialize)

@@ -2,8 +2,9 @@
 Test graph_rag score_path - Sprint 67
 Tests for score_path method in GraphRAGOrchestrator.
 """
+from unittest.mock import MagicMock
+
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
 
 
 class TestGraphRAGScorePath:
@@ -115,7 +116,7 @@ class TestGetEmbedder:
         assert orchestrator._embedder_lock is None
 
         # After _get_embedder, should have lock
-        embedder = await orchestrator._get_embedder()
+        await orchestrator._get_embedder()
 
         # Lock should be created
         assert orchestrator._embedder_lock is not None

@@ -1,7 +1,6 @@
 """Tests for signpost profiler - mock ctypes and verify calls, timing statistics."""
+
 import pytest
-from unittest.mock import patch, MagicMock
-import sys
 
 
 class TestSignpostProfiler:

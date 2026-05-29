@@ -25,18 +25,16 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-import io
 import json
 import math
 import os
 import re
 import sqlite3
-import struct
 import zipfile
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any
 
 # Optional dependencies - imported lazily inside methods
 # PIL, pypdf, docx, mutagen, ffmpeg
@@ -122,11 +120,11 @@ class GPSCoordinates:
     """GPS coordinates with accuracy information."""
     latitude: float
     longitude: float
-    altitude: Optional[float] = None
-    accuracy: Optional[float] = None  # meters
-    timestamp: Optional[datetime] = None
+    altitude: float | None = None
+    accuracy: float | None = None  # meters
+    timestamp: datetime | None = None
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary."""
         return {
             "latitude": self.latitude,
@@ -145,7 +143,7 @@ class TimelineEvent:
     source: str  # exif, filesystem, xmp, etc.
     confidence: float = 1.0  # 0.0-1.0
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary."""
         return {
             "timestamp": self.timestamp.isoformat(),
@@ -158,15 +156,15 @@ class TimelineEvent:
 @dataclass
 class AttributionData:
     """Attribution data extracted from metadata."""
-    software: Optional[str] = None
-    device: Optional[str] = None  # Camera model, phone, etc.
-    device_serial: Optional[str] = None
-    author: Optional[str] = None
-    copyright: Optional[str] = None
-    organization: Optional[str] = None
-    version: Optional[str] = None  # Software version
+    software: str | None = None
+    device: str | None = None  # Camera model, phone, etc.
+    device_serial: str | None = None
+    author: str | None = None
+    copyright: str | None = None
+    organization: str | None = None
+    version: str | None = None  # Software version
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary."""
         return {
             "software": self.software,
@@ -184,11 +182,11 @@ class ScrubbingAnalysis:
     """Analysis of potential metadata scrubbing."""
     is_scrubbed: bool
     confidence: float  # 0.0-1.0
-    indicators: List[str] = field(default_factory=list)
-    missing_expected_fields: List[str] = field(default_factory=list)
-    suspicious_patterns: List[str] = field(default_factory=list)
+    indicators: list[str] = field(default_factory=list)
+    missing_expected_fields: list[str] = field(default_factory=list)
+    suspicious_patterns: list[str] = field(default_factory=list)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary."""
         return {
             "is_scrubbed": self.is_scrubbed,
@@ -202,25 +200,25 @@ class ScrubbingAnalysis:
 @dataclass
 class ImageMetadata:
     """Image-specific metadata."""
-    width: Optional[int] = None
-    height: Optional[int] = None
-    format: Optional[str] = None
-    mode: Optional[str] = None  # RGB, RGBA, etc.
-    exif: Dict[str, Any] = field(default_factory=dict)
-    gps: Optional[GPSCoordinates] = None
-    camera_make: Optional[str] = None
-    camera_model: Optional[str] = None
-    lens: Optional[str] = None
-    focal_length: Optional[float] = None
-    exposure_time: Optional[str] = None
-    f_number: Optional[float] = None
-    iso: Optional[int] = None
-    flash: Optional[bool] = None
-    orientation: Optional[int] = None
-    caption: Optional[str] = None  # MLX-VLM generated description
-    tags: List[str] = field(default_factory=list)  # MLX-VLM generated keywords
+    width: int | None = None
+    height: int | None = None
+    format: str | None = None
+    mode: str | None = None  # RGB, RGBA, etc.
+    exif: dict[str, Any] = field(default_factory=dict)
+    gps: GPSCoordinates | None = None
+    camera_make: str | None = None
+    camera_model: str | None = None
+    lens: str | None = None
+    focal_length: float | None = None
+    exposure_time: str | None = None
+    f_number: float | None = None
+    iso: int | None = None
+    flash: bool | None = None
+    orientation: int | None = None
+    caption: str | None = None  # MLX-VLM generated description
+    tags: list[str] = field(default_factory=list)  # MLX-VLM generated keywords
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary."""
         return {
             "width": self.width,
@@ -246,20 +244,20 @@ class ImageMetadata:
 @dataclass
 class PDFMetadata:
     """PDF document metadata."""
-    title: Optional[str] = None
-    author: Optional[str] = None
-    subject: Optional[str] = None
-    creator: Optional[str] = None
-    producer: Optional[str] = None
-    creation_date: Optional[datetime] = None
-    modification_date: Optional[datetime] = None
-    num_pages: Optional[int] = None
-    pdf_version: Optional[str] = None
+    title: str | None = None
+    author: str | None = None
+    subject: str | None = None
+    creator: str | None = None
+    producer: str | None = None
+    creation_date: datetime | None = None
+    modification_date: datetime | None = None
+    num_pages: int | None = None
+    pdf_version: str | None = None
     is_encrypted: bool = False
-    permissions: Dict[str, bool] = field(default_factory=dict)
-    embedded_files: List[str] = field(default_factory=list)
+    permissions: dict[str, bool] = field(default_factory=dict)
+    embedded_files: list[str] = field(default_factory=list)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary."""
         return {
             "title": self.title,
@@ -280,22 +278,22 @@ class PDFMetadata:
 @dataclass
 class DocxMetadata:
     """DOCX document metadata."""
-    title: Optional[str] = None
-    author: Optional[str] = None
-    subject: Optional[str] = None
-    keywords: Optional[str] = None
-    category: Optional[str] = None
-    comments: Optional[str] = None
-    created: Optional[datetime] = None
-    modified: Optional[datetime] = None
-    last_modified_by: Optional[str] = None
-    revision: Optional[int] = None
-    company: Optional[str] = None
-    manager: Optional[str] = None
-    template: Optional[str] = None
-    total_editing_time: Optional[int] = None  # minutes
+    title: str | None = None
+    author: str | None = None
+    subject: str | None = None
+    keywords: str | None = None
+    category: str | None = None
+    comments: str | None = None
+    created: datetime | None = None
+    modified: datetime | None = None
+    last_modified_by: str | None = None
+    revision: int | None = None
+    company: str | None = None
+    manager: str | None = None
+    template: str | None = None
+    total_editing_time: int | None = None  # minutes
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary."""
         return {
             "title": self.title,
@@ -318,28 +316,28 @@ class DocxMetadata:
 @dataclass
 class AudioMetadata:
     """Audio file metadata."""
-    title: Optional[str] = None
-    artist: Optional[str] = None
-    album: Optional[str] = None
-    album_artist: Optional[str] = None
-    genre: Optional[str] = None
-    year: Optional[int] = None
-    track_number: Optional[int] = None
-    total_tracks: Optional[int] = None
-    disc_number: Optional[int] = None
-    total_discs: Optional[int] = None
-    composer: Optional[str] = None
-    publisher: Optional[str] = None
-    copyright: Optional[str] = None
-    comments: Optional[str] = None
-    lyrics: Optional[str] = None
-    duration: Optional[float] = None  # seconds
-    bitrate: Optional[int] = None  # kbps
-    sample_rate: Optional[int] = None  # Hz
-    channels: Optional[int] = None
-    codec: Optional[str] = None
+    title: str | None = None
+    artist: str | None = None
+    album: str | None = None
+    album_artist: str | None = None
+    genre: str | None = None
+    year: int | None = None
+    track_number: int | None = None
+    total_tracks: int | None = None
+    disc_number: int | None = None
+    total_discs: int | None = None
+    composer: str | None = None
+    publisher: str | None = None
+    copyright: str | None = None
+    comments: str | None = None
+    lyrics: str | None = None
+    duration: float | None = None  # seconds
+    bitrate: int | None = None  # kbps
+    sample_rate: int | None = None  # Hz
+    channels: int | None = None
+    codec: str | None = None
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary."""
         return {
             "title": self.title,
@@ -368,22 +366,22 @@ class AudioMetadata:
 @dataclass
 class VideoMetadata:
     """Video file metadata."""
-    title: Optional[str] = None
-    duration: Optional[float] = None  # seconds
-    bitrate: Optional[int] = None  # kbps
-    width: Optional[int] = None
-    height: Optional[int] = None
-    fps: Optional[float] = None
-    video_codec: Optional[str] = None
-    video_bitrate: Optional[int] = None
-    audio_codec: Optional[str] = None
-    audio_bitrate: Optional[int] = None
-    audio_channels: Optional[int] = None
-    audio_sample_rate: Optional[int] = None
-    container_format: Optional[str] = None
-    creation_time: Optional[datetime] = None
+    title: str | None = None
+    duration: float | None = None  # seconds
+    bitrate: int | None = None  # kbps
+    width: int | None = None
+    height: int | None = None
+    fps: float | None = None
+    video_codec: str | None = None
+    video_bitrate: int | None = None
+    audio_codec: str | None = None
+    audio_bitrate: int | None = None
+    audio_channels: int | None = None
+    audio_sample_rate: int | None = None
+    container_format: str | None = None
+    creation_time: datetime | None = None
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary."""
         return {
             "title": self.title,
@@ -406,15 +404,15 @@ class VideoMetadata:
 @dataclass
 class ArchiveMetadata:
     """Archive file metadata."""
-    archive_type: Optional[str] = None  # zip, rar, 7z, tar, etc.
-    num_files: Optional[int] = None
-    uncompressed_size: Optional[int] = None  # bytes
+    archive_type: str | None = None  # zip, rar, 7z, tar, etc.
+    num_files: int | None = None
+    uncompressed_size: int | None = None  # bytes
     is_encrypted: bool = False
-    compression_ratio: Optional[float] = None
-    comment: Optional[str] = None
-    files: List[Dict[str, Any]] = field(default_factory=list)
+    compression_ratio: float | None = None
+    comment: str | None = None
+    files: list[dict[str, Any]] = field(default_factory=list)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary."""
         return {
             "archive_type": self.archive_type,
@@ -434,22 +432,22 @@ class ArchiveMetadata:
 @dataclass
 class PPTXMetadata:
     """Presentation metadata (PPTX/ODP) - FOCA-style forensics."""
-    author: Optional[str] = None
-    last_modified_by: Optional[str] = None
-    title: Optional[str] = None
-    subject: Optional[str] = None
-    company: Optional[str] = None
-    template_path: Optional[str] = None
-    slide_count: Optional[int] = None
-    has_macros: Optional[bool] = None
-    macro_urls: List[str] = field(default_factory=list)
-    speaker_notes: List[str] = field(default_factory=list)
-    hidden_slides: List[Dict[str, Any]] = field(default_factory=list)
-    macro_analysis: Dict[str, Any] = field(default_factory=dict)
-    embedded_fonts: List[Dict[str, str]] = field(default_factory=list)
-    internal_paths: List[str] = field(default_factory=list)
+    author: str | None = None
+    last_modified_by: str | None = None
+    title: str | None = None
+    subject: str | None = None
+    company: str | None = None
+    template_path: str | None = None
+    slide_count: int | None = None
+    has_macros: bool | None = None
+    macro_urls: list[str] = field(default_factory=list)
+    speaker_notes: list[str] = field(default_factory=list)
+    hidden_slides: list[dict[str, Any]] = field(default_factory=list)
+    macro_analysis: dict[str, Any] = field(default_factory=dict)
+    embedded_fonts: list[dict[str, str]] = field(default_factory=list)
+    internal_paths: list[str] = field(default_factory=list)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "author": self.author,
             "last_modified_by": self.last_modified_by,
@@ -471,20 +469,20 @@ class PPTXMetadata:
 @dataclass
 class EmailMetadata:
     """Email header forensics - FOCA-style infrastructure analysis."""
-    from_addr: Optional[str] = None
-    reply_to: Optional[str] = None
-    subject: Optional[str] = None
-    date: Optional[str] = None
-    message_id_domain: Optional[str] = None
-    originating_ip: Optional[str] = None
-    dkim_domain: Optional[str] = None
-    spf_result: Optional[str] = None
-    received_chain: List[Dict[str, Any]] = field(default_factory=list)
-    headers: Dict[str, str] = field(default_factory=dict)
+    from_addr: str | None = None
+    reply_to: str | None = None
+    subject: str | None = None
+    date: str | None = None
+    message_id_domain: str | None = None
+    originating_ip: str | None = None
+    dkim_domain: str | None = None
+    spf_result: str | None = None
+    received_chain: list[dict[str, Any]] = field(default_factory=list)
+    headers: dict[str, str] = field(default_factory=dict)
     has_attachments: bool = False
     attachment_count: int = 0
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "from_addr": self.from_addr,
             "reply_to": self.reply_to,
@@ -504,18 +502,18 @@ class EmailMetadata:
 @dataclass
 class CADMetadata:
     """CAD/technical drawing metadata (DXF, DWG, SVG) - FOCA-style."""
-    author: Optional[str] = None
-    title: Optional[str] = None
-    description: Optional[str] = None
-    autocad_version: Optional[str] = None
-    insertion_base: Optional[Dict[str, float]] = None
-    coordinate_extents: Optional[Dict[str, Any]] = None
-    viewBox: Optional[str] = None
-    width: Optional[str] = None
-    height: Optional[str] = None
-    internal_paths: List[str] = field(default_factory=list)
+    author: str | None = None
+    title: str | None = None
+    description: str | None = None
+    autocad_version: str | None = None
+    insertion_base: dict[str, float] | None = None
+    coordinate_extents: dict[str, Any] | None = None
+    viewBox: str | None = None
+    width: str | None = None
+    height: str | None = None
+    internal_paths: list[str] = field(default_factory=list)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "author": self.author,
             "title": self.title,
@@ -537,24 +535,24 @@ class GenericMetadata:
     file_path: str
     file_size: int
     file_extension: str
-    mime_type: Optional[str] = None
-    created: Optional[datetime] = None
-    modified: Optional[datetime] = None
-    accessed: Optional[datetime] = None
-    permissions: Optional[int] = None
-    owner: Optional[str] = None
-    group: Optional[str] = None
-    inode: Optional[int] = None
-    device_id: Optional[int] = None
-    hard_links: Optional[int] = None
-    blocks: Optional[int] = None
-    block_size: Optional[int] = None
-    md5_hash: Optional[str] = None
-    sha256_hash: Optional[str] = None
-    sha1_hash: Optional[str] = None
-    entropy: Optional[float] = None
+    mime_type: str | None = None
+    created: datetime | None = None
+    modified: datetime | None = None
+    accessed: datetime | None = None
+    permissions: int | None = None
+    owner: str | None = None
+    group: str | None = None
+    inode: int | None = None
+    device_id: int | None = None
+    hard_links: int | None = None
+    blocks: int | None = None
+    block_size: int | None = None
+    md5_hash: str | None = None
+    sha256_hash: str | None = None
+    sha1_hash: str | None = None
+    entropy: float | None = None
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary."""
         return {
             "file_name": self.file_name,
@@ -588,12 +586,12 @@ class SteganalysisMetadata:
     histogram_suspicious: bool = False
     histogram_score: float = 0.0
     chi_square_score: float = 0.0
-    stegdetect_result: Optional[str] = None
+    stegdetect_result: str | None = None
     stegdetect_available: bool = False
     overall_suspicious: bool = False
     confidence: float = 0.0
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "lsb_suspicious": self.lsb_suspicious,
             "lsb_score": self.lsb_score,
@@ -612,25 +610,25 @@ class MetadataResult:
     """Complete metadata extraction result."""
     file_path: str
     success: bool
-    error: Optional[str] = None
-    generic: Optional[GenericMetadata] = None
-    image: Optional[ImageMetadata] = None
-    pdf: Optional[PDFMetadata] = None
-    docx: Optional[DocxMetadata] = None
-    audio: Optional[AudioMetadata] = None
-    video: Optional[VideoMetadata] = None
-    archive: Optional[ArchiveMetadata] = None
-    pptx: Optional[PPTXMetadata] = None
-    email: Optional[EmailMetadata] = None
-    cad: Optional[CADMetadata] = None
-    steganalysis: Optional[SteganalysisMetadata] = None
-    timeline: List[TimelineEvent] = field(default_factory=list)
-    attribution: Optional[AttributionData] = None
-    scrubbing: Optional[ScrubbingAnalysis] = None
-    raw_metadata: Dict[str, Any] = field(default_factory=dict)
+    error: str | None = None
+    generic: GenericMetadata | None = None
+    image: ImageMetadata | None = None
+    pdf: PDFMetadata | None = None
+    docx: DocxMetadata | None = None
+    audio: AudioMetadata | None = None
+    video: VideoMetadata | None = None
+    archive: ArchiveMetadata | None = None
+    pptx: PPTXMetadata | None = None
+    email: EmailMetadata | None = None
+    cad: CADMetadata | None = None
+    steganalysis: SteganalysisMetadata | None = None
+    timeline: list[TimelineEvent] = field(default_factory=list)
+    attribution: AttributionData | None = None
+    scrubbing: ScrubbingAnalysis | None = None
+    raw_metadata: dict[str, Any] = field(default_factory=dict)
     extraction_time: float = 0.0  # seconds
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary."""
         return {
             "file_path": self.file_path,
@@ -668,14 +666,14 @@ class MetadataCache:
 
     MAX_ENTRIES = 10000
 
-    def __init__(self, db_path: Optional[str] = None):
+    def __init__(self, db_path: str | None = None):
         """Initialize cache.
 
         Args:
             db_path: Path to SQLite database. If None, uses in-memory cache.
         """
         self.db_path = db_path or ":memory:"
-        self._conn: Optional[sqlite3.Connection] = None
+        self._conn: sqlite3.Connection | None = None
         self._lock = asyncio.Lock()
 
     async def initialize(self) -> None:
@@ -700,7 +698,7 @@ class MetadataCache:
             """))
             await asyncio.to_thread(lambda: self._conn.commit())
 
-    async def get(self, file_hash: str, mod_time: float, file_size: int) -> Optional[Dict[str, Any]]:
+    async def get(self, file_hash: str, mod_time: float, file_size: int) -> dict[str, Any] | None:
         """Get cached metadata if valid.
 
         Args:
@@ -726,7 +724,7 @@ class MetadataCache:
                 return json.loads(row[0])
             return None
 
-    async def set(self, file_hash: str, mod_time: float, file_size: int, metadata: Dict[str, Any]) -> None:
+    async def set(self, file_hash: str, mod_time: float, file_size: int, metadata: dict[str, Any]) -> None:
         """Cache metadata.
 
         Args:
@@ -824,14 +822,14 @@ class UniversalMetadataExtractor:
 
     def __init__(
         self,
-        cache_path: Optional[str] = None,
+        cache_path: str | None = None,
         enable_exif: bool = True,
         enable_gps: bool = True,
         enable_reverse_geocode: bool = False,
         enable_audio: bool = True,
         enable_video: bool = False,
         calculate_hashes: bool = True,
-        hash_algorithms: Optional[List[str]] = None,
+        hash_algorithms: list[str] | None = None,
         max_file_size: int = 1073741824,  # 1GB
         batch_size: int = 100,
     ):
@@ -873,7 +871,7 @@ class UniversalMetadataExtractor:
         await self.cache.close()
         self._initialized = False
 
-    def _get_file_hash(self, file_path: str) -> Tuple[str, float, int]:
+    def _get_file_hash(self, file_path: str) -> tuple[str, float, int]:
         """Calculate a partial content hash and get modification time.
 
         For files larger than 2MB, this hashes only the first 1MB and the last 1MB.
@@ -903,7 +901,7 @@ class UniversalMetadataExtractor:
 
         return hasher.hexdigest(), mod_time, file_size
 
-    def _calculate_full_hashes(self, file_path: str) -> Dict[str, str]:
+    def _calculate_full_hashes(self, file_path: str) -> dict[str, str]:
         """Calculate full file hashes.
 
         Args:
@@ -1116,7 +1114,7 @@ class UniversalMetadataExtractor:
                     extraction_time=time.time() - start_time
                 )
 
-    async def extract_batch(self, file_paths: List[str]) -> List[MetadataResult]:
+    async def extract_batch(self, file_paths: list[str]) -> list[MetadataResult]:
         """Extract metadata from multiple files in batches.
 
         Args:
@@ -1132,7 +1130,7 @@ class UniversalMetadataExtractor:
             tasks = [self.extract(path) for path in batch]
             batch_results = await asyncio.gather(*tasks, return_exceptions=True)
 
-            for path, result in zip(batch, batch_results):
+            for path, result in zip(batch, batch_results, strict=False):
                 if isinstance(result, Exception):
                     results.append(MetadataResult(
                         file_path=path,
@@ -1168,8 +1166,8 @@ class UniversalMetadataExtractor:
         owner = None
         group = None
         try:
-            import pwd
             import grp
+            import pwd
             owner = pwd.getpwuid(stat.st_uid).pw_name
             group = grp.getgrgid(stat.st_gid).gr_name
         except (ImportError, KeyError):
@@ -1206,7 +1204,7 @@ class UniversalMetadataExtractor:
             entropy=entropy,
         )
 
-    async def _extract_image_exif(self, file_path: str) -> Optional[ImageMetadata]:
+    async def _extract_image_exif(self, file_path: str) -> ImageMetadata | None:
         """Extract EXIF metadata from image.
 
         Args:
@@ -1217,7 +1215,7 @@ class UniversalMetadataExtractor:
         """
         try:
             from PIL import Image
-            from PIL.ExifTags import TAGS, GPSTAGS
+            from PIL.ExifTags import GPSTAGS, TAGS
         except ImportError:
             return None
 
@@ -1308,7 +1306,7 @@ class UniversalMetadataExtractor:
         except Exception:
             return None
 
-    def _parse_gps_data(self, gps_data: Dict[str, Any]) -> Optional[GPSCoordinates]:
+    def _parse_gps_data(self, gps_data: dict[str, Any]) -> GPSCoordinates | None:
         """Parse GPS data from EXIF.
 
         Args:
@@ -1350,7 +1348,7 @@ class UniversalMetadataExtractor:
         except Exception:
             return None
 
-    async def _reverse_geocode(self, lat: float, lon: float) -> Optional[str]:
+    async def _reverse_geocode(self, lat: float, lon: float) -> str | None:
         """Reverse geocode coordinates to address.
 
         Args:
@@ -1367,7 +1365,7 @@ class UniversalMetadataExtractor:
         # For now, return None to avoid external dependencies
         return None
 
-    async def _extract_pdf_metadata(self, file_path: str) -> Optional[PDFMetadata]:
+    async def _extract_pdf_metadata(self, file_path: str) -> PDFMetadata | None:
         """Extract metadata from PDF file.
 
         Args:
@@ -1418,7 +1416,7 @@ class UniversalMetadataExtractor:
         except Exception:
             return None
 
-    async def _extract_pdf_mupdf(self, file_path: str) -> Optional[PDFMetadata]:
+    async def _extract_pdf_mupdf(self, file_path: str) -> PDFMetadata | None:
         """Extract metadata from PDF using PyMuPDF (fitz).
 
         PyMuPDF provides more detailed metadata than pypdf including
@@ -1500,7 +1498,7 @@ class UniversalMetadataExtractor:
         except Exception:
             return None
 
-    async def _extract_image_piexif(self, file_path: str) -> Optional[ImageMetadata]:
+    async def _extract_image_piexif(self, file_path: str) -> ImageMetadata | None:
         """Extract EXIF metadata using piexif for enhanced accuracy.
 
         piexif provides more accurate EXIF parsing than PIL for certain
@@ -1580,7 +1578,7 @@ class UniversalMetadataExtractor:
         except Exception:
             return None
 
-    def _parse_piexif_gps(self, gps_ifd: dict) -> Optional[GPSCoordinates]:
+    def _parse_piexif_gps(self, gps_ifd: dict) -> GPSCoordinates | None:
         """Parse GPS data from piexif GPS IFD.
 
         Args:
@@ -1621,7 +1619,7 @@ class UniversalMetadataExtractor:
         except Exception:
             return None
 
-    async def _extract_steganography(self, file_path: str) -> Optional[SteganalysisMetadata]:
+    async def _extract_steganography(self, file_path: str) -> SteganalysisMetadata | None:
         """Extract steganography analysis for images.
 
         Performs chi-square, histogram, and LSB analysis to detect
@@ -1634,7 +1632,7 @@ class UniversalMetadataExtractor:
             SteganalysisMetadata object or None
         """
         try:
-            from .steganography_detector import analyze_image_steganography, STEGDETECT_AVAILABLE
+            from .steganography_detector import STEGDETECT_AVAILABLE, analyze_image_steganography
         except ImportError:
             return None
 
@@ -1659,7 +1657,7 @@ class UniversalMetadataExtractor:
         except Exception:
             return None
 
-    async def extract_image_caption(self, file_path: str) -> Tuple[Optional[str], List[str]]:
+    async def extract_image_caption(self, file_path: str) -> tuple[str | None, list[str]]:
         """Extract image caption and tags using MLX-VLM.
 
         Uses mlx-vlm or qwen2.5vl-3b-mlx for image captioning.
@@ -1674,8 +1672,8 @@ class UniversalMetadataExtractor:
         try:
             # Lazy import MLX VLM - only load when actually needed
             try:
-                from mlx_vlm import load, generate
                 from mlx.core import load as mlx_load
+                from mlx_vlm import generate, load
                 MLX_VLM_AVAILABLE = True
             except ImportError:
                 MLX_VLM_AVAILABLE = False
@@ -1751,7 +1749,7 @@ class UniversalMetadataExtractor:
         except Exception:
             return None, []
 
-    def _parse_pdf_date(self, date_str: str) -> Optional[datetime]:
+    def _parse_pdf_date(self, date_str: str) -> datetime | None:
         """Parse PDF date string.
 
         Args:
@@ -1794,7 +1792,7 @@ class UniversalMetadataExtractor:
         except Exception:
             return None
 
-    async def _extract_docx_metadata(self, file_path: str) -> Optional[DocxMetadata]:
+    async def _extract_docx_metadata(self, file_path: str) -> DocxMetadata | None:
         """Extract metadata from DOCX file.
 
         Args:
@@ -1832,7 +1830,7 @@ class UniversalMetadataExtractor:
         except Exception:
             return None
 
-    async def _extract_audio_metadata(self, file_path: str) -> Optional[AudioMetadata]:
+    async def _extract_audio_metadata(self, file_path: str) -> AudioMetadata | None:
         """Extract metadata from audio file.
 
         Args:
@@ -1908,7 +1906,7 @@ class UniversalMetadataExtractor:
         except Exception:
             return None
 
-    async def _extract_video_metadata(self, file_path: str) -> Optional[VideoMetadata]:
+    async def _extract_video_metadata(self, file_path: str) -> VideoMetadata | None:
         """Extract metadata from video file.
 
         Args:
@@ -1921,7 +1919,7 @@ class UniversalMetadataExtractor:
         # This is a placeholder that returns basic info
         try:
             import os
-            stat = os.stat(file_path)
+            os.stat(file_path)
 
             return VideoMetadata(
                 container_format=Path(file_path).suffix.lower().lstrip("."),
@@ -1930,7 +1928,7 @@ class UniversalMetadataExtractor:
         except Exception:
             return None
 
-    async def _extract_archive_metadata(self, file_path: str) -> Optional[ArchiveMetadata]:
+    async def _extract_archive_metadata(self, file_path: str) -> ArchiveMetadata | None:
         """Extract metadata from archive file.
 
         Args:
@@ -2040,7 +2038,7 @@ class UniversalMetadataExtractor:
 
         return metadata
 
-    async def _extract_pptx_metadata(self, file_path: str) -> Optional[PPTXMetadata]:
+    async def _extract_pptx_metadata(self, file_path: str) -> PPTXMetadata | None:
         """Extract metadata from PPTX/ODP presentation files.
 
         Args:
@@ -2052,7 +2050,7 @@ class UniversalMetadataExtractor:
         import zipfile
         from xml.etree import ElementTree as ET
 
-        ext = Path(file_path).suffix.lower()
+        Path(file_path).suffix.lower()
         metadata = PPTXMetadata()
 
         try:
@@ -2156,7 +2154,7 @@ class UniversalMetadataExtractor:
 
         return metadata
 
-    async def _extract_svg_metadata(self, file_path: str) -> Optional[CADMetadata]:
+    async def _extract_svg_metadata(self, file_path: str) -> CADMetadata | None:
         """Extract metadata from SVG vector graphics.
 
         Args:
@@ -2170,7 +2168,7 @@ class UniversalMetadataExtractor:
         metadata = CADMetadata()
 
         try:
-            with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
+            with open(file_path, encoding="utf-8", errors="ignore") as f:
                 content = f.read()
 
             root = ET.fromstring(content)
@@ -2204,7 +2202,7 @@ class UniversalMetadataExtractor:
 
         return metadata
 
-    async def _extract_dxf_metadata(self, file_path: str) -> Optional[CADMetadata]:
+    async def _extract_dxf_metadata(self, file_path: str) -> CADMetadata | None:
         """Extract metadata from DXF CAD files.
 
         Args:
@@ -2216,7 +2214,7 @@ class UniversalMetadataExtractor:
         metadata = CADMetadata()
 
         try:
-            with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
+            with open(file_path, encoding="utf-8", errors="ignore") as f:
                 content = f.read()
 
             # DXF is text-based, parse HEADER section
@@ -2250,7 +2248,7 @@ class UniversalMetadataExtractor:
 
         return metadata
 
-    async def _extract_email_metadata(self, file_path: str) -> Optional[EmailMetadata]:
+    async def _extract_email_metadata(self, file_path: str) -> EmailMetadata | None:
         """Extract metadata from email files (EML/MSG).
 
         Args:
@@ -2261,14 +2259,13 @@ class UniversalMetadataExtractor:
         """
         import re
         from email.parser import Parser
-        from email.policy import default
 
         ext = Path(file_path).suffix.lower()
         metadata = EmailMetadata()
 
         try:
             if ext == ".eml":
-                with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
+                with open(file_path, encoding="utf-8", errors="ignore") as f:
                     content = f.read()
 
                 msg = Parser().parsestr(content)
@@ -2340,7 +2337,7 @@ class UniversalMetadataExtractor:
 
         return metadata
 
-    def _build_timeline(self, result: MetadataResult) -> List[TimelineEvent]:
+    def _build_timeline(self, result: MetadataResult) -> list[TimelineEvent]:
         """Build timeline from all extracted metadata.
 
         Args:
@@ -2550,7 +2547,7 @@ class UniversalMetadataExtractor:
             suspicious_patterns=suspicious,
         )
 
-    def _result_from_dict(self, data: Dict[str, Any]) -> MetadataResult:
+    def _result_from_dict(self, data: dict[str, Any]) -> MetadataResult:
         """Reconstruct MetadataResult from dictionary.
 
         Args:
@@ -2741,8 +2738,8 @@ class UniversalMetadataExtractor:
 # =============================================================================
 
 def create_metadata_extractor(
-    cache_path: Optional[str] = None,
-    config: Optional[Any] = None,
+    cache_path: str | None = None,
+    config: Any | None = None,
 ) -> UniversalMetadataExtractor:
     """Create a configured metadata extractor.
 

@@ -25,10 +25,10 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from typing import Any, List, Tuple, TYPE_CHECKING
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from typing import Optional
+    pass
 
 __all__ = [
     "_check_gathered",
@@ -40,10 +40,10 @@ logger = logging.getLogger(__name__)
 
 
 def _check_gathered(
-    results: List[Any],
-    logger_instance: 'Optional[logging.Logger]' = None,
+    results: list[Any],
+    logger_instance: logging.Logger | None = None,
     ctx: str = ""
-) -> Tuple[List[Any], List[Any]]:
+) -> tuple[list[Any], list[Any]]:
     """
     Process results from asyncio.gather(..., return_exceptions=True).
 
@@ -65,8 +65,8 @@ def _check_gathered(
         - ok_results: items that are not Exception instances
         - error_results: Exception instances (for logging/handling downstream)
     """
-    ok_results: List[Any] = []
-    error_results: List[Any] = []
+    ok_results: list[Any] = []
+    error_results: list[Any] = []
     _log = logger_instance or logger
 
     for i, item in enumerate(results):
@@ -94,7 +94,7 @@ async def async_getaddrinfo(
     type_: int = 0,
     proto: int = 0,
     timeout: float | None = None,
-) -> List[Tuple[int, int, int, str, Any]]:
+) -> list[tuple[int, int, int, str, Any]]:
     """
     Async wrapper around loop.getaddrinfo() with optional timeout.
 

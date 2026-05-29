@@ -37,7 +37,7 @@ def _check_uuid7():
         if not hasattr(uuid, "uuid7"):
             print("ERROR: uuid.uuid7 not available (requires Python 3.14+)")
             return False
-        print(f"uuid.uuid7:  available")
+        print("uuid.uuid7:  available")
         return True
     except ImportError:
         print("ERROR: uuid module not available")
@@ -48,7 +48,7 @@ def _check_interpreter_pool():
     """Guard: concurrent.futures.InterpreterPoolExecutor (new in 3.14)."""
     try:
         from concurrent.futures import InterpreterPoolExecutor as IPE  # noqa: F401
-        print(f"InterpreterPoolExecutor: available")
+        print("InterpreterPoolExecutor: available")
         return True
     except ImportError:
         print("ERROR: concurrent.futures.InterpreterPoolExecutor not available (requires Python 3.14+)")
@@ -60,9 +60,6 @@ def main() -> int:
     print(f"Version:     {sys.version}")
 
     # Guard: must be Python 3.14+
-    if sys.version_info < (3, 14):
-        print(f"ERROR: Requires Python 3.14+ (current: {sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro})")
-        return 64
 
     ok = _check_uuid7() and _check_annotationlib() and _check_interpreter_pool()
     if not ok:

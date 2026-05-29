@@ -3,9 +3,9 @@ Testy pro Sprint 68 - Plně autonomní orchestrátor
 Action Registry, Decision Logic, Memory Pressure
 """
 
+from collections import OrderedDict, deque
+
 import pytest
-from collections import deque, OrderedDict
-from unittest.mock import AsyncMock, MagicMock, patch
 
 # Test action_result.py
 from hledac.universal.utils import ActionResult
@@ -56,7 +56,7 @@ from hledac.universal.utils.mlx_cache import evict_all, get_cache_stats
 
 def test_evict_all():
     """Test synchronní evikce MLX cache."""
-    stats_before = get_cache_stats()
+    get_cache_stats()
     evict_all()
     stats_after = get_cache_stats()
     assert stats_after["size"] == 0

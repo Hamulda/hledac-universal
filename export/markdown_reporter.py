@@ -12,7 +12,7 @@ import json
 import os
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Union
+from typing import Any
 
 from ..utils.safe_render import safe_markdown_link
 
@@ -71,7 +71,7 @@ def normalize_report_input(report: object) -> dict[str, Any]:
     """
     if hasattr(report, "__struct_fields__"):
         # msgspec.Struct — extract via dir to avoid __getitem__ assumption
-        return {f: getattr(report, f) for f in getattr(report, "__struct_fields__")}
+        return {f: getattr(report, f) for f in report.__struct_fields__}
     if isinstance(report, dict):
         return dict(report)
     if hasattr(report, "keys"):
@@ -430,7 +430,7 @@ def render_diagnostic_markdown(report: object) -> str:
 
 def render_diagnostic_markdown_to_path(
     report: object,
-    path: Union[str, Path, None] = None,
+    path: str | Path | None = None,
 ) -> Path:
     """
     Render report to markdown and write to ``path``.

@@ -4,9 +4,10 @@ Sprint 65: No-Toggles Invariant Tests
 CI-safe tests that verify no toggle flags exist in critical files.
 """
 
-import pytest
 import re
 from pathlib import Path
+
+import pytest
 
 # Paths to check
 CHECK_FILES = [
@@ -66,6 +67,7 @@ class TestTransportImportSafety:
     def test_model_store_plaintext_works(self):
         """Verify ModelStore works in plaintext mode without crypto deps."""
         import tempfile
+
         import numpy as np
 
         # Create temp directory
@@ -90,7 +92,7 @@ class TestTransportResolver:
 
     def test_resolver_instantiation(self):
         """Verify TransportResolver can be instantiated."""
-        from hledac.universal.transport import TransportResolver, TransportContext
+        from hledac.universal.transport import TransportResolver
 
         resolver = TransportResolver()
         assert resolver is not None

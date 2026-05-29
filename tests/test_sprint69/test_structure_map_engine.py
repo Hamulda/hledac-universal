@@ -5,10 +5,9 @@ Sprint 69: Structure Map Engine Tests
 import os
 import sys
 import tempfile
-import time
 import unittest
 from collections import OrderedDict
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
 # Add project root to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))
@@ -80,11 +79,10 @@ def helper():
 
     def test_time_budget_truncation(self):
         """Test time budget truncation - deterministic."""
+
         from hledac.universal.tools.content_miner import build_structure_map
-        import itertools
 
         # Mock time to trigger truncation after first file
-        original_time = time.monotonic
         call_count = [0]
 
         def mock_time():
@@ -157,14 +155,15 @@ def helper():
 
     def test_parallel_scan_threshold(self):
         """Test that parallel scan is only used above threshold."""
+        from unittest.mock import patch
+
         from hledac.universal.tools.content_miner import build_structure_map
-        from unittest.mock import patch, MagicMock
 
         # Test below threshold - should NOT use ThreadPoolExecutor
         with patch("concurrent.futures.ThreadPoolExecutor") as mock_executor:
             mock_executor.return_value = MagicMock()
 
-            result = build_structure_map(
+            build_structure_map(
                 self.temp_dir,
                 limits={
                     "max_files": 100,

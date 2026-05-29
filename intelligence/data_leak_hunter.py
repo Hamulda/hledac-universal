@@ -15,18 +15,15 @@ M1 8GB Optimized: Streaming processing, minimal memory footprint
 from __future__ import annotations
 
 import asyncio
-import base64
 import hashlib
-import json
 import logging
-import re
 import time
 import uuid
-from pathlib import Path
-from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from dataclasses import dataclass
+from datetime import datetime
 from enum import Enum
-from typing import Any, Dict, List, Optional, Set, Tuple, Union
+from pathlib import Path
+from typing import Any
 
 try:
     import aiohttp
@@ -80,10 +77,10 @@ class LeakAlert:
     target_type: str  # email, username, domain, ip, hash
     source: LeakSource
     severity: AlertSeverity
-    breach_name: Optional[str]
-    leaked_data: Dict[str, Any]
-    raw_sample: Optional[str] = None  # Sanitized sample
-    url: Optional[str] = None
+    breach_name: str | None
+    leaked_data: dict[str, Any]
+    raw_sample: str | None = None  # Sanitized sample
+    url: str | None = None
 
 
 @dataclass
@@ -92,19 +89,19 @@ class MonitoringTarget:
     target_id: str
     value: str
     target_type: str  # email, username, domain, ip, hash, phone
-    description: Optional[str]
+    description: str | None
     added_at: datetime
-    last_check: Optional[datetime] = None
+    last_check: datetime | None = None
     alert_count: int = 0
 
 
 @dataclass
 class BreachAPIConfig:
     """Configuration for breach APIs"""
-    haveibeenpwned_api_key: Optional[str] = None
-    dehashed_api_key: Optional[str] = None
-    intelligencex_api_key: Optional[str] = None
-    leaklookup_api_key: Optional[str] = None
+    haveibeenpwned_api_key: str | None = None
+    dehashed_api_key: str | None = None
+    intelligencex_api_key: str | None = None
+    leaklookup_api_key: str | None = None
 
 
 # =============================================================================
@@ -114,30 +111,30 @@ class BreachAPIConfig:
 class DataLeakHunter:
     """
     Advanced data leak monitoring system.
-    
+
     Features:
     - Continuous monitoring of breach databases
     - Dark web forum scraping (Tor/I2P)
     - Paste site surveillance
     - Real-time alerting
     - Temporal anonymization for stealth operations
-    
+
     Integrated from stealth_osint for universal orchestrator.
-    
+
     Example:
         hunter = DataLeakHunter()
         await hunter.initialize()
-        
+
         # Add monitoring target
         await hunter.add_target("user@example.com", "email")
-        
+
         # Start continuous monitoring
         await hunter.start_monitoring()
-        
+
         # Or single check
         alerts = await hunter.check_target("user@example.com")
     """
-    
+
     # Major breach API sources
     BREACH_APIS = {
         "haveibeenpwned": {
@@ -162,7 +159,7 @@ class DataLeakHunter:
             "rate_limit": 3,
         },
     }
-    
+
     # Paste sites to monitor
     PASTE_SITES = [
         "https://pastebin.com/raw/",
@@ -170,7 +167,7 @@ class DataLeakHunter:
         "https://0bin.net/",
         "https://privatebin.net/",
     ]
-    
+
     # Common breach forum indicators (on clearnet indexes)
     FORUM_INDICATORS = [
         "breachforums",
@@ -178,16 +175,16 @@ class DataLeakHunter:
         "cracked.io",
         "nulled.to",
     ]
-    
+
     def __init__(
         self,
-        api_config: Optional[BreachAPIConfig] = None,
+        api_config: BreachAPIConfig | None = None,
         check_interval: int = 3600,  # 1 hour
-        alert_handlers: Optional[List[callable]] = None
+        alert_handlers: list[callable] | None = None
     ):
         """
         Initialize DataLeakHunter.
-        
+
         Args:
             api_config: API keys for breach databases
             check_interval: Seconds between checks
@@ -196,36 +193,36 @@ class DataLeakHunter:
         self.api_config = api_config or BreachAPIConfig()
         self.check_interval = check_interval
         self.alert_handlers = alert_handlers or []
-        
+
         # Security components
         self._anonymizer = None
         self._zero_attribution = None
-        
+
         # Monitoring state
-        self._targets: Dict[str, MonitoringTarget] = {}
+        self._targets: dict[str, MonitoringTarget] = {}
         self._is_monitoring = False
-        self._monitoring_task: Optional[asyncio.Task] = None
-        
+        self._monitoring_task: asyncio.Task | None = None
+
         # Alert storage
-        self._alerts: List[LeakAlert] = []
-        self._recent_alerts: Set[str] = set()  # Deduplication
-        
+        self._alerts: list[LeakAlert] = []
+        self._recent_alerts: set[str] = set()  # Deduplication
+
         # Performance metrics
         self._checks_performed = 0
         self._alerts_generated = 0
         self._api_calls = 0
-        
+
         # HTTP session
         self._session = None
-        
+
         logger.info("DataLeakHunter initialized")
-    
+
     async def initialize(self) -> bool:
         """Initialize security components and HTTP session"""
         if not AIOHTTP_AVAILABLE:
             logger.error("aiohttp not available")
             return False
-        
+
         try:
             # Initialize security components
             if SECURITY_AVAILABLE:
@@ -234,7 +231,7 @@ class DataLeakHunter:
                     self._zero_attribution = ZeroAttributionEngine()
                 except Exception as e:
                     logger.warning(f"Security components not available: {e}")
-            
+
             # Create HTTP session with stealth headers
             self._session = aiohttp.ClientSession(
                 headers={
@@ -243,32 +240,32 @@ class DataLeakHunter:
                 },
                 timeout=aiohttp.ClientTimeout(total=30)
             )
-            
+
             logger.info("✅ DataLeakHunter initialized")
             return True
         except Exception as e:
             logger.error(f"❌ Initialization failed: {e}")
             return False
-    
+
     async def add_target(
         self,
         value: str,
         target_type: str,
-        description: Optional[str] = None
+        description: str | None = None
     ) -> str:
         """
         Add a target to monitor.
-        
+
         Args:
             value: Target value (email, username, etc.)
             target_type: Type of target (email, username, domain, ip, hash)
             description: Optional description
-            
+
         Returns:
             Target ID
         """
         target_id = hashlib.sha256(f"{value}:{target_type}".encode()).hexdigest()[:16]
-        
+
         target = MonitoringTarget(
             target_id=target_id,
             value=value,
@@ -276,11 +273,11 @@ class DataLeakHunter:
             description=description,
             added_at=datetime.now()
         )
-        
+
         self._targets[target_id] = target
         logger.info(f"🎯 Added monitoring target: {value} ({target_type})")
         return target_id
-    
+
     async def remove_target(self, target_id: str) -> bool:
         """Remove a monitoring target"""
         if target_id in self._targets:
@@ -288,20 +285,20 @@ class DataLeakHunter:
             logger.info(f"🗑️ Removed target: {target_id}")
             return True
         return False
-    
+
     async def start_monitoring(self) -> None:
         """Start continuous monitoring loop"""
         if self._is_monitoring:
             logger.warning("Monitoring already active")
             return
-        
+
         self._is_monitoring = True
         self._monitoring_task = asyncio.create_task(
             self._monitoring_loop(),
             name="data_leak_monitoring"
         )
         logger.info(f"▶️ Started monitoring ({self.check_interval}s interval)")
-    
+
     async def stop_monitoring(self) -> None:
         """Stop continuous monitoring"""
         self._is_monitoring = False
@@ -312,54 +309,54 @@ class DataLeakHunter:
             except asyncio.CancelledError:
                 pass
         logger.info("⏹️ Stopped monitoring")
-    
+
     async def _monitoring_loop(self) -> None:
         """Main monitoring loop"""
         while self._is_monitoring:
             try:
                 logger.debug("Running periodic leak check...")
-                
+
                 # Check all targets
                 for target in self._targets.values():
                     alerts = await self.check_target(target.value, target.target_type)
-                    
+
                     for alert in alerts:
                         await self._process_alert(alert)
-                    
+
                     target.last_check = datetime.now()
-                
+
                 self._checks_performed += len(self._targets)
-                
+
                 # Wait for next check
                 await asyncio.sleep(self.check_interval)
-                
+
             except asyncio.CancelledError:
                 break
             except Exception as e:
                 logger.error(f"Monitoring loop error: {e}")
                 await asyncio.sleep(60)  # Wait 1 min on error
-    
+
     async def check_target(
         self,
         value: str,
         target_type: str
-    ) -> List[LeakAlert]:
+    ) -> list[LeakAlert]:
         """
         Perform single check for a target.
-        
+
         Args:
             value: Target value
             target_type: Type of target
-            
+
         Returns:
             List of LeakAlerts
         """
         alerts = []
-        
+
         # Apply temporal anonymization
         if self._anonymizer:
             await asyncio.sleep(self._anonymizer.get_random_delay())
-        
+
         # Check breach APIs
         api_alerts = await self._check_breach_apis(value, target_type)
         alerts.extend(api_alerts)
@@ -375,14 +372,14 @@ class DataLeakHunter:
         if target_type in ("email", "username"):
             paste_alerts = await self._check_paste_sites(value, target_type)
             alerts.extend(paste_alerts)
-        
+
         return alerts
-    
+
     async def _check_breach_apis(
         self,
         value: str,
         target_type: str
-    ) -> List[LeakAlert]:
+    ) -> list[LeakAlert]:
         """Check breach APIs for target"""
         alerts = []
 
@@ -419,25 +416,25 @@ class DataLeakHunter:
                 logger.debug(f"IntelligenceX check failed: {e}")
 
         return alerts
-    
-    async def _check_haveibeenpwned(self, email: str) -> List[LeakAlert]:
+
+    async def _check_haveibeenpwned(self, email: str) -> list[LeakAlert]:
         """Check HaveIBeenPwned API"""
         alerts = []
-        
+
         config = self.BREACH_APIS["haveibeenpwned"]
         url = f"{config['url']}{email}"
         headers = {
             **config["headers"],
             "hibp-api-key": self.api_config.haveibeenpwned_api_key
         }
-        
+
         try:
             async with self._session.get(url, headers=headers) as resp:
                 self._api_calls += 1
-                
+
                 if resp.status == 200:
                     breaches = await resp.json()
-                    
+
                     for breach in breaches:
                         alert = LeakAlert(
                             alert_id=str(uuid.uuid4()),
@@ -456,31 +453,31 @@ class DataLeakHunter:
                             url=breach.get("Domain")
                         )
                         alerts.append(alert)
-                        
+
                 elif resp.status == 404:
                     # No breaches found
                     pass
                 else:
                     logger.warning(f"HIBP API error: {resp.status}")
-                    
+
             # Rate limiting
             await asyncio.sleep(config["rate_limit"])
-            
+
         except Exception as e:
             logger.debug(f"HIBP request failed: {e}")
-        
+
         return alerts
-    
+
     async def _check_leaklookup(
         self,
         value: str,
         target_type: str
-    ) -> List[LeakAlert]:
+    ) -> list[LeakAlert]:
         """Check LeakLookup API"""
         alerts = []
-        
+
         config = self.BREACH_APIS["leaklookup"]
-        
+
         # Map target type to LeakLookup type
         type_mapping = {
             "email": "email",
@@ -489,22 +486,22 @@ class DataLeakHunter:
             "ip": "ip",
             "hash": "hash",
         }
-        
+
         lookup_type = type_mapping.get(target_type, "email")
-        
+
         try:
             payload = {
                 "key": self.api_config.leaklookup_api_key,
                 "type": lookup_type,
                 "query": value,
             }
-            
+
             async with self._session.post(config["url"], data=payload) as resp:
                 self._api_calls += 1
-                
+
                 if resp.status == 200:
                     data = await resp.json()
-                    
+
                     if data.get("found"):
                         for source in data.get("sources", []):
                             alert = LeakAlert(
@@ -521,7 +518,7 @@ class DataLeakHunter:
                                 }
                             )
                             alerts.append(alert)
-                            
+
             await asyncio.sleep(config["rate_limit"])
 
         except Exception as e:
@@ -529,7 +526,7 @@ class DataLeakHunter:
 
         return alerts
 
-    async def _check_dehashed(self, value: str, target_type: str) -> List[LeakAlert]:
+    async def _check_dehashed(self, value: str, target_type: str) -> list[LeakAlert]:
         """Check Dehashed API for leaks."""
         alerts = []
 
@@ -581,7 +578,7 @@ class DataLeakHunter:
 
         return alerts
 
-    async def _check_intelligencex(self, value: str, target_type: str) -> List[LeakAlert]:
+    async def _check_intelligencex(self, value: str, target_type: str) -> list[LeakAlert]:
         """Check IntelligenceX API for leaks (two-phase: search + poll)."""
         alerts = []
 
@@ -670,7 +667,7 @@ class DataLeakHunter:
 
         return alerts
 
-    async def _check_grep_app(self, query: str) -> List[LeakAlert]:
+    async def _check_grep_app(self, query: str) -> list[LeakAlert]:
         """Check GREP.app for code/secret leaks matching query."""
         alerts = []
 
@@ -732,21 +729,21 @@ class DataLeakHunter:
         self,
         value: str,
         target_type: str
-    ) -> List[LeakAlert]:
+    ) -> list[LeakAlert]:
         """Check paste sites for leaked data"""
         alerts = []
-        
+
         # Search paste search engines
         search_engines = [
             f"https://psbdmp.ws/api/v3/search/{value}",  # Pastebin dump search
         ]
-        
+
         for engine_url in search_engines:
             try:
                 async with self._session.get(engine_url) as resp:
                     if resp.status == 200:
                         data = await resp.json()
-                        
+
                         for result in data.get("data", []):
                             # Check if it contains the target
                             if value.lower() in result.get("text", "").lower():
@@ -766,46 +763,46 @@ class DataLeakHunter:
                                     url=f"https://pastebin.com/raw/{result.get('id')}"
                                 )
                                 alerts.append(alert)
-                                
+
             except Exception as e:
                 logger.debug(f"Paste site check failed: {e}")
-        
+
         return alerts
-    
+
     async def _process_alert(self, alert: LeakAlert) -> None:
         """Process and dispatch alert"""
         # Deduplication
         alert_hash = hashlib.sha256(
             f"{alert.target}:{alert.breach_name}:{alert.source.value}".encode()
         ).hexdigest()[:16]
-        
+
         if alert_hash in self._recent_alerts:
             return
-        
+
         self._recent_alerts.add(alert_hash)
         self._alerts.append(alert)
         self._alerts_generated += 1
-        
+
         # Update target stats
         for target in self._targets.values():
             if target.value == alert.target:
                 target.alert_count += 1
-        
+
         # Log alert
         logger.warning(
             f"🚨 LEAK ALERT [{alert.severity.value.upper()}]: "
             f"{alert.target} found in {alert.breach_name} "
             f"({alert.source.value})"
         )
-        
+
         # Call alert handlers
         for handler in self.alert_handlers:
             try:
                 await handler(alert)
             except Exception as e:
                 logger.error(f"Alert handler error: {e}")
-    
-    def get_statistics(self) -> Dict[str, Any]:
+
+    def get_statistics(self) -> dict[str, Any]:
         """Get hunter statistics"""
         return {
             "targets_monitored": len(self._targets),
@@ -815,31 +812,31 @@ class DataLeakHunter:
             "is_monitoring": self._is_monitoring,
             "recent_alerts": len(self._recent_alerts),
         }
-    
+
     def get_alerts(
         self,
-        target: Optional[str] = None,
-        severity: Optional[AlertSeverity] = None,
+        target: str | None = None,
+        severity: AlertSeverity | None = None,
         limit: int = 100
-    ) -> List[LeakAlert]:
+    ) -> list[LeakAlert]:
         """Get alerts with optional filtering"""
         alerts = self._alerts
-        
+
         if target:
             alerts = [a for a in alerts if a.target == target]
-        
+
         if severity:
             alerts = [a for a in alerts if a.severity == severity]
-        
+
         return sorted(alerts, key=lambda x: x.timestamp, reverse=True)[:limit]
-    
+
     async def cleanup(self) -> None:
         """Cleanup resources"""
         await self.stop_monitoring()
-        
+
         if self._session:
             await self._session.close()
-        
+
         logger.info("DataLeakHunter cleanup complete")
 
 
@@ -849,11 +846,11 @@ class DataLeakHunter:
 
 async def check_email_breaches(
     email: str,
-    hibp_api_key: Optional[str] = None
-) -> List[LeakAlert]:
+    hibp_api_key: str | None = None
+) -> list[LeakAlert]:
     """
     Quick check for email breaches.
-    
+
     Example:
         alerts = await check_email_breaches("user@example.com", "api_key")
         for alert in alerts:
@@ -861,15 +858,15 @@ async def check_email_breaches(
     """
     config = BreachAPIConfig(haveibeenpwned_api_key=hibp_api_key)
     hunter = DataLeakHunter(api_config=config)
-    
+
     if await hunter.initialize():
         return await hunter.check_target(email, "email")
-    
+
     return []
 
 
 # Global instance
-_data_leak_hunter: Optional[DataLeakHunter] = None
+_data_leak_hunter: DataLeakHunter | None = None
 
 
 def get_data_leak_hunter() -> DataLeakHunter:

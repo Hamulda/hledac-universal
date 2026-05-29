@@ -1,15 +1,15 @@
 """Certificate Transparency log scanner (crt.sh) with local cache."""
-import asyncio
+from __future__ import annotations
+
 import json
 import logging
 import sqlite3
 from pathlib import Path
-from typing import List, Optional, Set
 
 from hledac.universal.network.session_runtime import (
-    async_get_aiohttp_session,
     CT_CONNECT_TIMEOUT_S,
     CT_READ_TIMEOUT_S,
+    async_get_aiohttp_session,
 )
 
 logger = logging.getLogger(__name__)
@@ -55,8 +55,8 @@ class _CTLogScanner:
         self,
         domain: str,
         *,
-        async_session: Optional["aiohttp.ClientSession"] = None
-    ) -> List[str]:
+        async_session: aiohttp.ClientSession | None = None
+    ) -> list[str]:
         """Get subdomains for a domain, using cache first.
 
         Args:
@@ -83,7 +83,7 @@ class _CTLogScanner:
         # aiohttp is guaranteed to be available here (AIOHTTP_AVAILABLE=True)
         import aiohttp as _aiohttp
 
-        async def _fetch_with_session(session: _aiohttp.ClientSession) -> List[str]:
+        async def _fetch_with_session(session: _aiohttp.ClientSession) -> list[str]:
             url = f"https://crt.sh/?q=%.{domain}&output=json"
             async with session.get(
                 url,
@@ -106,7 +106,7 @@ class _CTLogScanner:
                 data = await _fetch_with_session(shared_session)
 
             # Parse subdomains
-            subdomains: Set[str] = set()
+            subdomains: set[str] = set()
             for entry in data[:100]:  # bounded
                 # crt.sh returns JSON objects with name_value field
                 entry_dict: dict = dict(entry) if isinstance(entry, dict) else {}
@@ -124,14 +124,14 @@ class _CTLogScanner:
             self._save_to_cache(domain, result)
             return result
 
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.warning(f"[CT] Timeout for {domain}")
             return []
         except Exception as e:
             logger.warning(f"[CT] Error for {domain}: {e}")
             return []
 
-    def _get_cached(self, domain: str) -> Optional[List[str]]:
+    def _get_cached(self, domain: str) -> list[str] | None:
         """Return cached subdomains if fresh enough."""
         import time
         now = time.time()
@@ -146,7 +146,7 @@ class _CTLogScanner:
                 return json.loads(row[0])
         return None
 
-    def _save_to_cache(self, domain: str, subdomains: List[str]):
+    def _save_to_cache(self, domain: str, subdomains: list[str]):
         """Store subdomains in cache."""
         import time
         with sqlite3.connect(self.CACHE_DB) as conn:

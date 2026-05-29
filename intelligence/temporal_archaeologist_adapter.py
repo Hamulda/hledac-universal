@@ -23,8 +23,7 @@ from __future__ import annotations
 import logging
 import time
 from dataclasses import dataclass
-from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -37,9 +36,9 @@ MAX_TIMELINE_FINDINGS: int = 20  # max derived timeline findings per sprint
 
 try:
     from .temporal_archaeologist import (
-        TemporalArchaeologist,
         ArchivedVersion,
         EntityTimeline,
+        TemporalArchaeologist,
     )
     _TEMPORAL_AVAILABLE = True
 except ImportError:
@@ -50,9 +49,9 @@ except ImportError:
 
 try:
     from .timeline_synthesizer import (
-        TimelineSynthesizer,
         SynthesizedTimeline,
         TimelineEvent,
+        TimelineSynthesizer,
     )
     _SYNTHESIZER_AVAILABLE = True
 except ImportError:
@@ -75,9 +74,9 @@ class TimelineFindingResult:
     """
     Result of timeline synthesis containing events and derived findings.
     """
-    timeline: Optional[SynthesizedTimeline]
-    derived_findings: List[Any]
-    stats: Dict[str, int]
+    timeline: SynthesizedTimeline | None
+    derived_findings: list[Any]
+    stats: dict[str, int]
 
 
 # ── Adapter ───────────────────────────────────────────────────────────────────
@@ -103,7 +102,7 @@ class TemporalArchaeologistAdapter:
 
     def __init__(self) -> None:
         self._synthesizer = TimelineSynthesizer() if _SYNTHESIZER_AVAILABLE else None
-        self._stats: Dict[str, int] = {
+        self._stats: dict[str, int] = {
             "ct_events_added": 0,
             "archive_events_added": 0,
             "document_events_added": 0,
@@ -116,9 +115,9 @@ class TemporalArchaeologistAdapter:
 
     def synthesize_timeline(
         self,
-        ct_findings: Optional[List[Any]] = None,
-        archive_results: Optional[List[Any]] = None,
-        doc_metadata: Optional[List[Any]] = None,
+        ct_findings: list[Any] | None = None,
+        archive_results: list[Any] | None = None,
+        doc_metadata: list[Any] | None = None,
         entity_id: str = "",
     ) -> TimelineFindingResult:
         """
@@ -183,7 +182,7 @@ class TemporalArchaeologistAdapter:
 
     def add_finding_events(
         self,
-        findings: List[Any],
+        findings: list[Any],
         source_label: str = "finding",
     ) -> int:
         """
@@ -211,7 +210,7 @@ class TemporalArchaeologistAdapter:
     def _to_derived_findings(
         self,
         timeline: SynthesizedTimeline,
-    ) -> List[Any]:
+    ) -> list[Any]:
         """
         Convert SynthesizedTimeline to list of CanonicalFinding.
 
@@ -230,7 +229,7 @@ class TemporalArchaeologistAdapter:
         if CanonicalFinding is None:
             return []
 
-        findings: List[Any] = []
+        findings: list[Any] = []
         try:
             # Serialize timeline to JSON for payload_text
             import json
@@ -259,7 +258,7 @@ class TemporalArchaeologistAdapter:
 
     # ── Stats ────────────────────────────────────────────────────────────────
 
-    def get_stats(self) -> Dict[str, int]:
+    def get_stats(self) -> dict[str, int]:
         """Return adapter statistics."""
         return self._stats.copy()
 
@@ -267,7 +266,7 @@ class TemporalArchaeologistAdapter:
         """Clear synthesizer state and reset stats."""
         if self._synthesizer:
             self._synthesizer.clear()
-        self._stats = {k: 0 for k in self._stats}
+        self._stats = dict.fromkeys(self._stats, 0)
 
 
 # ── Factory ───────────────────────────────────────────────────────────────────

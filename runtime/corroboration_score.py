@@ -182,10 +182,10 @@ def score_lane_outcomes(
 
     # Nonfeed expected but all missing penalty
     nonfeed_missed = (
-        ct_terminal == False
-        and doh_terminal == False
-        and wayback_terminal == False
-        and passive_dns_terminal == False
+        not ct_terminal
+        and not doh_terminal
+        and not wayback_terminal
+        and not passive_dns_terminal
     )
     if not feed_present and nonfeed_missed and nonfeed_terminal_count == 0:
         score -= 0.20

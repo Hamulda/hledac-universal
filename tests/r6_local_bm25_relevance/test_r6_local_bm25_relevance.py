@@ -60,8 +60,8 @@ class FakeDictFinding:
 
 def test_canonical_finding_converts_to_search_document():
     """Accepted CanonicalFinding objects convert to SearchDocument."""
-    from hledac.universal.runtime.sprint_advisory_runner import build_search_documents_from_findings
     from hledac.universal.knowledge.search_index import SearchDocument
+    from hledac.universal.runtime.sprint_advisory_runner import build_search_documents_from_findings
 
     findings = [
         FakeCanonicalFinding("fid1", "web", "This is a test payload content", "https://example.com/1"),
@@ -157,7 +157,7 @@ def test_empty_findings_returns_empty_docs():
 @pytest.mark.asyncio
 async def test_local_search_advisory_does_not_call_duckdb_write():
     """Advisory result does not call DuckDB write path."""
-    from hledac.universal.runtime.sprint_advisory_runner import SprintAdvisoryRunner, AdvisoryRunOutcome
+    from hledac.universal.runtime.sprint_advisory_runner import AdvisoryRunOutcome, SprintAdvisoryRunner
 
     mock_scheduler = MagicMock()
     mock_scheduler._all_findings = []
@@ -170,7 +170,7 @@ async def test_local_search_advisory_does_not_call_duckdb_write():
 
     runner = SprintAdvisoryRunner(scheduler=mock_scheduler, duckdb_store=mock_scheduler._duckdb_store)
 
-    outcome = await runner._run_local_search_advisory(AdvisoryRunOutcome())
+    await runner._run_local_search_advisory(AdvisoryRunOutcome())
 
     # DuckDB store should NOT have been called (no write, no query)
     mock_scheduler._duckdb_store.assert_not_called()
@@ -182,7 +182,7 @@ async def test_local_search_advisory_does_not_call_duckdb_write():
 @pytest.mark.asyncio
 async def test_local_search_advisory_no_persistent_db():
     """Advisory result does not create a persistent DB file."""
-    from hledac.universal.runtime.sprint_advisory_runner import SprintAdvisoryRunner, AdvisoryRunOutcome
+    from hledac.universal.runtime.sprint_advisory_runner import AdvisoryRunOutcome, SprintAdvisoryRunner
 
     mock_scheduler = MagicMock()
     mock_scheduler._all_findings = []
@@ -195,7 +195,7 @@ async def test_local_search_advisory_no_persistent_db():
 
     runner = SprintAdvisoryRunner(scheduler=mock_scheduler, duckdb_store=mock_scheduler._duckdb_store)
 
-    with tempfile.TemporaryDirectory() as tmpdir:
+    with tempfile.TemporaryDirectory():
         pass  # no files created in tmpdir
 
     outcome = await runner._run_local_search_advisory(AdvisoryRunOutcome())
@@ -209,7 +209,6 @@ async def test_local_search_advisory_no_persistent_db():
 def test_no_network_calls_in_build_search_documents():
     """build_search_documents_from_findings makes no network calls."""
     import http.client
-    import socket
 
     original_connect = http.client.HTTPConnection.connect
     network_called = False
@@ -222,7 +221,7 @@ def test_no_network_calls_in_build_search_documents():
     with patch.object(http.client.HTTPConnection, 'connect', track_connect):
         from hledac.universal.runtime.sprint_advisory_runner import build_search_documents_from_findings
         findings = [FakeCanonicalFinding("f1", "web", "test content", "https://example.com")]
-        docs = build_search_documents_from_findings(findings)
+        build_search_documents_from_findings(findings)
 
     assert not network_called, "Network call detected in build_search_documents_from_findings"
 
@@ -300,7 +299,7 @@ def test_search_index_import_is_safe():
 @pytest.mark.asyncio
 async def test_local_search_advisory_fail_soft():
     """Integration point is fail-soft when seam raises."""
-    from hledac.universal.runtime.sprint_advisory_runner import SprintAdvisoryRunner, AdvisoryRunOutcome
+    from hledac.universal.runtime.sprint_advisory_runner import AdvisoryRunOutcome, SprintAdvisoryRunner
 
     mock_scheduler = MagicMock()
     mock_scheduler._all_findings = []
@@ -328,7 +327,7 @@ async def test_local_search_advisory_fail_soft():
 @pytest.mark.asyncio
 async def test_local_search_advisory_cancelled_error_raised():
     """CancelledError is re-raised if async wrapper is added."""
-    from hledac.universal.runtime.sprint_advisory_runner import SprintAdvisoryRunner, AdvisoryRunOutcome
+    from hledac.universal.runtime.sprint_advisory_runner import AdvisoryRunOutcome, SprintAdvisoryRunner
 
     mock_scheduler = MagicMock()
     mock_scheduler._all_findings = []
@@ -384,7 +383,7 @@ def test_max_indexed_findings_bound():
 @pytest.mark.asyncio
 async def test_run_all_advisories_includes_local_search():
     """run_all_advisories calls local search step (step 5)."""
-    from hledac.universal.runtime.sprint_advisory_runner import SprintAdvisoryRunner, AdvisoryRunOutcome
+    from hledac.universal.runtime.sprint_advisory_runner import SprintAdvisoryRunner
 
     mock_scheduler = MagicMock()
     mock_scheduler._all_findings = []

@@ -14,13 +14,12 @@ graph reasoning to this coordinator.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections import deque
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any
 from urllib.parse import urlparse
-
-import asyncio
 
 from .base import UniversalCoordinator
 
@@ -65,7 +64,7 @@ class GraphCoordinator(UniversalCoordinator):
 
     def __init__(
         self,
-        config: Optional[GraphCoordinatorConfig] = None,
+        config: GraphCoordinatorConfig | None = None,
         max_concurrent: int = 2,
     ):
         super().__init__(name="GraphCoordinator", max_concurrent=max_concurrent)
@@ -74,21 +73,21 @@ class GraphCoordinator(UniversalCoordinator):
         # State
         # Sprint F206X: deque with maxlen prevents unbounded growth
         self._pending_queries: deque = deque(maxlen=MAX_PENDING_QUERIES)
-        self._seen_queries: Set[str] = set()  # O(1) membership test
+        self._seen_queries: set[str] = set()  # O(1) membership test
         self._walks_executed: int = 0
         self._paths_returned: int = 0
-        self._stop_reason: Optional[str] = None
+        self._stop_reason: str | None = None
 
         # Orchestrator reference (set via start)
-        self._orchestrator: Optional[Any] = None
-        self._ctx: Dict[str, Any] = {}
+        self._orchestrator: Any | None = None
+        self._ctx: dict[str, Any] = {}
 
         # Sprint 50: Fingerprint edge storage (source, edge_type, target) -> bool (exists)
-        self._fingerprint_edges: Set[Tuple[str, str, str]] = set()
+        self._fingerprint_edges: set[tuple[str, str, str]] = set()
         # Sprint 50: favicon hash -> domain index for same_infra_as edges
-        self._favicon_index: Dict[str, List[str]] = {}
+        self._favicon_index: dict[str, list[str]] = {}
 
-    def get_supported_operations(self) -> List[Any]:
+    def get_supported_operations(self) -> list[Any]:
         """Return supported operation types."""
         from .base import OperationType
         return [OperationType.SYNTHESIS, OperationType.RESEARCH]
@@ -111,12 +110,12 @@ class GraphCoordinator(UniversalCoordinator):
         logger.info("GraphCoordinator initialized")
         return True
 
-    async def _do_start(self, ctx: Dict[str, Any]) -> None:
+    async def _do_start(self, ctx: dict[str, Any]) -> None:
         """
         Start coordinator with context from orchestrator.
 
         Expected ctx keys:
-        - pending_queries: List[str] - queries to process
+        - pending_queries: list[str] - queries to process
         - orchestrator: reference to orchestrator instance
         """
         self._ctx = ctx
@@ -131,7 +130,7 @@ class GraphCoordinator(UniversalCoordinator):
 
         logger.info(f"GraphCoordinator started with {len(self._pending_queries)} pending queries")
 
-    async def _do_step(self, ctx: Dict[str, Any]) -> Dict[str, Any]:
+    async def _do_step(self, ctx: dict[str, Any]) -> dict[str, Any]:
         """
         Execute one graph reasoning step.
 
@@ -162,7 +161,7 @@ class GraphCoordinator(UniversalCoordinator):
 
         return self._get_step_result(result)
 
-    def _get_step_result(self, result: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    def _get_step_result(self, result: dict[str, Any] | None = None) -> dict[str, Any]:
         """Get bounded step result."""
         paths = result.get('paths', []) if result else []
         paths = paths[:self._config.max_paths_per_step]
@@ -176,14 +175,14 @@ class GraphCoordinator(UniversalCoordinator):
             'pending_queries': len(self._pending_queries),
         }
 
-    async def _execute_graph_reasoning(self, query: str) -> Optional[Dict[str, Any]]:
+    async def _execute_graph_reasoning(self, query: str) -> dict[str, Any] | None:
         """
         Execute graph reasoning for a query.
 
         Delegates to orchestrator's GraphRAG or quantum pathfinder.
         """
         if not self._orchestrator:
-            logger.warning(f"GraphCoordinator: no orchestrator reference for query")
+            logger.warning("GraphCoordinator: no orchestrator reference for query")
             return None
 
         try:
@@ -232,7 +231,7 @@ class GraphCoordinator(UniversalCoordinator):
             return None
 
     # Sprint 33: JSON-LD entity extraction
-    async def add_entities_from_jsonld(self, jsonld_data: List[Dict]) -> None:
+    async def add_entities_from_jsonld(self, jsonld_data: list[dict]) -> None:
         """Extract entities/relations from JSON-LD and add to graph."""
         if not jsonld_data:
             return
@@ -240,7 +239,7 @@ class GraphCoordinator(UniversalCoordinator):
         # Placeholder: In future, this will call self._knowledge_layer.add_knowledge(...)
         await asyncio.sleep(0)  # yield to event loop
 
-    async def _do_shutdown(self, ctx: Dict[str, Any]) -> None:
+    async def _do_shutdown(self, ctx: dict[str, Any]) -> None:
         """Cleanup on shutdown."""
         logger.info(f"GraphCoordinator shutting down: {self._walks_executed} walks, {self._paths_returned} paths")
         self._pending_queries.clear()
@@ -301,7 +300,7 @@ class GraphCoordinator(UniversalCoordinator):
                 existing.append(domain)
             elif favicon_hash:
                 if not hasattr(self, '_favicon_index'):
-                    self._favicon_index: Dict[str, List[str]] = {}
+                    self._favicon_index: dict[str, list[str]] = {}
                 self._favicon_index.setdefault(favicon_hash, []).append(domain)
 
             # jarm_hash -> same_infra_as edges (Sprint 51)
@@ -309,7 +308,7 @@ class GraphCoordinator(UniversalCoordinator):
             if jarm_hash:
                 # Reuse _favicon_index for JARM (same_infra_as logic)
                 if not hasattr(self, '_favicon_index'):
-                    self._favicon_index: Dict[str, List[str]] = {}
+                    self._favicon_index: dict[str, list[str]] = {}
 
                 existing = self._favicon_index.get(jarm_hash, [])
                 for existing_domain in existing:

@@ -22,7 +22,6 @@ from unittest.mock import MagicMock
 
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # TestSprintF195C: Forensics Enrichment Service
 # ---------------------------------------------------------------------------

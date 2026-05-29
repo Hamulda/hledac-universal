@@ -1572,6 +1572,53 @@ class FeedDominanceGuardResult:
 
 
 
+# D6: Lane Budget Pool for per-lane timeout accounting
+@dataclass
+class LaneBudgetAllocation:
+    lane_name: str
+    allocated_s: float = 0.0
+    consumed_s: float = 0.0
+    released_s: float = 0.0
+    timeout_count: int = 0
+
+
+@dataclass
+class LaneBudgetPool:
+    _allocations: dict = field(default_factory=dict)
+    _total_budget_s: float = 0.0
+
+    def allocate(self, lane_name: str, budget_s: float) -> None:
+        if lane_name not in self._allocations:
+            self._allocations[lane_name] = LaneBudgetAllocation(lane_name=lane_name)
+        self._allocations[lane_name].allocated_s += budget_s
+        self._total_budget_s += budget_s
+
+    def consume(self, lane_name: str, elapsed_s: float) -> None:
+        if lane_name in self._allocations:
+            self._allocations[lane_name].consumed_s += elapsed_s
+
+    def release(self, lane_name: str, remaining_s: float | None = None) -> float:
+        if lane_name not in self._allocations:
+            return 0.0
+        alloc = self._allocations[lane_name]
+        alloc.timeout_count += 1
+        if remaining_s is not None and remaining_s > 0:
+            alloc.released_s += remaining_s
+            return remaining_s
+        return 0.0
+
+    def get_utilization(self) -> float:
+        if self._total_budget_s <= 0:
+            return -1.0
+        total = sum(a.consumed_s for a in self._allocations.values())
+        return min(total / self._total_budget_s, 1.0)
+
+    def get_lane_stats(self) -> dict:
+        return {n: dict(allocated_s=a.allocated_s, consumed_s=a.consumed_s,
+                        released_s=a.released_s, timeout_count=a.timeout_count)
+                for n, a in self._allocations.items()}
+
+
 @dataclass(slots=True)
 
 class FeedDominanceGuard:
@@ -3681,7 +3728,7 @@ class NonfeedSprintResult(SprintResult):
 
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 
 class PreWindupBarrierResult:
 
@@ -3721,7 +3768,7 @@ class PreWindupBarrierResult:
 
 
 
-@dataclass
+@dataclass(slots=True)
 
 class SourceEconomics:
 
@@ -3769,7 +3816,7 @@ class SourceEconomics:
 
 
 
-@dataclass
+@dataclass(slots=True)
 
 class SourceWork:
 
@@ -3923,7 +3970,7 @@ def _import_hypothesis_engine():
 
 # Sprint 8TB: Agentic Pivot Loop
 
-@dataclass(order=True)
+@dataclass(order=True, slots=True)
 
 class PivotTask:
 
@@ -4048,6 +4095,9 @@ class SprintScheduler:
         # Result accumulators
 
         self._result = SprintSchedulerResult()
+
+        # D6: Per-lane budget accounting pool
+        self._lane_budget_pool = LaneBudgetPool()
 
         # Cancellation flag
 
@@ -5055,6 +5105,254 @@ class SprintScheduler:
 
     # ── Public API ─────────────────────────────────────────────────────────
 
+    async def _initialize_sprint_run(
+        self,
+        adapter: Any,
+        lifecycle: Any,
+        ct_log_client: Any | None,
+        policy_manager: Any,
+        duckdb_store: Any,
+        now_monotonic: float | None,
+    ) -> tuple[float, bool, Any | None]:
+        """Phase 1: Sprint initialization - privacy, governor, sidecar, layers, CT, dedup."""
+        # Sprint F250F: Privacy context
+        try:
+            _privacy = getattr(self._layer_manager, 'privacy', None)
+            if _privacy and hasattr(_privacy, 'create_privacy_context'):
+                self._privacy_context_id = await _privacy.create_privacy_context()
+                log.debug("privacy_context created: %s", self._privacy_context_id)
+        except Exception as _e:
+            log.debug("privacy_context init failed: %s", _e)
+
+        # Sprint F202J: Initialize M1 resource governor
+        try:
+            from hledac.universal.runtime.resource_governor import get_governor
+            self._governor = get_governor()
+        except Exception as _exc:
+            log.warning("failed to initialize M1 resource governor: %s", _exc)
+            self._governor = None
+
+        # Sprint F205F: Sidecar orchestration
+        from hledac.universal.runtime.sidecar_orchestrator import SidecarOrchestrator
+        self._sidecar_orchestrator = SidecarOrchestrator(
+            self._result, governor=self._governor, scheduler=self,
+        )
+
+        # Sprint F250: LayerManager init (opt-in)
+        if os.environ.get("HLEDAC_ENABLE_LAYERS") == "1":
+            try:
+                from hledac.universal.layers.layer_manager import LayerManager
+                self._layer_manager = LayerManager(config=None)
+                log.info("layers LayerManager initialized")
+                try:
+                    _privacy = getattr(self._layer_manager, 'privacy', None)
+                    if _privacy and hasattr(_privacy, 'create_privacy_context'):
+                        self._privacy_context_id = await _privacy.create_privacy_context()
+                        log.info("layers privacy_context created: %s", self._privacy_context_id)
+                except Exception as _e:
+                    log.W("layers privacy_context init failed: %s", _e)
+            except Exception as _e:
+                log.W("layers LayerManager init failed: %s", _e)
+
+        # Sprint F193A: CT log client injection
+        if ct_log_client is not None:
+            self._ct_log_client = ct_log_client
+
+        # Sprint 8VD: sprint_id from lifecycle
+        try:
+            self.sprint_id = getattr(lifecycle, "sprint_id", "") or ""
+        except Exception:
+            self.sprint_id = ""
+
+        # Sprint 8RA: Store lifecycle refs
+        self._lifecycle = lifecycle
+        self._lc_adapter = adapter
+
+        # Sprint F195C: Inject opt-in RL policy manager
+        if policy_manager is not None:
+            self.inject_policy_manager(policy_manager)
+
+        # Sprint 8BK: Wall-clock start and hard deadline
+        self._wall_clock_start = _time.monotonic()
+        self._hard_deadline_monotonic = self._wall_clock_start + self._config.sprint_duration_s
+        self._result.hard_deadline_monotonic = self._hard_deadline_monotonic
+        self._result.arrow_batch_hard_cap = self._ARROW_BATCH_HARD_CAP
+
+        # Sprint F195: Store duckdb_store
+        self._duckdb_store = duckdb_store
+        self._duckdb_can_ingest = duckdb_store is not None and hasattr(
+            duckdb_store, "async_ingest_findings_batch"
+        )
+
+        # Sprint F195C: Initialize enrichment services
+        if self._enrichment_services:
+            await self._enrichment_services.init()
+
+        # Sprint F205H: Initialize metrics registry
+        await self._init_metrics_registry()
+
+        # RelationshipDiscoveryEngine cross-sprint bridge
+        try:
+            from hledac.universal.intelligence.relationship_discovery import RelationshipDiscoveryEngine
+            from hledac.universal.paths import LMDB_ROOT
+            self._rel_discovery_engine = RelationshipDiscoveryEngine(use_sparse=True, max_memory_mb=512)
+            _rel_graph_path = LMDB_ROOT / "rel_discovery_graph.pkl"
+            if _rel_graph_path.exists():
+                self._rel_discovery_engine.load_graph(_rel_graph_path)
+                log.debug(f"[RelDiscovery] Loaded graph: {_rel_graph_path}")
+            from hledac.universal.knowledge.graph_service import Relationship
+            _cb = lambda src, dst, rel_type, weight: self._rel_discovery_engine.add_relationship(
+                Relationship(source=src, target=dst, type=rel_type, strength=weight)
+            )
+            _DEFAULT_GRAPH_SERVICE.register_relationship_callback(_cb)
+            log.debug("[RelDiscovery] Registered callback on GraphService")
+        except Exception as _e:
+            log.warning(f"[RelDiscovery] init failed: {_e}")
+            self._rel_discovery_engine = None
+
+        # F205H: Baseline RSS at sprint start
+        self._tick_metrics_on_cycle_end()
+
+        # E4: GC sprint callbacks
+        global _gc_sprint_callback_handle
+        if _gc_sprint_callback_handle is not None:
+            gc.callbacks.remove(_gc_sprint_callback_handle)
+        _gc_sprint_stats.clear()
+        _gc_sprint_callback_handle = _gc_sprint_callback
+        gc.callbacks.append(_gc_sprint_callback)
+
+        # E2: Opt-in tracemalloc snapshot
+        _trace_snap_before: Any = None
+        _trace_enabled = os.environ.get("HLEDAC_TRACEMALLOC")
+        if _trace_enabled:
+            try:
+                import tracemalloc
+                tracemalloc.start(10)
+                _trace_snap_before = tracemalloc.take_snapshot()
+            except Exception as _e:
+                log.warning(f"[E2] tracemalloc start failed: {_e}")
+                _trace_enabled = False
+
+        # Initial tick to enter ACTIVE
+        self._runner.tick(now_monotonic)
+        self._runner.ensure_active(now_monotonic)
+
+        # Sprint 8RA: Load persistent dedup at BOOT
+        _dedup_t0 = _time.monotonic()
+        await self._load_dedup()
+        _dedup_elapsed = _time.monotonic() - _dedup_t0
+        self._result.dedup_preload_elapsed_s = _dedup_elapsed
+        self._result.dedup_preload_count = (
+            len(self._dedup_seen) if hasattr(self, '_dedup_seen') and self._dedup_seen is not None else 0
+        )
+
+        # Sprint F203D: Evidence chain builder
+        try:
+            from hledac.universal.knowledge.evidence_chain import EvidenceChainBuilder, set_global_builder
+            set_global_builder(EvidenceChainBuilder())
+        except Exception:
+            pass
+
+        # Sprint F166B: Pre-loop cost center
+        if _dedup_elapsed > 1.0 and not self._result.pre_loop_blocker_reason:
+            self._result.pre_loop_blocker_reason = "dedup_preload"
+
+        # F240A: Timer instrumentation
+        try:
+            self._timer.phase("memory_preflight")
+        finally:
+            self._timer.phase("memory_preflight_end")
+
+        return _dedup_elapsed, _trace_enabled, _trace_snap_before
+
+    async def _init_background_transports(self) -> None:
+        """Phase 3: Initialize background transports - memory pressure, DHT, I2P, Nym, Tor."""
+        # Sprint 8VD §C: Start memory pressure monitoring loop
+        _t = asyncio.create_task(self._memory_pressure_loop(), name="sprint:memory_pressure_loop")
+        self._bg_tasks.add(_t)
+        _t.add_done_callback(self._bg_tasks.discard)
+
+        # Sprint F214: DHT background init (non-blocking)
+        if os.getenv("HLEDAC_ENABLE_DHT", "").lower() in ("1", "true", "yes", "on"):
+            _dht_t = asyncio.create_task(self._init_dht_node_background(), name="sprint:dht_init")
+            self._bg_tasks.add(_dht_t)
+            _dht_t.add_done_callback(self._bg_tasks.discard)
+
+        # Sprint F250: I2PTransport background init (non-blocking)
+        if os.environ.get("HLEDAC_ENABLE_I2P") == "1":
+            _i2p_t = asyncio.create_task(self._init_i2p_background(), name="sprint:i2p_init")
+            self._bg_tasks.add(_i2p_t)
+            _i2p_t.add_done_callback(self._bg_tasks.discard)
+
+        # Sprint F250: NymTransport background init (non-blocking)
+        if os.environ.get("HLEDAC_ENABLE_NYM") == "1":
+            _nym_t = asyncio.create_task(self._init_nym_background(), name="sprint:nym_init")
+            self._bg_tasks.add(_nym_t)
+            _nym_t.add_done_callback(self._bg_tasks.discard)
+
+        # Sprint F214Q B.3: TorTransport background init (non-blocking)
+        _tor_gate = os.environ.get("HLEDAC_ENABLE_TOR", "").strip() in ("1", "true", "True")
+        _tor_proxy = bool(os.environ.get("HLEDAC_TOR_PROXY", "").strip())
+        if _tor_gate or _tor_proxy:
+            _tor_t = asyncio.create_task(self._init_tor_background(), name="sprint:tor_init")
+            self._bg_tasks.add(_tor_t)
+            _tor_t.add_done_callback(self._bg_tasks.discard)
+    async def _prewarm_hermes(self) -> None:
+        """Phase 2: Hermes prewarm - load model at sprint start (bounded M1 8GB lifecycle)."""
+        # P12: Hermes prewarm — explicit policy by mode
+        # Aggressive mode: prewarm before fan-out, unless RSS > 4GB (skip fail-soft)
+        # Stable mode: current safe behavior via ModelManager memory guards
+        # Hermes ~2GB: loaded once at sprint start, released at teardown
+        self._hermes_engine = None
+        self._memory_manager = None
+        try:
+            self._timer.phase("profile_reality_check_start")
+            await self._prewarm_hermes_for_sprint()
+        except Exception as e:
+            log.debug(f"[P12] Hermes prewarm failed, ToT will be skipped: {e}")
+            self._hermes_engine = None
+        finally:
+            self._timer.phase("profile_reality_check_end")
+
+
+
+    async def _teardown_sprint(self, _trace_enabled: bool, _trace_snap_before: Any) -> None:
+        """Phase D: Teardown - cleanup resources at sprint end (tracemalloc, GC, privacy context)."""
+        # E2: Compare tracemalloc snapshots if enabled
+        if _trace_enabled:
+            try:
+                import tracemalloc
+                _trace_snap_after = tracemalloc.take_snapshot()
+                _trace_diff = _trace_snap_after.compare_to(_trace_snap_before, "lineno")
+                log.info("[E2] tracemalloc top 10 allocations:")
+                for _stat in _trace_diff[:10]:
+                    log.info("  %s", _stat)
+            except Exception:
+                pass
+            try:
+                tracemalloc.stop()
+            except Exception:
+                pass
+
+        # E4: Remove GC sprint callback
+        global _gc_sprint_callback_handle
+        if _gc_sprint_callback_handle is not None:
+            try:
+                gc.callbacks.remove(_gc_sprint_callback_handle)
+            except Exception:
+                pass
+            _gc_sprint_callback_handle = None
+
+        # Sprint F250F: Close privacy context at TEARDOWN
+        try:
+            _privacy = getattr(self._layer_manager, "privacy", None)
+            if _privacy and hasattr(_privacy, "close_privacy_context"):
+                await _privacy.close_privacy_context(self._privacy_context_id)
+                log.debug("privacy_context closed: %s", self._privacy_context_id)
+        except Exception as _e:
+            log.debug("privacy_context close failed: %s", _e)
+    # ── Public API ─────────────────────────────────────────────────────────
+
 
 
     async def run(
@@ -5192,277 +5490,17 @@ class SprintScheduler:
                 log.W("layers LayerManager init failed: %s", _e)
 
 
-        # Sprint F228F: Wrap ALL body statements in defensive try/except so any
-
-        # exception is classified and recorded on result before propagation.
-
-        # SprintScheduler must NEVER silently fail — classify every error.
-
+        # Sprint F228F: Wrap ALL body statements in defensive try/except
         _run_error: Exception | None = None
-
         _run_error_class: str = "unknown"
-
         try:
-
-            # Sprint F193A: CT log client can be injected at run() call time
-
-            if ct_log_client is not None:
-
-                self._ct_log_client = ct_log_client
-
-    
-
-            # Sprint 8VD: Set sprint_id from lifecycle if available
-
-            try:
-
-                self.sprint_id = getattr(lifecycle, "sprint_id", "") or ""
-
-            except Exception:
-
-                self.sprint_id = ""
-
-    
-
-            # Sprint 8RA: Store lifecycle ref for callbacks
-
-            self._lifecycle = lifecycle
-
-            # Sprint 8SA: Store adapter for all lifecycle access in this run
-
-            self._lc_adapter = adapter
-
-    
-
-            # Sprint F195C: Inject opt-in RL policy manager
-
-            if policy_manager is not None:
-
-                self.inject_policy_manager(policy_manager)
-
-    
-
-            # Sprint 8BK: Record wall-clock start for duration budget guard
-
-            self._wall_clock_start = _time.monotonic()
-
-            # Sprint F212A: Derive hard deadline from sprint_duration_s
-
-            self._hard_deadline_monotonic = self._wall_clock_start + self._config.sprint_duration_s
-
-            self._result.hard_deadline_monotonic = self._hard_deadline_monotonic
-
-            # Sprint F214OPT-D: Wire Arrow batch hard cap to result
-
-            self._result.arrow_batch_hard_cap = self._ARROW_BATCH_HARD_CAP
-
-            # Sprint F195: Store duckdb_store on self for task handler access
-
-            self._duckdb_store = duckdb_store
-
-            # Sprint F218E: Cache capability check once at sprint start
-
-            self._duckdb_can_ingest = duckdb_store is not None and hasattr(
-
-                duckdb_store, "async_ingest_findings_batch"
-
+            # Phase 1: Initialize sprint
+            _dedup_elapsed, _trace_enabled, _trace_snap_before = await self._initialize_sprint_run(
+                adapter, lifecycle, ct_log_client, policy_manager, duckdb_store, now_monotonic
             )
 
-    
-
-            # Sprint F195C: Initialize forensics enricher and LMDB
-
-            if self._enrichment_services:
-
-                await self._enrichment_services.init()
-
-            # Sprint F205H: Initialize metrics registry (fail-soft, run_dir from config or default)
-
-            await self._init_metrics_registry()
-
-
-
-            # ── Wave 2: RelationshipDiscoveryEngine cross-sprint bridge ─────────
-
-            # Load persisted graph → register on GraphService → sync latent at teardown
-
-            try:
-
-                from hledac.universal.intelligence.relationship_discovery import RelationshipDiscoveryEngine
-
-                from hledac.universal.paths import LMDB_ROOT
-
-                self._rel_discovery_engine = RelationshipDiscoveryEngine(use_sparse=True, max_memory_mb=512)
-
-                _rel_graph_path = LMDB_ROOT / "rel_discovery_graph.pkl"
-
-                if _rel_graph_path.exists():
-
-                    self._rel_discovery_engine.load_graph(_rel_graph_path)
-
-                    log.debug(f"[RelDiscovery] Loaded graph: {_rel_graph_path}")
-
-                # Register as callback on GraphService (DuckPGQ upsert fires this for every relation)
-
-                from hledac.universal.knowledge.graph_service import Relationship
-
-                _cb = lambda src, dst, rel_type, weight: self._rel_discovery_engine.add_relationship(
-
-                    Relationship(source=src, target=dst, type=rel_type, strength=weight)
-
-                )
-
-                _DEFAULT_GRAPH_SERVICE.register_relationship_callback(_cb)
-
-                log.debug("[RelDiscovery] Registered callback on GraphService")
-
-            except Exception as _e:
-
-                log.warning(f"[RelDiscovery] init failed: {_e}")
-
-                self._rel_discovery_engine = None
-
-
-
-            # F205H: Capture baseline RSS at sprint start (not just at cycle end)
-
-            self._tick_metrics_on_cycle_end()
-
-    
-
-            # E4: Register GC sprint callbacks (remove stale handle first to prevent doubles)
-
-            global _gc_sprint_callback_handle
-
-            if _gc_sprint_callback_handle is not None:
-
-                gc.callbacks.remove(_gc_sprint_callback_handle)
-
-            _gc_sprint_stats.clear()
-
-            _gc_sprint_callback_handle = _gc_sprint_callback
-
-            gc.callbacks.append(_gc_sprint_callback)
-
-    
-
-            # E2: Opt-in tracemalloc snapshot diff via HLEDAC_TRACEMALLOC env var
-
-            # Sprint F219M: init before try so finally always has consistent reference
-
-            _trace_snap_before: Any = None
-
-            _trace_enabled = os.environ.get("HLEDAC_TRACEMALLOC")
-
-            if _trace_enabled:
-
-                try:
-
-                    import tracemalloc
-
-                    tracemalloc.start(10)  # 10-frame depth limit
-
-                    _trace_snap_before = tracemalloc.take_snapshot()
-
-                except Exception as _e:
-
-                    log.warning(f"[E2] tracemalloc start failed: {_e}")
-
-                    _trace_enabled = False  # prevent finally from attempting stop/compare
-
-    
-
-            # Initial tick to enter ACTIVE
-
-            phase = self._runner.tick(now_monotonic)
-
-    
-
-            # Sprint 8UA: Fix lifecycle WARMUP→ACTIVE transition
-
-            # Sprint F206C: Delegated to runner.ensure_active()
-
-            self._runner.ensure_active(now_monotonic)
-
-    
-
-            # Sprint 8RA: Load persistent dedup at BOOT
-
-            _dedup_t0 = _time.monotonic()
-
-            await self._load_dedup()
-
-            _dedup_elapsed = _time.monotonic() - _dedup_t0
-
-            self._result.dedup_preload_elapsed_s = _dedup_elapsed
-
-            self._result.dedup_preload_count = len(self._dedup_seen) if hasattr(self, '_dedup_seen') and self._dedup_seen is not None else 0
-
-    
-
-            # Sprint F203D: Initialize evidence chain builder at sprint start
-
-            try:
-
-                from hledac.universal.knowledge.evidence_chain import EvidenceChainBuilder, set_global_builder
-
-                set_global_builder(EvidenceChainBuilder())
-
-            except Exception:
-
-                pass  # Fail-soft: chain tracking is optional advisory
-
-    
-
-            # Sprint F166B: Identify pre-loop cost center (additive — first reason only)
-
-            if _dedup_elapsed > 1.0 and not self._result.pre_loop_blocker_reason:
-
-                self._result.pre_loop_blocker_reason = "dedup_preload"
-
-    
-
-            # F240A: Timer instrumentation — memory_preflight and profile_reality_check
-
-            try:
-
-                self._timer.phase("memory_preflight")
-
-                # (empty — dedup preload above is the cost center)
-
-            finally:
-
-                self._timer.phase("memory_preflight_end")
-
-    
-
-            # P12: Hermes prewarm — explicit policy by mode (bounded M1 8GB lifecycle)
-
-            # Aggressive mode: prewarm before fan-out, unless RSS > 4GB (skip fail-soft)
-
-            # Stable mode: current safe behavior via ModelManager memory guards
-
-            # Hermes ~2GB: loaded once at sprint start, released at teardown
-
-            self._hermes_engine = None
-
-            self._memory_manager = None
-
-            try:
-
-                self._timer.phase("profile_reality_check_start")
-
-                await self._prewarm_hermes_for_sprint()
-
-            except Exception as e:
-
-                log.debug(f"[P12] Hermes prewarm failed, ToT will be skipped: {e}")
-
-                self._hermes_engine = None
-
-            finally:
-
-                self._timer.phase("profile_reality_check_end")
+            # Phase 2: Hermes prewarm
+            await self._prewarm_hermes()
 
     
 
@@ -5910,67 +5948,8 @@ class SprintScheduler:
 
     
 
-            # Sprint 8VD §C: Start memory pressure monitoring loop
-
-            _t = asyncio.create_task(self._memory_pressure_loop(), name="sprint:memory_pressure_loop")
-
-            self._bg_tasks.add(_t)
-
-            _t.add_done_callback(self._bg_tasks.discard)
-
-
-
-            # Sprint F214: DHT background init (non-blocking)
-
-            if os.getenv("HLEDAC_ENABLE_DHT", "").lower() in ("1", "true", "yes", "on"):
-
-                _dht_t = asyncio.create_task(self._init_dht_node_background(), name="sprint:dht_init")
-
-                self._bg_tasks.add(_dht_t)
-
-                _dht_t.add_done_callback(self._bg_tasks.discard)
-
-
-
-            # Sprint F250: I2PTransport background init (non-blocking)
-
-            if os.environ.get("HLEDAC_ENABLE_I2P") == "1":
-
-                _i2p_t = asyncio.create_task(self._init_i2p_background(), name="sprint:i2p_init")
-
-                self._bg_tasks.add(_i2p_t)
-
-                _i2p_t.add_done_callback(self._bg_tasks.discard)
-
-
-
-            # Sprint F250: NymTransport background init (non-blocking)
-
-            if os.environ.get("HLEDAC_ENABLE_NYM") == "1":
-
-                _nym_t = asyncio.create_task(self._init_nym_background(), name="sprint:nym_init")
-
-                self._bg_tasks.add(_nym_t)
-
-                _nym_t.add_done_callback(self._bg_tasks.discard)
-
-
-
-            # Sprint F214Q B.3: TorTransport background init (non-blocking)
-
-            # Gate: HLEDAC_ENABLE_TOR=1 OR HLEDAC_TOR_PROXY set
-
-            _tor_gate = os.environ.get("HLEDAC_ENABLE_TOR", "").strip() in ("1", "true", "True")
-
-            _tor_proxy = bool(os.environ.get("HLEDAC_TOR_PROXY", "").strip())
-
-            if _tor_gate or _tor_proxy:
-
-                _tor_t = asyncio.create_task(self._init_tor_background(), name="sprint:tor_init")
-
-                self._bg_tasks.add(_tor_t)
-
-                _tor_t.add_done_callback(self._bg_tasks.discard)
+            # Phase 3: Initialize background transports
+            await self._init_background_transports()
 
 
 
@@ -14144,6 +14123,10 @@ class SprintScheduler:
 
             branch_timeout = self._branch_timeout_s("PUBLIC", remaining_s)
 
+            # D6: Allocate lane budget before running
+            if branch_timeout > 0:
+                self._lane_budget_pool.allocate("PUBLIC", branch_timeout)
+
             if branch_timeout <= 0:
 
                 log.debug("[F212-B] PUBLIC branch skipped: remaining=%.1fs", remaining_s)
@@ -19752,6 +19735,16 @@ class SprintScheduler:
 
             adapter = BGPAdapter(session_provider=session_provider)
 
+            # F214R: PassiveDNS adapter (gated by HLEDAC_ENABLE_BGP_PDNS=1)
+            pdns_adapter = None
+            if os.environ.get("HLEDAC_ENABLE_BGP_PDNS", "0").lower() in ("1", "true", "yes", "on"):
+                try:
+                    from hledac.universal.intelligence.bgp_passive_dns_adapter import PassiveDNSAdapter
+                    pdns_adapter = PassiveDNSAdapter()
+                    pdns_adapter.set_session(session_provider())
+                except Exception:
+                    pass  # fail-soft
+
             try:
 
                 # Extract domains from acquisition lane outcomes
@@ -19858,7 +19851,21 @@ class SprintScheduler:
 
                         self._result.bgp_advisory_findings_produced = len(findings)
 
-
+                # F214R: PassiveDNS enrichment via HackerTarget (after BGP enrich)
+                if pdns_adapter is not None and unique_domains and store is not None:
+                    pdns_findings = []
+                    for domain in unique_domains[:5]:  # Cap at 5 domains
+                        try:
+                            records = await pdns_adapter.query_pdns(domain)
+                            for rec in records:
+                                cf = rec.to_canonical_finding(self._query)
+                                if cf:
+                                    pdns_findings.append(cf)
+                        except Exception:
+                            pass
+                    if pdns_findings:
+                        await store.async_ingest_findings_batch(pdns_findings)
+                        self._result.pdns_advisory_findings_produced = len(pdns_findings)
 
                 # Record source_family_outcomes
 
@@ -19895,6 +19902,11 @@ class SprintScheduler:
             finally:
 
                 await adapter.close()
+                if pdns_adapter is not None:
+                    try:
+                        await pdns_adapter._session.aclose()
+                    except Exception:
+                        pass
 
 
 

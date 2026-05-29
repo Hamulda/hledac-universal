@@ -8,10 +8,11 @@ import hashlib
 import logging
 import sys
 import time
-import msgspec
-from typing import TYPE_CHECKING, Dict, List, Optional, Callable, Tuple, Any
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Any
 
-from hledac.universal.core.resource_governor import ResourceGovernor, Priority
+import msgspec
+from hledac.universal.core.resource_governor import Priority, ResourceGovernor
 
 if TYPE_CHECKING:
     from hledac.universal.utils.sprint_lifecycle import SprintLifecycleManager
@@ -29,7 +30,7 @@ class PlannerRuntimeRequest(msgspec.Struct, frozen=True, gc=False):
     prompt: str
     response_model_name: str
     priority: float
-    remaining_time_s: Optional[float]
+    remaining_time_s: float | None
     is_panic_deprioritized: bool
 
 
@@ -38,12 +39,12 @@ class PlannerRuntimeResult(msgspec.Struct, frozen=True, gc=False):
     task_id: str
     executed: bool
     skipped_panic: bool
-    hermes_output: Optional[str]
-    error: Optional[str]
+    hermes_output: str | None
+    error: str | None
 
 
 # Task type → response model name mapping (Sprint 8N)
-_TASK_TYPE_MODEL_MAP: Dict[str, str] = {
+_TASK_TYPE_MODEL_MAP: dict[str, str] = {
     'fetch': 'FetchResult',
     'deep_read': 'DeepReadResult',
     'analyse': 'AnalyseResult',
@@ -123,7 +124,7 @@ def _should_learn_from_error(error: str | None) -> bool:
 class HTNPlanner:
     def __init__(self, governor: ResourceGovernor, cost_model: AdaptiveCostModel,
                  decomposer: SLMDecomposer, scheduler, evidence_log,
-                 remaining_time_s: Optional[float] = None):
+                 remaining_time_s: float | None = None):
         self.governor = governor
         self.cost_model = cost_model
         self.decomposer = decomposer
@@ -139,13 +140,13 @@ class HTNPlanner:
         self._storage_fail_count = 0
         self._storage_skipped_count = 0
         # Time-budget signal — set via setter for fail-open read-only access
-        self._remaining_time_s: Optional[float] = remaining_time_s
+        self._remaining_time_s: float | None = remaining_time_s
         # Sprint 8U: explicit override takes priority over live lifecycle signal
-        self._override_remaining_time: Optional[float] = None
+        self._override_remaining_time: float | None = None
         # Sprint 8U: fail counter for lifecycle accessor exceptions (not exposed externally)
         self._lifecycle_fail_count: int = 0
 
-    def set_remaining_time(self, remaining_time_s: Optional[float]) -> None:
+    def set_remaining_time(self, remaining_time_s: float | None) -> None:
         """
         Fail-open setter — establishes explicit override taking priority over live lifecycle.
         Writes to both _override_remaining_time (primary precedence key)
@@ -160,7 +161,7 @@ class HTNPlanner:
         # Also reset _remaining_time_s so tier-2 doesn't mask live signal
         self._remaining_time_s = None
 
-    def _get_live_remaining_time(self) -> Optional[float]:
+    def _get_live_remaining_time(self) -> float | None:
         """
         Sprint 8U + F400E: Read live remaining_time from SprintLifecycleManager singleton.
         Source preference: runtime/sprint_lifecycle (canonical) → utils/sprint_lifecycle (compat fallback).
@@ -185,7 +186,7 @@ class HTNPlanner:
                     fromlist=["SprintLifecycleManager"]
                 )
                 SprintLifecycleManager = compat_mgr.SprintLifecycleManager
-            manager: "SprintLifecycleManager" = SprintLifecycleManager.get_instance()
+            manager: SprintLifecycleManager = SprintLifecycleManager.get_instance()
             # SprintLifecycleManager.remaining_time is a @property (utils) or method (runtime);
             # both return 0.0 when sprint has not started
             remaining = manager.remaining_time
@@ -197,7 +198,7 @@ class HTNPlanner:
             self._lifecycle_fail_count += 1
             return None
 
-    def _get_remaining_time(self) -> Optional[float]:
+    def _get_remaining_time(self) -> float | None:
         """
         Read-only access to remaining_time with four-tier precedence (Sprint 8U):
           1. Explicit override set via set_remaining_time() — highest priority
@@ -218,7 +219,7 @@ class HTNPlanner:
         # Tier 4: fail-open
         return None
 
-    def _time_multiplier(self, task: Dict) -> float:
+    def _time_multiplier(self, task: dict) -> float:
         """
         Time-aware cost multiplier based on remaining sprint time.
         Used to penalize expensive tasks when time is low.
@@ -258,13 +259,13 @@ class HTNPlanner:
     # Feature extraction & safe predict helpers (CPU-only, no I/O)      #
     # ------------------------------------------------------------------ #
 
-    def _extract_cost_features(self, task: Dict) -> Dict:
+    def _extract_cost_features(self, task: dict) -> dict:
         """
         Extrahuje parametry z task dict pro cost model.
         CPU-only: žádné I/O, žádné MLX load.
         """
         params = {}
-        task_type = task.get('type', 'other')
+        task.get('type', 'other')
 
         # URL length as complexity proxy
         url = task.get('url') or task.get('source') or ''
@@ -285,7 +286,7 @@ class HTNPlanner:
 
         return params
 
-    def _build_system_state(self) -> Dict:
+    def _build_system_state(self) -> dict:
         """
         Build lightweight system_state dict for predict().
         CPU-only, no I/O, fail-safe.
@@ -314,7 +315,7 @@ class HTNPlanner:
     def _cached_predict_hash(self, task_type: str, url_hash: int,
                               depth: float, priority: float,
                               expected: float, active_tasks: float,
-                              rss_gb: float, avg_latency: float) -> Optional[Tuple[float, float, float, float]]:
+                              rss_gb: float, avg_latency: float) -> tuple[float, float, float, float] | None:
         """
         Hashable cached wrapper around cost_model.predict().
         All args must be primitives (int/float/str) for lru_cache hashability.
@@ -340,7 +341,7 @@ class HTNPlanner:
             pass
         return None
 
-    def _safe_predict(self, task: Dict) -> Tuple[float, float, float, float, bool]:
+    def _safe_predict(self, task: dict) -> tuple[float, float, float, float, bool]:
         """
         Safe wrapper around cost_model.predict() with memoization and fail-open.
         Returns (cost, ram, network, value, used_predict).
@@ -391,7 +392,7 @@ class HTNPlanner:
     # Estimation methods — wired to AdaptiveCostModel                     #
     # ------------------------------------------------------------------ #
 
-    def _estimate_cost(self, task: Dict) -> float:
+    def _estimate_cost(self, task: dict) -> float:
         """Odhad nákladů úkolu (čas v sekundách). Always > 0."""
         cost, _, _, _, _ = self._safe_predict(task)
         # Apply time-aware multiplier for low remaining time
@@ -400,17 +401,17 @@ class HTNPlanner:
             return _MIN_COST  # hard prune — return minimal cost so task gets de-prioritized
         return max(_MIN_COST, cost * mult)
 
-    def _estimate_ram(self, task: Dict) -> float:
+    def _estimate_ram(self, task: dict) -> float:
         """Odhad RAM (MB). Always > 0."""
         _, ram, _, _, _ = self._safe_predict(task)
         return ram
 
-    def _estimate_network(self, task: Dict) -> float:
+    def _estimate_network(self, task: dict) -> float:
         """Odhad network (MB). Always > 0."""
         _, _, network, _, _ = self._safe_predict(task)
         return network
 
-    def _is_panic_heavy_task(self, task: Dict) -> bool:
+    def _is_panic_heavy_task(self, task: dict) -> bool:
         """Check if task is a heavy I/O task that should be pruned in panic horizon."""
         rt = self._get_remaining_time()
         if rt is None or rt >= 60:
@@ -422,7 +423,7 @@ class HTNPlanner:
     # Sprint 8N: Translation layer — abstract task → Hermes runtime request
     # ------------------------------------------------------------------ #
 
-    def build_runtime_request(self, task: Dict, task_id: str) -> PlannerRuntimeRequest | None:
+    def build_runtime_request(self, task: dict, task_id: str) -> PlannerRuntimeRequest | None:
         """
         Translate an abstract planner task dict into a typed Hermes runtime request.
 
@@ -467,7 +468,7 @@ class HTNPlanner:
             is_panic_deprioritized=skipped_panic,
         )
 
-    def _task_to_prompt(self, task: Dict) -> str:
+    def _task_to_prompt(self, task: dict) -> str:
         """Build a Hermes prompt from an abstract task dict."""
         task_type = task.get('type', 'other')
         url = task.get('url') or task.get('source', '')
@@ -480,8 +481,8 @@ class HTNPlanner:
         return f"[{task_type}] Execute task."
 
     def build_runtime_requests(
-        self, tasks: List[Dict], start_id: int = 0
-    ) -> List[PlannerRuntimeRequest]:
+        self, tasks: list[dict], start_id: int = 0
+    ) -> list[PlannerRuntimeRequest]:
         """
         Translate a list of abstract planner tasks into typed runtime requests.
         Tasks that cannot be translated are skipped (fail-open).
@@ -501,7 +502,7 @@ class HTNPlanner:
         self,
         request: PlannerRuntimeRequest,
         engine,
-    ) -> Tuple[PlannerRuntimeResult, float]:
+    ) -> tuple[PlannerRuntimeResult, float]:
         """
         Execute a single PlannerRuntimeRequest with per-task timing.
 
@@ -528,10 +529,10 @@ class HTNPlanner:
 
     async def execute_requests_and_learn(
         self,
-        tasks: List[Dict],
+        tasks: list[dict],
         engine,
-        store: "Any | None" = None,
-    ) -> List[PlannerRuntimeResult]:
+        store: Any | None = None,
+    ) -> list[PlannerRuntimeResult]:
         """
         Execute planner tasks via Hermes bridge and feed runtime outcomes back
         into AdaptiveCostModel.update().
@@ -565,7 +566,7 @@ class HTNPlanner:
         """
         # Snapshot feature data Z DOBY PREDICCE so update gets the same
         # inputs that were used during planning cost estimation.
-        task_snapshots: List[Dict] = []
+        task_snapshots: list[dict] = []
         for task in tasks:
             task_type = task.get('type', 'other')
             params = self._extract_cost_features(task)
@@ -588,12 +589,12 @@ class HTNPlanner:
             self._execute_single_request(req, engine)
             for req in requests
         ]
-        raw_results: List[Tuple[PlannerRuntimeResult, float]] = await asyncio.gather(
+        raw_results: list[tuple[PlannerRuntimeResult, float]] = await asyncio.gather(
             *coros, return_exceptions=True
         )
 
         # Build results list + elapsed times, handling exceptions
-        results_with_elapsed: List[Tuple[PlannerRuntimeResult, float]] = []
+        results_with_elapsed: list[tuple[PlannerRuntimeResult, float]] = []
         for item in raw_results:
             if isinstance(item, Exception):
                 # Bridge crashed for this request — treat as error result
@@ -621,7 +622,7 @@ class HTNPlanner:
 
         # Derive observed signals and call update() per result
         update_needed = False
-        for snapshot, (result, elapsed_s) in zip(task_snapshots, results_with_elapsed):
+        for snapshot, (result, elapsed_s) in zip(task_snapshots, results_with_elapsed, strict=False):
             task_type = snapshot['task_type']
             params = snapshot['params']
             # Sprint 8Q: system_state includes live avg_latency from this batch
@@ -683,7 +684,7 @@ class HTNPlanner:
         await self._store_canonical_findings(results, requests, store=store)
         return results
 
-    def _should_skip_for_panic(self, task: Dict) -> bool:
+    def _should_skip_for_panic(self, task: dict) -> bool:
         """
         Sprint 8N panic skip check.
         Returns True if task should be skipped due to panic horizon.
@@ -693,7 +694,7 @@ class HTNPlanner:
             return False
         return self._is_panic_heavy_task(task)
 
-    def _estimate_value(self, task: Dict) -> float:
+    def _estimate_value(self, task: dict) -> float:
         """Odhad přínosu úkolu. Always >= 0."""
         _, _, _, value, _ = self._safe_predict(task)
         # Sprint 8K: Panic-horizon fix — heavy I/O tasks in panic get 0 value
@@ -721,7 +722,7 @@ class HTNPlanner:
           finding_id  = request.task_id
           query       = request.prompt[:256]          # original query text
           source_type = sys.intern("planner_bridge")  # internovaný string
-          confidence  = 0.8  # TODO §7.4/§5.15: nahradit quality/corroboration score
+          confidence  = self._cost_model_confidence()
           ts          = time.time()
           provenance  = (sys.intern(request.task_id),
                          sys.intern(request.task_type),
@@ -774,9 +775,9 @@ class HTNPlanner:
 
     async def _store_canonical_findings(
         self,
-        results: List[PlannerRuntimeResult],
-        requests: List[PlannerRuntimeRequest],
-        store: "Any | None",
+        results: list[PlannerRuntimeResult],
+        requests: list[PlannerRuntimeRequest],
+        store: Any | None,
     ) -> None:
         """
         Sprint 8S: Storage side-effect for successful PlannerRuntimeResults.
@@ -809,14 +810,14 @@ class HTNPlanner:
             return
 
         # Lazy import — only at actual call site
-        CanonicalFinding = __import__(
+        __import__(
             "hledac.universal.knowledge.duckdb_store",
             fromlist=["CanonicalFinding"]
         ).CanonicalFinding
 
         # Build CanonicalFinding list from successful results
-        findings: List[Any] = []
-        for req, res in zip(requests, results):
+        findings: list[Any] = []
+        for req, res in zip(requests, results, strict=False):
             finding = self._runtime_result_to_canonical_finding(req, res)
             if finding is not None:
                 findings.append(finding)
@@ -844,7 +845,7 @@ class HTNPlanner:
     # Planning loop                                                       #
     # ------------------------------------------------------------------ #
 
-    async def plan(self, goal: str, context: Dict, time_budget: float, ram_budget_mb: float, net_budget_mb: float) -> Optional[List[Dict]]:
+    async def plan(self, goal: str, context: dict, time_budget: float, ram_budget_mb: float, net_budget_mb: float) -> list[dict] | None:
         """
         Hlavní plánovací metoda. goal je textový cíl, context obsahuje parametry.
         Vrací seznam akcí (primitivních úkolů) k provedení.

@@ -24,9 +24,9 @@ If `sprint_exporter` ever needs to import from `formatters`, the architecture br
 """
 from __future__ import annotations
 
+import itertools
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Any
-import itertools
 
 if TYPE_CHECKING:
     from hledac.universal.project_types import ExportHandoff
@@ -36,7 +36,7 @@ import logging
 logger = logging.getLogger(__name__)
 
 # Re-export public API for backward compatibility
-from .sprint_exporter import export_sprint, export_partial_sprint
+from .sprint_exporter import export_partial_sprint, export_sprint
 
 __all__ = [
     "ExportFormatter",
@@ -62,7 +62,7 @@ class ExportFormatter(ABC):
     async def format(
         self,
         store: Any,
-        handoff: "ExportHandoff",
+        handoff: ExportHandoff,
         sprint_id: str | None = None,
         enable_security_enrichment: bool = False,
         export_mode: str = "slim",
@@ -98,7 +98,7 @@ class JSONFormatter(ExportFormatter):
     async def format(
         self,
         store: Any,
-        handoff: "ExportHandoff",
+        handoff: ExportHandoff,
         sprint_id: str | None = None,
         enable_security_enrichment: bool = False,
         export_mode: str = "slim",
@@ -118,37 +118,39 @@ class JSONFormatter(ExportFormatter):
         """
         # Import and call the original export_sprint logic
         # This preserves all existing behavior while enabling class-based organization
+        import json
+
+        from hledac.universal.export.COMPAT_HANDOFF import ensure_export_handoff
+        from hledac.universal.paths import get_sprint_json_report_path
+
         from .sprint_exporter import (
+            _build_capability_synthesis,
+            _build_operator_brief,
             _build_product_value_summary,
+            _build_sprint_summary,
+            _compute_research_depth,
+            _derive_best_first_move,
+            _derive_branch_truth,
+            _derive_run_truth_note,
+            _derive_why_this_run_matters,
             _generate_next_sprint_seeds,
-            _get_sprint_trend,
-            _get_source_leaderboard,
-            _get_correlation_from_handoff,
-            _get_runtime_truth,
             _get_acquisition_truth,
-            _reconcile_acquisition_terminality_from_source_outcomes,
-            _get_feed_verdict,
-            _get_public_verdict,
-            _get_signal_path,
-            _get_hypothesis_pack,
+            _get_branch_value,
             _get_canonical_run_summary,
+            _get_correlation_from_handoff,
+            _get_feed_verdict,
+            _get_hypothesis_pack,
+            _get_public_verdict,
+            _get_runtime_truth,
+            _get_signal_path,
+            _get_source_leaderboard,
+            _get_sprint_trend,
             _get_sprint_verdict,
             _get_synthesis_outcome_payload,
-            _compute_research_depth,
-            _build_capability_synthesis,
-            _derive_run_truth_note,
-            reconcile_terminal_truth,
-            _derive_branch_truth,
-            _derive_best_first_move,
-            _derive_why_this_run_matters,
-            _get_branch_value,
-            _build_operator_brief,
-            _build_sprint_summary,
             _make_serializable,
+            _reconcile_acquisition_terminality_from_source_outcomes,
+            reconcile_terminal_truth,
         )
-        from hledac.universal.paths import get_sprint_json_report_path
-        from hledac.universal.export.COMPAT_HANDOFF import ensure_export_handoff
-        import json
 
         # Sprint F186C: Tighten typed contract
         eh = ensure_export_handoff(handoff, default_sprint_id=sprint_id or "unknown")
@@ -227,7 +229,8 @@ class JSONFormatter(ExportFormatter):
             logger.info(f"[EXPORT] F229A truth reconciliation: {truth_recon_reason}")
 
         # Sprint F225F/F228D: capability_synthesis
-        acquisition_report = _get_acquisition_truth(eh).get("acquisition_report")
+        _acq_truth = _get_acquisition_truth(eh)
+        acquisition_report = _acq_truth.get("acquisition_report") if isinstance(_acq_truth, dict) else None
         capability_runtime_truth = _get_runtime_truth(eh)
         capability_research_depth = _compute_research_depth(eh, pvs, None, None, None)
         capability_synthesis = _build_capability_synthesis(

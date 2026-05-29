@@ -16,91 +16,92 @@ Modular layers for the universal orchestrator:
 """
 
 from .communication_layer import CommunicationLayer
-from .coordination_layer import CoordinationLayer, GhostWatchdog, DriverStatus
-from .ghost_layer import GhostLayer, SystemContext, VMThreatLevel, ProcessType
-from .memory_layer import (
-    MemoryLayer,
-    RAMDiskManager,
-    RAMDiskConfig,
-    SharedMemoryManager,
-    EntropyMaskingManager,
-    SharedMemoryBlock,
-)
-from .privacy_layer import PrivacyLayer
-from .research_layer import ResearchLayer
-from .security_layer import SecurityLayer, MissionAudit, AuditEntry
-from .stealth_layer import (
-    StealthLayer,
-    BehaviorSimulator,
-    SimulationConfig,
-    BehaviorPattern,
-    MouseMovement,
-    ScrollAction,
-    Chameleon,
-    # Fingerprint Randomizer (from stealth_toolkit integration)
-    FingerprintRandomizer,
-    FingerprintConfig,
-    BrowserProfile,
-)
 from .content_layer import (
-    ContentCleaner,
-    SimpleHTMLCleaner,
-    ResiliparseCleaner,
     CleaningResult,
+    ContentCleaner,
     OutputFormat,
-    get_content_cleaner,
+    ResiliparseCleaner,
+    SearchResultItem,
+    SimpleHTMLCleaner,
     # Utility functions (from stealth_crawler integration)
     clean_html_tags,
+    clean_search_result_url,
     extract_url_from_duckduckgo_redirect,
     extract_url_from_google_redirect,
-    clean_search_result_url,
-    SearchResultItem,
+    get_content_cleaner,
     parse_duckduckgo_results,
     parse_google_results,
 )
+from .ghost_layer import GhostLayer, ProcessType, SystemContext, VMThreatLevel
 from .hive_coordination import (
     ConnectedCoordinationSystem,
-    CoordinationLayer as HiveCoordinationLayer,
     CoordinationNode,
     CoordinationTask,
     TopologyType,
 )
-from .smart_coordination import (
-    SmartSpawnedCoordinationIntegration,
-    SmartSpawnedAgent,
-    SmartSpawnedRole,
+from .hive_coordination import (
+    CoordinationLayer as HiveCoordinationLayer,
 )
 from .layer_manager import (
+    LayerHealth,
     LayerManager,
     LayerStatus,
-    LayerHealth,
-    create_layer_manager,
-    get_layer_manager,
     # NEW: Unified Capabilities Manager
     UnifiedCapabilitiesManager,
     create_capabilities_manager,
+    create_layer_manager,
     get_capabilities_manager,
+    get_layer_manager,
+)
+from .memory_layer import (
+    EntropyMaskingManager,
+    MemoryLayer,
+    RAMDiskConfig,
+    RAMDiskManager,
+    SharedMemoryBlock,
+    SharedMemoryManager,
+)
+from .privacy_layer import PrivacyLayer
+from .research_layer import ResearchLayer
+from .security_layer import AuditEntry, MissionAudit, SecurityLayer
+from .smart_coordination import (
+    SmartSpawnedAgent,
+    SmartSpawnedCoordinationIntegration,
+    SmartSpawnedRole,
+)
+from .stealth_layer import (
+    BehaviorPattern,
+    BehaviorSimulator,
+    BrowserProfile,
+    Chameleon,
+    FingerprintConfig,
+    # Fingerprint Randomizer (from stealth_toolkit integration)
+    FingerprintRandomizer,
+    MouseMovement,
+    ScrollAction,
+    SimulationConfig,
+    StealthLayer,
 )
 from .temporal_signal_layer import (
+    TemporalEdgeCandidate,
     TemporalEvent,
     TemporalScore,
-    TemporalEdgeCandidate,
-    _KeyState,
     TemporalSignalLayer,
+    _KeyState,
     event_from_finding_like,
 )
-from .temporal_signal_store import TemporalSignalStore
 from .temporal_signal_runtime import (
+    build_temporal_priority_hints,
+    close_temporal_signal_store,
     get_temporal_signal_layer,
-    reset_temporal_signal_layer,
+    get_temporal_signal_store,
     get_temporal_signal_summary,
     is_temporal_store_enabled,
-    get_temporal_signal_store,
     load_temporal_signal_snapshot,
+    reset_temporal_signal_layer,
     save_temporal_signal_snapshot,
-    close_temporal_signal_store,
-    build_temporal_priority_hints,
 )
+from .temporal_signal_store import TemporalSignalStore
 
 __all__ = [
     "GhostLayer",
@@ -113,9 +114,6 @@ __all__ = [
     "SharedMemoryManager",
     "EntropyMaskingManager",
     "SharedMemoryBlock",
-    "CoordinationLayer",
-    "GhostWatchdog",
-    "DriverStatus",
     "SecurityLayer",
     "MissionAudit",
     "AuditEntry",
@@ -192,7 +190,7 @@ __all__ = [
 # ---------------------------------------------------------------------------
 
 
-def get_stealth_layer() -> "StealthLayer | None":
+def get_stealth_layer() -> StealthLayer | None:
     """Lazy singleton StealthLayer accessor.
 
     Returns None if layers are disabled or init fails (fail-soft).
@@ -209,7 +207,7 @@ def get_stealth_layer() -> "StealthLayer | None":
         return None
 
 
-def get_content_layer() -> "ContentCleaner | None":
+def get_content_layer() -> ContentCleaner | None:
     """Lazy singleton ContentCleaner accessor.
 
     Returns None if content_layer init fails (fail-soft).

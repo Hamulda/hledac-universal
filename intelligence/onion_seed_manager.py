@@ -10,7 +10,7 @@ import re
 import time
 import urllib.parse
 from pathlib import Path
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     import aiohttp
@@ -36,7 +36,7 @@ class OnionSeedManager:
         "http://juhanurmihxlp77nkq76byazcldy2hlmovfu2epvl5ankdibsot4csyd.onion/",
     ]
 
-    def __init__(self, seeds_path: Optional[Path] = None) -> None:
+    def __init__(self, seeds_path: Path | None = None) -> None:
         if seeds_path is None:
             from hledac.universal.paths import TOR_ROOT
             seeds_path = TOR_ROOT / "onion_seeds.json"
@@ -100,7 +100,7 @@ class OnionSeedManager:
     async def discover_from_ahmia(
         self,
         query: str,
-        session: Optional[object] = None,
+        session: object | None = None,
     ) -> list[str]:
         """
         Přidat nové onion seeds z Ahmia clearnet search.
@@ -158,7 +158,7 @@ class OnionSeedManager:
     async def discover_via_tor(
         self,
         query: str,
-        tor_session: "aiohttp.ClientSession",
+        tor_session: aiohttp.ClientSession,
     ) -> list[str]:
         """Ahmia .onion discovery přes Tor.
         Fallback na clearnet Ahmia pokud Tor nedostupný."""
@@ -169,7 +169,7 @@ class OnionSeedManager:
         )
         q_enc = urllib.parse.quote_plus(query)
 
-        async def _fetch(url: str, sess: "aiohttp.ClientSession") -> str:
+        async def _fetch(url: str, sess: aiohttp.ClientSession) -> str:
             async with sess.get(
                 url, timeout=aiohttp.ClientTimeout(total=30)
             ) as r:

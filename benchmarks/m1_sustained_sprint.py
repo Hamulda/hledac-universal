@@ -31,11 +31,11 @@ import json
 import sys
 import time
 from dataclasses import dataclass
-
-from hledac.universal.utils.serialization import _safe_dataclass_to_dict
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
+
+from hledac.universal.utils.serialization import _safe_dataclass_to_dict
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 

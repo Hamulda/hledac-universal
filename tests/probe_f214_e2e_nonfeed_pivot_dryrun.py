@@ -55,21 +55,20 @@ from pathlib import Path
 # Same path fixup pattern as existing probe tests
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
-from hledac.universal.runtime.nonfeed_candidate_ledger import (
-    NonfeedCandidateLedger,
-    extract_domain_candidates_from_text,
-    compute_lane_eligibility,
-    rank_candidates,
-    filter_source_host_only,
-    MAX_DOMAIN_CANDIDATES_FOR_LANES,
-    FAMILY_FEED,
-    STAGE_DISCOVERED,
-)
 from hledac.universal.runtime.acquisition_strategy import (
-    build_acquisition_report,
     build_acquisition_plan,
+    build_acquisition_report,
 )
-
+from hledac.universal.runtime.nonfeed_candidate_ledger import (
+    FAMILY_FEED,
+    MAX_DOMAIN_CANDIDATES_FOR_LANES,
+    STAGE_DISCOVERED,
+    NonfeedCandidateLedger,
+    compute_lane_eligibility,
+    extract_domain_candidates_from_text,
+    filter_source_host_only,
+    rank_candidates,
+)
 
 # ── Synthetic input ────────────────────────────────────────────────────────────
 
@@ -95,7 +94,7 @@ def step1_extract_candidates():
         source_url=SOURCE_URL,
         source_family=FAMILY_FEED,
     )
-    print(f"[Step 1] extract_domain_candidates_from_text")
+    print("[Step 1] extract_domain_candidates_from_text")
     print(f"  Found {len(candidates)} candidates:")
     for c in candidates:
         print(f"    domain={c.domain!r:45s} source_field={c.source_field!r:6s} confidence={c.confidence}")
@@ -107,7 +106,7 @@ def step1_extract_candidates():
 def step2_filter_source_host(candidates):
     """Remove domains that appear ONLY in source URL hostname."""
     filtered, source_host_domains = filter_source_host_only(candidates, SOURCE_URL)
-    print(f"\n[Step 2] filter_source_host_only")
+    print("\n[Step 2] filter_source_host_only")
     print(f"  Filtered to {len(filtered)} candidates (source_host_domains={source_host_domains})")
     for c in filtered:
         print(f"    domain={c.domain!r}")
@@ -157,7 +156,7 @@ def step3_rank(filtered, source_host_domains):
 def step4_lane_eligibility(ranked):
     """Compute lane eligibility from ranked candidates."""
     eligibility = compute_lane_eligibility(ranked)
-    print(f"\n[Step 4] compute_lane_eligibility")
+    print("\n[Step 4] compute_lane_eligibility")
     for lane, eligible in eligibility.items():
         print(f"    {lane}: eligible={eligible}")
     assert eligibility["ct"] is True, "CT must be eligible with domain candidates"
@@ -181,7 +180,7 @@ def step5_ledger_integration(ranked):
             sample_context=tc.sample_context[:200] if tc.sample_context else "",
         )
     summary = ledger.summary()
-    print(f"\n[Step 5] NonfeedCandidateLedger.summary()")
+    print("\n[Step 5] NonfeedCandidateLedger.summary()")
     print(f"  total_records={summary.get('total_records', 'N/A')}")
     print(f"  family_counts={summary.get('family_counts', 'N/A')}")
     print(f"  stage_counts={summary.get('stage_counts', 'N/A')}")
@@ -202,7 +201,7 @@ def step6_planner_inputs(ranked):
     wayback_candidates = [tc.domain for tc in ranked][:10]
     pdns_candidates = [tc.domain for tc in ranked][:10]
 
-    print(f"\n[Step 6] Planner inputs from ranked candidates")
+    print("\n[Step 6] Planner inputs from ranked candidates")
     print(f"  nonfeed_doh_planner_input={doh_domains}")
     print(f"  nonfeed_ct_planner_candidates={ct_domains}")
     print(f"  nonfeed_wayback_candidates={wayback_candidates}")
@@ -288,7 +287,7 @@ def step7_acquisition_report(lane_eligibility, ledger_summary, ledger):
         doh_cache_used=False,
     )
 
-    print(f"\n[Step 7] build_acquisition_report")
+    print("\n[Step 7] build_acquisition_report")
     print(f"  nonfeed_candidate_ledger_summary keys: {list(report.get('nonfeed_candidate_ledger_summary', {}).keys())}")
     print(f"  nonfeed_lane_eligibility: {report.get('nonfeed_lane_eligibility', 'MISSING')}")
     print(f"  doh_planned: {report.get('doh_planned')}")

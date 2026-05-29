@@ -11,10 +11,9 @@ Tests verify:
 6. bounded concurrency with semaphore
 """
 
-import unittest
-import asyncio
-import sys
 import os
+import sys
+import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 
@@ -30,6 +29,7 @@ class TestSprint8AFDirectHarvest(unittest.IsolatedAsyncioTestCase):
     async def test_direct_harvest_handler_is_callable(self):
         """Verify direct_harvest code exists in the module."""
         import inspect
+
         from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
         # Check the method that registers actions
         source = inspect.getsource(FullyAutonomousOrchestrator._initialize_actions)
@@ -38,6 +38,7 @@ class TestSprint8AFDirectHarvest(unittest.IsolatedAsyncioTestCase):
     async def test_direct_harvest_action_in_research_flow(self):
         """Verify direct_harvest is integrated in the research flow."""
         import inspect
+
         from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
         # Check that the action is registered
         source = inspect.getsource(FullyAutonomousOrchestrator._initialize_actions)
@@ -141,6 +142,7 @@ class TestSprint8AFBoundedConcurrency(unittest.TestCase):
         """Semaphore limit of 2 must exist for enrichment."""
         # Verify the pattern exists in the handler
         import inspect
+
         from hledac.universal.autonomous_orchestrator import _ResearchManager
 
         source = inspect.getsource(_ResearchManager.execute_surface_search)
@@ -164,6 +166,7 @@ class TestSprint8AFRegression(unittest.IsolatedAsyncioTestCase):
     async def test_direct_harvest_handler_exists_in_source(self):
         """direct_harvest handler must exist in source code."""
         import inspect
+
         from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
         source = inspect.getsource(FullyAutonomousOrchestrator._initialize_actions)
         # The handler function is defined inside _initialize_actions

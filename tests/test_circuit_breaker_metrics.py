@@ -9,11 +9,11 @@ Verifies:
 import time
 
 from transport.circuit_breaker import (
-    get_breaker,
-    per_domain_stats,
-    clear_all_breakers,
     CIRCUIT_FAILURE_THRESHOLD,
     _metrics_safe_increment,
+    clear_all_breakers,
+    get_breaker,
+    per_domain_stats,
 )
 
 

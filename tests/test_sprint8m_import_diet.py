@@ -8,8 +8,6 @@ Tests verify:
 5. MemoryCoordinator still functions correctly
 """
 import unittest
-import sys
-import time
 
 
 class TestAutonomousOrchestratorUntouched(unittest.TestCase):
@@ -18,6 +16,7 @@ class TestAutonomousOrchestratorUntouched(unittest.TestCase):
     def test_no_changes_to_autonomous_orchestrator(self):
         """autonomous_orchestrator.py should not be modified in Sprint 8M."""
         import inspect
+
         from hledac.universal import autonomous_orchestrator as ao_module
         source = inspect.getsource(ao_module)
         # If it imports scipy or sklearn directly at module level, it would be a problem
@@ -31,6 +30,7 @@ class TestLazyScipyInMemoryCoordinator(unittest.TestCase):
     def test_scipy_sparse_is_lazy_guard(self):
         """scipy.sparse import should be wrapped in try/except."""
         import inspect
+
         from hledac.universal.coordinators import memory_coordinator as mc
         source = inspect.getsource(mc)
 
@@ -72,8 +72,6 @@ class TestNeuromorphicMemoryManagerLazyNumpy(unittest.TestCase):
         """NeuromorphicMemoryManager should instantiate with lazy numpy."""
         from hledac.universal.coordinators.memory_coordinator import (
             NeuromorphicMemoryManager,
-            NeuromorphicMemoryZone,
-            STDPParameters
         )
         nm = NeuromorphicMemoryManager(n_neurons=64, connectivity=0.05)
         self.assertEqual(nm.n_neurons, 64)
@@ -81,10 +79,7 @@ class TestNeuromorphicMemoryManagerLazyNumpy(unittest.TestCase):
 
     def test_neuromorphic_pattern_storage(self):
         """NeuromorphicMemoryManager should store and recall patterns."""
-        from hledac.universal.coordinators.memory_coordinator import (
-            NeuromorphicMemoryManager,
-            NeuromorphicMemoryZone
-        )
+        from hledac.universal.coordinators.memory_coordinator import NeuromorphicMemoryManager, NeuromorphicMemoryZone
         nm = NeuromorphicMemoryManager(n_neurons=64, connectivity=0.05)
         data = {'query': 'test', 'result': 42}
         stored = nm.store_pattern('p1', data, NeuromorphicMemoryZone.WORKING_MEMORY)
@@ -102,8 +97,6 @@ class TestUniversalMemoryCoordinatorFunctionality(unittest.TestCase):
         """UniversalMemoryCoordinator should instantiate."""
         from hledac.universal.coordinators.memory_coordinator import (
             UniversalMemoryCoordinator,
-            MemoryPressureLevel,
-            MemoryZone
         )
         coord = UniversalMemoryCoordinator(memory_limit_mb=500)
         self.assertEqual(coord.memory_limit_mb, 500)
@@ -118,10 +111,7 @@ class TestUniversalMemoryCoordinatorFunctionality(unittest.TestCase):
 
     def test_memory_zone_operations(self):
         """MemoryCoordinator should support zone operations."""
-        from hledac.universal.coordinators.memory_coordinator import (
-            UniversalMemoryCoordinator,
-            MemoryZone
-        )
+        from hledac.universal.coordinators.memory_coordinator import MemoryZone, UniversalMemoryCoordinator
         coord = UniversalMemoryCoordinator(memory_limit_mb=500)
 
         # Test allocation
@@ -156,26 +146,17 @@ class TestTypeAnnotationsSafe(unittest.TestCase):
 
     def test_future_annotations_imported(self):
         """memory_coordinator should have future annotations import."""
-        from hledac.universal.coordinators.memory_coordinator import NeuromorphicMemoryManager
         # The class should define np.ndarray in type hints without triggering NameError
         # This tests that from __future__ import annotations is present
         import inspect
+
+        from hledac.universal.coordinators.memory_coordinator import NeuromorphicMemoryManager
         source = inspect.getsource(NeuromorphicMemoryManager)
         self.assertIn('np.ndarray', source)  # Type hint uses np.ndarray
 
     def test_no_name_error_on_import(self):
         """Importing memory_coordinator should not raise NameError."""
         # This test passes if we get here without exception
-        from hledac.universal.coordinators.memory_coordinator import (
-            UniversalMemoryCoordinator,
-            NeuromorphicMemoryManager,
-            MemoryZone,
-            MemoryPressureLevel,
-            MemoryAllocation,
-            MemoryStatistics,
-            STDPParameters,
-            NeuromorphicMemoryZone,
-        )
         # All classes imported successfully
         self.assertTrue(True)
 
@@ -185,9 +166,7 @@ class TestPackageCascadeAudit(unittest.TestCase):
 
     def test_scipy_sparse_is_optional_guard(self):
         """scipy.sparse should be guarded with lazy _get_sparse() in memory_coordinator."""
-        from hledac.universal.coordinators.memory_coordinator import (
-            SCIPY_AVAILABLE, _get_sparse
-        )
+        from hledac.universal.coordinators.memory_coordinator import SCIPY_AVAILABLE, _get_sparse
         # Verify the lazy getter function exists and is callable
         self.assertTrue(callable(_get_sparse))
         # Verify the flag exists
@@ -205,8 +184,9 @@ class TestCoordinatorsPackageCascade(unittest.TestCase):
 
     def test_coordinators_init_has_many_imports(self):
         """coordinators/__init__.py imports many submodules."""
-        from hledac.universal import coordinators
         import inspect
+
+        from hledac.universal import coordinators
         source = inspect.getsource(coordinators)
         # Should have multiple coordinator imports
         self.assertGreater(source.count('from .'), 5)

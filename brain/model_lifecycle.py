@@ -88,7 +88,8 @@ from __future__ import annotations
 
 import gc
 import logging
-from typing import Any, Callable, Optional
+from collections.abc import Callable
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -98,7 +99,7 @@ logger = logging.getLogger(__name__)
 # NEVER call unload_model() directly from watchdog loop.
 # ---------------------------------------------------------------------------
 _emergency_unload_requested: bool = False
-_emergency_callback: Optional[Callable[[], None]] = None
+_emergency_callback: Callable[[], None] | None = None
 # F162F: Emergency wait counter — prevents infinite wait on M1 when
 # is_safe_to_clear_emergency keeps returning False due to inaccessible engine attrs.
 _EMERGENCY_WAIT_ATTEMPTS: int = 0
@@ -198,7 +199,7 @@ def set_emergency_callback(callback: Callable[[], None]) -> None:
     _emergency_callback = callback
 
 
-def get_emergency_callback() -> Optional[Callable[[], None]]:
+def get_emergency_callback() -> Callable[[], None] | None:
     """Return the registered emergency callback, if any."""
     return _emergency_callback
 
@@ -242,10 +243,11 @@ _selected_quantization: str = "q4_k_m"
 # F162F FIX: Now uses weakref to avoid preventing GC — model is released
 # immediately after lifecycle considers it unloaded.
 import weakref
-_weak_model_ref: Optional[weakref.ref] = None
+
+_weak_model_ref: weakref.ref | None = None
 
 
-def _get_current_model_unsafe() -> Optional[Any]:
+def _get_current_model_unsafe() -> Any | None:
     """Dereference weak ref, returning model or None. Must not be called after GC."""
     if _weak_model_ref is None:
         return None
@@ -332,7 +334,7 @@ def ensure_mlx_runtime_initialized() -> bool:
 
 def load_model(
     model: Any,
-    model_name: Optional[str] = None,
+    model_name: str | None = None,
     tokenizer: Any = None,
     prompt_cache: Any = None,
 ) -> None:
@@ -672,14 +674,14 @@ class ModelLifecycle:
     def __init__(self) -> None:
         self._model: Any = None
         self._tokenizer: Any = None
-        self._model_path: Optional[Path] = None
+        self._model_path: Path | None = None
         self._loaded: bool = False
 
     # ------------------------------------------------------------------
     # Model discovery — 3-tier
     # ------------------------------------------------------------------
 
-    def _discover_model_path(self) -> Optional[Path]:
+    def _discover_model_path(self) -> Path | None:
         """
         3-tier model discovery.
 
@@ -810,8 +812,9 @@ class ModelLifecycle:
 
         # Sprint 8TA B.1: FALLBACK — mlx_lm.generate + regex JSON extract
         try:
-            import mlx_lm
             import re as _re
+
+            import mlx_lm
 
             if hasattr(tokenizer, "apply_chat_template"):
                 m = _re.search(r"<\|system\|>(.*?)<\|user\|>(.*?)<\|assistant\|>", full_prompt, _re.DOTALL)

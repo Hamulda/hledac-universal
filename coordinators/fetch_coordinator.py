@@ -14,18 +14,15 @@ fetch logic to this coordinator.
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import ipaddress
 import json
 import logging
 import os
-import re
 import socket
-import tempfile
 import time
+from collections import deque
 
 import lmdb
-from collections import deque
 
 # Sprint 41: zstd compression — re-exported from tools/zstd_compressor
 from hledac.universal.tools.zstd_compressor import ZstdCompressor
@@ -39,7 +36,6 @@ except ImportError:
     zstd = None
 
 # Sprint 44: Lightpanda for JS-heavy pages — re-exported from tools/lightpanda_manager
-from hledac.universal.tools.lightpanda_manager import LightpandaManager, NODRIVER_AVAILABLE
 
 try:
     import aiohttp
@@ -51,9 +47,9 @@ except ImportError:
 
 # Sprint 46: Session management and Paywall bypass
 try:
-    from ..tools.session_manager import SessionManager
-    from ..tools.paywall import PaywallBypass
     from ..tools.darknet import DarknetConnector
+    from ..tools.paywall import PaywallBypass
+    from ..tools.session_manager import SessionManager
     SESSION_AVAILABLE = True
 except ImportError:
     SESSION_AVAILABLE = False
@@ -61,13 +57,13 @@ except ImportError:
     PaywallBypass = None
     DarknetConnector = None
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any
 from urllib.parse import urlparse
 
+from ..tools.url_dedup import DeduplicationStrategy, RotatingBloomFilterAdapter
 from .base import UniversalCoordinator
-from ..tools.url_dedup import RotatingBloomFilterAdapter, DeduplicationStrategy
 
 # Sprint F214: Zero-attribution HTTP header randomization
 try:
@@ -103,8 +99,11 @@ from ..utils.async_helpers import async_getaddrinfo
 
 # Sprint 8C1: Flow trace
 from ..utils.flow_trace import (
-    trace_fetch_start, trace_fetch_end, trace_dedup_decision,
-    trace_counter, is_enabled,
+    is_enabled,
+    trace_counter,
+    trace_dedup_decision,
+    trace_fetch_end,
+    trace_fetch_start,
 )
 
 # Sprint 80: TokenBucketController
@@ -112,7 +111,6 @@ try:
     from ..stealth.stealth_manager import TokenBucketController
 except ImportError:
     # Fallback - inline definition
-    import threading
 
     class TokenBucketController:
         """Token Bucket pro řízení concurrency."""
@@ -143,7 +141,7 @@ except ImportError:
 
 # Sprint 39: Deep web hints extraction
 try:
-    from ..tools.deep_web_hints import DeepWebHintsExtractor, DeepWebHints
+    from ..tools.deep_web_hints import DeepWebHints, DeepWebHintsExtractor
     HINTS_AVAILABLE = True
 except ImportError:
     HINTS_AVAILABLE = False
@@ -197,13 +195,13 @@ MAX_EVIDENCE_IDS_PER_STEP = 10
 # F_NOCACHE = 48 tells the kernel not to cache the file data (optimization for large downloads)
 # LOW-6/LOW-7 fix: moved fcntl import to module level with platform check
 import platform
-import fcntl
 
 NOCACHE_THRESHOLD_BYTES = 50 * 1024 * 1024  # 50MB
 F_NOCACHE = 48 if platform.system() == "Darwin" else None
 
 # Re-exported from tools/file_cache.py for backward compatibility
 from hledac.universal.tools.file_cache import apply_fcntl_nocache as _apply_fcntl_nocache
+
 
 def apply_fcntl_nocache(fd: int, content_length: int | None) -> None:
     """Wrapper for backward compatibility — delegates to tools/file_cache.py."""
@@ -238,7 +236,7 @@ class FetchCoordinator(UniversalCoordinator):
 
     def __init__(
         self,
-        config: Optional[FetchCoordinatorConfig] = None,
+        config: FetchCoordinatorConfig | None = None,
         max_concurrent: int = 3,
     ):
         super().__init__(name="FetchCoordinator", max_concurrent=max_concurrent)
@@ -249,12 +247,12 @@ class FetchCoordinator(UniversalCoordinator):
         self._processed_urls: DeduplicationStrategy = _create_dedup_strategy()
         self._evidence_ids: deque = deque(maxlen=500)
         self._urls_fetched_count: int = 0
-        self._stop_reason: Optional[str] = None
+        self._stop_reason: str | None = None
 
         # Per-domain circuit breaker (Sprint F195C)
-        self._domain_failures: Dict[str, int] = {}
-        self._domain_failure_timestamps: Dict[str, float] = {}  # for eviction (P2-1)
-        self._domain_blocked_until: Dict[str, float] = {}
+        self._domain_failures: dict[str, int] = {}
+        self._domain_failure_timestamps: dict[str, float] = {}  # for eviction (P2-1)
+        self._domain_blocked_until: dict[str, float] = {}
         self._failure_threshold = 3
         self._cooldown_seconds = 60
         self._base_retry_delay = 1.0  # Sprint F195C: circuit breaker retry config
@@ -262,8 +260,8 @@ class FetchCoordinator(UniversalCoordinator):
         self._max_backoff_delay = 30.0
 
         # Orchestrator reference (set via start)
-        self._orchestrator: Optional[Any] = None
-        self._ctx: Dict[str, Any] = {}
+        self._orchestrator: Any | None = None
+        self._ctx: dict[str, Any] = {}
 
         # Sprint 39: Deep web hints extractor
         self._hints_extractor = DeepWebHintsExtractor() if HINTS_AVAILABLE else None
@@ -285,8 +283,8 @@ class FetchCoordinator(UniversalCoordinator):
         self._darknet_connector = DarknetConnector() if SESSION_AVAILABLE else None
 
         # Sprint 76: Tor connection pooling
-        self._tor_sessions: Dict[str, Any] = {}
-        self._tor_last_used: Dict[str, float] = {}
+        self._tor_sessions: dict[str, Any] = {}
+        self._tor_last_used: dict[str, float] = {}
         self._tor_max_sessions = CONCURRENCY_TOR
         self._tor_lock = asyncio.Lock()
 
@@ -319,7 +317,7 @@ class FetchCoordinator(UniversalCoordinator):
                 self._gopher_transport_enabled = False
 
         # Sprint P3: CAPTCHA pre-filter (gated, PIL-only heuristics)
-        self._captcha_detector: Optional[Any] = None
+        self._captcha_detector: Any | None = None
         self._captcha_detections: int = 0
         if os.environ.get("HLEDAC_ENABLE_CAPTCHA_DETECTION") == "1":
             try:
@@ -334,8 +332,8 @@ class FetchCoordinator(UniversalCoordinator):
         self._dedup_lock = asyncio.Lock()
 
         # I2P connection pooling (mirrors Tor pattern)
-        self._i2p_sessions: Dict[str, Any] = {}
-        self._i2p_last_used: Dict[str, float] = {}
+        self._i2p_sessions: dict[str, Any] = {}
+        self._i2p_last_used: dict[str, float] = {}
         self._i2p_max_sessions = CONCURRENCY_TOR
         self._i2p_lock = asyncio.Lock()
 
@@ -346,12 +344,12 @@ class FetchCoordinator(UniversalCoordinator):
         self._aimd_concurrency: float = float(CONCURRENCY_CLEARNET)  # current window
         self._aimd_successes: int = 0  # successes since last increase
         self._aimd_failures: int = 0  # consecutive failures
-        self._aimd_semaphore: Optional[asyncio.Semaphore] = None  # created on first use
+        self._aimd_semaphore: asyncio.Semaphore | None = None  # created on first use
         self._aimd_semaphore_limit: int = int(CONCURRENCY_CLEARNET)  # P1-3: track limit explicitly (avoid _value private API)
         self._aimd_lock = asyncio.Lock()
 
         # Sprint 4B: Telemetry state
-        self._telemetry: Dict[str, Any] = {
+        self._telemetry: dict[str, Any] = {
             'aimd_concurrency': self._aimd_concurrency,
             'active_fetches': 0,
             'total_successes': 0,
@@ -373,7 +371,7 @@ class FetchCoordinator(UniversalCoordinator):
         self._canonical_breaker_fallback_used: int = 0
         self._canonical_breaker_lock = __import__('threading').Lock()
 
-    def _ensure_canonical_breaker(self) -> Tuple[bool, Any, str]:
+    def _ensure_canonical_breaker(self) -> tuple[bool, Any, str]:
         """
         Lazily import canonical circuit breaker from transport/circuit_breaker.py.
 
@@ -418,7 +416,7 @@ class FetchCoordinator(UniversalCoordinator):
                 self._canonical_breaker_fallback_reason = f'unexpected_error:{e}'
                 return (False, None, f'unexpected_error:{e}')
 
-    def _check_canonical_breaker(self, domain: str) -> Tuple[bool, str, float]:
+    def _check_canonical_breaker(self, domain: str) -> tuple[bool, str, float]:
         """
         Check canonical circuit breaker for a domain.
 
@@ -493,19 +491,19 @@ class FetchCoordinator(UniversalCoordinator):
                 f"for {backoff:.0f}s (until {self._domain_blocked_until[domain]:.0f})"
             )
 
-    def get_blocked_domains(self) -> Dict[str, float]:
+    def get_blocked_domains(self) -> dict[str, float]:
         """Returns {domain: unblock_timestamp} for currently blocked domains."""
         now = time.time()
         return {d: t for d, t in self._domain_blocked_until.items() if t > now}
 
-    def get_captcha_stats(self) -> Dict[str, Any]:
+    def get_captcha_stats(self) -> dict[str, Any]:
         """Sprint P3: Return CAPTCHA detection stats for RL telemetry."""
         return {
             'captcha_detections_total': self._captcha_detections,
             'captcha_detector_enabled': self._captcha_detector is not None,
         }
 
-    def get_canonical_breaker_stats(self) -> Dict[str, Any]:
+    def get_canonical_breaker_stats(self) -> dict[str, Any]:
         """
         F206AS: Return canonical circuit breaker integration stats.
 
@@ -528,7 +526,7 @@ class FetchCoordinator(UniversalCoordinator):
                 pass  # fail-soft: return empty states on error
         return result
 
-    def init_session_manager(self, lmdb_path: Optional[str] = None):
+    def init_session_manager(self, lmdb_path: str | None = None):
         """Initialize session manager with LMDB persistence (idempotent)."""
         if not SESSION_AVAILABLE:
             return
@@ -542,7 +540,7 @@ class FetchCoordinator(UniversalCoordinator):
         self._session_lmdb_env = lmdb.open(str(lmdb_path), map_size=10*1024*1024)
         self._session_manager = SessionManager(self._session_lmdb_env)
 
-    def _load_geo_proxies(self) -> Dict[str, str]:
+    def _load_geo_proxies(self) -> dict[str, str]:
         """Load proxy servers for different regions from configuration."""
         from hledac.universal.paths import DB_ROOT
         proxy_file = DB_ROOT / 'config' / 'proxies.json'
@@ -560,20 +558,20 @@ class FetchCoordinator(UniversalCoordinator):
         "127.0.0.0/8", "169.254.0.0/16", "100.64.0.0/10"
     ]]
 
-    async def _resolve_host_ips_async(self, host: str) -> List[str]:
+    async def _resolve_host_ips_async(self, host: str) -> list[str]:
         """Resolve hostname to IPs (deterministically sorted) using async DNS."""
         try:
             results = await async_getaddrinfo(host, 0, proto=socket.IPPROTO_TCP)
-            ips = sorted(set(str(r[4][0]) for r in results))
+            ips = sorted({str(r[4][0]) for r in results})
             return ips
         except Exception:
             return []
 
-    def _resolve_host_ips(self, host: str) -> List[str]:
+    def _resolve_host_ips(self, host: str) -> list[str]:
         """Resolve hostname to IPs synchronously using blocking socket.getaddrinfo."""
         try:
             results = socket.getaddrinfo(host, 0, proto=socket.IPPROTO_TCP)
-            ips = sorted(set(str(r[4][0]) for r in results))
+            ips = sorted({str(r[4][0]) for r in results})
             return ips
         except Exception:
             return []
@@ -595,7 +593,7 @@ class FetchCoordinator(UniversalCoordinator):
         except Exception:
             return False
 
-    async def _validate_fetch_target(self, url: str) -> Tuple[bool, Dict[str, Any]]:
+    async def _validate_fetch_target(self, url: str) -> tuple[bool, dict[str, Any]]:
         """
         Validate fetch target: resolve and check for private IPs.
 
@@ -622,7 +620,7 @@ class FetchCoordinator(UniversalCoordinator):
 
             # Resolve DNS natively (async, no thread pool)
             raw_results = await async_getaddrinfo(hostname, 0, proto=socket.IPPROTO_TCP)
-            ips = sorted(set(str(r[4][0]) for r in raw_results))
+            ips = sorted({str(r[4][0]) for r in raw_results})
             if not ips:
                 return False, {"resolved_ips": [], "blocked_reason": "dns_resolution_failed"}
 
@@ -733,7 +731,7 @@ class FetchCoordinator(UniversalCoordinator):
         self._telemetry['aimd_concurrency'] = self._aimd_concurrency
         return self._aimd_concurrency
 
-    async def _fetch_with_lightpanda(self, url: str, proxy: str = None) -> Dict[str, Any]:
+    async def _fetch_with_lightpanda(self, url: str, proxy: str = None) -> dict[str, Any]:
         """Fetch URL with Lightpanda using pool (JS rendering)."""
         try:
             # P1-1: Start pool on first use (lazy initialization) - thread-safe with double-check
@@ -759,7 +757,7 @@ class FetchCoordinator(UniversalCoordinator):
     # =============================================================================
 
     @staticmethod
-    def _mask_cookies_for_log(cookies: Optional[Dict[str, str]]) -> Dict[str, str]:
+    def _mask_cookies_for_log(cookies: dict[str, str] | None) -> dict[str, str]:
         """
         P3-5 fix: Mask cookie values for safe logging.
 
@@ -771,9 +769,9 @@ class FetchCoordinator(UniversalCoordinator):
         """
         if not cookies:
             return {}
-        return {k: '***' for k in cookies}
+        return dict.fromkeys(cookies, '***')
 
-    async def _get_tor_session(self, domain: str) -> Optional[Any]:
+    async def _get_tor_session(self, domain: str) -> Any | None:
         """Get or create Tor session with connection pooling."""
         async with self._tor_lock:
             import time
@@ -814,7 +812,7 @@ class FetchCoordinator(UniversalCoordinator):
             self._tor_last_used[domain] = now
             return self._tor_sessions.get(domain)
 
-    async def _fetch_with_tor(self, url: str) -> Optional[Dict[str, Any]]:
+    async def _fetch_with_tor(self, url: str) -> dict[str, Any] | None:
         """Fetch .onion URL using Tor connection pool."""
         # Sprint 4B: Use TIMEOUT_TOR matrix constant (passed to session at creation)
         try:
@@ -832,7 +830,7 @@ class FetchCoordinator(UniversalCoordinator):
                     'headers': dict(resp.headers),
                     'content': await resp.read()
                 }
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.debug(f"[TOR] Timeout for {url}")
             # Trigger AIMD failure
             self._aimd_release_failure()
@@ -846,7 +844,7 @@ class FetchCoordinator(UniversalCoordinator):
     # I2P Connection Pooling
     # =============================================================================
 
-    async def _get_i2p_session(self, domain: str) -> Optional[Any]:
+    async def _get_i2p_session(self, domain: str) -> Any | None:
         """Get or create I2P session with connection pooling."""
         async with self._i2p_lock:
             import time
@@ -885,7 +883,7 @@ class FetchCoordinator(UniversalCoordinator):
             self._i2p_last_used[domain] = now
             return self._i2p_sessions.get(domain)
 
-    async def _fetch_with_i2p(self, url: str) -> Optional[Dict[str, Any]]:
+    async def _fetch_with_i2p(self, url: str) -> dict[str, Any] | None:
         """Fetch .i2p URL using I2P connection pool."""
         try:
             from urllib.parse import urlparse
@@ -903,7 +901,7 @@ class FetchCoordinator(UniversalCoordinator):
                     'headers': dict(resp.headers),
                     'content_type': resp.content_type,
                 }
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.debug(f"[I2P] Timeout for {url}")
             self._aimd_release_failure()
             return None
@@ -912,7 +910,7 @@ class FetchCoordinator(UniversalCoordinator):
             self._aimd_release_failure()
             return None
 
-    async def _fetch_with_curl(self, url: str, proxy: str = None) -> Dict[str, Any]:
+    async def _fetch_with_curl(self, url: str, proxy: str = None) -> dict[str, Any]:
         """Fetch URL with curl_cffi (fallback)."""
         # Sprint F3/F8/F9: also populates status_code/content_type/headers for corpus ingest
         try:
@@ -937,7 +935,7 @@ class FetchCoordinator(UniversalCoordinator):
                     'success': True,
                 }
             return {'url': url, 'content': b'', 'error': f'scrape_failed status={result.status_code}'}
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.debug(f"[CURL] Timeout for {url}")
             self._aimd_release_failure()
             return {'url': url, 'content': b'', 'error': 'timeout'}
@@ -945,7 +943,7 @@ class FetchCoordinator(UniversalCoordinator):
             logger.warning(f"[CURL] Failed: {e}")
             return {'url': url, 'content': b'', 'error': str(e)}
 
-    def get_supported_operations(self) -> List[Any]:
+    def get_supported_operations(self) -> list[Any]:
         """Return supported operation types."""
         from .base import OperationType
         return [OperationType.RESEARCH]
@@ -970,12 +968,12 @@ class FetchCoordinator(UniversalCoordinator):
         logger.info("FetchCoordinator initialized")
         return True
 
-    async def _do_start(self, ctx: Dict[str, Any]) -> None:
+    async def _do_start(self, ctx: dict[str, Any]) -> None:
         """
         Start coordinator with context from orchestrator.
 
         Expected ctx keys:
-        - frontier: List[str] - URLs to fetch
+        - frontier: list[str] - URLs to fetch
         - orchestrator: reference to orchestrator instance
         - budget_manager: BudgetManager for limits
         """
@@ -1014,7 +1012,7 @@ class FetchCoordinator(UniversalCoordinator):
         # Fallback for other exotic TLDs
         return _PRIORITY_OTHER
 
-    async def _do_step(self, ctx: Dict[str, Any]) -> Dict[str, Any]:
+    async def _do_step(self, ctx: dict[str, Any]) -> dict[str, Any]:
         """
         Execute one fetch step with batch parallel fetch.
 
@@ -1059,7 +1057,7 @@ class FetchCoordinator(UniversalCoordinator):
 
         # Sprint 5B: Determine effective batch size (limited by AIMD window)
         batch_size = len(urls_to_fetch)
-        effective_batch = min(batch_size, int(self._aimd_concurrency))
+        min(batch_size, int(self._aimd_concurrency))
 
         # Sprint 4B: Light telemetry snapshot before fetch batch
         if is_enabled():
@@ -1078,7 +1076,7 @@ class FetchCoordinator(UniversalCoordinator):
 
         # Sprint 5B: Gather hygiene - explicit exception logging
         evidence_ids = []
-        for url, result in zip(urls_to_fetch, results):
+        for url, result in zip(urls_to_fetch, results, strict=False):
             if isinstance(result, Exception):
                 # Sprint 5B: Explicit exception logging (no silent failure)
                 logger.debug(f"[BATCH] fetch exception for {url}: {type(result).__name__}: {result}")
@@ -1112,11 +1110,11 @@ class FetchCoordinator(UniversalCoordinator):
 
     def _get_step_result(
         self,
-        new_evidence_ids: Optional[List[str]] = None,
+        new_evidence_ids: list[str] | None = None,
         batch_size: int = 0,
         effective_parallelism: int = 0,
         batch_elapsed_ms: float = 0.0,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Get bounded step result with Sprint 5B batch telemetry."""
         evidence_ids = (new_evidence_ids or [])[:self._config.max_evidence_per_step]
 
@@ -1135,7 +1133,7 @@ class FetchCoordinator(UniversalCoordinator):
             'batch_elapsed_ms': batch_elapsed_ms,
         }
 
-    async def _fetch_url(self, url: str, attempt: int = 0) -> Optional[Dict[str, Any]]:
+    async def _fetch_url(self, url: str, attempt: int = 0) -> dict[str, Any] | None:
         """
         Fetch a single URL with AIMD concurrency control and timeout matrix.
 
@@ -1154,7 +1152,7 @@ class FetchCoordinator(UniversalCoordinator):
           To wire it in future: replace the above with resolver.resolve(ctx).
         """
         # Sprint 82Q Phase 6: Offline mode fast-fail BEFORE any network operations
-        from ..types import is_offline_mode, OfflineModeError
+        from ..types import OfflineModeError, is_offline_mode
         if is_offline_mode():
             raise OfflineModeError(f"Offline mode enabled, skipping fetch: {url}")
 
@@ -1214,7 +1212,7 @@ class FetchCoordinator(UniversalCoordinator):
                 # Sprint 4B: Policy gate via SourceTransportMap — replaces hardcoded url.endswith()
                 # Sprint 46 + 76: Darknet URL handling (.onion, .i2p)
                 # Sprint 76: Use Tor connection pool for .onion
-                from ..transport.transport_resolver import get_transport_for_url, Transport
+                from ..transport.transport_resolver import Transport, get_transport_for_url
                 url_transport = get_transport_for_url(url)
 
                 if url_transport is Transport.TOR:
@@ -1324,7 +1322,7 @@ class FetchCoordinator(UniversalCoordinator):
                                             return text[:10000] if text else ""
                                     return ""
                         html_preview = await _async_fetch_preview()
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     logger.debug(f"[PREVIEW] Timeout for {url}")
                 except Exception as e:
                     # Sprint 4B: Gather hygiene - log but don't swallow
@@ -1454,7 +1452,7 @@ class FetchCoordinator(UniversalCoordinator):
     # Sprint 8BH: Deep Research — lawful surface + archival search (no Docker)
     # ==========================================================================
 
-    async def _maybe_deep_research(self, query: str, limit: int = 10) -> Optional[List[Dict[str, Any]]]:
+    async def _maybe_deep_research(self, query: str, limit: int = 10) -> list[dict[str, Any]] | None:
         """
         Execute deep research search via DDGS + Wayback CDX + optional urlscan.
 
@@ -1473,8 +1471,8 @@ class FetchCoordinator(UniversalCoordinator):
 
         try:
             # Lazy imports — only loaded when feature flag is active
-            from ..tools.ddgs_client import search_text_sync, search_news_sync
-            from ..tools.deep_research_sources import wayback_cdx_lookup, urlscan_search
+            from ..tools.ddgs_client import search_news_sync, search_text_sync
+            from ..tools.deep_research_sources import urlscan_search, wayback_cdx_lookup
             from ..tools.search_fusion import top_k
 
             # Parallel fan-out: DDGS text, DDGS news, Wayback CDX, urlscan
@@ -1489,7 +1487,7 @@ class FetchCoordinator(UniversalCoordinator):
             )
 
             # Sprint 4B: Gather hygiene - collect with explicit exception logging
-            rows: List[Dict[str, Any]] = []
+            rows: list[dict[str, Any]] = []
             for part, label in [(ddgs_rows, "ddgs"), (news_rows, "news"),
                                  (wayback_rows, "wayback"), (urlscan_rows, "urlscan")]:
                 if isinstance(part, list):
@@ -1509,7 +1507,7 @@ class FetchCoordinator(UniversalCoordinator):
             logger.debug(f"[DEEP] research failed: {e}")
             return None
 
-    async def _do_shutdown(self, ctx: Dict[str, Any]) -> None:
+    async def _do_shutdown(self, ctx: dict[str, Any]) -> None:
         """
         Cleanup on shutdown with proper drain.
 
@@ -1655,8 +1653,8 @@ class FetchCoordinator(UniversalCoordinator):
             if transport_lower == "tor":
                 # Tor SOCKS proxy — never curl_cffi directly for Tor
                 try:
-                    from ..transport.tor_transport import get_tor_transport
                     from ..transport.base import TransportConfig
+                    from ..transport.tor_transport import get_tor_transport
                     tor = get_tor_transport()
                     if tor and await tor.is_running():
                         config = TransportConfig(url=url, method="GET", headers=None, body=None, timeout=10.0)
@@ -1666,8 +1664,8 @@ class FetchCoordinator(UniversalCoordinator):
 
             elif transport_lower == "i2p":
                 try:
-                    from ..transport.i2p_transport import get_i2p_transport
                     from ..transport.base import TransportConfig
+                    from ..transport.i2p_transport import get_i2p_transport
                     i2p = get_i2p_transport()
                     if i2p and i2p.is_running():
                         config = TransportConfig(url=url, method="GET", headers=None, body=None, timeout=10.0)

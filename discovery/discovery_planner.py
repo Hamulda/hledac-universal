@@ -35,9 +35,9 @@ from hledac.universal.discovery.duckduckgo_adapter import (
     DiscoveryBatchResult,
 )
 from hledac.universal.discovery.provider_stats import (
-    PROVIDER_NAMES,
-    PROVIDER_COST_ESTIMATE,
     PROVIDER_CAPABILITIES,
+    PROVIDER_COST_ESTIMATE,
+    PROVIDER_NAMES,
     ProviderStatsRegistry,
     get_provider_stats_registry,
 )
@@ -193,7 +193,7 @@ async def _run_ddg_mojeek(
     try:
         async with asyncio.timeout(min(timeout_s, 20.0)):
             return await async_search_public_web(query, max_results=max_results, timeout_s=timeout_s)
-    except asyncio.TimeoutError:
+    except TimeoutError:
         return _timeout_result("ddg_mojeek", timeout_s)
 
 
@@ -208,7 +208,7 @@ async def _run_historical_frontier(
             return await async_search_historical_frontier(
                 query, max_results=max_results, timeout_s=min(timeout_s, 3.0)
             )
-    except asyncio.TimeoutError:
+    except TimeoutError:
         return _timeout_result("historical_frontier", timeout_s)
 
 
@@ -221,7 +221,7 @@ async def _run_wayback_cdx(
     try:
         async with asyncio.timeout(min(timeout_s, 15.0)):
             return await async_search_wayback_cdx(query, max_results=max_results, timeout_s=timeout_s)
-    except asyncio.TimeoutError:
+    except TimeoutError:
         return _timeout_result("wayback_cdx", timeout_s)
 
 
@@ -598,7 +598,7 @@ class DiscoveryPlanner:
         results: list[DiscoveryBatchResult] = []
         outcomes = await asyncio.gather(*[t[1] for t in tasks], return_exceptions=True)
 
-        for (provider, _), result in zip(tasks, outcomes):
+        for (provider, _), result in zip(tasks, outcomes, strict=False):
             # Check for success: result must have 'hits' and 'elapsed_s' attributes
             # (covers both real DiscoveryBatchResult and properly-shaped mocks)
             if hasattr(result, 'hits') and hasattr(result, 'elapsed_s'):

@@ -28,10 +28,9 @@ import importlib
 import json
 import sys
 from dataclasses import dataclass
+from enum import Enum
 
 from hledac.universal.utils.serialization import _safe_dataclass_to_dict  # noqa: F401
-from enum import Enum
-from typing import Dict, List, Optional
 
 # ---------------------------------------------------------------------------
 # Types
@@ -57,9 +56,9 @@ class DepStatus:
     import_name: str
     available: bool
     category: str
-    version: Optional[str]
-    install_hint: Optional[str]
-    extra: Optional[str]
+    version: str | None
+    install_hint: str | None
+    extra: str | None
 
 
 @dataclass
@@ -67,9 +66,9 @@ class DoctorReport:
     """Full doctor report."""
     python_version: str
     platform: str
-    statuses: List[DepStatus]
-    missing_by_extra: Dict[str, List[str]]
-    opsec_warnings: Optional[List[str]] = None
+    statuses: list[DepStatus]
+    missing_by_extra: dict[str, list[str]]
+    opsec_warnings: list[str] | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -78,7 +77,7 @@ class DoctorReport:
 
 # (import_name, pip_specifier, extra_group, is_baseline_required)
 # Listed in dependency order (most foundational first).
-DEPENDENCY_REGISTRY: List[Dict] = [
+DEPENDENCY_REGISTRY: list[dict] = [
     # --- baseline ---
     {"name": "aiosqlite",    "import": "aiosqlite",         "spec": "aiosqlite>=0.19.0",      "extra": None,         "baseline": True},
     {"name": "aiohttp",       "import": "aiohttp",           "spec": "aiohttp>=3.9.0",          "extra": None,         "baseline": True},
@@ -165,7 +164,7 @@ EXTRA_GROUPS = {
 # Probe logic
 # ---------------------------------------------------------------------------
 
-def probe_import(dep: Dict) -> DepStatus:
+def probe_import(dep: dict) -> DepStatus:
     """Probe a single dependency's import availability."""
     import_name = dep["import"]
     version = None
@@ -180,7 +179,7 @@ def probe_import(dep: Dict) -> DepStatus:
         # Try to get version
         version = getattr(mod, "__version__", None) or getattr(mod, "version", None)
         if version is None and hasattr(mod, "__version__"):
-            version = getattr(mod, "__version__")
+            version = mod.__version__
         install_hint = None
     except ImportError:
         available = False
@@ -202,7 +201,7 @@ def probe_import(dep: Dict) -> DepStatus:
     )
 
 
-def _probe_remote_debug_guard() -> List[str]:
+def _probe_remote_debug_guard() -> list[str]:
     """
     F214Q: Check PYTHON_DISABLE_REMOTE_DEBUG posture.
 
@@ -210,7 +209,7 @@ def _probe_remote_debug_guard() -> List[str]:
     Always returns [] on Python < 3.14 (flag introduced in 3.14).
     """
     import os
-    warnings: List[str] = []
+    warnings: list[str] = []
     major, minor = sys.version_info.major, sys.version_info.minor
     if major < 3 or (major == 3 and minor < 14):
         return warnings
@@ -223,7 +222,7 @@ def _probe_remote_debug_guard() -> List[str]:
     return warnings
 
 
-def run_diagnostics(requested_extra: Optional[str] = None) -> DoctorReport:
+def run_diagnostics(requested_extra: str | None = None) -> DoctorReport:
     """
     Run diagnostics on all (or filtered) dependencies.
 
@@ -236,14 +235,14 @@ def run_diagnostics(requested_extra: Optional[str] = None) -> DoctorReport:
     python_v = f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
     platform = sys.platform
 
-    statuses: List[DepStatus] = []
+    statuses: list[DepStatus] = []
     for dep in DEPENDENCY_REGISTRY:
         if requested_extra and dep["extra"] != requested_extra and dep["extra"] is not None:
             continue
         statuses.append(probe_import(dep))
 
     # Build missing-by-extra
-    missing_by_extra: Dict[str, List[str]] = {}
+    missing_by_extra: dict[str, list[str]] = {}
     for dep in DEPENDENCY_REGISTRY:
         if requested_extra and dep["extra"] != requested_extra:
             continue
@@ -345,18 +344,12 @@ def format_json(report: DoctorReport, verbose: bool = False) -> str:
 # ---------------------------------------------------------------------------
 
 def build_parser() -> argparse.ArgumentParser:
-    if sys.version_info >= (3, 14):
-        parser = argparse.ArgumentParser(
-            prog="hledac_doctor.py",
-            description="Check Hledac dependency availability. No network, no model load.",
-            suggest_on_error=True,
-            color=True,
-        )
-    else:
-        parser = argparse.ArgumentParser(
-            prog="hledac_doctor.py",
-            description="Check Hledac dependency availability. No network, no model load.",
-        )
+    parser = argparse.ArgumentParser(
+        prog="hledac_doctor.py",
+        description="Check Hledac dependency availability. No network, no model load.",
+        suggest_on_error=True,
+        color=True,
+    )
     parser.add_argument("--json", action="store_true", help="Output JSON instead of Markdown")
     parser.add_argument("--extra", metavar="EXTRA", choices=sorted(EXTRA_GROUPS.keys()),
                         help="Only check deps for this extra group")

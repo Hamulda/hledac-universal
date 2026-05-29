@@ -11,9 +11,7 @@ import argparse
 import json
 import os
 import sys
-from dataclasses import dataclass, field, asdict
-from typing import Optional
-
+from dataclasses import asdict, dataclass, field
 
 # ------------------------------------------------------------------
 # Artifact manifest
@@ -40,11 +38,11 @@ GATE_BLOCKING_SET = {"F231A", "F231B", "F231C", "F231D", "F231E", "F231F", "F231
 class ArtifactResult:
     name: str
     exists: bool
-    valid_json: Optional[bool] = None
-    size_bytes: Optional[int] = None
-    test_count: Optional[int] = None
-    verdict: Optional[str] = None
-    error: Optional[str] = None
+    valid_json: bool | None = None
+    size_bytes: int | None = None
+    test_count: int | None = None
+    verdict: str | None = None
+    error: str | None = None
 
 
 @dataclass
@@ -90,7 +88,7 @@ def inspect_artifact(repo_root: str, probe_dir: str, artifact_file: str) -> Arti
         return ArtifactResult(name=name, exists=True, valid_json=False, error=str(e))
 
 
-def run_inventory(repo_root: str, gate_artifact_path: Optional[str] = None) -> PackInventory:
+def run_inventory(repo_root: str, gate_artifact_path: str | None = None) -> PackInventory:
     artifacts: dict[str, ArtifactResult] = {}
     present: list[str] = []
     missing: list[str] = []
@@ -143,7 +141,7 @@ def run_inventory(repo_root: str, gate_artifact_path: Optional[str] = None) -> P
     return inv
 
 
-def _apply_gate_artifact_stale(inv: PackInventory, gate_artifact_path: Optional[str], repo_root: str) -> PackInventory:
+def _apply_gate_artifact_stale(inv: PackInventory, gate_artifact_path: str | None, repo_root: str) -> PackInventory:
     """Override gate_status to GATE_STALE if gate artifact blocks probes already present."""
     if not gate_artifact_path:
         gate_artifact_path = os.path.join(
@@ -248,7 +246,7 @@ def _render_md(inv: PackInventory) -> str:
     return "\n".join(lines)
 
 
-def main(argv: Optional[list[str]] = None) -> int:
+def main(argv: list[str] | None = None) -> int:
     parser = _build_arg_parser()
     args = parser.parse_args(argv)
 

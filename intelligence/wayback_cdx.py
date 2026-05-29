@@ -28,8 +28,9 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from typing import Any, Awaitable, Callable, List, Optional
+from typing import Any
 
 import aiohttp
 
@@ -97,7 +98,7 @@ class CDXSearchResult:
 
     def to_canonical_finding(
         self, query: str, _sprint_id: str = ""
-    ) -> Optional["CanonicalFinding"]:
+    ) -> CanonicalFinding | None:
         if CanonicalFinding is None:
             return None
         try:
@@ -144,8 +145,8 @@ class CDXDeepSearchResult:
     query: str
     match_type: str
     total_rows: int = 0
-    results: List[CDXSearchResult] = field(default_factory=list)
-    error: Optional[str] = None
+    results: list[CDXSearchResult] = field(default_factory=list)
+    error: str | None = None
     timeout: bool = False
     duration_s: float = 0.0
     rate_limited: bool = False
@@ -164,10 +165,10 @@ async def cdx_deep_search(
     session: aiohttp.ClientSession,
     *,
     match_type: str = "domain",    # exact | prefix | host | domain
-    from_date: Optional[str] = None,  # YYYYMMDD
-    to_date: Optional[str] = None,    # YYYYMMDD
+    from_date: str | None = None,  # YYYYMMDD
+    to_date: str | None = None,    # YYYYMMDD
     limit: int = MAX_CDX_RESULTS,
-) -> List[CDXSearchResult]:
+) -> list[CDXSearchResult]:
     """
     CDX fulltext discovery — finds archived URLs for a domain.
 
@@ -232,7 +233,7 @@ async def cdx_deep_search(
             raw: list[list[str]] = await resp.json(content_type=None)
             return _parse_cdx_response(raw)
 
-    except asyncio.TimeoutError:
+    except TimeoutError:
         logger.debug(f"CDX deep search timeout for {domain}")
         return []
     except Exception as e:
@@ -240,13 +241,13 @@ async def cdx_deep_search(
         return []
 
 
-def _parse_cdx_response(raw: list[list[str]]) -> List[CDXSearchResult]:
+def _parse_cdx_response(raw: list[list[str]]) -> list[CDXSearchResult]:
     """Parse CDX JSON response into CDXSearchResult list."""
     if not raw or len(raw) < 2:
         return []
 
-    headers = raw[0]
-    results: List[CDXSearchResult] = []
+    raw[0]
+    results: list[CDXSearchResult] = []
 
     for row in raw[1:]:
         if len(row) < 6:
@@ -268,13 +269,13 @@ def _parse_cdx_response(raw: list[list[str]]) -> List[CDXSearchResult]:
 
 
 async def cdx_deep_search_batch(
-    domains: List[str],
+    domains: list[str],
     session: aiohttp.ClientSession,
     *,
     match_type: str = "domain",
     concurrency: int = 3,
     rate_limit_s: float = RATE_LIMIT_S,
-) -> List[CDXSearchResult]:
+) -> list[CDXSearchResult]:
     """
     Batch CDX deep search across multiple domains with rate limiting.
 
@@ -293,10 +294,10 @@ async def cdx_deep_search_batch(
 
     semaphore = asyncio.Semaphore(concurrency)
     last_request = 0.0
-    all_results: List[CDXSearchResult] = []
+    all_results: list[CDXSearchResult] = []
     seen_urls: set[str] = set()  # deduplicate
 
-    async def _fetch_one(domain: str) -> List[CDXSearchResult]:
+    async def _fetch_one(domain: str) -> list[CDXSearchResult]:
         nonlocal last_request
         async with semaphore:
             elapsed = time.monotonic() - last_request
@@ -338,10 +339,10 @@ class WaybackCDXDeepSearch:
 
     def __init__(
         self,
-        session_provider: Optional[Callable[[], Awaitable[aiohttp.ClientSession]]] = None,
+        session_provider: Callable[[], Awaitable[aiohttp.ClientSession]] | None = None,
     ) -> None:
         self._session_provider = session_provider
-        self._session: Optional[aiohttp.ClientSession] = None
+        self._session: aiohttp.ClientSession | None = None
         self._stats: dict[str, int] = {
             "domains_searched": 0,
             "total_results": 0,
@@ -362,11 +363,11 @@ class WaybackCDXDeepSearch:
 
     async def search(
         self,
-        domains_or_urls: List[str],
+        domains_or_urls: list[str],
         *,
         match_type: str = "domain",
-        from_date: Optional[str] = None,
-        to_date: Optional[str] = None,
+        from_date: str | None = None,
+        to_date: str | None = None,
         limit_per_domain: int = 200,
         concurrency: int = 3,
     ) -> CDXDeepSearchResult:
@@ -390,7 +391,7 @@ class WaybackCDXDeepSearch:
         semaphore = asyncio.Semaphore(concurrency)
         last_request = 0.0
 
-        async def _fetch_one(domain: str) -> List[CDXSearchResult]:
+        async def _fetch_one(domain: str) -> list[CDXSearchResult]:
             nonlocal last_request
             async with semaphore:
                 elapsed = time.monotonic() - last_request
@@ -411,7 +412,7 @@ class WaybackCDXDeepSearch:
             return_exceptions=True,
         )
 
-        all_results: List[CDXSearchResult] = []
+        all_results: list[CDXSearchResult] = []
         for res in gathered:
             if isinstance(res, list):
                 all_results.extend(res)
@@ -430,11 +431,11 @@ class WaybackCDXDeepSearch:
 
     async def search_batch(
         self,
-        domains: List[str],
+        domains: list[str],
         *,
         match_type: str = "domain",
         concurrency: int = 3,
-    ) -> List[CDXSearchResult]:
+    ) -> list[CDXSearchResult]:
         """Batch search across domains with concurrency + rate limiting."""
         session = await self._ensure_session()
         results = await cdx_deep_search_batch(

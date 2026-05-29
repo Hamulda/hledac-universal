@@ -27,12 +27,11 @@ Domain Groups:
     - specialized: Fetch, Graph, Archive, Claims, Multimodal, Render, AgentCoordination
 """
 
-from typing import Dict, List, Type, Any
 import importlib
-
+from typing import Any
 
 # Domain definitions - coordinator name -> module mapping
-_DOMAIN_MODULES: Dict[str, Dict[str, str]] = {
+_DOMAIN_MODULES: dict[str, dict[str, str]] = {
     'core': {
         'UniversalResearchCoordinator': '.research_coordinator',
         'UniversalExecutionCoordinator': '.execution_coordinator',
@@ -42,7 +41,6 @@ _DOMAIN_MODULES: Dict[str, Dict[str, str]] = {
         'UniversalValidationCoordinator': '.validation_coordinator',
     },
     'advanced': {
-        'UniversalAdvancedResearchCoordinator': '.advanced_research_coordinator',
         'UniversalSwarmCoordinator': '.swarm_coordinator',
         'UniversalMetaReasoningCoordinator': '.meta_reasoning_coordinator',
         'PrivacyEnhancedResearch': '.privacy_enhanced_research',
@@ -55,7 +53,6 @@ _DOMAIN_MODULES: Dict[str, Dict[str, str]] = {
     },
     'infrastructure': {
         'UniversalCoordinator': '.base',
-        'CoordinatorRegistry': '.coordinator_registry',
         'OperationTrackingMixin': '.base',
         'MemoryPressureLevel': '.enums',
     },
@@ -71,10 +68,10 @@ _DOMAIN_MODULES: Dict[str, Dict[str, str]] = {
 }
 
 # Additional exports per coordinator (non-Coordinator classes)
-_COORDINATOR_EXPORTS: Dict[str, List[str]] = {
+_COORDINATOR_EXPORTS: dict[str, list[str]] = {
     'UniversalMemoryCoordinator': ['MemoryAllocation', 'MemoryStatistics', 'MemoryZone'],
     'UniversalValidationCoordinator': ['ValidationSeverity', 'OutputFormat', 'ValidationResult', 'CleaningResult'],
-    'UniversalAdvancedResearchCoordinator': ['ExcavationConfig', 'ExcavationStrategy', 'ResearchPaper', 'ResearchThread', 'MetaPattern', 'ResearchTheory'],
+    'UniversalResearchCoordinator': ['ExcavationConfig', 'ExcavationStrategy', 'ResearchPaper', 'ResearchThread', 'MetaPattern', 'ResearchTheory', 'ResearchDepth', 'HierarchicalPlan'],
     'UniversalSwarmCoordinator': ['SwarmState', 'SwarmMetrics', 'AdaptiveStrategy', 'SwarmAgent'],
     'UniversalMetaReasoningCoordinator': ['ReasoningStrategy', 'ReasoningStep', 'ReasoningChain', 'ThoughtNode'],
     'AgentPerformanceOptimizer': ['AgentPool', 'IntelligentLoadBalancer', 'AsyncExecutionOptimizer', 'LoadBalancingConfig', 'OptimizationReport', 'AgentMetrics'],
@@ -96,15 +93,15 @@ class CoordinatorCatalog:
     """
 
     def __init__(self):
-        self._cache: Dict[str, Type] = {}
+        self._cache: dict[str, type] = {}
         self._domains = list(_DOMAIN_MODULES.keys())
 
     @property
-    def domains(self) -> List[str]:
+    def domains(self) -> list[str]:
         """List all available domains."""
         return self._domains.copy()
 
-    def get(self, domain: str) -> Dict[str, str]:
+    def get(self, domain: str) -> dict[str, str]:
         """Get coordinator name -> module mapping for a domain."""
         if domain not in _DOMAIN_MODULES:
             available = ', '.join(self._domains)
@@ -165,7 +162,7 @@ class CoordinatorCatalog:
             f"Available: {', '.join(self._get_all_names())}"
         )
 
-    def _get_all_names(self) -> List[str]:
+    def _get_all_names(self) -> list[str]:
         """Get all available coordinator and export names."""
         names = set()
         for mappings in _DOMAIN_MODULES.values():
@@ -174,13 +171,13 @@ class CoordinatorCatalog:
             names.update(exports)
         return sorted(names)
 
-    def list_domain(self, domain: str) -> List[str]:
+    def list_domain(self, domain: str) -> list[str]:
         """List all coordinator names in a domain."""
         if domain not in _DOMAIN_MODULES:
             raise ValueError(f"Unknown domain '{domain}'")
         return list(_DOMAIN_MODULES[domain].keys())
 
-    def search(self, query: str) -> List[str]:
+    def search(self, query: str) -> list[str]:
         """
         Search for coordinators/exports matching query (case-insensitive).
 

@@ -29,6 +29,7 @@ Vždy kontroluj _AVAILABLE flag a přítomnost SKUTEČNÝCH call sites v kódu.
 
 from enum import Enum
 
+
 # DecisionType — re-exported from Hermes3Engine compat shim (decision_engine.py deleted)
 class DecisionType(Enum):
     RESEARCH = "research"
@@ -40,17 +41,18 @@ class DecisionType(Enum):
     COMPLETE = "complete"
 
 from .hermes3_engine import Hermes3Engine
+
 try:
     from .insight_engine import (
-        InsightEngine,
-        InsightAnalysisResult,
-        Insight,
-        Pattern,
         Anomaly,
+        CausalRelationship,
         Contradiction,
         Gap,
         Hypothesis,
-        CausalRelationship,
+        Insight,
+        InsightAnalysisResult,
+        InsightEngine,
+        Pattern,
         SynthesisLevel,
         create_insight_engine,
     )
@@ -61,18 +63,20 @@ except ImportError:
 # Inference Engine (OSINT inference and reasoning)
 try:
     from .inference_engine import (
-        InferenceEngine,
         Evidence,
-        InferenceStep,
-        Hypothesis as InferenceHypothesis,
-        ResolvedEntity,
+        HopStep,
+        InferenceEngine,
         InferenceRule,
+        InferenceStep,
         InferenceType,
-        create_inference_engine,
+        MultiHopPath,
         # Multi-Hop Reasoning
         MultiHopReasoner,
-        HopStep,
-        MultiHopPath,
+        ResolvedEntity,
+        create_inference_engine,
+    )
+    from .inference_engine import (
+        Hypothesis as InferenceHypothesis,
     )
     INFERENCE_AVAILABLE = True
 except ImportError:
@@ -81,21 +85,23 @@ except ImportError:
 # Hypothesis Engine (automated hypothesis generation and testing)
 try:
     from .hypothesis_engine import (
-        HypothesisEngine,
-        Hypothesis,
-        HypothesisType,
-        HypothesisStatus,
-        TestResult,
-        TestDesign,
-        TestType,
-        FalsificationResult,
-        Evidence as HypothesisEvidence,
-        create_hypothesis_engine,
+        AdversarialReport,
         # Adversarial Verification
         AdversarialVerifier,
-        SourceCredibility,
         Contradiction,
-        AdversarialReport,
+        FalsificationResult,
+        Hypothesis,
+        HypothesisEngine,
+        HypothesisStatus,
+        HypothesisType,
+        SourceCredibility,
+        TestDesign,
+        TestResult,
+        TestType,
+        create_hypothesis_engine,
+    )
+    from .hypothesis_engine import (
+        Evidence as HypothesisEvidence,
     )
     HYPOTHESIS_AVAILABLE = True
 except ImportError:
@@ -120,9 +126,9 @@ except Exception:
 # Bounded compat: catch broader Exception to ensure fail-soft containment.
 try:
     from .distillation_engine import (
+        CriticMLP,
         DistillationEngine,
         DistillationExample,
-        CriticMLP,
         create_distillation_engine,
     )
     DISTILLATION_AVAILABLE = True
@@ -164,12 +170,12 @@ except ImportError:
 # Sprint 8VG: kanonické místo pro NER/IOC je brain.ner_engine
 try:
     from .ner_engine import (
-        NEREngine,
         Entity,
+        IOCScorer,
+        NEREngine,
+        extract_iocs_from_text,
         get_ner_engine,
         reset_ner_engine,
-        extract_iocs_from_text,
-        IOCScorer,
     )
     NER_ENGINE_AVAILABLE = True
 except ImportError:

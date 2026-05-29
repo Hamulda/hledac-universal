@@ -2,10 +2,10 @@
 Tests for M1-specific branches and hardware features.
 """
 
-import pytest
 import sys
 import time
-from unittest.mock import patch, MagicMock
+
+import pytest
 
 # Skip all tests if not Darwin
 darwin_only = pytest.mark.skipif(sys.platform != "darwin", reason="macOS only")
@@ -69,7 +69,7 @@ class TestM1Branches:
 
     def test_thermal_trend_detection(self):
         """Test thermal trend from history."""
-        from hledac.universal.coordinators.memory_coordinator import UniversalMemoryCoordinator, ThermalState
+        from hledac.universal.coordinators.memory_coordinator import ThermalState, UniversalMemoryCoordinator
 
         coord = UniversalMemoryCoordinator()
         coord._thermal_history = [
@@ -83,7 +83,7 @@ class TestM1Branches:
 
     def test_thermal_trend_stable(self):
         """Test stable thermal trend."""
-        from hledac.universal.coordinators.memory_coordinator import UniversalMemoryCoordinator, ThermalState
+        from hledac.universal.coordinators.memory_coordinator import ThermalState, UniversalMemoryCoordinator
 
         coord = UniversalMemoryCoordinator()
         coord._thermal_history = [

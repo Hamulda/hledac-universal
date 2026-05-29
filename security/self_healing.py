@@ -7,20 +7,17 @@ Intelligent automated recovery and self-healing capabilities for CI/CD pipelines
 import asyncio
 import json
 import logging
-import yaml
-import subprocess
-import time
-from datetime import datetime, timedelta
-from pathlib import Path
-from typing import Dict, List, Optional, Set, Tuple, Any, Union
-from dataclasses import dataclass, asdict
-from collections import defaultdict, deque
-from enum import Enum
-import uuid
-# Sprint 7C: lazy import — requests is only used in subprocess command strings, not async hot path
-import psutil
-import socket
 import re
+import time
+from collections import defaultdict, deque
+from dataclasses import dataclass
+from datetime import datetime, timedelta
+from enum import Enum
+from pathlib import Path
+from typing import Any
+
+# Sprint 7C: lazy import — requests is only used in subprocess command strings, not async hot path
+import yaml
 
 # Configure logging
 logging.basicConfig(
@@ -66,7 +63,7 @@ class HealthCheck:
     """Health check definition"""
     component: CIComponent
     name: str
-    command: List[str]
+    command: list[str]
     timeout: int  # seconds
     success_criteria: str
     retry_count: int
@@ -82,7 +79,7 @@ class HealthResult:
     status: HealthStatus
     response_time_ms: float
     output: str
-    error_message: Optional[str]
+    error_message: str | None
     timestamp: datetime
     success_rate: float
     consecutive_failures: int
@@ -93,11 +90,11 @@ class HealingAction:
     action_id: str
     action_type: HealingAction
     component: CIComponent
-    trigger_conditions: List[str]
-    command: List[str]
+    trigger_conditions: list[str]
+    command: list[str]
     timeout: int
     success_criteria: str
-    rollback_command: Optional[List[str]]
+    rollback_command: list[str] | None
     max_attempts: int
     impact: str  # low, medium, high
 
@@ -112,7 +109,7 @@ class HealingResult:
     output: str
     timestamp: datetime
     attempts_used: int
-    side_effects: List[str]
+    side_effects: list[str]
 
 class CircuitBreaker:
     """Circuit breaker for preventing cascading failures"""
@@ -321,16 +318,16 @@ class SelfHealingCICD:
         # Initialize metrics collection
         self._initialize_metrics()
 
-    def _load_config(self) -> Dict[str, Any]:
+    def _load_config(self) -> dict[str, Any]:
         """Load CI/CD configuration"""
         try:
-            with open(self.config_path, 'r') as f:
+            with open(self.config_path) as f:
                     return yaml.safe_load(f)
         except FileNotFoundError:
             logger.warning(f"Config file {self.config_path} not found")
             return self._default_config()
 
-    def _default_config(self) -> Dict[str, Any]:
+    def _default_config(self) -> dict[str, Any]:
         """Default CI/CD configuration"""
         return {
             "self_healing": {
@@ -614,7 +611,7 @@ class SelfHealingCICD:
                 logger.error(f"Error in self-healing cycle: {e}")
                 await asyncio.sleep(300)  # Wait 5 minutes on error
 
-    async def _run_health_checks(self) -> Dict[str, HealthResult]:
+    async def _run_health_checks(self) -> dict[str, HealthResult]:
         """Run all health checks"""
         health_results = {}
 
@@ -710,7 +707,7 @@ class SelfHealingCICD:
             logger.debug(f"Health check {check_id}: {status.value} ({response_time:.0f}ms)")
             return result
 
-        except asyncio.TimeoutError:
+        except TimeoutError:
             response_time = health_check.timeout * 1000
             logger.error(f"Health check {check_id} timed out after {health_check.timeout}s")
 
@@ -792,7 +789,7 @@ class SelfHealingCICD:
 
             return consecutive_failures
 
-    def _analyze_health_results(self, health_results: Dict[str, HealthResult]) -> List[Tuple[CIComponent, HealthResult, List[HealingAction]]]:
+    def _analyze_health_results(self, health_results: dict[str, HealthResult]) -> list[tuple[CIComponent, HealthResult, list[HealingAction]]]:
         """Analyze health results and identify issues requiring healing"""
         issues = []
 
@@ -804,7 +801,7 @@ class SelfHealingCICD:
 
             return issues
 
-    def _identify_healing_actions(self, health_result: HealthResult) -> List[HealingAction]:
+    def _identify_healing_actions(self, health_result: HealthResult) -> list[HealingAction]:
         """Identify appropriate healing actions for a health result"""
         actions = []
 
@@ -817,7 +814,7 @@ class SelfHealingCICD:
 
             return actions
 
-    def _check_trigger_conditions(self, trigger_conditions: List[str], health_result: HealthResult) -> bool:
+    def _check_trigger_conditions(self, trigger_conditions: list[str], health_result: HealthResult) -> bool:
         """Check if trigger conditions are met"""
         for condition in trigger_conditions:
             try:
@@ -881,7 +878,7 @@ class SelfHealingCICD:
         max_healings = self.config["self_healing"].get("max_concurrent_healings", 3)
         return current_healings >= max_healings
 
-    async def _apply_healing_actions(self, issues: List[Tuple[CIComponent, HealthResult, List[HealingAction]]]):
+    async def _apply_healing_actions(self, issues: list[tuple[CIComponent, HealthResult, list[HealingAction]]]):
         """Apply healing actions to identified issues"""
         max_concurrent = self.config["self_healing"].get("max_concurrent_healings", 3)
 
@@ -893,7 +890,7 @@ class SelfHealingCICD:
         ), reverse=True)
 
         executed_count = 0
-        for component, health_result, actions in sorted_issues:
+        for _component, health_result, actions in sorted_issues:
             if executed_count >= max_concurrent:
                     break
 
@@ -931,7 +928,7 @@ class SelfHealingCICD:
         """Execute a healing action"""
         logger.info(f"🔧 Executing healing action: {action.action_type.value} for {action.component.value}")
 
-        start_time = time.time()
+        time.time()
 
         try:
             # Execute the healing command
@@ -953,7 +950,7 @@ class SelfHealingCICD:
 
                     return success
 
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.error(f"❌ Healing action {action.action_id} timed out")
             return False
 
@@ -1000,7 +997,7 @@ class SelfHealingCICD:
         except Exception as e:
             logger.error(f"❌ Error executing rollback: {e}")
 
-    def _update_metrics(self, health_results: Dict[str, HealthResult]):
+    def _update_metrics(self, health_results: dict[str, HealthResult]):
         """Update system metrics"""
         self.metrics["total_health_checks"] += len(health_results)
         self.metrics["successful_checks"] += len([r for r in health_results.values() if r.status == HealthStatus.HEALTHY])
@@ -1096,7 +1093,7 @@ class SelfHealingCICD:
         latest_result = history[-1]
         return latest_result.status.value
 
-    def _get_last_check_result(self, component: CIComponent) -> Optional[HealthResult]:
+    def _get_last_check_result(self, component: CIComponent) -> HealthResult | None:
         """Get last health check result for component"""
         history = self.health_history.get(component.value)
         if not history:
@@ -1133,7 +1130,7 @@ class SelfHealingCICD:
 
             return weighted_score / total_weight
 
-    def _generate_recommendations(self) -> List[str]:
+    def _generate_recommendations(self) -> list[str]:
         """Generate recommendations based on current state"""
         recommendations = []
 
@@ -1181,7 +1178,7 @@ async def main():
 
         elif command == "check":
             health_results = await healer._run_health_checks()
-            print(f"\n🔍 Health Check Results:")
+            print("\n🔍 Health Check Results:")
             print("=" * 20)
             for result in health_results.values():
                 print(f"  {result.name}: {result.status.value} ({result.response_time_ms:.0f}ms)")
@@ -1204,10 +1201,10 @@ async def main():
 
         elif command == "report":
             healer.generate_self_healing_report()
-            print(f"\n📊 Self-healing report generated!")
+            print("\n📊 Self-healing report generated!")
 
         elif command == "status":
-            print(f"\n🔄 Self-Healing Status:")
+            print("\n🔄 Self-Healing Status:")
             print("=" * 25)
             print(f"Enabled: {healer.config['self_healing']['enabled']}")
             print(f"Health checks configured: {len(healer.health_checks)}")

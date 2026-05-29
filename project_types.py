@@ -16,13 +16,13 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass, field
 from datetime import datetime
-from enum import Enum, auto
-from typing import Any, Dict, List, Optional, Set, Tuple, Union, TYPE_CHECKING
+from enum import Enum
+from typing import TYPE_CHECKING, Any, Union
 
 if TYPE_CHECKING:
-    from .autonomous_analyzer import AutoResearchProfile
-
     import numpy as np  # noqa: F401 — type annotations only
+
+    from .autonomous_analyzer import AutoResearchProfile
 
 
 # =============================================================================
@@ -132,7 +132,7 @@ class ActionType(Enum):
     ANSWER = "answer"
     CRACK = "crack"
     ERROR = "error"
-    
+
     # Extended actions
     ARCHIVE_FALLBACK = "archive_fallback"
     FACT_CHECK = "fact_check"
@@ -206,7 +206,7 @@ class ResearchConfig:
     max_steps: int = 20
     max_time_minutes: int = 30
     memory_limit_mb: float = 5500.0
-    
+
     # Models - 3 model stack only
     hermes_model: str = ModelConfig.HERMES_MODEL
     modernbert_model: str = ModelConfig.MODERNBERT_MODEL
@@ -215,28 +215,28 @@ class ResearchConfig:
     # Knowledge (optional - no Neo4j)
     enable_knowledge_graph: bool = False
     enable_rag: bool = True
-    db_path: Optional[str] = None
-    
+    db_path: str | None = None
+
     # Stealth
     enable_stealth: bool = True
     auto_stealth: bool = True
     privacy_level: str = "high"
     chaff_ratio: float = 0.3
     enable_audit: bool = True
-    
+
     # Autonomy
     enable_autonomy: bool = True
     auto_archive_fallback: bool = True
     enable_fact_checking: bool = True
-    
+
     # Output
     output_format: str = "markdown"
     save_intermediate: bool = True
-    
+
     # Security
     use_ram_vault: bool = True
-    vault_password: Optional[str] = None
-    
+    vault_password: str | None = None
+
     # Sub-agents
     max_concurrent_agents: int = 3
     agent_timeout: int = 300
@@ -272,7 +272,7 @@ class SecurityConfig:
     enable_audit: bool = True
     privacy_level: str = "high"
     use_ram_vault: bool = True
-    vault_password: Optional[str] = None
+    vault_password: str | None = None
     pii_detection: bool = True
     auto_redact: bool = True
     # Obfuscation (required by SecurityLayer)
@@ -300,7 +300,7 @@ class StealthConfig:
     rotate_identity: bool = True
     use_tor: bool = False
     use_proxy: bool = False
-    proxy_url: Optional[str] = None
+    proxy_url: str | None = None
     timing_jitter: bool = True
     user_agent_rotation: bool = True
     # Browser
@@ -319,11 +319,11 @@ class StealthConfig:
     enable_behavior_simulation: bool = True
     # CAPTCHA
     enable_captcha_solving: bool = True
-    captcha_providers: List[str] = field(default_factory=lambda: ["2captcha", "anticaptcha"])
+    captcha_providers: list[str] = field(default_factory=lambda: ["2captcha", "anticaptcha"])
     captcha_timeout: int = 120
     # Proxy
     enable_proxy_rotation: bool = False
-    proxy_list: List[str] = field(default_factory=list)
+    proxy_list: list[str] = field(default_factory=list)
     # Anti-detection extras
     hide_webdriver: bool = True
     hide_automation: bool = True
@@ -393,28 +393,28 @@ class ExecutionContext:
     current_step: int = 0
     max_steps: int = 20
     state: OrchestratorState = OrchestratorState.IDLE
-    
+
     # History
-    execution_history: List[Dict[str, Any]] = field(default_factory=list)
-    action_log: List[Dict[str, Any]] = field(default_factory=list)
-    
+    execution_history: list[dict[str, Any]] = field(default_factory=list)
+    action_log: list[dict[str, Any]] = field(default_factory=list)
+
     # Knowledge
-    collected_data: List[Dict[str, Any]] = field(default_factory=list)
-    knowledge_graph: Dict[str, Any] = field(default_factory=dict)
-    
+    collected_data: list[dict[str, Any]] = field(default_factory=list)
+    knowledge_graph: dict[str, Any] = field(default_factory=dict)
+
     # Stealth
     stealth_activated: bool = False
-    blocked_domains: Set[str] = field(default_factory=set)
-    
+    blocked_domains: set[str] = field(default_factory=set)
+
     # Deduplication
-    visited_urls: Set[str] = field(default_factory=set)
-    content_hashes: Set[str] = field(default_factory=set)
-    
+    visited_urls: set[str] = field(default_factory=set)
+    content_hashes: set[str] = field(default_factory=set)
+
     # Statistics
     start_time: float = field(default_factory=lambda: datetime.now().timestamp())
     tokens_used: int = 0
-    
-    def add_action(self, action_type: ActionType, details: Dict[str, Any]) -> None:
+
+    def add_action(self, action_type: ActionType, details: dict[str, Any]) -> None:
         """Add action to log"""
         self.action_log.append({
             "step": self.current_step,
@@ -432,7 +432,7 @@ class DecisionContext:
     phase: ResearchPhase
     iterations: int = 0
     max_iterations: int = 20
-    context_data: Dict[str, Any] = field(default_factory=dict)
+    context_data: dict[str, Any] = field(default_factory=dict)
 
 
 # =============================================================================
@@ -444,9 +444,9 @@ class SubAgentResult:
     """Result from sub-agent execution"""
     agent_type: SubAgentType
     success: bool
-    data: Dict[str, Any]
+    data: dict[str, Any]
     confidence: float
-    sources: List[Dict[str, Any]]
+    sources: list[dict[str, Any]]
     execution_time: float
     state: AgentState
 
@@ -458,48 +458,48 @@ class ResearchResult:
     query: str
     mode: ResearchMode
     final_answer: str
-    sources: List[Dict[str, Any]] = field(default_factory=list)
-    knowledge_graph: Dict[str, Any] = field(default_factory=dict)
-    execution_history: List[Dict[str, Any]] = field(default_factory=list)
-    agent_results: List[SubAgentResult] = field(default_factory=list)
-    statistics: Dict[str, Any] = field(default_factory=dict)
-    metadata: Dict[str, Any] = field(default_factory=dict)
-    
+    sources: list[dict[str, Any]] = field(default_factory=list)
+    knowledge_graph: dict[str, Any] = field(default_factory=dict)
+    execution_history: list[dict[str, Any]] = field(default_factory=list)
+    agent_results: list[SubAgentResult] = field(default_factory=list)
+    statistics: dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
+
     def to_markdown(self) -> str:
         """Export result as Markdown"""
         lines = [
             f"# Research Report: {self.query}",
-            f"",
+            "",
             f"**Mode:** {self.mode.value}",
             f"**Success:** {'✅' if self.success else '❌'}",
             f"**Sources:** {len(self.sources)}",
             f"**Agents Used:** {len([r for r in self.agent_results if r.success])}",
-            f"",
-            f"## Answer",
-            f"",
+            "",
+            "## Answer",
+            "",
             self.final_answer,
-            f"",
-            f"## Sources",
-            f"",
+            "",
+            "## Sources",
+            "",
         ]
-        
+
         for i, source in enumerate(self.sources, 1):
             lines.append(f"{i}. [{source.get('title', 'Unknown')}]({source.get('url', '#')})")
-        
+
         if self.statistics:
             lines.extend([
-                f"",
-                f"## Statistics",
-                f"",
-                f"```json",
+                "",
+                "## Statistics",
+                "",
+                "```json",
                 f"{self._dict_to_json(self.statistics)}",
-                f"```",
+                "```",
             ])
-        
+
         return "\n".join(lines)
-    
+
     @staticmethod
-    def _dict_to_json(d: Dict) -> str:
+    def _dict_to_json(d: dict) -> str:
         """Simple dict to JSON string"""
         import json
         return json.dumps(d, indent=2, default=str)
@@ -509,7 +509,7 @@ class ResearchResult:
 class DecisionRequest:
     """Request for decision making (from DeepSeek R1)"""
     operation_type: OperationType
-    context: Dict[str, Any]
+    context: dict[str, Any]
     priority: int = 5  # 1-10
     timeout_seconds: float = 30.0
     requires_delegation: bool = True
@@ -521,10 +521,10 @@ class DecisionResponse:
     decision_id: str
     operation_type: OperationType
     action: str
-    parameters: Dict[str, Any]
+    parameters: dict[str, Any]
     confidence: float
-    coordinator_id: Optional[str] = None
-    reasoning: Optional[str] = None
+    coordinator_id: str | None = None
+    reasoning: str | None = None
 
 
 @dataclass
@@ -532,7 +532,7 @@ class ActionResult:
     """Result from Ghost action execution"""
     action: ActionType
     success: bool
-    data: Dict[str, Any]
+    data: dict[str, Any]
     execution_time: float
     stagnation_detected: bool = False
     stored_in_vault: bool = False
@@ -544,7 +544,7 @@ class SystemMetrics:
     memory_used_mb: float
     memory_available_mb: float
     cpu_percent: float
-    temperature_c: Optional[float]
+    temperature_c: float | None
     state: SystemState
     timestamp: float
 
@@ -567,7 +567,7 @@ class ComplexityAnalysis:
     requires_multi_step: bool
     estimated_depth: int
     tot_recommended: bool
-    indicators: Dict[str, float]
+    indicators: dict[str, float]
 
 
 # =============================================================================
@@ -586,17 +586,17 @@ class AnalyzerResult:
     the source of truth for analyzer output until full migration.
     """
     # Tool routing
-    tools: Set[str] = field(default_factory=set)
+    tools: set[str] = field(default_factory=set)
 
     # Source routing
-    sources: Set[str] = field(default_factory=set)
+    sources: set[str] = field(default_factory=set)
 
     # Privacy configuration
     privacy_level: str = "STANDARD"
     use_tor: bool = False
 
     # Model requirements (for ModelLifecycleManager)
-    models_needed: Set[str] = field(default_factory=set)
+    models_needed: set[str] = field(default_factory=set)
 
     # Execution parameters
     depth: str = "STANDARD"
@@ -610,10 +610,10 @@ class AnalyzerResult:
     reasoning: str = ""
 
     # Raw profile reference (for backward compatibility during transition)
-    _raw_profile: Optional[Any] = field(default=None, repr=False)
+    _raw_profile: Any | None = field(default=None, repr=False)
 
     @classmethod
-    def from_profile(cls, profile: "AutoResearchProfile") -> "AnalyzerResult":
+    def from_profile(cls, profile: AutoResearchProfile) -> AnalyzerResult:
         """
         Create AnalyzerResult from AutoResearchProfile.
 
@@ -634,7 +634,7 @@ class AnalyzerResult:
             _raw_profile=profile,
         )
 
-    def to_capability_signal(self) -> Dict[str, Any]:
+    def to_capability_signal(self) -> dict[str, Any]:
         """
         Convert to capability signal for CapabilityRouter.
 
@@ -660,10 +660,10 @@ class AnalyzerResult:
 # =============================================================================
 
 # For backwards compatibility
-AgentCapability = Dict[str, Any]
-TaskDefinition = Dict[str, Any]
-PlanStep = Dict[str, Any]
-KnowledgeNode = Dict[str, Any]
+AgentCapability = dict[str, Any]
+TaskDefinition = dict[str, Any]
+PlanStep = dict[str, Any]
+KnowledgeNode = dict[str, Any]
 
 
 # =============================================================================
@@ -710,7 +710,7 @@ class UniversalResearchOrchestrator:
     override the research method.
     """
 
-    def __init__(self, config: Optional[ResearchConfig] = None):
+    def __init__(self, config: ResearchConfig | None = None):
         """
         Initialize the orchestrator.
 
@@ -734,7 +734,7 @@ class UniversalResearchOrchestrator:
     async def research(
         self,
         query: str,
-        search_func: Optional[Any] = None,
+        search_func: Any | None = None,
         domain: str = "general"
     ) -> Any:
         """
@@ -758,7 +758,7 @@ class UniversalResearchOrchestrator:
         self._initialized = False
         self.state = OrchestratorState.IDLE
 
-    def get_stats(self) -> Dict[str, Any]:
+    def get_stats(self) -> dict[str, Any]:
         """Get orchestrator statistics."""
         return {
             "state": self.state.value,
@@ -861,7 +861,7 @@ class ObfuscationResult:
     """Result of string obfuscation"""
     original_hash: str
     obfuscated_data: str
-    encoding_chain: List[str]  # e.g., ["xor", "base64", "zlib"]
+    encoding_chain: list[str]  # e.g., ["xor", "base64", "zlib"]
     decoy_count: int
     success: bool
 
@@ -882,8 +882,8 @@ class StealthSession:
     """Stealth browsing session"""
     session_id: str
     browser_type: BrowserType
-    fingerprint: Dict[str, Any]
-    proxy: Optional[str]
+    fingerprint: dict[str, Any]
+    proxy: str | None
     risk_level: RiskLevel
     created_at: float
 
@@ -917,7 +917,7 @@ class DeepResearchConfig:
     follow_citations: bool = True
     explore_tangents: bool = True
     max_threads: int = 5
-    citation_types: List[str] = field(default_factory=lambda: [
+    citation_types: list[str] = field(default_factory=lambda: [
         "academic", "patent", "preprint", "dataset"
     ])
 
@@ -929,9 +929,9 @@ class ExplorationNode:
     url: str
     title: str
     depth: int
-    parent_id: Optional[str]
-    children: List[str] = field(default_factory=list)
-    citations: List[str] = field(default_factory=list)
+    parent_id: str | None
+    children: list[str] = field(default_factory=list)
+    citations: list[str] = field(default_factory=list)
     quality_score: float = 0.0
 
 
@@ -939,7 +939,7 @@ class ExplorationNode:
 class GhostAction:
     """GhostDirector action"""
     action_type: ActionType
-    parameters: Dict[str, Any]
+    parameters: dict[str, Any]
     priority: int = 5
     requires_stealth: bool = False
     vault_storage: bool = True
@@ -950,9 +950,9 @@ class GhostMission:
     """GhostDirector mission"""
     mission_id: str
     goal: str
-    actions: List[GhostAction]
+    actions: list[GhostAction]
     current_step: int = 0
-    acquired_loot: List[Dict[str, Any]] = field(default_factory=list)
+    acquired_loot: list[dict[str, Any]] = field(default_factory=list)
     anti_loop_counter: int = 0
 
 
@@ -963,7 +963,7 @@ class DataLeakAlert:
     source: LeakSource
     severity: RiskLevel
     target: str
-    leaked_data: Dict[str, Any]
+    leaked_data: dict[str, Any]
     timestamp: float
 
 
@@ -1015,25 +1015,25 @@ class ProtocolType(Enum):
 class PrivacyConfig:
     """Privacy layer configuration"""
     level: PrivacyLevel = PrivacyLevel.STANDARD
-    
+
     # Component enables
     enable_privacy_manager: bool = True
     enable_anonymous_comm: bool = True
     enable_audit_log: bool = True
     enable_protocol_gen: bool = False
-    
+
     # VPN settings
     vpn_provider: str = "mullvad"
     vpn_protocol: str = "wireguard"
-    
+
     # Tor settings
     use_tor: bool = False
     tor_use_bridges: bool = False
-    
+
     # DNS settings
     dns_provider: str = "cloudflare"
     dns_protocol: str = "doh"
-    
+
     # Audit settings
     audit_retention_days: int = 90
     audit_encryption: bool = True
@@ -1044,24 +1044,24 @@ class PrivacyConfig:
 # =============================================================================
 
 # Security aliases
-ObfuscationPattern = Dict[str, str]
+ObfuscationPattern = dict[str, str]
 EncryptionKey = Union[str, bytes]
-FingerprintConfig = Dict[str, Any]
+FingerprintConfig = dict[str, Any]
 
 # Research aliases
-CitationGraph = Dict[str, List[str]]
-ExplorationTree = Dict[str, ExplorationNode]
-GhostLoot = Dict[str, Any]
+CitationGraph = dict[str, list[str]]
+ExplorationTree = dict[str, ExplorationNode]
+GhostLoot = dict[str, Any]
 
 # Stealth aliases
-ProxyConfig = Dict[str, str]
+ProxyConfig = dict[str, str]
 EvasionScript = str
-DetectionSignature = Dict[str, Any]
+DetectionSignature = dict[str, Any]
 
 # Privacy aliases
-VPNCredentials = Dict[str, str]
-PGPKeypair = Dict[str, str]
-AuditEntry = Dict[str, Any]
+VPNCredentials = dict[str, str]
+PGPKeypair = dict[str, str]
+AuditEntry = dict[str, Any]
 
 # =============================================================================
 # COMMUNICATION TYPES
@@ -1136,11 +1136,11 @@ class NeuralEvent:
     """Neural event for event-driven processing"""
     event_type: EventType
     source_neuron: int
-    target_neurons: List[int]
+    target_neurons: list[int]
     timestamp: float
     weight_delta: float = 0.0
     priority: int = 5  # 1-10, lower is higher priority
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self):
         if self.timestamp == 0:
@@ -1164,9 +1164,9 @@ class ProcessingResult:
     success: bool
     state: ProcessingState
     metrics: ProcessingMetrics
-    spike_history: List[SpikeData] = field(default_factory=list)
-    output_pattern: Optional[np.ndarray] = None
-    error_message: Optional[str] = None
+    spike_history: list[SpikeData] = field(default_factory=list)
+    output_pattern: np.ndarray | None = None
+    error_message: str | None = None
 
 
 @dataclass
@@ -1240,7 +1240,7 @@ class SNNEncryptedContainer:
     timestamp: float
     entropy_used: int = 0
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for serialization"""
         import base64
         return {
@@ -1252,7 +1252,7 @@ class SNNEncryptedContainer:
         }
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "SNNEncryptedContainer":
+    def from_dict(cls, data: dict[str, Any]) -> SNNEncryptedContainer:
         """Create from dictionary"""
         import base64
         return cls(
@@ -1325,12 +1325,12 @@ class RunCorrelation:
         Pass as context to ledger calls for cross-component correlation.
         All fields are optional to allow gradual adoption — do not require all fields.
     """
-    run_id: Optional[str] = None
-    branch_id: Optional[str] = None
-    provider_id: Optional[str] = None
-    action_id: Optional[str] = None
+    run_id: str | None = None
+    branch_id: str | None = None
+    provider_id: str | None = None
+    action_id: str | None = None
 
-    def with_provider(self, provider: str) -> "RunCorrelation":
+    def with_provider(self, provider: str) -> RunCorrelation:
         """Return new instance with provider_id set."""
         return RunCorrelation(
             run_id=self.run_id,
@@ -1339,7 +1339,7 @@ class RunCorrelation:
             action_id=self.action_id,
         )
 
-    def with_action(self, action: str) -> "RunCorrelation":
+    def with_action(self, action: str) -> RunCorrelation:
         """Return new instance with action_id set."""
         return RunCorrelation(
             run_id=self.run_id,
@@ -1348,7 +1348,7 @@ class RunCorrelation:
             action_id=action,
         )
 
-    def to_dict(self) -> Dict[str, Optional[str]]:
+    def to_dict(self) -> dict[str, str | None]:
         """Serialize to dict for ledger injection."""
         return {
             "run_id": self.run_id,
@@ -1385,9 +1385,9 @@ class ProviderRequest:
     model: str
     temperature: float = 0.3
     max_tokens: int = 512
-    correlation: Optional[RunCorrelation] = None
+    correlation: RunCorrelation | None = None
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "prompt": self.prompt,
             "model": self.model,
@@ -1413,9 +1413,9 @@ class ProviderResult:
     """
     text: str
     model: str
-    usage: Dict[str, int]
+    usage: dict[str, int]
     latency_ms: float
-    correlation: Optional[RunCorrelation] = None
+    correlation: RunCorrelation | None = None
 
     @property
     def prompt_tokens(self) -> int:
@@ -1429,7 +1429,7 @@ class ProviderResult:
     def total_tokens(self) -> int:
         return self.usage.get("total_tokens", 0)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "text": self.text,
             "model": self.model,
@@ -1462,11 +1462,11 @@ class ExecutionRequest:
     Removal condition: replaced by typed ActionProtocol.
     """
     action_type: str
-    parameters: Dict[str, Any]
+    parameters: dict[str, Any]
     priority: int = 5
-    correlation: Optional[RunCorrelation] = None
+    correlation: RunCorrelation | None = None
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "action_type": self.action_type,
             "parameters": self.parameters,
@@ -1496,12 +1496,12 @@ class ExecutionResult:
     """
     action_type: str
     success: bool
-    data: Dict[str, Any]
+    data: dict[str, Any]
     execution_time: float
-    error: Optional[str] = None
-    correlation: Optional[RunCorrelation] = None
+    error: str | None = None
+    correlation: RunCorrelation | None = None
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "action_type": self.action_type,
             "success": self.success,
@@ -1538,12 +1538,12 @@ class BranchDecision:
     """
     decision_id: str
     branch_id: str
-    alternatives: List[str]
+    alternatives: list[str]
     reasoning: str
     confidence: float
-    correlation: Optional[RunCorrelation] = None
+    correlation: RunCorrelation | None = None
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "decision_id": self.decision_id,
             "branch_id": self.branch_id,
@@ -1618,32 +1618,32 @@ class ExportHandoff:
     Removal condition: scorecard replaced by structured WindupResult.
     """
     sprint_id: str
-    scorecard: Dict[str, Any]
-    ranked_parquet: Optional[str] = None
+    scorecard: dict[str, Any]
+    ranked_parquet: str | None = None
     synthesis_engine: str = "unknown"
     gnn_predictions: int = 0
-    top_nodes: List[Any] = field(default_factory=list)
-    phase_durations: Dict[str, float] = field(default_factory=dict)
-    correlation: Optional[RunCorrelation] = None
+    top_nodes: list[Any] = field(default_factory=list)
+    phase_durations: dict[str, float] = field(default_factory=dict)
+    correlation: RunCorrelation | None = None
     # Sprint F155: Canonical truth enrichment — additive payload from same run
-    runtime_truth: Dict[str, Any] = field(default_factory=dict)
-    execution_context: Dict[str, Any] = field(default_factory=dict)
-    canonical_run_summary: Dict[str, Any] = field(default_factory=dict)
-    synthesis_outcome_payload: Optional[Dict[str, Any]] = None
+    runtime_truth: dict[str, Any] = field(default_factory=dict)
+    execution_context: dict[str, Any] = field(default_factory=dict)
+    canonical_run_summary: dict[str, Any] = field(default_factory=dict)
+    synthesis_outcome_payload: dict[str, Any] | None = None
     # Sprint F153: Top-level sprint verdict — posture, confidence, next action
-    sprint_verdict: Optional[Dict[str, Any]] = None
+    sprint_verdict: dict[str, Any] | None = None
     # Sprint F204E: Analyst brief — model-free sprint summary at teardown
-    analyst_brief: Optional[Dict[str, Any]] = None
+    analyst_brief: dict[str, Any] | None = None
     # Sprint F238E Phase C: Optional timer events for runtime timing debug
-    timer_events: Optional[List[Dict[str, Any]]] = None
+    timer_events: list[dict[str, Any]] | None = None
 
     @classmethod
     def from_windup(
         cls,
         sprint_id: str,
-        scorecard: Dict[str, Any],
-        correlation: Optional[RunCorrelation] = None,
-    ) -> "ExportHandoff":
+        scorecard: dict[str, Any],
+        correlation: RunCorrelation | None = None,
+    ) -> ExportHandoff:
         """
         Create ExportHandoff from windup phase output (scorecard dict).
 
@@ -1679,7 +1679,7 @@ class ExportHandoff:
             correlation=correlation,
         )
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "sprint_id": self.sprint_id,
             "scorecard": self.scorecard,
@@ -1752,14 +1752,14 @@ class CanonicalGroundingHints:
 
     Shrink wrap: Keep minimal. Only add fields with explicit migration trigger.
     """
-    topic_hints: Tuple[str, ...] = field(default_factory=lambda: ())
-    domain_tags: Tuple[str, ...] = field(default_factory=lambda: ())
-    correlation: Optional[RunCorrelation] = None
-    budget_hint: Optional[str] = None
-    evidence_hint: Optional[str] = None
+    topic_hints: tuple[str, ...] = field(default_factory=lambda: ())
+    domain_tags: tuple[str, ...] = field(default_factory=lambda: ())
+    correlation: RunCorrelation | None = None
+    budget_hint: str | None = None
+    evidence_hint: str | None = None
 
     @classmethod
-    def from_shim(cls, shim: Any = None, topic_hints: Tuple[str, ...] = (), domain_tags: Tuple[str, ...] = (), correlation: Optional[RunCorrelation] = None) -> "CanonicalGroundingHints":
+    def from_shim(cls, shim: Any = None, topic_hints: tuple[str, ...] = (), domain_tags: tuple[str, ...] = (), correlation: RunCorrelation | None = None) -> CanonicalGroundingHints:
         """
         Create from local seam Shim for forward-compatibility.
 

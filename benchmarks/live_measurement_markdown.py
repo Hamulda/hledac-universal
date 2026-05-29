@@ -140,8 +140,8 @@ def _render_runtime_authority(result) -> list[str]:
         "",
         "## Runtime Authority",
         "",
-        f"| Field | Value |",
-        f"| --- | --- |",
+        "| Field | Value |",
+        "| --- | --- |",
         f"| Runtime authority path | `{ra_path}` |",
         f"| Module | `{ra_module}` |",
         f"| Function | `{ra_func}` |",
@@ -190,8 +190,8 @@ def _render_live_kpi(result) -> list[str]:
         "",
         "## Live KPI",
         "",
-        f"| Metric | Value |",
-        f"| --- | --- |",
+        "| Metric | Value |",
+        "| --- | --- |",
         f"| Total findings | {kpi.get('total_findings', 'N/A')} |",
         f"| Accepted findings | {kpi.get('accepted_findings', 'N/A')} |",
         f"| Cycles completed | {kpi.get('cycles_completed', 'N/A')} |",
@@ -227,8 +227,8 @@ def _render_research_quality(kpi) -> list[str]:
         "",
         "## Research Quality Score",
         "",
-        f"| Metric | Value |",
-        f"| --- | --- |",
+        "| Metric | Value |",
+        "| --- | --- |",
         f"| Total score | {_score:.1f}/100 |",
         f"| Grade | `{_grade}` |",
         f"| Comparable | {_comp_flag} |",
@@ -282,9 +282,9 @@ def _render_lane_execution_truth(kpi) -> list[str]:
     )
     _ct_in_sfo = any(_e.get('family') == 'ct' for _e in _sfo_disp)
     if _ct_failed and _ct_attempted:
-        lane_truth_rows.append(f"| **Next action** | **fix_final_terminality_reconciliation** |")
+        lane_truth_rows.append("| **Next action** | **fix_final_terminality_reconciliation** |")
     elif _ct_in_sfo and not _ct_attempted:
-        lane_truth_rows.append(f"| **Next action** | **fix_ct_prelude_execution** |")
+        lane_truth_rows.append("| **Next action** | **fix_ct_prelude_execution** |")
     return lane_truth_rows
 
 
@@ -304,8 +304,8 @@ def _render_acquisition_prelude(kpi) -> list[str]:
         "",
         "## Acquisition Prelude",
         "",
-        f"| Metric | Value |",
-        f"| --- | --- |",
+        "| Metric | Value |",
+        "| --- | --- |",
         f"| Prelude checked | {apl_checked if apl_checked is not None else 'N/A'} |",
         f"| Prelude ran | {apl_ran if apl_ran is not None else 'N/A'} |",
         f"| Reason | {apl_reason or 'N/A'} |",
@@ -335,8 +335,8 @@ def _render_windup_guard(kpi) -> list[str]:
         "",
         "## Windup Guard Observation",
         "",
-        f"| Metric | Value |",
-        f"| --- | --- |",
+        "| Metric | Value |",
+        "| --- | --- |",
         f"| Call count | {wg_call} |",
         f"| Callback supplied | {wg_supplied} |",
         f"| Callback executed | {wg_exec} |",
@@ -345,15 +345,15 @@ def _render_windup_guard(kpi) -> list[str]:
         f"| Last allowed | {wg_allowed} |",
     ]
     if wg_call == 0:
-        lines.append(f"| **Next action** | **fix_scheduler_windup_callsite** |")
+        lines.append("| **Next action** | **fix_scheduler_windup_callsite** |")
     elif wg_supplied == 0:
-        lines.append(f"| **Next action** | **fix_callback_wiring** |")
+        lines.append("| **Next action** | **fix_callback_wiring** |")
     elif wg_exec == 0:
-        lines.append(f"| **Next action** | **fix_callback_execution** |")
+        lines.append("| **Next action** | **fix_callback_execution** |")
     elif wg_allowed is True:
-        lines.append(f"| **Next action** | **no_windup_starvation** |")
+        lines.append("| **Next action** | **no_windup_starvation** |")
     elif wg_allowed is False:
-        lines.append(f"| **Next action** | **fix_barrier_semantics** |")
+        lines.append("| **Next action** | **fix_barrier_semantics** |")
     return lines
 
 
@@ -371,8 +371,8 @@ def _render_return_guard(kpi) -> list[str]:
         "",
         "## Scheduler Return Guard",
         "",
-        f"| Metric | Value |",
-        f"| --- | --- |",
+        "| Metric | Value |",
+        "| --- | --- |",
         f"| Return guard checked | {rg_checked} |",
         f"| Return guard satisfied | {rg_satisfied} |",
         f"| Block reason | {rg_block or 'N/A'} |",
@@ -384,9 +384,9 @@ def _render_return_guard(kpi) -> list[str]:
     if rg_errors:
         lines.append(f"| Errors | {json.dumps(rg_errors)} |")
     if not rg_checked:
-        lines.append(f"| **Next action** | **fix_scheduler_return_guard_not_called** |")
+        lines.append("| **Next action** | **fix_scheduler_return_guard_not_called** |")
     elif rg_checked and not rg_satisfied:
-        lines.append(f"| **Next action** | **fix_return_guard_terminal_state** |")
+        lines.append("| **Next action** | **fix_return_guard_terminal_state** |")
     return lines
 
 
@@ -403,8 +403,8 @@ def _render_scheduler_exit(kpi) -> list[str]:
         "",
         "## Scheduler Exit Path",
         "",
-        f"| Metric | Value |",
-        f"| --- | --- |",
+        "| Metric | Value |",
+        "| --- | --- |",
         f"| Exit path | {se_path or 'N/A'} |",
         f"| Exit reason | {se_reason or 'N/A'} |",
         f"| Exit phase | {se_phase or 'N/A'} |",
@@ -415,7 +415,7 @@ def _render_scheduler_exit(kpi) -> list[str]:
         f"| Guard satisfied | {se_guard_satisfied or 'N/A'} |",
     ]
     if not se_path:
-        lines.append(f"| **Next action** | **add_scheduler_exit_tracer** |")
+        lines.append("| **Next action** | **add_scheduler_exit_tracer** |")
     elif se_path and se_path != "run_complete" and not se_guard_checked:
         lines.append(f"| **Next action** | **patch_scheduler_exit_path:{se_path}** |")
     return lines
@@ -432,8 +432,8 @@ def _render_public_acceptance(kpi) -> list[str]:
         "",
         "## PUBLIC Acceptance",
         "",
-        f"| Metric | Value |",
-        f"| --- | --- |",
+        "| Metric | Value |",
+        "| --- | --- |",
         f"| Pages attempted | {kpi.get('public_acceptance_attempted', 0)} |",
         f"| Pages accepted | {kpi.get('public_acceptance_accepted', 0)} |",
         f"| Pages rejected | {kpi.get('public_acceptance_rejected', 0)} |",
@@ -464,8 +464,8 @@ def _render_feed_balance(kpi) -> list[str]:
         "",
         "## Feed Balance",
         "",
-        f"| Metric | Value |",
-        f"| --- | --- |",
+        "| Metric | Value |",
+        "| --- | --- |",
         f"| Feed dominance score | {kpi.get('feed_dominance_score')} |",
         f"| Dominant source | {dom_source} |",
         f"| Dominant share | {dom_pct_str} |",
@@ -482,8 +482,8 @@ def _render_nonfeed_starvation(kpi) -> list[str]:
         "",
         "## Non-feed Starvation",
         "",
-        f"| Metric | Value |",
-        f"| --- | --- |",
+        "| Metric | Value |",
+        "| --- | --- |",
         f"| Nonfeed starvation suspected | {suspected} |",
         f"| Windup lead requested | {kpi.get('windup_lead_requested_s', 'N/A')}s |",
         f"| Windup lead observed | {kpi.get('windup_lead_observed_s', 'N/A')}s |",
@@ -503,8 +503,8 @@ def _render_prewindup_barrier(kpi) -> list[str]:
         "",
         "## Pre-windup Barrier",
         "",
-        f"| Metric | Value |",
-        f"| --- | --- |",
+        "| Metric | Value |",
+        "| --- | --- |",
         f"| Barrier checked | {barrier_checked} |",
         f"| Barrier satisfied | {kpi.get('prewindup_barrier_satisfied', 'N/A')} |",
         f"| Required lanes | {kpi.get('prewindup_required_lanes', [])} |",

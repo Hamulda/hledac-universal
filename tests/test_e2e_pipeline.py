@@ -3,22 +3,19 @@ End‑to‑End integration test for the full OSINT pipeline.
 Completely mocked – no real network or model calls.
 """
 
-import asyncio
 import hashlib
 import time
 import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
+
 import psutil
-
-import pytest
-
 from hledac.universal.autonomous_orchestrator import (
-    FullyAutonomousOrchestrator,
-    DiscoveryDepth,
+    AutonomousStrategy,
     ComprehensiveResearchResult,
+    DiscoveryDepth,
+    FullyAutonomousOrchestrator,
     ResearchFinding,
     ResearchSource,
-    AutonomousStrategy,
     SourceType,
 )
 

@@ -3,17 +3,18 @@ PrefetchCache – dočasné úložiště pro prefetched data s LRU, TTL a backgr
 """
 
 import asyncio
-import orjson
+import logging
 import time
 from pathlib import Path
-from typing import Optional, Dict, Any
-import logging
+from typing import Any
+
+import orjson
 
 logger = logging.getLogger(__name__)
 
 
 class PrefetchCache:
-    def __init__(self, db_path: Optional[str] = None, max_size_mb: int = 100,
+    def __init__(self, db_path: str | None = None, max_size_mb: int = 100,
                  max_entries: int = 10000):
         from hledac.universal.paths import SPRINT_LMDB_ROOT, open_lmdb
         if db_path is None:
@@ -25,7 +26,7 @@ class PrefetchCache:
         self.env = open_lmdb(self.db_path, map_size=max_size_mb * 1024 * 1024)
         self.max_entries = max_entries
         self._write_queue = asyncio.Queue(maxsize=1000)  # C2: bounded to prevent unbounded growth
-        self._writer_task: Optional[asyncio.Task] = None
+        self._writer_task: asyncio.Task | None = None
         self._running = True
 
         # F196B: Track background tasks for proper cleanup
@@ -60,7 +61,7 @@ class PrefetchCache:
             self.env.close()
             self.env = None
 
-    async def put(self, url: str, data: Dict[str, Any], ttl: int = 3600):
+    async def put(self, url: str, data: dict[str, Any], ttl: int = 3600):
         """Zařadí zápis do fronty (neblokující)."""
         if not self._running:
             raise RuntimeError("Cache is shutting down, cannot put new data")
@@ -71,7 +72,7 @@ class PrefetchCache:
         }
         await self._write_queue.put(('put', url, entry))
 
-    async def get(self, url: str) -> Optional[Dict]:
+    async def get(self, url: str) -> dict | None:
         """Čtení – synchronní (LMDB je thread‑safe pro čtení)."""
         with self.env.begin() as txn:
             raw = txn.get(url.encode())

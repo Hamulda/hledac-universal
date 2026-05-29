@@ -22,8 +22,7 @@ import time
 import tracemalloc
 from collections import deque
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, List, Optional, Tuple
-from contextlib import asynccontextmanager
+from typing import Any
 
 try:
     import psutil
@@ -57,7 +56,7 @@ class BenchmarkConfig:
     max_concurrent_agents: int = 4
     timeout_seconds: float = 30.0
     memory_threshnew_mb: int = 512
-    sample_queries: List[str] = field(default_factory=lambda: [
+    sample_queries: list[str] = field(default_factory=lambda: [
         "machine learning algorithms",
         "quantum computing research",
         "climate change impact",
@@ -93,11 +92,11 @@ class AgentBenchmarkResult:
 
     # Performance classification
     performance_tier: str  # "excellent", "good", "average", "poor"
-    bottlenecks: List[str] = field(default_factory=list)
+    bottlenecks: list[str] = field(default_factory=list)
 
     # Raw data for analysis
-    execution_times: List[float] = field(default_factory=list)
-    memory_snapshots: List[float] = field(default_factory=list)
+    execution_times: list[float] = field(default_factory=list)
+    memory_snapshots: list[float] = field(default_factory=list)
 
 
 @dataclass
@@ -105,10 +104,10 @@ class BenchmarkReport:
     """Comprehensive benchmark report for multiple agents."""
     timestamp: float = field(default_factory=time.time)
     config: BenchmarkConfig = field(default_factory=BenchmarkConfig)
-    agent_results: Dict[str, AgentBenchmarkResult] = field(default_factory=dict)
-    system_metrics: Dict[str, Any] = field(default_factory=dict)
-    comparative_analysis: Dict[str, Any] = field(default_factory=dict)
-    recommendations: List[str] = field(default_factory=list)
+    agent_results: dict[str, AgentBenchmarkResult] = field(default_factory=dict)
+    system_metrics: dict[str, Any] = field(default_factory=dict)
+    comparative_analysis: dict[str, Any] = field(default_factory=dict)
+    recommendations: list[str] = field(default_factory=list)
 
     # Summary statistics
     total_agents_tested: int = 0
@@ -122,7 +121,7 @@ class MemoryProfiler:
     """Memory profiling utility for benchmarking."""
 
     def __init__(self):
-        self._snapshots: deque[Tuple[float, float]] = deque(maxlen=MAX_SNAPSHOT_HISTORY)  # (timestamp, memory_mb)
+        self._snapshots: deque[tuple[float, float]] = deque(maxlen=MAX_SNAPSHOT_HISTORY)  # (timestamp, memory_mb)
         self._active = False
         self._process = psutil.Process() if PSUTIL_AVAILABLE else None
 
@@ -135,12 +134,12 @@ class MemoryProfiler:
         # Start memory monitoring task - guard against missing event loop
         try:
             asyncio.create_task(self._monitor_memory(), name="benchmark:memory_monitor")
-        except RuntimeError as e:
+        except RuntimeError:
             # No running event loop - profiling not available
             self._active = False
             tracemalloc.stop()
 
-    def stop_profiling(self) -> Tuple[float, float, float]:
+    def stop_profiling(self) -> tuple[float, float, float]:
         """Stop profiling and return memory statistics."""
         self._active = False
 
@@ -188,16 +187,16 @@ class AgentBenchmarker:
     execution time, memory usage, throughput, and reliability.
     """
 
-    def __init__(self, config: Optional[BenchmarkConfig] = None):
+    def __init__(self, config: BenchmarkConfig | None = None):
         self.config = config or BenchmarkConfig()
         self.memory_profiler = MemoryProfiler()
-        self._system_baseline: Optional[Dict[str, Any]] = None
+        self._system_baseline: dict[str, Any] | None = None
 
     async def benchmark_agent(
         self,
         agent_name: str,
         agent: AgentProtocol,
-        custom_queries: Optional[List[str]] = None
+        custom_queries: list[str] | None = None
     ) -> AgentBenchmarkResult:
         """
         Benchmark a single agent comprehensively.
@@ -213,8 +212,8 @@ class AgentBenchmarker:
         logger.info(f"Starting benchmark for agent: {agent_name}")
 
         queries = custom_queries or self.config.sample_queries
-        execution_times: List[float] = []
-        memory_snapshots: List[float] = []
+        execution_times: list[float] = []
+        memory_snapshots: list[float] = []
         successful_executions = 0
         total_results = 0
 
@@ -281,7 +280,7 @@ class AgentBenchmarker:
 
     async def benchmark_multiple_agents(
         self,
-        agents: Dict[str, AgentProtocol],
+        agents: dict[str, AgentProtocol],
         concurrent: bool = False
     ) -> BenchmarkReport:
         """
@@ -362,7 +361,7 @@ class AgentBenchmarker:
         logger.info(f"Benchmark suite completed: {len(report.agent_results)} agents tested")
         return report
 
-    async def _warmup_agent(self, agent: AgentProtocol, queries: List[str]) -> None:
+    async def _warmup_agent(self, agent: AgentProtocol, queries: list[str]) -> None:
         """Warm up agent with a few queries."""
         for i, query in enumerate(queries[:self.config.warmup_iterations]):
             try:
@@ -389,8 +388,8 @@ class AgentBenchmarker:
     def _calculate_benchmark_results(
         self,
         agent_name: str,
-        execution_times: List[float],
-        memory_snapshots: List[float],
+        execution_times: list[float],
+        memory_snapshots: list[float],
         successful_executions: int,
         total_results: int,
         total_executions: int
@@ -546,7 +545,7 @@ class AgentBenchmarker:
         success_rate: float,
         avg_memory: float,
         memory_growth: float
-    ) -> List[str]:
+    ) -> list[str]:
         """Identify performance bottlenecks."""
         bottlenecks = []
 
@@ -569,8 +568,8 @@ class AgentBenchmarker:
 
     def _generate_comparative_analysis(
         self,
-        results: Dict[str, AgentBenchmarkResult]
-    ) -> Dict[str, Any]:
+        results: dict[str, AgentBenchmarkResult]
+    ) -> dict[str, Any]:
         """Generate comparative analysis of benchmark results."""
         if not results:
             return {}
@@ -615,8 +614,8 @@ class AgentBenchmarker:
 
     def _calculate_performance_variance(
         self,
-        results: Dict[str, AgentBenchmarkResult]
-    ) -> Dict[str, float]:
+        results: dict[str, AgentBenchmarkResult]
+    ) -> dict[str, float]:
         """Calculate performance variance metrics."""
         if len(results) < 2:
                     return {"execution_time_variance": 0.0, "memory_variance": 0.0}
@@ -638,7 +637,7 @@ class AgentBenchmarker:
             "memory_std": memory_variance ** 0.5,
         }
 
-    async def _capture_system_baseline(self) -> Dict[str, Any]:
+    async def _capture_system_baseline(self) -> dict[str, Any]:
         """Capture system baseline metrics."""
         if not PSUTIL_AVAILABLE or psutil is None:
             return {"error": "psutil not available", "timestamp": time.time()}
@@ -652,7 +651,7 @@ class AgentBenchmarker:
             "timestamp": time.time(),
         }
 
-    async def _capture_system_metrics(self) -> Dict[str, Any]:
+    async def _capture_system_metrics(self) -> dict[str, Any]:
         """Capture current system metrics."""
         if not PSUTIL_AVAILABLE or psutil is None:
             return {"error": "psutil not available", "timestamp": time.time()}
@@ -688,7 +687,7 @@ class AgentBenchmarker:
 
         return report
 
-    def _generate_recommendations(self, report: BenchmarkReport) -> List[str]:
+    def _generate_recommendations(self, report: BenchmarkReport) -> list[str]:
         """Generate optimization recommendations based on benchmark results."""
         recommendations = []
 
@@ -733,8 +732,8 @@ class AgentBenchmarker:
 
 # Utility functions for running benchmarks
 async def run_agent_benchmarks(
-    agents: Dict[str, AgentProtocol],
-    config: Optional[BenchmarkConfig] = None,
+    agents: dict[str, AgentProtocol],
+    config: BenchmarkConfig | None = None,
     concurrent: bool = False
 ) -> BenchmarkReport:
     """
@@ -753,9 +752,9 @@ async def run_agent_benchmarks(
 
 
 async def run_quick_performance_check(
-    agents: Dict[str, AgentProtocol],
+    agents: dict[str, AgentProtocol],
     sample_size: int = 3
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Run a quick performance check on agents.
 

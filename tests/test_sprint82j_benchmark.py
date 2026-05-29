@@ -6,24 +6,20 @@ Quick validation that benchmark can collect metrics.
 Sprint 82K: Added tests for log/metrics wiring.
 """
 
-import asyncio
-import json
 import os
-import tempfile
 import time
 import unittest
-from pathlib import Path
-from unittest.mock import MagicMock, AsyncMock, patch
+from unittest.mock import MagicMock
 
 from hledac.universal.benchmarks.run_sprint82j_benchmark import (
-    E2EBenchmark,
     BenchmarkConfig,
-    BenchmarkResults,
-    BenchmarkMemoryMetrics,
-    BenchmarkGatingMetrics,
-    BenchmarkToolExecSummary,
     BenchmarkEvidenceSummary,
+    BenchmarkGatingMetrics,
+    BenchmarkMemoryMetrics,
     BenchmarkMetricsSummary,
+    BenchmarkResults,
+    BenchmarkToolExecSummary,
+    E2EBenchmark,
 )
 
 
@@ -239,7 +235,6 @@ class TestSprint82KMetricsWiring(unittest.TestCase):
         is fixed. The old implementation was O(n) iterations, causing timeout.
         """
         import sys
-        import os
 
         # Add project root to path
         sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(
@@ -267,8 +262,9 @@ class TestSprint82QNoveltyFix(unittest.TestCase):
 
     def test_compute_novelty_score_reads_from_research_mgr(self):
         """Verify _compute_novelty_score reads from _research_mgr._findings_heap."""
-        from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
         from unittest.mock import MagicMock
+
+        from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
 
         orch = FullyAutonomousOrchestrator.__new__(FullyAutonomousOrchestrator)
         orch._last_iteration_new_findings = 3
@@ -302,7 +298,6 @@ class TestSprint82QNoveltyFix(unittest.TestCase):
     def test_last_novelty_score_is_set_in_process_result(self):
         """Verify _last_novelty_score is set after processing result."""
         from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
-        from hledac.universal.utils import ActionResult
 
         orch = FullyAutonomousOrchestrator.__new__(FullyAutonomousOrchestrator)
         orch._last_iteration_new_findings = 0
@@ -379,6 +374,7 @@ class TestSprint82QPhase2IterationTrace(unittest.TestCase):
     def test_iteration_trace_buffer_bounded(self):
         """Verify trace buffer is bounded."""
         from collections import deque
+
         from hledac.universal.autonomous_orchestrator import IterationTrace
 
         # Simulate bounded buffer
@@ -436,8 +432,9 @@ class TestSprint82QPhase2Benchmark(unittest.TestCase):
 
     def test_trace_extraction_no_buffer(self):
         """Verify trace extraction handles missing buffer gracefully."""
-        from hledac.universal.benchmarks.run_sprint82j_benchmark import E2EBenchmark, BenchmarkConfig
         from unittest.mock import MagicMock
+
+        from hledac.universal.benchmarks.run_sprint82j_benchmark import BenchmarkConfig, E2EBenchmark
 
         bench = E2EBenchmark(BenchmarkConfig())
 
@@ -590,8 +587,9 @@ class TestSprint82QPhase4CandidateFeeding(unittest.TestCase):
 
     def test_new_domain_queue_initialized(self):
         """Verify _new_domain_queue is initialized."""
-        from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
         from unittest.mock import MagicMock
+
+        from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
 
         orch = FullyAutonomousOrchestrator.__new__(FullyAutonomousOrchestrator)
         orch._new_domain_queue = MagicMock()
@@ -642,7 +640,6 @@ class TestSprint82QPhase6TruthfulBenchmark(unittest.TestCase):
 
     def test_offline_mode_detection(self):
         """Verify offline mode can be detected via environment variable."""
-        import os
         from hledac.universal.project_types import is_offline_mode
 
         # Test default (should be False)
@@ -651,7 +648,6 @@ class TestSprint82QPhase6TruthfulBenchmark(unittest.TestCase):
 
     def test_offline_mode_enabled(self):
         """Verify offline mode is True when HLEDAC_OFFLINE=1."""
-        import os
         from hledac.universal.project_types import is_offline_mode
 
         os.environ["HLEDAC_OFFLINE"] = "1"
@@ -670,6 +666,7 @@ class TestSprint82QPhase6TruthfulBenchmark(unittest.TestCase):
     def test_exception_mapping_network_unavailable(self):
         """Verify socket.gaierror maps to NETWORK_UNAVAILABLE."""
         import socket
+
         from hledac.universal.autonomous_orchestrator import _map_exception_to_result_type
 
         result = _map_exception_to_result_type(
@@ -692,11 +689,10 @@ class TestSprint82QPhase6TruthfulBenchmark(unittest.TestCase):
 
     def test_exception_mapping_timeout(self):
         """Verify asyncio.TimeoutError maps to TIMEOUT."""
-        import asyncio
         from hledac.universal.autonomous_orchestrator import _map_exception_to_result_type
 
         result = _map_exception_to_result_type(
-            exception=asyncio.TimeoutError(),
+            exception=TimeoutError(),
             http_status=None,
             is_mock_derived=False
         )
@@ -769,7 +765,7 @@ class TestSprint82QPhase6LiveAudit(unittest.TestCase):
         }
 
         # Verify all targets have required fields
-        for name, config in _LIVE_AUDIT_TARGETS.items():
+        for _name, config in _LIVE_AUDIT_TARGETS.items():
             self.assertIn("timeout_s", config)
             self.assertLessEqual(config["timeout_s"], 10.0)  # Bounded
 
@@ -902,8 +898,8 @@ class TestSprint8HTruthAndDiagnostics(unittest.TestCase):
 
     def test_data_mode_wired_from_orchestrator(self):
         """Verify data_mode is wired from orchestrator into results."""
+
         from hledac.universal.benchmarks.run_sprint82j_benchmark import BenchmarkResults
-        from unittest.mock import MagicMock
         r = BenchmarkResults()
         # Simulate orchestrator with _data_mode set
         class FakeOrch:

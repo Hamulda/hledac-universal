@@ -13,9 +13,10 @@ Tests for:
 8. test_offline_replay_benchmark_still_passes (regression)
 """
 
-import pytest
 import sys
 from pathlib import Path
+
+import pytest
 
 # Add universal to path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
@@ -27,7 +28,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 def test_live_runbook_contains_seed_domains():
     """Verify seed domains are defined for live run."""
-    from hledac.universal.tests.test_sprint8l_live import SEED_DOMAINS, LIVE_QUERY
+    from hledac.universal.tests.test_sprint8l_live import LIVE_QUERY, SEED_DOMAINS
 
     assert len(SEED_DOMAINS) >= 4, f"Expected at least 4 seed domains, got {len(SEED_DOMAINS)}"
     assert "python.org" in SEED_DOMAINS, "python.org should be in seed domains"
@@ -160,8 +161,9 @@ def test_shared_client_path_preserved():
     # Check that handlers don't create their own aiohttp.ClientSession
     # by verifying the archive_discovery.py uses shared session
 
-    import hledac.universal.intelligence.archive_discovery as ad
     import inspect
+
+    import hledac.universal.intelligence.archive_discovery as ad
 
     # Get the source of ArchiveDiscovery.__init__
     if hasattr(ad.ArchiveDiscovery, '__init__'):
@@ -202,8 +204,8 @@ async def test_offline_replay_benchmark_still_passes():
 
 def test_rss_monitor_slope_calculation():
     """Verify RSS monitor computes slope correctly."""
+
     from hledac.universal.tests.test_sprint8l_live import RSSMonitor
-    import asyncio
 
     monitor = RSSMonitor(interval_s=10.0)
     # Simulate RSS samples

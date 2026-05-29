@@ -7,7 +7,7 @@ import os
 import sys
 import unittest
 from collections import OrderedDict
-from unittest.mock import patch, MagicMock, AsyncMock
+from unittest.mock import MagicMock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
@@ -102,6 +102,7 @@ class TestBackgroundExecutor(unittest.TestCase):
     def test_background_executor_attribute_exists(self):
         """Test že atribut _background_executor je definován v __init__."""
         import inspect
+
         from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
 
         # Get the source code of __init__

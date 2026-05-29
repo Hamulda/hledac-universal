@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-from typing import List
 
 logger = logging.getLogger(__name__)
 
@@ -18,7 +17,7 @@ class WaybackAdapter:
         """
         self._stealth = stealth
 
-    async def fetch_domain_history(self, domain: str, max_results: int = 100) -> List[dict]:
+    async def fetch_domain_history(self, domain: str, max_results: int = 100) -> list[dict]:
         """
         Fetch archivní snapshoty pro domain.
 
@@ -27,7 +26,7 @@ class WaybackAdapter:
             max_results: Maximální počet výsledků
 
         Returns:
-            List[dict]: Archivní snapshoty        """
+            list[dict]: Archivní snapshoty        """
         url = f"https://web.archive.org/cdx/search/cdx?url=*.{domain}&output=json&limit={max_results}&filter=statuscode:200&collapse=urlkey"
 
         findings = []

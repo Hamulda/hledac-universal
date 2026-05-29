@@ -2,7 +2,6 @@
 Test Kernel Optimizations - Sprint 71
 """
 import unittest
-from unittest.mock import patch, MagicMock
 
 
 class TestKernelOptimizations(unittest.TestCase):

@@ -46,23 +46,23 @@ from __future__ import annotations
 
 import logging
 import re
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Callable, Optional
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
 # [F207K-A] Non-feed bridge helpers — rejection tracking + candidate conversion
 # Used inside inner async lane runners (closures), not at module scope.
-from hledac.universal.runtime.source_finding_bridge import (
-    ct_results_to_findings,
-    wayback_results_to_findings,
-    passive_dns_results_to_findings,
-    MAX_SAMPLE_REJECTIONS,
-)
-
 from hledac.universal.runtime.acquisition_telemetry_reconcile import (
-    reconcile_lane_detail_fields,
     complete_source_family_outcomes_from_lane_details,
+    reconcile_lane_detail_fields,
+)
+from hledac.universal.runtime.source_finding_bridge import (
+    MAX_SAMPLE_REJECTIONS,
+    ct_results_to_findings,
+    passive_dns_results_to_findings,
+    wayback_results_to_findings,
 )
 
 __all__ = [
@@ -474,8 +474,9 @@ class AcquisitionContext:
     stealth_ready: bool
     base_concurrency: int
     is_academic: bool
-    is_deep_osint_m1: bool            # F233D: deep_osint_m1 staged research profile
-    cid_present: bool                # explicit IPFS CID in query
+    is_deep_osint_m1: bool = False     # F233D: deep_osint_m1 staged research profile
+    has_ip: bool = False             # F235: IP/CIDR indicator in query
+    cid_present: bool = False         # explicit IPFS CID in query
     # Feed cap for nonfeed_diagnostic profile
     _feed_max_items: int = field(default=50)
     _feed_cap_reason: str | None = field(default=None)
@@ -597,7 +598,7 @@ def _disabled_reason(lane: str, ctx: AcquisitionContext) -> str:
     return "lane_disabled"
 
 
-LANE_RULES: tuple[LaneRule, ...] = tuple([
+LANE_RULES: tuple[LaneRule, ...] = (
     # ── FEED ────────────────────────────────────────────────────────────────
     _lane_rule(
         AcquisitionLane.FEED, LaneSpecFeed,
@@ -747,7 +748,7 @@ LANE_RULES: tuple[LaneRule, ...] = tuple([
         lambda ctx: "ip_or_cidr_indicator",
         lambda ctx: _lc(AcquisitionLane.GREYNOISE, ctx.base_concurrency, ctx.uma_state),
     ),
-])
+)
 
 
 @dataclass
@@ -931,7 +932,6 @@ def required_terminal_lanes(
     has_domain = _has_domain_or_ip(query)
     is_emergency = uma_state == "emergency"
     is_critical = uma_state == "critical"
-    is_warn = uma_state == "warn"
     # F233D-FIX-06c: nonfeed_diagnostic profile should treat CT as required even for non-domain
     _nd = getattr(snapshot, "nonfeed_plan_debug", None) if snapshot else None
     _is_nonfeed_diagnostic = getattr(_nd, "acquisition_profile", "") == "nonfeed_diagnostic" if _nd else False
@@ -1883,7 +1883,7 @@ def build_acquisition_report(
     }
     # Sprint F226G: Reconcile lane detail fields with source_family_outcomes
     # so reports never contradict the authoritative outcomes list.
-    result = reconcile_lane_detail_fields(result)
+    reconcile_lane_detail_fields(result)
 
 
 # ── Helper APIs for lane admission gating ──────────────────────────────────
@@ -2098,7 +2098,6 @@ def canonicalize_source_family_outcomes(outcomes: list[dict]) -> list[dict]:
         skip_reason = skip_reasons[0] if len(skip_reasons) == 1 else None
 
         # lane: prefer the one from the best-terminal-state outcome
-        best_ts = terminal_state
         lane_candidates = [o.get("lane") for o in group if o.get("lane")]
         lane = lane_candidates[0] if lane_candidates else fam_norm.upper()
 
@@ -2252,7 +2251,7 @@ class AcquisitionLaneOutcome:
     accepted_findings: int = 0
     produced_items: int = 0
     timeout: bool = False
-    error: Optional[str] = None
+    error: str | None = None
     duration_s: float = 0.0
     source_family: str = "unknown"
     # [F207F] CT lane telemetry — shaped query and raw hit counts
@@ -2919,8 +2918,8 @@ def build_acquisition_plan(
     swap_detected: bool,
     accepted_findings_so_far: int = 0,
     branch_timeout_count: int = 0,
-    transport_authority_status: Optional[dict] = None,
-    stealth_phase: Optional[dict] = None,
+    transport_authority_status: dict | None = None,
+    stealth_phase: dict | None = None,
     acquisition_profile: str = "default",
 ) -> AcquisitionStrategySnapshot:
     """
@@ -3013,8 +3012,8 @@ def _build_plan_impl(
     swap_detected: bool,
     accepted_findings_so_far: int,
     branch_timeout_count: int,
-    transport_authority_status: Optional[dict],
-    stealth_phase: Optional[dict],
+    transport_authority_status: dict | None,
+    stealth_phase: dict | None,
     acquisition_profile: str = "default",
     feed_budget: FeedDominanceBudget = FeedDominanceBudget(),
 ) -> AcquisitionStrategySnapshot:
@@ -3023,6 +3022,7 @@ def _build_plan_impl(
     # ── Derive AcquisitionContext ─────────────────────────────────────────────
     hardware_critical = uma_state in ("critical", "emergency") or swap_detected
     has_domain = _has_domain_or_ip(query)
+    has_ip = bool(_DOMAIN_OR_IP_RE.search(query) and _re.search(r'\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b', query))
     has_url = _has_url(query)
     has_crypto = _has_crypto_indicator(query)
     has_long_duration = duration_s >= 300.0
@@ -3064,6 +3064,7 @@ def _build_plan_impl(
         base_concurrency=base_conc,
         is_academic=is_academic_profile(acquisition_profile),
         is_deep_osint_m1=is_deep_osint_m1,
+        has_ip=has_ip,
         cid_present=_has_explicit_cid(query.strip()),
         _feed_max_items=_feed_max,
         _feed_cap_reason=_feed_cap_r,
@@ -3210,7 +3211,7 @@ async def run_enabled_acquisition_lanes(
     query: str,
     store,  # DuckDBShadowStore | None
     uma_state: str = "ok",
-    seed_context: "NonfeedSeedContext | None" = None,
+    seed_context: NonfeedSeedContext | None = None,
 ) -> tuple:
     """
     Run all enabled optional acquisition lanes (CT, WAYBACK, PASSIVE_DNS, BLOCKCHAIN)
@@ -3246,7 +3247,7 @@ async def run_enabled_acquisition_lanes(
     # Heavy optional lanes skipped under hardware critical
     hardware_critical = uma_state in ("critical", "emergency")
 
-    async def _run_ct_lane(plan) -> "AcquisitionLaneOutcome":
+    async def _run_ct_lane(plan) -> AcquisitionLaneOutcome:
         """Run CT/crt.sh lane — wired to call_crtsh() for measurable outcome.
 
         [F207K-A] Uses bridge helpers to produce CanonicalFinding candidates
@@ -3315,7 +3316,7 @@ async def run_enabled_acquisition_lanes(
                     rejected_count=rejected_count,
                     sample_rejections=sample_rejections,
                 )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             return AcquisitionLaneOutcome(
                 lane=AcquisitionLane.CT,
                 enabled=plan.enabled,
@@ -3347,7 +3348,7 @@ async def run_enabled_acquisition_lanes(
                 sample_rejections=sample_rejections,
             )
 
-    async def _run_wayback_lane(plan) -> "AcquisitionLaneOutcome":
+    async def _run_wayback_lane(plan) -> AcquisitionLaneOutcome:
         """Run Wayback diff mining lane — runtime safety check before network call.
 
         [F207K-A] Uses bridge helpers to produce CanonicalFinding candidates
@@ -3428,7 +3429,7 @@ async def run_enabled_acquisition_lanes(
                     wayback_raw_count=len(result.change_events),
                     wayback_query=shaped_query_str,
                 )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             return AcquisitionLaneOutcome(
                 lane=AcquisitionLane.WAYBACK,
                 enabled=plan.enabled,
@@ -3460,7 +3461,7 @@ async def run_enabled_acquisition_lanes(
                     wayback_query=shaped_query_str,
                 )
 
-    async def _run_pdns_lane(plan) -> "AcquisitionLaneOutcome":
+    async def _run_pdns_lane(plan) -> AcquisitionLaneOutcome:
         """Run passive DNS lookup lane — wired to call_lookup_passive_dns with domain/IP shaping.
 
         [F207K-A] Uses bridge helpers to produce CanonicalFinding candidates
@@ -3528,7 +3529,7 @@ async def run_enabled_acquisition_lanes(
                     passive_dns_raw_count=produced,
                     passive_dns_query=shaped_query,
                 )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             return AcquisitionLaneOutcome(
                 lane=AcquisitionLane.PASSIVE_DNS,
                 enabled=plan.enabled,
@@ -3562,7 +3563,7 @@ async def run_enabled_acquisition_lanes(
                     passive_dns_query=shaped_query,
                 )
 
-    async def _run_academic_lane(plan) -> "AcquisitionLaneOutcome":
+    async def _run_academic_lane(plan) -> AcquisitionLaneOutcome:
         """Run academic search lane — R9: bounded, research-profile-only, no query expansion."""
         start = time.monotonic()
         try:
@@ -3627,7 +3628,7 @@ async def run_enabled_acquisition_lanes(
                 )
         except asyncio.CancelledError:
             raise  # GHOST_INVARIANTS I6: re-raise CancelledError
-        except asyncio.TimeoutError:
+        except TimeoutError:
             return AcquisitionLaneOutcome(
                 lane=AcquisitionLane.ACADEMIC,
                 enabled=plan.enabled,
@@ -3647,7 +3648,7 @@ async def run_enabled_acquisition_lanes(
                 source_family="academic",
             )
 
-    async def _run_ipfs_lane(plan) -> "AcquisitionLaneOutcome":
+    async def _run_ipfs_lane(plan) -> AcquisitionLaneOutcome:
         """R10: CID-only IPFS evidence fetch — bounded gateway fetch, no search/DHT/recursive.
 
         Enabled only when query is an explicit CID. No model load, no browser,
@@ -3666,17 +3667,18 @@ async def run_enabled_acquisition_lanes(
 
         try:
             async with asyncio.timeout(plan.timeout_s):
+                import hashlib
+
                 from hledac.universal.network.ipfs_client import (
                     fetch_ipfs,
                     ipfs_content_to_finding_dict,
                 )
-                import hashlib
 
                 findings_list: list = []
                 for cid in cids_to_fetch:
-                    content: Optional[bytes] = None
+                    content: bytes | None = None
                     gateway_used = "none"
-                    for gw_name, gw_url in [
+                    for gw_name, _gw_url in [
                         ("cloudflare", "https://cloudflare-ipfs.com/ipfs/"),
                         ("ipfs.io", "https://ipfs.io/ipfs/"),
                     ]:
@@ -3694,7 +3696,7 @@ async def run_enabled_acquisition_lanes(
 
                     content_text = content.decode("utf-8", errors="replace")
                     content_hash = hashlib.sha256(content_text[:2000].encode()).hexdigest()[:16]
-                    finding_id = f"ipfs_{cid}_{int(start * 1000)}_{content_hash}"
+                    f"ipfs_{cid}_{int(start * 1000)}_{content_hash}"
 
                     finding_dict = ipfs_content_to_finding_dict(
                         cid=cid,
@@ -3751,7 +3753,7 @@ async def run_enabled_acquisition_lanes(
                 )
         except asyncio.CancelledError:
             raise
-        except asyncio.TimeoutError:
+        except TimeoutError:
             return AcquisitionLaneOutcome(
                 lane=AcquisitionLane.IPFS,
                 enabled=plan.enabled,
@@ -3773,7 +3775,7 @@ async def run_enabled_acquisition_lanes(
                 ipfs_terminal_state="error",
             )
 
-    async def _run_open_source_lane(plan) -> "AcquisitionLaneOutcome":
+    async def _run_open_source_lane(plan) -> AcquisitionLaneOutcome:
         """Run OpenSourceCollectors lane — pastebin, usenet, matrix, academic, sec_edgar, court records."""
         start = time.monotonic()
         try:
@@ -3787,7 +3789,7 @@ async def run_enabled_acquisition_lanes(
 
                 accepted = 0
                 all_findings: list = []
-                for source, findings in results.items():
+                for _source, findings in results.items():
                     all_findings.extend(findings)
 
                 if all_findings and store is not None:
@@ -3810,7 +3812,7 @@ async def run_enabled_acquisition_lanes(
                     duration_s=time.monotonic() - start,
                     source_family="public",
                 )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             return AcquisitionLaneOutcome(
                 lane=AcquisitionLane.OPEN_SOURCE,
                 enabled=plan.enabled,
@@ -3830,7 +3832,7 @@ async def run_enabled_acquisition_lanes(
                 source_family="public",
             )
 
-    async def _run_doh_lane(plan) -> "AcquisitionLaneOutcome":
+    async def _run_doh_lane(plan) -> AcquisitionLaneOutcome:
         """Run DOH lane — DNS-over-HTTPS passive DNS recon via DOHAdapter.
 
         F222B: First-class nonfeed lane. No model load, no browser, no stealth.
@@ -3838,7 +3840,6 @@ async def run_enabled_acquisition_lanes(
         Fail-soft: provider errors never break other lanes.
         """
         start = time.monotonic()
-        doh_error: str | None = None
         doh_raw_count = 0
         candidate_findings: tuple = ()
         accepted = 0
@@ -3905,7 +3906,7 @@ async def run_enabled_acquisition_lanes(
                     doh_query=domain,
                 )
 
-        except asyncio.TimeoutError:
+        except TimeoutError:
             return AcquisitionLaneOutcome(
                 lane=AcquisitionLane.DOH,
                 enabled=plan.enabled,
@@ -3929,7 +3930,7 @@ async def run_enabled_acquisition_lanes(
                 doh_query=domain,
             )
 
-    async def _run_blockchain_lane(plan) -> "AcquisitionLaneOutcome":
+    async def _run_blockchain_lane(plan) -> AcquisitionLaneOutcome:
         """Run blockchain forensics lane."""
         start = time.monotonic()
         try:
@@ -3971,7 +3972,7 @@ async def run_enabled_acquisition_lanes(
                     duration_s=time.monotonic() - start,
                     source_family="blockchain",
                 )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             return AcquisitionLaneOutcome(
                 lane=AcquisitionLane.BLOCKCHAIN,
                 enabled=plan.enabled,
@@ -3994,7 +3995,7 @@ async def run_enabled_acquisition_lanes(
     if snapshot is None:
         return ()
 
-    async def _stealth_never_run(plan) -> "AcquisitionLaneOutcome":
+    async def _stealth_never_run(plan) -> AcquisitionLaneOutcome:
         """STEALTH is never auto-run — always record the skip."""
         return AcquisitionLaneOutcome(
             lane=AcquisitionLane.STEALTH,
@@ -4006,7 +4007,7 @@ async def run_enabled_acquisition_lanes(
 
     # ── F235: External Intelligence Lanes ───────────────────────────────────
 
-    async def _run_shodan_lane(plan) -> "AcquisitionLaneOutcome":
+    async def _run_shodan_lane(plan) -> AcquisitionLaneOutcome:
         """Run Shodan intelligence lane — device/IP fingerprints."""
         start = time.monotonic()
         try:
@@ -4034,7 +4035,7 @@ async def run_enabled_acquisition_lanes(
                     duration_s=time.monotonic() - start,
                     source_family="shodan_intel",
                 )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             return AcquisitionLaneOutcome(
                 lane=AcquisitionLane.SHODAN,
                 enabled=plan.enabled,
@@ -4054,7 +4055,7 @@ async def run_enabled_acquisition_lanes(
                 source_family="shodan_intel",
             )
 
-    async def _run_censys_lane(plan) -> "AcquisitionLaneOutcome":
+    async def _run_censys_lane(plan) -> AcquisitionLaneOutcome:
         """Run Censys intelligence lane — certificate transparency."""
         start = time.monotonic()
         try:
@@ -4082,7 +4083,7 @@ async def run_enabled_acquisition_lanes(
                     duration_s=time.monotonic() - start,
                     source_family="censys_intel",
                 )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             return AcquisitionLaneOutcome(
                 lane=AcquisitionLane.CENSYS,
                 enabled=plan.enabled,
@@ -4102,7 +4103,7 @@ async def run_enabled_acquisition_lanes(
                 source_family="censys_intel",
             )
 
-    async def _run_greynoise_lane(plan) -> "AcquisitionLaneOutcome":
+    async def _run_greynoise_lane(plan) -> AcquisitionLaneOutcome:
         """Run GreyNoise intelligence lane — mass scanner classification."""
         start = time.monotonic()
         try:
@@ -4130,7 +4131,7 @@ async def run_enabled_acquisition_lanes(
                     duration_s=time.monotonic() - start,
                     source_family="greynoise_intel",
                 )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             return AcquisitionLaneOutcome(
                 lane=AcquisitionLane.GREYNOISE,
                 enabled=plan.enabled,
@@ -4256,7 +4257,7 @@ def _hits_to_ct_findings(hits: tuple, query: str) -> list:
                 query=query[:128],
                 ts=getattr(hit, "retrieved_ts", 0.0) or 0.0,
                 payload_text=f"{hit.title}\n{hit.url}\n{hit.snippet}",
-                provenance=(f"source:crtsh", f"url:{hit.url}"),
+                provenance=("source:crtsh", f"url:{hit.url}"),
             )
             findings.append(finding)
         except Exception:
@@ -4313,7 +4314,7 @@ def _wallet_to_findings(wallet_analysis, query: str) -> list:
                 f"address:{address} chain:{chain} "
                 f"balance:{balance} risk_score:{risk}"
             ),
-            provenance=(f"source:blockchain", f"address:{address}"),
+            provenance=("source:blockchain", f"address:{address}"),
         )
         findings.append(finding)
     except Exception:
@@ -4337,7 +4338,7 @@ _NONFEED_SEED_EMPTY = NonfeedSeedContext()
 # ── Lane query shaper ──────────────────────────────────────────────────────────
 
 
-def build_lane_query(base_query: str, lane: str, seed_context: "NonfeedSeedContext | None" = None) -> str | dict:
+def build_lane_query(base_query: str, lane: str, seed_context: NonfeedSeedContext | None = None) -> str | dict:
     """
     Shape a source-specific query for an acquisition lane.
 

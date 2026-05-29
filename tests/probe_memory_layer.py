@@ -3,19 +3,17 @@ Hermetic probe tests for blocking I/O offload seams.
 Tests verify subprocess/psutil are not called directly from async event loop.
 """
 import asyncio
-import subprocess
-import time
-import psutil
-from unittest.mock import AsyncMock, MagicMock, patch
-import sys
 import os
+import subprocess
+import sys
+import time
+from unittest.mock import AsyncMock, MagicMock, patch
 
 # Add project root to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import pytest
-
-from hledac.universal.project_types import MemoryConfig, SystemState
+from hledac.universal.project_types import MemoryConfig
 
 
 class TestThermalSamplerOffload:
@@ -48,9 +46,9 @@ class TestThermalSamplerOffload:
         with patch.object(subprocess, 'run', side_effect=tracking_run):
             with patch.object(subprocess, 'TimeoutExpired', subprocess.TimeoutExpired):
                 # First call - should go through thread
-                result = await sampler.sample()
+                await sampler.sample()
                 # Second call within TTL - should use cache
-                result2 = await sampler.sample()
+                await sampler.sample()
 
         # If we got here without hanging, the offload works
         assert True
@@ -149,7 +147,6 @@ class TestResourceCapacitySamplerOffload:
         Must use interval=0.0 or asyncio.to_thread.
         """
         call_tracker = []
-        original_cpu_percent = psutil.cpu_percent
 
         def tracking_cpu(*args, **kwargs):
             call_tracker.append(kwargs.get('interval'))

@@ -1,18 +1,17 @@
 #!/usr/bin/env python3
 """File search utility created by Claude Code agent simulation."""
 
-from pathlib import Path
-from typing import List, Union, Optional
 import fnmatch
+from pathlib import Path
 
 
 def find_files(
-    directory: Union[str, Path],
+    directory: str | Path,
     pattern: str = "*",
     recursive: bool = True,
     case_sensitive: bool = True,
-    max_depth: Optional[int] = None
-) -> List[Path]:
+    max_depth: int | None = None
+) -> list[Path]:
     """
     Find files matching a pattern in a directory tree.
 
@@ -88,10 +87,10 @@ def find_files(
 
 
 def find_files_by_extension(
-    directory: Union[str, Path],
-    extensions: Union[str, List[str]],
+    directory: str | Path,
+    extensions: str | list[str],
     recursive: bool = True
-) -> List[Path]:
+) -> list[Path]:
     """
     Find files by extension(s).
 

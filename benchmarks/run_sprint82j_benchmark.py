@@ -20,17 +20,16 @@ to provide correlated end-to-end picture of a research run.
 """
 
 import asyncio
-import gc
 import json
 import logging
 import os
-import psutil
 import time
-from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
+
+import psutil
 
 logger = logging.getLogger(__name__)
 
@@ -53,7 +52,7 @@ class BenchmarkConfig:
     """Configuration for benchmark run."""
     duration_seconds: int = BENCHMARK_FULL_SECONDS
     query: str = "artificial intelligence future trends 2025"
-    depth: Optional[str] = None
+    depth: str | None = None
     output_dir: Path = field(default_factory=lambda: Path("./benchmark_results"))
     verbose: bool = False
     track_memory: bool = True
@@ -199,27 +198,27 @@ class BenchmarkToolExecSummary:
     success_count: int = 0
     error_count: int = 0
     cancelled_count: int = 0
-    top_tools: Dict[str, int] = field(default_factory=dict)
-    first_event_ts: Optional[str] = None
-    last_event_ts: Optional[str] = None
+    top_tools: dict[str, int] = field(default_factory=dict)
+    first_event_ts: str | None = None
+    last_event_ts: str | None = None
     chain_head: str = ""
     chain_valid: bool = True
-    errors: List[str] = field(default_factory=list)
+    errors: list[str] = field(default_factory=list)
 
 
 @dataclass
 class BenchmarkEvidenceSummary:
     """Summary of evidence log (from real SQLite/JSONL)."""
     total_events: int = 0
-    event_types: Dict[str, int] = field(default_factory=dict)
+    event_types: dict[str, int] = field(default_factory=dict)
     tool_call_count: int = 0
     observation_count: int = 0
     synthesis_count: int = 0
     error_count: int = 0
     decision_count: int = 0
     evidence_packet_count: int = 0
-    first_event_ts: Optional[str] = None
-    last_event_ts: Optional[str] = None
+    first_event_ts: str | None = None
+    last_event_ts: str | None = None
 
 
 @dataclass
@@ -228,11 +227,11 @@ class BenchmarkMetricsSummary:
     total_samples: int = 0
     counter_count: int = 0
     gauge_count: int = 0
-    expected_counters: List[str] = field(default_factory=list)
-    found_counters: List[str] = field(default_factory=list)
-    missing_counters: List[str] = field(default_factory=list)
-    first_flush_ts: Optional[str] = None
-    last_flush_ts: Optional[str] = None
+    expected_counters: list[str] = field(default_factory=list)
+    found_counters: list[str] = field(default_factory=list)
+    missing_counters: list[str] = field(default_factory=list)
+    first_flush_ts: str | None = None
+    last_flush_ts: str | None = None
 
 
 @dataclass
@@ -252,7 +251,7 @@ class BenchmarkResults:
     teardown_report_write_s: float = 0.0
     teardown_summary_write_s: float = 0.0
     post_loop_live_tasks_count: int = 0
-    post_loop_live_task_names: List[str] = field(default_factory=list)
+    post_loop_live_task_names: list[str] = field(default_factory=list)
     time_to_first_finding_seconds: float = 0.0
     time_to_first_high_confidence_seconds: float = 0.0
     time_to_first_deep_read_seconds: float = 0.0
@@ -267,10 +266,10 @@ class BenchmarkResults:
     echo_rejection_rate: float = 0.0  # l1_echo_rejects / (l1_echo_rejects + admits)
 
     # Phase metrics
-    phases: List[BenchmarkPhaseMetrics] = field(default_factory=list)
+    phases: list[BenchmarkPhaseMetrics] = field(default_factory=list)
 
     # Lane metrics
-    lanes: List[BenchmarkLaneMetrics] = field(default_factory=list)
+    lanes: list[BenchmarkLaneMetrics] = field(default_factory=list)
 
     # Memory metrics
     memory: BenchmarkMemoryMetrics = field(default_factory=BenchmarkMemoryMetrics)
@@ -326,8 +325,8 @@ class BenchmarkResults:
     frontier_empty: bool = False
 
     # Sprint 82Q Phase 2: Iteration trace and capability reachability
-    iteration_trace: Dict[str, Any] = field(default_factory=dict)
-    capability_reachability: Dict[str, Any] = field(default_factory=dict)
+    iteration_trace: dict[str, Any] = field(default_factory=dict)
+    capability_reachability: dict[str, Any] = field(default_factory=dict)
 
     # Sprint 86: Network Recon Economics
     network_recon_precondition_met_count: int = 0
@@ -345,12 +344,12 @@ class BenchmarkResults:
     network_recon_queue_had_items_at_score_time: int = 0
     network_recon_queue_empty_at_score_time: int = 0
     network_recon_queue_size_avg: float = 0.0
-    network_recon_yield_ratio: Optional[float] = None
-    network_recon_forwarding_efficiency: Optional[float] = None
+    network_recon_yield_ratio: float | None = None
+    network_recon_forwarding_efficiency: float | None = None
     network_recon_selection_rate_pct: float = 0.0
 
     # Sprint 8C: Per-action echo telemetry
-    action_echo_telemetry: Dict[str, Dict[str, int]] = field(default_factory=dict)
+    action_echo_telemetry: dict[str, dict[str, int]] = field(default_factory=dict)
 
     # Sprint 86F: Wildcard metrics
     network_recon_wildcard_hit_count: int = 0
@@ -361,11 +360,11 @@ class BenchmarkResults:
     network_recon_wildcard_but_has_mx_ns_txt_findings_count: int = 0
 
     # Sprint 86F: Score history percentiles (post-mortem)
-    network_recon_score_p50: Optional[float] = None
-    network_recon_score_p90: Optional[float] = None
+    network_recon_score_p50: float | None = None
+    network_recon_score_p90: float | None = None
 
     action_selection_hhi: float = 0.0
-    action_selection_counts: Dict[str, int] = field(default_factory=dict)
+    action_selection_counts: dict[str, int] = field(default_factory=dict)
 
     # Sprint 7C: FPS metriky (iterations/findings/sources per second)
     benchmark_fps: float = 0.0  # iterations / elapsed_s
@@ -451,12 +450,12 @@ class E2EBenchmark:
         self.config = config
         self.results = BenchmarkResults()
         self._start_time: float = 0.0
-        self._first_finding_time: Optional[float] = None
-        self._first_high_confidence_time: Optional[float] = None
-        self._first_deep_read_time: Optional[float] = None
-        self._synthesis_start_time: Optional[float] = None
-        self._rss_samples: List[float] = []
-        self._phase_timings: Dict[str, float] = {}
+        self._first_finding_time: float | None = None
+        self._first_high_confidence_time: float | None = None
+        self._first_deep_read_time: float | None = None
+        self._synthesis_start_time: float | None = None
+        self._rss_samples: list[float] = []
+        self._phase_timings: dict[str, float] = {}
 
     def _get_rss_mb(self) -> float:
         """Get current RSS in MB."""
@@ -472,15 +471,15 @@ class E2EBenchmark:
         Sprint 82M: Attempts to create real orchestrator first, falls back to mock
         only if real orchestrator cannot be initialized. Always reports which path was used.
         """
-        from pathlib import Path
         import time as time_module
+        from pathlib import Path
 
         # Sprint 82M: Try real orchestrator first (with timeout)
         logger.info("Attempting to create REAL FullyAutonomousOrchestrator...")
 
         try:
             from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
-            from hledac.universal.config import UniversalConfig, ResearchMode
+            from hledac.universal.config import ResearchMode, UniversalConfig
 
             config = UniversalConfig.for_mode(ResearchMode.AUTONOMOUS)
             real_orch = FullyAutonomousOrchestrator(config)
@@ -498,7 +497,7 @@ class E2EBenchmark:
                     self.results.mock_path_used = True
                     self.results.init_error = "Init returned False"
                     raise RuntimeError("Real orchestrator init returned False")
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 logger.warning("⚠️ Real orchestrator init timed out after 30s")
                 logger.warning("Falling back to mock orchestrator")
                 self.results.real_orchestrator = False
@@ -599,7 +598,7 @@ class E2EBenchmark:
                         self._metrics_registry.flush(force=True)
                         self._metrics_registry.close()
 
-            from hledac.universal.config import UniversalConfig, ResearchMode
+            from hledac.universal.config import ResearchMode, UniversalConfig
             config = UniversalConfig.for_mode(ResearchMode.AUTONOMOUS)
             return MinimalBenchmarkOrchestrator(config)
 
@@ -743,8 +742,8 @@ class E2EBenchmark:
             total_iterations = len(buffer)
 
             # Calculate aggregates from trace
-            action_selection_count: Dict[str, int] = {}
-            result_type_counts: Dict[str, int] = {}
+            action_selection_count: dict[str, int] = {}
+            result_type_counts: dict[str, int] = {}
             total_findings = 0
             total_sources = 0
             query_changed_count = 0
@@ -825,11 +824,11 @@ class E2EBenchmark:
                 return
 
             # Stream-parse JSONL (bounded - max 1000 lines)
-            tool_counter: Dict[str, int] = {}
-            first_ts: Optional[str] = None
-            last_ts: Optional[str] = None
+            tool_counter: dict[str, int] = {}
+            first_ts: str | None = None
+            last_ts: str | None = None
 
-            with open(tool_exec_file, 'r') as f:
+            with open(tool_exec_file) as f:
                 for i, line in enumerate(f):
                     if i >= 1000:  # Bounded read
                         break
@@ -947,7 +946,7 @@ class E2EBenchmark:
             # Try to read from file for flush timestamps
             metrics_file = Path.home() / '.hledac' / 'runs' / 'logs' / 'metrics.jsonl'
             if metrics_file.exists():
-                with open(metrics_file, 'r') as f:
+                with open(metrics_file) as f:
                     lines = f.readlines()
                     self.results.metrics.total_samples = len(lines)
                     if lines:
@@ -972,7 +971,7 @@ class E2EBenchmark:
         elif hasattr(orch, '_attr_run_id') and orch._attr_run_id:
             self.results.run_id = orch._attr_run_id
 
-    def _compute_bottleneck_diagnosis(self) -> List[Dict[str, Any]]:
+    def _compute_bottleneck_diagnosis(self) -> list[dict[str, Any]]:
         """Analyze results and identify top bottlenecks."""
         bottlenecks = []
         g = self.results.gating
@@ -1044,7 +1043,7 @@ class E2EBenchmark:
 
         return bottlenecks[:5]  # Top 5
 
-    def _generate_report(self, bottlenecks: List[Dict[str, Any]]) -> str:
+    def _generate_report(self, bottlenecks: list[dict[str, Any]]) -> str:
         """Generate human-readable benchmark report."""
         r = self.results
         g = r.gating
@@ -1327,7 +1326,7 @@ class E2EBenchmark:
                     ),
                     timeout=float(cfg_timeout) + 60.0
                 )
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 logger.warning("Research timed out - collecting partial results")
                 result = None
 
@@ -1582,7 +1581,6 @@ class E2EBenchmark:
                 # Sprint 8H: Additional truth fields
                 'hh_index': self.results.hh_index,
                 'total_wall_clock_s': self.results.total_wall_clock_s,
-                'teardown_cleanup_s': self.results.teardown_cleanup_s,
                 'post_loop_live_tasks_count': self.results.post_loop_live_tasks_count,
                 'post_loop_live_task_names': self.results.post_loop_live_task_names,
             }

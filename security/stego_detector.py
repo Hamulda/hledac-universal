@@ -25,7 +25,7 @@ import logging
 import math
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any
 
 import numpy as np
 
@@ -77,7 +77,7 @@ class StegoConfig:
     dct_analysis_enabled: bool = True
     max_image_size: int = 2048
     streaming_mode: bool = True
-    rs_mask: List[int] = field(default_factory=lambda: [0, 1, 0, 1])
+    rs_mask: list[int] = field(default_factory=lambda: [0, 1, 0, 1])
     dct_threshold: float = 0.5
 
 
@@ -131,9 +131,9 @@ class DCTResult:
     """
 
     anomaly_score: float = 0.0
-    suspicious_coefficients: List[int] = field(default_factory=list)
+    suspicious_coefficients: list[int] = field(default_factory=list)
     histogram_deviation: float = 0.0
-    block_anomalies: List[float] = field(default_factory=list)
+    block_anomalies: list[float] = field(default_factory=list)
 
 
 @dataclass
@@ -155,10 +155,10 @@ class StegoResult:
     confidence: float = 0.0
     method_used: str = "none"
     message_length_estimate: int = 0
-    chi_square: Optional[ChiSquareResult] = None
-    rs_analysis: Optional[RSResult] = None
-    dct_analysis: Optional[DCTResult] = None
-    details: Dict[str, Any] = field(default_factory=dict)
+    chi_square: ChiSquareResult | None = None
+    rs_analysis: RSResult | None = None
+    dct_analysis: DCTResult | None = None
+    details: dict[str, Any] = field(default_factory=dict)
 
 
 class StatisticalStegoDetector:
@@ -202,7 +202,7 @@ class StatisticalStegoDetector:
         >>> await detector.cleanup()
     """
 
-    def __init__(self, config: Optional[StegoConfig] = None):
+    def __init__(self, config: StegoConfig | None = None):
         """Initialize detector with configuration.
 
         Args:
@@ -218,7 +218,7 @@ class StatisticalStegoDetector:
             max_workers=1, thread_name_prefix="stego_mps"
         )
 
-    async def detect(self, image_bytes: bytes) -> Dict[str, Any]:
+    async def detect(self, image_bytes: bytes) -> dict[str, Any]:
         """Main detection method - chooses MPS or CPU based on availability.
 
         Args:
@@ -232,7 +232,7 @@ class StatisticalStegoDetector:
         else:
             return await self._detect_cpu(image_bytes)
 
-    async def _detect_mps(self, image_bytes: bytes) -> Dict[str, Any]:
+    async def _detect_mps(self, image_bytes: bytes) -> dict[str, Any]:
         """MPS-accelerated detection."""
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(
@@ -241,11 +241,12 @@ class StatisticalStegoDetector:
             image_bytes
         )
 
-    def _detect_mps_sync(self, image_bytes: bytes) -> Dict[str, Any]:
+    def _detect_mps_sync(self, image_bytes: bytes) -> dict[str, Any]:
         """Synchronous MPS implementation of steganography detection."""
+        import io
+
         import torch
         from PIL import Image
-        import io
 
         try:
             img = Image.open(io.BytesIO(image_bytes)).convert('L')
@@ -296,7 +297,7 @@ class StatisticalStegoDetector:
             "method": "mps_chi_square"
         }
 
-    async def _detect_cpu(self, image_bytes: bytes) -> Dict[str, Any]:
+    async def _detect_cpu(self, image_bytes: bytes) -> dict[str, Any]:
         """CPU-based detection."""
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(
@@ -305,12 +306,13 @@ class StatisticalStegoDetector:
             image_bytes
         )
 
-    def _detect_cpu_sync(self, image_bytes: bytes) -> Dict[str, Any]:
+    def _detect_cpu_sync(self, image_bytes: bytes) -> dict[str, Any]:
         """Synchronous CPU implementation of steganography detection."""
         # Simple chi-square on LSB
         try:
-            from PIL import Image
             import io
+
+            from PIL import Image
 
             img = Image.open(io.BytesIO(image_bytes))
             if img.mode != 'L':
@@ -357,7 +359,7 @@ class StatisticalStegoDetector:
             logger.error(f"Failed to import PIL: {e}")
             raise RuntimeError("PIL/Pillow is required for image analysis") from e
 
-    async def analyze_image(self, image_path: Union[str, Path]) -> StegoResult:
+    async def analyze_image(self, image_path: str | Path) -> StegoResult:
         """Analyze image for steganographic content.
 
         Runs enabled analysis methods and aggregates results.
@@ -428,7 +430,7 @@ class StatisticalStegoDetector:
 
         return result
 
-    def _load_image(self, image_path: Path) -> Tuple[Any, Optional[np.ndarray]]:
+    def _load_image(self, image_path: Path) -> tuple[Any, np.ndarray | None]:
         """Load image and convert to numpy array.
 
         Args:
@@ -812,7 +814,7 @@ class StatisticalStegoDetector:
         logger.debug("StatisticalStegoDetector cleaned up")
 
 
-def create_stego_detector(config: Optional[StegoConfig] = None) -> Optional[StatisticalStegoDetector]:
+def create_stego_detector(config: StegoConfig | None = None) -> StatisticalStegoDetector | None:
     """Factory function to create steganography detector.
 
     Creates a StatisticalStegoDetector with optional configuration.
@@ -843,7 +845,7 @@ StegoAnalysisResult = StegoResult
 
 
 # Convenience function for quick analysis
-async def quick_stego_check(image_path: Union[str, Path]) -> Dict[str, Any]:
+async def quick_stego_check(image_path: str | Path) -> dict[str, Any]:
     """Quick steganography check on an image.
 
     Args:

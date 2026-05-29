@@ -10,7 +10,7 @@ Výhody:
 
 Použití:
     from hledac.core.mlx_embeddings import MLXEmbeddingManager
-    
+
     manager = MLXEmbeddingManager()
     embeddings = manager.encode(["text 1", "text 2"])
 """
@@ -20,7 +20,6 @@ from __future__ import annotations
 import logging
 import warnings
 from pathlib import Path
-from typing import List, Optional, Union
 
 import numpy as np
 
@@ -32,7 +31,7 @@ try:
     MLX_AVAILABLE = True
 except ImportError:
     MLX_AVAILABLE = False
-    warnings.warn("MLX not available. Install: pip install mlx>=0.15.0")
+    warnings.warn("MLX not available. Install: pip install mlx>=0.15.0", stacklevel=2)
 
 # mlx-embeddings for ModernBERT (works, mlx-lm.load does NOT support ModernBERT)
 try:
@@ -40,7 +39,7 @@ try:
     MLX_EMBEDDINGS_AVAILABLE = True
 except ImportError:
     MLX_EMBEDDINGS_AVAILABLE = False
-    warnings.warn("mlx-embeddings not available. Install: pip install mlx-embeddings")
+    warnings.warn("mlx-embeddings not available. Install: pip install mlx-embeddings", stacklevel=2)
 
 
 # === Embedding Task Enum (prefix discipline) ===
@@ -90,11 +89,11 @@ class MLXEmbeddingManager:
     SUPPORTS_TASK_PREFIX = True  # ModernBERT supports search_query/search_document prefixes
 
     # Task safety: track current embedding task
-    _current_task: Optional[EmbeddingTask] = None
+    _current_task: EmbeddingTask | None = None
 
     def __init__(
         self,
-        model_path: Optional[Union[str, Path]] = None,
+        model_path: str | Path | None = None,
         lazy_load: bool = True
     ):
         """
@@ -118,7 +117,7 @@ class MLXEmbeddingManager:
             self._load_model()
 
         logger.info(f"MLXEmbeddingManager initialized: {self.model_path}")
-    
+
     def _load_model(self) -> None:
         """Načte ModernBERT model přes mlx-embeddings."""
         if self._is_loaded:
@@ -143,7 +142,7 @@ class MLXEmbeddingManager:
         except Exception as e:
             logger.error(f"Failed to load embedding model: {e}")
             raise
-    
+
     @property
     def is_loaded(self) -> bool:
         """Vrátí True pokud je model načten."""
@@ -156,25 +155,25 @@ class MLXEmbeddingManager:
 
     # === Task-aware embedding methods (prefix discipline) ===
 
-    def embed_query(self, text: str, truncate_dim: Optional[int] = None) -> np.ndarray:
+    def embed_query(self, text: str, truncate_dim: int | None = None) -> np.ndarray:
         """Embed user query (asymmetric - search_query prefix)."""
         return self._embed_task(text, EmbeddingTask.SEARCH_QUERY, truncate_dim)
 
-    def embed_document(self, text: str, truncate_dim: Optional[int] = None) -> np.ndarray:
+    def embed_document(self, text: str, truncate_dim: int | None = None) -> np.ndarray:
         """Embed document for indexing (asymmetric - search_document prefix)."""
         return self._embed_task(text, EmbeddingTask.SEARCH_DOCUMENT, truncate_dim)
 
-    def embed_for_clustering(self, text: str, truncate_dim: Optional[int] = None) -> np.ndarray:
+    def embed_for_clustering(self, text: str, truncate_dim: int | None = None) -> np.ndarray:
         """Embed text for clustering (symmetric - clustering prefix)."""
         return self._embed_task(text, EmbeddingTask.CLUSTERING, truncate_dim)
 
-    def embed_for_dedup(self, text: str, truncate_dim: Optional[int] = None) -> np.ndarray:
+    def embed_for_dedup(self, text: str, truncate_dim: int | None = None) -> np.ndarray:
         """Embed text for deduplication (symmetric - clustering task)."""
         # Deduplication is symmetric text-vs-text comparison, not asymmetric query-document
         # CLUSTERING is the correct task, not CLASSIFICATION
         return self._embed_task(text, EmbeddingTask.CLUSTERING, truncate_dim, force_normalize=True)
 
-    def _embed_for_indexing(self, texts: Union[str, List[str]], truncate_dim: Optional[int] = None) -> np.ndarray:
+    def _embed_for_indexing(self, texts: str | list[str], truncate_dim: int | None = None) -> np.ndarray:
         """
         Internal method for batch document embedding (used by LanceDB store for indexing).
 
@@ -191,7 +190,7 @@ class MLXEmbeddingManager:
         self,
         text: str,
         task: EmbeddingTask,
-        truncate_dim: Optional[int] = None,
+        truncate_dim: int | None = None,
         force_normalize: bool = False
     ) -> np.ndarray:
         """
@@ -235,11 +234,11 @@ class MLXEmbeddingManager:
 
     def encode(
         self,
-        texts: Union[str, List[str]],
+        texts: str | list[str],
         batch_size: int = 32,
         normalize: bool = True,
         show_progress: bool = False,
-        truncate_dim: Optional[int] = None,  # Matryoshka truncation
+        truncate_dim: int | None = None,  # Matryoshka truncation
         _for_indexing: bool = False  # Internal flag for indexing validation
     ) -> np.ndarray:
         """
@@ -329,10 +328,10 @@ class MLXEmbeddingManager:
             del inputs
 
             all_embeddings.append(embeddings_np)
-        
+
         # Spojení všech batchů
         return np.vstack(all_embeddings)
-    
+
     def _mean_pooling(
         self,
         token_embeddings: mx.array,
@@ -340,73 +339,73 @@ class MLXEmbeddingManager:
     ) -> mx.array:
         """
         Mean pooling s ohledem na attention mask.
-        
+
         Args:
             token_embeddings: Vstupní embeddngy tvaru (batch, seq_len, hidden)
             attention_mask: Attention mask tvaru (batch, seq_len)
-            
+
         Returns:
             Pooled embeddings tvaru (batch, hidden)
         """
         # Expand mask pro broadcasting
         mask_expanded = mx.expand_dims(attention_mask, -1)
         mask_expanded = mx.broadcast_to(mask_expanded, token_embeddings.shape)
-        
+
         # Masked sum
         sum_embeddings = mx.sum(token_embeddings * mask_expanded, axis=1)
-        
+
         # Sum mask (počet platných tokenů)
         sum_mask = mx.clip(mx.sum(attention_mask, axis=1, keepdims=True), a_min=1e-9)
-        
+
         # Mean
         return sum_embeddings / sum_mask
-    
+
     def _normalize(self, embeddings: np.ndarray) -> np.ndarray:
         """
         L2 normalizace embedding vektorů.
-        
+
         Args:
             embeddings: Vstupní vektory tvaru (n, dim)
-            
+
         Returns:
             Normalizované vektory
         """
         norms = np.linalg.norm(embeddings, axis=1, keepdims=True)
         return embeddings / np.clip(norms, a_min=1e-12)
-    
+
     def similarity(
         self,
-        text1: Union[str, List[str]],
-        text2: Union[str, List[str]]
-    ) -> Union[float, np.ndarray]:
+        text1: str | list[str],
+        text2: str | list[str]
+    ) -> float | np.ndarray:
         """
         Vypočítá kosinovou podobnost mezi texty.
-        
+
         Args:
             text1: První text nebo seznam textů
             text2: Druhý text nebo seznam textů
-            
+
         Returns:
             Podobnost skóre (0-1)
         """
         # Zakódování
         emb1 = self.encode(text1, normalize=True)
         emb2 = self.encode(text2, normalize=True)
-        
+
         # Kosinová podobnost (pro normalizované vektory = dot product)
         if emb1.ndim == 1:
             emb1 = emb1.reshape(1, -1)
         if emb2.ndim == 1:
             emb2 = emb2.reshape(1, -1)
-        
+
         similarity = np.dot(emb1, emb2.T)
-        
+
         # Vrátit skalár pokud jeden vstup
         if similarity.shape == (1, 1):
             return float(similarity[0, 0])
-        
+
         return similarity
-    
+
     def unload(self) -> None:
         """Uvolní model z paměti."""
         if self._is_loaded:
@@ -431,7 +430,7 @@ class MLXEmbeddingManager:
                         logger.debug(f"mx.metal.clear_cache() raised (non-fatal): {exc}")
                 except Exception as exc:
                     logger.debug(f"MLX eval during unload raised (non-fatal): {exc}")
-    
+
     def get_info(self) -> dict:
         """Vrátí informace o manageru."""
         return {
@@ -444,7 +443,7 @@ class MLXEmbeddingManager:
 
 
 # Singleton pro celou aplikaci
-_default_manager: Optional[MLXEmbeddingManager] = None
+_default_manager: MLXEmbeddingManager | None = None
 _init_logged: bool = False
 _task_logged: bool = False
 
@@ -536,14 +535,14 @@ def assert_embedding_dimension(expected_dim: int, context: str = "") -> None:
         )
 
 
-def encode_texts(texts: Union[str, List[str]], **kwargs) -> np.ndarray:
+def encode_texts(texts: str | list[str], **kwargs) -> np.ndarray:
     """
     Jednoduchá funkce pro zakódování textů.
-    
+
     Args:
         texts: Texty k zakódování
         **kwargs: Další parametry pro encode()
-        
+
     Returns:
         Embedding vektory
     """
@@ -554,11 +553,11 @@ def encode_texts(texts: Union[str, List[str]], **kwargs) -> np.ndarray:
 def compute_similarity(text1: str, text2: str) -> float:
     """
     Vypočítá podobnost dvou textů.
-    
+
     Args:
         text1: První text
         text2: Druhý text
-        
+
     Returns:
         Podobnost skóre 0-1
     """
@@ -569,24 +568,24 @@ def compute_similarity(text1: str, text2: str) -> float:
 if __name__ == "__main__":
     # Test
     logging.basicConfig(level=logging.INFO)
-    
+
     print("Testing MLX Embedding Manager...")
-    
+
     manager = MLXEmbeddingManager()
-    
+
     test_texts = [
         "Machine learning is fascinating",
         "Deep learning transforms AI",
         "The weather is nice today"
     ]
-    
+
     print(f"\nEncoding {len(test_texts)} texts...")
     embeddings = manager.encode(test_texts)
-    
+
     print(f"Shape: {embeddings.shape}")
     print(f"Sample (first 5 dims of first text): {embeddings[0, :5]}")
-    
+
     # Test similarity
-    print(f"\nSimilarity matrix:")
+    print("\nSimilarity matrix:")
     sim = manager.similarity(test_texts, test_texts)
     print(sim)

@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """Categorize broken imports into 4 groups: real-missing-pip, wrong-internal-path, permanently-shimmed, genuine-dead."""
 import json
-import os
 import re
 from collections import defaultdict
 from pathlib import Path
@@ -27,9 +26,9 @@ def load_pyproject():
 
 def categorize_item(item, shims, pyproject_content):
     missing = item["missing_module"]
-    import_stmt = item["import_statement"]
-    file_path = item.get("file", "")
-    suggestion = item.get("suggestion", "")
+    item["import_statement"]
+    item.get("file", "")
+    item.get("suggestion", "")
     note = item.get("note", "")
     status = item.get("status", "")
 
@@ -273,7 +272,7 @@ def analyze():
     print("IMPORT CATEGORIZATION REPORT")
     print("=" * 60)
     print(f"Total broken imports: {len(bi)}")
-    print(f"Previous size: 79KB -> Current: 91KB (GROWTH: +12KB)")
+    print("Previous size: 79KB -> Current: 91KB (GROWTH: +12KB)")
     print()
     print("BY CATEGORY:")
     for cat, items in sorted(categories.items(), key=lambda x: -len(x[1])):
@@ -295,14 +294,14 @@ def analyze():
 
     # Generate JSON output
     output = {
-        "categories": {cat: items for cat, items in categories.items()},
+        "categories": dict(categories.items()),
         "summary": {cat: len(items) for cat, items in categories.items()}
     }
 
     with open(ROOT / "import_categorization.json", "w") as f:
         json.dump(output, f, indent=2)
 
-    print(f"\nFull categorization saved to import_categorization.json")
+    print("\nFull categorization saved to import_categorization.json")
 
     # Top missing pip packages (hledac.* that should be real deps)
     print("\n" + "=" * 60)

@@ -8,16 +8,16 @@ Obsahuje:
 - PluginMetadata, LoadedPlugin: Plugin dataclasses
 """
 
-from .system_monitor import SystemMonitor, SystemState
 from .plugin_manager import (
+    LoadedPlugin,
     PluginManager,
+    PluginMetadata,
     PluginStatus,
     PluginType,
-    PluginMetadata,
-    LoadedPlugin,
     create_plugin_manager,
     load_all_plugins,
 )
+from .system_monitor import SystemMonitor, SystemState
 
 __all__ = [
     # System monitoring

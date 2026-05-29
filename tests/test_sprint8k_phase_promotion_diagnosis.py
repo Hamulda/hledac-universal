@@ -132,6 +132,7 @@ class TestMultipleLanesSeeded(unittest.TestCase):
         # This is verified by code inspection: lines 13259, 13263, 13267
         # lane_a = expansion, lane_b = falsification, lane_c = winner_deepening
         import inspect
+
         from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
         source = inspect.getsource(FullyAutonomousOrchestrator.research)
         add_lane_count = source.count('add_lane(')
@@ -212,7 +213,7 @@ class TestPromotionScoreCanChange(unittest.TestCase):
 
     def test_score_zero_at_baseline(self):
         """Score is 0.0 when all signals are at baseline (frozen state)."""
-        from hledac.universal.orchestrator.phase_controller import PhaseController, Phase
+        from hledac.universal.orchestrator.phase_controller import PhaseController
 
         controller = PhaseController()
         controller.start()
@@ -233,7 +234,7 @@ class TestPromotionScoreCanChange(unittest.TestCase):
 
     def test_score_improves_with_signals(self):
         """Score improves when signals move from baseline."""
-        from hledac.universal.orchestrator.phase_controller import PhaseController, Phase
+        from hledac.universal.orchestrator.phase_controller import PhaseController
 
         controller = PhaseController()
         controller.start()

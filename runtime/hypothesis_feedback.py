@@ -33,7 +33,6 @@ from __future__ import annotations
 import logging
 import time
 from dataclasses import dataclass
-from typing import Optional
 
 __all__ = [
     "HypothesisFeedbackRecord",
@@ -56,7 +55,7 @@ _ZERO_YIELD_PENALTY_THRESHOLD: int = 3
 _PENALTY_FACTOR: float = 0.5
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class HypothesisFeedbackRecord:
     """
     A single feedback record for one pivot outcome.
@@ -81,7 +80,7 @@ class HypothesisFeedbackRecord:
     ts: float
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class HypothesisFeedbackSummary:
     """
     Aggregated feedback summary per (target_id, pivot_type, ioc_type).
@@ -119,7 +118,7 @@ class HypothesisFeedbackAdapter:
 
     def __init__(
         self,
-        duckdb_store: Optional[object] = None,
+        duckdb_store: object | None = None,
         target_id: str = "default",
     ) -> None:
         """
@@ -181,7 +180,7 @@ class HypothesisFeedbackAdapter:
 
     async def async_get_summary(
         self,
-        pivot_types: Optional[list[str]] = None,
+        pivot_types: list[str] | None = None,
     ) -> dict[tuple[str, str], HypothesisFeedbackSummary]:
         """
         Fetch aggregated feedback summary from DuckDB.
@@ -293,7 +292,7 @@ class HypothesisFeedbackAdapter:
     def _get_filtered_summary(
         self,
         summary: dict[tuple[str, str], HypothesisFeedbackSummary],
-        pivot_types: Optional[list[str]],
+        pivot_types: list[str] | None,
     ) -> dict[tuple[str, str], HypothesisFeedbackSummary]:
         """Filter summary by pivot_types if provided."""
         if pivot_types is None:

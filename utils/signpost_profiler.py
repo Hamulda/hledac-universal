@@ -10,7 +10,6 @@ Provides:
 import ctypes
 import sys
 from contextlib import contextmanager
-from typing import Optional
 
 # Try to load macOS System APIs
 if sys.platform == "darwin":

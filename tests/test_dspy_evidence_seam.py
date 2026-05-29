@@ -9,7 +9,6 @@ GHOST_INVARIANTS tested:
 """
 import json
 import time
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -207,5 +206,5 @@ class TestDspyEvidenceSeam:
             f"Expected failure_count=3 after DSPy failure, got {optimizer._failure_count}"
         )
         assert time.time() < optimizer._circuit_open_until, (
-            f"Circuit breaker should be open"
+            "Circuit breaker should be open"
         )

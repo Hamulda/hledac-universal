@@ -17,7 +17,6 @@ import json
 import logging
 import re
 from dataclasses import dataclass, field
-from typing import List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -45,8 +44,8 @@ class DeepWebHints:
     api_candidates: list[str] = field(default_factory=list)
     js_markers: dict = field(default_factory=dict)
     hints_hash: str = ""
-    onion_links: List[str] = field(default_factory=list)
-    bundle_urls: List[str] = field(default_factory=list)
+    onion_links: list[str] = field(default_factory=list)
+    bundle_urls: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict:
         """Convert to dictionary for serialization."""
@@ -105,7 +104,7 @@ class DeepWebHintsExtractor:
         # Combine JS patterns without named groups (not needed for simple existence check)
         self._js_pattern = '|'.join(self.JS_MARKERS.values())
 
-    def extract(self, url: str, html_preview: str, base_url: Optional[str] = None) -> DeepWebHints:
+    def extract(self, url: str, html_preview: str, base_url: str | None = None) -> DeepWebHints:
         """
         Extract deep web hints from HTML preview.
 
@@ -194,7 +193,7 @@ class DeepWebHintsExtractor:
                     field_info['placeholder'] = placeholder[:50]
 
                 value = inp.get('value', '')
-                if value and not inp_type in ('submit', 'hidden', 'checkbox', 'radio'):
+                if value and inp_type not in ('submit', 'hidden', 'checkbox', 'radio'):
                     field_info['value'] = value[:50]
 
                 if field_info.get('name'):
@@ -332,7 +331,7 @@ class DeepWebHintsExtractor:
         from urllib.parse import urljoin
         return urljoin(base_url, url)
 
-    def _extract_js_bundle_urls(self, html: str, base_url: str) -> List[str]:
+    def _extract_js_bundle_urls(self, html: str, base_url: str) -> list[str]:
         """Extract external .js bundle URLs from HTML (sync, no HTTP)."""
         from urllib.parse import urljoin
         pattern = re.compile(r'<script[^>]+src=["\']([^"\']*\.js)["\']', re.IGNORECASE)
@@ -362,7 +361,7 @@ class DeepWebHintsExtractor:
         return hashlib.sha256(json_str.encode()).hexdigest()[:16]
 
 
-def extract_deepweb_hints(url: str, html_preview: str, base_url: Optional[str] = None) -> DeepWebHints:
+def extract_deepweb_hints(url: str, html_preview: str, base_url: str | None = None) -> DeepWebHints:
     """
     Convenience function to extract deep web hints.
 

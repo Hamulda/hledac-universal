@@ -8,16 +8,15 @@ Validates:
 - MLX batch fallback to numpy
 """
 
-import pytest
-import tempfile
-import os
-from pathlib import Path
-from unittest.mock import patch, MagicMock
-
 import sys
+from pathlib import Path
+from unittest.mock import MagicMock, patch
+
+import pytest
+
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
-from hledac.universal.utils.deduplication import SimHash, _TOKEN_HASH_CACHE, _MAX_TOKEN_CACHE
+from hledac.universal.utils.deduplication import _MAX_TOKEN_CACHE, _TOKEN_HASH_CACHE, SimHash
 
 
 class TestSimHashBasics:
@@ -68,7 +67,7 @@ class TestSimHashBasics:
 
     def test_hamming_distance(self):
         """Hamming distance should be computed correctly."""
-        simhash = SimHash(hashbits=64, seed=42)
+        SimHash(hashbits=64, seed=42)
 
         # Hashes with known distance
         hash1 = 0b1100
@@ -128,7 +127,6 @@ class TestSimHashTokenCache:
     def test_thread_safety(self):
         """Token hashing should be thread-safe."""
         import threading
-        import time
 
         global _TOKEN_HASH_CACHE
         _TOKEN_HASH_CACHE.clear()
@@ -214,7 +212,7 @@ class TestSimHashMLXBatch:
         with patch.dict(sys.modules, {'mlx': mock_mx, 'mlx.core': mock_mx}):
             # Should handle MLX errors gracefully
             try:
-                result = simhash.compute_embedding_batch(np.array([[1,2,3,4]], dtype=np.float32))
+                simhash.compute_embedding_batch(np.array([[1,2,3,4]], dtype=np.float32))
             except Exception:
                 pass  # Expected to fail with mock
 

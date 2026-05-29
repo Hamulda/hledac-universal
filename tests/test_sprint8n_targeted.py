@@ -8,12 +8,11 @@ Targeted tests verifying:
 4. Targeted regression tests
 """
 
-import pytest
-import asyncio
-import time
-import sys
 import os
+import sys
 from pathlib import Path
+
+import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
@@ -105,9 +104,8 @@ class TestSprint8NProviderFix:
 
     def test_rss_monitor_slope_calculation(self):
         """Verify RSSMonitor computes slope correctly."""
+
         from hledac.universal.tests.test_sprint8l_live import RSSMonitor
-        import psutil
-        import os
 
         monitor = RSSMonitor(interval_s=1.0)
         # Simulate samples: 100, 110, 120, 130 MB over 3 seconds
@@ -154,7 +152,7 @@ class TestSprint8NProviderFix:
             )
 
             findings = getattr(result, 'findings', [])
-            sources = getattr(result, 'sources', [])
+            getattr(result, 'sources', [])
             stats = result.statistics if hasattr(result, 'statistics') else {}
             iterations = stats.get('iterations', 0)
 
@@ -220,8 +218,7 @@ class TestSprint8NProviderFix:
 
     def test_shared_client_path_preserved(self):
         """Verify shared client path is used (aiohttp.ClientSession)."""
-        from hledac.universal.tests.test_sprint8l_live import RSSMonitor
-        from hledac.universal.tests.test_sprint8l_live import LiveLatencyCollector
+        from hledac.universal.tests.test_sprint8l_live import LiveLatencyCollector, RSSMonitor
 
         # These should be importable and functional
         assert callable(LiveLatencyCollector)
@@ -251,9 +248,9 @@ class TestSprint8NProviderFix:
 
     def test_ts_constants_defined(self):
         """Verify Thompson Sampling constants are defined."""
-        from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
-
         import inspect
+
+        from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
         source = inspect.getsource(FullyAutonomousOrchestrator.__init__)
         assert '_TS_SHADOW_MODE' in source or '_TS_' in source
 

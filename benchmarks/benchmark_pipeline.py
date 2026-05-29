@@ -18,12 +18,11 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
-import os
 import sys
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
@@ -54,7 +53,7 @@ async def run_pipeline_iteration(
     query: str,
     mode: str = "public",
     duration_s: float = 60.0,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Run a single pipeline iteration and collect timing metrics.
 
@@ -67,8 +66,8 @@ async def run_pipeline_iteration(
         Dict with timing metrics for each phase
     """
     rss_before = get_rss_mb()
-    phase_times: Dict[str, float] = {}
-    phase_errors: Dict[str, str] = {}
+    phase_times: dict[str, float] = {}
+    phase_errors: dict[str, str] = {}
 
     # Import the sprint mode function
     try:
@@ -103,7 +102,7 @@ async def run_pipeline_iteration(
                 _run_sprint_mode(query, duration_s=duration_s * 0.4, mode=mode),
                 timeout=duration_s * 0.5,
             )
-    except asyncio.TimeoutError:
+    except TimeoutError:
         phase_errors["fetch"] = "timeout"
     except Exception as e:
         phase_errors["fetch"] = str(e)
@@ -158,7 +157,7 @@ async def run_pipeline_iteration(
     }
 
 
-def calculate_statistics(results: List[Dict[str, Any]]) -> Dict[str, Any]:
+def calculate_statistics(results: list[dict[str, Any]]) -> dict[str, Any]:
     """
     Calculate average, min, max, stddev for each timing phase.
 
@@ -172,7 +171,7 @@ def calculate_statistics(results: List[Dict[str, Any]]) -> Dict[str, Any]:
         return {}
 
     phase_names = ["discovery", "fetch", "embed", "hypothesis", "export", "total_elapsed_s"]
-    stats: Dict[str, Any] = {}
+    stats: dict[str, Any] = {}
 
     for phase in phase_names:
         values = []
@@ -212,11 +211,11 @@ def calculate_statistics(results: List[Dict[str, Any]]) -> Dict[str, Any]:
 
 async def run_benchmark(
     num_runs: int = 10,
-    queries: Optional[List[str]] = None,
+    queries: list[str] | None = None,
     mode: str = "public",
     duration_s: float = 60.0,
-    output_path: Optional[Path] = None,
-) -> Dict[str, Any]:
+    output_path: Path | None = None,
+) -> dict[str, Any]:
     """
     Run the full benchmark suite.
 
@@ -248,18 +247,18 @@ async def run_benchmark(
     queries_to_use = [queries[i % len(queries)] for i in range(num_runs)]
 
     log = print
-    log(f"=" * 60)
-    log(f"BENCHMARK PIPELINE — P19 / F191B")
-    log(f"=" * 60)
+    log("=" * 60)
+    log("BENCHMARK PIPELINE — P19 / F191B")
+    log("=" * 60)
     log(f"Runs: {num_runs}")
     log(f"Mode: {mode}")
     log(f"Duration per run: {duration_s}s")
     log(f"Queries: {len(set(queries_to_use))} unique queries")
     log(f"uvloop: {'active' if _UVLOOP_ACTIVE else 'not available'}")
     log(f"Mock fetch: {'enabled (fast)' if BENCHMARK_MOCK_FETCH else 'live (slow)'}")
-    log(f"=" * 60)
+    log("=" * 60)
 
-    results: List[Dict[str, Any]] = []
+    results: list[dict[str, Any]] = []
     rss_start = get_rss_mb()
     log(f"RSS before benchmark: {rss_start:.0f} MB")
 
@@ -288,7 +287,7 @@ async def run_benchmark(
 
     rss_end = get_rss_mb()
     log(f"\n{'=' * 60}")
-    log(f"BENCHMARK COMPLETE")
+    log("BENCHMARK COMPLETE")
     log(f"RSS after benchmark: {rss_end:.0f} MB (delta: {rss_end - rss_start:+.0f} MB)")
     log(f"{'=' * 60}")
 

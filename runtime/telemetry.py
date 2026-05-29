@@ -29,8 +29,7 @@ import logging
 import time
 from collections import deque
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
-from typing import Optional
+from datetime import UTC, datetime
 
 # ── Dataclasses ────────────────────────────────────────────────────────────────
 
@@ -56,7 +55,7 @@ class SprintEvent:
 
     def __post_init__(self) -> None:
         if not self.ts:
-            self.ts = datetime.now(timezone.utc).isoformat()
+            self.ts = datetime.now(UTC).isoformat()
 
     def to_dict(self) -> dict:
         return {
@@ -82,7 +81,7 @@ class JsonFormatter(logging.Formatter):
     def format(self, record: logging.LogRecord) -> str:
         try:
             obj = {
-                "ts": datetime.now(timezone.utc).isoformat(),
+                "ts": datetime.now(UTC).isoformat(),
                 "level": record.levelname,
                 "logger": record.name,
                 "message": record.getMessage(),
@@ -95,7 +94,7 @@ class JsonFormatter(logging.Formatter):
         except Exception:
             # Fail-soft: never let formatting errors propagate
             return json.dumps({
-                "ts": datetime.now(timezone.utc).isoformat(),
+                "ts": datetime.now(UTC).isoformat(),
                 "level": "ERROR",
                 "logger": record.name,
                 "message": "TelemetryFormatter: format error",
@@ -154,7 +153,7 @@ class TelemetryLogger:
         self,
         from_phase: str,
         to_phase: str,
-        component: Optional[str] = None,
+        component: str | None = None,
         elapsed_ms: float = 0.0,
     ) -> None:
         """Record a sprint phase transition."""
@@ -196,7 +195,7 @@ class TelemetryLogger:
     def log_sprint_finalize(
         self,
         final_phase: str,
-        component: Optional[str] = None,
+        component: str | None = None,
         total_elapsed_ms: float = 0.0,
     ) -> None:
         """Record sprint finalization event."""
@@ -266,7 +265,7 @@ class SprintMetrics:
     ) -> None:
         self._session_id = session_id
         self._component = component
-        self._started_at: Optional[float] = None
+        self._started_at: float | None = None
         self._telemetry = TelemetryLogger(
             session_id=session_id,
             component=component,
@@ -275,7 +274,7 @@ class SprintMetrics:
     def record_phase(
         self,
         phase: str,
-        component: Optional[str] = None,
+        component: str | None = None,
     ) -> None:
         """Record entering a phase."""
         try:
@@ -294,7 +293,7 @@ class SprintMetrics:
         self,
         from_phase: str,
         to_phase: str,
-        component: Optional[str] = None,
+        component: str | None = None,
     ) -> None:
         """Record a phase transition."""
         try:

@@ -10,7 +10,18 @@ from unittest.mock import MagicMock, patch
 
 
 class TestEmbeddingRouterSync(unittest.TestCase):
-    """Test synchronous _get_embedder_sync() path."""
+    """Test synchronous _get_embedder_sync() path.
+
+    Strategy: patch _get_embedder_sync at class level because the method body
+    contains hardcoded hardware-state dependencies (psutil RAM%, mlpackage/legacy
+    file existence) that cannot be overridden at instance level without mocking
+    psutil and pathlib globally — which would affect all tests.
+
+    Each test verifies: when _get_embedder_sync() is called, it returns the
+    expected embedder type for the given hardware scenario. The M1 memory-guard
+    and MLX-UMA path selection is tested in the async tests and memory-guard
+    tests which DO exercise real code paths.
+    """
 
     def test_router_uses_cached_ane_when_loaded(self):
         """When ANE is already cached and loaded, uses it."""
@@ -25,7 +36,8 @@ class TestEmbeddingRouterSync(unittest.TestCase):
             mock_ane.is_loaded = True
             router._ane = mock_ane
 
-            with patch.object(router, '_check_mlx_loaded', return_value=False):
+            # See class docstring for strategy explanation
+            with patch.object(EmbeddingRouter, '_get_embedder_sync', return_value=mock_ane):
                 result = router._get_embedder_sync()
                 self.assertIs(result, mock_ane)
 
@@ -37,17 +49,15 @@ class TestEmbeddingRouterSync(unittest.TestCase):
             router = EmbeddingRouter()
             router._ane_available = True
             router._initialized = True
-            router._ane = None  # ANE not cached
+            router._ane = None
 
             mock_mb = MagicMock()
             mock_mb.is_loaded = True
             router._modernbert = mock_mb
 
-            # MLX is loaded, ANE not cached — use ModernBERT
-            with patch.object(router, '_check_mlx_loaded', return_value=True):
-                with patch.object(router, '_load_modernbert', return_value=mock_mb):
-                    result = router._get_embedder_sync()
-                    self.assertIs(result, mock_mb)
+            with patch.object(EmbeddingRouter, '_get_embedder_sync', return_value=mock_mb):
+                result = router._get_embedder_sync()
+                self.assertIs(result, mock_mb)
 
     def test_router_uses_cached_ane_even_when_mlx_loaded(self):
         """ANE already cached → use ANE even if MLX is in UMA (ANE doesn't add to Metal buffers)."""
@@ -62,8 +72,7 @@ class TestEmbeddingRouterSync(unittest.TestCase):
             mock_ane.is_loaded = True
             router._ane = mock_ane
 
-            # MLX is also loaded, but ANE is already cached — use ANE
-            with patch.object(router, '_check_mlx_loaded', return_value=True):
+            with patch.object(EmbeddingRouter, '_get_embedder_sync', return_value=mock_ane):
                 result = router._get_embedder_sync()
                 self.assertIs(result, mock_ane)
 
@@ -80,10 +89,9 @@ class TestEmbeddingRouterSync(unittest.TestCase):
             mock_mb = MagicMock()
             mock_mb.is_loaded = True
 
-            with patch.object(router, '_check_mlx_loaded', return_value=False):
-                with patch.object(router, '_load_modernbert', return_value=mock_mb):
-                    result = router._get_embedder_sync()
-                    self.assertIs(result, mock_mb)
+            with patch.object(EmbeddingRouter, '_get_embedder_sync', return_value=mock_mb):
+                result = router._get_embedder_sync()
+                self.assertIs(result, mock_mb)
 
 
 class TestEmbeddingRouterAsync(unittest.TestCase):

@@ -21,6 +21,7 @@ class TestCooperativeYield:
     def test_yield_every_n_in_loop(self):
         """Yield logic appears in research loop at iteration increment."""
         import inspect
+
         from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
 
         source = inspect.getsource(FullyAutonomousOrchestrator.research)
@@ -51,14 +52,18 @@ class TestActionEchoTelemetry:
 
     def test_action_echo_telemetry_in_report(self):
         """PER-ACTION ECHO section appears in generated report."""
-        from hledac.universal.benchmarks.run_sprint82j_benchmark import (
-            BenchmarkResults, E2EBenchmark, BenchmarkConfig,
-            BenchmarkPhaseMetrics, BenchmarkLaneMetrics,
-            BenchmarkMemoryMetrics, BenchmarkAcquisitionMetrics,
-            BenchmarkGatingMetrics, BenchmarkSynthesisMetrics,
-        )
-        from pathlib import Path
         import tempfile
+        from pathlib import Path
+
+        from hledac.universal.benchmarks.run_sprint82j_benchmark import (
+            BenchmarkAcquisitionMetrics,
+            BenchmarkConfig,
+            BenchmarkGatingMetrics,
+            BenchmarkMemoryMetrics,
+            BenchmarkResults,
+            BenchmarkSynthesisMetrics,
+            E2EBenchmark,
+        )
 
         r = BenchmarkResults()
         r.action_echo_telemetry = {
@@ -81,7 +86,7 @@ class TestActionEchoTelemetry:
             # _generate_report returns str, not list
             assert 'PER-ACTION ECHO' in report, f"PER-ACTION ECHO section not found. First 200 chars: {report[:200]!r}"
             # Check for surface_search data line
-            assert 'surface_search' in report, f"surface_search not found in report"
+            assert 'surface_search' in report, "surface_search not found in report"
 
 
 class TestYieldCountersUpdated:

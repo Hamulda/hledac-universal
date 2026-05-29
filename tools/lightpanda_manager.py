@@ -11,7 +11,6 @@ import asyncio
 import hashlib
 import os
 import re
-from typing import Optional
 
 import aiohttp
 
@@ -22,8 +21,9 @@ try:
 except ImportError:
     NODRIVER_AVAILABLE = False
 
-from hledac.universal.paths import DB_ROOT
 import logging
+
+from hledac.universal.paths import DB_ROOT
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +34,7 @@ class LightpandaManager:
     """Manages Lightpanda headless browser for JS-heavy page rendering."""
 
     def __init__(self):
-        self._proc: Optional[asyncio.subprocess.Process] = None
+        self._proc: asyncio.subprocess.Process | None = None
         self._endpoint = os.environ.get(
             "CDP_ENDPOINT", "ws://127.0.0.1:9222"
         )
@@ -112,7 +112,7 @@ class LightpandaManager:
             raise ValueError(f"Unsafe JS expression rejected: {expr!r}")
         return expr
 
-    async def fetch_js(self, url: str, proxy: Optional[str] = None) -> bytes:
+    async def fetch_js(self, url: str, proxy: str | None = None) -> bytes:
         """Fetch URL with JS rendering using nodriver."""
         if not NODRIVER_AVAILABLE:
             logger.warning("[LIGHTPANDA] nodriver not installed, falling back")
@@ -120,7 +120,7 @@ class LightpandaManager:
 
         await self.ensure_running()
 
-        from nodriver import start, Config
+        from nodriver import Config, start
 
         config = Config(browserWSEndpoint=self._endpoint)
         browser = await start(config)
@@ -136,7 +136,7 @@ class LightpandaManager:
             content = await tab.evaluate(js_expr)
             await browser.stop()
             return content.encode()
-        except Exception as e:
+        except Exception:
             await browser.stop()
             raise
 

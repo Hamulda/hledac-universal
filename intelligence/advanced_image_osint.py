@@ -23,12 +23,9 @@ from __future__ import annotations
 
 import hashlib
 import io
-import itertools
-import json
 import logging
-import struct
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any
 
 import numpy as np
 
@@ -64,8 +61,8 @@ class OCRResult:
     """OCR extraction result."""
     text: str
     confidence: float
-    language: Optional[str]
-    regions: List[Dict[str, Any]]  # Bounding boxes with text
+    language: str | None
+    regions: list[dict[str, Any]]  # Bounding boxes with text
     processing_time_ms: float
 
 
@@ -77,8 +74,8 @@ class SteganalysisResult:
     chi_square_p: float
     ela_score: float
     hidden_data_detected: bool
-    suspicious_patterns: List[str]
-    visual_artifacts: Optional[np.ndarray] = None  # ELA image
+    suspicious_patterns: list[str]
+    visual_artifacts: np.ndarray | None = None  # ELA image
 
 
 @dataclass
@@ -86,20 +83,20 @@ class ImageAnalysis:
     """Complete image analysis result."""
     file_hash: str
     image_hash: ImageHash
-    dimensions: Tuple[int, int]
+    dimensions: tuple[int, int]
     format: str
     mode: str
     exif_available: bool
 
     # Analysis results
-    ocr_result: Optional[OCRResult] = None
-    steganalysis: Optional[SteganalysisResult] = None
-    similar_images: List[str] = field(default_factory=list)
-    extracted_text: List[str] = field(default_factory=list)
+    ocr_result: OCRResult | None = None
+    steganalysis: SteganalysisResult | None = None
+    similar_images: list[str] = field(default_factory=list)
+    extracted_text: list[str] = field(default_factory=list)
 
     # Metadata
-    creation_software: Optional[str] = None
-    modification_history: List[str] = field(default_factory=list)
+    creation_software: str | None = None
+    modification_history: list[str] = field(default_factory=list)
 
 
 class PerceptualHashGenerator:
@@ -216,7 +213,7 @@ class PerceptualHashGenerator:
         bin1 = bin(int(hash1, 16))[2:].zfill(len(hash1) * 4)
         bin2 = bin(int(hash2, 16))[2:].zfill(len(hash2) * 4)
 
-        return sum(c1 != c2 for c1, c2 in zip(bin1, bin2))
+        return sum(c1 != c2 for c1, c2 in zip(bin1, bin2, strict=False))
 
     def similarity(self, hash1: ImageHash, hash2: ImageHash) -> float:
         """Calculate similarity score between two image hashes (0-1)."""
@@ -233,7 +230,7 @@ class PerceptualHashGenerator:
 
         # Weighted average (pHash is most reliable)
         weights = [0.2, 0.4, 0.25, 0.15]
-        similarity = sum(s * w for s, w in zip(normalized, weights))
+        similarity = sum(s * w for s, w in zip(normalized, weights, strict=False))
 
         return max(0.0, min(1.0, similarity))
 
@@ -443,7 +440,7 @@ class AdvancedSteganalysis:
         self,
         image: Image.Image,
         quality: int = 90
-    ) -> Tuple[float, Optional[np.ndarray]]:
+    ) -> tuple[float, np.ndarray | None]:
         """
         Perform Error Level Analysis (ELA).
 
@@ -486,10 +483,10 @@ class ImageSearchEngine:
 
     def __init__(self, hash_size: int = 8):
         self.hash_generator = PerceptualHashGenerator(hash_size)
-        self.index: Dict[str, ImageHash] = {}
-        self.metadata: Dict[str, Dict[str, Any]] = {}
+        self.index: dict[str, ImageHash] = {}
+        self.metadata: dict[str, dict[str, Any]] = {}
 
-    def add_image(self, image_id: str, image: Image.Image, metadata: Optional[Dict] = None):
+    def add_image(self, image_id: str, image: Image.Image, metadata: dict | None = None):
         """Add image to search index."""
         image_hash = self.hash_generator.compute_hash(image)
         self.index[image_id] = image_hash
@@ -499,7 +496,7 @@ class ImageSearchEngine:
         self,
         query_image: Image.Image,
         threshold: float = 0.85
-    ) -> List[Tuple[str, float]]:
+    ) -> list[tuple[str, float]]:
         """
         Search for similar images.
 
@@ -523,7 +520,7 @@ class ImageSearchEngine:
 
         return results
 
-    def find_duplicates(self, threshold: float = 0.95) -> List[Tuple[str, str, float]]:
+    def find_duplicates(self, threshold: float = 0.95) -> list[tuple[str, str, float]]:
         """
         Find duplicate/near-duplicate images in index.
 
@@ -610,12 +607,12 @@ class AdvancedImageOSINT:
             processed = self.ocr_engine.preprocess_for_ocr(img)
             return await self.ocr_engine.extract_text(processed)
 
-    def search_similar(self, image_path: str, threshold: float = 0.85) -> List[Tuple[str, float]]:
+    def search_similar(self, image_path: str, threshold: float = 0.85) -> list[tuple[str, float]]:
         """Search for similar images in index."""
         with Image.open(image_path) as img:
             return self.search_engine.search(img, threshold)
 
-    def add_to_index(self, image_id: str, image_path: str, metadata: Optional[Dict] = None):
+    def add_to_index(self, image_id: str, image_path: str, metadata: dict | None = None):
         """Add image to similarity search index."""
         with Image.open(image_path) as img:
             self.search_engine.add_image(image_id, img, metadata)

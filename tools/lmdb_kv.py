@@ -17,7 +17,6 @@ from __future__ import annotations
 import asyncio
 import logging
 from pathlib import Path
-from typing import Any, Optional
 
 import orjson
 
@@ -115,7 +114,7 @@ class LMDBKVStore:
             )
         logger.info(f"LMDB KV store initialized at {self._path}")
 
-    def get(self, key: str) -> Optional[dict]:
+    def get(self, key: str) -> dict | None:
         """
         Zero-copy get operation.
 
@@ -243,7 +242,7 @@ class LMDBKVStore:
             self._env.close()
             logger.info("LMDB KV store closed")
 
-    def __enter__(self) -> "LMDBKVStore":
+    def __enter__(self) -> LMDBKVStore:
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb) -> None:
@@ -288,7 +287,7 @@ class AsyncLMDBKVStore:
         else:
             raise ImportError("Neither aiolmdb nor lmdb available")
 
-    async def get(self, key: str) -> Optional[dict]:
+    async def get(self, key: str) -> dict | None:
         """Async get operation."""
         key_bytes = key.encode()
 

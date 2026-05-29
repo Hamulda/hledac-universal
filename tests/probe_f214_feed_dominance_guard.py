@@ -6,9 +6,10 @@ Validates the three cases from the task spec:
   case C: feed=100, nonfeed=0, no eligible lanes -> True but no hard block by default
 """
 import sys
+
 sys.path.insert(0, '/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal')
 
-from runtime.sprint_scheduler import FeedDominanceGuard, FeedDominanceGuardResult
+from runtime.sprint_scheduler import FeedDominanceGuard
 
 
 def test_case_a():
@@ -56,7 +57,7 @@ def test_case_c():
         f"C: expected True, got {result.should_recommend_nonfeed_diagnostic}"
     )
     assert result.guard_triggered is True, f"C guard_triggered: {result.guard_triggered}"
-    assert result.block_early_exit is False, f"C block_early_exit should be False (strict=False)"
+    assert result.block_early_exit is False, "C block_early_exit should be False (strict=False)"
     print("PASS case C (default mode)")
 
 
@@ -84,7 +85,7 @@ def test_case_c_strict_allowed():
         feed_accepted=100,
         nonfeed_accepted=5,
     )
-    assert result.block_early_exit is False, f"C strict min_nonfeed: expected block=False"
+    assert result.block_early_exit is False, "C strict min_nonfeed: expected block=False"
     print("PASS case C (strict, nonfeed>=5 — allow)")
 
 
@@ -98,7 +99,7 @@ def test_case_c_strict_terminal():
         eligible_nonfeed_lanes_terminal=True,
         nonfeed_diagnostic_timed_out=False,
     )
-    assert result.block_early_exit is False, f"C strict terminal: expected block=False"
+    assert result.block_early_exit is False, "C strict terminal: expected block=False"
     print("PASS case C (strict, lanes terminal — allow)")
 
 
@@ -112,7 +113,7 @@ def test_case_c_strict_timedout():
         eligible_nonfeed_lanes_terminal=False,
         nonfeed_diagnostic_timed_out=True,
     )
-    assert result.block_early_exit is False, f"C strict timedout: expected block=False"
+    assert result.block_early_exit is False, "C strict timedout: expected block=False"
     print("PASS case C (strict, diagnostic timed out — allow)")
 
 

@@ -1,4 +1,5 @@
 """
+from __future__ import annotations
 MLX Cache - Shared LRU cache for MLX models and semaphore for inference.
 
 Provides:
@@ -12,7 +13,7 @@ import importlib.util
 import logging
 import threading
 from collections import OrderedDict
-from typing import Optional, Tuple, Any
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -35,12 +36,12 @@ def _detect_mlx_available() -> bool:
 MLX_AVAILABLE: bool = _detect_mlx_available()
 
 # LRU cache for MLX models (max 2 models)
-_MLX_CACHE: OrderedDict[str, Tuple[Any, Any]] = OrderedDict()
+_MLX_CACHE: Ordereddict[str, tuple[Any, Any]] = OrderedDict()
 _MLX_CACHE_MAX = 2
 
 # Lazy locks
-_MLX_CACHE_LOCK: Optional[asyncio.Lock] = None
-_MLX_SEMAPHORE: Optional[asyncio.Semaphore] = None
+_MLX_CACHE_LOCK: asyncio.Lock | None = None
+_MLX_SEMAPHORE: asyncio.Semaphore | None = None
 
 # Synchronní lock pro evict_all (nezávislý na asyncio lock)
 _MLX_EVICT_LOCK = threading.Lock()
@@ -70,7 +71,7 @@ def get_mlx_semaphore() -> asyncio.Semaphore:
     return _MLX_SEMAPHORE
 
 
-async def get_mlx_model(model_name: str) -> Tuple[Any, Any]:
+async def get_mlx_model(model_name: str) -> tuple[Any, Any]:
     """
     Get MLX model and tokenizer from cache or load from disk.
 
@@ -200,12 +201,12 @@ _MLX_METAL_LIMITS_LOCK = threading.Lock()
 _MLX_INITIALIZED = False
 
 # Diagnostic surface for setter failures
-_last_setter_error: Optional[str] = None
-_cache_limit_actual: Optional[int] = None
-_wired_limit_actual: Optional[int] = None
+_last_setter_error: str | None = None
+_cache_limit_actual: int | None = None
+_wired_limit_actual: int | None = None
 
 
-def _format_limit_mib(value: Optional[int]) -> str:
+def _format_limit_mib(value: int | None) -> str:
     """Format a memory limit in MiB for safe logging."""
     if value is None:
         return "unavailable"
@@ -451,8 +452,8 @@ def mlx_cleanup_aggressive() -> None:
 
 def mlx_cleanup_decorator(aggressive: bool = False):
     """Dekorátor pro async i sync funkce – přidá cleanup po dokončení."""
-    import functools
     import asyncio
+    import functools
     import inspect
 
     def decorator(func):

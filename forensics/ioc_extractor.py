@@ -8,20 +8,19 @@ Rust bindings for:
 Falls back to pure Python if Rust extension unavailable.
 """
 
-from typing import List, Tuple
 
 try:
     from hledac_rust_extensions import (
+        batch_dedup_urls,
         fast_ioc_extract,
         url_normalize,
-        batch_dedup_urls,
     )
     RUST_IOC_AVAILABLE = True
 except ImportError:
     RUST_IOC_AVAILABLE = False
 
     import re
-    from urllib.parse import urlencode, urlparse, parse_qsl
+    from urllib.parse import parse_qsl, urlencode, urlparse
 
     _IPV4_RE = re.compile(
         r"\b(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}"
@@ -41,7 +40,7 @@ except ImportError:
         "fbclid", "gclid", "mc_cid", "mc_eid", "ref", "ref_src", "ref_url",
     }
 
-    def fast_ioc_extract(text: str) -> List[Tuple[str, str]]:
+    def fast_ioc_extract(text: str) -> list[tuple[str, str]]:
         iocs = []
         seen = set()
 
@@ -130,7 +129,7 @@ except ImportError:
 
         return result
 
-    def batch_dedup_urls(urls: List[str]) -> List[str]:
+    def batch_dedup_urls(urls: list[str]) -> list[str]:
         seen = set()
         result = []
         for url in urls:

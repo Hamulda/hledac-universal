@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -115,7 +114,7 @@ class TestContentMinerLinkExtraction:
 
     def test_extracts_links_via_selectolax(self, minimal_html: str) -> None:
         """selectolax CSS selector 'a' extracts hrefs correctly."""
-        from tools.content_miner import RustMiner, SELECTOLAX_AVAILABLE
+        from tools.content_miner import SELECTOLAX_AVAILABLE, RustMiner
 
         if not SELECTOLAX_AVAILABLE:
             pytest.skip("selectolax not available")
@@ -130,7 +129,7 @@ class TestContentMinerLinkExtraction:
 
     def test_skips_javascript_links(self, minimal_html: str) -> None:
         """Links starting with javascript: are skipped."""
-        from tools.content_miner import RustMiner, SELECTOLAX_AVAILABLE
+        from tools.content_miner import SELECTOLAX_AVAILABLE, RustMiner
 
         if not SELECTOLAX_AVAILABLE:
             pytest.skip("selectolax not available")
@@ -144,7 +143,7 @@ class TestContentMinerLinkExtraction:
 
     def test_max_links_respected(self, minimal_html: str) -> None:
         """max_links cap is enforced."""
-        from tools.content_miner import RustMiner, SELECTOLAX_AVAILABLE
+        from tools.content_miner import SELECTOLAX_AVAILABLE, RustMiner
 
         if not SELECTOLAX_AVAILABLE:
             pytest.skip("selectolax not available")
@@ -155,7 +154,7 @@ class TestContentMinerLinkExtraction:
 
     def test_malformed_html_tolerance(self, malformed_html: str) -> None:
         """lol_html (selectolax backend) handles malformed HTML without raising."""
-        from tools.content_miner import RustMiner, SELECTOLAX_AVAILABLE
+        from tools.content_miner import SELECTOLAX_AVAILABLE, RustMiner
 
         if not SELECTOLAX_AVAILABLE:
             pytest.skip("selectolax not available")

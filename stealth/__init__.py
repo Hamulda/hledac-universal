@@ -6,10 +6,9 @@ Obsahuje:
 """
 
 # Canonical exports — stealth_session.py is the canonical stealth surface
-from .stealth_session import StealthSession, StealthResponse
-
 # Full system (for advanced use)
 from .stealth_manager import StealthManager
+from .stealth_session import StealthResponse, StealthSession
 
 __all__ = [
     # Canonical

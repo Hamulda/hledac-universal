@@ -8,15 +8,15 @@ High-speed text analysis utilities for security research.
 UNICODE_ANALYZER_AVAILABLE = False
 try:
     from .unicode_analyzer import (
-        UnicodeConfig,
-        UnicodeAttackAnalyzer,
-        UnicodeAnalysisResult,
-        ZeroWidthFinding,
-        HomoglyphFinding,
         BidiFinding,
+        HomoglyphFinding,
         NormalizationFinding,
-        create_unicode_analyzer,
+        UnicodeAnalysisResult,
+        UnicodeAttackAnalyzer,
+        UnicodeConfig,
+        ZeroWidthFinding,
         create_and_initialize_unicode_analyzer,
+        create_unicode_analyzer,
     )
     UNICODE_ANALYZER_AVAILABLE = True
 except ImportError:
@@ -35,9 +35,9 @@ ENCODING_DETECTOR_AVAILABLE = False
 try:
     from .encoding_detector import (
         BaseEncodingDetector,
-        EncodingFinding,
         EncodingChain,
         EncodingConfig,
+        EncodingFinding,
         create_encoding_detector,
         detect_encodings,
     )
@@ -54,10 +54,10 @@ except ImportError:
 HASH_IDENTIFIER_AVAILABLE = False
 try:
     from .hash_identifier import (
+        HashConfig,
+        HashFinding,
         HashIdentifier,
         HashMatch,
-        HashFinding,
-        HashConfig,
         create_hash_identifier,
         identify_hash,
     )

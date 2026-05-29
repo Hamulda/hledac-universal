@@ -22,7 +22,7 @@ import gc
 import logging
 import time as _time
 from contextlib import nullcontext
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from types import ModuleType
@@ -32,7 +32,6 @@ logger = logging.getLogger(__name__)
 # Sprint F207N-C: Canonical threshold import — single source of truth.
 # Fail-open: if uma_budget is unavailable, fall back to safe defaults.
 try:
-    from .uma_budget import UMA_WARN_GIB, UMA_CRITICAL_GIB
 
     # MLX budget is a conservative fraction of total UMA (6.0 GiB warn threshold).
     # WARNING at 80% of MLX budget (~4.0 GiB), CRITICAL at 90% (~4.5 GiB).
@@ -47,8 +46,8 @@ except Exception:
     MAX_MEMORY_MB = 6_250
 
 # Lazy availability singleton
-_MLX_AVAILABLE: Optional[bool] = None
-_mlx_core: Optional["ModuleType"] = None
+_MLX_AVAILABLE: bool | None = None
+_mlx_core: ModuleType | None = None
 
 
 def _ensure_mlx() -> bool:
@@ -105,7 +104,7 @@ def clear_mlx_cache() -> bool:
         return False
 
 
-def get_mlx_active_memory_mb() -> Optional[int]:
+def get_mlx_active_memory_mb() -> int | None:
     """Aktuální aktivní MLX paměť v MB, nebo None pokud nedostupné."""
     mx_core = _get_mlx_core()
     if mx_core is None:
@@ -121,7 +120,7 @@ def get_mlx_active_memory_mb() -> Optional[int]:
     return None
 
 
-def get_mlx_peak_memory_mb() -> Optional[int]:
+def get_mlx_peak_memory_mb() -> int | None:
     """Peak MLX paměť v MB, nebo None pokud nedostupné."""
     mx_core = _get_mlx_core()
     if mx_core is None:
@@ -137,7 +136,7 @@ def get_mlx_peak_memory_mb() -> Optional[int]:
     return None
 
 
-def get_mlx_cache_memory_mb() -> Optional[int]:
+def get_mlx_cache_memory_mb() -> int | None:
     """MLX cache paměť v MB, nebo None pokud nedostupné."""
     mx_core = _get_mlx_core()
     if mx_core is None:

@@ -21,7 +21,6 @@ import ctypes.util
 import logging
 import platform
 import subprocess
-from typing import Optional
 
 __all__ = [
     "get_thermal_state",
@@ -44,8 +43,8 @@ _THERMAL_LEVELS = {
 }
 
 # Lazy singleton for process handle
-_PDL_INITIALIZED: Optional[bool] = None
-_PDL_HANDLE: Optional[ctypes.c_int] = None
+_PDL_INITIALIZED: bool | None = None
+_PDL_HANDLE: ctypes.c_int | None = None
 
 
 def _get_pdl_handle():

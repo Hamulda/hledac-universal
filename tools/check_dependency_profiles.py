@@ -34,8 +34,6 @@ import subprocess
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional
-
 
 # Project root = parent of tools/
 _PROJECT_ROOT = Path(__file__).parent.parent.resolve()
@@ -52,9 +50,9 @@ class ProfileCheck:
     uv_sync_args: list[str] = field(default_factory=list)
     import_smoke: list[str] = field(default_factory=list)
     # Python expression; skip if evaluates to True
-    skip_guard: Optional[str] = None
+    skip_guard: str | None = None
     # Post-sync verification (no sync needed)
-    verify_fn: Optional[str] = None
+    verify_fn: str | None = None
 
 
 SYNC_PROFILES: dict[str, ProfileCheck] = {

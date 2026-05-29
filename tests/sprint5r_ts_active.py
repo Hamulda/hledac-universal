@@ -3,15 +3,15 @@
 Sprint 5R: TS Active Mode 60s Benchmark
 """
 import asyncio
+import random
 import sys
 import time
-import random
 
 sys.path.insert(0, '/Users/vojtechhamada/PycharmProjects/Hledac')
 
 async def run_ts_active():
     from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
-    from hledac.universal.knowledge.atomic_storage import EvidencePacketStorage, EvidencePacket
+    from hledac.universal.knowledge.atomic_storage import EvidencePacket, EvidencePacketStorage
 
     print("=" * 60)
     print("[TS ACTIVE] 60s OFFLINE_REPLAY Benchmark")
@@ -25,7 +25,7 @@ async def run_ts_active():
             evidence_id=f"evidence_{i}",
             url=f"http://localhost:{64000+i}/test",
             final_url=f"http://localhost:{64000+i}/test",
-            domain=f"localhost",
+            domain="localhost",
             fetched_at=time.time() - (i * 86400),
             status=200,
             headers_digest="abc123",
@@ -72,7 +72,7 @@ async def run_ts_active():
 
     # Action distribution
     action_counts = result.get('action_selection_counts', {})
-    total_actions = sum(action_counts.values()) if action_counts else 1
+    sum(action_counts.values()) if action_counts else 1
 
     # Gini coefficient
     def gini(counts):

@@ -24,11 +24,9 @@ Safety invariants:
 
 from __future__ import annotations
 
-import asyncio
 from typing import TYPE_CHECKING
 
 from .nonfeed_seed_extractor import (
-    SeedQuality,
     classify_seed_quality,
     extract_nonfeed_seeds_from_findings,
     extract_nonfeed_seeds_from_text,
@@ -168,9 +166,9 @@ def _compute_lanes_unlocked(
 
 async def run_runtime_pivot_prelude(
     query: str,
-    duckdb_store: "DuckDBShadowStore | None",
+    duckdb_store: DuckDBShadowStore | None,
     nonfeed_diagnostic_active: bool,
-    existing_findings: "list[dict] | None" = None,
+    existing_findings: list[dict] | None = None,
     acquisition_profile: str = "default",
 ) -> dict:
     """

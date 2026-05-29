@@ -15,7 +15,6 @@ from __future__ import annotations
 import asyncio
 import random
 import time
-from typing import Optional
 
 # QoS class constants (Darwin / macOS)
 QOS_CLASS_USER_INTERACTIVE = 0x21
@@ -72,7 +71,7 @@ class TokenBucket:
         """Dynamically change the refill rate. Thread-safe."""
         self._rate = max(0.0, rate)
 
-    async def acquire(self, timeout: Optional[float] = None) -> bool:
+    async def acquire(self, timeout: float | None = None) -> bool:
         """
         Acquire one token, waiting if necessary.
 

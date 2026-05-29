@@ -28,11 +28,12 @@ import re
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from pathlib import Path
 from enum import Enum
-from typing import Any, Dict, List, Optional, Set, Tuple
+from pathlib import Path
+from typing import Any
+from urllib.parse import quote, urlparse
+
 import aiohttp
-from urllib.parse import quote, unquote, urlparse
 
 # Optional imports for enhanced functionality
 try:
@@ -62,7 +63,7 @@ logger = logging.getLogger(__name__)
 MAX_PAYLOAD_BYTES = 5 * 1024 * 1024  # 5 MiB
 
 
-async def _read_text_with_cap(response: "aiohttp.ClientResponse", cap: int = MAX_PAYLOAD_BYTES) -> str:
+async def _read_text_with_cap(response: aiohttp.ClientResponse, cap: int = MAX_PAYLOAD_BYTES) -> str:
     """Read response text with payload cap for M1 RAM safety."""
     # Read up to cap bytes; if content exceeds cap, truncate/abort
     try:
@@ -129,13 +130,13 @@ class ResurrectionResult:
     request_id: str
     original_url: str
     success: bool
-    best_snapshot: Optional[Snapshot]
-    all_snapshots: List[Snapshot]
-    content: Optional[str]
-    title: Optional[str]
-    author: Optional[str]
-    published_date: Optional[datetime]
-    extracted_metadata: Dict[str, Any]
+    best_snapshot: Snapshot | None
+    all_snapshots: list[Snapshot]
+    content: str | None
+    title: str | None
+    author: str | None
+    published_date: datetime | None
+    extracted_metadata: dict[str, Any]
     processing_time: float
 
 
@@ -144,7 +145,7 @@ class ResurrectionRequest:
     """Request for content resurrection (from stealth_osint integration)"""
     request_id: str
     url: str
-    target_date: Optional[datetime]
+    target_date: datetime | None
     min_quality: float
     extract_metadata: bool
     created_at: datetime
@@ -160,13 +161,13 @@ class ArchiveResult:
     url: str
     title: str
     source: str  # wayback, archive_today, ipfs, etc.
-    timestamp: Optional[datetime] = None
-    content: Optional[str] = None
+    timestamp: datetime | None = None
+    content: str | None = None
     content_type: str = "text/html"
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
     available: bool = True
-    
-    def to_dict(self) -> Dict[str, Any]:
+
+    def to_dict(self) -> dict[str, Any]:
         return {
             "url": self.url,
             "title": self.title,
@@ -196,14 +197,14 @@ class CDXSnapshot:
     status_code: str
     digest: str
     length: str
-    
+
     @property
     def wayback_url(self) -> str:
         """Get Wayback Machine URL for this snapshot."""
         return f"https://web.archive.org/web/{self.timestamp}/{self.original_url}"
-    
+
     @property
-    def datetime(self) -> Optional[datetime]:
+    def datetime(self) -> datetime | None:
         """Parse timestamp as datetime."""
         try:
             return datetime.strptime(self.timestamp, "%Y%m%d%H%M%S")
@@ -215,31 +216,31 @@ class CDXSnapshot:
 class DiscoveredEndpoint:
     """Discovered endpoint with metadata."""
     url: str
-    title: Optional[str] = None
+    title: str | None = None
     confidence_score: float = 0.0
     discovery_method: str = "unknown"
-    file_type: Optional[str] = None
+    file_type: str | None = None
     path: str = ""
-    source_url: Optional[str] = None
-    tech_stack: Optional[Dict[str, Any]] = None
-    last_modified: Optional[str] = None
-    size_bytes: Optional[int] = None
-    archive_source: Optional[str] = None
-    
+    source_url: str | None = None
+    tech_stack: dict[str, Any] | None = None
+    last_modified: str | None = None
+    size_bytes: int | None = None
+    archive_source: str | None = None
+
     def __post_init__(self):
         if not self.path and self.url:
             parsed = urlparse(self.url)
             self.path = parsed.path
-    
+
     @property
     def is_archived(self) -> bool:
         return self.archive_source is not None
-    
+
     @property
     def domain(self) -> str:
         return urlparse(self.url).netloc
-    
-    def to_dict(self) -> Dict[str, Any]:
+
+    def to_dict(self) -> dict[str, Any]:
         return {
             'url': self.url,
             'title': self.title,
@@ -253,36 +254,36 @@ class DiscoveredEndpoint:
 
 class WaybackMachineClient:
     """Client for Internet Archive Wayback Machine."""
-    
+
     BASE_URL = "https://web.archive.org"
     CDX_API = "https://web.archive.org/cdx/search/cdx"
-    
+
     def __init__(self, timeout: float = 30.0):
         self.timeout = timeout
         self.session = None
-    
+
     async def __aenter__(self):
         import aiohttp
         self.session = aiohttp.ClientSession()
         return self
-    
+
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         if self.session:
             await self.session.close()
             self.session = None
-    
+
     async def get_snapshots(
         self,
         url: str,
-        from_date: Optional[str] = None,
-        to_date: Optional[str] = None,
+        from_date: str | None = None,
+        to_date: str | None = None,
         limit: int = 10
-    ) -> List[SnapshotInfo]:
+    ) -> list[SnapshotInfo]:
         """Get list of snapshots for a URL."""
         if not self.session:
             import aiohttp
             self.session = aiohttp.ClientSession()
-        
+
         params = {
             "url": url,
             "output": "json",
@@ -290,12 +291,12 @@ class WaybackMachineClient:
             "collapse": "digest",
             "limit": str(limit),
         }
-        
+
         if from_date:
             params["from"] = from_date
         if to_date:
             params["to"] = to_date
-        
+
         try:
             async with self.session.get(
                 self.CDX_API,
@@ -305,15 +306,15 @@ class WaybackMachineClient:
                 if response.status != 200:
                     logger.warning(f"Wayback CDX API returned {response.status}")
                     return []
-                
+
                 data = await response.json()
                 snapshots = []
-                
+
                 for row in data[1:]:  # Skip header
                     if len(row) >= 5:
                         timestamp_str = row[0]
                         timestamp = datetime.strptime(timestamp_str, "%Y%m%d%H%M%S")
-                        
+
                         snapshots.append(SnapshotInfo(
                             timestamp=timestamp,
                             url=row[1],
@@ -321,30 +322,30 @@ class WaybackMachineClient:
                             digest=row[3],
                             length=int(row[4]) if row[4].isdigit() else 0
                         ))
-                
+
                 return snapshots
-                
+
         except Exception as e:
             logger.error(f"Wayback snapshots error: {e}")
             return []
-    
+
     async def get_snapshot_content(
         self,
         url: str,
-        timestamp: Optional[datetime] = None
-    ) -> Optional[ArchiveResult]:
+        timestamp: datetime | None = None
+    ) -> ArchiveResult | None:
         """Get content of a specific snapshot."""
         if not self.session:
             import aiohttp
             self.session = aiohttp.ClientSession()
-        
+
         try:
             if timestamp:
                 ts_str = timestamp.strftime("%Y%m%d%H%M%S")
                 archive_url = f"{self.BASE_URL}/web/{ts_str}/{url}"
             else:
                 archive_url = f"{self.BASE_URL}/web/{url}"
-            
+
             async with self.session.get(
                 archive_url,
                 timeout=aiohttp.ClientTimeout(total=self.timeout),
@@ -353,7 +354,7 @@ class WaybackMachineClient:
                 if response.status == 200:
                     content = await _read_text_with_cap(response)
                     title = self._extract_title(content) or f"Snapshot of {url}"
-                    
+
                     return ArchiveResult(
                         url=archive_url,
                         title=title,
@@ -366,12 +367,12 @@ class WaybackMachineClient:
                 else:
                     logger.warning(f"Wayback content returned {response.status}")
                     return None
-                    
+
         except Exception as e:
             logger.error(f"Wayback content error: {e}")
             return None
-    
-    def _extract_title(self, html: str) -> Optional[str]:
+
+    def _extract_title(self, html: str) -> str | None:
         """Extract title from HTML."""
         import re
         match = re.search(r"<title[^>]*>([^<]+)</title>", html, re.IGNORECASE)
@@ -380,32 +381,32 @@ class WaybackMachineClient:
 
 class ArchiveTodayClient:
     """Client for Archive.today / archive.ph."""
-    
+
     BASE_URL = "https://archive.today"
-    
+
     def __init__(self, timeout: float = 30.0):
         self.timeout = timeout
         self.session = None
-    
+
     async def __aenter__(self):
         import aiohttp
         self.session = aiohttp.ClientSession()
         return self
-    
+
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         if self.session:
             await self.session.close()
             self.session = None
-    
-    async def search(self, url: str) -> List[ArchiveResult]:
+
+    async def search(self, url: str) -> list[ArchiveResult]:
         """Search for archived versions on Archive.today."""
         if not self.session:
             import aiohttp
             self.session = aiohttp.ClientSession()
-        
+
         try:
             search_url = f"{self.BASE_URL}/search/?q={quote(url)}"
-            
+
             async with self.session.get(
                 search_url,
                 timeout=aiohttp.ClientTimeout(total=self.timeout)
@@ -415,19 +416,19 @@ class ArchiveTodayClient:
                     return self._parse_search_results(html, url)
                 else:
                     return []
-                    
+
         except Exception as e:
             logger.error(f"Archive.today search error: {e}")
             return []
-    
-    def _parse_search_results(self, html: str, original_url: str) -> List[ArchiveResult]:
+
+    def _parse_search_results(self, html: str, original_url: str) -> list[ArchiveResult]:
         """Parse Archive.today search results."""
         import re
         results = []
-        
+
         pattern = r'href="(https://archive\.today/[^"]+)"[^>]*>([^<]+)'
         matches = re.findall(pattern, html)
-        
+
         for archive_url, title in matches[:5]:
             results.append(ArchiveResult(
                 url=archive_url,
@@ -435,51 +436,51 @@ class ArchiveTodayClient:
                 source="archive_today",
                 metadata={"original_url": original_url}
             ))
-        
+
         return results
 
 
 class IPFSClient:
     """Client for IPFS gateways."""
-    
+
     GATEWAYS = [
         "https://ipfs.io/ipfs/",
         "https://gateway.ipfs.io/ipfs/",
         "https://cloudflare-ipfs.com/ipfs/",
         "https://dweb.link/ipfs/",
     ]
-    
+
     def __init__(self, timeout: float = 30.0):
         self.timeout = timeout
         self.session = None
-    
+
     async def __aenter__(self):
         import aiohttp
         self.session = aiohttp.ClientSession()
         return self
-    
+
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         if self.session:
             await self.session.close()
             self.session = None
-    
-    async def fetch_content(self, cid: str) -> Optional[ArchiveResult]:
+
+    async def fetch_content(self, cid: str) -> ArchiveResult | None:
         """Fetch content from IPFS by CID."""
         if not self.session:
             import aiohttp
             self.session = aiohttp.ClientSession()
-        
+
         for gateway in self.GATEWAYS:
             try:
                 url = f"{gateway}{cid}"
-                
+
                 async with self.session.get(
                     url,
                     timeout=aiohttp.ClientTimeout(total=self.timeout)
                 ) as response:
                     if response.status == 200:
                         content = await _read_text_with_cap(response)
-                        
+
                         return ArchiveResult(
                             url=url,
                             title=f"IPFS: {cid[:20]}...",
@@ -488,52 +489,52 @@ class IPFSClient:
                             content_type=response.headers.get("Content-Type", "text/html"),
                             metadata={"cid": cid, "gateway": gateway}
                         )
-                        
+
             except Exception as e:
                 logger.debug(f"IPFS gateway {gateway} failed: {e}")
                 continue
-        
+
         return None
 
 
 class GitHubHistoricalClient:
     """Client for GitHub historical commits."""
-    
+
     API_BASE = "https://api.github.com"
-    
-    def __init__(self, token: Optional[str] = None, timeout: float = 30.0):
+
+    def __init__(self, token: str | None = None, timeout: float = 30.0):
         self.token = token
         self.timeout = timeout
         self.session = None
-    
+
     async def __aenter__(self):
         import aiohttp
         headers = {}
         if self.token:
             headers["Authorization"] = f"token {self.token}"
-        
+
         self.session = aiohttp.ClientSession(headers=headers)
         return self
-    
+
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         if self.session:
             await self.session.close()
             self.session = None
-    
+
     async def get_file_history(
         self,
         repo: str,
         path: str,
         limit: int = 10
-    ) -> List[ArchiveResult]:
+    ) -> list[ArchiveResult]:
         """Get historical versions of a file from GitHub."""
         if not self.session:
             await self.__aenter__()
-        
+
         try:
             url = f"{self.API_BASE}/repos/{repo}/commits"
             params = {"path": path, "per_page": limit}
-            
+
             async with self.session.get(
                 url,
                 params=params,
@@ -541,12 +542,12 @@ class GitHubHistoricalClient:
             ) as response:
                 if response.status == 200:
                     commits = await response.json()
-                    
+
                     results = []
                     for commit in commits:
                         commit_data = commit.get("commit", {})
                         author_data = commit_data.get("author", {})
-                        
+
                         timestamp_str = author_data.get("date")
                         if timestamp_str:
                             timestamp = datetime.fromisoformat(
@@ -554,7 +555,7 @@ class GitHubHistoricalClient:
                             )
                         else:
                             timestamp = None
-                        
+
                         results.append(ArchiveResult(
                             url=commit.get("html_url", ""),
                             title=f"{commit_data.get('message', 'No message')[:50]}...",
@@ -567,12 +568,12 @@ class GitHubHistoricalClient:
                                 "path": path,
                             }
                         ))
-                    
+
                     return results
                 else:
                     logger.warning(f"GitHub API returned {response.status}")
                     return []
-                    
+
         except Exception as e:
             logger.error(f"GitHub history error: {e}")
             return []
@@ -581,45 +582,45 @@ class GitHubHistoricalClient:
 class ArchiveDiscovery:
     """
     Main archive discovery orchestrator.
-    
+
     Combines multiple archival sources for comprehensive
     historical content discovery.
     """
-    
+
     def __init__(
         self,
         wayback_timeout: float = 30.0,
         archive_today_timeout: float = 30.0,
         ipfs_timeout: float = 30.0,
-        github_token: Optional[str] = None
+        github_token: str | None = None
     ):
         self.wayback = WaybackMachineClient(wayback_timeout)
         self.archive_today = ArchiveTodayClient(archive_today_timeout)
         self.ipfs = IPFSClient(ipfs_timeout)
         self.github = GitHubHistoricalClient(github_token)
-    
+
     async def search_url(
         self,
         url: str,
-        sources: Optional[List[str]] = None,
+        sources: list[str] | None = None,
         limit_per_source: int = 5
-    ) -> Dict[str, List[ArchiveResult]]:
+    ) -> dict[str, list[ArchiveResult]]:
         """
         Search for archived versions of a URL.
-        
+
         Args:
             url: URL to search
             sources: List of sources (wayback, archive_today, etc.)
             limit_per_source: Maximum results per source
-            
+
         Returns:
             Dictionary of source -> results
         """
         if sources is None:
             sources = ["wayback", "archive_today"]
-        
+
         results = {}
-        
+
         if "wayback" in sources:
             try:
                 async with self.wayback:
@@ -628,7 +629,7 @@ class ArchiveDiscovery:
             except Exception as e:
                 logger.error(f"Wayback search error: {e}")
                 results["wayback"] = []
-        
+
         if "archive_today" in sources:
             try:
                 async with self.archive_today:
@@ -637,19 +638,19 @@ class ArchiveDiscovery:
             except Exception as e:
                 logger.error(f"Archive.today search error: {e}")
                 results["archive_today"] = []
-        
+
         return results
-    
+
     async def get_timeline(
         self,
         url: str,
-        from_date: Optional[datetime] = None,
-        to_date: Optional[datetime] = None
-    ) -> List[ArchiveResult]:
+        from_date: datetime | None = None,
+        to_date: datetime | None = None
+    ) -> list[ArchiveResult]:
         """Get timeline of changes for a URL."""
         from_date_str = from_date.strftime("%Y%m%d") if from_date else None
         to_date_str = to_date.strftime("%Y%m%d") if to_date else None
-        
+
         async with self.wayback:
             snapshots = await self.wayback.get_snapshots(
                 url,
@@ -657,7 +658,7 @@ class ArchiveDiscovery:
                 to_date=to_date_str,
                 limit=50
             )
-            
+
             results = []
             for snapshot in snapshots:
                 results.append(ArchiveResult(
@@ -671,7 +672,7 @@ class ArchiveDiscovery:
                         "length": snapshot.length
                     }
                 ))
-            
+
             return results
 
 
@@ -691,7 +692,7 @@ class ArchiveDiscovery:
 class ArchiveResurrector:
     """
     Advanced web archive content recovery system.
-    
+
     Features:
     - Wayback Machine CDX API integration
     - Search engine cache checking
@@ -699,25 +700,25 @@ class ArchiveResurrector:
     - Content quality assessment
     - Metadata extraction
     - Concurrent processing
-    
+
     Integrated from stealth_osint for universal orchestrator.
     """
-    
+
     # Archive configurations
     WAYBACK_CDX_URL = "https://web.archive.org/cdx/search/cdx"
     WAYBACK_RAW_URL = "https://web.archive.org/web/{timestamp}id_/{url}"
-    
+
     SEARCH_ENGINES = {
         "google": "https://webcache.googleusercontent.com/search?q=cache:",
         "bing": "https://r.jina.ai/http://",
         "yandex": "https://yandexwebcache.net/yandbtm?url=",
     }
-    
+
     SOCIAL_ARCHIVES = {
         "politwoops": "https://politwoops.com/",
         "unreddit": "https://r.jina.ai/http://reddit.com",
     }
-    
+
     # Content patterns for quality assessment
     ERROR_PATTERNS = [
         r"404\s*not\s*found",
@@ -727,7 +728,7 @@ class ArchiveResurrector:
         r"this\s*page\s*is\s*not\s*available",
         r"snapshot\s*cannot\s*be\s*displayed",
     ]
-    
+
     def __init__(
         self,
         min_quality: float = 0.5,
@@ -737,30 +738,30 @@ class ArchiveResurrector:
         self.min_quality = min_quality
         self.max_snapshots = max_snapshots
         self.concurrent_requests = concurrent_requests
-        
+
         # Security components
         self._anonymizer = None
         self._zero_attribution = None
-        
+
         # HTTP session
         self._session = None
-        
+
         # Request tracking
-        self._active_requests: Dict[str, ResurrectionRequest] = {}
-        self._request_history: List[ResurrectionRequest] = []
-        
+        self._active_requests: dict[str, ResurrectionRequest] = {}
+        self._request_history: list[ResurrectionRequest] = []
+
         # Performance metrics
         self._resurrections_attempted = 0
         self._resurrections_successful = 0
         self._snapshots_found = 0
-        
+
         logger.info("ArchiveResurrector initialized")
-    
+
     async def initialize(self) -> bool:
         """Initialize security components and HTTP session"""
         try:
             import aiohttp
-            
+
             # Initialize security components
             if SECURITY_AVAILABLE:
                 try:
@@ -768,7 +769,7 @@ class ArchiveResurrector:
                     self._zero_attribution = ZeroAttributionEngine()
                 except Exception as e:
                     logger.warning(f"Security components not available: {e}")
-            
+
             # Create HTTP session
             self._session = aiohttp.ClientSession(
                 headers={
@@ -777,25 +778,25 @@ class ArchiveResurrector:
                 },
                 timeout=aiohttp.ClientTimeout(total=60)
             )
-            
+
             logger.info("✅ ArchiveResurrector initialized")
             return True
         except Exception as e:
             logger.error(f"❌ Initialization failed: {e}")
             return False
-    
+
     async def resurrect(
         self,
         url: str,
-        target_date: Optional[datetime] = None,
-        min_quality: Optional[float] = None
+        target_date: datetime | None = None,
+        min_quality: float | None = None
     ) -> ResurrectionResult:
         """Resurrect content from web archives."""
         min_quality = min_quality or self.min_quality
         self._resurrections_attempted += 1
-        
+
         request_id = hashlib.sha256(f"{url}:{datetime.now()}".encode()).hexdigest()[:16]
-        
+
         request = ResurrectionRequest(
             request_id=request_id,
             url=url,
@@ -804,16 +805,16 @@ class ArchiveResurrector:
             extract_metadata=True,
             created_at=datetime.now()
         )
-        
+
         self._active_requests[request_id] = request
-        
+
         logger.info(f"🕸️ Resurrecting: {url}")
         start_time = time.monotonic()
-        
+
         try:
             # Find all available snapshots
             snapshots = await self._find_snapshots(url, target_date)
-            
+
             if not snapshots:
                 logger.warning(f"No snapshots found for: {url}")
                 return ResurrectionResult(
@@ -829,15 +830,15 @@ class ArchiveResurrector:
                     extracted_metadata={},
                     processing_time=time.monotonic() - start_time
                 )
-            
+
             self._snapshots_found += len(snapshots)
-            
+
             # Extract content from best snapshots
             results = await self._extract_from_snapshots(snapshots)
-            
+
             # Filter successful extractions
             successful = [r for r in results if r is not None]
-            
+
             if not successful:
                 logger.warning(f"Could not extract content from any snapshot: {url}")
                 return ResurrectionResult(
@@ -853,21 +854,21 @@ class ArchiveResurrector:
                     extracted_metadata={},
                     processing_time=time.monotonic() - start_time
                 )
-            
+
             # Select best content
             best_result = self._select_best_content(successful)
-            
+
             self._resurrections_successful += 1
-            
+
             logger.info(
                 f"✅ Resurrected: {url} "
                 f"(snapshots: {len(snapshots)}, best: {best_result['snapshot'].timestamp})"
             )
-            
+
             # Move to history
             self._request_history.append(request)
             del self._active_requests[request_id]
-            
+
             return ResurrectionResult(
                 request_id=request_id,
                 original_url=url,
@@ -881,7 +882,7 @@ class ArchiveResurrector:
                 extracted_metadata=best_result["metadata"],
                 processing_time=time.monotonic() - start_time
             )
-            
+
         except Exception as e:
             logger.error(f"❌ Resurrection failed: {e}")
             return ResurrectionResult(
@@ -897,45 +898,45 @@ class ArchiveResurrector:
                 extracted_metadata={},
                 processing_time=time.monotonic() - start_time
             )
-    
+
     async def _find_snapshots(
         self,
         url: str,
-        target_date: Optional[datetime]
-    ) -> List[Snapshot]:
+        target_date: datetime | None
+    ) -> list[Snapshot]:
         """Find all available snapshots for URL"""
         snapshots = []
-        
+
         # Apply temporal anonymization
         if self._anonymizer:
             await asyncio.sleep(self._anonymizer.get_random_delay())
-        
+
         # Check Wayback Machine
         wayback_snapshots = await self._check_wayback(url, target_date)
         snapshots.extend(wayback_snapshots)
-        
+
         # Check search engine cache
         cache_snapshots = await self._check_search_cache(url)
         snapshots.extend(cache_snapshots)
-        
+
         # Check social media archives
         social_snapshots = await self._check_social_archive(url)
         snapshots.extend(social_snapshots)
-        
+
         # Sort by timestamp (most recent first)
         snapshots.sort(key=lambda x: x.timestamp, reverse=True)
-        
+
         # Limit to max_snapshots
         return snapshots[:self.max_snapshots]
-    
+
     async def _check_wayback(
         self,
         url: str,
-        target_date: Optional[datetime]
-    ) -> List[Snapshot]:
+        target_date: datetime | None
+    ) -> list[Snapshot]:
         """Check Wayback Machine CDX API for snapshots"""
         snapshots = []
-        
+
         try:
             # Build CDX query
             params = {
@@ -944,16 +945,16 @@ class ArchiveResurrector:
                 "collapse": "digest",
                 "fl": "timestamp,original,mimetype,statuscode,digest,length",
             }
-            
+
             # Add date filter if target date specified
             if target_date:
                 params["from"] = (target_date - timedelta(days=30)).strftime("%Y%m%d")
                 params["to"] = (target_date + timedelta(days=30)).strftime("%Y%m%d")
-            
+
             async with self._session.get(self.WAYBACK_CDX_URL, params=params) as resp:
                 if resp.status == 200:
                     data = await resp.text()
-                    
+
                     # Parse CDX JSON
                     lines = data.strip().split("\n")
                     if len(lines) > 1:
@@ -967,19 +968,19 @@ class ArchiveResurrector:
                                     mimetype = parts[2]
                                     status = parts[3]
                                     length = parts[5]
-                                    
+
                                     # Parse timestamp
                                     timestamp = datetime.strptime(timestamp_str, "%Y%m%d%H%M%S")
-                                    
+
                                     # Determine content type
                                     content_type = self._detect_content_type(mimetype)
-                                    
+
                                     # Build archived URL
                                     archived_url = self.WAYBACK_RAW_URL.format(
                                         timestamp=timestamp_str,
                                         url=original_url
                                     )
-                                    
+
                                     snapshot = Snapshot(
                                         snapshot_id=hashlib.sha256(
                                             f"wayback:{timestamp_str}:{url}".encode()
@@ -994,24 +995,24 @@ class ArchiveResurrector:
                                         available=True
                                     )
                                     snapshots.append(snapshot)
-                                    
+
                             except Exception as e:
                                 logger.debug(f"Failed to parse CDX line: {e}")
                                 continue
-                                
+
         except Exception as e:
             logger.debug(f"Wayback check failed: {e}")
-        
+
         return snapshots
-    
-    async def _check_search_cache(self, url: str) -> List[Snapshot]:
+
+    async def _check_search_cache(self, url: str) -> list[Snapshot]:
         """Check search engine cache for URL"""
         snapshots = []
-        
+
         for engine, cache_url in self.SEARCH_ENGINES.items():
             try:
                 cache_full_url = f"{cache_url}{quote(url)}"
-                
+
                 async with self._session.head(cache_full_url, allow_redirects=True) as resp:
                     if resp.status == 200:
                         snapshot = Snapshot(
@@ -1028,20 +1029,20 @@ class ArchiveResurrector:
                             available=True
                         )
                         snapshots.append(snapshot)
-                        
+
             except Exception as e:
                 logger.debug(f"Cache check failed for {engine}: {e}")
-        
+
         return snapshots
-    
-    async def _check_social_archive(self, url: str) -> List[Snapshot]:
+
+    async def _check_social_archive(self, url: str) -> list[Snapshot]:
         """Check social media archives"""
         snapshots = []
-        
+
         # Check if URL is from social media
         parsed = urlparse(url)
         domain = parsed.netloc.lower()
-        
+
         # Politwoops for Twitter/X
         if any(x in domain for x in ["twitter.com", "x.com", "t.co"]):
             try:
@@ -1062,28 +1063,28 @@ class ArchiveResurrector:
                     snapshots.append(snapshot)
             except Exception as e:
                 logger.debug(f"Politwoops check failed: {e}")
-        
+
         return snapshots
-    
-    def _extract_tweet_id(self, url: str) -> Optional[str]:
+
+    def _extract_tweet_id(self, url: str) -> str | None:
         """Extract tweet ID from Twitter/X URL"""
         patterns = [
             r"twitter\.com/\w+/status/(\d+)",
             r"x\.com/\w+/status/(\d+)",
             r"t\.co/(\w+)",
         ]
-        
+
         for pattern in patterns:
             match = re.search(pattern, url)
             if match:
                 return match.group(1)
-        
+
         return None
-    
+
     def _detect_content_type(self, mimetype: str) -> ContentType:
         """Detect content type from MIME type"""
         mimetype = mimetype.lower()
-        
+
         if "html" in mimetype:
             return ContentType.HTML
         elif "pdf" in mimetype:
@@ -1096,81 +1097,81 @@ class ArchiveResurrector:
             return ContentType.TEXT
         else:
             return ContentType.UNKNOWN
-    
+
     async def _extract_from_snapshots(
         self,
-        snapshots: List[Snapshot]
-    ) -> List[Dict[str, Any]]:
+        snapshots: list[Snapshot]
+    ) -> list[dict[str, Any]]:
         """Extract content from snapshots concurrently"""
         semaphore = asyncio.Semaphore(self.concurrent_requests)
-        
-        async def extract_with_limit(snapshot: Snapshot) -> Optional[Dict[str, Any]]:
+
+        async def extract_with_limit(snapshot: Snapshot) -> dict[str, Any] | None:
             async with semaphore:
                 return await self._extract_snapshot(snapshot)
-        
+
         tasks = [extract_with_limit(s) for s in snapshots]
         results = await asyncio.gather(*tasks, return_exceptions=True)
-        
+
         # Filter out exceptions and None results
         return [r for r in results if r is not None and not isinstance(r, Exception)]
-    
-    async def _extract_snapshot(self, snapshot: Snapshot) -> Optional[Dict[str, Any]]:
+
+    async def _extract_snapshot(self, snapshot: Snapshot) -> dict[str, Any] | None:
         """Extract content from a single snapshot"""
         try:
             # Apply temporal delay
             if self._anonymizer:
                 await asyncio.sleep(self._anonymizer.get_random_delay())
-            
+
             async with self._session.get(snapshot.archived_url) as resp:
                 if resp.status != 200:
                     return None
-                
+
                 content = await resp.text()
-                
+
                 # Check content size
                 if len(content) < 100:
                     return None
-                
+
                 # Check for error pages
                 if self._is_error_page(content):
                     return None
-                
+
                 # Determine content type and quality
                 content_type = snapshot.content_type
                 quality = self._assess_quality(content, content_type)
-                
+
                 # Extract metadata
                 metadata = {}
                 if content_type == ContentType.HTML:
                     metadata = self._extract_metadata_html(content)
-                
+
                 snapshot.quality_score = quality
-                
+
                 return {
                     "snapshot": snapshot,
                     "content": content,
                     "metadata": metadata,
                     "quality": quality
                 }
-                
+
         except Exception as e:
             logger.debug(f"Snapshot extraction failed: {e}")
             return None
-    
+
     def _is_error_page(self, content: str) -> bool:
         """Check if content is an error page"""
         content_lower = content.lower()
-        
+
         for pattern in self.ERROR_PATTERNS:
             if re.search(pattern, content_lower):
                 return True
-        
+
         return False
-    
+
     def _assess_quality(self, content: str, content_type: ContentType) -> float:
         """Assess content quality (0.0-1.0)"""
         score = 0.5  # Base score
-        
+
         # Length factor
         length = len(content)
         if length > 10000:
@@ -1179,20 +1180,20 @@ class ArchiveResurrector:
             score += 0.1
         elif length < 500:
             score -= 0.2
-        
+
         # HTML quality
         if content_type == ContentType.HTML:
             # Check for common content indicators
             if "<article" in content or "<main" in content:
                 score += 0.1
-            
+
             # Check for error indicators
             if self._is_error_page(content):
                 score -= 0.5
-        
+
         return max(0.0, min(1.0, score))
-    
-    def _extract_metadata_html(self, content: str) -> Dict[str, Any]:
+
+    def _extract_metadata_html(self, content: str) -> dict[str, Any]:
         """Extract metadata from HTML content.
 
         Tier 2 migration: selectolax-first → bs4 fallback → regex/stdlib fallback.
@@ -1272,7 +1273,7 @@ class ArchiveResurrector:
 
         return metadata
 
-    def _select_best_content(self, results: List[Dict[str, Any]]) -> Dict[str, Any]:
+    def _select_best_content(self, results: list[dict[str, Any]]) -> dict[str, Any]:
         """Select best content from results"""
         # Sort by quality (best first) and then by timestamp (most recent)
         sorted_results = sorted(
@@ -1280,10 +1281,10 @@ class ArchiveResurrector:
             key=lambda x: (x["quality"], x["snapshot"].timestamp),
             reverse=True
         )
-        
+
         return sorted_results[0]
-    
-    def get_statistics(self) -> Dict[str, Any]:
+
+    def get_statistics(self) -> dict[str, Any]:
         """Get resurrector statistics"""
         return {
             "resurrections_attempted": self._resurrections_attempted,
@@ -1298,7 +1299,7 @@ class ArchiveResurrector:
                 if self._resurrections_attempted > 0 else 0
             ),
         }
-    
+
     async def cleanup(self) -> None:
         """Cleanup resources"""
         if self._session:
@@ -1307,20 +1308,20 @@ class ArchiveResurrector:
 
 
 # Convenience functions
-async def resurrect_url(url: str) -> Optional[str]:
+async def resurrect_url(url: str) -> str | None:
     """Quick resurrect URL and return content."""
     resurrector = ArchiveResurrector()
-    
+
     if await resurrector.initialize():
         result = await resurrector.resurrect(url)
         if result.success:
             return result.content
-    
+
     return None
 
 
 # Global instance
-_archive_resurrector: Optional[ArchiveResurrector] = None
+_archive_resurrector: ArchiveResurrector | None = None
 
 
 def get_archive_resurrector() -> ArchiveResurrector:
@@ -1335,13 +1336,13 @@ def get_archive_resurrector() -> ArchiveResurrector:
 # ORIGINAL Convenience functions
 # =============================================================================
 
-async def search_archives(url: str, limit: int = 5) -> Dict[str, List[ArchiveResult]]:
+async def search_archives(url: str, limit: int = 5) -> dict[str, list[ArchiveResult]]:
     """Search for archived versions of a URL."""
     discovery = ArchiveDiscovery()
     return await discovery.search_url(url, limit_per_source=limit)
 
 
-async def get_wayback_snapshots(url: str, limit: int = 10) -> List[SnapshotInfo]:
+async def get_wayback_snapshots(url: str, limit: int = 10) -> list[SnapshotInfo]:
     """Get Wayback Machine snapshots for a URL."""
     async with WaybackMachineClient() as client:
         return await client.get_snapshots(url, limit=limit)
@@ -1350,7 +1351,7 @@ async def get_wayback_snapshots(url: str, limit: int = 10) -> List[SnapshotInfo]
 async def discover_from_wayback(
     url: str,
     limit: int = 50
-) -> List[DiscoveredEndpoint]:
+) -> list[DiscoveredEndpoint]:
     """Discover historical endpoints from Wayback Machine.
     COMPAT: Tato funkce je archive-discovery wrapper kolem WaybackCDX.
     AUTHORITY: WaybackCDX.get_snapshots() je nízkoúrovňový interface.
@@ -1387,8 +1388,8 @@ async def discover_from_wayback(
 # REMOVAL CONDITION: po přechodu všech call-sites na WaybackCDX
 # =============================================================================
 
-import xxhash
 import orjson
+import xxhash
 
 
 class WaybackCDX:
@@ -1406,7 +1407,7 @@ class WaybackCDX:
         self._last_req = 0.0
         self._session: aiohttp.ClientSession | None = None
 
-    async def __aenter__(self) -> "WaybackCDX":
+    async def __aenter__(self) -> WaybackCDX:
         self._session = aiohttp.ClientSession()
         return self
 
@@ -1474,7 +1475,7 @@ class WaybackCDX:
         # První řádek jsou headers
         headers, rows = raw[0], raw[1:]
         result = [
-            dict(zip(headers, row))
+            dict(zip(headers, row, strict=False))
             for row in rows
             if len(row) > 3 and row[3].startswith("text/") or len(row) <= 3
         ]
@@ -1551,7 +1552,7 @@ class WaybackSnapshot:
     digest: str
 
 
-async def query_wayback(url: str, limit: int = 10) -> List[WaybackSnapshot]:
+async def query_wayback(url: str, limit: int = 10) -> list[WaybackSnapshot]:
     """
     Query Wayback Machine CDX API for snapshots of a URL.
 
@@ -1564,7 +1565,7 @@ async def query_wayback(url: str, limit: int = 10) -> List[WaybackSnapshot]:
     """
     WAYBACK_CDX_API = "https://web.archive.org/cdx/search/cdx"
 
-    results: List[WaybackSnapshot] = []
+    results: list[WaybackSnapshot] = []
     try:
         params = {
             "url": url,
@@ -1607,7 +1608,7 @@ class CommonCrawlSnapshot:
     offset: int
 
 
-async def query_common_crawl(domain: str, limit: int = 10) -> List[CommonCrawlSnapshot]:
+async def query_common_crawl(domain: str, limit: int = 10) -> list[CommonCrawlSnapshot]:
     """
     Query Common Crawl Index for URLs matching a domain.
 
@@ -1620,7 +1621,7 @@ async def query_common_crawl(domain: str, limit: int = 10) -> List[CommonCrawlSn
     """
     CC_INDEX_API = "https://index.commoncrawl.org/collinfo.json"
 
-    results: List[CommonCrawlSnapshot] = []
+    results: list[CommonCrawlSnapshot] = []
     try:
         async with aiohttp.ClientSession() as session:
             async with session.get(CC_INDEX_API, timeout=aiohttp.ClientTimeout(total=15)) as resp:
@@ -1672,9 +1673,9 @@ class GitHubDorkResult:
     """GitHub search result."""
     name: str
     url: str
-    description: Optional[str]
+    description: str | None
     stars: int
-    language: Optional[str]
+    language: str | None
     updated: str
 
 
@@ -1687,7 +1688,7 @@ class GitHubDorkingClient:
     _BASE_URL = "https://api.github.com/search/code"
     _RATE_LIMIT = 6.1  # seconds between requests (10 req/min)
 
-    def __init__(self, token: Optional[str] = None) -> None:
+    def __init__(self, token: str | None = None) -> None:
         self._token = token
         self._last_req = 0.0
 
@@ -1702,12 +1703,12 @@ class GitHubDorkingClient:
         query: str,
         session: aiohttp.ClientSession,
         limit: int = 10,
-    ) -> List[GitHubDorkResult]:
+    ) -> list[GitHubDorkResult]:
         """
         Search GitHub code using advanced operators.
         Example: "leaked password" language:python extension:env
         """
-        results: List[GitHubDorkResult] = []
+        results: list[GitHubDorkResult] = []
         headers = {
             "Accept": "application/vnd.github.v3+json",
         }
@@ -1751,12 +1752,12 @@ class GitHubDorkingClient:
 class PastebinResult:
     """Pastebin scrape result."""
     key: str
-    title: Optional[str]
+    title: str | None
     date: str
     size: int
-    syntax: Optional[str]
+    syntax: str | None
     url: str
-    content_preview: Optional[str] = None
+    content_preview: str | None = None
 
 
 class PastebinMonitorClient:
@@ -1783,9 +1784,9 @@ class PastebinMonitorClient:
         self,
         session: aiohttp.ClientSession,
         limit: int = 100,
-    ) -> List[PastebinResult]:
+    ) -> list[PastebinResult]:
         """Fetch recent public pastes."""
-        results: List[PastebinResult] = []
+        results: list[PastebinResult] = []
         await self._throttle()
         try:
             async with session.get(
@@ -1817,14 +1818,14 @@ class PastebinMonitorClient:
         session: aiohttp.ClientSession,
         keyword: str,
         limit: int = 50,
-    ) -> List[PastebinResult]:
+    ) -> list[PastebinResult]:
         """
         Fetch recent pastes and filter by keyword.
         Used for credential/component leak detection.
         """
         all_pastes = await self.get_recent_pastes(session, limit=limit * 3)
         keyword_lower = keyword.lower()
-        filtered: List[PastebinResult] = []
+        filtered: list[PastebinResult] = []
 
         for paste in all_pastes:
             title = (paste.title or "").lower()

@@ -103,8 +103,8 @@ def _patch_feeds_and_patterns():
     import hledac.universal.discovery.rss_atom_adapter as rss_module
     from hledac.universal.discovery.rss_atom_adapter import FeedEntryHit
     from hledac.universal.patterns import pattern_matcher as pm_module
-    from hledac.universal.pipeline import live_feed_pipeline as lfp_module
     from hledac.universal.patterns.pattern_matcher import PatternHit
+    from hledac.universal.pipeline import live_feed_pipeline as lfp_module
 
     entry_dict = _make_canned_entry()
     canned_entry = FeedEntryHit(
@@ -195,11 +195,11 @@ async def run_benchmark(
     cleanup = _patch_feeds_and_patterns()
 
     # Imports
-    from hledac.universal.knowledge.duckdb_store import DuckDBShadowStore
-    from hledac.universal.pipeline.live_feed_pipeline import async_run_live_feed_pipeline
-
     # Temp store
     import tempfile
+
+    from hledac.universal.knowledge.duckdb_store import DuckDBShadowStore
+    from hledac.universal.pipeline.live_feed_pipeline import async_run_live_feed_pipeline
     tmp = tempfile.mkdtemp(prefix="hledac_bench_probe_")
     db_path = Path(tmp) / "shadow.duckdb"
     store = DuckDBShadowStore(db_path=str(db_path))
@@ -311,7 +311,7 @@ async def run_benchmark(
 
     # ── Print summary ──────────────────────────────────────────────────────
     log(f"\n{'=' * 60}")
-    log(f"BENCHMARK RESULTS — Probe F192E.1")
+    log("BENCHMARK RESULTS — Probe F192E.1")
     log(f"{'=' * 60}")
     log(f"  first_finding_latency_s: {result_dict['first_finding_latency_s']}")
     log(f"  pipeline_elapsed_s:     {result_dict['pipeline_elapsed_s']}")
@@ -331,7 +331,7 @@ async def run_benchmark(
         log(f"FAIL: RSS {rss_peak:.0f}MB exceeds M1 8GB ceiling {M1_8GB_CEILING_MB:.0f}MB")
 
     if uma_peak.get("swap_detected", False):
-        log(f"WARN: Swap detected — UMA pressure on M1 8GB")
+        log("WARN: Swap detected — UMA pressure on M1 8GB")
 
     # Save to output path
     if output_path is None:

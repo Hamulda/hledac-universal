@@ -30,7 +30,7 @@ import json
 import os
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 # Add project root
@@ -263,7 +263,7 @@ def format_markdown(results: dict) -> str:
     lines = [
         "# M1 Embedding Batch Benchmark",
         "",
-        f"**Date**: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}",
+        f"**Date**: {datetime.now(UTC).strftime('%Y-%m-%d %H:%M UTC')}",
         f"**Mode**: {'dry-run (synthetic, no MLX model)' if results['dry_run'] else 'live (MLX model loaded)'}",
         f"**Items**: {results['n_items']}",
         "",
@@ -310,14 +310,14 @@ def main() -> None:
         print("ERROR: Cannot specify both --dry-run and --live")
         sys.exit(1)
 
-    print(f"\n=== M1 Embedding Batch Benchmark ===")
+    print("\n=== M1 Embedding Batch Benchmark ===")
     print(f"Mode: {'DRY-RUN (synthetic)' if args.dry_run else 'LIVE (MLX model)'}")
     print(f"Sizes: {args.sizes}")
     print(f"Items: {args.n_items}")
     print()
 
     results = asyncio.run(run_benchmark(args.sizes, dry_run=args.dry_run, n_items=args.n_items))
-    results["timestamp"] = datetime.now(timezone.utc).isoformat()
+    results["timestamp"] = datetime.now(UTC).isoformat()
     results["python_version"] = f" {sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
 
     # JSON output

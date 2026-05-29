@@ -2,12 +2,11 @@
 Sprint 8VI §E: E2E dry-run test — celá pipeline bez reálných HTTP requestů.
 30s timeout, max 10 findings, všechny external fetches mockované.
 """
-import asyncio
-import json
 import pathlib
 from pathlib import Path
+from unittest.mock import AsyncMock, MagicMock, patch
+
 import pytest
-from unittest.mock import patch, AsyncMock, MagicMock
 
 
 def test_none_file_absent_after_run():
@@ -22,7 +21,8 @@ async def test_e2e_pipeline_completes():
     """Spustí WARMUP → mock ACTIVE → WINDUP → EXPORT."""
     # Sprint 8VY: run_warmup moved from runtime/sprint_lifecycle → __main__.py (canonical WARMUP truth)
     # Use importlib to load __main__ directly (pytest's --main__ is pytest's own module)
-    import os, importlib.util
+    import importlib.util
+    import os
     _ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
     _MAIN_PY = os.path.join(_ROOT, "hledac", "universal", "__main__.py")
     _spec = importlib.util.spec_from_file_location("hledac_main", _MAIN_PY)
@@ -30,9 +30,9 @@ async def test_e2e_pipeline_completes():
     _main_mod = importlib.util.module_from_spec(_spec)
     _spec.loader.exec_module(_main_mod)  # type: ignore
     run_warmup = _main_mod.run_warmup
-    from runtime.windup_engine import run_windup
     from export.sprint_exporter import export_sprint
     from runtime.sprint_scheduler import SprintScheduler, SprintSchedulerConfig
+    from runtime.windup_engine import run_windup
 
     # Mock scheduler s potřebnými atributy
     config = SprintSchedulerConfig()
@@ -95,18 +95,12 @@ async def test_aggressive_mode_hypothesis_burst_preserves_canonical_truth():
 
     Hermetic: no network, no live external services.
     """
-    import tempfile
     import shutil
-    from pathlib import Path
+    import tempfile
 
     from hledac.universal.knowledge.duckdb_store import DuckDBShadowStore
     from hledac.universal.patterns.pattern_matcher import PatternHit
     from hledac.universal.pipeline.live_public_pipeline import async_run_live_public_pipeline
-    from hledac.universal.runtime.sprint_scheduler import (
-        SprintScheduler,
-        SprintSchedulerConfig,
-    )
-    from hledac.universal.runtime.sprint_lifecycle import SprintLifecycleManager
 
     tmp = tempfile.mkdtemp(prefix="hledac_hypothesis_truth_")
     db_path = Path(tmp) / "shadow.duckdb"

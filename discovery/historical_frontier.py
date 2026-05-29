@@ -18,8 +18,8 @@ import asyncio
 import time
 
 from hledac.universal.discovery.duckduckgo_adapter import (
-    DiscoveryHit,
     DiscoveryBatchResult,
+    DiscoveryHit,
 )
 
 # DuckDB store interface for historical query
@@ -93,7 +93,7 @@ async def async_search_historical_frontier(
 
             async def _query() -> list:
                 return conn.execute(
-                    f"""
+                    """
                     SELECT query, title, url, snippet, provenance_json
                     FROM shadow_findings
                     WHERE (
@@ -111,7 +111,7 @@ async def async_search_historical_frontier(
                 rows = await _query()
         finally:
             conn.close()
-    except asyncio.TimeoutError:
+    except TimeoutError:
         elapsed = time.monotonic() - start
         return DiscoveryBatchResult(
             hits=(),
@@ -153,13 +153,13 @@ async def async_search_historical_frontier(
         reason = None
         if row_query:
             row_lower = row_query.lower()
-            overlap = tokens & {t for t in row_lower.split()}
+            overlap = tokens & set(row_lower.split())
             if overlap:
                 score = min(0.8, len(overlap) * 0.15)
                 reason = "query_match"
         if title:
             title_lower = title.lower()
-            overlap = tokens & {t for t in title_lower.split()}
+            overlap = tokens & set(title_lower.split())
             if overlap:
                 score = max(score, min(0.6, len(overlap) * 0.1))
                 reason = reason or "title_match"

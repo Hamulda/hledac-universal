@@ -21,8 +21,6 @@ import tempfile
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
-import pytest
-
 
 class TestAOOrchestratorCanary:
     """Canary tests for AO lifecycle - fastest gate."""
@@ -67,7 +65,7 @@ class TestAOOrchestratorCanary:
         orch._research_mgr = None
         orch._synthesis_mgr = None
         orch._memory_mgr = None
-        setattr(orch, '_budget_mgr', None)
+        orch._budget_mgr = None
 
         # Should not raise
         await orch.shutdown_all()
@@ -129,12 +127,12 @@ class TestCheckpointProbeCanary:
         orch._state_mgr = mock_state
 
         # Use setattr for dynamic attributes that may not be declared
-        setattr(orch, '_checkpoint_save_count', 0)
+        orch._checkpoint_save_count = 0
 
         # If _save_checkpoint exists, call it
         if hasattr(orch, '_save_checkpoint'):
-            setattr(orch, '_save_checkpoint', AsyncMock())
-            await getattr(orch, '_save_checkpoint')()
+            orch._save_checkpoint = AsyncMock()
+            await orch._save_checkpoint()
 
 
 class TestBgTaskTrackingCanary:
@@ -325,7 +323,7 @@ class TestBudgetManagerCanary:
         from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
 
         orch = FullyAutonomousOrchestrator()
-        setattr(orch, '_budget_mgr', None)
+        orch._budget_mgr = None
 
         # Verify _check_budget exists (or doesn't) without crashing
         # The actual method behavior is tested in phase_gate sprint tests
@@ -365,9 +363,7 @@ class TestModelLifecycleCanary:
 
     async def test_single_model_constraint_concept(self):
         """Verify single model constraint logic exists."""
-        from hledac.universal.capabilities import (
-            Capability, CapabilityRegistry, ModelLifecycleManager
-        )
+        from hledac.universal.capabilities import Capability, CapabilityRegistry, ModelLifecycleManager
 
         registry = CapabilityRegistry()
         for cap in [Capability.HERMES, Capability.MODERNBERT, Capability.GLINER]:

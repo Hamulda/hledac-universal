@@ -21,7 +21,7 @@ import random
 import time
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 from hledac.universal.project_types import (
     BrowserType,
@@ -61,11 +61,11 @@ class CaptchaSolverConfig:
 class CaptchaResult:
     """Result of CAPTCHA solving attempt"""
     success: bool
-    solution: Optional[str]
+    solution: str | None
     confidence: float
     processing_time_ms: float
     method: str  # 'ocr', 'logic', 'rotation', 'failed'
-    alternative_solutions: List[str] = field(default_factory=list)
+    alternative_solutions: list[str] = field(default_factory=list)
 
 
 class AdvancedCaptchaSolver:
@@ -115,9 +115,9 @@ class AdvancedCaptchaSolver:
         'deskew',
     ]
 
-    def __init__(self, config: Optional[CaptchaSolverConfig] = None):
+    def __init__(self, config: CaptchaSolverConfig | None = None):
         self.config = config or CaptchaSolverConfig()
-        self._ocr_pipeline: Optional[Any] = None
+        self._ocr_pipeline: Any | None = None
         self._initialized = False
         self._solve_stats = {
             'attempted': 0,
@@ -188,8 +188,8 @@ class AdvancedCaptchaSolver:
     async def solve_captcha(
         self,
         captcha_type: CaptchaType,
-        image_data: Optional[bytes] = None,
-        text_challenge: Optional[str] = None,
+        image_data: bytes | None = None,
+        text_challenge: str | None = None,
         **kwargs
     ) -> CaptchaResult:
         """
@@ -245,8 +245,9 @@ class AdvancedCaptchaSolver:
 
     async def _solve_image_captcha(self, image_data: bytes) -> CaptchaResult:
         """Solve image-based text CAPTCHA using OCR."""
-        from PIL import Image
         import io
+
+        from PIL import Image
 
         try:
             # Load image
@@ -300,7 +301,7 @@ class AdvancedCaptchaSolver:
                 method='error'
             )
 
-    def _preprocess_for_ocr(self, image: 'Image.Image') -> 'Image.Image':
+    def _preprocess_for_ocr(self, image: Image.Image) -> Image.Image:
         """Preprocess image for better OCR accuracy."""
         try:
             from PIL import ImageEnhance, ImageFilter
@@ -325,11 +326,11 @@ class AdvancedCaptchaSolver:
             logger.warning(f"Image preprocessing failed: {e}")
             return image
 
-    async def _run_transformers_ocr(self, image: 'Image.Image') -> Tuple[str, float]:
+    async def _run_transformers_ocr(self, image: Image.Image) -> tuple[str, float]:
         """Run OCR using Transformers model (offloaded to thread)."""
         return await asyncio.to_thread(self._run_transformers_ocr_sync, image)
 
-    def _run_transformers_ocr_sync(self, image: 'Image.Image') -> Tuple[str, float]:
+    def _run_transformers_ocr_sync(self, image: Image.Image) -> tuple[str, float]:
         """Synchronous OCR using Transformers model."""
         try:
             import torch
@@ -359,11 +360,11 @@ class AdvancedCaptchaSolver:
             logger.warning(f"Transformers OCR failed: {e}")
             return ("", 0.0)
 
-    async def _run_tesseract_ocr(self, image: 'Image.Image') -> Tuple[str, float]:
+    async def _run_tesseract_ocr(self, image: Image.Image) -> tuple[str, float]:
         """Run OCR using Tesseract (offloaded to thread)."""
         return await asyncio.to_thread(self._run_tesseract_ocr_sync, image)
 
-    def _run_tesseract_ocr_sync(self, image: 'Image.Image') -> Tuple[str, float]:
+    def _run_tesseract_ocr_sync(self, image: Image.Image) -> tuple[str, float]:
         """Synchronous OCR using Tesseract."""
         try:
             if self._ocr_pipeline is None:
@@ -439,7 +440,7 @@ class AdvancedCaptchaSolver:
         """Solve math-based CAPTCHA."""
         return await self._solve_text_logic(challenge)
 
-    def get_statistics(self) -> Dict[str, Any]:
+    def get_statistics(self) -> dict[str, Any]:
         """Get solving statistics."""
         attempted = self._solve_stats['attempted']
         solved = self._solve_stats['solved']
@@ -517,11 +518,11 @@ class JavaScriptEvasion:
         'recaptcha',
     ]
 
-    def __init__(self, config: Optional[JavaScriptEvasionConfig] = None):
+    def __init__(self, config: JavaScriptEvasionConfig | None = None):
         self.config = config or JavaScriptEvasionConfig()
-        self._script_cache: Dict[str, str] = {}
+        self._script_cache: dict[str, str] = {}
 
-    def get_all_evasion_scripts(self) -> List[str]:
+    def get_all_evasion_scripts(self) -> list[str]:
         """Get all enabled evasion scripts."""
         scripts = []
 
@@ -1071,7 +1072,7 @@ class JavaScriptEvasion:
         };
         """
 
-    def get_detection_score(self) -> Dict[str, Any]:
+    def get_detection_score(self) -> dict[str, Any]:
         """Get evasion coverage score."""
         evasions = {
             'webdriver_hiding': self.config.hide_webdriver,
@@ -1162,7 +1163,7 @@ class BehaviorSimulator:
     """
 
     # Pattern presets
-    PATTERNS: Dict[BehaviorPattern, Dict[str, Any]] = {
+    PATTERNS: dict[BehaviorPattern, dict[str, Any]] = {
         BehaviorPattern.CASUAL: {
             'min_delay': 1.0,
             'max_delay': 5.0,
@@ -1200,14 +1201,14 @@ class BehaviorSimulator:
             'randomness': 0.2,
         },
     }
-    
-    def __init__(self, config: Optional[SimulationConfig] = None):
+
+    def __init__(self, config: SimulationConfig | None = None):
         self.config = config or SimulationConfig()
         self._apply_pattern()
 
         # State tracking
         self.last_action_time: float = time.time()
-        self.mouse_position: Tuple[int, int] = (0, 0)
+        self.mouse_position: tuple[int, int] = (0, 0)
         self.scroll_position: int = 0
         self.action_count: int = 0
 
@@ -1238,11 +1239,11 @@ class BehaviorSimulator:
 
     def _bezier_curve(
         self,
-        p0: Tuple[float, float],
-        p1: Tuple[float, float],
-        p2: Tuple[float, float],
+        p0: tuple[float, float],
+        p1: tuple[float, float],
+        p2: tuple[float, float],
         t: float
-    ) -> Tuple[float, float]:
+    ) -> tuple[float, float]:
         """Calculate quadratic Bézier curve point (M1-optimized)"""
         x = (1 - t) ** 2 * p0[0] + 2 * (1 - t) * t * p1[0] + t ** 2 * p2[0]
         y = (1 - t) ** 2 * p0[1] + 2 * (1 - t) * t * p1[1] + t ** 2 * p2[1]
@@ -1250,10 +1251,10 @@ class BehaviorSimulator:
 
     def generate_mouse_path(
         self,
-        start: Tuple[int, int],
-        end: Tuple[int, int],
+        start: tuple[int, int],
+        end: tuple[int, int],
         num_points: int = 20
-    ) -> List[MouseMovement]:
+    ) -> list[MouseMovement]:
         """
         Generate human-like mouse path using Bézier curve.
 
@@ -1306,7 +1307,7 @@ class BehaviorSimulator:
         self,
         target_x: int,
         target_y: int,
-        callback: Optional[Any] = None
+        callback: Any | None = None
     ) -> None:
         """
         Simulate mouse movement to target position.
@@ -1335,9 +1336,9 @@ class BehaviorSimulator:
 
     async def simulate_click(
         self,
-        x: Optional[int] = None,
-        y: Optional[int] = None,
-        callback: Optional[Any] = None
+        x: int | None = None,
+        y: int | None = None,
+        callback: Any | None = None
     ) -> None:
         """
         Simulate mouse click.
@@ -1368,8 +1369,8 @@ class BehaviorSimulator:
     async def simulate_scroll(
         self,
         direction: str = 'down',
-        amount: Optional[int] = None,
-        callback: Optional[Any] = None
+        amount: int | None = None,
+        callback: Any | None = None
     ) -> None:
         """
         Simulate scrolling.
@@ -1413,7 +1414,7 @@ class BehaviorSimulator:
     async def simulate_typing(
         self,
         text: str,
-        callback: Optional[Any] = None,
+        callback: Any | None = None,
         wpm: int = 60
     ) -> None:
         """
@@ -1475,7 +1476,7 @@ class BehaviorSimulator:
         self,
         num_scrolls: int = 3,
         read_time: float = 15.0
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Simulate complete page visit behavior.
 
@@ -1515,7 +1516,7 @@ class BehaviorSimulator:
             'pattern': self.config.pattern.value,
         }
 
-    def get_statistics(self) -> Dict[str, Any]:
+    def get_statistics(self) -> dict[str, Any]:
         """Get simulation statistics"""
         return {
             'action_count': self.action_count,
@@ -1543,7 +1544,7 @@ class FingerprintConfig:
     consistent_per_session: bool = True
     session_duration: float = 3600  # seconds
     use_realistic_profiles: bool = True
-    platform: Optional[str] = None  # 'macos', 'windows', 'linux', None=random
+    platform: str | None = None  # 'macos', 'windows', 'linux', None=random
 
 
 @dataclass
@@ -1555,11 +1556,11 @@ class BrowserProfile:
     screen_pixel_ratio: float = 1.0
     timezone: str = 'America/New_York'
     timezone_offset: int = -5
-    canvas_noise: Tuple[int, int, int] = (0, 0, 0)  # RGB offset
+    canvas_noise: tuple[int, int, int] = (0, 0, 0)  # RGB offset
     webgl_vendor: str = 'Apple Inc.'
     webgl_renderer: str = 'Apple M1'
-    fonts: List[str] = field(default_factory=list)
-    plugins: List[Dict[str, str]] = field(default_factory=list)
+    fonts: list[str] = field(default_factory=list)
+    plugins: list[dict[str, str]] = field(default_factory=list)
     hardware_concurrency: int = 8
     device_memory: int = 8
     max_touch_points: int = 0
@@ -1568,20 +1569,20 @@ class BrowserProfile:
 class FingerprintRandomizer:
     """
     Browser fingerprint randomization (from stealth_toolkit).
-    
+
     Randomizes browser fingerprints to avoid tracking:
     - Canvas fingerprinting protection
     - WebGL fingerprint randomization
     - Font list variation
     - Screen resolution spoofing
     - Timezone rotation
-    
+
     Example:
         >>> randomizer = FingerprintRandomizer()
         >>> profile = randomizer.get_profile()
         >>> js_protection = randomizer.get_js_protection_script()
     """
-    
+
     # Realistic screen resolutions
     SCREEN_RESOLUTIONS = [
         (1920, 1080),  # Full HD
@@ -1592,7 +1593,7 @@ class FingerprintRandomizer:
         (1280, 720),   # HD
         (3840, 2160),  # 4K (less common, 10% chance)
     ]
-    
+
     # Common timezones
     TIMEZONES = [
         ('America/New_York', -5),
@@ -1606,7 +1607,7 @@ class FingerprintRandomizer:
         ('Asia/Shanghai', 8),
         ('Australia/Sydney', 10),
     ]
-    
+
     # WebGL vendors/renderers
     WEBGL_PROFILES = {
         'macos': [
@@ -1628,7 +1629,7 @@ class FingerprintRandomizer:
             ('AMD', 'AMD Radeon Graphics'),
         ],
     }
-    
+
     # Common fonts
     COMMON_FONTS = [
         'Arial', 'Arial Black', 'Arial Narrow', 'Arial Rounded MT Bold',
@@ -1642,75 +1643,75 @@ class FingerprintRandomizer:
         'Geneva', 'Lucida Grande', 'Lucida Sans Unicode',
         'Menlo', 'Monaco', 'Consolas',
     ]
-    
+
     # Browser plugins
     COMMON_PLUGINS = [
         {'name': 'Chrome PDF Plugin', 'filename': 'internal-pdf-viewer', 'description': 'Portable Document Format'},
         {'name': 'Chrome PDF Viewer', 'filename': 'mhjfbmdgcfjbbpaeojofohoefgiehjai', 'description': 'Portable Document Format'},
         {'name': 'Native Client', 'filename': 'internal-nacl-plugin', 'description': 'Native Client module'},
     ]
-    
-    def __init__(self, config: Optional[FingerprintConfig] = None):
+
+    def __init__(self, config: FingerprintConfig | None = None):
         self.config = config or FingerprintConfig()
-        self._current_profile: Optional[BrowserProfile] = None
+        self._current_profile: BrowserProfile | None = None
         self._profile_timestamp: float = 0
         self._rotation_count = 0
-    
-    def _generate_canvas_noise(self) -> Tuple[int, int, int]:
+
+    def _generate_canvas_noise(self) -> tuple[int, int, int]:
         """Generate subtle canvas noise (invisible to human eye)"""
         return (
             random.randint(0, 2),
             random.randint(0, 2),
             random.randint(0, 2)
         )
-    
-    def _generate_screen_resolution(self) -> Tuple[int, int, int, float]:
+
+    def _generate_screen_resolution(self) -> tuple[int, int, int, float]:
         """Generate realistic screen specs"""
         if random.random() < 0.9:
             width, height = random.choice(self.SCREEN_RESOLUTIONS[:5])
         else:
             width, height = random.choice(self.SCREEN_RESOLUTIONS)
-        
+
         color_depth = random.choice([24, 32])
         pixel_ratio = random.choice([1.0, 1.0, 1.0, 1.25, 1.5, 2.0])
-        
+
         return width, height, color_depth, pixel_ratio
-    
-    def _generate_timezone(self) -> Tuple[str, int]:
+
+    def _generate_timezone(self) -> tuple[str, int]:
         """Generate random timezone"""
         if not self.config.randomize_timezone:
             import time
             tz = time.tzname[0] if time.tzname else 'UTC'
             offset = -time.timezone // 3600
             return tz, offset
-        
+
         return random.choice(self.TIMEZONES)
-    
-    def _generate_webgl_profile(self, platform: str) -> Tuple[str, str]:
+
+    def _generate_webgl_profile(self, platform: str) -> tuple[str, str]:
         """Generate WebGL vendor/renderer"""
         if not self.config.randomize_webgl:
             return ('', '')
-        
+
         profiles = self.WEBGL_PROFILES.get(platform, self.WEBGL_PROFILES['macos'])
         return random.choice(profiles)
-    
-    def _generate_font_list(self) -> List[str]:
+
+    def _generate_font_list(self) -> list[str]:
         """Generate randomized font list"""
         if not self.config.randomize_fonts:
             return self.COMMON_FONTS[:10]
-        
+
         num_fonts = random.randint(10, 15)
         return random.sample(self.COMMON_FONTS, min(num_fonts, len(self.COMMON_FONTS)))
-    
-    def _generate_plugins(self) -> List[Dict[str, str]]:
+
+    def _generate_plugins(self) -> list[dict[str, str]]:
         """Generate browser plugins"""
         if not self.config.randomize_plugins:
             return self.COMMON_PLUGINS[:2]
-        
+
         num_plugins = random.randint(2, len(self.COMMON_PLUGINS))
         return random.sample(self.COMMON_PLUGINS, num_plugins)
-    
-    def _generate_hardware_specs(self, platform: str) -> Tuple[int, int, int]:
+
+    def _generate_hardware_specs(self, platform: str) -> tuple[int, int, int]:
         """Generate hardware specs"""
         if platform == 'macos':
             concurrency = random.choice([8, 8, 10, 10])
@@ -1718,32 +1719,32 @@ class FingerprintRandomizer:
         else:
             concurrency = random.choice([4, 4, 8, 8, 8, 16])
             memory = random.choice([4, 8, 8, 16, 16, 32])
-        
+
         touch_points = 0 if platform != 'mobile' else random.choice([5, 10])
-        
+
         return concurrency, memory, touch_points
-    
+
     def generate_profile(self, force_new: bool = False) -> BrowserProfile:
         """Generate new browser fingerprint profile"""
         # Check if we should reuse current profile
-        if (not force_new and 
+        if (not force_new and
             self.config.consistent_per_session and
             self._current_profile is not None):
-            
+
             elapsed = time.time() - self._profile_timestamp
             if elapsed < self.config.session_duration:
                 return self._current_profile
-        
+
         # Determine platform
         platform = self.config.platform
         if platform is None:
             platform = random.choice(['macos', 'windows', 'linux'])
-        
+
         # Generate profile components
         width, height, color_depth, pixel_ratio = self._generate_screen_resolution()
         timezone, tz_offset = self._generate_timezone()
         webgl_vendor, webgl_renderer = self._generate_webgl_profile(platform)
-        
+
         # Create profile
         profile = BrowserProfile(
             screen_width=width,
@@ -1761,28 +1762,28 @@ class FingerprintRandomizer:
             device_memory=self._generate_hardware_specs(platform)[1],
             max_touch_points=self._generate_hardware_specs(platform)[2],
         )
-        
+
         self._current_profile = profile
         self._profile_timestamp = time.time()
         self._rotation_count += 1
-        
+
         logger.debug(f"Generated new fingerprint profile ({platform})")
         return profile
-    
+
     def get_profile(self) -> BrowserProfile:
         """Get current or new profile"""
         return self.generate_profile()
-    
+
     def get_js_protection_script(self) -> str:
         """Generate JavaScript to apply fingerprint protection"""
         profile = self.get_profile()
-        
+
         import json
         script = f"""
         // Fingerprint Protection Script
         (function() {{
             'use strict';
-            
+
             const profile = {json.dumps({{
                 'screen': {{
                     'width': profile.screen_width,
@@ -1797,18 +1798,18 @@ class FingerprintRandomizer:
                 'maxTouchPoints': profile.max_touch_points,
                 'canvasNoise': profile.canvas_noise,
             }})};
-            
+
             // Override screen properties
             Object.defineProperty(screen, 'width', {{ get: () => profile.screen.width }});
             Object.defineProperty(screen, 'height', {{ get: () => profile.screen.height }});
             Object.defineProperty(screen, 'colorDepth', {{ get: () => profile.screen.colorDepth }});
             Object.defineProperty(screen, 'pixelDepth', {{ get: () => profile.screen.colorDepth }});
-            
+
             // Override window.devicePixelRatio
             Object.defineProperty(window, 'devicePixelRatio', {{
                 get: () => profile.screen.pixelRatio
             }});
-            
+
             // Override hardware specs
             Object.defineProperty(navigator, 'hardwareConcurrency', {{
                 get: () => profile.hardwareConcurrency
@@ -1854,7 +1855,7 @@ class FingerprintRandomizer:
             // Canvas fingerprint protection
             const originalToDataURL = HTMLCanvasElement.prototype.toDataURL;
             const originalGetImageData = CanvasRenderingContext2D.prototype.getImageData;
-            
+
             HTMLCanvasElement.prototype.toDataURL = function(...args) {{
                 const ctx = this.getContext('2d');
                 if (ctx) {{
@@ -1870,7 +1871,7 @@ class FingerprintRandomizer:
                 }}
                 return originalToDataURL.apply(this, args);
             }};
-            
+
             // Timezone protection
             const originalDate = Date;
             Date = class extends originalDate {{
@@ -1881,19 +1882,19 @@ class FingerprintRandomizer:
                     return profile.timezoneOffset * 60;
                 }}
             }};
-            
+
         }})();
         """
-        
+
         return script
-    
+
     def get_fingerprint_hash(self) -> str:
         """Get hash of current fingerprint (for tracking detection)"""
         import hashlib
         import json
-        
+
         profile = self.get_profile()
-        
+
         fingerprint_data = {
             'screen': f"{profile.screen_width}x{profile.screen_height}",
             'color_depth': profile.screen_color_depth,
@@ -1902,15 +1903,15 @@ class FingerprintRandomizer:
             'fonts_hash': hash(tuple(sorted(profile.fonts))) % 10000,
             'hardware': f"{profile.hardware_concurrency}c{profile.device_memory}g",
         }
-        
+
         fingerprint_str = json.dumps(fingerprint_data, sort_keys=True)
         return hashlib.sha256(fingerprint_str.encode()).hexdigest()[:16]
-    
+
     def rotate(self) -> BrowserProfile:
         """Force rotation to new fingerprint"""
         return self.generate_profile(force_new=True)
-    
-    def get_statistics(self) -> Dict[str, Any]:
+
+    def get_statistics(self) -> dict[str, Any]:
         """Get randomization statistics"""
         return {
             'rotation_count': self._rotation_count,
@@ -1926,63 +1927,63 @@ logger = logging.getLogger(__name__)
 class StealthLayer:
     """
     Stealth layer for web browsing with anti-detection and CAPTCHA solving.
-    
+
     This layer:
     1. Manages stealth browser instances
     2. Applies detection evasion techniques
     3. Solves CAPTCHAs when detected
     4. Simulates human behavior
     5. Protects against debugging (Chameleon)
-    
+
     Example:
         stealth = StealthLayer(config)
         await stealth.initialize()
-        
+
         # Create stealth session
         session = await stealth.create_session()
-        
+
         # Browse with evasion
         page = await stealth.new_page(session)
         await stealth.apply_evasion(page)
-        
+
         # Solve CAPTCHA if detected
         solution = await stealth.solve_captcha(page, "https://example.com")
     """
-    
-    def __init__(self, config: Optional[StealthConfig] = None):
+
+    def __init__(self, config: StealthConfig | None = None):
         """
         Initialize StealthLayer.
-        
+
         Args:
             config: Stealth configuration (uses defaults if None)
         """
         self.config = config or StealthConfig()
-        
+
         # Core components (lazy loaded)
         self._stealth_browser = None
         self._detection_evader = None
 
         # Advanced CAPTCHA solver (self-hosted, M1 optimized)
-        self._captcha_solver: Optional[AdvancedCaptchaSolver] = None
+        self._captcha_solver: AdvancedCaptchaSolver | None = None
 
         # JavaScript evasion (15+ anti-detection scripts)
-        self._js_evasion: Optional[JavaScriptEvasion] = None
+        self._js_evasion: JavaScriptEvasion | None = None
 
         # Chameleon - anti-debugging protection
-        self._chameleon: Optional['Chameleon'] = None
+        self._chameleon: Chameleon | None = None
 
         # Fingerprint randomizer (from stealth_toolkit integration)
-        self._fingerprint_randomizer: Optional[FingerprintRandomizer] = None
-        
+        self._fingerprint_randomizer: FingerprintRandomizer | None = None
+
         # Session management
-        self._sessions: Dict[str, StealthSession] = {}
+        self._sessions: dict[str, StealthSession] = {}
         self._session_counter = 0
-        
+
         # Statistics
         self._browsers_created = 0
         self._captchas_solved = 0
         self._evasions_applied = 0
-        
+
         logger.info("StealthLayer initialized")
 
     # -------------------------------------------------------------------------
@@ -2010,17 +2011,17 @@ class StealthLayer:
     async def initialize(self) -> bool:
         """
         Initialize StealthLayer components.
-        
+
         Returns:
             True if initialization successful
         """
         try:
             logger.info("🚀 Initializing StealthLayer...")
-            
+
             # Initialize DetectionEvader (lightweight, no browser needed)
             if self.config.enable_stealth_scripts:
                 await self._init_detection_evader()
-            
+
             # Initialize CaptchaSolver (if enabled)
             if self.config.enable_captcha_solving:
                 await self._init_captcha_solver()
@@ -2030,57 +2031,57 @@ class StealthLayer:
 
             # Initialize Chameleon (anti-debugging)
             await self._init_chameleon()
-            
+
             # Initialize FingerprintRandomizer (from stealth_toolkit)
             await self._init_fingerprint_randomizer()
-            
+
             # Note: StealthBrowser is initialized on-demand (heavy)
-            
+
             logger.info("✅ StealthLayer initialized successfully")
             return True
-            
+
         except Exception as e:
             logger.error(f"❌ StealthLayer initialization failed: {e}")
             return False
-    
+
     async def _init_stealth_browser(self) -> None:
         """Lazy initialization of StealthBrowser"""
         if self._stealth_browser is None:
             try:
-                from hledac.advanced_web.stealth_browser import StealthBrowser, BrowserConfig
-                
+                from hledac.advanced_web.stealth_browser import BrowserConfig, StealthBrowser
+
                 browser_config = BrowserConfig(
                     browser_type=self.config.browser_type,
                     headless=self.config.headless,
                     pool_size=self.config.pool_size,
                     m1_optimized=True
                 )
-                
+
                 self._stealth_browser = StealthBrowser(browser_config)
                 await self._stealth_browser.initialize()
                 self._browsers_created += 1
                 logger.info("✅ StealthBrowser initialized")
-                
+
             except ImportError as e:
                 logger.warning(f"⚠️ StealthBrowser not available: {e}")
                 self._stealth_browser = None
-    
+
     async def _init_detection_evader(self) -> None:
         """Lazy initialization of DetectionEvader"""
         if self._detection_evader is None:
             try:
                 from hledac.advanced_web.detection_evader import DetectionEvader
-                
+
                 self._detection_evader = DetectionEvader(
                     detection_threshnew=self.config.detection_threshold,
                     adaptive_mode=self.config.adaptive_mode
                 )
                 logger.info("✅ DetectionEvader initialized")
-                
+
             except ImportError as e:
                 logger.warning(f"⚠️ DetectionEvader not available: {e}")
                 self._detection_evader = None
-    
+
     async def _init_captcha_solver(self) -> None:
         """Lazy initialization of AdvancedCaptchaSolver (self-hosted)"""
         if self._captcha_solver is None:
@@ -2123,25 +2124,25 @@ class StealthLayer:
             except Exception as e:
                 logger.warning(f"⚠️ JavaScriptEvasion initialization failed: {e}")
                 self._js_evasion = None
-    
+
     async def _init_chameleon(self) -> None:
         """Initialize Chameleon for anti-debugging."""
         try:
             self._chameleon = Chameleon()
-            
+
             # Apply process masquerading
             self._chameleon.masquerade_process()
-            
+
             # Initialize ptrace anti-debugging on macOS
             if self._chameleon.initialize_ptrace_protection():
                 logger.info("✅ Chameleon anti-debugging initialized (ptrace)")
             else:
                 logger.info("✅ Chameleon initialized (ptrace not available)")
-                
+
         except Exception as e:
             logger.warning(f"⚠️ Chameleon not available: {e}")
             self._chameleon = None
-    
+
     async def _init_fingerprint_randomizer(self) -> None:
         """Initialize FingerprintRandomizer for browser fingerprint protection."""
         try:
@@ -2150,50 +2151,50 @@ class StealthLayer:
         except Exception as e:
             logger.warning(f"⚠️ FingerprintRandomizer initialization failed: {e}")
             self._fingerprint_randomizer = None
-    
+
     # ====================================================================
     # Chameleon Integration
     # ====================================================================
-    
-    def get_chameleon(self) -> Optional['Chameleon']:
+
+    def get_chameleon(self) -> Chameleon | None:
         """Get Chameleon instance for anti-debugging control."""
         return self._chameleon
-    
+
     def is_debugger_present(self) -> bool:
         """Check if a debugger is attached (macOS only)."""
         if self._chameleon:
             return self._chameleon.is_debugger_present()
         return False
-    
+
     async def create_session(
         self,
-        browser_type: Optional[BrowserType] = None,
-        proxy: Optional[str] = None
+        browser_type: BrowserType | None = None,
+        proxy: str | None = None
     ) -> StealthSession:
         """
         Create a new stealth browsing session.
-        
+
         Args:
             browser_type: Browser type (uses config default if None)
             proxy: Proxy URL (optional)
-            
+
         Returns:
             StealthSession
         """
         self._session_counter += 1
         session_id = f"stealth_{self._session_counter}"
-        
+
         browser_type = browser_type or BrowserType(self.config.browser_type)
-        
+
         logger.info(f"🔒 Creating stealth session: {session_id}")
-        
+
         # Initialize browser if needed
         if self._stealth_browser is None:
             await self._init_stealth_browser()
-        
+
         # Generate fingerprint
         fingerprint = await self._generate_fingerprint()
-        
+
         session = StealthSession(
             session_id=session_id,
             browser_type=browser_type,
@@ -2202,11 +2203,11 @@ class StealthLayer:
             risk_level=RiskLevel.LOW,
             created_at=time.time()
         )
-        
+
         self._sessions[session_id] = session
         return session
-    
-    async def _generate_fingerprint(self) -> Dict[str, Any]:
+
+    async def _generate_fingerprint(self) -> dict[str, Any]:
         """Generate browser fingerprint"""
         if self.config.enable_fingerprint_rotation and self._detection_evader:
             try:
@@ -2221,26 +2222,26 @@ class StealthLayer:
                 }
             except Exception:
                 pass
-        
+
         # Default fingerprint
         return {
             "user_agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
             "screen": {"width": 1920, "height": 1080},
         }
-    
+
     async def new_page(self, session: StealthSession) -> Any:
         """
         Create a new page in the stealth session.
-        
+
         Args:
             session: StealthSession
-            
+
         Returns:
             Playwright page object
         """
         if self._stealth_browser is None:
             raise RuntimeError("StealthBrowser not initialized")
-        
+
         try:
             page = await self._stealth_browser.new_page()
             logger.debug(f"📄 New page created for session {session.session_id}")
@@ -2248,28 +2249,28 @@ class StealthLayer:
         except Exception as e:
             logger.error(f"❌ Failed to create page: {e}")
             raise
-    
-    async def apply_evasion(self, page: Any, risk_level: Optional[RiskLevel] = None) -> None:
+
+    async def apply_evasion(self, page: Any, risk_level: RiskLevel | None = None) -> None:
         """
         Apply detection evasion scripts to page.
-        
+
         Args:
             page: Playwright page
             risk_level: Risk level (auto-detect if None)
         """
         if not self.config.enable_stealth_scripts:
             return
-        
+
         if self._detection_evader is None:
             logger.warning("⚠️ DetectionEvader not available, skipping evasion")
             return
-        
+
         try:
             if risk_level is None:
                 # Analyze page for detection risk
                 content = await page.content() if hasattr(page, 'content') else ""
                 risk_level = self._detection_evader.analyze_page_content(content)
-            
+
             # Get evasion scripts for risk level
             scripts = self._detection_evader.get_evasion_scripts()
 
@@ -2290,64 +2291,64 @@ class StealthLayer:
                     await page.add_init_script(script)
                 except Exception as e:
                     logger.debug(f"⚠️ Failed to add script: {e}")
-            
+
             self._evasions_applied += 1
             logger.info(f"🛡️ Applied {len(scripts)} evasion scripts (risk: {risk_level.value})")
-            
+
         except Exception as e:
             logger.warning(f"⚠️ Evasion application failed: {e}")
-    
+
     async def simulate_human_behavior(self, page: Any) -> None:
         """
         Simulate human-like behavior on page.
-        
+
         Args:
             page: Playwright page
         """
         if not self.config.enable_behavior_simulation:
             return
-        
+
         if self._detection_evader is None:
             return
-        
+
         try:
             # Simulate mouse movements
             await self._detection_evader.simulate_human_behavior(page)
             logger.debug("🎭 Human behavior simulated")
         except Exception as e:
             logger.debug(f"⚠️ Behavior simulation failed: {e}")
-    
+
     async def solve_captcha(
         self,
         page: Any,
         url: str,
-        captcha_type: Optional[CaptchaType] = None
-    ) -> Optional[CaptchaSolution]:
+        captcha_type: CaptchaType | None = None
+    ) -> CaptchaSolution | None:
         """
         Detect and solve CAPTCHA on page.
-        
+
         Args:
             page: Playwright page
             url: Page URL
             captcha_type: CAPTCHA type (auto-detect if None)
-            
+
         Returns:
             CaptchaSolution or None if no CAPTCHA
         """
         if not self.config.enable_captcha_solving:
             return None
-        
+
         if self._captcha_solver is None:
             logger.warning("⚠️ CaptchaSolver not available")
             return None
-        
+
         try:
             # Get page HTML
             html = await page.content() if hasattr(page, 'content') else ""
-            
+
             # Detect CAPTCHA
             detected_type = captcha_type or self._captcha_solver.detect_captcha(html)
-            
+
             if detected_type == CaptchaType.IMAGE:
                 logger.info("🧩 Image CAPTCHA detected")
                 # Extract image URL from HTML
@@ -2399,20 +2400,20 @@ class StealthLayer:
                 return None
             elif detected_type in (CaptchaType.RECAPTCHA_V2, CaptchaType.RECAPTCHA_V3):
                 logger.info("🧩 reCAPTCHA detected")
-                
+
                 # Extract site key
                 import re
                 site_key_match = re.search(r'data-sitekey="([^"]+)"', html)
                 if site_key_match:
                     site_key = site_key_match.group(1)
-                    
+
                     # Solve
                     solution = await self._captcha_solver.solve_captcha(
                         captcha_type=detected_type,
                         site_key=site_key,
                         url=url
                     )
-                    
+
                     self._captchas_solved += 1
                     return CaptchaSolution(
                         solution=solution if isinstance(solution, str) else str(solution),
@@ -2421,31 +2422,31 @@ class StealthLayer:
                         confidence=0.9,
                         provider=self.config.captcha_providers[0] if self.config.captcha_providers else "unknown"
                     )
-            
+
             return None
-            
+
         except Exception as e:
             logger.error(f"❌ CAPTCHA solving failed: {e}")
             return None
-    
+
     async def close_session(self, session_id: str) -> None:
         """
         Close a stealth session.
-        
+
         Args:
             session_id: Session ID
         """
         if session_id in self._sessions:
             del self._sessions[session_id]
             logger.debug(f"🔒 Session closed: {session_id}")
-    
+
     def get_fingerprint_protection(self) -> str:
         """Get JavaScript fingerprint protection script"""
         if self._fingerprint_randomizer:
             return self._fingerprint_randomizer.get_js_protection_script()
         return ''
-    
-    def rotate_fingerprint(self) -> Optional[BrowserProfile]:
+
+    def rotate_fingerprint(self) -> BrowserProfile | None:
         """Force rotation to new browser fingerprint.
 
         Rotates both HTTP headers (via ZeroAttributionEngine) and browser JA3
@@ -2464,20 +2465,20 @@ class StealthLayer:
         if self._fingerprint_randomizer:
             return self._fingerprint_randomizer.rotate()
         return None
-    
-    def get_js_evasion_score(self) -> Optional[Dict[str, Any]]:
+
+    def get_js_evasion_score(self) -> dict[str, Any] | None:
         """Get JavaScript evasion coverage score"""
         if self._js_evasion:
             return self._js_evasion.get_detection_score()
         return None
 
-    def get_captcha_solver_stats(self) -> Optional[Dict[str, Any]]:
+    def get_captcha_solver_stats(self) -> dict[str, Any] | None:
         """Get CAPTCHA solver statistics"""
         if self._captcha_solver:
             return self._captcha_solver.get_statistics()
         return None
 
-    def get_statistics(self) -> Dict[str, Any]:
+    def get_statistics(self) -> dict[str, Any]:
         """Get stealth layer statistics"""
         return {
             "browsers_created": self._browsers_created,
@@ -2501,28 +2502,28 @@ class StealthLayer:
                 "enable_captcha_solving": self.config.enable_captcha_solving,
             }
         }
-    
+
     async def cleanup(self) -> None:
         """Cleanup resources"""
         logger.info("🧹 Cleaning up StealthLayer...")
-        
+
         # Close all sessions
         self._sessions.clear()
-        
+
         # Cleanup browser
         if self._stealth_browser and hasattr(self._stealth_browser, 'close'):
             try:
                 await self._stealth_browser.close()
             except Exception as e:
                 logger.warning(f"⚠️ StealthBrowser cleanup error: {e}")
-        
+
         # Cleanup captcha solver
         if self._captcha_solver and hasattr(self._captcha_solver, 'close'):
             try:
                 await self._captcha_solver.close()
             except Exception as e:
                 logger.warning(f"⚠️ CaptchaSolver cleanup error: {e}")
-        
+
         logger.info("✅ StealthLayer cleanup complete")
 
 
@@ -2532,36 +2533,36 @@ class StealthLayer:
 
 import ctypes
 import ctypes.util
-import sys
 import os
+import sys
 
 
 class Chameleon:
     """
     Chameleon - Anti-debugging and process masquerading for macOS M1.
-    
+
     Integrated from kernel/stealth/chameleon.py - Provides protection
     against debugging and process masquerading for stealth operations.
-    
+
     Features:
     - Process masquerading (change process name to appear benign)
     - ptrace(PT_DENY_ATTACH) anti-debugging (macOS only)
     - Environment cleanup to remove debugging indicators
-    
+
     Example:
         chameleon = Chameleon()
-        
+
         # Apply process masquerading
         chameleon.masquerade_process()
-        
+
         # Initialize anti-debugging
         chameleon.initialize_ptrace_protection()
-        
+
         # Check if debugger is present
         if chameleon.is_debugger_present():
             print("Debugger detected!")
     """
-    
+
     # Masquerade targets - processes that look benign
     MASQUERADE_TARGETS = [
         ("mdworker_shared", "Spotlight indexer"),
@@ -2573,65 +2574,65 @@ class Chameleon:
         ("powerd", "Power management"),
         ("airportd", "WiFi daemon"),
     ]
-    
+
     def __init__(self):
         """Initialize Chameleon."""
-        self._original_name: Optional[str] = None
+        self._original_name: str | None = None
         self._masqueraded = False
         self._ptrace_protected = False
-        
+
         logger.debug("Chameleon initialized")
-    
-    def masquerade_process(self, target_index: Optional[int] = None) -> bool:
+
+    def masquerade_process(self, target_index: int | None = None) -> bool:
         """
         Masquerade process as a benign system process.
-        
+
         Args:
             target_index: Index of MASQUERADE_TARGETS to use (random if None)
-            
+
         Returns:
             True if successful
         """
         try:
             import random
-            
+
             # Select masquerade target
             if target_index is None:
                 target_index = random.randint(0, len(self.MASQUERADE_TARGETS) - 1)
-            
+
             target_name, target_desc = self.MASQUERADE_TARGETS[target_index]
             self._original_name = sys.argv[0] if sys.argv else "python"
-            
+
             # Try to change process name via setproctitle
             try:
                 import setproctitle
                 setproctitle.setproctitle(target_name)
                 self._masqueraded = True
-                
+
                 logger.info(f"Chameleon: Masquerading as '{target_name}' ({target_desc})")
                 return True
-                
+
             except ImportError:
                 # Fallback: modify argv[0]
                 if len(sys.argv) > 0:
                     sys.argv[0] = target_name
                     self._masqueraded = True
-                    
+
                     logger.info(f"Chameleon: Masquerading as '{target_name}' (via argv)")
                     return True
-            
+
             return False
-            
+
         except Exception as e:
             logger.warning(f"Chameleon: Masquerade failed: {e}")
             return False
-    
+
     def initialize_ptrace_protection(self) -> bool:
         """
         Initialize ptrace anti-debugging protection (macOS only).
-        
+
         Uses PT_DENY_ATTACH to prevent debugger attachment.
-        
+
         Returns:
             True if protection was successfully applied
         """
@@ -2639,17 +2640,17 @@ class Chameleon:
         if sys.platform != "darwin":
             logger.debug("Chameleon: ptrace protection only available on macOS")
             return False
-        
+
         try:
             # Load libc
             libc = ctypes.CDLL(ctypes.util.find_library("c"))
-            
+
             # PT_DENY_ATTACH = 31 (macOS specific)
             PT_DENY_ATTACH = 31
-            
+
             # Call ptrace
             result = libc.ptrace(PT_DENY_ATTACH, 0, 0, 0)
-            
+
             if result == 0:
                 self._ptrace_protected = True
                 logger.info("Chameleon: ptrace anti-debugging enabled (PT_DENY_ATTACH)")
@@ -2657,56 +2658,56 @@ class Chameleon:
             else:
                 logger.warning(f"Chameleon: ptrace returned {result}")
                 return False
-                
+
         except Exception as e:
             logger.warning(f"Chameleon: ptrace initialization failed: {e}")
             return False
-    
+
     def is_debugger_present(self) -> bool:
         """
         Check if a debugger is attached (macOS only).
-        
+
         Returns:
             True if debugger detected
         """
         # Only on macOS
         if sys.platform != "darwin":
             return False
-        
+
         try:
             # Try to use sysctl to detect debugger
             import subprocess
-            
+
             result = subprocess.run(
                 ["sysctl", "-n", "kern.proc.pid", str(os.getpid())],
                 capture_output=True,
                 text=True,
                 timeout=1
             )
-            
+
             # Check for P_TRACED flag in output
             if "P_TRACED" in result.stdout or "traced" in result.stdout.lower():
                 return True
-            
+
             # Alternative: check if we can ptrace ourselves
             libc = ctypes.CDLL(ctypes.util.find_library("c"))
             PT_TRACE_ME = 0
-            
+
             # If ptrace fails, we're likely being traced
             result = libc.ptrace(PT_TRACE_ME, 0, 0, 0)
             if result < 0:
                 return True
-            
+
             return False
-            
+
         except Exception as e:
             logger.debug(f"Chameleon: Debugger check failed: {e}")
             return False
-    
+
     def is_debugger_protected(self) -> bool:
         """Check if ptrace protection is active."""
         return self._ptrace_protected
-    
+
     def cleanup_environment(self) -> None:
         """Clean environment variables that might indicate debugging."""
         debug_vars = [
@@ -2716,13 +2717,13 @@ class Chameleon:
             'IDE_PROJECT_ROOTS',
             'PYTHONPATH_DEBUG',
         ]
-        
+
         for var in debug_vars:
             if var in os.environ:
                 del os.environ[var]
                 logger.debug(f"Chameleon: Removed {var} from environment")
-    
-    def get_info(self) -> Dict[str, Any]:
+
+    def get_info(self) -> dict[str, Any]:
         """Get Chameleon status information."""
         return {
             "masqueraded": self._masqueraded,

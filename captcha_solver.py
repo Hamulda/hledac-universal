@@ -6,12 +6,12 @@ CAPTCHA solver using YOLO CoreML model and VNCoreMLModel.
 Designed for M1/Apple Silicon with ANE acceleration.
 """
 
+from __future__ import annotations
+
 import asyncio
 import hashlib
 import logging
 import time
-from pathlib import Path
-from typing import Dict, List, Optional, Tuple
 from collections import OrderedDict
 
 logger = logging.getLogger(__name__)
@@ -94,7 +94,7 @@ class VisionCaptchaSolver:
 
     # Class-level cache
     _result_cache: OrderedDict = OrderedDict()
-    _cache_timestamps: Dict[str, float] = {}
+    _cache_timestamps: dict[str, float] = {}
     CACHE_TTL = 3600  # 1 hour in seconds
     MAX_CACHE_SIZE = 100
 
@@ -184,7 +184,7 @@ class VisionCaptchaSolver:
     def solve_grid(
         self,
         image_bytes: bytes
-    ) -> List[int]:
+    ) -> list[int]:
         """
         Solve grid CAPTCHA (e.g., "select all images with traffic lights").
 
@@ -200,7 +200,7 @@ class VisionCaptchaSolver:
         if cached is not None:
             return cached
 
-        result: List[int] = []
+        result: list[int] = []
 
         if not _VN_AVAILABLE or self._model is None:
             logger.warning("Vision framework or model not available")
@@ -214,8 +214,6 @@ class VisionCaptchaSolver:
                 return result
 
             # Create Vision request
-            from Vision import VNCoreMLRequest, VNImageRequestHandler
-            import Vision
 
             # For now, return empty - full implementation would:
             # 1. Convert image_bytes to CVPixelBuffer
@@ -300,9 +298,10 @@ class VisionCaptchaSolver:
         - Thresholding to binary
         """
         try:
+            import io
+
             import pytesseract
             from PIL import Image
-            import io
         except ImportError:
             logger.debug("pytesseract not available, trying 2captcha")
             return None
@@ -331,8 +330,9 @@ class VisionCaptchaSolver:
             return None
 
         try:
-            import aiohttp
             import base64
+
+            import aiohttp
         except ImportError:
             logger.warning("aiohttp not available for 2captcha")
             return None

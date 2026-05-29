@@ -2,18 +2,17 @@
 Sprint 53 tests – MPS ELA, MPS stego, AMX sketch.
 """
 
-import asyncio
+import io
 import sys
 import time
 import unittest
-from unittest.mock import AsyncMock, MagicMock, patch
-import io
+from unittest.mock import patch
+
 try:
     from PIL import Image
     _PIL_AVAILABLE = True
 except ImportError:
     _PIL_AVAILABLE = False
-import numpy as np
 
 sys.path.insert(0, '/Users/vojtechhamada/PycharmProjects/Hledac')
 
@@ -25,7 +24,6 @@ except Exception:
     _MPS_AVAILABLE = False
 
 try:
-    import mlx.core as mx
     _MLX_AVAILABLE = True
 except Exception:
     _MLX_AVAILABLE = False

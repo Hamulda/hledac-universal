@@ -33,7 +33,6 @@ import json
 import sys
 from pathlib import Path
 
-
 # --------------------------------------------------------------------------
 # Constants
 # ----------------------------------------------------------------------------
@@ -412,23 +411,19 @@ def _check_live_kpi_input_wiring(runner_path: Path, source: str | None = None) -
     # 1. LiveKpiInput dataclass must exist locally
     # (After F230A extraction: runner imports it, so only fail if locally defined
     # with wrong pattern — not if entirely absent since F230B boundary check handles imports)
-    has_live_kpi_input = False
-    live_kpi_input_local = None
     for node in ast.walk(tree):
         if isinstance(node, ast.ClassDef) and node.name == "LiveKpiInput":
-            has_live_kpi_input = True
-            live_kpi_input_local = node
+            pass
 
     # 2. _derive_live_kpi_from_input must exist with exactly one param named 'inp'
     has_kpi_func = False
-    kpi_func_single_inp = False
 
     for node in ast.walk(tree):
         if isinstance(node, ast.FunctionDef) and node.name == "_derive_live_kpi_from_input":
             has_kpi_func = True
             args = [a.arg for a in node.args.args]
             if len(args) == 1 and args[0] == "inp":
-                kpi_func_single_inp = True
+                pass
             else:
                 violations.append({
                     "name": "_derive_live_kpi_from_input",
@@ -782,7 +777,7 @@ def format_markdown(result: dict) -> str:
 
     lines.extend([
         "",
-        f"## Schema Classes (must stay in schema module)",
+        "## Schema Classes (must stay in schema module)",
         "",
     ])
     for cls in result["schema_classes"]:

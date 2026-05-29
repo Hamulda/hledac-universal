@@ -3,16 +3,16 @@
 Sprint 5V: TRUE 30MIN OFFLINE_REPLAY VALIDATION
 """
 import asyncio
+import os
+import random
 import sys
 import time
-import random
-import os
 
 sys.path.insert(0, '/Users/vojtechhamada/PycharmProjects/Hledac')
 
 async def run_30min_validation():
     from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
-    from hledac.universal.knowledge.atomic_storage import EvidencePacketStorage, EvidencePacket
+    from hledac.universal.knowledge.atomic_storage import EvidencePacket, EvidencePacketStorage
 
     print("=" * 70)
     print("[5V] 30MIN OFFLINE_REPLAY VALIDATION - Sprint 5V")
@@ -26,11 +26,11 @@ async def run_30min_validation():
     packets_dir = os.path.expanduser("~/.hledac/evidence_packets/shards")
     packet_count = 0
     if os.path.exists(packets_dir):
-        for root, dirs, files in os.walk(packets_dir):
+        for _root, _dirs, files in os.walk(packets_dir):
             packet_count += len([f for f in files if f.endswith('.json')])
 
     print(f"[PREFLIGHT] Replay packets: {packet_count}")
-    print(f"[PREFLIGHT] Anti-mock threshold: 100")
+    print("[PREFLIGHT] Anti-mock threshold: 100")
 
     if packet_count < 100:
         print("[PREFLIGHT] WARNING: Fewer than 100 packets - may trigger SUSPICIOUS")
@@ -41,7 +41,7 @@ async def run_30min_validation():
             evidence_id=f"evidence_{i}",
             url=f"http://localhost:{64000+i}/test",
             final_url=f"http://localhost:{64000+i}/test",
-            domain=f"localhost",
+            domain="localhost",
             fetched_at=time.time() - (i * 86400),
             status=200,
             headers_digest="abc123",
@@ -82,7 +82,7 @@ async def run_30min_validation():
     DURATION = 1800  # 30 minutes
     START_TIME = time.monotonic()
 
-    print(f"\n[START] 30min OFFLINE_REPLAY validation (1800s)...")
+    print("\n[START] 30min OFFLINE_REPLAY validation (1800s)...")
 
     result = await asyncio.wait_for(
         orch.run_benchmark(
@@ -141,7 +141,7 @@ async def run_30min_validation():
     zero_run = [a for a, c in action_counts.items() if c == 0]
     executed_zero = [a for a, c in action_executed.items() if c == 0]
 
-    print(f"\n=== 30MIN VALIDATION RESULTS ===")
+    print("\n=== 30MIN VALIDATION RESULTS ===")
     print(f"[DATA_MODE] {data_mode}")
     print(f"[ELAPSED] {ELAPSED:.1f}s (target: {DURATION}s)")
     print(f"[ITERATIONS] {iterations}")
@@ -171,7 +171,7 @@ async def run_30min_validation():
     # Duration check
     DURATION_CHECK = ELAPSED >= 0.9 * DURATION
 
-    print(f"\n=== ANTI-MOCK ANALYSIS ===")
+    print("\n=== ANTI-MOCK ANALYSIS ===")
     print(f"[DURATION_CHECK] {'PASS' if DURATION_CHECK else 'FAIL'} ({ELAPSED:.1f}s >= {0.9*DURATION:.0f}s)")
     print(f"[SUSPICIOUS_SIGNALS] {suspicious_signals if suspicious_signals else 'NONE'}")
 
@@ -188,7 +188,7 @@ async def run_30min_validation():
     # Final verdict
     READY = verdict == "CLEAN" and hhi < 0.70 and healthy_fraction >= 0.8
 
-    print(f"\n=== FINAL VERDICT ===")
+    print("\n=== FINAL VERDICT ===")
     print(f"[READY_FOR_30MIN_VALIDATION] {'YES' if READY else 'NO'}")
     print(f"[PROJECT_STATUS] {'COMPLETE' if READY else 'PARTIAL'}")
 

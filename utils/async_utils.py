@@ -27,10 +27,11 @@ Example:
 from __future__ import annotations
 
 import asyncio
+import logging
 import random
 import sys
-import logging
-from typing import Any, Callable, Awaitable, Optional, TypeVar, Union, AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
+from typing import TypeVar
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +41,7 @@ T = TypeVar('T')
 class TaskResult:
     """Výsledek úlohy s indexem pro zachování mapování."""
 
-    def __init__(self, index: int, value: Optional[T], error: Optional[Exception] = None):
+    def __init__(self, index: int, value: T | None, error: Exception | None = None):
         self.index = index
         self.value = value
         self.error = error
@@ -75,15 +76,15 @@ def _get_memory_level() -> float:
     return 0.0
 
 
-async def bounded_map(
+async def bounded_map[T](
     tasks: list[tuple[Callable[..., Awaitable[T]], tuple, dict]],
     max_concurrent: int = 3,
     max_retries: int = 0,
     cancel_on_error: bool = True,
     memory_pressure_check: bool = True,
     retryable_exceptions: tuple[type[Exception], ...] = (Exception,),
-    timeout: Optional[float] = None
-) -> list[Optional[T]]:
+    timeout: float | None = None
+) -> list[T | None]:
     """
     Spouští úlohy s omezenou concurrency.
 
@@ -109,7 +110,7 @@ async def bounded_map(
 
     sem = asyncio.BoundedSemaphore(max_concurrent)
 
-    async def _run(index: int, fn: Callable[..., Awaitable[T]], args: tuple, kwargs: dict) -> Optional[T]:
+    async def _run(index: int, fn: Callable[..., Awaitable[T]], args: tuple, kwargs: dict) -> T | None:
         for attempt in range(max_retries + 1):
             try:
                 async with sem:
@@ -128,7 +129,7 @@ async def bounded_map(
                 await asyncio.sleep(delay)
         return None
 
-    results: list[Optional[T]] = [None] * len(tasks)
+    results: list[T | None] = [None] * len(tasks)
 
     if sys.version_info >= (3, 11) and cancel_on_error:
         async with asyncio.TaskGroup() as tg:
@@ -155,7 +156,7 @@ async def bounded_map(
         return results
 
 
-async def map_as_completed(
+async def map_as_completed[T](
     tasks: list[tuple[Callable[..., Awaitable[T]], tuple, dict]],
     max_concurrent: int = 3,
     **kwargs
@@ -198,7 +199,7 @@ async def map_as_completed(
         yield idx, val
 
 
-async def bounded_gather(
+async def bounded_gather[T](
     *coros: Awaitable[T],
     max_concurrent: int = 3,
     return_exceptions: bool = False

@@ -10,8 +10,8 @@ Tests verify:
 5. cold-start scipy module count is reduced to 0
 """
 
-import unittest
 import sys
+import unittest
 
 
 class TestScipyLazyLoadInRelationshipDiscovery(unittest.TestCase):
@@ -58,7 +58,7 @@ class TestScipyLazyLoadInRelationshipDiscovery(unittest.TestCase):
             if 'scipy' in m:
                 del sys.modules[m]
 
-        from hledac.universal.intelligence.relationship_discovery import _get_sparse, SCIPY_AVAILABLE
+        from hledac.universal.intelligence.relationship_discovery import SCIPY_AVAILABLE, _get_sparse
         sparse = _get_sparse()
         if SCIPY_AVAILABLE:
             self.assertIsNotNone(sparse)
@@ -73,7 +73,7 @@ class TestScipyLazyLoadInRelationshipDiscovery(unittest.TestCase):
 
     def test_csr_matrix_creates_sparse_matrix(self):
         """_get_csr_matrix() should return csr_matrix that creates sparse matrices."""
-        from hledac.universal.intelligence.relationship_discovery import _get_csr_matrix, SCIPY_AVAILABLE
+        from hledac.universal.intelligence.relationship_discovery import SCIPY_AVAILABLE, _get_csr_matrix
         csr = _get_csr_matrix()
         if not SCIPY_AVAILABLE:
             self.skipTest("scipy not available")
@@ -84,7 +84,7 @@ class TestScipyLazyLoadInRelationshipDiscovery(unittest.TestCase):
 
     def test_lil_matrix_creates_sparse_matrix(self):
         """_get_lil_matrix() should return lil_matrix that creates sparse matrices."""
-        from hledac.universal.intelligence.relationship_discovery import _get_lil_matrix, SCIPY_AVAILABLE
+        from hledac.universal.intelligence.relationship_discovery import SCIPY_AVAILABLE, _get_lil_matrix
         lil = _get_lil_matrix()
         if not SCIPY_AVAILABLE:
             self.skipTest("scipy not available")
@@ -96,7 +96,9 @@ class TestScipyLazyLoadInRelationshipDiscovery(unittest.TestCase):
     def test_adjacency_matrix_builds_with_lazy_sparse(self):
         """_build_adjacency_matrix() should work with lazy scipy.sparse."""
         from hledac.universal.intelligence.relationship_discovery import (
-            RelationshipDiscoveryEngine, Entity, Relationship
+            Entity,
+            Relationship,
+            RelationshipDiscoveryEngine,
         )
         engine = RelationshipDiscoveryEngine(
             enable_mlx=False,
@@ -117,7 +119,10 @@ class TestScipyLazyLoadInRelationshipDiscovery(unittest.TestCase):
     def test_adjacency_matrix_sparse_path(self):
         """_build_adjacency_matrix() should use sparse for large graphs (n > 100)."""
         from hledac.universal.intelligence.relationship_discovery import (
-            RelationshipDiscoveryEngine, Entity, Relationship, SCIPY_AVAILABLE
+            SCIPY_AVAILABLE,
+            Entity,
+            Relationship,
+            RelationshipDiscoveryEngine,
         )
         if not SCIPY_AVAILABLE:
             self.skipTest("scipy not available")
@@ -155,7 +160,6 @@ class TestScipyColdStartReduction(unittest.TestCase):
             if 'scipy' in m:
                 del sys.modules[m]
 
-        import hledac.universal.autonomous_orchestrator
         scipy_mods = [m for m in sys.modules if 'scipy' in m]
         self.assertEqual(len(scipy_mods), 0,
             f"scipy was loaded at cold-start: {scipy_mods[:5]}")

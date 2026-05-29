@@ -12,7 +12,6 @@ Tyto testy by MĚLY PROCHÁZET — pokud některý selže, znamená to
 boundary violation (code drift).
 """
 
-import pytest
 
 
 class TestRAGEngineBoundaries:
@@ -108,9 +107,10 @@ class TestPQIndexBoundaries:
 
     def test_pq_index_returns_similarity(self):
         """PQIndex.search() vrací similarity (1/(1+L2)), ne distance."""
-        from hledac.universal.knowledge.pq_index import PQIndex
         # Kontrola že search má správný return type comment
         import inspect
+
+        from hledac.universal.knowledge.pq_index import PQIndex
         source = inspect.getsource(PQIndex.search)
         assert "similarity" in source.lower(), "PQIndex.search should return similarity"
 
@@ -126,6 +126,7 @@ class TestGraphRAGBoundaries:
     def test_graph_rag_has_knowledge_layer_param(self):
         """GraphRAGOrchestrator.__init__ MUSÍ mít knowledge_layer parametr."""
         import inspect
+
         from hledac.universal.knowledge.graph_rag import GraphRAGOrchestrator
         sig = inspect.signature(GraphRAGOrchestrator.__init__)
         assert "knowledge_layer" in sig.parameters
@@ -161,11 +162,11 @@ class TestCrossModuleBoundaries:
 
         To by znamenalo že boundaries jsou rozmazané.
         """
-        from hledac.universal.knowledge.rag_engine import RAGEngine
         from hledac.universal.knowledge.lancedb_store import LanceDBIdentityStore
+        from hledac.universal.knowledge.rag_engine import RAGEngine
 
         rag_api = set(dir(RAGEngine))
-        lancedb_api = set(dir(LanceDBIdentityStore))
+        set(dir(LanceDBIdentityStore))
 
         # Průnik by neměl obsahovat všechny 3
         hybrid_and_entity = (
@@ -178,7 +179,7 @@ class TestCrossModuleBoundaries:
     def test_rag_engine_not_lancedb_schema(self):
         """RAGEngine NESMÍ mít LanceDB identity schema fields."""
         from hledac.universal.knowledge.rag_engine import RAGEngine
-        rag_api_lower = set(a.lower() for a in dir(RAGEngine))
+        rag_api_lower = {a.lower() for a in dir(RAGEngine)}
         # LanceDB entity schema fields
         lancedb_identity_fields = {"aliases", "first_seen", "last_seen", "embedding"}
         assert len(rag_api_lower & lancedb_identity_fields) == 0, (
@@ -188,10 +189,10 @@ class TestCrossModuleBoundaries:
     def test_assertions_module_usable(self):
         """assertions.py je importovatelný a má správné funkce."""
         from hledac.universal.knowledge.assertions import (
-            assert_rag_engine_is_not_identity_store,
+            assert_graph_rag_is_consumer_not_owner,
             assert_lancedb_is_not_grounding_authority,
             assert_pq_index_is_compression_only,
-            assert_graph_rag_is_consumer_not_owner,
+            assert_rag_engine_is_not_identity_store,
         )
         # Všechny funkce existují a jsou callable
         assert callable(assert_rag_engine_is_not_identity_store)

@@ -12,7 +12,7 @@ Optimized for M1 Mac with ANE acceleration.
 
 import asyncio
 import logging
-from typing import Dict, Any, List
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +37,7 @@ class VisionAnalyzer:
     - Feature print generation (for similarity detection)
     """
 
-    async def analyze_image(self, image_bytes: bytes) -> Dict[str, Any]:
+    async def analyze_image(self, image_bytes: bytes) -> dict[str, Any]:
         """
         Analyze image bytes using Vision framework.
 
@@ -122,7 +122,7 @@ class VisionAnalyzer:
             return {"text": "", "barcodes": [], "faces": 0, "feature_print": False}
 
 
-async def analyze_image_async(image_bytes: bytes) -> Dict[str, Any]:
+async def analyze_image_async(image_bytes: bytes) -> dict[str, Any]:
     """Async wrapper for VisionAnalyzer.analyze_image."""
     analyzer = VisionAnalyzer()
     return await analyzer.analyze_image(image_bytes)

@@ -3,9 +3,10 @@ Sprint 8BA Phase 0 Closure Tests
 Dead code classification, BasePolicy ABC, lock/import/mutable-state safety verification.
 """
 import abc
+import statistics
 import subprocess
 import sys
-import statistics
+
 import pytest
 
 
@@ -40,7 +41,7 @@ class TestSprint8BAPhase0:
 
     def test_basepolicy_concrete_implementations_work(self):
         """Verify all concrete policy implementations work."""
-        from tools.policies import AuthorityPolicy, TemporalPolicy, DiscoursePolicy
+        from tools.policies import AuthorityPolicy, DiscoursePolicy, TemporalPolicy
 
         policies = [
             AuthorityPolicy(),
@@ -73,7 +74,7 @@ class TestSprint8BAPhase0:
         ]
 
         for path in paths:
-            with open(path, "r", encoding="utf-8") as f:
+            with open(path, encoding="utf-8") as f:
                 src = f.read()
             tree = ast.parse(src, filename=path)
 
@@ -94,7 +95,7 @@ class TestSprint8BAPhase0:
         ]
 
         for path in paths:
-            with open(path, "r", encoding="utf-8") as f:
+            with open(path, encoding="utf-8") as f:
                 src = f.read()
 
             # scipy should be guarded with try/except or lazy import
@@ -118,7 +119,7 @@ class TestSprint8BAPhase0:
         ]
 
         for path in files:
-            with open(path, "r", encoding="utf-8") as f:
+            with open(path, encoding="utf-8") as f:
                 src = f.read()
             tree = ast.parse(src, filename=path)
 
@@ -134,7 +135,7 @@ class TestSprint8BAPhase0:
 
     def test_handle_platforms_frozenset_verified_or_fixed(self):
         """Verify _HANDLE_PLATFORMS is frozenset in AO."""
-        with open("/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/autonomous_orchestrator.py", "r") as f:
+        with open("/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/autonomous_orchestrator.py") as f:
             src = f.read()
 
         # Find _HANDLE_PLATFORMS assignments

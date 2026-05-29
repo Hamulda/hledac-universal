@@ -27,13 +27,10 @@ from __future__ import annotations
 import gc
 import gzip
 import json
-import os
-import sys
 import time
 import tracemalloc
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
 
 # ── Paths ────────────────────────────────────────────────────────────────────
 
@@ -372,7 +369,7 @@ def print_candidate_table(candidates: list[CandidateReport]) -> None:
     print("-" * 100)
 
     for c in candidates:
-        for key, r in c.results.items():
+        for _key, r in c.results.items():
             print(
                 f"{c.file_line:<45} {r.format+'_'+str(r.level):<12} "
                 f"{r.raw_bytes:>7} {r.compressed_bytes:>7} {r.ratio:>7.1%} "
@@ -405,11 +402,11 @@ def write_report(candidates: list[CandidateReport]) -> Path:
         "",
         "### Compression Benchmark Table",
         "",
-        f"| Candidate | Format | RawB | CmprB | Ratio | Cmp(μs) | Dcp(μs) | RSS(KB) | Verdict |",
-        f"|---|---|---|---|---|---|---|---|---|",
+        "| Candidate | Format | RawB | CmprB | Ratio | Cmp(μs) | Dcp(μs) | RSS(KB) | Verdict |",
+        "|---|---|---|---|---|---|---|---|---|",
     ]
     for c in candidates:
-        for key, r in c.results.items():
+        for _key, r in c.results.items():
             lines.append(
                 f"| `{c.file_line}` | {r.format}_l{r.level} | "
                 f"{r.raw_bytes} | {r.compressed_bytes} | {r.ratio:.1%} | "
@@ -420,8 +417,8 @@ def write_report(candidates: list[CandidateReport]) -> Path:
         "",
         "### Candidate Map",
         "",
-        f"| File:Line | Artifact Type | Transient | Read Path | Migrate Needed | Gate | Decision | Reason |",
-        f"|---|---|---|---|---|---|---|---|---|",
+        "| File:Line | Artifact Type | Transient | Read Path | Migrate Needed | Gate | Decision | Reason |",
+        "|---|---|---|---|---|---|---|---|---|",
     ])
     for c in candidates:
         reason_short = c.patch_decision_reason[:80] + "..." if len(c.patch_decision_reason) > 80 else c.patch_decision_reason
@@ -442,13 +439,13 @@ def write_report(candidates: list[CandidateReport]) -> Path:
         "",
         "#### `export/sprint_exporter.py:630` — next_seeds JSON",
         "",
-        f"Decision: **SIDE_CAR_ONLY**",
+        "Decision: **SIDE_CAR_ONLY**",
         "",
         "Gate analysis:",
         "",
         "```",
         f"  zstd-l1: ratio={candidates[1].results.get('zstd_l1', candidates[1].results.get('gzip_l1', None)).ratio:.1%}, ",
-        f"  gate=CONDITIONAL (migration_needed=True)",
+        "  gate=CONDITIONAL (migration_needed=True)",
         "```",
         "",
         "Reason: Gate PASSES on metrics (size reduction >10%), but `migration_needed=True`",

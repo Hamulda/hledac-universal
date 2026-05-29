@@ -12,11 +12,9 @@ Invariant tested:
 
 from __future__ import annotations
 
-import asyncio
 import logging
 
 import pytest
-
 from hledac.universal.pipeline.live_feed_pipeline import (
     async_run_default_feed_batch,
 )
@@ -43,7 +41,7 @@ async def test_pipeline_produces_findings_for_known_feed():
             per_feed_timeout_s=10.0,
             batch_timeout_s=120.0,
         )
-    except asyncio.TimeoutError:
+    except TimeoutError:
         pytest.skip("batch_timeout — feeds took too long to respond")
     except OSError as exc:
         if "Connect" in type(exc).__name__ or "DNS" in type(exc).__name__ or "No route" in str(exc):

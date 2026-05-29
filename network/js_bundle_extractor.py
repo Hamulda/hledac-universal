@@ -1,7 +1,8 @@
+from __future__ import annotations
+
 """JS Bundle AST extractor – finds API endpoints in external JS files."""
 import logging
 import re
-from typing import List, Set
 
 logger = logging.getLogger(__name__)
 
@@ -18,12 +19,12 @@ class _JSBundleExtractor:
     # Relative URL patterns
     RELATIVE_PATTERN = re.compile(r'["\'](/[^"\']*)["\']')
 
-    def extract_from_js(self, js_content: str, base_url: str = "") -> List[str]:
+    def extract_from_js(self, js_content: str, base_url: str = "") -> list[str]:
         """
         Extract API endpoints from JS content.
         Returns list of unique, normalized endpoints.
         """
-        endpoints: Set[str] = set()
+        endpoints: set[str] = set()
 
         # Fetch calls
         for match in self.FETCH_PATTERN.findall(js_content):
@@ -49,7 +50,7 @@ class _JSBundleExtractor:
         # Return bounded list
         return list(endpoints)[:50]
 
-    def _add_endpoint(self, endpoints: Set[str], path: str, base_url: str) -> None:
+    def _add_endpoint(self, endpoints: set[str], path: str, base_url: str) -> None:
         """Normalize and add endpoint if it looks plausible."""
         path = path.strip()
         if not path or len(path) < 3:

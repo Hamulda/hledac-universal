@@ -29,10 +29,11 @@ Run:
 """
 from __future__ import annotations
 
+import importlib.util
 import sys
 import time
+
 import pytest
-import importlib.util
 
 # Direct file-based imports to avoid triggering package __init__.py chains
 # that pull in numpy/MLX dependencies
@@ -77,6 +78,7 @@ FAMILY_PASSIVE_DNS = _ledger_mod.FAMILY_PASSIVE_DNS
 
 # Load acquisition_strategy via normal import (numpy is available in test env)
 from hledac.universal.runtime import acquisition_strategy as _acq_real
+
 _acq_mod = _acq_real
 build_acquisition_report = _acq_mod.build_acquisition_report
 normalize_source_family_outcome = _acq_mod.normalize_source_family_outcome
@@ -85,6 +87,7 @@ get_lane_plan = _acq_mod.get_lane_plan
 
 # Load sprint_scheduler via normal import
 from hledac.universal.runtime import sprint_scheduler as _ss_real
+
 _ss_mod = _ss_real
 _compute_public_stage = _ss_mod._compute_public_stage
 
@@ -287,7 +290,7 @@ class TestPassiveDNSCandidatesReachIngest:
         assert telemetry["pdns_public_accepted"] == 3
 
         store = FakeDuckDBStore()
-        results = await store.async_ingest_findings_batch(findings)
+        await store.async_ingest_findings_batch(findings)
         assert store.accepted == 3
         for f in store.ingested:
             assert f.source_type == "passive_dns"
@@ -300,15 +303,15 @@ class TestWaybackOutcomeSourceFamily:
 
     def test_assertion_5_wayback_outcome_normalizes_to_source_family_outcomes(self):
         """Assertion 5: Wayback outcome normalizes to lowercase 'wayback' in source_family_outcomes."""
-        wayback_outcome = FakeAcquisitionLaneOutcome(
+        FakeAcquisitionLaneOutcome(
             lane="WAYBACK", enabled=True, attempted=True,
             wayback_raw_count=10,
-            wayback_candidates=tuple([
+            wayback_candidates=(
                 FakeCanonicalFinding(
                     source_type="wayback_diff", query="example.com",
                     payload_text="change_type: added\nurl: https://example.com/",
                 )
-            ]),
+            ,),
             wayback_accepted=1,
         )
 
@@ -389,12 +392,12 @@ class TestPivotSourceRecording:
         pivot_outcome = FakeAcquisitionLaneOutcome(
             lane="PASSIVE_DNS", enabled=True, attempted=True,
             pdns_raw_count=3,
-            pdns_candidates=tuple([
+            pdns_candidates=(
                 FakeCanonicalFinding(
                     source_type="passive_dns", query="sub.example.com",
                     payload_text="domain: sub.example.com\nip: 1.2.3.4",
                 )
-            ]),
+            ,),
             pdns_accepted=1,
             pivot_source="ct",
             pivot_depth=1,
@@ -672,7 +675,7 @@ class TestCTToPassiveDNSPivotFlow:
 
         store = FakeDuckDBStore()
         all_findings = list(ct_findings) + list(pdns_findings)
-        results = await store.async_ingest_findings_batch(all_findings)
+        await store.async_ingest_findings_batch(all_findings)
 
         assert store.accepted == 2
         assert {f.source_type for f in store.ingested} == {"ct", "passive_dns"}

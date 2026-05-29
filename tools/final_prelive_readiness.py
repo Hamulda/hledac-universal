@@ -22,14 +22,14 @@ import argparse
 import json
 import os
 import sys
-from dataclasses import dataclass, field, asdict
-from enum import Enum
+from dataclasses import asdict, dataclass, field
+from enum import StrEnum
 from pathlib import Path
 
 REPO_ROOT_DEFAULT = "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal"
 
 
-class Verdict(str, Enum):
+class Verdict(StrEnum):
     READY_TO_RUN_NOW = "READY_TO_RUN_NOW"
     READY_TO_RESTART_AND_RUN = "READY_TO_RESTART_AND_RUN"
     READY_DIAGNOSTIC_ONLY = "READY_DIAGNOSTIC_ONLY"
@@ -40,7 +40,7 @@ class Verdict(str, Enum):
     BLOCKED_BY_UNKNOWN = "BLOCKED_BY_UNKNOWN"
 
 
-class NextAction(str, Enum):
+class NextAction(StrEnum):
     RUN_LIVE_NOW = "RUN_LIVE_NOW"
     RESTART_THEN_RUN_LIVE = "RESTART_THEN_RUN_LIVE"
     RUN_NONFEED_DIAGNOSTIC = "RUN_NONFEED_DIAGNOSTIC"
@@ -472,7 +472,7 @@ def compute_verdict(
 
     # Real contract blockers (after stripping false positives and provider-surface issues)
     # Exclude provider-surface reasons from the contract blocker bucket
-    provider_surface_reasons = [r for r in stripped_reasons if "PROVIDER_SURFACE" in r]
+    [r for r in stripped_reasons if "PROVIDER_SURFACE" in r]
     contract_only_reasons = [r for r in stripped_reasons if "PROVIDER_SURFACE" not in r]
     has_real_contract_blocker = bool(contract_only_reasons)
     if has_real_contract_blocker and not f231_blocking and not f224_blocking:
@@ -716,7 +716,7 @@ def render_markdown(result: ReadinessResult, profile: str, query: str) -> str:
         "",
         f"**Profile:** `{profile}`",
         f"**Query:** `{query}`",
-        f"**Date:** 2026-05-10",
+        "**Date:** 2026-05-10",
         "",
         "---",
         "",
@@ -741,8 +741,8 @@ def render_markdown(result: ReadinessResult, profile: str, query: str) -> str:
         "",
         "## Swap / Memory",
         "",
-        f"| Metric | Value |",
-        f"|--------|-------|",
+        "| Metric | Value |",
+        "|--------|-------|",
         f"| swap_used_gib | {result.swap_used_gib:.3f} |",
         f"| uma_state | {result.uma_state} |",
         f"| swap_policy_tier | {result.swap_policy_tier} |",
@@ -756,8 +756,8 @@ def render_markdown(result: ReadinessResult, profile: str, query: str) -> str:
         "",
         "## F231 Artifact Inventory",
         "",
-        f"| Check | Value |",
-        f"|-------|-------|",
+        "| Check | Value |",
+        "|-------|-------|",
         f"| verdict | {result.f231_inventory_verdict} |",
         f"| F231H gate | {result.f231h_gate_verdict} ({result.f231h_gate_status}) |",
         f"| F231 core ready | {result.f231_core_ready} |",
@@ -771,8 +771,8 @@ def render_markdown(result: ReadinessResult, profile: str, query: str) -> str:
         "",
         "## Gate Decision",
         "",
-        f"| Check | Value |",
-        f"|-------|-------|",
+        "| Check | Value |",
+        "|-------|-------|",
         f"| gate_decision | {result.gate_decision} |",
         f"| gate_live_allowed | {result.gate_live_allowed} |",
         f"| F224 core ready | {result.f224_core_ready} |",
@@ -781,7 +781,7 @@ def render_markdown(result: ReadinessResult, profile: str, query: str) -> str:
     ])
 
     if result.gate_reasons:
-        lines.extend(["", f"**Gate Reasons (original):**"])
+        lines.extend(["", "**Gate Reasons (original):**"])
         for r in result.gate_reasons:
             lines.append(f"- {r}")
 
@@ -801,40 +801,40 @@ def render_markdown(result: ReadinessResult, profile: str, query: str) -> str:
             "",
             "**Memory instruction:** Restart Mac, open only terminal, run readiness first.",
             "",
-            f"```bash",
-            f"# 1. Run final pre-live readiness (post-restart)",
-            f"python -m tools.final_prelive_readiness \\",
-            f"  --repo-root . \\",
+            "```bash",
+            "# 1. Run final pre-live readiness (post-restart)",
+            "python -m tools.final_prelive_readiness \\",
+            "  --repo-root . \\",
             f"  --profile {profile} \\",
             f'  --query "{query}" \\',
-            f"  --output-json probe_f232c_final_post_restart_readiness/final_readiness.json \\",
-            f"  --output-md probe_f232c_final_post_restart_readiness/FINAL_READINESS.md",
-            f"",
-            f"# 2. If READY_TO_RUN_NOW — run live nonfeed_diagnostic180",
+            "  --output-json probe_f232c_final_post_restart_readiness/final_readiness.json \\",
+            "  --output-md probe_f232c_final_post_restart_readiness/FINAL_READINESS.md",
+            "",
+            "# 2. If READY_TO_RUN_NOW — run live nonfeed_diagnostic180",
             f"python -m core --profile {profile} --query \"{query}\" --live --require-memory-ok",
-            f"",
-            f"# 3. Research quality score",
-            f"python -m tools.research_quality_score \\",
+            "",
+            "# 3. Research quality score",
+            "python -m tools.research_quality_score \\",
             f"  --repo-root . --profile {profile} --sprint-id F232C \\",
-            f"  --output-json probe_f232c_final_post_restart_readiness/research_quality_score.json \\",
-            f"  --output-md probe_f232c_final_post_restart_readiness/RESEARCH_QUALITY_SCORE.md",
-            f"",
-            f"# 4. Live result sanity",
-            f"python -m tools.live_result_sanity \\",
+            "  --output-json probe_f232c_final_post_restart_readiness/research_quality_score.json \\",
+            "  --output-md probe_f232c_final_post_restart_readiness/RESEARCH_QUALITY_SCORE.md",
+            "",
+            "# 4. Live result sanity",
+            "python -m tools.live_result_sanity \\",
             f"  --repo-root . --profile {profile} \\",
-            f"  --output-json probe_f232c_final_post_restart_readiness/live_result_sanity.json",
-            f"",
-            f"# 5. Evidence delta memory",
-            f"python -m tools.evidence_delta_memory \\",
+            "  --output-json probe_f232c_final_post_restart_readiness/live_result_sanity.json",
+            "",
+            "# 5. Evidence delta memory",
+            "python -m tools.evidence_delta_memory \\",
             f"  --repo-root . --profile {profile} \\",
-            f"  --output-json probe_f232c_final_post_restart_readiness/evidence_delta_memory.json",
-            f"",
-            f"# 6. F231 artifact inventory (final)",
-            f"python -m tools.f231_artifact_inventory \\",
-            f"  --repo-root . \\",
-            f"  --output-json probe_f232c_final_post_restart_readiness/f231_artifact_inventory.json \\",
-            f"  --output-md probe_f232c_final_post_restart_readiness/F231_ARTIFACT_INVENTORY.md",
-            f"```",
+            "  --output-json probe_f232c_final_post_restart_readiness/evidence_delta_memory.json",
+            "",
+            "# 6. F231 artifact inventory (final)",
+            "python -m tools.f231_artifact_inventory \\",
+            "  --repo-root . \\",
+            "  --output-json probe_f232c_final_post_restart_readiness/f231_artifact_inventory.json \\",
+            "  --output-md probe_f232c_final_post_restart_readiness/F231_ARTIFACT_INVENTORY.md",
+            "```",
         ])
 
     lines.extend([
@@ -887,7 +887,7 @@ def main() -> int:
 
     # Console output
     print(f"\n{'='*60}")
-    print(f"F232C Final Pre-Live Readiness")
+    print("F232C Final Pre-Live Readiness")
     print(f"{'='*60}")
     print(f"  verdict:         {result.verdict.value}")
     print(f"  live_allowed:     {result.live_allowed}")
@@ -902,7 +902,7 @@ def main() -> int:
     print(f"  f224_core_ready:  {result.f224_core_ready}")
     print(f"  provider_surface: {result.provider_surface_ok}")
     if result.blockers:
-        print(f"  blockers:")
+        print("  blockers:")
         for b in result.blockers:
             print(f"    - [{b.category}] {b.severity}: {b.detail}")
     print(f"{'='*60}\n")

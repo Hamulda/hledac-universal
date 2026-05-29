@@ -2,27 +2,32 @@
 Memory Manager with LMDB Persistence
 ====================================
 
-Persistent memory storage for entities, queries, and files.
-Uses LMDB for zero-copy reads and bounded storage.
+Dual-layer architecture for session-bound ephemeral storage:
 
-API:
-- async put(session_id, key, value) -> bool
-- async get(session_id, key) -> Optional[dict]
-- async delete(session_id, key) -> bool
-- async get_session_history(session_id, limit=100) -> list[dict]
-- async clear_session(session_id) -> bool
+LAYER 1 — Direct Module API (here in memory_manager.py):
+    put(session_id, key, value), get(session_id, key), delete(session_id, key)
+    Used by: live_public_pipeline (sprint lifecycle), research_loop (RL q-table)
+    Scope: per-session working memory, hot/ephemeral, LMDB-backed
 
-Features:
-- Session-based isolation
-- Async LMDB operations
-- orjson serialization
-- Bounded storage per session
-- Automatic cleanup of old sessions
+LAYER 2 — memory_layer.py wraps this with:
+    SharedBlock: cross-session shared data blocks (research context, evidence carriers)
+    EntropyMaskingManager: noise injection for privacy, O(|fifo|) eviction
+    Used by: research loops that need shared state across hypothesis iterations
+
+WHY SEPARATE FROM DuckDB? DuckDBShadowStore = persistent canonical store for sprint
+facts (tier 1), written once per sprint. MemoryManager = micro-session state
+updated hundreds of times per sprint. Different lifetimes, different access patterns.
+
+THREAD SAFETY: MemoryManager is NOT thread-safe. All access is async and must
+remain within a single event loop. Session isolation prevents cross-session
+corruption but concurrent await points within one session are unprotected (by design
+— event loop serialized).
 
 M1 8GB Optimized:
 - Zero-copy reads via buffers=True
-- Bounded key count per session
-- Lazy session cleanup
+- Bounded key count per session (MAX_KEYS_PER_SESSION)
+- Lazy session cleanup (cleanup_old_sessions called on put/get)
+- orjson zero-copy deserialization
 """
 
 from __future__ import annotations
@@ -31,7 +36,7 @@ import asyncio
 import logging
 import time
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 try:
     import orjson
@@ -91,7 +96,7 @@ class MemoryManager:
 
     def __init__(
         self,
-        db_path: Optional[str] = None,
+        db_path: str | None = None,
         map_size: int = DEFAULT_MAP_SIZE,
         max_keys_per_session: int = MAX_KEYS_PER_SESSION,
         max_sessions: int = MAX_SESSIONS,
@@ -139,11 +144,11 @@ class MemoryManager:
 
     def _make_session_key(self, session_id: str, key: str) -> bytes:
         """Create a full LMDB key from session_id and key."""
-        return f"session:{session_id}:{key}".encode('utf-8')
+        return f"session:{session_id}:{key}".encode()
 
     def _make_session_index_key(self, session_id: str) -> bytes:
         """Create session index key."""
-        return f"sessions:{session_id}".encode('utf-8')
+        return f"sessions:{session_id}".encode()
 
     async def put(self, session_id: str, key: str, value: dict) -> bool:
         """
@@ -186,7 +191,7 @@ class MemoryManager:
                 logger.error(f"MemoryManager put failed: {e}")
                 return False
 
-    async def get(self, session_id: str, key: str) -> Optional[dict]:
+    async def get(self, session_id: str, key: str) -> dict | None:
         """
         Retrieve a value from session storage.
 
@@ -257,7 +262,7 @@ class MemoryManager:
         async with self._lock:
             try:
                 keys = []
-                prefix = f"session:{session_id}:".encode('utf-8')
+                prefix = f"session:{session_id}:".encode()
 
                 with self._env.begin(write=False) as txn:
                     cursor = txn.cursor()
@@ -413,7 +418,7 @@ class MemoryManager:
             self._env.close()
             logger.info("MemoryManager closed")
 
-    def __enter__(self) -> "MemoryManager":
+    def __enter__(self) -> MemoryManager:
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb) -> None:
@@ -427,7 +432,7 @@ class MemoryManager:
 
 
 # Singleton instance
-_memory_manager: Optional[MemoryManager] = None
+_memory_manager: MemoryManager | None = None
 
 
 async def get_memory_manager() -> MemoryManager:
@@ -461,7 +466,7 @@ async def memory_put(session_id: str, key: str, value: dict) -> bool:
     return await mgr.put(session_id, key, value)
 
 
-async def memory_get(session_id: str, key: str) -> Optional[dict]:
+async def memory_get(session_id: str, key: str) -> dict | None:
     """Retrieve a value from memory."""
     mgr = await get_memory_manager()
     return await mgr.get(session_id, key)

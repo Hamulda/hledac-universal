@@ -28,9 +28,19 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Callable, Optional
+from collections.abc import Callable
 
 from hledac.universal.graph.quantum_pathfinder import DuckPGQGraph
+
+# ── Rust IOC dedup (lazy import) ───────────────────────────────────────────────
+_RUST_IOC_DEDUP_AVAILABLE = False
+try:
+    from hledac_rust_extensions import IocSet, RelSet
+
+    _RUST_IOC_DEDUP_AVAILABLE = True
+except ImportError:
+    IocSet = None  # type: ignore[assignment, misc]
+    RelSet = None  # type: ignore[assignment, misc]
 
 logger = logging.getLogger(__name__)
 
@@ -43,10 +53,10 @@ MAX_GRAPH_ANALYTICS_TOP_K: int = 10
 # Used by module-level facade AND by GraphService instances via class lookup.
 # Tests patching graph_service._get_graph affect all callers.
 
-_DUCKPGQ_GRAPH: Optional[DuckPGQGraph] = None
+_DUCKPGQ_GRAPH: DuckPGQGraph | None = None
 
 
-def _get_graph() -> Optional[DuckPGQGraph]:
+def _get_graph() -> DuckPGQGraph | None:
     """Lazy singleton getter for DuckPGQGraph.
 
     Defined at module level so tests can patch it and affect all callers
@@ -83,8 +93,12 @@ class GraphService:
     __slots__ = ("_seen_iocs", "_seen_rels", "_relationship_callbacks")  # _duckpgq_graph NOT stored (uses _get_graph)
 
     def __init__(self) -> None:
-        self._seen_iocs: set[tuple[str, str]] = set()
-        self._seen_rels: set[tuple[str, str, str]] = set()
+        if _RUST_IOC_DEDUP_AVAILABLE:
+            self._seen_iocs: IocSet = IocSet()  # type: ignore[assignment]
+            self._seen_rels: RelSet = RelSet()  # type: ignore[assignment]
+        else:
+            self._seen_iocs = set()  # type: ignore[assignment]
+            self._seen_rels = set()  # type: ignore[assignment]
         self._relationship_callbacks: list[Callable] = []
 
     def register_relationship_callback(self, fn: Callable[..., None]) -> None:
@@ -109,8 +123,7 @@ class GraphService:
         Returns:
             True if IOC was newly upserted, False if it already existed or on error.
         """
-        key = (value, ioc_type)
-        if key in self._seen_iocs:
+        if _RUST_IOC_DEDUP_AVAILABLE and self._seen_iocs.contains(value, ioc_type):
             return False
 
         # Sprint F214Q: Validate ioc_type against canonical taxonomy
@@ -125,7 +138,10 @@ class GraphService:
         try:
             row_id = graph.add_ioc(value, ioc_type, confidence, source)
             if row_id is not None:
-                self._seen_iocs.add(key)
+                if _RUST_IOC_DEDUP_AVAILABLE:
+                    self._seen_iocs.add(value, ioc_type)
+                else:
+                    self._seen_iocs.add((value, ioc_type))
                 return True
             return False
         except Exception as e:
@@ -149,15 +165,23 @@ class GraphService:
         if not rows:
             return 0
         unique: list[tuple[str, str, float, str]] = []
-        seen_add = self._seen_iocs.add
         for value, ioc_type, confidence, source in rows:
-            key = (value, ioc_type)
-            if key not in self._seen_iocs:
-                # Sprint F214Q: Validate ioc_type
-                if ioc_type not in _VALID_IOC_TYPES:
-                    ioc_type = "unknown"
-                unique.append((value, ioc_type, confidence, source))
-                seen_add(key)
+            # Deduplicate via Rust IocSet or Python set
+            if _RUST_IOC_DEDUP_AVAILABLE:
+                if self._seen_iocs.contains(value, ioc_type):
+                    continue
+            else:
+                key = (value, ioc_type)
+                if key in self._seen_iocs:
+                    continue
+            # Sprint F214Q: Validate ioc_type
+            if ioc_type not in _VALID_IOC_TYPES:
+                ioc_type = "unknown"
+            unique.append((value, ioc_type, confidence, source))
+            if _RUST_IOC_DEDUP_AVAILABLE:
+                self._seen_iocs.add(value, ioc_type)
+            else:
+                self._seen_iocs.add((value, ioc_type))
         if not unique:
             return 0
 
@@ -184,8 +208,7 @@ class GraphService:
         Returns:
             True on success, False on error or if already seen.
         """
-        key = (src, dst, rel_type)
-        if key in self._seen_rels:
+        if _RUST_IOC_DEDUP_AVAILABLE and self._seen_rels.contains(src, dst, rel_type):
             return False
 
         graph = _get_graph()
@@ -193,7 +216,7 @@ class GraphService:
             return False
         try:
             graph.add_relation(src, dst, rel_type, weight, evidence)
-            self._seen_rels.add(key)
+            self._seen_rels.add(src, dst, rel_type)
             # Fire relationship callbacks (NetworkX bridge for cross-sprint persistence)
             for cb in self._relationship_callbacks:
                 try:
@@ -258,7 +281,10 @@ class GraphService:
         if graph is None:
             return {}
         try:
-            return graph.stats()
+            # F228FIX: DuckPGQGraph fallback path may not have stats() method
+            if hasattr(graph, 'stats'):
+                return graph.stats()
+            return {}
         except Exception as e:
             logger.warning(f"[GraphService] graph_stats failed: {e}")
             return {}
@@ -390,11 +416,22 @@ _SeenRels = _DEFAULT_GRAPH_SERVICE._seen_rels
 class _ModuleSeenIOCs:
     """Forward clear/add/contains/iter to _DEFAULT_GRAPH_SERVICE._seen_iocs."""
     def clear(self):
-        _DEFAULT_GRAPH_SERVICE._seen_iocs.clear()
+        if _RUST_IOC_DEDUP_AVAILABLE:
+            _DEFAULT_GRAPH_SERVICE._seen_iocs.clear()
+        else:
+            _DEFAULT_GRAPH_SERVICE._seen_iocs.clear()
     def add(self, key):
-        _DEFAULT_GRAPH_SERVICE._seen_iocs.add(key)
+        val, ioc_type = key
+        if _RUST_IOC_DEDUP_AVAILABLE:
+            _DEFAULT_GRAPH_SERVICE._seen_iocs.add(val, ioc_type)
+        else:
+            _DEFAULT_GRAPH_SERVICE._seen_iocs.add(key)
     def __contains__(self, key):
-        return key in _DEFAULT_GRAPH_SERVICE._seen_iocs
+        val, ioc_type = key
+        if _RUST_IOC_DEDUP_AVAILABLE:
+            return _DEFAULT_GRAPH_SERVICE._seen_iocs.contains(val, ioc_type)
+        else:
+            return key in _DEFAULT_GRAPH_SERVICE._seen_iocs
     def __iter__(self):
         return iter(_DEFAULT_GRAPH_SERVICE._seen_iocs)
 
@@ -402,11 +439,22 @@ class _ModuleSeenIOCs:
 class _ModuleSeenRels:
     """Forward clear/add/contains/iter to _DEFAULT_GRAPH_SERVICE._seen_rels."""
     def clear(self):
-        _DEFAULT_GRAPH_SERVICE._seen_rels.clear()
+        if _RUST_IOC_DEDUP_AVAILABLE:
+            _DEFAULT_GRAPH_SERVICE._seen_rels.clear()
+        else:
+            _DEFAULT_GRAPH_SERVICE._seen_rels.clear()
     def add(self, key):
-        _DEFAULT_GRAPH_SERVICE._seen_rels.add(key)
+        src, dst, rel_type = key
+        if _RUST_IOC_DEDUP_AVAILABLE:
+            _DEFAULT_GRAPH_SERVICE._seen_rels.add(src, dst, rel_type)
+        else:
+            _DEFAULT_GRAPH_SERVICE._seen_rels.add(key)
     def __contains__(self, key):
-        return key in _DEFAULT_GRAPH_SERVICE._seen_rels
+        src, dst, rel_type = key
+        if _RUST_IOC_DEDUP_AVAILABLE:
+            return _DEFAULT_GRAPH_SERVICE._seen_rels.contains(src, dst, rel_type)
+        else:
+            return key in _DEFAULT_GRAPH_SERVICE._seen_rels
     def __iter__(self):
         return iter(_DEFAULT_GRAPH_SERVICE._seen_rels)
 
@@ -473,7 +521,7 @@ def graph_analytics_summary(top_k: int = MAX_GRAPH_ANALYTICS_TOP_K) -> dict:
 
 # ── Internal helpers ───────────────────────────────────────────────────────────
 
-def _estimate_community_count(graph: "DuckPGQGraph") -> int:
+def _estimate_community_count(graph: DuckPGQGraph) -> int:
     """
     Estimate community count via simple label propagation on sampled edges.
 

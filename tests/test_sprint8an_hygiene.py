@@ -17,7 +17,6 @@ import gc
 import inspect
 import subprocess
 import sys
-from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -64,9 +63,7 @@ class TestAcademicSearchStability:
 
     def test_academic_search_adapters_use_context_manager(self):
         """CONFIRMED_STABLE: Adapters inside academic_search use per-call context manager."""
-        from hledac.universal.intelligence.academic_search import (
-            ArxivAdapter, CrossrefAdapter, SemanticScholarAdapter
-        )
+        from hledac.universal.intelligence.academic_search import ArxivAdapter, CrossrefAdapter, SemanticScholarAdapter
         for adapter_cls in [ArxivAdapter, CrossrefAdapter, SemanticScholarAdapter]:
             src = inspect.getsource(adapter_cls)
             assert "async with aiohttp.ClientSession()" in src, \
@@ -143,8 +140,9 @@ class TestFDDeltaTelemetry:
 
     def test_fd_delta_bounded_after_import(self):
         """FD: After import, FD count <= baseline + 5."""
-        import psutil
         import os
+
+        import psutil
         # Measure actual baseline at test invocation time
         p = psutil.Process(os.getpid())
         baseline_fds = p.num_fds()
@@ -155,8 +153,9 @@ class TestFDDeltaTelemetry:
     @pytest.mark.asyncio
     async def test_fd_delta_bounded_after_shutdown(self):
         """FD: Shutdown does not leak more than 15 FDs above init baseline."""
-        import psutil
         import os
+
+        import psutil
         p = psutil.Process(os.getpid())
 
         from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator

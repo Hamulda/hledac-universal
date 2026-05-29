@@ -2,8 +2,9 @@
 Test pattern_mining - Sprint 67
 Tests for wavelet change detection and forecasting.
 """
+from unittest.mock import patch
+
 import pytest
-from unittest.mock import patch, MagicMock, AsyncMock
 
 
 class TestWaveletChangePoints:
@@ -102,12 +103,10 @@ class TestMambaForecasting:
     async def test_forecast_circuit_breaker(self):
         """Test circuit breaker after 3 failures."""
         import time
-        from hledac.universal.intelligence.pattern_mining import (
-            forecast_mamba2, _MAMBA_FAILURES, _MAMBA_DISABLED_UNTIL
-        )
 
         # Set circuit breaker state
         import hledac.universal.intelligence.pattern_mining as pm
+        from hledac.universal.intelligence.pattern_mining import forecast_mamba2
         pm._MAMBA_DISABLED_UNTIL = time.time() + 60
 
         result = await forecast_mamba2([1.0, 2.0, 3.0, 4.0, 5.0])
@@ -120,8 +119,8 @@ class TestMambaForecasting:
     @pytest.mark.asyncio
     async def test_forecast_no_model(self):
         """Test forecast when model not available."""
-        from hledac.universal.intelligence.pattern_mining import forecast_mamba2
         import hledac.universal.intelligence.pattern_mining as pm
+        from hledac.universal.intelligence.pattern_mining import forecast_mamba2
 
         # Force no model
         pm._MAMBA_AVAILABLE = False

@@ -44,15 +44,14 @@ import json
 import sys
 import textwrap
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import StrEnum
 from pathlib import Path
-from typing import Optional
 
 # --------------------------------------------------------------------------- #
 # Verdict enum
 # --------------------------------------------------------------------------- #
 
-class OneButtonVerdict(str, Enum):
+class OneButtonVerdict(StrEnum):
     RUN_NOW = "RUN_NOW"
     RESTART_THEN_RUN = "RESTART_THEN_RUN"
     DO_NOT_RUN_FIX_ARTIFACTS = "DO_NOT_RUN_FIX_ARTIFACTS"
@@ -246,7 +245,7 @@ class F221ArtifactResult:
     probe_dir: str
     filename: str
     found: bool
-    parse_error: Optional[str] = None
+    parse_error: str | None = None
     valid: bool = False  # found AND valid JSON
 
 
@@ -260,7 +259,7 @@ def _check_f221_artifact(repo_root: Path, probe_dir: str, filename: str) -> F221
 
     result.found = True
     try:
-        with open(full_path, "r", encoding="utf-8") as fh:
+        with open(full_path, encoding="utf-8") as fh:
             json.load(fh)
         result.valid = True
     except json.JSONDecodeError as exc:
@@ -296,8 +295,8 @@ class F223ArtifactResult:
     filename: str = ""
     found: bool = False
     valid: bool = False
-    parse_error: Optional[str] = None
-    resolved_path: Optional[str] = None
+    parse_error: str | None = None
+    resolved_path: str | None = None
     alias_used: bool = False
     searched_paths: list[str] = field(default_factory=list)
 
@@ -338,7 +337,7 @@ def _check_f223_artifact(
         if candidate_dir != probe_dir or candidate_file != filename:
             result.alias_used = True
         try:
-            with open(full_path, "r", encoding="utf-8") as fh:
+            with open(full_path, encoding="utf-8") as fh:
                 json.load(fh)
             result.valid = True
         except json.JSONDecodeError as exc:
@@ -433,7 +432,7 @@ def _check_cross_sprint_artifacts(repo_root: Path) -> tuple[list[F221ArtifactRes
 # Last live triage parsing
 # --------------------------------------------------------------------------- #
 
-def _load_last_live_triage(path: Optional[Path]) -> Optional[dict]:
+def _load_last_live_triage(path: Path | None) -> dict | None:
     """Load optional last-live artifact triage result."""
     if path is None or not path.exists():
         return None
@@ -448,7 +447,7 @@ def _load_last_live_triage(path: Optional[Path]) -> Optional[dict]:
 # Decision gate result loading
 # --------------------------------------------------------------------------- #
 
-def _load_decision_gate(decision_path: Optional[Path]) -> Optional[dict]:
+def _load_decision_gate(decision_path: Path | None) -> dict | None:
     if decision_path is None or not decision_path.exists():
         return None
     try:
@@ -462,7 +461,7 @@ def _load_decision_gate(decision_path: Optional[Path]) -> Optional[dict]:
 # Provider surface check (from decision gate checked_reports)
 # --------------------------------------------------------------------------- #
 
-def _is_provider_surface_ok(decision_data: Optional[dict]) -> bool:
+def _is_provider_surface_ok(decision_data: dict | None) -> bool:
     """Check provider surface is OK from decision gate data."""
     if decision_data is None:
         return True  # no gate data = skip check
@@ -496,7 +495,7 @@ def _is_provider_surface_ok(decision_data: Optional[dict]) -> bool:
     return surface_satisfied
 
 
-def _has_fallback_schema(decision_data: Optional[dict]) -> bool:
+def _has_fallback_schema(decision_data: dict | None) -> bool:
     """Check if any report has fallback acquisition schema marker."""
     if decision_data is None:
         return False
@@ -526,8 +525,8 @@ class OneButtonResult:
     swap_policy_tier: str = "unknown"
     swap_gate_reason: str = ""
     live_command: dict = field(default_factory=dict)  # {command, expected_assertions}
-    triage_verdict: Optional[str] = None
-    triage_another_live_useful: Optional[bool] = None
+    triage_verdict: str | None = None
+    triage_another_live_useful: bool | None = None
     # F233F: Split gate output contract
     capability_live_allowed: bool = False  # nonfeed capability run allowed
     feed_baseline_allowed: bool = False    # feed baseline run allowed
@@ -590,8 +589,8 @@ def run_one_button_gate(
     repo_root: Path,
     profile: str,
     query: str,
-    decision_gate_path: Optional[Path] = None,
-    last_live_triage_path: Optional[Path] = None,
+    decision_gate_path: Path | None = None,
+    last_live_triage_path: Path | None = None,
 ) -> OneButtonResult:
     """
     Run the one-button prelive gate.
@@ -753,7 +752,7 @@ def run_one_button_gate(
         f231d_path = repo_root / "probe_f231d_research_quality_v2" / "research_quality_v2.json"
         if f231d_path.exists():
             try:
-                with open(f231d_path, "r", encoding="utf-8") as fh:
+                with open(f231d_path, encoding="utf-8") as fh:
                     f231d_data = json.load(fh)
                     # research_quality must be explicitly True in the artifact
                     if f231d_data.get("research_quality") is True:
@@ -767,7 +766,7 @@ def run_one_button_gate(
         f233d_path = repo_root / "probe_f233d_nonfeed_prelude_coverage" / "nonfeed_prelude_coverage.json"
         if f233d_path.exists():
             try:
-                with open(f233d_path, "r", encoding="utf-8") as fh:
+                with open(f233d_path, encoding="utf-8") as fh:
                     f233d_data = json.load(fh)
                     if f233d_data.get("coverage_present") is True:
                         f233d_nonfeed_prelude_coverage = True
@@ -784,16 +783,13 @@ def run_one_button_gate(
     capability_live_allowed = False
     feed_baseline_allowed = False
     why_nonfeed_capability_blocked = ""
-    degraded_but_allowed = False
 
     # Conditions that block ANY live run (feed or capability)
     any_run_blocked = False
-    any_run_block_reason = ""
 
     # Rule 1: Missing F221 artifacts → DO_NOT_RUN_FIX_ARTIFACTS
     if missing_f221:
         any_run_blocked = True
-        any_run_block_reason = "missing_f221"
         verdict = OneButtonVerdict.DO_NOT_RUN_FIX_ARTIFACTS
         live_allowed = False
         capability_live_allowed = False
@@ -805,7 +801,6 @@ def run_one_button_gate(
     # Rule 1b: Missing F223 required artifacts → DO_NOT_RUN_FIX_ARTIFACTS
     elif missing_f223_required:
         any_run_blocked = True
-        any_run_block_reason = "missing_f223"
         verdict = OneButtonVerdict.DO_NOT_RUN_FIX_ARTIFACTS
         live_allowed = False
         capability_live_allowed = False
@@ -815,7 +810,6 @@ def run_one_button_gate(
     # Rule 2: Fallback schema → DO_NOT_RUN_CONTRACT (blocks both)
     elif fallback_blocked:
         any_run_blocked = True
-        any_run_block_reason = "fallback_schema"
         verdict = OneButtonVerdict.DO_NOT_RUN_CONTRACT
         live_allowed = False
         capability_live_allowed = False
@@ -827,7 +821,6 @@ def run_one_button_gate(
     # Rule 3: Provider surface broken → DO_NOT_RUN_PROVIDER_SURFACE (blocks both)
     elif not provider_surface_ok:
         any_run_blocked = True
-        any_run_block_reason = "provider_surface"
         verdict = OneButtonVerdict.DO_NOT_RUN_PROVIDER_SURFACE
         live_allowed = False
         capability_live_allowed = False
@@ -838,7 +831,6 @@ def run_one_button_gate(
     # Rule 4: UMA emergency/critical → DO_NOT_RUN_UNKNOWN
     elif uma_state in ("critical", "emergency"):
         any_run_blocked = True
-        any_run_block_reason = "uma_critical"
         verdict = OneButtonVerdict.DO_NOT_RUN_UNKNOWN
         live_allowed = False
         capability_live_allowed = False
@@ -851,7 +843,6 @@ def run_one_button_gate(
     # Rule 5: Swap > DIAGNOSTIC_SWAP_MAX_GIB → DO_NOT_RUN_MEMORY_HARD_BLOCK
     elif swap_gib > DIAGNOSTIC_SWAP_MAX_GIB:
         any_run_blocked = True
-        any_run_block_reason = "swap_hard_block"
         verdict = OneButtonVerdict.DO_NOT_RUN_MEMORY_HARD_BLOCK
         live_allowed = False
         capability_live_allowed = False
@@ -1148,7 +1139,7 @@ def _render_markdown(result: OneButtonResult, profile: str, query: str) -> str:
 
     if f223a and f223a.get("optional_details"):
         lines.extend(["", "### F223 Optional Artifact Details", ""])
-        lines.append(f"(_Optional — advisory only, does not block_)")
+        lines.append("(_Optional — advisory only, does not block_)")
         lines.append("| Probe | Artifact | Found | Valid |")
         lines.append("|------|----------|-------|-------|")
         for d in f223a["optional_details"]:
@@ -1165,8 +1156,8 @@ def _render_markdown(result: OneButtonResult, profile: str, query: str) -> str:
     # F233F: Split gate output contract
     lines.extend(["", "---", "", "## F233F Gate: Capability vs Feed Split", ""])
     lines.extend([
-        f"| Field | Value |",
-        f"|-------|-------|",
+        "| Field | Value |",
+        "|-------|-------|",
         f"| Live Allowed | `{result.live_allowed}` |",
         f"| Capability Live Allowed | `{result.capability_live_allowed}` |",
         f"| Feed Baseline Allowed | `{result.feed_baseline_allowed}` |",
@@ -1574,8 +1565,8 @@ def _render_self_test_markdown(result: SelfTestResult, profile: str, query: str)
         "",
         "## Contract Status",
         "",
-        f"| Contract | Status |",
-        f"|----------|--------|",
+        "| Contract | Status |",
+        "|----------|--------|",
         f"| CWD / Repo-Root | {'✅' if result.cwd_contract_ok else '❌'} |",
         f"| Assertion Contract | {'✅' if result.assertion_contract_ok else '❌'} |",
         f"| Command Contract | {'✅' if result.command_contract_ok else '❌'} |",
@@ -1612,12 +1603,12 @@ def _render_self_test_markdown(result: SelfTestResult, profile: str, query: str)
 
     encoded_q = query.replace('"', '\\"')
     lines.extend(["", "---", "", "## How to Run Live", "", "```bash"])
-    lines.append(f"python tools/prelive_one_button_gate.py \\")
-    lines.append(f"  --repo-root . \\")
+    lines.append("python tools/prelive_one_button_gate.py \\")
+    lines.append("  --repo-root . \\")
     lines.append(f"  --profile {profile} \\")
     lines.append(f"  --query \"{encoded_q}\" \\")
-    lines.append(f"  --output-json probe_f221h_one_button_prelive_gate/one_button_prelive_gate.json \\")
-    lines.append(f"  --output-md probe_f221h_one_button_prelive_gate/REPORT_ONE_BUTTON_PRELIVE_GATE.md")
+    lines.append("  --output-json probe_f221h_one_button_prelive_gate/one_button_prelive_gate.json \\")
+    lines.append("  --output-md probe_f221h_one_button_prelive_gate/REPORT_ONE_BUTTON_PRELIVE_GATE.md")
     lines.append("```")
 
     return "\n".join(lines)
@@ -1799,7 +1790,7 @@ def main() -> int:
     print()
     lc = result.live_command
     if lc:
-        print(f"Live command:")
+        print("Live command:")
         print(f"  {lc.get('command', '')}")
         print()
         print("Expected assertions:")

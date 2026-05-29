@@ -12,14 +12,12 @@ Tests:
 8. test_no_boot_regression
 """
 
+import json
+import os
 import subprocess
 import sys
 import unittest
 from unittest.mock import MagicMock
-import statistics
-import json
-import os
-
 
 # Universal path for subprocess tests
 UNIVERSAL_ROOT = "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal"
@@ -91,9 +89,12 @@ class TestMlxHelperApiShape(unittest.TestCase):
     def test_mlx_helper_api_shape(self):
         """Each API returns the documented type."""
         from hledac.universal.utils.mlx_memory import (
-            clear_mlx_cache, get_mlx_active_memory_mb,
-            get_mlx_peak_memory_mb, get_mlx_cache_memory_mb,
-            get_mlx_memory_pressure, get_mlx_memory_metrics
+            clear_mlx_cache,
+            get_mlx_active_memory_mb,
+            get_mlx_cache_memory_mb,
+            get_mlx_memory_metrics,
+            get_mlx_memory_pressure,
+            get_mlx_peak_memory_mb,
         )
         result = clear_mlx_cache()
         self.assertIsInstance(result, bool)
@@ -159,7 +160,6 @@ class TestMlxMemoryPressureThresholds(unittest.TestCase):
     def test_mlx_memory_pressure_thresholds(self):
         """Pressure levels: NORMAL<80%, WARNING>=80%, CRITICAL>=90%."""
         import hledac.universal.utils.mlx_memory as mm
-        from unittest.mock import MagicMock
 
         test_cases = [
             (0, "NORMAL"),      # 0% -> NORMAL
@@ -197,7 +197,7 @@ class TestReplacedAoCallsitesSurgical(unittest.TestCase):
 
     def test_replaced_ao_callsites_are_surgical(self):
         """Both AO sites replaced with clear_mlx_cache() calls."""
-        with open(os.path.join(UNIVERSAL_ROOT, "autonomous_orchestrator.py"), "r") as f:
+        with open(os.path.join(UNIVERSAL_ROOT, "autonomous_orchestrator.py")) as f:
             source = f.read()
 
         idx1 = source.find("gc.collect()\n                        clear_mlx_cache()")
@@ -215,6 +215,7 @@ class TestEvalPlusClearPattern(unittest.TestCase):
     def test_eval_plus_clear_pattern_for_eligible_files(self):
         """clear_mlx_cache() must call gc.collect() + mx.eval([]) + metal.clear_cache()."""
         import inspect
+
         from hledac.universal.utils.mlx_memory import clear_mlx_cache
 
         src = inspect.getsource(clear_mlx_cache)

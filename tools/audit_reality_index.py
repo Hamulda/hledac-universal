@@ -26,8 +26,6 @@ import sys
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Optional
-
 
 # ── Claim status taxonomy ────────────────────────────────────────────────────
 
@@ -47,8 +45,8 @@ class ClaimResult:
     status: ClaimStatus
     evidence: str
     suggested_action: str
-    file_ref: Optional[str] = None
-    line_ref: Optional[int] = None
+    file_ref: str | None = None
+    line_ref: int | None = None
 
 
 # ── Deterministic checks ─────────────────────────────────────────────────────
@@ -133,7 +131,7 @@ def check_worker_pool_module_level_process_pool_executor(
     content = file_path.read_text()
 
     # Check for module-level _executor = None (lazy init, not spawned on import)
-    has_module_level_executor = "_executor: Optional[ProcessPoolExecutor] = None" in content
+    has_module_level_executor = "_executor: ProcessPoolExecutor | None = None" in content
     has_deprecation_comment = "DEPRECATED" in content or "zero callers" in content.lower()
 
     if has_module_level_executor and has_deprecation_comment:
@@ -158,7 +156,7 @@ def check_worker_pool_module_level_process_pool_executor(
             claim_id="P2-worker_pool",
             original_text="utils/worker_pool.py has module-level ProcessPoolExecutor()",
             status=ClaimStatus.OPEN,
-            evidence="Module-level _executor: Optional[ProcessPoolExecutor] = None present",
+            evidence="Module-level _executor: ProcessPoolExecutor | None = None present",
             suggested_action="Review if lazy init is acceptable",
             file_ref="utils/worker_pool.py",
             line_ref=None,
@@ -475,7 +473,7 @@ def check_htn_planner_canonical_finding_confidence(
             original_text="planning/htn_planner.py:724 confidence=0.8 hardcoded in _runtime_result_to_canonical_finding()",
             status=ClaimStatus.OPEN,
             evidence="Hardcoded 'confidence = 0.8' found in _runtime_result_to_canonical_finding(), _cost_model_confidence() not called",
-            suggested_action=f"Replace 'confidence = 0.8' with 'confidence=self._cost_model_confidence()'",
+            suggested_action="Replace 'confidence = 0.8' with 'confidence=self._cost_model_confidence()'",
             file_ref="planning/htn_planner.py",
             line_ref=724,
         ))

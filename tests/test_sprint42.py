@@ -12,13 +12,11 @@ import asyncio
 import heapq
 import time
 import unittest
-from unittest.mock import AsyncMock, MagicMock, patch
-import numpy as np
+from unittest.mock import MagicMock
 
 import pytest
-
-from hledac.universal.layers.communication_layer import CommunicationLayer, _BatchItem
-from hledac.universal.tools.source_bandit import SourceBandit, LinUCBArm, extract_context_features
+from hledac.universal.layers.communication_layer import _BatchItem
+from hledac.universal.tools.source_bandit import SourceBandit
 
 
 class TestSprint42A_Aging(unittest.IsolatedAsyncioTestCase):
@@ -151,7 +149,6 @@ class TestSprint42B_PredictiveRSS(unittest.IsolatedAsyncioTestCase):
 
         # Simulate: current RSS = 60%, derivative = 60 - 54 = 6% > 5%
         current_rss = 60.0
-        EMA_ALPHA = 0.3
         rss_derivative = current_rss - orch._rss_ema
 
         # Should trigger throttle

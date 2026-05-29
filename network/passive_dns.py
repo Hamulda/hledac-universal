@@ -27,12 +27,11 @@ GHOST_INVARIANTS:
 
 from __future__ import annotations
 
-import aiohttp
 import asyncio
 import logging
 import time
-from typing import Optional
 
+import aiohttp
 from hledac.universal.network.session_runtime import async_get_aiohttp_session
 
 logger = logging.getLogger(__name__)
@@ -92,7 +91,7 @@ class _DoHCache:
     def _key(self, name: str, rdtype: str, resolver: str) -> str:
         return f"{resolver}:{rdtype}:{name}"
 
-    def get(self, name: str, rdtype: str, resolver: str) -> Optional[dict]:
+    def get(self, name: str, rdtype: str, resolver: str) -> dict | None:
         k = self._key(name, rdtype, resolver)
         ts = self._timestamps.get(k, 0)
         if time.time() - ts > DOH_CACHE_TTL_S:
@@ -130,7 +129,7 @@ class PassiveDNSResolver:
     """
 
     def __init__(self):
-        self._session: Optional[aiohttp.ClientSession] = None
+        self._session: aiohttp.ClientSession | None = None
 
     async def _ensure_session(self) -> aiohttp.ClientSession:
         if self._session is None or self._session.closed:
@@ -222,7 +221,7 @@ class PassiveDNSResolver:
         }
         results = await asyncio.gather(*tasks.values(), return_exceptions=True)
         comparison: dict[str, list[str]] = {}
-        for resolver, res in zip(tasks.keys(), results):
+        for resolver, res in zip(tasks.keys(), results, strict=False):
             if isinstance(res, list):
                 comparison[resolver] = res
             else:

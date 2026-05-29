@@ -17,10 +17,10 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import itertools
-import time
-from typing import Any, Callable, Coroutine, Dict, Optional, Set, Type
-
 import logging
+import time
+from collections.abc import Callable, Coroutine
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +45,7 @@ class BatchScheduler:
 
     def __init__(
         self,
-        execute_callback: Callable[[Dict[str, Any]], Coroutine[Any, Any, Any]],
+        execute_callback: Callable[[dict[str, Any]], Coroutine[Any, Any, Any]],
         max_size: int = 8,
         max_queue: int = 256,
         default_flush_interval: float = 2.0,
@@ -78,13 +78,13 @@ class BatchScheduler:
         self._ema_alpha = ema_alpha
 
         # Queue state
-        self._batch_queue: Optional[asyncio.PriorityQueue] = None
-        self._batch_tie_breaker: Optional[itertools.count] = None
-        self._worker_task: Optional[asyncio.Task] = None
+        self._batch_queue: asyncio.PriorityQueue | None = None
+        self._batch_tie_breaker: itertools.count | None = None
+        self._worker_task: asyncio.Task | None = None
         self._worker_shutting_down = False
 
         # Pending futures (for emergency failure)
-        self._pending_futures: Set[asyncio.Future] = set()
+        self._pending_futures: set[asyncio.Future] = set()
 
         # Counters
         self._flush_cycle_count = 0
@@ -147,7 +147,7 @@ class BatchScheduler:
 
         try:
             await asyncio.wait_for(asyncio.shield(self._worker_task), timeout=timeout)
-        except (asyncio.CancelledError, asyncio.TimeoutError):
+        except (TimeoutError, asyncio.CancelledError):
             pass
 
         self._worker_task = None
@@ -157,11 +157,11 @@ class BatchScheduler:
     async def submit(
         self,
         prompt: str,
-        response_model: Type,
+        response_model: type,
         priority: float = 1.0,
         temperature: float = 0.1,
         max_tokens: int = 1024,
-        system_msg: Optional[str] = None,
+        system_msg: str | None = None,
     ) -> asyncio.Future:
         """
         Submit a structured output request to the batch queue.
@@ -207,9 +207,9 @@ class BatchScheduler:
 
     def is_batch_safe(
         self,
-        response_model: Type,
+        response_model: type,
         priority: float,
-        timeout_s: Optional[float] = None,
+        timeout_s: float | None = None,
     ) -> bool:
         """
         Batch-safe eligibility check.
@@ -269,7 +269,7 @@ class BatchScheduler:
 
         return drained
 
-    def get_telemetry(self) -> Dict[str, Any]:
+    def get_telemetry(self) -> dict[str, Any]:
         """Return telemetry snapshot (EMA + counters)."""
         return {
             'ema': dict(self._telemetry_ema),
@@ -350,10 +350,10 @@ class BatchScheduler:
                                 break
 
                             items.append(item)
-                        except asyncio.TimeoutError:
+                        except TimeoutError:
                             break
 
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     continue
 
                 # Anti-starvation: age bump every _age_bump_interval cycles
@@ -391,8 +391,8 @@ class BatchScheduler:
         if not items:
             return
 
-        by_schema: Dict[str, list] = {}
-        for priority, tie, schema_key, payload in items:
+        by_schema: dict[str, list] = {}
+        for priority, _tie, schema_key, payload in items:
             if schema_key not in by_schema:
                 by_schema[schema_key] = []
             by_schema[schema_key].append((payload, priority))
@@ -415,7 +415,7 @@ class BatchScheduler:
                 results.append(result)
 
             # Resolve futures
-            for payload, result in zip([p for p, _ in items], results):
+            for payload, result in zip([p for p, _ in items], results, strict=False):
                 future = payload.get('future')
                 if future and not future.done():
                     future.set_result(result)
@@ -493,7 +493,7 @@ class BatchScheduler:
             return 'medium'
         return 'long'
 
-    def _compute_system_prompt_hash(self, system_msg: Optional[str]) -> str:
+    def _compute_system_prompt_hash(self, system_msg: str | None) -> str:
         """Hash of system prompt for segregation."""
         if not system_msg:
             return 'default'

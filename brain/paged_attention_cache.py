@@ -6,7 +6,7 @@ Samostatně testovatelná komponenta.
 from __future__ import annotations
 
 import logging
-from typing import Optional, Tuple, List, Any
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -58,8 +58,8 @@ class PagedAttentionCache:
         self.top_k = top_k
 
         # List of (keys, values, avg_score) tuples
-        self.pages: List[Tuple[Any, Any, float]] = []
-        self.page_scores: List[float] = []
+        self.pages: list[tuple[Any, Any, float]] = []
+        self.page_scores: list[float] = []
 
         logger.info(
             f"PagedAttentionCache initialized: max_pages={max_pages}, "
@@ -110,7 +110,7 @@ class PagedAttentionCache:
         if len(self.pages) > self.max_pages:
             # Sort by score descending
             sorted_pages = sorted(
-                zip(self.page_scores, self.pages),
+                zip(self.page_scores, self.pages, strict=False),
                 key=lambda x: x[0],
                 reverse=True
             )
@@ -120,7 +120,7 @@ class PagedAttentionCache:
 
         logger.debug(f"PagedAttentionCache updated: {len(self.pages)} pages")
 
-    def get(self) -> Optional[Tuple[Any, Any]]:
+    def get(self) -> tuple[Any, Any] | None:
         """
         Vrátí všechny uložené pages jako concatenated keys a values.
 
@@ -142,7 +142,7 @@ class PagedAttentionCache:
 
         return all_keys, all_values
 
-    def get_top_pages(self, k: int) -> List[Tuple[Any, Any, float]]:
+    def get_top_pages(self, k: int) -> list[tuple[Any, Any, float]]:
         """
         Vrátí top-k stránek seřazené podle skóre.
 
@@ -156,7 +156,7 @@ class PagedAttentionCache:
             return []
 
         sorted_pages = sorted(
-            zip(self.page_scores, self.pages),
+            zip(self.page_scores, self.pages, strict=False),
             key=lambda x: x[0],
             reverse=True
         )

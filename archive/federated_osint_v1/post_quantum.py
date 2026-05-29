@@ -4,7 +4,7 @@ Podpora ML-DSA (Dilithium), FALCON, Ed25519; Kyber, X25519.
 """
 
 import logging
-from typing import Tuple, Optional
+
 import cryptography.hazmat.primitives.serialization
 
 logger = logging.getLogger(__name__)
@@ -124,7 +124,7 @@ class PQCProvider:
         else:
             return self._sign_public_key
 
-    def generate_kem_keypair(self) -> Tuple[bytes, bytes]:
+    def generate_kem_keypair(self) -> tuple[bytes, bytes]:
         """Vygeneruje KEM pár klíčů."""
         if self._kem_name == 'X25519':
             public = self._x25519_public.public_bytes(
@@ -137,7 +137,7 @@ class PQCProvider:
             secret_key = self._kem_impl.export_secret_key()
             return public_key, secret_key
 
-    def encapsulate(self, public_key: bytes) -> Tuple[bytes, bytes]:
+    def encapsulate(self, public_key: bytes) -> tuple[bytes, bytes]:
         """Zapouzdří shared secret pro daný veřejný klíč."""
         if self._kem_name == 'X25519':
             from cryptography.hazmat.primitives.asymmetric import x25519

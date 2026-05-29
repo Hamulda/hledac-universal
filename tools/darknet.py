@@ -5,7 +5,7 @@ Sprint 46: Access to Unreachable Data (Sessions + Paywall + OSINT + Darknet)
 
 import asyncio
 import logging
-from typing import Optional, Dict, Any
+from typing import Any
 from urllib.parse import urlparse
 
 logger = logging.getLogger(__name__)
@@ -61,7 +61,7 @@ class DarknetConnector:
             logger.warning(f"[TOR] Controller failed: {e}")
             return False
 
-    async def fetch_via_tor(self, url: str) -> Optional[bytes]:
+    async def fetch_via_tor(self, url: str) -> bytes | None:
         """Fetch URL přes Tor SOCKS proxy."""
         if not AIOHTTP_SOCKS_AVAILABLE:
             logger.warning("[TOR] aiohttp_socks not available")
@@ -77,7 +77,7 @@ class DarknetConnector:
             logger.warning(f"[TOR] Fetch failed {url}: {e}")
             return None
 
-    async def fetch_via_i2p(self, url: str) -> Optional[bytes]:
+    async def fetch_via_i2p(self, url: str) -> bytes | None:
         """Fetch URL přes I2P SOCKS proxy."""
         if not AIOHTTP_SOCKS_AVAILABLE:
             logger.warning("[I2P] aiohttp_socks not available")
@@ -113,7 +113,7 @@ class DarknetConnector:
 
         try:
             kem = oqs.KeyEncapsulation('Kyber512')
-            public_key = kem.generate_keypair()
+            kem.generate_keypair()
             logger.info(f"[LIBOQS] Kyber512 available for {host}")
             return True
         except ImportError:
@@ -123,7 +123,7 @@ class DarknetConnector:
             logger.warning(f"[LIBOQS] Handshake failed: {e}")
             return False
 
-    async def fetch_onion(self, url: str) -> Optional[Dict[str, Any]]:
+    async def fetch_onion(self, url: str) -> dict[str, Any] | None:
         """Fetch .onion URL through Tor.
 
         Validates that the hostname (not full URL) ends with .onion.
@@ -140,7 +140,7 @@ class DarknetConnector:
             return {'url': url, 'content': content, 'via': 'tor'}
         return None
 
-    async def fetch_i2p(self, url: str) -> Optional[Dict[str, Any]]:
+    async def fetch_i2p(self, url: str) -> dict[str, Any] | None:
         """Fetch .i2p URL through I2P.
 
         Validates that the hostname (not full URL) ends with .i2p.

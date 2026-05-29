@@ -92,9 +92,8 @@ def main() -> None:
     args = parser.parse_args()
 
     from hledac.universal.brain.llm_candidate_registry import (
-        get_primary_reasoner_candidate,
-        get_fallback_reasoner_candidate,
         LLM_CANDIDATES,
+        get_primary_reasoner_candidate,
     )
 
     if args.candidate == "default":

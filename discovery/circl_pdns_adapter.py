@@ -23,17 +23,15 @@ from dataclasses import dataclass
 from enum import Enum
 
 import aiohttp
-
 from hledac.universal.network.session_runtime import async_get_aiohttp_session
 from hledac.universal.security.passive_dns import parse_circl_pdns_text
-from hledac.universal.transport.circuit_breaker import checked_aiohttp_get
-
 from hledac.universal.tools.discovery_replay import (
     read_cassette,
     replay_enabled,
     replay_strict_enabled,
     write_cassette,
 )
+from hledac.universal.transport.circuit_breaker import checked_aiohttp_get
 
 from .duckduckgo_adapter import DiscoveryBatchResult, DiscoveryHit
 
@@ -357,7 +355,7 @@ async def async_search_circl_pdns(
     except asyncio.CancelledError:
         raise
 
-    except asyncio.TimeoutError:
+    except TimeoutError:
         elapsed = time.monotonic() - start
         _enter_cooldown(domain_norm, "timeout", start)
         return DiscoveryBatchResult(
@@ -680,7 +678,7 @@ async def call_circl_pdns(
     except asyncio.CancelledError:
         raise
 
-    except asyncio.TimeoutError:
+    except TimeoutError:
         elapsed = time.monotonic() - start
         _enter_cooldown(domain_norm, "timeout", start)
         outcome = PDNSOutcome(

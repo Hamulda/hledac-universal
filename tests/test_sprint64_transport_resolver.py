@@ -4,10 +4,11 @@ Sprint 64: Transport Resolver Tests
 CI-safe tests for autonomous transport selection.
 """
 
-import pytest
 import asyncio
-import sys
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
+
+import pytest
+
 
 # Test transport import doesn't crash
 def test_transport_import_no_crash():
@@ -51,7 +52,7 @@ def test_transport_context_creation():
 @pytest.mark.asyncio
 async def test_resolver_fallback_to_inmemory():
     """Test resolver falls back to InMemory when no Tor/Nym available."""
-    from hledac.universal.transport import TransportResolver, TransportContext, InMemoryTransport
+    from hledac.universal.transport import InMemoryTransport, TransportContext, TransportResolver
 
     # Patch the transport imports to fail at the module level where they're imported
     with patch.dict('sys.modules', {
@@ -70,7 +71,7 @@ async def test_resolver_fallback_to_inmemory():
 @pytest.mark.asyncio
 async def test_resolver_returns_none_without_inmemory():
     """Test resolver returns None when no transports available and inmemory not allowed."""
-    from hledac.universal.transport import TransportResolver, TransportContext
+    from hledac.universal.transport import TransportContext, TransportResolver
 
     # Patch the transport imports to fail
     with patch.dict('sys.modules', {

@@ -28,7 +28,7 @@ Design:
 from __future__ import annotations
 
 import logging
-from typing import Any, List, Optional, TypeVar
+from typing import Any, TypeVar
 
 from pydantic import BaseModel
 
@@ -54,7 +54,7 @@ class ModernBertModelAdapter:
       Prefer structured generation to Hermes3Engine for actual structured output.
     """
 
-    def __init__(self, config: Optional[Any] = None):
+    def __init__(self, config: Any | None = None):
         self._engine = ModernBertEngine(config=config)
         self._loaded = False
         self._model_name: str = "modernbert-embed-base"
@@ -79,9 +79,9 @@ class ModernBertModelAdapter:
     async def generate(
         self,
         prompt: str,
-        temperature: Optional[float] = None,
-        max_tokens: Optional[int] = None,
-        system_msg: Optional[str] = None,
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+        system_msg: str | None = None,
     ) -> str:
         """
         Not supported on ModernBertModelAdapter.
@@ -101,9 +101,9 @@ class ModernBertModelAdapter:
         self,
         prompt: str,
         response_model: type[T],
-        temperature: Optional[float] = None,
-        max_tokens: Optional[int] = None,
-        system_msg: Optional[str] = None,
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+        system_msg: str | None = None,
         max_retries: int = 2,
         priority: float = 1.0,
     ) -> T:
@@ -128,7 +128,7 @@ class ModernBertModelAdapter:
 
     # ── Identity ───────────────────────────────────────────────────────────────
 
-    def get_current_model_name(self) -> Optional[str]:
+    def get_current_model_name(self) -> str | None:
         """Return model identifier (informational, not the same as Hermes model path)."""
         if self._loaded:
             return self._model_name
@@ -139,7 +139,7 @@ class ModernBertModelAdapter:
     async def generate_report(
         self,
         query: str,
-        context: List[str],
+        context: list[str],
     ) -> str:
         """
         Synthesize report via extractive summarization.

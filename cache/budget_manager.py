@@ -17,15 +17,15 @@ Features:
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime
 from enum import Enum
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any
 
 import numpy as np
-from pydantic import BaseModel, Field, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
-from ..utils.deduplication import SimHash
 from ..tools.url_dedup import create_rotating_bloom_filter
+from ..utils.deduplication import SimHash
 
 logger = logging.getLogger(__name__)
 
@@ -106,10 +106,10 @@ class IterationSnapshot(BaseModel):
     model_config = ConfigDict(validate_assignment=True)
 
     iteration: int = Field(ge=0, description="Iteration number")
-    entities: List[str] = Field(default_factory=list, description="Discovered entities")
-    sources: List[str] = Field(default_factory=list, description="Discovered sources")
-    claims: List[str] = Field(default_factory=list, description="Extracted claims")
-    findings: List[Any] = Field(default_factory=list, description="Research findings (Sprint 26)")
+    entities: list[str] = Field(default_factory=list, description="Discovered entities")
+    sources: list[str] = Field(default_factory=list, description="Discovered sources")
+    claims: list[str] = Field(default_factory=list, description="Extracted claims")
+    findings: list[Any] = Field(default_factory=list, description="Research findings (Sprint 26)")
     confidence: float = Field(default=0.0, ge=0.0, le=1.0, description="Confidence score")
     timestamp: datetime = Field(default_factory=datetime.now, description="When evidence was logged")
 
@@ -125,8 +125,8 @@ class BudgetStatus(BaseModel):
     elapsed_time_sec: float = 0.0
     stagnation_counter: int = 0
     current_confidence: float = 0.0
-    budgets: Dict[str, Any] = Field(default_factory=dict)
-    utilization: Dict[str, float] = Field(default_factory=dict)
+    budgets: dict[str, Any] = Field(default_factory=dict)
+    utilization: dict[str, float] = Field(default_factory=dict)
 
 
 class BudgetManager:
@@ -156,7 +156,7 @@ class BudgetManager:
             manager.record_iteration(evidence)
     """
 
-    def __init__(self, config: Optional[BudgetConfig] = None):
+    def __init__(self, config: BudgetConfig | None = None):
         """
         Initialize BudgetManager with configuration.
 
@@ -188,7 +188,7 @@ class BudgetManager:
             f"max_docs={self.config.max_docs}, max_time={self.config.max_time_sec}s"
         )
 
-    def check_should_stop(self, current_evidence: IterationSnapshot) -> Tuple[bool, str]:
+    def check_should_stop(self, current_evidence: IterationSnapshot) -> tuple[bool, str]:
         """
         Check if workflow should stop based on budget constraints.
 
@@ -227,7 +227,7 @@ class BudgetManager:
 
         return False, ""
 
-    def _check_hard_limits(self) -> Tuple[bool, StopReason, str]:
+    def _check_hard_limits(self) -> tuple[bool, StopReason, str]:
         """Check hard resource limits"""
         # Max iterations
         if self.state.iteration >= self.config.max_iterations:
@@ -264,7 +264,7 @@ class BudgetManager:
 
         return False, StopReason.NONE, ""
 
-    def _check_confidence(self, evidence: IterationSnapshot) -> Tuple[bool, StopReason, str]:
+    def _check_confidence(self, evidence: IterationSnapshot) -> tuple[bool, StopReason, str]:
         """Check if confidence threshold is met"""
         if evidence.confidence >= self.config.min_confidence:
             return (
@@ -274,7 +274,7 @@ class BudgetManager:
             )
         return False, StopReason.NONE, ""
 
-    def _compute_novelty_score(self, new_fingerprints: Set[int]) -> float:
+    def _compute_novelty_score(self, new_fingerprints: set[int]) -> float:
         """Compute novelty score using Jaccard similarity (Sprint 26).
 
         With BloomFilter, we approximate Jaccard by checking membership of new fingerprints
@@ -295,7 +295,7 @@ class BudgetManager:
 
         return novelty
 
-    def _check_stagnation(self, evidence: IterationSnapshot) -> Tuple[bool, StopReason, str]:
+    def _check_stagnation(self, evidence: IterationSnapshot) -> tuple[bool, StopReason, str]:
         """Check if workflow is stagnating (no new discoveries) - now with Jaccard novelty (Sprint 26)"""
         # Count new discoveries - FIX 2: BloomFilter uses __contains__, not set subtraction
         new_entities = sum(1 for e in evidence.entities if e not in self._entities_seen)
@@ -429,7 +429,7 @@ class BudgetManager:
         }
 
         # Determine if any limit is approaching (80% threshold)
-        approaching_limit = any(u >= 80 for u in utilization.values())
+        any(u >= 80 for u in utilization.values())
 
         return BudgetStatus(
             should_stop=self._stop_triggered,
@@ -445,7 +445,7 @@ class BudgetManager:
             utilization=utilization,
         )
 
-    def get_summary(self) -> Dict[str, Any]:
+    def get_summary(self) -> dict[str, Any]:
         """
         Get summary of budget consumption.
 
@@ -531,7 +531,7 @@ class BudgetManager:
         logger.debug("BudgetManager reset")
 
     def __repr__(self) -> str:
-        status = self.get_status()
+        self.get_status()
         return (
             f"BudgetManager(iter={self.state.iteration}/{self.config.max_iterations}, "
             f"docs={self.state.docs_collected}/{self.config.max_docs}, "

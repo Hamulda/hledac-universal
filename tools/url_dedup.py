@@ -1,66 +1,70 @@
 """
 URL Deduplication using RotatingBloomFilter
-==========================================
 
 Wrapper around probables.RotatingBloomFilter for URL deduplication.
 Provides bounded, memory-efficient URL tracking.
 
 Sprint 81 Fáze 3: xxhash support for faster non-crypto hashing.
-
 Sprint F214AD: DeduplicationStrategy protocol extracted to break concrete coupling.
 """
+from __future__ import annotations
 
+import hashlib
+from typing import Any, Protocol, runtime_checkable
+
+# Probables library import (RotatingBloomFilter from probables)
 try:
     from probables import RotatingBloomFilter
+
     PROBABLES_AVAILABLE = True
 except ImportError:
     try:
         from pyprobables import RotatingBloomFilter
+
         PROBABLES_AVAILABLE = True
     except ImportError:
         RotatingBloomFilter = object  # sentinel — functions raise ImportError before use
         PROBABLES_AVAILABLE = False
 
-from typing import Any, Optional, Protocol, runtime_checkable
-
-# Sprint 81 Fáze 3: xxhash for faster hashing
+# xxhash for fast non-crypto hashing (10x faster than blake2b)
 try:
     import xxhash
-    XXHASH_AVAILABLE = True
-except ImportError:
-    XXHASH_AVAILABLE = False
-    import hashlib
 
-# -----------------------------------------------------------------------------
+    xxhash_available = True
+except ImportError:
+    xxhash_available = False
+
 # Rust extension import guard
-# -----------------------------------------------------------------------------
 _RUST_BLOOM_AVAILABLE = False
 try:
     import hledac_rust_extensions
+
     # Expose Rust BloomFilter as RustRotatingBloomFilter for API compatibility
     RustRotatingBloomFilter = hledac_rust_extensions.BloomFilter
     _RUST_BLOOM_AVAILABLE = True
 except ImportError:
     pass
 
+# Rust UrlSet — FNV-1a hash dedup (highest ROI, HOTPATH_RUST_ANALYSIS.md)
+_RUST_URL_DEDUP_AVAILABLE = False
+try:
+    from hledac_rust_extensions import UrlSet as RustUrlSet
+
+    _RUST_URL_DEDUP_AVAILABLE = True
+except ImportError:
+    RustUrlSet = None  # type: ignore[assignment,sentinel]
+
 
 @runtime_checkable
 class DeduplicationStrategy(Protocol):
-    """
-    Protocol for URL deduplication strategies.
-
-    Abstracts over different dedup implementations (Bloom filter, Set, LMDB, etc.)
-    allowing callers to be decoupled from concrete types.
-
-    Sprint F214AD: Extracted from FetchCoordinator seam.
-    """
+    """Protocol for URL deduplication strategies."""
 
     def add(self, item: str) -> None:
-        """Add an item to the dedup collection."""
+        """Add an item to the deduplication set."""
         ...
 
     def __contains__(self, item: str) -> bool:
-        """Check if an item is already in the dedup collection."""
+        """Check if an item might have been seen before."""
         ...
 
 
@@ -73,7 +77,7 @@ class RotatingBloomFilterAdapter:
 
     __slots__ = ("_filter",)
 
-    def __init__(self, filter_instance):
+    def __init__(self, filter_instance: Any) -> None:
         self._filter = filter_instance
 
     def add(self, item: str) -> None:
@@ -85,11 +89,9 @@ class RotatingBloomFilterAdapter:
 
 class PersistentSetAdapter:
     """
-    High-precision Set-based dedup adapter for workflows requiring zero false positives.
+    Bounded set adapter for deduplication when BloomFilter unavailable.
 
-    Bound is explicit — callers must respect max_size to prevent unbounded growth.
-
-    Sprint F214AD: Alternative to RotatingBloomFilter for high-precision workflows.
+    Uses an OrderedDict-style eviction to maintain bounded memory.
     """
 
     __slots__ = ("_set", "_max_size")
@@ -112,56 +114,98 @@ class PersistentSetAdapter:
     def __contains__(self, item: str) -> bool:
         return item in self._set
 
-# Default parameters for URL deduplication
-DEFAULT_URL_ESTIMATE = 100000
-DEFAULT_FPR = 0.01  # 1% false positive rate (min value for probables)
-# P1-15: Cap to prevent unbounded memory growth on M1 8GB
-MAX_URL_ESTIMATE = 1_000_000
+
+class RustUrlSetAdapter:
+    """
+    Adapter wrapping Rust UrlSet (FNV-1a hash set) to satisfy DeduplicationStrategy.
+
+    Rust implementation: url_set.rs — FNV-1a hashing, O(1) add/contains.
+    Falls back to Python set if Rust unavailable (RUST_URL_DEDUP_AVAILABLE=False).
+    """
+    __slots__ = ("_set",)
+
+    def __init__(self) -> None:
+        if not _RUST_URL_DEDUP_AVAILABLE:
+            raise ImportError("hledac_rust_extensions.UrlSet not available")
+        self._set: Any = RustUrlSet()
+
+    def add(self, item: str) -> None:
+        self._set.add(item)
+
+    def __contains__(self, item: str) -> bool:
+        return self._set.contains(item)
+
+    def __len__(self) -> int:
+        return self._set.len()
+
+    def clear(self) -> None:
+        self._set.clear()
+
+
+def create_rust_url_set() -> DeduplicationStrategy:
+    """Create a Rust-backed URL deduplication set (FNV-1a, O(1))."""
+    if not _RUST_URL_DEDUP_AVAILABLE:
+        raise ImportError("Rust UrlSet not available — install hledac_rust_extensions")
+    return RustUrlSetAdapter()
 
 
 def fast_hash(text: str) -> str:
     """
-    Sprint 81 Fáze 3: 64bit hash pro URL deduplikaci (nekryptografický).
+    Fast non-crypto hash for URL fingerprinting.
 
-    Uses xxhash if available (10x faster), falls back to blake2b.
+    Uses xxhash (10x faster) if available, falls back to blake2b.
+    xxhash is NOT cryptographically safe — use only for deduplication.
     """
-    if XXHASH_AVAILABLE:
-        return xxhash.xxh3_64(text.encode()).hexdigest()
-    else:
-        return hashlib.blake2b(text.encode(), digest_size=8).hexdigest()
+    if xxhash_available:
+        return xxhash.xxh64(text).hexdigest()
+    # Fallback to blake2b (crypto-grade but slower)
+    return hashlib.blake2b(text.encode(), digest_size=8).hexdigest()
+
+
+# Configuration
+DEFAULT_URL_ESTIMATE = 100_000
+DEFAULT_FPR = 0.01  # 1% false positive rate
+MAX_URL_ESTIMATE = 1_000_000
 
 
 def create_rotating_bloom_filter(
     est_elements: int = DEFAULT_URL_ESTIMATE,
-    false_positive_rate: float = DEFAULT_FPR
-):
+    false_positive_rate: float = DEFAULT_FPR,
+) -> DeduplicationStrategy:
     """
     Create a RotatingBloomFilter for URL deduplication.
 
     Args:
         est_elements: Estimated number of unique URLs to track
         false_positive_rate: Target false positive rate (0.001 = 0.1%)
-
     Returns:
-        Configured RotatingBloomFilter instance
-
+        Configured DeduplicationStrategy (Rust or probables fallback)
     Raises:
-        ImportError: If probables library is not installed
+        ImportError: If neither Rust extensions nor probables library is available
     """
-    if not PROBABLES_AVAILABLE:
-        raise ImportError("probables library required: pip install probables")
     # P1-15: Enforce upper bound to prevent unbounded memory growth
     est_elements = min(est_elements, MAX_URL_ESTIMATE)
+
+    # Prefer Rust BloomFilter when available — 10-100x faster than pyprobables
+    if _RUST_BLOOM_AVAILABLE:
+        return RustRotatingBloomFilter(est_elements, false_positive_rate)
+
+    if not PROBABLES_AVAILABLE:
+        raise ImportError(
+            "Neither Rust BloomFilter (hledac-rust-extensions) nor "
+            "probables library available. Install probables: pip install probables"
+        )
     return RotatingBloomFilter(
         est_elements=est_elements,
-        false_positive_rate=false_positive_rate
+        false_positive_rate=false_positive_rate,
     )
 
 
-_default_bloom: Optional[Any] = None
+_default_bloom: Any | None = None
 
 
-def get_default_bloom_filter():
+def get_default_bloom_filter() -> DeduplicationStrategy:
+    """Get the shared default BloomFilter instance."""
     global _default_bloom
     if _default_bloom is None:
         if not PROBABLES_AVAILABLE:

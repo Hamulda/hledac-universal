@@ -18,7 +18,6 @@ from __future__ import annotations
 import logging
 import re
 from dataclasses import dataclass
-from typing import List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -44,7 +43,7 @@ class RawFinding:
     source: str
     url: str
     confidence: float = 0.5
-    entities: List[str] = None
+    entities: list[str] = None
     metadata: dict = None
 
     def __post_init__(self):
@@ -57,7 +56,7 @@ class RawFinding:
 class CommonCrawlAdapter:
     """Common Crawl CDX API adapter — discovery seam only."""
 
-    _latest_index: Optional[str] = None
+    _latest_index: str | None = None
     _index_fetch_failed: bool = False  # F192E: don't retry after first failure
 
     def __init__(self, stealth):
@@ -99,7 +98,7 @@ class CommonCrawlAdapter:
         lower = url.lower()
         return any(p in lower for p in _CDN_NOISE_PATTERNS)
 
-    async def fetch(self, domain: str, max_results: int = 50) -> List[RawFinding]:
+    async def fetch(self, domain: str, max_results: int = 50) -> list[RawFinding]:
         """
         Fetch snapshots pro domain z Common Crawl CDX API.
 
@@ -108,7 +107,7 @@ class CommonCrawlAdapter:
             max_results: Maximální počet výsledků
 
         Returns:
-            List[RawFinding]: Nalezené snapshoty (discovery only, no content)
+            list[RawFinding]: Nalezené snapshoty (discovery only, no content)
         """
         index = await self._get_latest_index()
         # F192E FIX: use dynamic index, not hardcoded URL
@@ -145,7 +144,7 @@ class CommonCrawlAdapter:
         return findings
 
     # F192E: search-shaped seam — returns dicts compatible with DiscoveryHit
-    async def search(self, query: str, max_results: int = 20) -> List[dict]:
+    async def search(self, query: str, max_results: int = 20) -> list[dict]:
         """
         Discovery search via Common Crawl CDX.
 
@@ -154,7 +153,7 @@ class CommonCrawlAdapter:
             max_results: Max results to return
 
         Returns:
-            List[dict]: search-shaped results with title/url/snippet/source/timestamp
+            list[dict]: search-shaped results with title/url/snippet/source/timestamp
         """
         # Strip leading "site:" or "domain:" prefixes if present
         clean = re.sub(r"^(site|domain):", "", query.strip(), flags=re.IGNORECASE).strip()

@@ -7,9 +7,10 @@ Validates subdomain source, partial failure, cross-dedup, and downstream flow.
 """
 
 import asyncio
-import pytest
-import sys
 import os
+import sys
+
+import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
@@ -19,9 +20,7 @@ class TestSprint83BSubdomainSource:
 
     def test_network_recon_forwarding_truthful_when_include_subdomains_false(self):
         """Test 4: Verify subdomain extraction uses DNS records (NS/MX), not brute force."""
-        from hledac.universal.intelligence.network_reconnaissance import (
-            DNSRecord, RecordType, NetworkReconnaissance
-        )
+        from hledac.universal.intelligence.network_reconnaissance import DNSRecord, RecordType
 
         # Verify DNSRecord has value attribute (for NS/MX hostnames)
         ns_record = DNSRecord(
@@ -47,10 +46,11 @@ class TestSprint83BSubdomainSource:
     def test_dns_records_populated_from_enumerate_all(self):
         """Verify dns_records is populated from enumerate_all results."""
         import inspect
+
         from hledac.universal.intelligence.network_reconnaissance import NetworkReconnaissance
 
         source_file = inspect.getsourcefile(NetworkReconnaissance)
-        with open(source_file, 'r') as f:
+        with open(source_file) as f:
             content = f.read()
 
         # Verify the fix is in place - dns_records should be populated
@@ -64,10 +64,12 @@ class TestSprint83BPartialFailure:
     @pytest.mark.asyncio
     async def test_network_recon_partial_success_dns_only(self):
         """Test 2: DNS success + registration fail returns partial output."""
+
         from hledac.universal.intelligence.network_reconnaissance import (
-            NetworkReconnaissance, HostInfo, DNSRecord, RecordType
+            DNSRecord,
+            HostInfo,
+            RecordType,
         )
-        from datetime import datetime
 
         # Mock DNS success, WHOIS fail
         mock_host_info = HostInfo(
@@ -98,10 +100,9 @@ class TestSprint83BPartialFailure:
     @pytest.mark.asyncio
     async def test_network_recon_partial_success_registration_only(self):
         """Test 3: DNS fail + registration success returns partial output."""
-        from hledac.universal.intelligence.network_reconnaissance import (
-            HostInfo, WHOISData
-        )
         from datetime import datetime
+
+        from hledac.universal.intelligence.network_reconnaissance import HostInfo, WHOISData
 
         # Mock DNS fail, WHOIS success
         mock_host_info = HostInfo(
@@ -164,10 +165,11 @@ class TestSprint83BDownstreamFlow:
     def test_network_recon_downstream_flow_state_truthful(self):
         """Test 6: Verify downstream_flow_state is correctly set."""
         import inspect
+
         from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
 
         source_file = inspect.getsourcefile(FullyAutonomousOrchestrator)
-        with open(source_file, 'r') as f:
+        with open(source_file) as f:
             content = f.read()
 
         # Verify downstream_flow_state is set based on forwarding
@@ -186,7 +188,6 @@ class TestSprint83BLiveAudit:
     @pytest.mark.slow
     async def test_network_recon_live_audit_bounded(self):
         """Test 1: Live audit with bounded timeout."""
-        import asyncio
 
         # Bounded live audit for network_recon
         CANARY_DOMAIN = "python.org"
@@ -203,7 +204,7 @@ class TestSprint83BLiveAudit:
                     # include_subdomains=False for passive enumeration
                     host_info = await recon.recon_target(CANARY_DOMAIN, include_subdomains=False)
                     return host_info
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 return None
 
         # Run with global timeout
@@ -231,7 +232,7 @@ class TestSprint83BLiveAudit:
                     # Timeout is acceptable for bounded audit
                     print("Live audit: timed out (acceptable for bounded test)")
 
-        except asyncio.TimeoutError:
+        except TimeoutError:
             pytest.fail("Global timeout exceeded - audit should be bounded")
 
     def test_network_recon_live_audit_skipped_if_offline(self):
@@ -242,7 +243,7 @@ class TestSprint83BLiveAudit:
         original = os.environ.get("HLEDAC_OFFLINE")
         try:
             os.environ["HLEDAC_OFFLINE"] = "1"
-            assert is_offline_mode() == True
+            assert is_offline_mode()
         finally:
             if original:
                 os.environ["HLEDAC_OFFLINE"] = original

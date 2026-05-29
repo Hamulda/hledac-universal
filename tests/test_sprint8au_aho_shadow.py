@@ -24,9 +24,9 @@ import pytest
 sys.path.insert(0, "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal")
 from utils.aho_extractor import (
     PILOT_PATTERNS,
+    aho_scan_text,
     compare_aho_vs_regex,
     get_suspicious_keywords_automaton,
-    aho_scan_text,
     normalize_aho_match,
     regex_scan_suspicious_keywords,
 )
@@ -238,6 +238,7 @@ class TestBenchmark:
         """ahocorasick module is loaded only on first scan call."""
         # Force fresh import to test lazy flag
         import importlib
+
         import utils.aho_extractor
         importlib.reload(utils.aho_extractor)
 

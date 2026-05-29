@@ -19,19 +19,13 @@ Unique Features Integrated:
 
 from __future__ import annotations
 
+import logging
 import time
-from typing import Any, Dict, List, Optional, Tuple
 from dataclasses import dataclass, field
 from enum import Enum
-import logging
+from typing import Any
 
-from .base import (
-    UniversalCoordinator,
-    OperationType,
-    DecisionResponse,
-    OperationResult,
-    MemoryPressureLevel
-)
+from .base import DecisionResponse, OperationResult, OperationType, UniversalCoordinator
 
 logger = logging.getLogger(__name__)
 
@@ -50,10 +44,10 @@ class SecurityContext:
     operation_id: str
     security_level: SecurityLevel
     stealth_active: bool = False
-    threats_detected: List[str] = field(default_factory=list)
-    crypto_operations: List[str] = field(default_factory=list)
-    zkp_operations: List[str] = field(default_factory=list)
-    audit_log: List[Dict[str, Any]] = field(default_factory=list)
+    threats_detected: list[str] = field(default_factory=list)
+    crypto_operations: list[str] = field(default_factory=list)
+    zkp_operations: list[str] = field(default_factory=list)
+    audit_log: list[dict[str, Any]] = field(default_factory=list)
 
 
 @dataclass
@@ -66,26 +60,26 @@ class SecurityResult:
     execution_time: float
     measures_activated: int = 0
     threats_found: int = 0
-    result_data: Dict[str, Any] = field(default_factory=dict)
-    error: Optional[str] = None
+    result_data: dict[str, Any] = field(default_factory=dict)
+    error: str | None = None
 
 
 class UniversalSecurityCoordinator(UniversalCoordinator):
     """
     Universal coordinator for security operations.
-    
+
     Integrates four security backends:
     1. StealthEngine - Stealth/evasion operations
     2. ThreatIntelligence - Threat detection and analysis
     3. QuantumResistantCrypto - Post-quantum cryptography
     4. ZKPResearchEngine - Zero-Knowledge Proofs
-    
+
     Routing Strategy:
     - 'stealth'/'evasion'/'anonymize' → StealthEngine
     - 'threat'/'intelligence'/'detect' → ThreatIntelligence
     - 'quantum'/'crypto'/'encrypt' → QuantumResistantCrypto
     - 'zkp'/'proof'/'verify' → ZKPResearchEngine
-    
+
     Security Levels:
     - Level 1: Basic stealth
     - Level 2: + Threat detection
@@ -99,29 +93,29 @@ class UniversalSecurityCoordinator(UniversalCoordinator):
             max_concurrent=max_concurrent,
             memory_aware=True
         )
-        
+
         # Security subsystems (lazy initialization)
-        self._stealth_engine: Optional[Any] = None
-        self._threat_intelligence: Optional[Any] = None
-        self._quantum_crypto: Optional[Any] = None
-        self._zkp_engine: Optional[Any] = None
-        
+        self._stealth_engine: Any | None = None
+        self._threat_intelligence: Any | None = None
+        self._quantum_crypto: Any | None = None
+        self._zkp_engine: Any | None = None
+
         # Availability flags
         self._stealth_available = False
         self._threat_available = False
         self._crypto_available = False
         self._zkp_available = False
-        
+
         # Security context tracking
-        self._security_contexts: Dict[str, SecurityContext] = {}
+        self._security_contexts: dict[str, SecurityContext] = {}
         self._max_contexts = 50
-        
+
         # Security metrics
         self._stealth_activations = 0
         self._threat_analyses = 0
         self._crypto_operations = 0
         self._zkp_operations = 0
-        
+
         # Global security state
         self._global_threat_level = 0.0  # 0.0-1.0
         self._stealth_mode_active = False
@@ -133,7 +127,7 @@ class UniversalSecurityCoordinator(UniversalCoordinator):
     async def _do_initialize(self) -> bool:
         """Initialize security subsystems with graceful degradation."""
         initialized_any = False
-        
+
         # Try StealthEngine — adapter in _shims wraps canonical StealthSession
         try:
             from hledac.security.stealth_engine import StealthEngine
@@ -147,7 +141,7 @@ class UniversalSecurityCoordinator(UniversalCoordinator):
             logger.warning("SecurityCoordinator: StealthEngine not available")
         except Exception as e:
             logger.warning(f"SecurityCoordinator: StealthEngine init failed: {e}")
-        
+
         # Try ThreatIntelligence
         try:
             from _shims.security_threat_intelligence import ThreatIntelligence
@@ -161,11 +155,10 @@ class UniversalSecurityCoordinator(UniversalCoordinator):
             logger.warning("SecurityCoordinator: ThreatIntelligence not available")
         except Exception as e:
             logger.warning(f"SecurityCoordinator: ThreatIntelligence init failed: {e}")
-        
+
         # Try QuantumResistantCrypto
         try:
-            from hledac.universal.security.pq_crypto import create_post_quantum_backend
-            from hledac.universal.security.pq_crypto import PQAvailability
+            from hledac.universal.security.pq_crypto import PQAvailability, create_post_quantum_backend
             self._pq_backend, pq_status = await create_post_quantum_backend(enabled=True, key_id="hledac.security.v1")
             self._crypto_available = pq_status.availability.value in ("available", "signed", "fail_soft")
             self._pq_crypto_available = self._crypto_available
@@ -175,7 +168,7 @@ class UniversalSecurityCoordinator(UniversalCoordinator):
             logger.warning("SecurityCoordinator: PQ backend not available")
         except Exception as e:
             logger.warning(f"SecurityCoordinator: PQ backend init failed: {e}")
-        
+
         # Try ZKPResearchEngine
         try:
             from _shims.security_zkp_research_engine import ZKPResearchEngine
@@ -189,7 +182,7 @@ class UniversalSecurityCoordinator(UniversalCoordinator):
             logger.warning("SecurityCoordinator: ZKPResearchEngine not available")
         except Exception as e:
             logger.warning(f"SecurityCoordinator: ZKP init failed: {e}")
-        
+
         return initialized_any
 
     async def _do_cleanup(self) -> None:
@@ -199,32 +192,32 @@ class UniversalSecurityCoordinator(UniversalCoordinator):
                 await self._stealth_engine.cleanup()
             except Exception as e:
                 logger.error(f"Error cleaning up StealthEngine: {e}")
-        
+
         if self._threat_intelligence and hasattr(self._threat_intelligence, 'cleanup'):
             try:
                 await self._threat_intelligence.cleanup()
             except Exception as e:
                 logger.error(f"Error cleaning up ThreatIntelligence: {e}")
-        
+
         if self._pq_backend and hasattr(self._pq_backend, 'cleanup'):
             try:
                 await self._pq_backend.cleanup()
             except Exception as e:
                 logger.error(f"Error cleaning up PQ backend: {e}")
-        
+
         if self._zkp_engine and hasattr(self._zkp_engine, 'cleanup'):
             try:
                 await self._zkp_engine.cleanup()
             except Exception as e:
                 logger.error(f"Error cleaning up ZKP: {e}")
-        
+
         self._security_contexts.clear()
 
     # ========================================================================
     # Core Operations
     # ========================================================================
 
-    def get_supported_operations(self) -> List[OperationType]:
+    def get_supported_operations(self) -> list[OperationType]:
         """Return supported operation types."""
         return [OperationType.SECURITY]
 
@@ -235,17 +228,17 @@ class UniversalSecurityCoordinator(UniversalCoordinator):
     ) -> OperationResult:
         """
         Handle security request with intelligent routing.
-        
+
         Args:
             operation_ref: Unique operation reference
             decision: Security decision with routing info
-            
+
         Returns:
             OperationResult with security operation outcome
         """
         start_time = time.time()
         operation_id = self.generate_operation_id()
-        
+
         try:
             # Track operation
             self.track_operation(operation_id, {
@@ -253,10 +246,10 @@ class UniversalSecurityCoordinator(UniversalCoordinator):
                 'decision': decision,
                 'type': 'security'
             })
-            
+
             # Route to appropriate security method
             result = await self._execute_security_decision(decision)
-            
+
             # Create operation result
             operation_result = OperationResult(
                 operation_id=operation_id,
@@ -271,7 +264,7 @@ class UniversalSecurityCoordinator(UniversalCoordinator):
                     'threats_found': result.threats_found,
                 }
             )
-            
+
         except Exception as e:
             operation_result = OperationResult(
                 operation_id=operation_id,
@@ -283,7 +276,7 @@ class UniversalSecurityCoordinator(UniversalCoordinator):
             )
         finally:
             self.untrack_operation(operation_id)
-        
+
         # Record metrics
         self.record_operation_result(operation_result)
         return operation_result
@@ -298,40 +291,40 @@ class UniversalSecurityCoordinator(UniversalCoordinator):
     ) -> SecurityResult:
         """
         Route security decision to appropriate backend.
-        
+
         Routing logic:
         1. Parse chosen_option for routing hints
         2. Route to specific security system
         """
         chosen = decision.chosen_option.lower()
         context = decision.reasoning or decision.metadata.get('context', '')
-        
+
         # Calculate security level from confidence
         security_level = self._confidence_to_security_level(decision.confidence)
-        
+
         # Route to appropriate system
         if 'stealth' in chosen or 'evasion' in chosen or 'anonymize' in chosen:
             if self._stealth_available:
                 return await self._execute_stealth_operation(decision, context, security_level)
-        
+
         elif 'threat' in chosen or 'intelligence' in chosen or 'detect' in chosen:
             if self._threat_available:
                 return await self._execute_threat_analysis(decision, context, security_level)
-        
+
         elif 'quantum' in chosen or 'crypto' in chosen or 'encrypt' in chosen:
             if self._crypto_available:
                 return await self._execute_crypto_operation(decision, security_level)
-        
+
         elif 'zkp' in chosen or 'proof' in chosen or 'verify' in chosen:
             if self._zkp_available:
                 return await self._execute_zkp_operation(decision, context, security_level)
-        
+
         # Default: Try stealth first, then others
         if self._stealth_available:
             return await self._execute_stealth_operation(decision, context, security_level)
         elif self._threat_available:
             return await self._execute_threat_analysis(decision, context, security_level)
-        
+
         return SecurityResult(
             operation_type='none',
             success=False,
@@ -359,21 +352,21 @@ class UniversalSecurityCoordinator(UniversalCoordinator):
     ) -> SecurityResult:
         """Execute stealth operation using StealthEngine."""
         start_time = time.time()
-        
+
         if not self._stealth_engine:
             raise RuntimeError("StealthEngine not available")
-        
+
         # Activate stealth mode
         stealth_result = await self._stealth_engine.activate_stealth_mode(
             operation_type=context,
             confidence_threshold=decision.confidence,
             security_level=security_level.value
         )
-        
+
         execution_time = time.time() - start_time
         self._stealth_activations += 1
         self._stealth_mode_active = stealth_result.get('active', False)
-        
+
         return SecurityResult(
             operation_type='stealth',
             success=stealth_result.get('success', False),
@@ -392,23 +385,23 @@ class UniversalSecurityCoordinator(UniversalCoordinator):
     ) -> SecurityResult:
         """Execute threat intelligence analysis."""
         start_time = time.time()
-        
+
         if not self._threat_intelligence:
             raise RuntimeError("ThreatIntelligence not available")
-        
+
         # Perform threat analysis
         threat_result = await self._threat_intelligence.analyze_threats(
             context=context,
             priority_level=decision.confidence,
             security_level=security_level.value
         )
-        
+
         execution_time = time.time() - start_time
         self._threat_analyses += 1
-        
+
         threats = threat_result.get('threats', [])
         self._global_threat_level = threat_result.get('threat_level', 0.0)
-        
+
         return SecurityResult(
             operation_type='threat',
             success=True,
@@ -456,14 +449,14 @@ class UniversalSecurityCoordinator(UniversalCoordinator):
     ) -> SecurityResult:
         """Execute zero-knowledge proof operation."""
         start_time = time.time()
-        
+
         if not self._zkp_engine:
             raise RuntimeError("ZKPResearchEngine not available")
-        
+
         # Generate or verify ZKP
         proof_type = decision.metadata.get('proof_type', 'membership')
         verify = decision.metadata.get('verify', False)
-        
+
         if verify:
             zkp_result = await self._zkp_engine.verify_proof(
                 statement=context,
@@ -476,10 +469,10 @@ class UniversalSecurityCoordinator(UniversalCoordinator):
                 proof_type=proof_type,
                 confidence=decision.confidence
             )
-        
+
         execution_time = time.time() - start_time
         self._zkp_operations += 1
-        
+
         return SecurityResult(
             operation_type='zkp',
             success=zkp_result.get('valid', zkp_result.get('success', False)),
@@ -497,28 +490,28 @@ class UniversalSecurityCoordinator(UniversalCoordinator):
         self,
         context: str,
         target_security_level: SecurityLevel = SecurityLevel.HIGH
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Execute comprehensive multi-layer security operation.
-        
+
         Unique feature: Activates all security layers up to target level.
-        
+
         Levels:
         - Level 1: Stealth only
         - Level 2: Stealth + Threat detection
         - Level 3: Stealth + Threat + Quantum crypto
         - Level 4: All layers + ZKP
-        
+
         Args:
             context: Security context/operation description
             target_security_level: Desired security level
-            
+
         Returns:
             Comprehensive security results
         """
         results = []
         start_time = time.time()
-        
+
         # Level 1: Stealth
         if self._stealth_available and target_security_level.value >= 1:
             try:
@@ -535,7 +528,7 @@ class UniversalSecurityCoordinator(UniversalCoordinator):
                 results.append(stealth_result)
             except Exception as e:
                 logger.warning(f"Comprehensive security: Stealth failed: {e}")
-        
+
         # Level 2: Threat Analysis
         if self._threat_available and target_security_level.value >= 2:
             try:
@@ -552,7 +545,7 @@ class UniversalSecurityCoordinator(UniversalCoordinator):
                 results.append(threat_result)
             except Exception as e:
                 logger.warning(f"Comprehensive security: Threat analysis failed: {e}")
-        
+
         # Level 3: Quantum Crypto
         if self._crypto_available and target_security_level.value >= 3:
             try:
@@ -569,7 +562,7 @@ class UniversalSecurityCoordinator(UniversalCoordinator):
                 results.append(crypto_result)
             except Exception as e:
                 logger.warning(f"Comprehensive security: Crypto failed: {e}")
-        
+
         # Level 4: ZKP
         if self._zkp_available and target_security_level.value >= 4:
             try:
@@ -587,11 +580,11 @@ class UniversalSecurityCoordinator(UniversalCoordinator):
                 results.append(zkp_result)
             except Exception as e:
                 logger.warning(f"Comprehensive security: ZKP failed: {e}")
-        
+
         # Aggregate results
         total_time = time.time() - start_time
         successful = sum(1 for r in results if r.success)
-        
+
         return {
             'success': successful > 0,
             'summary': f"Comprehensive security: {successful}/{len(results)} layers active",
@@ -627,15 +620,15 @@ class UniversalSecurityCoordinator(UniversalCoordinator):
             security_level=security_level
         )
         self._security_contexts[operation_id] = context
-        
+
         # Trim if needed
         while len(self._security_contexts) > self._max_contexts:
             oldest = next(iter(self._security_contexts))
             del self._security_contexts[oldest]
-        
+
         return context
 
-    def get_security_context(self, operation_id: str) -> Optional[SecurityContext]:
+    def get_security_context(self, operation_id: str) -> SecurityContext | None:
         """Retrieve security context."""
         return self._security_contexts.get(operation_id)
 
@@ -643,7 +636,7 @@ class UniversalSecurityCoordinator(UniversalCoordinator):
         self,
         operation_id: str,
         event: str,
-        details: Dict[str, Any]
+        details: dict[str, Any]
     ) -> None:
         """Add audit log entry to security context."""
         if operation_id in self._security_contexts:
@@ -657,7 +650,7 @@ class UniversalSecurityCoordinator(UniversalCoordinator):
     # Global Security State
     # ========================================================================
 
-    def get_global_security_state(self) -> Dict[str, Any]:
+    def get_global_security_state(self) -> dict[str, Any]:
         """Get global security state summary."""
         return {
             'stealth_mode_active': self._stealth_mode_active,
@@ -681,10 +674,10 @@ class UniversalSecurityCoordinator(UniversalCoordinator):
     # Reporting
     # ========================================================================
 
-    def _get_feature_list(self) -> List[str]:
+    def _get_feature_list(self) -> list[str]:
         """Report available features."""
         features = ["Multi-layer security architecture"]
-        
+
         if self._stealth_available:
             features.append("Stealth/Evasion Operations")
         if self._threat_available:
@@ -693,7 +686,7 @@ class UniversalSecurityCoordinator(UniversalCoordinator):
             features.append("Quantum-Resistant Cryptography")
         if self._zkp_available:
             features.append("Zero-Knowledge Proofs")
-        
+
         features.extend([
             "Security level escalation (1-4)",
             "Comprehensive security operations",
@@ -701,10 +694,10 @@ class UniversalSecurityCoordinator(UniversalCoordinator):
             "Audit logging",
             "Global threat monitoring"
         ])
-        
+
         return features
 
-    def get_available_security_systems(self) -> Dict[str, bool]:
+    def get_available_security_systems(self) -> dict[str, bool]:
         """Get availability status of all security systems."""
         return {
             'stealth': self._stealth_available,
@@ -713,7 +706,7 @@ class UniversalSecurityCoordinator(UniversalCoordinator):
             'zkp': self._zkp_available
         }
 
-    def get_security_stats(self) -> Dict[str, int]:
+    def get_security_stats(self) -> dict[str, int]:
         """Get security operation statistics."""
         return {
             'stealth_activations': self._stealth_activations,
@@ -726,7 +719,7 @@ class UniversalSecurityCoordinator(UniversalCoordinator):
     # Hermes3 Integration - Piiranha, Anonymity, Vault
     # ========================================================================
 
-    async def detect_pii(self, text: str) -> Dict[str, Any]:
+    async def detect_pii(self, text: str) -> dict[str, Any]:
         """
         Detect PII in text using regex-based detection.
 
@@ -768,7 +761,7 @@ class UniversalSecurityCoordinator(UniversalCoordinator):
                 'detections': []
             }
 
-    async def redact_pii(self, text: str) -> Dict[str, Any]:
+    async def redact_pii(self, text: str) -> dict[str, Any]:
         """
         Redact PII from text using regex-based detection.
 
@@ -807,7 +800,7 @@ class UniversalSecurityCoordinator(UniversalCoordinator):
         self,
         content: str,
         force_fallback: bool = False
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Early privacy gate for outbound content.
 
@@ -826,7 +819,6 @@ class UniversalSecurityCoordinator(UniversalCoordinator):
         from ..security.pii_gate import (
             SecurityGate,
             fallback_sanitize,
-            quick_sanitize,
         )
 
         try:
@@ -871,22 +863,22 @@ class UniversalSecurityCoordinator(UniversalCoordinator):
     async def enable_stealth_mode(
         self,
         level: str = "medium"
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Enable stealth mode via AnonymityManager (from Hermes3).
-        
+
         Args:
             level: Stealth level (low, medium, high)
-            
+
         Returns:
             Stealth activation result
         """
         try:
             from hledac.network.anonymity.anonymity_manager import AnonymityManager
-            
+
             manager = AnonymityManager()
             await manager.enable_stealth(level)
-            
+
             return {
                 'success': True,
                 'level': level,
@@ -913,40 +905,40 @@ class UniversalSecurityCoordinator(UniversalCoordinator):
     async def resurrect_from_archive(
         self,
         url: str,
-        target_date: Optional[str] = None,
-        sources: Optional[List[str]] = None
-    ) -> Dict[str, Any]:
+        target_date: str | None = None,
+        sources: list[str] | None = None
+    ) -> dict[str, Any]:
         """
         Resurrect content from web archives using ArchiveResurrector.
-        
+
         Integrated from: stealth_osint/archive_resurrector.py
-        
+
         Features:
         - Wayback Machine (Internet Archive) - Full CDX API support
         - Search engine cache (Google, Bing, Yandex)
         - Social media archives (Politwoops, Unreddit)
         - Content quality assessment and ranking
-        
+
         Args:
             url: URL to resurrect
             target_date: Target date (ISO format)
             sources: List of sources to check ['wayback', 'search_cache', 'social']
-            
+
         Returns:
             Resurrection result with content and metadata
         """
         try:
             from hledac.stealth_osint.archive_resurrector import ArchiveResurrector
-            
+
             resurrector = ArchiveResurrector()
             await resurrector.initialize()
-            
+
             result = await resurrector.resurrect(
                 url=url,
                 target_date=target_date,
                 sources=sources
             )
-            
+
             return {
                 'success': result.success,
                 'content': result.content,
@@ -966,35 +958,35 @@ class UniversalSecurityCoordinator(UniversalCoordinator):
         self,
         target: str,
         target_type: str = "email"
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Check for data leaks using DataLeakHunter.
-        
+
         Integrated from: stealth_osint/data_leak_hunter.py
-        
+
         Features:
         - Breach API integration (HaveIBeenPwned, DeHashed)
         - Dark web monitoring indicators
         - Paste site surveillance
         - Real-time alerts
-        
+
         Args:
             target: Target to check (email, username, domain)
             target_type: Type of target ('email', 'username', 'domain', 'ip')
-            
+
         Returns:
             Leak check results with alerts
         """
         try:
             from hledac.stealth_osint.data_leak_hunter import DataLeakHunter
-            
+
             hunter = DataLeakHunter()
             await hunter.initialize()
-            
+
             # Add target and check
             await hunter.add_target(target, target_type)
             alerts = await hunter.check_target(target)
-            
+
             return {
                 'success': True,
                 'target': target,
@@ -1022,39 +1014,39 @@ class UniversalSecurityCoordinator(UniversalCoordinator):
         url: str,
         protection_bypass: bool = True,
         fingerprint_rotation: bool = True
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Stealth web scraping with anti-detection using StealthWebScraper.
-        
+
         Integrated from: stealth_osint/stealth_web_scraper.py
-        
+
         Features:
         - Protection detection (Cloudflare, Akamai, Imperva, DataDome)
         - Multi-layer bypass (cloudscraper → Selenium → Browser automation)
         - Fingerprint rotation (50+ unique profiles)
         - Proxy management with residential support
         - CAPTCHA solving integration
-        
+
         Args:
             url: URL to scrape
             protection_bypass: Enable protection bypass
             fingerprint_rotation: Enable fingerprint rotation
-            
+
         Returns:
             Scraping result with content
         """
         try:
             from hledac.stealth_osint.stealth_web_scraper import StealthWebScraper
-            
+
             scraper = StealthWebScraper()
             await scraper.initialize()
-            
+
             result = await scraper.scrape(
                 url=url,
                 enable_bypass=protection_bypass,
                 rotate_fingerprint=fingerprint_rotation
             )
-            
+
             return {
                 'success': result.success,
                 'content': result.content,
@@ -1078,34 +1070,36 @@ class UniversalSecurityCoordinator(UniversalCoordinator):
     async def establish_privacy_connection(
         self,
         privacy_level: str = "enhanced",
-        connection_type: Optional[str] = None
-    ) -> Dict[str, Any]:
+        connection_type: str | None = None
+    ) -> dict[str, Any]:
         """
         Establish privacy-protected connection using PersonalPrivacyManager.
-        
+
         Integrated from: privacy_protection/personal_privacy_manager.py
-        
+
         Features:
         - VPN/Proxy management with rotation
         - Tor network integration
         - DNS-over-HTTPS/TLS encryption
         - Browser fingerprint randomization
         - Traffic correlation prevention
-        
+
         Args:
             privacy_level: 'basic', 'standard', 'enhanced', 'maximum'
             connection_type: 'vpn', 'tor', 'proxy', 'mixed' (auto-selected if None)
-            
+
         Returns:
             Connection establishment result
         """
         try:
             from hledac.privacy_protection.personal_privacy_manager import (
-                PersonalPrivacyManager, PrivacyLevel, ConnectionType
+                ConnectionType,
+                PersonalPrivacyManager,
+                PrivacyLevel,
             )
-            
+
             manager = PersonalPrivacyManager()
-            
+
             # Map string to enum
             level_map = {
                 'basic': PrivacyLevel.BASIC,
@@ -1114,7 +1108,7 @@ class UniversalSecurityCoordinator(UniversalCoordinator):
                 'maximum': PrivacyLevel.MAXIMUM
             }
             privacy_enum = level_map.get(privacy_level, PrivacyLevel.ENHANCED)
-            
+
             # Auto-select connection type if not specified
             if not connection_type:
                 if privacy_level == 'maximum':
@@ -1123,12 +1117,12 @@ class UniversalSecurityCoordinator(UniversalCoordinator):
                     connection_type = ConnectionType.TOR
                 else:
                     connection_type = ConnectionType.VPN
-            
+
             result = await manager.establish_connection(
                 privacy_level=privacy_enum,
                 connection_type=connection_type
             )
-            
+
             return {
                 'success': result.get('success', False),
                 'privacy_level': privacy_level,
@@ -1148,38 +1142,38 @@ class UniversalSecurityCoordinator(UniversalCoordinator):
         self,
         platform: str = "macos",
         browser: str = "chrome",
-        domain: Optional[str] = None
-    ) -> Dict[str, Any]:
+        domain: str | None = None
+    ) -> dict[str, Any]:
         """
         Get browser fingerprint using FingerprintManager.
-        
+
         Integrated from: advanced_web/fingerprint_manager.py
-        
+
         Features:
         - Large fingerprint database (1000+ unique fingerprints)
         - Usage tracking and risk assessment
         - Domain-specific fingerprint rotation
         - Canvas/WebGL/Audio fingerprint randomization
-        
+
         Args:
             platform: 'macos', 'windows', 'linux', 'ios', 'android'
             browser: 'chrome', 'firefox', 'safari', 'edge'
             domain: Domain for domain-specific rotation
-            
+
         Returns:
             Fingerprint profile
         """
         try:
             from hledac.advanced_web.fingerprint_manager import FingerprintManager
-            
+
             manager = FingerprintManager()
-            
+
             fingerprint = manager.get_fingerprint(
                 platform_flavor=platform,
                 browser_family=browser,
                 domain=domain
             )
-            
+
             return {
                 'success': True,
                 'fingerprint_id': fingerprint.fingerprint_id,
@@ -1208,37 +1202,37 @@ class UniversalSecurityCoordinator(UniversalCoordinator):
     async def manage_data_leak_monitoring(
         self,
         action: str,
-        target: Optional[str] = None,
-        target_type: Optional[str] = None,
+        target: str | None = None,
+        target_type: str | None = None,
         check_interval: int = 3600
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Manage continuous data leak monitoring.
-        
+
         Features:
         - Start/stop continuous monitoring
         - Add/remove monitoring targets
         - Get monitoring status
-        
+
         Args:
             action: 'start', 'stop', 'add_target', 'remove_target', 'status'
             target: Target value (for add/remove)
             target_type: Type of target (email, username, domain)
             check_interval: Seconds between checks
-            
+
         Returns:
             Operation result
         """
         try:
             from hledac.stealth_osint.data_leak_hunter import DataLeakHunter
-            
+
             # Initialize singleton hunter if not exists
             if not hasattr(self, '_leak_hunter'):
                 self._leak_hunter = DataLeakHunter(check_interval=check_interval)
                 await self._leak_hunter.initialize()
-            
+
             hunter = self._leak_hunter
-            
+
             if action == 'start':
                 await hunter.start_monitoring()
                 return {
@@ -1247,14 +1241,14 @@ class UniversalSecurityCoordinator(UniversalCoordinator):
                     'interval': check_interval,
                     'targets_count': len(hunter._targets)
                 }
-            
+
             elif action == 'stop':
                 await hunter.stop_monitoring()
                 return {
                     'success': True,
                     'action': 'stop_monitoring'
                 }
-            
+
             elif action == 'add_target' and target and target_type:
                 target_id = await hunter.add_target(target, target_type)
                 return {
@@ -1263,7 +1257,7 @@ class UniversalSecurityCoordinator(UniversalCoordinator):
                     'target_id': target_id,
                     'target': target
                 }
-            
+
             elif action == 'remove_target' and target:
                 # Find target by value
                 target_id = None
@@ -1271,7 +1265,7 @@ class UniversalSecurityCoordinator(UniversalCoordinator):
                     if t.value == target:
                         target_id = tid
                         break
-                
+
                 if target_id:
                     success = await hunter.remove_target(target_id)
                     return {
@@ -1280,7 +1274,7 @@ class UniversalSecurityCoordinator(UniversalCoordinator):
                         'target': target
                     }
                 return {'success': False, 'error': 'Target not found'}
-            
+
             elif action == 'status':
                 return {
                     'success': True,
@@ -1290,10 +1284,10 @@ class UniversalSecurityCoordinator(UniversalCoordinator):
                     'checks_performed': hunter._checks_performed,
                     'alerts_generated': hunter._alerts_generated
                 }
-            
+
             else:
                 return {'success': False, 'error': f'Unknown action: {action}'}
-                
+
         except ImportError:
             return {'success': False, 'error': 'DataLeakHunter not available'}
         except Exception as e:
@@ -1304,30 +1298,33 @@ class UniversalSecurityCoordinator(UniversalCoordinator):
         self,
         provider: str = "mullvad",
         protocol: str = "wireguard",
-        server: Optional[str] = None
-    ) -> Dict[str, Any]:
+        server: str | None = None
+    ) -> dict[str, Any]:
         """
         Establish VPN connection using PersonalPrivacyManager.
-        
+
         Features:
         - WireGuard and OpenVPN support
         - Multiple providers (Mullvad, ProtonVPN, IVPN)
         - DNS leak protection
         - Automatic server selection
-        
+
         Args:
             provider: VPN provider ('mullvad', 'protonvpn', 'ivpn')
             protocol: 'wireguard' or 'openvpn'
             server: Specific server (auto-selected if None)
-            
+
         Returns:
             Connection result
         """
         try:
             from hledac.privacy_protection.personal_privacy_manager import (
-                PersonalPrivacyManager, VPNConfig, VPNDriver, PrivacyLevel
+                PersonalPrivacyManager,
+                PrivacyLevel,
+                VPNConfig,
+                VPNDriver,
             )
-            
+
             # Auto-select server if not specified
             if not server:
                 servers = VPNDriver.PROVIDERS.get(provider, {}).get('servers', [])
@@ -1336,7 +1333,7 @@ class UniversalSecurityCoordinator(UniversalCoordinator):
                     server = random.choice(servers)
                 else:
                     return {'success': False, 'error': f'Unknown provider: {provider}'}
-            
+
             # Create VPN config
             config = VPNConfig(
                 provider=provider,
@@ -1345,11 +1342,11 @@ class UniversalSecurityCoordinator(UniversalCoordinator):
                 dns_leak_protection=True,
                 kill_switch=True
             )
-            
+
             # Create driver and connect
             driver = VPNDriver(config)
             success = await driver.connect()
-            
+
             if success:
                 return {
                     'success': True,
@@ -1366,18 +1363,18 @@ class UniversalSecurityCoordinator(UniversalCoordinator):
                     'provider': provider,
                     'server': server
                 }
-                
+
         except ImportError:
             return {'success': False, 'error': 'PersonalPrivacyManager not available'}
         except Exception as e:
             logger.error(f"VPN connection failed: {e}")
             return {'success': False, 'error': str(e)}
 
-    async def disconnect_vpn(self) -> Dict[str, Any]:
+    async def disconnect_vpn(self) -> dict[str, Any]:
         """Disconnect active VPN connection."""
         try:
             from hledac.privacy_protection.personal_privacy_manager import VPNDriver
-            
+
             # Note: This would need proper tracking of active connections
             # For now, return info that manual disconnect may be needed
             return {
@@ -1402,19 +1399,19 @@ class UniversalSecurityCoordinator(UniversalCoordinator):
         provider: str = "protonmail",
         use_tor: bool = True,
         encrypt: bool = False,
-        recipient_key: Optional[str] = None
-    ) -> Dict[str, Any]:
+        recipient_key: str | None = None
+    ) -> dict[str, Any]:
         """
         Send anonymous email through secure providers with optional Tor.
-        
+
         Integrated from: privacy_protection/anonymous_communication.py
-        
+
         Features:
         - Tor network routing
         - PGP encryption support
         - Privacy-friendly providers (ProtonMail, Tutanota)
         - Exit node country selection
-        
+
         Args:
             to_address: Recipient email
             subject: Email subject
@@ -1423,17 +1420,15 @@ class UniversalSecurityCoordinator(UniversalCoordinator):
             use_tor: Route through Tor network
             encrypt: Encrypt with PGP
             recipient_key: PGP public key for encryption
-            
+
         Returns:
             Send result with privacy metadata
         """
         try:
-            from hledac.privacy_protection.anonymous_communication import (
-                TorMailer, EmailConfig
-            )
-            
+            from hledac.privacy_protection.anonymous_communication import EmailConfig, TorMailer
+
             mailer = TorMailer(use_tor=use_tor)
-            
+
             # Configure secure email
             config = EmailConfig(
                 smtp_server="127.0.0.1" if use_tor else "smtp.protonmail.com",
@@ -1443,7 +1438,7 @@ class UniversalSecurityCoordinator(UniversalCoordinator):
                 use_tls=not use_tor,
                 use_tor=use_tor
             )
-            
+
             success = await mailer.send_email(
                 config=config,
                 to_address=to_address,
@@ -1452,7 +1447,7 @@ class UniversalSecurityCoordinator(UniversalCoordinator):
                 encrypt=encrypt,
                 recipient_key=recipient_key
             )
-            
+
             return {
                 'success': success,
                 'provider': provider,
@@ -1461,7 +1456,7 @@ class UniversalSecurityCoordinator(UniversalCoordinator):
                 'recipient': to_address,
                 'privacy_level': 'maximum' if use_tor and encrypt else 'high'
             }
-            
+
         except ImportError:
             logger.warning("Anonymous communication module not available")
             return {'success': False, 'error': 'Module not available'}
@@ -1471,33 +1466,31 @@ class UniversalSecurityCoordinator(UniversalCoordinator):
 
     async def establish_secure_channel(
         self,
-        participant_ids: List[str],
-        channel_name: Optional[str] = None
-    ) -> Dict[str, Any]:
+        participant_ids: list[str],
+        channel_name: str | None = None
+    ) -> dict[str, Any]:
         """
         Create secure encrypted communication channel.
-        
+
         Features:
         - End-to-end encryption
         - Channel-based messaging
         - Participant management
         - TTL support for messages
-        
+
         Args:
             participant_ids: List of participant IDs
             channel_name: Optional channel name
-            
+
         Returns:
             Channel creation result
         """
         try:
-            from hledac.privacy_protection.anonymous_communication import (
-                SecureChannelManager
-            )
-            
+            from hledac.privacy_protection.anonymous_communication import SecureChannelManager
+
             manager = SecureChannelManager()
             channel = manager.create_channel(participant_ids, channel_name)
-            
+
             if channel:
                 return {
                     'success': True,
@@ -1507,7 +1500,7 @@ class UniversalSecurityCoordinator(UniversalCoordinator):
                     'created_at': channel.created_at.isoformat()
                 }
             return {'success': False, 'error': 'Channel creation failed'}
-            
+
         except ImportError:
             return {'success': False, 'error': 'SecureChannelManager not available'}
         except Exception as e:
@@ -1519,25 +1512,25 @@ class UniversalSecurityCoordinator(UniversalCoordinator):
         email: str,
         key_type: str = "RSA",
         key_length: int = 4096
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Create PGP identity for secure communication.
-        
+
         Args:
             name: Identity name
             email: Identity email
             key_type: Key type (RSA, ECC)
             key_length: Key length in bits
-            
+
         Returns:
             PGP key information
         """
         try:
             from hledac.privacy_protection.anonymous_communication import PGPManager
-            
+
             manager = PGPManager()
             key = manager.generate_key(name, email, key_type, key_length)
-            
+
             if key:
                 return {
                     'success': True,
@@ -1548,7 +1541,7 @@ class UniversalSecurityCoordinator(UniversalCoordinator):
                     'expires_at': key.expires_at.isoformat() if key.expires_at else None
                 }
             return {'success': False, 'error': 'Key generation failed'}
-            
+
         except ImportError:
             return {'success': False, 'error': 'PGPManager not available'}
         except Exception as e:
@@ -1562,25 +1555,25 @@ class UniversalSecurityCoordinator(UniversalCoordinator):
         self,
         url: str,
         method: str = "GET",
-        headers: Optional[Dict[str, str]] = None,
+        headers: dict[str, str] | None = None,
         impersonate: str = "chrome110",
         jitter_shape: float = 1.5,
         jitter_scale: float = 2.0,
         min_delay: float = 0.5,
         max_delay: float = 10.0,
         **kwargs
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Stealth HTTP request with Weibull-distributed jitter delays.
-        
+
         Integrated from: tools/preserved_logic/stealth_request.py
-        
+
         Features:
         - Weibull-distributed random delays (more natural than uniform)
         - curl_cffi impersonation (Chrome, Firefox, Safari)
         - Automatic retry with exponential backoff
         - Response time tracking
-        
+
         Args:
             url: Target URL
             method: HTTP method (GET, POST, etc.)
@@ -1590,16 +1583,16 @@ class UniversalSecurityCoordinator(UniversalCoordinator):
             jitter_scale: Weibull scale parameter
             min_delay: Minimum delay in seconds
             max_delay: Maximum delay in seconds
-            
+
         Returns:
             Response with content, status code, and timing
         """
         import asyncio
         import random
         import time
-        
+
         start_time = time.time()
-        
+
         try:
             # Weibull jitter delay
             try:
@@ -1608,25 +1601,25 @@ class UniversalSecurityCoordinator(UniversalCoordinator):
             except ImportError:
                 # Fallback to uniform distribution
                 delay = random.uniform(min_delay, max_delay)
-            
+
             delay = max(min_delay, min(delay, max_delay))
             await asyncio.sleep(delay)
-            
+
             # Try curl_cffi for impersonation
             try:
                 from curl_cffi import requests
-                
+
                 session = requests.Session(impersonate=impersonate)
-                
+
                 if method.upper() == "GET":
                     resp = session.get(url, headers=headers, **kwargs)
                 elif method.upper() == "POST":
                     resp = session.post(url, headers=headers, **kwargs)
                 else:
                     resp = session.request(method, url, headers=headers, **kwargs)
-                
+
                 elapsed = time.time() - start_time
-                
+
                 return {
                     'success': True,
                     'url': url,
@@ -1638,18 +1631,18 @@ class UniversalSecurityCoordinator(UniversalCoordinator):
                     'impersonate': impersonate,
                     'method': 'curl_cffi'
                 }
-                
+
             except ImportError:
                 # Fallback to aiohttp
                 import aiohttp
-                
+
                 async with aiohttp.ClientSession() as session:
                     async with session.request(
                         method, url, headers=headers, **kwargs
                     ) as resp:
                         content = await resp.text()
                         elapsed = time.time() - start_time
-                        
+
                         return {
                             'success': True,
                             'url': url,
@@ -1661,7 +1654,7 @@ class UniversalSecurityCoordinator(UniversalCoordinator):
                             'impersonate': None,
                             'method': 'aiohttp'
                         }
-                        
+
         except Exception as e:
             elapsed = time.time() - start_time
             logger.error(f"Stealth request failed for {url}: {e}")
@@ -1674,37 +1667,37 @@ class UniversalSecurityCoordinator(UniversalCoordinator):
 
     async def batch_stealth_requests(
         self,
-        urls: List[str],
+        urls: list[str],
         concurrency: int = 3,
-        jitter_range: Tuple[float, float] = (0.5, 5.0)
-    ) -> List[Dict[str, Any]]:
+        jitter_range: tuple[float, float] = (0.5, 5.0)
+    ) -> list[dict[str, Any]]:
         """
         Execute multiple stealth requests with controlled concurrency.
-        
+
         Args:
             urls: List of URLs to request
             concurrency: Maximum concurrent requests
             jitter_range: (min, max) delay range
-            
+
         Returns:
             List of response results
         """
         import asyncio
         from asyncio import Semaphore
-        
+
         semaphore = Semaphore(concurrency)
-        
-        async def fetch_with_limit(url: str) -> Dict[str, Any]:
+
+        async def fetch_with_limit(url: str) -> dict[str, Any]:
             async with semaphore:
                 return await self.stealth_request_with_jitter(
                     url,
                     min_delay=jitter_range[0],
                     max_delay=jitter_range[1]
                 )
-        
+
         tasks = [fetch_with_limit(url) for url in urls]
         results = await asyncio.gather(*tasks, return_exceptions=True)
-        
+
         # Convert exceptions to error results
         processed_results = []
         for i, result in enumerate(results):
@@ -1716,28 +1709,28 @@ class UniversalSecurityCoordinator(UniversalCoordinator):
                 })
             else:
                 processed_results.append(result)
-        
+
         return processed_results
 
     async def create_secure_vault(
         self,
         size_mb: int = 256
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Create secure RAM disk vault (from Hermes3).
-        
+
         Args:
             size_mb: Vault size in MB
-            
+
         Returns:
             Vault creation result
         """
         try:
             from hledac.supreme.security.ram_disk_vault import RamDiskVault
-            
+
             vault = RamDiskVault(size_mb=size_mb)
             mount_point = vault.mount()
-            
+
             return {
                 'success': True,
                 'mount_point': mount_point,

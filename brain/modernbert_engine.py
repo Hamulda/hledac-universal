@@ -20,7 +20,6 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass
-from typing import List, Optional
 
 import numpy as np
 
@@ -74,11 +73,11 @@ class ModernBertEngine:
 
     EMBEDDING_DIM = 768
 
-    def __init__(self, config: Optional[ModernBertConfig] = None):
+    def __init__(self, config: ModernBertConfig | None = None):
         self.config = config or ModernBertConfig()
         self._manager = None  # MLXEmbeddingManager or SentenceTransformer
         self._loaded = False
-        self._backend: Optional[str] = None  # "mlx" | "st"
+        self._backend: str | None = None  # "mlx" | "st"
 
     # ── Public API ────────────────────────────────────────────────────────────
 
@@ -128,7 +127,7 @@ class ModernBertEngine:
         self._loaded = False
         return False
 
-    async def summarize(self, context_items: List[str]) -> str:
+    async def summarize(self, context_items: list[str]) -> str:
         """
         Extractive summarization of context items via embedding similarity.
 
@@ -155,7 +154,7 @@ class ModernBertEngine:
             logger.error(f"[ModernBertEngine] summarize failed: {e}")
             return ""
 
-    async def embed(self, texts: List[str]) -> np.ndarray:
+    async def embed(self, texts: list[str]) -> np.ndarray:
         """
         Batch embed texts to embedding matrix.
 
@@ -202,7 +201,7 @@ class ModernBertEngine:
 
     # ── Private: extractive summary ────────────────────────────────────────────
 
-    def _extractive_summary(self, items: List[str]) -> str:
+    def _extractive_summary(self, items: list[str]) -> str:
         """
         Select top-k centroid items and concatenate as summary.
 
@@ -252,7 +251,7 @@ class ModernBertEngine:
 
         return "\n---\n".join(summary_parts)
 
-    def _embed_sync(self, texts: List[str]) -> np.ndarray:
+    def _embed_sync(self, texts: list[str]) -> np.ndarray:
         """Synchronous embed — dispatches to correct backend."""
         manager = self._manager
         backend = self._backend

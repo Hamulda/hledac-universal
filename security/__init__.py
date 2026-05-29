@@ -5,25 +5,16 @@ Security components optimized for M1 8GB RAM with MLX acceleration.
 Includes steganography detection from deep_research integration.
 """
 
-from .pii_gate import (
-    SecurityGate,
-    PIICategory,
-    PIIMatch,
-    SanitizationResult,
-    create_security_gate,
-    quick_sanitize
-)
+from .pii_gate import PIICategory, PIIMatch, SanitizationResult, SecurityGate, create_security_gate, quick_sanitize
+from .ram_vault import RamDiskVault
 from .vault_manager import (
     LootManager,
     VaultManager,  # Alias: canonical name for secure export authority
 )
-from .ram_vault import (
-    RamDiskVault
-)
 
 # Encryption and Key Management (Sprint 61)
 try:
-    from .encryption import encrypt_aes_gcm, decrypt_aes_gcm
+    from .encryption import decrypt_aes_gcm, encrypt_aes_gcm
     CRYPTO_AVAILABLE = True
 except ImportError:
     encrypt_aes_gcm = None
@@ -39,14 +30,14 @@ except ImportError:
 # Steganography Detector (from deep_research/steganography_watermark_detector.py)
 try:
     from .stego_detector import (
-        StegoDetector,
+        ChiSquareResult,
+        DCTResult,
+        RSResult,
         StatisticalStegoDetector,
         StegoAnalysisResult,
-        StegoResult,
         StegoConfig,
-        ChiSquareResult,
-        RSResult,
-        DCTResult,
+        StegoDetector,
+        StegoResult,
         create_stego_detector,
         quick_stego_check,
     )
@@ -57,8 +48,8 @@ except ImportError:
 # Digital Ghost Detector (from deep_research/next_gen_enhancements.py)
 try:
     from .digital_ghost_detector import (
-        DigitalGhostDetector,
         DigitalGhostAnalysis,
+        DigitalGhostDetector,
         GhostSignal,
         RecoveredContent,
         detect_digital_ghosts,
@@ -70,13 +61,13 @@ except ImportError:
 # Secure Enclave (Sprint F206X)
 try:
     from .secure_enclave import (
+        BatchManifest,
         EnclaveAvailability,
         EnclaveStatus,
-        SignedDigest,
-        BatchManifest,
+        NullSecureEnclaveBackend,
         SecureEnclaveBackend,
         SecureEnclaveError,
-        NullSecureEnclaveBackend,
+        SignedDigest,
         build_batch_manifest,
         create_secure_enclave_backend,
     )
@@ -87,13 +78,13 @@ except ImportError:
 # Post-Quantum (Sprint F206Z)
 try:
     from .pq_crypto import (
-        PQAvailability,
-        PQStatus,
-        PQSignature,
         HybridSignatureSet,
+        NullPostQuantumBackend,
         PostQuantumBackend,
         PostQuantumError,
-        NullPostQuantumBackend,
+        PQAvailability,
+        PQSignature,
+        PQStatus,
         create_post_quantum_backend,
     )
     PQ_AVAILABLE = True

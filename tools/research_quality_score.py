@@ -15,13 +15,13 @@ import argparse
 import json
 import sys
 from dataclasses import dataclass
-
-from hledac.universal.utils.serialization import _safe_dataclass_to_dict
-from enum import Enum
+from enum import StrEnum
 from pathlib import Path
 
+from hledac.universal.utils.serialization import _safe_dataclass_to_dict
 
-class Grade(str, Enum):
+
+class Grade(StrEnum):
     FEED_ONLY = "FEED_ONLY"
     MULTISOURCE_SHALLOW = "MULTISOURCE_SHALLOW"
     MULTISOURCE_USEFUL = "MULTISOURCE_USEFUL"
@@ -64,7 +64,7 @@ def _coerce_feed_dominance_score(value, total_findings: int, feed_findings: int 
     return 1.0
 
 
-class QualityGate(str, Enum):
+class QualityGate(StrEnum):
     QUALITY_PASS = "QUALITY_PASS"
     QUALITY_FAIL_FEED_ONLY = "QUALITY_FAIL_FEED_ONLY"
     QUALITY_FAIL_HARDWARE_TAINTED = "QUALITY_FAIL_HARDWARE_TAINTED"
@@ -518,7 +518,6 @@ def _nonfeed_evidence_score(nonfeed: int, total: int) -> float:
         return 0.0
     ratio = nonfeed / total
     # Power curve: 5% ratio ≈ 3pts, 20% ≈ 10pts, 50% ≈ 21pts, 80% ≈ 30pts (capped at 25)
-    import math
     score = 25.0 * (ratio ** 0.3)
     return min(25.0, max(0.0, score))
 

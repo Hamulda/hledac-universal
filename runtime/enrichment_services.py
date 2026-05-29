@@ -18,7 +18,6 @@ from pathlib import Path
 from typing import Any
 
 import lmdb
-
 from hledac.universal.utils.async_helpers import _check_gathered
 
 log = logging.getLogger(__name__)

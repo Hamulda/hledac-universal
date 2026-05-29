@@ -5,7 +5,6 @@ Testy pro Sprint 59 – prediktivní prefetch s contextual banditem a dvoustupň
 import asyncio
 import tempfile
 import time
-from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import numpy as np

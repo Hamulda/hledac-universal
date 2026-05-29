@@ -50,32 +50,31 @@ from typing import Any
 
 import aiohttp
 import orjson
-
 from hledac.universal.core.resource_governor import sample_uma_status
-from hledac.universal.utils import mlx_cache
+from hledac.universal.export.sprint_exporter import export_sprint
 from hledac.universal.intelligence.ct_log_client import CTLogClient
 from hledac.universal.knowledge.duckdb_store import DuckDBShadowStore
 from hledac.universal.knowledge.semantic_store import SemanticStore
 from hledac.universal.paths import TOR_ROOT, get_sprint_json_report_path
-from hledac.universal.runtime.sprint_scheduler import (
-    SprintScheduler,
-    SprintSchedulerConfig,
-)
 from hledac.universal.rl.sprint_policy_manager import SprintPolicyManager
-from hledac.universal.transport.tor_transport import TorTransport
-from hledac.universal.runtime.sprint_lifecycle import SprintLifecycleManager, _PHASE_ORDER
 from hledac.universal.runtime.acquisition_strategy import (
-    build_acquisition_report,
-    normalize_source_family_outcome,
-    canonicalize_source_family_outcomes,
-    reconcile_lane_detail_fields,
-    complete_source_family_outcomes_from_lane_details,
     ACQUISITION_REPORT_SCHEMA_VERSION,
+    build_acquisition_report,
+    canonicalize_source_family_outcomes,
+    complete_source_family_outcomes_from_lane_details,
+    normalize_source_family_outcome,
+    reconcile_lane_detail_fields,
 )
 from hledac.universal.runtime.acquisition_telemetry_reconcile import (
     complete_source_family_outcomes_from_prelude,
 )
-from hledac.universal.export.sprint_exporter import export_sprint
+from hledac.universal.runtime.sprint_lifecycle import _PHASE_ORDER, SprintLifecycleManager
+from hledac.universal.runtime.sprint_scheduler import (
+    SprintScheduler,
+    SprintSchedulerConfig,
+)
+from hledac.universal.transport.tor_transport import TorTransport
+from hledac.universal.utils import mlx_cache
 
 logger = logging.getLogger(__name__)
 
@@ -158,8 +157,8 @@ def _safe_config_get(config: object, key: str, default=None):
 
 
 def _scheduler_result_acquisition_payload(
-    result: "SprintSchedulerResult",
-    scheduler: "SprintScheduler",
+    result: SprintSchedulerResult,
+    scheduler: SprintScheduler,
     query: str,
     duration_s: float,
 ) -> dict:
@@ -617,7 +616,7 @@ def _scheduler_result_acquisition_payload(
                     if o.get("attempted") and o.get("family")
                 ],
                 "effective_acquisition_plan": list(set(
-                    (_term_rep.get("required_lanes", []) if _term_rep else [])
+                    _term_rep.get("required_lanes", []) if _term_rep else []
                 ) | {
                     o.get("family", "") for o in _sfo_list if o.get("attempted") and o.get("family")
                 }),
@@ -1008,7 +1007,8 @@ def run_pre_sprint_checks() -> bool:
         try:
             mlx_cache.init_mlx_buffers()
             status = mlx_cache.get_metal_limits_status()
-            _fmt = lambda v: f"{v // (1024 * 1024):.0f}MiB" if v else "N/A"
+            def _fmt(v):
+                return f"{v // (1024 * 1024):.0f}MiB" if v else "N/A"
             logger.info(
                 f"[BOOT] MLX buffers: cache={_fmt(status['cache_limit_bytes'])} wired={_fmt(status['wired_limit_bytes'])} configured={status['configured']}"
             )
@@ -1089,6 +1089,219 @@ async def write_sprint_delta(
         )
     except Exception as exc:
         logger.warning(f"[TEARDOWN] sprint_delta write failed: {exc}")
+
+
+# =============================================================================
+# Dry-run diagnostic — pre-sprint validation without discovery
+# =============================================================================
+
+
+async def dry_run_sprint(query: str, duration_s: float = 300.0) -> None:
+    """
+    Dry-run mode: validate config, check Hermes/UMA/sources, show timing plan.
+    Read-only — no DuckDB writes, no real discovery, no data downloads.
+
+    Invariant: --dry-run is read-only. Minimal side effects (writes DRY_RUN_REPORT.json only).
+    """
+    import socket
+    from pathlib import Path
+
+    report: dict[str, Any] = {
+        "target": query,
+        "duration": duration_s,
+        "windup_lead": 0.0,
+        "active_budget": 0.0,
+        "hermes_available": False,
+        "uma_available_gib": 0.0,
+        "sources_online": {},
+        "issues": [],
+        "verdict": "OK",
+        "sprint_timing_plan": None,
+    }
+    issues: list[str] = []
+    verdict = "OK"
+
+    # ── 1. Config validation ─────────────────────────────────────────────────
+    _WINDUP_MIN = 30.0
+    _WINDUP_MAX = 180.0
+    _WINDUP_RATIO = 0.30
+    effective_windup = max(_WINDUP_MIN, min(_WINDUP_MAX, duration_s * _WINDUP_RATIO))
+    synthesis_budget = 60.0
+    active_budget = max(0.0, duration_s - effective_windup - synthesis_budget)
+
+    report["windup_lead"] = effective_windup
+    report["active_budget"] = active_budget
+
+    if effective_windup >= duration_s:
+        issues.append(f"windup_lead ({effective_windup:.0f}s) >= duration ({duration_s:.0f}s) — windup would never end")
+        verdict = "ABORT_RECOMMENDED"
+    elif active_budget <= 0:
+        issues.append(f"active_budget ({active_budget:.0f}s) <= 0 for {duration_s:.0f}s sprint — no room for fetch")
+        verdict = "ABORT_RECOMMENDED"
+
+    try:
+        _ = float(duration_s)
+        assert duration_s > 0
+    except (TypeError, ValueError, AssertionError):
+        issues.append(f"duration ({duration_s}) is not a valid positive float")
+        verdict = "ABORT_RECOMMENDED"
+
+    # ── 2. Hermes3 availability check (no full load) ───────────────────────
+    hermes_ok = False
+    try:
+        from hledac.universal.brain.model_lifecycle import get_model_lifecycle_status
+        status_dict = get_model_lifecycle_status()
+        hermes_ok = status_dict.get("loaded", False)  # "loaded" key from get_model_lifecycle_status()
+    except Exception as e:
+        issues.append(f"Hermes3 model_lifecycle check failed: {e}")
+    report["hermes_available"] = hermes_ok
+    if not hermes_ok:
+        issues.append("Hermes3 model not loaded — synthesis will be skipped")
+        if verdict == "OK":
+            verdict = "OK_WITH_WARNINGS"
+
+    # ── 3. UMA snapshot ────────────────────────────────────────────────────
+    uma_gib = 0.0
+    uma_state = "unknown"
+    try:
+        uma = sample_uma_status()
+        uma_gib = getattr(uma, "system_available_gib", 0.0)
+        uma_state = getattr(uma, "state", "unknown")
+    except Exception as e:
+        issues.append(f"UMA snapshot failed: {e}")
+        verdict = "ABORT_RECOMMENDED"
+    report["uma_available_gib"] = round(uma_gib, 2)
+    report["uma_state"] = uma_state
+    if uma_gib < 1.0:
+        issues.append(f"UMA available < 1 GiB ({uma_gib:.1f}) — Hermes3 load may OOM on M1 8GB")
+        if verdict == "OK":
+            verdict = "OK_WITH_WARNINGS"
+    if uma_state == "emergency":
+        issues.append("UMA state=emergency — abort recommended")
+        verdict = "ABORT_RECOMMENDED"
+
+    # ── 4. Network probe: DNS resolve on target ─────────────────────────────
+    try:
+        target_host = query.replace("https://", "").replace("http://", "").split("/")[0].split()[0]
+        socket.gethostbyname(target_host)
+        report["dns_resolve"] = {"target": target_host, "status": "ok"}
+    except socket.gaierror as e:
+        issues.append(f"DNS resolve failed for '{target_host}': {e}")
+        if verdict == "OK":
+            verdict = "OK_WITH_WARNINGS"
+    except Exception as e:
+        issues.append(f"Network probe failed: {e}")
+
+    # ── 5. Source availability check: crt.sh, CIRCL PDNS ───────────────────
+    online_sources: dict[str, bool] = {"crt.sh": False, "circl_pdns": False}
+    try:
+        import urllib.request
+        for src_name, src_url in [
+            ("crt.sh", "https://crt.sh/?q=%.example.com"),
+            ("circl_pdns", "https://cirolve.circl.lu/api/pdns?q=example.com"),
+        ]:
+            try:
+                req = urllib.request.Request(src_url, method="HEAD")
+                req.add_header("User-Agent", "curl/8.4.0")
+                with urllib.request.urlopen(req, timeout=5) as resp:
+                    if resp.status < 500:
+                        online_sources[src_name] = True
+            except Exception:
+                pass
+    except Exception:
+        pass  # network check is best-effort
+    report["sources_online"] = online_sources
+    for src, ok in online_sources.items():
+        if not ok:
+            issues.append(f"{src} unreachable — may be skipped at runtime")
+            if verdict == "OK":
+                verdict = "OK_WITH_WARNINGS"
+
+    # ── 6. Timing projection ───────────────────────────────────────────────
+    report["sprint_timing_plan"] = {
+        "duration": duration_s,
+        "windup_lead": effective_windup,
+        "active_budget": active_budget,
+        "synthesis_budget": synthesis_budget,
+        "phases": [
+            {
+                "phase": "WINDUP",
+                "t_start": 0.0,
+                "t_end": effective_windup,
+                "description": "seed, bootstrap",
+            },
+            {
+                "phase": "ACTIVE",
+                "t_start": effective_windup,
+                "t_end": effective_windup + active_budget,
+                "description": f"{active_budget:.0f}s available for fetch",
+            },
+            {
+                "phase": "SYNTHESIS",
+                "t_start": effective_windup + active_budget,
+                "t_end": duration_s,
+                "description": "synthesis + export budget",
+            },
+        ],
+    }
+
+    # ── Final verdict ────────────────────────────────────────────────────────
+    report["issues"] = issues
+    report["verdict"] = verdict
+
+    # ── Console summary ────────────────────────────────────────────────────
+    _print_dry_run_summary(report)
+
+    # ── Write JSON report ─────────────────────────────────────────────────
+    try:
+        report_dir = Path.home() / ".hledac" / "reports"
+        report_dir.mkdir(parents=True, exist_ok=True)
+        report_path = report_dir / "DRY_RUN_REPORT.json"
+        orjson_dump = orjson.dumps
+        report_path.write_bytes(orjson_dump(report, option=orjson.OPT_INDENT_2))
+        logger.info(f"[DRY-RUN] Report written to {report_path}")
+    except Exception as e:
+        logger.warning(f"[DRY-RUN] Failed to write report: {e}")
+
+
+def _print_dry_run_summary(report: dict) -> None:
+    """Print human-readable dry-run summary to console."""
+    plan = report.get("sprint_timing_plan") or {}
+    phases = plan.get("phases", [])
+    dur = report["duration"]
+
+    print()
+    print("=" * 60)
+    print(f"  DRY-RUN: {report['target']!r}  ({dur:.0f}s)")
+    print("=" * 60)
+    print()
+
+    if phases:
+        print("  Sprint Timing Plan")
+        print(f"  ─{'─' * 54}")
+        for p in phases:
+            t0 = p["t_start"]
+            t1 = p["t_end"]
+            print(f"  [T={t0:5.0f}s–{t1:5.0f}s]  {p['phase']:<10}  {p['description']}")
+        print()
+        print(f"  Active budget: {plan.get('active_budget', 0):.0f}s  │  UMA available: {report.get('uma_available_gib', 0):.1f} GiB")
+    print()
+    print(f"  Hermes3:      {'✓ available' if report.get('hermes_available') else '✗ not loaded'}")
+    sources = report.get("sources_online", {})
+    dns = report.get("dns_resolve", {})
+    print(f"  DNS probe:     {'✓ ' + dns.get('target','') if dns.get('status') == 'ok' else '✗ failed'}")
+    print(f"  crt.sh:       {'✓' if sources.get('crt.sh') else '✗ unreachable'}")
+    print(f"  CIRCL PDNS:   {'✓' if sources.get('circl_pdns') else '✗ unreachable'}")
+    print()
+    issues = report.get("issues", [])
+    if issues:
+        print("  Issues:")
+        for iss in issues:
+            print(f"    ! {iss}")
+        print()
+    print(f"  Verdict: {report['verdict']}")
+    print("=" * 60)
+    print()
 
 
 # =============================================================================
@@ -1195,7 +1408,7 @@ async def run_sprint(
         os.environ["HLEDAC_ACQUISITION_PROFILE"] = _acq_effective or "default"
     acquisition_profile = _acq_effective or "default"
     config = SprintSchedulerConfig(
-        sprint_duration_s=duration_s,
+        sprint_duration_s=float(duration_s),
         windup_lead_s=_windup_lead_s,
         export_enabled=True,
         export_dir=export_dir,
@@ -1213,7 +1426,7 @@ async def run_sprint(
 
     # Sprint F153: Lifecycle receives explicit runtime params — duration authority propagated
     lifecycle = SprintLifecycleManager(
-        sprint_duration_s=duration_s,
+        sprint_duration_s=float(duration_s),
         windup_lead_s=config.windup_lead_s,
     )
     # Sprint F223K + RL F257: Opt-in RL feedback loop — enables quality-weighted source selection
@@ -1224,6 +1437,11 @@ async def run_sprint(
     )
     scheduler.inject_policy_manager(policy_manager)
 
+    # F228F CRITICAL: inject duckdb_store before health_check so health_check
+    # reads self._duckdb_store (not always None). run() also sets it from param,
+    # but health_check runs BEFORE run(), so injection must happen here first.
+    scheduler.inject_duckdb_store(store)
+
     # Sprint F228F: Pre-run health check — verify critical dependencies
     # SprintScheduler is top architectural chokepoint (degree 398).
     # If it fails silently, nothing writes to DuckDB and nothing accumulates to graph.
@@ -1231,11 +1449,11 @@ async def run_sprint(
     try:
         async with asyncio.timeout(30.0):
             health = await scheduler.health_check()
-    except asyncio.TimeoutError:
-        logger.W("[F228F] health_check timed out after 30s — continuing without pre-run check")
+    except TimeoutError:
+        logger.warning("[F228F] health_check timed out after 30s — continuing without pre-run check")
         health = None
     if health is not None and not health.overall_ok:
-        logger.W(f"[F228F] health_check warnings: {health.summary()}")
+        logger.warning(f"[F228F] health_check warnings: {health.summary()}")
         # Fail-soft: log and continue — sprint will handle degraded mode gracefully
     elif health is not None:
         logger.debug(f"[F228F] health_check: {health.summary()} - real URLs from typed seed surface")
@@ -1879,7 +2097,6 @@ async def run_sprint(
             # [F208I-A] Acquisition terminality and report truth — pure, fail-soft.
             # Spread on top of canonical_run_summary so acquisition fields take precedence.
             **_scheduler_result_acquisition_payload(result, scheduler, query, duration_s),
-            "runtime_truth": runtime_truth,
             "timing_truth": timing_truth,
             # Sprint M218A: GC startup tuning telemetry
             "gc_telemetry": _gc_telemetry,

@@ -23,14 +23,13 @@ import asyncio
 import logging
 from collections import deque
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, List, Optional
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
 if TYPE_CHECKING:
     import lancedb
 
-from hledac.universal.utils.exceptions import MemoryPressureError
 
 logger = logging.getLogger(__name__)
 
@@ -46,8 +45,10 @@ CPU_EXECUTOR = asyncio.Semaphore(1)
 # ── CoreML/ANE availability ────────────────────────────────────────────────────
 try:
     from hledac.universal.brain.coreml_embedder import (
-        CoreMLEmbedder,
         ANE_AVAILABLE as _COREML_ANE_AVAILABLE,
+    )
+    from hledac.universal.brain.coreml_embedder import (
+        CoreMLEmbedder,
         get_coreml_embedder,
     )
 
@@ -92,11 +93,11 @@ class SemanticStore:
 
     def __init__(self, db_path: Path) -> None:
         self._db_path: Path = db_path
-        self._db: "lancedb.LanceDBConnection | None" = None  # lancedb.LanceDBConnection
-        self._table: "lancedb.Table | None" = None  # lancedb.Table
+        self._db: lancedb.LanceDBConnection | None = None  # lancedb.LanceDBConnection
+        self._table: lancedb.Table | None = None  # lancedb.Table
         self._model: Any = None  # FastEmbed TextEmbedding
         # Sprint F228B: CoreML/ANE embedder — preferred when ANE is available
-        self._coreml_embedder: "CoreMLEmbedder | None" = (
+        self._coreml_embedder: CoreMLEmbedder | None = (
             get_coreml_embedder() if _COREML_AVAILABLE else None
         )
         self._pending_texts: deque = deque()
@@ -113,7 +114,7 @@ class SemanticStore:
         if self._initialized:
             return
 
-        loop = asyncio.get_running_loop()
+        asyncio.get_running_loop()
 
         # Sprint F228B: Try CoreMLEmbedder ANE path first
         if self._coreml_embedder is not None:
@@ -175,7 +176,7 @@ class SemanticStore:
         text: str,
         source_type: str,
         finding_id: str,
-        ioc_types: Optional[list[str]] = None,
+        ioc_types: list[str] | None = None,
     ) -> None:
         """
         Buffer a finding for batch embed — ŽÁDNÉ I/O.
@@ -226,10 +227,16 @@ class SemanticStore:
 
         loop = asyncio.get_running_loop()
 
-        # Sprint F228B: ANE path preferred — use CoreMLEmbedder
+        t0 = time.monotonic()
+        backend_name = "unknown"
+
+        # Sprint F228B: ANE path preferred — use CoreMLEmbedder (sync, must run in executor)
         if self._coreml_embedder is not None and self._coreml_embedder.is_loaded:
+            backend_name = "ane"
             try:
-                embeddings = await self._coreml_embedder.embed(texts, batch_size=64)
+                embeddings = await loop.run_in_executor(
+                    None, lambda: self._coreml_embedder.embed(texts, batch_size=64)
+                )
                 logger.debug(
                     "[SEMSTORE] Batch embed via CoreMLEmbedder: %d texts", len(texts)
                 )
@@ -238,15 +245,19 @@ class SemanticStore:
                 embeddings = await loop.run_in_executor(
                     None, lambda: list(self._model.embed(texts))
                 )
-        # CPU fallback: FastEmbed
+                backend_name = "cpu_fallback"
+        # FastEmbed CPU path
         elif self._model is not None:
+            backend_name = "cpu_fallback"
             embeddings = await loop.run_in_executor(
                 None, lambda: list(self._model.embed(texts))
             )
         else:
             # Hash fallback — deterministic zero-RAM
+            backend_name = "hash_only"
             logger.debug("[SEMSTORE] Using hash fallback embed")
             import hashlib
+
             import numpy as np
 
             emb_dim = self._embed_dim
@@ -263,7 +274,7 @@ class SemanticStore:
 
         # LanceDB upsert (batched)
         records = []
-        for i, (emb, m) in enumerate(zip(embeddings, meta)):
+        for i, (emb, m) in enumerate(zip(embeddings, meta, strict=False)):
             rec: dict[str, Any] = {
                 "vector": emb.tolist(),
                 "text": texts[i][: _MAX_TEXT_LEN],
@@ -279,6 +290,12 @@ class SemanticStore:
             logger.debug("[SEMSTORE] LanceDB upserted %d records", len(records))
         except Exception as e:
             logger.warning("[SEMSTORE] LanceDB add failed: %s", e)
+
+        elapsed_ms = (time.monotonic() - t0) * 1000
+        logger.debug(
+            "embedding_backend=%s latency_ms=%.1f texts=%d",
+            backend_name, elapsed_ms, len(texts)
+        )
 
         return len(records)
 
@@ -306,7 +323,6 @@ class SemanticStore:
         )
 
         try:
-            import lancedb
 
             results = (
                 self._table.search(q_vec)

@@ -4,13 +4,13 @@ Temporal analysis: drift detection and archive fallback.
 
 import logging
 import time
-from typing import Optional, Dict, Any
+from typing import Any
 from urllib.parse import urlparse
 
 logger = logging.getLogger(__name__)
 
 # In‑memory cache of previous versions (simplified)
-_previous_versions: Dict[str, Dict[str, Any]] = {}
+_previous_versions: dict[str, dict[str, Any]] = {}
 
 # Constants for boundedness
 MAX_ARCHIVE_FALLBACKS_PER_RUN = 5
@@ -43,7 +43,7 @@ def record_previous_version(url: str, content_hash: str, title: str) -> None:
                 pass
 
 
-def detect_drift(url: str, current_content_hash: str, current_title: str) -> Optional[Dict[str, Any]]:
+def detect_drift(url: str, current_content_hash: str, current_title: str) -> dict[str, Any] | None:
     """
     Compare with previous version. Return drift info if changed, else None.
     """

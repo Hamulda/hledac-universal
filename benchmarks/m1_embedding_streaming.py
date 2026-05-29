@@ -18,7 +18,6 @@ import asyncio
 import gc
 import os
 import sys
-import time
 
 # Add project root to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
@@ -65,7 +64,7 @@ async def benchmark_streaming_rss(texts: list[str], batch_size: int = 16) -> dic
     total_items = 0
 
     try:
-        async for ids, embeddings in generate_embeddings_streaming(texts, batch_size=batch_size):
+        async for ids, _embeddings in generate_embeddings_streaming(texts, batch_size=batch_size):
             batches_processed += 1
             total_items += len(ids)
             current_rss = get_rss_mb()
@@ -105,12 +104,12 @@ def benchmark_sync_rss(texts: list[str], batch_size: int = 16) -> dict:
 
     try:
         # Materialize all at once (sync path)
-        embeddings = generate_embeddings(texts, batch_size=batch_size)
+        generate_embeddings(texts, batch_size=batch_size)
         current_rss = get_rss_mb()
         peak_rss = max(peak_rss, current_rss)
     except Exception as e:
         print(f"  [sync] error: {e}")
-        embeddings = np.zeros((len(texts), 256), dtype=np.float32)
+        np.zeros((len(texts), 256), dtype=np.float32)
 
     gc.collect()
     rss_after = get_rss_mb()
@@ -137,11 +136,11 @@ async def run_benchmark(hermetic: bool = False, n_items: int = 200) -> dict:
     Returns benchmark results.
     """
     print(f"\n{'='*60}")
-    print(f"F203I — M1 Embedding Streaming Benchmark")
+    print("F203I — M1 Embedding Streaming Benchmark")
     print(f"{'='*60}")
     print(f"  Hermetic mode: {hermetic}")
     print(f"  Items: {n_items}")
-    print(f"  Batch size: 16")
+    print("  Batch size: 16")
     print()
 
     texts = synthetic_texts(n_items)
@@ -179,7 +178,7 @@ async def run_benchmark(hermetic: bool = False, n_items: int = 200) -> dict:
 
     print()
     print(f"{'='*60}")
-    print(f"RESULTS")
+    print("RESULTS")
     print(f"{'='*60}")
     print(f"  Sync delta:     +{sync_delta:.1f} MB")
     print(f"  Stream delta:   +{stream_delta:.1f} MB")

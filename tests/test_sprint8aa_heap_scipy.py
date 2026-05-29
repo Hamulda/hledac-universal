@@ -10,7 +10,6 @@ Tests verify:
 """
 
 import unittest
-import sys
 
 
 class TestFindingsHeapBoundedness(unittest.TestCase):
@@ -43,7 +42,7 @@ class TestScipyLazyLoad(unittest.TestCase):
 
     def test_scipy_sparse_lazy_when_unavailable(self):
         """When scipy is not available, _get_sparse() returns None."""
-        from hledac.universal.coordinators.memory_coordinator import _get_sparse, SCIPY_AVAILABLE
+        from hledac.universal.coordinators.memory_coordinator import SCIPY_AVAILABLE, _get_sparse
         sparse = _get_sparse()
         if not SCIPY_AVAILABLE:
             self.assertIsNone(sparse)
@@ -51,7 +50,7 @@ class TestScipyLazyLoad(unittest.TestCase):
     def test_neuromorphic_memory_manager_uses_lazy_sparse(self):
         """NeuromorphicMemoryManager should use _get_sparse(), not module-level sparse."""
         from hledac.universal.coordinators.memory_coordinator import (
-            NeuromorphicMemoryManager, _get_sparse, SCIPY_AVAILABLE
+            NeuromorphicMemoryManager,
         )
         nm = NeuromorphicMemoryManager(n_neurons=64, connectivity=0.05)
         self.assertIsNotNone(nm.synaptic_weights)

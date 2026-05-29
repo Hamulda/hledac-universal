@@ -34,15 +34,15 @@ class MemoryWatchdog:
     """
 
     def __init__(  # noqa: ARG002
-        threshold_mb: int | None = None,  # noqa: ARG002
+        self: int | None = None,  # noqa: ARG002
         check_interval: float | None = None,  # noqa: ARG002
-        callback: "collections.abc.Callable[..., None] | None" = None,  # noqa: ARG002
+        callback: collections.abc.Callable[..., None] | None = None,  # noqa: ARG002
     ) -> None:
         import collections.abc
         import warnings
 
         # Silence unused warnings — params exist for API compat only.
-        _ = threshold_mb, check_interval, callback, collections.abc
+        _ = self, check_interval, callback, collections.abc
 
         warnings.warn(
             "MemoryWatchdog from runtime.memory_watchdog is a shim for "

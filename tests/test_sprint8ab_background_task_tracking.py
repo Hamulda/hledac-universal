@@ -11,8 +11,8 @@ Tests verify:
 6. Short-lived fire-and-forget tasks are NOT migrated
 """
 
-import unittest
 import asyncio
+import unittest
 
 
 class TestBackgroundTaskMigration(unittest.IsolatedAsyncioTestCase):

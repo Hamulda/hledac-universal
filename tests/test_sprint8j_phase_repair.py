@@ -185,7 +185,7 @@ class TestPhaseControllerScoreComputation(unittest.TestCase):
 
     def test_score_with_high_signals_exceeds_threshold(self):
         """With good signals, score should exceed 0.60 and trigger promotion."""
-        from hledac.universal.orchestrator.phase_controller import PhaseController, Phase, PhaseSignals
+        from hledac.universal.orchestrator.phase_controller import PhaseController, PhaseSignals
 
         controller = PhaseController()
         controller.start()
@@ -214,7 +214,6 @@ class TestLiveTier1Preconditions(unittest.TestCase):
 
     def test_live_tier1_targets_defined_in_init(self):
         """_live_tier1_targets should be set in __init__ at line ~3469."""
-        from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
         # Verify the attribute is NOT a class attribute (it's set in __init__)
         # This is expected behavior - the test checks the attribute exists in instance
         # For this test, we just verify the default value is defined

@@ -21,10 +21,8 @@ from __future__ import annotations
 import logging
 import os
 import time
-from typing import List, Optional
 
 import aiohttp
-
 from hledac.universal.knowledge.duckdb_store import CanonicalFinding
 from hledac.universal.utils.rate_limiters import get_limiter
 
@@ -34,11 +32,11 @@ SHODAN_SEARCH_API = "https://api.shodan.io/shodan/host/search"
 RATE_LIMIT_KEY = "shodan_api"
 
 
-def _get_api_key() -> Optional[str]:
+def _get_api_key() -> str | None:
     return os.environ.get("SHODAN_API_KEY") or None
 
 
-def _build_findings(query: str, raw_results: List[dict], ts_now: float) -> List[CanonicalFinding]:
+def _build_findings(query: str, raw_results: list[dict], ts_now: float) -> list[CanonicalFinding]:
     findings = []
     for host in raw_results:
         ip = host.get("ip", "") or ""
@@ -74,8 +72,8 @@ def _build_findings(query: str, raw_results: List[dict], ts_now: float) -> List[
 async def search_shodan_lane(
     query: str,
     limit: int = 20,
-    api_key: Optional[str] = None,
-) -> tuple[List[CanonicalFinding], List[dict]]:
+    api_key: str | None = None,
+) -> tuple[list[CanonicalFinding], list[dict]]:
     """
     Search Shodan and return CanonicalFindings.
 
@@ -168,7 +166,7 @@ class ShodanLane:
             "errors": 0,
         }
 
-    async def query(self, target: str) -> List[CanonicalFinding]:
+    async def query(self, target: str) -> list[CanonicalFinding]:
         """Query Shodan for target (IP, CIDR, or keyword)."""
         self._stats["queries"] += 1
         findings, _ = await search_shodan_lane(target, limit=20)

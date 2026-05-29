@@ -9,8 +9,8 @@ Fix: sanitized_obj stays dict after gate parse; no unnecessary str→dict→str 
 Invariant: report JSON output shape unchanged, no truncation, no corruption.
 """
 import json
-import pytest
 
+import pytest
 from hledac.universal.export.sprint_exporter import export_sprint
 from hledac.universal.paths import get_sprint_json_report_path
 from hledac.universal.project_types import ExportHandoff

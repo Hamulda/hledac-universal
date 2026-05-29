@@ -21,20 +21,18 @@ M1 Optimized: Streaming processing, lazy loading, minimal memory footprint
 from __future__ import annotations
 
 import asyncio
-import io
 import hashlib
-import json
+import io
 import logging
 import os
 import re
-import socket
-import ssl
 import time
+from collections import OrderedDict
+from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from collections import OrderedDict
-from typing import Any, AsyncIterator, Dict, List, Optional, Set, Tuple
+from typing import Any
 from urllib.parse import urljoin, urlparse
 
 import aiohttp
@@ -47,7 +45,13 @@ try:
 except ImportError:
     TOR_AVAILABLE = False
 
-from ..types import RiskLevel, StealthConfig
+try:
+    from selectolax.parser import HTMLParser as _SelectolaxHTMLParser
+    SELECTOLAX_AVAILABLE = True
+except ImportError:
+    SELECTOLAX_AVAILABLE = False
+
+from ..types import RiskLevel
 
 logger = logging.getLogger(__name__)
 
@@ -89,18 +93,18 @@ class HiddenService:
     address: str
     onion_type: OnionType
     source: DarkWebSource
-    title: Optional[str] = None
-    description: Optional[str] = None
+    title: str | None = None
+    description: str | None = None
     last_seen: float = field(default_factory=time.time)
     first_seen: float = field(default_factory=time.time)
     is_online: bool = False
     response_time_ms: float = 0.0
-    server_signature: Optional[str] = None
-    bitcoin_addresses: List[str] = field(default_factory=list)
-    monero_addresses: List[str] = field(default_factory=list)
-    pgp_keys: List[str] = field(default_factory=list)
-    linked_onions: List[str] = field(default_factory=list)
-    keywords: List[str] = field(default_factory=list)
+    server_signature: str | None = None
+    bitcoin_addresses: list[str] = field(default_factory=list)
+    monero_addresses: list[str] = field(default_factory=list)
+    pgp_keys: list[str] = field(default_factory=list)
+    linked_onions: list[str] = field(default_factory=list)
+    keywords: list[str] = field(default_factory=list)
     risk_level: RiskLevel = RiskLevel.MEDIUM
 
 
@@ -110,14 +114,15 @@ class DarkWebContent:
     url: str
     content_hash: str
     content_type: str
-    title: Optional[str]
+    title: str | None
     text_content: str
     extracted_at: float
-    metadata: Dict[str, Any] = field(default_factory=dict)
-    cryptocurrency_addresses: Dict[str, List[str]] = field(default_factory=dict)
-    emails: List[str] = field(default_factory=list)
-    pgp_blocks: List[str] = field(default_factory=list)
-    magnet_links: List[str] = field(default_factory=list)
+    metadata: dict[str, Any] = field(default_factory=dict)
+    cryptocurrency_addresses: dict[str, list[str]] = field(default_factory=dict)
+    emails: list[str] = field(default_factory=list)
+    pgp_blocks: list[str] = field(default_factory=list)
+    magnet_links: list[str] = field(default_factory=list)
+    raw_html: str = ""  # F216R: raw HTML for image extraction
 
 
 @dataclass
@@ -125,8 +130,8 @@ class PGPKeyInfo:
     """Extracted PGP key information."""
     key_id: str
     fingerprint: str
-    user_ids: List[str]
-    creation_date: Optional[datetime]
+    user_ids: list[str]
+    creation_date: datetime | None
     key_type: str
     key_size: int
     raw_key: str
@@ -144,13 +149,13 @@ class TorProxyManager:
         proxy_host: str = "127.0.0.1",
         proxy_port: int = 9050,
         control_port: int = 9051,
-        control_password: Optional[str] = None
+        control_password: str | None = None
     ):
         self.proxy_host = proxy_host
         self.proxy_port = proxy_port
         self.control_port = control_port
         self.control_password = control_password
-        self._session: Optional[aiohttp.ClientSession] = None
+        self._session: aiohttp.ClientSession | None = None
         self._connector = None
 
     async def initialize(self) -> bool:
@@ -234,7 +239,7 @@ class TorProxyManager:
             logger.error(f"Failed to get new Tor identity: {e}")
             return False
 
-    def get_session(self) -> Optional[aiohttp.ClientSession]:
+    def get_session(self) -> aiohttp.ClientSession | None:
         """Get aiohttp session configured for Tor."""
         return self._session
 
@@ -245,7 +250,7 @@ class TorProxyManager:
         if self._connector:
             await self._connector.close()
 
-    async def __aenter__(self) -> "TorProxyManager":
+    async def __aenter__(self) -> TorProxyManager:
         """Async context manager entry - initializes Tor connection."""
         await self.initialize()
         return self
@@ -288,7 +293,7 @@ class DarkWebCrawler:
 
     def __init__(
         self,
-        tor_proxy: Optional[TorProxyManager] = None,
+        tor_proxy: TorProxyManager | None = None,
         max_depth: int = 3,
         max_pages_per_site: int = 100,
         request_delay: float = 2.0,
@@ -302,9 +307,9 @@ class DarkWebCrawler:
 
         # Bounded session state (M1 8GB)
         # OrderedDict provides FIFO LRU eviction on insert beyond limit
-        self.discovered_services: OrderedDict[str, HiddenService] = OrderedDict()
-        self.visited_urls: OrderedDict[str, bool] = OrderedDict()
-        self.content_cache: OrderedDict[str, DarkWebContent] = OrderedDict()
+        self.discovered_services: Ordereddict[str, HiddenService] = OrderedDict()
+        self.visited_urls: Ordereddict[str, bool] = OrderedDict()
+        self.content_cache: Ordereddict[str, DarkWebContent] = OrderedDict()
         self.url_queue: asyncio.Queue = asyncio.Queue(maxsize=self.MAX_URL_QUEUE)
 
         # Statistics
@@ -364,7 +369,7 @@ class DarkWebCrawler:
             logger.error(f"Error crawling {url}: {e}")
             self.stats["errors"] += 1
 
-    async def _fetch_page(self, url: str) -> Optional[DarkWebContent]:
+    async def _fetch_page(self, url: str) -> DarkWebContent | None:
         """Fetch a single page through Tor."""
         session = self.tor_proxy.get_session()
         if not session:
@@ -411,7 +416,7 @@ class DarkWebCrawler:
 
                 return content
 
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.warning(f"Timeout fetching {url}")
             return None
         except Exception as e:
@@ -420,20 +425,37 @@ class DarkWebCrawler:
 
     def _parse_content(self, url: str, html: str) -> DarkWebContent:
         """Parse HTML content and extract intelligence."""
-        from bs4 import BeautifulSoup
-
-        soup = BeautifulSoup(html, "lxml")
-
-        # Extract text
-        for script in soup(["script", "style"]):
-            script.decompose()
-        text = soup.get_text(separator=" ", strip=True)
-
-        # Extract title
-        title = None
-        title_tag = soup.find("title")
-        if title_tag:
-            title = title_tag.get_text(strip=True)
+        # F214OPT-A: selectolax-first + lxml fallback (same parser used historically)
+        if SELECTOLAX_AVAILABLE:
+            try:
+                tree = _SelectolaxHTMLParser(html)
+                for tag in tree.css("script, style"):
+                    tag.decompose()
+                text = tree.body.text(separator=" ", strip=True) if tree.body else ""
+                title_tag = tree.css_first("title")
+                title = title_tag.text(strip=True) if title_tag else None
+                desc_tag = tree.css_first("meta[name='description']")
+                meta_description = desc_tag.get("content", "") if desc_tag else ""
+            except Exception:
+                from bs4 import BeautifulSoup
+                soup = BeautifulSoup(html, "lxml")
+                for script in soup(["script", "style"]):
+                    script.decompose()
+                text = soup.get_text(separator=" ", strip=True)
+                title_tag = soup.find("title")
+                title = title_tag.get_text(strip=True) if title_tag else None
+                desc_tag = soup.find("meta", attrs={"name": "description"})
+                meta_description = desc_tag.get("content", "") if desc_tag else ""
+        else:
+            from bs4 import BeautifulSoup
+            soup = BeautifulSoup(html, "lxml")
+            for script in soup(["script", "style"]):
+                script.decompose()
+            text = soup.get_text(separator=" ", strip=True)
+            title_tag = soup.find("title")
+            title = title_tag.get_text(strip=True) if title_tag else None
+            desc_tag = soup.find("meta", attrs={"name": "description"})
+            meta_description = desc_tag.get("content", "") if desc_tag else ""
 
         # Extract cryptocurrency addresses
         crypto_addresses = {
@@ -452,14 +474,10 @@ class DarkWebCrawler:
 
         # Extract metadata
         metadata = {
-            "meta_description": "",
+            "meta_description": meta_description,
             "meta_keywords": "",
             "server": ""
         }
-
-        desc_tag = soup.find("meta", attrs={"name": "description"})
-        if desc_tag:
-            metadata["meta_description"] = desc_tag.get("content", "")
 
         return DarkWebContent(
             url=url,
@@ -472,7 +490,8 @@ class DarkWebCrawler:
             cryptocurrency_addresses=crypto_addresses,
             emails=emails,
             pgp_blocks=[p[0] for p in pgp_blocks],
-            magnet_links=magnet_links
+            magnet_links=magnet_links,
+            raw_html=html,  # F216R: raw HTML preserved for image extraction
         )
 
     async def extract_and_encode_images(
@@ -483,7 +502,7 @@ class DarkWebCrawler:
         fetch_coordinator,
         vision_encoder,
         vector_store,
-    ) -> List[dict]:
+    ) -> list[dict]:
         """
         Sprint F214R: Extract images from crawled HTML and store VisionEncoder embeddings.
 
@@ -499,22 +518,27 @@ class DarkWebCrawler:
             return []
 
         try:
-            from bs4 import BeautifulSoup
-            soup = BeautifulSoup(html, "html.parser")
-            # Cap before iteration to avoid unbounded parse on gallery pages
-            img_tags = soup.find_all("img", src=True)[:10]
+            if SELECTOLAX_AVAILABLE:
+                tree = _SelectolaxHTMLParser(html)
+                img_tags_raw = tree.css("img[src]")
+            else:
+                from bs4 import BeautifulSoup
+                soup = BeautifulSoup(html, "html.parser")
+                img_tags_raw = soup.find_all("img", src=True)
         except Exception as exc:
-            logger.warning("BeautifulSoup parse failed for %s: %s", page_url, exc)
+            logger.warning("HTML parse failed for %s: %s", page_url, exc)
             return []
 
         # Filter: skip data URIs, #, empty, tracking pixels (width+height < 20px)
-        candidates: List[str] = []
-        for img in img_tags:
-            src = img.get("src", "").strip()
-            if not src or src.startswith("data:") or src.startswith("#"):
+        candidates: list[str] = []
+        seen_srcs: set[str] = set()
+        for img in img_tags_raw[:10]:
+            src = (img.attributes.get("src") if hasattr(img, "attributes") else img.get("src", "")).strip()
+            if not src or src.startswith("data:") or src.startswith("#") or src in seen_srcs:
                 continue
-            w = img.get("width")
-            h = img.get("height")
+            seen_srcs.add(src)
+            w = img.attributes.get("width") if hasattr(img, "attributes") else img.get("width")
+            h = img.attributes.get("height") if hasattr(img, "attributes") else img.get("height")
             try:
                 if w and h and int(w) < 20 and int(h) < 20:
                     continue
@@ -527,7 +551,7 @@ class DarkWebCrawler:
         if not candidates:
             return []
 
-        results: List[dict] = []
+        results: list[dict] = []
         for img_url in candidates:
             try:
                 # Download via FetchCoordinator —JA3 stealth transport
@@ -552,6 +576,33 @@ class DarkWebCrawler:
                     logger.debug("Not a valid image: %s", img_url)
                     continue
 
+                # F216R: Steganography check via security/stego_detector.py (canonical)
+                stego_result: dict = {"stego_detected": False, "confidence": 0.0}
+                try:
+                    import tempfile
+                    from pathlib import Path
+
+                    from hledac.universal.security.stego_detector import quick_stego_check
+
+                    with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as tmp:
+                        tmp_path = Path(tmp.name)
+                        try:
+                            pil_img.save(tmp_path, format="JPEG", quality=85)
+                            # quick_stego_check is async def — call directly with await
+                            raw_result = await quick_stego_check(tmp_path)
+                            stego_result = {
+                                "stego_detected": raw_result.get("is_suspicious", False),
+                                "confidence": raw_result.get("confidence", 0.0),
+                            }
+                        finally:
+                            try:
+                                tmp_path.unlink(missing_ok=True)
+                            except Exception:
+                                pass
+                except Exception as exc:
+                    logger.debug("Stego check failed for %s: %s", img_url, exc)
+                    stego_result = {"stego_detected": False, "confidence": 0.0}
+
                 # Encode batch (VisionEncoder handles CoreML/ANE internally)
                 embeddings = vision_encoder.encode_batch([body])
                 if not embeddings or embeddings[0] is None:
@@ -563,9 +614,8 @@ class DarkWebCrawler:
                     emb = emb.tolist()
 
                 # Store via vector_store.add_vectors — table="image"
+                # np already imported at module level (NP_AVAILABLE guard passed above)
                 try:
-                    import numpy as np
-
                     vec_id = f"img_{sprint_id}_{hashlib.md5(img_url.encode()).hexdigest()[:12]}"
                     vector_store.add_vectors(
                         ids=[vec_id],
@@ -582,6 +632,9 @@ class DarkWebCrawler:
                         "img_url": img_url,
                         "embedding_dim": len(emb),
                         "stored": stored,
+                        "stego_detected": stego_result.get("stego_detected", False),
+                        "stego_confidence": stego_result.get("confidence", 0.0),
+                        "stego_signals": stego_result.get("signals", []),
                     }
                 )
             except Exception as exc:
@@ -596,31 +649,40 @@ class DarkWebCrawler:
         )
         return results
 
-    def _extract_links(self, html: str, base_domain: str) -> List[str]:
+    def _extract_links(self, html: str, base_domain: str) -> list[str]:
         """Extract .onion links from content."""
+        links: list[str] = []
+        seen: set[str] = set()
+        if SELECTOLAX_AVAILABLE:
+            try:
+                tree = _SelectolaxHTMLParser(html)
+                for anchor in tree.css("a[href]"):
+                    href = anchor.attributes.get("href", "")
+                    parsed = urlparse(href)
+                    if not parsed.netloc:
+                        href = urljoin(f"http://{base_domain}", href)
+                        parsed = urlparse(href)
+                    if ".onion" in parsed.netloc and parsed.netloc not in seen:
+                        seen.add(parsed.netloc)
+                        links.append(parsed.netloc)
+                return links
+            except Exception:
+                pass
+        # Fallback
         from bs4 import BeautifulSoup
-
         soup = BeautifulSoup(html, "lxml")
-        links = []
-
         for link in soup.find_all("a", href=True):
             href = link["href"]
-
-            # Parse URL
             parsed = urlparse(href)
-
-            # If relative, make absolute
             if not parsed.netloc:
                 href = urljoin(f"http://{base_domain}", href)
                 parsed = urlparse(href)
-
-            # Only follow .onion links
-            if ".onion" in parsed.netloc:
+            if ".onion" in parsed.netloc and parsed.netloc not in seen:
+                seen.add(parsed.netloc)
                 links.append(parsed.netloc)
+        return links
 
-        return list(set(links))
-
-    def search_onion_addresses(self, text: str) -> List[Tuple[str, OnionType]]:
+    def search_onion_addresses(self, text: str) -> list[tuple[str, OnionType]]:
         """
         Search text for onion addresses.
 
@@ -639,7 +701,7 @@ class DarkWebCrawler:
 
         return addresses
 
-    async def monitor_service(self, onion_address: str, interval_minutes: int = 60) -> AsyncIterator[Dict[str, Any]]:
+    async def monitor_service(self, onion_address: str, interval_minutes: int = 60) -> AsyncIterator[dict[str, Any]]:
         """
         Continuously monitor a hidden service for changes.
 
@@ -684,7 +746,7 @@ class DarkWebCrawler:
                 logger.error(f"Monitor error for {onion_address}: {e}")
                 await asyncio.sleep(interval_minutes * 60)
 
-    def get_statistics(self) -> Dict[str, Any]:
+    def get_statistics(self) -> dict[str, Any]:
         """Get crawling statistics with bounded truth."""
         return {
             **self.stats,
@@ -760,9 +822,9 @@ class CryptocurrencyAnalyzer:
     """
 
     def __init__(self):
-        self.address_cache: Dict[str, Dict[str, Any]] = {}
+        self.address_cache: dict[str, dict[str, Any]] = {}
 
-    def analyze_bitcoin_address(self, address: str) -> Dict[str, Any]:
+    def analyze_bitcoin_address(self, address: str) -> dict[str, Any]:
         """
         Analyze Bitcoin address.
 
@@ -803,7 +865,7 @@ class CryptocurrencyAnalyzer:
             return "P2SH"
         return "unknown"
 
-    def cluster_addresses(self, addresses: List[str]) -> Dict[str, List[str]]:
+    def cluster_addresses(self, addresses: list[str]) -> dict[str, list[str]]:
         """
         Cluster addresses that might belong to the same entity.
 
@@ -833,14 +895,15 @@ __all__ = [
 ]
 
 
-def darkweb_content_to_canonical(content: DarkWebContent, query: str) -> "CanonicalFinding":
+def darkweb_content_to_canonical(content: DarkWebContent, query: str) -> CanonicalFinding:
     """
     Sprint F251: Map DarkWebCrawler output → CanonicalFinding for sprint ingestion.
 
     Bounded: payload_text truncated to 3000 chars, fail-safe if title is None.
     """
-    from hledac.universal.knowledge.duckdb_store import CanonicalFinding
     import hashlib
+
+    from hledac.universal.knowledge.duckdb_store import CanonicalFinding
 
     title = content.title or "onion"
     body = content.text_content or ""
@@ -878,7 +941,7 @@ class DHTFinding:
     source: str = "dht"
 
 
-def dht_content_to_canonical(dht_result: DHTFinding, query: str) -> "CanonicalFinding":
+def dht_content_to_canonical(dht_result: DHTFinding, query: str) -> CanonicalFinding:
     """
     Sprint F214Q: Map DHT crawl result → CanonicalFinding for sprint ingestion.
 

@@ -40,14 +40,13 @@ import logging
 import re
 import time
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    import aiohttp
+    pass
 
+from hledac.universal.fetching.public_fetcher import FetchResult, async_fetch_public_text
 from hledac.universal.network.session_runtime import async_get_aiohttp_session
-from hledac.universal.fetching.public_fetcher import async_fetch_public_text, FetchResult
-from hledac.universal.intelligence.confidence_policy import FEED, PUBLIC
 from hledac.universal.runtime.resource_governor import M1ResourceGovernor
 
 logger = logging.getLogger(__name__)
@@ -139,11 +138,11 @@ class ChatMessage:
 class AcademicPaper:
     title: str
     authors: list[str]
-    year: Optional[int]
+    year: int | None
     link: str
     source: str
     abstract: str = ""
-    doi: Optional[str] = None
+    doi: str | None = None
     citations: int = 0
     tags: list[str] = field(default_factory=list)
 
@@ -997,9 +996,9 @@ class OpenSourceCollectors:
     """
 
     def __init__(self) -> None:
-        self._governor: Optional[M1ResourceGovernor] = None
+        self._governor: M1ResourceGovernor | None = None
 
-    def _get_governor(self) -> Optional[M1ResourceGovernor]:
+    def _get_governor(self) -> M1ResourceGovernor | None:
         """Lazy load governor to avoid circular imports."""
         if self._governor is None:
             try:
@@ -1135,7 +1134,7 @@ class OpenSourceCollectors:
 # Singleton
 # =============================================================================
 
-_collector: Optional[OpenSourceCollectors] = None
+_collector: OpenSourceCollectors | None = None
 
 
 def get_open_source_collectors() -> OpenSourceCollectors:

@@ -906,7 +906,7 @@ def _match_html_content(texts: list[str]) -> list[ServiceFingerprint]:
 # ── Core Fingerprinting Engine ───────────────────────────────────────────────
 
 
-def extract_fingerprints(finding: "CanonicalFinding") -> list[ServiceFingerprint]:
+def extract_fingerprints(finding: CanonicalFinding) -> list[ServiceFingerprint]:
     """
     Extract all fingerprints from a single CanonicalFinding.
 
@@ -918,7 +918,7 @@ def extract_fingerprints(finding: "CanonicalFinding") -> list[ServiceFingerprint
       - MAX_PATTERN_BYTES = 4096
     """
     fid = getattr(finding, "finding_id", "") or ""
-    src = getattr(finding, "source_type", "") or ""
+    getattr(finding, "source_type", "") or ""
     payload = getattr(finding, "payload_text", None) or "{}"
 
     # Truncate payload to MAX_PATTERN_BYTES
@@ -1077,7 +1077,7 @@ def extract_fingerprints(finding: "CanonicalFinding") -> list[ServiceFingerprint
 def to_canonical_findings(
     fingerprints: list[ServiceFingerprint],
     query: str,
-) -> list["CanonicalFinding"]:
+) -> list[CanonicalFinding]:
     """
     Convert ServiceFingerprint list to CanonicalFinding list.
 
@@ -1129,9 +1129,9 @@ def to_canonical_findings(
 _GLOBAL_STATS: dict[str, float] = {}
 
 def correlate_passive_fingerprints(
-    findings: list["CanonicalFinding"],
+    findings: list[CanonicalFinding],
     query: str,
-) -> list["CanonicalFinding"]:
+) -> list[CanonicalFinding]:
     """
     F204G: Extract passive service fingerprints from sprint findings.
 
@@ -1200,7 +1200,7 @@ def correlate_passive_fingerprints(
 
 
 async def run_passive_fingerprint_sidecar(
-    findings: list["CanonicalFinding"],
+    findings: list[CanonicalFinding],
     store: Any,
     query: str,
 ) -> int:
@@ -1259,7 +1259,7 @@ class PassiveFingerprintAdapter:
     def __init__(self) -> None:
         self._stats_snapshot: dict[str, int] = {}
 
-    def correlate(self, findings: list["CanonicalFinding"], query: str) -> list["CanonicalFinding"]:
+    def correlate(self, findings: list[CanonicalFinding], query: str) -> list[CanonicalFinding]:
         """
         Correlate fingerprints from findings.
 
@@ -1384,9 +1384,9 @@ _TECH_STACK_PATTERNS: list[tuple[str, str, str, re.Pattern]] = [
 
 
 def _extract_tech_stack_findings(
-    findings: list["CanonicalFinding"],
+    findings: list[CanonicalFinding],
     query: str,
-) -> list["CanonicalFinding"]:
+) -> list[CanonicalFinding]:
     """
     R11: Extract tech-stack signals from existing public findings.
     No live network, no deep_probe, no MLX.
@@ -1505,7 +1505,7 @@ def _extract_tech_stack_findings(
 
 
 async def run_passive_tech_stack_sidecar(
-    findings: list["CanonicalFinding"],
+    findings: list[CanonicalFinding],
     store: Any,
     query: str,
 ) -> int:
@@ -1540,7 +1540,7 @@ async def run_passive_tech_stack_sidecar(
 
 
 def _trigger_cve_lookup_tasks(
-    findings: list["CanonicalFinding"],
+    findings: list[CanonicalFinding],
     store: Any,
 ) -> None:
     """
@@ -1583,7 +1583,7 @@ def _trigger_cve_lookup_tasks(
 
     for tech in detected_techs:
         cve_id = f"CVE-{tech.upper()}-LATEST"
-        task = loop.create_task(
+        loop.create_task(
             _cve_lookup_background(tech, cve_id, store),
         )
         # Fire-and-forget: store task reference only if caller tracks it
@@ -1602,8 +1602,9 @@ async def _cve_lookup_background(
     Fail-soft: logs and returns on any error.
     """
     try:
-        from hledac.universal.intelligence.exposure_clients import GitHubCodeSearchClient as _GitHubCodeSearchCVEClient
         from pathlib import Path
+
+        from hledac.universal.intelligence.exposure_clients import GitHubCodeSearchClient as _GitHubCodeSearchCVEClient
 
         cache_dir = Path("/tmp/cve_gh_cache")
         client = _GitHubCodeSearchCVEClient(cache_dir)
@@ -1662,7 +1663,7 @@ class PassiveTechStackAdapter:
             "tech_stack_found": 0,
         }
 
-    def correlate(self, findings: list["CanonicalFinding"], query: str) -> list["CanonicalFinding"]:
+    def correlate(self, findings: list[CanonicalFinding], query: str) -> list[CanonicalFinding]:
         """Correlate tech-stack signals from findings."""
         result = _extract_tech_stack_findings(findings, query)
         self._stats["findings_scanned"] = len(findings)

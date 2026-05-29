@@ -29,11 +29,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Dict, List, Tuple, Any, Optional
 
 import aiohttp
-
-from hledac.universal.utils.async_helpers import _check_gathered
 
 from .domain_concurrency import (  # noqa: F401  # pragma: no cover
     ARM_VALUES,
@@ -95,7 +92,7 @@ TOR_READ_TIMEOUT_S: float = 75.0
 #   Must NOT be unified without full migration plan.
 # =============================================================================
 
-_session_instance: Optional[aiohttp.ClientSession] = None
+_session_instance: aiohttp.ClientSession | None = None
 _session_lock: asyncio.Lock | None = None
 _uvloop_enabled: bool = False
 
@@ -106,15 +103,15 @@ async def _get_session_lock() -> asyncio.Lock:
     if _session_lock is None:
         _session_lock = asyncio.Lock()
     return _session_lock
-_last_error: Optional[str] = None
-_last_close_error: Optional[str] = None
+_last_error: str | None = None
+_last_close_error: str | None = None
 
 # =============================================================================
 # Domain Concurrency Bandit State — Sprint 8AC
 # Per-domain adaptive concurrency via Gradient Bandit
 # =============================================================================
-_domain_bandits: Dict[str, DomainConcurrencyBandit] = {}
-_bandit_overrides: Dict[str, int] = {}  # host → explicit limit override
+_domain_bandits: dict[str, DomainConcurrencyBandit] = {}
+_bandit_overrides: dict[str, int] = {}  # host → explicit limit override
 
 
 def get_domain_limit(host: str) -> int:

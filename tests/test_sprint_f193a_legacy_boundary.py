@@ -37,13 +37,6 @@ class TestLegacyBoundary:
             sys.modules.pop(mod, None)
 
         # This must not trigger legacy import
-        from hledac.universal.knowledge import (
-            KnowledgeGraphLayer,
-            GraphRAGOrchestrator,
-            KnowledgeGraphBuilder,
-            ContextGraph,
-            RAGEngine,
-        )
 
         # Verify none of these imported legacy at module level
         assert "hledac.universal.legacy" not in sys.modules, (
@@ -63,7 +56,7 @@ class TestLegacyBoundary:
         from hledac.universal.knowledge.graph_builder import KnowledgeGraphBuilder
 
         # Verify the builder's process_and_store method has lazy legacy access
-        builder = KnowledgeGraphBuilder()
+        KnowledgeGraphBuilder()
         # The legacy types should NOT be loaded yet
         assert "hledac.universal.legacy.persistent_layer" not in sys.modules
 
@@ -77,7 +70,6 @@ class TestLegacyBoundary:
         for mod in modules_to_clear:
             sys.modules.pop(mod, None)
 
-        from hledac.universal.knowledge.graph_rag import GraphRAGOrchestrator
 
         # persistent_layer must not be loaded at import time
         assert "hledac.universal.legacy.persistent_layer" not in sys.modules
@@ -93,14 +85,12 @@ class TestLegacyBoundary:
             sys.modules.pop(mod, None)
 
         # Import the module (should NOT load legacy yet)
-        import hledac.universal.knowledge as knowledge
 
         # Access a legacy compat name — this SHOULD trigger lazy load
         # and emit a DeprecationWarning
         with warnings.catch_warnings(record=True) as w:
             warnings.simplefilter("always")
             # Trigger lazy loading via __getattr__
-            PersistentKnowledgeLayer = knowledge.PersistentKnowledgeLayer
 
             # Should have gotten a deprecation warning
             deprecation_warnings = [
@@ -135,11 +125,6 @@ class TestLegacyBoundary:
         for mod in modules_to_clear:
             sys.modules.pop(mod, None)
 
-        from hledac.universal.orchestrator import (
-            FullyAutonomousOrchestrator,
-            _ResearchManager,
-            _SecurityManager,
-        )
 
         # The orchestrator facade intentionally loads legacy — it IS the seam.
         # This is expected and documented. The key boundary test is that

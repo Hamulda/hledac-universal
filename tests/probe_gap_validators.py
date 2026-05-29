@@ -3,27 +3,28 @@ GAP-3/1 ModelCircuitBreaker, GAP-5 prompt injection detection.
 
 Run: pytest tests/probe_gap_validators.py -v --tb=short
 """
-import pytest
 import time
 
+import pytest
+
 from brain.synthesis_runner import (
-    _extract_text_iocs_from_finding,
+    IOCEntity,
+    OSINTReport,
     validate_evidence_grounding,
     validate_report_semantics,
 )
-from brain.synthesis_runner import OSINTReport, IOCEntity
 
 
 def _make_report(**kwargs) -> OSINTReport:
-    defaults = dict(
-        query="test query",
-        ioc_entities=[],
-        threat_summary="Test threat summary with content.",
-        threat_actors=[],
-        confidence=0.75,
-        sources_count=3,
-        timestamp=time.time(),
-    )
+    defaults = {
+        "query": "test query",
+        "ioc_entities": [],
+        "threat_summary": "Test threat summary with content.",
+        "threat_actors": [],
+        "confidence": 0.75,
+        "sources_count": 3,
+        "timestamp": time.time(),
+    }
     defaults.update(kwargs)
     return OSINTReport(**defaults)
 

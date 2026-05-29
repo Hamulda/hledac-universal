@@ -12,11 +12,10 @@ Scope: runtime/acquisition_strategy.py build_acquisition_report() only.
 No runtime behavior changes — report-only fields.
 """
 
-import pytest
 
 from hledac.universal.runtime.acquisition_strategy import (
-    build_acquisition_report,
     ACQUISITION_REPORT_SCHEMA_VERSION,
+    build_acquisition_report,
 )
 
 
@@ -115,9 +114,9 @@ class TestF221F_PlanSemanticsSplit:
         plan_semantics should be 'effective_runtime' if any lane was attempted.
         """
         from hledac.universal.runtime.acquisition_strategy import (
-            AcquisitionStrategySnapshot,
-            AcquisitionLanePlan,
             AcquisitionLane,
+            AcquisitionLanePlan,
+            AcquisitionStrategySnapshot,
         )
 
         plan_snapshot = AcquisitionStrategySnapshot(plans=[

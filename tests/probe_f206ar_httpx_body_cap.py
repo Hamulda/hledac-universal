@@ -24,7 +24,6 @@ import pytest
 
 from transport.body_limiter import read_body_with_cap
 
-
 # ---------------------------------------------------------------------------
 # Seal: Inline cap uses O(1) amortized append, not list concatenation
 # ---------------------------------------------------------------------------

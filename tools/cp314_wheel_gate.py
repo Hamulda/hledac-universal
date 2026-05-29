@@ -42,7 +42,6 @@ import json
 import subprocess
 import sys
 from dataclasses import dataclass
-from typing import Dict, List
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -67,7 +66,7 @@ SUPPORTED_EXTRAS = {
 
 # (package_name, pip specifier, extra_group)
 # Platform markers on mlx/uvloop ensure they resolve to empty on non-Darwin.
-WHEEL_REPORT_PACKAGES: List[Dict[str, str]] = [
+WHEEL_REPORT_PACKAGES: list[dict[str, str]] = [
     # default
     {"name": "aiosqlite", "spec": "aiosqlite>=0.19.0", "extra": "default"},
     {"name": "aiohttp", "spec": "aiohttp>=3.9.0", "extra": "default"},
@@ -140,11 +139,11 @@ WHEEL_REPORT_PACKAGES: List[Dict[str, str]] = [
 @dataclass
 class WheelGateResult:
     """Result of a wheel gate run."""
-    extras_requested: List[str]
+    extras_requested: list[str]
     platform_tag: str
-    pip_command: List[str]
+    pip_command: list[str]
     dry_run: bool
-    packages_by_extra: Dict[str, List[str]]
+    packages_by_extra: dict[str, list[str]]
     executed: bool = False
     exit_code: int = 0
     error: str | None = None
@@ -159,14 +158,14 @@ def get_platform_tag() -> str:
     return "cp314-macosx_14_0_arm64"
 
 
-def build_extra_packages(requested_extras: List[str]) -> Dict[str, List[str]]:
+def build_extra_packages(requested_extras: list[str]) -> dict[str, list[str]]:
     """Group package names by extra for requested extras + default."""
     if "all" in requested_extras:
         requested_extras = [e for e in SUPPORTED_EXTRAS if e != "all"]
     if "default" not in requested_extras:
         requested_extras = ["default"] + requested_extras
 
-    result: Dict[str, List[str]] = {}
+    result: dict[str, list[str]] = {}
     for pkg in WHEEL_REPORT_PACKAGES:
         if pkg["extra"] in requested_extras:
             result.setdefault(pkg["extra"], []).append(pkg["name"])
@@ -175,10 +174,10 @@ def build_extra_packages(requested_extras: List[str]) -> Dict[str, List[str]]:
 
 
 def build_pip_download_command(
-    requested_extras: List[str],
+    requested_extras: list[str],
     platform_tag: str,
     python_version: str = "314",
-) -> List[str]:
+) -> list[str]:
     """Build the pip download command for the given extras and platform."""
     if "all" in requested_extras:
         extras_list = [e for e in SUPPORTED_EXTRAS if e != "all"]
@@ -200,7 +199,7 @@ def build_pip_download_command(
 
 
 def run_wheel_gate(
-    requested_extras: List[str],
+    requested_extras: list[str],
     dry_run: bool = True,
     execute: bool = False,
 ) -> WheelGateResult:
@@ -254,7 +253,7 @@ def run_wheel_gate(
             result.error = proc.stderr[:500]
             print(f"ERROR: pip download failed: {proc.stderr[:300]}", file=sys.stderr)
         else:
-            print(f"[cp314_wheel_gate] pip download succeeded", file=sys.stderr)
+            print("[cp314_wheel_gate] pip download succeeded", file=sys.stderr)
     except Exception as e:
         result.executed = True
         result.exit_code = 3
@@ -311,7 +310,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 def print_report(result: WheelGateResult, out=sys.stdout) -> None:
     """Print human-readable wheel gate report."""
-    print(f"=== cp314 Wheel Gate Report ===", file=out)
+    print("=== cp314 Wheel Gate Report ===", file=out)
     print(f"Requested extras : {result.extras_requested or ['default']}", file=out)
     print(f"Platform tag     : {result.platform_tag}", file=out)
     print(f"Dry-run          : {result.dry_run}", file=out)
@@ -326,7 +325,7 @@ def print_report(result: WheelGateResult, out=sys.stdout) -> None:
         print(f"  [{extra}]", ", ".join(sorted(packages)), file=out)
 
     print(file=out)
-    print(f"Pip command:", file=out)
+    print("Pip command:", file=out)
     print(f"  {' '.join(result.pip_command)}", file=out)
 
 

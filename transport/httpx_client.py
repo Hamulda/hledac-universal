@@ -33,7 +33,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -85,12 +84,12 @@ def _check_httpx_h2_capability() -> bool:
 # Lazy HTTPX Client Singleton
 # =============================================================================
 
-_httpx_client_instance: Optional["httpx.AsyncClient"] = None
+_httpx_client_instance: httpx.AsyncClient | None = None
 _httpx_client_lock: asyncio.Lock = asyncio.Lock()
 _httpx_client_closed: bool = False
 
 
-async def async_get_httpx_client() -> "httpx.AsyncClient":
+async def async_get_httpx_client() -> httpx.AsyncClient:
     """
     Get or create the lazy HTTPX AsyncClient instance (HTTP/2 capable).
 

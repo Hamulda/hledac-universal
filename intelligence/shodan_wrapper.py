@@ -17,7 +17,6 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from typing import Optional
 
 import aiohttp
 
@@ -46,7 +45,7 @@ def _normalize_record(host: dict) -> dict:
 async def search_shodan(
     query: str,
     limit: int = 10,
-    api_key: Optional[str] = None,
+    api_key: str | None = None,
     use_tor: bool = False,
 ) -> list[dict]:
     """
@@ -71,7 +70,7 @@ async def search_shodan(
     seen_ips: set[str] = set()
 
     # Build connector (Tor if requested)
-    connector: Optional[aiohttp.TCPConnector] = None
+    connector: aiohttp.TCPConnector | None = None
     if use_tor:
         try:
             from aiohttp_socks import ProxyConnector
@@ -92,7 +91,7 @@ async def search_shodan(
 
     client_timeout = aiohttp.ClientTimeout(total=30)
 
-    async def _do_request() -> Optional[dict]:
+    async def _do_request() -> dict | None:
         """Perform one HTTP request to Shodan."""
         nonlocal connector
         session_kwargs: dict = {"timeout": client_timeout}
@@ -139,7 +138,7 @@ async def search_shodan(
             if len(results) >= limit:
                 break
 
-    except asyncio.TimeoutError:
+    except TimeoutError:
         logger.warning(f"Shodan request timeout for query: {query}")
     except Exception as e:
         logger.warning(f"Shodan search error: {e}")
@@ -155,9 +154,9 @@ async def search_shodan(
 async def search_shodan_to_findings(
     query: str,
     limit: int = 10,
-    api_key: Optional[str] = None,
+    api_key: str | None = None,
     use_tor: bool = False,
-) -> tuple[list["CanonicalFinding"], list[dict]]:
+) -> tuple[list[CanonicalFinding], list[dict]]:
     """
     Sprint F195G: Convert Shodan search results to CanonicalFinding list.
 

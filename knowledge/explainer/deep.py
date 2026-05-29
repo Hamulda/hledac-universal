@@ -3,11 +3,10 @@ Deep explainer – využívá mlx-graphs native explain nebo fallback GNNExplain
 """
 
 import logging
-from typing import Dict, Optional, List, Tuple
+
 import mlx.core as mx
 import mlx.nn as nn
-
-from hledac.universal.core.resource_governor import ResourceGovernor, Priority
+from hledac.universal.core.resource_governor import Priority, ResourceGovernor
 
 logger = logging.getLogger(__name__)
 
@@ -25,8 +24,8 @@ class DeepExplainer:
         self.gnn = gnn_predictor
         self.governor = governor
 
-    async def explain(self, node: str, target_prediction: Optional[str] = None,
-                      max_nodes: int = 10, optimize_features: bool = False) -> Dict:
+    async def explain(self, node: str, target_prediction: str | None = None,
+                      max_nodes: int = 10, optimize_features: bool = False) -> dict:
         """
         Vysvětlí predikci pro daný uzel.
         Vrací slovník s důležitými hranami a případně důležitými features.
@@ -59,7 +58,7 @@ class DeepExplainer:
             # 3. Fallback GNNExplainer s řádným MLX gradient flow
             return await self._fallback_explain(subgraph, optimize_features)
 
-    async def _fallback_explain(self, subgraph: Dict, optimize_features: bool) -> Dict:
+    async def _fallback_explain(self, subgraph: dict, optimize_features: bool) -> dict:
         """Fallback GNN explainer s gradient-based mask."""
         node_features = mx.array(subgraph['node_features'])
         edge_index = mx.array(subgraph['edges']).T
@@ -110,7 +109,7 @@ class DeepExplainer:
             'feature_importance': None,
         }
 
-    async def _extract_subgraph(self, node: str, max_nodes: int) -> Dict:
+    async def _extract_subgraph(self, node: str, max_nodes: int) -> dict:
         """Extrahuje subgraf – využívá RelationshipDiscoveryEngine."""
         # Zde bychom volali metodu z relationship_discovery
         # Pro ukázku vracíme placeholder

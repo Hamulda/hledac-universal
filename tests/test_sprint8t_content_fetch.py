@@ -13,12 +13,10 @@ Tests for:
 9. replay non-regression still nonzero
 """
 
-import pytest
-import asyncio
-import time
-from unittest.mock import MagicMock, patch
-import sys
 import os
+import sys
+
+import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 
@@ -94,7 +92,6 @@ class TestSprint8TContentFetch:
 
     def test_fetch_page_content_uses_subprocess_curl_when_curl_cffi_fails(self):
         """Test fetch_page_content records transport correctly."""
-        from hledac.universal.intelligence.stealth_crawler import StealthCrawler
 
         # Just verify transport is recorded correctly
         result = {'fetch_transport': 'curl_cffi'}

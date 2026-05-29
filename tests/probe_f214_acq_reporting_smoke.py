@@ -4,7 +4,6 @@ Self-contained smoke test for F214-ACQ reporting fixes.
 Tests the fixed logic with sample data from live_sprint_300s.json.
 No imports from the hledac tree — only stdlib.
 """
-import sys
 
 # === Test 1 & 2: findings_per_minute logic from live_measurement_kpi.py ===
 # Logic (line 301-303):
@@ -52,13 +51,13 @@ should_recommend_nonfeed_diagnostic = (
 
 print()
 print("=== Test 3 & 4: feed_dominance_ratio + should_recommend_nonfeed_diagnostic ===")
-print(f"  feed_accepted=5058, nonfeed_accepted=2, total=5060")
+print("  feed_accepted=5058, nonfeed_accepted=2, total=5060")
 print(f"  feed_dominance_ratio = {feed_dominance_ratio:.4f}")
 print(f"  should_recommend_nonfeed_diagnostic = {should_recommend_nonfeed_diagnostic}")
 assert feed_dominance_ratio is not None
 assert feed_dominance_ratio > 0.99, f"BUG: feed_dominance_ratio={feed_dominance_ratio:.4f} should be > 0.99"
 assert should_recommend_nonfeed_diagnostic is True, f"BUG: should_recommend={should_recommend_nonfeed_diagnostic}"
-print(f"  PASS: feed_dominance_ratio > 0.99 and should_recommend = True")
+print("  PASS: feed_dominance_ratio > 0.99 and should_recommend = True")
 
 # === Test 5: primary_signal_source fix from __main__.py ===
 # Logic: when feed dominates > 95% and non-feed minimal, label as "feed" not "mixed"
@@ -83,7 +82,7 @@ print("=== Test 5: primary_signal_source ===")
 print(f"  feed=5058, public=2, ct=0, feed_ratio={feed_ratio:.4f}")
 print(f"  primary_signal_source = {primary}")
 assert primary == "feed", f"BUG: primary_signal_source={primary} should be 'feed'"
-print(f"  PASS: primary_signal_source = 'feed' (not 'mixed')")
+print("  PASS: primary_signal_source = 'feed' (not 'mixed')")
 
 print()
 print("ALL SMOKE TESTS PASSED")

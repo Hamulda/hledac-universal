@@ -17,7 +17,6 @@ from __future__ import annotations
 
 import asyncio
 import concurrent.futures
-import copy
 import hashlib
 import inspect
 import json
@@ -25,8 +24,9 @@ import logging
 import os
 import time
 from collections import OrderedDict
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, List, Optional, Type, TypeVar
+from typing import Any, TypeVar
 
 from pydantic import BaseModel, Field
 
@@ -79,9 +79,9 @@ def _detect_prompt_injection(prompt: str) -> tuple[bool, list[str]]:
 try:
     from hledac.universal.brain.model_inference_guard import (
         check_model_allowed,
+        classify_failure_kind,
         record_model_failure,
         record_model_success,
-        classify_failure_kind,
     )
 except ImportError:
     check_model_allowed = None  # type: ignore
@@ -93,9 +93,10 @@ except ImportError:
 logger = logging.getLogger(__name__)  # declare early for except block
 try:
     import outlines
-    from outlines import generate as outlines_generate
+    # outlines 1.3.0: Generator class, not generate module
+    _outlines_Generator = outlines.Generator
     OUTLINES_AVAILABLE = True
-except ImportError:
+except (ImportError, AttributeError):
     OUTLINES_AVAILABLE = False
     logger.warning("outlines not installed — grammar-constrained decoding disabled")
 
@@ -104,7 +105,7 @@ KV_CACHE_AVAILABLE = False  # Set to True only when cache is actually initialize
 
 # Sprint 81: MLX memory management
 try:
-    from .adaptive_context_policy import decide_context_budget, apply_context_budget
+    from .adaptive_context_policy import apply_context_budget, decide_context_budget
 except ImportError:
     decide_context_budget = None  # type: ignore
     apply_context_budget = None  # type: ignore
@@ -247,7 +248,7 @@ class Hermes3Engine:
     def __init__(
         self,
         model_path: str = None,
-        sanitize_for_llm: Optional[Callable[[str], str]] = None
+        sanitize_for_llm: Callable[[str], str] | None = None
     ):
         """
         Initialize Hermes3Engine.
@@ -271,6 +272,10 @@ class Hermes3Engine:
         # Sprint 36: Conditional MLX cache - disabled by default
         self._kv_cache_enabled = False
         self._prompt_cache = None  # Prompt cache for generation
+
+        # Sprint F214Q: Dynamic KV cache sizing per RAM tier (M1 8GB)
+        # normal: max_kv_size=full, warn: half, critical/emergency: KV off
+        self._max_kv_size = 8192
 
         # Sprint 33: outlines model for grammar-constrained decoding
         self._outlines_model = None
@@ -300,7 +305,7 @@ class Hermes3Engine:
             self._prefix_cache_maxsize: int = max(1, _max) if _max is not None else 64
         except (ValueError, TypeError):
             self._prefix_cache_maxsize: int = 64
-        self._prefix_cache: OrderedDict[str, Any] = OrderedDict()  # type: ignore[assignment]
+        self._prefix_cache: Ordereddict[str, Any] = OrderedDict()  # type: ignore[assignment]
         # Telemetry for prefix cache
         self._prefix_cache_stats = {
             "prefix_cache_maxsize": self._prefix_cache_maxsize,
@@ -316,7 +321,7 @@ class Hermes3Engine:
 
         # Sprint 71/7E: Continuous batching — schema-aware PriorityQueue
         self._batch_queue: asyncio.PriorityQueue = None
-        self._batch_worker_task: Optional[asyncio.Task] = None
+        self._batch_worker_task: asyncio.Task | None = None
         self._batch_max_size = 8  # Max batch size
         self._batch_default_flush_interval = 2.0  # seconds (Sprint 7I: corrected from 0.5)
         self._batch_flush_interval = self._batch_default_flush_interval
@@ -366,7 +371,7 @@ class Hermes3Engine:
         self._last_gpu_memory: int = 0
 
         # GAP-3/1: Per-model inference circuit breaker
-        self._model_breaker: "ModelCircuitBreaker | None" = None
+        self._model_breaker: ModelCircuitBreaker | None = None
 
     def init_model_breaker(self, model_id: str) -> None:
         """GAP-3/1: Initialize per-model circuit breaker."""
@@ -409,7 +414,7 @@ class Hermes3Engine:
         self._batch_worker_task.cancel()
         try:
             await asyncio.wait_for(asyncio.shield(self._batch_worker_task), timeout=timeout)
-        except (asyncio.CancelledError, asyncio.TimeoutError):
+        except (TimeoutError, asyncio.CancelledError):
             pass
         self._batch_worker_task = None
         # Sprint 7K: Clear queue AFTER worker is confirmed stopped
@@ -486,7 +491,7 @@ class Hermes3Engine:
             self.__class__._batch_tie_breaker = itertools.count()
         tie = next(self._batch_tie_breaker)
 
-        t_enqueue = time.monotonic()
+        time.monotonic()
         await self._batch_queue.put((priority, tie, schema_key, payload))
 
         # Update enqueue-to-dispatch EMA on dispatch (captured in worker)
@@ -500,7 +505,7 @@ class Hermes3Engine:
     async def _batch_worker(self) -> None:
         """Background worker that processes batches with schema-awareness + prompt/length segregation."""
         import itertools
-        tie_breaker = itertools.count()
+        itertools.count()
 
         while True:
             # Sprint 7I: Emergency check at top of each cycle
@@ -582,10 +587,10 @@ class Hermes3Engine:
                                 self._telemetry_counters['length_bin_mismatch_flushes'] += 1
                                 break
                             items.append(item)
-                        except asyncio.TimeoutError:
+                        except TimeoutError:
                             break
 
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     # No items available — skip this cycle
                     continue
 
@@ -636,7 +641,7 @@ class Hermes3Engine:
         response_model: Any,
         priority: float,
         stream: bool,
-        timeout_s: Optional[float],
+        timeout_s: float | None,
     ) -> bool:
         """
         Sprint 7G: Batch-safe eligibility check.
@@ -675,7 +680,7 @@ class Hermes3Engine:
             return 'medium'
         return 'long'
 
-    def _compute_system_prompt_hash(self, system_msg: Optional[str]) -> str:
+    def _compute_system_prompt_hash(self, system_msg: str | None) -> str:
         """Sprint 7G: Hash of system prompt for segregation."""
         if not system_msg:
             return 'default'
@@ -704,8 +709,8 @@ class Hermes3Engine:
 
         # Group by schema_key for batch processing
         # items are (priority, tie, schema_key, payload)
-        by_schema: Dict[str, list] = {}
-        for priority, tie, schema_key, payload in items:
+        by_schema: dict[str, list] = {}
+        for priority, _tie, schema_key, payload in items:
             if schema_key not in by_schema:
                 by_schema[schema_key] = []
             by_schema[schema_key].append((payload, priority))
@@ -734,7 +739,7 @@ class Hermes3Engine:
             # Process items in parallel-ish fashion within the batch
             results = await self._execute_structured_batch(items)
             # If we got here, batch succeeded — resolve futures
-            for payload, result in zip([p for p, _ in items], results):
+            for payload, result in zip([p for p, _ in items], results, strict=False):
                 future = payload.get('future')
                 if future and not future.done():
                     future.set_result(result)
@@ -914,7 +919,9 @@ class Hermes3Engine:
         """
         try:
             import inspect
-            from mlx_lm import load, generate as _mlx_generate
+
+            from mlx_lm import generate as _mlx_generate
+            from mlx_lm import load
 
             # F177C: Use resource_governor for consistent UMA measurement
             try:
@@ -976,7 +983,6 @@ class Hermes3Engine:
 
         try:
             from mlx_lm.models.cache import make_prompt_cache
-            import mlx.core as mx
 
             self._system_prompt_cache = make_prompt_cache(self._model, max_kv_size=512)
 
@@ -1042,6 +1048,7 @@ class Hermes3Engine:
         """Try to load cache from disk."""
         try:
             from pathlib import Path
+
             import mlx.core as mx
 
             cache_path = Path.home() / '.hledac' / 'cache' / 'system_prompt_cache.npz'
@@ -1060,37 +1067,37 @@ class Hermes3Engine:
         self,
         system_msg: str,
         user_msg: str,
-        history: List[Dict[str, str]] = None
+        history: list[dict[str, str]] = None
     ) -> str:
         """
         Formátovat zprávu do ChatML formátu.
-        
+
         Args:
             system_msg: Systémová zpráva
             user_msg: Uživatelská zpráva
             history: Historie konverzace
-            
+
         Returns:
             Formátovaný prompt
         """
         parts = []
-        
+
         # Systémová zpráva
         parts.append(f"<|im_start|>system\n{system_msg}<|im_end|>")
-        
+
         # Historie
         if history:
             for entry in history:
                 role = entry.get("role", "user")
                 content = entry.get("content", "")
                 parts.append(f"<|im_start|>{role}\n{content}<|im_end|>")
-        
+
         # Uživatelská zpráva
         parts.append(f"<|im_start|>user\n{user_msg}<|im_end|>")
-        
+
         # Assistant začátek
         parts.append("<|im_start|>assistant\n")
-        
+
         return "\n".join(parts)
 
     def _get_prefix_cache(self, system_prompt: str):
@@ -1118,6 +1125,38 @@ class Hermes3Engine:
         except Exception as e:
             logger.warning(f"[KV-CACHE] Prefix cache failed: {e}")
             return None
+
+    def _get_kv_cache_kwargs(self) -> dict:
+        """
+        Sprint F214Q: Dynamické KV cache řízení dle RAM tier (M1 8GB).
+
+        Returns:
+            dict: kwargs pro mlx_lm.generate() — buď {} (KV off) nebo {"max_kv_size": N}
+            INVARIANT: NIKDY nevyhazuje výjimku — fallback {} je vždy bezpečný
+        """
+        # Test override: pokud je _kv_cache_enabled explicitně False, vypni KV cache
+        if self._kv_cache_enabled is False:
+            return {}
+
+        try:
+            from ..utils.uma_budget import get_uma_pressure_level
+
+            _pct, tier = get_uma_pressure_level()
+        except Exception:
+            tier = "warn"  # safe default
+
+        if tier == "normal":
+            kv_kwargs = {"max_kv_size": self._max_kv_size}
+        elif tier == "warn":
+            kv_kwargs = {"max_kv_size": max(1024, self._max_kv_size // 2)}
+        else:
+            # critical nebo emergency — KV cache vypnutá
+            kv_kwargs = {}
+
+        logger.debug(
+            "KV cache: tier=%s kv_kwargs=%s", tier, list(kv_kwargs.keys())
+        )
+        return kv_kwargs
 
     def _run_inference(self, formatted_prompt: str, temp: float, max_tok: int, prefix_cache=None) -> str:
         """
@@ -1154,10 +1193,10 @@ class Hermes3Engine:
             "prompt": formatted_prompt,
             "temp": temp,
             "max_tokens": max_tok,
-            "max_kv_size": 8192,
             "kv_bits": 4,
             "prompt_cache": kv_cache,
             "verbose": False,
+            **self._get_kv_cache_kwargs(),
         }
 
         # Sprint 75: Speculative decoding with memory guard
@@ -1352,7 +1391,7 @@ class Hermes3Engine:
                 self._model_breaker.record_success()
             return response
 
-        except asyncio.TimeoutError:
+        except TimeoutError:
             # P1F-A: Timeout must propagate and record failure_kind="timeout"
             logger.warning("Hermes inference timed out")
             if record_model_failure is not None:
@@ -1383,13 +1422,13 @@ class Hermes3Engine:
             logger.error(f"Generation failed: {e}")
             return f"Error: {str(e)}"
 
-    async def decide_next_action(self, context: Dict[str, Any]) -> Dict[str, Any]:
+    async def decide_next_action(self, context: dict[str, Any]) -> dict[str, Any]:
         """
         Rozhodnout o dalším kroku ve výzkumu.
-        
+
         Args:
             context: Kontext aktuálního stavu výzkumu
-            
+
         Returns:
             Rozhodnutí o další akci
         """
@@ -1397,7 +1436,7 @@ class Hermes3Engine:
         step = context.get("step", 0)
         max_steps = context.get("max_steps", 20)
         history = context.get("history", [])
-        
+
         system_msg = """You are a research orchestrator. Decide the next action to progress the research.
 
 Available actions:
@@ -1437,7 +1476,7 @@ What should be the next action?"""
             temperature=0.2
         )
         return decision_model.model_dump()
-    
+
     # =========================================================================
     # Sprint F150G: Runtime-Facing Wrappers
     # =========================================================================
@@ -1527,8 +1566,8 @@ Report piš v češtině, buď konkrétní a stručný."""
     async def generate_sprint_plan(
         self,
         query: str,
-        context: Optional[Dict[str, Any]] = None
-    ) -> Dict[str, Any]:
+        context: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
         """
         Sprint F150G: Thin runtime-facing wrapper for sprint planning.
 
@@ -1623,10 +1662,10 @@ Report piš v češtině, buď konkrétní a stručný."""
     async def synthesize_findings(
         self,
         query: str,
-        findings: List[Any],
-        hypotheses: Optional[List[str]] = None,
-        context: Optional[Dict[str, Any]] = None
-    ) -> Dict[str, Any]:
+        findings: list[Any],
+        hypotheses: list[str] | None = None,
+        context: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
         """
         Sprint F150G: Thin runtime-facing wrapper for synthesis.
 
@@ -1728,7 +1767,7 @@ Report piš v češtině, buď konkrétní a stručný."""
                 "synthesis_id": None,
             }
 
-    async def synthesize(self, context: Dict[str, Any]) -> str:
+    async def synthesize(self, context: dict[str, Any]) -> str:
         """
         Syntetizovat výsledky výzkumu do finální odpovědi.
 
@@ -1778,7 +1817,7 @@ Synthesize a comprehensive research report answering the query."""
     async def generate_structured(
         self,
         prompt: str,
-        response_model: Type[T],
+        response_model: type[T],
         temperature: float = None,
         max_tokens: int = None,
         system_msg: str = None,
@@ -1843,7 +1882,7 @@ Synthesize a comprehensive research report answering the query."""
             try:
                 schema_key = response_model.__name__
                 if schema_key not in self._outlines_generators:
-                    self._outlines_generators[schema_key] = outlines_generate.json(
+                    self._outlines_generators[schema_key] = _outlines_Generator(
                         self._outlines_model, response_model
                     )
                 generator = self._outlines_generators[schema_key]
@@ -1859,8 +1898,6 @@ Synthesize a comprehensive research report answering the query."""
         # Sprint 75: JSON prompt + retry
         import json
         import re
-        temp = temperature or self.config.temperature
-        max_tok = max_tokens or self.config.max_tokens
 
         for attempt in range(max_retries + 1):
             json_prompt = f"""{prompt}
@@ -1884,7 +1921,7 @@ Do not include any other text. Output valid JSON only."""
 
         # Sprint 75: Heuristic fallback
         logger.warning(f"[STRUCTURED] All attempts failed, using fallback for {response_model.__name__}")
-        fields = {name: None for name in response_model.model_fields.keys()}
+        fields = dict.fromkeys(response_model.model_fields.keys())
         return response_model.model_construct(**fields)
 
     # Sprint F214OPT-B: Invalidate prefix cache
@@ -1982,8 +2019,7 @@ Do not include any other text. Output valid JSON only."""
         if response_models is None:
             response_models = _MODEL_REGISTRY
 
-        results: List[PlannerRuntimeResult] = []
-        pending_tasks: List = []
+        results: list[PlannerRuntimeResult] = []
 
         async def execute_single(req) -> PlannerRuntimeResult:
             """Execute a single PlannerRuntimeRequest via generate_structured."""
@@ -2036,7 +2072,7 @@ Do not include any other text. Output valid JSON only."""
             chunk_results = await asyncio.gather(*chunk_tasks, return_exceptions=True)
 
             # Handle exceptions (invariant B.16: fail-open for unsupported task)
-            for req, result in zip(chunk, chunk_results):
+            for req, result in zip(chunk, chunk_results, strict=False):
                 if isinstance(result, Exception):
                     results.append(PlannerRuntimeResult(
                         task_id=req.task_id,
@@ -2113,13 +2149,20 @@ Do not include any other text. Output valid JSON only."""
         # Step 7: mx.eval([]) + mx.metal.clear_cache() — F219B via helper
         _safe_mlx_eval_and_clear_cache("hermes_unload")
 
+        # F234: Release ANE/MLX mutex — MLX model now released
+        try:
+            from brain.ane_embedder import get_ane_mlx_mutex
+            get_ane_mlx_mutex().release("mlx")
+        except Exception:
+            pass
+
         logger.info("✓ Hermes-3 unloaded (Sprint 7K lifecycle closed)")
 
     # =========================================================================
     # ModelLifecycleProtocol implementation (Sprint 8Z bridge)
     # =========================================================================
 
-    async def get_current_model_name(self) -> Optional[str]:
+    async def get_current_model_name(self) -> str | None:
         """Return currently loaded model name, or None if no model loaded."""
         return self.config.model_path if self._model is not None else None
 
@@ -2136,14 +2179,23 @@ Do not include any other text. Output valid JSON only."""
 
     async def load_model(self, model_id: str) -> bool:
         """Load specified model by path identifier."""
+        from brain.ane_embedder import get_ane_mlx_mutex
+        mutex = get_ane_mlx_mutex()
         try:
             from mlx_lm import load
+            # F234: ANE/MLX mutex — acquire MLX lock before loading
+            mutex.acquire_mlx(model_size_mb=2000.0)
             self._model, self._tokenizer = await asyncio.to_thread(load, model_id)
             self.config.model_path = model_id
             logger.info(f"✓ Model loaded: {model_id}")
             return True
         except Exception as e:
             logger.warning(f"Model load failed for {model_id}: {e}")
+            # F234: Release mutex on load failure (mutex was acquired above)
+            try:
+                mutex.release("mlx")
+            except Exception:
+                pass
             return False
 
     # =========================================================================
@@ -2155,8 +2207,9 @@ Do not include any other text. Output valid JSON only."""
         if not self._prompt_cache:
             return 0.0
         try:
-            import mlx.core as mx
             import sys
+
+            import mlx.core as mx
 
             # Handle compressed format
             if isinstance(self._prompt_cache, tuple) and self._prompt_cache[0] == 'commvq_compressed':
@@ -2477,6 +2530,7 @@ Do not include any other text. Output valid JSON only."""
         """
         import re
         import time
+
         import orjson
 
         # DSPy path: ChainOfThought with OSINT signatures (M1-safe, fail-soft)
@@ -2567,5 +2621,5 @@ Do not include any other text. Output valid JSON only."""
 
         # Final fallback: return model with default fields
         logger.warning(f"[STRUCTURED] All attempts failed for {response_model.__name__}, using defaults")
-        fields = {name: None for name in response_model.model_fields.keys()}
+        fields = dict.fromkeys(response_model.model_fields.keys())
         return response_model.model_construct(**fields)

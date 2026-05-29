@@ -32,12 +32,12 @@ Je to čistě LMDB wrapper kolem numpy serializace.
 """
 
 import asyncio
-import orjson
-from pathlib import Path
-from typing import Dict, Optional, Any
-import numpy as np
 import logging
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
+
+import numpy as np
+import orjson
 
 logger = logging.getLogger(__name__)
 
@@ -74,7 +74,7 @@ class ModelStore:
     close() je IDEMPOTENT — lze volat vícekrát bez chyby.
     """
 
-    def __init__(self, path: Optional[str] = None):
+    def __init__(self, path: str | None = None):
         from hledac.universal.paths import DB_ROOT
         if path is None:
             self.path = DB_ROOT / "federated_models"
@@ -103,7 +103,7 @@ class ModelStore:
             self._executor = ThreadPoolExecutor(max_workers=2)
         return self._executor
 
-    def put_model(self, round_num: int, weights: Dict[str, np.ndarray]):
+    def put_model(self, round_num: int, weights: dict[str, np.ndarray]):
         """Uloží modelové váhy."""
         key = f"model:{round_num}".encode()
         # Serializace vah jako hex stringy (orjson neumí bytes)
@@ -121,7 +121,7 @@ class ModelStore:
         with self._ensure_env().begin(write=True) as txn:
             txn.put(key, serialized)
 
-    def get_model(self, round_num: int) -> Optional[Dict[str, np.ndarray]]:
+    def get_model(self, round_num: int) -> dict[str, np.ndarray] | None:
         """Načte modelové váhy."""
         key = f"model:{round_num}".encode()
         # F184F: lazy env open
@@ -144,7 +144,7 @@ class ModelStore:
         with self._ensure_env().begin(write=True) as txn:
             txn.put(key, public_key)
 
-    def get_trusted_key(self, node_id: str) -> Optional[bytes]:
+    def get_trusted_key(self, node_id: str) -> bytes | None:
         """Načte důvěryhodný veřejný klíč."""
         key = f"trusted_key:{node_id}".encode()
         # F184F: lazy env open
@@ -152,8 +152,8 @@ class ModelStore:
             return txn.get(key)
 
     # Async wrappers - additive API from model_store_v2.bak
-    async def async_save_model(self, key: str, weights: Dict[str, np.ndarray],
-                               encrypted: bool = False, bucket_key: Optional[bytes] = None):
+    async def async_save_model(self, key: str, weights: dict[str, np.ndarray],
+                               encrypted: bool = False, bucket_key: bytes | None = None):
         """
         Async wrapper for save_model.
 
@@ -186,7 +186,7 @@ class ModelStore:
         await loop.run_in_executor(self._ensure_executor(), _put)
 
     async def async_load_model(self, key: str, encrypted: bool = False,
-                               bucket_key: Optional[bytes] = None) -> Optional[Dict[str, np.ndarray]]:
+                               bucket_key: bytes | None = None) -> dict[str, np.ndarray] | None:
         """
         Async wrapper for load_model.
 

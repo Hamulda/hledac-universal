@@ -12,8 +12,6 @@ Tests for:
 """
 
 import inspect
-import time
-from unittest.mock import patch, MagicMock
 
 import pytest
 
@@ -121,8 +119,9 @@ class TestProvenanceConsistency:
 
     def test_source_type_finding_values_are_explicit_strings(self):
         """PROVENANCE: source_type_finding uses explicit string values."""
-        from hledac.universal.autonomous_orchestrator import ResearchFinding
         import inspect
+
+        from hledac.universal.autonomous_orchestrator import ResearchFinding
         src = inspect.getsource(ResearchFinding)
         assert "source_type_finding: str" in src
 

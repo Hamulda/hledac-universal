@@ -16,9 +16,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 from dataclasses import dataclass
 from unittest.mock import AsyncMock, MagicMock
 
-from runtime.sprint_scheduler import SprintSchedulerResult, SprintScheduler
 from runtime.acquisition_strategy import AcquisitionLane, build_lane_query
-
+from runtime.sprint_scheduler import SprintScheduler, SprintSchedulerResult
 
 # ----------------------------------------------------------------------
 # Test 1: pivot domain seed invokes DOH with domain
@@ -27,7 +26,6 @@ from runtime.acquisition_strategy import AcquisitionLane, build_lane_query
 
 async def test_pivot_domain_seed_used_for_doh():
     """When pivot_lanes contains lane='DOH' seed_type='domain', DOH runs with that domain."""
-    from runtime.sprint_scheduler import SprintScheduler
 
     @dataclass(frozen=True, slots=True)
     class _MockLanePlanItem:
@@ -99,7 +97,6 @@ async def test_pivot_domain_seed_used_for_doh():
 
 async def test_raw_query_no_domain_skips_doh():
     """When no pivot DOH item exists and raw query has no domain, DOH skips with no_domain_seed."""
-    from runtime.sprint_scheduler import SprintScheduler
 
     time_mod = MagicMock()
     time_mod.monotonic.return_value = 0.0
@@ -166,7 +163,6 @@ def test_ip_query_returns_disabled_for_doh():
 
 async def test_doh_runner_exception_fails_soft():
     """When DOH adapter raises, DOH terminal stage = provider_error, no exception propagated."""
-    from runtime.sprint_scheduler import SprintScheduler
 
     @dataclass(frozen=True, slots=True)
     class _MockLanePlanItem:
@@ -239,7 +235,6 @@ def test_doh_seed_source_telemetry_field():
 
 async def test_doh_seed_source_set_to_pivot_plan():
     """doh_seed_source is set to 'pivot_plan' when pivot domain is used."""
-    from runtime.sprint_scheduler import SprintScheduler
 
     @dataclass(frozen=True, slots=True)
     class _MockLanePlanItem:
@@ -294,7 +289,6 @@ async def test_doh_seed_source_set_to_pivot_plan():
 
 async def test_doh_seed_source_set_to_raw_query():
     """doh_seed_source is set to 'raw_query' when pivot has no DOH item but query has domain."""
-    from runtime.sprint_scheduler import SprintScheduler
 
     mock_store = MagicMock()
     mock_store.async_ingest_findings_batch = AsyncMock(return_value=[])

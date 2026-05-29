@@ -27,7 +27,18 @@ import pathlib
 import signal
 import sys
 import time
-from typing import Any, Callable, Dict, List, Optional
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Any
+
+# TYPE_CHECKING block: imports only for static analysis (ruff, mypy)
+# At runtime these are strings due to `from __future__ import annotations`
+if TYPE_CHECKING:
+    import argparse
+    from pathlib import Path
+
+    import aiohttp
+
+    from runtime.sprint_lifecycle import SprintLifecycleManager
 
 # Sprint 8VC: Exclude legacy/ from Python path to prevent accidental imports
 # legacy/ is for reference only — active code must not import from it
@@ -208,7 +219,7 @@ def get_entrypoint_role(name: str) -> str:
 # Sprint F214HELP: Fast --help / -h path — no MLX, no runtime init
 # Must be defined BEFORE any heavy module imports (mlx_cache, brain, etc.)
 # =============================================================================
-def build_parser() -> "argparse.ArgumentParser":
+def build_parser() -> argparse.ArgumentParser:
     """Build CLI argument parser. Lightweight — imports only argparse/stdlib."""
     import argparse  # local import keeps help path off module-level MLX chain
     parser = argparse.ArgumentParser(
@@ -243,6 +254,11 @@ def build_parser() -> "argparse.ArgumentParser":
         choices=["default", "nonfeed_diagnostic", "deep_osint_m1"],
         help="F216B/F251D: Acquisition runtime profile (default | nonfeed_diagnostic | deep_osint_m1)",
     )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Dry-run mode: validate config, check Hermes/UMA/sources, show timing plan. No real discovery.",
+    )
     # Python 3.14 argparse settings
     try:
         parser.suggest_on_error = True
@@ -262,7 +278,7 @@ logger = logging.getLogger(__name__)
 # Sprint 8AI: Boot telemetry buffer — O(1) append, side-effect free
 # =============================================================================
 
-_boot_telemetry: List[Dict[str, Any]] = []
+_boot_telemetry: list[dict[str, Any]] = []
 
 
 def _boot_record(step: str, status: str, **kw: Any) -> None:
@@ -270,7 +286,7 @@ def _boot_record(step: str, status: str, **kw: Any) -> None:
     _boot_telemetry.append({"step": step, "status": status, "ms": time.time(), **kw})
 
 
-def get_boot_telemetry() -> List[Dict[str, Any]]:
+def get_boot_telemetry() -> list[dict[str, Any]]:
     """Return a copy of boot telemetry. Side-effect free."""
     return list(_boot_telemetry)
 
@@ -323,7 +339,7 @@ _owned_resources: dict[str, bool] = {
 }
 
 
-def get_runtime_status() -> Dict[str, Any]:
+def get_runtime_status() -> dict[str, Any]:
     """
     Return current runtime status snapshot.
     O(1), side-effect free, purely diagnostic.
@@ -360,7 +376,7 @@ def _get_and_clear_signal_flag() -> bool:
     return val
 
 
-def _install_signal_teardown(loop: "asyncio.AbstractEventLoop") -> None:
+def _install_signal_teardown(loop: asyncio.AbstractEventLoop) -> None:
     """
     Install SIGINT/SIGTERM handlers that schedule loop.stop().
 
@@ -395,7 +411,7 @@ def _install_signal_teardown(loop: "asyncio.AbstractEventLoop") -> None:
 # Sprint 8AI: Boot guard — synchronous, called BEFORE asyncio.run()
 # =============================================================================
 
-def _run_boot_guard(lmdb_root: Optional[pathlib.Path] = None) -> tuple[int, str]:
+def _run_boot_guard(lmdb_root: pathlib.Path | None = None) -> tuple[int, str]:
     """
     Run LMDB boot guard (8AG) synchronously.
 
@@ -418,8 +434,10 @@ def _run_boot_guard(lmdb_root: Optional[pathlib.Path] = None) -> tuple[int, str]
 
     try:
         from hledac.universal.knowledge.lmdb_boot_guard import (
-            cleanup_stale_lmdb_lock,
             BootGuardError as _BootGuardError,
+        )
+        from hledac.universal.knowledge.lmdb_boot_guard import (
+            cleanup_stale_lmdb_lock,
         )
     except Exception as e:
         return 0, f"boot_guard_import_failed({e})"
@@ -495,7 +513,7 @@ async def _run_async_main(stop_flag: Callable[[], bool]) -> None:
 
     # Sprint 8AI: AsyncExitStack as unified teardown backbone
     # All resources are registered here for guaranteed LIFO unwind
-    exit_stack: Optional[contextlib.AsyncExitStack] = None
+    exit_stack: contextlib.AsyncExitStack | None = None
 
     try:
         exit_stack = contextlib.AsyncExitStack()
@@ -571,7 +589,7 @@ async def _cancel_orphan_tasks() -> None:
                 asyncio.gather(*all_tasks, return_exceptions=True),
                 timeout=5.0,
             )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             _boot_record("task_cancellation", "drain_timeout_5s")
             logger.warning("[MAIN] Orphan task drain timed out after 5s, continuing shutdown")
         except asyncio.CancelledError:
@@ -617,7 +635,7 @@ async def _run_public_passive_once(
         "store_owned": False,
     }
 
-    exit_stack: Optional[contextlib.AsyncExitStack] = None
+    exit_stack: contextlib.AsyncExitStack | None = None
     store_instance = None
 
     try:
@@ -627,7 +645,6 @@ async def _run_public_passive_once(
         _boot_record("async_exit_stack_entered", "ok")
 
         # Sprint 8AM C.2: Session ownership
-        session_created = False
         if owned_session:
             try:
                 # Obtain shared session — this is a Lazy singleton
@@ -642,7 +659,6 @@ async def _run_public_passive_once(
                 # Sprint 8AM C.2: push_async_callback — callback() is sync, cannot await async coroutine
                 exit_stack.push_async_callback(close_aiohttp_session_async)
                 _owned_resources["session_owned"] = True
-                session_created = True
                 _boot_record("session_owned", "registered")
             except Exception as e:
                 logger.warning(f"[MAIN] Failed to acquire session: {e}")
@@ -674,11 +690,10 @@ async def _run_public_passive_once(
 
         # Sprint 8AM C.9: Delegation to existing pipelines
         # Import here to avoid module-level side effects
-        from .pipeline.live_public_pipeline import async_run_live_public_pipeline
-        from .pipeline.live_feed_pipeline import async_run_default_feed_batch
-
         # Sprint 8SA: Configure bootstrap patterns before pipeline runs
         from .patterns.pattern_matcher import configure_default_bootstrap_patterns_if_empty
+        from .pipeline.live_feed_pipeline import async_run_default_feed_batch
+        from .pipeline.live_public_pipeline import async_run_live_public_pipeline
         configure_default_bootstrap_patterns_if_empty()
 
         # Use the SAME store instance for both pipelines
@@ -764,7 +779,7 @@ class _UmaSampler:
     def __init__(self, interval_s: float = 0.5) -> None:
         self._interval = interval_s
         self._running = False
-        self._task: Optional[asyncio.Task[Any]] = None
+        self._task: asyncio.Task[Any] | None = None
         self._lock = asyncio.Lock()
         self._peak_used_gib = 0.0
         self._peak_state = "unknown"
@@ -834,7 +849,7 @@ class _UmaSampler:
 # =============================================================================
 
 # Module-level singleton for last run report (C.4)
-_last_observed_run_report: Optional[dict] = None
+_last_observed_run_report: dict | None = None
 _observed_run_lock = asyncio.Lock()
 
 # Sprint 8BA C.0: Runtime truth fields (recorded before/after live run)
@@ -906,7 +921,6 @@ def _record_runtime_truth() -> None:
     global _bootstrap_pack_version, _default_bootstrap_count
 
     import sys
-    import os
 
     _interpreter_executable = sys.executable
     _interpreter_version = sys.version_info[:2] == (3, 14) and "3.14" or sys.version
@@ -973,7 +987,7 @@ class ObservedRunReport(msgspec.Struct, frozen=True, gc=False):
     fetched_entries: int
     accepted_findings: int
     stored_findings: int
-    batch_error: Optional[str]
+    batch_error: str | None
     per_source: tuple[dict, ...]
     patterns_configured: int
     bootstrap_applied: bool
@@ -1086,7 +1100,7 @@ def _build_observed_run_report(
     dedup_after: dict,
     uma_snapshot: dict,
     patterns_configured: int,
-    batch_error: Optional[str],
+    batch_error: str | None,
     bootstrap_applied: bool = False,
     # Sprint 8AU: signal trace
     entries_seen: int = 0,
@@ -1316,7 +1330,7 @@ def compare_observed_run_to_baseline(report: dict) -> dict:
       - failed_source_count: current value
       - findings_delta: accepted_findings delta vs baseline
       - status: "improved" | "regressed" | "stable" | "network_variance" | "insufficient_data"
-      - blocker: Optional[str] description if findings are 0
+      - blocker: str | None description if findings are 0
     """
     current_completed = report.get("completed_sources", 0)
     current_failed = report.get("total_sources", 0) - current_completed
@@ -1524,8 +1538,8 @@ def _ensure_runtime_patterns_configured_for_live_validation() -> tuple[int, bool
     """
     try:
         from .patterns.pattern_matcher import (
-            get_pattern_matcher,
             configure_default_bootstrap_patterns_if_empty,
+            get_pattern_matcher,
         )
         pm = get_pattern_matcher()
         current_count = pm.pattern_count()
@@ -1580,7 +1594,7 @@ async def _run_observed_default_feed_batch_once(
     global _last_observed_run_report
 
     started_ts = time.time()
-    batch_error: Optional[str] = None
+    batch_error: str | None = None
     uma_sampler = _UmaSampler(interval_s=_uma_sample_interval_s)
     dedup_before: dict = {}
     dedup_after: dict = {}
@@ -1610,7 +1624,6 @@ async def _run_observed_default_feed_batch_once(
     total_accepted = 0
     total_stored = 0
     completed_sources_count = 0
-    sources: list[Any] = []
 
     # Sprint 8AW: track pattern_count for diagnosis
     patterns_configured = 0
@@ -1619,10 +1632,10 @@ async def _run_observed_default_feed_batch_once(
 
     # C.1 + C.2: Acquire owned resources first
     try:
+        from .discovery.rss_atom_adapter import get_default_feed_seeds
         from .knowledge.duckdb_store import create_owned_store
         from .network.session_runtime import async_get_aiohttp_session
         from .pipeline.live_feed_pipeline import async_run_live_feed_pipeline
-        from .discovery.rss_atom_adapter import get_default_feed_seeds
 
         store_instance = create_owned_store()
         await store_instance.async_initialize()
@@ -1716,7 +1729,7 @@ async def _run_observed_default_feed_batch_once(
                     )
             except asyncio.CancelledError:
                 raise
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 elapsed_ms = (time.monotonic() - start) * 1000.0
                 error_msg = "per_feed_timeout"
             except BaseException as exc:
@@ -1786,7 +1799,7 @@ async def _run_observed_default_feed_batch_once(
                     per_source_results.append(res)
     except asyncio.CancelledError:
         batch_error = "cancelled"
-    except asyncio.TimeoutError:
+    except TimeoutError:
         batch_error = "batch_timeout"
     except Exception as exc:
         batch_error = str(exc)
@@ -1848,9 +1861,9 @@ async def _run_observed_default_feed_batch_once(
     _combined_accepted_feed_names = tuple(sorted(_accepted_feed_names_set))
 
     try:
-        from .pipeline.live_feed_pipeline import FeedSourceBatchRunResult, FeedSourceRunResult
+        from .pipeline.live_feed_pipeline import FeedSourceRunResult
         completed = sum(1 for r in per_source_results if r.get("error") is None)
-        failed = len(per_source_results) - completed
+        len(per_source_results) - completed
         total = len(seed_sources)
         batch_result_obj = type(
             "BatchResult",
@@ -1995,7 +2008,7 @@ async def _run_observed_default_feed_batch_once(
     return report
 
 
-def get_last_observed_run_report() -> Optional[dict]:
+def get_last_observed_run_report() -> dict | None:
     """
     Sprint 8AO C.4: Return last observed run report.
 
@@ -2029,7 +2042,7 @@ def format_observed_run_summary(report: dict) -> str:
     lines.append("=" * 60)
 
     # Sprint 8BA C.3: [runtime truth] section
-    lines.append(f"\n[runtime truth]")
+    lines.append("\n[runtime truth]")
     lines.append(f"  interpreter_executable:       {report.get('interpreter_executable', 'N/A')}")
     lines.append(f"  interpreter_version:          {report.get('interpreter_version', 'N/A')}")
     lines.append(f"  ahocorasick_available:        {report.get('ahocorasick_available', 'N/A')}")
@@ -2045,7 +2058,7 @@ def format_observed_run_summary(report: dict) -> str:
     sample_texts = report.get('sample_scanned_texts', ())
     sample_counts = report.get('sample_hit_counts', ())
     sample_labels = report.get('sample_hit_labels_union', ())
-    lines.append(f"\n[matcher truth]")
+    lines.append("\n[matcher truth]")
     lines.append(f"  patterns_configured_at_run:  {report.get('patterns_configured_at_run', 0)}")
     lines.append(f"  automaton_built_at_run:     {report.get('automaton_built_at_run', False)}")
     lines.append(f"  sample_scanned_texts:       {len(sample_texts)} captured")
@@ -2057,7 +2070,7 @@ def format_observed_run_summary(report: dict) -> str:
         lines.append(f"    sample[{i}]: {txt[:80]!r}")
 
     # Sprint 8BH C.5: [live run truth] section
-    lines.append(f"\n[live run truth]")
+    lines.append("\n[live run truth]")
     lines.append(f"  used_rich_feed_content:    {report.get('used_rich_feed_content', False)}")
     lines.append(f"  used_article_fallback:    {report.get('used_article_fallback', False)}")
     lines.append(f"  matched_feed_names:       {report.get('matched_feed_names', ())}")
@@ -2070,7 +2083,7 @@ def format_observed_run_summary(report: dict) -> str:
 
     # Batch totals (C.1)
     elapsed_s = report.get("elapsed_ms", 0) / 1000.0
-    lines.append(f"\n[Batch Totals]")
+    lines.append("\n[Batch Totals]")
     lines.append(f"  Total sources:     {report.get('total_sources', 0)}")
     lines.append(f"  Completed sources: {report.get('completed_sources', 0)}")
     lines.append(f"  Fetched entries:   {report.get('fetched_entries', 0)}")
@@ -2091,13 +2104,13 @@ def format_observed_run_summary(report: dict) -> str:
         lines.append(f"  Content quality:   VALIDATED ({patterns} patterns){bootstrap_note}")
     else:
         lines.append(
-            f"  Content quality:   INFRA-ONLY RUN (PatternMatcher empty — "
+            "  Content quality:   INFRA-ONLY RUN (PatternMatcher empty — "
             "validated infrastructure/runtime path, not content quality)"
         )
 
     # Peak UMA (C.3)
     uma = report.get("uma_snapshot", {})
-    lines.append(f"\n[Peak UMA]")
+    lines.append("\n[Peak UMA]")
     lines.append(f"  Peak used GiB:    {uma.get('peak_used_gib', 'N/A'):.2f}" if isinstance(uma.get('peak_used_gib'), float) else f"  Peak used GiB:    {uma.get('peak_used_gib', 'N/A')}")
     lines.append(f"  Peak state:        {uma.get('peak_state', 'N/A')}")
     lines.append(f"  Start state:       {uma.get('start_state', 'N/A')}")
@@ -2109,20 +2122,20 @@ def format_observed_run_summary(report: dict) -> str:
 
     # Dedup raw deltas (C.2, C.12)
     dedup_surf = report.get("dedup_surface_available", False)
-    lines.append(f"\n[Dedup Raw Deltas]")
+    lines.append("\n[Dedup Raw Deltas]")
     if dedup_surf:
         delta = report.get("dedup_delta", {})
-        lines.append(f"  persistent_dedup_enabled: True")
+        lines.append("  persistent_dedup_enabled: True")
         lines.append(f"  persistent_duplicate_count delta: {delta.get('persistent_duplicate_count', 'N/A')}")
         lines.append(f"  quality_duplicate_count delta:    {delta.get('quality_duplicate_count', 'N/A')}")
         lines.append(f"  in_memory_duplicate_count delta: {delta.get('in_memory_duplicate_count', 'N/A')}")
     else:
-        lines.append(f"  dedup_surface_available: False (N/A)")
+        lines.append("  dedup_surface_available: False (N/A)")
 
     # Slow-source ranking (C.10)
     slow = report.get("slow_sources", [])
     if slow:
-        lines.append(f"\n[Top Slow Sources (by elapsed_ms desc)]")
+        lines.append("\n[Top Slow Sources (by elapsed_ms desc)]")
         for i, src in enumerate(slow, 1):
             lines.append(
                 f"  {i}. {src.get('feed_url', '?')[:60]}"
@@ -2138,19 +2151,19 @@ def format_observed_run_summary(report: dict) -> str:
         for err_src in err_sum.get("sources", []):
             lines.append(f"  - {err_src.get('feed_url', '?')[:60]}: {err_src.get('error', '?')}")
     else:
-        lines.append(f"\n[Error Summary] 0 errors")
+        lines.append("\n[Error Summary] 0 errors")
 
     # Sprint 8AS C.2: Success rate + failed source count
     success_rate = report.get("success_rate", 0.0)
     failed_count = report.get("failed_source_count", 0)
-    lines.append(f"\n[Sprint 8AS C.2] Success Rate")
+    lines.append("\n[Sprint 8AS C.2] Success Rate")
     lines.append(f"  Success rate: {success_rate:.1%}")
     lines.append(f"  Failed sources: {failed_count}")
 
     # Sprint 8AS C.0: Baseline delta
     baseline = report.get("baseline_delta", {})
     if baseline:
-        lines.append(f"\n[Sprint 8AS C.0] Delta vs 8AO Baseline")
+        lines.append("\n[Sprint 8AS C.0] Delta vs 8AO Baseline")
         lines.append(f"  Status: {baseline.get('status', 'N/A')}")
         lines.append(f"  Completed sources: {baseline.get('completed_sources', 'N/A')} ({baseline.get('completed_sources_delta', 0):+d})")
         lines.append(f"  Fetched entries: {baseline.get('fetched_entries_delta', 0):+d}")
@@ -2165,7 +2178,7 @@ def format_observed_run_summary(report: dict) -> str:
     health = report.get("health_breakdown", {})
     if health:
         breakdown = health.get("health_breakdown", {})
-        lines.append(f"\n[Sprint 8AS C.1] Feed Health Breakdown")
+        lines.append("\n[Sprint 8AS C.1] Feed Health Breakdown")
         total_h = health.get("total", 0)
         lines.append(f"  Total sources: {total_h}")
         lines.append(f"  Success: {breakdown.get('success', 0)}")
@@ -2177,13 +2190,13 @@ def format_observed_run_summary(report: dict) -> str:
 
     # Sprint 8AS C.4: Content validation + session cleanup truth
     content_validated = report.get("content_quality_validated", False)
-    lines.append(f"\n[Sprint 8AS C.4] Run Quality")
+    lines.append("\n[Sprint 8AS C.4] Run Quality")
     if content_validated:
         lines.append(f"  Content validation: ACTIVE (patterns={patterns})")
-        lines.append(f"  Run type: CONTENT-VALIDATED (not infra-only)")
+        lines.append("  Run type: CONTENT-VALIDATED (not infra-only)")
     else:
-        lines.append(f"  Content validation: INFRA-ONLY (patterns=0)")
-        lines.append(f"  Run type: INFRA-ONLY")
+        lines.append("  Content validation: INFRA-ONLY (patterns=0)")
+        lines.append("  Run type: INFRA-ONLY")
 
     # Sprint 8BA C.3: [signal funnel] (B.9 funnel order)
     entries_seen = report.get("entries_seen", 0)
@@ -2197,7 +2210,7 @@ def format_observed_run_summary(report: dict) -> str:
     signal_stage = report.get("signal_stage", "unknown")
 
     if entries_seen > 0 or entries_with_text > 0:
-        lines.append(f"\n[signal funnel]")
+        lines.append("\n[signal funnel]")
         lines.append(f"  entries_seen:                     {entries_seen}")
         lines.append(f"  entries_with_empty_assembled_text: {entries_with_empty}")
         lines.append(f"  entries_with_text:                {entries_with_text}")
@@ -2223,7 +2236,7 @@ def format_observed_run_summary(report: dict) -> str:
     total_rejected = low_info_delta + in_mem_dup + persist_dup + other_delta
 
     if accepted_delta > 0 or total_rejected > 0:
-        lines.append(f"\n[store rejection trace]")
+        lines.append("\n[store rejection trace]")
         lines.append(f"  accepted_count_delta:           {accepted_delta}")
         lines.append(f"  low_information_rejected:        {low_info_delta}")
         lines.append(f"  in_memory_duplicate_rejected:    {in_mem_dup}")
@@ -2231,8 +2244,8 @@ def format_observed_run_summary(report: dict) -> str:
         lines.append(f"  other_rejected:                 {other_delta}")
         lines.append(f"  total_rejected:                 {total_rejected}")
         if total_rejected > 0:
-            lines.append(f"  entropy_threshold:              0.5")
-            lines.append(f"  entropy_min_len:                8")
+            lines.append("  entropy_threshold:              0.5")
+            lines.append("  entropy_min_len:                8")
             low_frac = low_info_delta / total_rejected * 100
             dup_frac = (in_mem_dup + persist_dup) / total_rejected * 100
             lines.append(f"  low_info fraction:              {low_frac:.1f}%")
@@ -2241,28 +2254,28 @@ def format_observed_run_summary(report: dict) -> str:
     # Sprint 8BA C.3: [root cause] + [recommendation] (C.2 mapping)
     diag = report.get("diagnostic_root_cause", "unknown")
     is_net_var = report.get("is_network_variance", False)
-    lines.append(f"\n[root cause]")
+    lines.append("\n[root cause]")
     lines.append(f"  diagnostic_root_cause:           {diag}")
     lines.append(f"  is_network_variance:             {is_net_var}")
 
     # C.2: Recommendation mapping (derived in formatter, not persisted)
-    lines.append(f"\n[recommendation]")
+    lines.append("\n[recommendation]")
     if diag == "accepted_present":
-        lines.append(f"  → scheduler_entry_hash_v1")
+        lines.append("  → scheduler_entry_hash_v1")
     elif diag == "duplicate_rejection_dominant":
-        lines.append(f"  → scheduler_entry_hash_v1")
+        lines.append("  → scheduler_entry_hash_v1")
     elif diag == "no_pattern_hits_possible_morphology_gap":
-        lines.append(f"  → pattern_pack_v3_or_source_specific_text_extraction")
+        lines.append("  → pattern_pack_v3_or_source_specific_text_extraction")
     elif diag == "no_pattern_hits":
-        lines.append(f"  → pattern_pack_v3_or_source_specific_text_extraction")
+        lines.append("  → pattern_pack_v3_or_source_specific_text_extraction")
     elif diag == "pattern_hits_but_no_findings_built":
-        lines.append(f"  → finding_build_trace")
+        lines.append("  → finding_build_trace")
     elif diag == "low_information_rejection_dominant":
-        lines.append(f"  → quality_gate_recalibration_only_if_reproduced")
+        lines.append("  → quality_gate_recalibration_only_if_reproduced")
     elif diag in ("network_variance", "no_new_entries"):
-        lines.append(f"  → repeat_live_run")
+        lines.append("  → repeat_live_run")
     else:
-        lines.append(f"  → repeat_live_run")
+        lines.append("  → repeat_live_run")
 
     lines.append("=" * 60)
     return "\n".join(lines)
@@ -2272,14 +2285,14 @@ def format_observed_run_summary(report: dict) -> str:
 # Sprint 0B: Benchmark probe (unchanged)
 # =============================================================================
 
-async def _run_benchmark_probe() -> Dict[str, Any]:
+async def _run_benchmark_probe() -> dict[str, Any]:
     """
     Run Sprint 0B benchmark probe tests.
 
     Returns:
         Dict with benchmark results including pass/fail counts.
     """
-    from .utils.flow_trace import is_enabled, get_summary
+    from .utils.flow_trace import get_summary, is_enabled
 
     results = {
         "probe": "sprint_0b_runtime",
@@ -2337,12 +2350,12 @@ class AsyncSessionFactory:
     Thread-safe lazy initialization with lock.
     """
 
-    _instance: Optional["AsyncSessionFactory"] = None
-    _session: Optional["aiohttp.ClientSession"] = None
+    _instance: AsyncSessionFactory | None = None
+    _session: aiohttp.ClientSession | None = None
     _session_count: int = 0
-    _lock: Optional["asyncio.Lock"] = None
+    _lock: asyncio.Lock | None = None
 
-    def __new__(cls) -> "AsyncSessionFactory":
+    def __new__(cls) -> AsyncSessionFactory:
         if cls._instance is None:
             cls._instance = super().__new__(cls)
         return cls._instance
@@ -2354,7 +2367,7 @@ class AsyncSessionFactory:
             cls._lock = asyncio.Lock()
         return cls._lock
 
-    async def get_session(self) -> "aiohttp.ClientSession":
+    async def get_session(self) -> aiohttp.ClientSession:
         """
         Get or create a shared aiohttp.ClientSession.
 
@@ -2406,7 +2419,7 @@ _sprint_frontier_stopped: bool = False
 _phase_times: dict[str, float] = {}
 
 # Sprint F204E: Analyst brief for markdown export (set after scheduler.run completes)
-_analyst_brief_for_markdown: "Optional[Dict[str, Any]]" = None
+_analyst_brief_for_markdown: dict[str, Any] | None = None
 
 
 def _mark_phase(name: str) -> None:
@@ -2415,7 +2428,7 @@ def _mark_phase(name: str) -> None:
     logger.info(f"[PHASE] {name}")
 
 
-def _compute_sprint_report_path(sprint_id: str) -> "Path":
+def _compute_sprint_report_path(sprint_id: str) -> Path:
     """
     Sprint 8VY §C: Delegates to canonical path owner.
 
@@ -2651,6 +2664,7 @@ async def _print_scorecard_report(
     # REMOVAL CONDITION: ExportHandoff.top_nodes always populated in all windup paths.
     try:
         from export.sprint_exporter import export_sprint as _export_sprint
+
         from .project_types import ExportHandoff
 
         # Sprint 8VZ §B: Construct typed handoff directly — canonical producer truth
@@ -2711,9 +2725,9 @@ async def _run_sprint_mode(
             inside this coroutine (uses the real event loop from asyncio.run())
     """
     from .core.resource_governor import (
-        UMAAlarmDispatcher,
         UMA_STATE_CRITICAL,
         UMA_STATE_EMERGENCY,
+        UMAAlarmDispatcher,
     )
     from .runtime.sprint_lifecycle import SprintLifecycleManager, SprintPhase
     from .runtime.sprint_scheduler import SprintScheduler, SprintSchedulerConfig
@@ -2731,10 +2745,10 @@ async def _run_sprint_mode(
 
     # Sprint 8VY: SprintScheduler for WARMUP orchestration (DuckPGQ, IOCScorer, ring buffers)
     # Created here so run_warmup() can initialize scheduler state during WARMUP phase.
-    scheduler = SprintScheduler(SprintSchedulerConfig(sprint_duration_s=duration_s))
+    scheduler = SprintScheduler(SprintSchedulerConfig(sprint_duration_s=float(duration_s)))
 
     # B.5: AsyncExitStack for LIFO teardown
-    exit_stack: Optional[contextlib.AsyncExitStack] = None
+    exit_stack: contextlib.AsyncExitStack | None = None
     try:
         exit_stack = contextlib.AsyncExitStack()
         await exit_stack.__aenter__()
@@ -2786,9 +2800,9 @@ async def _run_sprint_mode(
         _mark_phase("ACTIVE")
 
         # ---- ACTIVE: pipeline runs every 60s while remaining > 3min ----
+        from .knowledge.duckdb_store import create_owned_store
         from .pipeline.live_feed_pipeline import async_run_default_feed_batch
         from .pipeline.live_public_pipeline import async_run_live_public_pipeline
-        from .knowledge.duckdb_store import create_owned_store
 
         store_instance = None
         try:
@@ -2995,7 +3009,7 @@ async def _run_sprint_mode(
 async def _windup_synthesis(
     query: str,
     store: Any,
-    lifecycle: "SprintLifecycleManager",
+    lifecycle: SprintLifecycleManager,
 ) -> Any:
     """
     Sprint 8QC E2E: Synthesis in WINDUP phase.
@@ -3076,7 +3090,7 @@ async def _windup_synthesis(
             logger.debug(f"[8VA] HypothesisEngine skipped: {e}")
 
     # Sprint 8UC B.2.4: Capture synthesis engine for scorecard
-    synthesis_engine = getattr(runner, '_last_synthesis_engine', 'unknown')
+    getattr(runner, '_last_synthesis_engine', 'unknown')
 
     await runner.close()
 
@@ -3157,6 +3171,7 @@ def main() -> None:
     sprint_target = args.sprint
     sprint_duration = args.duration
     sprint_ui_mode = args.ui
+    sprint_dry_run = args.dry_run
     # --aggressive and --deep-probe handled automatically by parser
 
     # Sprint 8AI: Step 1 — Synchronous pre-boot
@@ -3177,13 +3192,22 @@ def main() -> None:
         _boot_record("boot_guard_sync", "error_soft", error=str(e))
 
     try:
-        if sprint_target is not None:
+        if sprint_dry_run and sprint_target is not None:
+            # Dry-run path: diagnostic only, no real discovery
+            from .core.__main__ import dry_run_sprint as _dry_run_sprint
+            os.environ["HLEDAC_ACQUISITION_PROFILE"] = args.acquisition_profile
+            asyncio.run(_dry_run_sprint(
+                query=sprint_target,
+                duration_s=float(sprint_duration),
+            ))
+            sys.exit(0)
+        elif sprint_target is not None:
             # Sprint F150R: Delegate to canonical sprint owner in core/__main__.py
             from .core.__main__ import run_sprint as _core_run_sprint
             os.environ["HLEDAC_ACQUISITION_PROFILE"] = args.acquisition_profile
             asyncio.run(_core_run_sprint(
                 query=sprint_target,
-                duration_s=sprint_duration,
+                duration_s=float(sprint_duration),
                 ui_mode=sprint_ui_mode,
                 aggressive_mode=args.aggressive,
                 deep_probe_enabled=args.deep_probe,
@@ -3211,8 +3235,7 @@ if __name__ == "__main__":
 # =============================================================================
 
 import logging
-import time
-from typing import TYPE_CHECKING, Any
+TYPE_CHECKING
 
 if TYPE_CHECKING:
     from .sprint_scheduler import SprintScheduler
@@ -3221,9 +3244,9 @@ _logger = logging.getLogger(__name__)
 
 
 async def run_warmup(
-    scheduler: "SprintScheduler",
+    scheduler: SprintScheduler,
     config: dict,
-    lifecycle: "Optional[Any]" = None,
+    lifecycle: Any | None = None,
     do_ane_warmup: bool = False,
 ) -> dict:
     """
@@ -3260,9 +3283,10 @@ async def run_warmup(
     # 3. DuckPGQGraph init + merge předchozích dat
     if not hasattr(scheduler, "_ioc_graph") or scheduler._ioc_graph is None:
         try:
+            import glob
+
             from hledac.universal.graph.quantum_pathfinder import DuckPGQGraph
             from hledac.universal.paths import SPRINT_STORE_ROOT
-            import glob
             scheduler._ioc_graph = DuckPGQGraph()
             prev_glob = str(SPRINT_STORE_ROOT / "*" / "batch_*.parquet")
             if glob.glob(prev_glob):

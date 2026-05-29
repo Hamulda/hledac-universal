@@ -23,7 +23,6 @@ import hashlib
 import logging as _logging
 from collections import Counter, OrderedDict
 from dataclasses import dataclass
-
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -41,6 +40,20 @@ __all__ = [
     "_compute_dedup_fingerprint",
     "_compute_url_fingerprint",
 ]
+
+
+# ---------------------------------------------------------------------------
+# Rust URL engine availability (Sprint F216R)
+# ---------------------------------------------------------------------------
+try:
+    from hledac_rust_extensions import fingerprint as _rust_fingerprint
+    from hledac_rust_extensions import normalize as _rust_normalize
+
+    _URL_ENGINE_AVAILABLE = True
+except ImportError:
+    _URL_ENGINE_AVAILABLE = False
+    _rust_normalize = None
+    _rust_fingerprint = None
 
 
 # ---------------------------------------------------------------------------
@@ -113,11 +126,14 @@ def _normalize_osint_url(url: str) -> str:
     if not url or not isinstance(url, str):
         return ""
 
-    try:
-        from urllib.parse import urlparse, urlencode, parse_qsl
-    except ImportError:
-        return url
+    # Sprint F216R: Try Rust fast path first
+    if _URL_ENGINE_AVAILABLE and _rust_normalize is not None:
+        try:
+            return _rust_normalize(url)
+        except Exception:
+            pass  # Fall through to Python implementation
 
+    # Python fallback (original implementation)
     url = url.strip()
 
     try:
@@ -175,7 +191,20 @@ def _compute_url_fingerprint(url: str) -> str:
     URL is normalized before fingerprinting per OSINT URL normalization rules.
 
     Returns 32-char hex BLAKE2b-128 fingerprint.
+
+    Sprint F216R: Uses Rust url_engine.fingerprint (xxHash64 u64) when available,
+    converting to hex string for backward compatibility with existing callers.
     """
+    # Sprint F216R: Try Rust fast path for fingerprint
+    if _URL_ENGINE_AVAILABLE and _rust_fingerprint is not None:
+        try:
+            fp = _rust_fingerprint(url)
+            # Convert u64 to 16-char hex string (backward compatible)
+            return format(fp, '016x')
+        except Exception:
+            pass  # Fall through to Python implementation
+
+    # Python fallback: normalize then BLAKE2b
     normalized_url = _normalize_osint_url(url)
     if normalized_url:
         return hashlib.blake2b(normalized_url.encode("utf-8"), digest_size=16).hexdigest()
@@ -260,8 +289,8 @@ class QualityAssessmentState:
 
     def record_rejection(
         self,
-        finding: "CanonicalFinding",
-        decision: "FindingQualityDecision",
+        finding: CanonicalFinding,
+        decision: FindingQualityDecision,
     ) -> None:
         """
         Sprint F216G: Record a quality gate rejection to the bounded ledger.
@@ -363,7 +392,7 @@ class QualityAssessor:
         self._lmdb_store_fn = lmdb_store_fn
         self._semantic_dedup_cache = semantic_dedup_cache
 
-    def assess(self, finding: "CanonicalFinding") -> "FindingQualityDecision":
+    def assess(self, finding: CanonicalFinding) -> FindingQualityDecision:
         """
         Sprint 8W + 8AG + 8AK: Assess a single finding's quality via entropy + dedup.
 
@@ -525,7 +554,7 @@ class QualityAssessor:
         entropy: float,
         fingerprint: str,
         duplicate: bool,
-    ) -> "FindingQualityDecision":
+    ) -> FindingQualityDecision:
         """Construct a FindingQualityDecision. Import lazily to avoid circular deps."""
         from .duckdb_store import FindingQualityDecision
 
@@ -539,8 +568,8 @@ class QualityAssessor:
 
     def record_rejection(
         self,
-        finding: "CanonicalFinding",
-        decision: "FindingQualityDecision",
+        finding: CanonicalFinding,
+        decision: FindingQualityDecision,
     ) -> None:
         """Delegate to QualityAssessmentState.record_rejection()."""
         self._state.record_rejection(finding, decision)

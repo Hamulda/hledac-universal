@@ -12,7 +12,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any, Dict, Optional
+import os
+from typing import Any
 
 from .body_limiter import read_body_with_cap
 
@@ -21,14 +22,66 @@ logger = logging.getLogger(__name__)
 DEFAULT_TIMEOUT_S = 10.0
 DEFAULT_MAX_BYTES = 10 * 1024 * 1024  # 10MB hard cap
 
+# Tor SOCKS5H proxy — DNS resolved by Tor, not localhost
+_TOR_CURL_PROXY: str = os.environ.get("TOR_SOCKS_PROXY_URL", "socks5h://127.0.0.1:9050")
 
-async def fetch_via_curl_cffi(
+# Tor-specific circuit tracking for curl_cffi Tor fetcher
+_tor_curl_request_count: int = 0
+
+
+async def fetch_via_tor_curl_cffi(
     url: str,
-    headers: Optional[Dict[str, str]] = None,
+    headers: dict[str, str] | None = None,
     timeout_s: float = DEFAULT_TIMEOUT_S,
     max_bytes: int = DEFAULT_MAX_BYTES,
     profile: str = "chrome110",
-) -> Dict[str, Any]:
+    tor_manager: Any = None,
+    circuit_rotation_count: int = 50,
+) -> dict[str, Any]:
+    """
+    Fetch URL via curl_cffi through Tor SOCKS5H proxy with circuit rotation.
+
+    Args:
+        url: URL to fetch (.onion only)
+        headers: Optional HTTP headers
+        timeout_s: Request timeout
+        max_bytes: Max bytes to read
+        profile: TLS profile for JA3 fingerprint
+        tor_manager: TorManager instance for circuit rotation (NEWNYM via stem)
+        circuit_rotation_count: Rotate circuit every N requests (default 50)
+    """
+    global _tor_curl_request_count
+    _tor_curl_request_count += 1
+    count = _tor_curl_request_count
+
+    # Rotate circuit if threshold reached
+    if tor_manager is not None and count >= circuit_rotation_count:
+        _tor_curl_request_count = 0
+        try:
+            await tor_manager.rotate_circuit()
+        except Exception as e:
+            logger.warning(f"[TOR] circuit rotation failed: {e}")
+
+    # Tor SOCKS5H proxy — DNS resolved by Tor, not localhost
+    proxies = {"https": TOR_SOCKS_PROXY}
+    return await fetch_via_curl_cffi(
+        url=url,
+        headers=headers,
+        timeout_s=timeout_s,
+        max_bytes=max_bytes,
+        profile=profile,
+        proxies=proxies,
+    )
+
+
+async def fetch_via_curl_cffi(
+    url: str,
+    headers: dict[str, str] | None = None,
+    timeout_s: float = DEFAULT_TIMEOUT_S,
+    max_bytes: int = DEFAULT_MAX_BYTES,
+    profile: str = "chrome110",
+    proxies: dict[str, str] | None = None,
+) -> dict[str, Any]:
     """
     Fetch URL via curl_cffi stealth lane.
 
@@ -83,11 +136,10 @@ async def fetch_via_curl_cffi(
 
     # Perform request
     try:
-        response = await session.get(
-            url,
-            headers=headers,
-            timeout=timeout_s,
-        )
+        kwargs = {"headers": headers, "timeout": timeout_s}
+        if proxies:
+            kwargs["proxies"] = proxies
+        response = await session.get(url, **kwargs)
 
         # Read body with hard cap at max_bytes
         # Uses shared body_limiter helper (same pattern: bytearray + del cap)
@@ -115,7 +167,7 @@ async def fetch_via_curl_cffi(
             "network_error_kind": None,
         }
 
-    except asyncio.TimeoutError:
+    except TimeoutError:
         return _make_error_result(
             url,
             error="timeout",
@@ -167,7 +219,7 @@ def _make_error_result(
     network_error_kind: str,
     selected_transport: str,
     tls_impersonate: str,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Build an error result dict."""
     return {
         "url": url,

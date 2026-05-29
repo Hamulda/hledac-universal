@@ -27,134 +27,134 @@ See LEGACY_MIGRATION.md for details.
 """
 
 # Base classes and types
-from .base import (
-    UniversalCoordinator,
-    OperationType,
-    DecisionResponse,
-    OperationResult,
-    CoordinatorCapabilities,
-    MemoryPressureLevel
-)
+# Privacy enhanced research
+from hledac.universal.project_types import PrivacyLevel
 
-# Core coordinators
-from .research_coordinator import UniversalResearchCoordinator
-from .execution_coordinator import UniversalExecutionCoordinator
-from .security_coordinator import UniversalSecurityCoordinator
-from .monitoring_coordinator import UniversalMonitoringCoordinator
-from .memory_coordinator import (
-    UniversalMemoryCoordinator,
-    MemoryAllocation,
-    MemoryStatistics,
-    MemoryZone,
-)
+# Coordinator catalog for domain-grouped lazy access
+from ._catalog import catalog
 
-# Validation coordinator
-from .validation_coordinator import (
-    UniversalValidationCoordinator,
-    ValidationSeverity,
-    OutputFormat,
-    ValidationResult,
-    CleaningResult,
-)
-
-# Advanced coordinators (ACTIVE)
-from .advanced_research_coordinator import (
-    UniversalAdvancedResearchCoordinator,
+# Research coordinator exports (ACTIVE)
+from .research_coordinator import (
     ExcavationConfig,
     ExcavationStrategy,
-    ResearchPaper,
-    ResearchThread,
     MetaPattern,
+    ResearchPaper,
     ResearchTheory,
-)
-from .swarm_coordinator import (
-    UniversalSwarmCoordinator,
-    SwarmState,
-    SwarmMetrics,
-    AdaptiveStrategy,
-    SwarmAgent,
-)
-from .meta_reasoning_coordinator import (
-    UniversalMetaReasoningCoordinator,
-    ReasoningStrategy,
-    ReasoningStep,
-    ReasoningChain,
-    ThoughtNode,
+    ResearchThread,
+    ResearchDepth,
+    HierarchicalPlan,
+    UniversalResearchCoordinator,
 )
 
-# Performance optimization
-from .performance_coordinator import (
-    AgentPerformanceOptimizer,
-    AgentPool,
-    IntelligentLoadBalancer,
-    AsyncExecutionOptimizer,
-    LoadBalancingConfig,
-    OptimizationReport,
-    AgentMetrics,
+# Multi-agent coordination
+from .agent_coordination_engine import (
+    AgentCapability,
+    AgentCoordinationEngine,
+    AgentPerformance,
+    AgentType,
+    CoordinationStrategy,
+    TaskPriority,
+    TaskRequest,
+    TaskResult,
+    coordinated_search,
+)
+from .base import (
+    CoordinatorCapabilities,
+    DecisionResponse,
+    MemoryPressureLevel,
+    OperationResult,
+    OperationType,
+    UniversalCoordinator,
 )
 
 # Benchmark coordinator
 from .benchmark_coordinator import (
     AgentBenchmarker,
+    AgentBenchmarkResult,
     BenchmarkConfig,
     BenchmarkReport,
-    AgentBenchmarkResult,
     MemoryProfiler,
     run_agent_benchmarks,
     run_quick_performance_check,
 )
 
-# Resource allocator
-from .resource_allocator import (
-    IntelligentResourceAllocator,
-    ResourceRequest,
-    ResourceAllocation,
-    ResourceType,
-    Priority,
+# Registry
+from .execution_coordinator import UniversalExecutionCoordinator
+from .memory_coordinator import (
+    MemoryAllocation,
+    MemoryStatistics,
+    MemoryZone,
+    UniversalMemoryCoordinator,
 )
-
-# Multi-agent coordination
-from .agent_coordination_engine import (
-    AgentCoordinationEngine,
-    AgentType,
-    TaskPriority,
-    AgentCapability,
-    AgentPerformance,
-    TaskRequest,
-    TaskResult,
-    CoordinationStrategy,
-    coordinated_search,
+from .meta_reasoning_coordinator import (
+    ReasoningChain,
+    ReasoningStep,
+    ReasoningStrategy,
+    ThoughtNode,
+    UniversalMetaReasoningCoordinator,
 )
+from .monitoring_coordinator import UniversalMonitoringCoordinator
 
-# Privacy enhanced research
-from hledac.universal.project_types import PrivacyLevel
+# Performance optimization
+from .performance_coordinator import (
+    AgentMetrics,
+    AgentPerformanceOptimizer,
+    AgentPool,
+    AsyncExecutionOptimizer,
+    IntelligentLoadBalancer,
+    LoadBalancingConfig,
+    OptimizationReport,
+)
 from .privacy_enhanced_research import (
-    PrivacyEnhancedResearch,
-    PrivacyConfig,
-    DataRetention,
-    AuditRecord,
     AnonymizedRequest,
+    AuditRecord,
+    DataRetention,
+    PrivacyConfig,
+    PrivacyEnhancedResearch,
     SanitizedResult,
     private_research,
 )
 
+# Core coordinators
+from .research_coordinator import UniversalResearchCoordinator
+
 # Research optimizer
 from .research_optimizer import (
-    ResearchOptimizer,
+    CachePolicy,
     OptimizationConfig,
     OptimizationStrategy,
-    CachePolicy,
-    QueryMetrics,
     OptimizedResult,
-    optimized_research,
+    QueryMetrics,
+    ResearchOptimizer,
     create_optimized_pipeline,
+    optimized_research,
 )
 
-# Registry
-from .coordinator_registry import CoordinatorRegistry
+# Resource allocator
+from .resource_allocator import (
+    IntelligentResourceAllocator,
+    Priority,
+    ResourceAllocation,
+    ResourceRequest,
+    ResourceType,
+)
+from .security_coordinator import UniversalSecurityCoordinator
+from .swarm_coordinator import (
+    AdaptiveStrategy,
+    SwarmAgent,
+    SwarmMetrics,
+    SwarmState,
+    UniversalSwarmCoordinator,
+)
 
-# Coordinator catalog for domain-grouped lazy access
-from ._catalog import catalog
+# Validation coordinator
+from .validation_coordinator import (
+    CleaningResult,
+    OutputFormat,
+    UniversalValidationCoordinator,
+    ValidationResult,
+    ValidationSeverity,
+)
 
 # LEGACY IMPORTS - Deprecated, moved to legacy/coordinators/
 # These imports will be removed in v5.0
@@ -198,8 +198,10 @@ __all__ = [
     'ValidationResult',
     'CleaningResult',
 
-    # Advanced research coordinators
-    'UniversalAdvancedResearchCoordinator',
+    # Universal research coordinator
+    'UniversalResearchCoordinator',
+    'ResearchDepth',
+    'HierarchicalPlan',
     'ExcavationConfig',
     'ExcavationStrategy',
     'ResearchPaper',
@@ -276,9 +278,6 @@ __all__ = [
     'OptimizedResult',
     'optimized_research',
     'create_optimized_pipeline',
-
-    # Registry
-    'CoordinatorRegistry',
 
     # Catalog
     'catalog',

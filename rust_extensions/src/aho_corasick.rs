@@ -52,4 +52,10 @@ impl AhoCorasickMatcher {
     fn is_empty(&self) -> bool {
         self.patterns.is_empty()
     }
+
+    /// Fast path: return True if any pattern matches, False otherwise.
+    /// Optimized for short-circuit evaluation on large texts.
+    fn find_any(&self, text: &str) -> bool {
+        self.automaton.is_match(text.as_bytes())
+    }
 }

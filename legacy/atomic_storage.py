@@ -13,22 +13,25 @@ Features sharding for improved scalability and memory efficiency.
 from __future__ import annotations
 
 import warnings
+
 warnings.warn(
     "knowledge.atomic_storage is DEPRECATED. Use knowledge.duckdb_store instead.",
     DeprecationWarning, stacklevel=2)
 
-import json
-import hashlib
 import asyncio
 import gc
-import time
-from pathlib import Path
-from datetime import datetime
-from typing import Dict, List, Any, Optional, Iterator, Tuple, Set
-from dataclasses import dataclass, field, asdict
-from collections import OrderedDict, deque
-from heapq import heappush, heappushpop
+import hashlib
+import json
 import logging
+import time
+from collections import OrderedDict, deque
+from collections.abc import Iterator
+from dataclasses import asdict, dataclass, field
+from datetime import datetime
+from heapq import heappush, heappushpop
+from pathlib import Path
+from typing import Any
+
 import orjson  # faster than pickle for JSON-serializable data
 
 # Optional delta compressor for snapshot storage
@@ -74,9 +77,9 @@ class KnowledgeEntry:
     source: str
     entry_type: str = "text"
     timestamp: datetime = field(default_factory=datetime.now)
-    metadata: Dict[str, Any] = field(default_factory=dict)
-    embedding: Optional[List[float]] = None
-    id: Optional[str] = None
+    metadata: dict[str, Any] = field(default_factory=dict)
+    embedding: list[float] | None = None
+    id: str | None = None
 
     def __post_init__(self):
         """Generate ID if not provided."""
@@ -86,14 +89,14 @@ class KnowledgeEntry:
             ).hexdigest()[:12]
             self.id = f"ke_{content_hash}"
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert entry to dictionary."""
         data = asdict(self)
         data['timestamp'] = self.timestamp.isoformat()
         return data
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> KnowledgeEntry:
+    def from_dict(cls, data: dict[str, Any]) -> KnowledgeEntry:
         """Create entry from dictionary."""
         if isinstance(data.get('timestamp'), str):
             data['timestamp'] = datetime.fromisoformat(data['timestamp'])
@@ -105,11 +108,11 @@ class ShardCache:
 
     def __init__(self, max_shards: int = 4):
         self.max_shards = max_shards
-        self._cache: OrderedDict[str, Dict[str, KnowledgeEntry]] = OrderedDict()
+        self._cache: Ordereddict[str, dict[str, KnowledgeEntry]] = OrderedDict()
         self._access_count = 0
         self._hit_count = 0
 
-    def get(self, shard_id: str) -> Optional[Dict[str, KnowledgeEntry]]:
+    def get(self, shard_id: str) -> dict[str, KnowledgeEntry] | None:
         """Get shard from cache, updating LRU order."""
         self._access_count += 1
         if shard_id in self._cache:
@@ -119,7 +122,7 @@ class ShardCache:
             return self._cache[shard_id]
         return None
 
-    def put(self, shard_id: str, entries: Dict[str, KnowledgeEntry]) -> None:
+    def put(self, shard_id: str, entries: dict[str, KnowledgeEntry]) -> None:
         """Add shard to cache, evicting oldest if necessary."""
         if shard_id in self._cache:
             # Update existing and move to end
@@ -137,7 +140,7 @@ class ShardCache:
         """Clear all cached shards."""
         self._cache.clear()
 
-    def get_stats(self) -> Dict[str, Any]:
+    def get_stats(self) -> dict[str, Any]:
         """Get cache statistics."""
         hit_rate = self._hit_count / max(1, self._access_count)
         return {
@@ -200,7 +203,7 @@ class AtomicJSONKnowledgeGraph:
         self.aggressive_memory_mode = aggressive_memory_mode
 
         # In-memory index (lazy-loaded)
-        self._index: Optional[Dict[str, Any]] = None
+        self._index: dict[str, Any] | None = None
 
         # Statistics
         self.stats = {
@@ -234,10 +237,10 @@ class AtomicJSONKnowledgeGraph:
             total = 0
             for shard_file in self.entries_dir.glob("*.json"):
                 try:
-                    with open(shard_file, 'r', encoding='utf-8') as f:
+                    with open(shard_file, encoding='utf-8') as f:
                         data = json.load(f)
                     total += len(data)
-                except (json.JSONDecodeError, IOError):
+                except (OSError, json.JSONDecodeError):
                     # Skip corrupted shards
                     pass
             self._total_entries = total
@@ -268,13 +271,13 @@ class AtomicJSONKnowledgeGraph:
             # Read JSON shards and write to LMDB
             for shard_file in self.entries_dir.glob("*.json"):
                 try:
-                    with open(shard_file, 'r', encoding='utf-8') as f:
+                    with open(shard_file, encoding='utf-8') as f:
                         data = json.load(f)
                     with self._env.begin(write=True) as txn:
                         for entry_id, entry_data in data.items():
                             entry = KnowledgeEntry(**entry_data)
                             txn.put(entry_id.encode(), orjson.dumps(entry.to_dict()))
-                except (json.JSONDecodeError, IOError):
+                except (OSError, json.JSONDecodeError):
                     pass
 
             # Mark migration complete
@@ -301,11 +304,11 @@ class AtomicJSONKnowledgeGraph:
         logger.info("Migrating legacy entries.json to sharded format...")
 
         try:
-            with open(self.legacy_entries_file, 'r', encoding='utf-8') as f:
+            with open(self.legacy_entries_file, encoding='utf-8') as f:
                 data = json.load(f)
 
             # Convert and shard entries
-            shard_entries: Dict[str, Dict[str, Any]] = {}
+            shard_entries: dict[str, dict[str, Any]] = {}
             for entry_id, entry_data in data.items():
                 shard_id = self._get_shard_id(entry_id)
                 if shard_id not in shard_entries:
@@ -325,11 +328,11 @@ class AtomicJSONKnowledgeGraph:
 
             logger.info(f"Migration complete: {len(data)} entries -> {len(shard_entries)} shards")
 
-        except (json.JSONDecodeError, IOError) as e:
+        except (OSError, json.JSONDecodeError) as e:
             logger.error(f"Migration failed: {e}")
             # Don't delete legacy file on error
 
-    def _load_shard(self, shard_id: str) -> Dict[str, KnowledgeEntry]:
+    def _load_shard(self, shard_id: str) -> dict[str, KnowledgeEntry]:
         """Load a shard from disk (with caching)."""
         # Check cache first
         cached = self._shard_cache.get(shard_id)
@@ -344,7 +347,7 @@ class AtomicJSONKnowledgeGraph:
             return entries
 
         try:
-            with open(shard_path, 'r', encoding='utf-8') as f:
+            with open(shard_path, encoding='utf-8') as f:
                 data = json.load(f)
 
             entries = {
@@ -359,14 +362,14 @@ class AtomicJSONKnowledgeGraph:
 
             logger.debug(f"Loaded shard {shard_id} with {len(entries)} entries")
 
-        except (json.JSONDecodeError, IOError) as e:
+        except (OSError, json.JSONDecodeError) as e:
             logger.warning(f"Error loading shard {shard_id}: {e}. Starting fresh.")
             entries = {}
             self._shard_cache.put(shard_id, entries)
 
         return entries
 
-    def _save_shard(self, shard_id: str, entries: Dict[str, KnowledgeEntry]) -> None:
+    def _save_shard(self, shard_id: str, entries: dict[str, KnowledgeEntry]) -> None:
         """Save a shard to disk atomically."""
         shard_path = self._get_shard_path(shard_id)
 
@@ -388,7 +391,7 @@ class AtomicJSONKnowledgeGraph:
 
             logger.debug(f"Saved shard {shard_id} with {len(entries)} entries")
 
-        except IOError as e:
+        except OSError as e:
             logger.error(f"Error saving shard {shard_id}: {e}")
             if temp_file.exists():
                 temp_file.unlink()
@@ -423,10 +426,10 @@ class AtomicJSONKnowledgeGraph:
         self._clear_memory_if_aggressive()
         return entry.id
 
-    def add_entries(self, entries: List[KnowledgeEntry]) -> List[str]:
+    def add_entries(self, entries: list[KnowledgeEntry]) -> list[str]:
         """Add multiple entries efficiently."""
         # Group by shard
-        shard_groups: Dict[str, Dict[str, KnowledgeEntry]] = {}
+        shard_groups: dict[str, dict[str, KnowledgeEntry]] = {}
         ids = []
 
         for entry in entries:
@@ -446,7 +449,7 @@ class AtomicJSONKnowledgeGraph:
         self._clear_memory_if_aggressive()
         return ids
 
-    def get_entry(self, entry_id: str) -> Optional[KnowledgeEntry]:
+    def get_entry(self, entry_id: str) -> KnowledgeEntry | None:
         """Get a specific entry by ID."""
         # Try LMDB first if available
         if self._env is not None:
@@ -465,8 +468,8 @@ class AtomicJSONKnowledgeGraph:
 
     def query(
         self,
-        filter_dict: Optional[Dict[str, Any]] = None,
-        max_shards_scanned: Optional[int] = None
+        filter_dict: dict[str, Any] | None = None,
+        max_shards_scanned: int | None = None
     ) -> Iterator[KnowledgeEntry]:
         """
         Query entries by metadata filters.
@@ -517,7 +520,7 @@ class AtomicJSONKnowledgeGraph:
 
         self._clear_memory_if_aggressive()
 
-    def search_recent(self, limit: int = 100) -> List[KnowledgeEntry]:
+    def search_recent(self, limit: int = 100) -> list[KnowledgeEntry]:
         """
         Search only the most recent N entries.
 
@@ -530,7 +533,7 @@ class AtomicJSONKnowledgeGraph:
         Returns:
             List of KnowledgeEntry objects sorted by timestamp (newest first)
         """
-        all_entries: List[KnowledgeEntry] = []
+        all_entries: list[KnowledgeEntry] = []
 
         # Get all shard files
         shard_files = list(self.entries_dir.glob("*.json"))
@@ -550,8 +553,8 @@ class AtomicJSONKnowledgeGraph:
         self,
         query: str,
         case_sensitive: bool = False,
-        max_shards_scanned: Optional[int] = None
-    ) -> List[KnowledgeEntry]:
+        max_shards_scanned: int | None = None
+    ) -> list[KnowledgeEntry]:
         """
         Search for query string in entry content.
 
@@ -624,7 +627,7 @@ class AtomicJSONKnowledgeGraph:
         gc.collect()
         logger.info("Knowledge graph cleared")
 
-    def get_stats(self) -> Dict[str, Any]:
+    def get_stats(self) -> dict[str, Any]:
         """Get storage statistics."""
         # Use cached total entries count
         total_entries = self._total_entries
@@ -681,7 +684,7 @@ class AtomicJSONKnowledgeGraph:
         self._clear_memory_if_aggressive()
         return total_deleted
 
-    def get_all_shard_ids(self) -> List[str]:
+    def get_all_shard_ids(self) -> list[str]:
         """Get list of all shard IDs."""
         return sorted([f.stem for f in self.entries_dir.glob("*.json")])
 
@@ -697,25 +700,25 @@ class AtomicJSONKnowledgeGraph:
 
     async def aquery(
         self,
-        filter_dict: Optional[Dict[str, Any]] = None,
-        max_shards_scanned: Optional[int] = None
-    ) -> List[KnowledgeEntry]:
+        filter_dict: dict[str, Any] | None = None,
+        max_shards_scanned: int | None = None
+    ) -> list[KnowledgeEntry]:
         """Async version of query."""
         return await asyncio.to_thread(
             lambda: list(self.query(filter_dict, max_shards_scanned))
         )
 
-    async def aget_stats(self) -> Dict[str, Any]:
+    async def aget_stats(self) -> dict[str, Any]:
         """Async version of get_stats."""
         return await asyncio.to_thread(self.get_stats)
 
-    async def asearch_recent(self, limit: int = 100) -> List[KnowledgeEntry]:
+    async def asearch_recent(self, limit: int = 100) -> list[KnowledgeEntry]:
         """Async version of search_recent."""
         return await asyncio.to_thread(self.search_recent, limit)
 
 
 # Global instance cache
-_storage_instances: Dict[str, AtomicJSONKnowledgeGraph] = {}
+_storage_instances: dict[str, AtomicJSONKnowledgeGraph] = {}
 
 
 def get_atomic_storage(
@@ -768,7 +771,7 @@ class SnapshotEntry:
     size_bytes: int
     compressed: bool
     created_at: float
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 class SnapshotStorage:
@@ -779,9 +782,9 @@ class SnapshotStorage:
     MAX_TOTAL_SNAPSHOTS = 100  # Max pocet snapshotu v RAM indexu
     CHUNK_SIZE = 64 * 1024  # 64KB chunks for streaming encryption
 
-    def __init__(self, storage_dir: Optional[Path] = None, encrypt_at_rest: bool = False):
-        from pathlib import Path
+    def __init__(self, storage_dir: Path | None = None, encrypt_at_rest: bool = False):
         import os
+        from pathlib import Path
 
         self._storage_dir = storage_dir or Path.home() / '.hledac' / 'snapshots'
         self._storage_dir.mkdir(parents=True, exist_ok=True)
@@ -797,12 +800,12 @@ class SnapshotStorage:
         else:
             self._cipher = None
 
-        self._index: Dict[str, SnapshotEntry] = {}  # evidence_id -> metadata only
-        self._cas_index: Dict[str, str] = {}  # content_hash -> blob_path (CAS)
+        self._index: dict[str, SnapshotEntry] = {}  # evidence_id -> metadata only
+        self._cas_index: dict[str, str] = {}  # content_hash -> blob_path (CAS)
 
         # Delta compressor for snapshot storage (Sprint 39)
         self._delta_compressor = DeltaCompressor(compress=True) if DELTA_AVAILABLE else None
-        self._previous_content: Optional[str] = None  # For delta computation
+        self._previous_content: str | None = None  # For delta computation
 
         # Sprint 79b: ZSTD compression for snapshots
         if ZSTD_AVAILABLE:
@@ -823,8 +826,9 @@ class SnapshotStorage:
             logger.warning("[ENCRYPT] No ENCRYPTION_KEY env var - using temporary key")
 
         try:
-            from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
             import secrets as sec
+
+            from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
             self._nonce = sec.token_bytes(12)
             self._cipher = Cipher(algorithms.AES(self._encryption_key), modes.GCM(self._nonce))
         except ImportError:
@@ -837,7 +841,7 @@ class SnapshotStorage:
         index_path = self._storage_dir / 'index.json'
         if index_path.exists():
             try:
-                with open(index_path, 'r') as f:
+                with open(index_path) as f:
                     data = json.load(f)
                 for evidence_id, entry_data in data.items():
                     self._index[evidence_id] = SnapshotEntry(**entry_data)
@@ -881,7 +885,7 @@ class SnapshotStorage:
 
     async def store_snapshot(self, evidence_id: str, url: str,
                             content_bytes: bytes, content_type: str,
-                            metadata: Optional[Dict[str, Any]] = None) -> Optional[SnapshotEntry]:
+                            metadata: dict[str, Any] | None = None) -> SnapshotEntry | None:
         """Ulozi snapshot na disk (CAS - content-addressable)."""
         import gzip
 
@@ -918,14 +922,11 @@ class SnapshotStorage:
             if self._zstd_compressor:
                 try:
                     compressed = self._zstd_compressor.compress(content_bytes)
-                    use_zstd = True
                 except Exception as e:
                     logger.warning(f"[SNAPSHOT] ZSTD compression failed: {e}, falling back to gzip")
                     compressed = gzip.compress(content_bytes, compresslevel=6)
-                    use_zstd = False
             else:
                 compressed = gzip.compress(content_bytes, compresslevel=6)
-                use_zstd = False
 
             bytes_to_write = compressed
             bytes_in = len(compressed)
@@ -977,7 +978,7 @@ class SnapshotStorage:
             logger.error(f"[SNAPSHOT] Failed to store: {e}")
             return None
 
-    async def load_snapshot(self, evidence_id: str) -> Optional[bytes]:
+    async def load_snapshot(self, evidence_id: str) -> bytes | None:
         """Nacte snapshot z disku (on-demand, ne cache)."""
         import gzip
 
@@ -1030,14 +1031,14 @@ class SnapshotStorage:
             logger.error(f"[SNAPSHOT] Failed to load: {e}")
             return None
 
-    def get_entry(self, evidence_id: str) -> Optional[SnapshotEntry]:
+    def get_entry(self, evidence_id: str) -> SnapshotEntry | None:
         """Vrati metadata snapshotu (bez obsahu)."""
         return self._index.get(evidence_id)
 
     def is_stored(self, evidence_id: str) -> bool:
         return evidence_id in self._index
 
-    def get_stats(self) -> Dict[str, Any]:
+    def get_stats(self) -> dict[str, Any]:
         """Get storage statistics."""
         total_size = sum(e.size_bytes for e in self._index.values())
         return {
@@ -1067,21 +1068,21 @@ class EvidencePacket:
     fetched_at: float
     status: int
     headers_digest: str  # SHA-256 hash of selected headers (not full)
-    snapshot_ref: Dict[str, Any]  # {blob_hash, path, size, encrypted: bool}
+    snapshot_ref: dict[str, Any]  # {blob_hash, path, size, encrypted: bool}
     content_hash: str
-    simhash: Optional[str] = None
-    page_type: Optional[str] = None
-    metadata_digests: Dict[str, str] = field(default_factory=dict)  # {json_ld_hash, opengraph_hash}
+    simhash: str | None = None
+    page_type: str | None = None
+    metadata_digests: dict[str, str] = field(default_factory=dict)  # {json_ld_hash, opengraph_hash}
     # Delta recrawl fields
     delta_recrawl: bool = False  # This is a delta recrawl
     delta_score: float = 0.0  # 0..1 change score
     delta_reason: str = ""  # Max 60 chars
-    delta_fields_changed: List[str] = field(default_factory=list)  # Max 10 fields
-    previous_evidence_id: Optional[str] = None  # Pointer to previous evidence
+    delta_fields_changed: list[str] = field(default_factory=list)  # Max 10 fields
+    previous_evidence_id: str | None = None  # Pointer to previous evidence
 
-    flags: Dict[str, bool] = field(default_factory=dict)  # {stale, swr, blocked}
-    graph_refs: Dict[str, List[str]] = field(default_factory=dict)  # {node_ids: [], edge_ids: []}
-    claims: List[Dict[str, Any]] = field(default_factory=list)  # Claim references
+    flags: dict[str, bool] = field(default_factory=dict)  # {stale, swr, blocked}
+    graph_refs: dict[str, list[str]] = field(default_factory=dict)  # {node_ids: [], edge_ids: []}
+    claims: list[dict[str, Any]] = field(default_factory=list)  # Claim references
 
     # Hard limits
     MAX_GRAPH_REFS = 10  # Max edge_ids in graph_refs
@@ -1089,12 +1090,12 @@ class EvidencePacket:
     MAX_CLAIMS_PER_PACKET = 12  # Max claims per packet
     MAX_DELTA_FIELDS = 10  # Max delta fields changed
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
         return asdict(self)
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "EvidencePacket":
+    def from_dict(cls, data: dict[str, Any]) -> EvidencePacket:
         """Create from dictionary."""
         return cls(**data)
 
@@ -1118,7 +1119,7 @@ class EvidencePacket:
             node_ids.popleft()
         node_ids.append(node_id)
 
-    def add_claims(self, claims: List[Claim]) -> None:
+    def add_claims(self, claims: list[Claim]) -> None:
         """Add claims to packet with hard limit."""
         for claim in claims:
             if len(self.claims) >= self.MAX_CLAIMS_PER_PACKET:
@@ -1131,7 +1132,7 @@ class EvidencePacket:
                 "confidence": claim.confidence
             })
 
-    def get_claim_ids(self) -> List[str]:
+    def get_claim_ids(self) -> list[str]:
         """Get list of claim IDs from this packet."""
         return [c["claim_id"] for c in self.claims]
 
@@ -1151,7 +1152,7 @@ class Claim:
     predicate: str  # Max 80 chars
     object: str  # Max 80 chars
     polarity: int  # +1 positive, -1 negative, 0 neutral
-    time_anchor: Optional[str] = None  # YYYY-MM or similar
+    time_anchor: str | None = None  # YYYY-MM or similar
     confidence: float = 0.5  # 0-1
     source_evidence_id: str = ""
 
@@ -1167,7 +1168,7 @@ class Claim:
         self.confidence = max(0.0, min(1.0, self.confidence))
 
     @classmethod
-    def create_from_text(cls, text: str, evidence_id: str, hermes_available: bool = False) -> List["Claim"]:
+    def create_from_text(cls, text: str, evidence_id: str, hermes_available: bool = False) -> list[Claim]:
         """
         Extract claims from text using Hermes or fallback heuristics.
         Returns max 12 claims per text.
@@ -1183,7 +1184,7 @@ class Claim:
         return claims[:12]  # Hard limit
 
     @classmethod
-    def _extract_svo_heuristic(cls, text: str, evidence_id: str) -> List["Claim"]:
+    def _extract_svo_heuristic(cls, text: str, evidence_id: str) -> list[Claim]:
         """Simple SVO extraction fallback - limited patterns."""
         import re
 
@@ -1250,21 +1251,21 @@ class ClaimCluster:
     positive_count: int = 0
     negative_count: int = 0
     object_variants: deque = field(default_factory=lambda: deque(maxlen=MAX_OBJECT_VARIANTS))  # Max 10
-    timeline_events: List[Dict[str, Any]] = field(default_factory=list) # Max 10
+    timeline_events: list[dict[str, Any]] = field(default_factory=list) # Max 10
     has_drift: bool = False  # Drift detected flag
     uncertainty_score: float = 0.0  # 0..1 uncertainty for evidence minimization
-    metadata_digests: Dict[str, str] = field(default_factory=dict)  # {source_fp, veracity_prior, ...}
-    source_fp_map: Dict[str, str] = field(default_factory=dict)  # evidence_id -> source_fp (bounded to MAX_EVIDENCE)
+    metadata_digests: dict[str, str] = field(default_factory=dict)  # {source_fp, veracity_prior, ...}
+    source_fp_map: dict[str, str] = field(default_factory=dict)  # evidence_id -> source_fp (bounded to MAX_EVIDENCE)
     # Stance tracking per evidence (UPGRADE C)
-    evidence_stances: Dict[str, Dict[str, Any]] = field(default_factory=dict)  # evidence_id -> {stance_label, stance_confidence, stance_anchors}
+    evidence_stances: dict[str, dict[str, Any]] = field(default_factory=dict)  # evidence_id -> {stance_label, stance_confidence, stance_anchors}
     # Veracity prior (UPGRADE B)
     veracity_prior: float = 0.5  # 0..1 prior belief in claim veracity
     veracity_prior_confidence: float = 0.0  # Confidence in prior (0..1)
 
     # Sprint 62: BetaBinomial for belief tracking
     _bb: Any = field(default=None, repr=False)  # BetaBinomial instance
-    supporting_evidence: List[Dict] = field(default_factory=list)
-    contradicting_evidence: List[Dict] = field(default_factory=list)
+    supporting_evidence: list[dict] = field(default_factory=list)
+    contradicting_evidence: list[dict] = field(default_factory=list)
     _max_evidence: int = 100
 
     # Hard limits
@@ -1280,7 +1281,7 @@ class ClaimCluster:
         else:
             self._bb = None
 
-    def add_evidence(self, evidence_id: str, domain: str, obj_variant: str, polarity: int, source_fp: Optional[str] = None) -> None:
+    def add_evidence(self, evidence_id: str, domain: str, obj_variant: str, polarity: int, source_fp: str | None = None) -> None:
         """Add evidence with hard limits (ring buffer)."""
         if evidence_id not in self.evidence_ids:
             if len(self.evidence_ids) >= self.MAX_EVIDENCE:
@@ -1319,7 +1320,7 @@ class ClaimCluster:
             self.first_seen = now
         self.last_seen = now
 
-    def add_stance(self, evidence_id: str, stance: Dict[str, Any]) -> None:
+    def add_stance(self, evidence_id: str, stance: dict[str, Any]) -> None:
         """
         Add stance for evidence (bounded).
 
@@ -1360,15 +1361,15 @@ class ClaimCluster:
         # Check for material change
         return abs(self.veracity_prior - old_prior) > 0.15
 
-    def get_stance_metrics(self) -> Dict[str, Any]:
+    def get_stance_metrics(self) -> dict[str, Any]:
         """
         Get stance metrics for this cluster.
 
         Returns:
             Dict with contradiction_rate, stance_entropy, support_count, refute_count, discuss_count
         """
-        from collections import Counter
         import math
+        from collections import Counter
 
         if not self.evidence_stances:
             return {
@@ -1426,7 +1427,7 @@ class ClaimCluster:
             return True
         return False
 
-    def get_dominant_object(self) -> Optional[str]:
+    def get_dominant_object(self) -> str | None:
         """Get most common object variant."""
         if not self.object_variants:
             return None
@@ -1491,11 +1492,11 @@ class ClaimCluster:
         """Return count of independent sources from supporting evidence."""
         return len({ev.get("domain") for ev in self.supporting_evidence if ev.get("domain")})
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "ClaimCluster":
+    def from_dict(cls, data: dict[str, Any]) -> ClaimCluster:
         return cls(**data)
 
 
@@ -1508,19 +1509,19 @@ class ClaimClusterIndex:
     MAX_CLAIMS_RAM = 200
     MAX_CLAIMS_DISK = 5000
 
-    def __init__(self, storage_dir: Optional[Path] = None):
+    def __init__(self, storage_dir: Path | None = None):
         self._storage_dir = storage_dir or Path.home() / '.hledac' / 'claim_clusters'
         self._clusters_dir = self._storage_dir / 'clusters'
         self._clusters_dir.mkdir(parents=True, exist_ok=True)
 
         # LRU cache for RAM
-        self._ram_cache: OrderedDict[str, ClaimCluster] = OrderedDict()
+        self._ram_cache: Ordereddict[str, ClaimCluster] = OrderedDict()
         self._disk_count = 0
 
         # Alignment tracking - cross-source independence
-        self._source_fp_to_domain: Dict[str, str] = {}
-        self._last_author_entity: Optional[str] = None
-        self._repost_domains: Set[str] = set()
+        self._source_fp_to_domain: dict[str, str] = {}
+        self._last_author_entity: str | None = None
+        self._repost_domains: set[str] = set()
 
     def _get_cluster_path(self, claim_id: str) -> Path:
         """Get path for cluster file (sharded by claim_id prefix)."""
@@ -1572,13 +1573,13 @@ class ClaimClusterIndex:
         except Exception as e:
             logger.warning(f"[CLAIM] Failed to save cluster {claim_id}: {e}")
 
-    def _load_from_disk(self, claim_id: str) -> Optional[ClaimCluster]:
+    def _load_from_disk(self, claim_id: str) -> ClaimCluster | None:
         """Load cluster from disk."""
         try:
             path = self._get_cluster_path(claim_id)
             if not path.exists():
                 return None
-            with open(path, 'r') as f:
+            with open(path) as f:
                 data = json.load(f)
             return ClaimCluster.from_dict(data)
         except Exception:
@@ -1593,7 +1594,7 @@ class ClaimClusterIndex:
         evidence_id: str,
         domain: str,
         polarity: int = 0,
-        source_fp: Optional[str] = None
+        source_fp: str | None = None
     ) -> ClaimCluster:
         """Add evidence to cluster and persist."""
         cluster = self.get_or_create(claim_id, subject, predicate)
@@ -1604,7 +1605,7 @@ class ClaimClusterIndex:
 
         return cluster
 
-    def get_high_uncertainty_clusters(self, topk: int = 10) -> List[Tuple[str, float]]:
+    def get_high_uncertainty_clusters(self, topk: int = 10) -> list[tuple[str, float]]:
         """
         Get top K clusters by uncertainty score.
         Uses streaming heap to avoid loading all clusters.
@@ -1630,11 +1631,11 @@ class ClaimClusterIndex:
             self._save_to_disk(claim_id, cluster)
         self._ram_cache.clear()
 
-    def get_cluster(self, claim_id: str) -> Optional[ClaimCluster]:
+    def get_cluster(self, claim_id: str) -> ClaimCluster | None:
         """Get cluster by ID."""
         return self.get_or_create(claim_id, "", "")
 
-    def get_stats(self) -> Dict[str, Any]:
+    def get_stats(self) -> dict[str, Any]:
         """Get index statistics."""
         return {
             "ram_clusters": len(self._ram_cache),
@@ -1689,7 +1690,7 @@ class ClaimClusterIndex:
         logger.info(f"[COMPACT] clusters_compacted={compacted}")
         return compacted
 
-    def get_top_clusters(self, limit: int = 200) -> List[Tuple[str, ClaimCluster]]:
+    def get_top_clusters(self, limit: int = 200) -> list[tuple[str, ClaimCluster]]:
         """
         Get top clusters by evidence count.
 
@@ -1697,7 +1698,7 @@ class ClaimClusterIndex:
             List of (claim_id, cluster) tuples sorted by evidence count
         """
         # Combine RAM and disk
-        all_clusters: List[Tuple[str, ClaimCluster]] = []
+        all_clusters: list[tuple[str, ClaimCluster]] = []
 
         # From RAM
         for claim_id, cluster in self._ram_cache.items():
@@ -1712,7 +1713,7 @@ class ClaimClusterIndex:
                         if count >= 10:  # Max 10 per shard
                             break
                         try:
-                            with open(f, 'r') as fp:
+                            with open(f) as fp:
                                 data = json.load(fp)
                             cluster = ClaimCluster.from_dict(data)
                             all_clusters.append((f.stem, cluster))
@@ -1736,8 +1737,8 @@ class ClaimClusterIndex:
         cluster.metadata_digests = getattr(cluster, 'metadata_digests', {})
         cluster.metadata_digests['source_fp'] = source_fp
 
-    def compute_independence(self, domain: str, source_fp: str, author_entity_id: Optional[str] = None,
-                            canonical_domain: Optional[str] = None) -> float:
+    def compute_independence(self, domain: str, source_fp: str, author_entity_id: str | None = None,
+                            canonical_domain: str | None = None) -> float:
         """
         Compute independence score for a source (0..1).
         Penalizes:
@@ -1770,7 +1771,7 @@ class ClaimClusterIndex:
 
         return max(0.0, min(1.0, score))
 
-    def compute_alignment_for_cluster(self, claim_id: str) -> Dict[str, Any]:
+    def compute_alignment_for_cluster(self, claim_id: str) -> dict[str, Any]:
         """
         Compute alignment table for a cluster.
         Returns: {supports: [], contradicts: [], unclear: [], independent_support_count: int}
@@ -1778,7 +1779,7 @@ class ClaimClusterIndex:
         Uses per-evidence source_fp_map from ClaimCluster for accurate independence counting.
         """
         cluster = self.get_or_create(claim_id, "", "")
-        stance_domains: Dict[str, List[str]] = {'supports': [], 'contradicts': [], 'unclear': []}
+        stance_domains: dict[str, list[str]] = {'supports': [], 'contradicts': [], 'unclear': []}
         unique_source_fps = set()
 
         # Get all evidence for this cluster and compute stance
@@ -1814,7 +1815,7 @@ class ClaimClusterIndex:
 class EvidencePacketStorage:
     """Disk-only storage pro EvidencePacket - žádný RAM index navíc."""
 
-    def __init__(self, storage_dir: Optional[Path] = None):
+    def __init__(self, storage_dir: Path | None = None):
         from pathlib import Path
 
         self._storage_dir = storage_dir or Path.home() / '.hledac' / 'evidence_packets'
@@ -1846,13 +1847,13 @@ class EvidencePacketStorage:
             logger.error(f"[EVIDENCE PACKET] Failed to store {evidence_id}: {e}")
             return False
 
-    def load_packet(self, evidence_id: str) -> Optional[EvidencePacket]:
+    def load_packet(self, evidence_id: str) -> EvidencePacket | None:
         """Load packet from disk."""
         try:
             packet_path = self._get_packet_path(evidence_id)
             if not packet_path.exists():
                 return None
-            with open(packet_path, 'r') as f:
+            with open(packet_path) as f:
                 data = json.load(f)
             return EvidencePacket.from_dict(data)
         except Exception as e:
@@ -1863,7 +1864,7 @@ class EvidencePacketStorage:
         """Check if packet exists on disk."""
         return self._get_packet_path(evidence_id).exists()
 
-    def verify_integrity(self, packet: EvidencePacket) -> Dict[str, bool]:
+    def verify_integrity(self, packet: EvidencePacket) -> dict[str, bool]:
         """
         Verify integrity of packet pointers (test-only helper).
         Returns dict with verification results.
@@ -1897,7 +1898,7 @@ class EvidencePacketStorage:
 
         return results
 
-    def get_stats(self) -> Dict[str, Any]:
+    def get_stats(self) -> dict[str, Any]:
         """Get storage statistics."""
         # Packets are stored in shards/ directory
         shards_dir = self._storage_dir / 'shards'
@@ -1943,12 +1944,12 @@ class PatternStats:
     # Hard limits
     MAX_PREFIX_LEN = 60
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
         return asdict(self)
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "PatternStats":
+    def from_dict(cls, data: dict[str, Any]) -> PatternStats:
         """Create from dictionary."""
         return cls(**data)
 
@@ -1979,7 +1980,7 @@ class PatternStatsManager:
 
     def __init__(
         self,
-        storage_dir: Optional[Path] = None,
+        storage_dir: Path | None = None,
         max_patterns_ram: int = 200,
         max_patterns_disk: int = 5000,
         ema_alpha: float = 0.2
@@ -1992,8 +1993,8 @@ class PatternStatsManager:
         self._ema_alpha = ema_alpha
 
         # RAM cache: LRUOrderedDict
-        self._ram_cache: OrderedDict[str, PatternStats] = OrderedDict()
-        self._ram_cache_set: Set[str] = set()  # For fast lookup
+        self._ram_cache: Ordereddict[str, PatternStats] = OrderedDict()
+        self._ram_cache_set: set[str] = set()  # For fast lookup
 
     def _get_pattern_key(self, domain: str, url: str) -> str:
         """Extract path prefix bucket from URL and create pattern key."""
@@ -2043,7 +2044,7 @@ class PatternStatsManager:
         pattern_path = self._get_pattern_path(pattern_key)
         if pattern_path.exists():
             try:
-                with open(pattern_path, 'r') as f:
+                with open(pattern_path) as f:
                     data = json.load(f)
                 stats = PatternStats.from_dict(data)
                 self._add_to_ram_cache(pattern_key, stats)
@@ -2176,7 +2177,7 @@ class PatternStatsManager:
             self._persist_pattern(pattern_key, stats)
         logger.info(f"[PATTERN] Flushed {len(self._ram_cache)} patterns to disk")
 
-    def get_stats(self) -> Dict[str, Any]:
+    def get_stats(self) -> dict[str, Any]:
         """Get pattern stats manager statistics."""
         # Count patterns on disk
         disk_patterns = 0
@@ -2236,7 +2237,6 @@ class PatternStatsManager:
 # =============================================================================
 
 import re
-from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urlparse
 
 
@@ -2275,10 +2275,10 @@ class SourceQualityScorer:
     def compute_source_quality(
         self,
         url: str,
-        packet_metadata: Optional[Dict[str, Any]] = None,
-        preview: Optional[str] = None,
-        title: Optional[str] = None
-    ) -> Dict[str, Any]:
+        packet_metadata: dict[str, Any] | None = None,
+        preview: str | None = None,
+        title: str | None = None
+    ) -> dict[str, Any]:
         """
         Compute source quality score from available signals.
 
@@ -2291,7 +2291,7 @@ class SourceQualityScorer:
         Returns:
             Dict with score, features_hash, reasons_topk
         """
-        features: Dict[str, Any] = {}
+        features: dict[str, Any] = {}
 
         # === Domain/URL hygiene ===
         parsed = urlparse(url)
@@ -2362,7 +2362,7 @@ class SourceQualityScorer:
             'reasons_topk': reasons
         }
 
-    def _compute_weighted_score(self, features: Dict[str, Any]) -> float:
+    def _compute_weighted_score(self, features: dict[str, Any]) -> float:
         """Compute weighted quality score."""
         score = 0.0
         weights = {
@@ -2390,11 +2390,11 @@ class SourceQualityScorer:
 
     def _extract_reasons(
         self,
-        features: Dict[str, Any],
+        features: dict[str, Any],
         url: str,
-        preview: Optional[str],
-        title: Optional[str]
-    ) -> List[str]:
+        preview: str | None,
+        title: str | None
+    ) -> list[str]:
         """Extract top reasons for score."""
         reasons = []
 
@@ -2420,7 +2420,7 @@ class SourceQualityScorer:
 
         return reasons[:self.MAX_REASONS]
 
-    def _compute_features_hash(self, features: Dict[str, Any]) -> str:
+    def _compute_features_hash(self, features: dict[str, Any]) -> str:
         """Compute stable hash of features."""
         # Sort keys for deterministic serialization
         stable = json.dumps(features, sort_keys=True, separators=(',', ':'))
@@ -2447,10 +2447,10 @@ class VeracityPriorCalculator:
 
     def compute_veracity_prior(
         self,
-        evidence_scores: List[Dict[str, Any]],
-        source_fp_map: Dict[str, str],
-        stances: Optional[Dict[str, Dict[str, Any]]] = None
-    ) -> Dict[str, Any]:
+        evidence_scores: list[dict[str, Any]],
+        source_fp_map: dict[str, str],
+        stances: dict[str, dict[str, Any]] | None = None
+    ) -> dict[str, Any]:
         """
         Compute veracity prior from evidence scores.
 
@@ -2493,10 +2493,10 @@ class VeracityPriorCalculator:
 
         # Weight by independence (source_fp uniqueness)
         weighted_scores = []
-        fp_counts: Dict[str, int] = {}
+        fp_counts: dict[str, int] = {}
 
         # Count FP occurrences for independence
-        for evidence_id, fp in source_fp_map.items():
+        for _evidence_id, fp in source_fp_map.items():
             fp_counts[fp] = fp_counts.get(fp, 0) + 1
 
         for ev in evidence_scores[:self.MAX_EVIDENCE_FOR_PRIOR]:
@@ -2532,13 +2532,13 @@ class VeracityPriorCalculator:
 
     def _compute_contradiction_rate(
         self,
-        stances: Dict[str, Dict[str, Any]]
+        stances: dict[str, dict[str, Any]]
     ) -> float:
         """Compute contradiction rate from stances."""
         support = 0
         refute = 0
 
-        for evidence_id, stance in stances.items():
+        for _evidence_id, stance in stances.items():
             label = stance.get('stance_label', 'discuss')
             if label == 'support':
                 support += 1
@@ -2589,8 +2589,8 @@ class StanceScorer:
         self,
         claim_surface: str,
         evidence_preview: str,
-        title: Optional[str] = None
-    ) -> Dict[str, Any]:
+        title: str | None = None
+    ) -> dict[str, Any]:
         """
         Score stance using deterministic baseline.
 
@@ -2647,8 +2647,8 @@ class StanceScorer:
     def _extract_anchors(
         self,
         evidence_preview: str,
-        title: Optional[str]
-    ) -> List[str]:
+        title: str | None
+    ) -> list[str]:
         """Extract short anchor snippets (bounded)."""
         anchors = []
         texts_to_check = [title] if title else []
@@ -2696,8 +2696,8 @@ class StanceScorer:
 
     def compute_contradiction_metrics(
         self,
-        stances: Dict[str, Dict[str, Any]]
-    ) -> Dict[str, Any]:
+        stances: dict[str, dict[str, Any]]
+    ) -> dict[str, Any]:
         """
         Compute contradiction metrics for a cluster.
 
@@ -2707,8 +2707,8 @@ class StanceScorer:
         Returns:
             Dict with contradiction_rate, stance_entropy, support_count, refute_count, discuss_count
         """
-        from collections import Counter
         import math
+        from collections import Counter
 
         counts = Counter()
         for stance in stances.values():

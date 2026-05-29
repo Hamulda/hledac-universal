@@ -20,9 +20,9 @@ import time
 from typing import Any
 
 # Lazy import only — no module-level heavy deps
-_layer: "TemporalSignalLayer | None" = None
+_layer: TemporalSignalLayer | None = None
 _reset_ts: float = 0.0
-_store: "TemporalSignalStore | None" = None
+_store: TemporalSignalStore | None = None
 _store_enabled: bool | None = None
 
 DEFAULT_MAX_KEYS = 4096
@@ -36,7 +36,7 @@ def is_temporal_store_enabled() -> bool:
     return _store_enabled
 
 
-def get_temporal_signal_store() -> "TemporalSignalStore | None":
+def get_temporal_signal_store() -> TemporalSignalStore | None:
     """
     Lazily create (or return) the module-level TemporalSignalStore singleton.
 
@@ -131,7 +131,7 @@ def close_temporal_signal_store() -> None:
             _store = None
 
 
-def get_temporal_signal_layer(max_keys: int = DEFAULT_MAX_KEYS) -> "TemporalSignalLayer":
+def get_temporal_signal_layer(max_keys: int = DEFAULT_MAX_KEYS) -> TemporalSignalLayer:
     """
     Lazily get (or create) the TemporalSignalLayer singleton for this run.
 

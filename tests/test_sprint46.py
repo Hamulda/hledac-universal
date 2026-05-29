@@ -3,26 +3,25 @@ Sprint 46 tests – Access to Unreachable Data (Sessions + Paywall + OSINT + Dar
 """
 
 import pytest
+
 pytest.importorskip("aiohttp_socks", reason="optional dependency not installed")
 
 import asyncio
-import json
-import os
 import sys
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch, mock_open
+from unittest.mock import AsyncMock, mock_open, patch
 
 import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 # Import after path setup
-from hledac.universal.tools.session_manager import SessionManager
-from hledac.universal.tools.paywall import PaywallBypass
-from hledac.universal.tools.osint_frameworks import OSINTFrameworkRunner
 from hledac.universal.tools.darknet import DarknetConnector
+from hledac.universal.tools.osint_frameworks import OSINTFrameworkRunner
+from hledac.universal.tools.paywall import PaywallBypass
+from hledac.universal.tools.session_manager import SessionManager
 
 
 class TestSprint46(unittest.IsolatedAsyncioTestCase):
@@ -136,7 +135,7 @@ class TestSprint46(unittest.IsolatedAsyncioTestCase):
 
             with patch('builtins.open', mock_open(read_data=mock_json)):
                 with patch('os.path.exists', return_value=True):
-                    findings = await runner.run_theharvester('test.com')
+                    await runner.run_theharvester('test.com')
                     # May be empty due to mocking, but should not crash
 
     async def test_sherlock_output_parsing(self):

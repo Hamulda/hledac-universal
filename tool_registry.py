@@ -112,7 +112,6 @@ def get_task_tool_preview_mapping() -> dict[str, str]:
 
 # Sprint F6b: Triad-Side Dormant Provider Mirror Seam
 from dataclasses import dataclass
-from typing import Tuple
 
 
 @dataclass(frozen=True)
@@ -123,7 +122,7 @@ class DeepResearchProviderMirror:
     triad_authority_exists: bool = True
     deepresearch_napojen: bool = False
 
-    blockers: Tuple[str, ...] = (
+    blockers: tuple[str, ...] = (
         "Session seams (BudgetManager, EvidenceLog): exists, not wired to DeepResearch",
         "Security gate (PII gate): exists, not wired to DeepResearch",
         "Minimal grounding seam (ProviderRequest/ProviderResult): exists, not wired to DeepResearch",

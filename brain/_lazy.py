@@ -35,7 +35,8 @@ from __future__ import annotations
 import asyncio
 import gc
 import logging
-from typing import TypeVar, Generic, Callable, Optional, Any
+from collections.abc import Callable
+from typing import Any, TypeVar
 
 logger = logging.getLogger(__name__)
 
@@ -63,7 +64,7 @@ def _mlx_clear() -> None:
         pass
 
 
-class LazyModel(Generic[T]):
+class LazyModel[T]:
     """
     Lazy model loader s TTL eviction pro M1 8GB unified memory.
 
@@ -88,12 +89,12 @@ class LazyModel(Generic[T]):
         self._name = name
         self._min_free_mb = min_free_mb
         self._min_findings = conditional_min_findings
-        self._instance: Optional[T] = None
-        self._evict_task: Optional[asyncio.TimerHandle] = None
+        self._instance: T | None = None
+        self._evict_task: asyncio.TimerHandle | None = None
         self._load_count = 0
         self._evict_count = 0
 
-    async def get(self, *, findings_count: int = 0) -> Optional[T]:
+    async def get(self, *, findings_count: int = 0) -> T | None:
         """
         Returns model instance. Returns None if:
         - Memory guard triggered (< min_free_mb available)

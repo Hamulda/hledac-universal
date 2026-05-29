@@ -2,10 +2,11 @@
 Tests for Sprint 77 - Embedding optimization.
 """
 
-import pytest
-from unittest.mock import patch, MagicMock, AsyncMock
 import asyncio
+from unittest.mock import AsyncMock, MagicMock, patch
+
 import numpy as np
+import pytest
 
 
 class TestFloat16Storage:
@@ -209,8 +210,9 @@ class TestWritebackBuffer:
     @pytest.mark.asyncio
     async def test_flush_writeback(self):
         """Test writeback buffer flush."""
-        from hledac.universal.knowledge.lancedb_store import LanceDBIdentityStore
         from collections import OrderedDict
+
+        from hledac.universal.knowledge.lancedb_store import LanceDBIdentityStore
 
         store = LanceDBIdentityStore.__new__(LanceDBIdentityStore)
         store._writeback_buffer = OrderedDict()
@@ -229,8 +231,9 @@ class TestWritebackBuffer:
     @pytest.mark.asyncio
     async def test_writeback_overflow(self):
         """Test writeback buffer is initialized as OrderedDict."""
-        from hledac.universal.knowledge.lancedb_store import LanceDBIdentityStore
         from collections import OrderedDict
+
+        from hledac.universal.knowledge.lancedb_store import LanceDBIdentityStore
 
         store = LanceDBIdentityStore.__new__(LanceDBIdentityStore)
         store._writeback_buffer = OrderedDict()

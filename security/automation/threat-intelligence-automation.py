@@ -5,21 +5,19 @@ Advanced security automation with threat intelligence and proactive defense
 """
 
 import asyncio
-import json
-import logging
 import hashlib
 import ipaddress
+import json
+import logging
 import re
+from collections import defaultdict
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Dict, List, Optional, Set, Tuple, Any
-from dataclasses import dataclass, asdict
-from collections import defaultdict, deque
+from typing import Any
+
 import aiohttp
 import yaml
-from urllib.parse import urljoin, urlparse
-import socket
-import ssl
 
 logging.basicConfig(
     level=logging.INFO,
@@ -35,12 +33,12 @@ class ThreatIntelligence:
     threat_type: str
     severity: str
     source: str
-    indicators: List[str]
+    indicators: list[str]
     description: str
     first_seen: datetime
     last_seen: datetime
     confidence: float
-    tags: List[str]
+    tags: list[str]
 
 
 @dataclass
@@ -48,9 +46,9 @@ class SecurityAlert:
     """Security alert generated from threat intelligence"""
     alert_id: str
     threat_intelligence: ThreatIntelligence
-    affected_assets: List[str]
-    recommended_actions: List[str]
-    automated_response: Optional[str]
+    affected_assets: list[str]
+    recommended_actions: list[str]
+    automated_response: str | None
     timestamp: datetime
     status: str
 
@@ -82,16 +80,16 @@ class ThreatIntelligenceAutomation:
         self.threat_sources = self._initialize_threat_sources()
         self._initialize_ml_models()
 
-    def _load_config(self) -> Dict[str, Any]:
+    def _load_config(self) -> dict[str, Any]:
         """Load security configuration"""
         try:
-            with open(self.config_path, 'r') as f:
+            with open(self.config_path) as f:
                 return yaml.safe_load(f)
         except FileNotFoundError:
             logger.warning(f"Config file {self.config_path} not found")
             return self._default_config()
 
-    def _default_config(self) -> Dict[str, Any]:
+    def _default_config(self) -> dict[str, Any]:
         """Default security configuration"""
         return {
             "threat_intelligence": {
@@ -117,7 +115,7 @@ class ThreatIntelligenceAutomation:
             }
         }
 
-    def _initialize_threat_sources(self) -> Dict[str, Dict[str, Any]]:
+    def _initialize_threat_sources(self) -> dict[str, dict[str, Any]]:
         """Initialize threat intelligence sources"""
         return {
             "abuse.ch": {
@@ -190,7 +188,7 @@ class ThreatIntelligenceAutomation:
             except Exception as e:
                 logger.error(f"Error gathering from {source_name}: {e}")
 
-    async def _gather_malware_domains(self, source_name: str, config: Dict[str, Any]):
+    async def _gather_malware_domains(self, source_name: str, config: dict[str, Any]):
         """Gather malware domain intelligence"""
         try:
             async with aiohttp.ClientSession() as session:
@@ -218,11 +216,11 @@ class ThreatIntelligenceAutomation:
         except Exception as e:
             logger.error(f"Error gathering malware domains from {source_name}: {e}")
 
-    async def _gather_file_reputation(self, source_name: str, config: Dict[str, Any]):
+    async def _gather_file_reputation(self, source_name: str, config: dict[str, Any]):
         """Gather file reputation intelligence"""
         logger.debug(f"File reputation gathering not fully implemented for {source_name}")
 
-    async def _gather_ioc_indicators(self, source_name: str, config: Dict[str, Any]):
+    async def _gather_ioc_indicators(self, source_name: str, config: dict[str, Any]):
         """Gather IOC indicators"""
         try:
             headers = {}
@@ -256,7 +254,7 @@ class ThreatIntelligenceAutomation:
         except Exception as e:
             logger.error(f"Error gathering IOC indicators from {source_name}: {e}")
 
-    async def _gather_vulnerabilities(self, source_name: str, config: Dict[str, Any]):
+    async def _gather_vulnerabilities(self, source_name: str, config: dict[str, Any]):
         """Gather vulnerability intelligence"""
         try:
             async with aiohttp.ClientSession() as session:
@@ -306,7 +304,7 @@ class ThreatIntelligenceAutomation:
         }
         return tlp_mapping.get(tlp.lower(), "medium")
 
-    def _map_cvss_severity(self, cvss_metrics: List[Dict[str, Any]]) -> str:
+    def _map_cvss_severity(self, cvss_metrics: list[dict[str, Any]]) -> str:
         """Map CVSS score to severity"""
         if not cvss_metrics:
             return "medium"
@@ -355,7 +353,7 @@ class ThreatIntelligenceAutomation:
                         self.active_alerts[alert.alert_id] = alert
                         logger.warning(f"Application threat detected: {indicator}")
 
-    def _matches_app_endpoint(self, indicator: str, endpoints: List[str]) -> bool:
+    def _matches_app_endpoint(self, indicator: str, endpoints: list[str]) -> bool:
         """Check if indicator matches application endpoints"""
         try:
             if any(endpoint in indicator for endpoint in endpoints):
@@ -379,7 +377,7 @@ class ThreatIntelligenceAutomation:
 
         return False
 
-    def _get_automated_response(self, threat: ThreatIntelligence) -> Optional[str]:
+    def _get_automated_response(self, threat: ThreatIntelligence) -> str | None:
         """Get automated response based on threat type and severity"""
         if threat.severity in ["critical", "high"] and threat.threat_type in ["malware_domain", "ioc"]:
             return "block_ip_domain"
@@ -412,7 +410,7 @@ class ThreatIntelligenceAutomation:
                 r"<script.*>",
             ]
 
-            with open(log_file, 'r') as f:
+            with open(log_file) as f:
                 for line_num, line in enumerate(f, 1):
                     for pattern in suspicious_patterns:
                         if re.search(pattern, line, re.IGNORECASE):
@@ -483,7 +481,7 @@ class ThreatIntelligenceAutomation:
         except Exception as e:
             logger.error(f"Error analyzing behavior anomalies: {e}")
 
-    async def _collect_behavior_metrics(self) -> Dict[str, Any]:
+    async def _collect_behavior_metrics(self) -> dict[str, Any]:
         """Collect behavior metrics for anomaly detection"""
         metrics = {}
         try:
@@ -495,7 +493,7 @@ class ThreatIntelligenceAutomation:
             logger.error(f"Error collecting behavior metrics: {e}")
         return metrics
 
-    def _detect_anomalies(self, metrics: Dict[str, Any]) -> List[str]:
+    def _detect_anomalies(self, metrics: dict[str, Any]) -> list[str]:
         """Detect anomalies in metrics"""
         anomalies = []
 
@@ -601,7 +599,7 @@ class ThreatIntelligenceAutomation:
             security_config_path = Path("config/security_enhancements.yaml")
 
             if security_config_path.exists():
-                with open(security_config_path, 'r') as f:
+                with open(security_config_path) as f:
                     config = yaml.safe_load(f)
 
                 if "threat_intelligence" not in config:
@@ -703,7 +701,7 @@ class ThreatIntelligenceAutomation:
 
         logger.info(f"Threat intelligence report saved to {report_path}")
 
-    def _generate_security_recommendations(self) -> List[str]:
+    def _generate_security_recommendations(self) -> list[str]:
         """Generate security recommendations based on current state"""
         recommendations = []
 

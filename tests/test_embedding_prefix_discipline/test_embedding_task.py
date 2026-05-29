@@ -11,21 +11,21 @@ Testy pro task-aware embedding layer v mlx_embeddings.py:
 - Task-aware embedding methods
 """
 
-import pytest
-import numpy as np
-
 # Import z mlx_embeddings.py (single source of truth)
 # Správná cesta: hledac.universal.core (ne hledac.core)
 import sys
 from pathlib import Path
+
+import pytest
+
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent.parent))
 
 from hledac.universal.core.mlx_embeddings import (
     EmbeddingTask,
-    apply_task_prefix,
-    should_normalize,
     MLXEmbeddingManager,
+    apply_task_prefix,
     get_embedding_manager,
+    should_normalize,
 )
 
 

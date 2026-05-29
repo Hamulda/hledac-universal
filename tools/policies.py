@@ -5,8 +5,8 @@ Each policy has a stable `.name` and a `.score` that can be updated.
 
 import abc
 import logging
-from urllib.parse import urlparse
 from typing import Any
+from urllib.parse import urlparse
 
 logger = logging.getLogger(__name__)
 

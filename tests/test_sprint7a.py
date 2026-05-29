@@ -1,12 +1,9 @@
 """Sprint 7A Tests: Real Execution Activation + Truth Validation"""
 
-import pytest
 import asyncio
-import time
-from unittest.mock import MagicMock, AsyncMock, patch
-from hledac.universal.autonomous_orchestrator import (
-    FullyAutonomousOrchestrator, TokenBucket
-)
+
+import pytest
+from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator, TokenBucket
 
 
 class TestSprint7AMockRemoval:

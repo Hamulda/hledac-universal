@@ -26,14 +26,12 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-
 from hledac.universal.knowledge.duckdb_store import DuckDBShadowStore
+from hledac.universal.patterns.pattern_matcher import PatternHit
 from hledac.universal.pipeline.live_feed_pipeline import (
-    FeedPipelineEntryResult,
     FeedPipelineRunResult,
     async_run_live_feed_pipeline,
 )
-from hledac.universal.patterns.pattern_matcher import PatternHit
 
 # ---------------------------------------------------------------------------
 # Module-level sentinel for store injection (bypasses scheduler's broken wiring)
@@ -117,9 +115,7 @@ def canned_feed_adapter():
     import hledac.universal.pipeline.live_feed_pipeline as lfp_module
     from hledac.universal.pipeline.live_feed_pipeline import (
         FeedPipelineRunResult,
-        FeedPipelineEntryResult,
     )
-    from hledac.universal.patterns.pattern_matcher import PatternHit
 
     _original_lfp_run = lfp_module.async_run_live_feed_pipeline
 
@@ -147,6 +143,7 @@ def canned_feed_adapter():
         # Persist finding directly to store if provided
         # Use a unique finding_id per call to avoid LMDB dedup rejecting duplicates
         import uuid
+
         import hledac.universal.tests.test_e2e_first_finding as _test_mod
         _effective_store = store if store is not None else getattr(_test_mod, '_canned_store_ref', None)
         if _effective_store is not None:
@@ -188,9 +185,6 @@ def canned_feed_adapter():
     # Also patch the scheduler's lazy import functions so its captured
     # reference picks up the patched versions.
     import hledac.universal.runtime.sprint_scheduler as sched_module
-    from hledac.universal.pipeline.live_feed_pipeline import (
-        FeedPipelineRunResult,
-    )
     from hledac.universal.pipeline.live_public_pipeline import PipelineRunResult
 
     _original_import_fn = sched_module._import_live_feed_pipeline
@@ -224,8 +218,8 @@ def canned_pattern_matcher():
     Ensure the "cve-" bootstrap pattern is active and patch match_text to
     return a canned CVE PatternHit when the canned entry text is scanned.
     """
-    from hledac.universal.patterns import pattern_matcher as pm_module
     import hledac.universal.pipeline.live_feed_pipeline as lfp_module
+    from hledac.universal.patterns import pattern_matcher as pm_module
 
     # Ensure bootstrap patterns are loaded
     pm_module.configure_default_bootstrap_patterns_if_empty()
@@ -509,7 +503,7 @@ def canned_public_adapter():
     import hledac.universal.pipeline.live_public_pipeline as pub_module
     from hledac.universal.pipeline.live_public_pipeline import PipelineRunResult
 
-    entry_dict = _make_canned_public_entry()
+    _make_canned_public_entry()
     # Reuse pattern-matcher patch from canned_pattern_matcher so CVE pattern fires
     from hledac.universal.patterns import pattern_matcher as pm_module
     from hledac.universal.patterns.pattern_matcher import PatternHit
@@ -606,19 +600,18 @@ async def test_canonical_run_sprint_persists_and_exports_findings(
 
     Hermetic: no real HTTP, no Tor, no real CT backend, no external services.
     """
-    import hledac.universal.core.__main__ as core_main
+    from hledac.universal.export.sprint_exporter import export_sprint
+    from hledac.universal.intelligence.ct_log_client import CTLogClient
+    from hledac.universal.paths import get_sprint_json_report_path
+    from hledac.universal.patterns.pattern_matcher import (
+        configure_default_bootstrap_patterns_if_empty,
+    )
+    from hledac.universal.project_types import ExportHandoff
+    from hledac.universal.runtime.sprint_lifecycle import SprintLifecycleManager
     from hledac.universal.runtime.sprint_scheduler import (
         SprintScheduler,
         SprintSchedulerConfig,
     )
-    from hledac.universal.runtime.sprint_lifecycle import SprintLifecycleManager
-    from hledac.universal.patterns.pattern_matcher import (
-        configure_default_bootstrap_patterns_if_empty,
-    )
-    from hledac.universal.intelligence.ct_log_client import CTLogClient
-    from hledac.universal.export.sprint_exporter import export_sprint
-    from hledac.universal.project_types import ExportHandoff
-    from hledac.universal.paths import get_sprint_json_report_path
 
     store = temp_duckdb_store
     configure_default_bootstrap_patterns_if_empty()
@@ -815,12 +808,12 @@ async def test_aggressive_cycle_fans_out_feed_public_ct_concurrently(
     Verifies that when aggressive_mode=True, CT discovery runs within the
     cycle (not just post-loop), and all three branches are launched.
     """
+    from hledac.universal.intelligence.ct_log_client import CTLogClient
+    from hledac.universal.runtime.sprint_lifecycle import SprintLifecycleManager
     from hledac.universal.runtime.sprint_scheduler import (
         SprintScheduler,
         SprintSchedulerConfig,
     )
-    from hledac.universal.runtime.sprint_lifecycle import SprintLifecycleManager
-    from hledac.universal.intelligence.ct_log_client import CTLogClient
 
     store = temp_duckdb_store
     sprint_duration = 45.0
@@ -878,15 +871,14 @@ async def test_slow_branch_timeout_does_not_block_other_branches(
     Patches public pipeline to be very slow, verifies cycle completes without
     hanging and feed findings are still produced.
     """
-    import asyncio
     import hledac.universal.pipeline.live_public_pipeline as pub_module
+    from hledac.universal.intelligence.ct_log_client import CTLogClient
     from hledac.universal.pipeline.live_public_pipeline import PipelineRunResult
+    from hledac.universal.runtime.sprint_lifecycle import SprintLifecycleManager
     from hledac.universal.runtime.sprint_scheduler import (
         SprintScheduler,
         SprintSchedulerConfig,
     )
-    from hledac.universal.runtime.sprint_lifecycle import SprintLifecycleManager
-    from hledac.universal.intelligence.ct_log_client import CTLogClient
 
     # Slow public that will timeout
     async def _slow_public(*args, **kwargs):
@@ -927,7 +919,7 @@ async def test_slow_branch_timeout_does_not_block_other_branches(
         ct_cache.mkdir(parents=True, exist_ok=True)
         ct_client = CTLogClient(cache_dir=ct_cache)
 
-        start = asyncio.get_event_loop().time if hasattr(asyncio, 'get_event_loop') else None
+        asyncio.get_event_loop().time if hasattr(asyncio, 'get_event_loop') else None
         import time as time_module
         start_time = time_module.monotonic()
 
@@ -976,15 +968,14 @@ async def test_partial_branch_success_still_updates_runtime_truth(
     Partial success: if public times out but feed succeeds, feed findings
     should still be persisted and count toward runtime truth.
     """
-    import asyncio
     import hledac.universal.pipeline.live_public_pipeline as pub_module
+    from hledac.universal.intelligence.ct_log_client import CTLogClient
     from hledac.universal.pipeline.live_public_pipeline import PipelineRunResult
+    from hledac.universal.runtime.sprint_lifecycle import SprintLifecycleManager
     from hledac.universal.runtime.sprint_scheduler import (
         SprintScheduler,
         SprintSchedulerConfig,
     )
-    from hledac.universal.runtime.sprint_lifecycle import SprintLifecycleManager
-    from hledac.universal.intelligence.ct_log_client import CTLogClient
 
     async def _slow_public(*args, **kwargs):
         await asyncio.sleep(300.0)
@@ -1083,12 +1074,13 @@ async def test_partial_export_written_every_ten_findings(
     - finding_count in the artifact matches the current count
     """
     import json as json_module
+
+    from hledac.universal.paths import get_sprint_json_report_path
+    from hledac.universal.runtime.sprint_lifecycle import SprintLifecycleManager
     from hledac.universal.runtime.sprint_scheduler import (
         SprintScheduler,
         SprintSchedulerConfig,
     )
-    from hledac.universal.runtime.sprint_lifecycle import SprintLifecycleManager
-    from hledac.universal.paths import get_sprint_json_report_path
 
     store = temp_duckdb_store
     sprint_duration = 60.0
@@ -1127,7 +1119,7 @@ async def test_partial_export_written_every_ten_findings(
     scheduler._last_partial_finding_count = 0  # simulate first crossing
     await scheduler._maybe_export_partial(lifecycle)
     assert partial_path.exists(), (
-        f"Partial export not written when findings crossed interval threshold."
+        "Partial export not written when findings crossed interval threshold."
     )
     data = json_module.loads(partial_path.read_text())
     assert data.get("is_partial") is True, f"Partial artifact missing is_partial flag: {data}"
@@ -1163,18 +1155,18 @@ async def test_partial_export_survives_early_windup(
     partial artifact written at windup entry remains on disk.
     """
     import orjson
+    from hledac.universal.export.sprint_exporter import export_partial_sprint
+    from hledac.universal.paths import get_sprint_json_report_path
+    from hledac.universal.runtime.sprint_lifecycle import SprintLifecycleManager
     from hledac.universal.runtime.sprint_scheduler import (
         SprintScheduler,
         SprintSchedulerConfig,
     )
-    from hledac.universal.runtime.sprint_lifecycle import SprintLifecycleManager
-    from hledac.universal.export.sprint_exporter import export_partial_sprint
-    from hledac.universal.paths import get_sprint_json_report_path
 
     store = temp_duckdb_store
     # Very short sprint to force early windup
     sprint_duration = 10.0
-    lifecycle = SprintLifecycleManager(
+    SprintLifecycleManager(
         sprint_duration_s=sprint_duration,
         windup_lead_s=5.0,
     )
@@ -1219,7 +1211,7 @@ async def test_partial_export_survives_early_windup(
     # Simulate abort — partial must still be readable
     scheduler._result.aborted = True
     scheduler._result.abort_reason = "lifecycle_abort"
-    result_abort = await export_partial_sprint(
+    await export_partial_sprint(
         store=store,
         handoff=handoff_dict,
         sprint_id="test_windup_partial",

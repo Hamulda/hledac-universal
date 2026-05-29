@@ -22,8 +22,8 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import Optional, Sequence
 
 __all__ = [
     "ChainStep",
@@ -124,7 +124,7 @@ class EvidenceChain:
     """
     root_finding_id: str
     steps: list[ChainStep] = field(default_factory=list)
-    conclusion: Optional[str] = None
+    conclusion: str | None = None
 
     def add_step(self, step: ChainStep) -> None:
         """Add a step to the chain. Silently drops if MAX_CHAIN_DEPTH reached."""
@@ -664,9 +664,9 @@ def summarize_chain_support(
     F225C: Produce a deterministic corroboration summary from chains or findings.
 
     Accepts:
-      - List[EvidenceChain]  (serialized chains from evidence_chain registry)
-      - List[dict]           (finding dicts with source_type)
-      - List[None]           (fail-soft, returns empty)
+      - list[EvidenceChain]  (serialized chains from evidence_chain registry)
+      - list[dict]           (finding dicts with source_type)
+      - list[None]           (fail-soft, returns empty)
 
     Returns dict:
       {

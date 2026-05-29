@@ -15,7 +15,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from .project_types import (
     AgentManagerConfig,
@@ -23,11 +23,9 @@ from .project_types import (
     CoordinationConfig,
     GhostConfig,
     MemoryConfig,
-    ModelConfig,
     ResearchConfig,
     ResearchMode,
 )
-
 
 # =============================================================================
 # DEFAULT CONFIGURATION PRESETS
@@ -35,21 +33,21 @@ from .project_types import (
 
 class M1Presets:
     """M1 8GB RAM optimization presets"""
-    
+
     # Strict memory limits
     MEMORY_LIMIT_MB = 5500.0
     THERMAL_THRESHOLD_C = 85.0
-    
+
     # Model settings - 3 model stack only (M1 8GB optimized)
     HERMES_MODEL = "mlx-community/DeepHermes-3-Llama-3-3B-Preview-4bit"
     MODERNBERT_MODEL = "mlx-community/answerdotai-ModernBERT-base-6bit"
     GLINER_MODEL = "knowledgator/gliner-relex-large-v0.5"
-    
+
     # Performance settings
     MAX_CONCURRENT_AGENTS = 6
     AGENT_TIMEOUT_SECONDS = 25.0
     CIRCUIT_BREAKER_THRESHOLD = 3
-    
+
     # Memory management
     CONTEXT_SWAP_ENABLED = True
     MLX_CACHE_CLEAR_INTERVAL = 10  # Clear MLX cache every N transitions
@@ -57,7 +55,7 @@ class M1Presets:
 
 class ResearchPresets:
     """Research mode presets"""
-    
+
     QUICK = {
         "max_steps": 5,
         "max_time_minutes": 5,
@@ -65,7 +63,7 @@ class ResearchPresets:
         "enable_knowledge_graph": False,
         "enable_rag": False,
     }
-    
+
     STANDARD = {
         "max_steps": 20,
         "max_time_minutes": 30,
@@ -73,7 +71,7 @@ class ResearchPresets:
         "enable_knowledge_graph": False,
         "enable_rag": True,
     }
-    
+
     DEEP = {
         "max_steps": 50,
         "max_time_minutes": 120,
@@ -81,7 +79,7 @@ class ResearchPresets:
         "enable_knowledge_graph": True,
         "enable_rag": True,
     }
-    
+
     EXTREME = {
         "max_steps": 100,
         "max_time_minutes": 480,
@@ -91,7 +89,7 @@ class ResearchPresets:
         "enable_fact_checking": True,
         "save_intermediate": True,
     }
-    
+
     AUTONOMOUS = {
         "max_steps": 200,
         "max_time_minutes": 1440,  # 24 hours
@@ -102,9 +100,9 @@ class ResearchPresets:
         "save_intermediate": True,
         "auto_archive_fallback": True,
     }
-    
+
     @classmethod
-    def get_preset(cls, mode: ResearchMode) -> Dict[str, Any]:
+    def get_preset(cls, mode: ResearchMode) -> dict[str, Any]:
         """Get preset configuration for research mode"""
         presets = {
             ResearchMode.QUICK: cls.QUICK,
@@ -127,19 +125,19 @@ class SecurityConfig:
     obfuscation_level: str = "medium"  # none, light, medium, heavy, maximum
     generate_decoys: bool = True
     decoy_count: int = 20
-    
+
     # Secure destruction
     wipe_standard: str = "nist_800_88"  # nist_800_88, dod_5220_22m, gutmann
     verification_enabled: bool = True
     rename_before_delete: bool = True
-    
+
     # Research obfuscation
     enable_query_masking: bool = True
     enable_chaff_traffic: bool = True
     chaff_ratio: float = 0.3
     enable_timing_jitter: bool = True
     jitter_percent: float = 50.0
-    
+
     # Privacy
     privacy_level: str = "high"  # low, medium, high, maximum
     enable_audit_logging: bool = True
@@ -153,27 +151,27 @@ class StealthConfig:
     browser_type: str = "chromium"  # chromium, firefox, webkit
     headless: bool = True
     pool_size: int = 2
-    
+
     # Anti-detection
     enable_stealth_scripts: bool = True
     enable_fingerprint_rotation: bool = True
     fingerprint_count: int = 50
     enable_canvas_noise: bool = True
     enable_webgl_spoofing: bool = True
-    
+
     # Detection evasion
     detection_threshold: float = 0.7
     adaptive_mode: bool = True
     enable_behavior_simulation: bool = True
-    
+
     # CAPTCHA
     enable_captcha_solving: bool = True
-    captcha_providers: List[str] = field(default_factory=lambda: ["2captcha", "anticaptcha"])
+    captcha_providers: list[str] = field(default_factory=lambda: ["2captcha", "anticaptcha"])
     captcha_timeout: int = 120
-    
+
     # Proxy
     enable_proxy_rotation: bool = False
-    proxy_list: List[str] = field(default_factory=list)
+    proxy_list: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -181,17 +179,17 @@ class PrivacyConfig:
     """Privacy and anonymity configuration"""
     # VPN
     enable_vpn: bool = False
-    vpn_config_path: Optional[str] = None
-    
+    vpn_config_path: str | None = None
+
     # Tor
     enable_tor: bool = False
     tor_proxy: str = os.environ.get("TOR_PROXY_URL", "socks5://127.0.0.1:9050")  # Configurable via TOR_PROXY_URL env variable
-    
+
     # DNS
     enable_dns_encryption: bool = True
-    dns_servers: List[str] = field(default_factory=lambda: ["1.1.1.1", "9.9.9.9"])
+    dns_servers: list[str] = field(default_factory=lambda: ["1.1.1.1", "9.9.9.9"])
     use_doh: bool = False  # P16: DNS-over-HTTPS via resolve_doh before fetch
-    
+
     # Encryption
     enable_encryption: bool = True
     encryption_algorithm: str = "fernet"  # fernet, aes256
@@ -205,17 +203,17 @@ class DeepResearchConfig:
     strategy: str = "hybrid"  # depth_first, breadth_first, citation, tangent, hybrid
     follow_citations: bool = True
     explore_tangents: bool = True
-    
+
     # Limits
     max_threads: int = 5
     max_documents: int = 1000
     max_citations_per_doc: int = 20
-    
+
     # Citation types
-    citation_types: List[str] = field(default_factory=lambda: [
+    citation_types: list[str] = field(default_factory=lambda: [
         "academic", "patent", "preprint", "dataset"
     ])
-    
+
     # Auto-summarization
     enable_auto_summarize: bool = True
     summarization_model: str = "qwen3-1.7b"
@@ -229,7 +227,7 @@ class DeepResearchConfig:
 class UniversalConfig:
     """
     Unified configuration for the Universal Orchestrator.
-    
+
     This class consolidates all configuration options from:
     - Research execution (ResearchConfig)
     - Memory management (MemoryConfig)
@@ -237,48 +235,48 @@ class UniversalConfig:
     - Coordination (CoordinationConfig)
     - Agent management (AgentManagerConfig)
     """
-    
+
     # Mode
     mode: ResearchMode = ResearchMode.STANDARD
-    
+
     # Sub-configurations
     research: ResearchConfig = field(default_factory=ResearchConfig)
     memory: MemoryConfig = field(default_factory=MemoryConfig)
     ghost: GhostConfig = field(default_factory=GhostConfig)
     coordination: CoordinationConfig = field(default_factory=CoordinationConfig)
     agent_manager: AgentManagerConfig = field(default_factory=AgentManagerConfig)
-    
+
     # Extended configurations (NEW)
     security: SecurityConfig = field(default_factory=SecurityConfig)
     stealth: StealthConfig = field(default_factory=StealthConfig)
     privacy: PrivacyConfig = field(default_factory=PrivacyConfig)
     deep_research: DeepResearchConfig = field(default_factory=DeepResearchConfig)
     communication: CommunicationConfig = field(default_factory=CommunicationConfig)
-    
+
     # Paths
-    db_path: Optional[str] = None
-    vault_path: Optional[str] = None
-    models_dir: Optional[str] = None
-    
+    db_path: str | None = None
+    vault_path: str | None = None
+    models_dir: str | None = None
+
     # Feature flags
     enable_ghost_layer: bool = True
     enable_coordination_layer: bool = True
     enable_knowledge_layer: bool = False  # Disabled by default (RAM)
     enable_rag_pipeline: bool = False  # Disabled by default (RAM)
     enable_reasoning_engine: bool = True
-    
+
     # Extended feature flags (NEW)
     enable_security_layer: bool = True
     enable_stealth_layer: bool = True
     enable_privacy_layer: bool = False  # Disabled by default (VPN/Tor required)
     enable_deep_research: bool = True
     enable_communication_layer: bool = True
-    
+
     # Logging
     log_level: str = "INFO"
     log_to_file: bool = True
     log_dir: str = "logs"
-    
+
     # M1 optimization
     m1_optimized: bool = True
     context_swap_enabled: bool = True
@@ -358,7 +356,7 @@ class UniversalConfig:
     metadata_extract_audio: bool = True
     metadata_extract_video: bool = False
     metadata_calculate_hashes: bool = True
-    metadata_hash_algorithms: List[str] = field(default_factory=lambda: ["md5", "sha256"])
+    metadata_hash_algorithms: list[str] = field(default_factory=lambda: ["md5", "sha256"])
     metadata_max_file_size: int = 1073741824  # 1GB
     metadata_batch_size: int = 100
 
@@ -388,23 +386,23 @@ class UniversalConfig:
     # Analysis modes
     analysis_mode_default: str = "auto"  # auto, quick, deep
     quick_scan_time_limit: int = 5  # seconds
-    deep_analysis_modules: List[str] = field(default_factory=list)  # empty = all relevant
+    deep_analysis_modules: list[str] = field(default_factory=list)  # empty = all relevant
 
     @classmethod
     def for_mode(cls, mode: ResearchMode, m1_optimized: bool = True) -> UniversalConfig:
         """
         Create configuration optimized for specific research mode.
-        
+
         Args:
             mode: Research mode (QUICK, STANDARD, DEEP, EXTREME, AUTONOMOUS)
             m1_optimized: Whether to apply M1 8GB optimizations
-            
+
         Returns:
             Configured UniversalConfig instance
         """
         # Get preset values
         preset = ResearchPresets.get_preset(mode)
-        
+
         # Create base config
         config = cls(
             mode=mode,
@@ -412,7 +410,7 @@ class UniversalConfig:
             enable_rag_pipeline=mode in [ResearchMode.STANDARD, ResearchMode.DEEP, ResearchMode.EXTREME, ResearchMode.AUTONOMOUS],
             m1_optimized=m1_optimized,
         )
-        
+
         # Apply preset values to research config
         config.research.mode = mode
         config.research.max_steps = preset.get("max_steps", 20)
@@ -422,24 +420,24 @@ class UniversalConfig:
         config.research.enable_rag = preset.get("enable_rag", True)
         config.research.enable_fact_checking = preset.get("enable_fact_checking", False)
         config.research.save_intermediate = preset.get("save_intermediate", False)
-        
+
         # Apply M1 optimizations
         if m1_optimized:
             config._apply_m1_optimizations()
-        
+
         return config
-    
+
     def _apply_m1_optimizations(self) -> None:
         """Apply M1 8GB RAM optimizations"""
         # Memory limits
         self.memory.memory_limit_mb = M1Presets.MEMORY_LIMIT_MB
         self.memory.thermal_threshold_c = M1Presets.THERMAL_THRESHOLD_C
-        
+
         # Models - 3 model stack only
         self.research.hermes_model = M1Presets.HERMES_MODEL
         self.research.modernbert_model = M1Presets.MODERNBERT_MODEL
         self.research.gliner_model = M1Presets.GLINER_MODEL
-        
+
         # Agent management
         self.agent_manager.max_concurrent_agents = min(
             self.agent_manager.max_concurrent_agents,
@@ -447,11 +445,11 @@ class UniversalConfig:
         )
         self.agent_manager.agent_timeout_seconds = M1Presets.AGENT_TIMEOUT_SECONDS
         self.agent_manager.circuit_breaker_threshold = M1Presets.CIRCUIT_BREAKER_THRESHOLD
-        
+
         # Disable heavy features if not enough RAM
         if self.research.max_concurrent_agents > 4:
             self.enable_knowledge_layer = False
-        
+
         # Coordination
         self.coordination.max_context_length = 1024  # Minimal for M1
         self.coordination.temperature = 0.1  # Consistent decisions
@@ -461,12 +459,12 @@ class UniversalConfig:
 
         # Distillation M1 limits
         self.distillation_hidden_dim = min(self.distillation_hidden_dim, 128)
-    
+
     @classmethod
     def from_env(cls) -> UniversalConfig:
         """
         Load configuration from environment variables.
-        
+
         Supported variables:
         - HLEDAC_RESEARCH_MODE: quick, standard, deep, extreme, autonomous
         - HLEDAC_MEMORY_LIMIT_MB: Memory limit in MB
@@ -480,27 +478,27 @@ class UniversalConfig:
             mode = ResearchMode[mode_str]
         except KeyError:
             mode = ResearchMode.STANDARD
-        
+
         # Create config
         m1_optimized = os.getenv("HLEDAC_M1_OPTIMIZED", "true").lower() == "true"
         config = cls.for_mode(mode, m1_optimized)
-        
+
         # Override from env
         if memory_limit := os.getenv("HLEDAC_MEMORY_LIMIT_MB"):
             config.memory.memory_limit_mb = float(memory_limit)
-        
+
         if max_steps := os.getenv("HLEDAC_MAX_STEPS"):
             config.research.max_steps = int(max_steps)
-        
+
         if log_level := os.getenv("HLEDAC_LOG_LEVEL"):
             config.log_level = log_level
-        
+
         return config
-    
+
     def update(self, **kwargs) -> None:
         """
         Update configuration values.
-        
+
         Example:
             config.update(max_steps=50, enable_stealth=False)
         """
@@ -526,8 +524,8 @@ class UniversalConfig:
                 setattr(self.privacy, key, value)
             elif hasattr(self.deep_research, key):
                 setattr(self.deep_research, key, value)
-    
-    def to_dict(self) -> Dict[str, Any]:
+
+    def to_dict(self) -> dict[str, Any]:
         """Convert configuration to dictionary"""
         return {
             "mode": self.mode.value,
@@ -566,42 +564,42 @@ class UniversalConfig:
             "agent_meta_min_samples": self.agent_meta_min_samples,
             "m1_optimized": self.m1_optimized,
         }
-    
-    def validate(self) -> List[str]:
+
+    def validate(self) -> list[str]:
         """
         Validate configuration and return list of issues.
-        
+
         Returns:
             List of validation error messages (empty if valid)
         """
         issues = []
-        
+
         # Memory validation
         if self.memory.memory_limit_mb > 6000:
             issues.append("Memory limit exceeds safe M1 8GB threshold (6000MB)")
-        
+
         if self.memory.memory_limit_mb < 2000:
             issues.append("Memory limit too low for meaningful operation")
-        
+
         # Research validation
         if self.research.max_steps < 1:
             issues.append("max_steps must be at least 1")
-        
+
         if self.research.max_time_minutes < 1:
             issues.append("max_time_minutes must be at least 1")
-        
+
         # Agent validation
         if self.agent_manager.max_concurrent_agents > 10:
             issues.append("max_concurrent_agents > 10 may cause memory issues")
-        
+
         # M1 optimization warnings
         if self.m1_optimized:
             if self.enable_knowledge_layer and self.agent_manager.max_concurrent_agents > 4:
                 issues.append("Warning: Knowledge layer with many agents may exceed M1 RAM")
-            
+
             if self.enable_rag_pipeline and self.enable_knowledge_layer:
                 issues.append("Warning: RAG + Knowledge layer may exceed M1 RAM")
-        
+
         return issues
 
 
@@ -616,7 +614,7 @@ def create_config(
 ) -> UniversalConfig:
     """
     Create configuration with optional overrides.
-    
+
     Example:
         config = create_config(
             mode=ResearchMode.DEEP,
@@ -640,26 +638,26 @@ def load_config_from_file(path: str) -> UniversalConfig:
         UniversalConfig instance
     """
     import json
-    
+
     path = Path(path)
-    
+
     if not path.exists():
         raise FileNotFoundError(f"Config file not found: {path}")
-    
+
     with open(path) as f:
         if path.suffix == ".json":
             data = json.load(f)
         else:
             raise ValueError(f"Unsupported config format: {path.suffix}")
-    
+
     # Parse mode
     mode = ResearchMode(data.get("mode", "standard"))
     m1_optimized = data.get("m1_optimized", True)
-    
+
     # Create config
     config = UniversalConfig.for_mode(mode, m1_optimized)
-    
+
     # Apply overrides
     config.update(**{k: v for k, v in data.items() if k not in ["mode", "m1_optimized"]})
-    
+
     return config

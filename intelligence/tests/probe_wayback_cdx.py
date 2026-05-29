@@ -9,23 +9,25 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+
 # Ensure hledac/universal is on path when run as script
 _root = Path(__file__).resolve().parents[2]
 if str(_root) not in sys.path:
     sys.path.insert(0, str(_root))
 
 import asyncio
+
 import aiohttp
 
 from intelligence.wayback_cdx import (
-    CDXSearchResult,
+    CDX_API,
+    MAX_CDX_RESULTS,
+    RATE_LIMIT_S,
     CDXDeepSearchResult,
+    CDXSearchResult,
     WaybackCDXDeepSearch,
     cdx_deep_search,
     cdx_deep_search_batch,
-    MAX_CDX_RESULTS,
-    RATE_LIMIT_S,
-    CDX_API,
 )
 
 

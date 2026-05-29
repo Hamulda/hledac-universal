@@ -5,23 +5,20 @@ This module provides a comprehensive test runner with detailed reporting,
 including HTML reports, JSON summaries, performance benchmarks, and memory usage.
 """
 
+import json
+import signal
 import subprocess
 import sys
-import json
+import threading
 import time
-import os
-import signal
-import atexit
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import List, Tuple, Dict, Any, Optional
-from dataclasses import dataclass, field
-import threading
+
 import psutil
 
-
 # Test suites configuration: (name, file, timeout_seconds)
-SUITES: List[Tuple[str, str, int]] = [
+SUITES: list[tuple[str, str, int]] = [
     ("Unit Tests (Basic)", "test_autonomous_analyzer.py", 60),
     ("Unit Tests (Extended)", "test_autonomous_analyzer_extended.py", 120),
     ("ToT Integration", "test_tot_integration.py", 120),
@@ -100,15 +97,15 @@ class SuiteResult:
     tests_skipped: int = 0
     tests_error: int = 0
     duration: float = 0.0
-    coverage: Optional[float] = None
+    coverage: float | None = None
     output: str = ""
     error_output: str = ""
-    html_report: Optional[str] = None
-    json_report: Optional[str] = None
+    html_report: str | None = None
+    json_report: str | None = None
     exit_code: int = 0
     memory_peak_mb: float = 0.0
-    start_time: Optional[datetime] = None
-    end_time: Optional[datetime] = None
+    start_time: datetime | None = None
+    end_time: datetime | None = None
 
 
 @dataclass
@@ -126,8 +123,8 @@ class PerformanceBenchmark:
     """Performance benchmark data."""
     query_type: str
     estimated_seconds: float
-    actual_seconds: Optional[float] = None
-    variance_percent: Optional[float] = None
+    actual_seconds: float | None = None
+    variance_percent: float | None = None
 
 
 class MemoryMonitor:
@@ -135,9 +132,9 @@ class MemoryMonitor:
 
     def __init__(self, interval: float = 0.5):
         self.interval = interval
-        self.snapshots: List[MemorySnapshot] = []
+        self.snapshots: list[MemorySnapshot] = []
         self._stop_event = threading.Event()
-        self._thread: Optional[threading.Thread] = None
+        self._thread: threading.Thread | None = None
         self._process = psutil.Process()
         self._peak_memory = 0.0
 
@@ -192,16 +189,16 @@ class MemoryMonitor:
 class TestSuiteRunner:
     """Comprehensive test suite runner with detailed reporting."""
 
-    def __init__(self, test_dir: Optional[Path] = None, verbose: bool = True):
+    def __init__(self, test_dir: Path | None = None, verbose: bool = True):
         self.test_dir = test_dir or Path(__file__).parent
         self.report_dir = self.test_dir / "test_reports"
         self.report_dir.mkdir(exist_ok=True)
-        self.results: List[SuiteResult] = []
-        self.start_time: Optional[datetime] = None
-        self.end_time: Optional[datetime] = None
+        self.results: list[SuiteResult] = []
+        self.start_time: datetime | None = None
+        self.end_time: datetime | None = None
         self.memory_monitor = MemoryMonitor()
-        self.memory_snapshots: List[MemorySnapshot] = []
-        self.performance_benchmarks: List[PerformanceBenchmark] = []
+        self.memory_snapshots: list[MemorySnapshot] = []
+        self.performance_benchmarks: list[PerformanceBenchmark] = []
         self.verbose = verbose
         self._interrupted = False
 
@@ -238,19 +235,14 @@ class TestSuiteRunner:
         """Print suite execution result."""
         if result.status == "passed":
             status_icon = green("✅ PASSED")
-            status_color = green
         elif result.status == "failed":
             status_icon = red("❌ FAILED")
-            status_color = red
         elif result.status == "timeout":
             status_icon = yellow("⏱️  TIMEOUT")
-            status_color = yellow
         elif result.status == "skipped":
             status_icon = yellow("⏭️  SKIPPED")
-            status_color = yellow
         else:
             status_icon = red("❌ ERROR")
-            status_color = red
 
         coverage_str = f"{result.coverage:.0f}%" if result.coverage else "N/A"
 
@@ -676,7 +668,7 @@ class TestSuiteRunner:
             print(f"Peak Memory: {red(f'{peak_memory:.0f} MB')} (exceeded {memory_limit} MB limit ❌)")
         print()
 
-    def _discover_test_file(self, filename: str) -> Optional[Path]:
+    def _discover_test_file(self, filename: str) -> Path | None:
         """Discover test file in various locations."""
         # Try different search paths
         search_paths = [
@@ -718,7 +710,7 @@ class TestSuiteRunner:
             "-v",
             "--tb=short",
             f"--html={html_path}",
-            f"--json-report",
+            "--json-report",
             f"--json-report-file={json_path}",
             "--color=yes",
         ]

@@ -19,9 +19,10 @@ from __future__ import annotations
 import hashlib
 import logging
 import re
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from difflib import SequenceMatcher
-from typing import Any, Callable, Dict, List, Optional, Set
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +41,7 @@ class MetadataEntry:
     description: str = ""
     og_title: str = ""
     og_description: str = ""
-    jsonld_types: List[str] = field(default_factory=list)
+    jsonld_types: list[str] = field(default_factory=list)
     published_at: str = ""
     evidence_id: str = ""  # For linking to evidence
 
@@ -67,7 +68,7 @@ class DedupResult:
     winner: str  # evidence_id or url of winner
     loser_hash: str  # hash of loser
     score: float
-    field_reasons: List[str]  # Why these match
+    field_reasons: list[str]  # Why these match
     winner_url: str
     loser_url: str
 
@@ -122,7 +123,7 @@ class MetadataDeduplicator:
         self.threshold = threshold
         self.logger = logging.getLogger(__name__)
 
-    def _parse_metadata(self, data: Dict[str, Any]) -> MetadataEntry:
+    def _parse_metadata(self, data: dict[str, Any]) -> MetadataEntry:
         """Parse metadata dict into MetadataEntry."""
         entry = MetadataEntry(
             url=data.get("url", ""),
@@ -148,7 +149,7 @@ class MetadataDeduplicator:
         self,
         a: MetadataEntry,
         b: MetadataEntry
-    ) -> tuple[float, List[str]]:
+    ) -> tuple[float, list[str]]:
         """
         Compute weighted similarity between two metadata entries.
 
@@ -225,12 +226,12 @@ class MetadataDeduplicator:
             return 1.0
         return SequenceMatcher(None, a.lower(), b.lower()).ratio()
 
-    def _list_similarity(self, a: List[str], b: List[str]) -> float:
+    def _list_similarity(self, a: list[str], b: list[str]) -> float:
         """Compute Jaccard similarity between two lists."""
         if not a or not b:
             return 0.0
-        set_a = set(str(x).lower() for x in a)
-        set_b = set(str(x).lower() for x in b)
+        set_a = {str(x).lower() for x in a}
+        set_b = {str(x).lower() for x in b}
         if not set_a or not set_b:
             return 0.0
         intersection = len(set_a & set_b)
@@ -258,9 +259,9 @@ class MetadataDeduplicator:
 
     def deduplicate(
         self,
-        metadata_list: List[Dict[str, Any]],
-        log_callback: Optional[Callable[[DedupResult], None]] = None
-    ) -> List[DedupResult]:
+        metadata_list: list[dict[str, Any]],
+        log_callback: Callable[[DedupResult], None] | None = None
+    ) -> list[DedupResult]:
         """
         Deduplicate metadata entries.
 
@@ -282,14 +283,14 @@ class MetadataDeduplicator:
             entries = entries[:self.top_k]
 
         # Bin by domain
-        domain_bins: Dict[str, List[MetadataEntry]] = {}
+        domain_bins: dict[str, list[MetadataEntry]] = {}
         for entry in entries:
             domain = entry.domain
             if domain not in domain_bins:
                 domain_bins[domain] = []
             domain_bins[domain].append(entry)
 
-        results: List[DedupResult] = []
+        results: list[DedupResult] = []
         comparisons = 0
 
         # Compare within each domain bin
@@ -312,7 +313,7 @@ class MetadataDeduplicator:
 
                     if score >= self.threshold:
                         # Check if syndication variant
-                        is_syndication = self._is_syndication_variant(a, b)
+                        self._is_syndication_variant(a, b)
 
                         # Determine winner (by URL canonical form)
                         if a.canonical_url < b.canonical_url:
@@ -342,9 +343,9 @@ class MetadataDeduplicator:
 
 
 def deduplicate_metadata(
-    metadata_list: List[Dict[str, Any]],
+    metadata_list: list[dict[str, Any]],
     threshold: float = 0.85
-) -> List[DedupResult]:
+) -> list[DedupResult]:
     """
     Convenience function to deduplicate metadata.
 

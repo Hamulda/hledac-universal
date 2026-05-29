@@ -1,9 +1,11 @@
+from __future__ import annotations
+
 """JS Source Maps extractor – retrieves and parses source maps to discover hidden source paths."""
 import json
 import logging
-from typing import List, Optional
 
 from hledac.universal.network.session_runtime import async_get_aiohttp_session
+
 logger = logging.getLogger(__name__)
 
 # Try to import aiohttp with fail-safe
@@ -24,7 +26,7 @@ class _JSSourceMapExtractor:
     _CONNECT_TIMEOUT_S: float = 10.0
     _READ_TIMEOUT_S: float = 10.0
 
-    async def extract_from_bundle(self, bundle_url: str) -> List[str]:
+    async def extract_from_bundle(self, bundle_url: str) -> list[str]:
         """Download source map and return extracted source paths."""
         if not AIOHTTP_AVAILABLE:
             return []
@@ -60,7 +62,7 @@ class _JSSourceMapExtractor:
             logger.debug(f"Source map extraction failed for {bundle_url}: {e}")
             return []
 
-    def _guess_map_url(self, bundle_url: str) -> Optional[str]:
+    def _guess_map_url(self, bundle_url: str) -> str | None:
         """Guess the source map URL from the bundle URL."""
         if bundle_url.endswith('.js'):
             return bundle_url + '.map'

@@ -1,12 +1,14 @@
 import asyncio
-import logging
 import json
-import time
+import logging
 import os
 import shutil
-from hledac.universal.utils.uuid7 import new_runtime_id
-from typing import Dict, Callable, Optional, Any
+import time
+from collections.abc import Callable
 from pathlib import Path
+from typing import Any
+
+from hledac.universal.utils.uuid7 import new_runtime_id
 
 from .base import Transport
 
@@ -28,7 +30,7 @@ def set_nym_transport_singleton(transport: Any) -> None:
 
 
 class NymTransport(Transport):
-    def __init__(self, data_dir: Optional[str] = None, nym_client_path: str = "nym-client",
+    def __init__(self, data_dir: str | None = None, nym_client_path: str = "nym-client",
                  websocket_port: int = 1977, max_queue_size: int = 100):
         # Lazy import check - raise RuntimeError if dependencies unavailable
         try:
@@ -49,7 +51,7 @@ class NymTransport(Transport):
         self.max_queue_size = max_queue_size
         self.client_process = None
         self.websocket = None
-        self.handlers: Dict[str, Callable] = {}
+        self.handlers: dict[str, Callable] = {}
         self._ready = asyncio.Event()
         self._stop_event = asyncio.Event()
         self._outgoing_queue = asyncio.Queue(maxsize=max_queue_size)
@@ -112,7 +114,7 @@ class NymTransport(Transport):
         try:
             self.nym_address = await asyncio.wait_for(wait_for_self_address(), timeout=10.0)
             logger.info(f"Nym address: {self.nym_address}")
-        except asyncio.TimeoutError:
+        except TimeoutError:
             raise RuntimeError("Nym client did not send selfAddress")
 
         self._ready.set()
@@ -138,7 +140,7 @@ class NymTransport(Transport):
         if graceful:
             try:
                 await asyncio.wait_for(self._outgoing_queue.join(), timeout=5.0)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 logger.warning("Outgoing queue not empty, discarding pending messages")
         for task in [self._sender_task, self._receiver_task, self._health_check_task,
                      self._stdout_task, self._stderr_task]:
@@ -157,7 +159,7 @@ class NymTransport(Transport):
             self.client_process.terminate()
             try:
                 await asyncio.wait_for(self.client_process.wait(), timeout=5.0)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 logger.warning("Nym process did not terminate gracefully, killing")
                 self.client_process.kill()
                 await self.client_process.wait()
@@ -168,7 +170,7 @@ class NymTransport(Transport):
     def register_handler(self, msg_type: str, handler: Callable):
         self.handlers[msg_type] = handler
 
-    async def send_message(self, target: str, msg_type: str, payload: Dict, signature: str, msg_id: Optional[str] = None):
+    async def send_message(self, target: str, msg_type: str, payload: dict, signature: str, msg_id: str | None = None):
         if self.circuit_breaker_open:
             raise RuntimeError("Circuit breaker open, cannot send via Nym")
         if msg_id is None:
@@ -185,7 +187,7 @@ class NymTransport(Transport):
         }
         try:
             await asyncio.wait_for(self._outgoing_queue.put((msg_id, message)), timeout=1.0)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.warning(f"Outgoing queue full, dropping message {msg_id}")
             return
 

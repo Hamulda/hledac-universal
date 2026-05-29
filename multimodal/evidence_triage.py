@@ -23,7 +23,7 @@ import logging
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from hledac.universal.tools.ocr_engine import VisionOCR, recognize_async
 
@@ -113,8 +113,8 @@ class TriageFacets:
     Fail-safe: all fields have safe defaults. Never raises.
     Bounded: collections capped at defined limits.
     """
-    title: Optional[str] = None
-    author: Optional[str] = None
+    title: str | None = None
+    author: str | None = None
     exif: dict[str, Any] = field(default_factory=dict)
     gps: dict[str, Any] = field(default_factory=dict)
     ocr_snippets: list[str] = field(default_factory=list)
@@ -171,7 +171,7 @@ class EvidenceTriageCoordinator:
         self._governor = governor
         self._initialized = False
         self._lock = asyncio.Lock()
-        self._metadata_extractor: Optional[Any] = None
+        self._metadata_extractor: Any | None = None
         self._ocr = VisionOCR()
 
     async def initialize(self) -> None:
@@ -289,7 +289,7 @@ class EvidenceTriageCoordinator:
 
         return facets
 
-    async def _extract_metadata(self, path: Path) -> Optional[Any]:
+    async def _extract_metadata(self, path: Path) -> Any | None:
         """Extract forensic metadata with timeout."""
         if self._metadata_extractor is None:
             return None
@@ -298,7 +298,7 @@ class EvidenceTriageCoordinator:
                 self._metadata_extractor.extract(str(path)),
                 timeout=METADATA_TIMEOUT_S,
             )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.debug("[EvidenceTriage] Metadata extraction timeout: %s", path)
             return None
         except Exception as e:
@@ -313,7 +313,7 @@ class EvidenceTriageCoordinator:
                 timeout=OCR_TIMEOUT_S,
             )
             return text
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.debug("[EvidenceTriage] OCR timeout: %s", path)
             return ""
         except Exception as e:

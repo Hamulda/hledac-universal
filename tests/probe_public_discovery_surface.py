@@ -12,9 +12,8 @@ Tests the F232 PUBLIC discovery surface telemetry:
 All provider calls are mocked. No live network access.
 """
 
-import asyncio
 import sys
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -107,6 +106,7 @@ class TestSprintF232DiscoveryEmptySubtypes:
 
         # Run with empty DB
         import tempfile
+
         from hledac.universal.knowledge.duckdb_store import DuckDBShadowStore
 
         with tempfile.TemporaryDirectory() as tmp:
@@ -146,6 +146,7 @@ class TestSprintF232DiscoveryEmptySubtypes:
         _patch_discovery(canned_search)
 
         import tempfile
+
         from hledac.universal.knowledge.duckdb_store import DuckDBShadowStore
 
         with tempfile.TemporaryDirectory() as tmp:
@@ -180,7 +181,7 @@ class TestSprintF232ProviderSurfaceTelemetry:
         mock_hits = []
         for i in range(3):
             hit = MagicMock()
-            hit.query = f"test provider surface"
+            hit.query = "test provider surface"
             hit.url = f"https://example-{i}.com"
             hit.title = f"Test {i}"
             hit.snippet = f"Test snippet {i}"
@@ -207,6 +208,7 @@ class TestSprintF232ProviderSurfaceTelemetry:
         _patch_discovery(canned_search)
 
         import tempfile
+
         from hledac.universal.knowledge.duckdb_store import DuckDBShadowStore
 
         with tempfile.TemporaryDirectory() as tmp:
@@ -255,6 +257,7 @@ class TestSprintF232ProviderErrors:
         _patch_discovery(canned_search)
 
         import tempfile
+
         from hledac.universal.knowledge.duckdb_store import DuckDBShadowStore
 
         with tempfile.TemporaryDirectory() as tmp:
@@ -293,6 +296,7 @@ class TestSprintF232ProviderErrors:
         _patch_discovery(canned_search)
 
         import tempfile
+
         from hledac.universal.knowledge.duckdb_store import DuckDBShadowStore
 
         with tempfile.TemporaryDirectory() as tmp:

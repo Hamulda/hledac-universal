@@ -27,10 +27,9 @@ LMDB NAMESPACE:
 from __future__ import annotations
 
 import time as _time
-from typing import Any, Optional
+from typing import Any
 
 import orjson
-
 from hledac.universal.tools.lmdb_kv import LMDBKVStore
 
 __all__ = ["WALManager"]
@@ -63,7 +62,7 @@ class WALManager:
         """
         self._wal_path = wal_path
         self._map_size = map_size
-        self._wal_lmdb: Optional[LMDBKVStore] = None
+        self._wal_lmdb: LMDBKVStore | None = None
         self._initialized: bool = False
 
     # ------------------------------------------------------------------
@@ -88,7 +87,7 @@ class WALManager:
         self._initialized = False
 
     @property
-    def lmdb(self) -> Optional[LMDBKVStore]:
+    def lmdb(self) -> LMDBKVStore | None:
         """Return the WAL LMDB store (may be None if not initialized)."""
         return self._wal_lmdb
 
@@ -129,7 +128,7 @@ class WALManager:
         except Exception:
             return False
 
-    def wal_get_finding(self, finding_id: str) -> Optional[dict[str, Any]]:
+    def wal_get_finding(self, finding_id: str) -> dict[str, Any] | None:
         """Get a WAL truth record by finding_id."""
         if self._wal_lmdb is None:
             return None
@@ -229,7 +228,7 @@ class WALManager:
         except Exception:
             return False
 
-    def wal_get_pending_marker(self, finding_id: str) -> Optional[dict[str, Any]]:
+    def wal_get_pending_marker(self, finding_id: str) -> dict[str, Any] | None:
         """Get a single pending marker value by finding_id."""
         if self._wal_lmdb is None:
             return None
@@ -388,7 +387,7 @@ class WALManager:
             return False
         return self._wal_lmdb.put_many(items)
 
-    def wal_get(self, key: str) -> Optional[dict]:
+    def wal_get(self, key: str) -> dict | None:
         """Get a raw WAL entry."""
         if self._wal_lmdb is None:
             return None

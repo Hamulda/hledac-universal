@@ -2,7 +2,6 @@
 Sprint F195C — test_stealth_session
 Stealth layer canonical wiring tests.
 """
-import asyncio
 
 import pytest
 

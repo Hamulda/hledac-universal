@@ -23,7 +23,7 @@ import asyncio
 import re
 import time
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Any
 
 from hledac.universal.transport.gopher_transport import (
     GopherItem,
@@ -64,7 +64,7 @@ class GopherCrawlItem:
     item_type: str  # "0"=file, "1"=directory, "7"=search, "8"=telnet, "9"=binary
     display_string: str
     depth: int = 0
-    text_content: Optional[str] = None  # extracted if type-0
+    text_content: str | None = None  # extracted if type-0
     source_url: str = ""  # gopher:// URL
 
     @property
@@ -91,7 +91,7 @@ class GopherCrawler:
 
     def __init__(
         self,
-        transport: Optional[GopherTransport] = None,
+        transport: GopherTransport | None = None,
         max_depth: int = MAX_CRAWL_DEPTH,
         max_items_per_host: int = MAX_ITEMS_PER_HOST,
         max_text_size: int = MAX_TEXT_SIZE,
@@ -165,7 +165,7 @@ class GopherCrawler:
                 self._transport.list_directory(host, port, selector, self._timeout_s),
                 timeout=self._timeout_s + 5,
             )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             result.errors.append(f"timeout listing {host}:{port}{selector}")
             return result
         except Exception as e:
@@ -206,7 +206,7 @@ class GopherCrawler:
         _parent_depth: int,
     ) -> None:
         """Crawl multiple directories concurrently with bounded concurrency."""
-        async def crawl_dir(item: GopherItem, depth: int) -> Optional[GopherCrawlResult]:
+        async def crawl_dir(item: GopherItem, depth: int) -> GopherCrawlResult | None:
             async with self._semaphore:
                 if self._is_host_exhausted(host):
                     return None
@@ -253,7 +253,7 @@ class GopherCrawler:
         host: str,
         port: int,
         selector: str,
-    ) -> Optional[str]:
+    ) -> str | None:
         """
         Fetch text content from a type-0 gopher URL and return preview.
         Runs synchronously in executor to avoid blocking.

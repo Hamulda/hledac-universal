@@ -1,7 +1,6 @@
 """CI health check - validates core imports pass."""
 import subprocess
 import sys
-from pathlib import Path
 
 
 def check_import(module_path: str, name: str) -> bool:

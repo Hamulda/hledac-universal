@@ -13,24 +13,34 @@ from __future__ import annotations
 import hashlib
 import re
 import urllib.parse
-from typing import Any
 
 import pytest
-
 
 # --- Module import — Rust or Python fallback ---
 # Cargo.toml lib.name = "hledac_rust_extensions" → Python import name
 try:
     from hledac_rust_extensions import (
-        normalize as _rust_normalize,
-        fingerprint as _rust_fingerprint,
-        strip_tracking_params as _rust_strip_tracking_params,
-        RollingHashEngine,
-        FastHasher,
         BloomFilter,
+        FastHasher,
+        RollingHashEngine,
+        batch_dedup_urls,
         fast_ioc_extract,
         url_normalize,
-        batch_dedup_urls,
+    )
+    from hledac_rust_extensions import (
+        content_hash_64,
+        content_hash_hex,
+        batch_content_hash,
+        batch_content_hash_hex,
+    )
+    from hledac_rust_extensions import (
+        fingerprint as _rust_fingerprint,
+    )
+    from hledac_rust_extensions import (
+        normalize as _rust_normalize,
+    )
+    from hledac_rust_extensions import (
+        strip_tracking_params as _rust_strip_tracking_params,
     )
     _RUST_AVAILABLE = True
 except ImportError:
@@ -44,6 +54,10 @@ except ImportError:
     fast_ioc_extract = None
     url_normalize = None
     batch_dedup_urls = None
+    content_hash_64 = None
+    content_hash_hex = None
+    batch_content_hash = None
+    batch_content_hash_hex = None
 
 
 # --- Pure-Python ref implementations (fallbacks when Rust unavailable) ---
@@ -168,7 +182,7 @@ class TestExtractIocs:
     def test_domain(self):
         text = "Contact admin@example.com or visit https://example.org"
         iocs = extract_iocs(text)
-        domains = [v for v, t in iocs if t == "ipv4" and "." in v]
+        [v for v, t in iocs if t == "ipv4" and "." in v]
         # Pure Python path uses limited domain regex
 
     def test_md5(self):
@@ -444,3 +458,232 @@ def test_rust_path_when_available():
     # fast_ioc_extract
     iocs = fast_ioc_extract("192.168.1.1")
     assert isinstance(iocs, list)
+
+
+# =============================================================================
+# Tests: xxhash (content hashing — non-cryptographic dedup keys)
+# =============================================================================
+class TestContentHashXxhash:
+    """Test xxHash3-64 content hashing for dedup keys and cache IDs."""
+
+    @pytest.mark.skipif(content_hash_64 is None, reason="Rust not available")
+    def test_content_hash_64_idempotent(self):
+        h = content_hash_64("hello")
+        assert h == content_hash_64("hello")
+
+    @pytest.mark.skipif(content_hash_64 is None, reason="Rust not available")
+    def test_content_hash_64_different_inputs(self):
+        assert content_hash_64("hello") != content_hash_64("world")
+
+    @pytest.mark.skipif(content_hash_hex is None, reason="Rust not available")
+    def test_content_hash_hex_idempotent(self):
+        h = content_hash_hex("hello")
+        assert h == content_hash_hex("hello")
+        assert len(h) == 16  # 64-bit hex
+
+    @pytest.mark.skipif(content_hash_hex is None, reason="Rust not available")
+    def test_content_hash_hex_different_inputs(self):
+        assert content_hash_hex("hello") != content_hash_hex("world")
+
+    @pytest.mark.skipif(batch_content_hash is None, reason="Rust not available")
+    def test_batch_content_hash_deterministic(self):
+        results = batch_content_hash(["a", "b", "a"])
+        assert results[0] == results[2]  # same input → same hash
+        assert results[0] != results[1]  # different input → different hash
+
+    @pytest.mark.skipif(batch_content_hash_hex is None, reason="Rust not available")
+    def test_batch_content_hash_hex(self):
+        results = batch_content_hash_hex(["a", "b", "a"])
+        assert results[0] == results[2]
+        assert len(results[0]) == 16
+        assert results[0] != results[1]
+
+    @pytest.mark.skipif(content_hash_hex is None, reason="Rust not available")
+    def test_content_hash_hex_matches_manual(self):
+        # 16-char hex = same format as truncated sha256
+        h = content_hash_hex("test string")
+        assert isinstance(h, str)
+        assert len(h) == 16
+        assert all(c in "0123456789abcdef" for c in h)
+
+    def test_python_fallback_content_hash(self):
+        """Python fallback uses hashlib.sha256 (not xxhash, just verifies import works)."""
+        import hashlib
+        expected = hashlib.sha256("hello".encode()).hexdigest()[:16]
+        if content_hash_hex is not None:
+            # Rust path: should give consistent 16-char hex
+            result = content_hash_hex("hello")
+            assert isinstance(result, str)
+            assert len(result) == 16
+
+
+# =============================================================================
+# Tests: SimHash (near-duplicate detection via Hamming distance)
+# =============================================================================
+try:
+    from hledac_rust_extensions import (
+        compute_simhash,
+        hamming_distance,
+        batch_compute_simhash,
+        is_near_duplicate,
+        find_near_duplicates,
+    )
+    from hledac.universal.semantic_deduplicator import (
+        _compute_simhash_fingerprint,
+        find_near_duplicates_in_batch,
+    )
+    _SIMHASH_FUNC_AVAILABLE = True
+except ImportError:
+    _SIMHASH_FUNC_AVAILABLE = False
+
+
+class TestSimhash:
+    """Test SimHash near-duplicate detection functions."""
+
+    @pytest.mark.skipif(
+        not _SIMHASH_FUNC_AVAILABLE or compute_simhash is None,
+        reason="Rust SimHash not available",
+    )
+    def test_simhash_same_text_distance_zero(self):
+        h = compute_simhash("hello world")
+        assert hamming_distance(h, h) == 0
+
+    @pytest.mark.skipif(
+        not _SIMHASH_FUNC_AVAILABLE or compute_simhash is None,
+        reason="Rust SimHash not available",
+    )
+    def test_simhash_identical_texts_equal_fingerprint(self):
+        assert compute_simhash("hello world") == compute_simhash("hello world")
+
+    @pytest.mark.skipif(
+        not _SIMHASH_FUNC_AVAILABLE or compute_simhash is None,
+        reason="Rust SimHash not available",
+    )
+    def test_simhash_near_duplicate_detection(self):
+        # "hello world" vs "hello world!" — differ by 1 char
+        a = compute_simhash("hello world")
+        b = compute_simhash("hello world!")
+        # Distance varies by position; at least within reasonable range
+        dist = hamming_distance(a, b)
+        assert isinstance(dist, int)
+        assert dist >= 0
+
+    @pytest.mark.skipif(
+        not _SIMHASH_FUNC_AVAILABLE or compute_simhash is None,
+        reason="Rust SimHash not available",
+    )
+    def test_simhash_different_texts_high_distance(self):
+        # Unrelated texts should have high Hamming distance
+        a = compute_simhash("the quick brown fox jumps")
+        b = compute_simhash("jpg encrypted archive contains malware")
+        dist = hamming_distance(a, b)
+        assert dist > 10  # high distance for very different texts
+
+    @pytest.mark.skipif(
+        not _SIMHASH_FUNC_AVAILABLE or batch_compute_simhash is None,
+        reason="Rust SimHash not available",
+    )
+    def test_batch_compute_consistency(self):
+        results = batch_compute_simhash(["alpha", "beta", "gamma"])
+        assert len(results) == 3
+        assert results[0] == batch_compute_simhash(["alpha"])[0]
+        assert len(set(results)) == 3  # all different hashes
+
+    @pytest.mark.skipif(
+        not _SIMHASH_FUNC_AVAILABLE or find_near_duplicates is None,
+        reason="Rust SimHash not available",
+    )
+    def test_find_near_duplicates_empty_list(self):
+        result = find_near_duplicates([], 3)
+        assert result == []
+
+    @pytest.mark.skipif(
+        not _SIMHASH_FUNC_AVAILABLE or find_near_duplicates is None,
+        reason="Rust SimHash not available",
+    )
+    def test_find_near_duplicates_no_pairs(self):
+        # Three very different texts — no pairs within threshold=3
+        fps = [
+            compute_simhash("the quick brown fox jumps over"),
+            compute_simhash("jpg encrypted archive contains malware payload"),
+            compute_simhash("latest stock prices NASDAQ trading session"),
+        ]
+        result = find_near_duplicates(fps, 3)
+        assert isinstance(result, list)
+
+    @pytest.mark.skipif(
+        not _SIMHASH_FUNC_AVAILABLE or find_near_duplicates is None,
+        reason="Rust SimHash not available",
+    )
+    def test_find_near_duplicates_all_same(self):
+        # All identical — every pair is near-duplicate
+        h = compute_simhash("identical text content")
+        fps = [h, h, h, h]
+        result = find_near_duplicates(fps, 64)  # very high threshold
+        # 4 items → 6 pairs: (0,1)(0,2)(0,3)(1,2)(1,3)(2,3)
+        assert len(result) == 6
+
+    @pytest.mark.skipif(
+        not _SIMHASH_FUNC_AVAILABLE or _compute_simhash_fingerprint is None or compute_simhash is None,
+        reason="SimHash fallback not available",
+    )
+    def test_compute_simhash_fingerprint_format(self):
+        fp = _compute_simhash_fingerprint("test input")
+        # Returns 16-char hex string (64-bit fingerprint)
+        assert isinstance(fp, str)
+        assert len(fp) == 16
+        assert all(c in "0123456789abcdef" for c in fp)
+        # Should match the hex format of compute_simhash
+        assert fp == format(compute_simhash("test input"), "016x")
+
+    @pytest.mark.skipif(
+        not _SIMHASH_FUNC_AVAILABLE or find_near_duplicates_in_batch is None,
+        reason="SimHash batch function not available",
+    )
+    def test_find_near_duplicates_in_batch_empty(self):
+        result = find_near_duplicates_in_batch([], 3)
+        assert result == []
+
+    @pytest.mark.skipif(
+        not _SIMHASH_FUNC_AVAILABLE or find_near_duplicates_in_batch is None
+        or batch_compute_simhash is None,
+        reason="SimHash batch function not available",
+    )
+    def test_find_near_duplicates_in_batch_all_same(self):
+        texts = ["same content", "same content", "same content"]
+        result = find_near_duplicates_in_batch(texts, 64)
+        assert len(result) == 3  # pairs: (0,1)(0,2)(1,2)
+
+    @pytest.mark.skipif(
+        not _SIMHASH_FUNC_AVAILABLE or find_near_duplicates_in_batch is None,
+        reason="SimHash batch function not available",
+    )
+    def test_find_near_duplicates_in_batch_no_pairs(self):
+        # Two very different texts should not be paired at threshold=3
+        texts = [
+            "the quick brown fox jumps over the lazy dog",
+            "financial markets cryptocurrency blockchain trading",
+        ]
+        result = find_near_duplicates_in_batch(texts, 3)
+        assert result == []
+
+    @pytest.mark.skipif(
+        not _SIMHASH_FUNC_AVAILABLE or is_near_duplicate is None or compute_simhash is None,
+        reason="Rust SimHash not available",
+    )
+    def test_is_near_duplicate_true(self):
+        h = compute_simhash("hello world")
+        # Very close text — likely within threshold=5
+        near_h = compute_simhash("hello world")
+        assert is_near_duplicate(h, near_h, 5) is True
+
+    @pytest.mark.skipif(
+        not _SIMHASH_FUNC_AVAILABLE or is_near_duplicate is None or compute_simhash is None,
+        reason="Rust SimHash not available",
+    )
+    def test_is_near_duplicate_false_distant(self):
+        h1 = compute_simhash("the quick brown fox jumps over")
+        h2 = compute_simhash("malware executable virus infected file dropper")
+        # Likely Hamming distance > 3
+        assert isinstance(is_near_duplicate(h1, h2, 3), bool)
+

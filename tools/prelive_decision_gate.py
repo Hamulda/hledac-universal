@@ -16,9 +16,8 @@ import json
 import os
 import sys
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import StrEnum
 from pathlib import Path
-from typing import Optional
 
 # Ensure hledac.universal is on sys.path so bare 'from core …' works when
 # this file is run directly as a script (python tools/prelive_decision_gate.py).
@@ -30,7 +29,7 @@ if str(_repo_root) not in sys.path:
 # Decision enum
 # --------------------------------------------------------------------------- #
 
-class Decision(str, Enum):
+class Decision(StrEnum):
     READY_FOR_LIVE = "READY_FOR_LIVE"
     READY_FOR_LIVE_HARDWARE_TAINTED = "READY_FOR_LIVE_HARDWARE_TAINTED"
     # F232H: Feed baseline — nonfeed capability blocked but feed can proceed
@@ -49,7 +48,6 @@ class Decision(str, Enum):
 # --------------------------------------------------------------------------- #
 
 from core.resource_governor import get_swap_policy_tier
-
 
 # --------------------------------------------------------------------------- #
 # UMA check  (read-only import — no network, no model, no SprintScheduler)
@@ -130,7 +128,7 @@ class ProbeReport:
     path: str
     found: bool
     data: dict = field(default_factory=dict)
-    parse_error: Optional[str] = None
+    parse_error: str | None = None
 
 
 def _load_report(repo_root: Path, probe_name: str, report_filename: str) -> ProbeReport:
@@ -145,7 +143,7 @@ def _load_report(repo_root: Path, probe_name: str, report_filename: str) -> Prob
     if not full_path.exists():
         return ProbeReport(path=str(full_path), found=False)
     try:
-        with open(full_path, "r", encoding="utf-8") as fh:
+        with open(full_path, encoding="utf-8") as fh:
             data = json.load(fh)
         return ProbeReport(path=str(full_path), found=True, data=data)
     except Exception as exc:
@@ -391,7 +389,7 @@ def _check_provider_surface(repo_root: Path) -> tuple[list[str], list[str], dict
 # Surface-contract check  (read-only — no live network, no model load)
 # --------------------------------------------------------------------------- #
 
-def _check_surface_contract(repo_root: Path) -> tuple[bool, str, Optional[ProbeReport]]:
+def _check_surface_contract(repo_root: Path) -> tuple[bool, str, ProbeReport | None]:
     """
     Check F219A surface contract if its probe directory exists.
     Returns (pass, detail, report).
@@ -407,7 +405,7 @@ def _check_surface_contract(repo_root: Path) -> tuple[bool, str, Optional[ProbeR
     return _is_pass(report), f"surface_contract: {_is_pass(report)}", report
 
 
-def _check_hermes_metal_finalizer(repo_root: Path) -> tuple[bool, str, Optional[ProbeReport]]:
+def _check_hermes_metal_finalizer(repo_root: Path) -> tuple[bool, str, ProbeReport | None]:
     """
     Check F219B Hermes Metal finalizer if its probe directory exists.
     """
@@ -422,7 +420,7 @@ def _check_hermes_metal_finalizer(repo_root: Path) -> tuple[bool, str, Optional[
     return _is_pass(report), f"hermes_metal_finalizer: {_is_pass(report)}", report
 
 
-def _check_public_session_seal(repo_root: Path) -> tuple[bool, str, Optional[ProbeReport]]:
+def _check_public_session_seal(repo_root: Path) -> tuple[bool, str, ProbeReport | None]:
     """
     Check F219D public session seal if its probe directory exists.
     """
@@ -437,7 +435,7 @@ def _check_public_session_seal(repo_root: Path) -> tuple[bool, str, Optional[Pro
     return _is_pass(report), f"public_session_seal: {_is_pass(report)}", report
 
 
-def _check_ct_cooldown(repo_root: Path) -> tuple[bool, str, Optional[ProbeReport]]:
+def _check_ct_cooldown(repo_root: Path) -> tuple[bool, str, ProbeReport | None]:
     """
     Check F219E CT provider cooldown if its probe directory exists.
     """
@@ -820,7 +818,7 @@ def run_gate(
     }
     if ct_cooldown_report and not ct_cooldown_report.found:
         missing_optional.append("probe_f219e_ct_provider_cooldown")
-        warnings.append(f"optional CT cooldown report absent — skipped")
+        warnings.append("optional CT cooldown report absent — skipped")
     elif ct_cooldown_report and not ct_cooldown_pass:
         reasons.append(f"BLOCKED_BY_PROVIDER_SURFACE: CT cooldown FAILED — {ct_cooldown_detail}")
 
@@ -846,7 +844,7 @@ def run_gate(
     }
     if sc_report and not sc_report.found:
         missing_optional.append("probe_f219a_surface_contract")
-        warnings.append(f"optional surface contract absent — skipped")
+        warnings.append("optional surface contract absent — skipped")
     elif sc_report and not sc_pass:
         reasons.append(f"BLOCKED_BY_CONTRACT: surface contract FAILED — {sc_detail}")
 
@@ -861,7 +859,7 @@ def run_gate(
     }
     if hmf_report and not hmf_report.found:
         missing_optional.append("probe_f219b_hermes_metal_finalizer")
-        warnings.append(f"optional Hermes Metal finalizer absent — skipped")
+        warnings.append("optional Hermes Metal finalizer absent — skipped")
     elif hmf_report and not hmf_pass:
         reasons.append(f"BLOCKED_BY_CONTRACT: Hermes Metal finalizer FAILED — {hmf_detail}")
 
@@ -876,14 +874,14 @@ def run_gate(
     }
     if pss_report and not pss_report.found:
         missing_optional.append("probe_f219d_public_session_seal")
-        warnings.append(f"optional public session seal absent — skipped")
+        warnings.append("optional public session seal absent — skipped")
     elif pss_report and not pss_pass:
         reasons.append(f"BLOCKED_BY_PROVIDER_SURFACE: public session seal FAILED — {pss_detail}")
 
     # --------------------------------------------------------------------------- #
     # 11. Fallback acquisition schema marker — always checked
     # --------------------------------------------------------------------------- #
-    fallback_reports: list[Optional[ProbeReport]] = [
+    fallback_reports: list[ProbeReport | None] = [
         mig_report, mig_manifest, nrg_report, nrg_manifest,
         zf_sanity, zf_quality,
         ct_cooldown_report, sc_report, hmf_report, pss_report,
@@ -1152,8 +1150,8 @@ def _render_markdown(result: DecisionResult, profile: str, query: str) -> str:
         "",
         "## UMA Status",
         "",
-        f"| Field | Value |",
-        f"|-------|-------|",
+        "| Field | Value |",
+        "|-------|-------|",
     ]
 
     uma = result.uma
@@ -1165,8 +1163,8 @@ def _render_markdown(result: DecisionResult, profile: str, query: str) -> str:
     # F220F: Swap tiered policy section
     lines.extend(["", "---", "", "## Swap Policy (F220F)", ""])
     lines.extend([
-        f"| Field | Value |",
-        f"|-------|-------|",
+        "| Field | Value |",
+        "|-------|-------|",
         f"| Swap Policy Tier | `{result.swap_policy_tier}` |",
         f"| Swap Gate Reason | `{result.swap_gate_reason}` |",
         f"| Hardware Constrained | `{result.hardware_constrained}` |",
@@ -1233,7 +1231,7 @@ def _render_markdown(result: DecisionResult, profile: str, query: str) -> str:
     if result.swap_policy_tier == "diagnostic":
         lines.append(f"\n**Diagnostic run (--allow-high-swap — results non-comparable):**\n```bash\n{result.suggested_highswap_diagnostic_command}\n```")
     elif result.swap_policy_tier == "hard_block":
-        lines.append(f"\n**Hard block — restart required before running**")
+        lines.append("\n**Hard block — restart required before running**")
 
     return "\n".join(lines)
 

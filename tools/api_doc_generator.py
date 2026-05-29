@@ -7,17 +7,11 @@ extracting classes, methods, functions, docstrings, and type hints.
 """
 
 import ast
-import asyncio
-import importlib
-import inspect
-import os
 import re
-import sys
 from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set, Tuple, Union
-import json
+from typing import Any
 
 
 @dataclass
@@ -26,10 +20,10 @@ class APIClass:
     name: str
     module: str
     docstring: str
-    methods: List['APIMethod']
-    properties: List['APIProperty']
-    base_classes: List[str]
-    decorators: List[str]
+    methods: list[APIMethod]
+    properties: list[APIProperty]
+    base_classes: list[str]
+    decorators: list[str]
     file_path: str
     line_number: int
 
@@ -41,8 +35,8 @@ class APIMethod:
     signature: str
     docstring: str
     return_type: str
-    parameters: List['APIParameter']
-    decorators: List[str]
+    parameters: list[APIParameter]
+    decorators: list[str]
     is_async: bool
     is_static: bool
     is_class_method: bool
@@ -76,10 +70,10 @@ class APIModule:
     name: str
     file_path: str
     docstring: str
-    classes: List[APIClass]
-    functions: List[APIMethod]
-    imports: List[str]
-    constants: Dict[str, Any]
+    classes: list[APIClass]
+    functions: list[APIMethod]
+    imports: list[str]
+    constants: dict[str, Any]
 
 
 class APIDocGenerator:
@@ -87,16 +81,16 @@ class APIDocGenerator:
 
     def __init__(self, package_path: str = "hledac"):
         self.package_path = Path(package_path)
-        self.modules: Dict[str, APIModule] = {}
-        self.class_hierarchy: Dict[str, List[str]] = defaultdict(list)
-        self.cross_references: Dict[str, Set[str]] = defaultdict(set)
+        self.modules: dict[str, APIModule] = {}
+        self.class_hierarchy: dict[str, list[str]] = defaultdict(list)
+        self.cross_references: dict[str, set[str]] = defaultdict(set)
         self.doc_categories = {
             "agents": [], "core": [], "intelligence": [], "llm": [],
             "runtime": [], "storage": [], "monitoring": [], "security": [],
             "optimization": [], "api": [], "utils": []
         }
 
-    def discover_modules(self) -> List[Path]:
+    def discover_modules(self) -> list[Path]:
         """Discover all Python modules in the package."""
         modules = []
         for py_file in self.package_path.rglob("*.py"):
@@ -109,7 +103,7 @@ class APIDocGenerator:
 
     def parse_module(self, file_path: Path) -> APIModule:
         """Parse a Python module and extract its API elements."""
-        with open(file_path, 'r', encoding='utf-8') as f:
+        with open(file_path, encoding='utf-8') as f:
             content = f.read()
 
         try:
@@ -169,8 +163,7 @@ class APIDocGenerator:
             elif isinstance(item, ast.Assign):
                 for target in item.targets:
                     if isinstance(target, ast.Name):
-                        const_name = target.id
-                        const_value = ast.unparse(item.value) if hasattr(ast, 'unparse') else str(item.value)
+                        ast.unparse(item.value) if hasattr(ast, 'unparse') else str(item.value)
 
         base_classes = [self.get_class_name(base) for base in node.bases]
         decorators = [self.get_decorator_name(dec) for dec in node.decorator_list]
@@ -184,7 +177,7 @@ class APIDocGenerator:
             decorators=decorators, file_path=file_path, line_number=node.lineno
         )
 
-    def parse_function(self, node: Union[ast.FunctionDef, ast.AsyncFunctionDef],
+    def parse_function(self, node: ast.FunctionDef | ast.AsyncFunctionDef,
                       module_name: str, class_name: str = None) -> APIMethod:
         """Parse a function or method definition."""
         docstring = ast.get_docstring(node) or ""
@@ -229,7 +222,7 @@ class APIDocGenerator:
             line_number=node.lineno
         )
 
-    def get_function_signature(self, node: Union[ast.FunctionDef, ast.AsyncFunctionDef]) -> str:
+    def get_function_signature(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> str:
         """Extract function signature as string."""
         args_str = []
 
@@ -325,7 +318,7 @@ class APIDocGenerator:
                 return True
         return False
 
-    def parse_constants(self, node: ast.Assign) -> Dict[str, Any]:
+    def parse_constants(self, node: ast.Assign) -> dict[str, Any]:
         """Parse constant assignments."""
         constants = {}
         for target in node.targets:
@@ -344,7 +337,7 @@ class APIDocGenerator:
                     constants[target.id] = "Unknown"
         return constants
 
-    def parse_import(self, node: Union[ast.Import, ast.ImportFrom]) -> List[str]:
+    def parse_import(self, node: ast.Import | ast.ImportFrom) -> list[str]:
         """Parse import statements."""
         imports = []
         if isinstance(node, ast.Import):
@@ -453,7 +446,7 @@ class APIDocGenerator:
         with open(output_path / "API_REFERENCE_GENERATED.md", 'w', encoding='utf-8') as f:
             f.write(api_content)
 
-    def generate_category_doc(self, category: str, modules: List[APIModule], output_path: Path):
+    def generate_category_doc(self, category: str, modules: list[APIModule], output_path: Path):
         """Generate documentation for a specific category."""
         category_name = category.replace("_", " ").title()
 
@@ -501,7 +494,7 @@ class APIDocGenerator:
         with open(api_dir / f"{category}.md", 'w', encoding='utf-8') as f:
             f.write("\n".join(content))
 
-    def generate_class_doc(self, cls: APIClass, content: List[str]):
+    def generate_class_doc(self, cls: APIClass, content: list[str]):
         """Generate documentation for a class."""
         content.append(f"##### {cls.name}")
         content.append("")
@@ -541,11 +534,11 @@ class APIDocGenerator:
 
         content.append("")
 
-    def generate_function_doc(self, func: APIMethod, content: List[str]):
+    def generate_function_doc(self, func: APIMethod, content: list[str]):
         """Generate documentation for a function."""
         self.generate_method_doc(func, content)
 
-    def generate_method_doc(self, method: APIMethod, content: List[str]):
+    def generate_method_doc(self, method: APIMethod, content: list[str]):
         """Generate documentation for a method or function."""
         async_prefix = "async " if method.is_async else ""
         static_prefix = "@staticmethod\n" if method.is_static else ""
@@ -689,10 +682,7 @@ def main():
     """Main entry point."""
     import argparse
 
-    if sys.version_info >= (3, 14):
-        parser = argparse.ArgumentParser(description="Generate API documentation for Hledac", suggest_on_error=True, color=True)
-    else:
-        parser = argparse.ArgumentParser(description="Generate API documentation for Hledac")
+    parser = argparse.ArgumentParser(description="Generate API documentation for Hledac", suggest_on_error=True, color=True)
     parser.add_argument("--package-path", default="hledac", help="Path to the Python package to document")
     parser.add_argument("--output-dir", default="docs", help="Output directory for documentation")
 

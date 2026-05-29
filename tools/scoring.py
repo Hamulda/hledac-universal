@@ -2,9 +2,8 @@
 Lead scoring and contradiction utilities (no dependencies on internal storage).
 """
 
-import time
 import re
-from typing import List, Optional, Set, Dict, Any
+import time
 
 
 def normalize_text(text: str) -> str:
@@ -15,10 +14,10 @@ def normalize_text(text: str) -> str:
 
 
 def has_contradiction(
-    object_variants: List[str],
+    object_variants: list[str],
     predicate: str,
-    whitelist: Set[str],
-    domain_sets: List[Set[str]]
+    whitelist: set[str],
+    domain_sets: list[set[str]]
 ) -> bool:
     """
     Determine if a set of object variants represents a significant contradiction.
@@ -55,7 +54,7 @@ class LeadScore:
     """Lead scoring for entities/claims (stateless)."""
 
     @staticmethod
-    def compute_score(centrality: int, created_at: float, current_time: Optional[float] = None) -> float:
+    def compute_score(centrality: int, created_at: float, current_time: float | None = None) -> float:
         """Calculate lead score = centrality * (1 - min(1.0, age_hours / 24))."""
         if current_time is None:
             current_time = time.time()

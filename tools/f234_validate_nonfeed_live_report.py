@@ -94,7 +94,7 @@ def _check_acquisition_profile(data: dict) -> tuple[bool, str]:
     # nonfeed_priority_enabled in runtime truth means profile propagation worked
     np_enabled = _get(data, "runtime_truth", "nonfeed_priority_enabled", default=None)
     if np_enabled is True:
-        return True, f"nonfeed_priority_enabled=True (canonical)"
+        return True, "nonfeed_priority_enabled=True (canonical)"
 
     # Check if any profile value is nonfeed_diagnostic
     if "nonfeed_diagnostic" in profiles:
@@ -121,7 +121,7 @@ def _check_nonfeed_priority(data: dict) -> tuple[bool, str]:
     # FEED_ONLY skip reason acceptable — profile propagation worked
     gate = _gate(data)
     if gate == "QUALITY_FAIL_FEED_ONLY":
-        return True, f"quality_gate=QUALITY_FAIL_FEED_ONLY (skip acceptable for nonfeed_diagnostic)"
+        return True, "quality_gate=QUALITY_FAIL_FEED_ONLY (skip acceptable for nonfeed_diagnostic)"
     return False, f"nonfeed_priority_enabled={np_enabled!r}, expected True or skip reason"
 
 
@@ -233,9 +233,9 @@ def _check_profile_priority_mismatch(data: dict) -> tuple[bool, str]:
     if np_enabled_ar is False:
         if np_enabled_rt is True:
             return True, "nonfeed_priority_enabled=True (runtime_truth override)"
-        failures = [f"nonfeed_priority_enabled=False (acquisition_report canonical)"]
+        failures = ["nonfeed_priority_enabled=False (acquisition_report canonical)"]
         if profiles and "default" in profiles:
-            failures.append(f"acquisition_profile=default (should be nonfeed_diagnostic for CT-expected run)")
+            failures.append("acquisition_profile=default (should be nonfeed_diagnostic for CT-expected run)")
         return False, "; ".join(failures)
 
     # acquisition_report missing or None — fall back to runtime_truth
@@ -248,12 +248,12 @@ def _check_profile_priority_mismatch(data: dict) -> tuple[bool, str]:
         # runtime_truth True but profile is wrong — this run has a profile problem
         failures = [f"nonfeed_priority_enabled=True (runtime_truth) but acquisition_profile={acq_profile!r}"]
         if profiles and "default" in profiles:
-            failures.append(f"acquisition_profile=default (should be nonfeed_diagnostic for CT-expected run)")
+            failures.append("acquisition_profile=default (should be nonfeed_diagnostic for CT-expected run)")
         return False, "; ".join(failures)
     if np_enabled_rt is False:
-        failures = [f"nonfeed_priority_enabled=False (runtime_truth)"]
+        failures = ["nonfeed_priority_enabled=False (runtime_truth)"]
         if profiles and "default" in profiles:
-            failures.append(f"acquisition_profile=default (should be nonfeed_diagnostic for CT-expected run)")
+            failures.append("acquisition_profile=default (should be nonfeed_diagnostic for CT-expected run)")
         return False, "; ".join(failures)
 
     # Both canonical surfaces missing/None — check stale surfaces for informational message
@@ -341,8 +341,8 @@ def _check_public_discovery_error_missing_reason(data: dict) -> tuple[bool, str]
 
     if not reason and not provider_errors:
         return False, (
-            f"public_terminal_stage=DISCOVERY_ERROR but no public_discovery_empty_reason "
-            f"and no provider_errors surface — report is silent on why discovery failed"
+            "public_terminal_stage=DISCOVERY_ERROR but no public_discovery_empty_reason "
+            "and no provider_errors surface — report is silent on why discovery failed"
         )
 
     surface = []
@@ -981,8 +981,8 @@ def main() -> None:
     report_path = sys.argv[1]
     exit_code, result = validate_report(report_path)
 
-    print(f"F234 Nonfeed Diagnostic Report Validator")
-    print(f"=" * 60)
+    print("F234 Nonfeed Diagnostic Report Validator")
+    print("=" * 60)
     print(f"Report: {report_path}")
     print(f"Quality gate: {result.get('gate', 'N/A')!r}")
     print(f"Runtime accepted: {result.get('runtime_accepted', 'N/A')}")

@@ -1,7 +1,7 @@
 """Integration tests - bandit + cache + Hermes generation with mock."""
+from unittest.mock import MagicMock
+
 import pytest
-import asyncio
-from unittest.mock import patch, MagicMock, AsyncMock
 
 
 class TestBanditCacheIntegration:
@@ -72,9 +72,8 @@ class TestFullIntegration:
         if cached_response is None:
             mock_response = f"Analysis using: {selected_prompt}"
             cache.set(selected_prompt, mock_response)
-            response = mock_response
         else:
-            response = cached_response
+            pass
 
         reward = 0.8
         await bandit.update(idx, reward)

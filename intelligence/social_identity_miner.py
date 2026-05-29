@@ -25,15 +25,12 @@ import json
 import re
 import time as _time
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
-
-from typing import TYPE_CHECKING
 
 from .confidence_policy import compute_confidence as _compute_confidence
 
 if TYPE_CHECKING:
-    from ..knowledge.duckdb_store import DuckDBShadowStore
     from ..project_types import CanonicalFinding
 
 # ── Bounds ────────────────────────────────────────────────────────────────────
@@ -334,7 +331,7 @@ class SocialIdentityMiner:
                 asyncio.gather(*tasks, return_exceptions=True),
                 timeout=30.0,
             )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             for t in tasks:
                 try:
                     t.close()

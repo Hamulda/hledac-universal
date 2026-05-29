@@ -2,9 +2,9 @@ import asyncio
 import hashlib
 import logging
 import time
-from typing import Dict, List, Optional, Any
+from typing import Any
 
-from hledac.universal.core.resource_governor import ResourceGovernor, Priority
+from hledac.universal.core.resource_governor import Priority, ResourceGovernor
 from hledac.universal.dht.kademlia_node import KademliaNode
 from hledac.universal.dht.local_graph import LocalGraphStore
 
@@ -18,7 +18,7 @@ def stable_digest(s: str) -> str:
     return hashlib.sha256(s.encode("utf-8")).hexdigest()
 
 
-def jaccard_from_lists(a: List[str], b: List[str]) -> float:
+def jaccard_from_lists(a: list[str], b: list[str]) -> float:
     if not a and not b:
         return 1.0
     if not a or not b:
@@ -42,10 +42,10 @@ class SketchExchange:
         self.dht = dht_node
         self.local_graph = local_graph
 
-        self._publish_task: Optional[asyncio.Task] = None
+        self._publish_task: asyncio.Task | None = None
         self._running = True
 
-        self._digests: List[str] = []
+        self._digests: list[str] = []
 
         # F196B: Track background tasks for proper cleanup
         self._background_tasks: set[asyncio.Task] = set()
@@ -84,14 +84,14 @@ class SketchExchange:
                 payload = {"digests": self._digests, "ts": time.time(), "v": 1}
                 await self.dht.store(key, payload)
 
-    async def query_entity(self, entity: str, min_jaccard: float = 0.1) -> List[Dict[str, Any]]:
+    async def query_entity(self, entity: str, min_jaccard: float = 0.1) -> list[dict[str, Any]]:
         """
         Query: compare local digests vs remote digests. If similarity high -> fetch subgraph (placeholder).
         """
         if not self._digests:
             await self._refresh_digests()
 
-        results: List[Dict[str, Any]] = []
+        results: list[dict[str, Any]] = []
         # Iterate local DHT cache (best-effort)
         for key, (payload, _ts) in list(self.dht.data_store.items()):
             if not key.startswith("sketch:"):

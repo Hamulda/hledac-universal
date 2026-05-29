@@ -32,7 +32,6 @@ import json
 import sys
 import time
 from dataclasses import asdict, dataclass
-from typing import Optional
 
 # In-boundary only — no external network, no process kill, no sudo
 try:
@@ -55,10 +54,10 @@ except Exception:
 
 try:
     from utils.uma_budget import (
-        get_uma_snapshot,
-        UMA_WARN_GIB,
         UMA_CRITICAL_GIB,
         UMA_EMERGENCY_GIB,
+        UMA_WARN_GIB,
+        get_uma_snapshot,
     )
 except Exception:
     # Fail-open defaults
@@ -137,10 +136,10 @@ class PreflightResult:
     thresholds_emergency_gib: float
     recommended_action: str
     sample_time_iso: str
-    error: Optional[str] = None
+    error: str | None = None
 
     def as_dict(self) -> dict:
-        return {k: v for k, v in asdict(self).items()}
+        return dict(asdict(self).items())
 
 
 # =============================================================================
@@ -155,7 +154,7 @@ def run_preflight() -> PreflightResult:
     Reads only in-boundary memory samplers.
     """
     sample_time_iso = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-    error: Optional[str] = None
+    error: str | None = None
 
     # ── UMA snapshot via resource_governor (hysteresis-aware) ──────────────
     uma = sample_uma_status()
@@ -263,18 +262,12 @@ def format_markdown(result: PreflightResult) -> str:
 # =============================================================================
 
 def build_arg_parser():
-    if sys.version_info >= (3, 14):
-        parser = argparse.ArgumentParser(
-            prog="tools.live_memory_preflight",
-            description="In-boundary memory preflight check. No network, no process kill, no sudo.",
-            suggest_on_error=True,
-            color=True,
-        )
-    else:
-        parser = argparse.ArgumentParser(
-            prog="tools.live_memory_preflight",
-            description="In-boundary memory preflight check. No network, no process kill, no sudo.",
-        )
+    parser = argparse.ArgumentParser(
+        prog="tools.live_memory_preflight",
+        description="In-boundary memory preflight check. No network, no process kill, no sudo.",
+        suggest_on_error=True,
+        color=True,
+    )
     parser.add_argument(
         "--json",
         action="store_true",

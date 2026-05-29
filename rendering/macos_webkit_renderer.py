@@ -146,12 +146,12 @@ def _probe_worker_capability() -> tuple[bool, str]:
                     proc.communicate(input=payload),
                     timeout=5.0,
                 )
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 if proc:
                     proc.terminate()
                     try:
                         await asyncio.wait_for(proc.wait(), timeout=2.0)
-                    except asyncio.TimeoutError:
+                    except TimeoutError:
                         proc.kill()
                         await proc.wait()
                 return (False, MACOS_WEBKIT_REASONS.PYOBJC_MISSING)
@@ -174,7 +174,7 @@ def _probe_worker_capability() -> tuple[bool, str]:
 
         # Run probe — use existing loop if available (M1-safe), else fresh loop
         try:
-            loop = asyncio.get_running_loop()
+            asyncio.get_running_loop()
         except RuntimeError:
             # No running loop — create a fresh one
             return asyncio.run(_probe())
@@ -280,13 +280,13 @@ async def fetch_with_macos_webkit(
                         proc.communicate(input=payload),
                         timeout=timeout_s + 5.0,
                     )
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     # Timeout on wait_for — worker is still alive, terminate it
                     if proc:
                         proc.terminate()
                         try:
                             await asyncio.wait_for(proc.wait(), timeout=2.0)
-                        except asyncio.TimeoutError:
+                        except TimeoutError:
                             proc.kill()
                             await proc.wait()
                     elapsed_ms = (time.monotonic() - t0) * 1000
@@ -389,7 +389,7 @@ async def fetch_with_macos_webkit(
                 try:
                     proc.terminate()
                     await asyncio.wait_for(proc.wait(), timeout=2.0)
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     proc.kill()
                     await proc.wait()
             raise

@@ -27,16 +27,17 @@ import asyncio
 import json
 import os
 import uuid
-from datetime import datetime, timezone
-from pathlib import Path
+from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any, Mapping, Union, cast
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import Any, cast
 
 from hledac.universal.security.pq_crypto import (
+    PostQuantumBackend,
     PQAvailability,
     PQSignature,
     PQStatus,
-    PostQuantumBackend,
     create_post_quantum_backend,
 )
 
@@ -291,7 +292,7 @@ def normalize_export_input(report: object) -> dict[str, Any]:
     Convert ObservedRunReport (msgspec.Struct) or Mapping → plain dict.
     """
     if hasattr(report, "__struct_fields__"):
-        return {f: getattr(report, f) for f in getattr(report, "__struct_fields__")}
+        return {f: getattr(report, f) for f in report.__struct_fields__}
     if isinstance(report, dict):
         return dict(report)
     if hasattr(report, "keys"):
@@ -305,7 +306,7 @@ def normalize_export_input(report: object) -> dict[str, Any]:
 # Timestamp helpers (RFC3339)
 # ---------------------------------------------------------------------------
 def _utc_now() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def _iso_timestamp(ts: Any) -> str:
@@ -313,7 +314,7 @@ def _iso_timestamp(ts: Any) -> str:
     if ts is None:
         return _utc_now()
     try:
-        return datetime.fromtimestamp(float(ts), tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        return datetime.fromtimestamp(float(ts), tz=UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
     except (TypeError, ValueError):
         return _utc_now()
 
@@ -339,7 +340,7 @@ def _get_recommendation(data: dict[str, Any]) -> str:
 # UUID helpers (STIX requires urn:uuid: for id fields)
 # ---------------------------------------------------------------------------
 def _bundle_id() -> str:
-    return f"bundle--00000000-0000-0000-0000-000000000000"
+    return "bundle--00000000-0000-0000-0000-000000000000"
 
 
 def _make_uuid() -> str:
@@ -403,7 +404,7 @@ def _build_diagnostic_note(data: dict[str, Any], created: str) -> dict[str, Any]
             "accepted_count_delta": data.get("accepted_count_delta", 0),
             "signal_stage": _safe_str(data.get("signal_stage")),
         }, sort_keys=True),
-        "object_refs": [f"identity--ghost-prime"],
+        "object_refs": ["identity--ghost-prime"],
     }
 
 
@@ -855,7 +856,7 @@ def _build_malware_object(
     malware_id = _make_stix_id("malware", name, malware_type)
     ext_refs = [{
         "source_name": "Ghost Prime OSINT",
-        "description": f"Identified from Hledac OSINT collection",
+        "description": "Identified from Hledac OSINT collection",
     }]
     if technique_ids:
         for tech in technique_ids[:5]:
@@ -897,7 +898,7 @@ def _build_tool_object(
         "tool_types": [tool_type] if tool_type else ["utility"],
         "external_references": [{
             "source_name": "Ghost Prime OSINT",
-            "description": f"Identified from Hledac OSINT collection",
+            "description": "Identified from Hledac OSINT collection",
         }],
     }
 
@@ -1228,7 +1229,7 @@ def render_full_stix_bundle(
             })
 
     # ── Report object ───────────────────────────────────────────────────────
-    report_name = f"Ghost Prime Full CTI {datetime.now(timezone.utc).strftime('%Y-%m-%d')}"
+    report_name = f"Ghost Prime Full CTI {datetime.now(UTC).strftime('%Y-%m-%d')}"
     report = _build_cti_report(
         objects=objects,
         name=report_name,
@@ -1296,7 +1297,7 @@ def render_full_stix_bundle_to_path(
     malware_samples: list[dict[str, Any]] | None = None,
     tool_samples: list[dict[str, Any]] | None = None,
     max_objects: int = MAX_STIX_OBJECTS,
-    path: Union[str, Path, None] = None,
+    path: str | Path | None = None,
 ) -> Path:
     """
     Render full CTI findings as a STIX bundle and write to ``path``.
@@ -1334,7 +1335,7 @@ def render_full_stix_bundle_to_path(
 
     filename = Path(path).name if path else None
     if not filename:
-        timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+        timestamp = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
         filename = f"ghost_full_cti_{timestamp}.stix.json"
 
     out_path = base / filename
@@ -1528,7 +1529,7 @@ def render_cti_stix_bundle(
             })
 
     # ── Report object ────────────────────────────────────────────────────────
-    report_name = f"Ghost Prime CTI {datetime.now(timezone.utc).strftime('%Y-%m-%d')}"
+    report_name = f"Ghost Prime CTI {datetime.now(UTC).strftime('%Y-%m-%d')}"
     report = _build_cti_report(
         objects=objects,
         name=report_name,
@@ -1585,7 +1586,7 @@ def render_cti_stix_bundle_to_path(
     killchain_tags: dict[str, Any] | None = None,
     evidence_chains: list[dict[str, Any]] | None = None,
     max_objects: int = MAX_STIX_OBJECTS,
-    path: Union[str, Path, None] = None,
+    path: str | Path | None = None,
 ) -> Path:
     """
     Render CTI findings as a STIX bundle and write to ``path``.
@@ -1619,7 +1620,7 @@ def render_cti_stix_bundle_to_path(
 
     filename = Path(path).name if path else None
     if not filename:
-        timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+        timestamp = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
         filename = f"ghost_cti_{timestamp}.stix.json"
 
     out_path = base / filename
@@ -1878,7 +1879,7 @@ def render_stix_bundle_json(report: object) -> str:
 # ---------------------------------------------------------------------------
 def render_stix_bundle_to_path(
     report: object,
-    path: Union[str, Path, None] = None,
+    path: str | Path | None = None,
 ) -> Path:
     """
     Render report as STIX bundle and write to ``path``.

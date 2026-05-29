@@ -10,7 +10,7 @@ import json
 import logging
 import math
 from pathlib import Path
-from typing import Dict, List, Optional, Any
+from typing import Any
 
 import numpy as np
 
@@ -60,14 +60,14 @@ class LinUCBArm:
         return {'A': self.A.tolist(), 'b': self.b.tolist(), 'alpha': self.alpha}
 
     @classmethod
-    def from_dict(cls, d: dict, n_features: int) -> 'LinUCBArm':
+    def from_dict(cls, d: dict, n_features: int) -> LinUCBArm:
         arm = cls(n_features, d['alpha'])
         arm.A = np.array(d['A'])
         arm.b = np.array(d['b'])
         return arm
 
 
-def _extract_base_features(analysis: Dict[str, Any]) -> list:
+def _extract_base_features(analysis: dict[str, Any]) -> list:
     """Sprint 42 features (8 dims)."""
     intent = analysis.get('intent', 'other').lower()
     query = analysis.get('query', '')
@@ -83,7 +83,7 @@ def _extract_base_features(analysis: Dict[str, Any]) -> list:
     ]
 
 
-def extract_context_features(analysis: Optional[Dict[str, Any]]) -> np.ndarray:
+def extract_context_features(analysis: dict[str, Any] | None) -> np.ndarray:
     """
     Returns 14-dim feature vector:
     [0-7] base features (intent, query_length, entities, temporal)
@@ -120,13 +120,14 @@ class SourceBandit:
     SOURCES = ['web', 'academic', 'darkweb', 'archive', 'blockchain', 'osint']
     LMDB_MAP_SIZE = 10 * 1024 * 1024  # 10 MB
 
-    def __init__(self, lmdb_path: Optional[Path] = None):
+    def __init__(self, lmdb_path: Path | None = None):
         # Sprint 8AR: Lazy import to avoid cold-start regression.
         # Sprint 3D: Also lazily import open_lmdb
         global _LMDB_ROOT, _open_lmdb
         if _LMDB_ROOT is None:
             try:
-                from ..paths import LMDB_ROOT as _LMDB_ROOT, open_lmdb as _open_lmdb
+                from ..paths import LMDB_ROOT as _LMDB_ROOT
+                from ..paths import open_lmdb as _open_lmdb
             except ImportError:
                 _LMDB_ROOT = None
                 _open_lmdb = None
@@ -160,12 +161,12 @@ class SourceBandit:
             )
         self._stats = self._load()
         # Sprint 42: LinUCB arms
-        self._linucb_arms: Dict[str, LinUCBArm] = {}
-        self._counts: Dict[str, int] = {}
-        self._rewards: Dict[str, float] = {}
+        self._linucb_arms: dict[str, LinUCBArm] = {}
+        self._counts: dict[str, int] = {}
+        self._rewards: dict[str, float] = {}
         self._load_linucb()
 
-    def _load(self) -> Dict[str, Dict[str, float]]:
+    def _load(self) -> dict[str, dict[str, float]]:
         """Načte statistiky z LMDB."""
         stats = {s: {'pulls': 0, 'rewards': 0.0} for s in self.SOURCES}
         try:
@@ -192,7 +193,7 @@ class SourceBandit:
         except Exception as e:
             logger.warning(f"[BANDIT] Failed to save {source}: {e}")
 
-    def select(self, n: int = 3) -> List[str]:
+    def select(self, n: int = 3) -> list[str]:
         """
         UCB1 selection – vrací top-n zdrojů.
         Pokud některý zdroj nemá pulls, má nekonečný score (explore).
@@ -302,8 +303,8 @@ class SourceBandit:
         exploration = 2.0 * np.sqrt(np.log(total) / max(1, self._counts[source]))
         return mean + exploration
 
-    def select_with_context(self, sources: List[str], analysis: Optional[Dict[str, Any]],
-                          n: int = 3) -> List[str]:
+    def select_with_context(self, sources: list[str], analysis: dict[str, Any] | None,
+                          n: int = 3) -> list[str]:
         """Select sources using LinUCB if enough data, else fallback to UCB1."""
         try:
             context = extract_context_features(analysis)
@@ -324,7 +325,7 @@ class SourceBandit:
             logger.warning(f"[LINUCB] Error: {e}, falling back to UCB1")
             return self._select_ucb1(sources, n)
 
-    def _select_ucb1(self, sources: List[str], n: int) -> List[str]:
+    def _select_ucb1(self, sources: list[str], n: int) -> list[str]:
         """Fallback UCB1 selection."""
         scored = []
         for src in sources:
@@ -335,7 +336,7 @@ class SourceBandit:
         scored.sort(reverse=True)
         return [s for _, s in scored[:n]]
 
-    def update_with_context(self, source: str, reward: float, analysis: Optional[Dict[str, Any]]) -> None:
+    def update_with_context(self, source: str, reward: float, analysis: dict[str, Any] | None) -> None:
         """Update both UCB1 counts and LinUCB arm."""
         # Classic UCB1 update
         self._counts[source] = self._counts.get(source, 0) + 1

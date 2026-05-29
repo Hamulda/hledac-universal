@@ -8,11 +8,11 @@ not at module import time.
 
 from __future__ import annotations
 
-import numpy as np
-from collections import deque
-from typing import Dict, List, Tuple, Optional, TYPE_CHECKING
 import logging
+from collections import deque
 from dataclasses import dataclass
+
+import numpy as np
 
 logger = logging.getLogger(__name__)
 
@@ -110,7 +110,6 @@ class AdaptiveCostModel:
 
     def _load_mlx_model(self):
         """Load MLX modules and create model. Called lazily on first predict if SSM is ready."""
-        import mlx.core as mx
         import mlx.nn as nn
         # Import Mamba here so it's only loaded when actually needed
         try:
@@ -156,7 +155,7 @@ class AdaptiveCostModel:
         import mlx.optimizers as optim
         self._optimizer = optim.Adam(learning_rate=self.lr)
 
-    def _build_features(self, task_type: str, params: Dict, system_state: Dict) -> np.ndarray:
+    def _build_features(self, task_type: str, params: dict, system_state: dict) -> np.ndarray:
         """
         Sestaví feature vector z:
         - one‑hot task type (fetch, deep_read, branch, atd.)
@@ -185,7 +184,7 @@ class AdaptiveCostModel:
 
         return feat
 
-    def predict(self, task_type: str, params: Dict, system_state: Dict) -> Tuple[float, float, float, float, Optional[float]]:
+    def predict(self, task_type: str, params: dict, system_state: dict) -> tuple[float, float, float, float, float | None]:
         x_raw = self._build_features(task_type, params, system_state)
         # Normalizace
         x_norm = self.normalizer.normalize(x_raw)
@@ -214,12 +213,12 @@ class AdaptiveCostModel:
 
         return (float(total[0]), float(total[1]), float(total[2]), float(total[3]), uncertainty)
 
-    def predict_overrun_risk(self, cost_estimate: Dict) -> float:
+    def predict_overrun_risk(self, cost_estimate: dict) -> float:
         """Predikce rizika překročení budgetu – placeholder."""
         return 0.1
 
-    async def update(self, task_type: str, params: Dict, system_state: Dict,
-                     actual: Tuple[float, float, float, float]):
+    async def update(self, task_type: str, params: dict, system_state: dict,
+                     actual: tuple[float, float, float, float]):
         x_raw = self._build_features(task_type, params, system_state)
 
         # Nejdřív update normalizátoru raw daty

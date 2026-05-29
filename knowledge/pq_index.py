@@ -11,7 +11,6 @@ ROLE: Compression/Acceleration Layer (NOT retrieval authority)
 """
 
 import logging
-from typing import List, Optional, Tuple
 
 import numpy as np
 
@@ -55,10 +54,10 @@ class PQIndex:
             raise ValueError(f"Dimension {d} must be divisible by number of sub-vectors {m}")
 
         self.sub_dim = d // m
-        self.centroids: Optional[mx.array] = None
-        self.codes: Optional[mx.array] = None
-        self.ids: List[str] = []
-        self.perm: Optional[mx.array] = None
+        self.centroids: mx.array | None = None
+        self.codes: mx.array | None = None
+        self.ids: list[str] = []
+        self.perm: mx.array | None = None
         self._is_trained = False
 
     def train(self, vectors: mx.array) -> None:
@@ -161,7 +160,7 @@ class PQIndex:
             self.codes = mx.concatenate([self.codes, code[None, :]], axis=0)
             self.ids.append(node_id)
 
-    def search(self, query: mx.array, k: int = 10) -> List[Tuple[str, float]]:
+    def search(self, query: mx.array, k: int = 10) -> list[tuple[str, float]]:
         """
         Search for k nearest neighbors.
 

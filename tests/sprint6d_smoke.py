@@ -3,9 +3,9 @@
 Sprint 6D: 10s Smoke Test - Step 0D
 """
 import asyncio
+import logging
 import sys
 import time
-import logging
 
 logging.getLogger('hledac').setLevel(logging.WARNING)
 logging.basicConfig(level=logging.INFO, format='%(message)s')
@@ -15,7 +15,7 @@ sys.path.insert(0, '/Users/vojtechhamada/PycharmProjects/Hledac')
 
 async def run_smoke():
     from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
-    from hledac.universal.knowledge.atomic_storage import EvidencePacketStorage, EvidencePacket
+    from hledac.universal.knowledge.atomic_storage import EvidencePacket, EvidencePacketStorage
 
     print("="*70)
     print("[6D] 10S SMOKE TEST - PRE-FLIGHT")
@@ -31,7 +31,7 @@ async def run_smoke():
             evidence_id=f"evidence_{i}",
             url=f"http://localhost:{64000+i}/test",
             final_url=f"http://localhost:{64000+i}/test",
-            domain=f"localhost",
+            domain="localhost",
             fetched_at=time.time() - (i * 86400),
             status=200,
             headers_digest="abc123",
@@ -60,7 +60,7 @@ async def run_smoke():
     DURATION = 10
     START_TIME = time.monotonic()
 
-    print(f"\n[START] 10s smoke test...")
+    print("\n[START] 10s smoke test...")
 
     result = await asyncio.wait_for(
         orch.run_benchmark(
@@ -81,7 +81,7 @@ async def run_smoke():
     findings_fps = findings / ELAPSED if ELAPSED > 0 else 0
     hhi = result.get('hh_index', 0)
 
-    print(f"\n=== 10S SMOKE RESULTS ===")
+    print("\n=== 10S SMOKE RESULTS ===")
     print(f"ELAPSED: {ELAPSED:.1f}s (target: {DURATION}s)")
     print(f"ITERATIONS: {iterations}")
     print(f"BENCHMARK_FPS: {benchmark_fps:.1f}")
@@ -92,7 +92,7 @@ async def run_smoke():
 
     # Action distribution
     action_dist = result.get('actions_selected_distribution', {})
-    print(f"\n[ACTION DISTRIBUTION]")
+    print("\n[ACTION DISTRIBUTION]")
     for name, count in sorted(action_dist.items(), key=lambda x: -x[1])[:8]:
         pct = (count / iterations * 100) if iterations > 0 else 0
         print(f"  {name}: {count} ({pct:.1f}%)")
@@ -108,11 +108,11 @@ async def run_smoke():
 
     # Telemetry
     data_mode = getattr(orch, '_data_mode', 'UNKNOWN')
-    print(f"\n[TELEMETRY]")
+    print("\n[TELEMETRY]")
     print(f"  DATA_MODE: {data_mode}")
 
     # Anti-mock verdict
-    print(f"\n[ANTI-MOCK]")
+    print("\n[ANTI-MOCK]")
     replay_packets = getattr(orch, '_replay_packet_count', 0)
     print(f"  Replay packets: {replay_packets}")
     print(f"  FPS realistic: {benchmark_fps < 50}")

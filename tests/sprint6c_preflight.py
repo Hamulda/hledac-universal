@@ -4,10 +4,10 @@ Sprint 6C: Preflight Truth and Gap Audit
 Step 0: Verify baseline state before any fixes
 """
 import asyncio
-import sys
-import time
 import logging
 import os
+import sys
+import time
 
 logging.getLogger('hledac').setLevel(logging.WARNING)
 logging.basicConfig(level=logging.INFO, format='%(message)s')
@@ -17,7 +17,7 @@ sys.path.insert(0, '/Users/vojtechhamada/PycharmProjects/Hledac')
 
 async def run_preflight_audit():
     from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
-    from hledac.universal.knowledge.atomic_storage import EvidencePacketStorage, EvidencePacket
+    from hledac.universal.knowledge.atomic_storage import EvidencePacket, EvidencePacketStorage
 
     print("=" * 70)
     print("[6C] PREFLIGHT TRUTH AND GAP AUDIT")
@@ -31,10 +31,10 @@ async def run_preflight_audit():
     packets_dir = os.path.expanduser("~/.hledac/evidence_packets/shards")
     packet_count = 0
     if os.path.exists(packets_dir):
-        for root, dirs, files in os.walk(packets_dir):
+        for _root, _dirs, files in os.walk(packets_dir):
             packet_count += len([f for f in files if f.endswith('.json')])
 
-    print(f"\n[A] BASELINE VERIFICATION")
+    print("\n[A] BASELINE VERIFICATION")
     print(f"  TS Active: {_get_ts_status(orch)}")
     print(f"  Adaptive Exploration: {hasattr(orch, '_compute_adaptive_exploration_ratio')}")
     print(f"  Contextual TS: {hasattr(orch, '_get_contextual_posterior')}")
@@ -46,7 +46,7 @@ async def run_preflight_audit():
             evidence_id=f"evidence_{i}",
             url=f"http://localhost:{64000+i}/test",
             final_url=f"http://localhost:{64000+i}/test",
-            domain=f"localhost",
+            domain="localhost",
             fetched_at=time.time() - (i * 86400),
             status=200,
             headers_digest="abc123",
@@ -73,7 +73,7 @@ async def run_preflight_audit():
                 getattr(orch, attr).clear()
 
     # Run 10s smoke test
-    print(f"\n[E] 10S SMOKE TEST")
+    print("\n[E] 10S SMOKE TEST")
     DURATION = 10
     START_TIME = time.monotonic()
 
@@ -109,7 +109,7 @@ async def run_preflight_audit():
     print(f"  NETWORK_RECON runs: {network_recon_runs}")
 
     # Anti-mock verdict
-    print(f"\n[F] ANTI-MOCK VERDICT")
+    print("\n[F] ANTI-MOCK VERDICT")
     offline_confirmed = packet_count >= 100
     anti_mock_ok = benchmark_fps < 50
     verdict = "CLEAN" if (offline_confirmed and anti_mock_ok) else "SUSPICIOUS"
@@ -118,7 +118,7 @@ async def run_preflight_audit():
     print(f"  PREFLIGHT_OK: {'YES' if (offline_confirmed and anti_mock_ok) else 'NO'}")
 
     # Calibration audit
-    print(f"\n[C] CALIBRATION CONTRADICTION AUDIT")
+    print("\n[C] CALIBRATION CONTRADICTION AUDIT")
     if hasattr(orch, '_compute_ts_calibration'):
         calib = orch._compute_ts_calibration()
         print(f"  ts_well_calibrated_fraction: {calib.get('ts_well_calibrated_fraction', 0):.3f}")
@@ -130,14 +130,14 @@ async def run_preflight_audit():
         fraction = calib.get('ts_well_calibrated_fraction', 0)
         wm_error = calib.get('weighted_mean_calibration_error', 0)
         if fraction > 0.5 and wm_error > 0.3:
-            print(f"  CALIBRATION_CONTRADICTION_CONFIRMED: YES")
+            print("  CALIBRATION_CONTRADICTION_CONFIRMED: YES")
         else:
-            print(f"  CALIBRATION_CONTRADICTION_CONFIRMED: NO")
+            print("  CALIBRATION_CONTRADICTION_CONFIRMED: NO")
     else:
-        print(f"  Calibration not implemented")
+        print("  Calibration not implemented")
 
     # Network recon audit
-    print(f"\n[D] NETWORK_RECON BOTTLENECK AUDIT")
+    print("\n[D] NETWORK_RECON BOTTLENECK AUDIT")
     print(f"  network_recon_selected_count: {getattr(orch, '_network_recon_selected_count', 0)}")
     print(f"  network_recon_executed_count: {getattr(orch, '_network_recon_executed_count', 0)}")
     print(f"  network_recon_wildcard_hit_count: {getattr(orch, '_network_recon_wildcard_hit_count', 0)}")
@@ -148,10 +148,10 @@ async def run_preflight_audit():
     print(f"  execution_rate: {exec_rate:.2f}%")
 
     # Handler binding audit
-    print(f"\n[B] HANDLER BINDING AUDIT")
+    print("\n[B] HANDLER BINDING AUDIT")
     action_registry = getattr(orch, '_action_registry', {})
     lambda_count = 0
-    for name, (handler, scorer) in action_registry.items():
+    for _name, (handler, _scorer) in action_registry.items():
         if handler and 'lambda' in str(handler)[:50]:
             lambda_count += 1
     print(f"  Lambda bindings in registry: {lambda_count}")

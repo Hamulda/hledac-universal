@@ -5,12 +5,14 @@ Run via: python -m pytest tests/test_sprint66/test_source_family_canonicalizatio
          (or pytest ... -v from .venv-py3135)
 """
 from __future__ import annotations
+
 import sys
+
 sys.path.insert(0, '/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal')
 
 from hledac.universal.runtime.acquisition_strategy import (
-    normalize_source_family_name,
     canonicalize_source_family_outcomes,
+    normalize_source_family_name,
     normalize_source_family_outcome,
 )
 

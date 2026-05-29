@@ -4,11 +4,11 @@ Sprint 46: Access to Unreachable Data (Sessions + Paywall + OSINT + Darknet)
 Sprint 49: ClientSession pool for connection reuse
 """
 
-import aiohttp
 import asyncio
-import re
 import logging
-from typing import Dict, Optional
+import re
+
+import aiohttp
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +26,7 @@ class PaywallBypass:
             'bloomberg': re.compile(r'bloomberg\.com.*paywall|subscription\s+required', re.I),
         }
         # S49-D: ClientSession pool for connection reuse
-        self._session: Optional[aiohttp.ClientSession] = None
+        self._session: aiohttp.ClientSession | None = None
         self._lock = asyncio.Lock()
 
     async def _get_session(self) -> aiohttp.ClientSession:
@@ -37,7 +37,7 @@ class PaywallBypass:
                 self._session = aiohttp.ClientSession(connector=connector)
             return self._session
 
-    def detect(self, html: str) -> Optional[str]:
+    def detect(self, html: str) -> str | None:
         """Vrátí název paywallu nebo None."""
         if not html:
             return None
@@ -46,7 +46,7 @@ class PaywallBypass:
                 return name
         return None
 
-    async def fetch_via_archive(self, url: str) -> Optional[str]:
+    async def fetch_via_archive(self, url: str) -> str | None:
         """Zkusí načíst z archive.is."""
         archive_url = f"https://archive.is/latest/{url}"
         try:
@@ -59,7 +59,7 @@ class PaywallBypass:
             logger.warning(f"[PAYWALL] archive.is failed: {e}")
         return None
 
-    async def fetch_via_12ft(self, url: str) -> Optional[str]:
+    async def fetch_via_12ft(self, url: str) -> str | None:
         """Zkusí načíst přes 12ft.io."""
         proxy_url = f"https://12ft.io/proxy?q={url}"
         try:
@@ -77,7 +77,7 @@ class PaywallBypass:
         if self._session and not self._session.closed:
             await self._session.close()
 
-    async def bypass(self, url: str, html: str) -> Optional[Dict[str, str]]:
+    async def bypass(self, url: str, html: str) -> dict[str, str] | None:
         """
         Attempt to bypass paywall using available methods.
         Returns dict with content and bypass method, or None.

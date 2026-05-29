@@ -7,9 +7,7 @@ Sprint F195C: Rich terminal dashboard for live sprint monitoring.
 from __future__ import annotations
 
 import sys
-from unittest.mock import MagicMock, patch, PropertyMock
-import pytest
-
+from unittest.mock import MagicMock, patch
 
 # ── Rich stub ─────────────────────────────────────────────────────────────────
 
@@ -329,7 +327,6 @@ class TestSprintDashboardLifecycle:
             dash.finish(result, 120.0)
             # After finish, _live is None
             update_calls = []
-            orig_update = fake_live.update
             def tracking_update(*args, **kwargs):
                 update_calls.append(1)
             fake_live.update = tracking_update

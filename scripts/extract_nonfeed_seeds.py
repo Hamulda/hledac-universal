@@ -44,7 +44,6 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-import tempfile
 from pathlib import Path
 
 # scripts/extract_nonfeed_seeds.py → universal/ → hledac/ → Hledac/ (project root)
@@ -55,14 +54,13 @@ _project_root_of_hledac = _hledac_root.parent
 sys.path.insert(0, str(_project_root_of_hledac))
 
 from hledac.universal.runtime.nonfeed_seed_extractor import (
+    PUBLISHER_DOMAINS,
     NonfeedSeed,
     SeedQuality,
     classify_seed_quality,
-    extract_nonfeed_seeds_from_findings,
     compute_lane_unlocks,
-    PUBLISHER_DOMAINS,
+    extract_nonfeed_seeds_from_findings,
 )
-
 
 # ---------------------------------------------------------------------------
 # DuckDB reading helpers
@@ -122,13 +120,12 @@ def _read_findings_from_duckdb(
 
         # Find text-like columns in this table
         text_cols: list[str] = []
-        id_col: str | None = None
         for col in col_names:
             col_lower = col.lower()
             if col_lower in _TEXT_COLUMNS:
                 text_cols.append(col)
             if col_lower == "id":
-                id_col = col
+                pass
 
         if not text_cols:
             continue
@@ -167,7 +164,7 @@ def _read_findings_from_duckdb(
 
         try:
             rows = conn.execute(sql, params if params else None).fetchall()
-        except Exception as e:
+        except Exception:
             # Try fallback without params
             try:
                 rows = conn.execute(sql).fetchall()
@@ -397,7 +394,7 @@ def main() -> None:
         print("WARNING: No findings found — writing empty seeds file.")
 
     seeds = extract_nonfeed_seeds_from_findings(findings, max_seeds=args.max_seeds)
-    lane_unlocks = compute_lane_unlocks(seeds)
+    compute_lane_unlocks(seeds)
 
     # ── Sprint F223B: Quality gate ─────────────────────────────────────────
     include_weak = args.include_weak
@@ -495,8 +492,6 @@ def main() -> None:
             "GENERIC_INFRA_WEAKENED": "true",
             "LOCKBIT_DOMAIN_KEPT": "true",
             "QUALITY_FIELDS_IN_JSON": "true",
-            "NO_MODEL_CHANGE": "true",
-            "NO_NETWORK_IN_TESTS": "true",
             "NO_NEW_REQUIRED_DEPENDENCIES": "true",
         },
     }

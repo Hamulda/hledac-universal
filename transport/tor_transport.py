@@ -1,11 +1,11 @@
 import asyncio
 import logging
 import os
-import signal
 import shutil
+import signal
 import socket
+from collections.abc import Callable
 from pathlib import Path
-from typing import Dict, Callable, Optional
 
 from .base import Transport
 
@@ -16,15 +16,15 @@ logger = logging.getLogger(__name__)
 MAX_CIRCUIT_REQUESTS: int = 3  # rotate after N requests per domain (correlation risk reduction)
 
 # Sprint F214Q B.3: Module-level TorTransport singleton — max 1 STEM Controller per process
-_TOR_TRANSPORT_SINGLETON: "TorTransport | None" = None
+_TOR_TRANSPORT_SINGLETON: TorTransport | None = None
 
 
-def get_tor_transport_singleton() -> "TorTransport | None":
+def get_tor_transport_singleton() -> TorTransport | None:
     """Return the module-level TorTransport singleton or None."""
     return _TOR_TRANSPORT_SINGLETON
 
 
-def set_tor_transport_singleton(transport: "TorTransport") -> None:
+def set_tor_transport_singleton(transport: TorTransport) -> None:
     """Set the module-level TorTransport singleton. Call after start() succeeds."""
     global _TOR_TRANSPORT_SINGLETON
     _TOR_TRANSPORT_SINGLETON = transport
@@ -57,7 +57,7 @@ class TorUnavailableError(RuntimeError):
 class TorTransport(Transport):
     available: bool = True
 
-    def __init__(self, data_dir: Optional[str] = None, control_port: int = 9051,
+    def __init__(self, data_dir: str | None = None, control_port: int = 9051,
                  socks_port: int = 9050):
         # B7: graceful fallback — Tor unavailable → available=False, no crash
         self.available = True
@@ -90,11 +90,11 @@ class TorTransport(Transport):
         self.socks_port = socks_port
         self.hidden_service_dir = self.data_dir / "hidden_service"
         self.hidden_service_dir.mkdir(exist_ok=True)
-        self.onion_address: Optional[str] = None
-        self.tor_process: Optional[asyncio.subprocess.Process] = None
+        self.onion_address: str | None = None
+        self.tor_process: asyncio.subprocess.Process | None = None
         self.http_server = None
         self.runner = None
-        self.handlers: Dict[str, Callable] = {}
+        self.handlers: dict[str, Callable] = {}
         self._ready = asyncio.Event()
         self.http_port: int = 0
         self.security_level = 'tor'
@@ -165,8 +165,9 @@ class TorTransport(Transport):
             # Hidden service hostname
             hostname_file = self.hidden_service_dir / "hostname"
             for _ in range(15):
-                if hostname_file.exists():
-                    with open(hostname_file, 'r') as f:
+                if await asyncio.to_thread(hostname_file.exists):
+                    f = await asyncio.to_thread(lambda: open(hostname_file))
+                    with f:
                         self.onion_address = f.read().strip()
                     break
                 await asyncio.sleep(1)
@@ -220,7 +221,7 @@ class TorTransport(Transport):
             self.tor_process.terminate()
             try:
                 await asyncio.wait_for(self.tor_process.wait(), timeout=5)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 self.tor_process.kill()
 
         if self._session_direct:
@@ -329,7 +330,6 @@ class TorTransport(Transport):
 
         Falls back to global counter for non-domain calls (backward compat).
         """
-        from urllib.parse import urlparse
 
         async with self._circuit_lock:
             if domain:
@@ -353,7 +353,7 @@ class TorTransport(Transport):
                     else:
                         logger.warning("Circuit rotation failed — continuing with current circuit")
 
-    async def fetch(self, config: "TransportConfig") -> "TransportResult":
+    async def fetch(self, config: TransportConfig) -> TransportResult:
         """
         Sprint F214 B.1: Fetch URL via Tor using curl_cffi with SOCKS5H.
         Circuit rotation after MAX_CIRCUIT_REQUESTS.
@@ -418,7 +418,7 @@ class TorTransport(Transport):
     def register_handler(self, msg_type: str, handler: Callable):
         self.handlers[msg_type] = handler
 
-    async def send_message(self, target: str, msg_type: str, payload: Dict, signature: str, msg_id: str = None):
+    async def send_message(self, target: str, msg_type: str, payload: dict, signature: str, msg_id: str = None):
         if target.startswith('localhost:'):
             url = f"http://{target}/message"
             session = self._session_direct
@@ -473,8 +473,8 @@ async def jarm_fingerprint(host: str, port: int = 443) -> str | None:
       2. TLS 1.3
       3. TLS 1.2 s CIPHER_SERVER_PREFERENCE
     """
-    import ssl
     import hashlib
+    import ssl
 
     probes = [
         (ssl.TLSVersion.TLSv1_2, ssl.OP_NO_TLSv1_3),
@@ -501,7 +501,7 @@ async def jarm_fingerprint(host: str, port: int = 443) -> str | None:
                 await asyncio.wait_for(w.wait_closed(), timeout=1.0)
             except Exception:
                 pass
-        except (asyncio.TimeoutError, OSError, ssl.SSLError, ConnectionRefusedError):
+        except (TimeoutError, OSError, ssl.SSLError, ConnectionRefusedError):
             tokens.append("TIMEOUT")
         except Exception as e:
             tokens.append(f"ERR:{type(e).__name__}")

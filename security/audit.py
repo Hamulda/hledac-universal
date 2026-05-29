@@ -21,7 +21,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -55,12 +55,12 @@ class AuditEvent:
     event_type: AuditEventType
     action: str
     resource: str
-    user_id: Optional[str]
-    session_id: Optional[str]
-    details: Dict[str, Any]
+    user_id: str | None
+    session_id: str | None
+    details: dict[str, Any]
     level: AuditLevel
     hash: str = field(default="")
-    _hmac_key: Optional[bytes] = field(default=None, repr=False)
+    _hmac_key: bytes | None = field(default=None, repr=False)
 
     def __post_init__(self):
         """Vypočítat hash pro integrity"""
@@ -84,8 +84,8 @@ class AuditEvent:
             return hmac.new(self._hmac_key, data.encode(), hashlib.sha256).hexdigest()
         # Fallback: key not available, use SHA256 (should not happen when properly configured)
         return hashlib.sha256(data.encode()).hexdigest()[:32]
-    
-    def to_dict(self) -> Dict[str, Any]:
+
+    def to_dict(self) -> dict[str, Any]:
         """Export jako slovník"""
         return {
             "timestamp": self.timestamp.isoformat(),
@@ -109,19 +109,19 @@ class AuditConfig:
     log_to_file: bool = True
     retention_days: int = 90
     encrypt_logs: bool = True
-    hmac_key: Optional[bytes] = None
+    hmac_key: bytes | None = None
 
 
 class AuditLogger:
     """
     Logger pro auditování s integrity protection.
-    
+
     Ukládá audit trail pro:
     - Výzkumné dotazy
     - Přístup k datům
     - Bezpečnostní události
     - Compliance reporting
-    
+
     Example:
         >>> audit = AuditLogger()
         >>> await audit.log(
@@ -131,16 +131,16 @@ class AuditLogger:
         ...     details={"query": "sensitive_topic"},
         ... )
     """
-    
+
     def __init__(self, config: AuditConfig = None):
         self.config = config or AuditConfig()
-        self._db: Optional[sqlite3.Connection] = None
+        self._db: sqlite3.Connection | None = None
         self._initialized = False
         # Generate HMAC key if not provided
         if self.config.hmac_key is None:
             self.config.hmac_key = os.urandom(32)
         self._hmac_key: bytes = self.config.hmac_key
-        
+
     async def initialize(self) -> None:
         """Inicializovat databázi"""
         Path(self.config.db_path).parent.mkdir(parents=True, exist_ok=True)
@@ -170,20 +170,20 @@ class AuditLogger:
         self._initialized = True
 
         logger.info(f"AuditLogger initialized: {self.config.db_path}")
-    
+
     async def log(
         self,
         event_type: AuditEventType,
         action: str,
         resource: str,
-        details: Dict[str, Any] = None,
+        details: dict[str, Any] = None,
         level: AuditLevel = AuditLevel.INFO,
         user_id: str = None,
         session_id: str = None,
     ) -> bool:
         """
         Zalogovat audit událost.
-        
+
         Args:
             event_type: Typ události
             action: Provedená akce
@@ -192,17 +192,17 @@ class AuditLogger:
             level: Úroveň
             user_id: ID uživatele
             session_id: ID relace
-            
+
         Returns:
             True pokud úspěšné
         """
         if not self._initialized:
             return False
-        
+
         # Kontrolovat úroveň
         if level.value < self.config.min_level.value:
             return True
-        
+
         event = AuditEvent(
             timestamp=datetime.now(),
             event_type=event_type,
@@ -214,7 +214,7 @@ class AuditLogger:
             level=level,
             _hmac_key=self._hmac_key,
         )
-        
+
         try:
             # Uložit do databáze
             await asyncio.to_thread(lambda: self._db.execute("""
@@ -233,17 +233,17 @@ class AuditLogger:
                 event.hash,
             )))
             await asyncio.to_thread(lambda: self._db.commit())
-            
+
             # Logovat do konzole pokud povoleno
             if self.config.log_to_console:
                 logger.info(f"AUDIT: {event.event_type.value} - {event.action} on {event.resource}")
-            
+
             return True
-            
+
         except Exception as e:
             logger.error(f"Failed to log audit event: {e}")
             return False
-    
+
     async def query(
         self,
         event_type: AuditEventType = None,
@@ -251,42 +251,42 @@ class AuditLogger:
         start_time: datetime = None,
         end_time: datetime = None,
         limit: int = 100
-    ) -> List[AuditEvent]:
+    ) -> list[AuditEvent]:
         """
         Query audit log.
-        
+
         Args:
             event_type: Filtrovat podle typu
             resource: Filtrovat podle zdroje
             start_time: Od
             end_time: Do
             limit: Limit výsledků
-            
+
         Returns:
             Seznam audit událostí
         """
         if not self._initialized:
             return []
-        
+
         query = "SELECT * FROM audit_events WHERE 1=1"
         params = []
-        
+
         if event_type:
             query += " AND event_type = ?"
             params.append(event_type.value)
-        
+
         if resource:
             query += " AND resource = ?"
             params.append(resource)
-        
+
         if start_time:
             query += " AND timestamp >= ?"
             params.append(start_time.isoformat())
-        
+
         if end_time:
             query += " AND timestamp <= ?"
             params.append(end_time.isoformat())
-        
+
         query += " ORDER BY timestamp DESC LIMIT ?"
         params.append(limit)
 
@@ -306,38 +306,38 @@ class AuditLogger:
                 hash=row[9],
                 _hmac_key=self._hmac_key,
             ))
-        
+
         return events
-    
+
     async def get_report(
         self,
         start_time: datetime = None,
         end_time: datetime = None
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Vygenerovat audit report.
-        
+
         Args:
             start_time: Od
             end_time: Do
-            
+
         Returns:
             Report statistiky
         """
         if not self._initialized:
             return {}
-        
+
         query = "SELECT event_type, COUNT(*) FROM audit_events WHERE 1=1"
         params = []
-        
+
         if start_time:
             query += " AND timestamp >= ?"
             params.append(start_time.isoformat())
-        
+
         if end_time:
             query += " AND timestamp <= ?"
             params.append(end_time.isoformat())
-        
+
         query += " GROUP BY event_type"
 
         cursor = await asyncio.to_thread(lambda: self._db.execute(query, params))
@@ -351,7 +351,7 @@ class AuditLogger:
             "event_counts": stats,
             "total_events": sum(stats.values()),
         }
-    
+
     async def close(self) -> None:
         """Zavřít databázi"""
         if self._db:

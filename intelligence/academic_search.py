@@ -26,25 +26,21 @@ import xml.etree.ElementTree as ET
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import datetime
-from pathlib import Path
 from enum import Enum, auto
-from typing import Any, Dict, List, Optional, Set, Tuple
+from pathlib import Path
+from typing import Any
 
 import aiohttp
-
 from hledac.universal.network.session_runtime import async_get_aiohttp_session
+from hledac.universal.utils.deduplication import DeduplicationConfig, DeduplicationEngine
+from hledac.universal.utils.deduplication import QueryItem as DedupItem
 from hledac.universal.utils.query_expansion import (
+    DomainSpecificExpansionStrategy,
     ExpansionStrategy,
     MultiStrategyExpander,
     QueryVariation,
     SemanticExpansionStrategy,
     SyntacticExpansionStrategy,
-    DomainSpecificExpansionStrategy
-)
-from hledac.universal.utils.deduplication import (
-    DeduplicationEngine,
-    DeduplicationConfig,
-    QueryItem as DedupItem
 )
 
 logger = logging.getLogger(__name__)
@@ -82,10 +78,10 @@ class SourceConfig:
     weight: float = 1.0
     timeout_seconds: float = 10.0
     max_results: int = 10
-    api_key: Optional[str] = None
-    base_url: Optional[str] = None
+    api_key: str | None = None
+    base_url: str | None = None
     rate_limit_per_minute: int = 60
-    
+
     def __post_init__(self):
         # Load API key from environment if not provided
         if self.api_key is None:
@@ -101,11 +97,11 @@ class SearchResult:
     snippet: str
     source: str
     result_type: ResultType = ResultType.UNKNOWN
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
     relevance_score: float = 0.0
     timestamp: datetime = field(default_factory=datetime.now)
-    
-    def to_dict(self) -> Dict[str, Any]:
+
+    def to_dict(self) -> dict[str, Any]:
         return {
             "title": self.title,
             "url": self.url,
@@ -122,28 +118,28 @@ class SearchResult:
 class SourceResult:
     """Results from a single source."""
     source_name: str
-    results: List[SearchResult]
+    results: list[SearchResult]
     query_used: str
     execution_time_ms: float
     success: bool
-    error_message: Optional[str] = None
+    error_message: str | None = None
 
 
 @dataclass
 class AcademicSearchResult:
     """Complete academic search result."""
     original_query: str
-    all_results: List[SearchResult]
-    deduplicated_results: List[SearchResult]
-    sources_used: List[str]
+    all_results: list[SearchResult]
+    deduplicated_results: list[SearchResult]
+    sources_used: list[str]
     total_sources: int
     successful_sources: int
     execution_time_ms: float
     expansions_used: int
-    query_variations: List[str] = field(default_factory=list)
+    query_variations: list[str] = field(default_factory=list)
     timestamp: datetime = field(default_factory=datetime.now)
-    
-    def to_dict(self) -> Dict[str, Any]:
+
+    def to_dict(self) -> dict[str, Any]:
         return {
             "original_query": self.original_query,
             "all_results_count": len(self.all_results),
@@ -163,16 +159,16 @@ class AcademicSearchResult:
 class QueryAnalysis:
     """Analysis of a query."""
     original_query: str
-    key_terms: List[str] = field(default_factory=list)
-    domain_hint: Optional[str] = None
+    key_terms: list[str] = field(default_factory=list)
+    domain_hint: str | None = None
     complexity_score: float = 0.5
     detected_language: str = "en"
-    
+
     def __post_init__(self):
         if not self.key_terms:
             self.key_terms = self._extract_key_terms()
-    
-    def _extract_key_terms(self) -> List[str]:
+
+    def _extract_key_terms(self) -> list[str]:
         """Extract key terms from query."""
         stop_words = {
             "the", "a", "an", "and", "or", "but", "in", "on", "at", "to",
@@ -192,14 +188,14 @@ class SourcePerformance:
     successful_requests: int = 0
     failed_requests: int = 0
     avg_response_time_ms: float = 0.0
-    last_used: Optional[datetime] = None
-    
+    last_used: datetime | None = None
+
     @property
     def success_rate(self) -> float:
         if self.total_requests == 0:
             return 1.0
         return self.successful_requests / self.total_requests
-    
+
     @property
     def score(self) -> float:
         """Calculate overall source score."""
@@ -207,7 +203,7 @@ class SourcePerformance:
         speed_weight = 0.3
         speed_score = max(0, 1 - (self.avg_response_time_ms / 10000))
         return (self.success_rate * success_weight) + (speed_score * speed_weight)
-    
+
     def update(self, success: bool, response_time_ms: float):
         """Update performance metrics."""
         self.total_requests += 1
@@ -215,12 +211,12 @@ class SourcePerformance:
             self.successful_requests += 1
         else:
             self.failed_requests += 1
-        
+
         if self.avg_response_time_ms == 0:
             self.avg_response_time_ms = response_time_ms
         else:
             self.avg_response_time_ms = (self.avg_response_time_ms * 0.8) + (response_time_ms * 0.2)
-        
+
         self.last_used = datetime.now()
 
 
@@ -230,29 +226,29 @@ class SourcePerformance:
 
 class BaseSourceAdapter(ABC):
     """Abstract base class for search source adapters."""
-    
+
     def __init__(self, config: SourceConfig):
         self.config = config
         self.performance = SourcePerformance(source_name=config.name)
         self.logger = logging.getLogger(f"academic.source.{config.name}")
-    
+
     @abstractmethod
     async def search(
         self,
         query: str,
         max_results: int = 10,
-        analysis: Optional[QueryAnalysis] = None
-    ) -> List[SearchResult]:
+        analysis: QueryAnalysis | None = None
+    ) -> list[SearchResult]:
         """Search the source with the given query."""
         pass
-    
+
     async def execute_search(
         self,
         query: str,
         max_results: int = 10,
-        analysis: Optional[QueryAnalysis] = None,
+        analysis: QueryAnalysis | None = None,
         **kwargs
-    ) -> Tuple[List[SearchResult], float, bool]:
+    ) -> tuple[list[SearchResult], float, bool]:
         """Execute search with performance tracking."""
         start_time = time.time()
         adapter_name = getattr(self.config, 'name', self.__class__.__name__)
@@ -276,7 +272,7 @@ class BaseSourceAdapter(ABC):
             )
             self.performance.update(success=False, response_time_ms=execution_time)
             return [], execution_time, False
-    
+
     def get_performance(self) -> SourcePerformance:
         """Get performance metrics for this source."""
         return self.performance
@@ -288,18 +284,18 @@ class BaseSourceAdapter(ABC):
 
 class ArxivAdapter(BaseSourceAdapter):
     """Adapter for searching ArXiv."""
-    
+
     def __init__(self, config: SourceConfig):
         super().__init__(config)
         self.base_url = config.base_url or "http://export.arxiv.org/api/query"
-    
+
     async def search(
         self,
         query: str,
         max_results: int = 10,
-        analysis: Optional[QueryAnalysis] = None,
-        async_session: Optional[aiohttp.ClientSession] = None
-    ) -> List[SearchResult]:
+        analysis: QueryAnalysis | None = None,
+        async_session: aiohttp.ClientSession | None = None
+    ) -> list[SearchResult]:
         """Search ArXiv for papers.
 
         Args:
@@ -322,7 +318,7 @@ class ArxivAdapter(BaseSourceAdapter):
 
             headers = {"User-Agent": "Hledac-Research/1.0"}
 
-            async def _do_search(session: aiohttp.ClientSession) -> List[SearchResult]:
+            async def _do_search(session: aiohttp.ClientSession) -> list[SearchResult]:
                 nonlocal url, headers
                 async with session.get(
                     url,
@@ -342,66 +338,66 @@ class ArxivAdapter(BaseSourceAdapter):
                 shared = await async_get_aiohttp_session()
                 return await _do_search(shared)
 
-        except asyncio.TimeoutError:
+        except TimeoutError:
             self.logger.warning("ArXiv search timed out")
             return []
         except Exception as e:
             self.logger.error(f"ArXiv search error: {e}")
             return []
 
-    def _parse_results(self, xml_content: str) -> List[SearchResult]:
+    def _parse_results(self, xml_content: str) -> list[SearchResult]:
         """Parse ArXiv API XML response."""
         results = []
-        
+
         try:
             ns = {
                 'atom': 'http://www.w3.org/2005/Atom',
                 'arxiv': 'http://arxiv.org/schemas/atom'
             }
-            
+
             root = ET.fromstring(xml_content.encode('utf-8'))
-            
+
             for entry in root.findall('atom:entry', ns):
                 if entry.find('atom:title', ns) is None:
                     continue
-                
+
                 title_elem = entry.find('atom:title', ns)
                 title = title_elem.text if title_elem is not None else "No Title"
-                
+
                 summary_elem = entry.find('atom:summary', ns)
                 summary = summary_elem.text if summary_elem is not None else ""
-                
+
                 id_elem = entry.find('atom:id', ns)
                 arxiv_id = id_elem.text if id_elem is not None else ""
                 url = arxiv_id if arxiv_id else ""
-                
+
                 # Get authors
                 authors = []
                 for author in entry.findall('atom:author', ns):
                     name_elem = author.find('atom:name', ns)
                     if name_elem is not None:
                         authors.append(name_elem.text)
-                
+
                 # Get published date
                 published_elem = entry.find('atom:published', ns)
                 published = published_elem.text if published_elem is not None else ""
-                
+
                 # Get categories
                 categories = []
                 for category in entry.findall('atom:category', ns):
                     term = category.get('term')
                     if term:
                         categories.append(term)
-                
+
                 # Get PDF link
                 pdf_url = ""
                 for link in entry.findall('atom:link', ns):
                     if link.get('title') == 'pdf':
                         pdf_url = link.get('href', '')
                         break
-                
+
                 snippet = summary[:300] + "..." if len(summary) > 300 else summary
-                
+
                 result = SearchResult(
                     title=title.strip(),
                     url=url,
@@ -417,19 +413,19 @@ class ArxivAdapter(BaseSourceAdapter):
                     }
                 )
                 results.append(result)
-                
+
         except ET.ParseError as e:
             self.logger.error(f"XML parse error: {e}")
         except Exception as e:
             self.logger.error(f"Error parsing ArXiv results: {e}")
-        
+
         return results
-    
-    async def get_paper_details(self, arxiv_id: str) -> Dict[str, Any]:
+
+    async def get_paper_details(self, arxiv_id: str) -> dict[str, Any]:
         """Get detailed information about a specific paper."""
         try:
             url = f"{self.base_url}?id_list={arxiv_id}"
-            
+
             async with aiohttp.ClientSession() as session:
                 async with session.get(url, timeout=aiohttp.ClientTimeout(total=10)) as response:
                     if response.status == 200:
@@ -449,7 +445,7 @@ class ArxivAdapter(BaseSourceAdapter):
 
 class CrossrefAdapter(BaseSourceAdapter):
     """Adapter for searching Crossref."""
-    
+
     def __init__(self, config: SourceConfig):
         super().__init__(config)
         self.base_url = config.base_url or "https://api.crossref.org/works"
@@ -458,9 +454,9 @@ class CrossrefAdapter(BaseSourceAdapter):
         self,
         query: str,
         max_results: int = 10,
-        analysis: Optional[QueryAnalysis] = None,
-        async_session: Optional[aiohttp.ClientSession] = None
-    ) -> List[SearchResult]:
+        analysis: QueryAnalysis | None = None,
+        async_session: aiohttp.ClientSession | None = None
+    ) -> list[SearchResult]:
         """Search Crossref for academic papers.
 
         Args:
@@ -485,7 +481,7 @@ class CrossrefAdapter(BaseSourceAdapter):
             if self.config.api_key:
                 headers["Crossref-Plus-API-Token"] = f"Bearer {self.config.api_key}"
 
-            async def _do_search(session: aiohttp.ClientSession) -> List[SearchResult]:
+            async def _do_search(session: aiohttp.ClientSession) -> list[SearchResult]:
                 nonlocal params, headers
                 async with session.get(
                     self.base_url,
@@ -506,27 +502,27 @@ class CrossrefAdapter(BaseSourceAdapter):
                 shared = await async_get_aiohttp_session()
                 return await _do_search(shared)
 
-        except asyncio.TimeoutError:
+        except TimeoutError:
             self.logger.warning("Crossref search timed out")
             return []
         except Exception as e:
             self.logger.error(f"Crossref search error: {e}")
             return []
 
-    def _parse_results(self, data: Dict) -> List[SearchResult]:
+    def _parse_results(self, data: dict) -> list[SearchResult]:
         """Parse Crossref API JSON response."""
         results = []
-        
+
         try:
             items = data.get("message", {}).get("items", [])
-            
+
             for item in items:
                 titles = item.get("title", [])
                 title = titles[0] if titles else "No Title"
-                
+
                 doi = item.get("DOI", "")
                 url = item.get("URL", f"https://doi.org/{doi}" if doi else "")
-                
+
                 # Get authors
                 authors = []
                 for author in item.get("author", []):
@@ -536,7 +532,7 @@ class CrossrefAdapter(BaseSourceAdapter):
                         authors.append(f"{given} {family}")
                     elif family:
                         authors.append(family)
-                
+
                 # Get abstract (rarely available in Crossref)
                 abstract = item.get("abstract", "")
                 if not abstract:
@@ -544,17 +540,17 @@ class CrossrefAdapter(BaseSourceAdapter):
                     container_title = container[0] if container else ""
                     pub_type = item.get("type", "unknown")
                     abstract = f"{pub_type}: {container_title}" if container_title else pub_type
-                
+
                 snippet = abstract[:300] + "..." if len(abstract) > 300 else abstract
-                
+
                 # Get publication date
                 published = item.get("published-print", {}) or item.get("published-online", {})
                 date_parts = published.get("date-parts", [[]])
                 pub_date = "-".join(str(p) for p in date_parts[0]) if date_parts and date_parts[0] else ""
-                
+
                 # Get citation count
                 citations = item.get("is-referenced-by-count", 0)
-                
+
                 result = SearchResult(
                     title=title.strip(),
                     url=url,
@@ -573,21 +569,21 @@ class CrossrefAdapter(BaseSourceAdapter):
                     relevance_score=min(citations / 100, 1.0) * 0.3
                 )
                 results.append(result)
-                
+
         except Exception as e:
             self.logger.error(f"Error parsing Crossref results: {e}")
-        
+
         return results
-    
-    async def get_work_by_doi(self, doi: str) -> Dict[str, Any]:
+
+    async def get_work_by_doi(self, doi: str) -> dict[str, Any]:
         """Get detailed information about a work by DOI."""
         try:
             url = f"{self.base_url}/{doi}"
-            
+
             headers = {
                 "User-Agent": "Hledac-Research/1.0 (mailto:research@hledac.local)"
             }
-            
+
             async with aiohttp.ClientSession() as session:
                 async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=10)) as response:
                     if response.status == 200:
@@ -613,7 +609,7 @@ class CrossrefAdapter(BaseSourceAdapter):
 
 class SemanticScholarAdapter(BaseSourceAdapter):
     """Adapter for searching Semantic Scholar."""
-    
+
     def __init__(self, config: SourceConfig):
         super().__init__(config)
         self.base_url = config.base_url or "https://api.semanticscholar.org/graph/v1"
@@ -622,9 +618,9 @@ class SemanticScholarAdapter(BaseSourceAdapter):
         self,
         query: str,
         max_results: int = 10,
-        analysis: Optional[QueryAnalysis] = None,
-        async_session: Optional[aiohttp.ClientSession] = None
-    ) -> List[SearchResult]:
+        analysis: QueryAnalysis | None = None,
+        async_session: aiohttp.ClientSession | None = None
+    ) -> list[SearchResult]:
         """Search Semantic Scholar for papers.
 
         Args:
@@ -648,7 +644,7 @@ class SemanticScholarAdapter(BaseSourceAdapter):
             if self.config.api_key:
                 headers["x-api-key"] = self.config.api_key
 
-            async def _do_search(session: aiohttp.ClientSession) -> List[SearchResult]:
+            async def _do_search(session: aiohttp.ClientSession) -> list[SearchResult]:
                 nonlocal url, params, headers
                 async with session.get(
                     url,
@@ -673,51 +669,51 @@ class SemanticScholarAdapter(BaseSourceAdapter):
                 shared = await async_get_aiohttp_session()
                 return await _do_search(shared)
 
-        except asyncio.TimeoutError:
+        except TimeoutError:
             self.logger.warning("Semantic Scholar search timed out")
             return []
         except Exception as e:
             self.logger.error(f"Semantic Scholar search error: {e}")
             return []
 
-    def _parse_results(self, data: Dict) -> List[SearchResult]:
+    def _parse_results(self, data: dict) -> list[SearchResult]:
         """Parse Semantic Scholar API JSON response."""
         results = []
-        
+
         try:
             papers = data.get("data", [])
-            
+
             for paper in papers:
                 title = paper.get("title", "No Title")
                 paper_id = paper.get("paperId", "")
-                
+
                 external_ids = paper.get("externalIds", {})
                 doi = external_ids.get("DOI", "")
-                
+
                 url = paper.get("url", "")
                 if not url and doi:
                     url = f"https://doi.org/{doi}"
-                
+
                 abstract = paper.get("abstract", "")
                 if not abstract:
                     abstract = "No abstract available"
-                
+
                 snippet = abstract[:300] + "..." if len(abstract) > 300 else abstract
-                
+
                 # Get authors
                 authors = []
                 for author in paper.get("authors", []):
                     name = author.get("name", "")
                     if name:
                         authors.append(name)
-                
+
                 year = paper.get("year", "")
                 citation_count = paper.get("citationCount", 0)
                 reference_count = paper.get("referenceCount", 0)
-                
+
                 open_access = paper.get("openAccessPdf", {})
                 pdf_url = open_access.get("url", "") if open_access else ""
-                
+
                 result = SearchResult(
                     title=title.strip(),
                     url=url,
@@ -736,26 +732,26 @@ class SemanticScholarAdapter(BaseSourceAdapter):
                     relevance_score=min(citation_count / 100, 1.0) * 0.5
                 )
                 results.append(result)
-                
+
         except Exception as e:
             self.logger.error(f"Error parsing Semantic Scholar results: {e}")
-        
+
         return results
-    
-    async def get_paper_details(self, paper_id: str) -> Dict[str, Any]:
+
+    async def get_paper_details(self, paper_id: str) -> dict[str, Any]:
         """Get detailed information about a specific paper."""
         try:
             url = f"{self.base_url}/paper/{paper_id}"
-            
+
             params = {
                 "fields": "title,authors,year,abstract,citationCount,referenceCount,externalIds,url,openAccessPdf,fieldsOfStudy,publicationDate,tldr"
             }
-            
+
             headers = {"User-Agent": "Hledac-Research/1.0"}
-            
+
             if self.config.api_key:
                 headers["x-api-key"] = self.config.api_key
-            
+
             async with aiohttp.ClientSession() as session:
                 async with session.get(url, params=params, headers=headers, timeout=aiohttp.ClientTimeout(total=10)) as response:
                     if response.status == 200:
@@ -764,8 +760,8 @@ class SemanticScholarAdapter(BaseSourceAdapter):
         except Exception as e:
             self.logger.error(f"Error fetching paper details: {e}")
             return {}
-    
-    async def get_citations(self, paper_id: str, limit: int = 10) -> List[Dict[str, Any]]:
+
+    async def get_citations(self, paper_id: str, limit: int = 10) -> list[dict[str, Any]]:
         """Get papers that cite this paper."""
         try:
             url = f"{self.base_url}/paper/{paper_id}/citations"
@@ -773,12 +769,12 @@ class SemanticScholarAdapter(BaseSourceAdapter):
                 "fields": "title,authors,year,abstract,citationCount",
                 "limit": limit
             }
-            
+
             headers = {"User-Agent": "Hledac-Research/1.0"}
-            
+
             if self.config.api_key:
                 headers["x-api-key"] = self.config.api_key
-            
+
             async with aiohttp.ClientSession() as session:
                 async with session.get(url, params=params, headers=headers, timeout=aiohttp.ClientTimeout(total=10)) as response:
                     if response.status == 200:
@@ -797,30 +793,30 @@ class SemanticScholarAdapter(BaseSourceAdapter):
 class AcademicSearchEngine:
     """
     Main engine for Multi-Source Academic Search.
-    
+
     Coordinates query expansion, source selection, parallel execution,
     and result deduplication.
     """
-    
+
     def __init__(
         self,
-        config: Optional[Dict[str, Any]] = None,
+        config: dict[str, Any] | None = None,
         enable_expansion: bool = True,
         enable_deduplication: bool = True
     ):
         self.config = config or {}
         self.enable_expansion = enable_expansion
         self.enable_deduplication = enable_deduplication
-        
+
         # Initialize expansion strategies
-        self.expansion_strategies: List[ExpansionStrategy] = []
+        self.expansion_strategies: list[ExpansionStrategy] = []
         if enable_expansion:
             self.expansion_strategies = [
                 SemanticExpansionStrategy(max_expansions=3),
                 SyntacticExpansionStrategy(max_expansions=3),
                 DomainSpecificExpansionStrategy(max_expansions=3)
             ]
-        
+
         self.multi_expander = MultiStrategyExpander(
             strategies=self.expansion_strategies,
             max_total_variations=15
@@ -829,12 +825,12 @@ class AcademicSearchEngine:
         self.logger = logging.getLogger("academic.engine")
 
         # Initialize source adapters
-        self.source_adapters: Dict[str, BaseSourceAdapter] = {}
-        self.source_performance: Dict[str, SourcePerformance] = {}
+        self.source_adapters: dict[str, BaseSourceAdapter] = {}
+        self.source_performance: dict[str, SourcePerformance] = {}
         self._init_sources()
 
         # Initialize deduplication engine
-        self.dedup_engine: Optional[DeduplicationEngine] = None
+        self.dedup_engine: DeduplicationEngine | None = None
         if enable_deduplication:
             dedup_config = DeduplicationConfig(
                 semantic_threshold=0.85,
@@ -884,9 +880,9 @@ class AcademicSearchEngine:
         self,
         query: str,
         max_results: int = 20,
-        enable_expansion: Optional[bool] = None,
-        sources: Optional[List[str]] = None,
-        async_session: Optional[aiohttp.ClientSession] = None,
+        enable_expansion: bool | None = None,
+        sources: list[str] | None = None,
+        async_session: aiohttp.ClientSession | None = None,
     ) -> AcademicSearchResult:
         """
         Execute multi-source academic search.
@@ -906,51 +902,51 @@ class AcademicSearchEngine:
         max_results = max_results or 20
         do_expansion = enable_expansion if enable_expansion is not None else self.enable_expansion
         start_time = time.time()
-        
+
         try:
             # Phase 1: Query Analysis
             analysis = self._analyze_query(query)
-            
+
             # Phase 2: Query Expansion
             queries_to_search = [query]
-            expanded_queries: List[QueryVariation] = []
+            expanded_queries: list[QueryVariation] = []
             query_variations = [query]
-            
+
             if do_expansion and self.expansion_strategies:
                 expanded_queries = await self.multi_expander.expand(
                     query, context={"domain": analysis.domain_hint}
                 )
                 queries_to_search.extend([exp.query for exp in expanded_queries])
                 query_variations = list(dict.fromkeys(queries_to_search))  # Remove duplicates
-            
+
             self.logger.info(f"Searching with {len(query_variations)} query variants")
-            
+
             # Phase 3: Execute searches across sources
             all_source_results = await self._execute_searches(
                 query_variations, analysis, sources, async_session=async_session
             )
-            
+
             # Collect all results
             all_results = []
             for source_result in all_source_results.values():
                 all_results.extend(source_result.results)
-            
+
             # Phase 4: Deduplication
             if self.enable_deduplication and self.dedup_engine:
                 deduplicated = await self._deduplicate_results(all_results)
             else:
                 deduplicated = self._simple_deduplicate(all_results)
-            
+
             # Phase 5: Ranking
             ranked_results = self._rank_results(deduplicated, query)[:max_results]
-            
+
             execution_time = (time.time() - start_time) * 1000
-            
+
             # Calculate success stats
             successful_sources = sum(
                 1 for sr in all_source_results.values() if sr.success
             )
-            
+
             result = AcademicSearchResult(
                 original_query=query,
                 all_results=all_results,
@@ -962,19 +958,19 @@ class AcademicSearchEngine:
                 expansions_used=len(expanded_queries),
                 query_variations=query_variations
             )
-            
+
             self.logger.info(
                 f"Search completed: {len(all_results)} total, "
                 f"{len(ranked_results)} unique from {successful_sources} sources "
                 f"in {execution_time:.0f}ms"
             )
-            
+
             return result
-            
+
         except Exception as e:
             self.logger.error(f"Academic search error: {e}")
             execution_time = (time.time() - start_time) * 1000
-            
+
             return AcademicSearchResult(
                 original_query=query,
                 all_results=[],
@@ -985,18 +981,18 @@ class AcademicSearchEngine:
                 execution_time_ms=execution_time,
                 expansions_used=0
             )
-    
+
     def _analyze_query(self, query: str) -> QueryAnalysis:
         """Analyze the query for optimization."""
         return QueryAnalysis(original_query=query)
-    
+
     async def _execute_searches(
         self,
-        queries: List[str],
+        queries: list[str],
         analysis: QueryAnalysis,
-        sources: Optional[List[str]] = None,
-        async_session: Optional[aiohttp.ClientSession] = None,
-    ) -> Dict[str, SourceResult]:
+        sources: list[str] | None = None,
+        async_session: aiohttp.ClientSession | None = None,
+    ) -> dict[str, SourceResult]:
         """Execute searches across all sources."""
         source_results = {}
 
@@ -1023,30 +1019,30 @@ class AcademicSearchEngine:
                     analysis=analysis,
                     async_session=async_session,
                 )
-        
+
         # Execute all searches
         tasks = []
         task_info = []
-        
+
         for source_name, adapter in adapters_to_use.items():
             for query in queries:
                 task = search_with_limit(source_name, adapter, query)
                 tasks.append(task)
                 task_info.append((source_name, query))
-        
+
         search_results = await asyncio.gather(*tasks, return_exceptions=True)
-        
+
         # Process results
-        source_results_map: Dict[str, List[SearchResult]] = {}
-        source_times: Dict[str, List[float]] = {}
-        source_success: Dict[str, bool] = {}
-        
-        for (source_name, query), result in zip(task_info, search_results):
+        source_results_map: dict[str, list[SearchResult]] = {}
+        source_times: dict[str, list[float]] = {}
+        source_success: dict[str, bool] = {}
+
+        for (source_name, query), result in zip(task_info, search_results, strict=False):
             if source_name not in source_results_map:
                 source_results_map[source_name] = []
                 source_times[source_name] = []
                 source_success[source_name] = True
-            
+
             if isinstance(result, Exception):
                 self.logger.warning(f"Search failed for {source_name}: {result}")
                 source_success[source_name] = False
@@ -1056,12 +1052,12 @@ class AcademicSearchEngine:
                 source_times[source_name].append(exec_time)
                 if not success:
                     source_success[source_name] = False
-        
+
         # Create SourceResult objects
         for source_name in source_results_map:
             results = source_results_map[source_name]
             total_time = sum(source_times[source_name]) if source_times[source_name] else 0
-            
+
             source_results[source_name] = SourceResult(
                 source_name=source_name,
                 results=results,
@@ -1069,16 +1065,16 @@ class AcademicSearchEngine:
                 execution_time_ms=total_time,
                 success=source_success[source_name]
             )
-        
+
         return source_results
-    
+
     async def _deduplicate_results(
-        self, results: List[SearchResult]
-    ) -> List[SearchResult]:
+        self, results: list[SearchResult]
+    ) -> list[SearchResult]:
         """Deduplicate results using deduplication engine."""
         if not results or not self.dedup_engine:
             return results
-        
+
         # Convert to QueryItems
         items = []
         for result in results:
@@ -1091,93 +1087,93 @@ class AcademicSearchEngine:
                 metadata=result.metadata
             )
             items.append(item)
-        
+
         # Run deduplication
         dedup_result = await self.dedup_engine.deduplicate(items)
-        
+
         # Map back to SearchResults
         unique_urls = {item.url for item in dedup_result.unique_items}
         unique_results = [r for r in results if r.url in unique_urls]
-        
+
         return unique_results
-    
-    def _simple_deduplicate(self, results: List[SearchResult]) -> List[SearchResult]:
+
+    def _simple_deduplicate(self, results: list[SearchResult]) -> list[SearchResult]:
         """Simple deduplication based on URL and title."""
         if not results:
             return []
-        
+
         seen_urls = set()
         seen_titles = set()
         unique_results = []
-        
+
         for result in results:
             normalized_url = self._normalize_url(result.url)
             normalized_title = result.title.lower().strip()
-            
+
             if normalized_url and normalized_url in seen_urls:
                 continue
-            
+
             if normalized_title in seen_titles:
                 continue
-            
+
             seen_urls.add(normalized_url)
             seen_titles.add(normalized_title)
             unique_results.append(result)
-        
+
         return unique_results
-    
+
     def _rank_results(
         self,
-        results: List[SearchResult],
+        results: list[SearchResult],
         query: str
-    ) -> List[SearchResult]:
+    ) -> list[SearchResult]:
         """Rank results by relevance."""
         query_terms = set(query.lower().split())
-        
+
         for result in results:
             title_terms = set(result.title.lower().split())
             snippet_terms = set(result.snippet.lower().split())
-            
+
             title_matches = len(query_terms & title_terms)
             snippet_matches = len(query_terms & snippet_terms)
-            
+
             title_weight = 0.4
             snippet_weight = 0.2
             source_weight = 0.2
             citation_weight = 0.2
-            
+
             match_score = (title_matches * title_weight + snippet_matches * snippet_weight)
-            
+
             source_scores = {
                 "arxiv": 1.0,
                 "crossref": 1.0,
                 "semantic_scholar": 0.9
             }
             source_score = source_scores.get(result.source, 0.5) * source_weight
-            
+
             citation_count = result.metadata.get("citation_count", 0)
             citation_score = min(citation_count / 100, 1.0) * citation_weight
-            
+
             result.relevance_score = match_score + source_score + citation_score
-        
+
         return sorted(results, key=lambda r: r.relevance_score, reverse=True)
-    
+
     def _normalize_url(self, url: str) -> str:
         """Normalize URL for deduplication."""
         if not url:
             return ""
-        
+
         normalized = url.lower()
         normalized = normalized.replace("https://", "").replace("http://", "")
         normalized = normalized.replace("www.", "")
         normalized = normalized.rstrip("/")
-        
+
         return normalized
-    
-    def get_source_performance(self) -> Dict[str, SourcePerformance]:
+
+    def get_source_performance(self) -> dict[str, SourcePerformance]:
         """Get performance metrics for all sources."""
         return self.source_performance
-    
+
     async def cleanup(self):
         """Cleanup resources."""
         if self.dedup_engine:
@@ -1196,12 +1192,12 @@ async def search_academic(
 ) -> AcademicSearchResult:
     """
     Convenience function for academic search.
-    
+
     Args:
         query: Search query
         max_results: Maximum results to return
         enable_expansion: Whether to expand the query
-        
+
     Returns:
         Search results
     """
@@ -1221,7 +1217,7 @@ __all__ = [
     # Enums
     'ResultType',
     'AcademicSource',
-    
+
     # Data classes
     'SourceConfig',
     'SearchResult',
@@ -1229,13 +1225,13 @@ __all__ = [
     'AcademicSearchResult',
     'QueryAnalysis',
     'SourcePerformance',
-    
+
     # Adapters
     'BaseSourceAdapter',
     'ArxivAdapter',
     'CrossrefAdapter',
     'SemanticScholarAdapter',
-    
+
     # Main engine
     'AcademicSearchEngine',
     'search_academic',
@@ -1260,7 +1256,7 @@ class SemanticScholarClient:
         self._cache_dir = Path(cache_dir)
         self._last_req = 0.0
 
-    async def __aenter__(self) -> "SemanticScholarClient":
+    async def __aenter__(self) -> SemanticScholarClient:
         return self
 
     async def __aexit__(self, *exc_info) -> None:
@@ -1277,7 +1273,8 @@ class SemanticScholarClient:
         limit: int = 10,
     ) -> list[dict]:
         """Semantic Scholar: [{title, abstract, year, doi, authors}]"""
-        import xxhash, orjson
+        import orjson
+        import xxhash
 
         key = xxhash.xxh64(f"ss_{query[:80]}".encode()).hexdigest()
         zst_path = self._cache_dir / f"{key}.json.zst"
@@ -1334,7 +1331,8 @@ class SemanticScholarClient:
         max_results: int = 5,
     ) -> list[dict]:
         """ArXiv API — security preprints. [{title, summary, published, link}]"""
-        import xxhash, orjson
+        import orjson
+        import xxhash
 
         key = xxhash.xxh64(f"ax_{query[:80]}".encode()).hexdigest()
         zst_path = self._cache_dir / f"{key}_ax.json.zst"

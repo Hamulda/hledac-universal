@@ -18,13 +18,10 @@ Tests only probe/analysis code; Pydantic/msgspec schemas are NOT modified.
 from __future__ import annotations
 
 import sys
-if sys.version_info < (3, 14):
-    raise SystemExit("Requires Python 3.14+ for annotationlib probes")
-
 import time
 import typing
-from dataclasses import dataclass, field
-from typing import TypedDict, Optional, ForwardRef
+from dataclasses import dataclass
+from typing import TypedDict
 
 # =============================================================================
 # Test Fixtures (mirror production types found in codebase)
@@ -47,7 +44,7 @@ class ToolMetadata:
 class ReplayResult(TypedDict, total=False):
     """TypedDict pattern from knowledge/duckdb_store.py."""
     session_id: str
-    finding_id: Optional[str]
+    finding_id: str | None
     evidence: list[str]
 
 
@@ -55,7 +52,7 @@ class ActivationResult(TypedDict, total=False):
     """TypedDict pattern from duckdb_store."""
     activation_id: str
     status: str
-    result_data: Optional[dict]
+    result_data: dict | None
 
 
 # msgspec.Struct pattern (NO_TOUCH zone)
@@ -88,7 +85,7 @@ except ImportError:
 ANNOTATIONLIB_AVAILABLE = False
 try:
     import annotationlib
-    from annotationlib import get_annotations, Format
+    from annotationlib import Format, get_annotations
     ANNOTATIONLIB_AVAILABLE = True
     ANNOTATIONLIB_ERROR = None
 except ImportError as e:
@@ -189,8 +186,8 @@ def make_class_with_forward_ref():
     def _build():
         class EntityWithForwardRef:
             name: str
-            parent: Optional["EntityWithForwardRef"]  # Forward ref
-            children: list["EntityWithForwardRef"]  # Forward ref
+            parent: EntityWithForwardRef | None  # Forward ref
+            children: list[EntityWithForwardRef]  # Forward ref
         return EntityWithForwardRef
     return _build()
 
@@ -205,7 +202,7 @@ def run_probe():
     print("=" * 70)
 
     # Environment
-    print(f"\nEnvironment:")
+    print("\nEnvironment:")
     print(f"  Python: {sys.version}")
     print(f"  annotationlib available: {ANNOTATIONLIB_AVAILABLE}")
     if not ANNOTATIONLIB_AVAILABLE:
@@ -279,7 +276,7 @@ def run_probe():
     print("\n[B2] Direct __annotations__ with forward refs (strings in 3.10+):")
     ann = ForwardRefClass.__annotations__
     print(f"  Raw: {ann}")
-    print(f"  NOTE: With `from __future__ import annotations`, forward refs remain strings")
+    print("  NOTE: With `from __future__ import annotations`, forward refs remain strings")
 
     if ANNOTATIONLIB_AVAILABLE:
         print("\n[B3] annotationlib.get_annotations(FORWARDREF) with forward refs:")
@@ -305,23 +302,23 @@ def run_probe():
         print("-" * 70)
 
         print(f"\n[C1] OSINTReport.__annotations__: {OSINTReport.__annotations__}")
-        print(f"  NOTE: msgspec.Struct uses __annotations__ (not deferred)")
+        print("  NOTE: msgspec.Struct uses __annotations__ (not deferred)")
 
         if ANNOTATIONLIB_AVAILABLE:
-            print(f"\n[C2] annotationlib.get_annotations(OSINTReport, VALUE):")
+            print("\n[C2] annotationlib.get_annotations(OSINTReport, VALUE):")
             try:
                 val = annotationlib.get_annotations(OSINTReport, format=Format.VALUE)
                 print(f"  {val}")
             except Exception as e:
                 print(f"  ERROR: {type(e).__name__}: {e}")
 
-        print(f"\n[C3] typing.get_type_hints(OSINTReport):")
+        print("\n[C3] typing.get_type_hints(OSINTReport):")
         try:
             hints = typing.get_type_hints(OSINTReport)
             print(f"  {hints}")
         except Exception as e:
             print(f"  ERROR: {type(e).__name__}: {e}")
-            print(f"  NOTE: msgspec.Struct may not work with get_type_hints() in all Python versions")
+            print("  NOTE: msgspec.Struct may not work with get_type_hints() in all Python versions")
     else:
         print("\n[C] msgspec not available — skipping Struct tests")
 
@@ -334,7 +331,7 @@ def run_probe():
 
     print(f"\n[D1] ReplayResult.__annotations__: {ReplayResult.__annotations__}")
 
-    print(f"\n[D2] typing.get_type_hints(ReplayResult):")
+    print("\n[D2] typing.get_type_hints(ReplayResult):")
     try:
         hints = typing.get_type_hints(ReplayResult)
         print(f"  {hints}")
@@ -342,7 +339,7 @@ def run_probe():
         print(f"  ERROR: {type(e).__name__}: {e}")
 
     if ANNOTATIONLIB_AVAILABLE:
-        print(f"\n[D3] annotationlib.get_annotations(ReplayResult, VALUE):")
+        print("\n[D3] annotationlib.get_annotations(ReplayResult, VALUE):")
         try:
             val = annotationlib.get_annotations(ReplayResult, format=Format.VALUE)
             print(f"  {val}")
@@ -359,11 +356,9 @@ def run_probe():
     print("\n[E1] annotationlib import overhead (if available):")
     if ANNOTATIONLIB_AVAILABLE:
         t0 = time.perf_counter()
-        import annotationlib as al
         t1 = time.perf_counter()
         print(f"  import annotationlib: {(t1-t0)*1000:.4f} ms")
         t0 = time.perf_counter()
-        from annotationlib import get_annotations, Format
         t1 = time.perf_counter()
         print(f"  from annotationlib import get_annotations, Format: {(t1-t0)*1000:.4f} ms")
     else:

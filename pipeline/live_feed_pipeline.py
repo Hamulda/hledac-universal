@@ -38,18 +38,12 @@ from collections import Counter
 from typing import TYPE_CHECKING, Any
 
 import msgspec
-
 from hledac.universal.pipeline.scoring import (
-    ASSEMBLY_TIER_NO_CONTENT,
-    ASSEMBLY_TIER_RICH_CONTENT,
-    ASSEMBLY_TIER_SUMMARY_ONLY,
-    ASSEMBLY_TIER_TITLE_ONLY,
     EntryQualitySignal,
     _assemble_clean_feed_text,
     _assemble_enriched_feed_text,
     _classify_assembly_substance,
     _compute_entry_quality_signal,
-    _convert_rich_html_to_text,
     _entry_payload_text,
     _strip_html_tags_from_text,
 )
@@ -156,7 +150,7 @@ class FeedPipelineRunResult(msgspec.Struct, frozen=True, gc=False):
     feed_economics_verdict: tuple[str, int, int, int, int] = ("", 0, 0, 0, 0)
     # (verdict_tag, feed_branch_signal_present_int, fallback_useful, fallback_waste, feed_signal_quality)
     # Sprint F150J: dict-style additive feed branch verdict
-    feed_branch_verdict: dict[str, Any] = dict()
+    feed_branch_verdict: dict[str, Any] = {}
     # Sprint F150J: derived feed counters with real scheduling value
     squandered_high_usefulness_entries: int = 0        # fallback attempted on entries that had high-usefulness but no hits
     fallback_value_ratio: float = 0.0                  # fallback_useful / max(1, fallback_useful + fallback_waste)
@@ -168,7 +162,7 @@ class FeedPipelineRunResult(msgspec.Struct, frozen=True, gc=False):
     # Sprint F151A: surf feed_confidence_score from verdict dict into flat field
     feed_confidence_score: int = 0                       # 0-100, adapter-informed confidence
     # Sprint F151A: winning source breakdown for scheduler/exporter
-    winning_source_breakdown: dict[str, int] = dict()     # {"feed_native": N, "fallback": N, "mixed": N}
+    winning_source_breakdown: dict[str, int] = {}     # {"feed_native": N, "fallback": N, "mixed": N}
     # Sprint F169D: root-cause propagation into FeedPipelineRunResult
     upstream_fetch_blocker: str | None = None       # "http_error" | "timeout" | "dns_failure" | "connection_error" | "robots_blocked"
     upstream_parse_blocker: str | None = None        # "malformed_xml" | "wrong_content_type" | "redirected_non_feed"
@@ -527,7 +521,7 @@ def _compute_feed_branch_verdict(
         return verdict
 
     # Waste rate for high-usefulness entries
-    total_fallbacks = fallback_useful + fallback_waste
+    fallback_useful + fallback_waste
     if squandered_high_usefulness + fallback_waste > 0:
         waste_denom = squandered_high_usefulness + fallback_waste
         verdict["high_usefulness_waste_rate"] = fallback_waste / waste_denom
@@ -1446,7 +1440,7 @@ async def _check_uma_emergency() -> bool:
 
 async def async_run_live_feed_pipeline(
     feed_url: str,
-    store: "DuckDBShadowStore | None" = None,
+    store: DuckDBShadowStore | None = None,
     query_context: str | None = None,
     max_entries: int = 20,
     timeout_s: float = 35.0,
@@ -2288,7 +2282,7 @@ async def async_run_feed_source_batch(
                 )
         except asyncio.CancelledError:
             raise  # never swallow
-        except asyncio.TimeoutError:
+        except TimeoutError:
             elapsed_ms = (time.monotonic() - start) * 1000.0
             return FeedSourceRunResult(
                 feed_url=feed_url,
@@ -2360,7 +2354,7 @@ async def async_run_feed_source_batch(
                         results.append(res)
     except asyncio.CancelledError:
         raise  # never swallow
-    except asyncio.TimeoutError:
+    except TimeoutError:
         pass
 
     total_fetched = sum(r.fetched_entries for r in results)

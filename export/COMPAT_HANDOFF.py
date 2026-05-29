@@ -16,16 +16,16 @@ ensure_export_handoff() is a consumer-side normalization seam, NOT a factory.
 New features go to windup_engine or types.py, not here.
 """
 
-from typing import TYPE_CHECKING, Any, Dict
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from hledac.universal.project_types import ExportHandoff  # noqa: F401
 
 
 def ensure_export_handoff(
-    handoff: "ExportHandoff | Dict[str, Any] | None",  # type: ignore[name-defined]
+    handoff: ExportHandoff | dict[str, Any] | None,  # type: ignore[name-defined]
     default_sprint_id: str = "unknown",
-) -> "ExportHandoff":  # type: ignore[name-defined]
+) -> ExportHandoff:  # type: ignore[name-defined]
     """
     Normalize ExportHandoff | dict | None → ExportHandoff.
 

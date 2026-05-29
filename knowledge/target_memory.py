@@ -6,10 +6,10 @@ TargetMemoryService: bounded cross-sprint target memory with RAM guard.
 from __future__ import annotations
 
 import logging
-import orjson
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+import orjson
 import psutil
 
 if TYPE_CHECKING:

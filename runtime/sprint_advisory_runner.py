@@ -38,7 +38,7 @@ import asyncio
 import json
 import logging
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Any
 
 __all__ = ["SprintAdvisoryRunner", "AdvisoryRunOutcome", "build_search_documents_from_findings"]
 
@@ -61,7 +61,7 @@ def build_search_documents_from_findings(findings: list) -> list:
                   finding_id, source_type, payload_text attrs).
 
     Returns:
-        List[SearchDocument] suitable for LocalSearchSeam.index().
+        list[SearchDocument] suitable for LocalSearchSeam.index().
     """
     from hledac.universal.knowledge.search_index import SearchDocument
 
@@ -121,8 +121,8 @@ class AdvisoryRunOutcome:
     local_search_indexed: int = 0
     local_search_elapsed_ms: float = 0.0
     local_search_top_results: list = field(default_factory=list)
-    local_search_error: Optional[str] = field(default=None)
-    error: Optional[str] = field(default=None)
+    local_search_error: str | None = field(default=None)
+    error: str | None = field(default=None)
 
 
 # ── Sprint Advisory Runner ──────────────────────────────────────────────────────
@@ -503,7 +503,7 @@ class SprintAdvisoryRunner:
             local_search_indexed: Number of findings indexed
             local_search_source: "search_index" or "none"
             local_search_elapsed_ms: Wall time of index+search
-            local_search_top_results: List[dict] with url/title/score/source_type/finding_id
+            local_search_top_results: list[dict] with url/title/score/source_type/finding_id
             local_search_error: Error string if failed, else None
         """
         from time import perf_counter

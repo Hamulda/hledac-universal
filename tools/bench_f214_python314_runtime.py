@@ -24,9 +24,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import contextlib
 import gc
-import importlib
 import inspect
 import json
 import os
@@ -34,8 +32,9 @@ import resource
 import sys
 import tempfile
 import time
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 # ── paths ─────────────────────────────────────────────────────────────────────
 BENCH_FILE = Path(__file__).resolve()
@@ -264,7 +263,7 @@ def _root_import_benchmark(*, runs: int = 3, warmups: int = 1, quick: bool = Fal
         # Must re-import to measure cold first-access per lazy attr
         _clear_hledac_modules()
         gc.collect()
-        u_cold = importlib.import_module("hledac.universal")
+        importlib.import_module("hledac.universal")
 
         lazy_attrs = ["UniversalConfig", "match_text", "DuckDBShadowStore", "async_fetch_public_text"]
         first_access_samples: dict[str, list[float]] = {attr: [] for attr in lazy_attrs}
@@ -668,13 +667,13 @@ def _json_benchmark(*, runs: int = 3, warmups: int = 1, quick: bool = False) -> 
     speedup_l = json_loads_result["summary"]["median_ms"] / orjson_loads_result["summary"]["median_ms"] if orjson_loads_result["summary"]["median_ms"] > 0 else 0
 
     print(f"  {n_items:,} items  ({runs} runs each):")
-    print(f"  json.dumps:")
+    print("  json.dumps:")
     _print_import_summary(json_dumps_result["summary"], "    ")
-    print(f"  json.loads:")
+    print("  json.loads:")
     _print_import_summary(json_loads_result["summary"], "    ")
-    print(f"  orjson.dumps:")
+    print("  orjson.dumps:")
     _print_import_summary(orjson_dumps_result["summary"], "    ")
-    print(f"  orjson.loads:")
+    print("  orjson.loads:")
     _print_import_summary(orjson_loads_result["summary"], "    ")
     print(f"  orjson speedup dumps={speedup_d:.2f}x  loads={speedup_l:.2f}x")
 
@@ -716,9 +715,9 @@ def _topk_benchmark(*, runs: int = 3, warmups: int = 1, quick: bool = False) -> 
     speedup = sorted_result["summary"]["median_ms"] / heapq_result["summary"]["median_ms"] if heapq_result["summary"]["median_ms"] > 0 else 0
 
     print(f"  {n_items:,} items, k={k}  ({runs} runs each):")
-    print(f"  sorted[:k]:")
+    print("  sorted[:k]:")
     _print_import_summary(sorted_result["summary"], "    ")
-    print(f"  heapq.nlargest(k):")
+    print("  heapq.nlargest(k):")
     _print_import_summary(heapq_result["summary"], "    ")
     print(f"  heapq speedup={speedup:.2f}x")
 
@@ -787,9 +786,9 @@ async def _run_async_semaphore(*, runs: int = 3, warmups: int = 1, quick: bool =
     overhead_pct = (sem_s["median_ms"] - plain_s["median_ms"]) / plain_s["median_ms"] * 100 if plain_s["median_ms"] > 0 else 0
 
     print(f"  {n_tasks:,} tasks, limit={sem_limit}  ({runs} runs each):")
-    print(f"  plain gather:")
+    print("  plain gather:")
     _print_import_summary(plain_s, "    ")
-    print(f"  semaphore gather:")
+    print("  semaphore gather:")
     _print_import_summary(sem_s, "    ")
     print(f"  semaphore overhead={overhead_pct:.1f}%")
 

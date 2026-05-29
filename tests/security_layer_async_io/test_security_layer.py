@@ -12,16 +12,12 @@ Tests verify that:
 
 import asyncio
 import os
-import sys
-import tempfile
 import shutil
-from pathlib import Path
-from unittest.mock import patch
+import tempfile
 
 import pytest
-
 from hledac.universal.layers.security_layer import SecurityLayer
-from hledac.universal.project_types import SecurityConfig, DestructionResult
+from hledac.universal.project_types import DestructionResult, SecurityConfig
 
 
 class TestDestroyFileFallbackAsync:

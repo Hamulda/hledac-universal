@@ -14,33 +14,29 @@ Tests:
   7. Benchmark sanity (msgspec faster than dataclass)
 """
 
-import sys
-import time
+import dataclasses
 import statistics
 import subprocess
-import dataclasses
-from typing import Any
+import sys
 
 import pytest
 
 # ---------------------------------------------------------------------------
 # Import the shadow module
 # ---------------------------------------------------------------------------
-
 from hledac.universal.utils.shadow_dtos import (
+    AdmissionResultBaseline,
     AdmissionResultShadow,
+    BacklogCandidateBaseline,
     BacklogCandidateShadow,
+    admission_baseline_to_dict,
     admission_from_live,
-    backlog_from_live,
     admission_to_dict,
+    backlog_baseline_to_dict,
+    backlog_from_live,
     backlog_to_dict,
     run_benchmark,
-    AdmissionResultBaseline,
-    BacklogCandidateBaseline,
-    admission_baseline_to_dict,
-    backlog_baseline_to_dict,
 )
-
 
 # ---------------------------------------------------------------------------
 # Test 1: AdmissionResultShadow constructor parity
@@ -279,7 +275,7 @@ class TestColdImportRegression:
         by importing it as a top-level utility (outside the hledac package path).
         The shadow_dtos module only brings in msgspec + dataclasses — no hledac deps.
         """
-        import os, sys
+        import os
         # Get the absolute path to shadow_dtos
         shadow_path = os.path.abspath(
             os.path.join(os.path.dirname(__file__), "..", "utils", "shadow_dtos.py")

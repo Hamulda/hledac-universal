@@ -4,12 +4,11 @@ Reputation scoring for domains based on corroboration/contradiction.
 
 import logging
 from collections import defaultdict
-from typing import Dict
 
 logger = logging.getLogger(__name__)
 
 # In‑memory storage for reputation counts (per domain)
-_reputation_counts: Dict[str, Dict[str, int]] = defaultdict(lambda: {"confirmed": 0, "refuted": 0})
+_reputation_counts: dict[str, dict[str, int]] = defaultdict(lambda: {"confirmed": 0, "refuted": 0})
 
 # Boundedness constant
 MAX_REPUTATION_DOMAINS = 1000

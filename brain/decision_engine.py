@@ -11,12 +11,11 @@ This module is kept for backward compatibility. All new code should import from:
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import math
 from dataclasses import dataclass
-from enum import Enum, auto
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
+from enum import Enum
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from .hermes3_engine import Hermes3Engine
@@ -40,12 +39,12 @@ class Decision:
     """Rozhodnutí orchestrátoru"""
     decision_type: DecisionType
     action: str
-    params: Dict[str, Any]
+    params: dict[str, Any]
     reasoning: str
     confidence: float  # 0-1
     complete: bool = False
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Konvertovat na slovník"""
         return {
             "type": self.decision_type.value,
@@ -67,7 +66,7 @@ class DecisionEngine:
     - hybrid: Kombinace (pravidla + LLM pro edge cases)
     """
 
-    def __init__(self, strategy: str = "hybrid", hermes: Optional["Hermes3Engine"] = None):
+    def __init__(self, strategy: str = "hybrid", hermes: Hermes3Engine | None = None):
         """
         Inicializace DecisionEngine.
 
@@ -82,11 +81,11 @@ class DecisionEngine:
         self._rules = self._init_rules()
 
         # Multi-armed bandit for adaptive module selection
-        self._bandit_counts: Dict[Tuple[str, str], int] = {}  # (input_type, module) -> trials
-        self._bandit_rewards: Dict[Tuple[str, str], float] = {}  # cumulative reward
-        self._bandit_total_trials: Dict[str, int] = {}  # input_type -> total trials
+        self._bandit_counts: dict[tuple[str, str], int] = {}  # (input_type, module) -> trials
+        self._bandit_rewards: dict[tuple[str, str], float] = {}  # cumulative reward
+        self._bandit_total_trials: dict[str, int] = {}  # input_type -> total trials
 
-    def _init_rules(self) -> List[Dict[str, Any]]:
+    def _init_rules(self) -> list[dict[str, Any]]:
         """Inicializovat pravidla pro rozhodování"""
         return [
             {
@@ -135,7 +134,7 @@ class DecisionEngine:
         ]
         return any(ind in query.lower() for ind in complex_indicators)
 
-    def decide(self, context: Dict[str, Any]) -> Decision:
+    def decide(self, context: dict[str, Any]) -> Decision:
         """
         Rozhodnout o dalším kroku.
 
@@ -152,7 +151,7 @@ class DecisionEngine:
         else:  # hybrid
             return self._hybrid_decide(context)
 
-    def _rule_based_decide(self, context: Dict[str, Any]) -> Decision:
+    def _rule_based_decide(self, context: dict[str, Any]) -> Decision:
         """Rozhodnout podle pravidel"""
         for rule in self._rules:
             try:
@@ -187,7 +186,7 @@ class DecisionEngine:
             confidence=0.5,
         )
 
-    def _call_hermes_decide(self, context: Dict[str, Any]):
+    def _call_hermes_decide(self, context: dict[str, Any]):
         """
         M1-safe helper: call hermes.decide_next_action from sync context.
 
@@ -207,7 +206,7 @@ class DecisionEngine:
         # M1-SAFE: use run_until_complete on existing loop
         return loop.run_until_complete(coro)
 
-    def _llm_based_decide(self, context: Dict[str, Any]) -> Decision:
+    def _llm_based_decide(self, context: dict[str, Any]) -> Decision:
         """Rozhodnout pomocí LLM"""
         if self._hermes is None:
             logger.warning("LLM requested but hermes not available, falling back to rules")
@@ -228,7 +227,7 @@ class DecisionEngine:
             logger.warning(f"LLM decision failed: {e}, falling back to rules")
         return self._rule_based_decide(context)
 
-    def _hybrid_decide(self, context: Dict[str, Any]) -> Decision:
+    def _hybrid_decide(self, context: dict[str, Any]) -> Decision:
         """Kombinované rozhodování"""
         rule_decision = self._rule_based_decide(context)
 
@@ -249,7 +248,7 @@ class DecisionEngine:
 
         return rule_decision
 
-    def _select_bandit_action(self, input_type: str, candidates: List[str]) -> str:
+    def _select_bandit_action(self, input_type: str, candidates: list[str]) -> str:
         """Select module using UCB1 multi-armed bandit."""
         total = self._bandit_total_trials.get(input_type, 0) + 1  # +1 for optimism
         best_score = -float('inf')
@@ -278,7 +277,7 @@ class DecisionEngine:
         self._bandit_rewards[key] = self._bandit_rewards.get(key, 0) + reward
         self._bandit_total_trials[input_type] = self._bandit_total_trials.get(input_type, 0) + 1
 
-    def should_continue(self, context: Dict[str, Any]) -> bool:
+    def should_continue(self, context: dict[str, Any]) -> bool:
         """
         Rozhodnout, zda pokračovat ve výzkumu.
 

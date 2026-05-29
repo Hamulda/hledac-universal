@@ -32,23 +32,20 @@ Example:
 import asyncio
 import hashlib
 import importlib.util
-import json
 import logging
 import re
-from dataclasses import dataclass, field
 from collections import deque
-from datetime import datetime, timezone, timedelta
-from pathlib import Path
-from typing import Any, Dict, List, Optional, Set, Tuple, Union
-from urllib.parse import quote
+from dataclasses import dataclass, field
+from datetime import UTC, datetime, timedelta
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
 def _ensure_utc_aware(value: datetime) -> datetime:
     """Normalize datetime to UTC-aware (required for TTL comparisons in Python 3.14+)."""
     if value.tzinfo is None:
-        return value.replace(tzinfo=timezone.utc)
-    return value.astimezone(timezone.utc)
+        return value.replace(tzinfo=UTC)
+    return value.astimezone(UTC)
 
 # Optional imports with fallback
 aiohttp = None
@@ -112,12 +109,12 @@ class EntityCandidate:
     wikidata_id: str
     label: str
     description: str
-    types: List[str] = field(default_factory=list)
+    types: list[str] = field(default_factory=list)
     context_score: float = 0.0
     popularity_score: float = 0.0
     final_score: float = 0.0
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for serialization."""
         return {
             'entity_text': self.entity_text,
@@ -131,7 +128,7 @@ class EntityCandidate:
         }
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> 'EntityCandidate':
+    def from_dict(cls, data: dict[str, Any]) -> EntityCandidate:
         """Create from dictionary."""
         return cls(
             entity_text=data['entity_text'],
@@ -169,7 +166,7 @@ class LinkedEntity:
     confidence: float
     candidates_considered: int
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for serialization."""
         return {
             'original_text': self.original_text,
@@ -183,7 +180,7 @@ class LinkedEntity:
         }
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> 'LinkedEntity':
+    def from_dict(cls, data: dict[str, Any]) -> LinkedEntity:
         """Create from dictionary."""
         return cls(
             original_text=data['original_text'],
@@ -213,14 +210,14 @@ class SimpleCache:
         """
         self.max_size = max_size
         self.ttl = timedelta(seconds=ttl_seconds)
-        self._cache: Dict[str, Tuple[Any, datetime]] = {}
+        self._cache: dict[str, tuple[Any, datetime]] = {}
         self._access_order: deque = deque()
 
     def _generate_key(self, query: str) -> str:
         """Generate cache key from query."""
         return hashlib.sha256(query.encode('utf-8')).hexdigest()[:16]
 
-    def get(self, query: str) -> Optional[Any]:
+    def get(self, query: str) -> Any | None:
         """Get cached value if not expired."""
         key = self._generate_key(query)
 
@@ -230,7 +227,7 @@ class SimpleCache:
         value, timestamp = self._cache[key]
 
         # Check expiration
-        if datetime.now(timezone.utc) - _ensure_utc_aware(timestamp) > self.ttl:
+        if datetime.now(UTC) - _ensure_utc_aware(timestamp) > self.ttl:
             del self._cache[key]
             if key in self._access_order:
                 self._access_order.remove(key)
@@ -253,7 +250,7 @@ class SimpleCache:
             if oldest_key in self._cache:
                 del self._cache[oldest_key]
 
-        self._cache[key] = (value, datetime.now(timezone.utc))
+        self._cache[key] = (value, datetime.now(UTC))
 
         # Update access order
         if key in self._access_order:
@@ -265,7 +262,7 @@ class SimpleCache:
         self._cache.clear()
         self._access_order.clear()
 
-    def get_stats(self) -> Dict[str, Any]:
+    def get_stats(self) -> dict[str, Any]:
         """Get cache statistics."""
         return {
             'size': len(self._cache),
@@ -303,16 +300,14 @@ class EntityLinker:
         'Q571': 'BOOK',           # book
         'Q11424': 'FILM',         # film
         'Q7397': 'SOFTWARE',      # software
-        'Q811165': 'PRODUCT',     # product
-        'Q5': 'PERSON',
+        'Q811165': 'PRODUCT',
         'Q95074': 'CHARACTER',    # fictional character
         'Q488383': 'LOCATION',    # location
         'Q618123': 'LOCATION',    # geographical feature
         'Q15401930': 'PRODUCT',   # product
         'Q12737077': 'OCCUPATION', # occupation
         'Q4164871': 'POSITION',   # position
-        'Q18616576': 'AWARD',     # award
-        'Q5': 'PERSON',
+        'Q18616576': 'AWARD',
     }
 
     def __init__(
@@ -347,10 +342,10 @@ class EntityLinker:
         self._cache = SimpleCache(max_size=cache_size, ttl_seconds=cache_ttl)
 
         # Initialize HTTP session (lazy)
-        self._session: Optional[Any] = None
+        self._session: Any | None = None
 
         # Initialize GLiNER (lazy, if available)
-        self._gliner_model: Optional[Any] = None
+        self._gliner_model: Any | None = None
 
         # Fallback NER patterns
         self._init_ner_patterns()
@@ -373,7 +368,7 @@ class EntityLinker:
             ],
         }
 
-    async def _get_session(self) -> Optional[Any]:
+    async def _get_session(self) -> Any | None:
         """Get or create aiohttp session."""
         if not AIOHTTP_AVAILABLE:
             return None
@@ -398,7 +393,7 @@ class EntityLinker:
                 logger.warning(f"Failed to load GLiNER: {e}")
                 self.use_gliner = False
 
-    def _extract_entities_fallback(self, text: str) -> List[Tuple[str, int, int, str]]:
+    def _extract_entities_fallback(self, text: str) -> list[tuple[str, int, int, str]]:
         """
         Extract entities using regex patterns (fallback when GLiNER unavailable).
 
@@ -406,7 +401,7 @@ class EntityLinker:
             List of (entity_text, start, end, entity_type) tuples
         """
         entities = []
-        seen_spans: Set[Tuple[int, int]] = set()
+        seen_spans: set[tuple[int, int]] = set()
 
         for entity_type, patterns in self._ner_patterns.items():
             for pattern in patterns:
@@ -425,7 +420,7 @@ class EntityLinker:
         entities.sort(key=lambda x: x[1])
         return entities
 
-    def _extract_entities_gliner(self, text: str) -> List[Tuple[str, int, int, str]]:
+    def _extract_entities_gliner(self, text: str) -> list[tuple[str, int, int, str]]:
         """
         Extract entities using GLiNER.
 
@@ -482,7 +477,7 @@ class EntityLinker:
         """
         return query
 
-    async def query_wikidata(self, entity_text: str) -> List[EntityCandidate]:
+    async def query_wikidata(self, entity_text: str) -> list[EntityCandidate]:
         """
         Query Wikidata for entity candidates.
 
@@ -524,7 +519,7 @@ class EntityLinker:
 
                 return candidates
 
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.warning(f"Timeout querying Wikidata for: {entity_text}")
             return []
         except Exception as e:
@@ -534,8 +529,8 @@ class EntityLinker:
     def _parse_sparql_results(
         self,
         entity_text: str,
-        data: Dict[str, Any]
-    ) -> List[EntityCandidate]:
+        data: dict[str, Any]
+    ) -> list[EntityCandidate]:
         """
         Parse SPARQL results into EntityCandidate objects.
 
@@ -629,9 +624,9 @@ class EntityLinker:
     async def disambiguate(
         self,
         entity_text: str,
-        candidates: List[EntityCandidate],
+        candidates: list[EntityCandidate],
         context: str
-    ) -> Optional[EntityCandidate]:
+    ) -> EntityCandidate | None:
         """
         Disambiguate entity candidates using context.
 
@@ -685,7 +680,7 @@ class EntityLinker:
         self,
         text: str,
         context: str = ""
-    ) -> List[LinkedEntity]:
+    ) -> list[LinkedEntity]:
         """
         Link entities in text to Wikidata.
 
@@ -709,7 +704,7 @@ class EntityLinker:
         linked_entities = []
         semaphore = asyncio.Semaphore(5)  # Limit concurrent requests
 
-        async def process_entity(entity_data: Tuple[str, int, int, str]) -> Optional[LinkedEntity]:
+        async def process_entity(entity_data: tuple[str, int, int, str]) -> LinkedEntity | None:
             async with semaphore:
                 entity_text, start, end, entity_type = entity_data
 
@@ -751,7 +746,7 @@ class EntityLinker:
 
         return linked_entities
 
-    async def resolve_aliases(self, entities: List[str]) -> Dict[str, str]:
+    async def resolve_aliases(self, entities: list[str]) -> dict[str, str]:
         """
         Resolve entity aliases to canonical Wikidata labels.
 
@@ -764,7 +759,7 @@ class EntityLinker:
         resolved = {}
         semaphore = asyncio.Semaphore(5)
 
-        async def resolve_one(entity: str) -> Tuple[str, Optional[str]]:
+        async def resolve_one(entity: str) -> tuple[str, str | None]:
             async with semaphore:
                 candidates = await self.query_wikidata(entity)
                 if candidates:
@@ -816,9 +811,9 @@ class EntityLinker:
 
     async def batch_link(
         self,
-        texts: List[str],
-        contexts: Optional[List[str]] = None
-    ) -> List[List[LinkedEntity]]:
+        texts: list[str],
+        contexts: list[str] | None = None
+    ) -> list[list[LinkedEntity]]:
         """
         Link entities in multiple texts (batch processing).
 
@@ -837,12 +832,12 @@ class EntityLinker:
 
         tasks = [
             self.link_entities(text, context)
-            for text, context in zip(texts, contexts)
+            for text, context in zip(texts, contexts, strict=False)
         ]
 
         return await asyncio.gather(*tasks, return_exceptions=True)
 
-    def get_cache_stats(self) -> Dict[str, Any]:
+    def get_cache_stats(self) -> dict[str, Any]:
         """Get cache statistics."""
         return self._cache.get_stats()
 
@@ -875,7 +870,7 @@ class EntityLinker:
 
 
 # Convenience functions for simple usage
-_linker: Optional[EntityLinker] = None
+_linker: EntityLinker | None = None
 
 
 def get_linker() -> EntityLinker:
@@ -886,7 +881,7 @@ def get_linker() -> EntityLinker:
     return _linker
 
 
-async def link_entities(text: str, context: str = "") -> List[LinkedEntity]:
+async def link_entities(text: str, context: str = "") -> list[LinkedEntity]:
     """
     Link entities in text (convenience function).
 
@@ -901,7 +896,7 @@ async def link_entities(text: str, context: str = "") -> List[LinkedEntity]:
     return await linker.link_entities(text, context)
 
 
-async def resolve_entity(entity_text: str) -> Optional[EntityCandidate]:
+async def resolve_entity(entity_text: str) -> EntityCandidate | None:
     """
     Resolve single entity to Wikidata (convenience function).
 

@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Dict, List, Tuple
+from typing import TYPE_CHECKING, Any
 
 __all__ = [
     "KillChainTag",
@@ -31,7 +31,7 @@ MAX_TAGGED_FINDINGS: int = 1000
 # ATT&CK tactic + technique registry
 # Each entry: (tactic, technique_id, technique_name, phase, confidence, patterns)
 # phase: reconnaissance | resource_development | initial_access | ... (kill chain phase)
-_ATTACK_PATTERNS: List[Tuple[str, str, str, str, float, List[re.Pattern[str]]]] = []
+_ATTACK_PATTERNS: list[tuple[str, str, str, str, float, list[re.Pattern[str]]]] = []
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -687,9 +687,9 @@ class KillChainTag:
     technique_id: str
     phase: str
     confidence: float
-    evidence_ids: Tuple[str, ...] = field(default_factory=tuple)
+    evidence_ids: tuple[str, ...] = field(default_factory=tuple)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "tactic": self.tactic,
             "technique_id": self.technique_id,
@@ -704,7 +704,7 @@ class KillChainTag:
 
 def _extract_text(finding: CanonicalFinding | dict) -> str:
     """Extract searchable text from a finding (dict or CanonicalFinding)."""
-    parts: List[str] = []
+    parts: list[str] = []
 
     if isinstance(finding, dict):
         parts.append(str(finding.get("ioc_value", "")))
@@ -733,14 +733,14 @@ def _get_finding_id(finding: CanonicalFinding | dict) -> str:
     return str(getattr(finding, "finding_id", "") or "")
 
 
-def ioc_to_technique_ids(ioc_type: str, ioc_value: str) -> List[str]:
+def ioc_to_technique_ids(ioc_type: str, ioc_value: str) -> list[str]:
     """
     Map IOC type + value to likely ATT&CK technique IDs.
 
     Returns a list of matching technique_ids based on IOC context.
     Used for quick triage when full text matching is unnecessary.
     """
-    results: List[str] = []
+    results: list[str] = []
     val_lower = ioc_value.lower()
 
     # Domain-based techniques
@@ -794,7 +794,7 @@ def ioc_to_technique_ids(ioc_type: str, ioc_value: str) -> List[str]:
 
     # Deduplicate while preserving order
     seen = set()
-    unique: List[str] = []
+    unique: list[str] = []
     for tid in results:
         if tid not in seen:
             seen.add(tid)
@@ -823,7 +823,7 @@ class KillChainTagger:
     def tagged_count(self) -> int:
         return self._tagged_count
 
-    def tag_finding(self, finding: CanonicalFinding | dict) -> List[KillChainTag]:
+    def tag_finding(self, finding: CanonicalFinding | dict) -> list[KillChainTag]:
         """
         Tag a single finding with MITRE ATT&CK kill chain labels.
 
@@ -851,7 +851,7 @@ class KillChainTagger:
             ioc_value = str(getattr(finding, "ioc_value", "") or "")
 
         # Collect all matching patterns
-        matches: List[Tuple[float, str, str, str]] = []  # (confidence, tactic, technique_id, technique_name)
+        matches: list[tuple[float, str, str, str]] = []  # (confidence, tactic, technique_id, technique_name)
 
         for (tactic, tech_id, tech_name, phase, confidence, patterns) in _ATTACK_PATTERNS:
             for pat in patterns:
@@ -871,7 +871,7 @@ class KillChainTagger:
                     break
 
         # Deduplicate by technique_id, keeping highest confidence
-        tech_seen: Dict[str, Tuple[float, str, str]] = {}  # tech_id -> (confidence, tactic, tech_name)
+        tech_seen: dict[str, tuple[float, str, str]] = {}  # tech_id -> (confidence, tactic, tech_name)
         for conf, tactic, tid, tname in matches:
             if tid not in tech_seen or conf > tech_seen[tid][0]:
                 tech_seen[tid] = (conf, tactic, tname)
@@ -882,7 +882,7 @@ class KillChainTagger:
         top_items = sorted_tags[:MAX_TAGS_PER_FINDING]
 
         # Build KillChainTag list
-        result: List[KillChainTag] = []
+        result: list[KillChainTag] = []
         for tech_id, (conf, tactic, tname) in top_items:
             # Find phase for this technique_id
             phase = "reconnaissance"
@@ -905,8 +905,8 @@ class KillChainTagger:
         return result
 
     def tag_findings(
-        self, findings: List[CanonicalFinding | dict]
-    ) -> Dict[str, List[KillChainTag]]:
+        self, findings: list[CanonicalFinding | dict]
+    ) -> dict[str, list[KillChainTag]]:
         """
         Tag multiple findings.
 
@@ -916,7 +916,7 @@ class KillChainTagger:
         Returns:
             Dict mapping finding_id -> list of KillChainTag.
         """
-        results: Dict[str, List[KillChainTag]] = {}
+        results: dict[str, list[KillChainTag]] = {}
         for finding in findings:
             if self._tagged_count >= MAX_TAGGED_FINDINGS:
                 break

@@ -90,9 +90,9 @@ def to_markdown(results: list[dict[str, Any]]) -> str:
         lines.append(f"## {cat} ({len(items)})")
         for item in items:
             lines.append(f"- `{item['file']}:{item['line']}`")
-            lines.append(f"  ```python")
+            lines.append("  ```python")
             lines.append(f"  {item['code']}")
-            lines.append(f"  ```")
+            lines.append("  ```")
         lines.append("")
 
     return "\n".join(lines)

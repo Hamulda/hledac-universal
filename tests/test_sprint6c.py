@@ -6,9 +6,8 @@ Sprint 6C: Unit Tests
 - Network recon wildcard fix
 - Bounded wrappers
 """
-import unittest
 import sys
-import asyncio
+import unittest
 from collections import OrderedDict
 
 sys.path.insert(0, '/Users/vojtechhamada/PycharmProjects/Hledac')
@@ -102,7 +101,6 @@ class TestBoundedWrappers(unittest.TestCase):
 
     def test_bounded_ordered_dict_fifo_eviction(self):
         """BoundedOrderedDict evicts oldest on overflow."""
-        from collections import OrderedDict
 
         class BoundedOrderedDict(OrderedDict):
             """Bounded wrapper with FIFO eviction."""

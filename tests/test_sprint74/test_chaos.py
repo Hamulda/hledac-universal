@@ -2,9 +2,8 @@
 Chaos engineering tests - orchestrator survival under failures.
 """
 
+
 import pytest
-from unittest.mock import patch, MagicMock
-import sys
 
 
 class TestChaosRecovery:
@@ -12,7 +11,7 @@ class TestChaosRecovery:
 
     def test_mlx_cleanup_never_crashes(self):
         """Test that mlx cleanup functions don't crash."""
-        from hledac.universal.utils.mlx_cache import mlx_cleanup_sync, mlx_cleanup_aggressive
+        from hledac.universal.utils.mlx_cache import mlx_cleanup_aggressive, mlx_cleanup_sync
 
         # These should not raise even if MLX is unavailable
         mlx_cleanup_sync()
@@ -20,9 +19,10 @@ class TestChaosRecovery:
 
     def test_metrics_registry_fallback(self):
         """Test metrics registry with invalid metric names."""
-        from hledac.universal.metrics_registry import MetricsRegistry
-        from pathlib import Path
         import tempfile
+        from pathlib import Path
+
+        from hledac.universal.metrics_registry import MetricsRegistry
 
         with tempfile.TemporaryDirectory() as tmp:
             registry = MetricsRegistry(Path(tmp), "test")

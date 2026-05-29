@@ -1,12 +1,11 @@
 """Sprint F250F: Privacy Layer + Research Layer integration probes."""
-import os
 
 BASE = '/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal'
 
 # Test 1: SprintSchedulerResult has pii_findings_anonymized field
 def test_sprint_scheduler_result_has_pii_field():
     """Verify pii_findings_anonymized field exists in SprintSchedulerResult dataclass."""
-    with open(f'{BASE}/runtime/sprint_scheduler.py', 'r') as f:
+    with open(f'{BASE}/runtime/sprint_scheduler.py') as f:
         content = f.read()
 
     assert 'pii_findings_anonymized: int = 0' in content, "pii_findings_anonymized field not found in SprintSchedulerResult"
@@ -16,7 +15,7 @@ def test_sprint_scheduler_result_has_pii_field():
 # Test 2: Privacy layer PII check gate respects HLEDAC_ENABLE_PRIVACY_LAYER
 def test_privacy_layer_gate_respected():
     """Verify privacy layer gate only runs when env var = '1'."""
-    with open(f'{BASE}/runtime/sprint_scheduler.py', 'r') as f:
+    with open(f'{BASE}/runtime/sprint_scheduler.py') as f:
         content = f.read()
 
     assert 'HLEDAC_ENABLE_PRIVACY_LAYER' in content, "Gate env var not found"
@@ -30,7 +29,7 @@ def test_privacy_layer_gate_respected():
 # Test 3: Research layer hunt integration in hypothesis_engine
 def test_research_layer_hunt_integration():
     """Verify research_layer hunt() is called before LLM in generate_dark_surface_queries."""
-    with open(f'{BASE}/brain/hypothesis_engine.py', 'r') as f:
+    with open(f'{BASE}/brain/hypothesis_engine.py') as f:
         content = f.read()
 
     assert 'HLEDAC_ENABLE_RESEARCH_LAYER' in content, "Gate env var not found"
@@ -44,7 +43,7 @@ def test_research_layer_hunt_integration():
 # Test 4: Privacy context lifecycle (create at startup, close at teardown)
 def test_privacy_context_lifecycle():
     """Verify privacy context is created at startup and closed at teardown."""
-    with open(f'{BASE}/runtime/sprint_scheduler.py', 'r') as f:
+    with open(f'{BASE}/runtime/sprint_scheduler.py') as f:
         content = f.read()
 
     assert 'create_privacy_context' in content, "create_privacy_context not found"
@@ -56,9 +55,9 @@ def test_privacy_context_lifecycle():
 # Test 5: Separate gates (PRIVACY_LAYER vs RESEARCH_LAYER)
 def test_separate_gates():
     """Verify PRIVACY_LAYER and RESEARCH_LAYER are separate gates."""
-    with open(f'{BASE}/runtime/sprint_scheduler.py', 'r') as f:
+    with open(f'{BASE}/runtime/sprint_scheduler.py') as f:
         sched = f.read()
-    with open(f'{BASE}/brain/hypothesis_engine.py', 'r') as f:
+    with open(f'{BASE}/brain/hypothesis_engine.py') as f:
         hyp = f.read()
 
     assert 'HLEDAC_ENABLE_PRIVACY_LAYER' in sched, "PRIVACY_LAYER gate missing in scheduler"
@@ -69,7 +68,7 @@ def test_separate_gates():
 # Test 6: max_depth=2 for M1 safety in hunt()
 def test_hunt_max_depth():
     """Verify hunt() is called with max_depth=2 for M1 safety."""
-    with open(f'{BASE}/brain/hypothesis_engine.py', 'r') as f:
+    with open(f'{BASE}/brain/hypothesis_engine.py') as f:
         content = f.read()
 
     # Look for the hunt call with max_depth

@@ -101,13 +101,13 @@ def _lazy_legacycompat():
         stacklevel=2,
     )
     from ..legacy.persistent_layer import (
-        PersistentKnowledgeLayer,
-        KnowledgeNode,
-        KnowledgeEdge,
-        NodeType,
         EdgeType,
-        KuzuDBBackend,
         JSONBackend,
+        KnowledgeEdge,
+        KnowledgeNode,
+        KuzuDBBackend,
+        NodeType,
+        PersistentKnowledgeLayer,
     )
     return (
         AtomicJSONKnowledgeGraph,
@@ -147,7 +147,7 @@ class _LegacyCompatModule:
                     "KuzuDBBackend",
                     "JSONBackend",
                 ),
-                _lazy_legacycompat(),
+                _lazy_legacycompat(), strict=False,
             ))
             self._loaded = True
 

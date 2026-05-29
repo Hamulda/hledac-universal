@@ -12,7 +12,6 @@ import io
 import os
 import re
 import secrets
-from typing import Optional
 
 # EXIF stripping — optional dep, fail-safe
 try:

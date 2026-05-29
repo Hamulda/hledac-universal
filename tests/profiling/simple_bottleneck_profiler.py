@@ -16,17 +16,15 @@ Results will be compiled into BOTTLENECKS.md with optimization roadmap.
 
 import asyncio
 import cProfile
-import io
 import json
 import logging
 import os
-import pstats
 import sys
 import time
 import traceback
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 # Setup logging
 logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
@@ -46,16 +44,16 @@ class BottleneckReport:
     estimated_improvement: str
     priority: str  # CRITICAL, HIGH, MEDIUM, LOW
     safe_to_optimize: bool = True
-    dependencies: List[str] = field(default_factory=list)
+    dependencies: list[str] = field(default_factory=list)
 
 class SimpleBottleneckProfiler:
     """Simple bottleneck profiler using built-in tools."""
 
     def __init__(self):
-        self.reports: List[BottleneckReport] = []
+        self.reports: list[BottleneckReport] = []
         self.test_data = self._generate_test_data()
 
-    def _generate_test_data(self) -> Dict[str, Any]:
+    def _generate_test_data(self) -> dict[str, Any]:
         """Generate test data for profiling."""
         return {
             "small_json": {"test": "data", "number": 42},
@@ -80,7 +78,7 @@ class SimpleBottleneckProfiler:
         except Exception:
             return 0.0
 
-    def _profile_function(self, func, *args, **kwargs) -> Tuple[Any, float]:
+    def _profile_function(self, func, *args, **kwargs) -> tuple[Any, float]:
         """Profile a function and measure execution time."""
         pr = cProfile.Profile()
         pr.enable()
@@ -123,7 +121,7 @@ class SimpleBottleneckProfiler:
 
                 # Time the import
                 module = __import__(module_name, fromlist=[class_name])
-                cls = getattr(module, class_name)
+                getattr(module, class_name)
                 elapsed = time.time() - start_time
 
                 if elapsed > 2.0:  # Import taking too long
@@ -153,11 +151,9 @@ class SimpleBottleneckProfiler:
             from hledac.common.safe_utils import (
                 SafeHTTPClient,
                 SafeHTTPConfig,
-                parse_json_safe,
                 clean_text_safe,
-                extract_links_safe,
+                parse_json_safe,
                 validate_url_safe,
-                sanitize_filename_safe,
             )
 
             # Profile HTTP client initialization
@@ -187,7 +183,7 @@ class SimpleBottleneckProfiler:
             # Profile JSON parsing with large data
             large_json_str = json.dumps(self.test_data["large_json"])
             start_time = time.time()
-            result = parse_json_safe(large_json_str)
+            parse_json_safe(large_json_str)
             elapsed = time.time() - start_time
             memory_mb = self._estimate_memory_usage(large_json_str)
 
@@ -207,7 +203,7 @@ class SimpleBottleneckProfiler:
 
             # Profile text cleaning
             start_time = time.time()
-            result = clean_text_safe(self.test_data["large_text"], remove_html=True)
+            clean_text_safe(self.test_data["large_text"], remove_html=True)
             elapsed = time.time() - start_time
             memory_mb = self._estimate_memory_usage(self.test_data["large_text"])
 
@@ -320,8 +316,8 @@ class SimpleBottleneckProfiler:
                 "database.host",
                 "database.credentials.username",
                 "api.endpoints.users",
-                f"features.feature_500.enabled",
-                f"features.feature_999.config.param1"
+                "features.feature_500.enabled",
+                "features.feature_999.config.param1"
             ] * 1000  # 5000 accesses
 
             start_time = time.time()
@@ -352,10 +348,10 @@ class SimpleBottleneckProfiler:
         logger.info("Profiling file operations...")
 
         try:
-            from hledac.common.safe_utils import read_file_safe, write_file_safe
-
             # Create temporary file
             import tempfile
+
+            from hledac.common.safe_utils import read_file_safe, write_file_safe
             with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.txt') as f:
                 f.write(self.test_data["large_text"])
                 temp_file = f.name
@@ -431,7 +427,7 @@ class SimpleBottleneckProfiler:
                 agent_class = getattr(module, class_name)
 
                 start_time = time.time()
-                agent = agent_class()
+                agent_class()
                 elapsed = time.time() - start_time
 
                 if elapsed > 2.0:
@@ -506,7 +502,7 @@ class SimpleBottleneckProfiler:
             "### Performance Impact:",
             f"- Total execution time in bottlenecks: {total_time:.2f}s",
             f"- Total estimated memory usage: {total_memory:.1f}MB",
-            f"- Average improvement potential: 60-80%",
+            "- Average improvement potential: 60-80%",
             "",
             "## Detailed Bottleneck Analysis",
             ""
@@ -532,7 +528,7 @@ class SimpleBottleneckProfiler:
                     f"**File:** `{report.file_path}:{report.line_number}`",
                     f"**Priority:** {report.priority}",
                     f"**Issue Type:** {report.issue_type}",
-                    f"**Current Performance:**",
+                    "**Current Performance:**",
                     f"- Execution Time: {report.execution_time:.3f}s",
                     f"- Estimated Memory: {report.memory_estimate_mb:.1f}MB",
                     f"**Description:** {report.description}",
@@ -601,10 +597,10 @@ class SimpleBottleneckProfiler:
             "## Expected Impact",
             "",
             "After implementing all optimizations:",
-            f"- **Performance improvement:** 3-5x faster execution",
-            f"- **Memory reduction:** 40-60% lower memory usage",
-            f"- **System stability:** Better under load",
-            f"- **M1 optimization:** Fully optimized for 8GB MacBook Air",
+            "- **Performance improvement:** 3-5x faster execution",
+            "- **Memory reduction:** 40-60% lower memory usage",
+            "- **System stability:** Better under load",
+            "- **M1 optimization:** Fully optimized for 8GB MacBook Air",
             "",
             "---",
             f"*Report generated by simple bottleneck profiler - {len(self.reports)} issues identified*"
@@ -627,7 +623,7 @@ async def main():
         report_file = Path("BOTTLENECKS.md")
         report_file.write_text(report)
 
-        print(f"\n✅ Bottleneck analysis complete!")
+        print("\n✅ Bottleneck analysis complete!")
         print(f"📊 {len(profiler.reports)} bottlenecks identified")
         print(f"📋 Report saved to: {report_file}")
 
@@ -637,14 +633,14 @@ async def main():
         medium = len([r for r in profiler.reports if r.priority == "MEDIUM"])
         low = len([r for r in profiler.reports if r.priority == "LOW"])
 
-        print(f"\n📈 Priority Breakdown:")
+        print("\n📈 Priority Breakdown:")
         print(f"   🔴 Critical: {critical}")
         print(f"   🟠 High: {high}")
         print(f"   🟡 Medium: {medium}")
         print(f"   🟢 Low: {low}")
 
         # Show top 3 bottlenecks
-        print(f"\n🎯 Top 3 Bottlenecks:")
+        print("\n🎯 Top 3 Bottlenecks:")
         for i, report in enumerate(profiler.reports[:3], 1):
             print(f"   {i}. {report.function_name} ({report.priority}) - {report.execution_time:.3f}s")
 

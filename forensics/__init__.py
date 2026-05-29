@@ -153,8 +153,8 @@ def _load_digital_ghost_detector():
 
     try:
         from .digital_ghost_detector import (
-            GhostArtifact,
             DigitalGhostResult,
+            GhostArtifact,
             analyze_file_ghosts,
         )
         DIGITAL_GHOST_AVAILABLE = True

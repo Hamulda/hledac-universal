@@ -27,8 +27,7 @@ STORE IS NOT GRAPH TRUTH OWNER:
 
 from __future__ import annotations
 
-from typing import Any, Optional
-
+from typing import Any
 
 __all__ = ["GraphAttachmentStore"]
 
@@ -63,7 +62,7 @@ class GraphAttachmentStore:
         # may be IOCGraph (Kuzu, truth) or DuckPGQGraph (donor/alternate).
         # Capability must be checked, never assumed. Set by inject_graph().
         self._ioc_graph: Any = None
-        self._graph_attachment_kind: Optional[str] = None  # class name of attached backend
+        self._graph_attachment_kind: str | None = None  # class name of attached backend
 
         # Sprint 8VQ: Dedicated STIX-only graph slot.
         # TRUTH-STORE ONLY: only IOCGraph (Kuzu) has export_stix_bundle().
@@ -99,7 +98,7 @@ class GraphAttachmentStore:
         self._ioc_graph = graph
         self._graph_attachment_kind = graph.__class__.__name__ if graph is not None else None
 
-    def get_graph_attachment_kind(self) -> Optional[str]:
+    def get_graph_attachment_kind(self) -> str | None:
         """
         NON-AUTHORITATIVE DIAGNOSTIC: returns the class name of the attached graph.
 

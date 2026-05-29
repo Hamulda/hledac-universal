@@ -335,9 +335,9 @@ AUDIT_REPORT.md z 2026-05-08 tvrdil že tyto soubory mají "TODO: rekonstruovat 
 | 1 | OBLAST 1 | `brain/ane_embedder.py` | 154 | ANE embed production path always raises NotImplementedError — pre-existing P1 CRITICAL | P1 |
 | 2 | OBLAST 1 | `rl/sprint_policy_manager.py` | 192-245 | `update_with_quality_decisions()` — dead-end API, never called at runtime | P3 |
 | 3 | OBLAST 1 | `knowledge/search_index.py` | 179-220 | LocalSearchSeam wired to branch_manager only, DeepResearch not connected — documented gap | P3 |
-| 4 | OBLAST 2 | `coordinators/memory_coordinator.py` | 739 | `threading.Lock()` in async class — can block event loop if lock held during sync ops | P2 |
-| 5 | OBLAST 2 | `knowledge/analytics_hook.py` | 115 | `_worker_lock: threading.Lock` in async class — same pattern | P2 |
-| 6 | OBLAST 2 | `knowledge/ann_index.py` | 76 | `threading.Lock()` in async init — same pattern | P2 |
+| 4 | OBLAST 2 | `coordinators/memory_coordinator.py` | 739 | `threading.Lock()` — **FALSE_POSITIVE:** lock guards only sync methods (allocate/free/touch), all regular def, never called from async context | P2 |
+| 5 | OBLAST 2 | `knowledge/analytics_hook.py` | 115 | `_worker_lock: threading.Lock` — **FALSE_POSITIVE:** SAFE_SYNC_BOUNDARY, double-checked locking on sync flag, no await inside lock | P2 |
+| 6 | OBLAST 2 | `knowledge/ann_index.py` | 76 | `threading.Lock()` — **FALSE_POSITIVE:** SAFE_SYNC_BOUNDARY, guards LanceDB ops in ThreadPoolExecutor, never called from async | P2 |
 | 7 | OBLAST 2 | `embedding_pipeline.py` | 511 | `_embed_refcount_lock` in async `__aenter__`/`__aexit__` — explicitly safe via executor | P4 |
 | 8 | OBLAST 3 | `planning/cost_model.py` | 19,218 | Config placeholder comments | P4 |
 | 9 | OBLAST 3 | `project_types.py` | 1774 | Forward-compat placeholder comments | P4 |

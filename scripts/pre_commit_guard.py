@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Pre-commit guard: blokuje commit souboru 'None' nebo 'None.*'"""
-import subprocess, sys, re
+import re
+import subprocess
+import sys
 
 staged = subprocess.run(
     ["git", "diff", "--cached", "--name-only"],

@@ -19,9 +19,10 @@ import gc
 import logging
 import time
 from collections import defaultdict, deque
-from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, List, Optional, Set, Tuple, Union
+from collections.abc import Callable
 from contextlib import asynccontextmanager
+from dataclasses import dataclass, field
+from typing import Any
 from weakref import ref as WeakRef
 
 try:
@@ -44,7 +45,7 @@ except ImportError:
     class AgentExecutionError(Exception):
         """Fallback for AgentExecutionError"""
         pass
-    
+
     class CircuitBreakerOpen(Exception):
         """Fallback for CircuitBreakerOpen"""
         pass
@@ -106,11 +107,11 @@ class LoadBalancingConfig:
 class OptimizationReport:
     """Report containing optimization results."""
     timestamp: float = field(default_factory=time.time)
-    optimizations_applied: List[str] = field(default_factory=list)
+    optimizations_applied: list[str] = field(default_factory=list)
     memory_freed_mb: float = 0.0
     performance_improvement: float = 0.0
-    agent_pool_stats: Dict[str, Any] = field(default_factory=dict)
-    bottlenecks_identified: List[str] = field(default_factory=list)
+    agent_pool_stats: dict[str, Any] = field(default_factory=dict)
+    bottlenecks_identified: list[str] = field(default_factory=list)
 
 
 class AgentPool:
@@ -123,11 +124,11 @@ class AgentPool:
 
     def __init__(self, config: LoadBalancingConfig):
         self.config = config
-        self._pools: Dict[str, deque] = defaultdict(deque)
-        self._pool_locks: Dict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
-        self._metrics: Dict[str, AgentMetrics] = {}
-        self._weak_refs: Dict[str, Set[WeakRef]] = defaultdict(set)
-        self._cleanup_task: Optional[asyncio.Task] = None
+        self._pools: dict[str, deque] = defaultdict(deque)
+        self._pool_locks: dict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
+        self._metrics: dict[str, AgentMetrics] = {}
+        self._weak_refs: dict[str, set[WeakRef]] = defaultdict(set)
+        self._cleanup_task: asyncio.Task | None = None
 
     async def initialize(self) -> None:
         """Initialize the agent pool system."""
@@ -319,11 +320,11 @@ class AgentPool:
         memory_mb = get_memory_usage_mb()
         logger.info(f"Emergency cleanup completed. Memory usage: {memory_mb:.1f}MB")
 
-    def get_metrics(self) -> Dict[str, AgentMetrics]:
+    def get_metrics(self) -> dict[str, AgentMetrics]:
         """Get performance metrics for all agents."""
         return dict(self._metrics)
 
-    def get_pool_stats(self) -> Dict[str, Any]:
+    def get_pool_stats(self) -> dict[str, Any]:
         """Get pool statistics."""
         stats = {
             "total_pools": len(self._pools),
@@ -344,16 +345,16 @@ class IntelligentLoadBalancer:
 
     def __init__(self, config: LoadBalancingConfig):
         self.config = config
-        self._round_robin_counters: Dict[str, int] = defaultdict(int)
-        self._agent_weights: Dict[str, float] = defaultdict(float)
-        self._usage_counters: Dict[str, int] = defaultdict(int)
+        self._round_robin_counters: dict[str, int] = defaultdict(int)
+        self._agent_weights: dict[str, float] = defaultdict(float)
+        self._usage_counters: dict[str, int] = defaultdict(int)
         self._last_weight_update = 0.0
 
     def select_agent(
         self,
-        available_agents: List[str],
-        strategy: Optional[str] = None,
-        metrics: Optional[Dict[str, AgentMetrics]] = None
+        available_agents: list[str],
+        strategy: str | None = None,
+        metrics: dict[str, AgentMetrics] | None = None
     ) -> str:
         """
         Select the best agent for execution based on load balancing strategy.
@@ -381,7 +382,7 @@ class IntelligentLoadBalancer:
             # Default to round-robin
             return self._round_robin_select(available_agents)
 
-    def _round_robin_select(self, agents: List[str]) -> str:
+    def _round_robin_select(self, agents: list[str]) -> str:
         """Round-robin agent selection."""
         if not agents:
             raise ValueError("No agents available")
@@ -391,7 +392,7 @@ class IntelligentLoadBalancer:
         self._round_robin_counters["global"] += 1
         return agent
 
-    def _weighted_select(self, agents: List[str], metrics: Dict[str, AgentMetrics]) -> str:
+    def _weighted_select(self, agents: list[str], metrics: dict[str, AgentMetrics]) -> str:
         """Weighted agent selection based on performance metrics."""
         if not agents:
             raise ValueError("No agents available")
@@ -414,7 +415,7 @@ class IntelligentLoadBalancer:
 
         return best_agent or agents[0]
 
-    def _least_used_select(self, agents: List[str]) -> str:
+    def _least_used_select(self, agents: list[str]) -> str:
         """Select the least used agent."""
         if not agents:
             raise ValueError("No agents available")
@@ -434,7 +435,7 @@ class IntelligentLoadBalancer:
 
         return best_agent or agents[0]
 
-    def _update_weights(self, metrics: Dict[str, AgentMetrics]) -> None:
+    def _update_weights(self, metrics: dict[str, AgentMetrics]) -> None:
         """Update agent weights based on performance metrics."""
         for agent_name, metric in metrics.items():
             # Calculate weight based on success rate and execution time
@@ -462,12 +463,12 @@ class AsyncExecutionOptimizer:
     def __init__(self, config: LoadBalancingConfig):
         self.config = config
         self._semaphore = asyncio.Semaphore(config.max_concurrent_agents)
-        self._execution_stats: Dict[str, List[float]] = defaultdict(list)
-        self._active_tasks: Set[str] = set()
-        self._task_timeout_overrides: Dict[str, float] = {}
+        self._execution_stats: dict[str, list[float]] = defaultdict(list)
+        self._active_tasks: set[str] = set()
+        self._task_timeout_overrides: dict[str, float] = {}
 
     @asynccontextmanager
-    async def execute_with_limits(self, agent_name: str, timeout: Optional[float] = None):
+    async def execute_with_limits(self, agent_name: str, timeout: float | None = None):
         """
         Execute agent with concurrency limits and timeout management.
 
@@ -488,7 +489,7 @@ class AsyncExecutionOptimizer:
                 self._semaphore.acquire(),
                 timeout=timeout or self.config.agent_timeout_seconds
             )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             raise AgentExecutionError(f"Timeout waiting for execution slot for {agent_name}")
 
         execution_id = f"{agent_name}_{time.time()}"
@@ -515,7 +516,6 @@ class AsyncExecutionOptimizer:
 
     def _is_circuit_breaker_open(self, agent_name: str) -> bool:
         """Check if circuit breaker is open for an agent."""
-        recent_failures = 0
         recent_executions = self._execution_stats.get(agent_name, [])
 
         # Check recent failures (simplified - in real implementation, track failures separately)
@@ -533,7 +533,7 @@ class AsyncExecutionOptimizer:
         """Get count of currently active tasks."""
         return len(self._active_tasks)
 
-    def get_execution_stats(self, agent_name: str) -> Dict[str, float]:
+    def get_execution_stats(self, agent_name: str) -> dict[str, float]:
         """Get execution statistics for an agent."""
         times = self._execution_stats.get(agent_name, [])
         if not times:
@@ -556,7 +556,7 @@ class AgentPerformanceOptimizer:
     with real-time performance monitoring and automatic optimization.
     """
 
-    def __init__(self, config: Optional[LoadBalancingConfig] = None):
+    def __init__(self, config: LoadBalancingConfig | None = None):
         self.config = config or LoadBalancingConfig()
         self.agent_pool = AgentPool(self.config)
         self.load_balancer = IntelligentLoadBalancer(self.config)
@@ -588,7 +588,7 @@ class AgentPerformanceOptimizer:
         agent_factory: Callable[[], Any],
         query: str,
         max_results: int = 10,
-        timeout: Optional[float] = None,
+        timeout: float | None = None,
     ):
         """
         Execute an agent with full performance optimization.
@@ -635,9 +635,9 @@ class AgentPerformanceOptimizer:
 
     async def select_best_agent(
         self,
-        available_agents: List[str],
+        available_agents: list[str],
         query: str = "",
-        metrics: Optional[Dict[str, AgentMetrics]] = None,
+        metrics: dict[str, AgentMetrics] | None = None,
     ) -> str:
         """
         Select the best agent for execution based on current conditions.
@@ -729,7 +729,7 @@ class AgentPerformanceOptimizer:
             except Exception as e:
                 logger.warning(f"Auto-optimization failed: {e}")
 
-    async def _identify_bottlenecks(self) -> List[str]:
+    async def _identify_bottlenecks(self) -> list[str]:
         """Identify current performance bottlenecks."""
         bottlenecks = []
 
@@ -740,13 +740,13 @@ class AgentPerformanceOptimizer:
 
         # Check for slow agents
         metrics = self.agent_pool.get_metrics()
-        for agent_name, metric in metrics.items():
+        for _agent_name, metric in metrics.items():
             if metric.avg_execution_time > self.config.agent_timeout_seconds * 0.8:
                 bottlenecks.append("slow_agents")
                 break
 
         # Check circuit breakers
-        for agent_name, metric in metrics.items():
+        for _agent_name, metric in metrics.items():
             if metric.circuit_breaker_open:
                 bottlenecks.append("circuit_breakers")
                 break
@@ -791,7 +791,7 @@ class AgentPerformanceOptimizer:
                     metric.circuit_breaker_open = False
                     logger.info(f"Auto-reset circuit breaker for agent {agent_name}")
 
-    def get_comprehensive_metrics(self) -> Dict[str, Any]:
+    def get_comprehensive_metrics(self) -> dict[str, Any]:
         """Get comprehensive performance metrics."""
         return {
             "agent_metrics": self.agent_pool.get_metrics(),

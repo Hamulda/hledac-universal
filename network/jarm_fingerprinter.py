@@ -10,14 +10,14 @@ Uses only Python stdlib (ssl, socket, hashlib, sqlite3).
 CPU-only operation via run_in_executor for async compatibility.
 """
 
+from __future__ import annotations
+
 import asyncio
 import hashlib
 import logging
-import os
 import sqlite3
 import struct
 from pathlib import Path
-from typing import List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -166,7 +166,7 @@ class _JARMFingerprinter:
             self._db_conn = _init_cache_db()
         return self._db_conn
 
-    async def fingerprint(self, domain: str, port: int = 443) -> Optional[str]:
+    async def fingerprint(self, domain: str, port: int = 443) -> str | None:
         """
         Return JARM hash for domain, using cache if available.
 
@@ -189,14 +189,14 @@ class _JARMFingerprinter:
             if result:
                 self._cache(domain, result)
             return result
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.debug(f"[JARM] Timeout computing JARM for {domain}")
             return None
         except Exception as e:
             logger.debug(f"[JARM] Fingerprint failed for {domain}: {e}")
             return None
 
-    async def _compute_jarm_async(self, domain: str, port: int) -> Optional[str]:
+    async def _compute_jarm_async(self, domain: str, port: int) -> str | None:
         """
         Async JARM computation - uses asyncio.sleep instead of blocking time.sleep.
 
@@ -207,7 +207,7 @@ class _JARMFingerprinter:
             payloads = self._build_payloads()
 
             # Send each payload and collect responses
-            results: List[str] = []
+            results: list[str] = []
             for i, payload in enumerate(payloads):
                 response = self._send_tls_packet(domain, port, payload)
                 if response:
@@ -233,7 +233,7 @@ class _JARMFingerprinter:
             logger.debug(f"[JARM] JARM computation failed for {domain}: {e}")
             return None
 
-    def _build_payloads(self) -> List[bytes]:
+    def _build_payloads(self) -> list[bytes]:
         """
         Build the 10 TLS Client Hello payloads.
 
@@ -312,9 +312,9 @@ class _JARMFingerprinter:
     def _build_client_hello(
         self,
         tls_version: bytes,
-        ciphers: List[int],
-        extensions: Optional[bool] = None,
-        alpn: Optional[bytes] = None
+        ciphers: list[int],
+        extensions: bool | None = None,
+        alpn: bytes | None = None
     ) -> bytes:
         """Build a TLS Client Hello packet."""
         import random
@@ -371,7 +371,6 @@ class _JARMFingerprinter:
         parts = [b"\x01"]  # handshake type
 
         # Placeholder for handshake length (will fill in later)
-        hh = b"\x00\x00\x00"
 
         # TLS version
         parts.append(tls_version)
@@ -456,7 +455,7 @@ class _JARMFingerprinter:
         domain: str,
         port: int,
         payload: bytes
-    ) -> Optional[bytes]:
+    ) -> bytes | None:
         """Send TLS packet and return response."""
         import socket
 
@@ -479,7 +478,7 @@ class _JARMFingerprinter:
                         record_len = struct.unpack(">H", response[3:5])[0]
                         if len(response) >= 5 + record_len:
                             break
-                except socket.timeout:
+                except TimeoutError:
                     break
             return bytes(response) if response else None
         except Exception:
@@ -533,7 +532,7 @@ class _JARMFingerprinter:
         except Exception:
             return "000000"
 
-    def _get_cached(self, domain: str) -> Optional[str]:
+    def _get_cached(self, domain: str) -> str | None:
         """Check SQLite cache. Return hash if exists and not expired."""
         import time
         try:

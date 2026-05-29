@@ -2,18 +2,19 @@
 Anytime beam search s budget‑aware a heuristikou value / cost.
 """
 
-import time
-from typing import List, Tuple, Optional, Callable, Dict, Any
 import logging
+import time
+from collections.abc import Callable
+from typing import Any
 
-from hledac.universal.core.resource_governor import ResourceGovernor, Priority
+from hledac.universal.core.resource_governor import Priority, ResourceGovernor
 
 logger = logging.getLogger(__name__)
 
 
 class SearchNode:
-    def __init__(self, state: Dict[str, Any], parent: Optional['SearchNode'] = None,
-                 action: Optional[Dict] = None, cost: float = 0.0, value: float = 0.0,
+    def __init__(self, state: dict[str, Any], parent: SearchNode | None = None,
+                 action: dict | None = None, cost: float = 0.0, value: float = 0.0,
                  ram_cost: float = 0.0, net_cost: float = 0.0):
         self.state = state
         self.parent = parent
@@ -28,15 +29,15 @@ class SearchNode:
         return self.score > other.score  # max-heap
 
 
-def anytime_beam_search(initial_state: Dict[str, Any],
-                        goal_check: Callable[[Dict], bool],
-                        expand: Callable[[Dict], List[Tuple[Optional[Dict], Dict, float, float, float, float]]],
-                        heuristic: Callable[[Dict], Tuple[float, float, float]],
+def anytime_beam_search(initial_state: dict[str, Any],
+                        goal_check: Callable[[dict], bool],
+                        expand: Callable[[dict], list[tuple[dict | None, dict, float, float, float, float]]],
+                        heuristic: Callable[[dict], tuple[float, float, float]],
                         governor: ResourceGovernor,
                         time_budget: float,
                         ram_budget_mb: float,
                         net_budget_mb: float,
-                        beam_width: int = 10) -> Optional[List[Dict]]:
+                        beam_width: int = 10) -> list[dict] | None:
     """
     Anytime beam search maximalizující value / cost.
     expand vrací: (action, new_state, time_cost, ram_cost, net_cost, value)
@@ -83,7 +84,7 @@ def anytime_beam_search(initial_state: Dict[str, Any],
                 h_val, h_time, h_ram = heuristic(succ_state)
                 expected_value = new_node.value + h_val
                 expected_time = new_node.cost + h_time
-                expected_ram = new_node.ram_cost + h_ram
+                new_node.ram_cost + h_ram
 
                 # Score = value / (time + epsilon)
                 if expected_time > 0:
@@ -98,7 +99,7 @@ def anytime_beam_search(initial_state: Dict[str, Any],
     return best_plan
 
 
-def _reconstruct_plan(node: SearchNode) -> List[Dict]:
+def _reconstruct_plan(node: SearchNode) -> list[dict]:
     plan = []
     while node.parent:
         if node.action is not None:

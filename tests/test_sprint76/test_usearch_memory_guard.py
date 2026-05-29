@@ -4,8 +4,9 @@ Tests for M1 RAM guard on usearch ANN index rebuild (Sprint C4).
 Verifies that _ensure_usearch_index skips index build when RAM < 4GB.
 """
 
+from unittest.mock import MagicMock, patch
+
 import pytest
-from unittest.mock import patch, MagicMock
 
 
 class TestUSearchIndexMemoryGuard:

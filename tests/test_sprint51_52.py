@@ -3,15 +3,16 @@ Sprint 51+52 tests – GLiNER async offload, FlashRank, HTTP/3 default.
 """
 
 import pytest
+
 pytest.importorskip("gliner", reason="optional dependency not installed")
 
 import asyncio
 import sys
 import time
 import unittest
-import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
-from urllib.parse import urlparse
+
+import pytest
 
 sys.path.insert(0, '/Users/vojtechhamada/PycharmProjects/Hledac')
 
@@ -52,7 +53,7 @@ class TestGLiNER(unittest.IsolatedAsyncioTestCase):
         if self.engine._model is None:
             self.skipTest("Model not loaded, skipping memory test")
 
-        result = self.engine.predict("test" * 100, ["person"])
+        self.engine.predict("test" * 100, ["person"])
         rss_after = process.memory_info().rss
         delta_mb = (rss_after - rss_before) / (1024 * 1024)
         self.assertLess(delta_mb, 500)  # max 500 MB nárůst
@@ -99,7 +100,7 @@ class TestFlashRank(unittest.IsolatedAsyncioTestCase):
         """Měření rychlosti – musí být ≤ 50 ms na dotaz (s ohledem na fallback)."""
         docs = [{"idx": i, "content": f"Document {i} content."} for i in range(20)]
         start = time.time()
-        result = self.reranker._fallback_rerank("test query", docs, 5)
+        self.reranker._fallback_rerank("test query", docs, 5)
         elapsed = (time.time() - start) * 1000  # ms
         self.assertLess(elapsed, 50)
 
@@ -144,7 +145,7 @@ class TestHTTP3(unittest.IsolatedAsyncioTestCase):
                 mock_session.return_value = mock_instance
 
                 # Mělo by to znovu detekovat (cache expired)
-                result = await self.session._supports_http3(f"https://{domain}/page")
+                await self.session._supports_http3(f"https://{domain}/page")
                 # Výsledek závisí na detekci, ale hlavně že necrashuje
 
     async def test_http3_fallback(self):
@@ -180,7 +181,7 @@ class TestHTTP3(unittest.IsolatedAsyncioTestCase):
         url = "https://slow-server.com"
         with patch('aiohttp.ClientSession') as mock_session:
             mock_instance = AsyncMock()
-            mock_instance.__aenter__.return_value.head.side_effect = asyncio.TimeoutError()
+            mock_instance.__aenter__.return_value.head.side_effect = TimeoutError()
             mock_session.return_value = mock_instance
 
             start = time.time()
@@ -199,8 +200,9 @@ class TestOverallLatency(unittest.IsolatedAsyncioTestCase):
 
     async def test_overall_latency(self):
         """Spustí mocked research a změří čas (≤ 30 s)."""
+        from unittest.mock import AsyncMock, patch
+
         from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
-        from unittest.mock import patch, AsyncMock
 
         with patch('hledac.universal.brain.hermes3_engine.Hermes3Engine.initialize'):
             with patch('psutil.virtual_memory') as mock_vm:

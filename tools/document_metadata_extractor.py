@@ -25,14 +25,11 @@ import asyncio
 import hashlib
 import io
 import logging
-import os
 import re
 import sqlite3
-import struct
-import xml.etree.ElementTree as ET
 import zipfile
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -215,7 +212,7 @@ class _DocumentMetadataExtractor:
         age_days = (time.time() - timestamp) / 86400
         return age_days < CACHE_TTL_DAYS
 
-    def _get_cached(self, content: bytes) -> Optional[dict]:
+    def _get_cached(self, content: bytes) -> dict | None:
         """Get cached extraction result."""
         if not self._conn:
             return None
@@ -289,7 +286,7 @@ class _DocumentMetadataExtractor:
             if result:
                 self._cache(content, result)
             return result
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.debug(f"[DOCMETA] Timeout extracting from {url}")
             return {}
         except Exception as e:
@@ -317,7 +314,7 @@ class _DocumentMetadataExtractor:
 
     def _extract_pdf(self, content: bytes) -> dict:
         """Extract from PDF using PyMuPDF with FOCA-style deep analysis."""
-        result: Dict[str, Any] = {'format': 'pdf'}
+        result: dict[str, Any] = {'format': 'pdf'}
 
         if not FITZ_AVAILABLE:
             return self._extract_pdf_fallback(content, result)
@@ -416,7 +413,7 @@ class _DocumentMetadataExtractor:
         except Exception:
             return 0
 
-    def _extract_pdf_fonts(self, doc) -> List[Dict[str, str]]:
+    def _extract_pdf_fonts(self, doc) -> list[dict[str, str]]:
         """Extract embedded fonts for geographic indication."""
         fonts = []
         try:
@@ -440,7 +437,7 @@ class _DocumentMetadataExtractor:
             pass
         return fonts
 
-    def _extract_pdf_template_path(self, doc, content: bytes) -> Optional[str]:
+    def _extract_pdf_template_path(self, doc, content: bytes) -> str | None:
         """Extract template path from PDF metadata."""
         try:
             meta = doc.metadata
@@ -452,7 +449,7 @@ class _DocumentMetadataExtractor:
         except Exception:
             return None
 
-    def _extract_pdf_hidden_content(self, doc, content: bytes) -> Dict[str, Any]:
+    def _extract_pdf_hidden_content(self, doc, content: bytes) -> dict[str, Any]:
         """
         Extract PDF hidden content:
         - Invisible text layers (OCR vs embedded text mismatch)
@@ -461,7 +458,7 @@ class _DocumentMetadataExtractor:
         - Embedded files
         - Incremental updates
         """
-        hidden: Dict[str, Any] = {
+        hidden: dict[str, Any] = {
             'has_invisible_text': False,
             'has_form_fields': False,
             'has_javascript': False,
@@ -513,7 +510,7 @@ class _DocumentMetadataExtractor:
 
         return hidden
 
-    def _extract_pdf_gps(self, doc) -> List[dict]:
+    def _extract_pdf_gps(self, doc) -> list[dict]:
         """Extract GPS coordinates from embedded images."""
         if not PIL_AVAILABLE:
             return []
@@ -546,7 +543,7 @@ class _DocumentMetadataExtractor:
 
         return gps_coords[:MAX_GPS_COORDS]
 
-    def _parse_exif_gps(self, exif) -> Optional[dict]:
+    def _parse_exif_gps(self, exif) -> dict | None:
         """Parse GPS from EXIF data."""
         try:
             if 34853 not in exif:
@@ -578,7 +575,7 @@ class _DocumentMetadataExtractor:
         except Exception:
             return None
 
-    def _extract_company_from_pdf_producer(self, producer: str) -> Optional[str]:
+    def _extract_company_from_pdf_producer(self, producer: str) -> str | None:
         """Extract company name from PDF producer string."""
         if not producer:
             return None
@@ -602,7 +599,7 @@ class _DocumentMetadataExtractor:
 
     def _extract_docx(self, content: bytes) -> dict:
         """Extract from DOCX with FOCA-style revision history and fonts."""
-        result: Dict[str, Any] = {'format': 'docx'}
+        result: dict[str, Any] = {'format': 'docx'}
 
         if not DOCX_AVAILABLE:
             return self._extract_docx_fallback(content, result)
@@ -681,7 +678,7 @@ class _DocumentMetadataExtractor:
         result['page_count'] = 0
         return result
 
-    def _extract_docx_extended_props(self, content: bytes) -> Dict[str, Any]:
+    def _extract_docx_extended_props(self, content: bytes) -> dict[str, Any]:
         """Extract extended properties from DOCX ZIP."""
         props = {}
         try:
@@ -706,7 +703,7 @@ class _DocumentMetadataExtractor:
             logger.debug(f"[DOCMETA] DOCX extended props extraction failed: {e}")
         return props
 
-    def _extract_docx_fonts(self, doc) -> List[Dict[str, str]]:
+    def _extract_docx_fonts(self, doc) -> list[dict[str, str]]:
         """Extract embedded fonts from DOCX document."""
         fonts = []
         try:
@@ -723,7 +720,7 @@ class _DocumentMetadataExtractor:
             pass
         return fonts
 
-    def _extract_docx_revisions(self, content: bytes) -> List[Dict[str, Any]]:
+    def _extract_docx_revisions(self, content: bytes) -> list[dict[str, Any]]:
         """Extract revision history from DOCX (track changes)."""
         revisions = []
         try:
@@ -760,7 +757,7 @@ class _DocumentMetadataExtractor:
 
     def _extract_xlsx(self, content: bytes) -> dict:
         """Extract from XLSX with embedded fonts."""
-        result: Dict[str, Any] = {'format': 'xlsx'}
+        result: dict[str, Any] = {'format': 'xlsx'}
 
         if not OPENPYXL_AVAILABLE:
             return self._extract_xlsx_fallback(content, result)
@@ -815,7 +812,7 @@ class _DocumentMetadataExtractor:
             logger.debug(f"[DOCMETA] XLSX extraction failed: {e}")
             return self._extract_xlsx_fallback(content, result)
 
-    def _extract_xlsx_extended_props(self, content: bytes) -> Dict[str, Any]:
+    def _extract_xlsx_extended_props(self, content: bytes) -> dict[str, Any]:
         """Extract extended properties from XLSX ZIP."""
         props = {}
         try:
@@ -855,7 +852,7 @@ class _DocumentMetadataExtractor:
 
     def _extract_pptx(self, content: bytes) -> dict:
         """Extract from PPTX with speaker notes and hidden slides."""
-        result: Dict[str, Any] = {'format': 'pptx'}
+        result: dict[str, Any] = {'format': 'pptx'}
 
         try:
             with zipfile.ZipFile(io.BytesIO(content)) as zf:
@@ -904,7 +901,7 @@ class _DocumentMetadataExtractor:
 
         return result
 
-    def _extract_pptx_speaker_notes(self, zf, names: List[str]) -> List[str]:
+    def _extract_pptx_speaker_notes(self, zf, names: list[str]) -> list[str]:
         """Extract speaker notes from PPTX."""
         notes = []
         try:
@@ -923,7 +920,7 @@ class _DocumentMetadataExtractor:
             pass
         return notes[:50]
 
-    def _extract_pptx_hidden_slides(self, zf, names: List[str]) -> List[Dict[str, Any]]:
+    def _extract_pptx_hidden_slides(self, zf, names: list[str]) -> list[dict[str, Any]]:
         """Extract hidden slides from PPTX."""
         hidden = []
         try:
@@ -961,7 +958,7 @@ class _DocumentMetadataExtractor:
 
     def _extract_odt(self, content: bytes) -> dict:
         """Extract from ODT (OpenDocument Text)."""
-        result: Dict[str, Any] = {'format': 'odt'}
+        result: dict[str, Any] = {'format': 'odt'}
 
         try:
             with zipfile.ZipFile(io.BytesIO(content)) as zf:
@@ -1002,7 +999,7 @@ class _DocumentMetadataExtractor:
 
     def _extract_svg(self, content: bytes) -> dict:
         """Extract metadata from SVG files."""
-        result: Dict[str, Any] = {'format': 'svg'}
+        result: dict[str, Any] = {'format': 'svg'}
 
         try:
             svg_content = content.decode('utf-8', errors='ignore')
@@ -1044,7 +1041,7 @@ class _DocumentMetadataExtractor:
 
     def _extract_dxf(self, content: bytes) -> dict:
         """Extract metadata from DXF files (CAD drawings)."""
-        result: Dict[str, Any] = {'format': 'dxf'}
+        result: dict[str, Any] = {'format': 'dxf'}
 
         try:
             dxf_content = content.decode('utf-8', errors='ignore')
@@ -1088,7 +1085,7 @@ class _DocumentMetadataExtractor:
 
     def _extract_email(self, content: bytes) -> dict:
         """Extract email headers with forensics analysis."""
-        result: Dict[str, Any] = {'format': 'eml'}
+        result: dict[str, Any] = {'format': 'eml'}
 
         try:
             email_content = content.decode('utf-8', errors='ignore')
@@ -1135,7 +1132,7 @@ class _DocumentMetadataExtractor:
 
         return result
 
-    def _analyze_received_chain(self, received_header: str) -> List[Dict[str, Any]]:
+    def _analyze_received_chain(self, received_header: str) -> list[dict[str, Any]]:
         """Analyze Received headers to build infrastructure chain."""
         chain = []
         try:
@@ -1147,7 +1144,7 @@ class _DocumentMetadataExtractor:
                 if not line:
                     continue
 
-                entry: Dict[str, Any] = {}
+                entry: dict[str, Any] = {}
 
                 from_match = re.search(r'from\s+([^\s\(]+)', line, re.IGNORECASE)
                 if from_match:
@@ -1174,12 +1171,12 @@ class _DocumentMetadataExtractor:
 
     def _extract_msg(self, content: bytes) -> dict:
         """Extract from Outlook MSG files."""
-        result: Dict[str, Any] = {'format': 'msg'}
+        result: dict[str, Any] = {'format': 'msg'}
 
         try:
             try:
                 with zipfile.ZipFile(io.BytesIO(content)) as zf:
-                    names = zf.namelist()
+                    zf.namelist()
                     result['has_macros'] = False
             except Exception:
                 content_str = content.decode('utf-8', errors='ignore')
@@ -1192,7 +1189,7 @@ class _DocumentMetadataExtractor:
 
         return result
 
-    def _extract_email_field(self, content: str, field: str) -> Optional[str]:
+    def _extract_email_field(self, content: str, field: str) -> str | None:
         """Extract field from email content."""
         patterns = [
             rf'{field}:\s*([^\n]+)',
@@ -1217,12 +1214,12 @@ class _DocumentMetadataExtractor:
         except Exception:
             return False
 
-    def _analyze_macros_olevba(self, content: bytes, file_type: str) -> Dict[str, Any]:
+    def _analyze_macros_olevba(self, content: bytes, file_type: str) -> dict[str, Any]:
         """
         Analyze macros using olevba for C2 URLs and suspicious API calls.
         Returns analysis results with threat indicators.
         """
-        analysis: Dict[str, Any] = {
+        analysis: dict[str, Any] = {
             'c2_urls': [],
             'suspicious_api_calls': [],
             'macro_strings': [],
@@ -1291,7 +1288,7 @@ class _DocumentMetadataExtractor:
     # UTILITIES
     # =========================================================================
 
-    def _extract_xml_value(self, xml_content: str, tag: str) -> Optional[str]:
+    def _extract_xml_value(self, xml_content: str, tag: str) -> str | None:
         """Extract value from XML tag."""
         patterns = [
             rf'<{tag}>([^<]+)</{tag}>',
@@ -1303,10 +1300,10 @@ class _DocumentMetadataExtractor:
                 return match.group(1).strip()
         return None
 
-    def _find_internal_paths(self, text: str) -> List[str]:
+    def _find_internal_paths(self, text: str) -> list[str]:
         """Find internal file paths in text."""
         paths = set()
-        for pattern_type, pattern in INTERNAL_PATH_PATTERNS.items():
+        for _pattern_type, pattern in INTERNAL_PATH_PATTERNS.items():
             matches = pattern.findall(text)
             paths.update(matches)
         return list(paths)

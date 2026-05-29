@@ -37,7 +37,7 @@ class CTLogClient:
         self._lock = asyncio.Lock()  # serialize concurrent pivots to same source
 
     async def pivot_domain(
-        self, domain: str, session: "aiohttp.ClientSession"
+        self, domain: str, session: aiohttp.ClientSession
     ) -> dict:
         """Hlavní entry point — vrátí CT log findings pro doménu.
 
@@ -164,7 +164,7 @@ class CTLogClient:
         }
 
     async def fetch_certificates(
-        self, domain: str, session: "aiohttp.ClientSession"
+        self, domain: str, session: aiohttp.ClientSession
     ) -> list[dict]:
         """Vrátí seznam certifikátů pro doménu z crt.sh.
 
@@ -259,7 +259,7 @@ class CTLogClient:
         return certs
 
     async def ingest_to_graph(
-        self, ct_result: dict, ioc_graph: "IOCGraph"
+        self, ct_result: dict, ioc_graph: IOCGraph
     ) -> int:
         """Zapsat CT log findings do IOC graph. Vrátí počet nových uzlů."""
         source_domain = ct_result["domain"]

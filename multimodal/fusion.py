@@ -1,6 +1,5 @@
 import asyncio
 import logging
-from typing import Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -166,7 +165,7 @@ class MobileCLIPFusion:
         self._tokenizer = None
         self.embed_dim = 512
         self.__lock = None
-        self._vision_encoder: Optional[Any] = None
+        self._vision_encoder: Any | None = None
 
     def _lock(self):
         if self.__lock is None:

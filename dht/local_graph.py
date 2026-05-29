@@ -1,12 +1,10 @@
 import asyncio
 from pathlib import Path
-from typing import TYPE_CHECKING, Dict, List, Optional, Any
+from typing import TYPE_CHECKING, Any
 
-import lmdb
-import orjson
 import numpy as np
-
-from hledac.universal.security import encrypt_aes_gcm, decrypt_aes_gcm
+import orjson
+from hledac.universal.security import decrypt_aes_gcm, encrypt_aes_gcm
 from hledac.universal.security.key_manager import KeyManager
 
 if TYPE_CHECKING:
@@ -16,7 +14,7 @@ MAX_NODES_FOR_SCAN = 10_000
 
 
 class LocalGraphStore:
-    def __init__(self, key_manager: KeyManager, db_path: Optional[str] = None):
+    def __init__(self, key_manager: KeyManager, db_path: str | None = None):
         from hledac.universal.paths import LMDB_ROOT
         self.key_manager = key_manager
         self.bucket_id = "local_graph"
@@ -38,7 +36,7 @@ class LocalGraphStore:
             self._mxg = None
             self.graph = None
 
-    async def put_node(self, node_id: str, features: "mx.array", neighbors: List[str]) -> None:
+    async def put_node(self, node_id: str, features: mx.array, neighbors: list[str]) -> None:
         arr = np.array(features, dtype=np.float16)
         node_data = {"features": arr.tobytes().hex(), "shape": list(arr.shape)}
         plaintext = orjson.dumps(node_data)
@@ -60,7 +58,7 @@ class LocalGraphStore:
 
             self.graph.add_node(node_id, x=mx.array(features, dtype=mx.float32))
 
-    async def get_node(self, node_id: str) -> Optional[Dict[str, Any]]:
+    async def get_node(self, node_id: str) -> dict[str, Any] | None:
         # Best-effort accel for features (neighbors still in LMDB)
         if self.graph is not None:
             try:
@@ -103,8 +101,8 @@ class LocalGraphStore:
 
         return {"node_id": node_id, "features": mx.array(arr.astype(np.float32)), "neighbors": neighbors}
 
-    async def get_all_nodes(self, limit: int = MAX_NODES_FOR_SCAN) -> List[Dict[str, str]]:
-        out: List[Dict[str, str]] = []
+    async def get_all_nodes(self, limit: int = MAX_NODES_FOR_SCAN) -> list[dict[str, str]]:
+        out: list[dict[str, str]] = []
 
         def _scan():
             with self.env.begin() as txn:
@@ -149,7 +147,7 @@ class LocalGraphStore:
         except Exception:
             pass  # Fail-soft: DHT persistence never blocks crawl
 
-    async def get_dht_node(self, node_id: str) -> Optional[Dict[str, Any]]:
+    async def get_dht_node(self, node_id: str) -> dict[str, Any] | None:
         """Retrieve a DHT node from LMDB by node_id."""
         try:
             bucket_key = self.key_manager.get_key_for_bucket(self.bucket_id)
@@ -167,14 +165,14 @@ class LocalGraphStore:
         except Exception:
             return None
 
-    async def get_all_dht_nodes(self, limit: int = 1000) -> List[Dict[str, Any]]:
+    async def get_all_dht_nodes(self, limit: int = 1000) -> list[dict[str, Any]]:
         """Retrieve all persisted DHT nodes (up to limit)."""
-        out: List[Dict[str, Any]] = []
+        out: list[dict[str, Any]] = []
 
         def _scan():
             with self.env.begin() as txn:
                 cur = txn.cursor()
-                for k, v in cur:
+                for k, _v in cur:
                     if not k.startswith(b"dht_node:"):
                         continue
                     out.append({"id": k.decode().replace("dht_node:", "")})

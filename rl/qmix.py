@@ -7,7 +7,7 @@ try:
     import mlx.core as mx
     import mlx.nn as nn
     import mlx.optimizers as optim
-    from mlx.utils import tree_map, tree_flatten, tree_unflatten
+    from mlx.utils import tree_flatten, tree_map, tree_unflatten
 
     MLX_AVAILABLE = True
 except ImportError:
@@ -19,9 +19,7 @@ except ImportError:
     tree_flatten = None
     tree_unflatten = None
 
-from typing import Dict, List, Optional
 from rl.actions import ACTION_DIM, ACTION_FETCH_MORE
-
 
 if MLX_AVAILABLE:
 
@@ -92,14 +90,14 @@ if MLX_AVAILABLE:
         Wrapper pro všechny trénované modely (mixer + agenti).
         Umožňuje nn.value_and_grad na celém modelu.
         """
-        def __init__(self, mixer: QMixer, agent_nets: List[QNetwork]):
+        def __init__(self, mixer: QMixer, agent_nets: list[QNetwork]):
             super().__init__()
             self.mixer = mixer
             self._n_agents = len(agent_nets)  # uložíme počet pro spolehlivé indexování
             for i, net in enumerate(agent_nets):
                 setattr(self, f"agent_{i}", net)
 
-        def get_agent_nets(self) -> List[QNetwork]:
+        def get_agent_nets(self) -> list[QNetwork]:
             """Vrátí seznam agent sítí."""
             return [getattr(self, f"agent_{i}") for i in range(self._n_agents)]
 
@@ -109,7 +107,7 @@ if MLX_AVAILABLE:
         Provádí joint update všech agentů podle QMIX algoritmu.
         Gradienty tečou přes mixer zpět do agent sítí.
         """
-        def __init__(self, agents: Dict[str, QMIXAgent], mixer: QMixer, target_mixer: QMixer,
+        def __init__(self, agents: dict[str, QMIXAgent], mixer: QMixer, target_mixer: QMixer,
                      gamma: float = 0.99, tau: float = 0.005):
             self.agents = agents
             self.mixer = mixer
@@ -121,7 +119,7 @@ if MLX_AVAILABLE:
             self.joint_model = JointModel(mixer, agent_nets)
             self.optimizer = optim.Adam(learning_rate=1e-3)
 
-        def update(self, batch: Dict[str, mx.array]) -> Dict[str, float]:
+        def update(self, batch: dict[str, mx.array]) -> dict[str, float]:
             """
             batch obsahuje: 'states', 'actions', 'rewards', 'next_states', 'dones'
             states, next_states: (batch, state_dim)
@@ -135,7 +133,7 @@ if MLX_AVAILABLE:
             next_states = batch['next_states']
             dones = batch['dones']
 
-            n_agents = len(self.agents)
+            len(self.agents)
 
             # Získáme agent sítě z joint modelu
             agent_nets = self.joint_model.get_agent_nets()
@@ -151,7 +149,7 @@ if MLX_AVAILABLE:
             ).squeeze(-1)  # (batch, n_agents)
 
             # 3. Globální Q přes mixer
-            q_total = self.mixer(chosen_qs, states)   # (batch, 1)
+            self.mixer(chosen_qs, states)   # (batch, 1)
 
             # 4. Double DQN: target hodnoty
             # Akce vybrané CURRENT sítěmi na NEXT stavy
@@ -202,7 +200,7 @@ if MLX_AVAILABLE:
             self.target_mixer.update(new_mixer_params)
 
             # Target sítě agentů
-            for aid, agent in self.agents.items():
+            for _aid, agent in self.agents.items():
                 new_target_params = tree_map(polyak_update, agent.q_net.parameters(), agent.target_q_net.parameters())
                 agent.target_q_net.update(new_target_params)
 

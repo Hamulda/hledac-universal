@@ -4,9 +4,10 @@ Sprint 45: High-performance binary serialization.
 Sprint 79a: orjson storage serialization with hash-chain compatibility.
 """
 
-import hashlib
+from __future__ import annotations
+
 import json
-from typing import Any, Dict, Union
+from typing import Any
 
 import msgpack
 import numpy as np
@@ -63,7 +64,7 @@ if ORJSON_AVAILABLE:
         """
         return orjson.dumps(obj, option=ORJSON_OPTIONS)
 
-    def deserialize_storage(data: Union[bytes, str]) -> Dict[str, Any]:
+    def deserialize_storage(data: Union[bytes, str]) -> dict[str, Any]:
         """
         Deserializace dat ze souboru.
 
@@ -87,7 +88,7 @@ else:
             default=str
         ).encode('utf-8')
 
-    def deserialize_storage(data: Union[bytes, str]) -> Dict[str, Any]:
+    def deserialize_storage(data: Union[bytes, str]) -> dict[str, Any]:
         """Fallback deserializace."""
         if isinstance(data, bytes):
             data = data.decode('utf-8')
@@ -151,7 +152,7 @@ def _decode_numpy(obj: Dict) -> Any:
 
 
 # Sprint 45: Test helper functions
-def estimate_size_reduction(data: Dict) -> float:
+def estimate_size_reduction(data: dict) -> float:
     """Estimate size reduction compared to JSON."""
     import json
     json_size = len(json.dumps(data, default=str).encode())

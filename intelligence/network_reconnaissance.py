@@ -26,18 +26,14 @@ import asyncio
 import hashlib
 import ipaddress
 import itertools
-import json
 import logging
-import random
 import secrets
 import socket
 import ssl
-import struct
-import time
-from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from dataclasses import dataclass
+from datetime import UTC, datetime
 from enum import Enum
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any
 
 import aiohttp
 import dns.asyncresolver
@@ -71,42 +67,42 @@ class DNSRecord:
     name: str
     value: str
     ttl: int
-    priority: Optional[int] = None  # For MX, SRV
+    priority: int | None = None  # For MX, SRV
 
 
 @dataclass
 class WHOISData:
     """WHOIS lookup results."""
     domain: str
-    registrar: Optional[str]
-    creation_date: Optional[datetime]
-    expiration_date: Optional[datetime]
-    updated_date: Optional[datetime]
-    name_servers: List[str]
-    status: List[str]
+    registrar: str | None
+    creation_date: datetime | None
+    expiration_date: datetime | None
+    updated_date: datetime | None
+    name_servers: list[str]
+    status: list[str]
     dnssec: bool
-    registrant_name: Optional[str]
-    registrant_org: Optional[str]
-    registrant_email: Optional[str]
-    admin_name: Optional[str]
-    admin_email: Optional[str]
-    tech_name: Optional[str]
-    tech_email: Optional[str]
+    registrant_name: str | None
+    registrant_org: str | None
+    registrant_email: str | None
+    admin_name: str | None
+    admin_email: str | None
+    tech_name: str | None
+    tech_email: str | None
     raw_whois: str
 
 
 @dataclass
 class SSLCertificate:
     """SSL/TLS certificate information."""
-    subject: Dict[str, str]
-    issuer: Dict[str, str]
+    subject: dict[str, str]
+    issuer: dict[str, str]
     serial_number: str
     not_before: datetime
     not_after: datetime
     fingerprint_sha256: str
     fingerprint_sha1: str
     version: int
-    san_domains: List[str]
+    san_domains: list[str]
     is_valid: bool
     days_until_expiry: int
 
@@ -117,8 +113,8 @@ class ServiceBanner:
     port: int
     protocol: str
     banner: str
-    service_name: Optional[str]
-    version: Optional[str]
+    service_name: str | None
+    version: str | None
     timestamp: float
 
 
@@ -126,16 +122,16 @@ class ServiceBanner:
 class HostInfo:
     """Complete host information."""
     hostname: str
-    ip_addresses: List[str]
-    reverse_dns: List[str]
-    whois_data: Optional[WHOISData]
-    dns_records: List[DNSRecord]
-    ssl_cert: Optional[SSLCertificate]
-    open_ports: List[int]
-    service_banners: List[ServiceBanner]
-    geolocation: Optional[Dict[str, Any]]
-    asn_info: Optional[Dict[str, Any]]
-    technology_stack: List[str]
+    ip_addresses: list[str]
+    reverse_dns: list[str]
+    whois_data: WHOISData | None
+    dns_records: list[DNSRecord]
+    ssl_cert: SSLCertificate | None
+    open_ports: list[int]
+    service_banners: list[ServiceBanner]
+    geolocation: dict[str, Any] | None
+    asn_info: dict[str, Any] | None
+    technology_stack: list[str]
 
 
 class DNSEnumerator:
@@ -158,7 +154,7 @@ class DNSEnumerator:
         " intra", "internal", "corp", "private"
     ]
 
-    def __init__(self, nameservers: Optional[List[str]] = None):
+    def __init__(self, nameservers: list[str] | None = None):
         self.resolver = dns.asyncresolver.Resolver()
         if nameservers:
             self.resolver.nameservers = nameservers
@@ -169,7 +165,7 @@ class DNSEnumerator:
         self,
         domain: str,
         include_subdomains: bool = True
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Comprehensive DNS enumeration.
 
@@ -226,7 +222,7 @@ class DNSEnumerator:
         self,
         domain: str,
         record_type: RecordType
-    ) -> List[DNSRecord]:
+    ) -> list[DNSRecord]:
         """Query specific DNS record type."""
         records = []
 
@@ -262,8 +258,8 @@ class DNSEnumerator:
     async def brute_force_subdomains(
         self,
         domain: str,
-        wordlist: Optional[List[str]] = None
-    ) -> List[Tuple[str, str, str]]:
+        wordlist: list[str] | None = None
+    ) -> list[tuple[str, str, str]]:
         """
         Brute force subdomains.
 
@@ -307,8 +303,8 @@ class DNSEnumerator:
     async def permutation_scan(
         self,
         domain: str,
-        words: Optional[List[str]] = None
-    ) -> List[Tuple[str, str]]:
+        words: list[str] | None = None
+    ) -> list[tuple[str, str]]:
         """
         Scan for subdomains using permutations.
 
@@ -341,7 +337,7 @@ class DNSEnumerator:
         )
         return found
 
-    async def attempt_zone_transfer(self, domain: str) -> Optional[List[str]]:
+    async def attempt_zone_transfer(self, domain: str) -> list[str] | None:
         """
         Attempt DNS zone transfer (AXFR).
 
@@ -365,7 +361,7 @@ class DNSEnumerator:
 
         return None
 
-    async def reverse_lookup(self, ip: str) -> List[str]:
+    async def reverse_lookup(self, ip: str) -> list[str]:
         """Perform reverse DNS lookup."""
         try:
             reversed_dns = dns.reversename.from_address(ip)
@@ -402,7 +398,7 @@ class WHOISLookup:
         "cn": "whois.cnnic.cn"
     }
 
-    async def lookup(self, domain: str) -> Optional[WHOISData]:
+    async def lookup(self, domain: str) -> WHOISData | None:
         """
         Perform WHOIS lookup.
 
@@ -475,7 +471,7 @@ class WHOISLookup:
 
         return WHOISData(**data)
 
-    def _extract_field(self, whois: str, field: str) -> Optional[str]:
+    def _extract_field(self, whois: str, field: str) -> str | None:
         """Extract single field from WHOIS."""
         for line in whois.split("\n"):
             if line.startswith(field):
@@ -483,7 +479,7 @@ class WHOISLookup:
                 return value if value and value != "REDACTED FOR PRIVACY" else None
         return None
 
-    def _extract_list(self, whois: str, field: str) -> List[str]:
+    def _extract_list(self, whois: str, field: str) -> list[str]:
         """Extract list field from WHOIS."""
         values = []
         for line in whois.split("\n"):
@@ -493,14 +489,14 @@ class WHOISLookup:
                     values.append(value)
         return values
 
-    def _extract_email(self, whois: str, field: str) -> Optional[str]:
+    def _extract_email(self, whois: str, field: str) -> str | None:
         """Extract email field, handling privacy protection."""
         email = self._extract_field(whois, field)
         if email and "priv" not in email.lower() and "redacted" not in email.lower():
             return email
         return None
 
-    def _parse_date(self, date_str: Optional[str]) -> Optional[datetime]:
+    def _parse_date(self, date_str: str | None) -> datetime | None:
         """Parse WHOIS date string."""
         if not date_str:
             return None
@@ -527,7 +523,7 @@ class SSLAnalyzer:
     SSL/TLS certificate analysis.
     """
 
-    async def analyze_certificate(self, hostname: str, port: int = 443) -> Optional[SSLCertificate]:
+    async def analyze_certificate(self, hostname: str, port: int = 443) -> SSLCertificate | None:
         """
         Analyze SSL certificate of remote host.
 
@@ -601,9 +597,9 @@ class SSLAnalyzer:
             sha1_fp = hashlib.sha1(cert_der).hexdigest()
 
             # Parse dates (naive UTC from DER timestamp strings)
-            not_before = datetime.strptime(x509.get_notBefore().decode(), "%Y%m%d%H%M%SZ").replace(tzinfo=timezone.utc)
-            not_after = datetime.strptime(x509.get_notAfter().decode(), "%Y%m%d%H%M%SZ").replace(tzinfo=timezone.utc)
-            days_until_expiry = (not_after - datetime.now(timezone.utc)).days
+            not_before = datetime.strptime(x509.get_notBefore().decode(), "%Y%m%d%H%M%SZ").replace(tzinfo=UTC)
+            not_after = datetime.strptime(x509.get_notAfter().decode(), "%Y%m%d%H%M%SZ").replace(tzinfo=UTC)
+            days_until_expiry = (not_after - datetime.now(UTC)).days
 
             return SSLCertificate(
                 subject=subject,
@@ -625,8 +621,8 @@ class SSLAnalyzer:
                 subject={},
                 issuer={},
                 serial_number="unknown",
-                not_before=datetime.now(timezone.utc),
-                not_after=datetime.now(timezone.utc),
+                not_before=datetime.now(UTC),
+                not_after=datetime.now(UTC),
                 fingerprint_sha256=hashlib.sha256(cert_der).hexdigest(),
                 fingerprint_sha1=hashlib.sha1(cert_der).hexdigest(),
                 version=3,
@@ -683,10 +679,10 @@ class NetworkReconnaissance:
         self.whois = WHOISLookup()
         self.ssl = SSLAnalyzer()
         # Sprint 83C: Per-domain wildcard cache (bounded)
-        self._wildcard_domains: Set[str] = set()
-        self._confirmed_non_wildcard: Set[str] = set()
+        self._wildcard_domains: set[str] = set()
+        self._confirmed_non_wildcard: set[str] = set()
 
-    async def detect_wildcard(self, domain: str) -> Dict[str, Any]:
+    async def detect_wildcard(self, domain: str) -> dict[str, Any]:
         """
         Detect wildcard DNS configuration for a domain.
 
@@ -727,7 +723,7 @@ class NetworkReconnaissance:
             probes.append(probe)
 
         # Probe each random hostname with timeout
-        async def probe_hostname(hostname: str) -> Optional[str]:
+        async def probe_hostname(hostname: str) -> str | None:
             try:
                 # Use asyncio.to_thread for async-safe DNS resolution
                 # since dns.asyncresolver.resolve is already async, we can use it directly
@@ -739,7 +735,7 @@ class NetworkReconnaissance:
                 for rdata in answers:
                     return str(rdata)
                 return None
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 return None
             except Exception:
                 return None
@@ -748,7 +744,7 @@ class NetworkReconnaissance:
         try:
             async with asyncio.timeout(self._WILDCARD_PROBE_TOTAL_S):
                 results = await asyncio.gather(*[probe_hostname(p) for p in probes], return_exceptions=True)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             # Conservative: if overall timeout, assume not wildcard
             self._confirmed_non_wildcard.add(domain)
             return {
@@ -915,11 +911,11 @@ class NetworkReconnaissance:
         try:
             socket.inet_aton(target)
             return True
-        except socket.error:
+        except OSError:
             try:
                 socket.inet_pton(socket.AF_INET6, target)
                 return True
-            except socket.error:
+            except OSError:
                 return False
 
 
@@ -1031,7 +1027,7 @@ async def graph_add_domain_ip_relations(
 
 async def graph_add_ip_asn_relations(
     ip: str,
-    asn_info: "ASNInfo | list[ASNInfo]",
+    asn_info: ASNInfo | list[ASNInfo],
     graph: Any,
 ) -> None:
     """
@@ -1168,7 +1164,7 @@ class CNAMERecord:
     ttl: int
 
 
-async def resolve_cname_chain(domain: str, max_depth: int = 10) -> List[CNAMERecord]:
+async def resolve_cname_chain(domain: str, max_depth: int = 10) -> list[CNAMERecord]:
     """
     Resolve full CNAME chain for a domain.
 
@@ -1179,9 +1175,9 @@ async def resolve_cname_chain(domain: str, max_depth: int = 10) -> List[CNAMERec
     Returns:
         List of CNAMERecord objects forming the alias chain
     """
-    chain: List[CNAMERecord] = []
+    chain: list[CNAMERecord] = []
     current = domain
-    seen: Set[str] = set()
+    seen: set[str] = set()
 
     try:
         resolver = dns.asyncresolver.Resolver()
@@ -1202,7 +1198,7 @@ async def resolve_cname_chain(domain: str, max_depth: int = 10) -> List[CNAMERec
                 cname_value = str(answers[0]).rstrip(".")
                 chain.append(CNAMERecord(source=current, target=cname_value, ttl=answers.ttl))
                 current = cname_value
-            except (dns.resolver.NoAnswer, dns.resolver.NXDOMAIN, asyncio.TimeoutError):
+            except (TimeoutError, dns.resolver.NoAnswer, dns.resolver.NXDOMAIN):
                 break
     except Exception as e:
         logger.debug(f"resolve_cname_chain({domain}): {e}")
@@ -1221,11 +1217,11 @@ class ASNInfo:
     asn: int
     prefix: str
     name: str
-    country: Optional[str]
+    country: str | None
     source: str
 
 
-async def lookup_asn(ip_or_prefix: str) -> List[ASNInfo]:
+async def lookup_asn(ip_or_prefix: str) -> list[ASNInfo]:
     """
     Look up ASN information for IP address or prefix.
 
@@ -1235,7 +1231,7 @@ async def lookup_asn(ip_or_prefix: str) -> List[ASNInfo]:
     Returns:
         List of ASNInfo objects
     """
-    results: List[ASNInfo] = []
+    results: list[ASNInfo] = []
 
     try:
         async with aiohttp.ClientSession() as session:
@@ -1273,10 +1269,10 @@ class CTRawCertificate:
     name_value: str
     issue_date: str
     expiry_date: str
-    issuer_name: Optional[str]
+    issuer_name: str | None
 
 
-async def lookup_crtsh(domain: str, limit: int = 50) -> List[CTRawCertificate]:
+async def lookup_crtsh(domain: str, limit: int = 50) -> list[CTRawCertificate]:
     """
     Query crt.sh Certificate Transparency log for domain certificates.
 
@@ -1287,7 +1283,7 @@ async def lookup_crtsh(domain: str, limit: int = 50) -> List[CTRawCertificate]:
     Returns:
         List of CTRawCertificate objects
     """
-    results: List[CTRawCertificate] = []
+    results: list[CTRawCertificate] = []
 
     try:
         async with aiohttp.ClientSession() as session:
@@ -1326,7 +1322,7 @@ async def lookup_crtsh(domain: str, limit: int = 50) -> List[CTRawCertificate]:
 # =============================================================================
 
 
-async def passive_dns_lookup(domain: str, api_key: Optional[str] = None) -> Dict[str, Any]:
+async def passive_dns_lookup(domain: str, api_key: str | None = None) -> dict[str, Any]:
     """
     Query Passive DNS service for domain resolution history.
 
@@ -1337,7 +1333,7 @@ async def passive_dns_lookup(domain: str, api_key: Optional[str] = None) -> Dict
     Returns:
         Dict with resolution records
     """
-    result: Dict[str, Any] = {"domain": domain, "resolutions": [], "subdomains": []}
+    result: dict[str, Any] = {"domain": domain, "resolutions": [], "subdomains": []}
 
     if not api_key:
         logger.debug("passive_dns_lookup: no API key provided")

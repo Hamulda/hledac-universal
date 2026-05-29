@@ -10,10 +10,9 @@ from __future__ import annotations
 
 import fcntl
 import platform
-from typing import Optional
 
 NOCACHE_THRESHOLD_BYTES = 50 * 1024 * 1024  # 50MB
-F_NOCACHE: Optional[int] = 48 if platform.system() == "Darwin" else None
+F_NOCACHE: int | None = 48 if platform.system() == "Darwin" else None
 
 
 def apply_fcntl_nocache(fd: int, content_length: int | None) -> None:

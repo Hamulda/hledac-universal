@@ -2,9 +2,9 @@
 """
 Sprint 6D: Unit Tests
 """
-import unittest
-import sys
 import asyncio
+import sys
+import unittest
 from collections import OrderedDict
 
 sys.path.insert(0, '/Users/vojtechhamada/PycharmProjects/Hledac')

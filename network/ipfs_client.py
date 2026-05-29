@@ -5,7 +5,7 @@ IPFS Client — Multi-gateway fetch and search for IPFS content.
 IPFS fetch is bounded and can be a safe OSINT source when:
   - Has explicit size cap (10MB MAX_FILE_SIZE_BYTES)
   - Results are tagged with source_type="ipfs_fetch" (not just "ipfs")
-  - ipfs_fetch_as_findings() returns List[CanonicalFinding]
+  - ipfs_fetch_as_findings() returns list[CanonicalFinding]
 
 F218Z: IPFS via Tor transport — all gateway requests route through Tor
 when CURL_CFFI_PROXY is set. Explicit HLEDAC_IPFS_CLEARNET=1 to override.
@@ -14,11 +14,35 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import time
+import os
+import re
+import time as _time
+
 import aiohttp
-from typing import Optional
+
+from hledac.universal.knowledge.duckdb_store import CanonicalFinding
 
 logger = logging.getLogger(__name__)
+
+# CID extraction pattern — matches Qm (v0, base58, 44 chars) and
+# bafy (v1, base32, 52+ chars) CID formats.
+CID_PATTERN = re.compile(r'\b(Qm[1-9A-HJ-NP-Za-km-z]{44}|bafy[a-z2-7]{52,})\b')
+
+
+def extract_cids_from_text(content: str) -> list[str]:
+    """Extract all IPFS CIDs from raw text content.
+
+    Scans content for Qm (v0) and bafy (v1) CID patterns.
+    Used by sprint-sidecar to pull CIDs from findings before bulk fetch.
+
+    Fail-safe: returns [] for empty/None content.
+    Hard timeout ≤12s enforced at fetch_ipfs layer.
+    RAM governor critical/emergency → caller skips IPFS sidecar.
+    """
+    if not content:
+        return []
+    return CID_PATTERN.findall(content)
+
 
 # =============================================================================
 # IPFS PROMOTION GATE — F206F
@@ -26,7 +50,7 @@ logger = logging.getLogger(__name__)
 # IPFS fetch is bounded and can be a safe OSINT src when:
 #   - Has explicit size cap (10MB MAX_FILE_SIZE_BYTES)
 #   - Results are tagged with source_type="ipfs_fetch" (not just "ipfs")
-#   - ipfs_fetch_as_findings() returns List[CanonicalFinding]
+#   - ipfs_fetch_as_findings() returns list[CanonicalFinding]
 IPFS_PROMOTION_STATUS: str = "bounded_gateway_fetch"
 
 MAX_FILE_SIZE_BYTES: int = 10 * 1024 * 1024  # 10 MB hard cap
@@ -39,7 +63,7 @@ IPFS_GATEWAYS: list[tuple[str, str]] = [
 ]
 
 
-async def fetch_ipfs(cid: str, timeout: int = 30) -> Optional[bytes]:
+async def fetch_ipfs(cid: str, timeout: int = 30) -> bytes | None:
     """
     Fetch content from IPFS via multiple gateways.
 
@@ -126,7 +150,7 @@ async def fetch_ipfs(cid: str, timeout: int = 30) -> Optional[bytes]:
                     logger.debug(f"IPFS fetch success: {cid} via {name} ({len(body)} bytes)")
                     return body
 
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.debug(f"IPFS timeout for {cid} via {name}")
             continue
         except Exception as e:
@@ -201,12 +225,11 @@ def ipfs_content_to_finding_dict(
     Returns:
         Finding dict with all required CanonicalFinding fields.
     """
-    import hashlib as _hashlib
-    from .utils.time import time_now as _time_now
+    import time as _time
 
     content_text = content.decode("utf-8", errors="replace") if isinstance(content, bytes) else content
 
-    finding_id = f"ipfs-{cid[:16]}-{int(_time_now())}"
+    finding_id = f"ipfs-{cid[:16]}-{_time.time_ns()}"
 
     # payload_text: content preview (up to 4096 chars for LMDB WAL)
     payload_text = content_text[:4096] if content_text else ""
@@ -216,7 +239,7 @@ def ipfs_content_to_finding_dict(
         "query": query,
         "source_type": source_type,
         "confidence": 0.75,  # IPFS content is authoritative but unverified
-        "ts": _time_now(),
+        "ts": _time.time(),
         "provenance": (f"ipfs://{cid}",),
         "payload_text": payload_text,
         "accepted": True,  # IPFS is bounded source — auto-accept
@@ -234,7 +257,7 @@ async def ipfs_fetch_as_findings(cid: str, query: str, timeout: int = 30) -> lis
     Fails soft: returns empty list on any err.
 
     Returns:
-        List[CanonicalFinding] — one finding per successful fetch
+        list[CanonicalFinding] — one finding per successful fetch
     """
     from hledac.universal.knowledge.duckdb_store import CanonicalFinding
 
@@ -256,15 +279,70 @@ async def ipfs_fetch_as_findings(cid: str, query: str, timeout: int = 30) -> lis
             ts=finding_dict["ts"],
             provenance=finding_dict["provenance"],
             payload_text=finding_dict.get("payload_text"),
-            accepted=True,
-            reason="ipfs_fetch",
-            entropy=0.0,
-            normalized_hash=None,
-            duplicate=False,
         )
         return [finding]
     except Exception:
         return []
+
+
+async def fetch_findings_from_cids(
+    cids: list[str],
+    query: str,
+    timeout_per_cid: int = 10,
+    max_concurrent: int = 3,
+) -> list[CanonicalFinding]:
+    """
+    Bulk fetch IPFS CIDs → list[CanonicalFinding].
+
+    Concurrency cap ≤ 3 (M1 8GB + M1ResourceGovernor warn tier).
+    Per-CID timeout: 10s default.
+    Fail-soft: timeout/error → log debug, skip CID, continue.
+    Deduplicates CID list before fetch (dict.fromkeys preserves order).
+
+    Returns:
+        list[CanonicalFinding] — one per successfully fetched CID.
+        [] if cids empty or HLEDAC_ENABLE_IPFS != "1".
+    """
+    # IPFS gate
+    if os.getenv("HLEDAC_ENABLE_IPFS", "0") != "1":
+        return []
+
+    # RAM governor — skip bulk fetch under emergency memory
+    try:
+        from hledac.universal.runtime.resource_governor import get_governor
+
+        governor = get_governor()
+        decision = await governor.evaluate()
+        if decision.uma_state in ("critical", "emergency"):
+            logger.debug("IPFS bulk fetch skipped: memory %s", decision.uma_state)
+            return []
+    except Exception:
+        pass  # fail-safe: proceed if governor unavailable
+
+    if not cids:
+        return []
+
+    # dedup + preserve order via dict.fromkeys
+    unique_cids = list(dict.fromkeys(cids))
+
+    sem = asyncio.Semaphore(max_concurrent)
+
+    async def _fetch_one(cid: str):
+        nonlocal query
+        async with sem:
+            try:
+                results = await asyncio.wait_for(
+                    ipfs_fetch_as_findings(cid, query),
+                    timeout=timeout_per_cid,
+                )
+                return results[0] if results else None
+            except (asyncio.TimeoutError, Exception) as e:
+                logger.debug("IPFS CID %s skip: %s", cid[:8], type(e).__name__)
+                return None
+
+    tasks = [_fetch_one(c) for c in unique_cids]
+    results = await asyncio.gather(*tasks)
+    return [r for r in results if r is not None]
 
 
 async def ipfs_search_as_findings(query: str, timeout_per_result: int = 30) -> list:
@@ -278,7 +356,7 @@ async def ipfs_search_as_findings(query: str, timeout_per_result: int = 30) -> l
         timeout_per_result: Seconds per fetch (default 30)
 
     Returns:
-        List[CanonicalFinding] — one finding per found CID
+        list[CanonicalFinding] — one finding per found CID
     """
     from hledac.universal.knowledge.duckdb_store import CanonicalFinding
 
@@ -309,11 +387,6 @@ async def ipfs_search_as_findings(query: str, timeout_per_result: int = 30) -> l
                 ts=finding_dict["ts"],
                 provenance=finding_dict["provenance"],
                 payload_text=finding_dict.get("payload_text"),
-                accepted=True,
-                reason="ipfs_search",
-                entropy=0.0,
-                normalized_hash=None,
-                duplicate=False,
             )
             findings.append(finding)
         except Exception:

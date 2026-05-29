@@ -18,7 +18,7 @@ import asyncio
 import logging
 import socket
 from pathlib import Path
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 
 from .base import Transport
 
@@ -69,7 +69,7 @@ class I2PTransport(Transport):
 
     def __init__(
         self,
-        data_dir: Optional[str] = None,
+        data_dir: str | None = None,
         socks_port: int = I2P_SOCKS_PORT,
         sam_port: int = I2P_SAM_PORT,
         http_port: int = I2P_HTTP_PORT,
@@ -99,9 +99,9 @@ class I2PTransport(Transport):
         self.socks_port = socks_port
         self.sam_port = sam_port
         self.http_port = http_port
-        self.i2p_address: Optional[str] = None
-        self._session_socks: Optional[aiohttp.ClientSession] = None
-        self._session_http: Optional[aiohttp.ClientSession] = None
+        self.i2p_address: str | None = None
+        self._session_socks: aiohttp.ClientSession | None = None
+        self._session_http: aiohttp.ClientSession | None = None
         self._ready = asyncio.Event()
 
     async def start(self) -> bool:
@@ -281,7 +281,7 @@ class I2PTransport(Transport):
             "use SOCKS5 mode (rdns=True) for .i2p hostname resolution"
         )
 
-    async def send_message(self, target: str, msg_type: str, payload: dict, signature: str, msg_id: Optional[str] = None):
+    async def send_message(self, target: str, msg_type: str, payload: dict, signature: str, msg_id: str | None = None):
         """
         Send message via I2P SAM session.
 
@@ -331,7 +331,7 @@ class I2PTransport(Transport):
             logger.error(f"I2P message send failed to {target}: {e}")
             raise I2PUnavailableError(f"Message send failed: {e}")
 
-    async def get_session(self, scheme: str = "http") -> "aiohttp.ClientSession":
+    async def get_session(self, scheme: str = "http") -> aiohttp.ClientSession:
         """
         Get aiohttp ClientSession configured for I2P.
 
@@ -379,7 +379,7 @@ class I2PTransport(Transport):
         """Check if I2P transport is operational."""
         return self.available and self.transport_mode != "none"
 
-    async def fetch(self, config: "TransportConfig") -> "TransportResult":
+    async def fetch(self, config: TransportConfig) -> TransportResult:
         """
         Fetch URL via I2P network using SOCKS5H or HTTP proxy.
 
@@ -436,7 +436,7 @@ I2P_SOCKS_PROXY: str = f"socks5://127.0.0.1:{I2P_SOCKS_PORT}"
 I2P_HTTP_PROXY: str = f"http://127.0.0.1:{I2P_HTTP_PORT}"
 
 
-async def get_i2p_session() -> "aiohttp.ClientSession":
+async def get_i2p_session() -> aiohttp.ClientSession:
     """
     Get or create aiohttp session via I2P SOCKS5 proxy (lazy singleton).
     P10: Used by public_fetcher for .i2p/.b32.i2p URLs.
@@ -465,7 +465,7 @@ async def get_i2p_session() -> "aiohttp.ClientSession":
 
 
 # Module-level session singleton
-_i2p_session: Optional["aiohttp.ClientSession"] = None
+_i2p_session: aiohttp.ClientSession | None = None
 
 
 async def close_i2p_session() -> None:

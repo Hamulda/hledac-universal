@@ -9,7 +9,6 @@ Acceptance criteria:
 - Final: pytest tests/test_knowledge_graph_service.py -q
 """
 
-import pytest
 from unittest.mock import MagicMock, patch
 
 
@@ -37,7 +36,6 @@ class TestGraphServiceUpsertIdempotent:
 
     def test_upsert_relation_twice_same_edge(self):
         """Second upsert_relation call is idempotent — returns False without graph call."""
-        import importlib
         from hledac.universal.knowledge import graph_service as gs
 
         # Reset to clean state

@@ -16,7 +16,7 @@ Features:
 import hashlib
 import logging
 import re
-from typing import Any, Dict, List
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +34,7 @@ class KnowledgeGraphBuilder:
         self._patterns = self._init_patterns()
         logger.info("KnowledgeGraphBuilder initialized with regex-based extraction")
 
-    def _init_patterns(self) -> Dict[str, List[re.Pattern]]:
+    def _init_patterns(self) -> dict[str, list[re.Pattern]]:
         """
         Initialize regex patterns for fact extraction.
 
@@ -64,7 +64,7 @@ class KnowledgeGraphBuilder:
             ],
         }
 
-    def extract_facts(self, text: str) -> List[Dict[str, Any]]:
+    def extract_facts(self, text: str) -> list[dict[str, Any]]:
         """
         Extract facts from text using regex patterns.
 
@@ -117,9 +117,9 @@ class KnowledgeGraphBuilder:
     def process_and_store(
         self,
         content: str,
-        metadata: Dict[str, Any],
+        metadata: dict[str, Any],
         knowledge_layer
-    ) -> List[str]:
+    ) -> list[str]:
         """
         Process content and store extracted facts in the knowledge graph.
 
@@ -208,7 +208,7 @@ class KnowledgeGraphBuilder:
         url: str,
         author: str = None,
         knowledge_layer=None
-    ) -> List[str]:
+    ) -> list[str]:
         """
         Process a document and store its facts.
 

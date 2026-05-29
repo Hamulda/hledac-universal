@@ -3,12 +3,14 @@ BranchManager – rozhodování o odbočkách s ANE a spiking prioritou.
 Rozhoduje o vytvoření nových větví (úloh) na základě nálezů.
 """
 
+from __future__ import annotations
+
 import asyncio
-import time
 import logging
-from pathlib import Path
-from typing import Any, Dict, List, Optional, TYPE_CHECKING
+import time
 from heapq import heappop, heappush
+from pathlib import Path
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from hledac.universal.research.parallel_scheduler import PrioritizedTask
@@ -31,12 +33,12 @@ class BranchManager:
     """
 
     def __init__(self, scheduler, rel_engine=None, claim_index=None,
-                 ane_model_path: Optional[str] = None):
+                 ane_model_path: str | None = None):
         self.scheduler = scheduler
         self.rel_engine = rel_engine
         self.claim_index = claim_index
         self.seen_entities: set = set()
-        self._entity_cache: Dict[str, Any] = {}  # entity → exploration results
+        self._entity_cache: dict[str, Any] = {}  # entity → exploration results
 
         # ANE model
         self.ane_model = None
@@ -64,7 +66,7 @@ class BranchManager:
             logger.warning(f"Failed to load ANE model: {e}")
             return None
 
-    async def on_finding(self, finding: Dict[str, Any]):
+    async def on_finding(self, finding: dict[str, Any]):
         """
         Zpracuje nový nález a rozhodne o větvi.
         """
@@ -88,7 +90,7 @@ class BranchManager:
                     if any(spikes):
                         await self._boost_related_tasks(entity, spikes)
 
-    def _extract_features(self, finding: Dict[str, Any]) -> List[float]:
+    def _extract_features(self, finding: dict[str, Any]) -> list[float]:
         """Extrahuje features z nálezu."""
         entity = finding.get('entity')
 
@@ -117,7 +119,7 @@ class BranchManager:
 
         return [centrality, novelty, contradiction, source_type]
 
-    def _predict_branch_ane(self, features: List[float]) -> float:
+    def _predict_branch_ane(self, features: list[float]) -> float:
         """Predikce pomocí ANE CoreML modelu."""
         if self.ane_model is None:
             return 0.0
@@ -129,7 +131,7 @@ class BranchManager:
             logger.warning(f"ANE prediction failed: {e}")
             return self._predict_branch_fallback(features)
 
-    def _predict_branch_fallback(self, features: List[float]) -> float:
+    def _predict_branch_fallback(self, features: list[float]) -> float:
         """Fallback pravidlo pro rozhodnutí o větvi."""
         centrality = features[0]
         novelty = features[1]
@@ -139,7 +141,7 @@ class BranchManager:
         prob = 0.5 + 0.2 * centrality + 0.1 * novelty + 0.2 * contradiction
         return min(1.0, max(0.0, prob))
 
-    async def _create_branch(self, entity: str, finding: Dict[str, Any], prob: float):
+    async def _create_branch(self, entity: str, finding: dict[str, Any], prob: float):
         """Vytvoří novou větev (úlohu) pro entity."""
         self.seen_entities.add(entity)
 
@@ -158,7 +160,7 @@ class BranchManager:
             )
             logger.info(f"Created branch for entity {entity} with priority {priority:.2f}")
 
-    async def _boost_related_tasks(self, entity: str, spikes: List[float]):
+    async def _boost_related_tasks(self, entity: str, spikes: list[float]):
         """Zvýší prioritu úloh souvisejících s entity."""
         if not self.scheduler or not hasattr(self.scheduler, '_lock'):
             return
@@ -207,14 +209,14 @@ class BranchManager:
             if results:
                 self._entity_cache[entity] = results
                 logger.debug(f"Explored entity {entity}: {len(results)} results cached")
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.debug(f"Entity exploration timed out: {entity}")
         except Exception as e:
             logger.debug(f"Entity exploration failed for {entity}: {e}")
 
-    async def _do_explore_entity(self, entity: str) -> List[Dict[str, Any]]:
+    async def _do_explore_entity(self, entity: str) -> list[dict[str, Any]]:
         """Core exploration logic with backends."""
-        results: List[Dict[str, Any]] = []
+        results: list[dict[str, Any]] = []
 
         # Try LocalSearchSeam via knowledge.search_index
         try:

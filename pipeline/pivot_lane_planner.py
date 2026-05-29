@@ -16,8 +16,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any, List, Optional, Set
-
+from typing import Any
 
 # ----------------------------------------------------------------------
 # Output DTOs
@@ -343,9 +342,9 @@ def _plan_entity(
 
 
 def _plan_dark_surface_pivot(
-    dark_queries: List[Any],
-    items: List[LanePlanItem],
-    seen_pairs: Set[tuple[str, str]],
+    dark_queries: list[Any],
+    items: list[LanePlanItem],
+    seen_pairs: set[tuple[str, str]],
     tor_available: bool = False,
     i2p_available: bool = False,
 ) -> None:

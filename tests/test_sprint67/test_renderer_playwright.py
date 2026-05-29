@@ -2,8 +2,9 @@
 Test Playwright renderer - Sprint 67
 Tests for PlaywrightWebKitRenderer backend.
 """
+from unittest.mock import AsyncMock
+
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
 
 
 class TestPlaywrightRenderer:

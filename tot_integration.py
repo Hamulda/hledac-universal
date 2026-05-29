@@ -23,8 +23,8 @@ import logging
 import os
 import re
 import time
-from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Tuple, Union
+from dataclasses import dataclass
+from typing import Any
 
 # Import types
 from .project_types import ComplexityAnalysis, ResearchResult
@@ -55,16 +55,16 @@ def _load_tot_components():
 @dataclass
 class TotResult:
     """Result from Tree of Thoughts reasoning."""
-    solution: Optional[str]
+    solution: str | None
     confidence_score: float
-    reasoning_trace: List[Dict[str, Any]]
-    tree_statistics: Dict[str, Any]
+    reasoning_trace: list[dict[str, Any]]
+    tree_statistics: dict[str, Any]
     computation_time: float
     iterations_performed: int
     converged: bool
     backtracking_used: bool
     memory_usage_mb: float
-    error: Optional[str] = None
+    error: str | None = None
 
     def to_research_result(self, query: str) -> ResearchResult:
         """Convert ToT result to standard ResearchResult."""
@@ -199,7 +199,7 @@ class TotIntegrationLayer:
         'cs': (0.60, 0.35),  # Lower thresholds for Czech
     }
 
-    def __init__(self, config: Optional[TotConfig] = None):
+    def __init__(self, config: TotConfig | None = None):
         """
         Initialize ToT integration layer.
 
@@ -207,7 +207,7 @@ class TotIntegrationLayer:
             config: ToT configuration. Uses defaults if not provided.
         """
         self.config = config or TotConfig()
-        self._tot_orchestrator: Optional[Any] = None
+        self._tot_orchestrator: Any | None = None
         self._last_memory_check: float = 0.0
         self._memory_check_interval: float = 5.0  # seconds
 
@@ -267,7 +267,7 @@ class TotIntegrationLayer:
         except ImportError:
             return 0.0
 
-    def _check_memory_pressure(self) -> Tuple[bool, float]:
+    def _check_memory_pressure(self) -> tuple[bool, float]:
         """
         Check if system is under memory pressure.
 
@@ -300,7 +300,7 @@ class TotIntegrationLayer:
             except ImportError:
                 pass
 
-    def _get_thresholds(self, lang: str) -> Tuple[float, float]:
+    def _get_thresholds(self, lang: str) -> tuple[float, float]:
         """
         Get language-specific thresholds for ToT activation.
 
@@ -312,8 +312,8 @@ class TotIntegrationLayer:
         """
         return self.THRESHOLDS.get(lang, self.THRESHOLDS['en'])
 
-    def should_activate_tot(self, query: str, context: Optional[Dict[str, Any]] = None
-                           ) -> Tuple[bool, float]:
+    def should_activate_tot(self, query: str, context: dict[str, Any] | None = None
+                           ) -> tuple[bool, float]:
         """
         Determine if ToT should be activated for this query.
         Uses language-specific thresholds for better Czech support.
@@ -382,7 +382,7 @@ class TotIntegrationLayer:
         words = query_lower.split()
         word_count = len(words)
 
-        indicators: Dict[str, float] = {}
+        indicators: dict[str, float] = {}
 
         # Select patterns based on detected language
         multi_step_patterns = (
@@ -474,7 +474,7 @@ class TotIntegrationLayer:
             indicators=indicators
         )
 
-    def _calculate_complexity_score(self, indicators: Dict[str, float]) -> float:
+    def _calculate_complexity_score(self, indicators: dict[str, float]) -> float:
         """
         Calculate overall complexity score from indicators.
 
@@ -495,7 +495,7 @@ class TotIntegrationLayer:
         # Cap at 1.0
         return min(1.0, max(0.0, base_score))
 
-    def _estimate_depth(self, total_score: float, indicators: Dict[str, float]) -> int:
+    def _estimate_depth(self, total_score: float, indicators: dict[str, float]) -> int:
         """
         Estimate required ToT depth based on complexity.
 
@@ -518,7 +518,7 @@ class TotIntegrationLayer:
             return 1
 
     async def solve_problem(self, problem: str,
-                           context: Optional[Dict[str, Any]] = None) -> TotResult:
+                           context: dict[str, Any] | None = None) -> TotResult:
         """
         Execute Tree of Thoughts reasoning on a problem.
 
@@ -602,7 +602,7 @@ class TotIntegrationLayer:
                 memory_usage_mb=memory_used
             )
 
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.warning(f"ToT reasoning timed out after {timeout}s")
             computation_time = time.time() - start_time
             return TotResult(
@@ -635,7 +635,7 @@ class TotIntegrationLayer:
             )
 
     async def solve_hybrid_tot_moe(self, problem: str,
-                                    context: Optional[Dict[str, Any]] = None) -> TotResult:
+                                    context: dict[str, Any] | None = None) -> TotResult:
         """
         Execute hybrid ToT + MoE reasoning for medium complexity problems.
 
@@ -715,8 +715,8 @@ class TotIntegrationLayer:
                 memory_usage_mb=memory_used
             )
 
-        except asyncio.TimeoutError:
-            logger.warning(f"Hybrid ToT+MoE timed out")
+        except TimeoutError:
+            logger.warning("Hybrid ToT+MoE timed out")
             return TotResult(
                 solution=None,
                 confidence_score=0.0,
@@ -774,7 +774,7 @@ class TotIntegrationLayer:
         if timeout > 0:
             try:
                 result = await asyncio.wait_for(self.solve_problem(prompt), timeout=timeout)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 logger.warning(f"solve_with_tot timed out after {timeout}s")
                 return ""
         else:
@@ -785,7 +785,7 @@ class TotIntegrationLayer:
 
         return ""
 
-    def get_capabilities(self) -> Dict[str, Any]:
+    def get_capabilities(self) -> dict[str, Any]:
         """Get ToT integration capabilities."""
         return {
             "name": "tot_integration_layer",
@@ -819,7 +819,7 @@ class TotIntegrationLayer:
 
 
 # Factory function
-def create_tot_integration(config: Optional[Dict[str, Any]] = None) -> TotIntegrationLayer:
+def create_tot_integration(config: dict[str, Any] | None = None) -> TotIntegrationLayer:
     """
     Create ToT integration layer with optional config override.
 

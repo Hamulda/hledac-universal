@@ -2,9 +2,8 @@
 Tests for Sprint 79c - Lazy imports, bounded containers, GNN fixes.
 """
 import asyncio
-import threading
 import time
-from collections import deque, OrderedDict
+from collections import OrderedDict, deque
 
 import pytest
 
@@ -72,8 +71,9 @@ class TestBoundedContainers:
     def test_alias_map_ordered_dict(self):
         """Test alias map is bounded OrderedDict."""
         # Import inside method to avoid heavy imports at module level
-        from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
         from collections import OrderedDict
+
+        from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
 
         # Create instance and check attributes exist
         orch = FullyAutonomousOrchestrator.__new__(FullyAutonomousOrchestrator)
@@ -176,8 +176,9 @@ class TestPromptCacheLock:
 
     def test_prompt_cache_uses_lock(self):
         """Test PromptCache uses Lock (not RLock)."""
-        from hledac.universal.brain.prompt_cache import PromptCache
         import inspect
+
+        from hledac.universal.brain.prompt_cache import PromptCache
         source = inspect.getsource(PromptCache.__init__)
         # Check it uses Lock, not RLock
         assert 'threading.Lock()' in source

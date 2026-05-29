@@ -2,7 +2,6 @@
 Test WASM Sandbox - Sprint 71
 """
 import unittest
-from unittest.mock import patch, MagicMock
 
 
 class TestWasmSandbox(unittest.TestCase):

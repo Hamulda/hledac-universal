@@ -1,6 +1,9 @@
 """Open Storage Scanner – discovers exposed S3, Firebase, Elasticsearch, Mongo buckets."""
+
+from __future__ import annotations
+
 import logging
-from typing import List, Dict, Any, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from hledac.universal.network.session_runtime import async_get_aiohttp_session
 
@@ -26,7 +29,7 @@ class _OpenStorageScanner:
     _CONNECT_TIMEOUT_S: float = 10.0  # canonical HTML connect
     _READ_TIMEOUT_S: float = 5.0      # HEAD request — short read
 
-    def _generate_guesses(self, domain: str) -> List[str]:
+    def _generate_guesses(self, domain: str) -> list[str]:
         """Generate a list of potential bucket URLs (only external services)."""
         # Remove any port or path
         domain = domain.split(':')[0]
@@ -54,7 +57,7 @@ class _OpenStorageScanner:
         # Remove duplicates and limit
         return list(dict.fromkeys(guesses))[:self.MAX_GUESSES_PER_DOMAIN]
 
-    async def scan_domain(self, domain: str) -> List[Dict[str, Any]]:
+    async def scan_domain(self, domain: str) -> list[dict[str, Any]]:
         """Scan a single domain for open storage. Returns list of found URLs with metadata."""
         if not AIOHTTP_AVAILABLE:
             return []

@@ -2,7 +2,6 @@
 Test CoreML Verification - Sprint 71
 """
 import unittest
-from unittest.mock import patch, MagicMock
 
 
 class TestCoreMLVerification(unittest.TestCase):

@@ -3,9 +3,9 @@
 Sprint 6E: 300s Truth Preview
 """
 import asyncio
+import logging
 import sys
 import time
-import logging
 
 logging.getLogger('hledac').setLevel(logging.WARNING)
 logging.basicConfig(level=logging.INFO, format='%(message)s')
@@ -15,7 +15,7 @@ sys.path.insert(0, '/Users/vojtechhamada/PycharmProjects/Hledac')
 
 async def run_300s():
     from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
-    from hledac.universal.knowledge.atomic_storage import EvidencePacketStorage, EvidencePacket
+    from hledac.universal.knowledge.atomic_storage import EvidencePacket, EvidencePacketStorage
 
     print("=" * 70)
     print("[6E] 300S TRUTH PREVIEW")
@@ -30,7 +30,7 @@ async def run_300s():
             evidence_id=f"evidence_{i}",
             url=f"http://localhost:{64000+i}/test",
             final_url=f"http://localhost:{64000+i}/test",
-            domain=f"localhost",
+            domain="localhost",
             fetched_at=time.time() - (i * 86400),
             status=200,
             headers_digest="abc123",
@@ -50,7 +50,7 @@ async def run_300s():
     DURATION = 300
     START_TIME = time.monotonic()
 
-    print(f"\n[START] 300s truth preview...")
+    print("\n[START] 300s truth preview...")
 
     result = await asyncio.wait_for(
         orch.run_benchmark(
@@ -84,13 +84,13 @@ async def run_300s():
 
     # Action distribution
     action_dist = result.get('actions_selected_distribution', {})
-    print(f"\n[ACTION DISTRIBUTION]")
+    print("\n[ACTION DISTRIBUTION]")
     for name, count in sorted(action_dist.items(), key=lambda x: -x[1])[:8]:
         pct = (count / iterations * 100) if iterations > 0 else 0
         print(f"  {name}: {count} ({pct:.1f}%)")
 
     # Target queue metrics
-    print(f"\n[TARGET QUEUE]")
+    print("\n[TARGET QUEUE]")
     print(f"  source: {result.get('target_queue_source', 'unknown')}")
     print(f"  size: {result.get('target_queue_size', 0)}")
     print(f"  drop_count: {result.get('target_queue_drop_count', 0)}")
@@ -98,10 +98,10 @@ async def run_300s():
     print(f"  type_dist: {result.get('target_type_distribution', {})}")
 
     # Data mode
-    print(f"\n[DATA MODE]")
+    print("\n[DATA MODE]")
     print(f"  mode: {result.get('data_mode', 'unknown')}")
 
-    print(f"\n[DONE]")
+    print("\n[DONE]")
 
 if __name__ == "__main__":
     asyncio.run(run_300s())

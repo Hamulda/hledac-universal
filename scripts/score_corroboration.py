@@ -30,12 +30,11 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from runtime.evidence_corroboration import (
-    score_indicators_by_corroboration,
-    score_seeds_by_corroboration,
+    CorroborationScore,
+    build_recommended_pivots,
     build_top_indicators,
     build_weak_unverified,
-    build_recommended_pivots,
-    CorroborationScore,
+    score_indicators_by_corroboration,
 )
 
 
@@ -109,7 +108,7 @@ def main() -> None:
         conn = duckdb.connect(args.duckdb, read_only=True)
         rows = conn.execute(args.query).fetchall()
         col_names = [c[0] for c in conn.description] if conn.description else []
-        findings = [dict(zip(col_names, row)) for row in rows]
+        findings = [dict(zip(col_names, row, strict=False)) for row in rows]
         conn.close()
     else:
         print("ERROR: provide --report, --seeds-json, or --duckdb", file=sys.stderr)

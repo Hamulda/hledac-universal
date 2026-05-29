@@ -46,14 +46,14 @@ INVARIANTS:
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from .circuit_breaker import CircuitBreaker, CircuitDecision, get_breaker
-    from .httpx_transport import fetch_via_httpx_h2, should_use_httpx_h2
-    from .curl_cffi_transport import should_use_curl_cffi
     from .curl_cffi_fetch import fetch_via_curl_cffi
-    from .transport_router import Lane, route_transport, TransportDecision
+    from .curl_cffi_transport import should_use_curl_cffi
+    from .httpx_transport import fetch_via_httpx_h2, should_use_httpx_h2
+    from .transport_router import Lane, TransportDecision, route_transport
 
 
 @dataclass(frozen=True)
@@ -73,7 +73,7 @@ class TransportConfig:
     # Circuit breaker domain (extracted from URL by public_fetcher)
     circuit_breaker_domain: str = ""
     # Retry state
-    retry_after_status: Optional[int] = None
+    retry_after_status: int | None = None
     suggested_concurrency: str = "medium"
 
 
@@ -90,19 +90,19 @@ class TransportResult:
     final_url: str = ""
     status_code: int = 0
     content_type: str = ""
-    text: Optional[str] = None
+    text: str | None = None
     fetched_bytes: int = 0
     declared_length: int = -1
     elapsed_ms: float = 0.0
 
     # Error handling
-    error: Optional[str] = None
-    failure_stage: Optional[str] = None
-    network_error_kind: Optional[str] = None
+    error: str | None = None
+    failure_stage: str | None = None
+    network_error_kind: str | None = None
 
     # Transport telemetry
     selected_transport: str = ""
-    http_version: Optional[str] = None
+    http_version: str | None = None
 
     # Decode info
     decode_replaced: bool = False
@@ -110,7 +110,7 @@ class TransportResult:
 
     # Redirect info
     redirected: bool = False
-    redirect_target: Optional[str] = None
+    redirect_target: str | None = None
 
     # XML recovery (feed ingress)
     xml_recovered: bool = False
@@ -120,7 +120,7 @@ class TransportResult:
     body_read_error: bool = False
 
     # Fallback tracking
-    transport_fallback_reason: Optional[str] = None
+    transport_fallback_reason: str | None = None
 
 
 class TransportAdapter(ABC):
@@ -265,6 +265,7 @@ __all__ = [
     # curl_cffi transport functions
     'should_use_curl_cffi',
     'fetch_via_curl_cffi',
+    'fetch_via_tor_curl_cffi',
     # Router
     'route_transport',
 ]
@@ -280,10 +281,10 @@ def __getattr__(name: str):
     if name in ('should_use_httpx_h2', 'fetch_via_httpx_h2'):
         from . import httpx_transport
         return getattr(httpx_transport, name)
-    if name in ('should_use_curl_cffi', 'fetch_via_curl_cffi'):
+    if name in ('should_use_curl_cffi', 'fetch_via_curl_cffi', 'fetch_via_tor_curl_cffi'):
         from . import curl_cffi_transport
         if name == 'should_use_curl_cffi':
             return curl_cffi_transport.should_use_curl_cffi
         from . import curl_cffi_fetch
-        return curl_cffi_fetch.fetch_via_curl_cffi
+        return getattr(curl_cffi_fetch, name)
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

@@ -68,17 +68,17 @@ class IdentityCandidate:
     Represents a single or stitched identity with confidence and signals.
     """
     candidate_id: str
-    profile_ids: List[str]             # constituent profile IDs
+    profile_ids: list[str]             # constituent profile IDs
     primary_name: str
-    emails: List[str]
-    usernames: List[str]
-    platforms: List[str]
+    emails: list[str]
+    usernames: list[str]
+    platforms: list[str]
     confidence: float                  # 0-1
-    signals: Dict[str, float]          # individual signal scores
-    evidence: List[str]                # evidence strings
-    finding_ids: List[str]             # source finding IDs
+    signals: dict[str, float]          # individual signal scores
+    evidence: list[str]                # evidence strings
+    finding_ids: list[str]             # source finding IDs
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "candidate_id": self.candidate_id,
             "profile_ids": self.profile_ids,
@@ -129,7 +129,7 @@ class IdentityStitchingAdapter:
         )
         self._match_threshold = match_threshold
         self._stitch_threshold = stitch_threshold
-        self._stats: Dict[str, int] = {
+        self._stats: dict[str, int] = {
             "profiles_added": 0,
             "candidates_found": 0,
             "comparisons_run": 0,
@@ -164,8 +164,8 @@ class IdentityStitchingAdapter:
 
     def extract_and_stitch(
         self,
-        profiles: List[Any],
-    ) -> List[IdentityCandidate]:
+        profiles: list[Any],
+    ) -> list[IdentityCandidate]:
         """
         Run identity stitching on a list of EntitySignalProfile objects.
 
@@ -222,7 +222,7 @@ class IdentityStitchingAdapter:
                 logger.debug(f"IdentityStitchingAdapter: stitch_identities error: {e}")
 
             # Build IdentityCandidate list
-            candidates: List[IdentityCandidate] = []
+            candidates: list[IdentityCandidate] = []
 
             # Add stitched identities as high-confidence candidates
             for stitch in stitched:
@@ -290,9 +290,9 @@ class IdentityStitchingAdapter:
 
     def score_and_enrich_candidates(
         self,
-        candidates: List[IdentityCandidate],
-        scorer: "AttributionConfidenceScorer",  # type: ignore[name-defined]
-    ) -> List[IdentityCandidate]:
+        candidates: list[IdentityCandidate],
+        scorer: AttributionConfidenceScorer,  # type: ignore[name-defined]
+    ) -> list[IdentityCandidate]:
         """
         F203B: Score pairs of identity candidates using AttributionConfidenceScorer
         and enrich signals/evidence with attribution data.
@@ -322,8 +322,8 @@ class IdentityStitchingAdapter:
                 return candidates
 
             # Build lookup of pair → score (bidirectional)
-            left_to_right: Dict[str, Any] = {}
-            right_to_left: Dict[str, Any] = {}
+            left_to_right: dict[str, Any] = {}
+            right_to_left: dict[str, Any] = {}
             for key, score in scores.items():
                 left_id, right_id = key.split("|", 1)
                 left_to_right[left_id] = score  # last score wins for each direction
@@ -333,7 +333,7 @@ class IdentityStitchingAdapter:
             enriched = []
             for cand in candidates:
                 # Find all scores involving this candidate (look in both directions)
-                relevant_scores: List[Any] = []
+                relevant_scores: list[Any] = []
                 if cand.candidate_id in left_to_right:
                     relevant_scores.append(left_to_right[cand.candidate_id])
                 if cand.candidate_id in right_to_left:
@@ -359,7 +359,7 @@ class IdentityStitchingAdapter:
 
     def upsert_identity_edges(
         self,
-        candidates: List[IdentityCandidate],
+        candidates: list[IdentityCandidate],
     ) -> int:
         """
         Upsert identity edges to graph_service for each candidate.
@@ -410,9 +410,9 @@ class IdentityStitchingAdapter:
 
     def to_derived_findings(
         self,
-        candidates: List[IdentityCandidate],
+        candidates: list[IdentityCandidate],
         query: str,
-    ) -> List[Any]:
+    ) -> list[Any]:
         """
         Convert IdentityCandidate list to CanonicalFinding list.
 
@@ -431,7 +431,7 @@ class IdentityStitchingAdapter:
         if not candidates or CanonicalFinding is None:
             return []
 
-        findings: List[Any] = []
+        findings: list[Any] = []
         try:
             for cand in candidates:
                 fid = f"identity_{cand.candidate_id[:32]}_{int(time.time() * 1000) % 1000000:06d}"
@@ -478,14 +478,14 @@ class IdentityStitchingAdapter:
 
     # ── Stats ─────────────────────────────────────────────────────────────────
 
-    def get_stats(self) -> Dict[str, int]:
+    def get_stats(self) -> dict[str, int]:
         """Return adapter statistics."""
         return self._stats.copy()
 
     def clear(self) -> None:
         """Clear engine state and reset stats."""
         self._engine.clear()
-        self._stats = {k: 0 for k in self._stats}
+        self._stats = dict.fromkeys(self._stats, 0)
 
 
 # ── Factory ───────────────────────────────────────────────────────────────────

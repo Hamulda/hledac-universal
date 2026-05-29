@@ -15,14 +15,11 @@ Also verifies:
 - Queryability of correlation fields
 """
 
-import asyncio
 import json
 import tempfile
 import uuid
 from datetime import datetime
 from pathlib import Path
-
-import pytest
 
 
 class TestEvidenceLogCorrelation:
@@ -32,7 +29,7 @@ class TestEvidenceLogCorrelation:
         """Old call sites without correlation still work."""
         from hledac.universal.evidence_log import EvidenceLog
 
-        with tempfile.TemporaryDirectory() as tmpdir:
+        with tempfile.TemporaryDirectory():
             run_id = f"test_run_{uuid.uuid4().hex[:8]}"
             log = EvidenceLog(run_id=run_id, enable_persist=False)
 
@@ -50,7 +47,7 @@ class TestEvidenceLogCorrelation:
         """create_event accepts correlation dict and stores in payload._correlation."""
         from hledac.universal.evidence_log import EvidenceLog
 
-        with tempfile.TemporaryDirectory() as tmpdir:
+        with tempfile.TemporaryDirectory():
             run_id = f"test_run_{uuid.uuid4().hex[:8]}"
             log = EvidenceLog(run_id=run_id, enable_persist=False)
 
@@ -78,7 +75,7 @@ class TestEvidenceLogCorrelation:
         """Correlation can be partial - only some keys present."""
         from hledac.universal.evidence_log import EvidenceLog
 
-        with tempfile.TemporaryDirectory() as tmpdir:
+        with tempfile.TemporaryDirectory():
             run_id = f"test_run_{uuid.uuid4().hex[:8]}"
             log = EvidenceLog(run_id=run_id, enable_persist=False)
 
@@ -104,7 +101,7 @@ class TestEvidenceLogCorrelation:
         """EvidenceEvent.to_dict() serialization includes correlation when present."""
         from hledac.universal.evidence_log import EvidenceLog
 
-        with tempfile.TemporaryDirectory() as tmpdir:
+        with tempfile.TemporaryDirectory():
             run_id = f"test_run_{uuid.uuid4().hex[:8]}"
             log = EvidenceLog(run_id=run_id, enable_persist=False)
 
@@ -133,7 +130,7 @@ class TestEvidenceLogCorrelation:
         """Correlation in payload is queryable via payload access."""
         from hledac.universal.evidence_log import EvidenceLog
 
-        with tempfile.TemporaryDirectory() as tmpdir:
+        with tempfile.TemporaryDirectory():
             run_id = f"test_run_{uuid.uuid4().hex[:8]}"
             log = EvidenceLog(run_id=run_id, enable_persist=False)
 
@@ -356,6 +353,7 @@ class TestAnalyticsHookCorrelation:
     def test_analytics_hook_signature_extended(self):
         """shadow_record_finding accepts branch_id, provider_id, action_id."""
         import inspect
+
         from hledac.universal.knowledge.analytics_hook import shadow_record_finding
 
         sig = inspect.signature(shadow_record_finding)
@@ -368,12 +366,10 @@ class TestAnalyticsHookCorrelation:
 
     def test_analytics_hook_fail_open_without_shadow(self):
         """shadow_record_finding is fail-open when shadow disabled."""
-        import os
         from hledac.universal.knowledge.analytics_hook import (
-            shadow_record_finding,
             shadow_ingest_failures,
+            shadow_record_finding,
             shadow_reset_failures,
-            _is_shadow_enabled,
         )
 
         # Ensure shadow is disabled
@@ -401,10 +397,9 @@ class TestAnalyticsHookCorrelation:
         Verifies cross-ledger propagation: EvidenceLog → analytics_hook (DuckDB shadow).
         """
         import os
+
         from hledac.universal.knowledge.analytics_hook import (
-            shadow_record_finding,
             shadow_reset_failures,
-            _ShadowRecorder,
         )
 
         # Ensure shadow is disabled so we test the fail-open path
@@ -413,7 +408,7 @@ class TestAnalyticsHookCorrelation:
 
         from hledac.universal.evidence_log import EvidenceLog
 
-        with tempfile.TemporaryDirectory() as tmpdir:
+        with tempfile.TemporaryDirectory():
             run_id = f"test_shadow_corr_{uuid.uuid4().hex[:8]}"
             log = EvidenceLog(run_id=run_id, enable_persist=False)
 

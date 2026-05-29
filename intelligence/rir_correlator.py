@@ -27,11 +27,11 @@ Source type: "rir_correlation"
 from __future__ import annotations
 
 import asyncio
-from collections import deque
 import ipaddress
 import logging
 import socket
 import time as _time
+from collections import deque
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -500,7 +500,7 @@ def reset_rir_stats() -> None:
 def to_canonical_findings(
     correlations: list[RIRCorrelation],
     query: str,
-) -> list["CanonicalFinding"]:
+) -> list[CanonicalFinding]:
     """
     Convert RIRCorrelation list to CanonicalFinding list.
 
@@ -514,9 +514,9 @@ def to_canonical_findings(
     Returns:
         List of CanonicalFinding (duckdb_store.CanonicalFinding)
     """
-    from hledac.universal.knowledge.duckdb_store import CanonicalFinding
-
     import json as _json
+
+    from hledac.universal.knowledge.duckdb_store import CanonicalFinding
 
     results: list[CanonicalFinding] = []
     ts_now = _time.time()
@@ -570,7 +570,7 @@ class RIRCorrelatorAdapter:
         self,
         findings: list,
         query: str = "",
-    ) -> list["CanonicalFinding"]:
+    ) -> list[CanonicalFinding]:
         """
         Correlate RIR signals from findings (async path, preferred).
 
@@ -595,7 +595,7 @@ class RIRCorrelatorAdapter:
         self,
         findings: list,
         query: str = "",
-    ) -> list["CanonicalFinding"]:
+    ) -> list[CanonicalFinding]:
         """
         Correlate RIR signals from findings (sync wrapper).
 

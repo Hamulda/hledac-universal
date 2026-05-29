@@ -2,9 +2,10 @@
 Tests for speculative decoding and draft model (Sprint 75).
 """
 
-import pytest
-from unittest.mock import patch, MagicMock, AsyncMock
 import asyncio
+from unittest.mock import MagicMock, patch
+
+import pytest
 
 
 class TestSpeculativeDecoding:
@@ -60,7 +61,7 @@ class TestSpeculativeDecoding:
             mock_cache.return_value = MagicMock()
             mock_generate.return_value = "test response"
 
-            result = engine._run_inference("test prompt", 0.3, 100)
+            engine._run_inference("test prompt", 0.3, 100)
 
             # Verify draft_model was passed
             call_kwargs = mock_generate.call_args.kwargs
@@ -85,7 +86,7 @@ class TestSpeculativeDecoding:
             mock_cache.return_value = MagicMock()
             mock_generate.return_value = "test response"
 
-            result = engine._run_inference("test prompt", 0.3, 100)
+            engine._run_inference("test prompt", 0.3, 100)
 
             # Verify no draft_model in kwargs
             call_kwargs = mock_generate.call_args.kwargs

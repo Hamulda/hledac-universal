@@ -32,12 +32,12 @@ import gc
 import logging
 import threading
 import time
+from collections.abc import AsyncIterator
 from pathlib import Path
-from typing import AsyncIterator, Dict, List, Optional, TYPE_CHECKING, Union
+from typing import TYPE_CHECKING
 
 import numpy as np
 import psutil
-
 from hledac.universal.utils.exceptions import MemoryPressureError
 
 if TYPE_CHECKING:
@@ -82,7 +82,7 @@ class EmbeddingRouter:
 
     def __init__(self):
         self._ane = None
-        self._modernbert: Optional["ModernBERTEmbedder"] = None
+        self._modernbert: ModernBERTEmbedder | None = None
         self._ane_available = False
         self._initialized = False
 
@@ -111,7 +111,7 @@ class EmbeddingRouter:
             await self._ane.load()
         return self._ane.is_loaded
 
-    def _load_modernbert(self) -> "ModernBERTEmbedder":
+    def _load_modernbert(self) -> ModernBERTEmbedder:
         """Load MLX ModernBERT embedder. Raises on failure."""
         if self._modernbert is None:
             from hledac.universal.embeddings.modernbert_embedder import ModernBERTEmbedder
@@ -131,7 +131,7 @@ class EmbeddingRouter:
         except Exception:
             return False
 
-    def encode(self, texts: Union[str, List[str]], **kwargs) -> np.ndarray:
+    def encode(self, texts: str | list[str], **kwargs) -> np.ndarray:
         """
         Encode texts using the selected embedder (ANE or ModernBERT).
 
@@ -176,7 +176,7 @@ class EmbeddingRouter:
         # Fallback
         return np.zeros((len(texts) if isinstance(texts, list) else 1, _EMBEDDING_DIM), dtype=np.float32)
 
-    def _get_legacy_ane_embedder(self) -> "CoreMLEmbedder | None":
+    def _get_legacy_ane_embedder(self) -> CoreMLEmbedder | None:
         """
         F218A: Load legacy AllMiniLML6V2 ANE embedder as fallback.
 
@@ -452,11 +452,11 @@ class CoreMLEmbedder:
 
 # === ANE_EMBEDDER singleton (lazy init) ===
 
-_ANE_EMBEDDER: "CoreMLEmbedder | None" = None
+_ANE_EMBEDDER: CoreMLEmbedder | None = None
 _ANE_INIT_LOCK = threading.Lock()
 
 
-def get_ane_embedder() -> "CoreMLEmbedder | None":
+def get_ane_embedder() -> CoreMLEmbedder | None:
     """
     Get or create the ANE embedder singleton.
 
@@ -492,7 +492,7 @@ def unload_ane_embedder() -> None:
 
 # === Fallback routing via EmbeddingRouter ===
 
-_embedding_router: "EmbeddingRouter | None" = None
+_embedding_router: EmbeddingRouter | None = None
 
 
 def _get_embedder():
@@ -545,9 +545,9 @@ def get_adaptive_batch_size() -> int:
     # Step 1: UMA pressure — downgrade to safe minimum
     try:
         from hledac.universal.utils.uma_budget import (
-            is_uma_warn,
             is_uma_critical,
             is_uma_emergency,
+            is_uma_warn,
         )
 
         if is_uma_emergency() or is_uma_critical() or is_uma_warn():
@@ -717,7 +717,7 @@ def _release_embedder() -> None:
         logger.debug(f"[EMBED] Failed to unload embedder: {e}")
 
 
-def generate_embeddings(texts: List[str], batch_size: int | None = None, keep_loaded: bool = False) -> np.ndarray:
+def generate_embeddings(texts: list[str], batch_size: int | None = None, keep_loaded: bool = False) -> np.ndarray:
     """
     Generate embeddings for a list of texts using ModernBERT via MLX.
 
@@ -745,13 +745,13 @@ def generate_embeddings(texts: List[str], batch_size: int | None = None, keep_lo
         batch_size = get_adaptive_batch_size()
 
     # AREA J: xxhash dedup — avoid embedding identical texts twice
-    original_to_unique: List[int] = []
-    texts_to_embed: List[str] = texts
+    original_to_unique: list[int] = []
+    texts_to_embed: list[str] = texts
     dedup_happened = False
     try:
         import xxhash
-        seen: Dict[str, int] = {}
-        unique_list: List[str] = []
+        seen: dict[str, int] = {}
+        unique_list: list[str] = []
         original_to_unique = []
 
         for text in texts:
@@ -931,7 +931,7 @@ def embed_document(text: str) -> np.ndarray:
         return np.zeros(_EMBEDDING_DIM, dtype=np.float32)
 
 
-async def generate_embeddings_async(texts: List[str], batch_size: int = _BATCH_SIZE, keep_loaded: bool = False) -> np.ndarray:
+async def generate_embeddings_async(texts: list[str], batch_size: int = _BATCH_SIZE, keep_loaded: bool = False) -> np.ndarray:
     """
     Async wrapper for generate_embeddings.
 
@@ -980,6 +980,7 @@ _embed_max_rss_gb: float = 5.5
 # semaphore._value which is always <= max, causing the guard to always fire.
 # Increment before model load attempt, decrement after unload — balanced per call.
 import threading
+
 _embedding_depth: int = 0
 _embedding_depth_lock = threading.Lock()
 
@@ -1233,7 +1234,7 @@ def _generate_embeddings_chunk(texts: list[str], batch_size: int) -> np.ndarray:
 # F218A: Embedding Ownership — Canonical entry point helpers
 # ---------------------------------------------------------------------------
 
-def get_canonical_embedder() -> "EmbeddingRouter":
+def get_canonical_embedder() -> EmbeddingRouter:
     """
     Return the canonical EmbeddingRouter singleton.
 

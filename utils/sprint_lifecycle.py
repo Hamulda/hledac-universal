@@ -38,8 +38,9 @@ import logging
 import os
 import signal
 import time
+from collections.abc import Callable
 from enum import Enum
-from typing import Any, Callable, Optional
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -97,21 +98,21 @@ class SprintLifecycleManager:
     - All methods are async-safe and fail-open
     """
 
-    _instance: Optional["SprintLifecycleManager"] = None
+    _instance: SprintLifecycleManager | None = None
 
     def __init__(self) -> None:
         self._state = SprintLifecycleState.BOOT
-        self._sprint_start: Optional[float] = None
+        self._sprint_start: float | None = None
         self._sprint_duration: float = _get_sprint_duration_seconds()
         self._windup_lead: float = _get_windup_lead_seconds()
         self._windup_fired: bool = False
         self._shutdown_requested: bool = False
-        self._shutdown_event: Optional[asyncio.Event] = None
+        self._shutdown_event: asyncio.Event | None = None
 
         # Hooks — set by owner (orchestrator)
-        self._on_windup: Optional[Callable[[], None]] = None
-        self._on_export: Optional[Callable[[], None]] = None
-        self._on_teardown: Optional[Callable[[], None]] = None
+        self._on_windup: Callable[[], None] | None = None
+        self._on_export: Callable[[], None] | None = None
+        self._on_teardown: Callable[[], None] | None = None
 
         # Signal registration flag
         self._signals_registered: bool = False
@@ -123,16 +124,16 @@ class SprintLifecycleManager:
         self._checkpoint_seam_ready: bool = True  # CheckpointManager exists in tools/checkpoint.py
 
         # Wind-down polling task
-        self._windown_task: Optional[asyncio.Task] = None
+        self._windown_task: asyncio.Task | None = None
 
         # Sprint 7H: UMA Watchdog — started in ACTIVE, stopped on wind-down
-        self._uma_watchdog: Optional["UmaWatchdog"] = None
-        self._uma_watchdog_task: Optional[asyncio.Task] = None
+        self._uma_watchdog: UmaWatchdog | None = None
+        self._uma_watchdog_task: asyncio.Task | None = None
 
     # ---- singleton (optional, for convenience) ----
 
     @classmethod
-    def get_instance(cls) -> "SprintLifecycleManager":
+    def get_instance(cls) -> SprintLifecycleManager:
         if cls._instance is None:
             cls._instance = cls()
         return cls._instance
@@ -315,8 +316,8 @@ class SprintLifecycleManager:
         """
         # Lazy import to avoid heavy import on boot path
         try:
+            from ..brain.model_lifecycle import request_emergency_unload
             from .uma_budget import UmaWatchdog, UmaWatchdogCallbacks
-            from ..brain.model_lifecycle import request_emergency_unload, clear_emergency_unload_request
         except Exception as e:
             logger.debug(f"[LIFECYCLE] UmaWatchdog import failed: {e}")
             return

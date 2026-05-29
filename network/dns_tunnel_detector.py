@@ -16,19 +16,12 @@ M1 Optimized: Uses MLX for LSTM inference when available.
 import asyncio
 import math
 import re
-import struct
 from collections import Counter
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 from typing import (
     Any,
-    Callable,
-    Dict,
-    List,
-    Optional,
-    Tuple,
-    Union,
 )
 
 import numpy as np
@@ -138,9 +131,9 @@ class TunnelingFinding:
     verdict: Verdict = Verdict.BENIGN
     confidence: float = 0.0
     encoding_type: str = ""
-    timestamp: Optional[float] = None
-    source_ip: Optional[str] = None
-    dest_ip: Optional[str] = None
+    timestamp: float | None = None
+    source_ip: str | None = None
+    dest_ip: str | None = None
 
 
 # Conditional MLX LSTM classifier - only defined when MLX is available
@@ -215,7 +208,7 @@ class DNSTunnelDetector:
     """
 
     # English letter bigram frequencies (simplified model)
-    ENGLISH_BIGRAMS: Dict[str, float] = {
+    ENGLISH_BIGRAMS: dict[str, float] = {
         "th": 0.035,
         "he": 0.030,
         "in": 0.024,
@@ -277,7 +270,7 @@ class DNSTunnelDetector:
     # High entropy pattern (mixed case, numbers, long strings)
     HIGH_ENTROPY_PATTERN = re.compile(r"[a-z][A-Z]|[A-Z][a-z]|[a-zA-Z][0-9]|[0-9][a-zA-Z]")
 
-    def __init__(self, config: Optional[DNSTunnelConfig] = None):
+    def __init__(self, config: DNSTunnelConfig | None = None):
         """Initialize detector with configuration.
 
         Args:
@@ -285,9 +278,9 @@ class DNSTunnelDetector:
         """
         self.config = config or DNSTunnelConfig()
         self._initialized = False
-        self._bigram_db: Dict[str, float] = {}
-        self._lstm_model: Optional[LSTMTunnelClassifier] = None
-        self._query_stats: Dict[str, Any] = {
+        self._bigram_db: dict[str, float] = {}
+        self._lstm_model: LSTMTunnelClassifier | None = None
+        self._query_stats: dict[str, Any] = {
             "total_processed": 0,
             "entropy_hits": 0,
             "ngram_hits": 0,
@@ -320,7 +313,7 @@ class DNSTunnelDetector:
 
         self._initialized = True
 
-    def _calculate_entropy(self, data: Union[str, bytes]) -> float:
+    def _calculate_entropy(self, data: str | bytes) -> float:
         """Calculate Shannon entropy of data.
 
         Args:
@@ -349,7 +342,7 @@ class DNSTunnelDetector:
 
     def _fast_entropy_screen(
         self, query: str
-    ) -> Tuple[float, Optional[bool]]:
+    ) -> tuple[float, bool | None]:
         """Fast entropy-based screening.
 
         Quickly identifies high-entropy queries that may indicate tunneling.
@@ -549,7 +542,7 @@ class DNSTunnelDetector:
             entropy, _ = self._fast_entropy_screen(query)
             return min(entropy / 6.0, 1.0)
 
-    def _detect_encoding_patterns(self, query: str) -> List[str]:
+    def _detect_encoding_patterns(self, query: str) -> list[str]:
         """Detect potential encoding patterns in query.
 
         Identifies Base32, Base64, and hexadecimal encoding patterns
@@ -607,10 +600,10 @@ class DNSTunnelDetector:
 
     def _majority_vote(
         self,
-        entropy_suspicious: Optional[bool],
+        entropy_suspicious: bool | None,
         ngram_score: NGramScore,
-        encoding_patterns: List[str],
-    ) -> Tuple[Verdict, float]:
+        encoding_patterns: list[str],
+    ) -> tuple[Verdict, float]:
         """Combine detection layers using majority voting.
 
         Args:
@@ -653,7 +646,7 @@ class DNSTunnelDetector:
         malicious_votes = sum(1 for v, _ in votes if v == "malicious")
         benign_votes = sum(1 for v, _ in votes if v == "benign")
         suspicious_votes = sum(1 for v, _ in votes if v == "suspicious")
-        ambiguous_votes = sum(1 for v, _ in votes if v == "ambiguous")
+        sum(1 for v, _ in votes if v == "ambiguous")
 
         # Determine verdict
         if malicious_votes >= self.config.majority_vote_threshold:
@@ -671,8 +664,8 @@ class DNSTunnelDetector:
             return Verdict.AMBIGUOUS, confidence
 
     async def analyze_queries(
-        self, queries: List[str]
-    ) -> List[TunnelingFinding]:
+        self, queries: list[str]
+    ) -> list[TunnelingFinding]:
         """Analyze a batch of DNS queries for tunneling.
 
         Processes queries through the cascade detection system:
@@ -767,8 +760,8 @@ class DNSTunnelDetector:
         )
 
     async def analyze_pcap(
-        self, pcap_path: Union[str, Path]
-    ) -> List[TunnelingFinding]:
+        self, pcap_path: str | Path
+    ) -> list[TunnelingFinding]:
         """Stream-analyze a PCAP file for DNS tunneling.
 
         Processes PCAP files in streaming fashion to maintain constant
@@ -847,8 +840,8 @@ class DNSTunnelDetector:
         return findings
 
     async def _process_query_batch(
-        self, queries: List[str], metadata: List[Tuple]
-    ) -> List[TunnelingFinding]:
+        self, queries: list[str], metadata: list[tuple]
+    ) -> list[TunnelingFinding]:
         """Process a batch of queries with their metadata.
 
         Args:
@@ -861,7 +854,7 @@ class DNSTunnelDetector:
         findings = await self.analyze_queries(queries)
 
         # Attach metadata
-        for finding, (ts, src, dst) in zip(findings, metadata):
+        for finding, (ts, src, dst) in zip(findings, metadata, strict=False):
             finding.timestamp = ts
             finding.source_ip = src
             finding.dest_ip = dst
@@ -886,7 +879,7 @@ class DNSTunnelDetector:
 
         self._initialized = False
 
-    def get_stats(self) -> Dict[str, Any]:
+    def get_stats(self) -> dict[str, Any]:
         """Get detection statistics.
 
         Returns:
@@ -910,8 +903,8 @@ class DNSTunnelDetector:
 # Factory function for creating detector instances
 
 def create_dns_tunnel_detector(
-    config: Optional[DNSTunnelConfig] = None,
-) -> Optional[DNSTunnelDetector]:
+    config: DNSTunnelConfig | None = None,
+) -> DNSTunnelDetector | None:
     """Factory function for creating DNS tunnel detector instances.
 
     Creates a configured DNSTunnelDetector with graceful fallback

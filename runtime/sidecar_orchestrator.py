@@ -229,17 +229,33 @@ class SidecarOrchestrator:
             )
             bg_tasks.add(_wayback_task)
             _wayback_task.add_done_callback(bg_tasks.discard)
+            # F250F: CommonCrawl CDX sidecar (non-blocking, HLEDAC_ENABLE_COMMONCRAWL=1)
+            _cc_env = _os.environ.get("HLEDAC_ENABLE_COMMONCRAWL", "").strip()
+            if _cc_env in ("1", "true"):
+                _cc_task = _asyncio.create_task(
+                    self._run_commoncrawl_sidecar(), name="sprint:commoncrawl_sidecar"
+                )
+                bg_tasks.add(_cc_task)
+                _cc_task.add_done_callback(bg_tasks.discard)
 
         # Steps 5-7: F229 deep OSINT sidecars (non-blocking, env-gated)
         if self._scheduler is not None:
             bg_tasks: set | None = getattr(self._scheduler, "_bg_tasks", None)
             if bg_tasks is None:
                 bg_tasks = set()
-            _ipfs_task = _asyncio.create_task(
-                self._run_ipfs_discovery_sidecar(), name="sprint:ipfs_discovery_sidecar"
-            )
-            bg_tasks.add(_ipfs_task)
-            _ipfs_task.add_done_callback(bg_tasks.discard)
+            _ipfs_env = _os.environ.get("HLEDAC_ENABLE_IPFS", "").strip()
+            _ipfs_enabled = _ipfs_env in ("1", "true", "True")
+            if _ipfs_enabled:
+                _gateway = _os.environ.get("HLEDAC_IPFS_GATEWAY_URL", "https://ipfs.io")
+                log.info("IPFS sidecar: ENABLED — gateway=%s", _gateway)
+            else:
+                log.info("IPFS sidecar: DISABLED (set HLEDAC_ENABLE_IPFS=1 to enable)")
+            if _ipfs_enabled:
+                _ipfs_task = _asyncio.create_task(
+                    self._run_ipfs_discovery_sidecar(), name="sprint:ipfs_discovery_sidecar"
+                )
+                bg_tasks.add(_ipfs_task)
+                _ipfs_task.add_done_callback(bg_tasks.discard)
             # F251: Onion discovery sidecar (Tor .onion crawling)
             _onion_task = _asyncio.create_task(
                 self._run_onion_discovery_sidecar(), name="sprint:onion_discovery_sidecar"
@@ -291,6 +307,15 @@ class SidecarOrchestrator:
                 )
                 bg_tasks.add(_stego_task)
                 _stego_task.add_done_callback(bg_tasks.discard)
+
+            # F252: TI feed advisory sidecar (NVD + CISA KEV)
+            _ti_env = _os.environ.get("HLEDAC_ENABLE_TI_FEEDS", "0")
+            if _ti_env == "1":
+                _ti_task = _asyncio.create_task(
+                    self._run_ti_feed_sidecar(), name="sprint:ti_feed_sidecar"
+                )
+                bg_tasks.add(_ti_task)
+                _ti_task.add_done_callback(bg_tasks.discard)
 
     async def run_target_memory_update(
         self,
@@ -472,7 +497,7 @@ class SidecarOrchestrator:
         if self._scheduler is None:
             return
         try:
-            await self._scheduler._run_ipfs_discovery_sidecar()
+            await self._scheduler._run_ipfs_enrichment_sidecar()
         except Exception:
             pass  # Fail-soft
 
@@ -503,7 +528,17 @@ class SidecarOrchestrator:
         if self._scheduler is None:
             return
         try:
-            await self._scheduler._run_bgp_enrichment_sidecar()
+            await self._scheduler._run_bgp_advisory_sidecar()
+        except Exception:
+            pass  # Fail-soft
+
+    # F250F: CommonCrawl CDX sidecar
+    async def _run_commoncrawl_sidecar(self) -> None:
+        """F250F: CommonCrawl CDX domain discovery. Fail-soft."""
+        if self._scheduler is None:
+            return
+        try:
+            await self._scheduler._run_commoncrawl_sidecar()
         except Exception:
             pass  # Fail-soft
 
@@ -526,6 +561,12 @@ class SidecarOrchestrator:
         except Exception:
             pass  # Fail-soft
 
+    # F214R: Gopher discovery sidecar (placeholder — gopher transport available but no sidecar adapter yet)
+    async def _run_gopher_sidecar(self) -> None:
+        """F214R: Gopher URL discovery. Fail-soft placeholder."""
+        # TODO: implement gopher sidecar adapter when gopherlane is available
+        pass
+
     # F3FORENSICS: Digital ghost forensics sidecar
     async def _run_digital_ghost_sidecar(self) -> None:
         """F3FORENSICS: Digital ghost detection on file artifacts. Fail-soft."""
@@ -543,5 +584,15 @@ class SidecarOrchestrator:
             return
         try:
             await self._scheduler._run_steganography_sidecar([])
+        except Exception:
+            pass  # Fail-soft
+
+    # F252: TI feed advisory sidecar (NVD + CISA KEV)
+    async def _run_ti_feed_sidecar(self) -> None:
+        """F252: TI feed advisory sidecar (NVD + CISA KEV). Fail-soft."""
+        if self._scheduler is None:
+            return
+        try:
+            await self._scheduler._run_ti_feed_sidecar()
         except Exception:
             pass  # Fail-soft

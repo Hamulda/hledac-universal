@@ -13,7 +13,9 @@ import concurrent.futures
 import ctypes
 import os
 import threading
-from typing import Any, Callable, Optional
+from collections.abc import Callable
+from typing import Any
+
 
 # Detekce jader na Apple Silicon
 def _get_core_counts() -> dict:
@@ -64,13 +66,13 @@ def _set_user_initiated() -> None:
 
 # Inicializace
 _cores = _get_core_counts()
-_io_pool: Optional[concurrent.futures.ThreadPoolExecutor] = None
-_cpu_pool: Optional[concurrent.futures.ThreadPoolExecutor] = None
+_io_pool: concurrent.futures.ThreadPoolExecutor | None = None
+_cpu_pool: concurrent.futures.ThreadPoolExecutor | None = None
 _pool_lock = threading.Lock()
 
 # Sprint 7A: Named executors
-_ane_pool: Optional[Any] = None
-_db_pool: Optional[Any] = None
+_ane_pool: Any | None = None
+_db_pool: Any | None = None
 
 
 def get_core_counts() -> dict:
@@ -156,7 +158,7 @@ class PersistentActorExecutor:
         self,
         name: str,
         *,
-        initializer: Optional[Callable[[], Any]] = None,
+        initializer: Callable[[], Any] | None = None,
     ) -> None:
         """
         Args:
@@ -169,8 +171,8 @@ class PersistentActorExecutor:
         self._lock = threading.Lock()
         self._condition = threading.Condition(self._lock)  # replaces sleep-polling in worker
         self._started = False
-        self._thread: Optional[threading.Thread] = None
-        self._loop: Optional[asyncio.AbstractEventLoop] = None
+        self._thread: threading.Thread | None = None
+        self._loop: asyncio.AbstractEventLoop | None = None
         self._shutdown_event = threading.Event()
 
         # Health metadata (for monitoring / timeout seams)
@@ -217,7 +219,7 @@ class PersistentActorExecutor:
 
         return fut
 
-    def shutdown(self, timeout: Optional[float] = None) -> None:
+    def shutdown(self, timeout: float | None = None) -> None:
         """
         Graceful shutdown: send sentinel, wait for thread to finish.
 

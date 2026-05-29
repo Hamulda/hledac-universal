@@ -12,10 +12,10 @@ from __future__ import annotations
 import asyncio
 import functools
 import inspect
-import time
-from typing import Any, Callable, TypeVar
-
 import logging
+import time
+from collections.abc import Callable
+from typing import Any, TypeVar
 
 logger = logging.getLogger(__name__)
 
@@ -133,7 +133,7 @@ def mlx_managed(func: Callable[..., Any]) -> Callable[..., Any]:
                 _maybe_eval_sync()
                 _clear_metal_cache_sync()
                 return result
-            except Exception as e:
+            except Exception:
                 # Even on error, try to clean up
                 _maybe_eval_sync()
                 _clear_metal_cache_sync()
@@ -150,7 +150,7 @@ def mlx_managed(func: Callable[..., Any]) -> Callable[..., Any]:
                 await _maybe_eval_async()
                 await _clear_metal_cache_async()
                 return result
-            except Exception as e:
+            except Exception:
                 # Even on error, try to clean up
                 await _maybe_eval_async()
                 await _clear_metal_cache_async()
@@ -175,7 +175,7 @@ def mlx_cleanup_after(func: Callable[..., Any]) -> Callable[..., Any]:
                 result = func(*args, **kwargs)
                 _clear_metal_cache_sync()
                 return result
-            except Exception as e:
+            except Exception:
                 _clear_metal_cache_sync()
                 raise
 
@@ -187,7 +187,7 @@ def mlx_cleanup_after(func: Callable[..., Any]) -> Callable[..., Any]:
                 result = await func(*args, **kwargs)
                 await _clear_metal_cache_async()
                 return result
-            except Exception as e:
+            except Exception:
                 await _clear_metal_cache_async()
                 raise
 

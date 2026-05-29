@@ -7,14 +7,22 @@ Tests DS second-opinion channel:
 3. DS backward compat: use_dempster_shafer=False → to_dict() no ds_* keys
 4. DS conflict mass: conflict_mass() is float 0.0-1.0 after mixed evidence
 """
-import pytest
 
-from brain.hypothesis_engine import HypothesisEngine, Hypothesis
-from brain.evidence_fusion import DempsterShafer
+from brain.hypothesis_engine import Hypothesis, HypothesisEngine
 
 
 class TestDempsterShaferIntegration:
     """Test DS second-opinion channel integration."""
+
+    def test_ds_active_by_default(self):
+        """
+        HypothesisEngine() without arguments → _ds_engine is not None.
+        Verifies use_dempster_shafer=True is the new default.
+        """
+        engine = HypothesisEngine()
+        assert engine._ds_engine is not None, (
+            "DS engine should be active by default (use_dempster_shafer=True)"
+        )
 
     def test_ds_bug_fix_supporting_evidence_routes_correctly(self):
         """

@@ -13,7 +13,7 @@ import logging
 import time
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +36,7 @@ class Finding:
     description: str
     severity: str
     confidence: float
-    modules: List[str] = field(default_factory=list)
+    modules: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -48,9 +48,9 @@ class CorrelationReport:
         risk_score: Calculated risk score (0.0-1.0)
         attribution: Attribution data (e.g., threat actor, source)
     """
-    cross_module_findings: List[Finding] = field(default_factory=list)
+    cross_module_findings: list[Finding] = field(default_factory=list)
     risk_score: float = 0.0
-    attribution: Dict[str, Any] = field(default_factory=dict)
+    attribution: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -66,7 +66,7 @@ class Anomaly:
     anomaly_type: str
     severity: str
     description: str
-    affected_modules: List[str] = field(default_factory=list)
+    affected_modules: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -80,9 +80,9 @@ class SharedContext:
         resource_usage: Resource usage statistics
     """
     input_data: Any = None
-    intermediate_results: Dict[str, Any] = field(default_factory=dict)
-    module_status: Dict[str, str] = field(default_factory=dict)
-    resource_usage: Dict[str, Any] = field(default_factory=dict)
+    intermediate_results: dict[str, Any] = field(default_factory=dict)
+    module_status: dict[str, str] = field(default_factory=dict)
+    resource_usage: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -100,15 +100,15 @@ class ComprehensiveReport:
         timeline: Timeline of analysis events
         export_data: Data formatted for export
     """
-    input_summary: Dict[str, Any] = field(default_factory=dict)
-    module_results: Dict[str, Any] = field(default_factory=dict)
+    input_summary: dict[str, Any] = field(default_factory=dict)
+    module_results: dict[str, Any] = field(default_factory=dict)
     correlations: CorrelationReport = field(default_factory=lambda: CorrelationReport())
-    anomalies: List[Anomaly] = field(default_factory=list)
+    anomalies: list[Anomaly] = field(default_factory=list)
     verdict: str = "CLEAN"
     confidence: float = 0.0
-    recommendations: List[str] = field(default_factory=list)
-    timeline: List[Dict[str, Any]] = field(default_factory=list)
-    export_data: Dict[str, Any] = field(default_factory=dict)
+    recommendations: list[str] = field(default_factory=list)
+    timeline: list[dict[str, Any]] = field(default_factory=list)
+    export_data: dict[str, Any] = field(default_factory=dict)
 
     def to_json(self) -> str:
         """Export report as JSON string.
@@ -306,9 +306,9 @@ class WorkflowPlan:
         execution_mode: "sequential" or "parallel"
         parallel_groups: Optional grouping for parallel execution
     """
-    modules: List[str] = field(default_factory=list)
+    modules: list[str] = field(default_factory=list)
     execution_mode: str = "sequential"
-    parallel_groups: Optional[List[List[str]]] = None
+    parallel_groups: list[list[str]] | None = None
 
 
 @dataclass
@@ -326,7 +326,7 @@ class IntelligenceConfig:
     max_parallel_modules: int = 4
     enable_correlation: bool = True
     enable_anomaly_detection: bool = True
-    risk_thresholds: Dict[str, float] = field(default_factory=lambda: {
+    risk_thresholds: dict[str, float] = field(default_factory=lambda: {
         "clean": 0.3,
         "suspicious": 0.7
     })
@@ -356,7 +356,7 @@ class WorkflowOrchestrator:
     def __init__(
         self,
         orchestrator: Any,
-        config: Optional[IntelligenceConfig] = None
+        config: IntelligenceConfig | None = None
     ):
         """Initialize workflow orchestrator.
 
@@ -366,10 +366,10 @@ class WorkflowOrchestrator:
         """
         self.orchestrator = orchestrator
         self.config = config or IntelligenceConfig()
-        self._module_registry: Dict[str, Any] = {}
-        self._execution_timeline: List[Dict[str, Any]] = []
+        self._module_registry: dict[str, Any] = {}
+        self._execution_timeline: list[dict[str, Any]] = []
 
-    def _add_timeline_event(self, event_type: str, details: Dict[str, Any]) -> None:
+    def _add_timeline_event(self, event_type: str, details: dict[str, Any]) -> None:
         """Add event to execution timeline.
 
         Args:
@@ -408,7 +408,7 @@ class WorkflowOrchestrator:
         context = SharedContext(
             input_data=input_data,
             intermediate_results={},
-            module_status={m: "pending" for m in workflow.modules},
+            module_status=dict.fromkeys(workflow.modules, "pending"),
             resource_usage={}
         )
 
@@ -438,7 +438,7 @@ class WorkflowOrchestrator:
                 })
 
             # Detect anomalies
-            anomalies: List[Anomaly] = []
+            anomalies: list[Anomaly] = []
             if self.config.enable_anomaly_detection:
                 anomalies = self._detect_anomalies(results)
                 self._add_timeline_event("anomaly_detection_complete", {
@@ -466,10 +466,10 @@ class WorkflowOrchestrator:
 
     async def _execute_sequential(
         self,
-        modules: List[str],
+        modules: list[str],
         input_data: Any,
         context: SharedContext
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Execute modules sequentially.
 
         Args:
@@ -480,7 +480,7 @@ class WorkflowOrchestrator:
         Returns:
             Dictionary of module results
         """
-        results: Dict[str, Any] = {}
+        results: dict[str, Any] = {}
 
         for module in modules:
             try:
@@ -496,10 +496,10 @@ class WorkflowOrchestrator:
 
     async def _execute_parallel(
         self,
-        module_groups: List[List[str]],
+        module_groups: list[list[str]],
         input_data: Any,
         context: SharedContext
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Execute modules in parallel groups.
 
         Args:
@@ -510,7 +510,7 @@ class WorkflowOrchestrator:
         Returns:
             Dictionary of module results
         """
-        results: Dict[str, Any] = {}
+        results: dict[str, Any] = {}
 
         for group in module_groups:
             # Execute group in parallel with timeout
@@ -524,7 +524,7 @@ class WorkflowOrchestrator:
 
             group_results = await asyncio.gather(*tasks, return_exceptions=True)
 
-            for module, result in zip(group, group_results):
+            for module, result in zip(group, group_results, strict=False):
                 if isinstance(result, Exception):
                     logger.error(f"Module {module} failed: {result}")
                     context.module_status[module] = "failed"
@@ -598,7 +598,7 @@ class WorkflowOrchestrator:
 
             return result
 
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.error(f"Module {module} timed out after {self.config.module_timeout}s")
             context.module_status[module] = "timeout"
             return {"error": "timeout", "module": module}
@@ -650,7 +650,7 @@ class WorkflowOrchestrator:
         """
         self._module_registry[name] = instance
 
-    def _correlate_results(self, results: Dict[str, Any]) -> CorrelationReport:
+    def _correlate_results(self, results: dict[str, Any]) -> CorrelationReport:
         """Correlate results across modules.
 
         Args:
@@ -659,9 +659,9 @@ class WorkflowOrchestrator:
         Returns:
             Correlation report with findings and risk score
         """
-        findings: List[Finding] = []
+        findings: list[Finding] = []
         risk_score = 0.0
-        attribution: Dict[str, Any] = {}
+        attribution: dict[str, Any] = {}
 
         # Check for high-risk correlation patterns
         detected_patterns = set()
@@ -711,8 +711,8 @@ class WorkflowOrchestrator:
 
     def _check_pattern(
         self,
-        results: Dict[str, Any],
-        pattern: Tuple[str, str]
+        results: dict[str, Any],
+        pattern: tuple[str, str]
     ) -> bool:
         """Check if a pattern exists in results.
 
@@ -736,7 +736,7 @@ class WorkflowOrchestrator:
             )
         return False
 
-    def _extract_indicators(self, results: Dict[str, Any]) -> List[str]:
+    def _extract_indicators(self, results: dict[str, Any]) -> list[str]:
         """Extract suspicious indicators from results.
 
         Args:
@@ -754,7 +754,7 @@ class WorkflowOrchestrator:
                     indicators.extend(result["indicators"])
         return indicators
 
-    def _extract_attribution(self, results: Dict[str, Any]) -> Dict[str, Any]:
+    def _extract_attribution(self, results: dict[str, Any]) -> dict[str, Any]:
         """Extract attribution information from results.
 
         Args:
@@ -772,7 +772,7 @@ class WorkflowOrchestrator:
                     attribution["source"] = result["source"]
         return attribution
 
-    def _detect_anomalies(self, results: Dict[str, Any]) -> List[Anomaly]:
+    def _detect_anomalies(self, results: dict[str, Any]) -> list[Anomaly]:
         """Detect anomalies in module results.
 
         Args:
@@ -781,7 +781,7 @@ class WorkflowOrchestrator:
         Returns:
             List of detected anomalies
         """
-        anomalies: List[Anomaly] = []
+        anomalies: list[Anomaly] = []
 
         # Check for module failures
         for module, result in results.items():
@@ -838,9 +838,9 @@ class WorkflowOrchestrator:
 
     def _generate_report(
         self,
-        results: Dict[str, Any],
+        results: dict[str, Any],
         correlations: CorrelationReport,
-        anomalies: List[Anomaly],
+        anomalies: list[Anomaly],
         context: SharedContext
     ) -> ComprehensiveReport:
         """Generate comprehensive report.
@@ -904,10 +904,10 @@ class WorkflowOrchestrator:
 
     def _generate_recommendations(
         self,
-        results: Dict[str, Any],
+        results: dict[str, Any],
         correlations: CorrelationReport,
-        anomalies: List[Anomaly]
-    ) -> List[str]:
+        anomalies: list[Anomaly]
+    ) -> list[str]:
         """Generate actionable recommendations.
 
         Args:
@@ -994,7 +994,7 @@ class WorkflowOrchestrator:
 # Bounded, fail-soft, no dependencies, M1 8GB safe
 # =============================================================================
 
-HIGH_RISK_PATTERNS: Dict[Tuple[str, str], float] = {
+HIGH_RISK_PATTERNS: dict[tuple[str, str], float] = {
     ("scrubbed_metadata", "steganography_detected"): 0.5,
     ("dns_tunneling", "encoded_payload"): 0.4,
     ("zero_width_unicode", "base64_hidden"): 0.3,
@@ -1017,57 +1017,57 @@ class CorrelationResult:
         verdict: Risk verdict string
 
         # --- NEW: actionable condensation ---
-        source_themes: Dict[str, List[str]]           # source -> list of theme keys
-        top_entities: List[Dict[str, Any]]            # extracted IOCs (domain/ip/hash/url)
-        repeated_domains: List[str]                   # domains seen across >1 finding
-        repeated_iocs: List[Dict[str, Any]]          # IOCs appearing >1 time
-        dominant_cluster: Optional[str]               # theme with most high-severity findings
-        high_risk_branch: List[Dict[str, Any]]        # critical/high findings with infra hints
-        theme_source_overlap: Dict[str, List[str]]   # theme -> sources contributing
-        campaign_hints: List[Dict[str, Any]]          # findings suggesting same campaign
-        coupling_pairs: List[Tuple[str, str]]          # (entity, related_entity) pairs
+        source_themes: dict[str, list[str]]           # source -> list of theme keys
+        top_entities: list[dict[str, Any]]            # extracted IOCs (domain/ip/hash/url)
+        repeated_domains: list[str]                   # domains seen across >1 finding
+        repeated_iocs: list[dict[str, Any]]          # IOCs appearing >1 time
+        dominant_cluster: str | None               # theme with most high-severity findings
+        high_risk_branch: list[dict[str, Any]]        # critical/high findings with infra hints
+        theme_source_overlap: dict[str, list[str]]   # theme -> sources contributing
+        campaign_hints: list[dict[str, Any]]          # findings suggesting same campaign
+        coupling_pairs: list[tuple[str, str]]          # (entity, related_entity) pairs
         so_what: str                                   # one-liner operator takeaway
 
         # --- SECOND-ORDER CONDENSATION (sprint delta) ---
         cross_source_confidence: float = 0.0       # 0.0-1.0: multi-source corroboration score
-        corroborated_iocs: List[Dict[str, Any]] = field(default_factory=list)  # IOCs with 2+ source evidence
-        top_priority_pivots: List[Dict[str, Any]] = field(default_factory=list)  # bounded action shortlist
+        corroborated_iocs: list[dict[str, Any]] = field(default_factory=list)  # IOCs with 2+ source evidence
+        top_priority_pivots: list[dict[str, Any]] = field(default_factory=list)  # bounded action shortlist
         campaign_confidence: float = 0.0            # 0.0-1.0: campaign cluster confidence
     """
-    themes: Dict[str, List[Dict[str, Any]]] = field(default_factory=dict)
+    themes: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
     risk_score: float = 0.0
-    risk_buckets: Dict[str, List[Dict[str, Any]]] = field(default_factory=dict)
-    top_themes: List[Tuple[str, float]] = field(default_factory=list)
+    risk_buckets: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
+    top_themes: list[tuple[str, float]] = field(default_factory=list)
     anomaly_count: int = 0
     verdict: str = "CLEAN"
     # NEW fields (with defaults so existing callers don't break)
-    source_themes: Dict[str, List[str]] = field(default_factory=dict)
-    top_entities: List[Dict[str, Any]] = field(default_factory=list)
-    repeated_domains: List[str] = field(default_factory=list)
-    repeated_iocs: List[Dict[str, Any]] = field(default_factory=list)
-    dominant_cluster: Optional[str] = None
-    high_risk_branch: List[Dict[str, Any]] = field(default_factory=list)
-    theme_source_overlap: Dict[str, List[str]] = field(default_factory=dict)
-    campaign_hints: List[Dict[str, Any]] = field(default_factory=list)
-    coupling_pairs: List[Tuple[str, str]] = field(default_factory=list)
+    source_themes: dict[str, list[str]] = field(default_factory=dict)
+    top_entities: list[dict[str, Any]] = field(default_factory=list)
+    repeated_domains: list[str] = field(default_factory=list)
+    repeated_iocs: list[dict[str, Any]] = field(default_factory=list)
+    dominant_cluster: str | None = None
+    high_risk_branch: list[dict[str, Any]] = field(default_factory=list)
+    theme_source_overlap: dict[str, list[str]] = field(default_factory=dict)
+    campaign_hints: list[dict[str, Any]] = field(default_factory=list)
+    coupling_pairs: list[tuple[str, str]] = field(default_factory=list)
     so_what: str = ""
     # --- SECOND-ORDER CONDENSATION (sprint delta) ---
     cross_source_confidence: float = 0.0       # 0.0-1.0: multi-source corroboration score
-    corroborated_iocs: List[Dict[str, Any]] = field(default_factory=list)  # IOCs with 2+ source evidence
-    top_priority_pivots: List[Dict[str, Any]] = field(default_factory=list)  # bounded action shortlist
+    corroborated_iocs: list[dict[str, Any]] = field(default_factory=list)  # IOCs with 2+ source evidence
+    top_priority_pivots: list[dict[str, Any]] = field(default_factory=list)  # bounded action shortlist
     campaign_confidence: float = 0.0           # 0.0-1.0: campaign cluster confidence
 
     # --- SECOND-ORDER: OPERATOR ACTIONABLE SHORTLIST (sprint delta) ---
     what_matters_first: str = ""                # single primary action/takeaway for operator
-    operator_shortlist: List[Dict[str, Any]] = field(default_factory=list)  # max 3 bounded prioritised items
+    operator_shortlist: list[dict[str, Any]] = field(default_factory=list)  # max 3 bounded prioritised items
     confidence_note: str = ""                  # human-readable confidence explanation
     signal_quality: str = "weak"               # "strong" | "mixed" | "weak" — scheduler filter
 
 
 def correlate_findings(
-    findings: List[Dict[str, Any]],
+    findings: list[dict[str, Any]],
     *,
-    risk_thresholds: Optional[Dict[str, float]] = None,
+    risk_thresholds: dict[str, float] | None = None,
     max_themes: int = 10,
 ) -> CorrelationResult:
     """Correlate findings and produce grouped themes with risk scoring.
@@ -1104,9 +1104,9 @@ def correlate_findings(
     thresholds = risk_thresholds or {"clean": 0.3, "suspicious": 0.7}
 
     # --- Normalize findings to canonical form ---
-    normalized: List[Dict[str, Any]] = []
+    normalized: list[dict[str, Any]] = []
     for f in findings:
-        nf: Dict[str, Any] = {
+        nf: dict[str, Any] = {
             "type": f.get("type") or f.get("finding_type") or f.get("indicator_type", "unknown"),
             "severity": f.get("severity", "medium"),
             "confidence": float(f.get("confidence", 0.5)),
@@ -1126,7 +1126,7 @@ def correlate_findings(
     risk_score = min(risk_score / max(len(normalized), 1), 1.0)
 
     # --- Theme grouping ---
-    themes: Dict[str, List[Dict[str, Any]]] = {}
+    themes: dict[str, list[dict[str, Any]]] = {}
     for f in normalized:
         theme_key = _derive_theme_key(f)
         if theme_key not in themes:
@@ -1134,14 +1134,14 @@ def correlate_findings(
         themes[theme_key].append(f)
 
     # --- Theme weights ---
-    theme_weights: Dict[str, float] = {}
+    theme_weights: dict[str, float] = {}
     for theme, theme_findings in themes.items():
         weights = [SEVERITY_WEIGHTS.get(x["severity"].lower(), 0.25) * x["confidence"]
                    for x in theme_findings]
         theme_weights[theme] = sum(weights) / max(len(weights), 1)
 
     # --- Risk buckets ---
-    buckets: Dict[str, List[Dict[str, Any]]] = {
+    buckets: dict[str, list[dict[str, Any]]] = {
         "critical": [], "high": [], "medium": [], "low": []
     }
     for f in normalized:
@@ -1164,7 +1164,7 @@ def correlate_findings(
         verdict = "SUSPICIOUS"
 
     # --- Source -> themes mapping ---
-    source_themes: Dict[str, List[str]] = {}
+    source_themes: dict[str, list[str]] = {}
     for f in normalized:
         src = f["source"]
         tk = _derive_theme_key(f)
@@ -1190,7 +1190,7 @@ def correlate_findings(
 
     # --- Dominant cluster: theme with most critical/high findings ---
     dominant_cluster = None
-    cluster_scores: Dict[str, float] = {}
+    cluster_scores: dict[str, float] = {}
     for theme, fndgs in themes.items():
         score = sum(
             SEVERITY_WEIGHTS.get(x["severity"].lower(), 0.25)
@@ -1209,7 +1209,7 @@ def correlate_findings(
     ]
 
     # --- Theme -> sources overlap ---
-    theme_source_overlap: Dict[str, List[str]] = {}
+    theme_source_overlap: dict[str, list[str]] = {}
     for theme, fndgs in themes.items():
         srcs = list({x["source"] for x in fndgs})
         theme_source_overlap[theme] = srcs
@@ -1268,8 +1268,8 @@ def correlate_findings(
 
 
 def _extract_entities(
-    findings: List[Dict[str, Any]]
-) -> Tuple[List[Dict[str, Any]], Dict[str, int], Dict[Tuple[str, str], int]]:
+    findings: list[dict[str, Any]]
+) -> tuple[list[dict[str, Any]], dict[str, int], dict[tuple[str, str], int]]:
     """Extract IOCs (domains, IPs, hashes, URLs) from findings descriptions.
 
     Returns:
@@ -1277,9 +1277,9 @@ def _extract_entities(
         domain_counts: domain -> count across findings
         ioc_counts: (value, type) -> count across findings
     """
-    entities: List[Dict[str, Any]] = []
-    domain_counts: Dict[str, int] = {}
-    ioc_counts: Dict[Tuple[str, str], int] = {}
+    entities: list[dict[str, Any]] = []
+    domain_counts: dict[str, int] = {}
+    ioc_counts: dict[tuple[str, str], int] = {}
 
     import re
 
@@ -1305,7 +1305,7 @@ def _extract_entities(
         confidence = f.get("confidence", 0.5)
         weight = SEVERITY_WEIGHTS.get(severity.lower(), 0.25) * confidence
 
-        found: Dict[str, Any] = {}
+        found: dict[str, Any] = {}
 
         for domain in DOMAIN_RE.findall(text):
             domain_lower = domain.lower()
@@ -1327,8 +1327,8 @@ def _extract_entities(
             entities.append(ent)
 
     # Deduplicate entities list by (value, type)
-    seen: Set[Tuple[str, str]] = set()
-    deduped: List[Dict[str, Any]] = []
+    seen: set[tuple[str, str]] = set()
+    deduped: list[dict[str, Any]] = []
     for e in entities:
         k = (e["value"], e["type"])
         if k not in seen:
@@ -1338,7 +1338,7 @@ def _extract_entities(
     return deduped, domain_counts, ioc_counts
 
 
-def _has_infra_hints(finding: Dict[str, Any]) -> bool:
+def _has_infra_hints(finding: dict[str, Any]) -> bool:
     """Check if finding has infrastructure-related hints."""
     text = (finding.get("description", "") + " " + finding.get("type", "")).lower()
     hints = (
@@ -1349,18 +1349,18 @@ def _has_infra_hints(finding: Dict[str, Any]) -> bool:
 
 
 def _find_campaign_hints(
-    findings: List[Dict[str, Any]],
-    _themes: Dict[str, List[Dict[str, Any]]]
-) -> List[Dict[str, Any]]:
+    findings: list[dict[str, Any]],
+    _themes: dict[str, list[dict[str, Any]]]
+) -> list[dict[str, Any]]:
     """Find findings that may belong to the same campaign.
 
     Heuristic: same type appearing from multiple sources or
     high confidence + high severity cluster.
     """
-    hints: List[Dict[str, Any]] = []
+    hints: list[dict[str, Any]] = []
 
     # Cluster: same type, multiple sources → campaign signal
-    type_sources: Dict[str, Set[str]] = {}
+    type_sources: dict[str, set[str]] = {}
     for f in findings:
         type_sources.setdefault(f["type"], set()).add(f["source"])
 
@@ -1392,16 +1392,16 @@ def _find_campaign_hints(
 
 
 def _find_coupling_pairs(
-    entities: List[Dict[str, Any]]
-) -> List[Tuple[str, str]]:
+    entities: list[dict[str, Any]]
+) -> list[tuple[str, str]]:
     """Find entity pairs that appear in the same finding.
 
     Returns list of (entity1_value, entity2_value) tuples.
     """
-    pairs: List[Tuple[str, str]] = []
+    pairs: list[tuple[str, str]] = []
     # Group entities by their source finding index (approximate via dedup key)
     # We pair entities of different types within the same pass
-    by_type: Dict[str, List[str]] = {}
+    by_type: dict[str, list[str]] = {}
     for e in entities:
         by_type.setdefault(e["type"], []).append(e["value"])
 
@@ -1419,11 +1419,11 @@ def _find_coupling_pairs(
 def _build_so_what(
     verdict: str,
     risk_score: float,
-    top_themes: List[Tuple[str, float]],
-    dominant_cluster: Optional[str],
+    top_themes: list[tuple[str, float]],
+    dominant_cluster: str | None,
     high_risk_count: int,
     anomaly_count: int,
-    repeated_domains: List[str],
+    repeated_domains: list[str],
 ) -> str:
     """Build one-liner operator takeaway."""
     if verdict == "HIGH_RISK":
@@ -1446,7 +1446,7 @@ def _build_so_what(
         return "CLEAN: no significant threats detected"
 
 
-def _derive_theme_key(finding: Dict[str, Any]) -> str:
+def _derive_theme_key(finding: dict[str, Any]) -> str:
     """Derive theme key from finding for grouping."""
     ftype = finding.get("type", "unknown").lower()
     source = str(finding.get("source", "unknown")).lower()
@@ -1473,7 +1473,7 @@ def _derive_theme_key(finding: Dict[str, Any]) -> str:
     return ftype
 
 
-def _count_anomalies(findings: List[Dict[str, Any]]) -> int:
+def _count_anomalies(findings: list[dict[str, Any]]) -> int:
     """Count simple anomalies in findings."""
     count = 0
     for f in findings:
@@ -1491,9 +1491,9 @@ def _count_anomalies(findings: List[Dict[str, Any]]) -> int:
 # =============================================================================
 
 def _calc_cross_source_confidence(
-    findings: List[Dict[str, Any]],
-    theme_source_overlap: Dict[str, List[str]],
-    campaign_hints: List[Dict[str, Any]],
+    findings: list[dict[str, Any]],
+    theme_source_overlap: dict[str, list[str]],
+    campaign_hints: list[dict[str, Any]],
 ) -> float:
     """Calculate 0.0-1.0 multi-source corroboration confidence.
 
@@ -1531,9 +1531,9 @@ def _calc_cross_source_confidence(
 
 
 def _get_corroborated_iocs(
-    findings: List[Dict[str, Any]],
-    repeated_iocs: List[Dict[str, Any]],
-) -> List[Dict[str, Any]]:
+    findings: list[dict[str, Any]],
+    repeated_iocs: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
     """Return IOCs that appear with 2+ source evidence.
 
     Corroborated = repeated across findings + high severity + high confidence.
@@ -1541,11 +1541,11 @@ def _get_corroborated_iocs(
     if not repeated_iocs:
         return []
 
-    corroborated: List[Dict[str, Any]] = []
+    corroborated: list[dict[str, Any]] = []
     for ioc in repeated_iocs[:10]:  # bounded to 10
         value = ioc.get("value", "")
         ioc_type = ioc.get("type", "unknown")
-        count = ioc.get("count", 1)
+        ioc.get("count", 1)
 
         # Find matching findings
         matching = [
@@ -1574,16 +1574,16 @@ def _get_corroborated_iocs(
 
 
 def _get_top_priority_pivots(
-    findings: List[Dict[str, Any]],
-    dominant_cluster: Optional[str],
-    high_risk_branch: List[Dict[str, Any]],
-    repeated_domains: List[str],
-) -> List[Dict[str, Any]]:
+    findings: list[dict[str, Any]],
+    dominant_cluster: str | None,
+    high_risk_branch: list[dict[str, Any]],
+    repeated_domains: list[str],
+) -> list[dict[str, Any]]:
     """Build bounded priority shortlist for operator.
 
     Max 5 pivots. Prioritizes: infra-heavy, corroborated, high-severity.
     """
-    pivots: List[Dict[str, Any]] = []
+    pivots: list[dict[str, Any]] = []
 
     # 1. Dominant cluster gets first slot
     if dominant_cluster:
@@ -1612,7 +1612,7 @@ def _get_top_priority_pivots(
         pivots.append({
             "pivot_type": "repeated_domain",
             "value": domain,
-            "description": f"Domain seen across multiple findings",
+            "description": "Domain seen across multiple findings",
             "priority": 3,
         })
 
@@ -1635,8 +1635,8 @@ def _get_top_priority_pivots(
 
 
 def _calc_campaign_confidence(
-    campaign_hints: List[Dict[str, Any]],
-    theme_source_overlap: Dict[str, List[str]],
+    campaign_hints: list[dict[str, Any]],
+    theme_source_overlap: dict[str, list[str]],
 ) -> float:
     """Calculate 0.0-1.0 campaign cluster confidence.
 
@@ -1672,7 +1672,7 @@ def _calc_campaign_confidence(
     return round(min(confidence, 1.0), 2)
 
 
-def _extract_primary_entity(finding: Dict[str, Any]) -> str:
+def _extract_primary_entity(finding: dict[str, Any]) -> str:
     """Extract primary IOC entity from finding description."""
     import re
 
@@ -1711,9 +1711,9 @@ def _extract_primary_entity(finding: Dict[str, Any]) -> str:
 
 def _get_what_matters_first(
     verdict: str,
-    dominant_cluster: Optional[str],
-    high_risk_branch: List[Dict[str, Any]],
-    corroborated_iocs: List[Dict[str, Any]],
+    dominant_cluster: str | None,
+    high_risk_branch: list[dict[str, Any]],
+    corroborated_iocs: list[dict[str, Any]],
 ) -> str:
     """Return single primary action/takeaway for operator."""
     if verdict == "HIGH_RISK":
@@ -1733,18 +1733,18 @@ def _get_what_matters_first(
 
 
 def _build_operator_shortlist(
-    dominant_cluster: Optional[str],
-    high_risk_branch: List[Dict[str, Any]],
-    corroborated_iocs: List[Dict[str, Any]],
+    dominant_cluster: str | None,
+    high_risk_branch: list[dict[str, Any]],
+    corroborated_iocs: list[dict[str, Any]],
     risk_score: float,
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """Build max-3 bounded prioritised shortlist for scheduler/export.
 
     Returns items with: action, target, rationale (scheduler-consumable shape).
 
     Scheduler transformation: action=query, target=rationale[:80], rationale=pivot_type
     """
-    shortlist: List[Dict[str, Any]] = []
+    shortlist: list[dict[str, Any]] = []
 
     # 1. Dominant cluster (always first if present)
     if dominant_cluster:
@@ -1811,7 +1811,7 @@ def _classify_signal_quality(
     risk_score: float,
     cross_source_confidence: float,
     campaign_confidence: float,
-    corroborated_iocs: List[Dict[str, Any]],
+    corroborated_iocs: list[dict[str, Any]],
 ) -> str:
     """Classify signal as strong/mixed/weak for scheduler filtering."""
     strong_indicators = (
@@ -1834,7 +1834,7 @@ def _classify_signal_quality(
 
 def create_workflow_orchestrator(
     orchestrator: Any,
-    config: Optional[IntelligenceConfig] = None
+    config: IntelligenceConfig | None = None
 ) -> WorkflowOrchestrator:
     """Create a configured WorkflowOrchestrator instance.
 

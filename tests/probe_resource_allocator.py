@@ -1,15 +1,14 @@
 """Hermetic tests for ResourceAwareScheduler task lifecycle."""
 import asyncio
 import logging
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-
 from hledac.universal.coordinators.resource_allocator import (
     IntelligentResourceAllocator,
+    Priority,
     ResourceAwareScheduler,
     ResourceRequest,
-    Priority,
 )
 
 

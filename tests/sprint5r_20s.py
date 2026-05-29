@@ -3,15 +3,15 @@
 Sprint 5R: TS Active 20s Benchmark (faster)
 """
 import asyncio
+import random
 import sys
 import time
-import random
 
 sys.path.insert(0, '/Users/vojtechhamada/PycharmProjects/Hledac')
 
 async def run():
     from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
-    from hledac.universal.knowledge.atomic_storage import EvidencePacketStorage, EvidencePacket
+    from hledac.universal.knowledge.atomic_storage import EvidencePacket, EvidencePacketStorage
 
     orch = FullyAutonomousOrchestrator()
     orch._evidence_packet_storage = EvidencePacketStorage()
@@ -21,7 +21,7 @@ async def run():
             evidence_id=f"evidence_{i}",
             url=f"http://localhost:{64000+i}/test",
             final_url=f"http://localhost:{64000+i}/test",
-            domain=f"localhost",
+            domain="localhost",
             fetched_at=time.time() - (i * 86400),
             status=200,
             headers_digest="abc123",

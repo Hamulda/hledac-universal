@@ -5,7 +5,6 @@ Lock chrání add i query, aby se předešlo race condition.
 
 import asyncio
 import logging
-from typing import List, Optional, Dict, Tuple
 
 import numpy as np
 
@@ -45,11 +44,11 @@ class IncrementalHNSW:
         self.index.set_ef(50)
         self.current_count = 0
         self._lock = asyncio.Lock()
-        self._id_to_int: Dict[str, int] = {}  # mapování string ID na integer index
-        self._int_to_id: Dict[int, str] = {}  # reverse mapping
+        self._id_to_int: dict[str, int] = {}  # mapování string ID na integer index
+        self._int_to_id: dict[int, str] = {}  # reverse mapping
         self._next_id = 0
 
-    async def add_items(self, vectors: np.ndarray, ids: List[str]):
+    async def add_items(self, vectors: np.ndarray, ids: list[str]):
         """
         Přidá vektory s jejich string ID. ID se mapují na interní integery.
 
@@ -76,7 +75,7 @@ class IncrementalHNSW:
             self.current_count += len(ids)
             logger.debug(f"Added {len(ids)} vectors, total: {self.current_count}")
 
-    async def knn_query(self, query: np.ndarray, k: int) -> Tuple[np.ndarray, np.ndarray]:
+    async def knn_query(self, query: np.ndarray, k: int) -> tuple[np.ndarray, np.ndarray]:
         """
         Provede KNN dotaz.
 

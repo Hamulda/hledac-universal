@@ -19,7 +19,6 @@ from __future__ import annotations
 import ast
 import pathlib
 
-
 # Absolute path to the module under test
 _SIDEAR_ORCHESTRATOR = pathlib.Path(__file__).parents[1] / "runtime" / "sidecar_orchestrator.py"
 

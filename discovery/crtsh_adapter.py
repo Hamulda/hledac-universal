@@ -19,10 +19,8 @@ import time
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Optional
 
 import aiohttp
-
 from hledac.universal.network.session_runtime import async_get_aiohttp_session
 from hledac.universal.transport.circuit_breaker import checked_aiohttp_get
 
@@ -79,13 +77,13 @@ class CTProviderStatusReport:
     attempted: bool = False
     status: CTProviderStatus = CTProviderStatus.DISABLED
     raw_count: int = 0
-    error_sample: Optional[str] = None
+    error_sample: str | None = None
     ct_cache_used: bool = False
     ct_cache_stale: bool = False
     ct_cache_age_s: float = 0.0
     # F219E cooldown fields
     cooldown_active: bool = False
-    cooldown_reason: Optional[str] = None
+    cooldown_reason: str | None = None
     cooldown_remaining_s: float = 0.0
     cooldown_started_at_monotonic: float = 0.0
     stale_cache_preferred: bool = False
@@ -251,7 +249,7 @@ def _make_cache_key(domain: str) -> str:
 
 def _read_stale_cache(
     domain: str, cache_dir: Path | None, max_age_s: float
-) -> tuple[Optional[list], float]:
+) -> tuple[list | None, float]:
     """
     F217D: Read a stale cache entry for diagnostic reuse.
 
@@ -904,7 +902,7 @@ async def call_crtsh(
     except asyncio.CancelledError:
         raise  # re-raised
 
-    except asyncio.TimeoutError:
+    except TimeoutError:
         elapsed = time.monotonic() - start
         _dc_for_cache = domain_candidate if 'domain_candidate' in dir() else query_stripped
         # F219E: Enter cooldown on timeout before stale-cache fallback

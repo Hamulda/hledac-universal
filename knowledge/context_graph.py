@@ -14,7 +14,7 @@ For persistent knowledge graph storage, use:
 from __future__ import annotations
 
 import json
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 
 class ContextGraph:
@@ -26,18 +26,18 @@ class ContextGraph:
     """
 
     def __init__(self) -> None:
-        self.nodes: List[Dict[str, Any]] = []
-        self.edges: List[Dict[str, Any]] = []
+        self.nodes: list[dict[str, Any]] = []
+        self.edges: list[dict[str, Any]] = []
 
     def add_node(
-        self, node_id: str, node_type: str, attributes: Optional[Dict[str, Any]] = None
+        self, node_id: str, node_type: str, attributes: dict[str, Any] | None = None
     ) -> None:
         """Adds a node to the graph."""
         if not any(n["id"] == node_id for n in self.nodes):
                 self.nodes.append({"id": node_id, "type": node_type, "attributes": attributes or {}})
 
     def add_edge(
-        self, source: str, target: str, edge_type: str, attributes: Optional[Dict[str, Any]] = None
+        self, source: str, target: str, edge_type: str, attributes: dict[str, Any] | None = None
     ) -> None:
         """Adds an edge to the graph."""
         self.edges.append(

@@ -3,8 +3,9 @@
 Sprint 5V: BoundedOrderedDict FIFO Eviction Test
 Hard rule #11-13: Bounded domain dedup with FIFO eviction
 """
-import unittest
 import sys
+import unittest
+
 sys.path.insert(0, '/Users/vojtechhamada/PycharmProjects/Hledac')
 
 from collections import OrderedDict

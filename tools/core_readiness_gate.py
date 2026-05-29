@@ -17,7 +17,7 @@ import ast
 import json
 import sys
 import traceback
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from enum import Enum
 from pathlib import Path
 from typing import NamedTuple
@@ -160,7 +160,7 @@ class GateReport(NamedTuple):
 def _compile_file(path: Path) -> CompileResult:
     """Compile a single Python file and return errors."""
     try:
-        with open(path, "r", encoding="utf-8") as f:
+        with open(path, encoding="utf-8") as f:
             source = f.read()
         ast.parse(source, filename=str(path))
         return CompileResult(path=str(path), ok=True, errors=[])
@@ -256,7 +256,7 @@ def run_gate(strict: bool = False) -> GateReport:
         verdict = Verdict.READY if not has_warnings else Verdict.READY_WITH_WARNINGS
 
     return GateReport(
-        timestamp=datetime.now(timezone.utc).isoformat(),
+        timestamp=datetime.now(UTC).isoformat(),
         verdict=verdict,
         compile_errors=[r for r in compile_errors if not r.ok],
         import_errors=import_errors,

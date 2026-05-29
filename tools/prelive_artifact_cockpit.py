@@ -26,10 +26,8 @@ import sys
 import textwrap
 from collections import defaultdict
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import StrEnum
 from pathlib import Path
-from typing import Optional
-
 
 # --------------------------------------------------------------------------- #
 # Sprint ID Collision Detection — F224D
@@ -168,7 +166,7 @@ def render_collision_warning(report: SprintCollisionReport) -> list[str]:
         lines.append("")
         lines.append("| Probe Directory | Report | JSON |")
         lines.append("|----------------|--------|-----|")
-        for probe_dir, report_p, json_p in zip(coll.probe_dirs, coll.report_paths, coll.json_paths):
+        for probe_dir, report_p, json_p in zip(coll.probe_dirs, coll.report_paths, coll.json_paths, strict=False):
             lines.append(f"| `{probe_dir}` | {report_p or 'N/A'} | {json_p or 'N/A'} |")
         lines.append("")
         lines.append(f"**Action:** Operator reports may show ambiguous labels. Use full alias (e.g. `{coll.aliases[0]}`) to disambiguate. **Live is NOT blocked** — required artifact paths are explicit.")
@@ -196,7 +194,7 @@ class SprintIdCollisionWarning:
 # Verdict & Action enums
 # --------------------------------------------------------------------------- #
 
-class Verdict(str, Enum):
+class Verdict(StrEnum):
     READY_TO_RUN_NOW = "READY_TO_RUN_NOW"
     READY_DIAGNOSTIC_ONLY = "READY_DIAGNOSTIC_ONLY"
     READY_TO_RESTART_AND_RUN = "READY_TO_RESTART_AND_RUN"
@@ -213,7 +211,7 @@ class Verdict(str, Enum):
     BLOCKED_BY_UNKNOWN = "BLOCKED_BY_UNKNOWN"
 
 
-class NextAction(str, Enum):
+class NextAction(StrEnum):
     RUN_LIVE_NOW = "run_live_now"
     RUN_WITH_HARDWARE_TAINT = "run_with_hardware_taint"
     RESTART_THEN_RUN_LIVE = "restart_then_run_live"
@@ -234,7 +232,7 @@ class UmaState:
     swap_detected: bool = False
     uma_state: str = "unknown"
     io_only: bool = False
-    error: Optional[str] = None
+    error: str | None = None
     # F220F: swap tiered policy telemetry
     hardware_constrained: bool = False
     swap_policy_tier: str = "unknown"
@@ -273,7 +271,7 @@ class CockpitResult:
     merge_log: list[str] = field(default_factory=list)
 
     # F224D: sprint ID collision telemetry
-    sprint_collision: Optional[SprintIdCollisionWarning] = None
+    sprint_collision: SprintIdCollisionWarning | None = None
 
     # F225E: F224 artifact gate telemetry
     f224_core_ready: bool = False
@@ -403,7 +401,7 @@ def load_artifact_pack(path: Path) -> dict:
         return json.load(f)
 
 
-def load_readiness(path: Optional[Path]) -> Optional[dict]:
+def load_readiness(path: Path | None) -> dict | None:
     if path is None or not path.exists():
         return None
     with open(path, encoding="utf-8") as f:
@@ -492,7 +490,7 @@ def check_provider_surface(decision_data: dict) -> bool:
 def merge_cockpit(
     decision_data: dict,
     artifact_data: dict,
-    readiness_data: Optional[dict],
+    readiness_data: dict | None,
 ) -> CockpitResult:
     """
     Merge decision gate + artifact pack + readiness into a single CockpitResult.
@@ -667,7 +665,7 @@ def merge_cockpit(
                 live_allowed = True
                 uma.hardware_constrained = uma.swap_used_gib > CLEAN_SWAP_MAX_GIB
                 uma.swap_policy_tier = "clean"
-                uma.swap_gate_reason = "nonfeed_diagnostic: swap={:.2f}GiB".format(uma.swap_used_gib)
+                uma.swap_gate_reason = f"nonfeed_diagnostic: swap={uma.swap_used_gib:.2f}GiB"
                 hardware_constrained = uma.swap_used_gib > CLEAN_SWAP_MAX_GIB
                 swap_policy_tier = "clean"
                 swap_gate_reason = uma.swap_gate_reason
@@ -679,23 +677,23 @@ def merge_cockpit(
                 live_allowed = True
                 uma.hardware_constrained = True
                 uma.swap_policy_tier = "diagnostic"
-                uma.swap_gate_reason = "nonfeed_diagnostic: swap={:.2f}GiB (diagnostic tier)".format(uma.swap_used_gib)
+                uma.swap_gate_reason = f"nonfeed_diagnostic: swap={uma.swap_used_gib:.2f}GiB (diagnostic tier)"
                 hardware_constrained = True
                 swap_policy_tier = "diagnostic"
                 swap_gate_reason = uma.swap_gate_reason
-                log.append("verdict=RUN_NONFEED_DIAGNOSTIC (feed-only, swap={:.2f}GiB, diagnostic tier)".format(uma.swap_used_gib))
+                log.append(f"verdict=RUN_NONFEED_DIAGNOSTIC (feed-only, swap={uma.swap_used_gib:.2f}GiB, diagnostic tier)")
             else:
                 verdict = Verdict.READY_TO_RESTART_AND_RUN
                 next_action = NextAction.RUN_NONFEED_DIAGNOSTIC
-                next_action_detail = "swap={:.2f}GiB > {:.1f}GiB — restart then nonfeed_diagnostic180".format(uma.swap_used_gib, DIAGNOSTIC_SWAP_MAX_GIB)
+                next_action_detail = f"swap={uma.swap_used_gib:.2f}GiB > {DIAGNOSTIC_SWAP_MAX_GIB:.1f}GiB — restart then nonfeed_diagnostic180"
                 live_allowed = False
                 uma.hardware_constrained = True
                 uma.swap_policy_tier = "hard_block"
-                uma.swap_gate_reason = "nonfeed_diagnostic: swap={:.2f}GiB > {:.1f}GiB".format(uma.swap_used_gib, HARD_BLOCK_SWAP_GIB)
+                uma.swap_gate_reason = f"nonfeed_diagnostic: swap={uma.swap_used_gib:.2f}GiB > {HARD_BLOCK_SWAP_GIB:.1f}GiB"
                 hardware_constrained = True
                 swap_policy_tier = "hard_block"
                 swap_gate_reason = uma.swap_gate_reason
-                log.append("verdict=RUN_NONFEED_DIAGNOSTIC (feed-only, swap={:.2f}GiB, hard_block)".format(uma.swap_used_gib))
+                log.append(f"verdict=RUN_NONFEED_DIAGNOSTIC (feed-only, swap={uma.swap_used_gib:.2f}GiB, hard_block)")
             log.append("F221G: nonfeed_diagnostic feed-only path selected")
 
         else:
@@ -707,7 +705,7 @@ def merge_cockpit(
                 live_allowed = True
                 uma.hardware_constrained = False
                 uma.swap_policy_tier = "clean"
-                uma.swap_gate_reason = "swap={:.2f}GiB <= {:.1f}GiB threshold".format(uma.swap_used_gib, CLEAN_SWAP_MAX_GIB)
+                uma.swap_gate_reason = f"swap={uma.swap_used_gib:.2f}GiB <= {CLEAN_SWAP_MAX_GIB:.1f}GiB threshold"
                 hardware_constrained = False
                 swap_policy_tier = "clean"
                 swap_gate_reason = uma.swap_gate_reason
@@ -715,27 +713,27 @@ def merge_cockpit(
             elif uma.swap_used_gib <= DIAGNOSTIC_SWAP_MAX_GIB:
                 verdict = Verdict.READY_DIAGNOSTIC_ONLY
                 next_action = NextAction.RUN_WITH_HARDWARE_TAINT
-                next_action_detail = "swap={:.2f}GiB in ({:.1f}GiB, {:.1f}GiB] — hardware taint".format(uma.swap_used_gib, CLEAN_SWAP_MAX_GIB, DIAGNOSTIC_SWAP_MAX_GIB)
+                next_action_detail = f"swap={uma.swap_used_gib:.2f}GiB in ({CLEAN_SWAP_MAX_GIB:.1f}GiB, {DIAGNOSTIC_SWAP_MAX_GIB:.1f}GiB] — hardware taint"
                 live_allowed = True
                 uma.hardware_constrained = True
                 uma.swap_policy_tier = "diagnostic"
-                uma.swap_gate_reason = "swap={:.2f}GiB in ({:.1f}GiB, {:.1f}GiB]".format(uma.swap_used_gib, CLEAN_SWAP_MAX_GIB, DIAGNOSTIC_SWAP_MAX_GIB)
+                uma.swap_gate_reason = f"swap={uma.swap_used_gib:.2f}GiB in ({CLEAN_SWAP_MAX_GIB:.1f}GiB, {DIAGNOSTIC_SWAP_MAX_GIB:.1f}GiB]"
                 hardware_constrained = True
                 swap_policy_tier = "diagnostic"
                 swap_gate_reason = uma.swap_gate_reason
-                log.append("verdict=READY_DIAGNOSTIC_ONLY (swap={:.2f})".format(uma.swap_used_gib))
+                log.append(f"verdict=READY_DIAGNOSTIC_ONLY (swap={uma.swap_used_gib:.2f})")
             else:
                 verdict = Verdict.READY_TO_RESTART_AND_RUN
                 next_action = NextAction.RESTART_THEN_RUN_LIVE
-                next_action_detail = "swap={:.2f}GiB > {:.1f}GiB — restart required".format(uma.swap_used_gib, DIAGNOSTIC_SWAP_MAX_GIB)
+                next_action_detail = f"swap={uma.swap_used_gib:.2f}GiB > {DIAGNOSTIC_SWAP_MAX_GIB:.1f}GiB — restart required"
                 live_allowed = False
                 uma.hardware_constrained = True
                 uma.swap_policy_tier = "hard_block"
-                uma.swap_gate_reason = "swap={:.2f}GiB > {:.1f}GiB".format(uma.swap_used_gib, HARD_BLOCK_SWAP_GIB)
+                uma.swap_gate_reason = f"swap={uma.swap_used_gib:.2f}GiB > {HARD_BLOCK_SWAP_GIB:.1f}GiB"
                 hardware_constrained = True
                 swap_policy_tier = "hard_block"
                 swap_gate_reason = uma.swap_gate_reason
-                log.append("verdict=READY_TO_RESTART_AND_RUN (swap={:.2f})".format(uma.swap_used_gib))
+                log.append(f"verdict=READY_TO_RESTART_AND_RUN (swap={uma.swap_used_gib:.2f})")
 
     # H: Catch-all unknown
     else:
@@ -808,8 +806,8 @@ def render_markdown(result: CockpitResult, profile: str, query: str) -> str:
         "",
         "## Feed Baseline vs Capability Readiness (F234P)",
         "",
-        f"| Capability Axis | Status |",
-        f"|-----------------|--------|",
+        "| Capability Axis | Status |",
+        "|-----------------|--------|",
         f"| **Feed Baseline Allowed** | {'✅ YES' if result.feed_baseline_allowed else '❌ NO'} |",
         f"| **Nonfeed Capability Live Allowed** | {'✅ YES' if result.capability_live_allowed else '❌ NO'} |",
     ])
@@ -847,7 +845,7 @@ def render_markdown(result: CockpitResult, profile: str, query: str) -> str:
         "",
         "## Artifact Pack",
         "",
-        f"| Status | Count |",
+        "| Status | Count |",
         "|--------|-------|",
         f"| Total  | {result.artifact_count} |",
         f"| Ready  | {result.artifact_ready} |",
@@ -915,9 +913,9 @@ def render_markdown(result: CockpitResult, profile: str, query: str) -> str:
         lines.append("Run these probe lanes to restore artifacts:")
         for probe in probes:
             probe_clean = probe.strip()
-            lines.append(f"```bash")
+            lines.append("```bash")
             lines.append(f"python -m pytest tests/{probe_clean} -v --tb=short")
-            lines.append(f"```")
+            lines.append("```")
 
     elif result.next_action == NextAction.FIX_PROVIDER_SURFACE:
         lines.extend(["", "Run provider surface probe lanes:"])
@@ -932,7 +930,7 @@ def render_markdown(result: CockpitResult, profile: str, query: str) -> str:
     elif result.next_action == NextAction.RUN_NONFEED_DIAGNOSTIC:
         lines.extend(["", "F220-like feed-only detected. Run nonfeed diagnostic profile:"])
         lines.append("```bash")
-        cmd = result.next_action_detail or f"python benchmarks/live_sprint_measurement.py --profile nonfeed_diagnostic180 --query \"mozilla.org certificate transparency subdomains april 2026\" --live"
+        cmd = result.next_action_detail or "python benchmarks/live_sprint_measurement.py --profile nonfeed_diagnostic180 --query \"mozilla.org certificate transparency subdomains april 2026\" --live"
         lines.append(cmd)
         lines.append("```")
 

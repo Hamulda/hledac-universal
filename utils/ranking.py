@@ -20,7 +20,7 @@ import hashlib
 import logging
 from collections import defaultdict
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Set, Set
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -41,11 +41,11 @@ class RankedResult:
     id: str
     title: str
     content: str
-    url: Optional[str] = None
+    url: str | None = None
     source: str = "unknown"
     score: float = 0.0
     rank: int = 0
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
     def __hash__(self):
         return hash(self.id)
@@ -72,9 +72,9 @@ class ReciprocalRankFusion:
         ... })
     """
 
-    def __init__(self, config: Optional[RRFConfig] = None):
+    def __init__(self, config: RRFConfig | None = None):
         self.config = config or RRFConfig()
-        self._source_stats: Dict[str, Dict[str, Any]] = defaultdict(dict)
+        self._source_stats: dict[str, dict[str, Any]] = defaultdict(dict)
 
     def _generate_id(self, result: RankedResult) -> str:
         """Generate unique ID for deduplication"""
@@ -90,7 +90,7 @@ class ReciprocalRankFusion:
         return ' '.join(text.lower().split())
 
     def _calculate_similarity(
-        self, r1: RankedResult, r2: RankedResult, cache1: Optional[Set[str]] = None, cache2: Optional[Set[str]] = None
+        self, r1: RankedResult, r2: RankedResult, cache1: set[str] | None = None, cache2: set[str] | None = None
     ) -> float:
         """Calculate simple text similarity for deduplication.
 
@@ -111,11 +111,11 @@ class ReciprocalRankFusion:
 
         return len(intersection) / len(union) if union else 0.0
 
-    def _normalize_and_tokenize(self, result: RankedResult) -> Set[str]:
+    def _normalize_and_tokenize(self, result: RankedResult) -> set[str]:
         """Pre-compute normalized token set for a result (used for dedup cache)."""
         return set(self._normalize_text(result.title + " " + result.content[:300]).split())
 
-    def _remove_duplicates(self, results: List[RankedResult]) -> List[RankedResult]:
+    def _remove_duplicates(self, results: list[RankedResult]) -> list[RankedResult]:
         """Remove near-duplicate results.
 
         Optimized to avoid repeated normalization inside O(n²) comparison loop.
@@ -123,11 +123,11 @@ class ReciprocalRankFusion:
         if not self.config.deduplication:
             return results
 
-        unique_results: List[RankedResult] = []
-        unique_indices: List[int] = []  # Track original indices for cache lookup
+        unique_results: list[RankedResult] = []
+        unique_indices: list[int] = []  # Track original indices for cache lookup
         # Pre-compute normalized token sets for all results upfront
-        token_cache: List[Optional[Set[str]]] = [None] * len(results)
-        url_cache: List[Optional[str]] = [None] * len(results)
+        token_cache: list[set[str] | None] = [None] * len(results)
+        url_cache: list[str | None] = [None] * len(results)
         for i, result in enumerate(results):
             if result.url:
                 url_cache[i] = result.url
@@ -170,9 +170,9 @@ class ReciprocalRankFusion:
 
     def fuse(
         self,
-        source_results: Dict[str, List[RankedResult]],
-        source_weights: Optional[Dict[str, float]] = None
-    ) -> List[RankedResult]:
+        source_results: dict[str, list[RankedResult]],
+        source_weights: dict[str, float] | None = None
+    ) -> list[RankedResult]:
         """
         Fuse results from multiple sources using RRF.
 
@@ -187,9 +187,9 @@ class ReciprocalRankFusion:
             return []
 
         if source_weights is None:
-            source_weights = {source: 1.0 for source in source_results}
+            source_weights = dict.fromkeys(source_results, 1.0)
 
-        result_scores: Dict[str, tuple[RankedResult, float]] = {}
+        result_scores: dict[str, tuple[RankedResult, float]] = {}
 
         for source, results in source_results.items():
             weight = source_weights.get(source, 1.0)
@@ -215,7 +215,7 @@ class ReciprocalRankFusion:
             reverse=True
         )
 
-        final_results: List[RankedResult] = []
+        final_results: list[RankedResult] = []
         for rank, (result, score) in enumerate(sorted_results[:self.config.max_results], start=1):
             result.score = score
             result.rank = rank
@@ -231,7 +231,7 @@ class ReciprocalRankFusion:
 
         return final_results
 
-    def get_source_statistics(self) -> Dict[str, Any]:
+    def get_source_statistics(self) -> dict[str, Any]:
         """Get statistics about recent fusion operations"""
         return dict(self._source_stats)
 
@@ -266,7 +266,7 @@ def rrf_fuse(
         return []
 
     # Accumulate RRF scores for each ID
-    id_scores: Dict[str, float] = defaultdict(float)
+    id_scores: dict[str, float] = defaultdict(float)
 
     for ranked_list in ranked_lists:
         if not ranked_lists:
@@ -286,8 +286,8 @@ class ScoreAggregator:
 
     @staticmethod
     def weighted_average(
-        scores: Dict[str, float],
-        weights: Dict[str, float]
+        scores: dict[str, float],
+        weights: dict[str, float]
     ) -> float:
         """
         Calculate weighted average of scores.
@@ -310,22 +310,22 @@ class ScoreAggregator:
         return total_score / total_weight if total_weight > 0 else 0.0
 
     @staticmethod
-    def max_score(scores: Dict[str, float]) -> float:
+    def max_score(scores: dict[str, float]) -> float:
         """Get maximum score from all sources."""
         return max(scores.values()) if scores else 0.0
 
     @staticmethod
-    def min_score(scores: Dict[str, float]) -> float:
+    def min_score(scores: dict[str, float]) -> float:
         """Get minimum score from all sources."""
         return min(scores.values()) if scores else 0.0
 
 
 # Convenience function
 def fuse_results(
-    source_results: Dict[str, List[RankedResult]],
+    source_results: dict[str, list[RankedResult]],
     k: int = 60,
     max_results: int = 100
-) -> List[RankedResult]:
+) -> list[RankedResult]:
     """
     Quick fusion of results from multiple sources.
 

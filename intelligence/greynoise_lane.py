@@ -21,10 +21,8 @@ from __future__ import annotations
 import logging
 import os
 import time
-from typing import List, Optional, Tuple
 
 import aiohttp
-
 from hledac.universal.knowledge.duckdb_store import CanonicalFinding
 from hledac.universal.utils.rate_limiters import get_limiter
 
@@ -35,11 +33,11 @@ GREYNOISE_FULL_API = "https://api.greynoise.io/v3/query/ip"
 RATE_LIMIT_KEY = "greynoise_api"
 
 
-def _get_api_key() -> Optional[str]:
+def _get_api_key() -> str | None:
     return os.environ.get("GREYNOISE_API_KEY") or None
 
 
-def _build_findings(ip: str, raw_result: dict, ts_now: float) -> List[CanonicalFinding]:
+def _build_findings(ip: str, raw_result: dict, ts_now: float) -> list[CanonicalFinding]:
     findings = []
 
     classification = raw_result.get("classification", "unknown")
@@ -74,9 +72,9 @@ def _build_findings(ip: str, raw_result: dict, ts_now: float) -> List[CanonicalF
 
 async def query_greynoise_ip(
     ip: str,
-    api_key: Optional[str] = None,
+    api_key: str | None = None,
     use_community: bool = False,
-) -> Tuple[List[CanonicalFinding], dict]:
+) -> tuple[list[CanonicalFinding], dict]:
     """
     Query GreyNoise for a single IP and return CanonicalFindings.
 
@@ -159,8 +157,8 @@ async def query_greynoise_ip(
 async def search_greynoise_lane(
     target: str,
     limit: int = 20,
-    api_key: Optional[str] = None,
-) -> Tuple[List[CanonicalFinding], List[dict]]:
+    api_key: str | None = None,
+) -> tuple[list[CanonicalFinding], list[dict]]:
     """
     Query GreyNoise for target IP(s) and return CanonicalFindings.
 
@@ -218,7 +216,7 @@ class GreyNoiseLane:
             "errors": 0,
         }
 
-    async def query(self, target: str) -> List[CanonicalFinding]:
+    async def query(self, target: str) -> list[CanonicalFinding]:
         """Query GreyNoise for target IP(s)."""
         self._stats["queries"] += 1
         findings, _ = await search_greynoise_lane(target, limit=20)

@@ -620,7 +620,6 @@ def _safe_sanitize_xml(raw: str) -> str:
     ):
         return raw
 
-    import re as _re
 
     # ---- Precompute sets ----
     _predefined: frozenset[str] = frozenset(
@@ -1036,7 +1035,7 @@ def _parse_feed_xml(
 # ---------------------------------------------------------------------------
 
 
-def _map_fetch_result_to_source_accessibility(result: "FetchResult") -> str | None:
+def _map_fetch_result_to_source_accessibility(result: FetchResult) -> str | None:
     """Return canonical source_accessibility_error from fetch-layer truth (F170B).
 
     Priority: failure_stage + network_error_kind (F169B structured fields) over

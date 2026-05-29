@@ -2,11 +2,11 @@
 """
 Sprint 6F Tests - FPS Root-Cause + TS Truth Restoration
 """
-import pytest
-import sys
 import asyncio
-import time
 import collections
+import sys
+
+import pytest
 
 sys.path.insert(0, '/Users/vojtechhamada/PycharmProjects/Hledac')
 
@@ -28,13 +28,13 @@ class TestFPSRootCause:
             orch._data_mode = 'OFFLINE_REPLAY'
 
             # Find and call academic_search handler
-            for name, (handler, scorer) in orch._action_registry.items():
+            for name, (handler, _scorer) in orch._action_registry.items():
                 if name == 'academic_search':
                     result = await handler('test query')
                     # Should succeed with mock findings (no real HTTP)
                     assert result.success, f"Expected success in OFFLINE_REPLAY, got {result.error}"
                     assert len(result.findings) > 0, "Should return mock findings"
-                    assert result.metadata.get('offline_replay') == True
+                    assert result.metadata.get('offline_replay')
                     break
 
         asyncio.run(run())
@@ -56,7 +56,7 @@ class TestUCB1Warmup:
             assert hasattr(orch, '_UCB1_WARMUP_MIN_EXECUTIONS')
             assert hasattr(orch, '_UCB1_WARMUP_ENABLED')
             assert orch._UCB1_WARMUP_MIN_EXECUTIONS == 20
-            assert orch._UCB1_WARMUP_ENABLED == True
+            assert orch._UCB1_WARMUP_ENABLED
 
         asyncio.run(run())
 
@@ -122,7 +122,7 @@ class TestScoreHackRemoval:
             await orch._initialize_actions()
 
             network_recon = None
-            for name, (handler, scorer) in orch._action_registry.items():
+            for name, (_handler, scorer) in orch._action_registry.items():
                 if name == 'network_recon':
                     network_recon = (name, scorer)
                     break
@@ -148,7 +148,7 @@ class TestScoreHackRemoval:
             await orch._initialize_actions()
 
             academic_search = None
-            for name, (handler, scorer) in orch._action_registry.items():
+            for name, (_handler, scorer) in orch._action_registry.items():
                 if name == 'academic_search':
                     academic_search = (name, scorer)
                     break

@@ -21,14 +21,14 @@ import struct
 import threading
 import time
 from abc import ABC, abstractmethod
+from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import datetime
 from difflib import SequenceMatcher
 from enum import Enum
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set, Tuple
-from collections import OrderedDict
+from typing import Any
 
 import numpy as np
 
@@ -54,32 +54,32 @@ class DeduplicationConfig:
     semantic_threshold: float = 0.85
     content_threshold: float = 0.90
     metadata_threshold: float = 0.95
-    
+
     # Strategy settings
-    strategies: List[DeduplicationStrategy] = field(default_factory=lambda: [
+    strategies: list[DeduplicationStrategy] = field(default_factory=lambda: [
         DeduplicationStrategy.SEMANTIC,
         DeduplicationStrategy.CONTENT,
         DeduplicationStrategy.METADATA
     ])
-    
+
     # MinHash settings
     enable_minhash: bool = True
     minhash_threshold: float = 0.80
     minhash_size: int = 128
     ngram_size: int = 5
-    
+
     # Embedding settings (ModernBERT-base)
     embedding_dim: int = 768
     embedding_model: str = "nomic-ai/nomic-embed-text-v1.5"
-    
+
     # Memory settings
     cache_size_mb: int = 256
     memory_limit_mb: int = 1024
     max_concurrent_threads: int = 4
-    
+
     # Hash algorithm
     hash_algorithm: str = "sha256"
-    
+
     # Processing
     batch_size: int = 100
     enable_parallel_processing: bool = True
@@ -99,9 +99,9 @@ class QueryItem:
     content: str
     url: str
     source: str
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
     timestamp: datetime = field(default_factory=datetime.now)
-    
+
     @property
     def content_hash(self) -> str:
         """Generate content hash."""
@@ -115,7 +115,7 @@ class SimilarityScore:
     score: float
     strategy: DeduplicationStrategy
     confidence: float
-    details: Dict[str, Any] = field(default_factory=dict)
+    details: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -131,13 +131,13 @@ class DeduplicationMatch:
 @dataclass
 class DeduplicationResult:
     """Result of deduplication process."""
-    original_items: List[QueryItem]
-    unique_items: List[QueryItem]
-    duplicates_removed: List[QueryItem]
-    matches: List[DeduplicationMatch]
+    original_items: list[QueryItem]
+    unique_items: list[QueryItem]
+    duplicates_removed: list[QueryItem]
+    matches: list[DeduplicationMatch]
     processing_time: float
-    stats: 'DeduplicationStats' = field(default_factory=lambda: DeduplicationStats())
-    
+    stats: DeduplicationStats = field(default_factory=lambda: DeduplicationStats())
+
     @property
     def deduplication_rate(self) -> float:
         """Calculate deduplication rate."""
@@ -154,12 +154,12 @@ class DeduplicationStats:
     items_removed: int = 0
     processing_time: float = 0.0
     memory_peak_mb: float = 0.0
-    
+
     # Strategy stats
     semantic_comparisons: int = 0
     content_comparisons: int = 0
     metadata_comparisons: int = 0
-    
+
     # Cache stats
     cache_hits: int = 0
     cache_misses: int = 0
@@ -171,18 +171,18 @@ class DeduplicationStats:
 
 class BaseDeduplicator(ABC):
     """Abstract base class for deduplicators."""
-    
+
     def __init__(self, config: DeduplicationConfig):
         self.config = config
         self.logger = logging.getLogger(f"dedup.{self.__class__.__name__}")
-    
+
     @abstractmethod
     async def find_duplicates(
-        self, item: QueryItem, candidates: List[QueryItem]
-    ) -> List[DeduplicationMatch]:
+        self, item: QueryItem, candidates: list[QueryItem]
+    ) -> list[DeduplicationMatch]:
         """Find duplicates for an item among candidates."""
         pass
-    
+
     @abstractmethod
     async def cleanup(self):
         """Cleanup resources."""
@@ -201,7 +201,7 @@ class SemanticDeduplicator(BaseDeduplicator):
 
     def __init__(self, config: DeduplicationConfig):
         super().__init__(config)
-        self.embedding_cache: OrderedDict[str, np.ndarray] = OrderedDict()
+        self.embedding_cache: Ordereddict[str, np.ndarray] = OrderedDict()
         self.embedding_cache_size = 0
         self.max_cache_size_mb = 256
         self._embedding_model = None
@@ -210,7 +210,7 @@ class SemanticDeduplicator(BaseDeduplicator):
         # SimHash for LSH clustering
         self._simhash = SimHash(hashbits=64)
 
-    def _cluster_by_simhash(self, items: List[QueryItem], simhash_bits: int = 16) -> Dict[int, List[QueryItem]]:
+    def _cluster_by_simhash(self, items: list[QueryItem], simhash_bits: int = 16) -> dict[int, list[QueryItem]]:
         """Group items into LSH buckets using SimHash for near-linear deduplication."""
         from collections import defaultdict
         clusters = defaultdict(list)
@@ -221,22 +221,22 @@ class SemanticDeduplicator(BaseDeduplicator):
         return clusters
 
     async def find_duplicates(
-        self, item: QueryItem, candidates: List[QueryItem]
-    ) -> List[DeduplicationMatch]:
+        self, item: QueryItem, candidates: list[QueryItem]
+    ) -> list[DeduplicationMatch]:
         """Find semantically similar items."""
         if not candidates:
             return []
-        
+
         try:
             item_embedding = await self._get_embedding(item)
             candidate_embeddings = await self._get_batch_embeddings(candidates)
-            
+
             matches = []
             for i, candidate in enumerate(candidates):
                 candidate_embedding = candidate_embeddings[i]
                 if candidate_embedding is not None:
                     similarity = self._compute_cosine_similarity(item_embedding, candidate_embedding)
-                    
+
                     if similarity >= self.config.semantic_threshold:
                         score = SimilarityScore(
                             score=similarity,
@@ -256,13 +256,13 @@ class SemanticDeduplicator(BaseDeduplicator):
                             decision="pending"
                         )
                         matches.append(match)
-            
+
             return matches
-            
+
         except Exception as e:
             self.logger.error(f"Semantic deduplication failed: {e}")
             return []
-    
+
     async def _get_embedding(self, item: QueryItem) -> np.ndarray:
         """Get embedding for a single item."""
         content = item.content.lower().strip()
@@ -283,10 +283,10 @@ class SemanticDeduplicator(BaseDeduplicator):
             self.embedding_cache_size += embedding.nbytes
 
         return embedding
-    
+
     async def _get_batch_embeddings(
-        self, items: List[QueryItem]
-    ) -> List[Optional[np.ndarray]]:
+        self, items: list[QueryItem]
+    ) -> list[np.ndarray | None]:
         """Get embeddings for a batch of items."""
         if not items:
             return []
@@ -308,7 +308,7 @@ class SemanticDeduplicator(BaseDeduplicator):
         if uncached_contents:
             new_embeddings = await self._generate_batch_embeddings(uncached_contents)
 
-            for idx, content, embedding in zip(uncached_indices, uncached_contents, new_embeddings):
+            for idx, content, embedding in zip(uncached_indices, uncached_contents, new_embeddings, strict=False):
                 if embedding is not None and self._can_cache_embedding(embedding):
                     # Enforce hard item cap
                     while len(self.embedding_cache) >= self.MAX_EMBED_CACHE_ITEMS:
@@ -320,7 +320,7 @@ class SemanticDeduplicator(BaseDeduplicator):
                 cached_embeddings[idx] = embedding
 
         return cached_embeddings
-    
+
     async def _generate_embedding(self, content: str) -> np.ndarray:
         """Generate embedding for content using dedup-specific task."""
         try:
@@ -336,10 +336,10 @@ class SemanticDeduplicator(BaseDeduplicator):
             self.logger.debug(f"Embedding generation failed: {e}")
 
         return self._fallback_embedding(content)
-    
+
     async def _generate_batch_embeddings(
-        self, contents: List[str]
-    ) -> List[Optional[np.ndarray]]:
+        self, contents: list[str]
+    ) -> list[np.ndarray | None]:
         """Generate embeddings for batch of contents using dedup-specific task."""
         try:
             if not self._model_loaded:
@@ -350,7 +350,7 @@ class SemanticDeduplicator(BaseDeduplicator):
                     return [self._embedding_model.embed_for_dedup(c) for c in contents]
                 # Fallback for sentence-transformers
                 batch_embeddings = self._embedding_model.encode(contents)
-                return [emb for emb in batch_embeddings]
+                return list(batch_embeddings)
         except Exception as e:
             self.logger.debug(f"Batch embedding failed: {e}")
 
@@ -362,7 +362,7 @@ class SemanticDeduplicator(BaseDeduplicator):
             except Exception:
                 embeddings.append(None)
         return embeddings
-    
+
     async def _load_model(self):
         """Load MLXEmbeddingManager first, then sentence-transformers fallback, then hash-based."""
         # Sprint 81 Fáze 4: Try MLXEmbeddingManager first (ModernBERT via MLX)
@@ -393,33 +393,33 @@ class SemanticDeduplicator(BaseDeduplicator):
             self.logger.warning("sentence-transformers not available, using fallback embedding")
         except Exception as e:
             self.logger.error(f"Failed to load sentence transformer model: {e}")
-    
+
     def _fallback_embedding(self, content: str) -> np.ndarray:
         """Generate fallback embedding using hash-based approach."""
         words = content.split()[:100]
         embedding = np.zeros(self.config.embedding_dim, dtype=np.float32)
-        
+
         for i, word in enumerate(words):
             if i >= self.config.embedding_dim:
                 break
-            
+
             word_hash = hashlib.md5(word.encode()).hexdigest()
             word_vector = float(int(word_hash[:8], 16)) / (2**32 - 1)
             embedding[i] = word_vector * (1.0 - i / len(words))
-        
+
         # F214OPT-J: Deterministic noise — same content always produces same embedding
         content_bytes = content.encode("utf-8")
         hash_digest = hashlib.blake2b(content_bytes, digest_size=16).digest()
         seed = int.from_bytes(hash_digest[:4], "little")
         rng = np.random.RandomState(seed)
         embedding += rng.normal(0, 0.01, self.config.embedding_dim)
-        
+
         norm = np.linalg.norm(embedding)
         if norm > 0:
             embedding = embedding / norm
-        
+
         return embedding.astype(np.float32)
-    
+
     def _compute_cosine_similarity(self, emb1: np.ndarray, emb2: np.ndarray) -> float:
         """Compute cosine similarity between two embeddings."""
         dot_product = np.dot(emb1, emb2)
@@ -431,7 +431,7 @@ class SemanticDeduplicator(BaseDeduplicator):
 
         return float(dot_product / (norm1 * norm2))
 
-    def _cluster_by_simhash(self, items: List[QueryItem], simhash_bits: int = 16) -> Dict[int, List[QueryItem]]:
+    def _cluster_by_simhash(self, items: list[QueryItem], simhash_bits: int = 16) -> dict[int, list[QueryItem]]:
         """Group items into LSH buckets using SimHash for near-linear deduplication."""
         from collections import defaultdict
         clusters = defaultdict(list)
@@ -440,13 +440,13 @@ class SemanticDeduplicator(BaseDeduplicator):
             bucket = simhash_val & ((1 << simhash_bits) - 1)
             clusters[bucket].append(item)
         return clusters
-    
+
     def _can_cache_embedding(self, embedding: np.ndarray) -> bool:
         """Check if we can cache embedding within memory limits."""
         embedding_size_mb = embedding.nbytes / (1024 * 1024)
         current_cache_mb = self.embedding_cache_size / (1024 * 1024)
         return (current_cache_mb + embedding_size_mb) <= self.max_cache_size_mb
-    
+
     async def cleanup(self):
         """Cleanup resources."""
         self.executor.shutdown(wait=True)
@@ -469,7 +469,7 @@ class ContentDeduplicator(BaseDeduplicator):
 
     def __init__(self, config: DeduplicationConfig):
         super().__init__(config)
-        self.content_cache: Dict[str, Dict[str, Any]] = {}
+        self.content_cache: dict[str, dict[str, Any]] = {}
         self.cache_size = 0
         self.max_cache_size_mb = 128
         self.executor = ThreadPoolExecutor(
@@ -479,7 +479,7 @@ class ContentDeduplicator(BaseDeduplicator):
         # SimHash for LSH clustering
         self._simhash = SimHash(hashbits=64)
 
-    def _cluster_by_simhash(self, items: List[QueryItem], simhash_bits: int = 16) -> Dict[int, List[QueryItem]]:
+    def _cluster_by_simhash(self, items: list[QueryItem], simhash_bits: int = 16) -> dict[int, list[QueryItem]]:
         """Group items into LSH buckets using SimHash for near-linear deduplication."""
         from collections import defaultdict
         clusters = defaultdict(list)
@@ -490,8 +490,8 @@ class ContentDeduplicator(BaseDeduplicator):
         return clusters
 
     async def find_duplicates(
-        self, item: QueryItem, candidates: List[QueryItem]
-    ) -> List[DeduplicationMatch]:
+        self, item: QueryItem, candidates: list[QueryItem]
+    ) -> list[DeduplicationMatch]:
         """Find content-based duplicates using LSH clustering for O(n) performance."""
         if not candidates:
             return []
@@ -553,46 +553,46 @@ class ContentDeduplicator(BaseDeduplicator):
         except Exception as e:
             self.logger.error(f"Content deduplication failed: {e}")
             return []
-    
-    async def _get_content_signature(self, item: QueryItem) -> Dict[str, Any]:
+
+    async def _get_content_signature(self, item: QueryItem) -> dict[str, Any]:
         """Generate content signature for an item."""
         content = item.content.strip()
-        
+
         if content in self.content_cache:
             return self.content_cache[content]
-        
+
         signature = await asyncio.get_running_loop().run_in_executor(
             self.executor, self._generate_signature, content
         )
-        
+
         signature_size = len(str(signature)) / (1024 * 1024)
         if (self.cache_size + signature_size) <= self.max_cache_size_mb:
             self.content_cache[content] = signature
             self.cache_size += signature_size
-        
+
         return signature
-    
-    def _generate_signature(self, content: str) -> Dict[str, Any]:
+
+    def _generate_signature(self, content: str) -> dict[str, Any]:
         """Generate complete content signature."""
         signature = {}
-        
+
         # Exact hash
         signature["hash"] = self._compute_hash(content)
-        
+
         # Character-level hash
         signature["char_hash"] = self._compute_character_hash(content)
-        
+
         # MinHash signature
         if self.config.enable_minhash:
             signature["minhash"] = self._compute_minhash(content)
-        
+
         # Content statistics
         signature["length"] = len(content)
         signature["word_count"] = len(content.split())
         signature["unique_words"] = len(set(content.lower().split()))
-        
+
         return signature
-    
+
     def _compute_hash(self, content: str) -> str:
         """Compute exact content hash."""
         if self.config.hash_algorithm == "sha256":
@@ -616,8 +616,8 @@ class ContentDeduplicator(BaseDeduplicator):
         """Compute character-level hash."""
         normalized = " ".join(content.lower().split())
         return hashlib.sha256(normalized.encode()).hexdigest()
-    
-    def _compute_minhash(self, content: str) -> List[int]:
+
+    def _compute_minhash(self, content: str) -> list[int]:
         """
         Compute MinHash signature for content similarity.
 
@@ -660,55 +660,55 @@ class ContentDeduplicator(BaseDeduplicator):
             minhash_signature.append(min_hash)
 
         return minhash_signature
-    
-    def _generate_ngrams(self, content: str, n: int) -> List[str]:
+
+    def _generate_ngrams(self, content: str, n: int) -> list[str]:
         """Generate n-grams from content."""
         content = content.lower().replace("\n", " ").strip()
-        
+
         if len(content) < n:
             return [content]
-        
+
         ngrams = []
         for i in range(len(content) - n + 1):
             ngram = content[i:i + n]
             if ngram.strip():
                 ngrams.append(ngram)
-        
+
         return ngrams
-    
+
     def _compute_hash_similarity(
-        self, sig1: Dict[str, Any], sig2: Dict[str, Any]
+        self, sig1: dict[str, Any], sig2: dict[str, Any]
     ) -> float:
         """Compute hash-based similarity."""
         if sig1["hash"] == sig2["hash"]:
             return 1.0
-        
+
         if sig1.get("char_hash") == sig2.get("char_hash"):
             return 0.95
-        
+
         length_diff = abs(sig1["length"] - sig2["length"])
         max_length = max(sig1["length"], sig2["length"])
         length_similarity = 1.0 - (length_diff / max_length) if max_length > 0 else 0.0
-        
+
         word_diff = abs(sig1["word_count"] - sig2["word_count"])
         max_words = max(sig1["word_count"], sig2["word_count"])
         word_similarity = 1.0 - (word_diff / max_words) if max_words > 0 else 0.0
-        
+
         return length_similarity * 0.4 + word_similarity * 0.3 + 0.3
-    
+
     def _compute_minhash_similarity(
-        self, minhash1: Optional[List[int]], minhash2: Optional[List[int]]
+        self, minhash1: list[int] | None, minhash2: list[int] | None
     ) -> float:
         """Compute MinHash Jaccard similarity."""
         if not minhash1 or not minhash2:
             return 0.0
-        
+
         if len(minhash1) != len(minhash2):
             return 0.0
-        
-        matches = sum(1 for h1, h2 in zip(minhash1, minhash2) if h1 == h2)
+
+        matches = sum(1 for h1, h2 in zip(minhash1, minhash2, strict=False) if h1 == h2)
         return matches / len(minhash1)
-    
+
     async def cleanup(self):
         """Cleanup resources."""
         self.executor.shutdown(wait=True)
@@ -726,7 +726,7 @@ class ContentDeduplicator(BaseDeduplicator):
 
 class MetadataDeduplicator(BaseDeduplicator):
     """Metadata-based deduplication using field comparison."""
-    
+
     def __init__(self, config: DeduplicationConfig):
         super().__init__(config)
         self.field_weights = {
@@ -737,30 +737,30 @@ class MetadataDeduplicator(BaseDeduplicator):
             "author": 0.1
         }
         self.stop_words = self._get_stop_words()
-        self.normalization_cache: Dict[str, str] = {}
+        self.normalization_cache: dict[str, str] = {}
         self.executor = ThreadPoolExecutor(max_workers=3, thread_name_prefix="metadata-process")
-    
+
     async def find_duplicates(
-        self, item: QueryItem, candidates: List[QueryItem]
-    ) -> List[DeduplicationMatch]:
+        self, item: QueryItem, candidates: list[QueryItem]
+    ) -> list[DeduplicationMatch]:
         """Find metadata-based duplicates."""
         if not candidates:
             return []
-        
+
         matches = []
-        
+
         try:
             item_metadata = await self._extract_and_normalize_metadata(item)
-            
+
             for candidate in candidates:
                 candidate_metadata = await self._extract_and_normalize_metadata(candidate)
-                
+
                 field_similarities = await self._compute_field_similarities(
                     item_metadata, candidate_metadata
                 )
-                
+
                 overall_similarity = self._compute_weighted_similarity(field_similarities)
-                
+
                 if overall_similarity >= self.config.metadata_threshold:
                     score = SimilarityScore(
                         score=overall_similarity,
@@ -779,14 +779,14 @@ class MetadataDeduplicator(BaseDeduplicator):
                         decision="pending"
                     )
                     matches.append(match)
-            
+
             return matches
-            
+
         except Exception as e:
             self.logger.error(f"Metadata deduplication failed: {e}")
             return []
-    
-    async def _extract_and_normalize_metadata(self, item: QueryItem) -> Dict[str, Any]:
+
+    async def _extract_and_normalize_metadata(self, item: QueryItem) -> dict[str, Any]:
         """Extract and normalize metadata fields."""
         metadata = {
             "title": item.title,
@@ -796,16 +796,16 @@ class MetadataDeduplicator(BaseDeduplicator):
             "timestamp": item.timestamp.isoformat() if item.timestamp else ""
         }
         metadata.update(item.metadata)
-        
+
         normalized_metadata = {}
         for field, value in metadata.items():
             if value is not None:
                 normalized_value = await self._normalize_field_value(field, value)
                 if normalized_value:
                     normalized_metadata[field] = normalized_value
-        
+
         return normalized_metadata
-    
+
     async def _normalize_field_value(self, field: str, value: Any) -> Any:
         """Normalize a metadata field value."""
         if isinstance(value, str):
@@ -814,21 +814,21 @@ class MetadataDeduplicator(BaseDeduplicator):
             return [await self._normalize_text(str(v)) for v in value if v is not None]
         else:
             return str(value)
-    
+
     async def _normalize_text(self, text: str) -> str:
         """Normalize text for comparison."""
         if text in self.normalization_cache:
             return self.normalization_cache[text]
-        
+
         normalized = await asyncio.get_running_loop().run_in_executor(
             self.executor, self._normalize_text_sync, text
         )
-        
+
         if len(self.normalization_cache) < 10000:
             self.normalization_cache[text] = normalized
-        
+
         return normalized
-    
+
     def _normalize_text_sync(self, text: str) -> str:
         """Synchronous text normalization."""
         text = text.lower().strip()
@@ -837,88 +837,88 @@ class MetadataDeduplicator(BaseDeduplicator):
         words = text.split()
         words = [w for w in words if w not in self.stop_words]
         return " ".join(words)
-    
+
     async def _compute_field_similarities(
-        self, metadata1: Dict[str, Any], metadata2: Dict[str, Any]
-    ) -> Dict[str, float]:
+        self, metadata1: dict[str, Any], metadata2: dict[str, Any]
+    ) -> dict[str, float]:
         """Compute similarities for each field."""
         similarities = {}
         all_fields = set(metadata1.keys()) | set(metadata2.keys())
-        
+
         for field in all_fields:
             value1 = metadata1.get(field)
             value2 = metadata2.get(field)
-            
+
             if value1 is None or value2 is None:
                 similarities[field] = 0.0
                 continue
-            
+
             if field in ["title", "url"]:
                 similarities[field] = await self._text_similarity(str(value1), str(value2))
             elif field in ["source", "author"]:
                 similarities[field] = 1.0 if str(value1).lower() == str(value2).lower() else 0.0
             else:
                 similarities[field] = self._generic_similarity(value1, value2)
-        
+
         return similarities
-    
+
     async def _text_similarity(self, text1: str, text2: str) -> float:
         """Compute text similarity."""
         if not text1 or not text2:
             return 0.0
-        
+
         if text1 == text2:
             return 1.0
-        
+
         seq_similarity = SequenceMatcher(None, text1, text2).ratio()
-        
+
         words1 = set(text1.split())
         words2 = set(text2.split())
-        
+
         if not words1 or not words2:
             jaccard_similarity = 0.0
         else:
             intersection = len(words1 & words2)
             union = len(words1 | words2)
             jaccard_similarity = intersection / union if union > 0 else 0.0
-        
+
         return seq_similarity * 0.6 + jaccard_similarity * 0.4
-    
+
     def _generic_similarity(self, value1: Any, value2: Any) -> float:
         """Compute generic similarity."""
         str1 = str(value1).lower().strip()
         str2 = str(value2).lower().strip()
-        
+
         if str1 == str2:
             return 1.0
-        
+
         return SequenceMatcher(None, str1, str2).ratio()
-    
-    def _compute_weighted_similarity(self, field_similarities: Dict[str, float]) -> float:
+
+    def _compute_weighted_similarity(self, field_similarities: dict[str, float]) -> float:
         """Compute weighted similarity."""
         weighted_sum = 0.0
         total_weight = 0.0
-        
+
         for field, similarity in field_similarities.items():
             weight = self.field_weights.get(field, 0.1)
             weighted_sum += similarity * weight
             total_weight += weight
-        
+
         return weighted_sum / total_weight if total_weight > 0 else 0.0
-    
-    def _get_stop_words(self) -> Set[str]:
+
+    def _get_stop_words(self) -> set[str]:
         """Get common stop words."""
         return {
             "a", "an", "and", "are", "as", "at", "be", "by", "for",
             "from", "has", "he", "in", "is", "it", "its", "of", "on",
-            "that", "the", "to", "was", "will", "with", "the", "this",
+            "that", "the", "to", "was", "will", "with", "this",
             "but", "they", "have", "had", "what", "said", "each",
             "which", "their", "time", "if", "about", "up", "out",
             "many", "then", "them", "these", "so", "some", "her",
             "would", "make", "like", "into", "him", "two", "more",
             "very", "after", "words", "long", "than", "first", "been"
         }
-    
+
     async def cleanup(self):
         """Cleanup resources."""
         self.executor.shutdown(wait=True)
@@ -936,66 +936,66 @@ class MetadataDeduplicator(BaseDeduplicator):
 
 class DeduplicationEngine:
     """Main deduplication engine with multi-strategy support."""
-    
-    def __init__(self, config: Optional[DeduplicationConfig] = None):
+
+    def __init__(self, config: DeduplicationConfig | None = None):
         self.config = config or DeduplicationConfig()
         self.logger = logging.getLogger("dedup.engine")
-        
+
         # Initialize deduplicators
         self.semantic_dedup = SemanticDeduplicator(self.config)
         self.content_dedup = ContentDeduplicator(self.config)
         self.metadata_dedup = MetadataDeduplicator(self.config)
-        
+
         # Thread safety
         self._lock = threading.RLock()
         self._processing = False
-        
+
         # Statistics
         self.stats = DeduplicationStats()
-        
+
         self.logger.info("DeduplicationEngine initialized")
-    
-    async def deduplicate(self, items: List[QueryItem]) -> DeduplicationResult:
+
+    async def deduplicate(self, items: list[QueryItem]) -> DeduplicationResult:
         """Deduplicate list of query items."""
         start_time = time.time()
-        
+
         if self._processing:
             raise RuntimeError("Deduplication already in progress")
-        
+
         with self._lock:
             self._processing = True
-        
+
         try:
             self.logger.info(f"Starting deduplication of {len(items)} items")
-            
+
             self.stats = DeduplicationStats()
             self.stats.total_items_processed = len(items)
-            
+
             # Process in batches
             batch_size = min(self.config.batch_size, len(items))
             all_matches = []
             seen_hashes = set()
             unique_items = []
             duplicates_removed = []
-            
+
             for i in range(0, len(items), batch_size):
                 batch = items[i:i + batch_size]
                 batch_result = await self._process_batch(batch)
-                
+
                 for item in batch:
                     if item.content_hash in seen_hashes:
                         duplicates_removed.append(item)
                     else:
                         unique_items.append(item)
                         seen_hashes.add(item.content_hash)
-                
+
                 all_matches.extend(batch_result)
-            
+
             processing_time = time.time() - start_time
             self.stats.processing_time = processing_time
             self.stats.items_kept = len(unique_items)
             self.stats.items_removed = len(duplicates_removed)
-            
+
             dedup_result = DeduplicationResult(
                 original_items=items,
                 unique_items=unique_items,
@@ -1004,34 +1004,34 @@ class DeduplicationEngine:
                 processing_time=processing_time,
                 stats=self.stats
             )
-            
+
             self.logger.info(
                 f"Deduplication complete: {len(duplicates_removed)}/{len(items)} removed "
                 f"({dedup_result.deduplication_rate:.2%} rate, {processing_time:.2f}s)"
             )
-            
+
             return dedup_result
-            
+
         finally:
             with self._lock:
                 self._processing = False
-    
-    async def _process_batch(self, batch: List[QueryItem]) -> List[DeduplicationMatch]:
+
+    async def _process_batch(self, batch: list[QueryItem]) -> list[DeduplicationMatch]:
         """Process a batch of items."""
         matches = []
-        
+
         for i, current_item in enumerate(batch):
             item_matches = await self._find_duplicates(current_item, batch[i + 1:])
             matches.extend(item_matches)
-        
+
         return matches
-    
+
     async def _find_duplicates(
-        self, item: QueryItem, candidates: List[QueryItem]
-    ) -> List[DeduplicationMatch]:
+        self, item: QueryItem, candidates: list[QueryItem]
+    ) -> list[DeduplicationMatch]:
         """Find duplicates for an item."""
         all_matches = []
-        
+
         for strategy in self.config.strategies:
             if strategy == DeduplicationStrategy.SEMANTIC:
                 self.stats.semantic_comparisons += 1
@@ -1044,44 +1044,44 @@ class DeduplicationEngine:
                 matches = await self.metadata_dedup.find_duplicates(item, candidates)
             else:
                 continue
-            
+
             all_matches.extend(matches)
-        
+
         # Deduplicate matches
         unique_matches = self._deduplicate_matches(all_matches)
-        
+
         return unique_matches
-    
-    def _deduplicate_matches(self, matches: List[DeduplicationMatch]) -> List[DeduplicationMatch]:
+
+    def _deduplicate_matches(self, matches: list[DeduplicationMatch]) -> list[DeduplicationMatch]:
         """Deduplicate matches and apply decision logic."""
-        matched_items: Dict[str, List[DeduplicationMatch]] = {}
-        
+        matched_items: dict[str, list[DeduplicationMatch]] = {}
+
         for match in matches:
             key = match.matched_item.id
             if key not in matched_items:
                 matched_items[key] = []
             matched_items[key].append(match)
-        
+
         unique_matches = []
         for matches_group in matched_items.values():
             matches_group.sort(key=lambda m: m.similarity_score.score, reverse=True)
             best_match = matches_group[0]
-            
+
             if best_match.similarity_score.score >= 0.85:
                 best_match.decision = "remove"
             elif best_match.similarity_score.score >= 0.70:
                 best_match.decision = "merge"
             else:
                 best_match.decision = "keep"
-            
+
             unique_matches.append(best_match)
-        
+
         return unique_matches
-    
+
     def get_statistics(self) -> DeduplicationStats:
         """Get current statistics."""
         return self.stats
-    
+
     async def cleanup(self):
         """Cleanup resources."""
         await self.semantic_dedup.cleanup()
@@ -1114,12 +1114,12 @@ class DomainStats:
     total_latency_ms: float = 0.0
     http_errors: int = 0
     robots_blocked: int = 0
-    last_request_at: Optional[float] = None
+    last_request_at: float | None = None
     yield_score: float = 1.0  # 0-1, klesa pri nizkem yieldu
     first_seen_at: float = field(default_factory=time.time)
     # Stale cache tracking
     stale_cache_hits: int = 0  # Number of times stale cache was used for this domain
-    last_stale_hit_at: Optional[float] = None
+    last_stale_hit_at: float | None = None
 
     @property
     def avg_latency_ms(self) -> float:
@@ -1187,7 +1187,7 @@ class DomainStats:
             stale_penalty = min(0.2, self.stale_cache_hits / max(1, self.requests))
             self.yield_score = max(0.1, raw_yield - error_penalty - stale_penalty)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Serialize to dict for persistence."""
         return {
             'domain': self.domain,
@@ -1205,7 +1205,7 @@ class DomainStats:
         }
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> 'DomainStats':
+    def from_dict(cls, data: dict[str, Any]) -> DomainStats:
         """Create from dict."""
         stats = cls(domain=data['domain'])
         stats.requests = data.get('requests', 0)
@@ -1225,12 +1225,12 @@ class DomainStats:
 class DomainStatsManager:
     """Spravuje DomainStats s persistenci na disk - M1 8GB."""
 
-    def __init__(self, storage_dir: Optional[Path] = None, max_domains: int = 500):
+    def __init__(self, storage_dir: Path | None = None, max_domains: int = 500):
         from pathlib import Path
         self._storage_dir = storage_dir or Path.home() / '.hledac' / 'domain_stats'
         self._storage_dir.mkdir(parents=True, exist_ok=True)
         self._max_domains = max_domains
-        self._stats: Dict[str, DomainStats] = {}
+        self._stats: dict[str, DomainStats] = {}
         self._load_stats()
 
     def _get_storage_path(self) -> Path:
@@ -1241,7 +1241,7 @@ class DomainStatsManager:
         path = self._get_storage_path()
         if path.exists():
             try:
-                with open(path, 'r') as f:
+                with open(path) as f:
                     data = json.load(f)
                 for domain, stats_data in data.items():
                     self._stats[domain] = DomainStats.from_dict(stats_data)
@@ -1280,10 +1280,10 @@ class DomainStatsManager:
             return 0.2  # 20% penalty
         return 0.0
 
-    def get_all_stats(self) -> Dict[str, DomainStats]:
+    def get_all_stats(self) -> dict[str, DomainStats]:
         return dict(self._stats)
 
-    def get_summary(self) -> Dict[str, Any]:
+    def get_summary(self) -> dict[str, Any]:
         """Get summary stats for all domains."""
         if not self._stats:
             return {'total_domains': 0}
@@ -1303,7 +1303,7 @@ class DomainStatsManager:
 # =============================================================================
 
 # Thread-safe cache for token hashes (bounded, shared between instances)
-_TOKEN_HASH_CACHE: Dict[Tuple[str, int], int] = {}
+_TOKEN_HASH_CACHE: dict[tuple[str, int], int] = {}
 _TOKEN_HASH_CACHE_LOCK = threading.Lock()
 _MAX_TOKEN_CACHE = 10000
 
@@ -1311,12 +1311,12 @@ _MAX_TOKEN_CACHE = 10000
 class SimHash:
     """SimHash (64-bit) s persistetním seedem a thread-safe token cache - M1 8GB optimized."""
 
-    def __init__(self, hashbits: int = 64, seed: Optional[int] = None):
+    def __init__(self, hashbits: int = 64, seed: int | None = None):
         self.hashbits = hashbits
         if seed is None:
             seed_file = Path.home() / '.hledac' / 'simhash_seed.txt'
             if seed_file.exists():
-                with open(seed_file, 'r') as f:
+                with open(seed_file) as f:
                     seed = int(f.read().strip())
             else:
                 seed = secrets.randbits(64)
@@ -1329,7 +1329,7 @@ class SimHash:
                 temp.replace(seed_file)
         self.seed = seed
 
-    def _tokenize(self, text: str) -> List[str]:
+    def _tokenize(self, text: str) -> list[str]:
         """Tokenization - shingle by 3 words."""
         words = text.lower().split()
         if len(words) < 3:

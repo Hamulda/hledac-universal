@@ -1,7 +1,7 @@
 """Tests for prompt cache - LRU, trigram similarity, TTL."""
-import pytest
 import time
-from unittest.mock import patch, MagicMock
+
+import pytest
 
 
 class TestPromptCacheBasic:

@@ -7,23 +7,20 @@ import hashlib
 import sys
 import time
 import unittest
-from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch, mock_open
 from collections import OrderedDict
-import tempfile
-import os
+from pathlib import Path
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
-from typing import List, Dict, Any
 
 # Import tested classes
-from hledac.universal.intelligence.document_intelligence import StegdetectServer
-from hledac.universal.tools.osint_frameworks import OSINTFrameworkRunner
 from hledac.universal.brain.hermes3_engine import Hermes3Engine
+from hledac.universal.intelligence.document_intelligence import StegdetectServer
 from hledac.universal.layers.communication_layer import CommunicationLayer
 from hledac.universal.project_types import CommunicationConfig
+from hledac.universal.tools.osint_frameworks import OSINTFrameworkRunner
 
 
 class TestSprint47(unittest.IsolatedAsyncioTestCase):
@@ -79,7 +76,7 @@ class TestSprint47(unittest.IsolatedAsyncioTestCase):
             ))
             mock_exec.return_value = mock_proc
 
-            findings = await runner.run_sherlock('testuser')
+            await runner.run_sherlock('testuser')
 
             # Check --json was passed
             args = mock_exec.call_args[0]
@@ -238,10 +235,10 @@ class TestSprint47(unittest.IsolatedAsyncioTestCase):
 
         start = time.time()
         try:
-            result = await comm.submit_query("slow_task", voi_score=0.5)
+            await comm.submit_query("slow_task", voi_score=0.5)
         except Exception:
             pass
-        elapsed = time.time() - start
+        time.time() - start
 
         # Should timeout at 10 seconds (default in submit_query)
         # But we test that it doesn't wait indefinitely

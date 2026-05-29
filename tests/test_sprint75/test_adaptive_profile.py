@@ -2,9 +2,9 @@
 Tests for adaptive inference profile (Sprint 75).
 """
 
+from unittest.mock import MagicMock
+
 import pytest
-from unittest.mock import patch, MagicMock, AsyncMock
-import asyncio
 
 
 class TestAdaptiveProfile:
@@ -12,8 +12,7 @@ class TestAdaptiveProfile:
 
     def test_profile_attributes_exist(self):
         """Test profile attributes exist in _BrainManager."""
-        from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
-        from hledac.universal.autonomous_orchestrator import _BrainManager
+        from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator, _BrainManager
 
         # Create mock orchestrator
         orch = FullyAutonomousOrchestrator.__new__(FullyAutonomousOrchestrator)
@@ -29,8 +28,7 @@ class TestAdaptiveProfile:
 
     def test_profile_defaults_to_full(self):
         """Test default profile is 'full'."""
-        from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
-        from hledac.universal.autonomous_orchestrator import _BrainManager
+        from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator, _BrainManager
 
         orch = FullyAutonomousOrchestrator.__new__(FullyAutonomousOrchestrator)
         orch._security_mgr = None
@@ -70,8 +68,7 @@ class TestProfileTransitions:
     @pytest.mark.asyncio
     async def test_apply_profile_no_draft(self):
         """Test profile transition to no-draft."""
-        from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
-        from hledac.universal.autonomous_orchestrator import _BrainManager
+        from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator, _BrainManager
 
         orch = FullyAutonomousOrchestrator.__new__(FullyAutonomousOrchestrator)
         orch._security_mgr = None
@@ -92,8 +89,7 @@ class TestProfileTransitions:
     @pytest.mark.asyncio
     async def test_apply_profile_short_context(self):
         """Test profile transition to short-context."""
-        from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
-        from hledac.universal.autonomous_orchestrator import _BrainManager
+        from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator, _BrainManager
 
         orch = FullyAutonomousOrchestrator.__new__(FullyAutonomousOrchestrator)
         orch._security_mgr = None
@@ -116,8 +112,7 @@ class TestProfileTransitions:
     @pytest.mark.asyncio
     async def test_apply_profile_full(self):
         """Test profile transition to full."""
-        from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
-        from hledac.universal.autonomous_orchestrator import _BrainManager
+        from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator, _BrainManager
 
         orch = FullyAutonomousOrchestrator.__new__(FullyAutonomousOrchestrator)
         orch._security_mgr = None
@@ -146,8 +141,7 @@ class TestMLXMemoryUsage:
 
     def test_get_mlx_memory_usage_returns_dict(self):
         """Test _get_mlx_memory_usage returns dict."""
-        from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
-        from hledac.universal.autonomous_orchestrator import _BrainManager
+        from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator, _BrainManager
 
         orch = FullyAutonomousOrchestrator.__new__(FullyAutonomousOrchestrator)
         orch._security_mgr = None

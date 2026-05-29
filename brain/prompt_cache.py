@@ -1,12 +1,11 @@
 """Approximate prompt cache using trigram-based similarity."""
 import hashlib
+import logging
 import math
+import threading
 import time
 from collections import OrderedDict
 from pathlib import Path
-from typing import Optional
-import logging
-import threading
 
 # Sprint 79b: xxhash for faster hashing
 try:
@@ -116,14 +115,14 @@ class PromptCache:
             return dot / (norm_a * norm_b)
         else:
             # Fallback – čistý Python (pomalé, ale funkční)
-            dot = sum(x*y for x, y in zip(a, b))
+            dot = sum(x*y for x, y in zip(a, b, strict=False))
             norm_a = math.sqrt(sum(x*x for x in a))
             norm_b = math.sqrt(sum(x*x for x in b))
             if norm_a == 0 or norm_b == 0:
                 return 0.0
             return dot / (norm_a * norm_b)
 
-    def get(self, prompt: str, threshold: float = 0.85) -> Optional[str]:
+    def get(self, prompt: str, threshold: float = 0.85) -> str | None:
         """Získá odpověď z cache, pokud existuje podobný prompt."""
         now = time.time()
 

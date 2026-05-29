@@ -35,7 +35,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import platform
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 
 __all__ = [
     "get_uma_snapshot",
@@ -61,6 +61,9 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# Sprint F214Q: L2 cache size guard (context cache load protection)
+MAX_L2_CACHE_SIZE_MB: int = 50  # context L2 cache max load size
+
 # M1 8GB UMA budget thresholds
 _UMA_TOTAL_MB: int = 8_192  # 8 GB total
 _WARN_THRESHOLD_MB: int = 6_144  # 6.0 GB - Sprint 6B
@@ -80,7 +83,7 @@ M1_FETCH_SOFT_CEILING_GB: float = 5.5
 GENERAL_HIGH_WATER_RATIO: float = 0.85
 
 # psutil lazy import
-_psutil: Optional["ModuleType"] = None
+_psutil: ModuleType | None = None
 
 
 def _get_psutil():
@@ -179,7 +182,7 @@ def get_mlx_memory_mb() -> tuple[int, int, int]:
         return 0, 0, 0
 
 
-def get_uma_usage_mb() -> Optional[int]:
+def get_uma_usage_mb() -> int | None:
     """
     Estimate of "used" UMA memory as:
         system_used + mlx_active

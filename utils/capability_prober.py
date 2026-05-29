@@ -9,8 +9,9 @@ import importlib
 import importlib.util
 import logging
 from collections import OrderedDict, deque
+from collections.abc import Callable
 from functools import cached_property
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -44,12 +45,12 @@ class _LazyModule:
             await m.ensure_loaded()
     """
 
-    _cache: Dict[str, Any] = {}
+    _cache: dict[str, Any] = {}
 
     def __init__(self, name: str):
         self._name = name
-        self._module: Optional[Any] = None
-        self._load_error: Optional[Exception] = None
+        self._module: Any | None = None
+        self._load_error: Exception | None = None
 
     def __bool__(self) -> bool:
         """Check if module is available - FAIL-FAST, no auto-load."""
@@ -106,7 +107,7 @@ class CapabilityProber:
     """Enhanced capability prober with sync/async methods and hardware detection."""
 
     def __init__(self):
-        self._cache: OrderedDict[str, bool] = OrderedDict()
+        self._cache: Ordereddict[str, bool] = OrderedDict()
         self._cache_max = _MAX_CACHE_SIZE
         self._stats = {"hits": 0, "misses": 0, "missed_modules": deque()}
 
@@ -152,7 +153,7 @@ class CapabilityProber:
                 timeout=timeout
             )
             return module
-        except (asyncio.TimeoutError, ImportError):
+        except (TimeoutError, ImportError):
             self._stats["misses"] += 1
             self._stats["missed_modules"].append(name)
             if len(self._stats["missed_modules"]) > _MAX_STATS_MISSED:
@@ -221,7 +222,7 @@ class CapabilityProber:
 
 
 # Global singleton for production
-_PROBER: Optional[CapabilityProber] = None
+_PROBER: CapabilityProber | None = None
 
 
 def get_prober() -> CapabilityProber:
@@ -233,7 +234,7 @@ def get_prober() -> CapabilityProber:
 
 
 # Legacy compatibility functions
-def probe_import(module: str, attr: Optional[str] = None) -> Any:
+def probe_import(module: str, attr: str | None = None) -> Any:
     """
     Probe if a module/attribute is importable.
     DEPRECATED: Use CapabilityProber.has_module() instead.
@@ -266,7 +267,7 @@ def clear_cache() -> None:
         _PROBER.clear_cache()
 
 
-def get_cache_stats() -> Dict[str, int]:
+def get_cache_stats() -> dict[str, int]:
     """Get cache statistics. DEPRECATED: Use prober.stats()."""
     if _PROBER:
         s = _PROBER.stats()

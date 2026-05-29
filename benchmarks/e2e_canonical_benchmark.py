@@ -26,8 +26,7 @@ import asyncio
 import json
 import sys
 import time as _time
-
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -219,9 +218,9 @@ async def _run_hermetic_benchmark(
     F205J: Also runs analyst brief generation to validate target memory integration.
     """
     from hledac.universal.runtime.sidecar_bus import (
+        SIDECAR_STAGES,
         FindingSidecarBus,
         SidecarBatch,
-        SIDECAR_STAGES,
     )
 
     run_metrics: list[dict[str, Any]] = []
@@ -356,7 +355,7 @@ async def _run_hermetic_benchmark(
     return {
         "metadata": {
             "probe": "F205E",
-            "timestamp": datetime.now(timezone.utc).isoformat().replace("+0000", "Z"),
+            "timestamp": datetime.now(UTC).isoformat().replace("+0000", "Z"),
             "mode": "hermetic",
             "runs": runs,
             "uvloop_active": _UVLOOP_ACTIVE,
@@ -422,7 +421,7 @@ async def run_benchmark(
 
     # ── Print summary ──────────────────────────────────────────────────────────
     log(f"\n{'=' * 60}")
-    log(f"BENCHMARK RESULTS — Sprint F205E")
+    log("BENCHMARK RESULTS — Sprint F205E")
     log(f"{'=' * 60}")
     agg = result["aggregate"]
     log(f"  findings_per_minute : {agg['findings_per_minute']}")
@@ -435,7 +434,7 @@ async def run_benchmark(
     log(f"  target_memory_summary_present : {agg['target_memory_summary_present']}")
     log(f"  analyst_brief_includes_memory : {agg['analyst_brief_includes_memory']}")
     log(f"  status               : {result['status']}")
-    log(f"\n  Per-sidecar avg ms:")
+    log("\n  Per-sidecar avg ms:")
     for name, stats in result["per_sidecar_ms"].items():
         log(f"    {name:28s}: {stats['avg_ms']:7.2f}ms  (min={stats['min_ms']:.2f}, max={stats['max_ms']:.2f})")
     log(f"{'=' * 60}")

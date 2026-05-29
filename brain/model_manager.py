@@ -17,21 +17,21 @@ import logging
 import os
 import time
 from collections import defaultdict
+from collections.abc import Callable
 from contextlib import asynccontextmanager
+from enum import Enum, auto
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Callable, Literal
+from typing import Any, Literal
 
 import aiofiles
-from enum import Enum, auto
-
-from hledac.universal.utils.concurrency import adjust_fetch_workers
-from hledac.universal.utils.exceptions import MemoryPressureError
-from hledac.universal.brain.quantization_selector import QuantizationSelector
 from hledac.universal.brain.model_inference_guard import (
     check_model_allowed,
     record_model_failure,
     record_model_success,
 )
+from hledac.universal.brain.quantization_selector import QuantizationSelector
+from hledac.universal.utils.concurrency import adjust_fetch_workers
+from hledac.universal.utils.exceptions import MemoryPressureError
 
 # Sprint F180D: MLX lazy init via mlx_memory — single authority for MLX
 # DO NOT add top-level `import mlx.core as mx` here.
@@ -221,7 +221,7 @@ class ModelManager:
     """
 
     # Mapování model_name -> ModelType
-    MODEL_REGISTRY: Dict[str, ModelType] = {
+    MODEL_REGISTRY: dict[str, ModelType] = {
         "hermes": ModelType.HERMES,
         "modernbert": ModelType.MODERNBERT,
         "gliner": ModelType.GLINER,
@@ -269,7 +269,7 @@ class ModelManager:
     #
     # Use brain.model_phase_facts.is_same_layer() to validate before comparison.
     # ========================================================================
-    PHASE_MODEL_MAP: Dict[str, ModelName] = {
+    PHASE_MODEL_MAP: dict[str, ModelName] = {
         "PLAN": "hermes",
         "DECIDE": "hermes",
         "GENERATE": "hermes",
@@ -281,9 +281,9 @@ class ModelManager:
     }
 
     def __init__(self):
-        self._loaded_models: Dict[ModelType, Any] = {}
-        self._current_model: Optional[ModelType] = None
-        self._model_factories: Dict[ModelType, Callable[[], Any]] = {
+        self._loaded_models: dict[ModelType, Any] = {}
+        self._current_model: ModelType | None = None
+        self._model_factories: dict[ModelType, Callable[[], Any]] = {
             ModelType.HERMES: self._create_hermes_engine,
             ModelType.MODERNBERT: self._create_modernbert_engine,
             ModelType.GLINER: self._create_gliner_engine,
@@ -293,7 +293,7 @@ class ModelManager:
         self._ane_embedder = None
         self._mlx_embedder = None
         # FIX 0: Per-model locks to prevent TOCTOU race conditions
-        self._model_locks: Dict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
+        self._model_locks: dict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
 
         # FIX 8: psutil for RAM pressure guard
         self._psutil_available = False
@@ -331,7 +331,7 @@ class ModelManager:
                 async def load(self) -> None:
                     """Načte gliner-relex model - async verze."""
                     if not self._is_loaded:
-                        logger.info(f"[MODEL LOAD] gliner-relex start")
+                        logger.info("[MODEL LOAD] gliner-relex start")
                         loop = asyncio.get_running_loop()
                         self._model = await loop.run_in_executor(
                             None,
@@ -343,10 +343,10 @@ class ModelManager:
                 def extract(
                     self,
                     text: str,
-                    labels: List[str],
-                    relations: List[Dict] = None,
+                    labels: list[str],
+                    relations: list[dict] = None,
                     threshold: float = 0.5
-                ) -> Dict[str, Any]:
+                ) -> dict[str, Any]:
                     """Extract entities and optionally relations."""
                     if not self._is_loaded:
                         raise RuntimeError("Model not loaded. Use load() first.")
@@ -400,9 +400,9 @@ class ModelManager:
         """
         try:
             from hledac.universal.core.resource_governor import (
-                sample_uma_status,
                 UMA_STATE_CRITICAL,
                 UMA_STATE_EMERGENCY,
+                sample_uma_status,
             )
         except ImportError:
             # Fail-open: pokud resource_governor není dostupný, neblokujeme load
@@ -480,7 +480,6 @@ class ModelManager:
 
         try:
             import coremltools as ct
-            import numpy as np
 
             # Try to convert via ONNX path
             # First export MLX to ONNX, then convert to CoreML
@@ -625,7 +624,7 @@ class ModelManager:
                 None,
                 lambda: mlx_lm.download(model_id)
             )
-            logger.info(f"[MODEL DOWNLOAD] Hermes-3 downloaded successfully")
+            logger.info("[MODEL DOWNLOAD] Hermes-3 downloaded successfully")
         finally:
             # Restore full HTTP concurrency
             logger.info("[MODEL DOWNLOAD] Restoring HTTP worker pool to 25")
@@ -785,7 +784,6 @@ class ModelManager:
     async def _release_model_async(self, model_type: ModelType, model_name: str) -> None:
         """Interní async implementace uvolnění modelu."""
         model = self._loaded_models.get(model_type)
-        unload_error: Optional[Exception] = None
 
         # P19: Capture RSS before unload for verification
         rss_before_unload = _get_current_rss_gb()
@@ -815,7 +813,7 @@ class ModelManager:
                 except asyncio.CancelledError:
                     # P1E-B: CancelledError from our wait_for — re-raise per spec
                     raise
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     # P1E-B: Timeout — log warning, fail-soft, teardown continues
                     logger.warning(
                         "[P1E-B] Model unload timed out after %.1fs for %s — continuing shutdown",
@@ -823,7 +821,6 @@ class ModelManager:
                         model_name,
                     )
                 except Exception as e:
-                    unload_error = e
                     logger.error(f"Failed to release model {model_name}: {e}")
                     # F166E: Exception swallowed
                 else:
@@ -884,7 +881,7 @@ class ModelManager:
                 except asyncio.CancelledError:
                     # P1E-B: CancelledError from our wait_for — re-raise per spec
                     raise
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     # P1E-B: Timeout — log warning, fail-soft, teardown continues
                     logger.warning(
                         "[P1E-B] Model unload timed out after %.1fs for %s — continuing shutdown",
@@ -906,8 +903,8 @@ class ModelManager:
 
     async def _cleanup_memory_async(
         self,
-        model_type: Optional[ModelType] = None,
-        engine: Optional[Any] = None
+        model_type: ModelType | None = None,
+        engine: Any | None = None
     ) -> None:
         """Agresivní async čištění paměti po uvolnění modelu.
 
@@ -950,7 +947,7 @@ class ModelManager:
             except Exception as e:
                 logger.warning(f"Failed to clear MLX cache: {e}")
 
-    def get_model(self, model_name: ModelName) -> Optional[Any]:
+    def get_model(self, model_name: ModelName) -> Any | None:
         """
         Vrátí instanci načteného modelu.
 
@@ -999,8 +996,8 @@ class ModelManager:
         """
         # Lazy import to avoid circular dependencies
         try:
-            from .ane_embedder import ANEEmbedder
             from ...embeddings.modernbert_embedder import ModernBERTEmbedder
+            from .ane_embedder import ANEEmbedder
         except ImportError:
             # Fallback - just return None
             return None
@@ -1037,7 +1034,7 @@ class ModelManager:
 
         return None
 
-    def get_current_model(self) -> Optional[str]:
+    def get_current_model(self) -> str | None:
         """
         Vrátí jméno aktuálně načteného modelu.
 
@@ -1053,8 +1050,8 @@ class ModelManager:
         logger.info("Releasing all models...")
 
         async with self._lock:
-            last_released: Optional[ModelType] = None
-            last_engine: Optional[Any] = None
+            last_released: ModelType | None = None
+            last_engine: Any | None = None
             for model_type in list(self._loaded_models.keys()):
                 model_name = model_type.name.lower()
                 last_released = model_type
@@ -1086,8 +1083,8 @@ class ModelManager:
     async def generate_report(
         self,
         graph_summary: str,
-        hypotheses: List[str],
-        findings: List[Any] = None,
+        hypotheses: list[str],
+        findings: list[Any] = None,
         output_path: str = None
     ) -> str:
         """
@@ -1106,14 +1103,12 @@ class ModelManager:
             Generated report as Markdown string
         """
         import os
-        import time
 
         if output_path is None:
             output_path = os.path.expanduser("~/hledac_report.md")
 
         # Load Hermes for generation
-        hermes = None
-        async with self.acquire_model_ctx("hermes") as hermes:
+        async with self.acquire_model_ctx("hermes"):
             pass  # Model loaded in context, will be released after
 
         # We need to use hermes3_engine directly for generate_report
@@ -1306,7 +1301,7 @@ Piš v češtině, buď konkrétní a stručný."""
 
 
 # Globální instance pro snadné použití
-_model_manager: Optional[ModelManager] = None
+_model_manager: ModelManager | None = None
 
 
 def get_model_manager() -> ModelManager:

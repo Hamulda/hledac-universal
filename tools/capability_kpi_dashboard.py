@@ -21,8 +21,8 @@ import argparse
 import json
 import sys
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
-from enum import Enum
+from datetime import UTC, datetime
+from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
@@ -45,7 +45,7 @@ ARTIFACT_PATHS = {
 
 # ── Status enums ─────────────────────────────────────────────────────────────
 
-class DomainStatus(str, Enum):
+class DomainStatus(StrEnum):
     GREEN = "green"
     YELLOW = "yellow"
     RED = "red"
@@ -644,7 +644,7 @@ def compute_dashboard() -> DashboardOutput:
 
     return DashboardOutput(
         sprint="F206BL",
-        date=datetime.now(timezone.utc).isoformat(),
+        date=datetime.now(UTC).isoformat(),
         capability_score=overall_score,
         readiness_for_300s_live=readinesses[0],
         readiness_for_stealth_live=readinesses[1],
@@ -707,7 +707,7 @@ def render_md(dashboard: DashboardOutput) -> str:
 
     lines += [
         "",
-        f"## Next Big Move",
+        "## Next Big Move",
         "",
         f"{dashboard.next_big_move}",
     ]
@@ -718,10 +718,7 @@ def render_md(dashboard: DashboardOutput) -> str:
 # ── CLI ───────────────────────────────────────────────────────────────────────
 
 def main() -> int:
-    if sys.version_info >= (3, 14):
-        parser = argparse.ArgumentParser(description="Capability KPI Dashboard — Sprint F206BL", suggest_on_error=True, color=True)
-    else:
-        parser = argparse.ArgumentParser(description="Capability KPI Dashboard — Sprint F206BL")
+    parser = argparse.ArgumentParser(description="Capability KPI Dashboard — Sprint F206BL", suggest_on_error=True, color=True)
     parser.add_argument("--output-json", action="store_true", help="Emit JSON to stdout")
     parser.add_argument("--output-md", action="store_true", help="Emit Markdown to stdout")
     args = parser.parse_args()
@@ -732,7 +729,7 @@ def main() -> int:
         # Fail-soft: if dashboard computation itself crashes, emit error JSON
         error_result = {
             "sprint": "F206BL",
-            "date": datetime.now(timezone.utc).isoformat(),
+            "date": datetime.now(UTC).isoformat(),
             "error": str(e),
             "capability_score": 0,
         }

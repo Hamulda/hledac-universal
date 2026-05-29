@@ -2,14 +2,13 @@
 Sprint 58A tests – QMIX, MARL, Replay Buffer, State Extractor.
 """
 
-import asyncio
 import sys
-import unittest
 import tempfile
-import pytest  # noqa: F401 — needed for skip markers on ghost MARLCoordinator tests
-import numpy as np
+import unittest
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+
+import numpy as np
+import pytest  # noqa: F401 — needed for skip markers on ghost MARLCoordinator tests
 
 sys.path.insert(0, '/Users/vojtechhamada/PycharmProjects/Hledac')
 
@@ -134,7 +133,6 @@ class TestStateExtractor(unittest.IsolatedAsyncioTestCase):
 
     async def test_state_extractor(self):
         """Test #7: State extractor – výstup state_dim (včetně GNN)."""
-        import mlx.core as mx
         from hledac.universal.rl.state_extractor import StateExtractor
 
         extractor = StateExtractor(state_dim=12)

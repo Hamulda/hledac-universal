@@ -40,7 +40,6 @@ import logging
 import os
 import time
 import uuid
-from typing import Optional, Tuple, List, Any
 
 logger = logging.getLogger(__name__)
 
@@ -88,10 +87,9 @@ async def run_deep_probe(
     from hledac.universal.deep_probe import (
         DeepProbeScanner,
         scan_ipfs,
-        scan_s3_buckets,
     )
     from hledac.universal.knowledge.duckdb_store import CanonicalFinding
-    from hledac.universal.knowledge.search_index import LocalSearchSeam, SearchDocument
+    from hledac.universal.knowledge.search_index import LocalSearchSeam
 
     start_time = time.monotonic()
     result = {
@@ -107,7 +105,7 @@ async def run_deep_probe(
     }
 
     # Collect all canonical findings for batch ingest
-    all_findings: List[CanonicalFinding] = []
+    all_findings: list[CanonicalFinding] = []
     scanner = DeepProbeScanner(max_memory_mb=100)
 
     # ── Cache-first: check LocalSearchSeam before network fetch ──────────────
@@ -276,7 +274,7 @@ async def run_deep_probe(
     return result
 
 
-def _extract_domain(query: str) -> Optional[str]:
+def _extract_domain(query: str) -> str | None:
     """Extract domain-like string from query for targeted scanning."""
     import re
 
@@ -292,7 +290,7 @@ def _extract_domain(query: str) -> Optional[str]:
     return None
 
 
-def _make_discovery_findings(urls: List[str], query: str) -> List['CanonicalFinding']:
+def _make_discovery_findings(urls: list[str], query: str) -> list[CanonicalFinding]:
     """
     Convert discovered URLs to CanonicalFinding objects.
 
@@ -304,7 +302,7 @@ def _make_discovery_findings(urls: List[str], query: str) -> List['CanonicalFind
     """
     from hledac.universal.knowledge.duckdb_store import CanonicalFinding
 
-    findings: List[CanonicalFinding] = []
+    findings: list[CanonicalFinding] = []
     for url in urls[:100]:  # Cap at 100 discovery URLs
         try:
             dedup_key = f"discovery:{url}"
@@ -328,9 +326,9 @@ def _make_discovery_findings(urls: List[str], query: str) -> List['CanonicalFind
 
 
 def _convert_search_results_to_findings(
-    documents: List["SearchDocument"],
+    documents: list[SearchDocument],
     query: str,
-) -> List["CanonicalFinding"]:
+) -> list[CanonicalFinding]:
     """
     Convert LocalSearchSeam SearchDocument list to CanonicalFinding list.
 
@@ -347,7 +345,7 @@ def _convert_search_results_to_findings(
     """
     from hledac.universal.knowledge.duckdb_store import CanonicalFinding
 
-    findings: List[CanonicalFinding] = []
+    findings: list[CanonicalFinding] = []
     for doc in documents:
         try:
             dedup_key = f"local_corpus:{doc.url}"
@@ -377,8 +375,8 @@ def _convert_search_results_to_findings(
 
 
 def _index_probe_results_to_seam(
-    seam: "LocalSearchSeam",
-    findings: List["CanonicalFinding"],
+    seam: LocalSearchSeam,
+    findings: list[CanonicalFinding],
     query: str,
 ) -> None:
     """
@@ -394,7 +392,7 @@ def _index_probe_results_to_seam(
     """
     from hledac.universal.knowledge.search_index import SearchDocument
 
-    documents: List[SearchDocument] = []
+    documents: list[SearchDocument] = []
     for finding in findings:
         try:
             # Extract URL from provenance or payload_text
@@ -429,8 +427,8 @@ def _index_probe_results_to_seam(
 
 
 def _index_urls_to_seam(
-    seam: "LocalSearchSeam",
-    urls: List[str],
+    seam: LocalSearchSeam,
+    urls: list[str],
     query: str,
 ) -> None:
     """
@@ -443,7 +441,7 @@ def _index_urls_to_seam(
     """
     from hledac.universal.knowledge.search_index import SearchDocument
 
-    documents: List[SearchDocument] = []
+    documents: list[SearchDocument] = []
     for url in urls[:50]:  # Cap at 50 URLs
         try:
             doc = SearchDocument(
@@ -466,7 +464,7 @@ def _index_urls_to_seam(
             logger.debug(f"[DEEP_PROBE] seam index failed: {e}")
 
 
-async def _scan_dht(query: str) -> List["CanonicalFinding"]:
+async def _scan_dht(query: str) -> list[CanonicalFinding]:
     """
     F214Q: Find peers for query via real BitTorrent DHT (BEP-5).
 
@@ -531,7 +529,7 @@ async def _scan_dht(query: str) -> List["CanonicalFinding"]:
             )
         return findings
 
-    except asyncio.TimeoutError:
+    except TimeoutError:
         logger.debug(f"DHT scan_dht timeout for query={query}")
         return []
     except Exception as e:
@@ -543,7 +541,7 @@ async def run_deep_probe_if_enabled(
     query: str,
     store,
     deep_probe_enabled: bool = False,
-) -> Optional[dict]:
+) -> dict | None:
     """
     Conditionally run deep probe — called ONLY when --deep-probe flag is set.
 

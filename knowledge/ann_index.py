@@ -26,9 +26,7 @@ from __future__ import annotations
 
 import logging
 import threading
-from collections import deque
 from pathlib import Path
-from typing import Optional
 
 import numpy as np
 
@@ -68,10 +66,10 @@ class _ANNIndex:
 
     def __init__(self, db_path: Path) -> None:
         self._db_path: Path = db_path
-        self._db: Optional[object] = None  # lancedb.LanceDBConnection
-        self._table: Optional[object] = None  # lancedb.Table
+        self._db: object | None = None  # lancedb.LanceDBConnection
+        self._table: object | None = None  # lancedb.Table
         self._embed_dim: int = _EMBEDDING_DIM
-        self._boot_error: Optional[str] = None
+        self._boot_error: str | None = None
         self._initialized: bool = False
         self._lock = threading.Lock()
         # SAFETY: SAFE_SYNC_BOUNDARY — _lock guards LanceDB table.search() and table.add()
@@ -128,7 +126,7 @@ class _ANNIndex:
 
             self._initialized = True
             self._boot_error = None
-            logger.info(f"[ANN] ANN index initialized successfully")
+            logger.info("[ANN] ANN index initialized successfully")
             return True
 
         except Exception as e:
@@ -227,7 +225,6 @@ class _ANNIndex:
                 to_delete = int(count * 0.1)
                 oldest_ts = self._get_oldest_timestamp()
                 if oldest_ts is not None:
-                    import pyarrow as pa
 
                     oldest_ts = self._table.to_arrow().sort_by([("added_at", "asc")]).slice(0, to_delete)
                     # Use delete WHERE using LanceDB's filter API
@@ -237,10 +234,9 @@ class _ANNIndex:
         except Exception as e:
             logger.debug(f"[ANN] evict failed: {e}")
 
-    def _get_oldest_timestamp(self) -> Optional[float]:
+    def _get_oldest_timestamp(self) -> float | None:
         """Get timestamp of oldest entry."""
         try:
-            import pyarrow as pa
 
             oldest = self._table.to_arrow().sort_by([("added_at", "asc")]).slice(0, 1)
             if oldest.num_rows > 0:
@@ -298,7 +294,7 @@ class _ANNIndex:
 # Public facade
 # -----------------------------------------------------------------------
 
-_ann_index: Optional[_ANNIndex] = None
+_ann_index: _ANNIndex | None = None
 _ann_index_lock = threading.Lock()
 # SAFETY: SAFE_SYNC_BOUNDARY — _ann_index_lock guards module-level singleton _ann_index.
 # Double-checked locking pattern: fast path without lock when _ann_index is already set.

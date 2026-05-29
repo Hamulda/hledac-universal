@@ -71,12 +71,12 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from .shadow_inputs import (
-        LifecycleSnapshotBundle,
         GraphSummaryBundle,
+        LifecycleSnapshotBundle,
         ModelControlFactsBundle,
     )
 
@@ -118,10 +118,10 @@ class ParityArtifact:
 
     # Lifecycle facts — SEPARATED fields, NEVER merged
     workflow_phase: str
-    workflow_phase_entered_at: Optional[float]
+    workflow_phase_entered_at: float | None
     control_phase_mode: str
     control_phase_thermal: str
-    windup_local_mode: Optional[str]
+    windup_local_mode: str | None
 
     # Graph facts
     graph_nodes: int
@@ -135,7 +135,7 @@ class ParityArtifact:
     mc_sources_count: int
     mc_privacy: str
     mc_depth: str
-    mc_models_needed: List[str]
+    mc_models_needed: list[str]
 
     # Export handoff facts
     export_sprint_id: str
@@ -144,27 +144,27 @@ class ParityArtifact:
     export_gnn_predictions: int
 
     # Branch/Provider precursor facts (if available)
-    branch_decision_id: Optional[str]
-    provider_recommend: Optional[str]
+    branch_decision_id: str | None
+    provider_recommend: str | None
 
     # Correlation carrier (if already natural)
-    correlation_run_id: Optional[str]
-    correlation_branch_id: Optional[str]
+    correlation_run_id: str | None
+    correlation_branch_id: str | None
 
     # Mismatch analysis
-    mismatch_categories: List[str]
-    mismatch_details: Dict[str, Any]
+    mismatch_categories: list[str]
+    mismatch_details: dict[str, Any]
 
     # Source tracking (for debugging which inputs were used)
-    input_sources: Dict[str, str]  # bundle_name → source_module
+    input_sources: dict[str, str]  # bundle_name → source_module
 
     # Fact stability breakdown — distinguishes STABLE vs COMPAT vs UNKNOWN inputs
     # This prevents compat seams from being treated as authoritative facts
-    fact_stability_breakdown: Dict[str, str] = field(default_factory=dict)
+    fact_stability_breakdown: dict[str, str] = field(default_factory=dict)
     # List of bundles that used COMPAT/legacy paths (not typed contracts)
-    compat_seams: List[str] = field(default_factory=list)
+    compat_seams: list[str] = field(default_factory=list)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "mode": self.mode,
             "timestamp_monotonic": self.timestamp_monotonic,
@@ -215,9 +215,9 @@ class ParityArtifact:
 # =============================================================================
 
 def _check_phase_field_merge(
-    bundle: "LifecycleSnapshotBundle",
-    mismatches: List[str],
-    mismatch_details: Dict[str, Any],
+    bundle: LifecycleSnapshotBundle,
+    mismatches: list[str],
+    mismatch_details: dict[str, Any],
 ) -> None:
     """
     Check for phase value anomalies — generic validation only.
@@ -247,9 +247,9 @@ def _check_phase_field_merge(
 
 
 def _check_phase_field_merge_bug(
-    bundle: "LifecycleSnapshotBundle",
-    mismatches: List[str],
-    mismatch_details: Dict[str, Any],
+    bundle: LifecycleSnapshotBundle,
+    mismatches: list[str],
+    mismatch_details: dict[str, Any],
 ) -> None:
     """
     Detect explicit PHASE_FIELD_MERGE structural bugs.
@@ -286,9 +286,9 @@ def _check_phase_field_merge_bug(
 
 
 def _check_graph_capability(
-    graph_bundle: "GraphSummaryBundle",
-    mismatches: List[str],
-    mismatch_details: Dict[str, Any],
+    graph_bundle: GraphSummaryBundle,
+    mismatches: list[str],
+    mismatch_details: dict[str, Any],
 ) -> None:
     """
     Check graph capability — truthfulness gated by fact stability.
@@ -320,13 +320,13 @@ def _check_graph_capability(
 # =============================================================================
 
 def run_shadow_parity(
-    lifecycle_bundle: "LifecycleSnapshotBundle",
-    graph_bundle: "GraphSummaryBundle",
-    model_control_bundle: "ModelControlFactsBundle",
-    export_handoff_facts: Dict[str, Any],
-    branch_decision: Optional["BranchDecision"] = None,
-    provider_recommend: Optional[str] = None,
-    correlation: Optional["RunCorrelation"] = None,
+    lifecycle_bundle: LifecycleSnapshotBundle,
+    graph_bundle: GraphSummaryBundle,
+    model_control_bundle: ModelControlFactsBundle,
+    export_handoff_facts: dict[str, Any],
+    branch_decision: BranchDecision | None = None,
+    provider_recommend: str | None = None,
+    correlation: RunCorrelation | None = None,
     runtime_mode: str = "scheduler_shadow",
 ) -> ParityArtifact:
     """
@@ -356,8 +356,8 @@ def run_shadow_parity(
     now_monotonic = time.monotonic()
     now_wall = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
-    mismatches: List[str] = []
-    mismatch_details: Dict[str, Any] = {}
+    mismatches: list[str] = []
+    mismatch_details: dict[str, Any] = {}
 
     # --- Lifecycle phase field merge check ---
     # This is a structural invariant: workflow_phase, control_phase, windup_local_phase
@@ -418,7 +418,7 @@ def run_shadow_parity(
         "graph_summary": graph_bundle.fact_stability,
         "model_control_facts": model_control_bundle.fact_stability,
     }
-    compat_seams: List[str] = []
+    compat_seams: list[str] = []
     if lifecycle_bundle.fact_stability == "COMPAT":
         compat_seams.append("lifecycle_snapshot/windup_local_phase")
     if graph_bundle.fact_stability == "COMPAT":

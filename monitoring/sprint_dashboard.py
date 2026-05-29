@@ -16,13 +16,11 @@ final SprintSchedulerResult regardless of how the sprint exited.
 from __future__ import annotations
 
 import time
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 
 try:
     from rich.console import Console
     from rich.live import Live
-    from rich.panel import Panel
-    from rich.progress import Progress, SpinnerColumn, BarColumn, TextColumn, TimeRemainingColumn
     from rich.table import Table
     from rich.text import Text
 except Exception as _rich_missing:  # pragma: no cover
@@ -86,8 +84,8 @@ class SprintDashboard:
         self.query = query
         self.duration_s = duration_s
         self._start_time = time.monotonic()
-        self._console: "Console" = Console()
-        self._live: Optional["Live"] = None
+        self._console: Console = Console()
+        self._live: Live | None = None
         self._last_phase = "BOOT"
         self._aborted = False
 
@@ -108,7 +106,7 @@ class SprintDashboard:
 
     def update(
         self,
-        result: "SprintSchedulerResult",
+        result: SprintSchedulerResult,
         phase: str,
         elapsed_s: float,
     ) -> None:
@@ -124,7 +122,7 @@ class SprintDashboard:
 
     def finish(
         self,
-        result: "SprintSchedulerResult",
+        result: SprintSchedulerResult,
         elapsed_s: float,
     ) -> None:
         """
@@ -139,9 +137,9 @@ class SprintDashboard:
 
     def _build_table(
         self,
-        result: Optional["SprintSchedulerResult"] = None,
+        result: SprintSchedulerResult | None = None,
         elapsed_s: float = 0.0,
-    ) -> "Table":
+    ) -> Table:
         """Build the main dashboard table."""
         table = Table(
             title=None,

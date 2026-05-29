@@ -18,9 +18,8 @@ import sys
 import textwrap
 from collections import defaultdict
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import StrEnum
 from pathlib import Path
-from typing import Optional
 
 # --------------------------------------------------------------------------- #
 # Constants
@@ -174,7 +173,7 @@ def render_collision_warning(report: SprintCollisionReport) -> list[str]:
         lines.append("")
         lines.append("| Probe Directory | Report | JSON |")
         lines.append("|----------------|--------|-----|")
-        for probe_dir, report_p, json_p in zip(coll.probe_dirs, coll.report_paths, coll.json_paths):
+        for probe_dir, report_p, json_p in zip(coll.probe_dirs, coll.report_paths, coll.json_paths, strict=False):
             lines.append(f"| `{probe_dir}` | {report_p or 'N/A'} | {json_p or 'N/A'} |")
         lines.append("")
         lines.append(f"**Action:** Use full alias (e.g. `{coll.aliases[0]}`) to disambiguate. "
@@ -190,10 +189,10 @@ class ArtifactPackResult:
     optional: list
     commands: list
     overall: ArtifactStatus
-    collision_report: Optional[SprintCollisionReport] = None
+    collision_report: SprintCollisionReport | None = None
 
 
-class ArtifactStatus(str, Enum):
+class ArtifactStatus(StrEnum):
     READY_FOR_PRELIVE_GATE = "READY_FOR_PRELIVE_GATE"
     MISSING_REQUIRED = "MISSING_REQUIRED"
     STALE_OR_CORRUPT = "STALE_OR_CORRUPT"
@@ -206,7 +205,7 @@ class ProbeArtifact:
     filename: str
     full_path: str
     found: bool
-    parse_error: Optional[str] = None
+    parse_error: str | None = None
     data: dict = field(default_factory=dict)
     status: ArtifactStatus = ArtifactStatus.MISSING_REQUIRED
 
@@ -233,7 +232,7 @@ def check_artifact(
         return artifact
 
     try:
-        with open(p, "r", encoding="utf-8") as fh:
+        with open(p, encoding="utf-8") as fh:
             data = json.load(fh)
         artifact.found = True
         artifact.data = data
@@ -338,9 +337,9 @@ def render_markdown(
         lines.append("Run these commands to regenerate missing artifacts:")
         lines.append("")
         for cmd in commands:
-            lines.append(f"```bash")
+            lines.append("```bash")
             lines.append(cmd)
-            lines.append(f"```")
+            lines.append("```")
             lines.append("")
     else:
         lines.extend(["", "## Regeneration Commands", "", "All required artifacts present. No regeneration needed.", ""])
@@ -351,12 +350,12 @@ def render_markdown(
         "",
         "```bash",
         "# Check all artifacts:",
-        f"python -m pytest tests/probe_f219i_prelive_artifact_pack -v --tb=short",
+        "python -m pytest tests/probe_f219i_prelive_artifact_pack -v --tb=short",
         "",
         "# Regenerate specific probe lane:",
         "# python -m pytest tests/probe_f217c_public_bootstrap -v --tb=short",
         "# python -m pytest tests/probe_f217d_ct_provider_resilience -v --tb=short",
-        f"```",
+        "```",
         "",
     ])
 
@@ -367,7 +366,7 @@ def render_json(
     required: list[ProbeArtifact],
     commands: list[str],
     overall: ArtifactStatus,
-    f224: Optional[list[ProbeArtifact]] = None,
+    f224: list[ProbeArtifact] | None = None,
 ) -> dict:
     """Render the JSON report."""
     f224_section = {}

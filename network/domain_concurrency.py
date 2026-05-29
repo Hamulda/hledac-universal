@@ -15,12 +15,11 @@ from __future__ import annotations
 
 import math
 import random
-from typing import List
 
 # =============================================================================
 # Arm Definition — Fibonacci-like conservative concurrency levels
 # =============================================================================
-ARM_VALUES: List[int] = [1, 2, 3, 5, 8]
+ARM_VALUES: list[int] = [1, 2, 3, 5, 8]
 N_ARMS: int = len(ARM_VALUES)
 
 # Gradient Bandit hyperparameters
@@ -52,7 +51,7 @@ class DomainConcurrencyBandit:
 
     def __init__(self) -> None:
         # Softmax preferences — initialized to 0 (uniform initially)
-        self._preferences: List[float] = [0.0] * N_ARMS
+        self._preferences: list[float] = [0.0] * N_ARMS
         # Running average reward (exponential smoothing baseline)
         self._baseline: float = 0.0
         # Consecutive 429 counter for emergency arm reduction
@@ -66,7 +65,7 @@ class DomainConcurrencyBandit:
     # Softmax action selection
     # -------------------------------------------------------------------------
 
-    def _softmax_probs(self) -> List[float]:
+    def _softmax_probs(self) -> list[float]:
         """
         Compute softmax probability distribution over arms.
 

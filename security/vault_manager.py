@@ -1,10 +1,11 @@
-import os
 import logging
+import os
 import tempfile
 import zipfile
-from typing import TYPE_CHECKING, Optional
-from pathlib import Path
 from datetime import datetime
+from pathlib import Path
+from typing import TYPE_CHECKING
+
 
 # Sprint 0A: RAMDISK tempfile dir (lazy, reads tempfile.tempdir at call time)
 def _get_tempdir() -> str:
@@ -12,10 +13,11 @@ def _get_tempdir() -> str:
     return tempfile.gettempdir()
 
 try:
+    import base64
+
     from cryptography.fernet import Fernet
     from cryptography.hazmat.primitives import hashes
     from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
-    import base64
     CRYPTO_AVAILABLE = True
 except ImportError:
     CRYPTO_AVAILABLE = False
@@ -90,7 +92,7 @@ class LootManager:
         encrypted_data = fernet.encrypt(data)
         return salt + encrypted_data
 
-    def _decrypt_with_fernet(self, encrypted_data: bytes, password: str) -> Optional[bytes]:
+    def _decrypt_with_fernet(self, encrypted_data: bytes, password: str) -> bytes | None:
         try:
             salt = encrypted_data[:16]
             encrypted = encrypted_data[16:]
@@ -104,7 +106,7 @@ class LootManager:
     def _create_zip(self, source_path: Path, output_path: Path) -> bool:
         try:
             with zipfile.ZipFile(output_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
-                for root, dirs, files in os.walk(source_path):
+                for root, _dirs, files in os.walk(source_path):
                     for file in files:
                         file_path = Path(root) / file
                         arcname = file_path.relative_to(source_path)
@@ -133,7 +135,7 @@ class LootManager:
                 compression=pyzipper.ZIP_DEFLATED
             ) as zipf:
                 zipf.setpassword(password.encode())
-                for root, dirs, files in os.walk(source_path):
+                for root, _dirs, files in os.walk(source_path):
                     for file in files:
                         file_path = Path(root) / file
                         arcname = file_path.relative_to(source_path)
@@ -209,7 +211,7 @@ class LootManager:
             logger.error(f"Error shredding directory: {e}")
             return False
 
-    def secure_export(self, output_dir: str, password: str, archive_name: Optional[str] = None) -> Optional[str]:
+    def secure_export(self, output_dir: str, password: str, archive_name: str | None = None) -> str | None:
         """
         Create encrypted ZIP archive of vault contents and shred original.
 
@@ -232,27 +234,27 @@ class LootManager:
         if not self.vault_path.exists():
             logger.error(f"Vault path does not exist: {self.vault_path}")
             return None
-        
+
         output_path = Path(output_dir)
         output_path.mkdir(parents=True, exist_ok=True)
-        
+
         if archive_name is None:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             archive_name = f"ghostvault_{timestamp}.enc"
-        
+
         output_file = output_path / archive_name
-        
+
         if not self._create_encrypted_zip(self.vault_path, output_file, password):
             logger.error("Failed to create encrypted export")
             return None
-        
+
         if not self._shred_directory(self.vault_path):
             logger.warning("Failed to completely shred vault contents")
-        
+
         logger.info(f"Secure export completed: {output_file}")
         return str(output_file)
 
-    def decrypt_export(self, encrypted_path: str, password: str, output_dir: str) -> Optional[str]:
+    def decrypt_export(self, encrypted_path: str, password: str, output_dir: str) -> str | None:
         encrypted_file = Path(encrypted_path)
         if not encrypted_file.exists():
             logger.error(f"Encrypted file does not exist: {encrypted_file}")
@@ -317,7 +319,7 @@ class LootManager:
                 raise zipfile.BadZipFile(f"Path traversal attempt: {member}")
         zf.extractall(extract_to)
 
-    def _decrypt_fernet(self, encrypted_data: bytes, password: str, output_path: Path) -> Optional[str]:
+    def _decrypt_fernet(self, encrypted_data: bytes, password: str, output_path: Path) -> str | None:
         temp_path = None
         try:
             decrypted = self._decrypt_with_fernet(encrypted_data, password)
@@ -343,15 +345,15 @@ class LootManager:
                 os.unlink(temp_path)
             return None
 
-    def _decrypt_pyzipper(self, encrypted_file: Path, password: str, output_path: Path) -> Optional[str]:
+    def _decrypt_pyzipper(self, encrypted_file: Path, password: str, output_path: Path) -> str | None:
         try:
             extract_path = output_path / "decrypted_vault"
             extract_path.mkdir(exist_ok=True)
-            
+
             with pyzipper.AESZipFile(encrypted_file) as zipf:
                 zipf.setpassword(password.encode())
                 LootManager._safe_extractall(zipf, extract_path)
-            
+
             return str(extract_path)
         except Exception as e:
             logger.error(f"Pyzipper decryption failed: {e}")

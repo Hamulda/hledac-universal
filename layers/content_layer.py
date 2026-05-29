@@ -26,10 +26,9 @@ Usage:
 
 import logging
 import re
-from typing import Optional, Dict, Any, List
 from dataclasses import dataclass
 from enum import Enum
-from pathlib import Path
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -56,8 +55,8 @@ class CleaningResult:
     success: bool
     content: str
     format: OutputFormat
-    metadata: Optional[Dict[str, Any]] = None
-    error: Optional[str] = None
+    metadata: dict[str, Any] | None = None
+    error: str | None = None
 
 
 class SimpleHTMLCleaner:
@@ -369,7 +368,7 @@ class ContentCleaner:
             fallback_to_bs4: Whether to fall back to BeautifulSoup
             default_format: Default output format
         """
-        self._simple_cleaner: Optional[SimpleHTMLCleaner] = None
+        self._simple_cleaner: SimpleHTMLCleaner | None = None
         self._use_mlx = use_mlx
         self._fallback_to_bs4 = fallback_to_bs4
         self._default_format = default_format
@@ -422,7 +421,7 @@ class ContentCleaner:
         html = re.sub(r'<header[^>]*>.*?</header>', '', html, flags=re.DOTALL)
         html = re.sub(r'<aside[^>]*>.*?</aside>', '', html, flags=re.DOTALL)
         html = re.sub(r'<!--.*?-->', '', html, flags=re.DOTALL)
-        
+
         # Extract main content area if exists
         main_match = re.search(r'<main[^>]*>(.*?)</main>', html, flags=re.DOTALL)
         if main_match:
@@ -443,7 +442,7 @@ class ContentCleaner:
     def clean_html(
         self,
         raw_html: str,
-        output_format: Optional[OutputFormat] = None
+        output_format: OutputFormat | None = None
     ) -> CleaningResult:
         """
         Clean HTML to specified format.
@@ -472,9 +471,9 @@ class ContentCleaner:
 
     def clean_html_batch(
         self,
-        html_list: List[str],
-        output_format: Optional[OutputFormat] = None
-    ) -> List[CleaningResult]:
+        html_list: list[str],
+        output_format: OutputFormat | None = None
+    ) -> list[CleaningResult]:
         """
         Clean multiple HTML documents.
 
@@ -491,7 +490,7 @@ class ContentCleaner:
         """Check if MLX model is available (deprecated, always returns False)."""
         return False
 
-    def get_status(self) -> Dict[str, Any]:
+    def get_status(self) -> dict[str, Any]:
         """
         Get cleaner status.
 
@@ -505,7 +504,7 @@ class ContentCleaner:
         }
 
 
-_global_cleaner: Optional[ContentCleaner] = None
+_global_cleaner: ContentCleaner | None = None
 
 
 def get_content_cleaner() -> ContentCleaner:
@@ -527,21 +526,21 @@ def get_content_cleaner() -> ContentCleaner:
 # UTILITY FUNCTIONS (from stealth_crawler.py integration)
 # =============================================================================
 
-from urllib.parse import unquote, urlparse, parse_qs
+from urllib.parse import parse_qs, unquote, urlparse
 
 
 def clean_html_tags(text: str) -> str:
     """
     Remove HTML tags and normalize whitespace.
-    
+
     Lightweight alternative to full HTML parsing for simple cleaning.
-    
+
     Args:
         text: HTML text to clean
-        
+
     Returns:
         Clean text without HTML tags
-        
+
     Example:
         >>> clean_html_tags("<p>Hello <b>world</b></p>")
         'Hello world'
@@ -551,19 +550,19 @@ def clean_html_tags(text: str) -> str:
     return text.strip()
 
 
-def extract_url_from_duckduckgo_redirect(url: str) -> Optional[str]:
+def extract_url_from_duckduckgo_redirect(url: str) -> str | None:
     """
     Extract actual URL from DuckDuckGo redirect URL.
-    
+
     DuckDuckGo wraps external URLs in their own redirect format:
     /l/?uddg=<encoded_url>
-    
+
     Args:
         url: DuckDuckGo redirect URL
-        
+
     Returns:
         Actual URL or None if not a redirect
-        
+
     Example:
         >>> extract_url_from_duckduckgo_redirect('/l/?uddg=https%3A%2F%2Fexample.com')
         'https://example.com'
@@ -580,18 +579,18 @@ def extract_url_from_duckduckgo_redirect(url: str) -> Optional[str]:
         return None
 
 
-def extract_url_from_google_redirect(url: str) -> Optional[str]:
+def extract_url_from_google_redirect(url: str) -> str | None:
     """
     Extract actual URL from Google redirect URL.
-    
+
     Google wraps external URLs in /url?q=<encoded_url> format.
-    
+
     Args:
         url: Google redirect URL
-        
+
     Returns:
         Actual URL or None if not a redirect
-        
+
     Example:
         >>> extract_url_from_google_redirect('/url?q=https%3A%2F%2Fexample.com')
         'https://example.com'
@@ -609,34 +608,34 @@ def extract_url_from_google_redirect(url: str) -> Optional[str]:
         return None
 
 
-def clean_search_result_url(url: str, source: str = "auto") -> Optional[str]:
+def clean_search_result_url(url: str, source: str = "auto") -> str | None:
     """
     Clean search result URL from various search engines.
-    
+
     Automatically detects and extracts actual URLs from search engine
     redirect wrappers.
-    
+
     Args:
         url: Search result URL
         source: Source engine ('duckduckgo', 'google', or 'auto')
-        
+
     Returns:
         Clean URL or None if invalid
-        
+
     Example:
         >>> clean_search_result_url('/l/?uddg=https%3A%2F%2Fexample.com', 'duckduckgo')
         'https://example.com'
     """
     if not url:
         return None
-    
+
     # Auto-detect source
     if source == "auto":
         if '/l/?uddg=' in url or 'duckduckgo' in url:
             source = "duckduckgo"
         elif '/url?' in url and 'google' in str(urlparse(url).netloc):
             source = "google"
-    
+
     # Clean based on source
     if source == "duckduckgo":
         return extract_url_from_duckduckgo_redirect(url)
@@ -655,7 +654,6 @@ def clean_search_result_url(url: str, source: str = "auto") -> Optional[str]:
 # =============================================================================
 
 from dataclasses import dataclass
-from typing import List
 
 
 @dataclass
@@ -668,30 +666,30 @@ class SearchResultItem:
     rank: int = 0
 
 
-def parse_duckduckgo_results(html: str, num_results: int = 10) -> List[SearchResultItem]:
+def parse_duckduckgo_results(html: str, num_results: int = 10) -> list[SearchResultItem]:
     """
     Parse DuckDuckGo HTML search results.
-    
+
     Extracts title, URL and snippet from DuckDuckGo HTML response.
-    
+
     Args:
         html: DuckDuckGo HTML response
         num_results: Maximum number of results to return
-        
+
     Returns:
         List of SearchResultItem
-        
+
     Example:
         >>> results = parse_duckduckgo_results(html_content, 5)
         >>> for r in results:
         ...     print(f"{r.title}: {r.url}")
     """
     results = []
-    
+
     # Primary pattern: result with snippet
     pattern = r'<a[^>]*class="result__a"[^>]*href="([^"]*)"[^>]*>(.*?)</a>.*?<a[^>]*class="result__snippet"[^>]*>(.*?)</a>'
     matches = re.findall(pattern, html, re.DOTALL)
-    
+
     for i, (url_raw, title, snippet) in enumerate(matches[:num_results]):
         clean_url = extract_url_from_duckduckgo_redirect(url_raw)
         if clean_url:
@@ -702,12 +700,12 @@ def parse_duckduckgo_results(html: str, num_results: int = 10) -> List[SearchRes
                 source="duckduckgo",
                 rank=i
             ))
-    
+
     # Fallback pattern: result without snippet
     if not results:
         pattern = r'<a[^>]*href="([^"]*)"[^>]*class="result__a"[^>]*>(.*?)</a>'
         matches = re.findall(pattern, html, re.DOTALL)
-        
+
         for i, (url_raw, title) in enumerate(matches[:num_results]):
             clean_url = extract_url_from_duckduckgo_redirect(url_raw)
             if clean_url:
@@ -718,33 +716,33 @@ def parse_duckduckgo_results(html: str, num_results: int = 10) -> List[SearchRes
                     source="duckduckgo",
                     rank=i
                 ))
-    
+
     return results
 
 
-def parse_google_results(html: str, num_results: int = 10) -> List[SearchResultItem]:
+def parse_google_results(html: str, num_results: int = 10) -> list[SearchResultItem]:
     """
     Parse Google HTML search results.
-    
+
     Extracts title, URL and snippet from Google HTML response.
-    
+
     Args:
         html: Google HTML response
         num_results: Maximum number of results to return
-        
+
     Returns:
         List of SearchResultItem
-        
+
     Example:
         >>> results = parse_google_results(html_content, 5)
         >>> for r in results:
         ...     print(f"{r.title}: {r.url}")
     """
     results = []
-    
+
     pattern = r'<div[^>]*class="g"[^>]*>.*?<h3[^>]*>.*?<a[^>]*href="([^"]*)"[^>]*>(.*?)</a>.*?<span[^>]*class="st"[^>]*>(.*?)</span>'
     matches = re.findall(pattern, html, re.DOTALL)
-    
+
     for i, (url_raw, title, snippet) in enumerate(matches[:num_results]):
         clean_url = extract_url_from_google_redirect(url_raw)
         if clean_url:
@@ -755,5 +753,5 @@ def parse_google_results(html: str, num_results: int = 10) -> List[SearchResultI
                 source="google",
                 rank=i
             ))
-    
+
     return results

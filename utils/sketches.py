@@ -17,9 +17,6 @@ import heapq
 import logging
 import pathlib
 from collections import OrderedDict
-from typing import Dict, List, Optional, Set, Tuple
-
-import numpy as np
 
 logger = logging.getLogger(__name__)
 
@@ -56,7 +53,7 @@ class HybridFrequencySketch:
         sketch_depth: int = 5,
         top_k: int = 1024,
         lru_size: int = 512,
-        lmdb_path: Optional[str] = None,
+        lmdb_path: str | None = None,
     ):
         self.width = sketch_width
         self.depth = sketch_depth
@@ -70,12 +67,12 @@ class HybridFrequencySketch:
             self.table = [[0] * sketch_width for _ in range(sketch_depth)]
 
         # SpaceSaving heap (max-heap via negative counts)
-        self.heap: List[Tuple[int, str]] = []  # (-count, item)
-        self.exact_counts: Dict[str, int] = {}  # exact counts for items in heap
-        self._item_set: Set[str] = set()  # Track items in heap for fast lookup
+        self.heap: list[tuple[int, str]] = []  # (-count, item)
+        self.exact_counts: dict[str, int] = {}  # exact counts for items in heap
+        self._item_set: set[str] = set()  # Track items in heap for fast lookup
 
         # LRU cache for recently accessed rare items
-        self.lru_cache: OrderedDict[str, int] = OrderedDict()
+        self.lru_cache: Ordereddict[str, int] = OrderedDict()
 
         # LMDB environment (if available)
         self.lmdb_env = None
@@ -192,7 +189,7 @@ class HybridFrequencySketch:
             except Exception as e:
                 logger.warning(f"LMDB write failed: {e}")
 
-    def _retrieve_from_cold(self, item: str) -> Optional[int]:
+    def _retrieve_from_cold(self, item: str) -> int | None:
         """Retrieve count from LRU or LMDB."""
         if item in self.lru_cache:
             # Move to end (most recently used)
@@ -255,10 +252,10 @@ class HybridFrequencySketch:
 
         return max(0, min_count - mean_noise)
 
-    def get_top_k(self, k: int = 10) -> List[Tuple[str, int]]:
+    def get_top_k(self, k: int = 10) -> list[tuple[str, int]]:
         """Get top K items by exact count."""
         # Rebuild heap to get accurate counts (lazy deletion may leave duplicates)
-        count_map: Dict[str, int] = {}
+        count_map: dict[str, int] = {}
         for neg_count, item in self.heap:
             count = -neg_count
             if item in count_map:
@@ -416,7 +413,7 @@ class ExactCounterFallback:
     """Fallback exact counter when MLX and hybrid are unavailable."""
 
     def __init__(self):
-        self._counts: Dict[str, int] = {}
+        self._counts: dict[str, int] = {}
 
     def add(self, item: str, count: int = 1) -> None:
         self._counts[item] = self._counts.get(item, 0) + count
@@ -424,7 +421,7 @@ class ExactCounterFallback:
     def estimate(self, item: str) -> int:
         return self._counts.get(item, 0)
 
-    def get_top_k(self, k: int = 10) -> List[Tuple[str, int]]:
+    def get_top_k(self, k: int = 10) -> list[tuple[str, int]]:
         sorted_items = sorted(
             self._counts.items(), key=lambda x: x[1], reverse=True
         )

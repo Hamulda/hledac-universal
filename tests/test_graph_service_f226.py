@@ -14,25 +14,18 @@ Run: pytest tests/test_graph_service_f226.py -q
 """
 from __future__ import annotations
 
-import pytest
 from unittest.mock import MagicMock, patch
 
 from hledac.universal.knowledge import graph_service
 from hledac.universal.knowledge.graph_service import (
-    GraphService,
     _DEFAULT_GRAPH_SERVICE,
     _SEEN_IOCS,
     _SEEN_RELS,
+    GraphService,
+    reset_session,
+    upsert_identity_edge,
     upsert_ioc,
     upsert_relation,
-    upsert_identity_edge,
-    find_entity_history,
-    graph_stats,
-    checkpoint,
-    reset_session,
-    upsert_ioc_batch,
-    graph_analytics_summary,
-    _get_graph,
 )
 
 

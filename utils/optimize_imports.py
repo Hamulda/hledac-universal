@@ -17,13 +17,14 @@ Examples:
     python optimize_imports.py hledac/               # Apply fixes
 """
 
-import ast
-import sys
+from __future__ import annotations
+
 import argparse
-import subprocess
-from pathlib import Path
-from typing import List
+import ast
 import logging
+import subprocess
+import sys
+from pathlib import Path
 
 logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
 logger = logging.getLogger(__name__)
@@ -40,7 +41,7 @@ class ImportOptimizer:
     def optimize_file(self, filepath: Path) -> bool:
         """Optimize imports in a single file."""
         try:
-            with open(filepath, 'r', encoding='utf-8') as f:
+            with open(filepath, encoding='utf-8') as f:
                 content = f.read()
 
             original_content = content
@@ -105,9 +106,9 @@ class ImportOptimizer:
         lines = content.split('\n')
 
         # Categorized import lists
-        stdlib_imports: List[str] = []
-        thirdparty_imports: List[str] = []
-        local_imports: List[str] = []
+        stdlib_imports: list[str] = []
+        thirdparty_imports: list[str] = []
+        local_imports: list[str] = []
 
         # Stdlib modules set
         stdlib_modules = {
@@ -118,7 +119,7 @@ class ImportOptimizer:
         }
 
         # Collect all import lines
-        import_lines: List[str] = []
+        import_lines: list[str] = []
         import_map = {}  # line_index -> import_category
 
         for i, line in enumerate(lines):
@@ -144,7 +145,7 @@ class ImportOptimizer:
         local_imports = sorted([lines[i] for i in import_map if import_map[i] == 'local'])
 
         # Build organized lines
-        organized: List[str] = []
+        organized: list[str] = []
         if stdlib_imports:
             organized.extend(stdlib_imports)
         if thirdparty_imports:
@@ -155,7 +156,7 @@ class ImportOptimizer:
             organized.extend(local_imports)
 
         # Rebuild content
-        result_lines: List[str] = []
+        result_lines: list[str] = []
         imports_inserted = False
 
         for line in lines:

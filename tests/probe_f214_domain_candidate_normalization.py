@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
 """F214-ACQ-DOMAIN-CANDIDATE-NORMALIZATION-HARDENING validation."""
 import sys
+
 sys.path.insert(0, "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal")
 
 from runtime.nonfeed_candidate_ledger import (
-    extract_domain_candidates_from_text,
-    compute_lane_eligibility,
-    _is_valid_domain_candidate,
     _is_ip_literal,
+    _is_valid_domain_candidate,
     _normalize_defanged_text,
+    compute_lane_eligibility,
+    extract_domain_candidates_from_text,
 )
 
 PASS = FAIL = 0

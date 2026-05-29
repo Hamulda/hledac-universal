@@ -50,6 +50,7 @@ __all__ = [
 
 # Sprint 8VG A.3: Warn if 'None' file exists on disk
 import pathlib as _pl
+
 _NONE_PATH = _pl.Path("None")
 if _NONE_PATH.exists():
     import warnings
@@ -64,7 +65,7 @@ import pathlib
 import shutil
 import warnings
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 # ---------------------------------------------------------------------------
 # OPSEC Fallback Warning (once-only)
@@ -204,7 +205,7 @@ def get_lmdb_max_size_mb() -> int:
         return 512
 
 
-def open_lmdb(path: pathlib.Path, *, map_size: Optional[int] = None, **kw) -> Any:
+def open_lmdb(path: pathlib.Path, *, map_size: int | None = None, **kw) -> Any:
     """
     Open an LMDB environment with consistent defaults and single-retry lock recovery.
 
@@ -394,7 +395,7 @@ def get_sprint_next_seeds_path(sprint_id: str) -> Path:
 # Security dirs: explicit chmod 0o700 after mkdir (umask can weaken)
 # ---------------------------------------------------------------------------
 
-def _ensure_dir(path: Path, mode: Optional[int] = None) -> None:
+def _ensure_dir(path: Path, mode: int | None = None) -> None:
     """Ensure directory exists, optionally with specific permissions."""
     if mode is not None:
         path.mkdir(parents=True, exist_ok=True)
@@ -509,7 +510,6 @@ def cleanup_stale_lmdb_locks(lmdb_root: Path) -> int:
 
     Returns count of lock files removed.
     """
-    import os as _os
 
     removed = 0
     if not lmdb_root.exists():

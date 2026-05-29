@@ -4,10 +4,8 @@ Sprint 7G: Critical Benchmark Triage
 - stealth_crawler async mismatch fix
 - duration cap override fix
 """
-import asyncio
 import inspect
-import time
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -45,7 +43,7 @@ class TestStealthCrawlerFix:
     """TEST 2: stealth crawler returns real non-coroutine result"""
 
     def test_fetch_html_sync_returns_string_not_coroutine(self):
-        """_fetch_html should return Optional[str], not a coroutine"""
+        """_fetch_html should return str | None, not a coroutine"""
         from hledac.universal.intelligence.stealth_crawler import StealthCrawler
 
         crawler = StealthCrawler()
@@ -135,6 +133,7 @@ class TestShutdownWarning:
     def test_quantum_wipe_no_bare_except(self):
         """secure_wipe_keys should not use bare except in __del__"""
         import inspect
+
         from hledac.security.quantum_resistant_crypto import QuantumResistantCrypto
 
         # Get the source of __del__
@@ -156,6 +155,7 @@ class TestSmokeIntegration:
     async def test_offline_replay_smoke_no_blocker_errors(self):
         """30s OFFLINE_REPLAY smoke should have no blocker errors"""
         import time as time_module
+
         from hledac.universal.benchmarks.run_sprint82j_benchmark import run_benchmark
 
         # Run benchmark - pass parameters directly to run_benchmark

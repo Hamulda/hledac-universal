@@ -5,7 +5,6 @@ Implementováno v MLX s online učením a ukládáním parametrů.
 
 import logging
 from pathlib import Path
-from typing import Dict, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -83,7 +82,7 @@ class TaskPrioritizerWrapper:
                 flat[prefix + k] = v
         return flat
 
-    def _unflatten_params(self, flat: Dict):
+    def _unflatten_params(self, flat: dict):
         """Převede plochý slovník zpět na vnořený."""
         nested = {}
         for key, value in flat.items():
@@ -104,7 +103,7 @@ class TaskPrioritizerWrapper:
         try:
             loaded = mx.load(str(self.model_path))
             if isinstance(loaded, dict):
-                flat = {k: v for k, v in loaded.items()}
+                flat = dict(loaded.items())
                 nested = self._unflatten_params(flat)
                 self.model.update(nested)
                 self.trained = True
@@ -127,7 +126,7 @@ class TaskPrioritizerWrapper:
         except Exception as e:
             logger.error(f"Failed to save TaskPrioritizer: {e}")
 
-    def extract_features(self, task_metadata: Dict):
+    def extract_features(self, task_metadata: dict):
         """
         Extrahuje 10-dim feature vector z task metadata.
         Všechny features normalizovány do [0.0, 1.0] range.
@@ -204,7 +203,7 @@ class TaskPrioritizerWrapper:
 
         return mx.array(features, dtype=mx.float32)
 
-    async def predict(self, task_metadata: Dict) -> Tuple[float, float]:
+    async def predict(self, task_metadata: dict) -> tuple[float, float]:
         """
         Predikuje gain a duration pro danou úlohu.
         Vrací (predicted_gain, predicted_duration).
@@ -222,7 +221,7 @@ class TaskPrioritizerWrapper:
         out = self.model(features)
         return float(out[0]), float(out[1])
 
-    async def update(self, task_metadata: Dict, actual_gain: float, actual_duration: float):
+    async def update(self, task_metadata: dict, actual_gain: float, actual_duration: float):
         """
         Provede online update modelu na základě skutečných výsledků.
         """

@@ -7,9 +7,7 @@ import sys
 import tempfile
 import threading
 import time
-import tracemalloc
 import unittest.mock
-from pathlib import Path
 
 import pytest
 
@@ -31,7 +29,7 @@ class TestPromptCache:
 
     def test_hash_key_prefix(self):
         """Test hash key has correct prefix."""
-        from hledac.universal.brain.prompt_cache import _hash_key, CACHE_VERSION, CACHE_NAMESPACE
+        from hledac.universal.brain.prompt_cache import CACHE_NAMESPACE, CACHE_VERSION, _hash_key
         key = _hash_key("test")
         assert key.startswith(f"{CACHE_NAMESPACE}:{CACHE_VERSION}:")
 
@@ -39,6 +37,7 @@ class TestPromptCache:
         """Test xxhash fallback when not available."""
         with unittest.mock.patch.dict(sys.modules, {'xxhash': None}):
             import importlib
+
             from hledac.universal.brain import prompt_cache
             importlib.reload(prompt_cache)
             key = prompt_cache._hash_key("test")
@@ -133,8 +132,9 @@ class TestZSTDCompression:
 
     def test_zstd_error_handling(self):
         """Test error handling for missing snapshots."""
-        from hledac.universal.knowledge.atomic_storage import SnapshotStorage
         import asyncio
+
+        from hledac.universal.knowledge.atomic_storage import SnapshotStorage
 
         storage = SnapshotStorage()
 
@@ -150,7 +150,6 @@ class TestZSTDCompression:
         storage = SnapshotStorage()
 
         # ZSTD magic bytes
-        zstd_data = b'\x28\xb5\x2f\xfdtest'
         assert storage._zstd_decompressor is not None
 
         # Test actual decompression

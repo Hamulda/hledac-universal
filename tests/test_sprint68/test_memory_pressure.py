@@ -2,9 +2,10 @@
 Testy pro Sprint 68 - Memory Pressure handling
 """
 
+from collections import OrderedDict, deque
+from unittest.mock import patch
+
 import pytest
-from collections import deque, OrderedDict
-from unittest.mock import patch, MagicMock
 
 
 def test_memory_pressure_detection():
@@ -25,7 +26,7 @@ def test_bounded_collections_memory():
     """Test bounded kolekce a jejich paměťové limity."""
     # Test deque bounded
     dq = deque(maxlen=100)
-    for i in range(200):
+    for _i in range(200):
         dq.append({"data": "x" * 100})  # ~100 bytes per item
     # Max ~10KB místo ~20KB
     assert len(dq) == 100
@@ -113,7 +114,7 @@ def test_iteration_count_limit():
     iter_count = 0
 
     # Simulace iterací
-    for i in range(250):
+    for _i in range(250):
         iter_count += 1
         if iter_count >= max_iters:
             break

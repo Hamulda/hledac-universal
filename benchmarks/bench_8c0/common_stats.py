@@ -7,13 +7,13 @@ Provides:
 - Shared fixtures loading
 """
 
+import gc
 import json
 import time
-import gc
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Tuple
 from statistics import median
-
+from typing import Any
 
 # ---------------------------------------------------------------------------
 # Schema
@@ -22,7 +22,7 @@ from statistics import median
 BENCHMARK_RESULT_SCHEMA = {
     "benchmark": str,       # e.g. "e2e_baseline", "html_parse"
     "status": str,          # "PASS", "FAIL", "MISSING_DEP", "UNAVAILABLE_WITH_REASON"
-    "reason": Optional[str], # why unavailable / missing dep
+    "reason": str | None, # why unavailable / missing dep
     "n": int,               # number of measured runs
     "warmup": int,          # warmup runs performed
     "min": float,
@@ -30,10 +30,10 @@ BENCHMARK_RESULT_SCHEMA = {
     "p95": float,
     "max": float,
     "unit": str,
-    "fixtures": List[str],   # source files used
-    "seed": Optional[int],  # deterministic seed used
+    "fixtures": list[str],   # source files used
+    "seed": int | None,  # deterministic seed used
     "timestamp": str,
-    "extra": Dict[str, Any], # benchmark-specific extra fields
+    "extra": dict[str, Any], # benchmark-specific extra fields
 }
 
 
@@ -41,7 +41,7 @@ BENCHMARK_RESULT_SCHEMA = {
 # Core helpers
 # ---------------------------------------------------------------------------
 
-def compute_percentile(values: List[float], p: float) -> float:
+def compute_percentile(values: list[float], p: float) -> float:
     """Compute the p-th percentile of a list of values (0.0 <= p <= 1.0)."""
     if not values:
         return 0.0
@@ -56,7 +56,7 @@ def warmup_and_measure(
     warmup: int = 2,
     repeats: int = 5,
     gc_between: bool = True,
-) -> Tuple[List[float], float]:
+) -> tuple[list[float], float]:
     """
     Run `fn` `warmup` times for warmup, then `repeats` times collecting
     wall-clock durations. Returns (durations, median).
@@ -69,7 +69,7 @@ def warmup_and_measure(
         fn()
 
     # Measurement phase
-    durations: List[float] = []
+    durations: list[float] = []
     for _ in range(repeats):
         if gc_between:
             gc.collect()
@@ -83,15 +83,15 @@ def warmup_and_measure(
 
 def build_result(
     benchmark: str,
-    durations_ms: List[float],
+    durations_ms: list[float],
     warmup: int,
     unit: str,
-    fixtures: List[str],
+    fixtures: list[str],
     status: str = "PASS",
-    reason: Optional[str] = None,
-    seed: Optional[int] = None,
-    extra: Optional[Dict[str, Any]] = None,
-) -> Dict[str, Any]:
+    reason: str | None = None,
+    seed: int | None = None,
+    extra: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     """Build a machine-readable benchmark result dict."""
     d = {
         "benchmark": benchmark,
@@ -112,7 +112,7 @@ def build_result(
     return d
 
 
-def write_results(results: List[Dict[str, Any]], output_path: Path) -> None:
+def write_results(results: list[dict[str, Any]], output_path: Path) -> None:
     """Append all results to a JSONL output file (one JSON object per line)."""
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with open(output_path, "a") as f:
@@ -124,7 +124,7 @@ def write_results(results: List[Dict[str, Any]], output_path: Path) -> None:
 # Fixture helpers
 # ---------------------------------------------------------------------------
 
-def load_fixture_manifest() -> Dict[str, List[str]]:
+def load_fixture_manifest() -> dict[str, list[str]]:
     """Load the fixture manifest created during KROK 2."""
     path = Path(__file__).parent.parent.parent / "tests" / "probe_8c0" / "fixture_manifest.json"
     if path.exists():
@@ -132,13 +132,13 @@ def load_fixture_manifest() -> Dict[str, List[str]]:
     return {"html": [], "json": [], "warc": [], "text": []}
 
 
-def load_html_fixtures(limit: int = 20) -> List[Tuple[str, str]]:
+def load_html_fixtures(limit: int = 20) -> list[tuple[str, str]]:
     """
     Load real HTML fixtures from the project.
     Returns list of (file_path, content).
     """
     manifest = load_fixture_manifest()
-    fixtures: List[Tuple[str, str]] = []
+    fixtures: list[tuple[str, str]] = []
     for fp in manifest.get("html", [])[:limit]:
         try:
             content = Path(fp).read_text(errors="ignore")
@@ -148,13 +148,13 @@ def load_html_fixtures(limit: int = 20) -> List[Tuple[str, str]]:
     return fixtures
 
 
-def load_json_fixtures(limit: int = 20) -> List[Tuple[str, Dict[str, Any]]]:
+def load_json_fixtures(limit: int = 20) -> list[tuple[str, dict[str, Any]]]:
     """
     Load real JSON fixtures from the project.
     Returns list of (file_path, parsed_dict).
     """
     manifest = load_fixture_manifest()
-    fixtures: List[Tuple[str, Dict[str, Any]]] = []
+    fixtures: list[tuple[str, dict[str, Any]]] = []
     for fp in manifest.get("json", [])[:limit]:
         try:
             data = json.loads(Path(fp).read_text(errors="ignore"))
@@ -171,7 +171,7 @@ def load_json_fixtures(limit: int = 20) -> List[Tuple[str, Dict[str, Any]]]:
 def check_selectolax() -> bool:
     """Check if selectolax parser is available."""
     try:
-        from selectolax.parser import HTMLParser as _   # noqa: F401
+        from selectolax.parser import HTMLParser as _  # noqa: F401
         return True
     except ImportError:
         return False
@@ -186,7 +186,7 @@ def check_uvloop() -> bool:
         return False
 
 
-def check_mlx() -> Tuple[bool, str]:
+def check_mlx() -> tuple[bool, str]:
     """
     Check if MLX and mlx_lm are available for inference.
     Returns (available, reason_if_not).
@@ -204,7 +204,7 @@ def check_mlx() -> Tuple[bool, str]:
     return True, ""
 
 
-def check_hermes_model() -> Tuple[bool, str]:
+def check_hermes_model() -> tuple[bool, str]:
     """
     Check if Hermes model is available.
     Returns (available, model_path_or_reason).

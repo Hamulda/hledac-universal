@@ -6,9 +6,9 @@ Tests for ModernBERT MLX embedder migration, fallback chain,
 Arrow streaming, and hybrid search.
 """
 
-import pytest
 import asyncio
-import numpy as np
+
+import pytest
 
 
 class TestModernBERTMLXEmbedder:
@@ -50,7 +50,6 @@ class TestLanceDBEmbedderMigration:
         store._fallback_dim = 768
 
         # Test single embedding
-        import asyncio
         result = asyncio.get_event_loop().run_until_complete(
             store._embed_single("test text")
         )

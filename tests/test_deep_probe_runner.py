@@ -17,9 +17,9 @@ Invariants tested:
 """
 
 import asyncio
-import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
-from typing import Any
+
+import pytest
 
 
 class TestDeepProbeInvariants:
@@ -27,7 +27,6 @@ class TestDeepProbeInvariants:
 
     def test_probe_source_type_is_deep_probe(self):
         """invariant_1: probe findings have source_type='deep_probe'."""
-        from hledac.universal.deep_research.probe_runner import run_deep_probe
         # Verify the result dict has the correct source type
         # The actual verification happens via the store calls
 
@@ -138,7 +137,7 @@ class TestDeepProbeRunnerIntegration:
     async def test_run_deep_probe_timeout_is_bounded(self, mock_store):
         """invariant_2: probe respects the timeout_s parameter."""
         import time
-        from hledac.universal.deep_research.probe_runner import MAX_PROBE_DURATION_S
+
 
         mock_scanner = MagicMock()
 
@@ -156,7 +155,7 @@ class TestDeepProbeRunnerIntegration:
 
                 test_timeout = 2.0  # 2 seconds for test
                 start = time.monotonic()
-                result = await run_deep_probe(
+                await run_deep_probe(
                     query="test query",
                     store=mock_store,
                     timeout_s=test_timeout,
@@ -210,6 +209,7 @@ class TestDeepProbeExportNonBlocking:
         """
         # Verify the source code structure - export_sprint awaited first, then probe runs
         import inspect
+
         from hledac.universal.core.__main__ import run_sprint
 
         source = inspect.getsource(run_sprint)
@@ -254,11 +254,11 @@ class TestDeepProbeExportNonBlocking:
         with patch("hledac.universal.core.__main__.export_sprint", mock_export):
             with patch("hledac.universal.deep_research.probe_runner.run_deep_probe_if_enabled", mock_probe):
                 # Simulate the sequential flow in run_sprint
-                export_result = await mock_export()  # First: await export
+                await mock_export()  # First: await export
                 assert export_completed is True
                 assert probe_started is False  # Probe hasn't started yet
 
-                probe_result = await mock_probe()  # Then: run probe
+                await mock_probe()  # Then: run probe
                 assert probe_started is True
 
                 # Export completed BEFORE probe started
@@ -271,12 +271,9 @@ class TestDeepProbeProbeRunnerImports:
     def test_probe_runner_imports_deep_probe(self):
         """probe_runner imports from deep_probe module."""
         from hledac.universal.deep_research.probe_runner import (
-            run_deep_probe,
-            run_deep_probe_if_enabled,
-            run_deep_probe_standalone,
-            MAX_PROBE_DURATION_S,
-            MAX_CRAWL_DEPTH,
             MAX_BUCKET_SCAN,
+            MAX_CRAWL_DEPTH,
+            MAX_PROBE_DURATION_S,
         )
         assert MAX_PROBE_DURATION_S == 120.0
         assert MAX_CRAWL_DEPTH == 3
@@ -286,11 +283,11 @@ class TestDeepProbeProbeRunnerImports:
         """deep_probe module exports expected functions."""
         from hledac.universal.deep_probe import (
             DeepProbeScanner,
+            generate_ipfs_dorks,
+            generate_s3_dorks,
             scan_deep_web,
             scan_ipfs,
             scan_s3_buckets,
-            generate_ipfs_dorks,
-            generate_s3_dorks,
         )
         assert callable(DeepProbeScanner)
         assert callable(scan_deep_web)

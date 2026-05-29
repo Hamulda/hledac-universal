@@ -51,8 +51,9 @@ def _do_capability_check() -> bytes:
     """Check if PyObjC and WebKit are importable, return status as JSON."""
     try:
         # Try importing the WebKit framework via PyObjC
-        from objc import dyld_framework
         import os
+
+        from objc import dyld_framework
 
         # Attempt to load WebKit — this fails if PyObjC or WebKit is missing
         path = "/System/Library/Frameworks/WebKit.framework"
@@ -63,8 +64,8 @@ def _do_capability_check() -> bytes:
         dyld_framework("/System/Library/Frameworks/AppKit.framework", "AppKit")
         dyld_framework(path, "WebKit")
 
-        from objc import nil
         from Foundation import NSBundle
+        from objc import nil
         bundle = NSBundle.bundleWithPath_(path)
         wk_class = bundle.classNamed_("WKWebView")
         if wk_class is None or wk_class == nil:
@@ -72,15 +73,13 @@ def _do_capability_check() -> bytes:
 
         # WKWebView is available
         return _build_response(True, "macos_webkit_success")
-    except Exception as e:
+    except Exception:
         # Any import/framework error means WebKit is not available
         return _build_response(False, "macos_webkit_pyobjc_missing")
 
 
 def _nsclass(name: str):
     """Short-hand for NSClassFromString — look up a Cocoa class by name."""
-    from objc import nil
-    from objc._objc import _loadBundle
     from Foundation import NSBundle
 
     bundle = NSBundle.bundleWithPath_("/System/Library/Frameworks/WebKit.framework")
@@ -100,7 +99,7 @@ def _run_loop_until_condition(
     during the wait, allowing async callbacks (like WKWebView navigation)
     to complete.
     """
-    from Foundation import NSRunLoop, NSDate
+    from Foundation import NSDate, NSRunLoop
 
     deadline = time.monotonic() + timeout_s
     run_loop = NSRunLoop.currentRunLoop()
@@ -129,15 +128,14 @@ def _do_render(payload: dict) -> bytes:
     t0 = time.monotonic()
 
     try:
-        from objc import nil, dyld_framework
         from Foundation import (
             NSURL,
-            NSURLRequest,
-            NSBundle,
-            NSRunLoop,
             NSDate,
+            NSRunLoop,
+            NSURLRequest,
         )
-        from WebKit import WKWebView, WKWebViewConfiguration, WKUserContentController
+        from objc import dyld_framework, nil
+        from WebKit import WKWebView, WKWebViewConfiguration
 
         # Load frameworks (WKWebView requires AppKit + WebKit)
         dyld_framework("/System/Library/Frameworks/AppKit.framework", "AppKit")
@@ -148,7 +146,7 @@ def _do_render(payload: dict) -> bytes:
 
         # Non-persistent data store: no cookies, no cache persisted to disk
         try:
-            from WebKit import WKWebsiteDataStore, WKProcessPool
+            from WebKit import WKProcessPool, WKWebsiteDataStore
             config.setWebsiteDataStore_(WKWebsiteDataStore.nonPersistentDataStore())
             config.setProcessPool_(WKProcessPool.alloc().init())
         except Exception:

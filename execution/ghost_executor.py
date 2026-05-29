@@ -34,7 +34,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Dict, List, Optional, Set, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from hledac.universal.project_types import ExecutionRequest, ExecutionResult, RunCorrelation
@@ -88,11 +88,11 @@ class ActionResult:
     """Výsledek akce"""
     success: bool
     action: str
-    data: Dict[str, Any]
-    error: Optional[str] = None
+    data: dict[str, Any]
+    error: str | None = None
     execution_time: float = 0.0
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "success": self.success,
             "action": self.action,
@@ -132,7 +132,7 @@ class ActionResult:
 # Důvod: Ghost akce mají vlastní implementace (byť placeholder),
 #        ToolRegistry handlery jsou placeholder/univerzální.
 # SPRINT 8VF: Delegation seam existuje, ale canonical-ready slice je PRÁZDNÁ.
-_CANONICAL_READY_ACTIONS: Set[str] = set()  # prázdná — audit viz níže
+_CANONICAL_READY_ACTIONS: set[str] = set()  # prázdná — audit viz níže
 
 # === MAPPED-BUT-LOSSY SLICE ===
 # Kritérium: Ghost action má mapping na ToolRegistry tool,
@@ -154,7 +154,7 @@ _CANONICAL_READY_ACTIONS: Set[str] = set()  # prázdná — audit viz níže
 #     TR: local file read (žádný network, žádný Bloom, žádný context)
 #     Sémantika ≠ → MAPPED-BUT-LOSSY
 #
-_MAPPED_BUT_LOSSY_ACTIONS: Set[str] = {
+_MAPPED_BUT_LOSSY_ACTIONS: set[str] = {
     ActionType.SEARCH.value,
     ActionType.GOOGLE.value,
     ActionType.SMART_SEARCH.value,
@@ -164,7 +164,7 @@ _MAPPED_BUT_LOSSY_ACTIONS: Set[str] = {
 
 # === RUNTIME-ONLY-COMPAT SLICE ===
 # Kritérium: žádný canonical ekvivalent v ToolRegistry
-_RUNTIME_ONLY_COMPAT_ACTIONS: Set[str] = {
+_RUNTIME_ONLY_COMPAT_ACTIONS: set[str] = {
     ActionType.SCAN.value,
     ActionType.DOWNLOAD.value,
     ActionType.MEMORIZE.value,
@@ -183,7 +183,7 @@ _RUNTIME_ONLY_COMPAT_ACTIONS: Set[str] = {
 # === UNIFIED MAPPING pro diagnostiku a delegation seam ===
 # Současný stav: pouze diagnostický — obsahuje i mapped-but-lossy položky
 # Future: po F9 cutover bude obsahovat pouze canonical-ready
-_ACTION_TO_CANONICAL_TOOL: Dict[str, str] = {
+_ACTION_TO_CANONICAL_TOOL: dict[str, str] = {
     # Mapped (ale lossy) akce
     ActionType.SEARCH.value: "web_search",
     ActionType.GOOGLE.value: "web_search",
@@ -272,10 +272,10 @@ class GhostBridge:
     @staticmethod
     def to_execution_request(
         action: str,
-        params: Dict[str, Any],
+        params: dict[str, Any],
         priority: int = 5,
-        correlation: Optional["RunCorrelation"] = None,
-    ) -> "ExecutionRequest":
+        correlation: RunCorrelation | None = None,
+    ) -> ExecutionRequest:
         """
         Konvertuje Ghost akci + params na canonical ExecutionRequest.
 
@@ -306,8 +306,8 @@ class GhostBridge:
     @staticmethod
     def to_execution_result(
         ghost_result: ActionResult,
-        correlation: Optional["RunCorrelation"] = None,
-    ) -> "ExecutionResult":
+        correlation: RunCorrelation | None = None,
+    ) -> ExecutionResult:
         """
         Konvertuje Ghost ActionResult na canonical ExecutionResult.
 
@@ -362,10 +362,10 @@ class GhostBridge:
     @staticmethod
     def to_delegation_request(
         action: str,
-        params: Dict[str, Any],
+        params: dict[str, Any],
         priority: int = 5,
-        correlation: Optional["RunCorrelation"] = None,
-    ) -> Optional["ExecutionRequest"]:
+        correlation: RunCorrelation | None = None,
+    ) -> ExecutionRequest | None:
         """
         Konvertuje Ghost akci na canonical ExecutionRequest PRO CANONICAL-READY AKCE.
 
@@ -403,7 +403,7 @@ class GhostBridge:
         )
 
     @staticmethod
-    def get_delegation_matrix() -> Dict[str, str]:
+    def get_delegation_matrix() -> dict[str, str]:
         """
         Vrátí kompletní klasifikační matici Ghost akcí.
 
@@ -417,22 +417,22 @@ class GhostBridge:
         return matrix
 
     @staticmethod
-    def get_canonical_ready_actions() -> Set[str]:
+    def get_canonical_ready_actions() -> set[str]:
         """Vrátí set canonical-ready akcí (prázdná množina v current repo)."""
         return set(_CANONICAL_READY_ACTIONS)
 
     @staticmethod
-    def get_mapped_but_lossy_actions() -> Set[str]:
+    def get_mapped_but_lossy_actions() -> set[str]:
         """Vrátí set mapped-but-lossy akcí."""
         return set(_MAPPED_BUT_LOSSY_ACTIONS)
 
     @staticmethod
-    def get_runtime_only_compat_actions() -> Set[str]:
+    def get_runtime_only_compat_actions() -> set[str]:
         """Vrátí set runtime-only-compat akcí."""
         return set(_RUNTIME_ONLY_COMPAT_ACTIONS)
 
     @staticmethod
-    def get_action_canonical_tool_mapping() -> Dict[str, str]:
+    def get_action_canonical_tool_mapping() -> dict[str, str]:
         """
         Vrátí kopii read-only _ACTION_TO_CANONICAL_TOOL mappingu.
 
@@ -478,19 +478,19 @@ class GhostExecutor:
     - ArchiveDiscovery pro Wayback fallback
     - Bloom Filter pro deduplikaci
     """
-    
+
     def __init__(self, enable_stealth: bool = True):
         self.enable_stealth = enable_stealth
-        
+
         # Lazy-loaded komponenty
         self._network_driver = None
         self._stealth_manager = None
         self._bloom_filter = None
-        
+
         # Registr akcí
         self._actions = self._init_actions()
-        
-    def _init_actions(self) -> Dict[str, callable]:
+
+    def _init_actions(self) -> dict[str, callable]:
         """Inicializovat mapování akcí"""
         return {
             ActionType.SCAN.value: self._action_scan,
@@ -512,16 +512,16 @@ class GhostExecutor:
             ActionType.OSINT_DISCOVERY.value: self._action_osint_discovery,
             ActionType.ERROR.value: self._action_error,
         }
-    
+
     async def initialize(self) -> None:
         """Inicializovat executor"""
         logger.info("Initializing GhostExecutor...")
-        
+
         # Inicializovat Bloom Filter pro URL deduplikaci
         await self._init_bloom_filter()
-        
+
         logger.info("✓ GhostExecutor initialized")
-    
+
     async def _init_bloom_filter(self) -> None:
         """Inicializovat Bloom Filter — bounded RotatingBloomFilter."""
         try:
@@ -535,7 +535,7 @@ class GhostExecutor:
             logger.info("✓ Bloom Filter initialized (RotatingBloomFilter, 10K URLs, bounded)")
         except Exception as e:
             logger.warning(f"Bloom Filter not available: {e}")
-    
+
     async def _get_network_driver(self):
         """Lazy load network driver"""
         if self._network_driver is None:
@@ -545,7 +545,7 @@ class GhostExecutor:
             await self._network_driver.initialize()
             logger.info("✓ GhostNetworkDriver loaded")
         return self._network_driver
-    
+
     async def _get_stealth_manager(self):
         """
         Lazy load stealth manager.
@@ -563,9 +563,7 @@ class GhostExecutor:
             try:
                 # Sprint F900G: Truthful import path — was hledac.stealth_toolkit
                 # (non-existent), redirecting to actual deprecated location
-                from hledac.outdated.stealth_toolkit.stealth_orchestrator import (
-                    StealthOrchestrator as _SO
-                )
+                from hledac.outdated.stealth_toolkit.stealth_orchestrator import StealthOrchestrator as _SO
                 logger.info("Loading StealthOrchestrator (outdated path)...")
                 self._stealth_manager = _SO()
                 logger.info("✓ StealthOrchestrator loaded (degraded/stub)")
@@ -577,26 +575,26 @@ class GhostExecutor:
                 )
                 self._stealth_manager = None
         return self._stealth_manager
-    
+
     async def execute(
         self,
         action: str,
-        params: Dict[str, Any],
+        params: dict[str, Any],
         context=None
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Vykonat akci.
-        
+
         Args:
             action: Typ akce
             params: Parametry akce
             context: Výzkumný kontext
-            
+
         Returns:
             Výsledek akce jako slovník
         """
         logger.info(f"Executing action: {action}")
-        
+
         # Najít handler
         handler = self._actions.get(action)
         if handler is None:
@@ -606,7 +604,7 @@ class GhostExecutor:
                 data={},
                 error=f"Unknown action: {action}"
             ).to_dict()
-        
+
         # Vykonat
         try:
             result = await handler(params, context)
@@ -619,7 +617,7 @@ class GhostExecutor:
                 data={},
                 error=str(e)
             ).to_dict()
-    
+
     # =====================================================================
     # AKCE
     # =====================================================================
@@ -634,7 +632,7 @@ class GhostExecutor:
             search_text_sync, query, max_results_per_backend=5, timeout=10
         )
 
-    async def _action_search(self, params: Dict[str, Any], context) -> Dict[str, Any]:
+    async def _action_search(self, params: dict[str, Any], context) -> dict[str, Any]:
         """Vyhledávání přes DuckDuckGo a další backendy"""
         query = params.get("query", "")
         logger.info(f"Searching: {query}")
@@ -656,7 +654,7 @@ class GhostExecutor:
                 data={"query": query, "results": [], "error": str(e)},
             ).to_dict()
 
-    async def _action_google(self, params: Dict[str, Any], context) -> Dict[str, Any]:
+    async def _action_google(self, params: dict[str, Any], context) -> dict[str, Any]:
         """Google vyhledávání přes stealth browser (GhostNetworkDriver)"""
         query = params.get("query", "")
         logger.info(f"Google search: {query}")
@@ -685,8 +683,8 @@ class GhostExecutor:
                 action="google",
                 data={"query": query, "results": [], "error": str(e)},
             ).to_dict()
-    
-    async def _action_deep_read(self, params: Dict[str, Any], context) -> Dict[str, Any]:
+
+    async def _action_deep_read(self, params: dict[str, Any], context) -> dict[str, Any]:
         """
         Bezpečné čtení obsahu z URL (8KB chunks, 5MB limit).
 
@@ -762,8 +760,8 @@ class GhostExecutor:
                 data={"url": url},
                 error=str(e)
             ).to_dict()
-    
-    async def _action_research_paper(self, params: Dict[str, Any], context) -> Dict[str, Any]:
+
+    async def _action_research_paper(self, params: dict[str, Any], context) -> dict[str, Any]:
         """Vyhledávání akademických prací"""
         query = params.get("query", "")
         logger.info(f"Research paper search: {query}")
@@ -797,12 +795,12 @@ class GhostExecutor:
                 data={},
                 error=str(e)
             ).to_dict()
-    
-    async def _action_archive_fallback(self, params: Dict[str, Any], context) -> Dict[str, Any]:
+
+    async def _action_archive_fallback(self, params: dict[str, Any], context) -> dict[str, Any]:
         """Wayback Machine fallback"""
         url = params.get("url", "")
         logger.info(f"Archive fallback: {url}")
-        
+
         try:
             from hledac.universal.intelligence.archive_discovery import search_archives
 
@@ -810,7 +808,7 @@ class GhostExecutor:
 
             if archive_result and archive_result.snapshots:
                 latest = archive_result.snapshots[0]
-                
+
                 return ActionResult(
                     success=True,
                     action="archive_fallback",
@@ -827,7 +825,7 @@ class GhostExecutor:
                     data={"url": url},
                     error="No archive snapshots found"
                 ).to_dict()
-                
+
         except Exception as e:
             return ActionResult(
                 success=False,
@@ -835,15 +833,15 @@ class GhostExecutor:
                 data={},
                 error=str(e)
             ).to_dict()
-    
-    async def _action_fact_check(self, params: Dict[str, Any], context) -> Dict[str, Any]:
+
+    async def _action_fact_check(self, params: dict[str, Any], context) -> dict[str, Any]:
         """Ověření faktů"""
         claims = params.get("claims", [])
         logger.info(f"Fact checking {len(claims)} claims")
-        
+
         try:
             from hledac.fact_checking import quick_fact_check
-            
+
             results = []
             for claim in claims:
                 result = await quick_fact_check(claim)
@@ -851,13 +849,13 @@ class GhostExecutor:
                     "claim": claim,
                     "verdict": result.verdict if hasattr(result, 'verdict') else "unknown",
                 })
-            
+
             return ActionResult(
                 success=True,
                 action="fact_check",
                 data={"results": results},
             ).to_dict()
-            
+
         except Exception as e:
             return ActionResult(
                 success=False,
@@ -865,8 +863,8 @@ class GhostExecutor:
                 data={},
                 error=str(e)
             ).to_dict()
-    
-    async def _action_stealth_harvest(self, params: Dict[str, Any], context) -> Dict[str, Any]:
+
+    async def _action_stealth_harvest(self, params: dict[str, Any], context) -> dict[str, Any]:
         """
         Stealth harvestování.
 
@@ -883,24 +881,24 @@ class GhostExecutor:
         Returns truthful stub result with stub=True metadata.
         """
         url = params.get("url", "")
-        logger.warning(f"stealth_harvest is stub-only — DetectionEvader not available at hledac.advanced_web.detection_evader")
+        logger.warning("stealth_harvest is stub-only — DetectionEvader not available at hledac.advanced_web.detection_evader")
         return ActionResult(
             success=True,
             action="stealth_harvest",
             data={"url": url, "stub": True, "reason": "detection_evader_not_available"},
         ).to_dict()
-    
-    async def _action_osint_discovery(self, params: Dict[str, Any], context) -> Dict[str, Any]:
+
+    async def _action_osint_discovery(self, params: dict[str, Any], context) -> dict[str, Any]:
         """OSINT objevování skrytých zdrojů"""
         query = params.get("query", "")
         logger.info(f"OSINT discovery: {query}")
-        
+
         try:
             from hledac.osint import HiddenSourcesCrawler
-            
+
             crawler = HiddenSourcesCrawler()
             discovered = await crawler.discover_sources(query, max_sources=5)
-            
+
             sources = [
                 {
                     "url": d.url,
@@ -909,7 +907,7 @@ class GhostExecutor:
                 }
                 for d in discovered
             ]
-            
+
             return ActionResult(
                 success=True,
                 action="osint_discovery",
@@ -919,7 +917,7 @@ class GhostExecutor:
                     "count": len(sources),
                 },
             ).to_dict()
-            
+
         except Exception as e:
             return ActionResult(
                 success=False,
@@ -927,7 +925,7 @@ class GhostExecutor:
                 data={},
                 error=str(e)
             ).to_dict()
-    
+
     # Placeholder akce — Sprint F130F: stub metadata pro truthful distinguishability
     STUB_METADATA = {
         "stub": True,
@@ -975,20 +973,20 @@ class GhostExecutor:
     # =====================================================================
     # CLEANUP
     # =====================================================================
-    
+
     async def unload(self) -> None:
         """Uvolnit zdroje"""
         logger.info("Unloading GhostExecutor...")
-        
+
         if self._network_driver:
             await self._network_driver.close()
             self._network_driver = None
-        
+
         self._stealth_manager = None
         self._bloom_filter = None
-        
+
         logger.info("✓ GhostExecutor unloaded")
-    
+
     async def close(self) -> None:
         """Zavřít executor"""
         await self.unload()

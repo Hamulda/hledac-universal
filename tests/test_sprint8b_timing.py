@@ -10,8 +10,9 @@ Tests for:
 - Duration termination truth
 """
 
-import pytest
 from unittest.mock import MagicMock
+
+import pytest
 
 
 class TestTimingTruth:
@@ -59,7 +60,6 @@ class TestFPSDenominator:
         """FPS = iterations / research_loop_elapsed_s when loop_time > 0."""
         iterations = 100
         research_loop_elapsed_s = 10.0
-        total_wall_clock_seconds = 20.0
 
         loop_time = research_loop_elapsed_s
         if loop_time > 0:

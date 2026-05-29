@@ -15,8 +15,8 @@ No imports from hledac tree — uses inspect on source files directly.
 """
 
 import ast
-import sys
 import os
+import sys
 
 # ── helpers ────────────────────────────────────────────────────────────────────
 

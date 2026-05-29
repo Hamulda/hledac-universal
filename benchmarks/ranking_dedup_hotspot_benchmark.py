@@ -13,11 +13,10 @@ import json
 import sys
 import time
 from dataclasses import dataclass
-from typing import List, Optional
 
 sys.path.insert(0, "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal")
 
-from utils.ranking import ReciprocalRankFusion, RRFConfig, RankedResult
+from utils.ranking import RankedResult, ReciprocalRankFusion, RRFConfig
 
 
 @dataclass
@@ -28,7 +27,7 @@ class BenchmarkResult:
     output_count: int
 
 
-def make_result(idx: int, url: Optional[str] = None, title: str = "", content: str = "") -> RankedResult:
+def make_result(idx: int, url: str | None = None, title: str = "", content: str = "") -> RankedResult:
     return RankedResult(
         id=f"result_{idx}",
         title=title or f"Result {idx} Title",
@@ -39,7 +38,7 @@ def make_result(idx: int, url: Optional[str] = None, title: str = "", content: s
     )
 
 
-def make_duplicate_cluster(base_idx: int, cluster_size: int, vary_content: bool = True) -> List[RankedResult]:
+def make_duplicate_cluster(base_idx: int, cluster_size: int, vary_content: bool = True) -> list[RankedResult]:
     """Create a cluster of near-duplicate results."""
     results = []
     base_url = f"https://example.com/page{base_idx}"
@@ -62,9 +61,9 @@ def make_duplicate_cluster(base_idx: int, cluster_size: int, vary_content: bool 
     return results
 
 
-def build_synthetic_dataset(size: int, dup_ratio: float = 0.3) -> List[RankedResult]:
+def build_synthetic_dataset(size: int, dup_ratio: float = 0.3) -> list[RankedResult]:
     """Build synthetic ranked results with controlled duplicates."""
-    results: List[RankedResult] = []
+    results: list[RankedResult] = []
     dup_cluster_size = max(2, int(size * dup_ratio / 3))
     num_clusters = max(1, int(size * dup_ratio / dup_cluster_size))
 
@@ -96,7 +95,7 @@ def build_synthetic_dataset(size: int, dup_ratio: float = 0.3) -> List[RankedRes
     return results
 
 
-def benchmark_remove_duplicates(sizes: List[int], num_runs: int = 3) -> List[BenchmarkResult]:
+def benchmark_remove_duplicates(sizes: list[int], num_runs: int = 3) -> list[BenchmarkResult]:
     """Benchmark _remove_duplicates at multiple sizes."""
     results = []
     config = RRFConfig(deduplication=True, dedup_threshold=0.85)
@@ -106,7 +105,7 @@ def benchmark_remove_duplicates(sizes: List[int], num_runs: int = 3) -> List[Ben
         total_deduped = 0
         total_output = 0
 
-        for run in range(num_runs):
+        for _run in range(num_runs):
             data = build_synthetic_dataset(size, dup_ratio=0.3)
             rrf = ReciprocalRankFusion(config)
 
@@ -130,7 +129,7 @@ def benchmark_remove_duplicates(sizes: List[int], num_runs: int = 3) -> List[Ben
     return results
 
 
-def analyze_complexity(results: List[BenchmarkResult]) -> dict:
+def analyze_complexity(results: list[BenchmarkResult]) -> dict:
     """Analyze time complexity from benchmark data."""
     if len(results) < 2:
         return {"complexity": "unknown", "ratio": None}
@@ -223,7 +222,7 @@ def format_markdown(data: dict) -> str:
 
     md.append("\n## Hotspot\n")
     md.append(f"- `{data['hotspot']}`")
-    md.append(f"\n## Optimization Applied\n")
+    md.append("\n## Optimization Applied\n")
     md.append(f"- {data['optimization']}")
 
     return "\n".join(md)

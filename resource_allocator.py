@@ -22,10 +22,10 @@ uma_budget.py absolute-MB thresholds. These serve different purposes:
 - resource_allocator.py: percent-based system pressure (for AdaptiveSemaphore decisions)
 """
 
-import time
 import logging
+import time
 from dataclasses import dataclass
-from typing import Optional, Dict, Any, List
+from typing import Any
 
 # psutil lazy import — only needed inside functions at runtime
 _psutil = None
@@ -102,15 +102,15 @@ class ResourceAllocator:
     WARMUP_QUERIES: int = 5
 
     def __init__(self):
-        self.active_requests: Dict[str, ResourceBudget] = {}
+        self.active_requests: dict[str, ResourceBudget] = {}
         self.total_ram_mb: float = 0.0
 
         # History for MLX linear regression: (features, actual_ram_mb)
-        self.history: List[tuple[List[float], float]] = []
-        self.coeffs: Optional[Any] = None
+        self.history: list[tuple[list[float], float]] = []
+        self.coeffs: Any | None = None
         self.warmup_counter: int = 0
 
-    def _extract_features(self, ctx: Any) -> List[float]:
+    def _extract_features(self, ctx: Any) -> list[float]:
         """Extract feature vector for RAM prediction."""
         return [
             float(len(ctx.query)) if hasattr(ctx, 'query') else 100.0,
@@ -212,7 +212,7 @@ class ResourceAllocator:
             self._update_model()
             logger.debug(f"Released request {request_id}, actual RAM: {actual_ram_mb:.0f} MB")
 
-    def emergency_brake(self) -> Optional[str]:
+    def emergency_brake(self) -> str | None:
         """
         Emergency brake: cancel lowest priority task if RSS > SOFT_PREEMPT_RAM_GIB.
         Returns cancelled request_id or None.
@@ -249,7 +249,7 @@ class ResourceAllocator:
             self.total_ram_mb -= budget.ram_mb
             logger.info(f"Cancelled request {request_id}")
 
-    def get_stats(self) -> Dict[str, Any]:
+    def get_stats(self) -> dict[str, Any]:
         """Get current allocator statistics."""
         return {
             "active_requests": len(self.active_requests),
@@ -288,7 +288,7 @@ def get_memory_pressure_level() -> str:
     return "normal"
 
 
-def get_recommended_concurrency() -> Dict[str, int]:
+def get_recommended_concurrency() -> dict[str, int]:
     """
     Return concurrency limits based on memory pressure level.
 
@@ -316,7 +316,6 @@ def get_recommended_concurrency() -> Dict[str, int]:
 
 import asyncio
 import platform
-import time
 
 _CONCURRENCY_FLOOR = 1
 _CONCURRENCY_CEILING = 3  # M1 8GB hard limit
@@ -378,7 +377,7 @@ class AdaptiveSemaphore:
         self._effective_limit = get_adaptive_concurrency()
         return self._effective_limit
 
-    async def __aenter__(self) -> "AdaptiveSemaphore":
+    async def __aenter__(self) -> AdaptiveSemaphore:
         async with self._lock:
             await self._compute_effective_limit()
             if self._active_holders >= self._effective_limit:

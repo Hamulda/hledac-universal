@@ -6,8 +6,7 @@ dynamický výběr backendu, scheduler priority.
 import asyncio
 import sys
 import unittest
-from unittest.mock import AsyncMock, MagicMock, patch, PropertyMock
-from pathlib import Path
+from unittest.mock import AsyncMock, MagicMock, patch
 
 sys.path.insert(0, '/Users/vojtechhamada/PycharmProjects/Hledac')
 
@@ -32,20 +31,32 @@ class TestANEEmbedder(unittest.IsolatedAsyncioTestCase):
         from hledac.universal.brain.ane_embedder import ANEEmbedder
         with patch('hledac.universal.brain.ane_embedder.ANE_AVAILABLE', True):
             embedder = ANEEmbedder()
-            # Mock path exists
-            with patch.object(embedder, 'coreml_path', MagicMock(exists=MagicMock(return_value=True))):
-                with patch('hledac.universal.brain.ane_embedder.ct') as mock_ct:
-                    mock_ct.models.MLModel = MagicMock()
-                    await embedder.load()
-                    self.assertTrue(embedder._loaded)
+            # Mock coreml_path exists and CoreML model can be loaded
+            mock_path = MagicMock(exists=MagicMock(return_value=True))
+            embedder.coreml_path = mock_path
+            # Mock the _CoreML global to simulate successful load
+            mock_coreml = MagicMock()
+            mock_model_instance = MagicMock()
+            mock_coreml.NSURL.fileURLWithPath_.return_value = MagicMock()
+            mock_coreml.MLModel.modelWithContentsOfURL_error_.return_value = (mock_model_instance, None)
+            with patch.dict('sys.modules', {'coremltools': MagicMock()}):
+                with patch('hledac.universal.brain.ane_embedder._CoreML', mock_coreml):
+                    with patch('hledac.universal.brain.ane_embedder._Foundation', MagicMock()):
+                        await embedder.load()
+                        # If load succeeds via CoreML, _loaded is True
+                        # (if CoreML fails, MLX fallback may succeed — still _loaded=True)
+                        self.assertTrue(embedder._loaded)
 
     async def test_ane_fallback(self):
-        """Ověří, že když ANE embedder není načten, vrací správnou hodnotu."""
+        """Ověří, že když ANE embedder není načten, vrací hash fallback embeddings."""
         from hledac.universal.brain.ane_embedder import ANEEmbedder
         embedder = ANEEmbedder()
-        # Without loading, should raise NotImplementedError
-        with self.assertRaises(NotImplementedError):
-            await embedder.embed("test text")
+        # Without loading, embed() should fall through to hash fallback (no NotImplementedError)
+        # Sprint F228B: embed() no longer raises NotImplementedError — uses hash fallback
+        result = await embedder.embed("test text")
+        self.assertEqual(result.shape, (1, 768))  # hash fallback produces 768-dim vector
+        # _loaded stays False (no model), but embed still works via hash fallback
+        self.assertFalse(embedder.is_loaded)
 
     async def test_ane_conversion_trigger(self):
         """Zavolá convert_to_ane() a ověří, že vytvoří očekávaný soubor."""
@@ -268,7 +279,7 @@ class TestRelationshipDiscoveryGNN(unittest.IsolatedAsyncioTestCase):
 
     async def test_gnn_switching(self):
         """Otestuje, že pro graf s >=500 uzly se použije GNN."""
-        from hledac.universal.intelligence.relationship_discovery import RelationshipDiscoveryEngine, Entity, EntityType
+        from hledac.universal.intelligence.relationship_discovery import Entity, EntityType, RelationshipDiscoveryEngine
 
         engine = RelationshipDiscoveryEngine()
 
@@ -287,7 +298,7 @@ class TestRelationshipDiscoveryGNN(unittest.IsolatedAsyncioTestCase):
 
     async def test_gnn_disabled_on_small_graph(self):
         """Ověří, že při počtu uzlů pod prahem se GNN netrénuje."""
-        from hledac.universal.intelligence.relationship_discovery import RelationshipDiscoveryEngine, Entity, EntityType
+        from hledac.universal.intelligence.relationship_discovery import Entity, EntityType, RelationshipDiscoveryEngine
 
         engine = RelationshipDiscoveryEngine()
 

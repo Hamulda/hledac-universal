@@ -1,15 +1,13 @@
+from __future__ import annotations
+
 import asyncio
 import logging
-import os
-import shutil
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import List, Optional
 
 import numpy as np
-
-from hledac.universal.core.resource_governor import ResourceGovernor, Priority
+from hledac.universal.core.resource_governor import Priority, ResourceGovernor
 
 logger = logging.getLogger(__name__)
 
@@ -100,7 +98,7 @@ class VisionEncoder:
     def __init__(
         self,
         governor: ResourceGovernor,
-        model_path: Optional[str] = None,
+        model_path: str | None = None,
         embedding_dim: int = IMAGE_VECTOR_DIM,
         batch_size: int = 4,
     ):
@@ -109,10 +107,10 @@ class VisionEncoder:
         self._embedding_dim = embedding_dim
         self.batch_size = batch_size
         self._model = None
-        self._input_name: Optional[str] = None
-        self._output_name: Optional[str] = None
+        self._input_name: str | None = None
+        self._output_name: str | None = None
         # Projection: 960 (MobileNetV3 penultimate) → 1024 (LanceDB image schema)
-        self._proj_weights: Optional[np.ndarray] = None
+        self._proj_weights: np.ndarray | None = None
         self._proj_loaded = False
         self._mlx_mod = None
 
@@ -193,9 +191,9 @@ class VisionEncoder:
             self._ensure_model_cache_dir()
 
             try:
+                import coremltools as ct
                 import torch
                 import torchvision
-                import coremltools as ct
 
                 # Load MobileNetV3-Large pretrained
                 mobilenet = torchvision.models.mobilenet_v3_large(weights="DEFAULT")
@@ -251,8 +249,9 @@ class VisionEncoder:
         ImageNet normalization applied.
         """
         try:
-            from PIL import Image
             import io
+
+            from PIL import Image
             img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
             img = img.resize((224, 224), Image.BILINEAR)
             arr = np.array(img, dtype=np.float32) / 255.0
@@ -279,8 +278,8 @@ class VisionEncoder:
         loop = asyncio.get_running_loop()
 
         def _inference():
-            from coremltools.models import MLModel
             import coremltools as ct
+            from coremltools.models import MLModel
 
             # Re-create model instance per call to avoid threading issues
             model = MLModel(str(self.model_path), compute_units=ct.ComputeUnit.ALL)
@@ -302,7 +301,7 @@ class VisionEncoder:
 
         return loop.run_until_complete(loop.run_in_executor(_COREML_EXECUTOR, _inference))
 
-    async def encode_batch(self, images: List[bytes]) -> List[np.ndarray]:
+    async def encode_batch(self, images: list[bytes]) -> list[np.ndarray]:
         """
         Encode a batch of images to 1024d embeddings via CoreML/ANE.
 

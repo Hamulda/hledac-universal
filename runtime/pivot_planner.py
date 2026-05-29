@@ -32,13 +32,13 @@ import math
 import re
 import uuid
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Any
 
-from hledac.universal.utils.confidence import normalize_source_quality
 from hledac.universal.runtime.hermes_pivot_contract import (
-    HermesInferenceOutput,
     MAX_INFERENCE_ITEMS,
+    HermesInferenceOutput,
 )
+from hledac.universal.utils.confidence import normalize_source_quality
 
 __all__ = [
     "Pivot",
@@ -162,7 +162,7 @@ class PivotStats:
 # Finding envelope helpers
 # ---------------------------------------------------------------------------
 
-def _extract_domain_from_finding(finding: Any) -> Optional[str]:
+def _extract_domain_from_finding(finding: Any) -> str | None:
     """Extract domain IOC from a finding. DEPRECATED: Use _extract_ioc_from_finding."""
     # Check payload_text for domain-like content
     payload = getattr(finding, "payload_text", None) or ""
@@ -183,7 +183,7 @@ def _extract_domain_from_finding(finding: Any) -> Optional[str]:
     return None
 
 
-def _extract_ioc_from_finding(finding: Any) -> tuple[Optional[str], Optional[str]]:
+def _extract_ioc_from_finding(finding: Any) -> tuple[str | None, str | None]:
     """
     Extract IOC value and type from a finding.
 
@@ -251,7 +251,7 @@ def _extract_ioc_from_finding(finding: Any) -> tuple[Optional[str], Optional[str
     return None, None
 
 
-def _deserialize_envelope(finding: Any) -> Optional[dict]:
+def _deserialize_envelope(finding: Any) -> dict | None:
     """Deserialize evidence envelope from finding payload_text."""
     payload = getattr(finding, "payload_text", None)
     if not payload or not isinstance(payload, str):
@@ -269,7 +269,7 @@ def _deserialize_envelope(finding: Any) -> Optional[dict]:
 # Pivot scoring adapters
 # ---------------------------------------------------------------------------
 
-def _cheap_score_finding(finding: Any, envelope: Optional[dict]) -> float:
+def _cheap_score_finding(finding: Any, envelope: dict | None) -> float:
     """
     Cheap heuristic scoring without model inference.
 
@@ -300,7 +300,7 @@ def _cheap_score_finding(finding: Any, envelope: Optional[dict]) -> float:
     return max(0.0, min(1.0, score))
 
 
-def _graph_stats_available(graph_stats: Optional[dict]) -> bool:
+def _graph_stats_available(graph_stats: dict | None) -> bool:
     """
     F238F: Check if graph_stats represents an explicitly available graph.
 
@@ -327,9 +327,9 @@ def _graph_stats_available(graph_stats: Optional[dict]) -> bool:
 def _score_pivot_domain(
     domain: str,
     confidence: float,
-    envelope: Optional[dict],
+    envelope: dict | None,
     graph_stats: dict,
-    source_quality_score: Optional[float] = None,
+    source_quality_score: float | None = None,
 ) -> float:
     """
     Score a domain pivot based on multiple signals.
@@ -427,7 +427,7 @@ def _score_pivot_leak(
 def _score_pivot_archive(
     domain: str,
     confidence: float,
-    graph_stats: Optional[dict] = None,
+    graph_stats: dict | None = None,
 ) -> float:
     """
     Score an archive pivot.
@@ -523,7 +523,7 @@ def _pivot_type_for_ioc(ioc_type: str) -> str:
     return "domain"
 
 
-def score_pivot_for_mission(pivot: Pivot, mission_intent: Optional[str]) -> float:
+def score_pivot_for_mission(pivot: Pivot, mission_intent: str | None) -> float:
     """
     F225D: Apply mission-aware boost to a pivot.
 
@@ -575,7 +575,7 @@ def estimate_pivot_cost(pivot: Pivot) -> float:
     return 0.5
 
 
-def explain_pivot_score(pivot: Pivot, mission_intent: Optional[str]) -> str:
+def explain_pivot_score(pivot: Pivot, mission_intent: str | None) -> str:
     """
     F225D: Human-readable score explanation for debugging/audit.
 
@@ -599,8 +599,8 @@ def explain_pivot_score(pivot: Pivot, mission_intent: Optional[str]) -> str:
 
 def apply_scoring_metadata(
     pivot: Pivot,
-    mission_intent: Optional[str] = None,
-    base_score: Optional[float] = None,
+    mission_intent: str | None = None,
+    base_score: float | None = None,
 ) -> Pivot:
     """
     F225D: Apply full scoring metadata to a pivot.
@@ -683,7 +683,7 @@ class PivotPlanner:
     def __init__(
         self,
         use_model_scoring: bool = False,
-        model_lifecycle_manager: Optional[Any] = None,
+        model_lifecycle_manager: Any | None = None,
     ) -> None:
         """
         Initialize pivot planner.
@@ -697,16 +697,16 @@ class PivotPlanner:
         self._use_model = use_model_scoring
         self._model_lifecycle = model_lifecycle_manager
         self._tot_adapter = None  # Lazy-loaded tot_integration
-        self._last_error: Optional[str] = None
+        self._last_error: str | None = None
 
     # ── Public API ─────────────────────────────────────────────────────────
 
     def plan_pivots(
         self,
         findings: list,
-        graph_stats: Optional[dict] = None,
+        graph_stats: dict | None = None,
         max_pivots: int = MAX_PIVOTS,
-        feedback_summary: Optional[dict] = None,
+        feedback_summary: dict | None = None,
     ) -> list[Pivot]:
         """
         Generate bounded pivots from accepted findings.
@@ -768,7 +768,7 @@ class PivotPlanner:
             self._last_error = str(e)
             return []  # Fail-soft: empty list on error
 
-    def get_last_error(self) -> Optional[str]:
+    def get_last_error(self) -> str | None:
         """Return last error message, or None if no error."""
         return self._last_error
 
@@ -779,8 +779,8 @@ class PivotPlanner:
         findings: list,
         hermes_outputs: list[HermesInferenceOutput],
         max_pivots: int = MAX_PIVOTS,
-        graph_stats: Optional[dict] = None,
-        mission_intent: Optional[str] = None,
+        graph_stats: dict | None = None,
+        mission_intent: str | None = None,
     ) -> list[Pivot]:
         """
         Sprint F256: Score and rank pivots using Hermes3Engine inference results.
@@ -1038,9 +1038,9 @@ class PivotPlanner:
         ioc_type: str,
         base_score: float,
         finding: Any,
-        envelope: Optional[dict],
+        envelope: dict | None,
         graph_stats: dict,
-        feedback_summary: Optional[dict] = None,
+        feedback_summary: dict | None = None,
     ) -> list[Pivot]:
         """Generate pivots for a single IOC."""
         pivots = []
@@ -1209,7 +1209,7 @@ class PivotPlanner:
         self,
         pivot_type: str,
         ioc_type: str,
-        feedback_summary: Optional[dict],
+        feedback_summary: dict | None,
     ) -> float:
         """
         F203G: Get penalty multiplier for a pivot type + ioc type combination.
@@ -1250,7 +1250,7 @@ class PivotPlanner:
             return False
         return True
 
-    def _extract_domain_from_url(self, url: str) -> Optional[str]:
+    def _extract_domain_from_url(self, url: str) -> str | None:
         """Extract domain from URL."""
         match = re.search(
             r"https?://([a-zA-Z0-9](?:[a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?)+)",
@@ -1319,7 +1319,7 @@ def _extract_root_domain(domain: str) -> str:
     return '.'.join(parts[-2:])
 
 
-def _query_domain_score(domain: str, base_score: float, graph_stats: Optional[dict]) -> float:
+def _query_domain_score(domain: str, base_score: float, graph_stats: dict | None) -> float:
     """
     F238A: Apply degree-weighted penalty to a query-level domain pivot score.
 
@@ -1371,8 +1371,8 @@ def _query_domain_score(domain: str, base_score: float, graph_stats: Optional[di
 def generate_pivot_candidates_from_query(
     query: str,
     max_candidates: int = MAX_PIVOT_CANDIDATES,
-    mission_intent: Optional[str] = None,
-    graph_stats: Optional[dict] = None,
+    mission_intent: str | None = None,
+    graph_stats: dict | None = None,
 ) -> list[Pivot]:
     """
     [F216F] Generate bounded pivot candidates from a query string.

@@ -31,6 +31,7 @@ class TestSprintF226DISeams:
     async def test_fetch_fn_is_used_without_global_patch(self):
         """Explicit fetch_fn is called without patching _ASYNC_FETCH_PUBLIC_TEXT."""
         import tempfile
+
         from hledac.universal.knowledge.duckdb_store import DuckDBShadowStore
         from hledac.universal.pipeline.live_public_pipeline import async_run_live_public_pipeline
 
@@ -68,7 +69,7 @@ class TestSprintF226DISeams:
             store._init_persistent_dedup_lmdb = lambda: None
             await store.async_initialize()
 
-            result = await async_run_live_public_pipeline(
+            await async_run_live_public_pipeline(
                 query="test fetch di",
                 store=store,
                 max_results=5,
@@ -87,6 +88,7 @@ class TestSprintF226DISeams:
     async def test_match_fn_is_used_without_global_patch(self):
         """Explicit match_fn is called without patching _SYNC_MATCH_TEXT."""
         import tempfile
+
         from hledac.universal.knowledge.duckdb_store import DuckDBShadowStore
         from hledac.universal.pipeline.live_public_pipeline import async_run_live_public_pipeline
 
@@ -129,7 +131,7 @@ class TestSprintF226DISeams:
             store._init_persistent_dedup_lmdb = lambda: None
             await store.async_initialize()
 
-            result = await async_run_live_public_pipeline(
+            await async_run_live_public_pipeline(
                 query="test match di",
                 store=store,
                 max_results=5,
@@ -149,6 +151,7 @@ class TestSprintF226DISeams:
     async def test_discovery_fn_is_used_without_patch(self):
         """Explicit discovery_fn is called without _patch_discovery()."""
         import tempfile
+
         from hledac.universal.knowledge.duckdb_store import DuckDBShadowStore
         from hledac.universal.pipeline.live_public_pipeline import async_run_live_public_pipeline
 
@@ -201,6 +204,7 @@ class TestSprintF226DISeams:
     async def test_ct_subdomains_fn_is_used(self):
         """Explicit ct_subdomains_fn is called for domain queries."""
         import tempfile
+
         from hledac.universal.knowledge.duckdb_store import DuckDBShadowStore
         from hledac.universal.pipeline.live_public_pipeline import async_run_live_public_pipeline
 
@@ -238,7 +242,7 @@ class TestSprintF226DISeams:
             store._init_persistent_dedup_lmdb = lambda: None
             await store.async_initialize()
 
-            result = await async_run_live_public_pipeline(
+            await async_run_live_public_pipeline(
                 query="example.com",
                 store=store,
                 max_results=5,
@@ -259,6 +263,7 @@ class TestSprintF226DISeams:
     async def test_clear_query_cache_fn_is_used(self):
         """Explicit clear_query_cache_fn is called at pipeline start."""
         import tempfile
+
         from hledac.universal.knowledge.duckdb_store import DuckDBShadowStore
         from hledac.universal.pipeline.live_public_pipeline import async_run_live_public_pipeline
 
@@ -281,7 +286,7 @@ class TestSprintF226DISeams:
             store._init_persistent_dedup_lmdb = lambda: None
             await store.async_initialize()
 
-            result = await async_run_live_public_pipeline(
+            await async_run_live_public_pipeline(
                 query="test cache clear",
                 store=store,
                 max_results=5,
@@ -298,6 +303,7 @@ class TestSprintF226DISeams:
     async def test_default_behavior_unchanged_when_params_none(self):
         """When all DI params are None, pipeline uses existing globals/defaults."""
         import tempfile
+
         from hledac.universal.knowledge.duckdb_store import DuckDBShadowStore
         from hledac.universal.pipeline.live_public_pipeline import async_run_live_public_pipeline
 

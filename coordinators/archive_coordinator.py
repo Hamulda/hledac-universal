@@ -16,7 +16,7 @@ from __future__ import annotations
 import logging
 from collections import deque
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Set
+from typing import Any
 
 from .base import UniversalCoordinator
 
@@ -53,7 +53,7 @@ class ArchiveCoordinator(UniversalCoordinator):
 
     def __init__(
         self,
-        config: Optional[ArchiveCoordinatorConfig] = None,
+        config: ArchiveCoordinatorConfig | None = None,
         max_concurrent: int = 2,
     ):
         super().__init__(name="ArchiveCoordinator", max_concurrent=max_concurrent)
@@ -62,16 +62,16 @@ class ArchiveCoordinator(UniversalCoordinator):
         # State
         # Sprint F206X: deque with maxlen prevents unbounded growth
         self._pending_urls: deque = deque(maxlen=MAX_PENDING_URLS)
-        self._seen_urls: Set[str] = set()  # O(1) membership test
+        self._seen_urls: set[str] = set()  # O(1) membership test
         self._escalations_executed: int = 0
         self._urls_emitted: int = 0
-        self._stop_reason: Optional[str] = None
+        self._stop_reason: str | None = None
 
         # Orchestrator reference (set via start)
-        self._orchestrator: Optional[Any] = None
-        self._ctx: Dict[str, Any] = {}
+        self._orchestrator: Any | None = None
+        self._ctx: dict[str, Any] = {}
 
-    def get_supported_operations(self) -> List[Any]:
+    def get_supported_operations(self) -> list[Any]:
         """Return supported operation types."""
         from .base import OperationType
         return [OperationType.RESEARCH]
@@ -94,7 +94,7 @@ class ArchiveCoordinator(UniversalCoordinator):
         logger.info("ArchiveCoordinator initialized")
         return True
 
-    async def _do_start(self, ctx: Dict[str, Any]) -> None:
+    async def _do_start(self, ctx: dict[str, Any]) -> None:
         """
         Start coordinator with context from orchestrator.
 
@@ -114,7 +114,7 @@ class ArchiveCoordinator(UniversalCoordinator):
 
         logger.info(f"ArchiveCoordinator started with {len(self._pending_urls)} pending URLs")
 
-    async def _do_step(self, ctx: Dict[str, Any]) -> Dict[str, Any]:
+    async def _do_step(self, ctx: dict[str, Any]) -> dict[str, Any]:
         """
         Execute one archive escalation step.
 
@@ -145,7 +145,7 @@ class ArchiveCoordinator(UniversalCoordinator):
 
         return self._get_step_result(result)
 
-    def _get_step_result(self, result: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    def _get_step_result(self, result: dict[str, Any] | None = None) -> dict[str, Any]:
         """Get bounded step result."""
         emitted_urls = result.get('emitted_urls', []) if result else []
         emitted_urls = emitted_urls[:self._config.max_probe_urls_per_step]
@@ -159,7 +159,7 @@ class ArchiveCoordinator(UniversalCoordinator):
             'pending_urls': len(self._pending_urls),
         }
 
-    async def _execute_archive_escalation(self, url: str) -> Optional[Dict[str, Any]]:
+    async def _execute_archive_escalation(self, url: str) -> dict[str, Any] | None:
         """
         Execute archive escalation for a URL.
 
@@ -200,7 +200,7 @@ class ArchiveCoordinator(UniversalCoordinator):
             logger.warning(f"ArchiveCoordinator: failed to execute escalation: {e}")
             return None
 
-    async def _lookup_mementos(self, url: str) -> List[Dict[str, Any]]:
+    async def _lookup_mementos(self, url: str) -> list[dict[str, Any]]:
         """Lookup mementos for URL via orchestrator."""
         try:
             if hasattr(self._orchestrator, 'trigger_archive_escalation'):
@@ -211,7 +211,7 @@ class ArchiveCoordinator(UniversalCoordinator):
             logger.debug(f"ArchiveCoordinator: memento lookup failed: {e}")
             return []
 
-    async def _run_deep_probe(self, url: str) -> List[str]:
+    async def _run_deep_probe(self, url: str) -> list[str]:
         """Run deep probe for URL via orchestrator."""
         try:
             if hasattr(self._orchestrator, '_maybe_trigger_deep_probe'):
@@ -226,7 +226,7 @@ class ArchiveCoordinator(UniversalCoordinator):
             logger.debug(f"ArchiveCoordinator: deep probe failed: {e}")
             return []
 
-    async def _do_shutdown(self, ctx: Dict[str, Any]) -> None:
+    async def _do_shutdown(self, ctx: dict[str, Any]) -> None:
         """Cleanup on shutdown."""
         logger.info(f"ArchiveCoordinator shutting down: {self._escalations_executed} escalations, {self._urls_emitted} URLs")
         self._pending_urls.clear()

@@ -7,13 +7,11 @@ validation and nested encoding detection.
 from __future__ import annotations
 
 import base64
-import binascii
 import logging
 import math
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Optional, Dict, Any
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +35,7 @@ class EncodingChain:
         final_content: Final decoded content
         depth: Depth of the encoding chain
     """
-    encodings: List[str]
+    encodings: list[str]
     final_content: str
     depth: int
 
@@ -65,7 +63,7 @@ class EncodingFinding:
     original: str
     is_printable: bool = False
     entropy: float = 0.0
-    nested_chain: Optional[EncodingChain] = None
+    nested_chain: EncodingChain | None = None
 
 
 @dataclass
@@ -102,14 +100,14 @@ class BaseEncodingDetector:
             print(f"Found {finding.encoding_type} at {finding.position}")
     """
 
-    def __init__(self, config: Optional[EncodingConfig] = None):
+    def __init__(self, config: EncodingConfig | None = None):
         """Initialize the encoding detector.
 
         Args:
             config: Optional configuration object
         """
         self.config = config or EncodingConfig()
-        self._stats: Dict[str, int] = {
+        self._stats: dict[str, int] = {
             'base64_found': 0,
             'base32_found': 0,
             'base85_found': 0,
@@ -167,7 +165,7 @@ class BaseEncodingDetector:
         except Exception:
             return f"<binary data: {len(data)} bytes>"
 
-    async def detect_text(self, text: str) -> List[EncodingFinding]:
+    async def detect_text(self, text: str) -> list[EncodingFinding]:
         """Detect encodings in text.
 
         Args:
@@ -176,7 +174,7 @@ class BaseEncodingDetector:
         Returns:
             List of encoding findings
         """
-        findings: List[EncodingFinding] = []
+        findings: list[EncodingFinding] = []
 
         # Detect various encodings
         findings.extend(self._detect_base64(text))
@@ -198,7 +196,7 @@ class BaseEncodingDetector:
 
         return findings
 
-    async def detect_file(self, file_path: str) -> List[EncodingFinding]:
+    async def detect_file(self, file_path: str) -> list[EncodingFinding]:
         """Stream-process large file for encoding detection.
 
         Args:
@@ -207,7 +205,7 @@ class BaseEncodingDetector:
         Returns:
             List of encoding findings
         """
-        findings: List[EncodingFinding] = []
+        findings: list[EncodingFinding] = []
         chunk_size = self.config.chunk_size
         overlap = 1000  # Overlap to catch encodings across boundaries
 
@@ -217,7 +215,7 @@ class BaseEncodingDetector:
             return findings
 
         try:
-            with open(path, 'r', encoding='utf-8', errors='ignore') as f:
+            with open(path, encoding='utf-8', errors='ignore') as f:
                 previous_chunk = ""
                 offset = 0
 
@@ -247,7 +245,7 @@ class BaseEncodingDetector:
 
         return findings
 
-    def _detect_base64(self, text: str) -> List[EncodingFinding]:
+    def _detect_base64(self, text: str) -> list[EncodingFinding]:
         """Detect Base64 encoded strings.
 
         Args:
@@ -310,7 +308,7 @@ class BaseEncodingDetector:
 
         return findings
 
-    def _detect_base32(self, text: str) -> List[EncodingFinding]:
+    def _detect_base32(self, text: str) -> list[EncodingFinding]:
         """Detect Base32 encoded strings.
 
         Args:
@@ -361,7 +359,7 @@ class BaseEncodingDetector:
 
         return findings
 
-    def _detect_base85(self, text: str) -> List[EncodingFinding]:
+    def _detect_base85(self, text: str) -> list[EncodingFinding]:
         """Detect Base85/Ascii85 encoded strings.
 
         Args:
@@ -408,7 +406,7 @@ class BaseEncodingDetector:
 
         return findings
 
-    def _detect_hex(self, text: str) -> List[EncodingFinding]:
+    def _detect_hex(self, text: str) -> list[EncodingFinding]:
         """Detect hexadecimal encoded strings.
 
         Args:
@@ -461,7 +459,7 @@ class BaseEncodingDetector:
 
         return findings
 
-    def _detect_url_encoding(self, text: str) -> List[EncodingFinding]:
+    def _detect_url_encoding(self, text: str) -> list[EncodingFinding]:
         """Detect URL/percent-encoded strings.
 
         Args:
@@ -506,7 +504,7 @@ class BaseEncodingDetector:
 
         return findings
 
-    async def _analyze_nested(self, finding: EncodingFinding) -> Optional[EncodingChain]:
+    async def _analyze_nested(self, finding: EncodingFinding) -> EncodingChain | None:
         """Analyze finding for nested encodings.
 
         Args:
@@ -567,7 +565,7 @@ class BaseEncodingDetector:
 
         return None
 
-    def get_stats(self) -> Dict[str, int]:
+    def get_stats(self) -> dict[str, int]:
         """Get detection statistics.
 
         Returns:
@@ -582,7 +580,7 @@ class BaseEncodingDetector:
 
 
 # Factory function
-def create_encoding_detector(config: Optional[EncodingConfig] = None) -> BaseEncodingDetector:
+def create_encoding_detector(config: EncodingConfig | None = None) -> BaseEncodingDetector:
     """Create a configured BaseEncodingDetector instance.
 
     Args:
@@ -595,7 +593,7 @@ def create_encoding_detector(config: Optional[EncodingConfig] = None) -> BaseEnc
 
 
 # Convenience function
-async def detect_encodings(text: str, config: Optional[EncodingConfig] = None) -> List[EncodingFinding]:
+async def detect_encodings(text: str, config: EncodingConfig | None = None) -> list[EncodingFinding]:
     """Convenience function to detect encodings in text.
 
     Args:

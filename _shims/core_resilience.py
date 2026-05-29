@@ -3,9 +3,9 @@ Shim for hledac.core.resilience — bypasses hledac.core.__init__.py chain
 which has cross-dependencies that fail at top-level import time.
 """
 import sys
+from importlib import util as importlib_util
 from importlib.machinery import ModuleSpec
 from pathlib import Path
-from importlib import util as importlib_util
 
 # Path to the actual sibling module file
 # _shims/ -> universal/ -> hledac/ -> Hledac/ -> parent = Hledac root

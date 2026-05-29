@@ -2,8 +2,6 @@
 import inspect
 import time
 
-import pytest
-
 
 class TestStructureMapNonBlockingScorer:
     """Testy pro neblokující scorer - Sprint 69E."""
@@ -83,7 +81,7 @@ class TestStructureMapNonBlockingScorer:
         in_scorer = False
         scorer_lines = []
 
-        for i, line in enumerate(lines):
+        for _i, line in enumerate(lines):
             if "def build_structure_map_scorer" in line:
                 in_scorer = True
             elif in_scorer and line.strip().startswith("def ") and "build_structure_map" not in line:
@@ -102,8 +100,9 @@ class TestStructureMapNonBlockingScorer:
 
     def test_analyze_state_includes_structure_map_gating(self):
         """Test: _analyze_state vrací structure_map_can_run a structure_map_upcoming_synthesis."""
-        from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
         import inspect
+
+        from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
 
         # Získej zdrojový kód _analyze_state
         source = inspect.getsource(FullyAutonomousOrchestrator._analyze_state)

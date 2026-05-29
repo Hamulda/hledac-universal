@@ -9,8 +9,8 @@ Tests verify:
 4. mx.metal memory getters have proper hasattr guards
 """
 
-import unittest
 import inspect
+import unittest
 from collections import OrderedDict
 
 
@@ -19,7 +19,6 @@ class TestProcessedHashesBoundedness(unittest.TestCase):
 
     def test_processed_hashes_bounded_5000(self):
         """_processed_hashes should be bounded at 5000 with FIFO eviction."""
-        from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
 
         # Create a minimal mock to test the structure behavior
         # The bound is enforced in _add_processed_hash

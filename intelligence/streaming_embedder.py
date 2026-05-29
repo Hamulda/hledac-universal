@@ -35,7 +35,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import AsyncIterator, TYPE_CHECKING
+from collections.abc import AsyncIterator
+from typing import TYPE_CHECKING
 
 import numpy as np
 
@@ -149,7 +150,7 @@ class StreamingEmbedder:
 
     async def embed_findings(
         self,
-        findings: list["CanonicalFinding"],
+        findings: list[CanonicalFinding],
         batch_size: int = MAX_EMBEDDING_BATCH,
     ) -> AsyncIterator[tuple[list[str], np.ndarray]]:
         """
@@ -204,7 +205,7 @@ class StreamingEmbedder:
 
     async def _embed_chunked(
         self,
-        findings: list["CanonicalFinding"],
+        findings: list[CanonicalFinding],
         batch_size: int,
     ) -> AsyncIterator[tuple[list[str], np.ndarray]]:
         """Internal chunked embedder — model assumed already loaded."""
@@ -220,7 +221,7 @@ class StreamingEmbedder:
 
     async def _embed_batch(
         self,
-        findings: list["CanonicalFinding"],
+        findings: list[CanonicalFinding],
     ) -> tuple[list[str], np.ndarray]:
         """Embed a single batch of findings in thread executor."""
         texts: list[str] = []
@@ -239,7 +240,7 @@ class StreamingEmbedder:
 
     async def _embed_fallback(
         self,
-        findings: list["CanonicalFinding"],
+        findings: list[CanonicalFinding],
         batch_size: int,
     ) -> AsyncIterator[tuple[list[str], np.ndarray]]:
         """
@@ -270,7 +271,7 @@ class StreamingEmbedder:
     # Text extraction
     # -------------------------------------------------------------------------
 
-    def _extract_text(self, finding: "CanonicalFinding") -> str:
+    def _extract_text(self, finding: CanonicalFinding) -> str:
         """Extract embeddable text from CanonicalFinding."""
         text = getattr(finding, "payload_text", None) or getattr(finding, "query", "") or ""
         if len(text) > MAX_TEXT_BYTES_PER_FINDING:

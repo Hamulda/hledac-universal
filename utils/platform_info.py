@@ -14,7 +14,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
-from typing import Dict, List
 
 
 class DepCategory(Enum):
@@ -39,9 +38,9 @@ class AccelerationStatus:
 @dataclass(frozen=True, slots=True)
 class PlatformReport:
     """Full platform acceleration report."""
-    statuses: Dict[str, AccelerationStatus]
+    statuses: dict[str, AccelerationStatus]
     summary: str
-    missing_optional: List[str]
+    missing_optional: list[str]
     install_command: str
 
 
@@ -219,7 +218,7 @@ def get_optional_acceleration_status() -> PlatformReport:
     Returns a PlatformReport with per-package status and install hints.
     Lightweight — all probes are lazy (import on first use only).
     """
-    statuses: Dict[str, AccelerationStatus] = {}
+    statuses: dict[str, AccelerationStatus] = {}
 
     for probe_fn in (
         _probe_mlx,

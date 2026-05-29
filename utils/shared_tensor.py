@@ -3,7 +3,6 @@ SharedTensor – obálka nad mlx.core.array, umožňuje předávání referencí
 Skutečný zero-copy vyžaduje Metal buffer – to je zatím TODO.
 """
 
-from typing import Optional
 
 # MLX import s fallback
 try:
@@ -40,12 +39,12 @@ class SharedTensor:
         self._ref_count = 1
 
     @classmethod
-    def from_array(cls, arr) -> 'SharedTensor':
+    def from_array(cls, arr) -> SharedTensor:
         """Vytvoří SharedTensor z MLX array."""
         return cls(arr)
 
     @classmethod
-    def from_numpy(cls, np_array) -> 'SharedTensor':
+    def from_numpy(cls, np_array) -> SharedTensor:
         """Vytvoří SharedTensor z numpy array."""
         if MLX_AVAILABLE:
             return cls(mx.array(np_array))
@@ -101,7 +100,7 @@ def create_shared(embedding) -> SharedTensor:
     Helper funkce pro vytvoření SharedTensor z embedding vektoru.
 
     Args:
-        embedding: List[float] nebo numpy array
+        embedding: list[float] nebo numpy array
 
     Returns:
         SharedTensor instance

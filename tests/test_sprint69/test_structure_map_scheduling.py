@@ -5,10 +5,9 @@ Sprint 69: Structure Map Scheduling Tests
 import asyncio
 import os
 import sys
-import time
 import unittest
 from collections import OrderedDict
-from unittest.mock import patch, MagicMock, AsyncMock
+from unittest.mock import patch
 
 # Add project root to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))

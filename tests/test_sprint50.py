@@ -2,12 +2,9 @@
 Sprint 50 tests – HNSW async, MLX normalizace, sdílená KV cache, HTTP/3 autonomní detekce.
 """
 
-import asyncio
 import sys
 import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
-
-import numpy as np
 
 sys.path.insert(0, '/Users/vojtechhamada/PycharmProjects/Hledac')
 
@@ -16,7 +13,7 @@ class TestSprint50HNSW(unittest.IsolatedAsyncioTestCase):
     """Testy pro HNSW build s MLX normalizací."""
 
     async def test_hnsw_build_async(self):
-        from hledac.universal.knowledge.persistent_layer import PersistentKnowledgeLayer, HNSWLIB_AVAILABLE
+        from hledac.universal.knowledge.persistent_layer import HNSWLIB_AVAILABLE, PersistentKnowledgeLayer
 
         if not HNSWLIB_AVAILABLE:
             self.skipTest("HNSWLIB_AVAILABLE=False")
@@ -27,7 +24,10 @@ class TestSprint50HNSW(unittest.IsolatedAsyncioTestCase):
             self.assertIsNotNone(layer._thread_pool)
 
     async def test_hnsw_mlx_used(self):
-        from hledac.universal.knowledge.persistent_layer import PersistentKnowledgeLayer, MLX_AVAILABLE, HNSWLIB_AVAILABLE
+        from hledac.universal.knowledge.persistent_layer import (
+            HNSWLIB_AVAILABLE,
+            MLX_AVAILABLE,
+        )
 
         if not HNSWLIB_AVAILABLE:
             self.skipTest("HNSWLIB_AVAILABLE=False")
@@ -36,7 +36,7 @@ class TestSprint50HNSW(unittest.IsolatedAsyncioTestCase):
         self.assertIn(MLX_AVAILABLE, [True, False])
 
     async def test_hnsw_mlx_fallback(self):
-        from hledac.universal.knowledge.persistent_layer import PersistentKnowledgeLayer, MLX_AVAILABLE
+        from hledac.universal.knowledge.persistent_layer import MLX_AVAILABLE
 
         # Verify fallback works when MLX not available
         self.assertIn(MLX_AVAILABLE, [True, False])
@@ -53,11 +53,12 @@ class TestSprint50KV(unittest.IsolatedAsyncioTestCase):
 
     def setUp(self):
         import importlib
+
         import hledac.universal.brain.hermes3_engine as he_module
         importlib.reload(he_module)
 
     async def test_prompt_cache_shared(self):
-        from hledac.universal.brain.hermes3_engine import Hermes3Engine, KV_CACHE_AVAILABLE
+        from hledac.universal.brain.hermes3_engine import KV_CACHE_AVAILABLE, Hermes3Engine
 
         if not KV_CACHE_AVAILABLE:
             self.skipTest("KV_CACHE_AVAILABLE=False")
@@ -81,7 +82,7 @@ class TestSprint50KV(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(mock_make_cache.call_count, 1)
 
     async def test_cache_rebuild_on_change(self):
-        from hledac.universal.brain.hermes3_engine import Hermes3Engine, KV_CACHE_AVAILABLE
+        from hledac.universal.brain.hermes3_engine import KV_CACHE_AVAILABLE, Hermes3Engine
 
         if not KV_CACHE_AVAILABLE:
             self.skipTest("KV_CACHE_AVAILABLE=False")
@@ -106,7 +107,7 @@ class TestSprint50KV(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(mock_make_cache.call_count, 2)
 
     async def test_cache_unchanged_after_generate(self):
-        from hledac.universal.brain.hermes3_engine import Hermes3Engine, KV_CACHE_AVAILABLE
+        from hledac.universal.brain.hermes3_engine import KV_CACHE_AVAILABLE, Hermes3Engine
 
         if not KV_CACHE_AVAILABLE:
             self.skipTest("KV_CACHE_AVAILABLE=False")
@@ -134,7 +135,7 @@ class TestSprint50HTTP3(unittest.IsolatedAsyncioTestCase):
     """Testy pro HTTP/3 autonomní detekci a fallback."""
 
     async def test_http3_autodetect_supported(self):
-        from hledac.universal.stealth.stealth_manager import StealthSession, StealthManager
+        from hledac.universal.stealth.stealth_manager import StealthSession
 
         manager = MagicMock()
         manager.rate_limiter = None
@@ -155,7 +156,7 @@ class TestSprint50HTTP3(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(result.body_bytes, b"response")
 
     async def test_http3_autodetect_not_supported(self):
-        from hledac.universal.stealth.stealth_manager import StealthSession, StealthManager
+        from hledac.universal.stealth.stealth_manager import StealthSession
 
         manager = MagicMock()
         manager.rate_limiter = None
@@ -171,7 +172,7 @@ class TestSprint50HTTP3(unittest.IsolatedAsyncioTestCase):
         self.assertIn(result, [True, False])
 
     async def test_http3_fallback_on_error(self):
-        from hledac.universal.stealth.stealth_manager import StealthSession, StealthManager
+        from hledac.universal.stealth.stealth_manager import StealthSession
 
         manager = MagicMock()
         manager.rate_limiter = None

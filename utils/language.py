@@ -1,6 +1,7 @@
+from __future__ import annotations
+
 import hashlib
 import logging
-from typing import Optional, Dict
 
 logger = logging.getLogger(__name__)
 
@@ -16,7 +17,7 @@ except ImportError:
 
 class LanguageDetector:
     """Fast Language Detection optimized for M1 Apple Silicon.
-    
+
     Uses fast-langdetect (FTZ format) for ultra-fast language detection.
     Falls back to simple heuristic if fast-langdetect is not installed.
     """
@@ -56,20 +57,19 @@ class LanguageDetector:
         'bn': 'Bengali',
         'fa': 'Persian',
         'ur': 'Urdu',
-        'ar': 'Arabic',
         'sw': 'Swahili',
     }
 
     def __init__(self, fallback_mode: bool = True):
         """Initialize language detector.
-        
+
         Args:
             fallback_mode: If True, use simple fallback when fast-langdetect is not available
         """
         self.fallback_mode = fallback_mode
         self._char_ranges = self._build_char_ranges()
 
-    def _build_char_ranges(self) -> Dict[str, tuple]:
+    def _build_char_ranges(self) -> dict[str, tuple]:
         """Build character range mappings for fallback detection."""
         return {
             'zh': (0x4E00, 0x9FFF),
@@ -84,14 +84,14 @@ class LanguageDetector:
 
     def detect(self, text: str, min_length: int = 10) -> str:
         """Detect language of text.
-        
+
         Args:
             text: Input text to analyze
             min_length: Minimum text length for detection (shorter texts return 'unknown')
-            
+
         Returns:
             Language code (e.g., 'en', 'cs', 'zh')
-            
+
         Example:
             >>> detector = LanguageDetector()
             >>> detector.detect("Ahoj světe")
@@ -148,10 +148,10 @@ class LanguageDetector:
 
     def is_supported(self, lang_code: str) -> bool:
         """Check if language code is supported.
-        
+
         Args:
             lang_code: Language code to check
-            
+
         Returns:
             True if language is supported
         """
@@ -159,10 +159,10 @@ class LanguageDetector:
 
     def get_language_name(self, lang_code: str) -> str:
         """Get human-readable language name.
-        
+
         Args:
             lang_code: Language code (e.g., 'en', 'cs')
-            
+
         Returns:
             Language name (e.g., 'English', 'Czech')
         """
@@ -170,11 +170,11 @@ class LanguageDetector:
 
     def batch_detect(self, texts: list, min_length: int = 10) -> list:
         """Detect languages for multiple texts.
-        
+
         Args:
             texts: List of texts to analyze
             min_length: Minimum text length for detection
-            
+
         Returns:
             List of language codes
         """
@@ -182,11 +182,11 @@ class LanguageDetector:
 
     def filter_by_language(self, texts: list, allowed_langs: list) -> list:
         """Filter texts by allowed languages.
-        
+
         Args:
             texts: List of (text, metadata) tuples or just texts
             allowed_langs: List of allowed language codes (e.g., ['en', 'cs'])
-            
+
         Returns:
             Filtered list of texts
         """
@@ -233,7 +233,7 @@ class FastLangDetector:
         """Initialize the fast language detector."""
         self._detector = LanguageDetector(fallback_mode=True)
 
-    def detect(self, text: str, *, max_chars: int = 4000) -> Dict[str, any]:
+    def detect(self, text: str, *, max_chars: int = 4000) -> dict[str, any]:
         """
         Detect language with bounded output.
 
@@ -292,7 +292,7 @@ class FastLangDetector:
             "lang_hash": lang_hash,
         }
 
-    def _default_result(self) -> Dict[str, any]:
+    def _default_result(self) -> dict[str, any]:
         """Return default result for insufficient text or error."""
         return {
             "lang": "und",
@@ -301,7 +301,7 @@ class FastLangDetector:
             "lang_hash": "00000000",
         }
 
-    def is_cross_language_comparable(self, result1: Dict[str, any], result2: Dict[str, any]) -> bool:
+    def is_cross_language_comparable(self, result1: dict[str, any], result2: dict[str, any]) -> bool:
         """
         Determine if two language detection results are comparable.
 

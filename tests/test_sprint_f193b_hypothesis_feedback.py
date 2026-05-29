@@ -24,10 +24,7 @@ Invariant table:
 
 from __future__ import annotations
 
-import asyncio
 import inspect
-from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -65,8 +62,7 @@ class TestSprintF193BStateTracking:
 
     def test_hypothesis_depth_state_initialized(self):
         """SprintScheduler._hypothesis_depth initialized to 0."""
-        from hledac.universal.runtime.sprint_scheduler import SprintScheduler
-        from hledac.universal.runtime.sprint_scheduler import SprintSchedulerConfig
+        from hledac.universal.runtime.sprint_scheduler import SprintScheduler, SprintSchedulerConfig
 
         config = SprintSchedulerConfig()
         scheduler = SprintScheduler(config)
@@ -79,8 +75,7 @@ class TestSprintF193BStateTracking:
 
     def test_hypothesis_query_count_state_initialized(self):
         """SprintScheduler._hypothesis_query_count initialized to 0."""
-        from hledac.universal.runtime.sprint_scheduler import SprintScheduler
-        from hledac.universal.runtime.sprint_scheduler import SprintSchedulerConfig
+        from hledac.universal.runtime.sprint_scheduler import SprintScheduler, SprintSchedulerConfig
 
         config = SprintSchedulerConfig()
         scheduler = SprintScheduler(config)
@@ -97,8 +92,7 @@ class TestSprintF193BEnqueueMethod:
 
     def test_enqueue_hypothesis_pivot_method_exists(self):
         """SprintScheduler has enqueue_hypothesis_pivot method."""
-        from hledac.universal.runtime.sprint_scheduler import SprintScheduler
-        from hledac.universal.runtime.sprint_scheduler import SprintSchedulerConfig
+        from hledac.universal.runtime.sprint_scheduler import SprintScheduler, SprintSchedulerConfig
 
         config = SprintSchedulerConfig()
         scheduler = SprintScheduler(config)
@@ -108,8 +102,7 @@ class TestSprintF193BEnqueueMethod:
 
     def test_enqueue_respects_depth_cap(self):
         """Depth > max_hypothesis_depth → pivot dropped (returns False)."""
-        from hledac.universal.runtime.sprint_scheduler import SprintScheduler
-        from hledac.universal.runtime.sprint_scheduler import SprintSchedulerConfig
+        from hledac.universal.runtime.sprint_scheduler import SprintScheduler, SprintSchedulerConfig
 
         config = SprintSchedulerConfig(max_hypothesis_depth=3)
         scheduler = SprintScheduler(config)
@@ -127,8 +120,7 @@ class TestSprintF193BEnqueueMethod:
 
     def test_enqueue_respects_query_count_cap(self):
         """Query count >= max_hypothesis_queries → pivot dropped."""
-        from hledac.universal.runtime.sprint_scheduler import SprintScheduler
-        from hledac.universal.runtime.sprint_scheduler import SprintSchedulerConfig
+        from hledac.universal.runtime.sprint_scheduler import SprintScheduler, SprintSchedulerConfig
 
         config = SprintSchedulerConfig(max_hypothesis_queries=5)
         scheduler = SprintScheduler(config)
@@ -156,8 +148,7 @@ class TestSprintF193BEnqueueMethod:
 
     def test_enqueue_success_within_bounds(self):
         """Within bounds → pivot enqueued successfully."""
-        from hledac.universal.runtime.sprint_scheduler import SprintScheduler
-        from hledac.universal.runtime.sprint_scheduler import SprintSchedulerConfig
+        from hledac.universal.runtime.sprint_scheduler import SprintScheduler, SprintSchedulerConfig
 
         config = SprintSchedulerConfig(max_hypothesis_depth=3, max_hypothesis_queries=10)
         scheduler = SprintScheduler(config)
@@ -184,15 +175,13 @@ class TestSprintF193BIOCTypeMapping:
 
     def test_hypothesis_ioc_type_maps_correctly(self):
         """ioc_type='hypothesis' maps to multi_engine_search, rdap_lookup."""
-        from hledac.universal.runtime.sprint_scheduler import SprintScheduler
-        from hledac.universal.runtime.sprint_scheduler import SprintSchedulerConfig
+        from hledac.universal.runtime.sprint_scheduler import SprintScheduler, SprintSchedulerConfig
 
         config = SprintSchedulerConfig()
         scheduler = SprintScheduler(config)
 
         # Patch enqueue_pivot to avoid queue full issues
         enqueued_tasks = []
-        original_enqueue = scheduler.enqueue_pivot
 
         def mock_enqueue(ioc_value, ioc_type, confidence, degree=1.0, task_type=None):
             enqueued_tasks.append({
@@ -268,8 +257,7 @@ class TestSprintF193BNoRunawayLoop:
 
     def test_depth_cap_prevents_deep_recursion(self):
         """Consecutive enqueues with depth > cap are dropped."""
-        from hledac.universal.runtime.sprint_scheduler import SprintScheduler
-        from hledac.universal.runtime.sprint_scheduler import SprintSchedulerConfig
+        from hledac.universal.runtime.sprint_scheduler import SprintScheduler, SprintSchedulerConfig
 
         config = SprintSchedulerConfig(max_hypothesis_depth=3, max_hypothesis_queries=20)
         scheduler = SprintScheduler(config)
@@ -296,8 +284,7 @@ class TestSprintF193BNoRunawayLoop:
 
     def test_query_cap_stops_unbounded_growth(self):
         """After max_hypothesis_queries, new pivots are rejected."""
-        from hledac.universal.runtime.sprint_scheduler import SprintScheduler
-        from hledac.universal.runtime.sprint_scheduler import SprintSchedulerConfig
+        from hledac.universal.runtime.sprint_scheduler import SprintScheduler, SprintSchedulerConfig
 
         config = SprintSchedulerConfig(max_hypothesis_depth=5, max_hypothesis_queries=3)
         scheduler = SprintScheduler(config)
@@ -329,12 +316,10 @@ class TestSprintF193BNoRunawayLoop:
 
     def test_hypothesis_probe_already_honors_depth(self):
         """Existing hypothesis_probe task type in scheduler should respect similar bounds."""
-        from hledac.universal.runtime.sprint_scheduler import SprintScheduler
-        from hledac.universal.runtime.sprint_scheduler import SprintSchedulerConfig
-        from hledac.universal.runtime.sprint_scheduler import PivotTask
+        from hledac.universal.runtime.sprint_scheduler import PivotTask, SprintScheduler, SprintSchedulerConfig
 
         config = SprintSchedulerConfig()
-        scheduler = SprintScheduler(config)
+        SprintScheduler(config)
 
         # Create a hypothesis_probe task
         task = PivotTask(

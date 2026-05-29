@@ -50,8 +50,7 @@ import asyncio
 import hashlib
 import logging
 import time
-from collections import defaultdict, OrderedDict
-from typing import Dict, List, Optional, Tuple, Any
+from collections import OrderedDict, defaultdict
 
 try:
     import mlx.core as mx
@@ -62,12 +61,11 @@ except ImportError:
     mx = None
 
 import numpy as np
-
-from hledac.universal.research.parallel_scheduler import ParallelResearchScheduler
-from hledac.universal.intelligence.relationship_discovery import RelationshipDiscoveryEngine
 from hledac.universal.federated.sketches import CountMinSketch, SimHashSketch
+from hledac.universal.intelligence.relationship_discovery import RelationshipDiscoveryEngine
 from hledac.universal.knowledge.pq_index import PQIndex
 from hledac.universal.prefetch.prefetch_cache import PrefetchCache
+from hledac.universal.research.parallel_scheduler import ParallelResearchScheduler
 
 logger = logging.getLogger(__name__)
 
@@ -237,7 +235,7 @@ class PrefetchOracle:
                 metadata=cand
             )
 
-    async def _fetch_for_prefetch(self, url: str, deadline: float, estimated_bytes: int, metadata: Dict):
+    async def _fetch_for_prefetch(self, url: str, deadline: float, estimated_bytes: int, metadata: dict):
         """Provede prefetch fetch – voláno z scheduleru."""
         if time.time() > deadline:
             return {'success': False, 'reason': 'deadline'}
@@ -257,7 +255,7 @@ class PrefetchOracle:
         h = hashlib.sha256(url.encode()).digest()[:8]
         return int.from_bytes(h, byteorder='big')
 
-    def _generate_candidates(self, url: str, entity: str, source_type: str) -> List[Dict]:
+    def _generate_candidates(self, url: str, entity: str, source_type: str) -> list[dict]:
         """Stage A: generování kandidátů s dynamickými limity."""
         candidates = []
 
@@ -290,7 +288,7 @@ class PrefetchOracle:
 
         return filtered[:self._max_candidates_dynamic]
 
-    def _get_common_neighbors(self, entity: str, limit: int) -> List[Dict]:
+    def _get_common_neighbors(self, entity: str, limit: int) -> list[dict]:
         """Placeholder pro get_common_neighbors - wrapper pro relationship_discovery."""
         # Try to call the actual method if it exists
         if hasattr(self.rel_engine, 'get_common_neighbors'):
@@ -314,7 +312,7 @@ class PrefetchOracle:
             return mx.random.normal(64)
         return np.random.normal(size=64).astype(np.float32)
 
-    def _extract_features_batch(self, candidates: List[Dict]):
+    def _extract_features_batch(self, candidates: list[dict]):
         """Extrahuje feature vektory pro reranker. Vrací (n, RERANKER_DIM)."""
         features = []
         for i, c in enumerate(candidates):
@@ -346,7 +344,7 @@ class PrefetchOracle:
             return mx.stack(features)
         return np.stack(features)
 
-    def _get_bandit_context_vector(self, candidate: Dict) -> np.ndarray:
+    def _get_bandit_context_vector(self, candidate: dict) -> np.ndarray:
         """Vrací feature vector pro bandit (numpy array float32, dim BANDIT_DIM)."""
         # GNN embedding entity
         entity = candidate.get('entity', '')
@@ -372,7 +370,7 @@ class PrefetchOracle:
         from urllib.parse import urlparse
         return urlparse(url).netloc
 
-    def _apply_budget(self, candidates: List[Dict]) -> List[Dict]:
+    def _apply_budget(self, candidates: list[dict]) -> list[dict]:
         """Omezí kandidáty podle aktuálních budgetů (network)."""
         total_bytes = sum(c.get('estimated_bytes', c.get('size', 1024 * 1024)) for c in candidates)
         if total_bytes > self.network_budget_mb * 1024 * 1024:

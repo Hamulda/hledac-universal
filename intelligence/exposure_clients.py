@@ -22,18 +22,18 @@ Mixed model NENÍ design flaw — je to správné rozdělení:
 
 from __future__ import annotations
 
-import atexit
 import asyncio
+import atexit
 import json
 import logging
 import os
 import time
+from collections.abc import AsyncIterator
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import Any, AsyncIterator, Dict, List, Optional
+from typing import Any
 
 import aiohttp
-
 from hledac.universal.network.session_runtime import async_get_aiohttp_session
 from hledac.universal.paths import open_lmdb
 
@@ -99,9 +99,9 @@ class ExposureCache:
         return self._env
 
     def _make_key(self, key: str) -> bytes:
-        return f"{self._prefix}:{key}".encode("utf-8")
+        return f"{self._prefix}:{key}".encode()
 
-    def get(self, key: str) -> Optional[Dict[str, Any]]:
+    def get(self, key: str) -> dict[str, Any] | None:
         """
         Synchroní LMDB get. Vrací cached data nebo None.
         Kontroluje TTL.
@@ -134,7 +134,7 @@ class ExposureCache:
             logger.debug(f"ExposureCache get error for {key}: {e}")
             return None
 
-    def set(self, key: str, data: Dict[str, Any]) -> bool:
+    def set(self, key: str, data: dict[str, Any]) -> bool:
         """
         Synchroní LMDB set. Vrací True při úspěchu.
         Single-writer přes DB_EXECUTOR.
@@ -187,12 +187,12 @@ class ShodanClient:
 
     def __init__(
         self,
-        session: Optional[aiohttp.ClientSession] = None,
+        session: aiohttp.ClientSession | None = None,
     ) -> None:
         self._api_key = os.environ.get("SHODAN_API_KEY", "")
         self._cache = ExposureCache(prefix="shodan")
         # Optional injected session; None triggers lazy own-session fallback
-        self._injected_session: Optional[aiohttp.ClientSession] = session
+        self._injected_session: aiohttp.ClientSession | None = session
 
     async def _get_session(self) -> aiohttp.ClientSession:
         # Use injected session if provided; otherwise fall back to shared plain-TCP surface
@@ -200,7 +200,7 @@ class ShodanClient:
             return self._injected_session
         return await async_get_aiohttp_session()
 
-    async def query_host(self, ip: str) -> Optional[Dict[str, Any]]:
+    async def query_host(self, ip: str) -> dict[str, Any] | None:
         """
         Query Shodan data pro danou IP.
 
@@ -282,13 +282,13 @@ class CensysClient:
 
     def __init__(
         self,
-        session: Optional[aiohttp.ClientSession] = None,
+        session: aiohttp.ClientSession | None = None,
     ) -> None:
         self._api_id = os.environ.get("CENSYS_API_ID", "")
         self._api_secret = os.environ.get("CENSYS_API_SECRET", "")
         self._cache = ExposureCache(prefix="censys")
         # Optional injected session; None triggers lazy own-session fallback
-        self._injected_session: Optional[aiohttp.ClientSession] = session
+        self._injected_session: aiohttp.ClientSession | None = session
 
     async def _get_session(self) -> aiohttp.ClientSession:
         # Use injected session if provided; otherwise fall back to shared plain-TCP surface
@@ -296,7 +296,7 @@ class CensysClient:
             return self._injected_session
         return await async_get_aiohttp_session()
 
-    async def search_hosts(self, query: str) -> Optional[List[Dict[str, Any]]]:
+    async def search_hosts(self, query: str) -> list[dict[str, Any]] | None:
         """
         Search Censys hosts.
 
@@ -319,7 +319,7 @@ class CensysClient:
 
         # Step 2: Bez API credentials → offline only
         if not self._api_id or not self._api_secret:
-            logger.info(f"Censys cache miss for query, no API credentials configured")
+            logger.info("Censys cache miss for query, no API credentials configured")
             return None
 
         # Step 3: HTTP fetch
@@ -351,7 +351,7 @@ class CensysClient:
             logger.warning(f"Censys search_hosts error: {e}")
             return None
 
-    async def view_host(self, ip: str) -> Optional[Dict[str, Any]]:
+    async def view_host(self, ip: str) -> dict[str, Any] | None:
         """
         View Censys host details.
 
@@ -437,8 +437,8 @@ class GitHubCodeSearchClient:
 
         Returns [{repo, url, path, stars}] — max 10 results.
         """
-        import xxhash
         import orjson
+        import xxhash
 
         key = xxhash.xxh64(f"ghcs_{cve_id}".encode()).hexdigest()
         zst_path = self._cache_dir / f"{key}.json.zst"
@@ -539,8 +539,8 @@ class MalwareBazaarClient:
 
         Returns raw MB response dict with query_status and data.
         """
-        import xxhash
         import orjson
+        import xxhash
 
         key = xxhash.xxh64(f"mb_{file_hash}".encode()).hexdigest()
         zst_path = self._cache_dir / f"{key}.json.zst"
@@ -640,7 +640,8 @@ class GreyNoiseClient:
         session: aiohttp.ClientSession,
     ) -> dict:
         """Vrátí {"ip", "classification", "name", "link", "noise", "riot"}"""
-        import xxhash, orjson
+        import orjson
+        import xxhash
 
         key = xxhash.xxh64(f"gn_{ip}".encode()).hexdigest()
         zst_path = self._cache_dir / f"{key}.json.zst"
@@ -751,7 +752,7 @@ class CVIntelligenceClient:
         self._nvd_semaphore = asyncio.Semaphore(self._NVD_SEMAPHORE_LIMIT)
         # Per-CVE TTL cache for EPSS data (in-memory, short-lived)
         # Bounded to prevent unbounded memory growth across sprints
-        self._epss_cache: Dict[str, Dict[str, float]] = {}
+        self._epss_cache: dict[str, dict[str, float]] = {}
         self._epss_cache_order: list[str] = []  # LRU order tracking
         self._EPSS_CACHE_MAX_SIZE = 1000
         self._EPSS_CACHE_EVICT_BATCH = 100
@@ -785,7 +786,7 @@ class CVIntelligenceClient:
         return await async_get_aiohttp_session()
 
     async def _fetch_osv_batch(
-        self, tech_stack: List[str], session: aiohttp.ClientSession
+        self, tech_stack: list[str], session: aiohttp.ClientSession
     ) -> AsyncIterator[dict]:
         """
         Fetch CVEs via OSV.dev batch API.
@@ -862,12 +863,11 @@ class CVIntelligenceClient:
                 yield cve
 
     async def _fetch_nvd_fallback(
-        self, tech_stack: List[str], session: aiohttp.ClientSession
+        self, tech_stack: list[str], session: aiohttp.ClientSession
     ) -> AsyncIterator[dict]:
         """
         NVD API 2.0 fallback - rate limited with semaphore + sliding window.
         """
-        import orjson
 
         for tech in tech_stack:
             # Rate limiting: semaphore + sliding window
@@ -916,7 +916,7 @@ class CVIntelligenceClient:
 
     async def _enrich_epss(
         self, cve_id: str, session: aiohttp.ClientSession
-    ) -> Optional[Dict[str, float]]:
+    ) -> dict[str, float] | None:
         """
         Fetch EPSS score for a CVE.
         Returns {"epss_score": float, "percentile": float} or None.
@@ -951,7 +951,7 @@ class CVIntelligenceClient:
         except Exception:
             return None
 
-    def _osv_to_cve(self, vuln: dict) -> Optional[dict]:
+    def _osv_to_cve(self, vuln: dict) -> dict | None:
         """Convert OSV vulnerability format to our CVE dict."""
         try:
             cve_id = vuln.get("id", "")
@@ -1025,7 +1025,7 @@ class CVIntelligenceClient:
         ]
 
     async def fetch_cve_intelligence(
-        self, tech_stack: List[str]
+        self, tech_stack: list[str]
     ) -> AsyncIterator[dict]:
         """
         Fetch CVE intelligence for a tech stack.
@@ -1041,7 +1041,7 @@ class CVIntelligenceClient:
         LMDB cache: 6h TTL for CVE data.
         """
         session = await self._get_session()
-        pending_epss: List[dict] = []
+        pending_epss: list[dict] = []
         cves_yielded = 0
 
         try:

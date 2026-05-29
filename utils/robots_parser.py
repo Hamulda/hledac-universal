@@ -16,11 +16,9 @@ Example:
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import time
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional
 from urllib.parse import urlparse
 
 logger = logging.getLogger(__name__)
@@ -45,9 +43,9 @@ class RobotsDocument:
     """Parsed robots.txt document."""
     fetched_at: float
     ttl: float
-    rules: Dict[str, List[Rule]] = field(default_factory=dict)
-    sitemaps: List[str] = field(default_factory=list)
-    crawl_delays: Dict[str, float] = field(default_factory=dict)
+    rules: dict[str, list[Rule]] = field(default_factory=dict)
+    sitemaps: list[str] = field(default_factory=list)
+    crawl_delays: dict[str, float] = field(default_factory=dict)
 
 
 class RobotsParser:
@@ -79,12 +77,12 @@ class RobotsParser:
         """
         self.cache_ttl = cache_ttl
         self._max_cache_size = max_cache_size
-        self._cache: Dict[str, RobotsDocument] = {}
-        self._cache_access_time: Dict[str, float] = {}  # Pro LRU eviction
+        self._cache: dict[str, RobotsDocument] = {}
+        self._cache_access_time: dict[str, float] = {}  # Pro LRU eviction
         self._user_agent = "Hledac-Bot/1.0"
-        self._session: Optional[aiohttp.ClientSession] = None
+        self._session: aiohttp.ClientSession | None = None
 
-    async def __aenter__(self) -> 'RobotsParser':
+    async def __aenter__(self) -> RobotsParser:
         """Async context manager entry - create shared session."""
         import aiohttp
         timeout = aiohttp.ClientTimeout(total=10.0)
@@ -133,8 +131,8 @@ class RobotsParser:
     async def fetch_robots(
         self,
         base_url: str,
-        user_agent: Optional[str] = None
-    ) -> Optional[RobotsDocument]:
+        user_agent: str | None = None
+    ) -> RobotsDocument | None:
         """
         Fetch and parse robots.txt file with caching.
 
@@ -197,36 +195,36 @@ class RobotsParser:
         except Exception as e:
             logger.debug(f"Error fetching robots.txt: {e}")
             return None
-    
+
     def _parse_robots_content(self, content: str, source_url: str) -> RobotsDocument:
         """Parse robots.txt content into structured format."""
         doc = RobotsDocument(
             fetched_at=time.time(),
             ttl=self.cache_ttl
         )
-        
+
         current_agent = '*'
         line_no = 0
-        
+
         for line in content.split('\n'):
             line_no += 1
             line = line.strip()
-            
+
             # Skip empty lines and comments
             if not line or line.startswith('#'):
                 continue
-            
+
             # Parse directives
             if ':' in line:
                 directive, value = line.split(':', 1)
                 directive = directive.strip().lower()
                 value = value.strip()
-                
+
                 if directive == 'user-agent':
                     current_agent = value
                     if current_agent not in doc.rules:
                         doc.rules[current_agent] = []
-                
+
                 elif directive == 'allow':
                     if current_agent not in doc.rules:
                         doc.rules[current_agent] = []
@@ -235,7 +233,7 @@ class RobotsParser:
                         allow=True,
                         line_no=line_no
                     ))
-                
+
                 elif directive == 'disallow':
                     if current_agent not in doc.rules:
                         doc.rules[current_agent] = []
@@ -244,67 +242,67 @@ class RobotsParser:
                         allow=False,
                         line_no=line_no
                     ))
-                
+
                 elif directive == 'crawl-delay':
                     try:
                         delay = float(value)
                         doc.crawl_delays[current_agent] = delay
                     except ValueError:
                         pass
-                
+
                 elif directive == 'sitemap':
                     doc.sitemaps.append(value)
-        
+
         return doc
-    
+
     def can_fetch(
-        self, 
-        path: str, 
-        user_agent: str = "*", 
-        robots_doc: Optional[RobotsDocument] = None
+        self,
+        path: str,
+        user_agent: str = "*",
+        robots_doc: RobotsDocument | None = None
     ) -> bool:
         """
         Check if path can be fetched according to robots.txt.
-        
+
         Args:
             path: URL path to check
             user_agent: User agent string
             robots_doc: Optional pre-fetched robots document
-            
+
         Returns:
             True if fetching is allowed
         """
         if not robots_doc:
             return True
-        
+
         # Get rules for this user agent, fallback to '*'
         rules = robots_doc.rules.get(user_agent, robots_doc.rules.get('*', []))
-        
+
         # Check rules in order (most specific first)
         for rule in sorted(rules, key=lambda r: len(r.path), reverse=True):
             if path.startswith(rule.path):
                 return rule.allow
-        
+
         return True
-    
+
     def get_crawl_delay(
-        self, 
-        user_agent: str = "*", 
-        robots_doc: Optional[RobotsDocument] = None
+        self,
+        user_agent: str = "*",
+        robots_doc: RobotsDocument | None = None
     ) -> float:
         """
         Get crawl delay for user agent.
-        
+
         Args:
             user_agent: User agent string
             robots_doc: Optional pre-fetched robots document
-            
+
         Returns:
             Crawl delay in seconds (0 if not specified)
         """
         if not robots_doc:
             return 0.0
-        
+
         return robots_doc.crawl_delays.get(
             user_agent,
             robots_doc.crawl_delays.get('*', 0.0)
@@ -314,7 +312,7 @@ class RobotsParser:
         self,
         sitemap_url: str,
         max_urls: int = _MAX_SITEMAP_URLS
-    ) -> List[str]:
+    ) -> list[str]:
         """
         Fetch and parse sitemap.xml - M1 8GB optimized.
 
@@ -359,7 +357,7 @@ class RobotsParser:
         self,
         content: str,
         max_urls: int
-    ) -> List[str]:
+    ) -> list[str]:
         """Parse sitemap XML and extract URLs."""
         import re
         urls = []
@@ -388,7 +386,7 @@ class RobotsParser:
         self,
         base_url: str,
         max_urls: int = _MAX_SITEMAP_URLS
-    ) -> List[str]:
+    ) -> list[str]:
         """
         Fetch robots.txt, extract sitemap URLs, and fetch all sitemaps.
 

@@ -13,18 +13,14 @@ from unittest.mock import patch
 
 import numpy as np
 import pytest
-
 from hledac.universal.semantic_deduplicator import (
-    SemanticDedupCache,
-    _SemanticDedupLMDB,
-    _cosine_similarity,
-    _generate_single_embedding,
+    _EMBEDDING_DIM,
     MAX_CACHE_ITEMS,
     MAX_CACHE_MEMORY_MB,
-    _EMBEDDING_DIM,
-    _MEMORY_GUARD_THRESHOLD_GB,
+    SemanticDedupCache,
+    _cosine_similarity,
+    _SemanticDedupLMDB,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -101,7 +97,7 @@ class TestSemanticDedupCacheLRU:
         # Add items until memory limit is hit
         count = 0
         while cache._cache_memory_bytes < MAX_CACHE_MEMORY_MB * 1024 * 1024:
-            text = f"x" * 200  # ~200 bytes key
+            text = "x" * 200  # ~200 bytes key
             emb = np.random.randn(_EMBEDDING_DIM).astype(np.float32)
             cache._add_to_cache(text, emb)
             count += 1

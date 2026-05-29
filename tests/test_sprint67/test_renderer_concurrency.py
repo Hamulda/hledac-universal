@@ -2,9 +2,8 @@
 Test renderer concurrency - Sprint 67
 Tests for semaphore and timeout in RenderCoordinator.
 """
+
 import pytest
-import asyncio
-from unittest.mock import AsyncMock, MagicMock
 
 
 class TestRendererConcurrency:
@@ -52,8 +51,9 @@ class TestRendererTimeout:
 
     def test_render_method_signature(self):
         """Test render accepts expected parameters."""
-        from hledac.universal.coordinators.render_coordinator import RenderCoordinator
         import inspect
+
+        from hledac.universal.coordinators.render_coordinator import RenderCoordinator
 
         rc = RenderCoordinator()
 

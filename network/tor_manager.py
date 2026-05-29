@@ -2,15 +2,15 @@
 import asyncio
 import logging
 import time
-from typing import Optional, Dict, Any
 from pathlib import Path
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
 # Fail-safe import of stem
 try:
-    from stem.control import Controller
     from stem import Signal
+    from stem.control import Controller
     STEM_AVAILABLE = True
 except ImportError:
     STEM_AVAILABLE = False
@@ -27,7 +27,7 @@ class TorManager:
 
     def __init__(
         self,
-        data_dir: Optional[Path] = None,
+        data_dir: Path | None = None,
         control_port: int = DEFAULT_CONTROL_PORT,
         control_password: str = "",
     ):
@@ -35,8 +35,8 @@ class TorManager:
         self._data_dir.mkdir(parents=True, exist_ok=True)
         self._control_port = control_port
         self._control_password = control_password
-        self._controller: Optional[Controller] = None
-        self._circuits: Dict[str, Dict[str, Any]] = {}  # domain -> circuit info
+        self._controller: Controller | None = None
+        self._circuits: dict[str, dict[str, Any]] = {}  # domain -> circuit info
         self._lock = asyncio.Lock()
         self._available = STEM_AVAILABLE
 
@@ -67,7 +67,7 @@ class TorManager:
             self._controller = None
             return False
 
-    async def get_circuit_for_domain(self, domain: str) -> Optional[str]:
+    async def get_circuit_for_domain(self, domain: str) -> str | None:
         """Get or create an isolated circuit for domain. Returns circuit ID or None."""
         if not self._available:
             return None

@@ -21,9 +21,9 @@ import logging
 import os
 from collections import deque
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -68,7 +68,7 @@ design for the other's convenience.
 """
 
 
-def normalize_correlation(corr: Optional[Dict[str, Optional[str]]]) -> Optional[Dict[str, Optional[str]]]:
+def normalize_correlation(corr: dict[str, str | None] | None) -> dict[str, str | None] | None:
     """
     Normalize correlation dict to shared grammar.
 
@@ -102,13 +102,13 @@ class ToolExecEvent:
     output_hash: str  # SHA256 of output (not stored)
     output_len: int  # Bounded: actual output length
     status: str  # "success" | "error" | "cancelled"
-    error_class: Optional[str] = None  # Bounded error type
+    error_class: str | None = None  # Bounded error type
     seq_no: int = 0
-    prev_chain_hash: Optional[str] = None
-    chain_hash: Optional[str] = None
-    correlation: Optional[Dict[str, Optional[str]]] = None  # run_id, branch_id, provider_id, action_id
+    prev_chain_hash: str | None = None
+    chain_hash: str | None = None
+    correlation: dict[str, str | None] | None = None  # run_id, branch_id, provider_id, action_id
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Serialize to dict for JSONL"""
         result = {
             "event_id": self.event_id,
@@ -128,7 +128,7 @@ class ToolExecEvent:
         return result
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "ToolExecEvent":
+    def from_dict(cls, data: dict[str, Any]) -> ToolExecEvent:
         """Deserialize from dict"""
         if isinstance(data.get("ts"), str):
             data["ts"] = datetime.fromisoformat(data["ts"])
@@ -209,7 +209,7 @@ class ToolExecLog:
         self._closed = False
 
         # Persist file
-        self._persist_file: Optional[Any] = None
+        self._persist_file: Any | None = None
         if enable_persist:
             self._persist_file = self._init_persist_file()
 
@@ -229,7 +229,7 @@ class ToolExecLog:
         """Compute SHA256 hash of bytes"""
         return hashlib.sha256(data).hexdigest()
 
-    def _bound_error_class(self, error: Optional[Exception]) -> Optional[str]:
+    def _bound_error_class(self, error: Exception | None) -> str | None:
         """Bound error class name to safe set"""
         if error is None:
             return None
@@ -243,8 +243,8 @@ class ToolExecLog:
         input_data: bytes,
         output_data: bytes,
         status: str,
-        error: Optional[Exception] = None,
-        correlation: Optional[Dict[str, Optional[str]]] = None,
+        error: Exception | None = None,
+        correlation: dict[str, str | None] | None = None,
     ) -> ToolExecEvent:
         """
         Log a tool execution event.
@@ -304,7 +304,7 @@ class ToolExecLog:
 
         event = ToolExecEvent(
             event_id=event_id,
-            ts=datetime.now(timezone.utc),
+            ts=datetime.now(UTC),
             tool_name=tool_name,
             input_hash=input_hash,
             output_hash=output_hash,
@@ -343,7 +343,7 @@ class ToolExecLog:
 
         return event
 
-    def verify_all(self) -> Dict[str, Any]:
+    def verify_all(self) -> dict[str, Any]:
         """
         Verify the entire chain for tampering.
 
@@ -356,11 +356,11 @@ class ToolExecLog:
                 - errors: list of issues
         """
         # Read all events from disk if persist was enabled
-        events: List[ToolExecEvent] = []
+        events: list[ToolExecEvent] = []
         if self._persist_enabled:
             log_file = self._run_dir / "logs" / "tool_exec.jsonl"
             if log_file.exists():
-                with open(log_file, 'r') as f:
+                with open(log_file) as f:
                     for line in f:
                         if line.strip():
                             data = json.loads(line)
@@ -411,7 +411,7 @@ class ToolExecLog:
         """Get current chain head hash"""
         return self._chain_head
 
-    def get_stats(self) -> Dict[str, Any]:
+    def get_stats(self) -> dict[str, Any]:
         """Get log statistics"""
         return {
             "seq": self._seq,
@@ -443,7 +443,7 @@ class ToolExecLog:
                 self._persist_file = None
         self._closed = True
 
-    def __enter__(self) -> "ToolExecLog":
+    def __enter__(self) -> ToolExecLog:
         return self
 
     def __exit__(self, *_: Any) -> None:

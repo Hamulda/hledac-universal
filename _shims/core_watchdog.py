@@ -35,7 +35,7 @@ class Watchdog:
         self,
         threshold_mb: int | None = None,
         check_interval: float | None = None,
-        callback: "collections.abc.Callable[..., None] | None" = None,
+        callback: collections.abc.Callable[..., None] | None = None,
     ) -> None:
         from hledac.universal.utils.uma_budget import UmaWatchdog, UmaWatchdogCallbacks
 

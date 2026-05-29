@@ -7,16 +7,106 @@ LanceDBIdentityStore má vlastní _get_flashrank_ranker() pro search path.
 Tyto dvě instance jsou záměrně oddělené — ANE brain pipeline vs. vector store search.
 """
 
+from __future__ import annotations
+
 import asyncio
 import logging
-from dataclasses import dataclass, field
+import threading
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import List, Union, Optional, Callable, Awaitable
+from typing import Literal
 
 import numpy as np
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Sprint F234: ANE/MLX Mutual Exclusion — prevents OOM on M1 8GB
+# ---------------------------------------------------------------------------
+
+class ANE_MLX_Mutex:
+    """
+    Prevents simultaneous ANE + MLX model loading on M1 8GB.
+
+    Only ONE runtime can hold the lock at a time:
+    - ANE path: reranker + embedder models
+    - MLX path: Hermes 3B LLM + KV cache
+
+    Max combined memory: 2.5GB (hard guard).
+    """
+
+    _instance: ANE_MLX_Mutex | None = None
+    _lock: threading.Lock = threading.Lock()
+    _active_runtime: Literal["ane", "mlx", None] = None
+    _max_combined_mb: float = 2560.0  # 2.5GB safety margin
+
+    def __new__(cls) -> ANE_MLX_Mutex:
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+        return cls._instance
+
+    def acquire_ane(self, model_size_mb: float = 0.0) -> None:
+        """Acquire ANE lock. Raises MemoryError if MLX is active."""
+        with self._lock:
+            if self._active_runtime == "mlx":
+                raise MemoryError(
+                    "[ANE_MLX_Mutex] MLX model active — cannot acquire ANE. "
+                    "Release MLX first via release()."
+                )
+            if self._active_runtime == "ane":
+                # Already holding ANE — re-entrant for same model
+                return
+            self._active_runtime = "ane"
+            logger.debug(f"[ANE_MLX_Mutex] Acquired ANE (model={model_size_mb:.0f}MB)")
+
+    def acquire_mlx(self, model_size_mb: float = 0.0) -> None:
+        """Acquire MLX lock. Raises MemoryError if ANE is active."""
+        with self._lock:
+            if self._active_runtime == "ane":
+                raise MemoryError(
+                    "[ANE_MLX_Mutex] ANE model active — cannot acquire MLX. "
+                    "Release ANE first via release()."
+                )
+            if self._active_runtime == "mlx":
+                # Already holding MLX — re-entrant
+                return
+            if model_size_mb > self._max_combined_mb:
+                raise MemoryError(
+                    f"[ANE_MLX_Mutex] MLX model {model_size_mb:.0f}MB exceeds "
+                    f"{self._max_combined_mb:.0f}MB limit."
+                )
+            self._active_runtime = "mlx"
+            logger.debug(f"[ANE_MLX_Mutex] Acquired MLX (model={model_size_mb:.0f}MB)")
+
+    def release(self, runtime: Literal["ane", "mlx"]) -> None:
+        """Release lock for specified runtime."""
+        with self._lock:
+            if self._active_runtime == runtime:
+                self._active_runtime = None
+                logger.debug(f"[ANE_MLX_Mutex] Released {runtime}")
+
+    def is_active(self) -> Literal["ane", "mlx", None]:
+        """Return currently active runtime."""
+        return self._active_runtime
+
+    def is_ane_active(self) -> bool:
+        return self._active_runtime == "ane"
+
+    def is_mlx_active(self) -> bool:
+        return self._active_runtime == "mlx"
+
+
+def get_ane_mlx_mutex() -> ANE_MLX_Mutex:
+    """Thread-safe singleton accessor."""
+    return ANE_MLX_Mutex()
+
+
+# ---------------------------------------------------------------------------
+# Original module content follows (ANE AVAIABLE flag, ANEEmbedder, etc.)
+# ---------------------------------------------------------------------------
 
 try:
     import CoreML as _CoreML
@@ -63,11 +153,11 @@ class ANEStatusResult:
     loaded: bool
     model_path_exists: bool
     fallback_configured: bool
-    last_error: Optional[str]
+    last_error: str | None
     inference_path: str  # "coreml", "fallback", "hash_fallback", "unavailable"
 
 
-def get_ane_status(embedder: "ANEEmbedder | None" = None) -> ANEStatusResult:
+def get_ane_status(embedder: ANEEmbedder | None = None) -> ANEStatusResult:
     """
     Sprint F228B: Returns ANE status as a dataclass.
     Callers can inspect without triggering model loading.
@@ -173,7 +263,7 @@ def _make_ml_array(data_list: list, length: int = 64):
     return arr
 
 
-def _coreml_embed(model, text: str) -> "np.ndarray":
+def _coreml_embed(model, text: str) -> np.ndarray:
     tok = _get_hf_tokenizer()
     tokens = tok(
         text[:256],
@@ -220,9 +310,9 @@ class ANEEmbedder:
         self._mlx_model = None
         self._mlx_processor = None
         self._loaded = False
-        self._last_load_error: Optional[str] = None
+        self._last_load_error: str | None = None
         self.coreml_path = MODELS_DIR / f"{model_name}_ane.mlpackage"
-        self._fallback_embedder: Optional[Callable[..., Awaitable[np.ndarray]]] = None
+        self._fallback_embedder: Callable[..., Awaitable[np.ndarray]] | None = None
 
     def set_fallback(self, fallback_func: Callable[..., Awaitable[np.ndarray]]) -> None:
         """Nastaví fallback async funkci (např. MLX embedder)."""
@@ -243,6 +333,8 @@ class ANEEmbedder:
                 self.model = model
                 self._loaded = True
                 self._last_load_error = None
+                # F234: ANE/MLX mutex — CoreML model acquired
+                get_ane_mlx_mutex().acquire_ane(model_size_mb=90.0)
                 logger.info(f"ANEEmbedder loaded CoreML: {self.model_name}")
                 return
             except Exception as e:
@@ -261,6 +353,30 @@ class ANEEmbedder:
             except Exception as e:
                 self._last_load_error = str(e)
                 logger.warning(f"MLX ModernBERT failed ({e}), using hash fallback")
+
+    async def initialize(self) -> None:
+        """
+        Sprint F228B: Explicit initialization — loads CoreML or MLX model on first call.
+        Idempotent: safe to call multiple times, only loads once.
+        M1 guard: requires >1.5GB UMA available before loading CoreML model.
+        """
+        if self._loaded:
+            return  # already loaded
+        # M1 memory guard — check before loading CoreML model
+        try:
+            from utils.uma_budget import get_uma_snapshot
+            snap = get_uma_snapshot()
+            if snap.is_critical or snap.is_emergency:
+                logger.warning(f"[ANE] initialize skipped: memory pressure "
+                               f"{snap.pct_used:.0f}% (>85%% critical)")
+                return
+            avail = snap.available_uma_gib
+            if avail < 1.5:
+                logger.warning(f"[ANE] initialize skipped: only {avail:.1f}GB < 1.5GB required")
+                return
+        except Exception:
+            pass  # guard is advisory — proceed if snapshot fails
+        await self.load()
 
     async def convert_to_ane(self) -> bool:
         """Check for pre-compiled .mlmodelc — no conversion needed."""
@@ -291,7 +407,7 @@ class ANEEmbedder:
         logger.warning("[ANE] No model found at %s or %s", compiled_path, raw_path)
         return False
 
-    async def embed(self, texts: Union[str, List[str]]) -> np.ndarray:
+    async def embed(self, texts: str | list[str]) -> np.ndarray:
         """
         Sprint F228B: Truthful embed — no NotImplementedError in production.
         Falls back gracefully: CoreML → fallback embedder → hash fallback.
@@ -343,7 +459,7 @@ class ANEEmbedder:
         _ANE_TELEMETRY["ane_embed_fallback_used"] += 1
         return self._hash_embed(texts)
 
-    def _hash_embed(self, texts: Union[str, List[str]]) -> np.ndarray:
+    def _hash_embed(self, texts: str | list[str]) -> np.ndarray:
         """Deterministic hash-based fallback — always works, no model needed."""
         if isinstance(texts, str):
             texts = [texts]
@@ -389,16 +505,15 @@ class ANEEmbedder:
 
 
 # Backward compat — importuje z kanonického mista
-from hledac.universal.brain.ner_engine import extract_iocs_from_text, _IOC_PATTERNS
 
 # ============================================================================
 # Sprint 8VF: ANE Semantic Dedup
 # ============================================================================
 
-_ANE_EMBEDDER: "ANEEmbedder | None" = None
+_ANE_EMBEDDER: ANEEmbedder | None = None
 
 
-def get_ane_embedder() -> "ANEEmbedder | None":
+def get_ane_embedder() -> ANEEmbedder | None:
     """Lazy init CoreML MiniLM-L6-v2 embedder, s MLX ModernBERT pokud CoreML není."""
     global _ANE_EMBEDDER
     if _ANE_EMBEDDER is None:
@@ -422,6 +537,11 @@ def get_ane_embedder() -> "ANEEmbedder | None":
 def unload_ane_embedder() -> None:
     """Called by memory pressure governor at CRITICAL state."""
     global _ANE_EMBEDDER
+    # F234: Release ANE mutex before clearing instance
+    try:
+        get_ane_mlx_mutex().release("ane")
+    except Exception:
+        pass
     _ANE_EMBEDDER = None
 
 
@@ -479,7 +599,7 @@ async def semantic_dedup_findings(
             for j in range(i + 1, len(findings)):
                 if sim[i, j] >= threshold:
                     keep[j] = False
-        return [f for f, k in zip(findings, keep) if k]
+        return [f for f, k in zip(findings, keep, strict=False) if k]
     except Exception:
         return findings  # fallback on any error
 

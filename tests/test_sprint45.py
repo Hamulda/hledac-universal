@@ -2,10 +2,8 @@
 Sprint 45 tests – Lightpanda Pool + LSH + Persistent Stegdetect + MessagePack.
 """
 
-import asyncio
 import json
 import sys
-import tempfile
 import time
 import unittest
 from pathlib import Path
@@ -15,9 +13,9 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from hledac.universal.coordinators.fetch_coordinator import FetchCoordinator, LightpandaPool, LightpandaManager
-from hledac.universal.intelligence.document_intelligence import DeepForensicsAnalyzer, StegdetectServer
-from hledac.universal.intelligence.relationship_discovery import RelationshipDiscoveryEngine, LSHLinkPredictor
+from hledac.universal.coordinators.fetch_coordinator import LightpandaManager, LightpandaPool
+from hledac.universal.intelligence.document_intelligence import StegdetectServer
+from hledac.universal.intelligence.relationship_discovery import LSHLinkPredictor
 
 
 class TestSprint45(unittest.IsolatedAsyncioTestCase):
@@ -56,7 +54,7 @@ class TestSprint45(unittest.IsolatedAsyncioTestCase):
             await pool.start()
 
             # Get the only instance
-            lp1 = await pool.get_instance()
+            await pool.get_instance()
 
             # Try to get another - should wait (we won't release in this test)
             # This tests that the queue mechanism exists
@@ -113,7 +111,7 @@ class TestSprint45(unittest.IsolatedAsyncioTestCase):
 
         start = time.time()
         predictor.build_index(g)
-        candidates = predictor.get_candidates(0)
+        predictor.get_candidates(0)
         elapsed = time.time() - start
 
         # Should complete in under 10ms
@@ -150,7 +148,7 @@ class TestSprint45(unittest.IsolatedAsyncioTestCase):
         """Server should auto-restart on failure."""
         server = StegdetectServer()
 
-        with patch.object(server, 'restart', new_callable=AsyncMock) as mock_restart:
+        with patch.object(server, 'restart', new_callable=AsyncMock):
             server._proc = MagicMock()
             server._proc.returncode = 1  # Dead process
 
@@ -169,9 +167,7 @@ class TestSprint45(unittest.IsolatedAsyncioTestCase):
         """MessagePack should be available and used."""
         try:
             from hledac.universal.tools.serialization import pack, unpack
-            MSGPACK_AVAILABLE = True
         except ImportError:
-            MSGPACK_AVAILABLE = False
             self.skipTest("msgpack not available")
 
         # Basic test that pack/unpack works
@@ -185,8 +181,8 @@ class TestSprint45(unittest.IsolatedAsyncioTestCase):
     def test_msgpack_size(self):
         """MessagePack should be smaller than JSON."""
         try:
-            from hledac.universal.tools.serialization import pack
             import numpy as np
+            from hledac.universal.tools.serialization import pack
         except ImportError:
             self.skipTest("msgpack/numpy not available")
 
@@ -206,8 +202,8 @@ class TestSprint45(unittest.IsolatedAsyncioTestCase):
     def test_msgpack_speed(self):
         """MessagePack should be comparable or faster than JSON for larger data."""
         try:
-            from hledac.universal.tools.serialization import pack, unpack
             import numpy as np
+            from hledac.universal.tools.serialization import pack, unpack
         except ImportError:
             self.skipTest("msgpack not available")
 

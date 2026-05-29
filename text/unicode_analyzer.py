@@ -12,12 +12,11 @@ Target: 100+ MB/s text processing speed
 
 import asyncio
 import hashlib
+import logging
 import unicodedata
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional, Set, Tuple, Any, FrozenSet
-import logging
-import sys
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +40,7 @@ class ZeroWidthFinding:
     position: int
     char_code: str
     char_name: str
-    context: Optional[str] = None
+    context: str | None = None
 
 
 @dataclass
@@ -50,7 +49,7 @@ class HomoglyphFinding:
     position: int
     char: str
     canonical_form: str
-    confusable_with: List[str]
+    confusable_with: list[str]
     char_code: str = ""
 
 
@@ -61,7 +60,7 @@ class BidiFinding:
     char_code: str
     attack_type: str
     description: str
-    context: Optional[str] = None
+    context: str | None = None
 
 
 @dataclass
@@ -77,10 +76,10 @@ class NormalizationFinding:
 @dataclass
 class UnicodeAnalysisResult:
     """Complete result of Unicode attack analysis."""
-    zero_width_findings: List[ZeroWidthFinding] = field(default_factory=list)
-    homoglyph_findings: List[HomoglyphFinding] = field(default_factory=list)
-    bidi_findings: List[BidiFinding] = field(default_factory=list)
-    normalization_findings: List[NormalizationFinding] = field(default_factory=list)
+    zero_width_findings: list[ZeroWidthFinding] = field(default_factory=list)
+    homoglyph_findings: list[HomoglyphFinding] = field(default_factory=list)
+    bidi_findings: list[BidiFinding] = field(default_factory=list)
+    normalization_findings: list[NormalizationFinding] = field(default_factory=list)
     risk_score: float = 0.0
     total_chars: int = 0
     processed_bytes: int = 0
@@ -104,7 +103,7 @@ class UnicodeAnalysisResult:
             + len(self.normalization_findings)
         )
 
-    def get_summary(self) -> Dict[str, Any]:
+    def get_summary(self) -> dict[str, Any]:
         """Get summary of analysis results."""
         return {
             "risk_score": self.risk_score,
@@ -129,7 +128,7 @@ class UnicodeAttackAnalyzer:
     """
 
     # Pre-computed frozensets for O(1) lookup
-    ZERO_WIDTH_CHARS: FrozenSet[int] = frozenset({
+    ZERO_WIDTH_CHARS: Frozenset[int] = frozenset({
         0x200B,  # ZERO WIDTH SPACE
         0x200C,  # ZERO WIDTH NON-JOINER
         0x200D,  # ZERO WIDTH JOINER
@@ -139,7 +138,7 @@ class UnicodeAttackAnalyzer:
     })
 
     # Bidi character info as tuples for fast lookup
-    BIDI_CHARS: Dict[int, Tuple[str, str]] = {
+    BIDI_CHARS: dict[int, tuple[str, str]] = {
         0x202A: ("LRE", "Left-to-Right Embedding"),
         0x202B: ("RLE", "Right-to-Left Embedding"),
         0x202C: ("PDF", "Pop Directional Formatting"),
@@ -151,16 +150,16 @@ class UnicodeAttackAnalyzer:
         0x2069: ("PDI", "Pop Directional Isolate"),
     }
 
-    HIGH_RISK_BIDI: FrozenSet[int] = frozenset({0x202E, 0x202D, 0x202C})
-    BIDI_OPENING: FrozenSet[int] = frozenset({0x202A, 0x202B, 0x202D, 0x202E, 0x2066, 0x2067, 0x2068})
-    BIDI_CLOSING: FrozenSet[int] = frozenset({0x202C, 0x2069})
+    HIGH_RISK_BIDI: Frozenset[int] = frozenset({0x202E, 0x202D, 0x202C})
+    BIDI_OPENING: Frozenset[int] = frozenset({0x202A, 0x202B, 0x202D, 0x202E, 0x2066, 0x2067, 0x2068})
+    BIDI_CLOSING: Frozenset[int] = frozenset({0x202C, 0x2069})
 
-    def __init__(self, config: Optional[UnicodeConfig] = None):
+    def __init__(self, config: UnicodeConfig | None = None):
         """Initialize the Unicode attack analyzer."""
         self.config = config or UnicodeConfig()
-        self._confusable_set: FrozenSet[str] = frozenset()
-        self._canonical_map: Dict[str, str] = {}
-        self._confusable_map: Dict[str, List[str]] = {}
+        self._confusable_set: Frozenset[str] = frozenset()
+        self._canonical_map: dict[str, str] = {}
+        self._confusable_map: dict[str, list[str]] = {}
         self._initialized: bool = False
         self._lock = asyncio.Lock()
 
@@ -185,7 +184,7 @@ class UnicodeAttackAnalyzer:
         """Load confusable character mappings - optimized version."""
         # Build comprehensive confusable character map
         # Latin confusables mapping: canonical -> list of confusables
-        raw_map: Dict[str, List[str]] = {
+        raw_map: dict[str, list[str]] = {
             'a': ['а', 'à', 'á', 'â', 'ã', 'ä', 'å', 'ā', 'ă', 'ą', 'ạ', 'ả', 'ấ', 'ầ', 'ẩ', 'ẫ', 'ậ'],
             'b': ['ь', 'Ь', 'в', 'В', 'Ƅ', 'ɓ', 'ḃ', 'ḅ', 'ḇ'],
             'c': ['с', 'С', '¢', '©', 'ç', 'ć', 'ĉ', 'ċ', 'č', 'ƈ', 'ḉ'],
@@ -285,8 +284,8 @@ class UnicodeAttackAnalyzer:
         self._confusable_map = raw_map
 
         # Build reverse mapping: confusable -> canonical
-        canonical_map: Dict[str, str] = {}
-        confusable_chars: Set[str] = set()
+        canonical_map: dict[str, str] = {}
+        confusable_chars: set[str] = set()
 
         for canonical, confusables in raw_map.items():
             for confusable in confusables:
@@ -308,7 +307,7 @@ class UnicodeAttackAnalyzer:
         context = ''.join(c if c.isprintable() or c.isspace() else f'\\u{ord(c):04X}' for c in context)
         return context.replace('\n', '\\n').replace('\r', '\\r').replace('\t', '\\t')
 
-    def _detect_zero_width(self, text: str, offset: int = 0) -> List[ZeroWidthFinding]:
+    def _detect_zero_width(self, text: str, offset: int = 0) -> list[ZeroWidthFinding]:
         """Detect zero-width characters in text - optimized version."""
         findings = []
         zw_chars = self.ZERO_WIDTH_CHARS
@@ -328,7 +327,7 @@ class UnicodeAttackAnalyzer:
 
         return findings
 
-    def _detect_homoglyphs(self, text: str, offset: int = 0) -> List[HomoglyphFinding]:
+    def _detect_homoglyphs(self, text: str, offset: int = 0) -> list[HomoglyphFinding]:
         """Detect homoglyph/confusable characters in text - optimized version."""
         findings = []
         confusable_set = self._confusable_set
@@ -350,7 +349,7 @@ class UnicodeAttackAnalyzer:
 
         return findings
 
-    def _detect_bidi_attacks(self, text: str, offset: int = 0) -> List[BidiFinding]:
+    def _detect_bidi_attacks(self, text: str, offset: int = 0) -> list[BidiFinding]:
         """Detect bidirectional text attacks in text - optimized version."""
         findings = []
         bidi_chars = self.BIDI_CHARS
@@ -407,7 +406,7 @@ class UnicodeAttackAnalyzer:
 
         return findings
 
-    def _detect_normalization_anomalies(self, text: str, offset: int = 0) -> List[NormalizationFinding]:
+    def _detect_normalization_anomalies(self, text: str, offset: int = 0) -> list[NormalizationFinding]:
         """Detect Unicode normalization anomalies in text - optimized version."""
         findings = []
 
@@ -523,7 +522,7 @@ class UnicodeAttackAnalyzer:
         chunk_size = self.config.chunk_size
 
         try:
-            with open(file_path, 'r', encoding='utf-8', errors='replace') as f:
+            with open(file_path, encoding='utf-8', errors='replace') as f:
                 while True:
                     chunk = f.read(chunk_size)
                     if not chunk:
@@ -553,7 +552,7 @@ class UnicodeAttackAnalyzer:
         except UnicodeDecodeError:
             # Try with different encoding
             try:
-                with open(file_path, 'r', encoding='utf-16', errors='replace') as f:
+                with open(file_path, encoding='utf-16', errors='replace') as f:
                     content = f.read()
                     result = self.analyze_text(content)
                     result.processed_bytes = file_size
@@ -716,7 +715,7 @@ class UnicodeAttackAnalyzer:
                     logger.warning(f"[F206AC] unicode_analyzer cleanup failed: {e}")
 
 
-def create_unicode_analyzer(config: Optional[UnicodeConfig] = None) -> Optional[UnicodeAttackAnalyzer]:
+def create_unicode_analyzer(config: UnicodeConfig | None = None) -> UnicodeAttackAnalyzer | None:
     """
     Factory function to create a Unicode attack analyzer.
 
@@ -735,8 +734,8 @@ def create_unicode_analyzer(config: Optional[UnicodeConfig] = None) -> Optional[
 
 # Convenience async factory
 async def create_and_initialize_unicode_analyzer(
-    config: Optional[UnicodeConfig] = None
-) -> Optional[UnicodeAttackAnalyzer]:
+    config: UnicodeConfig | None = None
+) -> UnicodeAttackAnalyzer | None:
     """
     Factory function to create and initialize a Unicode attack analyzer.
 

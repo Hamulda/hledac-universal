@@ -10,7 +10,6 @@ import logging
 import os
 import secrets
 from dataclasses import dataclass
-from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -22,7 +21,7 @@ class EncryptionResult:
     nonce: str
     tag: str
     success: bool = True
-    error: Optional[str] = None
+    error: str | None = None
 
 
 @dataclass
@@ -30,27 +29,27 @@ class DecryptionResult:
     """Result of decryption operation"""
     plaintext: str
     success: bool = True
-    error: Optional[str] = None
+    error: str | None = None
 
 
 class DataEncryption:
     """
     AES-256-GCM encryption for sensitive data storage.
-    
+
     Uses environment variable HLEDAC_ENCRYPTION_KEY or generates
     a key for the session (note: session keys don't persist).
     """
-    
-    def __init__(self, key: Optional[bytes] = None):
+
+    def __init__(self, key: bytes | None = None):
         """
         Initialize encryption with optional key.
-        
+
         Args:
             key: 32-byte encryption key. If None, uses env var or generates.
         """
         self.key = key or self._get_key_from_env() or self._generate_key()
-        
-    def _get_key_from_env(self) -> Optional[bytes]:
+
+    def _get_key_from_env(self) -> bytes | None:
         """Get encryption key from environment variable"""
         key_b64 = os.environ.get("HLEDAC_ENCRYPTION_KEY")
         if key_b64:
@@ -59,13 +58,13 @@ class DataEncryption:
             except Exception as e:
                 logger.warning(f"Failed to decode encryption key: {e}")
         return None
-    
+
     def _generate_key(self) -> bytes:
         """Generate a new 32-byte encryption key"""
         key = secrets.token_bytes(32)
         logger.warning("Generated temporary encryption key - data won't persist across sessions!")
         return key
-    
+
     def encrypt(self, plaintext: str) -> EncryptionResult:
         """
         Encrypt plaintext using AES-256-GCM.
@@ -113,7 +112,7 @@ class DataEncryption:
                 success=False,
                 error=str(e)
             )
-    
+
     def decrypt(self, result: EncryptionResult) -> DecryptionResult:
         """
         Decrypt ciphertext using AES-256-GCM.
@@ -156,7 +155,7 @@ class DataEncryption:
                 success=False,
                 error=str(e)
             )
-    
+
     @staticmethod
     def generate_key_b64() -> str:
         """Generate a new base64-encoded encryption key"""

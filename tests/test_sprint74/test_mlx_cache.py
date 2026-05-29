@@ -78,7 +78,7 @@ class TestMLXPromptCache:
         await cache.put("hash1", ["state1"], 1000000)  # 1MB - too large
         await cache.put("hash2", ["state2"], 100)       # Small - should fit
 
-        result1 = await cache.get("hash1")
+        await cache.get("hash1")
         result2 = await cache.get("hash2")
 
         # First item should be skipped (too large)

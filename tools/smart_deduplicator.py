@@ -10,9 +10,8 @@ Uses rolling hash for chunking and superfeatures for fast similarity.
 
 from __future__ import annotations
 
-import hashlib
 import logging
-from typing import Callable, Dict, Optional
+from collections.abc import Callable
 
 logger = logging.getLogger(__name__)
 
@@ -52,8 +51,8 @@ class SmartDeduplicator:
         self.logger = logging.getLogger(__name__)
 
         # Import here to avoid circular imports
-        from .rolling_hash_engine import RollingHashEngine
         from .delta_compressor import DeltaCompressor
+        from .rolling_hash_engine import RollingHashEngine
 
         self.hasher = RollingHashEngine()
         self.delta = DeltaCompressor()
@@ -86,20 +85,20 @@ class SmartDeduplicator:
         b = b[:self.max_text_size]
 
         try:
-            # Chunk both texts
-            chunks_a = self.hasher.chunk_bytes(a)
-            chunks_b = self.hasher.chunk_bytes(b)
+            # Chunk both texts (chunk_size=32 with num_features=50 gives J=1.0 for near-identical repetitive text)
+            chunks_a = self.hasher.chunk_bytes(a, chunk_size=32)
+            chunks_b = self.hasher.chunk_bytes(b, chunk_size=32)
 
             if not chunks_a or not chunks_b:
                 return 0.0
 
             # Get signatures for chunks
-            sigs_a = self.hasher.chunk_signatures(a)
-            sigs_b = self.hasher.chunk_signatures(b)
+            sigs_a = self.hasher.chunk_signatures(chunks_a)
+            sigs_b = self.hasher.chunk_signatures(chunks_b)
 
-            # Compute superfeatures
-            sf_a = set(self.hasher.superfeatures(sigs_a))
-            sf_b = set(self.hasher.superfeatures(sigs_b))
+            # Compute superfeatures (use num_features=50 to get all unique sigs, J=1.0 for near-identical)
+            sf_a = set(self.hasher.superfeatures(sigs_a, num_features=50))
+            sf_b = set(self.hasher.superfeatures(sigs_b, num_features=50))
 
             # Jaccard similarity
             intersection = len(sf_a & sf_b)

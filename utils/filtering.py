@@ -10,12 +10,12 @@ Optimized for M1 Silicon (8GB RAM).
 
 Usage:
     from hledac.universal.utils.filtering import FastFilter, EfficientFrontier
-    
+
     # URL filtering
     filter = FastFilter()
     if filter.check_url("https://example.com"):
         # URL is allowed
-        
+
     # URL frontier
     frontier = EfficientFrontier()
     if not frontier.contains(url):
@@ -28,10 +28,11 @@ from __future__ import annotations
 import hashlib
 import logging
 import re
-from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from collections.abc import Iterator
+from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Dict, Iterator, List, Optional, Set
+from typing import Any
 from urllib.parse import urlparse, urlunparse
 
 try:
@@ -83,9 +84,9 @@ class SimpleSetFilter:
     """
 
     def __init__(self):
-        self._blocked_domains: Set[str] = set()
-        self._blocked_urls: Set[str] = set()
-        self._blocked_patterns: List[re.Pattern] = []
+        self._blocked_domains: set[str] = set()
+        self._blocked_urls: set[str] = set()
+        self._blocked_patterns: list[re.Pattern] = []
 
     def add_domain(self, domain: str):
         """Add blocked domain."""
@@ -146,7 +147,7 @@ class BinaryFuseFilter:
         self._filter = None
         self._initialized = False
         self._expected_size = expected_size
-        self._items: Set[str] = set()
+        self._items: set[str] = set()
         self._init_filter()
 
     def _init_filter(self):
@@ -228,13 +229,13 @@ class FastFilter:
         fallback_to_set: bool = True,
         enable_cache: bool = True
     ):
-        self._bff: Optional[BinaryFuseFilter] = None
-        self._set_filter: Optional[SimpleSetFilter] = None
+        self._bff: BinaryFuseFilter | None = None
+        self._set_filter: SimpleSetFilter | None = None
         self._use_bff = use_bff
         self._fallback_to_set = fallback_to_set
 
         self._stats = FilterStats()
-        self._cache: Dict[str, bool] = {}
+        self._cache: dict[str, bool] = {}
         self._cache_size = 1000
         self._enable_cache = enable_cache
 
@@ -280,7 +281,7 @@ class FastFilter:
         except Exception:
             return url
 
-    def _check_cache(self, url: str) -> Optional[bool]:
+    def _check_cache(self, url: str) -> bool | None:
         """Check cache for URL."""
         if not self._enable_cache:
             return None
@@ -336,7 +337,7 @@ class FastFilter:
     def load_blocklist_file(self, filepath: str):
         """Load blocklist from file (one entry per line)."""
         try:
-            with open(filepath, 'r', encoding='utf-8') as f:
+            with open(filepath, encoding='utf-8') as f:
                 for line in f:
                     line = line.strip()
                     if not line or line.startswith('#'):
@@ -358,7 +359,7 @@ class FastFilter:
     def check_url(self, url: str) -> bool:
         """
         Check if URL is allowed (not blocked).
-        
+
         Returns:
             True if allowed, False if blocked
         """
@@ -392,11 +393,11 @@ class FastFilter:
         self._update_cache(url, not blocked)
         return not blocked
 
-    def check_urls_batch(self, urls: List[str]) -> List[bool]:
+    def check_urls_batch(self, urls: list[str]) -> list[bool]:
         """Check multiple URLs."""
         return [self.check_url(url) for url in urls]
 
-    def get_stats(self) -> Dict[str, Any]:
+    def get_stats(self) -> dict[str, Any]:
         """Get filter statistics."""
         return {
             'total_checked': self._stats.total_checked,
@@ -426,7 +427,7 @@ class FastFilter:
 class QuotientFilterFrontier:
     """
     URL frontier using PyProbables Quotient Filter.
-    
+
     Quotient Filter advantages:
     - Constant-time lookup
     - Minimal false positive rate
@@ -437,11 +438,11 @@ class QuotientFilterFrontier:
     def __init__(
         self,
         capacity: int = 1000000,
-        filter_size: Optional[int] = None
+        filter_size: int | None = None
     ):
         self.capacity = capacity
-        self._quotient_filter: Optional[Any] = None
-        self._exact_set: Set[str] = set()
+        self._quotient_filter: Any | None = None
+        self._exact_set: set[str] = set()
         self._stats = FrontierStats(
             total_urls=0,
             checked_urls=0,
@@ -456,7 +457,7 @@ class QuotientFilterFrontier:
             logger.warning("PyProbables not available, using set-based fallback")
             self._init_fallback()
 
-    def _init_quotient_filter(self, filter_size: Optional[int]):
+    def _init_quotient_filter(self, filter_size: int | None):
         """Initialize quotient filter."""
         try:
             from pyprobables import QuotientFilter
@@ -550,7 +551,7 @@ class PersistentFrontier:
 
     def __init__(
         self,
-        storage_path: Optional[Path] = None,
+        storage_path: Path | None = None,
         backend: str = "orjson"
     ):
         if storage_path is None:
@@ -590,7 +591,7 @@ class PersistentFrontier:
                         'added_urls': self._frontier._stats.added_urls,
                         'false_positives': self._frontier._stats.false_positives,
                     },
-                    'timestamp': datetime.now(timezone.utc).isoformat()
+                    'timestamp': datetime.now(UTC).isoformat()
                 }
                 if ORJSON_AVAILABLE:
                     with open(storage_file, 'wb') as f:
@@ -612,7 +613,7 @@ class PersistentFrontier:
                             'added_urls': self._frontier._stats.added_urls,
                             'false_positives': self._frontier._stats.false_positives,
                         },
-                        'timestamp': datetime.now(timezone.utc).isoformat()
+                        'timestamp': datetime.now(UTC).isoformat()
                     }, f)
 
             elif self.backend == 'sqlite':
@@ -640,7 +641,7 @@ class PersistentFrontier:
             ''')
 
             cursor.execute('DELETE FROM frontier')
-            timestamp = datetime.now(timezone.utc).isoformat()
+            timestamp = datetime.now(UTC).isoformat()
 
             data = [(url, timestamp) for url in self._frontier._exact_set]
             cursor.executemany(
@@ -669,13 +670,13 @@ class PersistentFrontier:
                         data = orjson.loads(f.read())
                 else:
                     import json
-                    with open(storage_file, 'r') as f:
+                    with open(storage_file) as f:
                         data = json.load(f)
                 self._frontier._exact_set = set(data.get('urls', []))
 
             elif self.backend == 'json':
                 import json
-                with open(storage_file, 'r') as f:
+                with open(storage_file) as f:
                     data = json.load(f)
                     self._frontier._exact_set = set(data.get('urls', []))
 
@@ -751,7 +752,7 @@ class PersistentFrontier:
         """Iterate over all URLs in frontier."""
         return iter(self._frontier._exact_set)
 
-    def get_all_urls(self) -> List[str]:
+    def get_all_urls(self) -> list[str]:
         """Get all URLs in frontier."""
         return list(self._frontier._exact_set)
 
@@ -768,7 +769,7 @@ class EfficientFrontier(PersistentFrontier):
 
     def __init__(
         self,
-        storage_path: Optional[Path] = None,
+        storage_path: Path | None = None,
         backend: str = "orjson",
         normalize_urls: bool = True
     ):
@@ -806,7 +807,7 @@ class EfficientFrontier(PersistentFrontier):
         normalized = self._normalize_url(url)
         super().remove(normalized, persist)
 
-    def add_batch(self, urls: List[str], persist: bool = True):
+    def add_batch(self, urls: list[str], persist: bool = True):
         """Add multiple URLs to frontier."""
         for url in urls:
             self.add(url, persist=False)
@@ -814,7 +815,7 @@ class EfficientFrontier(PersistentFrontier):
         if persist:
             self._save_to_disk()
 
-    def check_batch(self, urls: List[str]) -> List[bool]:
+    def check_batch(self, urls: list[str]) -> list[bool]:
         """Check multiple URLs against frontier."""
         return [self.contains(url) for url in urls]
 
@@ -823,8 +824,8 @@ class EfficientFrontier(PersistentFrontier):
 # GLOBAL INSTANCES
 # =============================================================================
 
-_global_filter: Optional[FastFilter] = None
-_global_frontier: Optional[EfficientFrontier] = None
+_global_filter: FastFilter | None = None
+_global_frontier: EfficientFrontier | None = None
 
 
 def get_fast_filter() -> FastFilter:
@@ -838,7 +839,7 @@ def get_fast_filter() -> FastFilter:
 
 
 def get_frontier(
-    storage_path: Optional[Path] = None,
+    storage_path: Path | None = None,
     backend: str = "orjson"
 ) -> EfficientFrontier:
     """Get global EfficientFrontier instance."""

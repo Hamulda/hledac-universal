@@ -6,32 +6,27 @@ GHOST_INVARIANTS: gather(return_exceptions=True), no asyncio.run() in async ctx.
 from __future__ import annotations
 
 import asyncio
-import json
-from unittest.mock import MagicMock, AsyncMock, patch
-from pathlib import Path
+from unittest.mock import patch
 
 # Candidate imports (adjust if project uses relative imports)
 try:
-    from export.stix_exporter import render_stix_bundle, _maybe_sign_bundle
+    from export.stix_exporter import _maybe_sign_bundle, render_stix_bundle
     STIX_OK = True
-except Exception as e:
+except Exception:
     STIX_OK = False
 
 try:
-    from export.jsonld_exporter import render_jsonld, _maybe_sign_jsonld
     JSONLD_OK = True
-except Exception as e:
+except Exception:
     JSONLD_OK = False
 
 try:
     from security.pq_crypto import (
         PQAvailability,
         PQSignature,
-        PostQuantumBackend,
-        create_post_quantum_backend,
     )
     PQ_OK = True
-except Exception as e:
+except Exception:
     PQ_OK = False
 
 
@@ -171,6 +166,7 @@ def test_gather_return_exceptions_in_stix_async():
     assert STIX_OK
     # Verify by code inspection: the function must use gather with return_exceptions
     import inspect
+
     from export.stix_exporter import _maybe_sign_bundle_async
     src = inspect.getsource(_maybe_sign_bundle_async)
     assert "return_exceptions=True" in src, "gather return_exceptions=True not found"
@@ -183,6 +179,7 @@ def test_gather_return_exceptions_in_jsonld_async():
     """JSON-LD _maybe_sign_jsonld_async uses gather(return_exceptions=True)."""
     assert JSONLD_OK
     import inspect
+
     from export.jsonld_exporter import _maybe_sign_jsonld_async
     src = inspect.getsource(_maybe_sign_jsonld_async)
     assert "return_exceptions=True" in src, "gather return_exceptions=True not found"

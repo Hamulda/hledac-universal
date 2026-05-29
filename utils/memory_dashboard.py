@@ -10,12 +10,12 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import Optional
 
 logger = logging.getLogger(__name__)
 
 # Platform detection
 import platform
+
 IS_DARWIN = platform.system() == "Darwin"
 
 # Optional imports - fail-safe
@@ -48,13 +48,13 @@ class UnifiedMemorySnapshot:
     sys_percent: float
 
     # Metal GPU (M1)
-    metal_active_gb: Optional[float] = None
-    metal_peak_gb: Optional[float] = None
-    metal_cache_gb: Optional[float] = None
+    metal_active_gb: float | None = None
+    metal_peak_gb: float | None = None
+    metal_cache_gb: float | None = None
 
     # Vypočítané metriky
     pressure: float = 0.0  # 0.0-1.0, vyšší = horší
-    metal_available_gb: Optional[float] = None
+    metal_available_gb: float | None = None
 
     def __post_init__(self):
         """Vypočítat derived metriky."""
@@ -97,7 +97,7 @@ class UnifiedMemoryMonitor:
             interval: Interval mezi měřeními (pro budoucí EMA výpočty)
         """
         self._interval = interval
-        self._last_snapshot: Optional[UnifiedMemorySnapshot] = None
+        self._last_snapshot: UnifiedMemorySnapshot | None = None
 
     def snapshot(self) -> UnifiedMemorySnapshot:
         """

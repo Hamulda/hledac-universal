@@ -12,18 +12,13 @@ Matrix: 13 scenarios × all 12 lanes = 156 assertions.
 from __future__ import annotations
 
 import pytest
-
 from hledac.universal.runtime.acquisition_strategy import (
-    AcquisitionLane,
-    AcquisitionLanePlan,
-    build_acquisition_plan,
-    AcquisitionContext,
-    LaneSpec,
-    LaneRule,
     LANE_RULES,
+    AcquisitionContext,
+    AcquisitionLane,
     _disabled_reason,
+    build_acquisition_plan,
 )
-
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -38,6 +33,7 @@ def _ctx(
     stealth_ready: bool = False,
     acquisition_profile: str = "default",
     duration_s: float = 180.0,
+    is_deep_osint_m1: bool = False,
 ) -> AcquisitionContext:
     """Build AcquisitionContext from raw params, mirroring _build_plan_impl()."""
     hardware_critical = uma_state in ("critical", "emergency") or swap_detected
@@ -68,13 +64,15 @@ def _ctx(
         )
 
     has_domain = _has_domain(query)
+    has_ip = bool(__import__("re").search(r'\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b', query))
     has_url = _has_url(query)
     has_crypto = _has_crypto(query)
     has_long_duration = False  # default scenario duration < 300s
 
-    from hledac.universal.runtime.acquisition_strategy import is_academic_profile, _has_explicit_cid
+    from hledac.universal.runtime.acquisition_strategy import _has_explicit_cid, is_academic_profile, is_deep_osint_m1_profile
 
     is_academic = is_academic_profile(acquisition_profile)
+    is_deep_osint_m1 = is_deep_osint_m1_profile(acquisition_profile)
     cid_present = _has_explicit_cid(query.strip())
 
     # base_concurrency mirrors _base_concurrency()
@@ -110,6 +108,8 @@ def _ctx(
         stealth_ready=stealth_ready,
         base_concurrency=base_conc,
         is_academic=is_academic,
+        is_deep_osint_m1=is_deep_osint_m1,
+        has_ip=has_ip,
         cid_present=cid_present,
         _feed_max_items=_feed_max,
         _feed_cap_reason=_feed_cap_r,
@@ -419,7 +419,7 @@ def test_disabled_reason_hardware_critical_ipfs():
     assert len(cid) == 46, f"CID should be 46 chars, got {len(cid)}"
     ctx = _ctx(cid, "critical", is_nonfeed_diagnostic=False)
     assert ctx.cid_present, f"CID should be detected, got cid_present={ctx.cid_present}"
-    assert ctx.hardware_critical, f"critical should set hardware_critical"
+    assert ctx.hardware_critical, "critical should set hardware_critical"
     reason = _disabled_reason(AcquisitionLane.IPFS, ctx)
     assert reason == "hardware_critical", f"Expected hardware_critical, got {reason!r}"
 

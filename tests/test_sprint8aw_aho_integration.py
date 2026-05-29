@@ -22,26 +22,18 @@ Classification: DORMANT_INTEGRATION
 
 import subprocess
 import sys
-import time
-
-import pytest
 
 # Add universal to path for direct imports
 sys.path.insert(0, "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal")
 
+from intelligence.document_intelligence import (
+    PDFAnalyzer,
+)
 from utils.aho_extractor import (
     PILOT_PATTERNS,
     get_suspicious_keywords_automaton,
     scan_suspicious_keywords_list,
-    regex_scan_suspicious_keywords,
 )
-from intelligence.document_intelligence import (
-    PDFAnalyzer,
-    _get_aho_extractor,
-    _AhoExtractorModule,
-    _AHO_AVAILABLE,
-)
-
 
 # ---------------------------------------------------------------------------
 # Test 1: classification is explicit

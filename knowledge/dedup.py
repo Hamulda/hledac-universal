@@ -26,8 +26,7 @@ LMDB NAMESPACE:
 from __future__ import annotations
 
 from collections import OrderedDict
-from pathlib import Path
-from typing import Optional, Any
+from typing import Any
 
 import psutil
 
@@ -63,8 +62,8 @@ class DedupManager:
 
     def __init__(
         self,
-        dedup_lmdb_path: Optional[str] = None,
-        semantic_lmdb_path: Optional[str] = None,
+        dedup_lmdb_path: str | None = None,
+        semantic_lmdb_path: str | None = None,
         *,
         map_size: int = _DEDUP_LMDB_MAP_SIZE,
         max_keys: int = 1_000_000,
@@ -76,23 +75,23 @@ class DedupManager:
             map_size: LMDB map size in bytes for dedup store.
             max_keys: Max keys in dedup LMDB.
         """
-        self._dedup_lmdb_path_str: Optional[str] = dedup_lmdb_path
-        self._semantic_lmdb_path: Optional[str] = semantic_lmdb_path
+        self._dedup_lmdb_path_str: str | None = dedup_lmdb_path
+        self._semantic_lmdb_path: str | None = semantic_lmdb_path
         self._map_size = map_size
         self._max_keys = max_keys
 
         # Persistent dedup LMDB
-        self._dedup_lmdb: Optional[Any] = None
-        self._dedup_lmdb_last_error: Optional[str] = None
-        self._dedup_lmdb_boot_error: Optional[str] = None
+        self._dedup_lmdb: Any | None = None
+        self._dedup_lmdb_last_error: str | None = None
+        self._dedup_lmdb_boot_error: str | None = None
 
         # Bounded hot cache
         self._dedup_hot_cache: dict[str, str] = {}
         self._dedup_hot_cache_order: OrderedDict = OrderedDict()
 
         # Semantic dedup cache (lazy init)
-        self._semantic_dedup_cache: Optional[Any] = None
-        self._semantic_dedup_boot_error: Optional[str] = None
+        self._semantic_dedup_cache: Any | None = None
+        self._semantic_dedup_boot_error: str | None = None
 
         self._initialized: bool = False
 
@@ -153,13 +152,13 @@ class DedupManager:
 
     def _dedup_key_from_fingerprint(self, fp: str) -> bytes:
         """Build dedup namespace key from BLAKE2b fingerprint."""
-        return f"{self.DEDUP_NAMESPACE}{fp}".encode("utf-8")
+        return f"{self.DEDUP_NAMESPACE}{fp}".encode()
 
     def _dedup_lmdb_key_to_fingerprint(self, key: bytes) -> str:
         """Extract fingerprint from dedup namespace key."""
         return key.decode("utf-8")[len(self.DEDUP_NAMESPACE):]
 
-    def lookup_persistent_dedup(self, fp: str) -> Optional[str]:
+    def lookup_persistent_dedup(self, fp: str) -> str | None:
         """
         Lookup a fingerprint in the persistent dedup LMDB.
 
@@ -227,7 +226,7 @@ class DedupManager:
         self._dedup_hot_cache[fp] = finding_id
         self._dedup_hot_cache_order[fp] = None
 
-    def hot_cache_lookup(self, fp: str) -> Optional[str]:
+    def hot_cache_lookup(self, fp: str) -> str | None:
         """Bounded hot cache lookup."""
         return self._dedup_hot_cache.get(fp)
 
@@ -266,7 +265,7 @@ class DedupManager:
             self._semantic_dedup_boot_error = str(e)
 
     @property
-    def semantic_dedup_cache(self) -> Optional[Any]:
+    def semantic_dedup_cache(self) -> Any | None:
         """Return the semantic dedup cache instance."""
         return self._semantic_dedup_cache
 

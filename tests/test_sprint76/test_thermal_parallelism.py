@@ -2,9 +2,9 @@
 Tests for thermal-aware parallelism (Sprint 76).
 """
 
+from unittest.mock import MagicMock
+
 import pytest
-from unittest.mock import patch, MagicMock, AsyncMock
-import asyncio
 
 
 class TestThermalParallelism:

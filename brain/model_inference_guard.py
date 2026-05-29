@@ -9,8 +9,7 @@ from __future__ import annotations
 import asyncio
 import time
 from dataclasses import dataclass
-from enum import Enum
-from typing import Dict, Optional
+from enum import StrEnum
 
 # Internal imports only — no new dependencies
 
@@ -25,7 +24,7 @@ class FailureKind(str):
     UNKNOWN_ERROR = "unknown_error"
 
 
-class GuardState(str, Enum):
+class GuardState(StrEnum):
     CLOSED = "closed"      # normal operation, failures tracked
     OPEN = "open"          # blocked, cooling down
     HALF_OPEN = "half_open"  # testing recovery after cooldown
@@ -80,7 +79,7 @@ class ModelInferenceGuard:
     """
 
     def __init__(self) -> None:
-        self._breakers: Dict[str, _ModelBreaker] = {}
+        self._breakers: dict[str, _ModelBreaker] = {}
         self._lock = asyncio.Lock()
 
     def _now_monotonic(self) -> float:
@@ -192,7 +191,7 @@ class ModelInferenceGuard:
             breaker.opened_at = now
             breaker.retry_after_s = _COOLDOWN_S
 
-    def get_snapshot(self, model_key: str) -> Optional[ModelGuardSnapshot]:
+    def get_snapshot(self, model_key: str) -> ModelGuardSnapshot | None:
         """Return snapshot for one model or None."""
         breaker = self._breakers.get(model_key)
         if breaker is None:
@@ -216,7 +215,7 @@ class ModelInferenceGuard:
 
 
 # Module-level singleton
-_GUARD: Optional[ModelInferenceGuard] = None
+_GUARD: ModelInferenceGuard | None = None
 
 
 def get_guard() -> ModelInferenceGuard:
@@ -238,7 +237,7 @@ def record_model_failure(model_key: str, *, failure_kind: str) -> None:
     get_guard().record_failure(model_key, failure_kind)
 
 
-def get_model_guard_snapshot(model_key: str) -> Optional[ModelGuardSnapshot]:
+def get_model_guard_snapshot(model_key: str) -> ModelGuardSnapshot | None:
     return get_guard().get_snapshot(model_key)
 
 

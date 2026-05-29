@@ -27,9 +27,9 @@ import sqlite3
 import time
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Union
+from typing import Any
 
 import numpy as np
 
@@ -63,9 +63,9 @@ class DistillationExample:
         timestamp: Čas vytvoření (unix timestamp)
     """
     query: str
-    chain: List[str]
+    chain: list[str]
     score: float
-    metadata: Dict[str, Any] = None
+    metadata: dict[str, Any] = None
     timestamp: float = None
 
     def __post_init__(self):
@@ -77,7 +77,7 @@ class DistillationExample:
         # Validate score range
         self.score = max(0.0, min(1.0, float(self.score)))
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Konvertovat na slovník."""
         return {
             "query": self.query,
@@ -88,7 +88,7 @@ class DistillationExample:
         }
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "DistillationExample":
+    def from_dict(cls, data: dict[str, Any]) -> DistillationExample:
         """Vytvořit z slovníku."""
         return cls(
             query=data["query"],
@@ -101,7 +101,7 @@ class DistillationExample:
 
 class _CriticMLPBase:
     """Base mixin for neural network backend — provides fallback scoring."""
-    def _heuristic_score(self, reasoning_chain: List[str]) -> float:
+    def _heuristic_score(self, reasoning_chain: list[str]) -> float:
         """Fallback scoring when MLX unavailable — simple chain length heuristic."""
         if not reasoning_chain:
             return 0.3
@@ -116,7 +116,7 @@ class _CriticMLPBase:
 if _MLX_NN_AVAILABLE:
     class CriticMLP(nn.Module):
         """MLX-based critic network for reasoning chain quality scoring."""
-        def __init__(self, input_dim: int, hidden_dims: Optional[List[int]] = None):
+        def __init__(self, input_dim: int, hidden_dims: list[int] | None = None):
             super().__init__()
             if hidden_dims is None:
                 hidden_dims = [128, 64]  # M1 8GB constraint
@@ -130,8 +130,8 @@ if _MLX_NN_AVAILABLE:
             layers.append(nn.Linear(prev_dim, 1))
             self.layers = layers
 
-        def __call__(self, x: "mx.array") -> "mx.array":
-            for i, layer in enumerate(self.layers[:-1]):
+        def __call__(self, x: mx.array) -> mx.array:
+            for _i, layer in enumerate(self.layers[:-1]):
                 x = layer(x)
                 x = mx.maximum(x, 0)  # ReLU
             x = self.layers[-1](x)
@@ -150,10 +150,10 @@ if _MLX_NN_AVAILABLE:
 else:
     class CriticMLP(_CriticMLPBase):
         """Fallback critic when MLX unavailable — uses heuristic scoring."""
-        def __init__(self, input_dim: int, hidden_dims: Optional[List[int]] = None):
+        def __init__(self, input_dim: int, hidden_dims: list[int] | None = None):
             self.input_dim = input_dim
             self.hidden_dims = hidden_dims or [128, 64]
-            logger.debug(f"CriticMLP running in heuristic mode (MLX unavailable)")
+            logger.debug("CriticMLP running in heuristic mode (MLX unavailable)")
 
         def __call__(self, x) -> np.ndarray:
             # Heuristic: return uniform score 0.5
@@ -187,13 +187,13 @@ class DistillationEngine:
 
     def __init__(
         self,
-        embedding_model: Optional[Any] = None,
-        db_path: Optional[Union[str, Path]] = None,
+        embedding_model: Any | None = None,
+        db_path: str | Path | None = None,
         embedding_dim: int = DEFAULT_EMBEDDING_DIM,
     ):
         self.embedding_model = embedding_model
         self.embedding_dim = embedding_dim
-        self._critic: Optional[CriticMLP] = None
+        self._critic: CriticMLP | None = None
         if db_path is None:
             from hledac.universal.paths import EVIDENCE_ROOT
             self._db_path = EVIDENCE_ROOT / "distillation.db"
@@ -201,7 +201,7 @@ class DistillationEngine:
             self._db_path = Path(db_path)
         self._initialized = False
 
-    async def initialize(self, embedding_model: Optional[Any] = None) -> None:
+    async def initialize(self, embedding_model: Any | None = None) -> None:
         """
         Inicializovat engine.
 
@@ -312,7 +312,7 @@ class DistillationEngine:
             logger.error(f"Failed to add example: {e}")
             return False
 
-    async def get_all_examples(self) -> List[DistillationExample]:
+    async def get_all_examples(self) -> list[DistillationExample]:
         """
         Načíst všechny training examples.
 
@@ -353,7 +353,7 @@ class DistillationEngine:
             logger.error(f"Failed to get examples: {e}")
             return []
 
-    async def train(self, n_epochs: int = 10) -> Dict[str, float]:
+    async def train(self, n_epochs: int = 10) -> dict[str, float]:
         """
         Trénovat critic na uložených examples.
 
@@ -398,7 +398,6 @@ class DistillationEngine:
             y = mx.array(np.array(y_list).reshape(-1, 1))
 
             # Simple training loop with SGD
-            learning_rate = 0.01
             losses = []
 
             for epoch in range(n_epochs):
@@ -449,7 +448,7 @@ class DistillationEngine:
             logger.error(f"Training failed: {e}")
             return {"loss": float("inf"), "accuracy": 0.0, "error": str(e)}
 
-    async def score_chain(self, query: str, chain: List[str]) -> float:
+    async def score_chain(self, query: str, chain: list[str]) -> float:
         """
         Ohodnotit kvalitu reasoning chainu.
 
@@ -481,7 +480,7 @@ class DistillationEngine:
             logger.error(f"Failed to score chain: {e}")
             return 0.5
 
-    def _get_chain_embedding(self, chain: List[str]) -> np.ndarray:
+    def _get_chain_embedding(self, chain: list[str]) -> np.ndarray:
         """
         Konvertovat chain na embedding vektor.
 
@@ -524,7 +523,7 @@ class DistillationEngine:
             # Return zero embedding
             return np.zeros(self.embedding_dim, dtype=np.float32)
 
-    def _fallback_chain_embedding(self, chain: List[str]) -> np.ndarray:
+    def _fallback_chain_embedding(self, chain: list[str]) -> np.ndarray:
         """
         Fallback embedding když není dostupný model.
 
@@ -550,7 +549,7 @@ class DistillationEngine:
 
         return embedding
 
-    def _heuristic_score(self, query: str, chain: List[str]) -> float:
+    def _heuristic_score(self, query: str, chain: list[str]) -> float:
         """
         Heuristické skóre když není dostupný critic.
 
@@ -607,7 +606,7 @@ class DistillationEngine:
 
         # Final score: weighted average
         weights = [0.3, 0.5, 0.2]
-        final_score = sum(s * w for s, w in zip(scores, weights))
+        final_score = sum(s * w for s, w in zip(scores, weights, strict=False))
 
         return min(max(final_score, 0.0), 1.0)
 
@@ -629,7 +628,7 @@ class DistillationEngine:
         self._initialized = False
         logger.info("✓ DistillationEngine cleaned up")
 
-    def get_status(self) -> Dict[str, Any]:
+    def get_status(self) -> dict[str, Any]:
         """
         Get engine status.
 
@@ -644,7 +643,7 @@ class DistillationEngine:
             "db_path": str(self._db_path),
         }
 
-    async def get_stats(self) -> Dict[str, Any]:
+    async def get_stats(self) -> dict[str, Any]:
         """
         Get statistics o uložených examples.
 
@@ -748,10 +747,9 @@ async def distil(
 
     # ANE pre-distillation: dedup + rerank on Neural Engine (parallel to CPU)
     try:
-        import asyncio as _asyncio
         from hledac.universal.brain.ane_embedder import (
-            semantic_dedup_findings,
             rerank_findings_cosine,
+            semantic_dedup_findings,
         )
         # Dedup
         findings = await semantic_dedup_findings(findings, threshold=0.90)
@@ -784,10 +782,10 @@ def _findings_to_text(findings: list[dict], max_items: int = 20) -> str:
 # ---------------------------------------------------------------------------
 
 async def create_distillation_engine(
-    embedding_model: Optional[Any] = None,
-    db_path: Optional[Union[str, Path]] = None,
+    embedding_model: Any | None = None,
+    db_path: str | Path | None = None,
     embedding_dim: int = 384,
-) -> Optional[DistillationEngine]:
+) -> DistillationEngine | None:
     """
     Factory funkce pro vytvoření DistillationEngine.
 

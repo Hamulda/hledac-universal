@@ -13,9 +13,9 @@ Run:
 """
 
 import multiprocessing as mp
-import sys
 import os
 import queue
+import sys
 
 # ---------------------------------------------------------------------------
 # Standalone module that simulates global_scheduler._TASK_REGISTRY
@@ -54,11 +54,12 @@ def _child_check_registry(child_conn, task_name_check):
     # So _TASK_REGISTRY will be empty ({}).
     import __main__
     main_dict = dir(__main__)
-    has_registry = '_TASK_REGISTRY' in main_dict and len(main_dict) > 0
+    '_TASK_REGISTRY' in main_dict and len(main_dict) > 0
 
     # Re-import THIS module in child to check state
-    import test_global_scheduler_spawn_registry as self_module
     import importlib
+
+    import test_global_scheduler_spawn_registry as self_module
     importlib.reload(self_module)
 
     registry_keys = list(self_module._TASK_REGISTRY.keys())
@@ -87,8 +88,9 @@ def _child_simulate_worker(signal_queue, result_queue, task_name_check):
         task_name = item[3] if len(item) > 3 else task_name_check
 
         # Reload self to get current registry state in this process
-        import test_global_scheduler_spawn_registry as self_module
         import importlib
+
+        import test_global_scheduler_spawn_registry as self_module
         importlib.reload(self_module)
 
         func = self_module.get_task(task_name)

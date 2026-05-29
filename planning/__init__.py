@@ -6,8 +6,8 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from .htn_planner import HTNPlanner
     from .cost_model import AdaptiveCostModel
+    from .htn_planner import HTNPlanner
     from .search import anytime_beam_search
     from .slm_decomposer import SLMDecomposer
     from .task_cache import TaskCache

@@ -379,7 +379,6 @@ def _prelude_to_sfo(
 
     # Determine raw_count (0 when derived from prelude only)
     raw_count = 0
-    built_count = 0
 
     return _add_outcome_if_missing(
         sfo_list,

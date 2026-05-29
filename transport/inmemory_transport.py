@@ -2,8 +2,8 @@
 InMemory Transport — bounded queue for M1 8GB safety.
 """
 import asyncio
-from typing import Dict, Callable, Optional
 import inspect
+from collections.abc import Callable
 
 from .base import Transport
 
@@ -14,10 +14,10 @@ _MAX_QUEUE_SIZE = 128
 class InMemoryTransport(Transport):
     def __init__(self, node_id: str):
         self.node_id = node_id
-        self.handlers: Dict[str, Callable] = {}
-        self.peers: Dict[str, 'InMemoryTransport'] = {}
+        self.handlers: dict[str, Callable] = {}
+        self.peers: dict[str, InMemoryTransport] = {}
         self._queue = asyncio.Queue(maxsize=_MAX_QUEUE_SIZE)
-        self._task: Optional[asyncio.Task] = None
+        self._task: asyncio.Task | None = None
         self._ready = asyncio.Event()
 
     async def start(self):
@@ -38,12 +38,12 @@ class InMemoryTransport(Transport):
     def register_handler(self, msg_type: str, handler: Callable):
         self.handlers[msg_type] = handler
 
-    def register_peer(self, peer_id: str, peer_transport: 'InMemoryTransport'):
+    def register_peer(self, peer_id: str, peer_transport: InMemoryTransport):
         """Register a peer transport. Alias for register_peer."""
         self.peers[peer_id] = peer_transport
 
     # Aliases for federated/transport_inmemory.py.bak compatibility
-    def add_peer(self, peer: 'InMemoryTransport'):
+    def add_peer(self, peer: InMemoryTransport):
         """Add a peer (alias for register_peer). Bounded to prevent memory issues."""
         if len(self.peers) >= 10:
             # Max 10 peers - bounded to prevent memory issues
@@ -51,12 +51,12 @@ class InMemoryTransport(Transport):
         self.peers[peer.node_id] = peer
         peer.peers[self.node_id] = self
 
-    async def receive(self) -> Dict:
+    async def receive(self) -> dict:
         """Receive a message from the queue. Bounded timeout."""
         try:
             msg_type, data = await asyncio.wait_for(self._queue.get(), timeout=1.0)
             return data
-        except asyncio.TimeoutError:
+        except TimeoutError:
             return {}
 
     async def poll_once(self):
@@ -69,12 +69,12 @@ class InMemoryTransport(Transport):
                     await handler(data)
                 else:
                     handler(data)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             pass
         except asyncio.CancelledError:
             pass
 
-    async def send_message(self, target: str, msg_type: str, payload: Dict, signature: str, msg_id: Optional[str] = None):
+    async def send_message(self, target: str, msg_type: str, payload: dict, signature: str, msg_id: str | None = None):
         if target not in self.peers:
             return
         target_transport = self.peers[target]

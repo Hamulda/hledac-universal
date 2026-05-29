@@ -1,7 +1,8 @@
 """Sprint F193A — CT log canonical pipeline integration tests."""
 import time
-import pytest
 from unittest.mock import AsyncMock, MagicMock
+
+import pytest
 
 
 class TestSprintF193A:
@@ -51,8 +52,7 @@ class TestSprintF193A:
     @pytest.mark.asyncio
     async def test_ct_log_discovery_no_client(self):
         """Scheduler with no CT log client should be a no-op."""
-        from hledac.universal.runtime.sprint_scheduler import SprintScheduler
-        from hledac.universal.runtime.sprint_scheduler import SprintSchedulerResult
+        from hledac.universal.runtime.sprint_scheduler import SprintScheduler, SprintSchedulerResult
         # Create minimal scheduler — just enough to call the method
         sched = SprintScheduler.__new__(SprintScheduler)
         sched._result = SprintSchedulerResult()
@@ -64,8 +64,8 @@ class TestSprintF193A:
     @pytest.mark.asyncio
     async def test_ct_log_discovery_mock_client(self):
         """Mock CT log client should update result counters correctly."""
-        from hledac.universal.runtime.sprint_scheduler import SprintScheduler, SprintSchedulerResult
         from hledac.universal.intelligence.ct_log_client import CTLogClient
+        from hledac.universal.runtime.sprint_scheduler import SprintScheduler, SprintSchedulerResult
 
         ct_result = {
             "domain": "example.com",
@@ -171,9 +171,10 @@ class TestSprintF194A:
 
     def test_ct_log_accepted_findings_set_by_discovery(self):
         """_run_ct_log_discovery_in_cycle sets ct_log_accepted_findings = ct_log_stored."""
-        from hledac.universal.runtime.sprint_scheduler import SprintScheduler, SprintSchedulerResult
         import time
-        from unittest.mock import MagicMock, AsyncMock
+        from unittest.mock import AsyncMock, MagicMock
+
+        from hledac.universal.runtime.sprint_scheduler import SprintScheduler, SprintSchedulerResult
 
         ct_result = {
             "domain": "example.com",

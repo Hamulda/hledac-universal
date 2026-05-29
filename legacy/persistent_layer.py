@@ -16,13 +16,14 @@ Key Features:
 """
 
 import warnings
+
 warnings.warn(
     "knowledge.persistent_layer is DEPRECATED. Use knowledge.duckdb_store instead.",
     DeprecationWarning, stacklevel=2)
 
+import concurrent.futures
 import logging
 from collections import OrderedDict, deque
-import concurrent.futures
 
 # Optional MLX for GPU-accelerated vector normalization
 try:
@@ -43,18 +44,17 @@ except ImportError:
     hnswlib = None
     np = None
     HNSWLIB_AVAILABLE = False
-from dataclasses import dataclass, field
-from datetime import datetime
-from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, Iterator, TYPE_CHECKING
-from enum import Enum
-import json
-import os
-import re
-import io
-import heapq
 import asyncio
 import hashlib
+import heapq
+import json
+import re
+from collections.abc import Iterator
+from dataclasses import dataclass, field
+from datetime import datetime
+from enum import Enum
+from pathlib import Path
+from typing import Any
 
 # Optional imports with fallback - LAZY LOAD for memory efficiency
 # Don't import at module level - only import when needed
@@ -69,9 +69,9 @@ def _get_cache_imports():
     if _CACHED_CONTEXT_CACHE is None:
         try:
             from hledac.universal.context_optimization.context_cache import (
+                CacheType,
                 MultiLevelContextCache,
                 cached_context,
-                CacheType
             )
             _CACHED_CONTEXT_CACHE = MultiLevelContextCache
             _CACHED_CACHED_CONTEXT = cached_context
@@ -145,12 +145,12 @@ class KnowledgeNode:
     id: str
     node_type: NodeType
     content: str
-    metadata: Dict[str, Any] = field(default_factory=dict)
-    embedding: Optional[List[float]] = None
+    metadata: dict[str, Any] = field(default_factory=dict)
+    embedding: list[float] | None = None
     created_at: datetime = field(default_factory=datetime.utcnow)
     updated_at: datetime = field(default_factory=datetime.utcnow)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert node to dictionary."""
         return {
             'id': self.id,
@@ -169,10 +169,10 @@ class KnowledgeEdge:
     target_id: str
     edge_type: EdgeType
     weight: float = 1.0
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
     created_at: datetime = field(default_factory=datetime.utcnow)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert edge to dictionary."""
         return {
             'source_id': self.source_id,
@@ -234,18 +234,18 @@ class KuzuDBBackend:
         """Initialize KuzuDB schema."""
         try:
             import kuzu
-            
+
             if not self.db_path.exists():
                 self.db_path.mkdir(parents=True, exist_ok=True)
-            
+
             self._db = kuzu.Database(str(self.db_path))
             self._conn = kuzu.Connection(self._db)
-            
+
             self._conn.execute('CREATE NODE TABLE IF NOT EXISTS KnowledgeNode (id STRING, node_type STRING, content STRING, metadata JSON, created_at STRING, updated_at STRING, PRIMARY KEY (id))')
             self._conn.execute('CREATE NODE TABLE IF NOT EXISTS KnowledgeEdge (source_id STRING, target_id STRING, edge_type STRING, weight DOUBLE, metadata JSON, created_at STRING, PRIMARY KEY (source_id, target_id))')
-            
+
             logger.info("KuzuDB schema initialized")
-            
+
         except Exception as e:
             logger.error(f"Failed to initialize KuzuDB schema: {e}")
             self._kuzu_available = False
@@ -258,7 +258,7 @@ class KuzuDBBackend:
             if self._kuzu_available:
                 self._conn.execute('''
                     MERGE (n:KnowledgeNode {id: $id})
-                    SET n.node_type = $node_type, n.content = $content, 
+                    SET n.node_type = $node_type, n.content = $content,
                         n.metadata = $metadata, n.created_at = $created_at,
                         n.updated_at = $updated_at
                 ''', {
@@ -276,7 +276,7 @@ class KuzuDBBackend:
             logger.error(f"Failed to add node: {e}")
             return False
 
-    def get_node(self, node_id: str) -> Optional[KnowledgeNode]:
+    def get_node(self, node_id: str) -> KnowledgeNode | None:
         """Get a node by ID."""
         try:
             if self._kuzu_available:
@@ -400,7 +400,7 @@ class KuzuDBBackend:
         except Exception as e:
             logger.error(f"Failed to touch node: {e}")
 
-    def get_all_nodes(self) -> List[KnowledgeNode]:
+    def get_all_nodes(self) -> list[KnowledgeNode]:
         """Get all nodes from the database."""
         try:
             if self._kuzu_available:
@@ -429,7 +429,7 @@ class KuzuDBBackend:
         except Exception as e:
             logger.error(f"Failed to iterate nodes: {e}")
 
-    def get_all_node_ids(self) -> List[str]:
+    def get_all_node_ids(self) -> list[str]:
         """Get all node IDs from the database."""
         try:
             if self._kuzu_available:
@@ -469,7 +469,7 @@ class KuzuDBBackend:
             logger.error(f"Failed to add edge: {e}")
             return False
 
-    def get_edges(self, node_id: str) -> List[KnowledgeEdge]:
+    def get_edges(self, node_id: str) -> list[KnowledgeEdge]:
         """Get all edges connected to a node."""
         try:
             if self._kuzu_available:
@@ -528,15 +528,15 @@ class JSONBackend:
         self.db_path = Path(db_path) if not isinstance(db_path, Path) else db_path
         self.nodes_file = self.db_path / "nodes.json"
         self.edges_file = self.db_path / "edges.json"
-        self._nodes: Dict[str, KnowledgeNode] = {}
-        self._edges: List[KnowledgeEdge] = []
+        self._nodes: dict[str, KnowledgeNode] = {}
+        self._edges: list[KnowledgeEdge] = []
 
     def initialize(self):
         """Initialize JSON backend."""
         self.db_path.mkdir(parents=True, exist_ok=True)
-        
+
         if self.nodes_file.exists():
-            with open(self.nodes_file, 'r', encoding='utf-8') as f:
+            with open(self.nodes_file, encoding='utf-8') as f:
                 data = json.load(f)
                 for node_data in data:
                     node = KnowledgeNode(
@@ -548,9 +548,9 @@ class JSONBackend:
                         updated_at=datetime.fromisoformat(node_data['updated_at'])
                     )
                     self._nodes[node.id] = node
-        
+
         if self.edges_file.exists():
-            with open(self.edges_file, 'r', encoding='utf-8') as f:
+            with open(self.edges_file, encoding='utf-8') as f:
                 data = json.load(f)
                 for edge_data in data:
                     edge = KnowledgeEdge(
@@ -569,7 +569,7 @@ class JSONBackend:
         self._save_nodes()
         return True
 
-    def get_node(self, node_id: str) -> Optional[KnowledgeNode]:
+    def get_node(self, node_id: str) -> KnowledgeNode | None:
         """Get a node by ID."""
         return self._nodes.get(node_id)
 
@@ -586,9 +586,6 @@ class JSONBackend:
             return
 
         # RAM safety hard limits
-        MAX_EVIDENCE_RING = 20
-        MAX_URL_RING = 10
-        MAX_HASH_RING = 10
 
         node = self._nodes[node_id]
         now = datetime.utcnow()
@@ -637,16 +634,15 @@ class JSONBackend:
         # Save to disk
         self._save_nodes()
 
-    def get_all_nodes(self) -> List[KnowledgeNode]:
+    def get_all_nodes(self) -> list[KnowledgeNode]:
         """Get all nodes."""
         return list(self._nodes.values())
 
     def iter_nodes(self) -> Iterator[KnowledgeNode]:
         """Iterate over all nodes without loading all into memory."""
-        for node in self._nodes.values():
-            yield node
+        yield from self._nodes.values()
 
-    def get_all_node_ids(self) -> List[str]:
+    def get_all_node_ids(self) -> list[str]:
         """Get all node IDs from JSON storage."""
         return list(self._nodes.keys())
 
@@ -656,7 +652,7 @@ class JSONBackend:
         self._save_edges()
         return True
 
-    def get_edges(self, node_id: str) -> List[KnowledgeEdge]:
+    def get_edges(self, node_id: str) -> list[KnowledgeEdge]:
         """Get edges connected to a node."""
         return [e for e in self._edges if e.source_id == node_id or e.target_id == node_id]
 
@@ -674,10 +670,10 @@ class JSONBackend:
 class PersistentKnowledgeLayer:
     """
     Persistent knowledge layer with semantic search using Model2Vec.
-    
+
     Integrates KuzuDB for disk-based graph storage and SemanticFilter
     (Model2Vec) for semantic similarity search.
-    
+
     Optimized for M1 Silicon (8GB RAM):
         - KuzuDB: Disk-based storage (minimal RAM)
         - Model2Vec: Tiny model loaded on-demand (~30MB)
@@ -686,7 +682,7 @@ class PersistentKnowledgeLayer:
 
     def __init__(
         self,
-        db_path: Optional[Path] = None,
+        db_path: Path | None = None,
         semantic_threshold: float = 0.7,
         max_results: int = 10,
         enable_cache: bool = True
@@ -731,7 +727,7 @@ class PersistentKnowledgeLayer:
 
         # HNSW index for fast approximate nearest neighbor search
         self._hnsw_index = None
-        self._hnsw_id_to_node: Dict[int, str] = {}
+        self._hnsw_id_to_node: dict[int, str] = {}
         self._use_hnsw = HNSWLIB_AVAILABLE
 
         # Sprint 55: Incremental HNSW for thread-safe add/query
@@ -744,7 +740,7 @@ class PersistentKnowledgeLayer:
             logger.warning(f"IncrementalHNSW not available: {e}")
 
         # Sprint 54: Node embeddings for linear search fallback
-        self._node_embeddings: Dict[str, List[float]] = {}
+        self._node_embeddings: dict[str, list[float]] = {}
 
         # Thread pool for async HNSW building (CPU-bound)
         self._thread_pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
@@ -752,7 +748,7 @@ class PersistentKnowledgeLayer:
         # Sprint 57: PQ Index for memory-efficient vector storage
         self._pq_index = None
         self._use_pq = True
-        self._embedding_buffer: List[Tuple[str, List[float]]] = []
+        self._embedding_buffer: list[tuple[str, list[float]]] = []
         self._pq_train_threshold = 1000  # Train after 1000 vectors
         self._pq_trained = False
 
@@ -776,7 +772,7 @@ class PersistentKnowledgeLayer:
             except ImportError as e:
                 logger.warning(f"Failed to load SemanticFilter: {e}")
 
-    def _build_hnsw_index(self, nodes: List[KnowledgeNode], embeddings: Dict[str, List[float]]):
+    def _build_hnsw_index(self, nodes: list[KnowledgeNode], embeddings: dict[str, list[float]]):
         """Build HNSW index from nodes and their embeddings."""
         if not HNSWLIB_AVAILABLE or not self._use_hnsw or not embeddings:
             return
@@ -802,7 +798,7 @@ class PersistentKnowledgeLayer:
             self._hnsw_index = None
             self._hnsw_id_to_node = {}
 
-    async def _build_hnsw_index_async(self, nodes: List[KnowledgeNode], embeddings: Dict[str, List[float]]):
+    async def _build_hnsw_index_async(self, nodes: list[KnowledgeNode], embeddings: dict[str, list[float]]):
         """
         Asynchronně postaví HNSW index v thread poolu.
         - nodes: seznam uzlů (pro metadata, zde nepoužito)
@@ -871,14 +867,14 @@ class PersistentKnowledgeLayer:
             self._hnsw_index = result
         return result
 
-    def _search_hnsw(self, query_embedding: List[float], k: int) -> List[Tuple[str, float]]:
+    def _search_hnsw(self, query_embedding: list[float], k: int) -> list[tuple[str, float]]:
         """Search HNSW index for k nearest neighbors."""
         if self._hnsw_index is None or HNSWLIB_AVAILABLE is False:
             return []
         try:
             labels, distances = self._hnsw_index.knn_query(np.array([query_embedding], dtype=np.float32), k=k)
             results = []
-            for label, dist in zip(labels[0], distances[0]):
+            for label, dist in zip(labels[0], distances[0], strict=False):
                 node_id = self._hnsw_id_to_node.get(label, '')
                 if node_id:
                     similarity = 1.0 - dist  # cosine distance to similarity
@@ -888,7 +884,7 @@ class PersistentKnowledgeLayer:
             logger.warning(f"HNSW search failed: {e}")
             return []
 
-    async def find_similar_vectors(self, query_embedding: List[float], top_k: int = 10) -> List[str]:
+    async def find_similar_vectors(self, query_embedding: list[float], top_k: int = 10) -> list[str]:
         """
         Find similar vectors using PQ (if trained), HNSW, or linear search.
         Sprint 57: PQ index for memory-efficient storage.
@@ -911,7 +907,7 @@ class PersistentKnowledgeLayer:
             # Use linear search for small graphs (< 100 nodes)
             return await self._linear_search_vectors(query_embedding, top_k)
 
-    async def _linear_search_vectors(self, query_embedding: List[float], top_k: int) -> List[str]:
+    async def _linear_search_vectors(self, query_embedding: list[float], top_k: int) -> list[str]:
         """
         Brute-force linear search for small graphs.
         Used when graph has < 100 nodes (HNSW not worth the overhead).
@@ -940,10 +936,10 @@ class PersistentKnowledgeLayer:
 
     async def vector_search(
         self,
-        query_embedding: List[float],
+        query_embedding: list[float],
         top_k: int = 10,
         index_type: str = "auto"
-    ) -> List[Tuple[str, float]]:
+    ) -> list[tuple[str, float]]:
         """
         Vector search with optional index type selection.
 
@@ -1096,8 +1092,8 @@ class PersistentKnowledgeLayer:
         self,
         content: str,
         node_type: NodeType = None,
-        metadata: Optional[Dict[str, Any]] = None,
-        node_id: Optional[str] = None
+        metadata: dict[str, Any] | None = None,
+        node_id: str | None = None
     ) -> str:
         """
         Add knowledge to the graph.
@@ -1156,7 +1152,7 @@ class PersistentKnowledgeLayer:
         target_id: str,
         edge_type: EdgeType,
         weight: float = 1.0,
-        metadata: Optional[Dict[str, Any]] = None
+        metadata: dict[str, Any] | None = None
     ) -> bool:
         """
         Add a relation between two knowledge nodes.
@@ -1217,9 +1213,9 @@ class PersistentKnowledgeLayer:
     def _search_impl(
         self,
         query: str,
-        threshold: Optional[float] = None,
-        limit: Optional[int] = None
-    ) -> List[Tuple[KnowledgeNode, float]]:
+        threshold: float | None = None,
+        limit: int | None = None
+    ) -> list[tuple[KnowledgeNode, float]]:
         """
         Internal search implementation using heapq for memory-efficient top-K.
 
@@ -1248,7 +1244,7 @@ class PersistentKnowledgeLayer:
                         # Fetch nodes and filter by threshold
                         import itertools
                         counter = itertools.count()
-                        heap: List[Tuple[float, int, KnowledgeNode]] = []
+                        heap: list[tuple[float, int, KnowledgeNode]] = []
                         for node_id, similarity in hnsw_results:
                             if similarity >= threshold:
                                 node = self._backend.get_node(node_id)
@@ -1271,7 +1267,7 @@ class PersistentKnowledgeLayer:
         # Use counter as tie-breaker to avoid comparing KnowledgeNode objects
         import itertools
         counter = itertools.count()
-        heap: List[Tuple[float, int, KnowledgeNode]] = []
+        heap: list[tuple[float, int, KnowledgeNode]] = []
 
         # Fallback if semantic filter not available - use substring matching
         if self._semantic_filter is None:
@@ -1317,9 +1313,9 @@ class PersistentKnowledgeLayer:
     async def search(
         self,
         query: str,
-        threshold: Optional[float] = None,
-        limit: Optional[int] = None
-    ) -> List[Tuple[KnowledgeNode, float]]:
+        threshold: float | None = None,
+        limit: int | None = None
+    ) -> list[tuple[KnowledgeNode, float]]:
         """
         Search knowledge by semantic similarity (async).
 
@@ -1349,9 +1345,9 @@ class PersistentKnowledgeLayer:
     def search_sync(
         self,
         query: str,
-        threshold: Optional[float] = None,
-        limit: Optional[int] = None
-    ) -> List[Tuple[KnowledgeNode, float]]:
+        threshold: float | None = None,
+        limit: int | None = None
+    ) -> list[tuple[KnowledgeNode, float]]:
         """
         Search knowledge by semantic similarity (sync version).
 
@@ -1369,7 +1365,7 @@ class PersistentKnowledgeLayer:
         self._check_event_loop()
         return self._search_impl(query, threshold, limit)
 
-    def _get_related_impl(self, node_id: str, max_depth: int = 2) -> Dict[str, Any]:
+    def _get_related_impl(self, node_id: str, max_depth: int = 2) -> dict[str, Any]:
         """
         Internal implementation for getting related knowledge nodes.
 
@@ -1406,7 +1402,7 @@ class PersistentKnowledgeLayer:
         return related
 
     # Cache decorator applied via lazy import
-    async def get_related(self, node_id: str, max_depth: int = 2) -> Dict[str, Any]:
+    async def get_related(self, node_id: str, max_depth: int = 2) -> dict[str, Any]:
         """
         Get related knowledge nodes via graph traversal (async).
 
@@ -1419,7 +1415,7 @@ class PersistentKnowledgeLayer:
         """
         return self._get_related_impl(node_id, max_depth)
 
-    def get_related_sync(self, node_id: str, max_depth: int = 2) -> Dict[str, Any]:
+    def get_related_sync(self, node_id: str, max_depth: int = 2) -> dict[str, Any]:
         """
         Get related knowledge nodes via graph traversal (sync version).
 
@@ -1436,7 +1432,7 @@ class PersistentKnowledgeLayer:
         self._check_event_loop()
         return self._get_related_impl(node_id, max_depth)
 
-    async def ask(self, question: str) -> List[Tuple[KnowledgeNode, float]]:
+    async def ask(self, question: str) -> list[tuple[KnowledgeNode, float]]:
         """
         Ask the knowledge layer a question (semantic search).
 
@@ -1456,7 +1452,7 @@ class PersistentKnowledgeLayer:
         logger.info(f"✓ Found {len(results)} relevant knowledge items")
         return results
 
-    def ask_sync(self, question: str) -> List[Tuple[KnowledgeNode, float]]:
+    def ask_sync(self, question: str) -> list[tuple[KnowledgeNode, float]]:
         """
         Ask the knowledge layer a question (semantic search, sync version).
 
@@ -1479,23 +1475,23 @@ class PersistentKnowledgeLayer:
         self,
         action: str,
         result: str,
-        context: Dict[str, Any]
+        context: dict[str, Any]
     ) -> str:
         """
         Store execution result as knowledge.
-        
+
         Called after TOOLS phase execution to persist learnings.
-        
+
         Args:
             action: Action that was executed
             result: Result of the action
             context: Execution context
-            
+
         Returns:
             Node ID
         """
         content = f"Action: {action}\nResult: {result}\nContext: {json.dumps(context, default=str)}"
-        
+
         node_id = self.add_knowledge(
             content=content,
             node_type=NodeType.EVENT,
@@ -1505,15 +1501,15 @@ class PersistentKnowledgeLayer:
                 **context
             }
         )
-        
+
         logger.debug(f"Stored execution result: {node_id}")
         return node_id
 
-    def get_statistics(self) -> Dict[str, Any]:
+    def get_statistics(self) -> dict[str, Any]:
         """Get knowledge layer statistics."""
         # Count nodes without loading all into memory
         total_nodes = 0
-        node_types: Dict[str, int] = {}
+        node_types: dict[str, int] = {}
         for node in self._backend.iter_nodes():
             total_nodes += 1
             node_type = node.node_type.value
@@ -1552,7 +1548,7 @@ class PersistentKnowledgeLayer:
 # =============================================================================
 
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 
 class WarcWriter:
@@ -1624,7 +1620,7 @@ class WarcWriter:
             return ""
 
         warc_record_id = f"urn:uuid:{uuid.uuid4()}"
-        timestamp = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H%M%S.%f')[:-3] + 'Z'
+        timestamp = datetime.now(UTC).strftime('%Y-%m-%dT%H%M%S.%f')[:-3] + 'Z'
 
         # Build WARCinfo payload
         info_payload = json.dumps({
@@ -1675,7 +1671,7 @@ class WarcWriter:
             logger.warning(f"[WARC] Max records reached ({self.MAX_RECORDS_PER_RUN}), skipping")
             return {"skipped": True, "reason": "max_records_exceeded"}
 
-        timestamp = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H%M%S.%f')[:-3] + 'Z'
+        timestamp = datetime.now(UTC).strftime('%Y-%m-%dT%H%M%S.%f')[:-3] + 'Z'
 
         # Get content hash for deduplication (prefer content_hash, fallback to sha256 of response)
         content_hash = digests.get("content_hash", "")
@@ -1868,8 +1864,8 @@ class WarcWriter:
     def write_metadata_record(
         self,
         target_uri: str,
-        metadata: Dict[str, Any],
-        concurrent_to_record_id: Optional[str] = None
+        metadata: dict[str, Any],
+        concurrent_to_record_id: str | None = None
     ) -> dict:
         """
         Write WARC metadata record (for rendered content signals).
@@ -1883,10 +1879,10 @@ class WarcWriter:
             Dict with record ID and offset
         """
         if self._record_count >= self.MAX_RECORDS_PER_RUN:
-            logger.warning(f"[WARC] Max records reached, skipping metadata")
+            logger.warning("[WARC] Max records reached, skipping metadata")
             return {"skipped": True}
 
-        timestamp = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H%M%S.%f')[:-3] + 'Z'
+        timestamp = datetime.now(UTC).strftime('%Y-%m-%dT%H%M%S.%f')[:-3] + 'Z'
         warc_record_id = f"urn:uuid:{uuid.uuid4()}"
 
         # Build metadata payload
@@ -1923,14 +1919,14 @@ class WarcWriter:
         date: str,
         content_type: str,
         payload: bytes,
-        extra_headers: Optional[Dict[str, str]] = None
+        extra_headers: dict[str, str] | None = None
     ) -> None:
         """Write a single WARC record to file."""
         content_length = len(payload)
 
         # Build WARC header
         header_lines = [
-            f"WARC/1.1",
+            "WARC/1.1",
             f"WARC-Type: {record_type}",
             f"WARC-Record-ID: {warc_record_id}",
             f"WARC-Date: {date}",
@@ -1954,7 +1950,7 @@ class WarcWriter:
         self._warc_file.write(header_str.encode('utf-8'))
         self._warc_file.write(payload)
 
-    def close(self) -> Dict[str, Any]:
+    def close(self) -> dict[str, Any]:
         """
         Close file handles and return stats.
 
@@ -2010,7 +2006,7 @@ class WaczPacker:
     All operations are streaming; never load full WARC/index into RAM.
     """
 
-    def __init__(self, run_id: str, base_archive_dir: Path, metadata: Optional[Dict[str, Any]] = None):
+    def __init__(self, run_id: str, base_archive_dir: Path, metadata: dict[str, Any] | None = None):
         self.run_id = run_id
         self.base_archive_dir = Path(base_archive_dir)
         self.metadata = metadata or {}
@@ -2023,8 +2019,8 @@ class WaczPacker:
         Returns:
             Path to created .wacz file
         """
-        import zipfile
         import hashlib
+        import zipfile
 
         wacz_path = self.base_archive_dir / f"{self.run_id}.wacz"
         warc_path = self.warc_dir / f"{self.run_id}.warc"
@@ -2048,7 +2044,7 @@ class WaczPacker:
 
             # Generate CDXJ data for fixity (SORTED for merge/sort compatibility)
             cdxj_lines = []
-            with open(idx_jsonl_path, 'r') as idx_f:
+            with open(idx_jsonl_path) as idx_f:
                 for line in idx_f:
                     line = line.strip()
                     if not line:
@@ -2085,7 +2081,7 @@ class WaczPacker:
             # Write datapackage.json with fixity per WACZ spec
             dp_info = {
                 "name": self.run_id,
-                "created": datetime.now(timezone.utc).isoformat(),
+                "created": datetime.now(UTC).isoformat(),
                 "description": "Hledac OSINT run archival package",
                 "resources": [
                     {
@@ -2131,7 +2127,7 @@ MAX_LINK_HEADER_BYTES = 65536  # 64KB
 MAX_LINKS = 256
 
 
-def parse_link_header(value: str) -> Tuple[List[Dict[str, Any]], Optional[str]]:
+def parse_link_header(value: str) -> tuple[list[dict[str, Any]], str | None]:
     """
     Parse RFC 5988 Web Linking Link header value.
 
@@ -2212,7 +2208,7 @@ def parse_link_header(value: str) -> Tuple[List[Dict[str, Any]], Optional[str]]:
     return links, warning
 
 
-def parse_link_format_body(content: str) -> Tuple[List[Dict[str, Any]], Optional[str]]:
+def parse_link_format_body(content: str) -> tuple[list[dict[str, Any]], str | None]:
     """
     Parse RFC 7089 Link-format body (application/link-format).
 
@@ -2279,13 +2275,13 @@ class MementoResolver:
     # MemGator aggregator endpoint (internal constant, not exposed to users)
     DEFAULT_MEMGATOR = "https://memgator.cs.odu.edu/timemap/link/"
 
-    def __init__(self, http_client: Optional[Any] = None, cache_dir: Optional[Path] = None):
+    def __init__(self, http_client: Any | None = None, cache_dir: Path | None = None):
         self.http_client = http_client
         self.cache_dir = cache_dir
         self._routing_cache = None
         self._aggregator_calls_this_run = 0
 
-    def _get_routing_cache(self) -> Dict[str, Any]:
+    def _get_routing_cache(self) -> dict[str, Any]:
         """Get or create routing cache (lazy init)."""
         if self._routing_cache is not None:
             return self._routing_cache
@@ -2295,7 +2291,7 @@ class MementoResolver:
             cache_file = self.cache_dir / "memento_routing_cache.jsonl"
             if cache_file.exists():
                 try:
-                    with open(cache_file, 'r') as f:
+                    with open(cache_file) as f:
                         for line in f:
                             if line.strip():
                                 entry = json.loads(line)
@@ -2320,7 +2316,7 @@ class MementoResolver:
             try:
                 if cache_file.exists():
                     lines = []
-                    with open(cache_file, 'r') as f:
+                    with open(cache_file) as f:
                         lines = f.readlines()
                     if len(lines) > 1:
                         with open(cache_file, 'w') as f:
@@ -2367,7 +2363,7 @@ class MementoResolver:
         except Exception:
             return ""
 
-    async def discover_timemap(self, url: str) -> Optional[str]:
+    async def discover_timemap(self, url: str) -> str | None:
         """
         Discover TimeMap URL via HTTP HEAD/GET Link header.
 
@@ -2509,7 +2505,7 @@ class MementoResolver:
 
         return timemap_url
 
-    def _parse_link_header_for_rel(self, link_header: str, rel: str) -> Optional[Dict[str, str]]:
+    def _parse_link_header_for_rel(self, link_header: str, rel: str) -> dict[str, str] | None:
         """
         Parse Link header and find entry with specific rel type.
 
@@ -2533,7 +2529,7 @@ class MementoResolver:
 
         return None
 
-    async def fetch_timemap(self, timemap_url: str) -> List[Dict[str, Any]]:
+    async def fetch_timemap(self, timemap_url: str) -> list[dict[str, Any]]:
         """
         Fetch mementos from TimeMap, bounded to MAX_MEMENTOS.
 
@@ -2562,7 +2558,7 @@ class MementoResolver:
         # Bound to max
         return mementos[:self.MAX_MEMENTOS]
 
-    def _parse_timemap_content(self, content: str) -> List[Dict[str, Any]]:
+    def _parse_timemap_content(self, content: str) -> list[dict[str, Any]]:
         """Parse TimeMap content (Link format, JSON, or CDXJ) with bounded parsing."""
         mementos = []
         MAX_BYTES = 524288  # 512KB bound
@@ -2677,7 +2673,7 @@ class MementoResolver:
         mementos.sort(key=lambda x: x.get("datetime", ""), reverse=True)
         return mementos
 
-    def select_mementos(self, mementos: List[Dict[str, Any]], strategy: str = "newest") -> List[str]:
+    def select_mementos(self, mementos: list[dict[str, Any]], strategy: str = "newest") -> list[str]:
         """
         Select top-K mementos based on strategy.
 
@@ -2710,7 +2706,7 @@ class MementoResolver:
 # UPGRADE 3: Rendered Targets Metadata Records
 # ============================================================
 
-def is_js_gated_page(html_preview: str, headers: Optional[Dict[str, str]] = None,
+def is_js_gated_page(html_preview: str, headers: dict[str, str] | None = None,
                      content_type: str = "") -> bool:
     """
     Heuristic to detect JS-gated/rendered pages.
@@ -2774,7 +2770,7 @@ class RenderedMetadataExtractor:
     MAX_FRAG_LEN = 160
     MAX_JSON_KEYS = 5
 
-    def extract(self, html_preview: str, url: str) -> Dict[str, Any]:
+    def extract(self, html_preview: str, url: str) -> dict[str, Any]:
         """
         Extract bounded rendered metadata.
 
@@ -2882,7 +2878,7 @@ class C2PAAnalyzer:
         file_path: Path,
         content_type: str,
         high_value: bool = False
-    ) -> Optional[Dict[str, Any]]:
+    ) -> dict[str, Any] | None:
         """
         Analyze media file for C2PA provenance.
 
@@ -2956,7 +2952,6 @@ class C2PAAnalyzer:
                     issuer = issuer[:256]
 
             # Compute manifest hash (short digest)
-            import json
             manifest_json = manifest_store.to_json()
             manifest_hash = hashlib.sha256(manifest_json.encode()).hexdigest()[:16]
 
@@ -2998,8 +2993,8 @@ class ArchiveValidator:
 
     def __init__(self, max_cdxj_lines: int = MAX_CDXJ_LINES_PER_RUN):
         self.max_cdxj_lines = max_cdxj_lines
-        self._errors: List[str] = []
-        self._warnings: List[str] = []
+        self._errors: list[str] = []
+        self._warnings: list[str] = []
 
     def _reset(self):
         """Reset error/warning lists for new validation run."""
@@ -3055,7 +3050,7 @@ class ArchiveValidator:
             sha256_checked=sha256_checked
         )
 
-    def _validate_wacz_structure(self, zf: 'zipfile.ZipFile'):
+    def _validate_wacz_structure(self, zf: zipfile.ZipFile):
         """Validate WACZ has required structure per spec."""
         namelist = zf.namelist()
 
@@ -3074,7 +3069,7 @@ class ArchiveValidator:
         if not warc_files:
             self._errors.append("missing_warc_in_archive")
 
-    def _validate_datapackage(self, zf: 'zipfile.ZipFile') -> dict:
+    def _validate_datapackage(self, zf: zipfile.ZipFile) -> dict:
         """
         Validate datapackage.json exists and lists resources with fixity.
 
@@ -3134,7 +3129,7 @@ class ArchiveValidator:
         untracked = zip_members - resource_paths - allowed_manifest
         if untracked:
             # Report up to 10 sample untracked files
-            sample = sorted(list(untracked))[:10]
+            sample = sorted(untracked)[:10]
             self._errors.append(f"untracked_members: {', '.join(sample)}")
             if len(untracked) > 10:
                 self._errors.append(f"untracked_members_count: {len(untracked)}")
@@ -3142,7 +3137,7 @@ class ArchiveValidator:
         # Check for missing resources (resources declared but not in zip)
         missing = resource_paths - zip_members
         if missing:
-            sample = sorted(list(missing))[:10]
+            sample = sorted(missing)[:10]
             self._errors.append(f"missing_resource_members: {', '.join(sample)}")
             if len(missing) > 10:
                 self._errors.append(f"missing_resource_members_count: {len(missing)}")
@@ -3180,7 +3175,7 @@ class ArchiveValidator:
 
         return result
 
-    def _validate_cdxj_and_warc(self, zf: 'zipfile.ZipFile') -> dict:
+    def _validate_cdxj_and_warc(self, zf: zipfile.ZipFile) -> dict:
         """
         Validate CDXJ entries against archived WARC records.
 
@@ -3283,7 +3278,7 @@ class ArchiveValidator:
             hash_samples = []
             for i in range(hash_sample_count):
                 # Create deterministic hash from run_id and index
-                hash_input = f"{run_id}:{i}".encode('utf-8')
+                hash_input = f"{run_id}:{i}".encode()
                 hash_digest = hashlib.md5(hash_input).hexdigest()
                 # Convert first 8 hex chars to int and map to middle range
                 hash_int = int(hash_digest[:8], 16)
@@ -3322,7 +3317,7 @@ class ArchiveValidator:
                     continue
 
                 # Validate WARC record at offset (lenient: warn but don't fail)
-                warc_valid = self._validate_warc_record_at_offset(
+                self._validate_warc_record_at_offset(
                     zf, warc_path, offset, length, entry
                 )
                 # Count as validated even if there were warnings
@@ -3338,7 +3333,7 @@ class ArchiveValidator:
 
     def _validate_warc_record_at_offset(
         self,
-        zf: 'zipfile.ZipFile',
+        zf: zipfile.ZipFile,
         warc_path: str,
         offset: int,
         expected_length: int,
@@ -3353,8 +3348,8 @@ class ArchiveValidator:
         - Check Content-Length is present and reasonable
         """
         try:
-            import tempfile
             import os
+            import tempfile
 
             with tempfile.NamedTemporaryFile(suffix='.warc', delete=False) as tmp:
                 tmp_path = tmp.name

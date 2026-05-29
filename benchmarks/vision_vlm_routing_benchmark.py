@@ -20,11 +20,10 @@ Usage:
 
 import argparse
 import json
-import sys
 import os
+import sys
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import List, Dict, Optional
 from pathlib import Path
 
 # Ensure hledac.universal is importable
@@ -72,7 +71,7 @@ class BenchmarkResult:
     benchmark: str = "vision_vlm_routing_benchmark"
     mode: str = "hermetic"
     total_cases: int = 0
-    routes: Dict[str, int] = field(default_factory=lambda: {
+    routes: dict[str, int] = field(default_factory=lambda: {
         "ocr_only": 0,
         "ocr_then_small_vlm": 0,
         "future_small_vlm_deferred": 0,
@@ -84,7 +83,7 @@ class BenchmarkResult:
     ocr_first_policy_verified: bool = False
     heavy_vlm_default_disabled_recommended: bool = False
     errors: int = 0
-    cases: List[dict] = field(default_factory=list)
+    cases: list[dict] = field(default_factory=list)
 
     def to_dict(self) -> dict:
         return {
@@ -175,7 +174,7 @@ def _compute_route(case: RoutingCase) -> Route:
     return Route.OCR_ONLY
 
 
-def _build_cases() -> List[RoutingCase]:
+def _build_cases() -> list[RoutingCase]:
     """Build synthetic routing test cases."""
     cases = [
         # text-heavy document image → ocr_only
@@ -313,7 +312,7 @@ def _build_cases() -> List[RoutingCase]:
 
 
 def run_benchmark(hermetic: bool = True, audit_only: bool = False,
-                  json_path: Optional[str] = None) -> BenchmarkResult:
+                  json_path: str | None = None) -> BenchmarkResult:
     """Run the Vision/VLM routing benchmark."""
     result = BenchmarkResult()
     result.mode = "hermetic" if hermetic else "live"

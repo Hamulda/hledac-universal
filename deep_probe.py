@@ -17,21 +17,20 @@ Categories: Deep Crawling & "Škvíry Internetu"
 """
 
 import asyncio
+import hashlib
+import json
 import logging
 import re
-import hashlib
 import time
-from collections import deque
 from abc import ABC, abstractmethod
-from typing import List, Dict, Set, Optional, Tuple, Any
+from collections import deque
 from dataclasses import dataclass
-from urllib.parse import urlparse, urljoin, parse_qs, urlencode
-from pathlib import Path
-import aiohttp
-import json
-import numpy as np
+from typing import Any
+from urllib.parse import urljoin, urlparse
 
-from hledac.universal.transport.circuit_breaker import get_breaker, CircuitBreaker, CircuitDecision
+import aiohttp
+import numpy as np
+from hledac.universal.transport.circuit_breaker import CircuitBreaker, CircuitDecision, get_breaker
 
 logger = logging.getLogger(__name__)
 
@@ -39,22 +38,22 @@ logger = logging.getLogger(__name__)
 class DiscoveredEndpoint:
     """Represents a discovered endpoint with metadata."""
     url: str
-    title: Optional[str] = None
+    title: str | None = None
     confidence_score: float = 0.0
     discovery_method: str = "unknown"
-    file_type: Optional[str] = None
+    file_type: str | None = None
     path: str = ""
-    source_url: Optional[str] = None
-    tech_stack: Optional[Dict[str, Any]] = None
-    last_modified: Optional[str] = None
-    size_bytes: Optional[int] = None
+    source_url: str | None = None
+    tech_stack: dict[str, Any] | None = None
+    last_modified: str | None = None
+    size_bytes: int | None = None
 
 class MemoryOptimizedURLSet:
     """Memory-efficient URL set with bloom filter optimization."""
 
     def __init__(self, max_memory_mb: int = 50):
         self.max_memory_mb = max_memory_mb
-        self.urls: Set[str] = set()
+        self.urls: set[str] = set()
         self._memory_usage = 0
         self._closed = False
 
@@ -124,7 +123,7 @@ class DorkingEngine:
             ]
         }
 
-    def generate_complex_queries(self, topic: str, query_type: str = 'academic') -> List[str]:
+    def generate_complex_queries(self, topic: str, query_type: str = 'academic') -> list[str]:
         """Generate complex dorking queries for a topic."""
         if query_type not in self.patterns:
             query_type = 'academic'
@@ -162,7 +161,7 @@ class TechStackSignature:
             'asp.net': ['WebResource.axd', 'ScriptResource.axd', 'App_Data']
         }
 
-    def detect_stack(self, url: str, content: Optional[str] = None) -> Dict[str, Any]:
+    def detect_stack(self, url: str, content: str | None = None) -> dict[str, Any]:
         """Detect technology stack from URL and content."""
         detected = {
             'framework': None,
@@ -204,17 +203,17 @@ class ShadowWalkerAlgorithm:
     def __init__(self):
         self.pattern_analyzer = PathPatternAnalyzer()
 
-    def predict_next_paths(self, base_url: str, known_paths: List[str]) -> List[Tuple[str, float]]:
+    def predict_next_paths(self, base_url: str, known_paths: list[str]) -> list[tuple[str, float]]:
         """Predict next likely paths based on known paths."""
         return self.predict_next_paths_with_reranking(base_url, known_paths, query="", embedder=None)
 
     def predict_next_paths_with_reranking(
         self,
         base_url: str,
-        known_paths: List[str],
+        known_paths: list[str],
         query: str = "",
         embedder=None
-    ) -> List[Tuple[str, float]]:
+    ) -> list[tuple[str, float]]:
         """
         Predict next likely paths based on known paths.
 
@@ -228,7 +227,7 @@ class ShadowWalkerAlgorithm:
             return []
 
         predictions = []
-        parsed_base = urlparse(base_url)
+        urlparse(base_url)
 
         # Analyze patterns in known paths
         patterns = self.pattern_analyzer.analyze_patterns(known_paths)
@@ -268,10 +267,10 @@ class ShadowWalkerAlgorithm:
 
     def _rerank_predictions(
         self,
-        predictions: List[Tuple[str, float]],
+        predictions: list[tuple[str, float]],
         query: str,
         embedder
-    ) -> List[Tuple[str, float]]:
+    ) -> list[tuple[str, float]]:
         """
         Rerank predictions using semantic similarity to query.
 
@@ -313,7 +312,7 @@ class ShadowWalkerAlgorithm:
 class PathPatternAnalyzer:
     """Analyzes path patterns to predict new paths."""
 
-    def analyze_patterns(self, paths: List[str]) -> List['PathPattern']:
+    def analyze_patterns(self, paths: list[str]) -> list[PathPattern]:
         """Analyze paths and extract patterns."""
         patterns = []
 
@@ -334,7 +333,7 @@ class PathPatternAnalyzer:
 
         return patterns
 
-    def _extract_date_pattern(self, paths: List[str]) -> Optional['DatePathPattern']:
+    def _extract_date_pattern(self, paths: list[str]) -> DatePathPattern | None:
         """Extract date-based patterns from paths."""
         # Look for year patterns like /2023/, /2022/, etc.
         year_pattern = re.compile(r'/(\d{4})/')
@@ -350,7 +349,7 @@ class PathPatternAnalyzer:
 
         return None
 
-    def _extract_sequential_pattern(self, paths: List[str]) -> Optional['SequentialPathPattern']:
+    def _extract_sequential_pattern(self, paths: list[str]) -> SequentialPathPattern | None:
         """Extract sequential number patterns."""
         # Look for numbered sequences
         number_pattern = re.compile(r'/(\d+)/')
@@ -366,7 +365,7 @@ class PathPatternAnalyzer:
 
         return None
 
-    def _extract_file_pattern(self, paths: List[str]) -> Optional['FilePathPattern']:
+    def _extract_file_pattern(self, paths: list[str]) -> FilePathPattern | None:
         """Extract file type patterns."""
         extensions = []
         for path in paths:
@@ -409,7 +408,7 @@ class PathPattern(PathPatternBase):
 class DatePathPattern(PathPattern):
     """Pattern for date-based paths."""
 
-    def __init__(self, years: List[int]):
+    def __init__(self, years: list[int]):
         self.years = years
 
     def generate_predictions(self, base_url: str) -> list[str]:
@@ -431,7 +430,7 @@ class DatePathPattern(PathPattern):
 class SequentialPathPattern(PathPattern):
     """Pattern for sequential number paths."""
 
-    def __init__(self, numbers: List[int]):
+    def __init__(self, numbers: list[int]):
         self.numbers = numbers
 
     def generate_predictions(self, base_url: str) -> list[str]:
@@ -444,7 +443,7 @@ class SequentialPathPattern(PathPattern):
         predictions.append(f"/{next_num}/")
         return predictions
 
-    def generate_predictions_with_scores(self) -> List[Tuple[str, float]]:
+    def generate_predictions_with_scores(self) -> list[tuple[str, float]]:
         """Generate multiple prediction candidates with confidence scores."""
         predictions = []
         if len(self.numbers) < 2:
@@ -457,7 +456,7 @@ class SequentialPathPattern(PathPattern):
         if len(diffs) >= 2:
             min_step = max(1, int(min(diffs)))
             max_step = int(max(diffs)) + 1
-            step_range = range(min_step, max_step + 1)
+            range(min_step, max_step + 1)
             step_step = max(1, (max_step - min_step) // 3) if max_step > min_step else 1
             for step in range(min_step, max_step + 1, step_step):
                 if step != avg_step:
@@ -473,7 +472,7 @@ class SequentialPathPattern(PathPattern):
 class FilePathPattern(PathPattern):
     """Pattern for file type paths."""
 
-    def __init__(self, extensions: List[str]):
+    def __init__(self, extensions: list[str]):
         self.extensions = extensions
 
     def generate_predictions(self, base_url: str) -> list[str]:
@@ -503,7 +502,7 @@ class WaybackCDXClient:
         if self.session:
             await self.session.close()
 
-    async def query_snapshots(self, url: str, limit: int = 100) -> List[Dict[str, Any]]:
+    async def query_snapshots(self, url: str, limit: int = 100) -> list[dict[str, Any]]:
         """Query Wayback Machine for URL snapshots."""
         if not self.session:
             raise RuntimeError("Client not initialized")
@@ -539,9 +538,9 @@ class WaybackCDXClient:
                     data = await response.json()
                     if len(data) > 1:  # First row is headers
                         headers = data[0]
-                        return [dict(zip(headers, row)) for row in data[1:]]
+                        return [dict(zip(headers, row, strict=False)) for row in data[1:]]
                 return []
-        except asyncio.TimeoutError:
+        except TimeoutError:
             if breaker:
                 breaker.record_failure(is_timeout=True, failure_kind="wayback_timeout")
             logger.error(f"Wayback CDX query timed out for {url}")
@@ -646,7 +645,7 @@ class DeepProbeScanner:
         logger.info(f"DeepProbeScanner.scan({domain}): {len(discovered)} URLs discovered")
         return discovered[:100]  # Cap at 100 URLs
 
-    async def deep_crawl(self, base_url: str, max_depth: int = 3) -> List[DiscoveredEndpoint]:
+    async def deep_crawl(self, base_url: str, max_depth: int = 3) -> list[DiscoveredEndpoint]:
         """
         Perform deep crawling starting from base URL.
 
@@ -684,7 +683,7 @@ class DeepProbeScanner:
 
         return discovered
 
-    async def _discover_endpoints(self, url: str) -> List[DiscoveredEndpoint]:
+    async def _discover_endpoints(self, url: str) -> list[DiscoveredEndpoint]:
         """Discover endpoints at a given URL."""
         endpoints = []
 
@@ -717,7 +716,7 @@ class DeepProbeScanner:
         # Add additional analysis here (content analysis, etc.)
         return endpoint
 
-    async def wayback_discovery(self, url: str) -> List[DiscoveredEndpoint]:
+    async def wayback_discovery(self, url: str) -> list[DiscoveredEndpoint]:
         """Discover historical versions using Wayback Machine."""
         endpoints = []
 
@@ -743,7 +742,7 @@ class DeepProbeScanner:
         domain: str,
         store=None,
         max_buckets: int = 50
-    ) -> Tuple[List[dict], List['CanonicalFinding']]:
+    ) -> tuple[list[dict], list[CanonicalFinding]]:
         """
         P14: Scan for open S3/GCS/Azure Blob buckets.
 
@@ -757,7 +756,7 @@ class DeepProbeScanner:
 
         Returns:
             List of dicts with structure:
-            {'bucket': str, 'provider': str, 'objects': List[dict], 'accessible': bool}
+            {'bucket': str, 'provider': str, 'objects': list[dict], 'accessible': bool}
 
         Anti-patterns:
           - No API keys hardcoded (uses unsigned requests for S3)
@@ -765,7 +764,6 @@ class DeepProbeScanner:
           - No images >50MB stored (object listing only)
         """
         import asyncio
-        import hashlib
 
         # Generate probable bucket names from domain
         bucket_names = self._generate_bucket_candidates(domain, max_buckets)
@@ -820,7 +818,7 @@ class DeepProbeScanner:
         infohash: str,
         store=None,
         timeout_s: float = 120.0,
-    ) -> List[CanonicalFinding]:
+    ) -> list[CanonicalFinding]:
         """
         F214: Real BitTorrent DHT peer discovery for a specific infohash.
 
@@ -843,17 +841,17 @@ class DeepProbeScanner:
             return []
 
         timeout_s = min(timeout_s, MAX_DHT_PROBE_DURATION_S)
-        from hledac.universal.dht.kademlia_node import KademliaNode
         from hledac.universal.core.resource_governor import ResourceGovernor
+        from hledac.universal.dht.kademlia_node import KademliaNode
 
-        findings: List[CanonicalFinding] = []
+        findings: list[CanonicalFinding] = []
         try:
             governor = ResourceGovernor()
             node_id = f"hledac-dht-{infohash[:8]}"
             node = KademliaNode(node_id=node_id, governor=governor)
 
             await node.start()
-            start = time.monotonic()
+            time.monotonic()
 
             # Use crawl with single info_hash to find peers
             # crawl() internally sends GET_PEERS and collects responses
@@ -886,7 +884,7 @@ class DeepProbeScanner:
 
         return findings
 
-    def _generate_bucket_candidates(self, domain: str, max_count: int) -> Dict[str, List[str]]:
+    def _generate_bucket_candidates(self, domain: str, max_count: int) -> dict[str, list[str]]:
         """Generate probable bucket names for S3, GCS, and Azure."""
         # Extract domain parts
         parts = domain.replace(".com", "").replace(".org", "").replace(".net", "").split(".")
@@ -942,7 +940,7 @@ class DeepProbeScanner:
             "azure": list(set(azure_buckets))[:max_count],
         }
 
-    async def _check_s3_bucket(self, bucket_name: str, semaphore: asyncio.Semaphore) -> Optional[dict]:
+    async def _check_s3_bucket(self, bucket_name: str, semaphore: asyncio.Semaphore) -> dict | None:
         """Check if S3 bucket is publicly accessible (unsigned)."""
         async with semaphore:
             try:
@@ -981,7 +979,7 @@ class DeepProbeScanner:
                 # Bucket not accessible or doesn't exist
                 return {"bucket": bucket_name, "provider": "s3", "objects": [], "accessible": False}
 
-    async def _check_gcs_bucket(self, bucket_name: str, semaphore: asyncio.Semaphore) -> Optional[dict]:
+    async def _check_gcs_bucket(self, bucket_name: str, semaphore: asyncio.Semaphore) -> dict | None:
         """Check if GCS bucket is publicly accessible."""
         async with semaphore:
             try:
@@ -1022,7 +1020,7 @@ class DeepProbeScanner:
             except Exception:
                 return {"bucket": bucket_name, "provider": "gcs", "objects": [], "accessible": False}
 
-    async def _check_azure_blob(self, container_name: str, semaphore: asyncio.Semaphore) -> Optional[dict]:
+    async def _check_azure_blob(self, container_name: str, semaphore: asyncio.Semaphore) -> dict | None:
         """Check if Azure Blob container is publicly accessible."""
         async with semaphore:
             try:
@@ -1072,7 +1070,7 @@ class DeepProbeScanner:
             except Exception:
                 return {"bucket": container_name, "provider": "azure", "objects": [], "accessible": False}
 
-    def _make_bucket_finding(self, result: dict, source_type: str) -> Optional['CanonicalFinding']:
+    def _make_bucket_finding(self, result: dict, source_type: str) -> CanonicalFinding | None:
         """
         Build a CanonicalFinding from a bucket scan result.
 
@@ -1108,7 +1106,7 @@ class DeepProbeScanner:
 
 
 # Convenience functions for easy integration
-async def scan_deep_web(target_url: str, options: Optional[Dict[str, Any]] = None) -> List[DiscoveredEndpoint]:
+async def scan_deep_web(target_url: str, options: dict[str, Any] | None = None) -> list[DiscoveredEndpoint]:
     """
     Convenience function for deep web scanning.
 
@@ -1122,7 +1120,7 @@ async def scan_deep_web(target_url: str, options: Optional[Dict[str, Any]] = Non
     scanner = DeepProbeScanner()
     return await scanner.deep_crawl(target_url, options.get('max_depth', 3) if options else 3)
 
-async def predict_hidden_paths(base_url: str, known_paths: List[str]) -> List[Tuple[str, float]]:
+async def predict_hidden_paths(base_url: str, known_paths: list[str]) -> list[tuple[str, float]]:
     """
     Predict hidden paths using Shadow Walker algorithm.
 
@@ -1205,7 +1203,7 @@ async def scan_s3_buckets(
     domain: str,
     store=None,
     max_buckets: int = 50
-) -> Tuple[List[dict], List['CanonicalFinding']]:
+) -> tuple[list[dict], list[CanonicalFinding]]:
     """
     Convenience function for S3/GCS/Azure bucket scanning.
 
@@ -1222,7 +1220,7 @@ async def scan_s3_buckets(
     return await scanner.scan_s3_buckets(domain, store=store, max_buckets=max_buckets)
 
 
-async def scan_ipfs(keyword: str, store=None) -> List[Dict[str, Any]]:
+async def scan_ipfs(keyword: str, store=None) -> list[dict[str, Any]]:
     """
     Search IPFS content via ipfssearch.com API and Cloudflare IPFS gateway.
 
@@ -1239,12 +1237,11 @@ async def scan_ipfs(keyword: str, store=None) -> List[Dict[str, Any]]:
       - aiohttp only (no blocking)
       - Store via DuckDB async patterns
     """
-    results: List[Dict[str, Any]] = []
+    results: list[dict[str, Any]] = []
     seen_cids: set = set()  # Deduplicate by CID
 
     # Memory bound: cap total results
     MAX_RESULTS = 100
-    MAX_MEMORY_MB = 300
 
     timeout = aiohttp.ClientTimeout(total=30)
 
@@ -1332,7 +1329,7 @@ async def scan_ipfs(keyword: str, store=None) -> List[Dict[str, Any]]:
     # Build canonical findings instead of direct persistence
     from hledac.universal.knowledge.duckdb_store import CanonicalFinding
 
-    ipfs_findings: List[CanonicalFinding] = []
+    ipfs_findings: list[CanonicalFinding] = []
     for result in results:
         try:
             dedup_key = f"{result.get('cid', '')}:ipfs"

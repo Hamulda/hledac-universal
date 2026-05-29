@@ -22,13 +22,13 @@ Migration:
 
 import asyncio
 import json
-import sqlite3
 import logging
+import sqlite3
 from contextlib import closing
-from datetime import datetime
-from typing import Dict, List, Optional, Any
 from dataclasses import dataclass
+from datetime import datetime
 from enum import Enum
+from typing import Any
 
 # No module-level logging configuration - use lazy logger
 logger = logging.getLogger(__name__)
@@ -54,23 +54,23 @@ class CoordinationNode:
     """Represents a node in the coordination network"""
     node_id: str
     layer: CoordinationLayer
-    capabilities: List[str]
+    capabilities: list[str]
     status: str
     memory_namespace: str
-    connected_nodes: List[str]
-    performance_metrics: Dict[str, float]
+    connected_nodes: list[str]
+    performance_metrics: dict[str, float]
 
 @dataclass
 class CoordinationTask:
     """Represents a task flowing through the coordination system"""
     task_id: str
     description: str
-    required_capabilities: List[str]
+    required_capabilities: list[str]
     priority: str
     complexity_score: float
     current_layer: CoordinationLayer
-    execution_path: List[str]
-    memory_context: Dict[str, Any]
+    execution_path: list[str]
+    memory_context: dict[str, Any]
 
 class ConnectedCoordinationSystem:
     """
@@ -79,8 +79,8 @@ class ConnectedCoordinationSystem:
 
     def __init__(self, swarm_id: str):
         self.swarm_id = swarm_id
-        self.nodes: Dict[str, CoordinationNode] = {}
-        self.tasks: Dict[str, CoordinationTask] = {}
+        self.nodes: dict[str, CoordinationNode] = {}
+        self.tasks: dict[str, CoordinationTask] = {}
         self.current_topology = TopologyType.HIERARCHICAL
         self.memory_db = None
         self.performance_history = []
@@ -208,7 +208,7 @@ class ConnectedCoordinationSystem:
         logger.info(f"Setup {len(self.nodes)} coordination nodes across {len(CoordinationLayer)} layers")
 
     def _add_coordination_node(self, node_id: str, layer: CoordinationLayer,
-                              capabilities: List[str], memory_namespace: str):
+                              capabilities: list[str], memory_namespace: str):
         """Add a coordination node to the system"""
         node = CoordinationNode(
             node_id=node_id,
@@ -293,7 +293,7 @@ class ConnectedCoordinationSystem:
 
     async def _analyze_task_requirements(self, task: CoordinationTask):
         """Analyze task requirements using auto-agent layer"""
-        analyzer_node = self.nodes["auto_task_analyzer"]
+        self.nodes["auto_task_analyzer"]
 
         # Simulate intelligent task analysis
         analysis_result = {
@@ -340,7 +340,7 @@ class ConnectedCoordinationSystem:
 
     async def _enhance_with_collective_intelligence(self, task: CoordinationTask):
         """Enhance task with hive mind collective intelligence"""
-        hive_node = self.nodes["hive_central_coordinator"]
+        self.nodes["hive_central_coordinator"]
 
         # Simulate collective intelligence enhancement
         intelligence_result = {
@@ -381,7 +381,7 @@ class ConnectedCoordinationSystem:
 
     async def _monitor_with_self_healing(self, task: CoordinationTask):
         """Monitor task with self-healing capabilities"""
-        healing_node = self.nodes["healing_monitor"]
+        self.nodes["healing_monitor"]
 
         # Simulate monitoring and error detection
         monitoring_result = {
@@ -465,7 +465,7 @@ class ConnectedCoordinationSystem:
                 if other_node.node_id != node.node_id and other_node.node_id not in node.connected_nodes:
                     node.connected_nodes.append(other_node.node_id)
 
-    def get_system_status(self) -> Dict[str, Any]:
+    def get_system_status(self) -> dict[str, Any]:
         """Get comprehensive system status"""
         return {
             "swarm_id": self.swarm_id,
@@ -491,7 +491,7 @@ class ConnectedCoordinationSystem:
                 score += 0.2
         return min(score, 1.0)
 
-    def _extract_capabilities(self, description: str) -> List[str]:
+    def _extract_capabilities(self, description: str) -> list[str]:
         """Extract required capabilities from task description"""
         capability_map = {
             "research": ["knowledge_synthesis", "literature_analysis"],
@@ -509,7 +509,7 @@ class ConnectedCoordinationSystem:
 
         return list(set(capabilities))
 
-    def _recommend_patterns(self, description: str) -> List[str]:
+    def _recommend_patterns(self, description: str) -> list[str]:
         """Recommend cognitive patterns for the task"""
         recommendations = []
         if "research" in description.lower():
@@ -527,7 +527,7 @@ class ConnectedCoordinationSystem:
 
         return recommendations
 
-    def _estimate_resources(self, description: str) -> Dict[str, Any]:
+    def _estimate_resources(self, description: str) -> dict[str, Any]:
         """Estimate resource requirements for the task"""
         return {
             "estimated_time": len(description.split()) * 0.1,  # Rough estimate
@@ -548,7 +548,7 @@ class ConnectedCoordinationSystem:
 
         return len(intersection) / len(union) if union else 0.0
 
-    def _generate_collective_insights(self, task: CoordinationTask) -> List[str]:
+    def _generate_collective_insights(self, task: CoordinationTask) -> list[str]:
         """Generate collective intelligence insights"""
         return [
             "Cross-domain pattern detected in task requirements",
@@ -556,7 +556,7 @@ class ConnectedCoordinationSystem:
             "Collective expertise indicates optimal resource allocation"
         ]
 
-    def _generate_consensus(self, task: CoordinationTask) -> Dict[str, Any]:
+    def _generate_consensus(self, task: CoordinationTask) -> dict[str, Any]:
         """Generate consensus-based recommendations"""
         return {
             "recommended_approach": "hybrid_execution",
@@ -564,7 +564,7 @@ class ConnectedCoordinationSystem:
             "alternative_strategies": ["sequential", "parallel", "adaptive"]
         }
 
-    def _integrate_swarm_wisdom(self, task: CoordinationTask) -> Dict[str, Any]:
+    def _integrate_swarm_wisdom(self, task: CoordinationTask) -> dict[str, Any]:
         """Integrate swarm wisdom into task execution"""
         return {
             "learned_patterns": ["similar_task_success", "optimal_agent_allocation"],
@@ -572,7 +572,7 @@ class ConnectedCoordinationSystem:
             "optimization_opportunities": ["parallel_processing", "caching"]
         }
 
-    def _select_execution_nodes(self, task: CoordinationTask) -> List[str]:
+    def _select_execution_nodes(self, task: CoordinationTask) -> list[str]:
         """Select optimal nodes for task execution"""
         selected_nodes = []
 
@@ -591,7 +591,7 @@ class ConnectedCoordinationSystem:
 
         return list(set(selected_nodes))
 
-    def _allocate_resources(self, task: CoordinationTask, execution_nodes: List[str]) -> Dict[str, Any]:
+    def _allocate_resources(self, task: CoordinationTask, execution_nodes: list[str]) -> dict[str, Any]:
         """Allocate resources for task execution"""
         return {
             "cpu_allocation": len(execution_nodes) * 0.2,
@@ -648,7 +648,7 @@ class ConnectedCoordinationSystem:
                               for node in self.nodes.values())
         return total_performance / len(self.nodes)
 
-    def _get_memory_utilization(self) -> Dict[str, Any]:
+    def _get_memory_utilization(self) -> dict[str, Any]:
         """Get memory utilization statistics"""
         cursor = self.memory_db.cursor()
         cursor.execute('SELECT COUNT(*), namespace FROM unified_memory GROUP BY namespace')
@@ -659,7 +659,7 @@ class ConnectedCoordinationSystem:
             "by_namespace": {row[1]: row[0] for row in results}
         }
 
-    def _get_recent_events(self) -> List[Dict[str, Any]]:
+    def _get_recent_events(self) -> list[dict[str, Any]]:
         """Get recent coordination events"""
         cursor = self.memory_db.cursor()
         cursor.execute('''
@@ -707,7 +707,7 @@ if __name__ == "__main__":
             print(f"✅ Task {task_id} processed successfully")
 
         # Demonstrate topology adaptation
-        print(f"\n🔄 Adapting topology to mesh for optimal parallel processing...")
+        print("\n🔄 Adapting topology to mesh for optimal parallel processing...")
         system.adapt_topology(TopologyType.MESH, "High parallel processing requirement")
 
         # Show final system status

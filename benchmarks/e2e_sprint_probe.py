@@ -24,9 +24,8 @@ import signal
 import subprocess
 import sys
 import time
-from datetime import datetime, timezone
-from typing import Any, Optional
-
+from datetime import UTC, datetime
+from typing import Any
 
 # ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -162,8 +161,8 @@ def run_sprint_subprocess(
     query: str,
     duration_s: float,
     aggressive_mode: bool,
-    extra_env: Optional[dict[str, str]] = None,
-    timeout_s: Optional[float] = None,
+    extra_env: dict[str, str] | None = None,
+    timeout_s: float | None = None,
 ) -> dict[str, Any]:
     """
     Run canonical sprint as subprocess. Returns result dict.
@@ -188,7 +187,7 @@ def run_sprint_subprocess(
         else:
             env.pop(k, None)
 
-    started_at = datetime.now(timezone.utc).isoformat()
+    started_at = datetime.now(UTC).isoformat()
     elapsed_requested = duration_s + 60  # grace for startup/teardown
     wall_start = time.monotonic()
 
@@ -316,7 +315,7 @@ async def run_sprint_direct(
     """
     from hledac.universal.core.__main__ import run_sprint
 
-    started_at = datetime.now(timezone.utc).isoformat()
+    started_at = datetime.now(UTC).isoformat()
     artifact = _default_artifact(
         [sys.executable, "-m", "hledac.universal", "--sprint", query, str(int(duration_s))],
         {},

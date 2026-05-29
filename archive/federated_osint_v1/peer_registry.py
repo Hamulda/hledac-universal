@@ -1,13 +1,13 @@
-from typing import Dict, Optional, Any
 import time
+from typing import Any
 
 
 class PeerRegistry:
     def __init__(self):
-        self._peers: Dict[str, Dict[str, Any]] = {}
+        self._peers: dict[str, dict[str, Any]] = {}
 
-    def add_peer(self, peer_id: str, tor_endpoint: Optional[str] = None,
-                 nym_endpoint: Optional[str] = None, public_key: Optional[bytes] = None):
+    def add_peer(self, peer_id: str, tor_endpoint: str | None = None,
+                 nym_endpoint: str | None = None, public_key: bytes | None = None):
         entry = self._peers.setdefault(peer_id, {})
         if tor_endpoint:
             entry['tor'] = tor_endpoint
@@ -17,10 +17,10 @@ class PeerRegistry:
             entry['public_key'] = public_key
         entry['last_seen'] = time.time()
 
-    def get_peer(self, peer_id: str) -> Optional[Dict[str, Any]]:
+    def get_peer(self, peer_id: str) -> dict[str, Any] | None:
         return self._peers.get(peer_id)
 
-    def get_endpoint(self, peer_id: str, transport_type: str) -> Optional[str]:
+    def get_endpoint(self, peer_id: str, transport_type: str) -> str | None:
         peer = self._peers.get(peer_id)
         if peer:
             return peer.get(transport_type)
@@ -29,5 +29,5 @@ class PeerRegistry:
     def remove_peer(self, peer_id: str):
         self._peers.pop(peer_id, None)
 
-    def get_all_peers(self) -> Dict[str, Dict[str, Any]]:
+    def get_all_peers(self) -> dict[str, dict[str, Any]]:
         return self._peers.copy()

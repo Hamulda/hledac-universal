@@ -31,7 +31,7 @@ Usage:
   python benchmarks/live_sprint_measurement.py --print-preflight-only --output-json /tmp/preflight.json
 """
 from __future__ import annotations
-import dataclasses
+
 import argparse
 import asyncio
 import json
@@ -40,17 +40,18 @@ import os
 import sys
 import time
 import uuid
-from dataclasses import dataclass, field, asdict
-from datetime import datetime, timezone
-from enum import Enum
+from datetime import UTC, datetime
 from pathlib import Path
 from pathlib import Path as _P
+
 _project_root = str(_P(__file__).resolve().parent.parent.parent)
 import sys as _sys
+
 _universal = str(_P(__file__).resolve().parent.parent)
 if _universal not in _sys.path:
     _sys.path.insert(0, _universal)
 import types as _types
+
 _hledac_stub = _types.ModuleType('hledac')
 _hledac_stub.__path__ = [_project_root, _universal]
 _hledac_stub.__file__ = f'{_project_root}/hledac/__init__.py'
@@ -59,9 +60,11 @@ _hledac_stub.__spec__ = None
 _sys.modules['hledac'] = _hledac_stub
 from hledac.universal.core import __main__ as core_main
 from hledac.universal.paths import get_sprint_json_report_path
-from benchmarks.live_measurement_parser import parse_sprint_report as _parse_sprint_report_impl
+
 import benchmarks.live_measurement_quality as _qm
+from benchmarks.live_measurement_parser import parse_sprint_report as _parse_sprint_report_impl
 from benchmarks.live_measurement_quality import _derive_run_quality_verdict as _quality_derive
+
 PROFILE_DURATION: dict[str, int] = {'smoke180': 180, 'nonfeed_diagnostic180': 180, 'active300': 300, 'active600': 600, 'deep_osint_m1_300': 300}
 PROFILE_META: dict[str, dict] = {'smoke180': {'planned_duration_s': 180, 'expected_windup_lead_s': 180, 'expected_active_window_s': 0, 'active_runtime_expected': False}, 'nonfeed_diagnostic180': {'planned_duration_s': 180, 'expected_windup_lead_s': 0, 'expected_active_window_s': 180, 'active_runtime_expected': True, 'acquisition_profile': 'nonfeed_diagnostic'}, 'active300': {'planned_duration_s': 300, 'expected_windup_lead_s': 180, 'expected_active_window_s': 120, 'active_runtime_expected': True}, 'active600': {'planned_duration_s': 600, 'expected_windup_lead_s': 180, 'expected_active_window_s': 420, 'active_runtime_expected': True}, 'deep_osint_m1_300': {'planned_duration_s': 300, 'expected_windup_lead_s': 180, 'expected_active_window_s': 120, 'active_runtime_expected': True, 'acquisition_profile': 'deep_osint_m1'}}
 _CANONICAL_ACQUISITION_PROFILES = frozenset(['default', 'nonfeed_diagnostic', 'deep_osint_m1'])
@@ -220,8 +223,23 @@ def get_repo_root_reality() -> dict:
     if not _is_repo_parent:
         _cwd_warning = f'WARNING: CWD={_cwd} is outside expected repo root ({_expected}). Artifact scans may glob wrong directory. Use --repo-root {_universal} or run from {_universal}.'
     return {'cwd': _cwd, 'resolved_cwd': _resolved, 'resolved_repo_root': _artifact_scan_root, 'expected_repo_root': _expected, 'universal_root': _universal, 'is_actual_repo_root': _is_universal_root, 'cwd_is_repo_parent': _is_repo_parent, 'cwd_is_universal_root': _is_universal_root, 'universal_root_exists': _universal_exists, 'tests_probe_dir_exists': _tests_probe_exists, 'artifact_scan_root': _artifact_scan_root, 'cwd_warning': _cwd_warning}
-from hledac.universal.benchmarks.live_measurement_schema import RunMode, MeasurementStatus, RunQualityVerdict, LiveMeasurementResult
-from hledac.universal.benchmarks.live_measurement_quality import _MEMORY_GATE_OPERATOR_ACTION, _SWAP_GATE_THRESHOLD_GIB, _SWAP_GATE_OPERATOR_ACTION, _uma_state_is_critical_or_emergency, _is_active_domain_query, _has_terminal_source_outcomes, _has_scheduler_exit_path, _derive_run_quality_verdict as _quality_derive
+from hledac.universal.benchmarks.live_measurement_quality import (
+    _MEMORY_GATE_OPERATOR_ACTION,
+    _SWAP_GATE_OPERATOR_ACTION,
+    _SWAP_GATE_THRESHOLD_GIB,
+    _has_scheduler_exit_path,
+    _has_terminal_source_outcomes,
+    _is_active_domain_query,
+    _uma_state_is_critical_or_emergency,
+)
+from hledac.universal.benchmarks.live_measurement_quality import _derive_run_quality_verdict as _quality_derive
+from hledac.universal.benchmarks.live_measurement_schema import (
+    LiveMeasurementResult,
+    MeasurementStatus,
+    RunMode,
+    RunQualityVerdict,
+)
+
 _derive_run_quality_verdict = _quality_derive
 READINESS_ARTIFACTS = {'stabilization_seal': Path(__file__).parent.parent / 'probe_f206an_stabilization' / 'stabilization_seal.json', 'hermetic_regression_manifest': Path(__file__).parent.parent / 'probe_f206aq_hermetic_regression' / 'hermetic_regression_manifest.json', 'transport_authority_status': Path(__file__).parent.parent / 'probe_transport_authority_f206bc' / 'transport_authority_status_refreshed.json', 'mlx_wired_limit_seal': Path(__file__).parent.parent / 'probe_f206ao_mlx_wired_limit' / 'mlx_wired_limit_seal.json'}
 
@@ -238,7 +256,7 @@ def _make_measurement_id() -> str:
     return f'lsm_{ts}_{uid}'
 
 def _now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 async def _capture_uma() -> dict:
     """Capture UMA status. Fail-soft: returns None on error."""
@@ -353,23 +371,12 @@ def _stamp_run_quality_verdict(result: LiveMeasurementResult, is_memory_gate_abo
 # F230A: KPI derivation extracted to live_measurement_kpi.py
 from benchmarks.live_measurement_kpi import (
     LiveKpiInput,
-    _derive_live_kpi,
     _derive_live_kpi_from_input,
 )
 
 # F229A: next_action logic moved to benchmarks/live_measurement_next_action.py
 from benchmarks.live_measurement_next_action import (
     NextActionInput,
-    _derive_next_action,
-    _was_family_attempted,
-    _rule_wallclock_enforcement,
-    _rule0b_memory_or_swap_gate,
-    _rule0g_prewindup_barrier,
-    _rule_profile_propagation,
-    _rule_terminality,
-    _rule_provider_surface,
-    _rule_quality_gate,
-    _rule_default,
 )
 
 # Alias for backward compatibility
@@ -472,7 +479,7 @@ async def _run_dry_run(query: str, profile: str, duration_s: int, aggressive_mod
         else:
             logging.info('[DRY-RUN] [MEMORY GATE] Pre-state=%s — memory OK for live execution', result.uma_pre_state)
     swap_gib = result.uma_pre_swap_gib or 0
-    is_active_profile = _is_active_measurement_profile(profile)
+    _is_active_measurement_profile(profile)
     if swap_gib <= 2.0:
         result.swap_policy_tier = 'clean'
         result.swap_gate_reason = f'swap={swap_gib:.2f}GiB <= 2.0GiB threshold'
@@ -834,7 +841,7 @@ async def main() -> int:
     if result.error:
         print(f'  ERROR: {result.error}')
     elif result.status == MeasurementStatus.PLANNED:
-        print(f'  Validated — ready for live execution. Use --live to run sprint.')
+        print('  Validated — ready for live execution. Use --live to run sprint.')
     if result.status in (MeasurementStatus.COMPLETED, MeasurementStatus.PLANNED):
         return 0
     elif result.status == MeasurementStatus.ABORTED:

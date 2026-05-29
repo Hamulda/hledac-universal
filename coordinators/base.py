@@ -18,14 +18,13 @@ Key Features Integrated:
 
 from __future__ import annotations
 
+import logging
 import time
-import asyncio
 from abc import ABC, abstractmethod
+from collections import OrderedDict
 from dataclasses import dataclass, field
 from enum import Enum, auto
-from typing import Any, Dict, Generic, List, Optional, TypeVar, Protocol
-from collections import OrderedDict
-import logging
+from typing import Any
 
 from .enums import MemoryPressureLevel
 
@@ -51,7 +50,7 @@ class DecisionResponse:
     reasoning: str
     estimated_duration: float = 0.0
     priority: int = 5  # 1-10, 10 being highest
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -62,8 +61,8 @@ class OperationResult:
     result_summary: str
     execution_time: float
     success: bool
-    error_message: Optional[str] = None
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    error_message: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
     timestamp: float = field(default_factory=time.time)
 
 
@@ -71,8 +70,8 @@ class OperationResult:
 class CoordinatorCapabilities:
     """Capabilities reported by a coordinator."""
     name: str
-    supported_operations: List[OperationType]
-    features: List[str]
+    supported_operations: list[OperationType]
+    features: list[str]
     is_available: bool
     load_factor: float
     max_concurrent: int
@@ -107,15 +106,15 @@ class UniversalCoordinator(ABC):
         self._memory_aware = memory_aware
 
         # Operation tracking (from OperationTrackingMixin)
-        self._active_operations: Dict[str, Dict[str, Any]] = {}
+        self._active_operations: dict[str, dict[str, Any]] = {}
         self._operation_counter = 0
-        self._operation_history: OrderedDict[str, Dict[str, Any]] = OrderedDict()
+        self._operation_history: Ordereddict[str, dict[str, Any]] = OrderedDict()
         self._max_history = 100
 
         # State
         self._initialized = False
         self._available = False
-        self._initialization_error: Optional[str] = None
+        self._initialization_error: str | None = None
 
         # Memory awareness (from MemoryPressureMixin)
         self._current_memory_pressure = MemoryPressureLevel.NORMAL
@@ -136,7 +135,7 @@ class UniversalCoordinator(ABC):
     # =========================================================================
 
     @abstractmethod
-    def get_supported_operations(self) -> List[OperationType]:
+    def get_supported_operations(self) -> list[OperationType]:
         """Get list of operation types this coordinator supports."""
         pass
 
@@ -148,11 +147,11 @@ class UniversalCoordinator(ABC):
     ) -> OperationResult:
         """
         Handle a decision request.
-        
+
         Args:
             operation_ref: Unique reference for this operation
             decision: Decision to execute
-            
+
         Returns:
             OperationResult with execution outcome
         """
@@ -162,7 +161,7 @@ class UniversalCoordinator(ABC):
     async def _do_initialize(self) -> bool:
         """
         Perform actual initialization. Override in subclasses.
-        
+
         Returns:
             True if initialization successful, False otherwise
         """
@@ -175,10 +174,10 @@ class UniversalCoordinator(ABC):
     async def initialize(self) -> bool:
         """
         Initialize coordinator with graceful degradation.
-        
+
         Supports partial initialization - coordinator can be available
         even if some subsystems fail (from Hermes3 pattern).
-        
+
         Returns:
             True if at least partially initialized
         """
@@ -188,12 +187,12 @@ class UniversalCoordinator(ABC):
         try:
             self._available = await self._do_initialize()
             self._initialized = True
-            
+
             if self._available:
                 logger.info(f"Coordinator '{self._name}' initialized successfully")
             else:
                 logger.warning(f"Coordinator '{self._name}' initialized with limited functionality")
-                
+
         except Exception as e:
             self._initialization_error = str(e)
             self._available = False
@@ -205,7 +204,7 @@ class UniversalCoordinator(ABC):
     async def cleanup(self) -> None:
         """
         Cleanup coordinator resources.
-        
+
         Safely handles cleanup even if initialization failed.
         """
         try:
@@ -234,11 +233,11 @@ class UniversalCoordinator(ABC):
     def track_operation(
         self,
         operation_id: str,
-        operation_data: Dict[str, Any]
+        operation_data: dict[str, Any]
     ) -> None:
         """
         Track active operation.
-        
+
         Args:
             operation_id: Unique operation identifier
             operation_data: Operation context and metadata
@@ -252,7 +251,7 @@ class UniversalCoordinator(ABC):
     def untrack_operation(self, operation_id: str) -> None:
         """
         Remove operation from active tracking and add to history.
-        
+
         Args:
             operation_id: Operation to untrack
         """
@@ -261,22 +260,22 @@ class UniversalCoordinator(ABC):
             op_data = self._active_operations.pop(operation_id)
             op_data['end_time'] = time.time()
             self._operation_history[operation_id] = op_data
-            
+
             # Trim history if needed
             while len(self._operation_history) > self._max_history:
                 self._operation_history.popitem(last=False)
 
-    def get_active_operations(self) -> List[str]:
+    def get_active_operations(self) -> list[str]:
         """Get list of currently active operation IDs."""
         return list(self._active_operations.keys())
 
-    def get_operation_status(self, operation_id: str) -> Optional[Dict[str, Any]]:
+    def get_operation_status(self, operation_id: str) -> dict[str, Any] | None:
         """
         Get status of specific operation.
-        
+
         Args:
             operation_id: Operation to check
-            
+
         Returns:
             Operation status dict or None if not found
         """
@@ -303,17 +302,17 @@ class UniversalCoordinator(ABC):
     def get_load_factor(self) -> float:
         """
         Calculate current load factor (0.0 = idle, 1.0 = fully loaded).
-        
+
         Considers:
         - Active operation count vs max concurrent
         - Current memory pressure (if memory_aware enabled)
-        
+
         Returns:
             Load factor between 0.0 and 1.0
         """
         # Base load from active operations
         active_load = len(self._active_operations) / self._max_concurrent
-        
+
         # Memory pressure adjustment (M1 optimization)
         memory_multiplier = 1.0
         if self._memory_aware:
@@ -323,26 +322,26 @@ class UniversalCoordinator(ABC):
                 memory_multiplier = 1.5
             elif self._current_memory_pressure == MemoryPressureLevel.CRITICAL:
                 memory_multiplier = 2.0
-        
+
         return min(active_load * memory_multiplier, 1.0)
 
     def can_accept_operation(self, priority: int = 5) -> bool:
         """
         Check if coordinator can accept new operation.
-        
+
         Args:
             priority: Operation priority (1-10, higher = more important)
-            
+
         Returns:
             True if operation can be accepted
         """
         # Always accept critical priority
         if priority >= 9:
             return self._available
-            
+
         # Check load factor
         load = self.get_load_factor()
-        
+
         # Different thresholds based on priority
         thresholds = {
             10: 1.0,   # Critical - always accept if available
@@ -356,10 +355,10 @@ class UniversalCoordinator(ABC):
             2: 0.60,
             1: 0.50,   # Low - only when idle
         }
-        
+
         return load < thresholds.get(priority, 0.75)
 
-    def get_capacity_info(self) -> Dict[str, Any]:
+    def get_capacity_info(self) -> dict[str, Any]:
         """Get detailed capacity information."""
         return {
             'max_concurrent': self._max_concurrent,
@@ -378,7 +377,7 @@ class UniversalCoordinator(ABC):
     def update_memory_pressure(self, level: MemoryPressureLevel) -> None:
         """
         Update current memory pressure level.
-        
+
         Args:
             level: New memory pressure level
         """
@@ -389,10 +388,10 @@ class UniversalCoordinator(ABC):
     def check_memory_pressure(self, memory_usage_ratio: float) -> MemoryPressureLevel:
         """
         Check memory pressure based on usage ratio.
-        
+
         Args:
             memory_usage_ratio: Current memory usage (0.0-1.0)
-            
+
         Returns:
             Memory pressure level
         """
@@ -412,13 +411,13 @@ class UniversalCoordinator(ABC):
         """Record operation result for metrics."""
         self._total_operations += 1
         self._total_execution_time += result.execution_time
-        
+
         if result.success:
             self._successful_operations += 1
         else:
             self._failed_operations += 1
 
-    def get_metrics(self) -> Dict[str, Any]:
+    def get_metrics(self) -> dict[str, Any]:
         """Get coordinator performance metrics."""
         total = self._total_operations
         return {
@@ -445,7 +444,7 @@ class UniversalCoordinator(ABC):
             current_operations=len(self._active_operations)
         )
 
-    def _get_feature_list(self) -> List[str]:
+    def _get_feature_list(self) -> list[str]:
         """Override in subclasses to report specific features."""
         return ["Basic coordination"]
 
@@ -465,7 +464,7 @@ class UniversalCoordinator(ABC):
         """Check if coordinator has been initialized."""
         return self._initialized
 
-    def get_initialization_error(self) -> Optional[str]:
+    def get_initialization_error(self) -> str | None:
         """Get initialization error if any."""
         return self._initialization_error
 
@@ -483,7 +482,7 @@ class UniversalCoordinator(ABC):
     # Context (ctx) is passed as dict - no raw text, only IDs/hashes/counters.
     # =========================================================================
 
-    async def start(self, ctx: Dict[str, Any]) -> None:
+    async def start(self, ctx: dict[str, Any]) -> None:
         """
         Start the coordinator with context.
 
@@ -493,14 +492,14 @@ class UniversalCoordinator(ABC):
         await self.initialize()
         await self._do_start(ctx)
 
-    async def _do_start(self, ctx: Dict[str, Any]) -> None:
+    async def _do_start(self, ctx: dict[str, Any]) -> None:
         """
         Override in subclasses for specific start logic.
         Default: no-op.
         """
         pass
 
-    async def step(self, ctx: Dict[str, Any]) -> Dict[str, Any]:
+    async def step(self, ctx: dict[str, Any]) -> dict[str, Any]:
         """
         Execute one step of coordinator work.
 
@@ -510,14 +509,14 @@ class UniversalCoordinator(ABC):
         Returns:
             Bounded dict with counts, IDs, and stop signals only:
             - urls_fetched: int
-            - evidence_ids: List[str] (max K items)
+            - evidence_ids: list[str] (max K items)
             - clusters_updated: int
-            - stop_reason: Optional[str]
+            - stop_reason: str | None
             - Other bounded metrics
         """
         return await self._do_step(ctx)
 
-    async def _do_step(self, ctx: Dict[str, Any]) -> Dict[str, Any]:
+    async def _do_step(self, ctx: dict[str, Any]) -> dict[str, Any]:
         """
         Override in subclasses for specific step logic.
         Default: empty response.
@@ -529,7 +528,7 @@ class UniversalCoordinator(ABC):
             'stop_reason': None,
         }
 
-    async def shutdown(self, ctx: Dict[str, Any]) -> None:
+    async def shutdown(self, ctx: dict[str, Any]) -> None:
         """
         Shutdown the coordinator gracefully.
 
@@ -539,7 +538,7 @@ class UniversalCoordinator(ABC):
         await self._do_shutdown(ctx)
         await self.cleanup()
 
-    async def _do_shutdown(self, ctx: Dict[str, Any]) -> None:
+    async def _do_shutdown(self, ctx: dict[str, Any]) -> None:
         """
         Override in subclasses for specific shutdown logic.
         Default: no-op.

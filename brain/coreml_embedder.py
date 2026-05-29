@@ -10,12 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
-import shutil
-import struct
-import tempfile
 from pathlib import Path
-from typing import List, Optional, Union
 
 import numpy as np
 
@@ -45,16 +40,18 @@ _EMBED_DIM = 384  # bge-small-en-v1.5 output dim
 _BATCH_SIZE = 32  # M1 8GB safety cap
 _MAX_TEXT_LEN = 512  # per-text truncation before embedding
 
-# Cache path: ~/.cache/hledac/models/bge-small-ane.mlpackage
-_CACHE_ROOT = Path.home() / ".cache" / "hledac" / "models"
-_MLPACKAGE_PATH = _CACHE_ROOT / "bge-small-ane.mlpackage"
-_ONNX_FALLBACK_PATH = _CACHE_ROOT / "bge-small-ort.onnx"
+# Cache path: ~/.hledac/models/bge-small-ane.mlpackage
+# F234: Use MODELS_DIR (~/.hledac/models) so .mlmodel files are resolved in one place
+_MODELS_DIR = Path.home() / ".hledac" / "models"
+_MODELS_DIR.mkdir(parents=True, exist_ok=True)
+_MLPACKAGE_PATH = _MODELS_DIR / "bge-small-ane.mlpackage"
+_ONNX_FALLBACK_PATH = _MODELS_DIR / "bge-small-ort.onnx"
 
 # ── Singleton ─────────────────────────────────────────────────────────────────
-_coreml_embedder_instance: Optional["CoreMLEmbedder"] = None
+_coreml_embedder_instance: CoreMLEmbedder | None = None
 
 
-def get_coreml_embedder() -> "CoreMLEmbedder":
+def get_coreml_embedder() -> CoreMLEmbedder:
     """Get or create the CoreMLEmbedder singleton."""
     global _coreml_embedder_instance
     if _coreml_embedder_instance is None:
@@ -94,7 +91,7 @@ class _BGETokenizer:
     def __init__(self) -> None:
         self._vocab = {w: i for i, w in enumerate(self.VOCAB)}
 
-    def encode(self, text: str) -> List[int]:
+    def encode(self, text: str) -> list[int]:
         """Simple whitespace tokenization + vocab lookup."""
         tokens = []
         for word in text.lower().split():
@@ -119,8 +116,8 @@ class CoreMLEmbedder:
     """
 
     def __init__(self) -> None:
-        self._model: Optional[object] = None  # CoreML MLModel or ONNX session
-        self._backend: Optional[str] = None  # "coreml" | "onnx" | None
+        self._model: object | None = None  # CoreML MLModel or ONNX session
+        self._backend: str | None = None  # "coreml" | "onnx" | None
         self._tokenizer = _BGETokenizer()
         self._is_loaded = False
 
@@ -192,15 +189,19 @@ class CoreMLEmbedder:
 
         try:
             # Import transformers lazily (heavy dep)
-            from transformers import AutoTokenizer, AutoModel
+            from transformers import AutoModel, AutoTokenizer
 
             logger.warning("[CoreML] Downloading bge-small-en-v1.5...")
-            model_path = self._download_model()
+            self._download_model()
 
             logger.warning("[CoreML] Loading model for conversion...")
             loop = asyncio.get_running_loop()
-            tokenizer = await loop.run_in_executor(None, AutoTokenizer.from_, _MODEL_NAME)
-            model = await loop.run_in_executor(None, AutoModel.from_pretrained, model_path)
+            tokenizer = await loop.run_in_executor(
+                None, lambda: AutoTokenizer.from_pretrained(_MODEL_NAME)
+            )
+            model = await loop.run_in_executor(
+                None, lambda: AutoModel.from_pretrained(_MODEL_NAME)
+            )
 
             logger.warning("[CoreML] Converting to CoreML targeting ANE...")
             import torch
@@ -224,7 +225,7 @@ class CoreMLEmbedder:
             )
 
             # Save .mlpackage
-            _CACHE_ROOT.mkdir(parents=True, exist_ok=True)
+            _MODELS_DIR.mkdir(parents=True, exist_ok=True)
             mlmodel.save(str(_MLPACKAGE_PATH))
             logger.warning("[CoreML] .mlpackage saved to %s", _MLPACKAGE_PATH)
 
@@ -256,9 +257,8 @@ class CoreMLEmbedder:
 
     def _download_model(self) -> Path:
         """Download and cache HF model to temp directory."""
-        from transformers import AutoModel, AutoTokenizer
 
-        cache_dir = _CACHE_ROOT / "hf_model"
+        cache_dir = _MODELS_DIR / "hf_model"
         cache_dir.mkdir(parents=True, exist_ok=True)
 
         # Download only once
@@ -278,14 +278,18 @@ class CoreMLEmbedder:
             return False
 
         try:
-            # Try to use ONNX Runtime with bge-small ONNX model
-            # If _ONNX_FALLBACK_PATH doesn't exist, convert it now
+            # Load ONNX model
             if not _ONNX_FALLBACK_PATH.exists():
                 return self._convert_onnx_fallback()
 
             sess_options = ort.SessionOptions()
             sess_options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
             self._model = ort.InferenceSession(str(_ONNX_FALLBACK_PATH), sess_options=sess_options)
+
+            # Load tokenizer for ONNX backend
+            from transformers import AutoTokenizer
+            self._tokenizer = AutoTokenizer.from_pretrained(_MODEL_NAME)
+
             self._backend = "onnx"
             return True
 
@@ -299,18 +303,18 @@ class CoreMLEmbedder:
             return False
 
         try:
-            from transformers import AutoTokenizer, AutoModel
             import torch
+            from transformers import AutoModel, AutoTokenizer
 
             logger.warning("[CoreML] Converting to ONNX CPU fallback...")
-            cache_dir = self._download_model()
-            tokenizer = AutoTokenizer.from_pretrained(str(cache_dir))
-            model = AutoModel.from_pretrained(str(cache_dir))
+            tokenizer = AutoTokenizer.from_pretrained(_MODEL_NAME)
+            model = AutoModel.from_pretrained(_MODEL_NAME)
             model.eval()
 
             # Export to ONNX
-            _CACHE_ROOT.mkdir(parents=True, exist_ok=True)
+            _MODELS_DIR.mkdir(parents=True, exist_ok=True)
 
+            # Tokenize
             dummy_tokens = tokenizer(
                 "test",
                 return_tensors="pt",
@@ -319,16 +323,16 @@ class CoreMLEmbedder:
                 max_length=512,
             )
 
+            # Export BERT base to ONNX
             torch.onnx.export(
                 model,
                 (dummy_tokens["input_ids"], dummy_tokens["attention_mask"]),
                 str(_ONNX_FALLBACK_PATH),
                 input_names=["input_ids", "attention_mask"],
                 output_names=["last_hidden_state"],
-                dynamic_axes={
+                dynamic_shapes={
                     "input_ids": {0: "batch", 1: "seq"},
                     "attention_mask": {0: "batch", 1: "seq"},
-                    "last_hidden_state": {0: "batch", 1: "seq"},
                 },
                 opset_version=14,
             )
@@ -361,7 +365,7 @@ class CoreMLEmbedder:
     # -------------------------------------------------------------------------
     async def encode_batch(
         self,
-        texts: Union[str, List[str]],
+        texts: str | list[str],
         batch_size: int = _BATCH_SIZE,
     ) -> np.ndarray:
         """
@@ -381,7 +385,7 @@ class CoreMLEmbedder:
             return np.zeros((0, _EMBED_DIM), dtype=np.float32)
 
         batch_size = min(batch_size, _BATCH_SIZE)
-        all_embeddings: List[np.ndarray] = []
+        all_embeddings: list[np.ndarray] = []
 
         for i in range(0, len(texts), batch_size):
             batch = texts[i : i + batch_size]
@@ -404,7 +408,7 @@ class CoreMLEmbedder:
         result = result / (norms + 1e-8)
         return result.astype(np.float32)
 
-    async def _encode_coreml(self, texts: List[str]) -> np.ndarray:
+    async def _encode_coreml(self, texts: list[str]) -> np.ndarray:
         """Encode via CoreML/ANE model."""
         loop = asyncio.get_running_loop()
 
@@ -419,7 +423,7 @@ class CoreMLEmbedder:
 
                 # Run CoreML inference
                 # CoreML expects dict input
-                inp = {"input_ids": input_ids.numpy().astype(np.int32)}
+                {"input_ids": input_ids.numpy().astype(np.int32)}
                 # Note: real CoreML batch path uses coremltools model prediction
                 # For now, using single-sample fallback
                 results = []
@@ -443,15 +447,22 @@ class CoreMLEmbedder:
 
         return await loop.run_in_executor(None, _sync_encode)
 
-    async def _encode_onnx(self, texts: List[str]) -> np.ndarray:
+    async def _encode_onnx(self, texts: list[str]) -> np.ndarray:
         """Encode via ONNXRuntime CPU."""
         loop = asyncio.get_running_loop()
 
         def _sync_encode() -> np.ndarray:
             try:
-                tokens = self._tokenizer.encode_batch(texts)
-                input_ids = np.array(tokens, dtype=np.int64)
-                attention_mask = np.ones_like(input_ids)
+                # Tokenize
+                tokens = self._tokenizer(
+                    texts,
+                    return_tensors="np",
+                    padding=True,
+                    truncation=True,
+                    max_length=512,
+                )
+                input_ids = np.array(tokens["input_ids"], dtype=np.int64)
+                attention_mask = np.array(tokens["attention_mask"], dtype=np.int64)
 
                 # Pad to max length in batch
                 max_len = input_ids.shape[1]
@@ -477,7 +488,7 @@ class CoreMLEmbedder:
 
         return await loop.run_in_executor(None, _sync_encode)
 
-    def _encode_hash_fallback(self, texts: List[str]) -> np.ndarray:
+    def _encode_hash_fallback(self, texts: list[str]) -> np.ndarray:
         """Deterministic hash-based embeddings — zero RAM, fail-safe."""
         import hashlib
 
@@ -493,7 +504,7 @@ class CoreMLEmbedder:
     # -------------------------------------------------------------------------
     # Sync encode (for SemanticStore compatibility)
     # -------------------------------------------------------------------------
-    def embed(self, texts: Union[str, List[str]], **kwargs) -> np.ndarray:
+    def embed(self, texts: str | list[str], **kwargs) -> np.ndarray:
         """Sync alias — runs encode_batch in executor (matches FastEmbed .embed())."""
         try:
             loop = asyncio.get_running_loop()

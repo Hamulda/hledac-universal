@@ -3,6 +3,7 @@ Characterization tests for SwarmNode behavior methods.
 No behavior change — these tests document current behavior.
 """
 import time
+
 import pytest
 
 from coordinators.swarm_coordinator import SwarmNode

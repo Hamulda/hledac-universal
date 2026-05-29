@@ -8,7 +8,6 @@ from the hledac tree (only stdlib + isolated logic).
 
 Run: python tests/probe_f214_canonical_summary_smoke.py
 """
-import sys
 
 # =========================================================================
 # TEST 1: signal_path dominant_path override for feed-only
@@ -55,7 +54,7 @@ dom_path, is_corr = compute_signal_path_for_feed_only(
     sig_quality="mixed",      # correlation would set mixed
     cross_conf=0.0,           # correlation would give 0 cross-source conf for feed-only
 )
-print(f"  feed=262, public=0, ct=0, ratio=1.0")
+print("  feed=262, public=0, ct=0, ratio=1.0")
 print(f"  dominant_signal_path = {dom_path}")
 print(f"  is_corroborated = {is_corr}")
 assert dom_path == "feed", f"FAIL: dominant_path should be 'feed' but got '{dom_path}'"
@@ -76,7 +75,7 @@ print(f"  dominant_signal_path = {dom_path2}")
 print(f"  is_corroborated = {is_corr2}")
 assert dom_path2 == "multi_source", f"FAIL: dominant_path should be 'multi_source' but got '{dom_path2}'"
 # is_corroborated = cross_conf > 0.4 → 0.5 > 0.4 → True
-assert is_corr2 is True, f"FAIL: is_corroborated should be True for mixed source with cross_conf=0.5"
+assert is_corr2 is True, "FAIL: is_corroborated should be True for mixed source with cross_conf=0.5"
 print("  PASS: mixed-source run retains multi_source/corroborated")
 
 print()
@@ -92,7 +91,6 @@ def compute_posture_for_feed_only(feed_dominance_ratio, pub_accepted, feed_accep
     """
     Simulates sprint_scheduler.py sprint_verdict posture computation with feed-only override.
     """
-    dominant_signal = sig_path_is_noisy  # placeholder, not used in feed-only override
     is_noisy = sig_path_is_noisy
     is_corroborated = sig_path_is_corroborated
 
@@ -128,7 +126,7 @@ posture1 = compute_posture_for_feed_only(
     campaign_signal=False,
     avg_noise=0.0,
 )
-print(f"  feed=262, public=0, ratio=1.0, is_corroborated=False")
+print("  feed=262, public=0, ratio=1.0, is_corroborated=False")
 print(f"  posture = {posture1}")
 assert posture1 == "noisy", f"FAIL: posture should be 'noisy' but got '{posture1}'"
 print("  PASS: feed-only run has posture='noisy'")
@@ -221,7 +219,7 @@ feed_findings = [
 ] * 262
 
 summary = build_source_family_summary(feed_findings)
-print(f"  feed-only findings (262 total):")
+print("  feed-only findings (262 total):")
 for line in summary:
     print(f"    {line}")
 
@@ -231,7 +229,7 @@ print("  PASS: FEED-ONLY marker present in source_family_summary")
 
 # Evidence gaps for feed-only
 gaps = build_evidence_gaps(feed_findings, summary)
-print(f"  evidence_gaps:")
+print("  evidence_gaps:")
 for g in gaps:
     print(f"    {g}")
 has_feed_gap = any("Feed-only" in g or "no public" in g for g in gaps)
@@ -248,7 +246,7 @@ mixed_findings = [
 ] * 5
 
 summary2 = build_source_family_summary(mixed_findings)
-print(f"  mixed-source findings (feed=100, public=20, ct=5):")
+print("  mixed-source findings (feed=100, public=20, ct=5):")
 for line in summary2:
     print(f"    {line}")
 has_ct_support = any("CT/certificate" in s or "ct" in s.lower() for s in summary2)

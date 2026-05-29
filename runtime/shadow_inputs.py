@@ -60,10 +60,9 @@ Future owners:
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import ClassVar
-from typing import Any, Dict, List, Optional, TYPE_CHECKING
 import os
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Any, ClassVar
 
 if TYPE_CHECKING:
     from hledac.universal.project_types import (
@@ -153,13 +152,13 @@ class WorkflowPhase:
     This scaffold only READS and packages it.
     """
     phase: str  # BOOT | WARMUP | ACTIVE | WINDUP | EXPORT | TEARDOWN
-    entered_at_monotonic: Optional[float] = None
-    started_at_monotonic: Optional[float] = None
+    entered_at_monotonic: float | None = None
+    started_at_monotonic: float | None = None
     sprint_duration_s: float = 1800.0
     windup_lead_s: float = 180.0
 
     @classmethod
-    def from_lifecycle_snapshot(cls, snap: Dict[str, Any]) -> "WorkflowPhase":
+    def from_lifecycle_snapshot(cls, snap: dict[str, Any]) -> WorkflowPhase:
         """Extract from SprintLifecycleManager.snapshot() dict."""
         return cls(
             phase=snap.get("current_phase", "UNKNOWN"),
@@ -189,10 +188,10 @@ class ControlPhase:
     @classmethod
     def from_lifecycle(
         cls,
-        lifecycle: "SprintLifecycleManager",
-        now_monotonic: Optional[float] = None,
+        lifecycle: SprintLifecycleManager,
+        now_monotonic: float | None = None,
         thermal_state: str = "nominal",
-    ) -> "ControlPhase":
+    ) -> ControlPhase:
         """Derive from SprintLifecycleManager.recommended_tool_mode()."""
         mode = lifecycle.recommended_tool_mode(now_monotonic, thermal_state)
         remaining = lifecycle.remaining_time(now_monotonic)
@@ -246,19 +245,19 @@ class LifecycleSnapshotBundle:
     """
     workflow_phase: WorkflowPhase
     control_phase: ControlPhase
-    windup_local_phase: Optional[WindupLocalPhase] = None
+    windup_local_phase: WindupLocalPhase | None = None
     # Raw snapshot for compatibility only
-    raw_snapshot: Dict[str, Any] = field(default_factory=dict)
+    raw_snapshot: dict[str, Any] = field(default_factory=dict)
     # Fact stability classification
     fact_stability: str = "STABLE"  # STABLE | COMPAT | UNKNOWN
     # Compat note: set when fact_stability != STABLE
-    __compat_note__: Optional[str] = None
+    __compat_note__: str | None = None
 
     # future_owner is a class-level attribute documenting canonical ownership.
     # Instance-level overrides are NOT supported — each bundle class has one canonical owner.
     __future_owner__: ClassVar[str] = "runtime/sprint_lifecycle.py"
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "workflow_phase": self.workflow_phase.phase,
             "workflow_phase_entered_at": self.workflow_phase.entered_at_monotonic,
@@ -308,19 +307,19 @@ class GraphSummaryBundle:
     node_count: int = 0
     edge_count: int = 0
     pgq_active: bool = False
-    top_nodes: List[Any] = field(default_factory=list)  # noqa: A003
+    top_nodes: list[Any] = field(default_factory=list)  # noqa: A003
     backend: str = "unknown"  # duckpgq | kuzu | none
-    raw_stats: Dict[str, Any] = field(default_factory=dict)
+    raw_stats: dict[str, Any] = field(default_factory=dict)
     # Fact stability classification
     fact_stability: str = "UNKNOWN"  # STABLE | COMPAT | UNKNOWN
     # Compat note: set when fact_stability != STABLE
-    __compat_note__: Optional[str] = None
+    __compat_note__: str | None = None
 
     # future_owner is class-level — canonical owner of graph facts
     __future_owner__: ClassVar[str] = "knowledge/duckdb_store.py"
 
     @classmethod
-    def from_ioc_graph_stats(cls, stats: Dict[str, Any], top_nodes: Optional[List[Any]] = None) -> "GraphSummaryBundle":
+    def from_ioc_graph_stats(cls, stats: dict[str, Any], top_nodes: list[Any] | None = None) -> GraphSummaryBundle:
         """Build from DuckPGQGraph.stats() dict via duckdb_store.get_graph_stats() seam. STABLE path."""
         # F700E fix: DuckPGQGraph.stats() returns pgq_available (truth).
         # Fall back to pgq_active for backward compat with older callers.
@@ -336,7 +335,7 @@ class GraphSummaryBundle:
         )
 
     @classmethod
-    def from_scorecard_top_nodes(cls, top_nodes: List[Any]) -> "GraphSummaryBundle":
+    def from_scorecard_top_nodes(cls, top_nodes: list[Any]) -> GraphSummaryBundle:
         """Build from scorecard top_nodes (compat path). COMPAT — deprecated."""
         return cls(
             node_count=0,  # unknown from compat path
@@ -349,7 +348,7 @@ class GraphSummaryBundle:
             __compat_note__="scorecard path is deprecated; use duckdb_store.get_graph_stats() seam",
         )
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "graph_nodes": self.node_count,
             "graph_edges": self.edge_count,
@@ -381,28 +380,28 @@ class ModelControlFactsBundle:
     Class-level attributes (NOT instance overrides):
     - __future_owner__: "autonomous_analyzer.py / types.py" — canonical owner
     """
-    tools: List[str] = field(default_factory=list)
-    sources: List[str] = field(default_factory=list)
+    tools: list[str] = field(default_factory=list)
+    sources: list[str] = field(default_factory=list)
     privacy_level: str = "STANDARD"
     use_tor: bool = False
     depth: str = "STANDARD"
     use_tot: bool = False
     tot_mode: str = "standard"
-    models_needed: List[str] = field(default_factory=list)
+    models_needed: list[str] = field(default_factory=list)
     # From capability signal
     requires_embeddings: bool = False
     requires_ner: bool = False
-    raw_profile: Optional[Dict[str, Any]] = None
+    raw_profile: dict[str, Any] | None = None
     # Fact stability classification
     fact_stability: str = "UNKNOWN"  # STABLE | COMPAT | UNKNOWN
     # Compat note: set when fact_stability != STABLE
-    __compat_note__: Optional[str] = None
+    __compat_note__: str | None = None
 
     # future_owner is class-level — canonical owner of model/control facts
     __future_owner__: ClassVar[str] = "autonomous_analyzer.py / types.py"
 
     @classmethod
-    def from_analyzer_result(cls, result: "AnalyzerResult") -> "ModelControlFactsBundle":
+    def from_analyzer_result(cls, result: AnalyzerResult) -> ModelControlFactsBundle:
         """Build from AnalyzerResult (typed path). STABLE."""
         sig = result.to_capability_signal()
         return cls(
@@ -420,7 +419,7 @@ class ModelControlFactsBundle:
             fact_stability="STABLE",
         )
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "mc_tools": self.tools,
             "mc_sources": self.sources,
@@ -443,8 +442,8 @@ class ModelControlFactsBundle:
 # =============================================================================
 
 def collect_lifecycle_snapshot(
-    lifecycle: "SprintLifecycleManager",
-    now_monotonic: Optional[float] = None,
+    lifecycle: SprintLifecycleManager,
+    now_monotonic: float | None = None,
     thermal_state: str = "nominal",
     windup_synthesis_mode: str = "synthesis",
     windup_error: bool = False,
@@ -472,7 +471,7 @@ def collect_lifecycle_snapshot(
 
     windup_local = None
     fact_stability = "STABLE"  # workflow and control are always STABLE from canonical sources
-    compat_note: Optional[str] = None
+    compat_note: str | None = None
 
     if wf_phase.phase == "WINDUP":
         windup_local = WindupLocalPhase(
@@ -496,8 +495,8 @@ def collect_lifecycle_snapshot(
 
 
 def collect_graph_summary(
-    ioc_graph: Optional[Any] = None,
-    scorecard: Optional[Dict[str, Any]] = None,
+    ioc_graph: Any | None = None,
+    scorecard: dict[str, Any] | None = None,
 ) -> GraphSummaryBundle:
     """
     Collect graph-related shadow inputs.
@@ -538,8 +537,8 @@ def collect_graph_summary(
 
 
 def collect_model_control_facts(
-    analyzer_result: Optional["AnalyzerResult"] = None,
-    raw_profile: Optional[Dict[str, Any]] = None,
+    analyzer_result: AnalyzerResult | None = None,
+    raw_profile: dict[str, Any] | None = None,
 ) -> ModelControlFactsBundle:
     """
     Collect model/control-related shadow inputs.
@@ -578,10 +577,10 @@ def collect_model_control_facts(
 
 
 def collect_export_handoff_facts(
-    handoff: Optional["ExportHandoff"] = None,
-    scorecard: Optional[Dict[str, Any]] = None,
+    handoff: ExportHandoff | None = None,
+    scorecard: dict[str, Any] | None = None,
     sprint_id: str = "unknown",
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Collect export handoff facts.
 
@@ -673,19 +672,19 @@ class ProviderRuntimeFactsBundle:
     Class-level attributes (NOT instance overrides):
     - __future_owner__: "brain/model_manager.py / brain/model_lifecycle.py" — canonical owner
     """
-    current_model: Optional[str] = None  # "hermes" | "modernbert" | "gliner" | None
+    current_model: str | None = None  # "hermes" | "modernbert" | "gliner" | None
     is_loaded: bool = False
     initialized: bool = False
-    last_error: Optional[str] = None
+    last_error: str | None = None
     # Fact stability classification
     fact_stability: str = "UNKNOWN"  # STABLE | COMPAT | UNKNOWN
     # Compat note: set when fact_stability != STABLE
-    __compat_note__: Optional[str] = None
+    __compat_note__: str | None = None
 
     # future_owner is class-level — canonical owner of runtime facts
     __future_owner__: ClassVar[str] = "brain/model_manager.py / brain/model_lifecycle.py"
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "runtime_current_model": self.current_model,
             "runtime_is_loaded": self.is_loaded,
@@ -699,7 +698,7 @@ class ProviderRuntimeFactsBundle:
 
 def collect_provider_runtime_facts(
     model_manager: Any = None,
-    lifecycle_status: Optional[Dict[str, Any]] = None,
+    lifecycle_status: dict[str, Any] | None = None,
 ) -> ProviderRuntimeFactsBundle:
     """
     Collect provider/model runtime facts from ModelManager and model_lifecycle.

@@ -18,14 +18,11 @@ from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
-
+from hledac.universal.rl.actions import ACTION_CONTINUE, ACTION_DEEP_DIVE
 from hledac.universal.rl.sprint_policy_manager import (
     SprintPolicyManager,
     SprintPolicyState,
-    _EXPLORATION_INTERVAL,
 )
-from hledac.universal.rl.actions import ACTION_CONTINUE, ACTION_DEEP_DIVE
-
 
 # ── Fixtures ───────────────────────────────────────────────────────────────────
 
@@ -104,7 +101,7 @@ class TestEveryFifthSprintExploration:
     def test_sprint_5_is_exploration(self, enabled_manager: SprintPolicyManager) -> None:
         """Sprint #5 (1-indexed modulo) should trigger exploration."""
         result = _make_result()
-        for i in range(4):
+        for _i in range(4):
             enabled_manager.update(result)
         # Sprint 5: should explore (sprint_sequence_number == 4 is 0-indexed, 5 % 5 == 0)
         assert enabled_manager.should_explore() is True
@@ -112,7 +109,7 @@ class TestEveryFifthSprintExploration:
     def test_sprint_10_is_exploration(self, enabled_manager: SprintPolicyManager) -> None:
         """Sprint #10 should trigger exploration."""
         result = _make_result()
-        for i in range(9):
+        for _i in range(9):
             enabled_manager.update(result)
         assert enabled_manager.should_explore() is True
 
@@ -131,7 +128,7 @@ class TestEveryFifthSprintExploration:
     ) -> None:
         """get_action() must return ACTION_DEEP_DIVE when should_explore() is True."""
         result = _make_result()
-        for i in range(4):
+        for _i in range(4):
             enabled_manager.update(result)
         assert enabled_manager.get_action() == ACTION_DEEP_DIVE
 
@@ -295,7 +292,7 @@ class TestSprintSchedulerIntegration:
     def test_sequence_number_increments(self, enabled_manager: SprintPolicyManager) -> None:
         """sprint_sequence_number increments on each update()."""
         result = _make_result()
-        for i in range(5):
+        for _i in range(5):
             enabled_manager.update(result)
         assert enabled_manager.sprint_sequence_number == 5
 

@@ -29,13 +29,12 @@ import asyncio
 import concurrent.futures
 import hashlib
 import logging
-import math
 import time
-import heapq
-from collections import defaultdict, deque, OrderedDict
+from collections import OrderedDict, defaultdict, deque
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Set, Tuple, Iterator, Callable
 from enum import Enum
+from typing import Any
 
 import numpy as np
 
@@ -54,14 +53,14 @@ except ImportError:
 # DATA CLASSES
 # =============================================================================
 
-@dataclass
+@dataclass(slots=True)
 class Evidence:
     """Single piece of evidence with metadata."""
     fact: str
     confidence: float  # 0-1
     source: str
     timestamp: float
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
     evidence_id: str = field(default="")
 
     def __post_init__(self):
@@ -72,7 +71,7 @@ class Evidence:
         # Clamp confidence to valid range
         self.confidence = max(0.0, min(1.0, self.confidence))
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary representation."""
         return {
             "evidence_id": self.evidence_id,
@@ -84,7 +83,7 @@ class Evidence:
         }
 
 
-@dataclass
+@dataclass(slots=True)
 class InferenceStep:
     """Single step in an inference chain."""
     from_statement: str
@@ -92,9 +91,9 @@ class InferenceStep:
     rule: str
     confidence: float
     step_number: int = 0
-    evidence_ids: List[str] = field(default_factory=list)
+    evidence_ids: list[str] = field(default_factory=list)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary representation."""
         return {
             "step_number": self.step_number,
@@ -106,18 +105,18 @@ class InferenceStep:
         }
 
 
-@dataclass
+@dataclass(slots=True)
 class Hypothesis:
     """Generated hypothesis with probabilistic assessment."""
     statement: str
     prior_probability: float
     posterior_probability: float = field(default=0.0)
-    supporting_evidence: List[str] = field(default_factory=list)
-    conflicting_evidence: List[str] = field(default_factory=list)
-    inference_chain: List[InferenceStep] = field(default_factory=list)
+    supporting_evidence: list[str] = field(default_factory=list)
+    conflicting_evidence: list[str] = field(default_factory=list)
+    inference_chain: list[InferenceStep] = field(default_factory=list)
     hypothesis_id: str = field(default="")
     created_at: float = field(default_factory=time.time)
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self):
         if not self.hypothesis_id:
@@ -134,7 +133,7 @@ class Hypothesis:
         """Alias for posterior probability."""
         return self.posterior_probability
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary representation."""
         return {
             "hypothesis_id": self.hypothesis_id,
@@ -149,19 +148,19 @@ class Hypothesis:
         }
 
 
-@dataclass
+@dataclass(slots=True)
 class ResolvedEntity:
     """Result of probabilistic entity resolution."""
     entity_id: str
     canonical_name: str
-    aliases: List[str] = field(default_factory=list)
-    fragments: List[Dict[str, Any]] = field(default_factory=list)
+    aliases: list[str] = field(default_factory=list)
+    fragments: list[dict[str, Any]] = field(default_factory=list)
     confidence: float = 0.0
     resolution_method: str = ""
-    attributes: Dict[str, Any] = field(default_factory=dict)
-    source_evidence: List[str] = field(default_factory=list)
+    attributes: dict[str, Any] = field(default_factory=dict)
+    source_evidence: list[str] = field(default_factory=list)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary representation."""
         return {
             "entity_id": self.entity_id,
@@ -175,16 +174,16 @@ class ResolvedEntity:
         }
 
 
-@dataclass
+@dataclass(slots=True)
 class InferenceRule:
     """Definition of an inference rule."""
     name: str
     description: str
-    condition: Callable[[Dict[str, Any], Dict[str, Any]], bool]
+    condition: Callable[[dict[str, Any], dict[str, Any]], bool]
     confidence_multiplier: float
-    applies_to: List[str] = field(default_factory=list)
+    applies_to: list[str] = field(default_factory=list)
 
-    def evaluate(self, evidence_a: Dict[str, Any], evidence_b: Dict[str, Any]) -> bool:
+    def evaluate(self, evidence_a: dict[str, Any], evidence_b: dict[str, Any]) -> bool:
         """Evaluate if rule applies to given evidence pair."""
         try:
             return self.condition(evidence_a, evidence_b)
@@ -207,7 +206,7 @@ class InferenceType(Enum):
 # MULTI-HOP REASONING DATA CLASSES
 # =============================================================================
 
-@dataclass
+@dataclass(slots=True)
 class HopStep:
     """Single step in a multi-hop reasoning chain.
 
@@ -234,7 +233,7 @@ class HopStep:
         self.confidence = max(0.0, min(1.0, self.confidence))
         self.step_number = max(1, self.step_number)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary representation."""
         return {
             "step_number": self.step_number,
@@ -246,7 +245,7 @@ class HopStep:
         }
 
 
-@dataclass
+@dataclass(slots=True)
 class MultiHopPath:
     """Complete multi-hop reasoning path between entities.
 
@@ -263,7 +262,7 @@ class MultiHopPath:
     """
     start_entity: str
     end_entity: str
-    hops: List[HopStep] = field(default_factory=list)
+    hops: list[HopStep] = field(default_factory=list)
     total_confidence: float = 0.0
     path_length: int = 0
     is_cyclic: bool = False
@@ -315,7 +314,7 @@ class MultiHopPath:
         """Alias for total_confidence with length penalty applied."""
         return self.total_confidence
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary representation."""
         return {
             "start_entity": self.start_entity,
@@ -326,7 +325,7 @@ class MultiHopPath:
             "is_cyclic": self.is_cyclic,
         }
 
-    def get_entities(self) -> List[str]:
+    def get_entities(self) -> list[str]:
         """Get all entities in the path in order."""
         entities = [self.start_entity]
         for hop in self.hops:
@@ -413,9 +412,9 @@ class InferenceEngine:
         self._thread_pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
 
         # Evidence storage (bounded with LRU eviction)
-        self._evidence: OrderedDict[str, Evidence] = OrderedDict()
-        self._evidence_graph: OrderedDict[str, Set[str]] = OrderedDict()
-        self._inference_rules: List[InferenceRule] = []
+        self._evidence: Ordereddict[str, Evidence] = OrderedDict()
+        self._evidence_graph: Ordereddict[str, set[str]] = OrderedDict()
+        self._inference_rules: list[InferenceRule] = []
 
         # Internal counters for bounded operations
         self._graph_pruned_count = 0
@@ -517,7 +516,7 @@ class InferenceEngine:
     # RULE CONDITIONS
     # =========================================================================
 
-    def _colocation_condition(self, a: Dict[str, Any], b: Dict[str, Any]) -> bool:
+    def _colocation_condition(self, a: dict[str, Any], b: dict[str, Any]) -> bool:
         """Check if two evidence pieces share IP/network location."""
         ip_a = a.get("ip_address") or a.get("metadata", {}).get("ip")
         ip_b = b.get("ip_address") or b.get("metadata", {}).get("ip")
@@ -543,7 +542,7 @@ class InferenceEngine:
 
         return False
 
-    def _temporal_proximity_condition(self, a: Dict[str, Any], b: Dict[str, Any]) -> bool:
+    def _temporal_proximity_condition(self, a: dict[str, Any], b: dict[str, Any]) -> bool:
         """Check if two events are temporally close."""
         ts_a = a.get("timestamp") or a.get("metadata", {}).get("timestamp")
         ts_b = b.get("timestamp") or b.get("metadata", {}).get("timestamp")
@@ -555,7 +554,7 @@ class InferenceEngine:
         time_diff = abs(float(ts_a) - float(ts_b))
         return time_diff < 3600  # 1 hour in seconds
 
-    def _communication_pattern_condition(self, a: Dict[str, Any], b: Dict[str, Any]) -> bool:
+    def _communication_pattern_condition(self, a: dict[str, Any], b: dict[str, Any]) -> bool:
         """Check if evidence indicates frequent communication."""
         # Check for communication metadata
         comm_a = a.get("metadata", {}).get("communication_count", 0)
@@ -571,7 +570,7 @@ class InferenceEngine:
 
         return False
 
-    def _stylometry_condition(self, a: Dict[str, Any], b: Dict[str, Any]) -> bool:
+    def _stylometry_condition(self, a: dict[str, Any], b: dict[str, Any]) -> bool:
         """Check if writing styles are similar."""
         text_a = a.get("text") or a.get("fact", "")
         text_b = b.get("text") or b.get("fact", "")
@@ -583,7 +582,7 @@ class InferenceEngine:
         similarity = self._calculate_text_similarity(text_a, text_b)
         return similarity > 0.85
 
-    def _behavioral_condition(self, a: Dict[str, Any], b: Dict[str, Any]) -> bool:
+    def _behavioral_condition(self, a: dict[str, Any], b: dict[str, Any]) -> bool:
         """Check if behavioral patterns match."""
         behavior_a = a.get("metadata", {}).get("behavior_pattern", "")
         behavior_b = b.get("metadata", {}).get("behavior_pattern", "")
@@ -624,7 +623,7 @@ class InferenceEngine:
     def _calculate_text_similarity(self, text_a: str, text_b: str) -> float:
         """Calculate stylometric similarity between two texts."""
         # Character frequency comparison
-        def get_char_dist(text: str) -> Dict[str, float]:
+        def get_char_dist(text: str) -> dict[str, float]:
             text = text.lower()
             total = max(len(text), 1)
             dist = defaultdict(int)
@@ -712,7 +711,7 @@ class InferenceEngine:
 
         return evidence.evidence_id
 
-    def add_evidence_batch(self, evidence_list: List[Evidence]) -> List[str]:
+    def add_evidence_batch(self, evidence_list: list[Evidence]) -> list[str]:
         """
         Add multiple evidence items efficiently.
 
@@ -765,9 +764,9 @@ class InferenceEngine:
 
     def abductive_reasoning(
         self,
-        observations: List[Evidence],
+        observations: list[Evidence],
         max_hypotheses: int = 10,
-    ) -> List[Hypothesis]:
+    ) -> list[Hypothesis]:
         """
         Perform abductive reasoning to find best explanations for observations.
 
@@ -833,7 +832,7 @@ class InferenceEngine:
 
         return hypotheses[:max_hypotheses]
 
-    def _generate_candidate_explanations(self, observations: List[Evidence]) -> List[str]:
+    def _generate_candidate_explanations(self, observations: list[Evidence]) -> list[str]:
         """Generate candidate explanations from observations."""
         explanations = set()
 
@@ -852,7 +851,7 @@ class InferenceEngine:
                     entities["extracted"].append(word)
 
         # Generate explanations based on entity co-occurrence
-        for entity_type, entity_list in entities.items():
+        for _entity_type, entity_list in entities.items():
             if len(entity_list) >= 2:
                 unique_entities = list(set(entity_list))
                 for i, entity_a in enumerate(unique_entities):
@@ -890,7 +889,7 @@ class InferenceEngine:
     def _calculate_prior_probability(
         self,
         explanation: str,
-        observations: List[Evidence],
+        observations: list[Evidence],
     ) -> float:
         """Calculate prior probability of an explanation."""
         # Base rate from historical data (simplified)
@@ -908,7 +907,7 @@ class InferenceEngine:
     def _calculate_likelihood(
         self,
         explanation: str,
-        observations: List[Evidence],
+        observations: list[Evidence],
     ) -> float:
         """Calculate likelihood of observations given explanation."""
         if not observations:
@@ -947,8 +946,8 @@ class InferenceEngine:
     def _build_inference_chain(
         self,
         explanation: str,
-        observations: List[Evidence],
-    ) -> List[InferenceStep]:
+        observations: list[Evidence],
+    ) -> list[InferenceStep]:
         """Build inference chain from observations to explanation."""
         chain = []
 
@@ -970,7 +969,7 @@ class InferenceEngine:
         start: str,
         target: str,
         max_depth: int = 5,
-    ) -> Optional[List[InferenceStep]]:
+    ) -> list[InferenceStep] | None:
         """
         Find inference chain connecting start to target through evidence.
 
@@ -1006,7 +1005,7 @@ class InferenceEngine:
 
         return None
 
-    def _find_evidence_by_content(self, content: str) -> List[str]:
+    def _find_evidence_by_content(self, content: str) -> list[str]:
         """Find evidence IDs matching content."""
         matching = []
         content_lower = content.lower()
@@ -1024,7 +1023,7 @@ class InferenceEngine:
         start_id: str,
         target_id: str,
         max_depth: int,
-    ) -> Optional[List[InferenceStep]]:
+    ) -> list[InferenceStep] | None:
         """Breadth-first search for inference chain."""
         if start_id == target_id:
             return []
@@ -1057,7 +1056,7 @@ class InferenceEngine:
 
         return None
 
-    def _path_to_chain(self, path: List[str]) -> List[InferenceStep]:
+    def _path_to_chain(self, path: list[str]) -> list[InferenceStep]:
         """Convert evidence path to inference chain."""
         chain = []
 
@@ -1087,9 +1086,9 @@ class InferenceEngine:
 
     def probabilistic_entity_resolution(
         self,
-        fragments: List[Dict[str, Any]],
+        fragments: list[dict[str, Any]],
         similarity_threshold: float = 0.7,
-    ) -> List[ResolvedEntity]:
+    ) -> list[ResolvedEntity]:
         """
         Merge fragmented entity identities using probabilistic matching.
 
@@ -1189,8 +1188,8 @@ class InferenceEngine:
 
     def _compute_fragment_similarity(
         self,
-        frag_a: Dict[str, Any],
-        frag_b: Dict[str, Any],
+        frag_a: dict[str, Any],
+        frag_b: dict[str, Any],
     ) -> float:
         """Compute similarity score between two entity fragments."""
         scores = []
@@ -1230,7 +1229,7 @@ class InferenceEngine:
             return 0.0
 
         # Weighted average
-        return sum(s * w for s, w in zip(scores, weights)) / sum(weights)
+        return sum(s * w for s, w in zip(scores, weights, strict=False)) / sum(weights)
 
     def _string_similarity(self, a: str, b: str) -> float:
         """Calculate string similarity using Jaro-Winkler-like approach."""
@@ -1293,7 +1292,7 @@ class InferenceEngine:
         self,
         similarity_matrix: np.ndarray,
         threshold: float,
-    ) -> List[List[int]]:
+    ) -> list[list[int]]:
         """Cluster fragments based on similarity matrix."""
         n = len(similarity_matrix)
         visited = [False] * n
@@ -1322,7 +1321,7 @@ class InferenceEngine:
 
         return clusters
 
-    def _select_canonical_name(self, names: List[str]) -> str:
+    def _select_canonical_name(self, names: list[str]) -> str:
         """Select the most canonical name from a list."""
         if not names:
             return ""
@@ -1379,7 +1378,7 @@ class InferenceEngine:
 
         return max(0.0, min(1.0, weighted_posterior))
 
-    def calculate_joint_probability(self, hypotheses: List[Hypothesis]) -> float:
+    def calculate_joint_probability(self, hypotheses: list[Hypothesis]) -> float:
         """
         Calculate joint probability of multiple hypotheses.
 
@@ -1407,7 +1406,7 @@ class InferenceEngine:
         self,
         target_statement: str,
         max_hops: int = 3,
-    ) -> List[InferenceStep]:
+    ) -> list[InferenceStep]:
         """
         Infer indirect evidence supporting a target statement.
 
@@ -1446,11 +1445,11 @@ class InferenceEngine:
         self,
         start_id: str,
         max_depth: int,
-    ) -> List[List[str]]:
+    ) -> list[list[str]]:
         """Find all paths from start node up to max_depth."""
         paths = []
 
-        def dfs(current: str, path: List[str], depth: int):
+        def dfs(current: str, path: list[str], depth: int):
             if depth > max_depth:
                 return
 
@@ -1467,8 +1466,8 @@ class InferenceEngine:
     def streaming_inference(
         self,
         evidence_iterator: Iterator[Evidence],
-        callback: Optional[Callable[[Hypothesis], None]] = None,
-    ) -> List[Hypothesis]:
+        callback: Callable[[Hypothesis], None] | None = None,
+    ) -> list[Hypothesis]:
         """
         Process evidence in streaming fashion for large datasets.
 
@@ -1521,7 +1520,7 @@ class InferenceEngine:
 
         return unique_hypotheses
 
-    def get_evidence_stats(self) -> Dict[str, Any]:
+    def get_evidence_stats(self) -> dict[str, Any]:
         """Get statistics about stored evidence."""
         return {
             "total_evidence": len(self._evidence),
@@ -1546,7 +1545,7 @@ class InferenceEngine:
         self.clear()
         logger.info("InferenceEngine cleanup completed")
 
-    def export_inference_graph(self) -> Dict[str, Any]:
+    def export_inference_graph(self) -> dict[str, Any]:
         """Export evidence graph for visualization."""
         return {
             "nodes": [
@@ -1576,7 +1575,7 @@ class InferenceEngine:
         max_hops: int = 6,
         min_confidence: float = 0.3,
         max_paths: int = 100,
-    ) -> List[MultiHopPath]:
+    ) -> list[MultiHopPath]:
         """
         Perform multi-hop reasoning between entities.
 
@@ -1631,7 +1630,7 @@ class InferenceEngine:
         end: str,
         max_hops: int = 6,
         min_confidence: float = 0.3,
-    ) -> Optional[MultiHopPath]:
+    ) -> MultiHopPath | None:
         """
         Synchronous wrapper for finding the strongest multi-hop path.
 
@@ -1647,7 +1646,6 @@ class InferenceEngine:
         Returns:
             Strongest MultiHopPath or None if no path found
         """
-        import asyncio
 
         reasoner = MultiHopReasoner(
             inference_engine=self,
@@ -1674,7 +1672,7 @@ class InferenceEngine:
         entity: str,
         max_hops: int = 3,
         min_confidence: float = 0.3,
-    ) -> Dict[str, List[MultiHopPath]]:
+    ) -> dict[str, list[MultiHopPath]]:
         """
         Find all indirect connections from an entity.
 
@@ -1718,7 +1716,7 @@ class InferenceEngine:
         self,
         start: str,
         max_hops: int,
-    ) -> Set[str]:
+    ) -> set[str]:
         """Get all entities reachable within max_hops from start."""
         reachable = set()
         visited = {start}
@@ -1752,7 +1750,7 @@ class InferenceEngine:
 
         return reachable
 
-    def _extract_entity_from_evidence_sync(self, evidence: Evidence) -> Optional[str]:
+    def _extract_entity_from_evidence_sync(self, evidence: Evidence) -> str | None:
         """Extract primary entity identifier from evidence (sync version)."""
         # Try metadata first
         for key in ["entity", "actor", "subject", "name", "id"]:
@@ -1773,7 +1771,7 @@ class InferenceEngine:
         start: str,
         target: str,
         max_depth: int = 5,
-    ) -> Optional[List[InferenceStep]]:
+    ) -> list[InferenceStep] | None:
         """
         Extended evidence chaining with variable depth.
 
@@ -1803,7 +1801,7 @@ class InferenceEngine:
 
     def _convert_hop_path_to_inference_steps(
         self, path: MultiHopPath
-    ) -> List[InferenceStep]:
+    ) -> list[InferenceStep]:
         """Convert a MultiHopPath to list of InferenceStep objects."""
         steps = []
         for hop in path.hops:
@@ -1820,7 +1818,7 @@ class InferenceEngine:
 
     def calculate_path_confidence(
         self,
-        hops: List[HopStep],
+        hops: list[HopStep],
         apply_length_penalty: bool = True,
     ) -> float:
         """
@@ -1930,9 +1928,9 @@ class MultiHopReasoner:
         self,
         start: str,
         end: str,
-        min_confidence: Optional[float] = None,
-        max_hops: Optional[int] = None,
-    ) -> List[MultiHopPath]:
+        min_confidence: float | None = None,
+        max_hops: int | None = None,
+    ) -> list[MultiHopPath]:
         """
         Find all multi-hop paths from start to end entity.
 
@@ -1970,7 +1968,7 @@ class MultiHopReasoner:
         end: str,
         max_depth: int,
         min_confidence: float,
-    ) -> List[MultiHopPath]:
+    ) -> list[MultiHopPath]:
         """
         Breadth-first search with depth limiting and confidence pruning.
 
@@ -2071,7 +2069,7 @@ class MultiHopReasoner:
 
         return paths_found
 
-    def _find_evidence_for_entity(self, entity: str) -> List[str]:
+    def _find_evidence_for_entity(self, entity: str) -> list[str]:
         """Find evidence IDs related to an entity."""
         matching = []
         entity_lower = entity.lower()
@@ -2091,7 +2089,7 @@ class MultiHopReasoner:
 
     def _get_entity_neighbors(
         self, entity: str
-    ) -> List[Tuple[str, str, float]]:
+    ) -> list[tuple[str, str, float]]:
         """
         Get neighboring entities with their relations and confidences.
 
@@ -2135,7 +2133,7 @@ class MultiHopReasoner:
 
         return list(seen.values())
 
-    def _extract_entity_from_evidence(self, evidence: Evidence) -> Optional[str]:
+    def _extract_entity_from_evidence(self, evidence: Evidence) -> str | None:
         """Extract primary entity identifier from evidence."""
         # Try metadata first
         for key in ["entity", "actor", "subject", "name", "id"]:
@@ -2199,7 +2197,7 @@ class MultiHopReasoner:
 
         return f"{relation} relationship inferred from evidence graph"
 
-    def _calculate_compound_confidence(self, hops: List[HopStep]) -> float:
+    def _calculate_compound_confidence(self, hops: list[HopStep]) -> float:
         """
         Calculate compounded confidence across hops.
 
@@ -2241,7 +2239,7 @@ class MultiHopReasoner:
 
         return len(entities) != len(set(entities))
 
-    def rank_paths(self, paths: List[MultiHopPath]) -> List[MultiHopPath]:
+    def rank_paths(self, paths: list[MultiHopPath]) -> list[MultiHopPath]:
         """
         Rank paths by confidence and quality.
 
@@ -2256,7 +2254,7 @@ class MultiHopReasoner:
         Returns:
             Sorted list of paths (highest confidence first)
         """
-        def path_score(path: MultiHopPath) -> Tuple[float, int, bool]:
+        def path_score(path: MultiHopPath) -> tuple[float, int, bool]:
             # Returns tuple for sorting: (confidence, -length, not_cyclic)
             # Higher confidence, shorter length, non-cyclic = better
             return (
@@ -2283,8 +2281,8 @@ class MultiHopReasoner:
         self,
         start: str,
         end: str,
-        min_confidence: Optional[float] = None,
-    ) -> Optional[MultiHopPath]:
+        min_confidence: float | None = None,
+    ) -> MultiHopPath | None:
         """
         Find the single strongest path between entities.
 
@@ -2311,7 +2309,7 @@ class MultiHopReasoner:
         ranked = self.rank_paths(paths)
         return ranked[0] if ranked else None
 
-    def get_path_statistics(self, paths: List[MultiHopPath]) -> Dict[str, Any]:
+    def get_path_statistics(self, paths: list[MultiHopPath]) -> dict[str, Any]:
         """
         Calculate statistics about a set of paths.
 
@@ -2348,10 +2346,11 @@ class MultiHopReasoner:
 # TOOL REGISTRY INTEGRATION
 # =============================================================================
 
-def create_inference_tool(engine: "InferenceEngine", execute_fn=None) -> "Tool":
+def create_inference_tool(engine: InferenceEngine, execute_fn=None) -> Tool:
     """Create a ToolRegistry-compatible Tool from InferenceEngine."""
+    from typing import TYPE_CHECKING
+
     from pydantic import BaseModel, Field
-    from typing import Optional, List, TYPE_CHECKING, Any, Dict
 
     if TYPE_CHECKING:
         from ..tool_registry import Tool
@@ -2359,15 +2358,15 @@ def create_inference_tool(engine: "InferenceEngine", execute_fn=None) -> "Tool":
     # Define args schema as Pydantic model
     class InferenceArgs(BaseModel):
         mode: str = Field(description="Inference mode: abductive, chain, resolve, indirect")
-        query: Optional[str] = Field(default="", description="Query string")
-        entities: Optional[List[str]] = Field(default_factory=list, description="List of entities")
-        observations: Optional[List[str]] = Field(default_factory=list, description="List of observations")
-        hypothesis: Optional[str] = Field(default="", description="Hypothesis for abductive reasoning")
+        query: str | None = Field(default="", description="Query string")
+        entities: list[str] | None = Field(default_factory=list, description="List of entities")
+        observations: list[str] | None = Field(default_factory=list, description="List of observations")
+        hypothesis: str | None = Field(default="", description="Hypothesis for abductive reasoning")
         max_hops: int = Field(default=3, description="Maximum hops for multi-hop inference")
 
     # Define returns schema as Pydantic model
     class InferenceResult(BaseModel):
-        result: Dict[str, Any] = Field(default_factory=dict, description="Inference result")
+        result: dict[str, Any] = Field(default_factory=dict, description="Inference result")
 
     # Import here to avoid circular import
     from ..tool_registry import Tool

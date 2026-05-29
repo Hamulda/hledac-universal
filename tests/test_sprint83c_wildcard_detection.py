@@ -5,10 +5,10 @@ Sprint 83C: Wildcard DNS Detection + Network Recon Hardening
 Tests for bounded wildcard DNS detection and subdomain forwarding guard.
 """
 
-import asyncio
-import pytest
-import sys
 import os
+import sys
+
+import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
@@ -69,7 +69,7 @@ class TestSprint83CWildcardDetection:
         """Verify high-entropy random probes are generated (not test/dev/admin)."""
         from hledac.universal.intelligence.network_reconnaissance import NetworkReconnaissance
 
-        recon = NetworkReconnaissance()
+        NetworkReconnaissance()
 
         # Check the probes don't use low-entropy patterns
         # We can't test the exact probes, but we can verify the constants
@@ -82,12 +82,13 @@ class TestSprint83CWildcardForwardingHardening:
     def test_network_recon_suppresses_subdomain_forwarding_on_wildcard(self):
         """Verify subdomain forwarding is suppressed when wildcard detected."""
         import inspect
+
         from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
 
         source_file = inspect.getsourcefile(FullyAutonomousOrchestrator)
         if source_file is None:
             pytest.skip("Source file not found")
-        with open(source_file, 'r') as f:
+        with open(source_file) as f:
             content = f.read()
 
         # Verify wildcard check before forwarding
@@ -98,12 +99,13 @@ class TestSprint83CWildcardForwardingHardening:
     def test_network_recon_keeps_forwarding_when_not_wildcard(self):
         """Verify forwarding still works for non-wildcard domains."""
         import inspect
+
         from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
 
         source_file = inspect.getsourcefile(FullyAutonomousOrchestrator)
         if source_file is None:
             pytest.skip("Source file not found")
-        with open(source_file, 'r') as f:
+        with open(source_file) as f:
             content = f.read()
 
         # Verify conditional forwarding logic
@@ -116,12 +118,13 @@ class TestSprint83CWildcardMetadata:
     def test_network_recon_wildcard_metadata_truthful(self):
         """Verify wildcard metadata is included in handler output."""
         import inspect
+
         from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
 
         source_file = inspect.getsourcefile(FullyAutonomousOrchestrator)
         if source_file is None:
             pytest.skip("Source file not found")
-        with open(source_file, 'r') as f:
+        with open(source_file) as f:
             content = f.read()
 
         # Verify metadata fields are in the ActionResult
@@ -167,7 +170,7 @@ class TestSprint83CWildcardProbeTimeout:
         assert 'probe_method' in result
 
         # Conservative branch should return False for ambiguous results
-        assert result['wildcard_suspected'] == False
+        assert not result['wildcard_suspected']
 
 
 if __name__ == "__main__":

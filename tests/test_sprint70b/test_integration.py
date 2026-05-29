@@ -7,7 +7,7 @@ import os
 import sys
 import unittest
 from collections import OrderedDict
-from unittest.mock import patch, MagicMock, AsyncMock
+from unittest.mock import MagicMock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
@@ -54,6 +54,7 @@ class TestSprint70Integration(unittest.TestCase):
         """Test že _analyze_state vrací Sprint 70 signály."""
         # Just verify the method has Sprint 70 signals in source code
         import inspect
+
         from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
         source = inspect.getsource(FullyAutonomousOrchestrator._analyze_state)
 
@@ -74,6 +75,7 @@ class TestSprint70Integration(unittest.TestCase):
     def test_cleanup_includes_sprint70(self):
         """Test že cleanup obsahuje Sprint 70 cleanup."""
         import inspect
+
         from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
 
         source = inspect.getsource(FullyAutonomousOrchestrator.cleanup)

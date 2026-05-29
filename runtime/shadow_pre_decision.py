@@ -51,8 +51,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum, auto
-from typing import Any, Dict, List, Optional, Set, TYPE_CHECKING
-
+from typing import TYPE_CHECKING, Any
 
 # =============================================================================
 # Diff Taxonomy — categorizace pre-decision mismatch reasons
@@ -134,7 +133,7 @@ class DiffTaxonomy(Enum):
 # Pre-Decision Summary — diagnostic artifact, NOT a truth store
 # =============================================================================
 
-@dataclass
+@dataclass(slots=True)
 class LifecycleInterpretation:
     """
     Lifecycle interpretation summary — composed from ParityArtifact.
@@ -143,10 +142,10 @@ class LifecycleInterpretation:
     z hlediska scheduler pre-decision, aniž by zasahovalo do lifecycle.
     """
     workflow_phase: str
-    workflow_phase_entered_at: Optional[float]
+    workflow_phase_entered_at: float | None
     control_phase_mode: str
     control_phase_thermal: str
-    windup_local_mode: Optional[str]
+    windup_local_mode: str | None
 
     # Pre-decision interpretation
     is_active: bool          # workflow_phase == ACTIVE
@@ -159,10 +158,10 @@ class LifecycleInterpretation:
 
     # Phase conflict detection
     phase_conflict: bool     # True pokud phase vrstvy jsou v konfliktu
-    phase_conflict_reason: Optional[str]  # Popis konfliktu pokud existuje
+    phase_conflict_reason: str | None  # Popis konfliktu pokud existuje
 
 
-@dataclass
+@dataclass(slots=True)
 class GraphCapabilitySummary:
     """
     Graph capability summary — composed from ParityArtifact.
@@ -182,7 +181,7 @@ class GraphCapabilitySummary:
     readiness: str           # "unknown" | "sparse" | "ready" | "rich"
 
 
-@dataclass
+@dataclass(slots=True)
 class ExportReadinessSummary:
     """
     Export readiness summary — composed from ParityArtifact.
@@ -201,7 +200,7 @@ class ExportReadinessSummary:
     readiness: str           # "unknown" | "partial" | "ready"
 
 
-@dataclass
+@dataclass(slots=True)
 class ModelControlSummary:
     """
     Model/control fact summary — composed from ParityArtifact.
@@ -212,7 +211,7 @@ class ModelControlSummary:
     sources_count: int
     privacy: str
     depth: str
-    models_needed: List[str]
+    models_needed: list[str]
 
     # Pre-decision interpretation
     has_tools: bool         # tools_count > 0
@@ -221,17 +220,17 @@ class ModelControlSummary:
     readiness: str          # "unknown" | "partial" | "ready"
 
 
-@dataclass
+@dataclass(slots=True)
 class PrecursorSummary:
     """
     Provider/Branch precursor summary — composed from ParityArtifact.
 
     Interpretuje provider a branch decision precursors z hlediska pre-decision.
     """
-    branch_decision_id: Optional[str]
-    provider_recommend: Optional[str]
-    correlation_run_id: Optional[str]
-    correlation_branch_id: Optional[str]
+    branch_decision_id: str | None
+    provider_recommend: str | None
+    correlation_run_id: str | None
+    correlation_branch_id: str | None
 
     # Pre-decision interpretation
     has_branch_decision: bool  # branch_decision_id is not None
@@ -243,7 +242,7 @@ class PrecursorSummary:
     readiness: str  # "unknown" | "partial" | "ready"
 
 
-@dataclass
+@dataclass(slots=True)
 class DecisionGateReadiness:
     """
     Decision gate readiness — explicit rozlišení pro scheduler decision gate.
@@ -262,13 +261,13 @@ class DecisionGateReadiness:
     unknown_count: int
     compat_seam_count: int
     # Detail per category
-    blocker_categories: List[str]  # Which categories are blocking
-    unknown_categories: List[str]  # Which categories are unknown
+    blocker_categories: list[str]  # Which categories are blocking
+    unknown_categories: list[str]  # Which categories are unknown
     is_proceed_allowed: bool  # True iff gate_status == "ready"
     defer_to_provider: bool  # Provider activation deferred
 
 
-@dataclass
+@dataclass(slots=True)
 class ToolReadinessPreview:
     """
     Tool readiness preview — DIAGNOSTIC ONLY, no dispatch, no execute_with_limits.
@@ -284,7 +283,7 @@ class ToolReadinessPreview:
     """
     readiness: str  # "ready" | "degraded" | "pruned" | "unknown"
     tool_count: int
-    tool_names: List[str]
+    tool_names: list[str]
     has_network_tools: bool
     has_high_memory_tools: bool
     # Control phase impact
@@ -293,10 +292,10 @@ class ToolReadinessPreview:
     # Resource-based assessment (read-only, no actual measurement)
     resource_constraint: str  # "none" | "memory" | "thermal" | "unknown"
     can_execute: bool  # True iff readiness in ("ready", "degraded")
-    defer_reason: Optional[str]  # Why deferred or unknown
+    defer_reason: str | None  # Why deferred or unknown
 
 
-@dataclass
+@dataclass(slots=True)
 class WindupReadinessPreview:
     """
     Windup readiness preview — from existing fact bundles, DIAGNOSTIC ONLY.
@@ -312,14 +311,14 @@ class WindupReadinessPreview:
     """
     readiness: str  # "ready" | "partial" | "insufficient" | "not_active"
     is_windup_phase: bool
-    synthesis_mode: Optional[str]  # "synthesis" | "structured" | "minimal" | None
+    synthesis_mode: str | None  # "synthesis" | "structured" | "minimal" | None
     synthesis_engine: str
     has_export_data: bool  # ranked_parquet or gnn_predictions available
     export_data_quality: str  # "none" | "sparse" | "ready"
-    defer_reason: Optional[str]  # Why deferred or not ready
+    defer_reason: str | None  # Why deferred or not ready
 
 
-@dataclass
+@dataclass(slots=True)
 class AdvisoryGateSnapshot:
     """
     Advisory gate snapshot — computed at scheduler decision points (WINDUP entry).
@@ -342,16 +341,16 @@ class AdvisoryGateSnapshot:
     blocker_count: int
     unknown_count: int
     compat_seam_count: int
-    blocker_reasons: List[str]
-    unknown_reasons: List[str]
-    compat_seam_reasons: List[str]
+    blocker_reasons: list[str]
+    unknown_reasons: list[str]
+    compat_seam_reasons: list[str]
     defer_to_provider: bool
     gate_evaluated_at_monotonic: float
     gate_evaluated_at_wall: str
     # Reference na source PreDecisionSummary (not copied — for debugging only)
-    source_pd_timestamp: Optional[float] = None
+    source_pd_timestamp: float | None = None
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "gate_outcome": self.gate_outcome,
             "gate_status": self.gate_status,
@@ -368,7 +367,7 @@ class AdvisoryGateSnapshot:
         }
 
 
-@dataclass
+@dataclass(slots=True)
 class ProviderActivationNote:
     """
     Provider activation note — deferred/unknown only, NO simulation.
@@ -387,12 +386,12 @@ class ProviderActivationNote:
     status: str  # "deferred" | "unknown" | "not_ready" | "blocked"
     deferral_reason: str  # Why deferred
     has_recommendation: bool  # provider_recommend available
-    recommendation: Optional[str]  # Raw recommendation string
-    next_phase_hint: Optional[str]  # Hint about when activation might proceed
+    recommendation: str | None  # Raw recommendation string
+    next_phase_hint: str | None  # Hint about when activation might proceed
     # NO: load_order, provider_state, activation_sequence
 
 
-@dataclass
+@dataclass(slots=True)
 class ProviderReadinessPreview:
     """
     Provider readiness preview — explicitní klasifikace provider readiness.
@@ -415,7 +414,7 @@ class ProviderReadinessPreview:
     """
     # Source facts
     has_recommendation: bool
-    recommendation: Optional[str]
+    recommendation: str | None
 
     # Readiness classification
     readiness: str  # "ready" | "deferred" | "blocked" | "unknown" | "compat"
@@ -427,23 +426,23 @@ class ProviderReadinessPreview:
     has_facts: bool              # has_recommendation AND has lifecycle facts
 
     # Blockers/detections
-    blockers: List[str]          # Hard constraints blocking readiness
-    unknowns: List[str]          # Facts insufficient to determine readiness
+    blockers: list[str]          # Hard constraints blocking readiness
+    unknowns: list[str]          # Facts insufficient to determine readiness
 
     # Hints
-    next_phase_hint: Optional[str]  # What would change readiness
-    deferred_reasons: List[str]     # Why deferred (if readiness = deferred)
+    next_phase_hint: str | None  # What would change readiness
+    deferred_reasons: list[str]     # Why deferred (if readiness = deferred)
 
     # Sprint F3.13: Runtime facts — read-only runtime model state
     runtime_loaded: bool = False          # is a model currently loaded
-    runtime_current_model: Optional[str] = None  # which model is loaded (hermes/modernbert/gliner/None)
+    runtime_current_model: str | None = None  # which model is loaded (hermes/modernbert/gliner/None)
     runtime_initialized: bool = False       # is MLX/runtime initialized
 
     # No simulation fields (enforced by tests)
     # NO: load_order, provider_state, activation_sequence, actual_model_loaded
 
 
-@dataclass
+@dataclass(slots=True)
 class PreDecisionSummary:
     """
     Pre-decision summary artifact — composed from ParityArtifact.
@@ -457,10 +456,10 @@ class PreDecisionSummary:
     - export: ExportReadinessSummary (composed from ParityArtifact)
     - model_control: ModelControlSummary (composed from ParityArtifact)
     - precursors: PrecursorSummary (composed from ParityArtifact)
-    - diff_taxonomy: List[DiffTaxonomy] (composed from ParityArtifact.mismatch_categories)
-    - blockers: List[str] — co brání pre-decision confidence
-    - unknowns: List[str] — co je neznámé
-    - mismatch_reasons: Dict[str, str] — pro každý mismatch category důvod
+    - diff_taxonomy: list[DiffTaxonomy] (composed from ParityArtifact.mismatch_categories)
+    - blockers: list[str] — co brání pre-decision confidence
+    - unknowns: list[str] — co je neznámé
+    - mismatch_reasons: dict[str, str] — pro každý mismatch category důvod
 
     Phase separation: VŠECHNY phase fields jsou ODDĚLENÉ v LifecycleInterpretation.
     Žádné slité phase pole neexistuje.
@@ -478,31 +477,31 @@ class PreDecisionSummary:
     precursors: PrecursorSummary
 
     # Diff taxonomy — composed from parity artifact mismatches
-    diff_taxonomy: List[DiffTaxonomy]
+    diff_taxonomy: list[DiffTaxonomy]
 
     # Diagnostic metadata
-    blockers: List[str]  # Co brání pre-decision confidence
-    unknowns: List[str]  # Co je neznámé
-    mismatch_reasons: Dict[str, str]  # category → reason string
+    blockers: list[str]  # Co brání pre-decision confidence
+    unknowns: list[str]  # Co je neznámé
+    mismatch_reasons: dict[str, str]  # category → reason string
     # Compat seams — FYSIOLOGICAL, not blockers. Lists which bundles use legacy paths.
-    compat_seams: List[str] = field(default_factory=list)
+    compat_seams: list[str] = field(default_factory=list)
 
     # Sprint 8VQ: Richer readiness previews
-    decision_gate: Optional[DecisionGateReadiness] = None
-    tool_readiness: Optional[ToolReadinessPreview] = None
-    windup_readiness: Optional[WindupReadinessPreview] = None
-    provider_note: Optional[ProviderActivationNote] = None
+    decision_gate: DecisionGateReadiness | None = None
+    tool_readiness: ToolReadinessPreview | None = None
+    windup_readiness: WindupReadinessPreview | None = None
+    provider_note: ProviderActivationNote | None = None
 
     # Sprint F3.5-F3.6: Provider readiness preview — diagnostic only, no activation
-    provider_readiness: Optional[ProviderReadinessPreview] = None
+    provider_readiness: ProviderReadinessPreview | None = None
 
     # Sprint F3.11: Dispatch parity preview — diagnostic only, no execute_with_limits
-    dispatch_parity: Optional[DispatchReadinessPreview] = None
+    dispatch_parity: DispatchReadinessPreview | None = None
 
     # Sprint F3.13: Provider runtime facts — read-only runtime model state
-    runtime_facts: Optional["ProviderRuntimeFactsBundle"] = None
+    runtime_facts: ProviderRuntimeFactsBundle | None = None
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "parity_timestamp_monotonic": self.parity_timestamp_monotonic,
             "parity_timestamp_wall": self.parity_timestamp_wall,
@@ -647,8 +646,8 @@ class PreDecisionSummary:
 # =============================================================================
 
 def compose_pre_decision(
-    parity_artifact: "ParityArtifact",
-    runtime_facts: Optional["ProviderRuntimeFactsBundle"] = None,
+    parity_artifact: ParityArtifact,
+    runtime_facts: ProviderRuntimeFactsBundle | None = None,
 ) -> PreDecisionSummary:
     """
     Sestaví PreDecisionSummary z ParityArtifact.
@@ -657,7 +656,7 @@ def compose_pre_decision(
 
     Args:
         parity_artifact: ParityArtifact z run_shadow_parity()
-        runtime_facts: Optional[ProviderRuntimeFactsBundle] — read-only runtime facts
+        runtime_facts: ProviderRuntimeFactsBundle | None — read-only runtime facts
             about current model state (from ModelManager.get_current_model())
 
     Returns:
@@ -747,7 +746,7 @@ def compose_pre_decision(
 
 
 def _compose_lifecycle_interpretation(
-    artifact: "ParityArtifact",
+    artifact: ParityArtifact,
 ) -> LifecycleInterpretation:
     """Sestaví lifecycle interpretation z ParityArtifact."""
     wf = artifact.workflow_phase
@@ -770,7 +769,7 @@ def _compose_lifecycle_interpretation(
 
     # Phase conflict detection
     phase_conflict = False
-    phase_conflict_reason: Optional[str] = None
+    phase_conflict_reason: str | None = None
 
     # Konflikt: WINDUP bez windup_local_mode
     if is_windup and not synthesis_mode_known:
@@ -801,7 +800,7 @@ def _compose_lifecycle_interpretation(
 
 
 def _compose_graph_capability_summary(
-    artifact: "ParityArtifact",
+    artifact: ParityArtifact,
 ) -> GraphCapabilitySummary:
     """Sestaví graph capability summary z ParityArtifact."""
     backend = artifact.graph_backend
@@ -839,7 +838,7 @@ def _compose_graph_capability_summary(
 
 
 def _compose_export_readiness_summary(
-    artifact: "ParityArtifact",
+    artifact: ParityArtifact,
 ) -> ExportReadinessSummary:
     """Sestaví export readiness summary z ParityArtifact."""
     sprint_id = artifact.export_sprint_id
@@ -871,7 +870,7 @@ def _compose_export_readiness_summary(
 
 
 def _compose_model_control_summary(
-    artifact: "ParityArtifact",
+    artifact: ParityArtifact,
 ) -> ModelControlSummary:
     """Sestaví model/control summary z ParityArtifact."""
     tools = artifact.mc_tools_count
@@ -905,7 +904,7 @@ def _compose_model_control_summary(
 
 
 def _compose_precursor_summary(
-    artifact: "ParityArtifact",
+    artifact: ParityArtifact,
 ) -> PrecursorSummary:
     """Sestaví precursor summary z ParityArtifact."""
     branch_id = artifact.branch_decision_id
@@ -939,12 +938,12 @@ def _compose_precursor_summary(
 
 
 def _compose_diff_taxonomy(
-    artifact: "ParityArtifact",
+    artifact: ParityArtifact,
     lc: LifecycleInterpretation,
     gr: GraphCapabilitySummary,
     er: ExportReadinessSummary,
     pr: PrecursorSummary,
-) -> List[DiffTaxonomy]:
+) -> list[DiffTaxonomy]:
     """
     Sestaví diff taxonomy z ParityArtifact mismatch_categories
     a composed interpretations.
@@ -956,7 +955,7 @@ def _compose_diff_taxonomy(
     This is a FYSIOLOGICAL state, not a blocker — it indicates
     we are using legacy compat paths rather than typed contracts.
     """
-    diffs: List[DiffTaxonomy] = []
+    diffs: list[DiffTaxonomy] = []
     raw_mismatches = artifact.mismatch_categories or []
 
     # Map raw mismatches to DiffTaxonomy
@@ -1002,7 +1001,7 @@ def _compose_diff_taxonomy(
 
     # Deduplicate
     seen: set[DiffTaxonomy] = set()
-    result: List[DiffTaxonomy] = []
+    result: list[DiffTaxonomy] = []
     for d in diffs:
         if d not in seen:
             seen.add(d)
@@ -1016,13 +1015,13 @@ def _compose_diff_taxonomy(
 
 
 def _compose_diagnostic_metadata(
-    artifact: "ParityArtifact",
+    artifact: ParityArtifact,
     lc: LifecycleInterpretation,
     gr: GraphCapabilitySummary,
     er: ExportReadinessSummary,
     mc: ModelControlSummary,
     pr: PrecursorSummary,
-) -> tuple[List[str], List[str], Dict[str, str]]:
+) -> tuple[list[str], list[str], dict[str, str]]:
     """
     Sestaví blockers, unknowns a mismatch_reasons z composed interpretations.
 
@@ -1033,9 +1032,9 @@ def _compose_diagnostic_metadata(
     Returns:
         (blockers, unknowns, mismatch_reasons)
     """
-    blockers: List[str] = []
-    unknowns: List[str] = []
-    mismatch_reasons: Dict[str, str] = {}
+    blockers: list[str] = []
+    unknowns: list[str] = []
+    mismatch_reasons: dict[str, str] = {}
 
     # Map raw mismatch details to reasons
     details = artifact.mismatch_details or {}
@@ -1089,9 +1088,9 @@ def _compose_diagnostic_metadata(
 
 
 def _compose_decision_gate_readiness(
-    blockers: List[str],
-    unknowns: List[str],
-    compat_seams: List[str],
+    blockers: list[str],
+    unknowns: list[str],
+    compat_seams: list[str],
 ) -> DecisionGateReadiness:
     """
     Sestaví DecisionGateReadiness z blockers/unknowns/compat_seams.
@@ -1333,7 +1332,7 @@ def _compose_provider_readiness_preview(
     lifecycle: LifecycleInterpretation,
     model_control: ModelControlSummary,
     precursor: PrecursorSummary,
-    runtime_facts: Optional["ProviderRuntimeFactsBundle"] = None,
+    runtime_facts: ProviderRuntimeFactsBundle | None = None,
 ) -> ProviderReadinessPreview:
     """
     Sestaví ProviderReadinessPreview z LifecycleInterpretation, ModelControlSummary a PrecursorSummary.
@@ -1358,9 +1357,9 @@ def _compose_provider_readiness_preview(
     - unknown: facts insufficient to determine readiness
     - compat: lifecycle in COMPAT path (WARMUP), readiness indeterminate
     """
-    blockers: List[str] = []
-    unknowns: List[str] = []
-    deferred_reasons: List[str] = []
+    blockers: list[str] = []
+    unknowns: list[str] = []
+    deferred_reasons: list[str] = []
 
     # Per-dimension facts
     lifecycle_ready = lifecycle.is_active or lifecycle.is_windup
@@ -1569,7 +1568,7 @@ def _compose_provider_readiness_preview(
 
 
 def compose_advisory_gate(
-    pd: "PreDecisionSummary",
+    pd: PreDecisionSummary,
 ) -> AdvisoryGateSnapshot:
     """
     Sestaví AdvisoryGateSnapshot z PreDecisionSummary.
@@ -1673,21 +1672,21 @@ class DispatchTaxonomy(Enum):
     RUNTIME_HANDLER_ONLY = auto()     # Používá get_task_handler(), ne execute_with_limits
 
 
-@dataclass
+@dataclass(slots=True)
 class ToolCapabilityGap:
     """
     Capability gap pro jeden tool.
     """
     tool_name: str
-    required_capabilities: Set[str]
-    available_capabilities: Set[str]
-    missing_capabilities: Set[str]
+    required_capabilities: set[str]
+    available_capabilities: set[str]
+    missing_capabilities: set[str]
     is_satisfied: bool
     is_network_tool: bool
     is_high_memory: bool
 
 
-@dataclass
+@dataclass(slots=True)
 class ExecutionContextReadiness:
     """
     Execution context readiness — DIAGNOSTIC ONLY.
@@ -1701,7 +1700,7 @@ class ExecutionContextReadiness:
     """
     # Capability readiness
     capability_ready: bool
-    capability_missing: List[str]  # seznam chybějících capabilities
+    capability_missing: list[str]  # seznam chybějících capabilities
 
     # Correlation readiness (scheduler-side)
     correlation_ready: bool
@@ -1720,9 +1719,9 @@ class ExecutionContextReadiness:
     runtime_only_compat_dispatch: bool  # True pokud všichni kandidáti jsou runtime_only
 
     # Blokery pro canonical execute_with_limits call
-    blocker_matrix: Dict[str, str]  # tool_name → blocker reason
+    blocker_matrix: dict[str, str]  # tool_name → blocker reason
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "capability_ready": self.capability_ready,
             "capability_missing": self.capability_missing,
@@ -1740,7 +1739,7 @@ class ExecutionContextReadiness:
         }
 
 
-@dataclass
+@dataclass(slots=True)
 class DispatchReadinessPreview:
     """
     Dispatch readiness preview — DIAGNOSTIC ONLY.
@@ -1766,16 +1765,16 @@ class DispatchReadinessPreview:
     dispatch_path: str  # "canonical_tool" | "runtime_only_compat"
 
     # Tool candidates (task_type → tool_name mapping kde existuje)
-    tool_candidates: Dict[str, str]  # task_type → tool_name
+    tool_candidates: dict[str, str]  # task_type → tool_name
 
     # Tool capability gaps (tool_name → ToolCapabilityGap)
-    capability_gaps: Dict[str, ToolCapabilityGap]
+    capability_gaps: dict[str, ToolCapabilityGap]
 
     # Blocker reasons
-    blockers: List[str]
-    pruned_tools: List[str]
-    unknown_tools: List[str]
-    runtime_only_handlers: List[str]  # task types bez ToolRegistry mapping
+    blockers: list[str]
+    pruned_tools: list[str]
+    unknown_tools: list[str]
+    runtime_only_handlers: list[str]  # task types bez ToolRegistry mapping
 
     # Control mode impact
     control_mode: str
@@ -1788,9 +1787,9 @@ class DispatchReadinessPreview:
     blocked_count: int
 
     # Sprint F9: Execution context readiness (separované capability/correlation/audit)
-    execution_context: Optional[ExecutionContextReadiness] = None
+    execution_context: ExecutionContextReadiness | None = None
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "readiness": self.readiness,
             "dispatch_path": self.dispatch_path,
@@ -1823,7 +1822,7 @@ class DispatchReadinessPreview:
 
 def build_execution_context_readiness(
     dispatch_preview: DispatchReadinessPreview,
-    correlation_context: Optional[Dict[str, Any]] = None,
+    correlation_context: dict[str, Any] | None = None,
     exec_logger_available: bool = False,
 ) -> ExecutionContextReadiness:
     """
@@ -1898,7 +1897,7 @@ def build_execution_context_readiness(
     runtime_only_compat_dispatch = dispatch_preview.dispatch_path == "runtime_only_compat"
 
     # 5. Blocker matrix
-    blocker_matrix: Dict[str, str] = {}
+    blocker_matrix: dict[str, str] = {}
     for tool_name, gap in dispatch_preview.capability_gaps.items():
         if not gap.is_satisfied:
             blocker_matrix[tool_name] = f"missing capabilities: {sorted(gap.missing_capabilities)}"
@@ -1923,10 +1922,10 @@ def build_execution_context_readiness(
 
 
 def preview_dispatch_parity(
-    task_candidates: List[str],
-    available_capabilities: Set[str],
+    task_candidates: list[str],
+    available_capabilities: set[str],
     control_mode: str,
-    registry_tools: Optional[List["Tool"]] = None,
+    registry_tools: list[Tool] | None = None,
 ) -> DispatchReadinessPreview:
     """
     Preview dispatch parity pro task kandidáty — DIAGNOSTIC ONLY.
@@ -1941,7 +1940,7 @@ def preview_dispatch_parity(
         task_candidates: Seznam task_type řetězců kandidátů
         available_capabilities: Set dostupných capability names
         control_mode: "normal" | "prune" | "panic"
-        registry_tools: Optional[List[Tool]] — pokud None, vrací truthful unknown/dispatch_unknown
+        registry_tools: list[Tool] | None — pokud None, vrací truthful unknown/dispatch_unknown
             bez heavy create_default_registry() fallback (M1-unfriendly v shadow-only path)
 
     Returns:
@@ -1996,17 +1995,17 @@ def preview_dispatch_parity(
         tools = registry_tools
 
     # Build tool lookup: tool_name → Tool
-    tool_lookup: Dict[str, "Tool"] = {t.name: t for t in tools}
+    tool_lookup: dict[str, Tool] = {t.name: t for t in tools}
 
     # Analyze each candidate
-    tool_candidates: Dict[str, str] = {}
-    capability_gaps: Dict[str, ToolCapabilityGap] = {}
-    runtime_only_handlers: List[str] = []
-    satisfied_tools: List[str] = []
-    blocked_tools: List[str] = []
-    pruned_tools: List[str] = []
-    unknown_tools: List[str] = []
-    blockers: List[str] = []
+    tool_candidates: dict[str, str] = {}
+    capability_gaps: dict[str, ToolCapabilityGap] = {}
+    runtime_only_handlers: list[str] = []
+    satisfied_tools: list[str] = []
+    blocked_tools: list[str] = []
+    pruned_tools: list[str] = []
+    unknown_tools: list[str] = []
+    blockers: list[str] = []
 
     # Prune check
     will_prune = control_mode in ("prune", "panic")
@@ -2095,7 +2094,8 @@ def preview_dispatch_parity(
 # =============================================================================
 
 if TYPE_CHECKING:
-    from typing import Any, Dict
-    from .shadow_parity import ParityArtifact
-    from .shadow_inputs import ProviderRuntimeFactsBundle
+    from typing import Any
+
     from ..tool_registry import Tool
+    from .shadow_inputs import ProviderRuntimeFactsBundle
+    from .shadow_parity import ParityArtifact

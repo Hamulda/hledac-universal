@@ -33,19 +33,18 @@ This module is the CORRECT context carrier for orchestrator <-> agent communicat
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
-from enum import Enum
-from typing import Any, Dict, List, Optional, Set
-
-from pydantic import BaseModel, Field, field_validator, ConfigDict, field_serializer
 from dataclasses import dataclass as pydantic_dataclass
+from datetime import UTC, datetime
+from enum import StrEnum
+from typing import Any
 
+from pydantic import BaseModel, ConfigDict, Field, field_serializer, field_validator
 
 # =============================================================================
 # CONTEXT HANDOFF METADATA — Sprint F11C: Bounded Handoff Surface
 # =============================================================================
 # Typed descriptor for context/evidence handoff between ResearchContext (carrier)
-# and EvidenceLog (ledger). Replaces implicit Dict[str, Any] with explicit schema.
+# and EvidenceLog (ledger). Replaces implicit dict[str, Any] with explicit schema.
 #
 # RULES:
 #   [1] ResearchContext.context_metadata carries this descriptor
@@ -63,7 +62,7 @@ class ContextHandoffMetadata:
     This descriptor:
     - Documents the explicit handoff contract between carrier and ledger
     - Provides type safety for context_metadata field
-    - Remains backward-compatible with existing Dict[str, Any] usage
+    - Remains backward-compatible with existing dict[str, Any] usage
     - Carries NO independent authority
 
     Fields (all optional for backward compat):
@@ -78,15 +77,15 @@ class ContextHandoffMetadata:
     NOTE: This is a typed descriptor, NOT a new authority surface.
           It does NOT govern, sample, or budget resources.
     """
-    phase: Optional[str] = None
-    branch_id: Optional[str] = None
-    parent_run_id: Optional[str] = None
-    iteration_snapshot: Optional[int] = None
-    source_component: Optional[str] = None
-    target_components: Optional[List[str]] = None
-    ttl_seconds: Optional[int] = None  # None = no expiry, 0 = expired
+    phase: str | None = None
+    branch_id: str | None = None
+    parent_run_id: str | None = None
+    iteration_snapshot: int | None = None
+    source_component: str | None = None
+    target_components: list[str] | None = None
+    ttl_seconds: int | None = None  # None = no expiry, 0 = expired
 
-    def to_correlation_dict(self) -> Dict[str, Optional[str]]:
+    def to_correlation_dict(self) -> dict[str, str | None]:
         """
         Convert to RunCorrelation-compatible dict for EvidenceLog injection.
 
@@ -107,7 +106,7 @@ class ContextHandoffMetadata:
         }
 
     @classmethod
-    def from_dict_compat(cls, data: Dict[str, Any]) -> "ContextHandoffMetadata":
+    def from_dict_compat(cls, data: dict[str, Any]) -> ContextHandoffMetadata:
         """
         Reconstruct typed ContextHandoffMetadata from raw dict compat shape.
 
@@ -138,7 +137,7 @@ class ContextHandoffMetadata:
         )
 
 
-class EntityType(str, Enum):
+class EntityType(StrEnum):
     """Typy entit objevených během výzkumu"""
     PERSON = "person"
     ORGANIZATION = "organization"
@@ -150,7 +149,7 @@ class EntityType(str, Enum):
     UNKNOWN = "unknown"
 
 
-class HypothesisStatus(str, Enum):
+class HypothesisStatus(StrEnum):
     """Stav hypotézy ve výzkumném procesu"""
     PENDING = "pending"           # Čeká na ověření
     TESTING = "testing"           # Právě testována
@@ -159,7 +158,7 @@ class HypothesisStatus(str, Enum):
     UNCERTAIN = "uncertain"       # Nejasná, potřeba více dat
 
 
-class ErrorSeverity(str, Enum):
+class ErrorSeverity(StrEnum):
     """Závažnost chyby"""
     LOW = "low"                   # Nezávažná, lze pokračovat
     MEDIUM = "medium"             # Střední, vyžaduje pozornost
@@ -232,9 +231,9 @@ class Entity(BaseModel):
     name: str = Field(..., description="Název entity")
     entity_type: EntityType = Field(default=EntityType.UNKNOWN)
     confidence: float = Field(default=1.0, ge=0.0, le=1.0)
-    metadata: Dict[str, Any] = Field(default_factory=dict)
-    first_seen_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    source_urls: List[str] = Field(default_factory=list)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    first_seen_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    source_urls: list[str] = Field(default_factory=list)
 
     @field_validator('source_urls', mode='before')
     @classmethod
@@ -250,10 +249,10 @@ class Hypothesis(BaseModel):
     statement: str = Field(..., description="Text hypotézy")
     status: HypothesisStatus = Field(default=HypothesisStatus.PENDING)
     confidence: float = Field(default=0.5, ge=0.0, le=1.0)
-    supporting_evidence: List[str] = Field(default_factory=list)
-    contradicting_evidence: List[str] = Field(default_factory=list)
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    tested_at: Optional[datetime] = None
+    supporting_evidence: list[str] = Field(default_factory=list)
+    contradicting_evidence: list[str] = Field(default_factory=list)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    tested_at: datetime | None = None
 
     @property
     def evidence_balance(self) -> int:
@@ -264,12 +263,12 @@ class Hypothesis(BaseModel):
 class ErrorRecord(BaseModel):
     """Záznam o chybě během výzkumu"""
     error_id: str = Field(..., description="Unikátní ID chyby")
-    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC))
     severity: ErrorSeverity = Field(default=ErrorSeverity.MEDIUM)
     component: str = Field(..., description="Komponenta, kde chyba nastala")
     message: str = Field(..., description="Chybová zpráva")
-    traceback: Optional[str] = None
-    context: Dict[str, Any] = Field(default_factory=dict)
+    traceback: str | None = None
+    context: dict[str, Any] = Field(default_factory=dict)
     recovered: bool = Field(default=False)
 
 
@@ -290,20 +289,20 @@ class ResearchContext(BaseModel):
     budgets: BudgetState = Field(default_factory=BudgetState)
 
     # Aktivní entity a hypotézy
-    active_entities: List[Entity] = Field(default_factory=list)
-    hypotheses: List[Hypothesis] = Field(default_factory=list)
+    active_entities: list[Entity] = Field(default_factory=list)
+    hypotheses: list[Hypothesis] = Field(default_factory=list)
 
     # Navštívené zdroje
-    visited_urls: Set[str] = Field(default_factory=set)
-    visited_domains: Set[str] = Field(default_factory=set)
+    visited_urls: set[str] = Field(default_factory=set)
+    visited_domains: set[str] = Field(default_factory=set)
 
     # Chyby a problémy
-    errors: List[ErrorRecord] = Field(default_factory=list)
+    errors: list[ErrorRecord] = Field(default_factory=list)
 
     # Kontextová data
-    key_findings: List[str] = Field(default_factory=list)
-    open_questions: List[str] = Field(default_factory=list)
-    context_metadata: Dict[str, Any] = Field(default_factory=dict)
+    key_findings: list[str] = Field(default_factory=list)
+    open_questions: list[str] = Field(default_factory=list)
+    context_metadata: dict[str, Any] = Field(default_factory=dict)
 
     # =============================================================================
     # CONTEXT HANDOFF HELPERS — Sprint F1100B: Typed Handoff Surface
@@ -312,7 +311,7 @@ class ResearchContext(BaseModel):
     # These are thin wrappers over context_metadata dict — no new authority.
     # =============================================================================
 
-    def get_handoff_metadata(self) -> Optional[ContextHandoffMetadata]:
+    def get_handoff_metadata(self) -> ContextHandoffMetadata | None:
         """
         Get typed handoff metadata from context_metadata dict.
 
@@ -340,9 +339,9 @@ class ResearchContext(BaseModel):
         The metadata is stored at context_metadata["handoff"] key.
         """
         self.context_metadata["handoff"] = metadata
-        self.updated_at = datetime.now(timezone.utc)
+        self.updated_at = datetime.now(UTC)
 
-    def get_correlation_for_handoff(self) -> Dict[str, Optional[str]]:
+    def get_correlation_for_handoff(self) -> dict[str, str | None]:
         """
         Get RunCorrelation-compatible dict from stored handoff metadata.
 
@@ -366,8 +365,8 @@ class ResearchContext(BaseModel):
         return handoff.to_correlation_dict()
 
     # Časové značky
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
     model_config = ConfigDict(populate_by_name=True)
 
@@ -392,19 +391,19 @@ class ResearchContext(BaseModel):
         existing = [e for e in self.active_entities if e.entity_id == entity.entity_id]
         if not existing:
             self.active_entities.append(entity)
-            self.updated_at = datetime.now(timezone.utc)
+            self.updated_at = datetime.now(UTC)
 
     def add_hypothesis(self, hypothesis: Hypothesis) -> None:
         """Přidá hypotézu pokud ještě neexistuje"""
         existing = [h for h in self.hypotheses if h.hypothesis_id == hypothesis.hypothesis_id]
         if not existing:
             self.hypotheses.append(hypothesis)
-            self.updated_at = datetime.now(timezone.utc)
+            self.updated_at = datetime.now(UTC)
 
     def add_error(self, error: ErrorRecord) -> None:
         """Přidá chybový záznam"""
         self.errors.append(error)
-        self.updated_at = datetime.now(timezone.utc)
+        self.updated_at = datetime.now(UTC)
 
     def add_visited_url(self, url: str) -> None:
         """Zaznamená navštívenou URL"""
@@ -417,27 +416,27 @@ class ResearchContext(BaseModel):
                 self.visited_domains.add(domain)
         except Exception:
             pass
-        self.updated_at = datetime.now(timezone.utc)
+        self.updated_at = datetime.now(UTC)
 
     def increment_iteration(self) -> None:
         """Zvýší číslo iterace"""
         self.iteration += 1
         self.budgets.iterations_used = self.iteration
-        self.updated_at = datetime.now(timezone.utc)
+        self.updated_at = datetime.now(UTC)
 
-    def get_entities_by_type(self, entity_type: EntityType) -> List[Entity]:
+    def get_entities_by_type(self, entity_type: EntityType) -> list[Entity]:
         """Vrátí entity daného typu"""
         return [e for e in self.active_entities if e.entity_type == entity_type]
 
-    def get_pending_hypotheses(self) -> List[Hypothesis]:
+    def get_pending_hypotheses(self) -> list[Hypothesis]:
         """Vrátí hypotézy čekající na ověření"""
         return [h for h in self.hypotheses if h.status == HypothesisStatus.PENDING]
 
-    def get_confirmed_hypotheses(self) -> List[Hypothesis]:
+    def get_confirmed_hypotheses(self) -> list[Hypothesis]:
         """Vrátí potvrzené hypotézy"""
         return [h for h in self.hypotheses if h.status == HypothesisStatus.CONFIRMED]
 
-    def get_errors_by_severity(self, severity: ErrorSeverity) -> List[ErrorRecord]:
+    def get_errors_by_severity(self, severity: ErrorSeverity) -> list[ErrorRecord]:
         """Vrátí chyby dané závažnosti"""
         return [e for e in self.errors if e.severity == severity]
 
@@ -475,15 +474,15 @@ class ResearchContext(BaseModel):
             "=" * 60,
             "RESEARCH CONTEXT",
             "=" * 60,
-            f"",
+            "",
             f"Query: {self.query}",
             f"Research ID: {self.research_id}",
             f"Iteration: {self.iteration}",
-            f"",
+            "",
             "-" * 40,
             self.budgets.to_prompt_section(),
             "-" * 40,
-            f"",
+            "",
             f"Entities Found: {self.total_entities}",
         ]
 
@@ -496,7 +495,7 @@ class ResearchContext(BaseModel):
                     lines.append(f"    - {et.value}: {count}")
 
         lines.extend([
-            f"",
+            "",
             f"Hypotheses: {self.total_hypotheses} total, {self.confirmed_count} confirmed",
         ])
 
@@ -508,7 +507,7 @@ class ResearchContext(BaseModel):
                 lines.append(f"    - [{h.hypothesis_id}] {h.statement[:60]}...")
 
         lines.extend([
-            f"",
+            "",
             f"Visited URLs: {len(self.visited_urls)} unique",
             f"Visited Domains: {len(self.visited_domains)} unique",
         ])
@@ -516,7 +515,7 @@ class ResearchContext(BaseModel):
         # Přidej key findings
         if self.key_findings:
             lines.extend([
-                f"",
+                "",
                 "Key Findings:",
             ])
             for i, finding in enumerate(self.key_findings[-5:], 1):  # Posledních 5
@@ -525,7 +524,7 @@ class ResearchContext(BaseModel):
         # Přidej open questions
         if self.open_questions:
             lines.extend([
-                f"",
+                "",
                 "Open Questions:",
             ])
             for i, question in enumerate(self.open_questions[:3], 1):  # Max 3
@@ -537,7 +536,7 @@ class ResearchContext(BaseModel):
             high = self.get_errors_by_severity(ErrorSeverity.HIGH)
             if critical or high:
                 lines.extend([
-                    f"",
+                    "",
                     "⚠️  ERRORS:",
                 ])
                 for e in critical[:2]:
@@ -546,13 +545,13 @@ class ResearchContext(BaseModel):
                     lines.append(f"  [HIGH] {e.component}: {e.message}")
 
         lines.extend([
-            f"",
+            "",
             "=" * 60,
         ])
 
         return "\n".join(lines)
 
-    def to_summary_dict(self) -> Dict[str, Any]:
+    def to_summary_dict(self) -> dict[str, Any]:
         """Vrátí shrnující dictionary pro export"""
         return {
             "research_id": self.research_id,

@@ -135,7 +135,7 @@ def _parse_caa_intel(value: str) -> dict:
 async def resolve_doh(
     domain: str,
     record_type: RecordType,
-    session: "aiohttp.ClientSession",
+    session: aiohttp.ClientSession,
     *,
     provider: str = "cloudflare",
     timeout: float = 10.0,
@@ -199,7 +199,7 @@ async def resolve_doh(
 
 async def full_doh_profile(
     domain: str,
-    session: "aiohttp.ClientSession",
+    session: aiohttp.ClientSession,
     *,
     limit: int = 500,
     timeout: float = 10.0,
@@ -246,7 +246,7 @@ async def full_doh_profile(
 
 async def subdomain_probe(
     domain: str,
-    session: "aiohttp.ClientSession",
+    session: aiohttp.ClientSession,
     wordlist: list[str] | None = None,
     *,
     timeout: float = 5.0,
@@ -274,7 +274,7 @@ async def subdomain_probe(
     results = await asyncio.gather(*tasks, return_exceptions=True)
 
     alive: list[str] = []
-    for sub, res in zip(wordlist, results):
+    for sub, res in zip(wordlist, results, strict=False):
         if isinstance(res, list) and res and res[0].value:
             alive.append(f"{sub}.{domain}")
 
@@ -304,7 +304,7 @@ class DOHAdapter:
     async def run(
         self,
         domain: str,
-        session: "aiohttp.ClientSession",
+        session: aiohttp.ClientSession,
     ) -> list[DOHFinding]:
         """Run DOH profile for domain. Results cached for CACHE_TTL."""
         self._called = True
@@ -329,7 +329,7 @@ class DOHAdapter:
     async def run_with_subdomains(
         self,
         domain: str,
-        session: "aiohttp.ClientSession",
+        session: aiohttp.ClientSession,
     ) -> tuple[list[DOHFinding], list[str]]:
         """Run DOH profile + subdomain probe concurrently."""
         profile_task = full_doh_profile(domain, session)

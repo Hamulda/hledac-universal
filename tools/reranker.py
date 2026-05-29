@@ -12,7 +12,7 @@ and minimal memory footprint.
 import asyncio
 import logging
 from dataclasses import dataclass
-from typing import List, Dict, Any, Optional, Tuple
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -20,7 +20,8 @@ logger = logging.getLogger(__name__)
 MAX_RERANK_DOCS = 50
 
 try:
-    from flashrank import Ranker, RerankRequest as FlashRankRequest
+    from flashrank import Ranker
+    from flashrank import RerankRequest as FlashRankRequest
     FLASHRANK_AVAILABLE = True
 except ImportError:
     FLASHRANK_AVAILABLE = False
@@ -42,71 +43,71 @@ class RerankResult:
 class RerankRequest:
     """Request for reranking."""
     query: str
-    documents: List[Dict[str, Any]]
-    top_k: Optional[int] = None
+    documents: list[dict[str, Any]]
+    top_k: int | None = None
     return_all: bool = False
 
 
 class LightweightReranker:
     """
     Memory-efficient reranker using FlashRank with TinyBERT-L-2.
-    
+
     Model: ms-marco-MiniLM-L-12-v2 (~4MB)
     Backend: ONNX Runtime (quantized)
     Purpose: Reorder search results by relevance to query
-    
+
     Advantages:
     - ~4MB vs ~500MB for CrossEncoder
     - ONNX Runtime for M1 optimization
     - Instant loading, no cnew start penalty
     - Low memory footprint (~20MB peak)
     """
-    
-    def __init__(self, model_name: str = "ms-marco-MiniLM-L-12-v2", cache_dir: Optional[str] = None):
+
+    def __init__(self, model_name: str = "ms-marco-MiniLM-L-12-v2", cache_dir: str | None = None):
         """
         Initialize lightweight reranker.
-        
+
         Args:
             model_name: FlashRank model name (default: TinyBERT-L-2-v2)
             cache_dir: Optional cache directory for models
         """
         self.model_name = model_name
         self.cache_dir = cache_dir or "/tmp"
-        self.ranker: Optional[Ranker] = None
+        self.ranker: Ranker | None = None
         self.is_loaded = False
-        
+
         if not FLASHRANK_AVAILABLE:
             logger.error("FlashRank not available. Install with: pip install flashrank")
             return
-        
+
         self._initialize_ranker()
-    
+
     def _initialize_ranker(self):
         """Initialize FlashRank ranker with minimal memory usage."""
         try:
             logger.info(f"Initializing FlashRank reranker: {self.model_name}")
-            
+
             self.ranker = Ranker(
                 model_name=self.model_name,
                 cache_dir=self.cache_dir,
                 max_length=512
             )
-            
+
             self.is_loaded = True
             logger.info("FlashRank reranker loaded (model: ~4MB)")
-            
+
         except Exception as e:
             logger.error(f"Failed to initialize FlashRank: {e}")
             self.ranker = None
             self.is_loaded = False
-    
+
     async def rerank(
         self,
         query: str,
-        documents: List[Dict[str, Any]],
-        top_k: Optional[int] = None,
+        documents: list[dict[str, Any]],
+        top_k: int | None = None,
         return_all: bool = False
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """
         Rerank documents based on query relevance.
 
@@ -151,16 +152,16 @@ class LightweightReranker:
         except Exception as e:
             logger.warning(f"Reranking failed, returning original order: {e}")
             return documents
-    
+
     def _rerank_sync(
-        self, 
-        query: str, 
-        documents: List[Dict[str, Any]], 
-        top_k: Optional[int],
+        self,
+        query: str,
+        documents: list[dict[str, Any]],
+        top_k: int | None,
         return_all: bool
-    ) -> List[RerankResult]:
+    ) -> list[RerankResult]:
         """Synchronous reranking using FlashRank."""
-        
+
         request = FlashRankRequest(
             query=query,
             passages=[
@@ -168,14 +169,14 @@ class LightweightReranker:
                 for i, doc in enumerate(documents)
             ]
         )
-        
+
         rank_results = self.ranker.rerank(request)
-        
+
         reranked_results = []
         for rank, result in enumerate(rank_results):
             doc_idx = int(result["id"])
             original_doc = documents[doc_idx]
-            
+
             rerank_result = RerankResult(
                 document_id=original_doc.get("id", str(doc_idx)),
                 content=original_doc.get("content", original_doc.get("text", "")),
@@ -184,20 +185,20 @@ class LightweightReranker:
                 score_delta=result.get("score", 0.0) - original_doc.get("score", 0.0),
                 rank=rank + 1
             )
-            
+
             reranked_results.append(rerank_result)
-        
+
         if top_k and top_k < len(reranked_results):
             reranked_results = reranked_results[:top_k]
-        
+
         return reranked_results
-    
+
     def _fallback_rerank(
         self,
         query: str,
-        documents: List[Dict[str, Any]],
-        top_k: Optional[int]
-    ) -> List[Dict[str, Any]]:
+        documents: list[dict[str, Any]],
+        top_k: int | None
+    ) -> list[dict[str, Any]]:
         """Keyword matching – deterministický, stabilní řazení."""
         logger.debug("Using fallback keyword-based reranking")
 
@@ -232,17 +233,17 @@ class LightweightReranker:
                 break
 
         return output
-    
+
     async def batch_rerank(
-        self, 
-        requests: List[RerankRequest]
-    ) -> List[List[RerankResult]]:
+        self,
+        requests: list[RerankRequest]
+    ) -> list[list[RerankResult]]:
         """
         Batch reranking for multiple queries.
-        
+
         Args:
             requests: List of reranking requests
-            
+
         Returns:
             List of reranked results for each request
         """
@@ -250,10 +251,10 @@ class LightweightReranker:
             self.rerank(req.query, req.documents, req.top_k, req.return_all)
             for req in requests
         ]
-        
+
         return await asyncio.gather(*tasks, return_exceptions=True)
-    
-    def get_memory_usage(self) -> Dict[str, Any]:
+
+    def get_memory_usage(self) -> dict[str, Any]:
         """Get estimated memory usage."""
         return {
             "model_name": self.model_name,
@@ -262,31 +263,31 @@ class LightweightReranker:
             "backend": "ONNX Runtime",
             "quantization": "int8"
         }
-    
+
     def unload(self):
         """Unload reranker and free memory."""
         if self.ranker:
             del self.ranker
             self.ranker = None
             self.is_loaded = False
-            
+
             logger.info("FlashRank reranker unloaded")
-            
+
             import gc
             gc.collect()
 
 
 class RerankerFactory:
     """Factory for creating rerankers."""
-    
+
     @staticmethod
     def create_lightweight_reranker(
         model_name: str = "ms-marco-MiniLM-L-12-v2",
-        cache_dir: Optional[str] = None
+        cache_dir: str | None = None
     ) -> LightweightReranker:
         """Create a lightweight reranker instance."""
         return LightweightReranker(model_name, cache_dir)
-    
+
     @staticmethod
     def create_fallback_reranker() -> LightweightReranker:
         """Create a fallback keyword-based reranker."""
@@ -295,11 +296,11 @@ class RerankerFactory:
 
 class RerankerConfig:
     """Configuration for reranker."""
-    
+
     def __init__(
         self,
         model_name: str = "ms-marco-MiniLM-L-12-v2",
-        cache_dir: Optional[str] = None,
+        cache_dir: str | None = None,
         max_length: int = 512,
         enable_cache: bool = True,
         cache_size: int = 1000
@@ -311,7 +312,7 @@ class RerankerConfig:
         self.cache_size = cache_size
 
 
-def create_reranker(config: Optional[RerankerConfig] = None) -> LightweightReranker:
+def create_reranker(config: RerankerConfig | None = None) -> LightweightReranker:
     """
     Convenience function to create reranker.
 

@@ -13,14 +13,15 @@ HARD RULES enforced:
 """
 
 import asyncio
-import time
-import sys
-import os
 import json
-import psutil
+import os
+import sys
+import time
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Any
 from pathlib import Path
+from typing import Any
+
+import psutil
 
 # Add universal to path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
@@ -40,7 +41,7 @@ class LiveHandlerLatency:
     errors: int = 0
     timeouts: int = 0
     rate_limited: int = 0
-    _samples: List[float] = field(default_factory=list)
+    _samples: list[float] = field(default_factory=list)
 
     def add(self, latency_ms: float, is_error: bool = False,
             is_timeout: bool = False, is_rate_limited: bool = False):
@@ -64,7 +65,7 @@ class LiveHandlerLatency:
         if self.min_ms == float('inf'):
             self.min_ms = 0.0
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             'min_ms': round(self.min_ms, 2),
             'mean_ms': round(self.mean_ms, 2),
@@ -91,26 +92,26 @@ class LiveBenchmarkResults:
     rss_peak_mb: float = 0.0
     rss_end_mb: float = 0.0
     rss_slope_mb_per_s: float = 0.0
-    rss_samples: List[float] = field(default_factory=list)
+    rss_samples: list[float] = field(default_factory=list)
     memory_guard_triggered: bool = False
-    action_selection_counts: Dict[str, int] = field(default_factory=dict)
+    action_selection_counts: dict[str, int] = field(default_factory=dict)
     action_selection_hhi: float = 0.0
-    handler_latency: Dict[str, LiveHandlerLatency] = field(default_factory=dict)
-    handler_errors: Dict[str, int] = field(default_factory=dict)
-    handler_timeouts: Dict[str, int] = field(default_factory=dict)
-    handler_rate_limited: Dict[str, int] = field(default_factory=dict)
+    handler_latency: dict[str, LiveHandlerLatency] = field(default_factory=dict)
+    handler_errors: dict[str, int] = field(default_factory=dict)
+    handler_timeouts: dict[str, int] = field(default_factory=dict)
+    handler_rate_limited: dict[str, int] = field(default_factory=dict)
     rate_limit_429_count: int = 0
     rate_limit_5xx_count: int = 0
     backoff_events: int = 0
-    phase_timeline: List[Dict[str, Any]] = field(default_factory=list)
+    phase_timeline: list[dict[str, Any]] = field(default_factory=list)
     promotion_score_max: float = 0.0
     winner_margin_max: float = 0.0
-    source_families: Dict[str, int] = field(default_factory=dict)
+    source_families: dict[str, int] = field(default_factory=dict)
     source_family_entropy: float = 0.0
-    action_families_with_findings: List[str] = field(default_factory=list)
+    action_families_with_findings: list[str] = field(default_factory=list)
     thermal_state_start: str = "unknown"
     thermal_state_peak: str = "unknown"
-    seed_domains: List[str] = field(default_factory=list)
+    seed_domains: list[str] = field(default_factory=list)
     timeout_discipline_preserved: bool = True
     ner_fallback_note: str = ""
     error: str = ""
@@ -146,7 +147,7 @@ class LiveLatencyCollector:
 
     def __init__(self, orch):
         self.orch = orch
-        self.latency: Dict[str, LiveHandlerLatency] = {
+        self.latency: dict[str, LiveHandlerLatency] = {
             name: LiveHandlerLatency() for name in TIMEOUT_BUDGETS.keys()
         }
         self._original_execute = orch._execute_action
@@ -164,7 +165,7 @@ class LiveLatencyCollector:
                 is_timeout = 'timeout' in error_msg or 'timed out' in error_msg
                 is_rate_limited = '429' in error_msg or 'rate limit' in error_msg
             return result
-        except asyncio.TimeoutError:
+        except TimeoutError:
             is_timeout = True
             is_error = True
             return None
@@ -184,10 +185,10 @@ class LiveLatencyCollector:
 class RSSMonitor:
     def __init__(self, interval_s: float = 10.0):
         self.interval_s = interval_s
-        self.samples: List[float] = []
+        self.samples: list[float] = []
         self.peak_mb: float = 0.0
         self.start_rss_mb: float = 0.0
-        self._task: Optional[asyncio.Task] = None
+        self._task: asyncio.Task | None = None
         self._stop = asyncio.Event()
         self.process = psutil.Process(os.getpid())
 
@@ -203,7 +204,7 @@ class RSSMonitor:
         if self._task:
             try:
                 await asyncio.wait_for(self._task, timeout=2.0)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 self._task.cancel()
 
     async def _monitor(self):
@@ -237,8 +238,8 @@ class RSSMonitor:
 class PhaseTracker:
     def __init__(self, orch):
         self.orch = orch
-        self.timeline: List[Dict[str, Any]] = []
-        self._task: Optional[asyncio.Task] = None
+        self.timeline: list[dict[str, Any]] = []
+        self._task: asyncio.Task | None = None
         self._stop = asyncio.Event()
         self.max_promotion_score = 0.0
         self.max_winner_margin = 0.0
@@ -253,7 +254,7 @@ class PhaseTracker:
         if self._task:
             try:
                 await asyncio.wait_for(self._task, timeout=2.0)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 self._task.cancel()
 
     def _read_current_state(self) -> tuple:
@@ -337,7 +338,7 @@ def detect_ner_fallback() -> str:
     return "No NER available"
 
 
-def compute_hhi(counts: Dict[str, int]) -> float:
+def compute_hhi(counts: dict[str, int]) -> float:
     if not counts:
         return 0.0
     total = sum(counts.values())
@@ -423,7 +424,7 @@ async def run_live_benchmark(
                     results.iterations = result.statistics.get('iterations', 0)
                 else:
                     results.iterations = getattr(result.statistics, 'iterations', 0) if hasattr(result, 'statistics') else 0
-        except asyncio.TimeoutError:
+        except TimeoutError:
             print("  Research timed out — collecting partial results...")
             results.error = "timeout"
         except Exception as e:
@@ -463,7 +464,7 @@ async def run_live_benchmark(
         results.promotion_score_max = phase_tracker.max_promotion_score
         results.winner_margin_max = phase_tracker.max_winner_margin
 
-        print(f"\n[3/6] Cleaning up...")
+        print("\n[3/6] Cleaning up...")
         cleanup_start = time.time()
         if hasattr(orch, 'cleanup'):
             try:
@@ -500,7 +501,7 @@ def print_live_results(results: LiveBenchmarkResults) -> bool:
     print("SPRINT 8L RESULTS")
     print("=" * 70)
 
-    print(f"\n[CORE]")
+    print("\n[CORE]")
     print(f"  data_mode:              {results.data_mode}")
     print(f"  iterations:             {results.iterations}")
     print(f"  findings_total:         {results.findings_total}")
@@ -508,7 +509,7 @@ def print_live_results(results: LiveBenchmarkResults) -> bool:
     print(f"  total_wall_clock_s:     {results.total_wall_clock_s:.1f}")
     print(f"  research_runtime_s:     {results.research_runtime_s:.1f}")
 
-    print(f"\n[MEMORY - M1 8GB]")
+    print("\n[MEMORY - M1 8GB]")
     print(f"  rss_start_mb:           {results.rss_start_mb:.0f}")
     print(f"  rss_peak_mb:            {results.rss_peak_mb:.0f}")
     print(f"  rss_end_mb:             {results.rss_end_mb:.0f}")
@@ -521,13 +522,13 @@ def print_live_results(results: LiveBenchmarkResults) -> bool:
             traj += f" ... ({len(results.rss_samples)} total)"
         print(f"  RSS trajectory:        {traj}")
 
-    print(f"\n[ACTION DISTRIBUTION]")
+    print("\n[ACTION DISTRIBUTION]")
     for name, count in sorted(results.action_selection_counts.items(), key=lambda x: -x[1]):
         pct = 100 * count / max(sum(results.action_selection_counts.values()), 1)
         print(f"  {name:30s}: {count:5d} ({pct:5.1f}%)")
     print(f"  HHI:                    {results.action_selection_hhi:.3f}")
 
-    print(f"\n[HANDLER LATENCY TABLE]")
+    print("\n[HANDLER LATENCY TABLE]")
     print(f"  {'Handler':<25s} {'min_ms':>8s} {'mean_ms':>8s} {'p95_ms':>8s} {'max_ms':>8s} {'calls':>6s} {'errors':>6s} {'timeouts':>8s} {'429':>6s}")
     print(f"  {'-'*25} {'-'*8} {'-'*8} {'-'*8} {'-'*8} {'-'*6} {'-'*6} {'-'*8} {'-'*6}")
     for name in TIMEOUT_BUDGETS:
@@ -537,7 +538,7 @@ def print_live_results(results: LiveBenchmarkResults) -> bool:
         else:
             print(f"  {name:<25s} {'N/A':>8s} {'N/A':>8s} {'N/A':>8s} {'N/A':>8s} {'0':>6s} {'0':>6s} {'0':>8s} {'0':>6s}")
 
-    print(f"\n[PHASE TIMELINE]")
+    print("\n[PHASE TIMELINE]")
     print(f"  promotion_score_max:   {results.promotion_score_max:.3f}")
     print(f"  winner_margin_max:      {results.winner_margin_max:.3f}")
     if results.phase_timeline:
@@ -546,26 +547,26 @@ def print_live_results(results: LiveBenchmarkResults) -> bool:
         if len(results.phase_timeline) > 8:
             print(f"    ... ({len(results.phase_timeline)} total entries)")
     else:
-        print(f"    (no phase data captured)")
+        print("    (no phase data captured)")
 
-    print(f"\n[ACTION FAMILIES WITH FINDINGS]")
+    print("\n[ACTION FAMILIES WITH FINDINGS]")
     print(f"  {results.action_families_with_findings}")
 
-    print(f"\n[THERMAL]")
+    print("\n[THERMAL]")
     print(f"  thermal_state_start:    {results.thermal_state_start}")
     print(f"  thermal_state_peak:    {results.thermal_state_peak}")
 
-    print(f"\n[NER FALLBACK]")
+    print("\n[NER FALLBACK]")
     print(f"  {results.ner_fallback_note}")
 
     if results.error:
-        print(f"\n[ERROR]")
+        print("\n[ERROR]")
         print(f"  {results.error}")
 
     total_429 = sum(results.handler_rate_limited.values())
     total_timeouts = sum(results.handler_timeouts.values())
     total_errors = sum(results.handler_errors.values())
-    print(f"\n[SUMMARY]")
+    print("\n[SUMMARY]")
     print(f"  rate_limited_429_total: {total_429}")
     print(f"  timeouts_total:          {total_timeouts}")
     print(f"  errors_total:            {total_errors}")

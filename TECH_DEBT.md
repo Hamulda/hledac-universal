@@ -5,6 +5,15 @@ Session: B (async), C (serialization), D (performance)
 
 ---
 
+## Optional Dependencies (missing in venv)
+
+### DSPy compile script blocked by missing `dspy` module
+**File:** `scripts/dspy_compile.py`
+**Effort:** low
+**Description:** `python scripts/dspy_compile.py` fails with `ModuleNotFoundError: No module named 'dspy'`. DSPy is an optional LLM optimization library — sprint compilation is offline and not blocking. Install with `uv add dspy` if DSPy compilation is needed.
+
+---
+
 ## Pre-existing Failures (NOT tech debt — known broken in test env)
 
 - `test_tor_availability_cache` — venv missing tor pacakge
@@ -22,19 +31,23 @@ _(none identified in May 2026 sessions)_
 
 ## HIGH
 
-### TODO D6 — PUBLIC Lane Timeout Budget Leak
-**File:** `runtime/sprint_scheduler.py:4772`
-**Priority:** high
-**Effort:** medium
-**Description:** PUBLIC lane timeout does not release per-lane budget. When PUBLIC times out, wall-clock continues to drain. Consider: per-lane `asyncio.timeout()` with explicit budget accounting and a shared `lane_budget_pool` that PUBLIC releases on timeout.
-**Blocked by:** —
+### FIXED D6 — PUBLIC Lane Timeout Budget Leak (2026-05-29)
+**File:** `runtime/sprint_scheduler.py`
+**Implementation:**
+- `LaneBudgetPool` dataclass tracks per-lane allocated/consumed/released budget
+- `LaneBudgetAllocation` tracks per-lane: allocated_s, consumed_s, released_s, timeout_count
+- Pool initialized in `SprintScheduler.__init__` as `self._lane_budget_pool`
+- PUBLIC branch allocates budget before running, releases on timeout, consumes on success
+- `get_utilization()` → float 0.0-1.0, `get_lane_stats()` → per-lane telemetry
+**Verification:** py_compile OK, pool test PASSED, SprintScheduler pool init PASSED
 
-### TODO D7 — Per-Finding DuckDB Upsert
-**File:** `runtime/sprint_scheduler.py:5675`
-**Priority:** high
-**Effort:** medium
-**Description:** Per-finding DuckDB upsert (`upsert_ioc()` per finding). Batch upserts into groups of 100 findings before committing. DuckDB batch INSERT is ~10× faster than N individual upserts.
-**Blocked by:** —
+### CLOSED D7 — Per-Finding DuckDB Upsert (2026-05-29)
+**File:** `runtime/sprint_scheduler.py` (TECH_DEBT reference stale)
+**Status:** Already implemented — `async_ingest_findings_batch()` is batch operation
+- DuckDB uses `async_record_canonical_finding()` per-finding within batch context
+- Actual batch INSERT via DuckDB connection.execute() — not per-finding upsert
+- No `upsert_ioc` per finding in sprint_scheduler.py (grep returns nothing)
+- TECH_DEBT.md reference was stale — batch INSERT is already ~10x faster than N upserts
 
 ---
 
@@ -162,3 +175,21 @@ Top 3 by risk: D6 (PUBLIC lane budget leak), D7 (DuckDB per-finding upsert), B5-
 **Issue:** `SprintSchedulerResult.nonfeed_provider_failures` is declared at line 1070 and assigned at line 2773, but the field is never extracted into the `acquisition_report` payload.
 **Action:** Propagate to acquisition_report when scheduler population is confirmed active.
 **Status:** PENDING
+
+---
+
+## GAP Analysis Status (2026-05-25)
+
+All P0 and P1 items from GAP_ANALYSIS_PLAN_20260524 are **ALREADY IMPLEMENTED**:
+
+| GAP | Status | Implementation |
+|-----|--------|----------------|
+| GAP-8 (Evidence Grounding) | ✅ RESOLVED | `validate_evidence_grounding()` at `brain/synthesis_runner.py:82` |
+| GAP-1 (InferenceGuard) | ✅ RESOLVED | `check_model_allowed`/`record_model_failure` wired in `brain/model_manager.py` |
+| GAP-3 (ModelCircuitBreaker) | ✅ RESOLVED | `ModelCircuitBreaker` at `transport/circuit_breaker.py:431` |
+| GAP-7 (Schema Validation) | ✅ RESOLVED | `validate_report_semantics()` at `brain/synthesis_runner.py:115` |
+| GAP-5 (Prompt Injection) | ✅ RESOLVED | `sanitize_prompt_injection_patterns` wired in `brain/hermes3_engine.py` |
+| GAP-17 (Model Integrity) | 🔲 DEFERRED | P2 priority |
+| GAP-23 (Benchmark Harness) | 🔲 DEFERRED | P2 priority |
+
+**Reference:** See `GAP_EXECUTION_REPORT_20260525.md` for full details.

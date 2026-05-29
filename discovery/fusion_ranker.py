@@ -23,8 +23,8 @@ import time
 from urllib.parse import urlparse
 
 from hledac.universal.discovery.duckduckgo_adapter import (
-    DiscoveryHit,
     DiscoveryBatchResult,
+    DiscoveryHit,
     _normalize_url_for_dedup,
 )
 

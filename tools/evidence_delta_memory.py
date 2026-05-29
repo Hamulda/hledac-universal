@@ -20,12 +20,11 @@ import argparse
 import json
 import sys
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import StrEnum
 from pathlib import Path
-from typing import Optional
 
 
-class Verdict(str, Enum):
+class Verdict(StrEnum):
     DELTA_NO_PRIOR = "DELTA_NO_PRIOR"
     DELTA_FEED_ONLY_REPEAT = "DELTA_FEED_ONLY_REPEAT"
     DELTA_NEW_NONFEED_EVIDENCE = "DELTA_NEW_NONFEED_EVIDENCE"
@@ -86,7 +85,7 @@ class EvidenceDelta:
 # ── F226F: Capability Delta ────────────────────────────────────────────────────
 
 
-class CapabilityDeltaVerdict(str, Enum):
+class CapabilityDeltaVerdict(StrEnum):
     IMPROVED = "IMPROVED"
     REGRESSED = "REGRESSED"
     MIXED = "MIXED"
@@ -653,7 +652,7 @@ def _get_ct_loss_stage(data: dict) -> str:
         return "no_loss"
 
 
-def compute_delta(previous_json: Optional[Path], current_json: Path) -> EvidenceDelta:
+def compute_delta(previous_json: Path | None, current_json: Path) -> EvidenceDelta:
     """Compute evidence delta between two report JSON files."""
 
     # F215B: Load full data for ct_loss_stage extraction
@@ -875,7 +874,7 @@ def compute_delta(previous_json: Optional[Path], current_json: Path) -> Evidence
     )
 
 
-def verdict_to_markdown(delta: EvidenceDelta, prev_path: Optional[Path], curr_path: Path) -> str:
+def verdict_to_markdown(delta: EvidenceDelta, prev_path: Path | None, curr_path: Path) -> str:
     """Render evidence delta as human-readable markdown."""
 
     v = delta.verdict

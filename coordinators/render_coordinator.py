@@ -2,13 +2,15 @@
 RenderCoordinator - decision tree for getting rendered HTML.
 Sprint 67: Full Playwright WebKit implementation with timeout, routing, semaphore.
 """
+from __future__ import annotations
+
 import asyncio
+import hashlib
 import logging
+import time
 from collections import OrderedDict
 from dataclasses import dataclass
-from typing import Literal, Optional, List, TYPE_CHECKING
-import time
-import hashlib
+from typing import TYPE_CHECKING, Literal
 
 from hledac.universal.utils.capability_prober import get_prober
 
@@ -32,12 +34,12 @@ CAPTCHA_PATTERNS = [
 ]
 
 if TYPE_CHECKING:
-    from playwright.async_api import Browser, BrowserContext, Playwright
+    from playwright.async_api import Browser, Playwright
 
 
 @dataclass
 class RenderResult:
-    html: Optional[str]
+    html: str | None
     status: Literal["ok", "no_backend", "timeout", "blocked", "error"]
     debug: dict  # max 4 keys, max 2KB
 
@@ -79,8 +81,8 @@ class PlaywrightWebKitRenderer(RenderBackend):
     MAX_HTML_SIZE = 4 * 1024 * 1024  # 4 MB
 
     def __init__(self):
-        self._playwright: Optional["Playwright"] = None
-        self._browser: Optional["Browser"] = None
+        self._playwright: Playwright | None = None
+        self._browser: Browser | None = None
         self._render_count = 0
         self._max_renders_per_browser = 50  # Recreate browser every 50 renders
 
@@ -115,7 +117,7 @@ class PlaywrightWebKitRenderer(RenderBackend):
                 logger.debug(f"Error stopping playwright: {e}")
             self._playwright = None
 
-    def _make_route_handler(self, blocked_types: List[str]):
+    def _make_route_handler(self, blocked_types: list[str]):
         """Create route handler for blocking assets."""
         async def route_handler(route):
             if route.request.resource_type in blocked_types:
@@ -233,7 +235,7 @@ class RenderCoordinator:
             "error": 0,  # errors not cached (TTL 0 means no caching)
         }
         # Semaphore for serialization (max 1 concurrent render)
-        self._semaphore: Optional[asyncio.Semaphore] = None
+        self._semaphore: asyncio.Semaphore | None = None
 
     def _get_semaphore(self) -> asyncio.Semaphore:
         """Get or create semaphore for render serialization."""
@@ -342,7 +344,7 @@ class RenderCoordinator:
                         if len(self._cache) > self._cache_max:
                             self._cache.popitem(last=False)
                     return result
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     # Try next backend
                     continue
                 except Exception:

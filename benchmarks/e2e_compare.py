@@ -168,7 +168,7 @@ def compare_artifacts(baseline: dict, new: dict) -> dict[str, Any]:
 
     if new.get("status") == "FAILED":
         result["verdict"] = "BROKEN"
-        result["verdict_reason"] = f"new status=FAILED"
+        result["verdict_reason"] = "new status=FAILED"
         return result
 
     # For canonical_report: require actual truth objects
@@ -194,7 +194,7 @@ def compare_artifacts(baseline: dict, new: dict) -> dict[str, Any]:
     baseline_has_comparable = sum(
         1 for v in result["baseline_comparable"].values() if v is not None
     )
-    new_has_comparable = sum(
+    sum(
         1 for v in result["new_comparable"].values() if v is not None
     )
 
@@ -264,12 +264,12 @@ def main() -> int:
             print(f"  {d['field']}: baseline={d['baseline']!r} new={d['new']!r}")
 
     if result["new_added_surfaces"]:
-        print(f"\nNew additive surfaces in new artifact:")
+        print("\nNew additive surfaces in new artifact:")
         for s in result["new_added_surfaces"]:
             print(f"  + {s}")
 
     if result["new_missing_surfaces"]:
-        print(f"\nWARNING — surfaces missing in new artifact:")
+        print("\nWARNING — surfaces missing in new artifact:")
         for s in result["new_missing_surfaces"]:
             print(f"  - {s}")
 

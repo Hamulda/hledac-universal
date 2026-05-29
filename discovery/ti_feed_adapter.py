@@ -12,30 +12,33 @@ Sprint 8BN — Structured TI Ingest V1
 
 from __future__ import annotations
 
-import aiohttp
 import asyncio
 import hashlib
 import json
 import logging
 import time
-import urllib.parse
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Any
 
-from hledac.universal.network.session_runtime import async_get_aiohttp_session
-from hledac.universal.transport.circuit_breaker import (
-    checked_aiohttp_get,
-    checked_aiohttp_post,
-)
-
+import aiohttp
 import msgspec
-
+from hledac.universal.network.session_runtime import async_get_aiohttp_session
 from hledac.universal.tools.discovery_replay import (
     read_cassette,
     replay_enabled,
     replay_strict_enabled,
     write_cassette,
 )
+from hledac.universal.transport.circuit_breaker import (
+    checked_aiohttp_get,
+    checked_aiohttp_post,
+)
+
+try:
+    from selectolax.parser import HTMLParser as _SelectolaxHTMLParser
+    SELECTOLAX_AVAILABLE = True
+except ImportError:
+    SELECTOLAX_AVAILABLE = False
 
 if TYPE_CHECKING:
     from hledac.universal.fetching.public_fetcher import FetchResult
@@ -268,7 +271,7 @@ class NvdApiAdapter(SourceAdapter):
             return ()
 
         entries: list[NormalizedEntry] = []
-        retrieved_ts = time.time()
+        time.time()
 
         for vuln in vulnerabilities[:limit]:
             cve_data = vuln.get("cve", {})
@@ -429,7 +432,7 @@ class CisaKevAdapter(SourceAdapter):
 
             source_url = vuln.get("knownRansomwareCampaignUse", "")
             if not source_url:
-                source_url = f"https://www.cisa.gov/known-exploited-vulnerabilities-catalog"
+                source_url = "https://www.cisa.gov/known-exploited-vulnerabilities-catalog"
 
             raw_identifiers = (cve_id,) if cve_id else ()
 
@@ -675,7 +678,7 @@ async def certstream_monitor(
                                 "title":    f"Certstream: {d}",
                                 "source":   "certstream_live"
                             })
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     continue
     except Exception as e:
         logger.warning(f"[Certstream] {e}")
@@ -724,7 +727,6 @@ async def scrape_pastebin_for_keyword(
     Pastebin archive scraping — public, no key required.
     FIXED: await asyncio.sleep() (previous bug was sync sleep).
     """
-    from bs4 import BeautifulSoup
     results: list[dict] = []
     _UA = "Mozilla/5.0 (Macintosh; ARM Mac OS X 14_0) AppleWebKit/605.1.15"
     try:
@@ -741,13 +743,34 @@ async def scrape_pastebin_for_keyword(
             return []
         if resp.status != 200:
             return []
-        soup = BeautifulSoup(await resp.text(), "html.parser")
-        paste_urls = [
-            f"https://pastebin.com/raw{a['href']}"
-            for tr in soup.select("table.maintable tr")[1:21]
-            for a in tr.select("td a")[:1]
-            if a.get("href")
-        ]
+        html_text = await resp.text()
+        paste_urls: list[str] = []
+        if SELECTOLAX_AVAILABLE:
+            try:
+                tree = _SelectolaxHTMLParser(html_text)
+                for tr in tree.css("table.maintable tr")[1:21]:
+                    for a in tr.css("td a")[:1]:
+                        href = a.attributes.get("href", "")
+                        if href:
+                            paste_urls.append(f"https://pastebin.com/raw{href}")
+            except Exception:
+                from bs4 import BeautifulSoup
+                soup = BeautifulSoup(html_text, "html.parser")
+                paste_urls = [
+                    f"https://pastebin.com/raw{a['href']}"
+                    for tr in soup.select("table.maintable tr")[1:21]
+                    for a in tr.select("td a")[:1]
+                    if a.get("href")
+                ]
+        else:
+            from bs4 import BeautifulSoup
+            soup = BeautifulSoup(html_text, "html.parser")
+            paste_urls = [
+                f"https://pastebin.com/raw{a['href']}"
+                for tr in soup.select("table.maintable tr")[1:21]
+                for a in tr.select("td a")[:1]
+                if a.get("href")
+            ]
         for raw_url in paste_urls[:max_pastes]:
             await asyncio.sleep(1.0)  # <- FIXED: await (was bug)
             try:
@@ -784,7 +807,6 @@ async def search_github_gists(
     keyword: str, max_results: int = 10
 ) -> list[dict]:
     """GitHub Gist public search — free, no key required."""
-    from bs4 import BeautifulSoup
     results: list[dict] = []
     try:
         s = await async_get_aiohttp_session()
@@ -800,17 +822,37 @@ async def search_github_gists(
             return []
         if resp.status != 200:
             return []
-        soup = BeautifulSoup(await resp.text(), "html.parser")
-        for item in soup.select(".gist-snippet")[:max_results]:
-            a = item.select_one(".gist-snippet-meta a")
-            p = item.select_one(".gist-snippet-body")
-            if a and a.get("href"):
-                results.append({
-                    "url":     f"https://gist.github.com{a['href']}",
-                    "title":   a.get_text(strip=True),
-                    "snippet": p.get_text(strip=True)[:200] if p else "",
-                    "source":  "github_gist_search"
-                })
+        html_text = await resp.text()
+        if SELECTOLAX_AVAILABLE:
+            try:
+                tree = _SelectolaxHTMLParser(html_text)
+                for item in tree.css(".gist-snippet")[:max_results]:
+                    meta_a = item.css_first(".gist-snippet-meta a")
+                    meta_url = meta_a.attributes.get("href", "") if meta_a else ""
+                    body_el = item.css_first(".gist-snippet-body")
+                    snippet_text = body_el.text(strip=True)[:200] if body_el else ""
+                    if meta_url:
+                        results.append({
+                            "url":     f"https://gist.github.com{meta_url}",
+                            "title":   meta_a.text(strip=True) if meta_a else "",
+                            "snippet": snippet_text,
+                            "source":  "github_gist_search"
+                        })
+            except Exception:
+                pass
+        if not results:
+            from bs4 import BeautifulSoup
+            soup = BeautifulSoup(html_text, "html.parser")
+            for item in soup.select(".gist-snippet")[:max_results]:
+                a = item.select_one(".gist-snippet-meta a")
+                p = item.select_one(".gist-snippet-body")
+                if a and a.get("href"):
+                    results.append({
+                        "url":     f"https://gist.github.com{a['href']}",
+                        "title":   a.get_text(strip=True),
+                        "snippet": p.get_text(strip=True)[:200] if p else "",
+                        "source":  "github_gist_search"
+                    })
     except Exception as e:
         logger.debug(f"[GitHub Gist] {e}")
     return results
@@ -898,7 +940,6 @@ async def search_ahmia(
     Ahmia dark web index search.
     use_onion=True → via tor_transport.
     """
-    from bs4 import BeautifulSoup
     base = AHMIA_ONION if use_onion else AHMIA_CLEARNET
     html = ""
     try:
@@ -919,19 +960,39 @@ async def search_ahmia(
         html = await resp.text()
         if not html:
             return []
-        soup = BeautifulSoup(html, "html.parser")
-        return [
-            {
-                "title":   a.get_text(strip=True),
-                "url":     a["href"],
-                "snippet": p.get_text(strip=True) if p else "",
-                "source":  "ahmia_onion" if use_onion else "ahmia_clearnet"
-            }
-            for li in soup.select("li.result")[:max_results]
-            for a in [li.select_one("h4 a")]
-            for p in [li.select_one("p")]
-            if a and a.get("href")
-        ]
+        results: list[dict] = []
+        if SELECTOLAX_AVAILABLE:
+            try:
+                tree = _SelectolaxHTMLParser(html)
+                for li in tree.css("li.result")[:max_results]:
+                    a = li.css_first("h4 a")
+                    p = li.css_first("p")
+                    if a:
+                        href = a.attributes.get("href", "")
+                        results.append({
+                            "title":   a.text(strip=True),
+                            "url":     href,
+                            "snippet": p.text(strip=True) if p else "",
+                            "source":  "ahmia_onion" if use_onion else "ahmia_clearnet"
+                        })
+            except Exception:
+                pass
+        if not results:
+            from bs4 import BeautifulSoup
+            soup = BeautifulSoup(html, "html.parser")
+            results = [
+                {
+                    "title":   a.get_text(strip=True),
+                    "url":     a["href"],
+                    "snippet": p.get_text(strip=True) if p else "",
+                    "source":  "ahmia_onion" if use_onion else "ahmia_clearnet"
+                }
+                for li in soup.select("li.result")[:max_results]
+                for a in [li.select_one("h4 a")]
+                for p in [li.select_one("p")]
+                if a and a.get("href")
+            ]
+        return results
     except Exception as e:
         logger.warning(f"[Ahmia] {e}")
     return []
@@ -1074,7 +1135,7 @@ class WaybackArchiveAdapter(SourceAdapter):
                 timeout=self.TIMEOUT_PER_SOURCE,
             )
 
-            for source_name, archive_results in results_dict.items():
+            for _source_name, archive_results in results_dict.items():
                 for ar in archive_results[:limit]:
                     if ar.available:
                         entry_hash = self._hash_fields(
@@ -1106,7 +1167,7 @@ class WaybackArchiveAdapter(SourceAdapter):
                         if len(entries) >= limit:
                             return tuple(entries)
 
-        except (asyncio.TimeoutError, Exception):
+        except (TimeoutError, Exception):
             pass
 
         return tuple(entries)
@@ -1390,6 +1451,7 @@ async def _handle_i2p_eepsite_fetch(task, scheduler):
 # ── IPFS CONTENT ──────────────────────────────────────────────────────────────
 
 import re as _cid_re_mod
+
 _CID_PATTERN = _cid_re_mod.compile(r'\b(Qm[1-9A-HJ-NP-Za-km-z]{44}|b[a-z2-7]{58})\b')
 
 _IPFS_GATEWAYS = [
@@ -1583,7 +1645,7 @@ async def fetch_gopher(host: str, selector: str = "/", port: int = 70) -> dict:
             "source": "gopher",
             "error": None,
         }
-    except asyncio.TimeoutError:
+    except TimeoutError:
         return {"host": host, "selector": selector, "content": "",
                 "items": [], "source": "gopher", "error": "timeout"}
     except Exception as e:
@@ -1714,6 +1776,7 @@ async def _handle_usenet_search(task, scheduler):
 # ── BGP ROUTING + ASN LOOKUP ─────────────────────────────────────────────────
 
 import re as _ip_re_mod
+
 _IP_PATTERN = _ip_re_mod.compile(r'^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$')
 
 

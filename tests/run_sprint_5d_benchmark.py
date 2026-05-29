@@ -1,10 +1,8 @@
 #!/usr/bin/env python3
 """Run full 60s × 3 repeatability benchmark for Sprint 5D - post-5D baseline."""
 import asyncio
-import sys
 import json
-import gc
-import os
+import sys
 
 # Add project to path
 sys.path.insert(0, '/Users/vojtechhamada/PycharmProjects/Hledac')
@@ -20,7 +18,7 @@ async def run_full_benchmark():
 
     # Initialize evidence packet storage for OFFLINE_REPLAY
     try:
-        from hledac.universal.knowledge.atomic_storage import EvidencePacketStorage, EvidencePacket
+        from hledac.universal.knowledge.atomic_storage import EvidencePacket, EvidencePacketStorage
         orch._evidence_packet_storage = EvidencePacketStorage()
         # Create synthetic packets for testing (same as 5A baseline)
         for i in range(15):
@@ -78,7 +76,7 @@ async def run_full_benchmark():
         print(f"  RSS Delta: {run.get('rss_delta_mb', 0):.2f} MB")
 
     summary = results.get('repeatability_summary', {})
-    print(f"\n--- Repeatability Summary ---")
+    print("\n--- Repeatability Summary ---")
     print(f"  Findings - Min: {summary.get('findings_min', 0)}, Max: {summary.get('findings_max', 0)}, Mean: {summary.get('findings_mean', 0):.1f}")
     print(f"  Sources - Min: {summary.get('sources_min', 0)}, Max: {summary.get('sources_max', 0)}, Mean: {summary.get('sources_mean', 0):.1f}")
     print(f"  HH Index Mean: {summary.get('hh_index_mean', 0):.3f}")

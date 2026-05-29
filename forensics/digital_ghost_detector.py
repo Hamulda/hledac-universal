@@ -22,14 +22,9 @@ M1 8GB Optimized:
 from __future__ import annotations
 
 import math
-import os
-import struct
 import zlib
 from dataclasses import dataclass, field
-from datetime import datetime
 from pathlib import Path
-from typing import Optional
-
 
 # Constants
 MAX_FILE_SIZE = 5 * 1024 * 1024  # 5MB max
@@ -42,8 +37,8 @@ class GhostArtifact:
     artifact_type: str  # deleted_content, hidden_data, tampering, timeline_anomaly, metadata_ghost
     confidence: float  # 0.0-1.0
     description: str
-    location: Optional[str] = None
-    evidence: Optional[dict] = None
+    location: str | None = None
+    evidence: dict | None = None
 
     def to_dict(self) -> dict:
         return {
@@ -65,7 +60,7 @@ class DigitalGhostResult:
     ghost_score: float = 0.0  # 0.0-1.0
     overall_suspicious: bool = False
     confidence: float = 0.0  # 0.0-1.0
-    error: Optional[str] = None
+    error: str | None = None
 
     def to_dict(self) -> dict:
         return {

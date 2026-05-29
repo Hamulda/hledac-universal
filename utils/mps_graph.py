@@ -7,7 +7,6 @@ Provides batch dot product and DCT operations via Metal.
 """
 
 import logging
-from typing import Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +28,7 @@ except ImportError as e:
     _MPS_AVAILABLE = False
 
 
-def _ensure_metal() -> Optional[object]:
+def _ensure_metal() -> object | None:
     """Get Metal device, return None if unavailable."""
     if not _MPS_AVAILABLE:
         return None
@@ -86,7 +85,7 @@ def _fallback_dot_product(
     doc_embs: list
 ) -> list:
     """Pure Python fallback for dot product."""
-    return [sum(q * d for q, d in zip(query_emb, doc)) for doc in doc_embs]
+    return [sum(q * d for q, d in zip(query_emb, doc, strict=False)) for doc in doc_embs]
 
 
 # DCT availability
@@ -167,7 +166,7 @@ def _fallback_dct(image_data: bytes, width: int, height: int) -> bytes:
         return image_data
 
 
-def create_mps_graph_session() -> Optional[object]:
+def create_mps_graph_session() -> object | None:
     """
     Create an MPSGraph session for custom computations.
 
@@ -247,10 +246,10 @@ def _numpy_matmul(
         return result.tolist()
     except Exception:
         # Pure Python fallback
-        a_t = list(zip(*a)) if trans_a else a
-        b_t = list(zip(*b)) if trans_b else b
+        a_t = list(zip(*a, strict=False)) if trans_a else a
+        b_t = list(zip(*b, strict=False)) if trans_b else b
         return [
-            [sum(x * y for x, y in zip(row, col)) for col in b_t]
+            [sum(x * y for x, y in zip(row, col, strict=False)) for col in b_t]
             for row in a_t
         ]
 

@@ -18,13 +18,14 @@ import gc
 import gzip
 import json
 import os
-import psutil
 import re
 import sys
 import time
 import tracemalloc
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Callable, List
+
+import psutil
 
 MIN_VERSION = (3, 14)
 if sys.version_info < MIN_VERSION:
@@ -148,7 +149,7 @@ def benchmark_executor(
     serial_ms = (time.perf_counter() - start) / n_runs * 1000
 
     rss_after_serial = get_rss_kb()
-    rss_serial = max(0, rss_after_serial - rss_before)
+    max(0, rss_after_serial - rss_before)
 
     gc.collect()
 
@@ -159,7 +160,7 @@ def benchmark_executor(
             result_tpe = list(ex.map(workload_fn, workload_args[0]))
     threadpool_ms = (time.perf_counter() - start) / n_runs * 1000
     rss_after_tpe = get_rss_kb()
-    rss_tpe = max(0, rss_after_tpe - rss_before)
+    max(0, rss_after_tpe - rss_before)
 
     gc.collect()
 
@@ -181,8 +182,8 @@ def benchmark_executor(
         start = time.perf_counter()
         # Use a separate thread with timeout since InterpreterPoolExecutor
         # doesn't support per-call timeout natively
-        from threading import Thread
         import queue
+        from threading import Thread
 
         result_queue: queue.Queue = queue.Queue()
         def target():
@@ -330,7 +331,7 @@ def benchmark_transient_artifact_compression(
 
 # ── Area C: executor.map buffersize scan ────────────────────────────────────
 
-def check_executor_map_buffersize() -> List[dict]:
+def check_executor_map_buffersize() -> list[dict]:
     """Return known production sites. Already verified content_miner has buffersize=8."""
     return [
         {"file": "tools/content_miner.py", "line": 1337, "status": "buffersize=8_F214M-B"},
@@ -449,7 +450,7 @@ def run_all():
         area_a_results.append(result)
         status = result.verdict
         if result.verdict == "TIMEOUT":
-            status = f"TIMEOUT (>3s)"
+            status = "TIMEOUT (>3s)"
         elif result.interp_ms < result.serial_ms * 10:
             status = f"{result.verdict} ({result.serial_ms/result.interp_ms:.2f}x vs TPE)"
         else:

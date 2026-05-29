@@ -5,13 +5,15 @@ This module provides robust data validation functions with comprehensive
 error handling, type safety, and performance optimization for M1 systems.
 """
 
-from typing import Any, Dict, List, Optional, Union, TypeVar, Generic
-from dataclasses import dataclass
-from enum import Enum
-import re
+from __future__ import annotations
+
 import json
-from datetime import datetime
 import logging
+import re
+from dataclasses import dataclass
+from datetime import datetime
+from enum import Enum
+from typing import Any, TypeVar
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -19,7 +21,7 @@ logger = logging.getLogger(__name__)
 
 # Generic type variables for better type safety
 T = TypeVar('T')
-ValidationResult = Dict[str, Union[bool, str, List[str]]]
+ValidationResult = dict[str, bool | str | list[str]]
 
 
 class ValidationSeverity(Enum):
@@ -38,7 +40,7 @@ class ValidationError:
     severity: ValidationSeverity
     timestamp: datetime
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
         return {
             'field': self.field,
@@ -67,9 +69,9 @@ class DataValidator:
         Args:
             cache_size: Maximum number of validation results to cache
         """
-        self._cache: Dict[str, ValidationResult] = {}
+        self._cache: dict[str, ValidationResult] = {}
         self._cache_size = cache_size
-        self._custom_validators: Dict[str, callable] = {}
+        self._custom_validators: dict[str, callable] = {}
 
         # Pre-compiled regex patterns for performance
         self._email_pattern = re.compile(
@@ -96,7 +98,7 @@ class DataValidator:
         if cache_key in self._cache:
                     return self._cache[cache_key]
 
-        errors: List[ValidationError] = []
+        errors: list[ValidationError] = []
 
         # Basic structure validation
         if not email or not isinstance(email, str):
@@ -150,7 +152,7 @@ class DataValidator:
         success = len([e for e in errors if e.severity == ValidationSeverity.ERROR]) == 0
         return self._create_result(success, errors, cache_key)
 
-    def validate_url(self, url: str, allowed_schemes: Optional[List[str]] = None) -> ValidationResult:
+    def validate_url(self, url: str, allowed_schemes: list[str] | None = None) -> ValidationResult:
         """
         Validate URL with configurable scheme restrictions.
 
@@ -169,7 +171,7 @@ class DataValidator:
         if cache_key in self._cache:
                     return self._cache[cache_key]
 
-        errors: List[ValidationError] = []
+        errors: list[ValidationError] = []
 
         # Basic validation
         if not url or not isinstance(url, str):
@@ -212,7 +214,7 @@ class DataValidator:
         success = len([e for e in errors if e.severity == ValidationSeverity.ERROR]) == 0
         return self._create_result(success, errors, cache_key)
 
-    def validate_json_schema(self, data: Dict[str, Any], schema: Dict[str, Any]) -> ValidationResult:
+    def validate_json_schema(self, data: dict[str, Any], schema: dict[str, Any]) -> ValidationResult:
         """
         Validate data against a JSON schema with detailed error reporting.
 
@@ -228,7 +230,7 @@ class DataValidator:
         if cache_key in self._cache:
                     return self._cache[cache_key]
 
-        errors: List[ValidationError] = []
+        errors: list[ValidationError] = []
 
         try:
             # Basic structure validation
@@ -322,7 +324,7 @@ class DataValidator:
         self._custom_validators[name] = validator_func
         logger.info(f"Added custom validator: {name}")
 
-    def validate_with_custom(self, data: Any, validator_names: List[str]) -> ValidationResult:
+    def validate_with_custom(self, data: Any, validator_names: list[str]) -> ValidationResult:
         """
         Validate data using multiple custom validators.
 
@@ -333,7 +335,7 @@ class DataValidator:
         Returns:
             Combined validation result from all specified validators
         """
-        all_errors: List[ValidationError] = []
+        all_errors: list[ValidationError] = []
 
         for validator_name in validator_names:
             if validator_name not in self._custom_validators:
@@ -397,7 +399,7 @@ class DataValidator:
 
                     return True  # Unknown type, assume valid
 
-    def _create_result(self, success: bool, errors: List[ValidationError], cache_key: str) -> ValidationResult:
+    def _create_result(self, success: bool, errors: list[ValidationError], cache_key: str) -> ValidationResult:
         """Create validation result and cache it."""
         result = {
             'valid': success,
@@ -422,7 +424,7 @@ class DataValidator:
         self._cache.clear()
         logger.info("Validation cache cleared")
 
-    def get_cache_stats(self) -> Dict[str, Any]:
+    def get_cache_stats(self) -> dict[str, Any]:
         """Get cache performance statistics."""
         return {
             'cache_size': len(self._cache),
@@ -432,7 +434,7 @@ class DataValidator:
         }
 
 
-def create_sample_schema() -> Dict[str, Any]:
+def create_sample_schema() -> dict[str, Any]:
     """Create a sample JSON schema for demonstration."""
     return {
         "type": "object",
@@ -574,7 +576,6 @@ def demonstrate_validator() -> None:
 # =============================================================================
 
 import uuid
-from typing import List
 
 
 def generate_uuid() -> str:
@@ -582,14 +583,14 @@ def generate_uuid() -> str:
     return str(uuid.uuid4())
 
 
-def calculate_confidence(scores: List[float]) -> float:
+def calculate_confidence(scores: list[float]) -> float:
     """Calculate average confidence score from list."""
     if not scores:
         return 0.0
     return sum(scores) / len(scores)
 
 
-def calculate_weighted_confidence(scores: List[tuple]) -> float:
+def calculate_weighted_confidence(scores: list[tuple]) -> float:
     """Calculate weighted confidence from (score, weight) tuples."""
     if not scores:
         return 0.0
@@ -601,39 +602,39 @@ def calculate_weighted_confidence(scores: List[tuple]) -> float:
 
 
 def extract_keywords(
-    text: str, 
-    min_length: int = 3, 
+    text: str,
+    min_length: int = 3,
     max_keywords: int = 10,
-    stopwords: Optional[set] = None
-) -> List[str]:
+    stopwords: set | None = None
+) -> list[str]:
     """
     Extract keywords from text using frequency analysis.
-    
+
     Args:
         text: Text to analyze
         min_length: Minimum keyword length
         max_keywords: Maximum keywords to extract
         stopwords: Words to ignore
-        
+
     Returns:
         List of keywords sorted by frequency
     """
     if not text:
         return []
-    
+
     if stopwords is None:
         stopwords = {
             'the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to',
             'for', 'of', 'with', 'by', 'from', 'as', 'is', 'was', 'are'
         }
-    
+
     words = re.findall(r'\b[a-zA-Z]+\b', text.lower())
     word_freq = {}
-    
+
     for word in words:
         if len(word) >= min_length and word not in stopwords:
             word_freq[word] = word_freq.get(word, 0) + 1
-    
+
     sorted_words = sorted(word_freq.items(), key=lambda x: x[1], reverse=True)
     return [word for word, _ in sorted_words[:max_keywords]]
 
@@ -642,13 +643,13 @@ def calculate_similarity(text1: str, text2: str) -> float:
     """Calculate Jaccard similarity between two texts."""
     words1 = set(re.findall(r'\b\w+\b', text1.lower()))
     words2 = set(re.findall(r'\b\w+\b', text2.lower()))
-    
+
     if not words1 or not words2:
         return 0.0
-    
+
     intersection = len(words1 & words2)
     union = len(words1 | words2)
-    
+
     return intersection / union if union > 0 else 0.0
 
 

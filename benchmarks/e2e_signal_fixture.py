@@ -23,16 +23,14 @@ import socket
 import sys
 import threading
 import time
-from http.server import HTTPServer, BaseHTTPRequestHandler
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from typing import Any
 
 PROJECT_ROOT = Path(__file__).parent.parent.resolve()
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from patterns.pattern_matcher import get_pattern_matcher
 from fetching.public_fetcher import async_fetch_public_text
-
 
 # ============================================================================
 # FIXTURE HTML — contains OSINT patterns that PatternMatcher detects

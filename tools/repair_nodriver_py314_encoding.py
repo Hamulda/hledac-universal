@@ -21,8 +21,8 @@ Usage:
 from __future__ import annotations
 
 import importlib.util
-import sys
 import os
+import sys
 
 # CDP files known to have CRLF issues in nodriver 0.48.x
 _CDP_FILES_TO_REPAIR = [
@@ -67,7 +67,7 @@ def _repair_file(file_path: str) -> bool:
         return False
 
     # Read with universal newlines, write with LF only
-    with open(file_path, "r", newline=None) as fh:
+    with open(file_path, newline=None) as fh:
         content = fh.read()
 
     with open(file_path, "w", newline="\n") as fh:

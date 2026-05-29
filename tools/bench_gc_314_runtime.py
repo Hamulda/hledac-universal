@@ -46,7 +46,6 @@ import signal
 import sys
 import time
 from dataclasses import dataclass, field
-from typing import Optional
 
 try:
     import psutil
@@ -112,11 +111,10 @@ class BenchmarkReport:
 
 def get_gc_snapshot() -> GCSnapshot:
     try:
-        collections = gc.collect(0)  # get counts without collecting
+        gc.collect(0)  # get counts without collecting
     except TypeError:
         # Python <3.11
         gc.collect()
-        collections = 0
     return GCSnapshot(
         threshold=gc.get_threshold(),
         count=gc.get_count(),
@@ -221,7 +219,7 @@ async def _boot_smoke(duration_s: float = 35) -> dict:
 
     # Import key modules
     succeeded, failed = await _import_hledac_modules()
-    
+
     # Let it run for ~duration_s
     remaining = duration_s - (time.monotonic() - start)
     if remaining > 0:
@@ -255,7 +253,7 @@ async def run_phase(name: str, coro, timeout_s: float = 60) -> PhaseResult:
             result = await coro()
         if isinstance(result, dict):
             errors.extend(result.get('errors', []))
-    except asyncio.TimeoutError:
+    except TimeoutError:
         errors.append(f"Phase timed out after {timeout_s}s")
     except Exception as e:
         errors.append(str(e))
@@ -296,12 +294,12 @@ def render_report(report: BenchmarkReport) -> str:
         "# F214G: Python 3.14.4 vs 3.14.5+ GC Reality Benchmark",
         "",
         f"**Generated:** {time.strftime('%Y-%m-%d %H:%M:%S')}",
-        f"**Platform:** MacBook Air M1 8GB, Darwin",
+        "**Platform:** MacBook Air M1 8GB, Darwin",
         "",
         "## Environment",
         "",
-        f"| Item | Value |",
-        f"|------|-------|",
+        "| Item | Value |",
+        "|------|-------|",
         f"| Python version | `{report.python_version}` |",
         f"| Python version_info | `{report.python_version_info}` |",
         f"| gc.threshold | `{report.gc_threshold}` |",
@@ -340,8 +338,8 @@ def render_report(report: BenchmarkReport) -> str:
         lines.extend([
             f"### Phase: {phase.name}",
             "",
-            f"| Metric | Value |",
-            f"|--------|-------|",
+            "| Metric | Value |",
+            "|--------|-------|",
             f"| Wall clock | {phase.wall_clock_s:.2f}s |",
             f"| GC collections delta | {phase.gc_collections_delta} |",
             f"| gc.threshold before | `{phase.gc_before.threshold}` |",
@@ -462,10 +460,7 @@ def _sigint_handler(signum, frame):
 # =============================================================================
 
 async def main() -> int:
-    if sys.version_info >= (3, 14):
-        parser = argparse.ArgumentParser(description="F214G GC Reality Benchmark", suggest_on_error=True, color=True)
-    else:
-        parser = argparse.ArgumentParser(description="F214G GC Reality Benchmark")
+    parser = argparse.ArgumentParser(description="F214G GC Reality Benchmark", suggest_on_error=True, color=True)
     parser.add_argument(
         "--label",
         default="auto",
@@ -515,7 +510,7 @@ async def main() -> int:
     swap_baseline_mb = _get_swap_used_mb()
     swap_peak_mb = 0.0
     if psutil:
-        vm_start = psutil.virtual_memory()
+        psutil.virtual_memory()
         swap_peak_mb = _get_swap_used_mb()
 
     # Phase 1: Baseline GC snapshot
@@ -550,7 +545,7 @@ async def main() -> int:
 
     # Track swap peak
     if psutil:
-        vm_now = psutil.virtual_memory()
+        psutil.virtual_memory()
         swap_now = _get_swap_used_mb()
         swap_peak_mb = max(swap_peak_mb, swap_now)
 
@@ -568,7 +563,7 @@ async def main() -> int:
 
     # Track swap peak
     if psutil:
-        vm_now = psutil.virtual_memory()
+        psutil.virtual_memory()
         swap_now = _get_swap_used_mb()
         swap_peak_mb = max(swap_peak_mb, swap_now)
 
@@ -585,7 +580,7 @@ async def main() -> int:
     # Final GC snapshot
     gc_final = get_gc_snapshot()
     if psutil:
-        vm_final = psutil.virtual_memory()
+        psutil.virtual_memory()
         swap_final = _get_swap_used_mb()
         swap_peak_mb = max(swap_peak_mb, swap_final)
 

@@ -126,7 +126,8 @@ class TestFailSoftPastebinMonitor:
     async def test_run_returns_empty_on_circuit_open(self):
         """run() returns [] when circuit breaker is open."""
         import time
-        from hledac.universal.intelligence.pastebin_monitor import run, _circuit
+
+        from hledac.universal.intelligence.pastebin_monitor import _circuit, run
 
         # Force circuit open: set recent opened_at so it hasn't reset yet
         _circuit.failures = 999
@@ -177,7 +178,7 @@ class TestNoParentIntelligenceImports:
         """live_public_pipeline does not import from parent intelligence/."""
         pipeline_path = "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/pipeline/live_public_pipeline.py"
 
-        with open(pipeline_path, 'r') as f:
+        with open(pipeline_path) as f:
             content = f.read()
 
             # Check for parent intelligence imports
@@ -196,7 +197,7 @@ class TestNoParentIntelligenceImports:
         scheduler_path = "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/runtime/sprint_scheduler.py"
 
         try:
-            with open(scheduler_path, 'r') as f:
+            with open(scheduler_path) as f:
                 content = f.read()
 
             forbidden_imports = [
@@ -249,7 +250,8 @@ class TestBoundedBehavior:
 
     def test_academic_semaphore_bounded(self):
         """academic_discovery uses bounded Semaphore(5)."""
-        from hledac.universal.intelligence import academic_discovery
         import inspect
+
+        from hledac.universal.intelligence import academic_discovery
         source = inspect.getsource(academic_discovery.search_academic_all)
         assert "Semaphore(5)" in source

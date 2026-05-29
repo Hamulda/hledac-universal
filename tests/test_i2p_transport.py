@@ -16,11 +16,12 @@ Invariant table:
 """
 from __future__ import annotations
 
-import pytest
-import sys
 import os
+import sys
+from unittest.mock import MagicMock, patch
+
 import anyio
-from unittest.mock import patch, MagicMock
+import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 
@@ -76,6 +77,7 @@ class TestI2PSessionPool:
 
         # Re-import to pick up env var (module-level constant)
         import importlib
+
         from hledac.universal.fetching import public_fetcher as pf
         importlib.reload(pf)
 
@@ -84,6 +86,7 @@ class TestI2PSessionPool:
     def test_get_i2p_session_creates_session(self):
         """_get_i2p_session creates aiohttp.ClientSession with ProxyConnector."""
         import importlib
+
         from hledac.universal.fetching import public_fetcher as pf
         importlib.reload(pf)
 
@@ -120,6 +123,7 @@ class TestI2PSessionPool:
     def test_get_i2p_session_injects_provider(self):
         """_get_i2p_session uses injected provider when available."""
         import importlib
+
         from hledac.universal.fetching import public_fetcher as pf
         importlib.reload(pf)
 
@@ -143,6 +147,7 @@ class TestI2PFallback:
     def test_get_i2p_session_raises_on_missing_dep(self):
         """Missing aiohttp_socks raises RuntimeError."""
         import importlib
+
         from hledac.universal.fetching import public_fetcher as pf
         importlib.reload(pf)
 

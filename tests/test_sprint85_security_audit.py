@@ -13,10 +13,10 @@ Minimal-diff security tests for network_recon:
 Tests verify fixes from Sprint 85 security audit.
 """
 
-import asyncio
-import pytest
-import sys
 import os
+import sys
+
+import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
@@ -27,13 +27,14 @@ class TestSprint85OfflineMode:
     def test_network_recon_handler_checks_offline_mode(self):
         """Verify: offline mode check exists in handler."""
         import inspect
+
         from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
 
         source_file = inspect.getsourcefile(FullyAutonomousOrchestrator)
         if source_file is None:
             pytest.skip("Source file not found")
 
-        with open(source_file, 'r') as f:
+        with open(source_file) as f:
             content = f.read()
 
         # Find network_recon_handler section
@@ -58,7 +59,7 @@ class TestSprint85OfflineMode:
 
             # Verify offline mode is active
             from hledac.universal.project_types import is_offline_mode
-            assert is_offline_mode() == True
+            assert is_offline_mode()
 
         finally:
             if original:
@@ -92,7 +93,7 @@ class TestSprint85PrivateIPFiltering:
         ]
 
         for ip in private_ips:
-            assert NetworkReconnaissance._is_private_ip(ip) == True, f"{ip} should be private"
+            assert NetworkReconnaissance._is_private_ip(ip), f"{ip} should be private"
 
         # Test public IPs
         public_ips = [
@@ -102,7 +103,7 @@ class TestSprint85PrivateIPFiltering:
         ]
 
         for ip in public_ips:
-            assert NetworkReconnaissance._is_private_ip(ip) == False, f"{ip} should be public"
+            assert not NetworkReconnaissance._is_private_ip(ip), f"{ip} should be public"
 
     def test_private_nets_defined(self):
         """Verify: _PRIVATE_NETS uses ipaddress module."""
@@ -119,10 +120,11 @@ class TestSprint85NoBlockingSleep:
     def test_network_recon_no_time_sleep(self):
         """Verify: network_reconnaissance.py doesn't use time.sleep."""
         import inspect
+
         from hledac.universal.intelligence.network_reconnaissance import NetworkReconnaissance
 
         source_file = inspect.getsourcefile(NetworkReconnaissance)
-        with open(source_file, 'r') as f:
+        with open(source_file) as f:
             content = f.read()
 
         # Check for blocking patterns (excluding comments)
@@ -134,10 +136,11 @@ class TestSprint85NoBlockingSleep:
     def test_network_recon_uses_async_resolver(self):
         """Verify: network_recon uses dns.asyncresolver (not sync)."""
         import inspect
+
         from hledac.universal.intelligence.network_reconnaissance import DNSEnumerator
 
         source_file = inspect.getsourcefile(DNSEnumerator)
-        with open(source_file, 'r') as f:
+        with open(source_file) as f:
             content = f.read()
 
         # Verify async resolver is used
@@ -157,10 +160,11 @@ class TestSprint85TimeoutDiscipline:
     def test_handler_has_timeout(self):
         """Verify: handler has bounded timeout constant."""
         import inspect
+
         from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
 
         source_file = inspect.getsourcefile(FullyAutonomousOrchestrator)
-        with open(source_file, 'r') as f:
+        with open(source_file) as f:
             content = f.read()
 
         assert '_RECON_TIMEOUT_PER_DOMAIN' in content
@@ -185,10 +189,11 @@ class TestSprint85BoundedCache:
     def test_scanned_domains_is_bounded(self):
         """Verify: _scanned_domains is bounded."""
         import inspect
+
         from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
 
         source_file = inspect.getsourcefile(FullyAutonomousOrchestrator)
-        with open(source_file, 'r') as f:
+        with open(source_file) as f:
             content = f.read()
 
         # Verify bounded constant exists
@@ -201,10 +206,11 @@ class TestSprint85NoBruteForce:
     def test_network_recon_bruteforce_disabled(self):
         """Verify: include_subdomains=False in handler."""
         import inspect
+
         from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
 
         source_file = inspect.getsourcefile(FullyAutonomousOrchestrator)
-        with open(source_file, 'r') as f:
+        with open(source_file) as f:
             content = f.read()
 
         # Find handler
@@ -222,10 +228,11 @@ class TestSprint85ItertoolsImport:
     def test_itertools_is_imported(self):
         """Verify: itertools is imported in network_reconnaissance.py."""
         import inspect
+
         from hledac.universal.intelligence.network_reconnaissance import NetworkReconnaissance
 
         source_file = inspect.getsourcefile(NetworkReconnaissance)
-        with open(source_file, 'r') as f:
+        with open(source_file) as f:
             content = f.read()
 
         # Verify itertools import exists
@@ -238,10 +245,11 @@ class TestSprint85BoundedForwarding:
     def test_forwarding_constants_defined(self):
         """Verify: bounded forwarding constants exist."""
         import inspect
+
         from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
 
         source_file = inspect.getsourcefile(FullyAutonomousOrchestrator)
-        with open(source_file, 'r') as f:
+        with open(source_file) as f:
             content = f.read()
 
         # Verify bounded constants
@@ -255,10 +263,11 @@ class TestSprint85WildcardSuppression:
     def test_wildcard_still_blocks_forwarding(self):
         """Verify: wildcard detection still suppresses forwarding."""
         import inspect
+
         from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
 
         source_file = inspect.getsourcefile(FullyAutonomousOrchestrator)
-        with open(source_file, 'r') as f:
+        with open(source_file) as f:
             content = f.read()
 
         # Find handler
@@ -278,13 +287,14 @@ class TestEmergencyPurgeSecurity:
     def test_emergency_purge_no_audit_deletion(self):
         """P0-5: emergency_purge must NOT delete audit logs (compliance requirement)."""
         import inspect
+
         from hledac.universal.security.deep_research_security import DeepResearchSecurity
 
         source_file = inspect.getsourcefile(DeepResearchSecurity)
         if source_file is None:
             pytest.skip("Source file not found")
 
-        with open(source_file, 'r') as f:
+        with open(source_file) as f:
             content = f.read()
 
         # Find emergency_purge method
@@ -313,13 +323,14 @@ class TestEmergencyPurgeSecurity:
     def test_emergency_purge_calls_session_cleanup(self):
         """P0-5: emergency_purge must call emergency_cleanup on all sessions."""
         import inspect
+
         from hledac.universal.security.deep_research_security import DeepResearchSecurity
 
         source_file = inspect.getsourcefile(DeepResearchSecurity)
         if source_file is None:
             pytest.skip("Source file not found")
 
-        with open(source_file, 'r') as f:
+        with open(source_file) as f:
             content = f.read()
 
         # Find emergency_purge method

@@ -11,9 +11,10 @@ import time
 sys.path.insert(0, '/Users/vojtechhamada/PycharmProjects/Hledac')
 
 async def diagnose_p95():
-    from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
-    import psutil
     import random
+
+    import psutil
+    from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
 
     print("=" * 60)
     print("[DIAGNOSTIC] P95 Latency Root Cause Hunt")
@@ -78,7 +79,7 @@ async def diagnose_p95():
     latency_by_action_p95 = result.get('latency_by_action_p95_ms', {})
     action_selection_counts = result.get('action_selection_counts', {})
 
-    print(f"\n[Action Latency Breakdown]:")
+    print("\n[Action Latency Breakdown]:")
     print(f"{'Action':<25} {'Avg (ms)':<12} {'P95 (ms)':<12} {'Count':<8}")
     print("-" * 60)
     for action in sorted(latency_by_action_avg.keys(), key=lambda x: latency_by_action_avg.get(x, 0), reverse=True):
@@ -103,7 +104,7 @@ async def diagnose_p95():
     # Top slowest actions by P95
     if latency_by_action_p95:
         top3 = sorted(latency_by_action_p95.items(), key=lambda x: x[1], reverse=True)[:3]
-        print(f"\nTop 3 slowest actions (P95):")
+        print("\nTop 3 slowest actions (P95):")
         for action, lat in top3:
             print(f"  {action}: {lat:.1f}ms")
 

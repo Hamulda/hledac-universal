@@ -22,10 +22,8 @@ import base64
 import logging
 import os
 import time
-from typing import List, Optional, Tuple
 
 import aiohttp
-
 from hledac.universal.knowledge.duckdb_store import CanonicalFinding
 from hledac.universal.utils.rate_limiters import get_limiter
 
@@ -36,13 +34,13 @@ CENSYS_VIEW_API = "https://search.censys.io/api/v1/view/ipv4"
 RATE_LIMIT_KEY = "censys_api"
 
 
-def _get_credentials() -> Tuple[Optional[str], Optional[str]]:
+def _get_credentials() -> tuple[str | None, str | None]:
     api_id = os.environ.get("CENSYS_API_ID") or None
     api_secret = os.environ.get("CENSYS_SECRET") or None
     return api_id, api_secret
 
 
-def _build_findings(query: str, raw_results: List[dict], ts_now: float) -> List[CanonicalFinding]:
+def _build_findings(query: str, raw_results: list[dict], ts_now: float) -> list[CanonicalFinding]:
     findings = []
     for host in raw_results:
         ip = host.get("ip", "") or ""
@@ -78,9 +76,9 @@ def _build_findings(query: str, raw_results: List[dict], ts_now: float) -> List[
 async def search_censys_lane(
     query: str,
     limit: int = 20,
-    api_id: Optional[str] = None,
-    api_secret: Optional[str] = None,
-) -> Tuple[List[CanonicalFinding], List[dict]]:
+    api_id: str | None = None,
+    api_secret: str | None = None,
+) -> tuple[list[CanonicalFinding], list[dict]]:
     """
     Search Censys and return CanonicalFindings.
 
@@ -169,7 +167,7 @@ class CensysLane:
             "errors": 0,
         }
 
-    async def query(self, target: str) -> List[CanonicalFinding]:
+    async def query(self, target: str) -> list[CanonicalFinding]:
         """Query Censys for target (domain, cert keyword, or search query)."""
         self._stats["queries"] += 1
         findings, _ = await search_censys_lane(target, limit=20)

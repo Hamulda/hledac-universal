@@ -51,7 +51,7 @@ BACKEND_VERSION = getattr(ahocorasick, "__version__", "unknown")
 
 def get_backend_info() -> dict:
     backend = "pyahocorasick"
-    if _RUST_ACO_AVAILABLE:
+    if _RUST_ACO_AVAILABLE and _matcher_state._rust_aco is not None:
         backend = "rust_aho_corasick"
     return {
         "backend": backend,
@@ -596,10 +596,14 @@ _SEED_REGISTRY: tuple[tuple[str, str], ...] = (
 # -----------------------------------------------------------------------------
 # Singleton state
 # -----------------------------------------------------------------------------
+# Pattern label lookup index — O(1) instead of O(n) per hit
+_PATTERN_LABEL_INDEX: dict[str, str] = {}
+
+
 class _PatternMatcherState:
     """Holds the singleton PatternMatcher instance and its lifecycle state."""
 
-    __slots__ = ("_automaton", "_pattern_version", "_registry_snapshot", "_dirty", "_bootstrap_applied")
+    __slots__ = ("_automaton", "_pattern_version", "_registry_snapshot", "_dirty", "_bootstrap_applied", "_rust_aco")
 
     def __init__(self) -> None:
         self._automaton: ahocorasick.Automaton | None = None
@@ -607,6 +611,7 @@ class _PatternMatcherState:
         self._registry_snapshot: frozenset[tuple[str, str]] = frozenset()
         self._dirty: bool = True  # needs rebuild on first match
         self._bootstrap_applied: bool = False
+        self._rust_aco: AhoCorasickMatcher | None = None
 
     def pattern_count(self) -> int:
         """Return number of configured patterns. O(1)."""
@@ -652,8 +657,11 @@ def configure_patterns(registry: tuple[tuple[str, str], ...]) -> None:
     if new_snapshot == _matcher_state._registry_snapshot:
         return  # no-op on identical registry
     _matcher_state._registry_snapshot = new_snapshot
+    global _PATTERN_LABEL_INDEX
+    _PATTERN_LABEL_INDEX = {p.lower(): l for p, l in registry}
     _matcher_state._pattern_version += 1
     _matcher_state._dirty = True
+    _matcher_state._rust_aco = None  # invalidate Rust instance on rebuild
 
 
 def match_text(
@@ -689,26 +697,44 @@ def match_text(
     # Sprint F192D DF-1 FIX: reuse text_lower in regex post-pass (was re-assigned redundantly)
     automaton_text = text_lower
 
-    for end_idx, (pattern, label) in automaton.iter(automaton_text):
-        start_idx = end_idx - len(pattern) + 1
-        value = text[start_idx:end_idx + 1]
+    # === Aho-Corasick scan ===
+    if _RUST_ACO_AVAILABLE and _matcher_state._rust_aco is not None:
+        # Rust path: find_all returns (start, end_exclusive, matched_str)
+        # end is EXCLUSIVE — identical to Python end_idx+1 convention
+        for r_start, r_end, matched_str in _matcher_state._rust_aco.scan(text_lower):
+            if boundary_policy == "word":
+                before_ok = r_start == 0 or not text[r_start - 1].isalnum()
+                after_ok = r_end >= len(text) or not text[r_end].isalnum()
+                if not (before_ok and after_ok):
+                    continue
+            label = _PATTERN_LABEL_INDEX.get(matched_str)
+            hits.append(PatternHit(
+                pattern=sys.intern(matched_str),
+                start=r_start,
+                end=r_end,
+                value=text[r_start:r_end],
+                label=sys.intern(label) if label else None,
+            ))
+    else:
+        # Python fallback — pyahocorasick Automaton.iter
+        for end_idx, (pattern, label) in automaton.iter(automaton_text):
+            start_idx = end_idx - len(pattern) + 1
+            value = text[start_idx:end_idx + 1]
 
-        # Boundary post-check
-        if boundary_policy == "word":
-            before_ok = start_idx == 0 or not text[start_idx - 1].isalnum()
-            after_ok = (end_idx + 1) >= len(text) or not text[end_idx + 1].isalnum()
-            if not (before_ok and after_ok):
-                continue
+            # Boundary post-check
+            if boundary_policy == "word":
+                before_ok = start_idx == 0 or not text[start_idx - 1].isalnum()
+                after_ok = (end_idx + 1) >= len(text) or not text[end_idx + 1].isalnum()
+                if not (before_ok and after_ok):
+                    continue
 
-        hits.append(
-            PatternHit(
+            hits.append(PatternHit(
                 pattern=sys.intern(pattern),
                 start=start_idx,
                 end=end_idx + 1,
                 value=value,
                 label=sys.intern(label) if label else None,
-            )
-        )
+            ))
 
     # Sprint 8QB V4 + Sprint 8SC V5: regex post-pass for structured patterns
     # Run after AC scan so both literal+regex hits are returned.
@@ -764,6 +790,7 @@ def reset_pattern_matcher() -> None:
     but in un-built (dirty) condition.
     """
     _matcher_state._automaton = None
+    _matcher_state._rust_aco = None
     _matcher_state._pattern_version = 0
     _matcher_state._registry_snapshot = frozenset()
     _matcher_state._dirty = True
@@ -812,6 +839,12 @@ def _build_automaton() -> None:
 
     automaton.make_automaton()
     _matcher_state._automaton = automaton
+
+    # Rust path: build alongside — only patterns, labels via _PATTERN_LABEL_INDEX
+    if _RUST_ACO_AVAILABLE:
+        patterns_list = [p.lower() for p, _l in _matcher_state._registry_snapshot]
+        _matcher_state._rust_aco = RustAhoCorasickMatcher(patterns_list)
+
     _matcher_state._dirty = False
 
 

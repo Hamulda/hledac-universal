@@ -16,7 +16,6 @@ import asyncio
 import os
 import sys
 import time
-import uuid
 from pathlib import Path
 
 # Add project root to path
@@ -173,7 +172,7 @@ async def main():
                 # Check total counts
                 total_runs = con.execute("SELECT COUNT(*) FROM shadow_runs").fetchone()[0]
                 total_findings_db = con.execute("SELECT COUNT(*) FROM shadow_findings").fetchone()[0]
-                print(f"\nTotal in DB:")
+                print("\nTotal in DB:")
                 print(f"  shadow_runs: {total_runs}")
                 print(f"  shadow_findings: {total_findings_db}")
 
@@ -203,18 +202,18 @@ async def main():
     print("=" * 60)
     print("FINAL REPORT — SPRINT 8BE")
     print("=" * 60)
-    print(f"SearXNG bring-up:     Podman container (searxng/searxng:latest)")
-    print(f"Config mounted:       settings.yml with JSON format enabled")
-    print(f"Settings fix:         secret_key + use_default_settings")
-    print(f"Downloaded:           podman (brew), searxng image, podman machine")
-    print(f"Provider:             SearXNG localhost:8080")
+    print("SearXNG bring-up:     Podman container (searxng/searxng:latest)")
+    print("Config mounted:       settings.yml with JSON format enabled")
+    print("Settings fix:         secret_key + use_default_settings")
+    print("Downloaded:           podman (brew), searxng image, podman machine")
+    print("Provider:             SearXNG localhost:8080")
     print(f"Provider hit rate:    {hits_q}/{total_q} = {hits_q/total_q*100:.1f}%")
     print(f"Bounded run duration: {total_wall:.1f}s")
     print(f"Total findings:       {total_findings}")
     print(f"DB path:              {db_path}")
     print(f"GHOST_DUCKDB_SHADOW:  {GHOST_DUCKDB_SHADOW}")
-    print(f"Import duckdb on boot: False (lazy)")
-    print(f"Feature flag OFF:     no-op (verified via _is_shadow_enabled)")
+    print("Import duckdb on boot: False (lazy)")
+    print("Feature flag OFF:     no-op (verified via _is_shadow_enabled)")
     print()
 
     # Classification

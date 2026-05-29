@@ -14,7 +14,6 @@ from __future__ import annotations
 import asyncio
 import random
 from dataclasses import dataclass, field
-from typing import Optional
 
 # ---------------------------------------------------------------------------
 # UA pool — rotatable, testable
@@ -40,7 +39,7 @@ class StealthResponse:
     status: int
     final_url: str
     body_bytes: bytes
-    content_type: Optional[str] = None
+    content_type: str | None = None
     headers: dict[str, str] = field(default_factory=dict)
     truncated: bool = False
 

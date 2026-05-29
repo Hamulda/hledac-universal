@@ -25,17 +25,15 @@ __all__ = [
 
 from dataclasses import dataclass
 
-from benchmarks.live_measurement_schema import MeasurementStatus, RunQualityVerdict
 from benchmarks.live_measurement_next_action import (
-    NextActionInput,
     _derive_next_action,
 )
 from benchmarks.live_measurement_quality import (
-    _is_active_domain_query,
-    _has_terminal_source_outcomes,
     _has_scheduler_exit_path,
+    _has_terminal_source_outcomes,
+    _is_active_domain_query,
 )
-
+from benchmarks.live_measurement_schema import MeasurementStatus, RunQualityVerdict
 
 # ---------------------------------------------------------------------------
 # LiveKpiInput
@@ -439,7 +437,7 @@ def _derive_live_kpi_from_input(inp: LiveKpiInput) -> dict:
                 }
             )
             if isinstance(nonfeed_attempted_families, list):
-                _has_pub_lower = any((_e.lower() == "public" for _e in nonfeed_attempted_families))
+                _has_pub_lower = any(_e.lower() == "public" for _e in nonfeed_attempted_families)
                 if not _has_pub_lower:
                     nonfeed_attempted_families.append("PUBLIC")
 

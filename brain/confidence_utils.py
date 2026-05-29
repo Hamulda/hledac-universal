@@ -12,7 +12,6 @@ Usage:
 from __future__ import annotations
 
 import math
-from typing import Tuple
 
 
 class BetaBinomial:
@@ -53,7 +52,7 @@ class BetaBinomial:
         """Return belief as posterior mean (0..1)."""
         return self.mean()
 
-    def credible_interval(self, p: float = 0.95) -> Tuple[float, float]:
+    def credible_interval(self, p: float = 0.95) -> tuple[float, float]:
         """Return credible interval (mean ± 2 std by default)."""
         std = math.sqrt(self.variance())
         lo = max(0.0, self.mean() - 2 * std)
@@ -69,6 +68,6 @@ class BetaBinomial:
         return {'alpha': self.alpha, 'beta': self.beta}
 
     @classmethod
-    def from_dict(cls, d: dict) -> 'BetaBinomial':
+    def from_dict(cls, d: dict) -> BetaBinomial:
         """Restore from dict."""
         return cls(alpha=d.get('alpha', 1.0), beta=d.get('beta', 1.0))

@@ -29,8 +29,9 @@ import asyncio
 import gc
 import logging
 import os
+from collections.abc import Awaitable, Callable
 from enum import Enum
-from typing import Any, Dict, Optional, Set, Callable, Awaitable, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from .project_types import AnalyzerResult
@@ -261,8 +262,8 @@ class CapabilityTruthStatus:
 
 def probe_capability_truth(
     capability: Capability,
-    registry: "CapabilityRegistry",
-    tool_contract_declarations: Optional[dict[str, set[str]]] = None,
+    registry: CapabilityRegistry,
+    tool_contract_declarations: dict[str, set[str]] | None = None,
 ) -> CapabilityTruthStatus:
     """
     F6: Probe all four truth layers for a capability.
@@ -336,7 +337,7 @@ def _get_tool_capability_declarations() -> dict[str, set[str]]:
 
 def get_capability_truth_matrix(
     capabilities: list[Capability],
-    registry: "CapabilityRegistry",
+    registry: CapabilityRegistry,
 ) -> dict[Capability, CapabilityTruthStatus]:
     """
     F6: Get truth matrix for multiple capabilities.
@@ -363,15 +364,15 @@ class CapabilityStatus:
     available: bool
     reason: str = ""
     module_path: str = ""
-    loader: Optional[Callable[[], Awaitable[bool]]] = None
+    loader: Callable[[], Awaitable[bool]] | None = None
 
 
 class CapabilityRegistry:
     """Registry tracking which capabilities are available and why."""
 
     def __init__(self):
-        self._status: Dict[Capability, CapabilityStatus] = {}
-        self._loaded: Set[Capability] = set()
+        self._status: dict[Capability, CapabilityStatus] = {}
+        self._loaded: set[Capability] = set()
         self._lock = asyncio.Lock()
 
     def register(
@@ -380,7 +381,7 @@ class CapabilityRegistry:
         available: bool = False,
         reason: str = "",
         module_path: str = "",
-        loader: Optional[Callable[[], Awaitable[bool]]] = None
+        loader: Callable[[], Awaitable[bool]] | None = None
     ) -> None:
         """Register a capability."""
         self._status[capability] = CapabilityStatus(
@@ -451,11 +452,11 @@ class CapabilityRegistry:
         self._loaded.discard(capability)
         logger.info(f"[CAPABILITY] {capability.value} unloaded")
 
-    def get_loaded(self) -> Set[Capability]:
+    def get_loaded(self) -> set[Capability]:
         """Get set of currently loaded capabilities."""
         return self._loaded.copy()
 
-    def get_all_available(self) -> Dict[Capability, str]:
+    def get_all_available(self) -> dict[Capability, str]:
         """Get all available capabilities with module paths."""
         return {
             cap: status.module_path
@@ -463,7 +464,7 @@ class CapabilityRegistry:
             if status.available
         }
 
-    def get_all_unavailable(self) -> Dict[Capability, str]:
+    def get_all_unavailable(self) -> dict[Capability, str]:
         """Get all unavailable capabilities with reasons."""
         return {
             cap: status.reason
@@ -496,12 +497,12 @@ class CapabilityRouter:
     This is the SECOND stage in the analyzer -> router -> registry pipeline.
 
     Supports two input modes:
-    1. Legacy: Dict[str, Any] analysis + strategy + depth (backward compatible)
+    1. Legacy: dict[str, Any] analysis + strategy + depth (backward compatible)
     2. Canonical: AnalyzerResult (from types.py)
 
     The AnalyzerResult path is the preferred canonical route.
 
-    Canonical output: Set[Capability] - passed to ToolRegistry for enforcement.
+    Canonical output: set[Capability] - passed to ToolRegistry for enforcement.
     """
 
     # Canonical capability signal keys (from AnalyzerResult.to_capability_signal())
@@ -512,7 +513,7 @@ class CapabilityRouter:
     ])
 
     # Mapping: source type -> required capabilities
-    SOURCE_CAPABILITIES: Dict[str, Set[Capability]] = {
+    SOURCE_CAPABILITIES: dict[str, set[Capability]] = {
         "surface_web": {Capability.RERANKING},
         "academic": {Capability.RERANKING, Capability.ENTITY_LINKING},
         "archive": {Capability.TEMPORAL, Capability.METADATA_EXTRACT},
@@ -522,7 +523,7 @@ class CapabilityRouter:
     }
 
     # Mapping: discovery depth -> additional capabilities
-    DEPTH_CAPABILITIES: Dict[str, Set[Capability]] = {
+    DEPTH_CAPABILITIES: dict[str, set[Capability]] = {
         "surface": set(),
         "deep": {Capability.PATTERN_MINING, Capability.INSIGHT},
         "extreme": {Capability.GRAPH_RAG, Capability.TEMPORAL, Capability.SNN},
@@ -533,7 +534,7 @@ class CapabilityRouter:
     }
 
     # Tool-to-capability mapping (scaffold for required_capabilities)
-    TOOL_CAPABILITIES: Dict[str, Set[Capability]] = {
+    TOOL_CAPABILITIES: dict[str, set[Capability]] = {
         "stealth_crawler": {Capability.STEALTH, Capability.DARK_WEB},
         "archive_discovery": {Capability.TEMPORAL, Capability.METADATA_EXTRACT},
         "leak_hunter": {Capability.STEALTH},
@@ -555,11 +556,11 @@ class CapabilityRouter:
     @classmethod
     def route(
         cls,
-        analysis: Dict[str, Any] | "AnalyzerResult",
+        analysis: dict[str, Any] | AnalyzerResult,
         strategy: Any = None,
         depth: Any = None,
         profile: str = "default"
-    ) -> Set[Capability]:
+    ) -> set[Capability]:
         """
         Determine required capabilities from research context.
 
@@ -572,13 +573,13 @@ class CapabilityRouter:
         Returns:
             Set of required capabilities
         """
-        required: Set[Capability] = set()
+        required: set[Capability] = set()
 
         # Base capabilities
         required.add(Capability.HERMES)
 
         # Build capability signal dict (canonical form)
-        signal: Dict[str, Any] = {}
+        signal: dict[str, Any] = {}
 
         # Canonical path: AnalyzerResult
         if hasattr(analysis, "to_capability_signal"):
@@ -686,7 +687,7 @@ class ModelLifecycleManager:
         # F650H: _active_models is LOCAL COMPAT state only — NOT canonical runtime truth.
         # Canonical model state lives in ModelManager._loaded_models.
         # This field tracks phase-level active set for capability-gate decisions only.
-        self._active_models: Set[Capability] = set()
+        self._active_models: set[Capability] = set()
 
     async def enforce_phase_models(self, phase_name: str) -> None:
         """
@@ -752,7 +753,7 @@ class ModelLifecycleManager:
 
         logger.info("[MODEL] All models released, GC completed")
 
-    def get_active_models(self) -> Set[Capability]:
+    def get_active_models(self) -> set[Capability]:
         """
         F650H: Return local capability-tracking state.
 
@@ -909,7 +910,7 @@ def create_default_registry() -> CapabilityRegistry:
     registry.register(
         capability=Capability.DHT,
         available=_dht_env,
-        reason=f"DHT enabled (HLEDAC_ENABLE_DHT=1)" if _dht_env else "DHT disabled via HLEDAC_ENABLE_DHT",
+        reason="DHT enabled (HLEDAC_ENABLE_DHT=1)" if _dht_env else "DHT disabled via HLEDAC_ENABLE_DHT",
         module_path="hledac.universal.dht.kademlia_node"
     )
 
@@ -923,7 +924,7 @@ def create_default_registry() -> CapabilityRegistry:
     registry.register(
         capability=Capability.QUANTUM_PQ,
         available=_pq_available,
-        reason=f"Real PQ crypto available (ML-KEM-768 + ML-DSA-65)" if _pq_available else "PQ crypto in SIMULATION mode (liboqs-python not installed)",
+        reason="Real PQ crypto available (ML-KEM-768 + ML-DSA-65)" if _pq_available else "PQ crypto in SIMULATION mode (liboqs-python not installed)",
         module_path="hledac.universal.security.quantum_safe"
     )
 
@@ -941,5 +942,18 @@ def create_default_registry() -> CapabilityRegistry:
         reason=f"Gopher transport enabled (env: {_gopher_env})" if _gopher_available else f"Gopher transport disabled (env: {_gopher_env})",
         module_path="hledac.universal.transport.gopher_transport"
     )
+
+    # F214R: BGP + Passive DNS adapters — gate on HLEDAC_ENABLE_BGP_PDNS=1
+    _bgp_pdns_env = os.environ.get("HLEDAC_ENABLE_BGP_PDNS", "").lower() in ("1", "true", "yes", "on")
+    try:
+        from hledac.universal.intelligence.bgp_passive_dns_adapter import (
+            BGP_LOOKUP_AVAILABLE,
+            PASSIVE_DNS_AVAILABLE,
+        )
+        _bgp_pdns_available = _bgp_pdns_env and (BGP_LOOKUP_AVAILABLE or PASSIVE_DNS_AVAILABLE)
+    except ImportError:
+        BGP_LOOKUP_AVAILABLE = False
+        PASSIVE_DNS_AVAILABLE = False
+        _bgp_pdns_available = False
 
     return registry

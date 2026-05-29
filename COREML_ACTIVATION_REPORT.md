@@ -169,3 +169,64 @@ python scripts/export_bge_to_coreml.py --dry-run
 ```
 
 **Note on import errors in pyright:** These are pre-existing workspace-level resolution issues (relative imports `from hledac.universal...` fail outside the package context). Not introduced by this sprint — same pattern exists across all `hledac.universal` modules when run as standalone scripts.
+
+---
+
+## SPRINT F218A Update — 2026-05-27
+
+### Export Path Attempted
+
+**Step A — TorchScript trace path (FAILED)**
+
+torch 2.12 + coremltools 8.2 MIL conversion incompatibility. Error at `m/embeddings/37`:
+```
+TypeError: only 0-dimensional arrays can be converted to Python scalars
+```
+Root cause: torch 2.12 is NOT tested with coremltools 8.2 (torch ≤2.5.0 required).
+
+**Step B — ONNX direct path (NOT SUPPORTED)**
+
+coremltools 8.2 does NOT support `source='onnx'` — only `['auto', 'tensorflow', 'pytorch', 'milinternal']`. `onnx2coreml` CLI (separate package) needed for ONNX→CoreML conversion.
+
+**Pre-existing `bge-small-ort.onnx`:** `~/.hledac/models/bge-small-ort.onnx` (1.4MB + 127.3MB data) — not yet converted.
+
+### AllMiniLML6V2.mlmodel — ALREADY COMPILED ✅
+
+`~/.hledac/models/AllMiniLML6V2.mlmodel` (85.5MB) loads via coremltools 8.2:
+```
+compute_unit: ComputeUnit.ALL
+input: ['input_ids', 'attention_mask'] | output: ['var_570']
+```
+Fully compiled ANE model — available immediately.
+
+### Backend Status After fastembed Install
+
+```
+Backend:      cpu_fallback   ← fastembed now available
+UMA usage:    75.4% (3.3/8.0 GB)
+Latency:      2.8 ms/text    Throughput: 363 docs/s
+Embed dim:    384
+```
+
+### FastEmbed CPU Benchmark
+
+| Run | ms/text | docs/s |
+|-----|---------|--------|
+| 200 texts, batch 32 | 3.48 | 287 |
+
+### Path Forward
+
+1. **Primary:** `AllMiniLML6V2.mlmodel` via `ANEEmbedder` — RAM guard (80%) is blocker on current system
+2. **Alternative A:** `onnx2coreml` CLI for `bge-small-ort.onnx` → CoreML (separate package)
+3. **Alternative B:** Python 3.13 env with torch ≤2.5.0 for torchscript trace path
+4. **Alternative C:** `mlx_lm` MLX fallback for embeddings
+
+### RAM Guard Status
+
+- RAM 75.4% < 80% → guard **inactive** on current system
+- At export time: 75-81% (borderline)
+- `bge-small-en-v1.5.mlpackage` does NOT exist — ANE path blocked by missing export
+
+### Disk Space ✅
+
+228GB total, 11GB used, 43% — well above 5GB minimum.

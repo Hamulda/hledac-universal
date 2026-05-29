@@ -19,17 +19,11 @@ Unique Features Integrated:
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, List, Optional
 from dataclasses import dataclass, field
 from enum import Enum
+from typing import Any
 
-from .base import (
-    UniversalCoordinator,
-    OperationType,
-    DecisionResponse,
-    OperationResult,
-    MemoryPressureLevel
-)
+from .base import UniversalCoordinator
 
 logger = logging.getLogger(__name__)
 
@@ -63,8 +57,8 @@ class ValidationResult:
     """Result of validation operation."""
     valid: bool
     field: str
-    errors: List[Dict[str, Any]] = field(default_factory=list)
-    warnings: List[str] = field(default_factory=list)
+    errors: list[dict[str, Any]] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
     severity: ValidationSeverity = ValidationSeverity.INFO
 
 
@@ -74,19 +68,19 @@ class CleaningResult:
     success: bool
     content: str
     format: OutputFormat
-    metadata: Dict[str, Any] = field(default_factory=dict)
-    error: Optional[str] = None
+    metadata: dict[str, Any] = field(default_factory=dict)
+    error: str | None = None
 
 
 class UniversalValidationCoordinator(UniversalCoordinator):
     """
     Universal coordinator for validation and content cleaning.
-    
+
     Integrates validation backends:
     1. DataValidator - Email, URL, JSON schema validation
     2. ContentCleaner - HTML to Markdown/JSON cleaning
     3. LanguageDetector - Text language detection
-    
+
     Routing Strategy:
     - 'validate'/'check' → DataValidator
     - 'clean'/'convert'/'extract' → ContentCleaner
@@ -99,19 +93,19 @@ class UniversalValidationCoordinator(UniversalCoordinator):
             max_concurrent=max_concurrent,
             memory_aware=True
         )
-        
+
         # Validation subsystems (lazy initialization)
-        self._data_validator: Optional[Any] = None
-        self._content_cleaner: Optional[Any] = None
-        
+        self._data_validator: Any | None = None
+        self._content_cleaner: Any | None = None
+
         # Availability flags
         self._validator_available = False
         self._cleaner_available = False
-        
+
         # Statistics
         self._validations_performed = 0
         self._cleanings_performed = 0
-        self._custom_validators: Dict[str, Any] = {}
+        self._custom_validators: dict[str, Any] = {}
 
     # ========================================================================
     # Initialization
@@ -120,7 +114,7 @@ class UniversalValidationCoordinator(UniversalCoordinator):
     async def _do_initialize(self) -> bool:
         """Initialize validation subsystems."""
         initialized_any = False
-        
+
         # Try DataValidator
         try:
             from hledac.tools.preserved_logic.engine_core.data_validator import DataValidator
@@ -132,7 +126,7 @@ class UniversalValidationCoordinator(UniversalCoordinator):
             logger.warning("ValidationCoordinator: DataValidator not available")
         except Exception as e:
             logger.warning(f"ValidationCoordinator: DataValidator init failed: {e}")
-        
+
         # Try ContentCleaner
         try:
             from hledac.tools.preserved_logic.content_cleaner import ContentCleaner
@@ -144,7 +138,7 @@ class UniversalValidationCoordinator(UniversalCoordinator):
             logger.warning("ValidationCoordinator: ContentCleaner not available")
         except Exception as e:
             logger.warning(f"ValidationCoordinator: ContentCleaner init failed: {e}")
-        
+
         return initialized_any
 
     # ========================================================================
@@ -155,33 +149,33 @@ class UniversalValidationCoordinator(UniversalCoordinator):
         self,
         email: str,
         strict: bool = True
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Validate email address with comprehensive checks.
-        
+
         Integrated from: tools/preserved_logic/engine_core/data_validator.py
-        
+
         Features:
         - RFC 5321 compliance checking
         - Pattern validation with regex
         - Domain validity verification
         - Consecutive dots detection
         - Length validation (254 char limit)
-        
+
         Args:
             email: Email address to validate
             strict: Enable strict RFC compliance
-            
+
         Returns:
             Validation result with details
         """
         if not self._validator_available:
             return {'valid': False, 'error': 'DataValidator not available'}
-        
+
         try:
             result = self._data_validator.validate_email(email, strict=strict)
             self._validations_performed += 1
-            
+
             return {
                 'valid': result.get('valid', False),
                 'email': email,
@@ -190,7 +184,7 @@ class UniversalValidationCoordinator(UniversalCoordinator):
                 'warning_count': result.get('warning_count', 0),
                 'errors': result.get('errors', [])
             }
-            
+
         except Exception as e:
             logger.error(f"Email validation failed: {e}")
             return {'valid': False, 'error': str(e), 'email': email}
@@ -198,30 +192,30 @@ class UniversalValidationCoordinator(UniversalCoordinator):
     async def validate_url(
         self,
         url: str,
-        allowed_schemes: Optional[List[str]] = None
-    ) -> Dict[str, Any]:
+        allowed_schemes: list[str] | None = None
+    ) -> dict[str, Any]:
         """
         Validate URL with scheme restrictions.
-        
+
         Features:
         - Pattern validation
         - Scheme restriction checking
         - Length validation (2048 char limit)
-        
+
         Args:
             url: URL to validate
             allowed_schemes: List of allowed schemes (default: ['http', 'https'])
-            
+
         Returns:
             Validation result
         """
         if not self._validator_available:
             return {'valid': False, 'error': 'DataValidator not available'}
-        
+
         try:
             result = self._data_validator.validate_url(url, allowed_schemes)
             self._validations_performed += 1
-            
+
             return {
                 'valid': result.get('valid', False),
                 'url': url,
@@ -229,39 +223,39 @@ class UniversalValidationCoordinator(UniversalCoordinator):
                 'error_count': result.get('error_count', 0),
                 'errors': result.get('errors', [])
             }
-            
+
         except Exception as e:
             logger.error(f"URL validation failed: {e}")
             return {'valid': False, 'error': str(e), 'url': url}
 
     async def validate_json_schema(
         self,
-        data: Dict[str, Any],
-        schema: Dict[str, Any]
-    ) -> Dict[str, Any]:
+        data: dict[str, Any],
+        schema: dict[str, Any]
+    ) -> dict[str, Any]:
         """
         Validate data against JSON schema.
-        
+
         Features:
         - Required field validation
         - Type checking
         - String format validation (email, URI)
         - Nested object validation
-        
+
         Args:
             data: Data to validate
             schema: JSON schema
-            
+
         Returns:
             Validation result with detailed errors
         """
         if not self._validator_available:
             return {'valid': False, 'error': 'DataValidator not available'}
-        
+
         try:
             result = self._data_validator.validate_json_schema(data, schema)
             self._validations_performed += 1
-            
+
             return {
                 'valid': result.get('valid', False),
                 'error_count': result.get('error_count', 0),
@@ -270,7 +264,7 @@ class UniversalValidationCoordinator(UniversalCoordinator):
                 'errors': result.get('errors', []),
                 'timestamp': result.get('timestamp')
             }
-            
+
         except Exception as e:
             logger.error(f"JSON schema validation failed: {e}")
             return {'valid': False, 'error': str(e)}
@@ -279,30 +273,30 @@ class UniversalValidationCoordinator(UniversalCoordinator):
         self,
         name: str,
         validator_func: Any
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Add custom validation function.
-        
+
         Args:
             name: Validator name
             validator_func: Validation function
-            
+
         Returns:
             Add result
         """
         if not self._validator_available:
             return {'success': False, 'error': 'DataValidator not available'}
-        
+
         try:
             self._data_validator.add_custom_validator(name, validator_func)
             self._custom_validators[name] = validator_func
-            
+
             return {
                 'success': True,
                 'validator_name': name,
                 'total_validators': len(self._custom_validators)
             }
-            
+
         except Exception as e:
             logger.error(f"Failed to add custom validator: {e}")
             return {'success': False, 'error': str(e)}
@@ -316,38 +310,38 @@ class UniversalValidationCoordinator(UniversalCoordinator):
         html: str,
         output_format: str = "markdown",
         use_mlx: bool = True
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Clean HTML and convert to specified format.
-        
+
         Integrated from: tools/preserved_logic/content_cleaner.py
-        
+
         Features:
         - HTML to Markdown conversion
         - HTML to JSON structured extraction
         - Plain text extraction
         - BeautifulSoup-based cleaning
         - Removes scripts, styles, nav, footer
-        
+
         Args:
             html: Raw HTML content
             output_format: 'markdown', 'json', or 'text'
             use_mlx: Try MLX model first (if available)
-            
+
         Returns:
             Cleaning result with converted content
         """
         if not self._cleaner_available:
             # Fallback to simple extraction
             return await self._simple_html_extract(html, output_format)
-        
+
         try:
             from hledac.tools.preserved_logic.content_cleaner import OutputFormat
-            
+
             fmt = OutputFormat(output_format.lower())
             result = self._content_cleaner.clean_html(html, fmt)
             self._cleanings_performed += 1
-            
+
             return {
                 'success': result.success,
                 'content': result.content,
@@ -355,7 +349,7 @@ class UniversalValidationCoordinator(UniversalCoordinator):
                 'metadata': result.metadata or {},
                 'error': result.error
             }
-            
+
         except Exception as e:
             logger.error(f"HTML cleaning failed: {e}")
             return await self._simple_html_extract(html, output_format)
@@ -364,7 +358,7 @@ class UniversalValidationCoordinator(UniversalCoordinator):
         self,
         html: str,
         output_format: str
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Simple HTML extraction fallback.
 
@@ -442,16 +436,16 @@ class UniversalValidationCoordinator(UniversalCoordinator):
 
     async def batch_clean_html(
         self,
-        html_list: List[str],
+        html_list: list[str],
         output_format: str = "markdown"
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """
         Clean multiple HTML documents.
-        
+
         Args:
             html_list: List of HTML strings
             output_format: Output format for all
-            
+
         Returns:
             List of cleaning results
         """
@@ -465,7 +459,7 @@ class UniversalValidationCoordinator(UniversalCoordinator):
     # Statistics
     # ========================================================================
 
-    def get_validation_stats(self) -> Dict[str, Any]:
+    def get_validation_stats(self) -> dict[str, Any]:
         """Get validation statistics."""
         return {
             'validations_performed': self._validations_performed,
@@ -475,7 +469,7 @@ class UniversalValidationCoordinator(UniversalCoordinator):
             'custom_validators': len(self._custom_validators)
         }
 
-    def _get_feature_list(self) -> List[str]:
+    def _get_feature_list(self) -> list[str]:
         """Report available features."""
         features = [
             "Email validation (RFC 5321)",

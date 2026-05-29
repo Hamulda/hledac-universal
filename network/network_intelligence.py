@@ -27,7 +27,6 @@ import logging
 import time
 from collections import deque
 from dataclasses import dataclass
-from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -121,7 +120,7 @@ class NetworkIntelAdapter:
                     except asyncio.CancelledError:
                         pass
 
-        except asyncio.TimeoutError:
+        except TimeoutError:
             errors.append("timeout")
         except asyncio.CancelledError:
             raise  # GHOST_INVARIANT: CancelledError must propagate, not be swallowed

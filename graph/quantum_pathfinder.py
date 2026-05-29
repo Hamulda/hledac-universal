@@ -28,7 +28,7 @@ import gc
 import logging
 import math
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set, Tuple, Union
+from typing import TYPE_CHECKING, Any
 
 # Lazy-first discipline: no heavy eager imports at module level.
 # DuckPGQGraph-only importers must NOT pay NumPy/MLX/SciPy tax.
@@ -41,7 +41,7 @@ logger = logging.getLogger(__name__)
 # LAZY HELPERS — loaded on-demand, not at module import time
 # =============================================================================
 
-_NP_CACHE: Optional[Any] = None
+_NP_CACHE: Any | None = None
 
 
 def _get_numpy() -> Any:
@@ -60,7 +60,7 @@ def _get_numpy() -> Any:
     return _NP_CACHE
 
 
-_MLX_CACHE: Optional[Any] = None
+_MLX_CACHE: Any | None = None
 
 
 def _get_mlx() -> Any:
@@ -79,7 +79,7 @@ def _get_mlx() -> Any:
     return _MLX_CACHE
 
 
-_SPARSE_CACHE: Optional[Any] = None
+_SPARSE_CACHE: Any | None = None
 
 
 def _get_scipy_sparse() -> Any:
@@ -100,8 +100,8 @@ def _get_scipy_sparse() -> Any:
 
 # Type aliases for annotation only — loaded lazily at runtime via helpers
 if TYPE_CHECKING:
-    import numpy as np  # noqa: F401
     import mlx.core as mx  # noqa: F401
+    import numpy as np  # noqa: F401
     from scipy import sparse  # noqa: F401
 
 
@@ -181,17 +181,17 @@ class QuantumInspiredPathFinder:
         initialized: Whether the pathfinder has been initialized.
     """
 
-    def __init__(self, config: Optional[QuantumPathConfig] = None) -> None:
+    def __init__(self, config: QuantumPathConfig | None = None) -> None:
         """Initialize the quantum-inspired pathfinder.
 
         Args:
             config: Configuration for pathfinding. Uses defaults if None.
         """
         self.config = config or QuantumPathConfig()
-        self.graph: Optional[Any] = None
-        self.node_to_idx: Dict[str, int] = {}
-        self.idx_to_node: Dict[int, str] = {}
-        self.adjacency_matrix: Optional[Union[Any, 'sparse.coo_matrix']] = None
+        self.graph: Any | None = None
+        self.node_to_idx: dict[str, int] = {}
+        self.idx_to_node: dict[int, str] = {}
+        self.adjacency_matrix: Any | sparse.coo_matrix | None = None
         self.n_nodes: int = 0
         self.initialized: bool = False
         self._mlx_available: bool = _get_mlx() is not None and self.config.use_mlx
@@ -203,8 +203,8 @@ class QuantumInspiredPathFinder:
 
     async def initialize(
         self,
-        graph: Union[Any, np.ndarray, Dict[str, List[str]]],
-        max_nodes: Optional[int] = None
+        graph: Any | np.ndarray | dict[str, list[str]],
+        max_nodes: int | None = None
     ) -> bool:
         """Initialize the pathfinder with a knowledge graph.
 
@@ -290,7 +290,7 @@ class QuantumInspiredPathFinder:
 
     async def _initialize_from_adjacency_list(
         self,
-        graph: Dict[str, List[str]],
+        graph: dict[str, list[str]],
         max_nodes: int
     ) -> None:
         """Initialize from adjacency list dictionary.
@@ -308,7 +308,7 @@ class QuantumInspiredPathFinder:
 
         self.n_nodes = len(nodes)
         self.node_to_idx = {node: i for i, node in enumerate(nodes)}
-        self.idx_to_node = {i: node for i, node in enumerate(nodes)}
+        self.idx_to_node = dict(enumerate(nodes))
 
         # Build sparse adjacency matrix
         rows, cols, data = [], [], []
@@ -368,9 +368,9 @@ class QuantumInspiredPathFinder:
 
     async def _build_sparse_matrix(
         self,
-        rows: List[int],
-        cols: List[int],
-        data: List[float]
+        rows: list[int],
+        cols: list[int],
+        data: list[float]
     ) -> None:
         """Build sparse matrix from COO data.
 
@@ -405,11 +405,11 @@ class QuantumInspiredPathFinder:
             else:
                 # Dense fallback for small graphs
                 matrix = np_mod.zeros((self.n_nodes, self.n_nodes), dtype=np_mod.float32)
-                for r, c, d in zip(rows, cols, data):
+                for r, c, d in zip(rows, cols, data, strict=False):
                     matrix[r, c] = d
                 self.adjacency_matrix = matrix
 
-    def initialize_state(self, start_nodes: List[str]) -> Any:
+    def initialize_state(self, start_nodes: list[str]) -> Any:
         """Create quantum superposition state from start nodes.
 
         Creates an equal superposition of the starting node states,
@@ -681,7 +681,7 @@ class QuantumInspiredPathFinder:
     def amplify_targets(
         self,
         state: Any,
-        target_nodes: List[str]
+        target_nodes: list[str]
     ) -> Any:
         """Apply Grover-style amplitude amplification to target nodes.
 
@@ -716,7 +716,7 @@ class QuantumInspiredPathFinder:
     def _grover_diffusion(
         self,
         state: Any,
-        target_indices: List[int]
+        target_indices: list[int]
     ) -> Any:
         """Apply Grover diffusion operator.
 
@@ -762,10 +762,10 @@ class QuantumInspiredPathFinder:
 
     async def find_paths(
         self,
-        start_nodes: List[str],
-        target_nodes: List[str],
-        max_steps: Optional[int] = None
-    ) -> List[List[str]]:
+        start_nodes: list[str],
+        target_nodes: list[str],
+        max_steps: int | None = None
+    ) -> list[list[str]]:
         """Find paths from start nodes to target nodes using quantum walk.
 
         This is the main pathfinding method that combines quantum random walks
@@ -847,9 +847,9 @@ class QuantumInspiredPathFinder:
     def _extract_paths(
         self,
         probabilities: Any,
-        start_nodes: List[str],
-        target_nodes: List[str]
-    ) -> List[List[str]]:
+        start_nodes: list[str],
+        target_nodes: list[str]
+    ) -> list[list[str]]:
         """Extract paths from probability distribution.
 
         Uses the final quantum state probabilities to reconstruct
@@ -905,8 +905,8 @@ class QuantumInspiredPathFinder:
         self,
         target_idx: int,
         probabilities: np.ndarray,
-        start_nodes: List[str]
-    ) -> List[str]:
+        start_nodes: list[str]
+    ) -> list[str]:
         """Reconstruct a path to target using greedy backtracking.
 
         Args:
@@ -963,7 +963,7 @@ class QuantumInspiredPathFinder:
 
         return node_path
 
-    def _get_predecessors(self, node_idx: int) -> List[int]:
+    def _get_predecessors(self, node_idx: int) -> list[int]:
         """Get predecessor nodes for a given node.
 
         Args:
@@ -1035,7 +1035,7 @@ class QuantumInspiredPathFinder:
         except Exception as e:
             logger.error(f"Error during cleanup: {e}")
 
-    def get_state_statistics(self, state: Any) -> Dict[str, float]:
+    def get_state_statistics(self, state: Any) -> dict[str, float]:
         """Get statistics about a quantum state.
 
         Args:
@@ -1386,6 +1386,10 @@ class DuckPGQGraph:
             logger.W(f"[GRAPH] find_paths_between_iocs failed: {e}")
             return []
 
+    def stats(self) -> dict:
+        """Return node/edge counts from DuckDB."""
+        return _graph_stats(self.con)
+
 
 def _find_paths_between_iocs_sync(
     con,
@@ -1396,7 +1400,7 @@ def _find_paths_between_iocs_sync(
     """Sync BFS implementation (module-level for to_thread)."""
     try:
         sql = """
-            SELECT e.src_id, e.dst_id, n_src.val as src_val, n_dst.val as dst_val
+            SELECT e.src_id, e.dst_id, n_src.value as src_val, n_dst.value as dst_val
             FROM ioc_edges e
             JOIN ioc_nodes n_src ON n_src.id = e.src_id
             JOIN ioc_nodes n_dst ON n_dst.id = e.dst_id
@@ -1438,11 +1442,16 @@ def _find_paths_between_iocs_sync(
         logger.W(f"[GRAPH] _find_paths_between_iocs_sync failed: {e}")
         return []
 
-    def stats(self) -> dict:
-        nodes = self.con.execute("SELECT COUNT(*) FROM ioc_nodes").fetchone()[0]
-        edges = self.con.execute("SELECT COUNT(*) FROM ioc_edges").fetchone()[0]
-        return {"nodes": nodes, "edges": edges,
-                "pgq_available": _DUCKPGQ_AVAILABLE}
+
+def _graph_stats(con) -> dict:
+    """Module-level stats helper (called by DuckPGQGraph.stats wrapper)."""
+    try:
+        nodes = con.execute("SELECT COUNT(*) FROM ioc_nodes").fetchone()[0]
+        edges = con.execute("SELECT COUNT(*) FROM ioc_edges").fetchone()[0]
+        return {"nodes": nodes, "edges": edges, "pgq_available": _DUCKPGQ_AVAILABLE}
+    except Exception as e:
+        logger.W(f"[GRAPH] _graph_stats failed: {e}")
+        return {"nodes": 0, "edges": 0, "pgq_available": _DUCKPGQ_AVAILABLE}
 
 
 # Module availability flag
@@ -1450,8 +1459,8 @@ QUANTUM_PATHFINDER_AVAILABLE = True
 
 
 def create_quantum_pathfinder(
-    config: Optional[QuantumPathConfig] = None
-) -> Optional[QuantumInspiredPathFinder]:
+    config: QuantumPathConfig | None = None
+) -> QuantumInspiredPathFinder | None:
     """Factory function to create a quantum pathfinder instance.
 
     This factory function provides a consistent API for creating

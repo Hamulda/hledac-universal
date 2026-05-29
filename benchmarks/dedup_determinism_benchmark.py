@@ -236,6 +236,7 @@ def test_semantic_check_batch_no_texts_index() -> dict[str, Any]:
     inside the similarity loop by inspecting the source.
     """
     import inspect
+
     from semantic_deduplicator import SemanticDedupCache
 
     results: dict[str, Any] = {

@@ -68,7 +68,7 @@ import logging
 import os
 import threading
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -76,7 +76,7 @@ logger = logging.getLogger(__name__)
 # Feature flag — cached after first access, never re-checked
 # ---------------------------------------------------------------------------
 
-_SHADOW_ENABLED: Optional[bool] = None
+_SHADOW_ENABLED: bool | None = None
 
 
 def _is_shadow_enabled() -> bool:
@@ -109,14 +109,16 @@ class _ShadowRecorder:
     """
 
     def __init__(self) -> None:
-        self._queue: asyncio.Queue[Dict[str, Any]] = asyncio.Queue(maxsize=_MAX_QUEUE_SIZE)
-        self._store: Optional[Any] = None  # DuckDBShadowStore, lazy
+        self._queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue(maxsize=_MAX_QUEUE_SIZE)
+        self._store: Any | None = None  # DuckDBShadowStore, lazy
         self._worker_started: bool = False
         self._worker_lock: threading.Lock = threading.Lock()
-        # SAFETY: _worker_lock is a threading.Lock (not asyncio.Lock) because
-        # _ensure_worker() is called from enqueue() which is sync. The lock guards
-        # _worker_started with double-checked locking pattern. No await occurs inside
-        # the lock; worker is started via loop.create_task().
+        # SAFETY: SAFE_SYNC_BOUNDARY — threading.Lock is correct here because
+        # _ensure_worker() is a sync method (called from enqueue(), also sync).
+        # The lock implements double-checked locking on _worker_started flag.
+        # No await occurs inside the lock; worker is started via loop.create_task()
+        # which is fire-and-forget. threading.Lock is the correct primitive
+        # for protecting a flag written from sync code and read from async code.
         self._closed: bool = False
         self._flush_failures: int = 0
 
@@ -147,7 +149,7 @@ class _ShadowRecorder:
             self._worker_started = True
             loop.create_task(self._worker())
 
-    def enqueue(self, record: Dict[str, Any]) -> None:
+    def enqueue(self, record: dict[str, Any]) -> None:
         """
         Enqueue a finding record for shadow ingest.
 
@@ -209,7 +211,7 @@ class _ShadowRecorder:
                 self._store = None
                 return
 
-        batch: List[Dict[str, Any]] = []
+        batch: list[dict[str, Any]] = []
         last_flush = time.monotonic()
 
         while not self._closed:
@@ -228,7 +230,7 @@ class _ShadowRecorder:
                     batch = []
                     last_flush = time.monotonic()
 
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 # Flush any pending batch on timeout
                 if batch:
                     await self._flush_batch(batch)
@@ -249,7 +251,7 @@ class _ShadowRecorder:
             except Exception as e:
                 logger.warning(f"[SHADOW] final flush failed: {e}")
 
-    async def _flush_batch(self, batch: List[Dict[str, Any]]) -> None:
+    async def _flush_batch(self, batch: list[dict[str, Any]]) -> None:
         """Flush a batch of records to DuckDB via the store."""
         if not batch or self._store is None:
             return
@@ -290,7 +292,7 @@ class _ShadowRecorder:
         # or it will drain the queue we are draining here (queue is unbounded drain).
         # Items already taken by the worker before we set _closed=True will be flushed
         # by the worker's own final-flush path.
-        drained: List[Dict[str, Any]] = []
+        drained: list[dict[str, Any]] = []
         while True:
             try:
                 drained.append(self._queue.get_nowait())
@@ -326,7 +328,7 @@ class _ShadowRecorder:
 # Module-level singleton
 # ---------------------------------------------------------------------------
 
-_shadow_recorder: Optional[_ShadowRecorder] = None
+_shadow_recorder: _ShadowRecorder | None = None
 
 
 def _get_recorder() -> _ShadowRecorder:
@@ -346,14 +348,14 @@ def shadow_record_finding(
     query: str,
     source_type: str,
     confidence: float,
-    run_id: Optional[str] = None,
-    url: Optional[str] = None,
-    title: Optional[str] = None,
-    source: Optional[str] = None,
-    relevance_score: Optional[float] = None,
-    branch_id: Optional[str] = None,
-    provider_id: Optional[str] = None,
-    action_id: Optional[str] = None,
+    run_id: str | None = None,
+    url: str | None = None,
+    title: str | None = None,
+    source: str | None = None,
+    relevance_score: float | None = None,
+    branch_id: str | None = None,
+    provider_id: str | None = None,
+    action_id: str | None = None,
 ) -> None:
     """
     Non-blocking shadow record for a finding.
@@ -381,7 +383,7 @@ def shadow_record_finding(
     if not _is_shadow_enabled():
         return
 
-    record: Dict[str, Any] = {
+    record: dict[str, Any] = {
         "id": finding_id,
         "run_id": run_id,
         "query": query,

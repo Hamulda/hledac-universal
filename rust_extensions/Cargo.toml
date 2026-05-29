@@ -9,12 +9,12 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 aho-corasick = "1.1"
-bloomfilter = "3.0"
 pyo3 = { version = "0.28", features = ["extension-module"] }
-thiserror = "2"
 regex = "1"
 url = "2"
+xxhash-rust = { version = "0.8", features = ["xxh64"] }
 once_cell = "1.19"
+sha2 = "0.10"
 
 [profile.release]
 opt-level = 3

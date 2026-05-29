@@ -11,9 +11,9 @@ Sprint F229 — SourceEntry dataclass with tier + acquisition_lane
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Callable, Any
-
+from typing import Any
 
 # ---------------------------------------------------------------------------
 # SourceEntry — F229: tier + acquisition_lane for source classification
@@ -176,6 +176,7 @@ def get_pivot_task_types(pivot_type: str) -> list[str]:
 # ---------------------------------------------------------------------------
 
 from .circl_pdns_adapter import async_search_circl_pdns as _circl_adapter
+from .dht_adapter import async_search_dht as _dht_adapter
 
 register_source_adapter(
     "circl_pdns",
@@ -185,3 +186,32 @@ register_source_adapter(
         acquisition_lane="passive_dns",
     ),
 )
+
+# ---------------------------------------------------------------------------
+# Sprint F229 / F214Q: DHT Discovery — tier-3 experimental
+# ---------------------------------------------------------------------------
+register_source_adapter(
+    "dht_discovery",
+    SourceEntry(
+        adapter=_dht_adapter,
+        tier=3,
+        acquisition_lane="experimental",
+    ),
+)
+
+# ---------------------------------------------------------------------------
+# Sprint F250F: IPFS Discovery — tier-3 experimental (unindexed archival data)
+# ---------------------------------------------------------------------------
+try:
+    from ..network.ipfs_client import ipfs_fetch_as_findings, ipfs_search_as_findings
+
+    register_source_adapter(
+        "ipfs_discovery",
+        SourceEntry(
+            adapter=ipfs_fetch_as_findings,
+            tier=3,
+            acquisition_lane="experimental",
+        ),
+    )
+except ImportError:
+    pass  # IPFS client not available

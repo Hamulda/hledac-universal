@@ -2,10 +2,8 @@
 Tests for MMR diversity filtering (Sprint 76).
 """
 
+
 import pytest
-from unittest.mock import patch, MagicMock, AsyncMock
-import asyncio
-import numpy as np
 
 
 class TestMMRDiversity:
@@ -45,7 +43,7 @@ class TestMMRDiversity:
         # High lambda = more diversity
         result = store._mmr(candidates, query_emb, lambda_param=0.8, top_k=2)
 
-        texts = [r['text'] for r in result]
+        [r['text'] for r in result]
         # With high lambda, we should get more diverse results
         assert len(result) == 2
 

@@ -14,9 +14,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import time
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 try:
     import orjson
@@ -65,9 +64,9 @@ class ResearchResult:
         state: Dict with current state info (cycle, findings_count, etc.)
         action: The action taken in this iteration
     """
-    findings: List[Dict[str, Any]] = field(default_factory=list)
+    findings: list[dict[str, Any]] = field(default_factory=list)
     reward: float = 0.0
-    state: Dict[str, Any] = field(default_factory=dict)
+    state: dict[str, Any] = field(default_factory=dict)
     action: str = ""
 
 
@@ -106,11 +105,11 @@ class QTable:
     """
 
     def __init__(self, alpha: float = 0.1, gamma: float = 0.9):
-        self._table: Dict[Tuple, Dict[str, float]] = {}
+        self._table: dict[tuple, dict[str, float]] = {}
         self._alpha = alpha
         self._gamma = gamma
 
-    def get_q(self, state: Tuple, action: str) -> float:
+    def get_q(self, state: tuple, action: str) -> float:
         """
         Get Q-value for state-action pair.
 
@@ -123,7 +122,7 @@ class QTable:
         """
         return self._table.get(state, {}).get(action, 0.0)
 
-    def get_best_action(self, state: Tuple, actions: List[str]) -> str:
+    def get_best_action(self, state: tuple, actions: list[str]) -> str:
         """
         Get action with highest Q-value for state.
         P17: When Q-values are equal, selects deterministically by alphabetical order.
@@ -142,7 +141,7 @@ class QTable:
         best_actions.sort()
         return best_actions[0]
 
-    def update(self, state: Tuple, action: str, reward: float, next_state: Tuple) -> None:
+    def update(self, state: tuple, action: str, reward: float, next_state: tuple) -> None:
         """
         Update Q-value using Q-learning rule.
 
@@ -165,7 +164,7 @@ class QTable:
         new_q = current_q + self._alpha * (reward + self._gamma * max_next_q - current_q)
         self._table[state][action] = new_q
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """
         P17: Serialize Q-table to dict for LMDB storage.
 
@@ -184,7 +183,7 @@ class QTable:
         }
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "QTable":
+    def from_dict(cls, data: dict[str, Any]) -> QTable:
         """
         P17: Deserialize Q-table from dict loaded from LMDB.
 
@@ -250,8 +249,8 @@ class ResearchLoop:
         self,
         hypothesis_engine: Any,
         graph: Any,
-        duckdb_store: Optional[Any] = None,
-        memory_manager: Optional[Any] = None,
+        duckdb_store: Any | None = None,
+        memory_manager: Any | None = None,
     ):
         """
         Initialize ResearchLoop.
@@ -311,7 +310,7 @@ class ResearchLoop:
         except Exception as e:
             logger.warning(f"[P17] Failed to persist QTable to LMDB: {e}")
 
-    def update_qtable(self, state: Tuple, action: str, reward: float, next_state: Tuple) -> None:
+    def update_qtable(self, state: tuple, action: str, reward: float, next_state: tuple) -> None:
         """
         P17: Update QTable and persist to LMDB.
 
@@ -334,7 +333,7 @@ class ResearchLoop:
         self,
         query: str,
         max_cycles: int = 5,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Run iterative research loop.
 
@@ -358,8 +357,8 @@ class ResearchLoop:
         seen_findings: set = set()
 
         cycles_completed = 0
-        actions_taken: List[str] = []
-        states_history: List[Dict] = []
+        actions_taken: list[str] = []
+        states_history: list[dict] = []
 
         for cycle in range(max_cycles):
             cycles_completed = cycle + 1
@@ -391,7 +390,6 @@ class ResearchLoop:
                     new_unique += 1
 
             # Update state
-            old_findings_count = state.findings_count
             state.findings_count += len(new_findings)
 
             # Create next state
@@ -453,7 +451,7 @@ class ResearchLoop:
         action: str,
         state: ResearchState,
         query: str,
-    ) -> Tuple[float, List[Dict]]:
+    ) -> tuple[float, list[dict]]:
         """
         Execute a research action and return reward + findings.
 
@@ -465,7 +463,7 @@ class ResearchLoop:
         Returns:
             Tuple of (reward, findings_list)
         """
-        findings: List[Dict] = []
+        findings: list[dict] = []
 
         try:
             if action == "hypothesis_generation":
@@ -506,7 +504,7 @@ class ResearchLoop:
 
         return reward, findings
 
-    async def _generate_hypotheses(self, query: str) -> List[Dict]:
+    async def _generate_hypotheses(self, query: str) -> list[dict]:
         """Generate hypotheses using HypothesisEngine.
 
         Calls generate_hypotheses_async() when engine has Hermes3 injected.
@@ -518,7 +516,7 @@ class ResearchLoop:
 
         try:
             if self.hypothesis_engine is not None:
-                ctx: Dict[str, Any] = {"query": query, "source": "research_loop"}
+                ctx: dict[str, Any] = {"query": query, "source": "research_loop"}
                 engine = self.hypothesis_engine
 
                 # Use async variant if available (supports Hermes3 injection)
@@ -576,7 +574,7 @@ class ResearchLoop:
 
         return findings
 
-    async def _tot_reasoning(self, query: str) -> List[Dict]:
+    async def _tot_reasoning(self, query: str) -> list[dict]:
         """
         Tree of Thoughts reasoning.
 
@@ -605,7 +603,7 @@ class ResearchLoop:
 
         return findings
 
-    async def _run_discovery(self, query: str) -> List[Dict]:
+    async def _run_discovery(self, query: str) -> list[dict]:
         """Run discovery phase."""
         findings = []
 
@@ -620,7 +618,7 @@ class ResearchLoop:
 
         return findings
 
-    async def _run_fetch(self, query: str) -> List[Dict]:
+    async def _run_fetch(self, query: str) -> list[dict]:
         """Fetch additional data for query."""
         findings = []
 
@@ -633,7 +631,7 @@ class ResearchLoop:
 
         return findings
 
-    async def _update_graph(self, query: str) -> List[Dict]:
+    async def _update_graph(self, query: str) -> list[dict]:
         """Update knowledge graph with findings."""
         findings = []
 
@@ -652,7 +650,7 @@ class ResearchLoop:
 
         return findings
 
-    async def _evaluate_findings(self, query: str) -> List[Dict]:
+    async def _evaluate_findings(self, query: str) -> list[dict]:
         """Evaluate and score findings."""
         findings = []
 
@@ -665,7 +663,7 @@ class ResearchLoop:
 
         return findings
 
-    def _state_to_tuple(self, state: ResearchState) -> Tuple:
+    def _state_to_tuple(self, state: ResearchState) -> tuple:
         """Convert ResearchState to hashable tuple for Q-table."""
         # Discretize continuous values for Q-table
         cycle_bucket = min(state.cycle // 2, 5)  # Bucket cycles 0-9 into 0-5
@@ -680,7 +678,7 @@ class ResearchLoop:
             state.tot_used,
         )
 
-    def _fingerprint_finding(self, finding: Dict) -> str:
+    def _fingerprint_finding(self, finding: dict) -> str:
         """Create a fingerprint for deduplication."""
         content = finding.get("content", "")
         finding_type = finding.get("type", "")
@@ -789,7 +787,7 @@ async def run_research(
     graph: Any = None,
     store: Any = None,
     max_cycles: int = 5,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Run autonomous research loop.
 

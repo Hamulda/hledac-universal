@@ -19,9 +19,9 @@ import logging
 import secrets
 import time
 from collections import deque
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any
 
 import numpy as np
 
@@ -212,7 +212,7 @@ class IzhikevichNeuron:
         self.d = d
         self.v = v_init
         self.u = b * v_init
-        self.spike_times: List[float] = []
+        self.spike_times: list[float] = []
         self.last_spike_time = -float('inf')
 
     def update(self, I: float, dt: float = 1.0) -> bool:
@@ -256,7 +256,7 @@ class HodgkinHuxleyNeuron:
         self.m = 0.05
         self.h = 0.6
         self.n = 0.32
-        self.spike_times: List[float] = []
+        self.spike_times: list[float] = []
         self.last_spike_time = -float('inf')
 
     def _alpha_m(self, V: float) -> float:
@@ -334,7 +334,7 @@ class SpikePatternTemplate:
         else:
             return np.random.rand(self.num_neurons) * 0.5
 
-    def generate_spikes(self, data_hash: bytes) -> List[int]:
+    def generate_spikes(self, data_hash: bytes) -> list[int]:
         """Generate spike pattern based on data hash."""
         # Use hash to seed pattern
         np.random.seed(int(hashlib.sha256(data_hash).hexdigest()[:8], 16))
@@ -350,9 +350,9 @@ class BurstDetector:
     def __init__(self, burst_threshold: int = 3, max_isi_ms: float = 10.0):
         self.burst_threshold = burst_threshold
         self.max_isi_ms = max_isi_ms
-        self.bursts: List[List[float]] = []
+        self.bursts: list[list[float]] = []
 
-    def detect_bursts(self, spike_times: List[float]) -> List[List[float]]:
+    def detect_bursts(self, spike_times: list[float]) -> list[list[float]]:
         """Detect bursts in spike train."""
         if len(spike_times) < 2:
             return []
@@ -387,10 +387,10 @@ class TemporalPatternAnalyzer:
     """
 
     def __init__(self):
-        self.isi_history: List[float] = []
-        self.cv_history: List[float] = []  # Coefficient of variation
+        self.isi_history: list[float] = []
+        self.cv_history: list[float] = []  # Coefficient of variation
 
-    def analyze(self, spike_times: List[float]) -> Dict[str, float]:
+    def analyze(self, spike_times: list[float]) -> dict[str, float]:
         """Analyze temporal patterns in spike train."""
         if len(spike_times) < 2:
             return {"mean_rate": 0.0, "cv_isi": 0.0, "burst_index": 0.0}
@@ -440,13 +440,13 @@ class NeuromorphicCryptoEngine:
         self.output_neurons = output_neurons
 
         # Core components (lazy initialization)
-        self._neural_network: Optional[SpikingNeuralNetwork] = None
-        self._entropy_pool: Optional[EntropyPool] = None
-        self._crypto_weights: Optional[np.ndarray] = None
+        self._neural_network: SpikingNeuralNetwork | None = None
+        self._entropy_pool: EntropyPool | None = None
+        self._crypto_weights: np.ndarray | None = None
 
         # Key management
-        self._key_neurons: Dict[str, str] = {}
-        self._active_keys: Dict[str, Dict[str, Any]] = {}
+        self._key_neurons: dict[str, str] = {}
+        self._active_keys: dict[str, dict[str, Any]] = {}
         self._initialized = False
 
     async def initialize(self) -> bool:
@@ -487,7 +487,7 @@ class NeuromorphicCryptoEngine:
             )
         self._neural_network.initialize()
 
-    def encrypt(self, data: bytes, key_id: Optional[str] = None) -> SNNEncryptedContainer:
+    def encrypt(self, data: bytes, key_id: str | None = None) -> SNNEncryptedContainer:
         """
         Encrypt data using SNN-based transformation.
 
@@ -570,7 +570,7 @@ class NeuromorphicCryptoEngine:
 
         # Reverse cryptographic weights
         inverse_weights = np.linalg.pinv(self._crypto_weights)
-        reverse_output = np.dot(inverse_weights, neural_output)
+        np.dot(inverse_weights, neural_output)
 
         # Regenerate keystream
         keystream = self._generate_keystream(neural_output, len(ciphertext.ciphertext))
@@ -582,7 +582,7 @@ class NeuromorphicCryptoEngine:
 
         return bytes(plaintext)
 
-    def generate_signature(self, data: bytes, key_id: Optional[str] = None) -> bytes:
+    def generate_signature(self, data: bytes, key_id: str | None = None) -> bytes:
         """
         Generate high-entropy neural signature for data integrity.
 
@@ -620,7 +620,7 @@ class NeuromorphicCryptoEngine:
 
         return sig_hash
 
-    def verify_signature(self, data: bytes, signature: bytes, key_id: Optional[str] = None) -> bool:
+    def verify_signature(self, data: bytes, signature: bytes, key_id: str | None = None) -> bool:
         """
         Verify neural signature.
 
@@ -638,7 +638,7 @@ class NeuromorphicCryptoEngine:
         except Exception:
             return False
 
-    def get_entropy_pool(self) -> Optional[EntropyPool]:
+    def get_entropy_pool(self) -> EntropyPool | None:
         """Get the entropy pool for cryptographic randomness."""
         return self._entropy_pool
 
@@ -711,7 +711,7 @@ class EncryptedContainer:
     algorithm: str
     security_level: SecurityLevel
 
-    def to_dict(self) -> Dict[str, str]:
+    def to_dict(self) -> dict[str, str]:
         """Export jako slovník"""
         return {
             "ciphertext": base64.b64encode(self.ciphertext).decode(),
@@ -722,7 +722,7 @@ class EncryptedContainer:
         }
 
     @classmethod
-    def from_dict(cls, data: Dict[str, str]) -> "EncryptedContainer":
+    def from_dict(cls, data: dict[str, str]) -> EncryptedContainer:
         """Import ze slovníku"""
         return cls(
             ciphertext=base64.b64decode(data["ciphertext"]),
@@ -746,7 +746,7 @@ class SNNEncryptedContainer:
         if self.timestamp == 0:
             self.timestamp = time.time()
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Export as dictionary with numpy array handling."""
         return {
             "ciphertext": base64.b64encode(self.ciphertext).decode(),
@@ -757,7 +757,7 @@ class SNNEncryptedContainer:
         }
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "SNNEncryptedContainer":
+    def from_dict(cls, data: dict[str, Any]) -> SNNEncryptedContainer:
         """Import from dictionary."""
         sig_bytes = base64.b64decode(data["neural_signature"])
         neural_signature = np.frombuffer(sig_bytes, dtype=np.float32)
@@ -794,12 +794,12 @@ class QuantumSafeVault:
         self._keypair = None
         self._initialized = False
         # Neuromorphic crypto engine (lazy initialization for M1 8GB)
-        self._neuro_engine: Optional[NeuromorphicCryptoEngine] = None
-        
+        self._neuro_engine: NeuromorphicCryptoEngine | None = None
+
     async def initialize(self) -> None:
         """Inicializovat vault - vygenerovat klíče"""
         logger.info(f"Initializing QuantumSafeVault ({self.security_level.value})")
-        
+
         # REAL PQ: ML-KEM-768 + ML-DSA-65 keypairs via liboqs
         if not REAL_PQ_AVAILABLE:
             logger.warning("PQ crypto SIMULATION MODE — not cryptographically secure")
@@ -825,7 +825,7 @@ class QuantumSafeVault:
 
         self._initialized = True
         logger.info("✓ QuantumSafeVault initialized")
-    
+
     async def encrypt(
         self,
         plaintext: bytes,
@@ -833,20 +833,20 @@ class QuantumSafeVault:
     ) -> EncryptedContainer:
         """
         Zašifrovat data pomocí ML-KEM.
-        
+
         Args:
             plaintext: Data k zašifrování
             associated_data: Volitelná přidružená data (pro AEAD)
-            
+
         Returns:
             EncryptedContainer s ciphertextem
         """
         if not self._initialized:
             raise RuntimeError("Vault not initialized")
-        
+
         # Generovat nonce
         nonce = secrets.token_bytes(12)
-        
+
         # REAL ML-KEM encapsulation via liboqs
         if REAL_PQ_AVAILABLE:
             with _oqs.KeyEncapsulation(_KYBER_ALG, self._keypair["secret"]) as kem:
@@ -855,12 +855,12 @@ class QuantumSafeVault:
             logger.warning("PQ crypto SIMULATION MODE — not cryptographically secure")
             shared_secret = secrets.token_bytes(32)
             encapsulated_key = secrets.token_bytes(32)
-        
+
         # AES-256-GCM s shared_secret
         from cryptography.hazmat.primitives.ciphers.aead import AESGCM
         aesgcm = AESGCM(shared_secret)
         ciphertext = aesgcm.encrypt(nonce, plaintext, associated_data)
-        
+
         return EncryptedContainer(
             ciphertext=ciphertext,
             encapsulated_key=encapsulated_key,
@@ -868,7 +868,7 @@ class QuantumSafeVault:
             algorithm="ML-KEM-768+AES-256-GCM",
             security_level=self.security_level,
         )
-    
+
     async def decrypt(
         self,
         container: EncryptedContainer,
@@ -876,17 +876,17 @@ class QuantumSafeVault:
     ) -> bytes:
         """
         Dešifrovat data.
-        
+
         Args:
             container: EncryptedContainer
             associated_data: Přidružená data
-            
+
         Returns:
             Dešifrovaná data
         """
         if not self._initialized:
             raise RuntimeError("Vault not initialized")
-        
+
         # REAL ML-KEM decapsulation via liboqs
         if REAL_PQ_AVAILABLE:
             with _oqs.KeyEncapsulation(_KYBER_ALG, self._keypair["secret"]) as kem:
@@ -894,27 +894,27 @@ class QuantumSafeVault:
         else:
             logger.warning("PQ crypto SIMULATION MODE — not cryptographically secure")
             shared_secret = secrets.token_bytes(32)
-        
+
         # AES-256-GCM decryption
         from cryptography.hazmat.primitives.ciphers.aead import AESGCM
         aesgcm = AESGCM(shared_secret)
         plaintext = aesgcm.decrypt(container.nonce, container.ciphertext, associated_data)
-        
+
         return plaintext
-    
+
     async def sign(self, message: bytes) -> bytes:
         """
         Podepsat zprávu pomocí ML-DSA (Dilithium).
-        
+
         Args:
             message: Zpráva k podpisu
-            
+
         Returns:
             Podpis
         """
         if not self._initialized:
             raise RuntimeError("Vault not initialized")
-        
+
         # REAL ML-DSA signature via liboqs
         if REAL_PQ_AVAILABLE:
             with _oqs.Signature(_DILITHIUM_ALG, self._signing_keypair["secret"]) as sig:
@@ -947,7 +947,7 @@ class QuantumSafeVault:
             await self._neuro_engine.initialize()
         return self._neuro_engine
 
-    async def encrypt_with_snn(self, data: bytes, key_id: Optional[str] = None) -> SNNEncryptedContainer:
+    async def encrypt_with_snn(self, data: bytes, key_id: str | None = None) -> SNNEncryptedContainer:
         """
         Encrypt data using SNN-based neuromorphic encryption.
 
@@ -983,7 +983,7 @@ class QuantumSafeVault:
         engine = await self._get_neuro_engine()
         return engine.decrypt(ciphertext)
 
-    async def generate_neural_signature(self, data: bytes, key_id: Optional[str] = None) -> bytes:
+    async def generate_neural_signature(self, data: bytes, key_id: str | None = None) -> bytes:
         """
         Generate high-entropy neural signature for data integrity.
 
@@ -1003,7 +1003,7 @@ class QuantumSafeVault:
         engine = await self._get_neuro_engine()
         return engine.generate_signature(data, key_id)
 
-    async def verify_neural_signature(self, data: bytes, signature: bytes, key_id: Optional[str] = None) -> bool:
+    async def verify_neural_signature(self, data: bytes, signature: bytes, key_id: str | None = None) -> bool:
         """
         Verify neural signature.
 
@@ -1032,18 +1032,18 @@ class QuantumSafeVault:
 class StealthCommunicator:
     """
     Stealth komunikátor se steganografií.
-    
+
     Skrývá zprávy v obrazech pomocí:
     - DCT (JPEG kompatibilní)
     - LSB (PNG/BMP)
     - Neural (AI-based)
-    
+
     Pro skryté ukládání výzkumných dat.
     """
-    
+
     def __init__(self, method: StegoMethod = StegoMethod.AUTO):
         self.method = method
-        
+
     async def hide_message(
         self,
         message: bytes,
@@ -1052,12 +1052,12 @@ class StealthCommunicator:
     ) -> bytes:
         """
         Schovat zprávu v obrázku.
-        
+
         Args:
             message: Zpráva k schování
             cover_image: Cover image data
             password: Volitelné heslo pro šifrování
-            
+
         Returns:
             Stego image s ukrytou zprávou
         """
@@ -1067,13 +1067,13 @@ class StealthCommunicator:
             key = hashlib.sha256(password.encode()).digest()
             f = Fernet(base64.urlsafe_b64encode(key))
             message = f.encrypt(message)
-        
+
         # Přidat metadata
         message_with_meta = len(message).to_bytes(4, 'big') + message
-        
+
         # Vybrat metodu
         method = self._select_method(cover_image)
-        
+
         # Aplikovat steganografii
         if method == StegoMethod.LSB:
             return await self._lsb_hide(message_with_meta, cover_image)
@@ -1081,7 +1081,7 @@ class StealthCommunicator:
             return await self._dct_hide(message_with_meta, cover_image)
         else:
             return await self._lsb_hide(message_with_meta, cover_image)
-    
+
     async def extract_message(
         self,
         stego_image: bytes,
@@ -1089,17 +1089,17 @@ class StealthCommunicator:
     ) -> bytes:
         """
         Extrahovat zprávu z obrázku.
-        
+
         Args:
             stego_image: Stego image
             password: Heslo pro dešifrování
-            
+
         Returns:
             Extrahovaná zpráva
         """
         # Detekovat metodu
         method = self._detect_method(stego_image)
-        
+
         # Extrahovat
         if method == StegoMethod.LSB:
             message = await self._lsb_extract(stego_image)
@@ -1107,25 +1107,25 @@ class StealthCommunicator:
             message = await self._dct_extract(stego_image)
         else:
             message = await self._lsb_extract(stego_image)
-        
+
         # Extrahovat metadata
         msg_len = int.from_bytes(message[:4], 'big')
         message = message[4:4+msg_len]
-        
+
         # Dešifrovat pokud je heslo
         if password:
             from cryptography.fernet import Fernet
             key = hashlib.sha256(password.encode()).digest()
             f = Fernet(base64.urlsafe_b64encode(key))
             message = f.decrypt(message)
-        
+
         return message
-    
+
     def _select_method(self, cover_image: bytes) -> StegoMethod:
         """Vybrat nejlepší metodu"""
         if self.method != StegoMethod.AUTO:
             return self.method
-        
+
         # Detekovat formát
         if cover_image[:2] == b'\xff\xd8':  # JPEG
             return StegoMethod.DCT
@@ -1133,40 +1133,41 @@ class StealthCommunicator:
             return StegoMethod.LSB
         else:
             return StegoMethod.LSB
-    
+
     def _detect_method(self, image: bytes) -> StegoMethod:
         """Detekovat použitou metodu"""
         # Zkusit LSB nejprve
         return StegoMethod.LSB
-    
+
     async def _lsb_hide(self, message: bytes, cover: bytes) -> bytes:
         """LSB steganografie"""
         try:
-            from PIL import Image
             import io
-            
+
+            from PIL import Image
+
             img = Image.open(io.BytesIO(cover))
-            
+
             # Převést na RGB
             if img.mode != 'RGB':
                 img = img.convert('RGB')
-            
+
             pixels = list(img.getdata())
-            
+
             # Převést zprávu na bity
             message_bits = ''.join(format(b, '08b') for b in message)
             message_bits += '00000000'  # Delimiter
-            
+
             if len(message_bits) > len(pixels) * 3:
                 raise ValueError("Message too large for cover image")
-            
+
             # Schovat bity v LSB
             new_pixels = []
             msg_idx = 0
-            
+
             for pixel in pixels:
                 r, g, b = pixel
-                
+
                 if msg_idx < len(message_bits):
                     r = (r & 0xFE) | int(message_bits[msg_idx])
                     msg_idx += 1
@@ -1176,28 +1177,29 @@ class StealthCommunicator:
                 if msg_idx < len(message_bits):
                     b = (b & 0xFE) | int(message_bits[msg_idx])
                     msg_idx += 1
-                
+
                 new_pixels.append((r, g, b))
-            
+
             # Vytvořit nový obrázek
             img.putdata(new_pixels)
             output = io.BytesIO()
             img.save(output, format='PNG')
             return output.getvalue()
-            
+
         except ImportError:
             logger.error("PIL not available for steganography")
             return cover
-    
+
     async def _lsb_extract(self, stego: bytes) -> bytes:
         """Extrahovat z LSB"""
         try:
-            from PIL import Image
             import io
-            
+
+            from PIL import Image
+
             img = Image.open(io.BytesIO(stego))
             pixels = list(img.getdata())
-            
+
             # Extrahovat bity
             bits = ''
             for pixel in pixels:
@@ -1205,24 +1207,24 @@ class StealthCommunicator:
                 bits += str(r & 1)
                 bits += str(g & 1)
                 bits += str(b & 1)
-            
+
             # Převést na byty
             message = bytearray()
             for i in range(0, len(bits), 8):
                 byte = bits[i:i+8]
                 if len(byte) == 8:
                     message.append(int(byte, 2))
-            
+
             return bytes(message)
-            
+
         except ImportError:
             return b''
-    
+
     async def _dct_hide(self, message: bytes, cover: bytes) -> bytes:
         """DCT steganografie (simplified)"""
         # Zjednodušená implementace - v produkci by byla komplexnější
         return await self._lsb_hide(message, cover)
-    
+
     async def _dct_extract(self, stego: bytes) -> bytes:
         """Extrahovat z DCT"""
         return await self._lsb_extract(stego)

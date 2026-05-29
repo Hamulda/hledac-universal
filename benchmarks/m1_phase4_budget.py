@@ -32,7 +32,7 @@ import argparse
 import json
 import sys
 import time
-from dataclasses import dataclass, asdict
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
@@ -94,7 +94,7 @@ def _simulate_embedding_fallback(embedder: Any, findings: list) -> bool:
 
     async def _iterate():
         nonlocal chunked_yields, total_items
-        async for ids, embs in embedder.embed_findings(findings, batch_size=16):
+        async for ids, _embs in embedder.embed_findings(findings, batch_size=16):
             chunked_yields += 1
             total_items += len(ids)
 
@@ -117,12 +117,12 @@ def run_budget_benchmark() -> BudgetBenchmarkResult:
     - Sidecar admission check behavior
     - Embedding fallback chunking
     """
-    from hledac.universal.runtime.resource_governor import (
-        get_governor,
-        MISSION_PEAK_RSS_GIB,
-        HEAVY_SIDECARS,
-    )
     from hledac.universal.intelligence.streaming_embedder import StreamingEmbedder
+    from hledac.universal.runtime.resource_governor import (
+        HEAVY_SIDECARS,
+        MISSION_PEAK_RSS_GIB,
+        get_governor,
+    )
 
     governor = get_governor()
     rss_start_gib = get_rss_gib()
@@ -206,7 +206,7 @@ def main() -> int:
                         help="Optional JSON output path")
     args = parser.parse_args()
 
-    print(f"[Benchmark] Running M1 mission budget benchmark...", file=sys.stderr)
+    print("[Benchmark] Running M1 mission budget benchmark...", file=sys.stderr)
 
     result = run_budget_benchmark()
     summary = _format_summary(result)

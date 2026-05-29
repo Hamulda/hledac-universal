@@ -2,13 +2,14 @@
 Lehká grafová neuronová síť (GraphSAGE) implementovaná v MLX.
 Trénink na pozadí, inference volitelná podle velikosti grafu.
 """
+from __future__ import annotations
 
+import array
 import heapq
 import logging
 import time
-import array
 from collections import OrderedDict
-from typing import List, Tuple, Optional, Any
+from typing import Any
 
 import numpy as np
 
@@ -21,43 +22,50 @@ except ImportError:
     RUSTWORKX_AVAILABLE = False
     rx = None
 
-# G2: Bounded node_features - now per-instance in __init__
+# MLX lazy-load (GHOST_INVARIANTS: no heavy imports at top-level)
+MLX_GNN_AVAILABLE: bool = False
 
-logger = logging.getLogger(__name__)
+# Module-level references — rewritten by _ensure_mlx_gnn()
+mx = None
+nn = None
 
-try:
-    import mlx.core as _mx
-    import mlx.nn as _nn
-    MLX_GNN_AVAILABLE = True
-except ImportError:
-    MLX_GNN_AVAILABLE = False
-    _mx = None
-    _nn = None
+
+def _ensure_mlx_gnn() -> bool:
+    """Lazy-load MLX on first actual use. Returns True if available."""
+    global MLX_GNN_AVAILABLE, mx, nn
+    if MLX_GNN_AVAILABLE:
+        return True
+    try:
+        import mlx.core as mx
+        import mlx.nn as nn
+        MLX_GNN_AVAILABLE = True
+        return True
+    except ImportError:
+        return False
 
 
 def _require_mlx():
     """Raise RuntimeError if MLX is not available."""
-    if not MLX_GNN_AVAILABLE:
+    if not _ensure_mlx_gnn():
         raise RuntimeError("MLX not available, cannot use GNN functionality")
 
 
-if MLX_GNN_AVAILABLE:
+if _ensure_mlx_gnn():
 
-    class GraphSAGE(_nn.Module):
+    class GraphSAGE(nn.Module):
         """GraphSAGE model pro predikci hran."""
 
         def __init__(self, in_dim: int, hidden_dim: int, out_dim: int, num_layers: int = 2):
             super().__init__()
             self.layers = []
             for i in range(num_layers):
-                self.layers.append(_nn.Linear(in_dim if i == 0 else hidden_dim, hidden_dim))
-            self.out_proj = _nn.Linear(hidden_dim, out_dim)
+                self.layers.append(nn.Linear(in_dim if i == 0 else hidden_dim, hidden_dim))
+            self.out_proj = nn.Linear(hidden_dim, out_dim)
 
         def __call__(self, x, adj):
             for layer in self.layers:
-                x = _mx.relu(layer(adj @ x))
+                x = mx.relu(layer(adj @ x))
             return self.out_proj(x)
-
 
 else:
 
@@ -65,13 +73,13 @@ else:
         """Stub when MLX not available."""
 
         def __init__(self, *args, **kwargs):
-            _require_mlx()
+            raise RuntimeError("MLX not available, cannot create GraphSAGE")
 
         def __call__(self, *args, **kwargs):
-            _require_mlx()
+            raise RuntimeError("MLX not available")
 
 
-def neighbor_sampling(adj_list: List[List[int]], node_ids: List[int], k: int = 10):
+def neighbor_sampling(adj_list: list[list[int]], node_ids: list[int], k: int = 10):
     """
     Vrátí pro každý uzel seznam k náhodných sousedů (s vracením).
     """
@@ -160,7 +168,7 @@ class GNNPredictor:
         if dst not in self.graph:
             self.graph[dst] = set()
 
-    def build_adj_list(self, edges: List[Tuple[int, int]], n_nodes: int):
+    def build_adj_list(self, edges: list[tuple[int, int]], n_nodes: int):
         """Vytvoří seznam sousedů pomocí plain dict (ne defaultdict)."""
         # Use plain dict with set for neighbors
         for u, v in edges:
@@ -205,7 +213,7 @@ class GNNPredictor:
             # Also clean up from graph
             self.graph.pop(oldest_id, None)
 
-    def trigger_training(self, edges: List[Tuple[int, int]],
+    def trigger_training(self, edges: list[tuple[int, int]],
                         features,
                         labels,
                         num_epochs: int = 10):
@@ -217,7 +225,7 @@ class GNNPredictor:
 
             self.scheduler.schedule(8, "train_gnn", self, edges, features, labels, num_epochs)
 
-    def predict(self, node_ids: List[int], edges: List[Tuple[int, int]]) -> Any:
+    def predict(self, node_ids: list[int], edges: list[tuple[int, int]]) -> Any:
         """
         Predikce pravděpodobnosti hrany mezi každým párem v node_ids.
         Pro jednoduchost predikujeme skóre pro všechny možné páry mezi node_ids.
@@ -244,7 +252,7 @@ class GNNPredictor:
                 if u in idx_map and v in idx_map:
                     adj_np[idx_map[u], idx_map[v]] = 1.0
                     adj_np[idx_map[v], idx_map[u]] = 1.0
-            adj = _mx.array(adj_np)
+            adj = mx.array(adj_np)
         else:
             # Large graph - use adjacency list representation
             adj_dict = {i: set() for i in range(n)}
@@ -255,7 +263,7 @@ class GNNPredictor:
                     adj_dict[idx_map[v]].add(idx_map[u])
             # Sprint 7B: Use stored node_features (fallback to zero for missing)
             feat_list = []
-            for i, node_id in enumerate(node_ids[:n]):
+            for _i, node_id in enumerate(node_ids[:n]):
                 if node_id in self.node_features:
                     arr = self.node_features[node_id]
                     if isinstance(arr, array.array):
@@ -264,9 +272,9 @@ class GNNPredictor:
                         feat_list.append(np.asarray(arr, dtype=np.float32))
                 else:
                     feat_list.append(np.zeros(self._in_dim, dtype=np.float32))
-            feat = _mx.stack([_mx.array(f) for f in feat_list])
+            feat = mx.stack([mx.array(f) for f in feat_list])
             # For large graphs, use simplified model (just features, no adjacency)
-            adj = _mx.zeros((n, n))  # Dummy - model should handle this
+            adj = mx.zeros((n, n))  # Dummy - model should handle this
             pred = self.model(feat, adj)
             return pred
 
@@ -282,7 +290,7 @@ class GNNPredictor:
             else:
                 # Fallback to zero vector if not found
                 feat_list.append(np.zeros(self._in_dim, dtype=np.float32))
-        feat = _mx.stack([_mx.array(f) for f in feat_list])
+        feat = mx.stack([mx.array(f) for f in feat_list])
 
         pred = self.model(feat, adj)
         return pred
@@ -292,7 +300,7 @@ class GNNPredictor:
         Vrátí embedding celého grafu jako proxy (průměr embeddings uzlů).
         """
         if not self.trained or not self.node_features:
-            return _mx.zeros((8,))
+            return mx.zeros((8,))
         # Convert array('f') to numpy for MLX
         emb_list = []
         for arr in self.node_features.values():
@@ -300,8 +308,8 @@ class GNNPredictor:
                 emb_list.append(np.array(arr, dtype=np.float32))
             else:
                 emb_list.append(np.asarray(arr, dtype=np.float32))
-        all_embs = _mx.stack([_mx.array(e) for e in emb_list])
-        return _mx.mean(all_embs, axis=0)[:8]  # omezíme na 8 dimenzí
+        all_embs = mx.stack([mx.array(e) for e in emb_list])
+        return mx.mean(all_embs, axis=0)[:8]  # omezíme na 8 dimenzí
 
     # ------------------------------------------------------------------
     # Sprint 8TD: Batch IOC scoring
@@ -449,7 +457,7 @@ class GNNPredictor:
                     adj_data[dst_i][src_i] = 1.0  # undirected
 
             # Feature matrix: jednoduché one-hot encoding typu uzlu
-            node_types = list(set(n.get("type", "unknown") for n in graph_nodes))
+            node_types = list({n.get("type", "unknown") for n in graph_nodes})
             type_to_idx = {t: i for i, t in enumerate(node_types)}
             feat_dim = max(len(node_types), 4)
 
@@ -461,24 +469,24 @@ class GNNPredictor:
                 features_data.append(feat)
 
             # MLX tensory
-            A = _mx.array(adj_data, dtype=_mx.float32)  # [n, n]
-            X = _mx.array(features_data, dtype=_mx.float32)  # [n, feat_dim]
+            A = mx.array(adj_data, dtype=mx.float32)  # [n, n]
+            X = mx.array(features_data, dtype=mx.float32)  # [n, feat_dim]
 
             # Normalizovaná Laplacian: D^(-1/2) * A * D^(-1/2)
-            degree = _mx.sum(A, axis=1, keepdims=True)  # [n, 1]
-            degree_inv_sqrt = _mx.where(degree > 0, 1.0 / _mx.sqrt(degree + 1e-8), _mx.zeros_like(degree))
-            A_norm = degree_inv_sqrt * A * _mx.transpose(degree_inv_sqrt)
+            degree = mx.sum(A, axis=1, keepdims=True)  # [n, 1]
+            degree_inv_sqrt = mx.where(degree > 0, 1.0 / mx.sqrt(degree + 1e-8), mx.zeros_like(degree))
+            A_norm = degree_inv_sqrt * A * mx.transpose(degree_inv_sqrt)
 
             # 2-vrstvý GCN forward pass (jednoduché váhy — není trénovaný, ale topologie funguje)
             hidden_dim = 16
             # Layer 1: W1 ∈ R^(feat_dim × hidden_dim) — náhodná inicializace (fixní seed)
-            _mx.random.seed(42)
-            W1 = _mx.random.normal((feat_dim, hidden_dim)) * 0.1
-            H1 = _mx.maximum(A_norm @ X @ W1, 0)  # ReLU activation, [n, hidden_dim]
+            mx.random.seed(42)
+            W1 = mx.random.normal((feat_dim, hidden_dim)) * 0.1
+            H1 = mx.maximum(A_norm @ X @ W1, 0)  # ReLU activation, [n, hidden_dim]
 
             # Layer 2: link prediction = H1 @ H1.T (dot product similarity)
-            scores_matrix = H1 @ _mx.transpose(H1)  # [n, n] — link probability scores
-            _mx.eval(scores_matrix)
+            scores_matrix = H1 @ mx.transpose(H1)  # [n, n] — link probability scores
+            mx.eval(scores_matrix)
 
             # Extrahuj predikce pro query_node
             query_idx = node_index.get(query_node_id)
@@ -497,7 +505,7 @@ class GNNPredictor:
                     existing_neighbors.add(edge.get("source"))
 
             predictions = []
-            for i, (node, score) in enumerate(zip(graph_nodes, query_scores)):
+            for _i, (node, score) in enumerate(zip(graph_nodes, query_scores, strict=False)):
                 if node["id"] == query_node_id:
                     continue
                 if node["id"] in existing_neighbors:
@@ -513,9 +521,9 @@ class GNNPredictor:
             predictions.sort(key=lambda x: x["predicted_link_probability"], reverse=True)
 
             # Uvolni MLX cache — M1 critical (mx.eval([]) required before clear_cache)
-            if hasattr(_mx.metal, "clear_cache"):
-                _mx.eval([])
-                _mx.metal.clear_cache()
+            if hasattr(mx.metal, "clear_cache"):
+                mx.eval([])
+                mx.metal.clear_cache()
 
             return predictions[:top_k]
 
@@ -546,7 +554,7 @@ class GNNPredictor:
 
         for result in research_results:
             text = str(result)
-            source_action = result.get("action", "unknown")
+            result.get("action", "unknown")
 
             # Extrahuj entity a vytvoř uzly
             for match in domain_pattern.findall(text)[:20]:
@@ -712,8 +720,8 @@ def get_anomaly_scores(
     if not edge_list:
         return []
 
-    from collections import Counter
     import statistics
+    from collections import Counter
 
     try:
         # Primární: GNN anomaly detection
@@ -727,7 +735,7 @@ def get_anomaly_scores(
             predictor = GNNPredictor()
             # Build all unique nodes with inferred types
             all_nodes = set()
-            for src, dst, rel, _ in edge_list:
+            for src, dst, _rel, _ in edge_list:
                 all_nodes.add(src)
                 all_nodes.add(dst)
             # Infer types
@@ -775,8 +783,8 @@ def get_anomaly_scores(
 # Original train_gnn_task
 # ---------------------------------------------------------------------------
 
-def train_gnn_task(predictor: 'GNNPredictor',
-                   edges: List[Tuple[int, int]],
+def train_gnn_task(predictor: GNNPredictor,
+                   edges: list[tuple[int, int]],
                    features,
                    labels,
                    num_epochs: int = 10,
@@ -793,8 +801,8 @@ def train_gnn_task(predictor: 'GNNPredictor',
         return
 
     try:
-        from mlx.nn import losses
         import mlx.optimizers as optim
+        from mlx.nn import losses
     except (ImportError, AttributeError) as e:
         logger.warning(f"MLX imports failed: {e}, skipping GNN training")
         return
@@ -824,7 +832,7 @@ def train_gnn_task(predictor: 'GNNPredictor',
         if u < n_nodes and v < n_nodes:
             adj_np[u, v] = 1.0
             adj_np[v, u] = 1.0
-    adj = _mx.array(adj_np)
+    adj = mx.array(adj_np)
 
     # Vytvoříme model se stejnou dimenzí jako features
     model = GraphSAGE(features.shape[1], 32, 1)
@@ -834,12 +842,12 @@ def train_gnn_task(predictor: 'GNNPredictor',
         pred = model(x, adj).squeeze()
         return losses.binary_cross_entropy(pred, y)
 
-    loss_and_grad_fn = _nn.value_and_grad(model, loss_fn)
+    loss_and_grad_fn = nn.value_and_grad(model, loss_fn)
 
     for epoch in range(num_epochs):
         loss, grads = loss_and_grad_fn(model, features, adj, labels)
         optimizer.update(model, grads)
-        _mx.eval(model.parameters(), optimizer.state)
+        mx.eval(model.parameters(), optimizer.state)
         if epoch % 2 == 0:
             logger.debug(f"GNN training epoch {epoch}, loss: {loss.item():.4f}")
 

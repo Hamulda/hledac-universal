@@ -20,7 +20,6 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import Tuple
 
 __all__ = [
     "PromptInjectionValidationResult",
@@ -35,7 +34,7 @@ __all__ = [
 class PromptInjectionValidationResult:
     safe_text: str
     suspicious: bool
-    patterns: Tuple[str, ...]
+    patterns: tuple[str, ...]
     original_chars: int
     final_chars: int
     reason: str

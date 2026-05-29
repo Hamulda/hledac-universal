@@ -2,9 +2,8 @@
 Tests for embedding cache (Sprint 76).
 """
 
+
 import pytest
-from unittest.mock import patch, MagicMock, AsyncMock
-import asyncio
 
 
 class TestEmbeddingCache:
@@ -69,7 +68,7 @@ class TestFloat16Quantization:
         restored = emb_np.astype(np.float32).tolist()
 
         # Should be approximately equal
-        for orig, rest in zip(original, restored):
+        for orig, rest in zip(original, restored, strict=False):
             assert abs(orig - rest) < 0.01
 
     def test_memory_savings(self):

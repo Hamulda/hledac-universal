@@ -10,9 +10,10 @@ Truth-validation tests for:
 5. Metadata alignment
 """
 
-import pytest
-import sys
 import os
+import sys
+
+import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
@@ -23,8 +24,9 @@ class TestSprint83DWildcardSuppressionTruth:
     @pytest.mark.asyncio
     async def test_wildcard_suppression_truly_blocks_forwarding(self):
         """Verify: is_wildcard=True → NO subdomains forwarded."""
+        from unittest.mock import AsyncMock, patch
+
         from hledac.universal.intelligence.network_reconnaissance import NetworkReconnaissance
-        from unittest.mock import AsyncMock, MagicMock, patch
 
         recon = NetworkReconnaissance()
 
@@ -57,15 +59,16 @@ class TestSprint83DWildcardSuppressionTruth:
                 forwarded = len(subdomains_found)
 
             # ASSERTION: When is_wildcard=True, forwarded must be 0
-            assert is_wildcard == True
+            assert is_wildcard
             assert forwarded == 0, "FAIL: Wildcard=True but forwarding occurred!"
             assert subdomains_suppressed > 0, "FAIL: Wildcard=True but suppressed count is 0"
 
     @pytest.mark.asyncio
     async def test_non_wildcard_allows_forwarding(self):
         """Verify: is_wildcard=False → subdomains ARE forwarded."""
-        from hledac.universal.intelligence.network_reconnaissance import NetworkReconnaissance
         from unittest.mock import AsyncMock, patch
+
+        from hledac.universal.intelligence.network_reconnaissance import NetworkReconnaissance
 
         recon = NetworkReconnaissance()
 
@@ -81,18 +84,17 @@ class TestSprint83DWildcardSuppressionTruth:
 
             # Simulate finding subdomains
             subdomains_found = ['www.example.com', 'mail.example.com', 'api.example.com']
-            subdomains_suppressed = 0
 
             # Forwarding logic
             forwarded = 0
             _MAX_SUBDOMAINS_FORWARDED_PER_DOMAIN = 5
             if not is_wildcard:
-                for sub in subdomains_found[:_MAX_SUBDOMAINS_FORWARDED_PER_DOMAIN]:
+                for _sub in subdomains_found[:_MAX_SUBDOMAINS_FORWARDED_PER_DOMAIN]:
                     if forwarded < _MAX_SUBDOMAINS_FORWARDED_PER_DOMAIN:
                         forwarded += 1
 
             # ASSERTION: When is_wildcard=False, forwarded > 0
-            assert is_wildcard == False
+            assert not is_wildcard
             assert forwarded > 0, "FAIL: Wildcard=False but no forwarding!"
             assert forwarded == len(subdomains_found)
 
@@ -141,8 +143,7 @@ class TestSprint83DMetadataAlignment:
     @pytest.mark.asyncio
     async def test_metadata_matches_forwarding_behavior_wildcard(self):
         """Verify: when wildcard=True, subdomains_suppressed_by_wildcard > 0."""
-        from hledac.universal.intelligence.network_reconnaissance import NetworkReconnaissance
-        from unittest.mock import AsyncMock, patch, MagicMock
+        from unittest.mock import MagicMock
 
         # Create mock host_info
         mock_host_info = MagicMock()
@@ -163,7 +164,7 @@ class TestSprint83DMetadataAlignment:
         }
 
         # ASSERTION: Metadata consistency
-        assert metadata['wildcard_suspected'] == True
+        assert metadata['wildcard_suspected']
         assert metadata['subdomains_forwarded'] == 0, "Forwarding should be 0 when wildcard=True"
         assert metadata['subdomains_suppressed_by_wildcard'] > 0, "Suppressed should be > 0 when wildcard=True"
 
@@ -184,7 +185,7 @@ class TestSprint83DMetadataAlignment:
             'wildcard_suspected': is_wildcard,
         }
 
-        assert metadata['wildcard_suspected'] == False
+        assert not metadata['wildcard_suspected']
         assert metadata['subdomains_forwarded'] > 0
         assert metadata['subdomains_suppressed_by_wildcard'] == 0
 
@@ -260,7 +261,6 @@ class TestSprint83DDownstreamFlowState:
 
     def test_downstream_flow_state_empty_when_no_forwarding(self):
         """Verify: no forwarding → EMPTY_RESULT."""
-        is_wildcard = True
         forwarded = 0
 
         downstream_flow_state = 'CANDIDATES_GENERATED' if forwarded > 0 else 'EMPTY_RESULT'
@@ -269,7 +269,6 @@ class TestSprint83DDownstreamFlowState:
 
     def test_downstream_flow_state_candidates_when_forwarding(self):
         """Verify: forwarding → CANDIDATES_GENERATED."""
-        is_wildcard = False
         forwarded = 3
 
         downstream_flow_state = 'CANDIDATES_GENERATED' if forwarded > 0 else 'EMPTY_RESULT'
@@ -283,13 +282,14 @@ class TestSprint83DCodeInspection:
     def test_wildcard_check_before_forwarding(self):
         """Verify: is_wildcard check occurs BEFORE forwarding in handler."""
         import inspect
+
         from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
 
         source_file = inspect.getsourcefile(FullyAutonomousOrchestrator)
         if source_file is None:
             pytest.skip("Source file not found")
 
-        with open(source_file, 'r') as f:
+        with open(source_file) as f:
             content = f.read()
 
         # Find network_recon_handler section
@@ -312,13 +312,14 @@ class TestSprint83DCodeInspection:
     def test_forwarding_suppression_uses_is_wildcard_variable(self):
         """Verify forwarding suppression uses is_wildcard, not hardcoded value."""
         import inspect
+
         from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
 
         source_file = inspect.getsourcefile(FullyAutonomousOrchestrator)
         if source_file is None:
             pytest.skip("Source file not found")
 
-        with open(source_file, 'r') as f:
+        with open(source_file) as f:
             content = f.read()
 
         # Find the forwarding suppression block

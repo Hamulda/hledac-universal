@@ -16,15 +16,13 @@ Usage:
 """
 from __future__ import annotations
 
-from typing import Set, Dict, Optional
-
 
 class DempsterShafer:
     """Dempster-Shafer theory implementation for hypothesis management."""
 
-    def __init__(self, hypotheses: Optional[Set[str]] = None):
+    def __init__(self, hypotheses: set[str] | None = None):
         self.hypotheses = hypotheses or set()
-        self.masses: Dict[str, float] = {h: 0.0 for h in self.hypotheses}
+        self.masses: dict[str, float] = dict.fromkeys(self.hypotheses, 0.0)
         self.unknown = 1.0
         self.conflict = 0.0
 
@@ -54,7 +52,7 @@ class DempsterShafer:
                 self.masses[h] = self.masses[h] * (1 - weighted_mass) / norm
         self.unknown = self.unknown * (1 - weighted_mass) / norm
 
-    def belief(self, hypothesis: Optional[str] = None) -> float:
+    def belief(self, hypothesis: str | None = None) -> float:
         """Return belief for hypothesis or total belief if None."""
         if hypothesis is None:
             return sum(self.masses.values())
@@ -83,7 +81,7 @@ class DempsterShafer:
         }
 
     @classmethod
-    def from_dict(cls, d: dict) -> 'DempsterShafer':
+    def from_dict(cls, d: dict) -> DempsterShafer:
         """Restore from dict."""
         ds = cls(hypotheses=set(d.get('hypotheses', [])))
         ds.masses = dict(d.get('masses', {}))

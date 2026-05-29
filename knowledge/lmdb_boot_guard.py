@@ -24,7 +24,7 @@ from __future__ import annotations
 import logging
 import os
 import pathlib
-from typing import Any, Optional
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -53,7 +53,7 @@ def _is_process_alive(pid: int) -> bool:
         return False
 
 
-def _try_get_lock_holder_pid(lock_path: pathlib.Path) -> Optional[int]:
+def _try_get_lock_holder_pid(lock_path: pathlib.Path) -> int | None:
     """
     Attempt to extract the PID stored in a lock file.
 
@@ -167,7 +167,7 @@ def cleanup_stale_lmdb_lock(lmdb_dir: pathlib.Path) -> tuple[int, str]:
 def open_lmdb_with_guard(
     path: pathlib.Path,
     *,
-    map_size: Optional[int] = None,
+    map_size: int | None = None,
     **kw,
 ) -> Any:
     """

@@ -49,7 +49,7 @@ matches = aho_scan_text(automaton, "This document is classified and secret")
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 __all__ = [
     "get_suspicious_keywords_automaton",
@@ -62,7 +62,7 @@ __all__ = [
 ]
 
 
-def scan_suspicious_keywords_list(text: str) -> List[str]:
+def scan_suspicious_keywords_list(text: str) -> list[str]:
     """
     Return list of matched keyword strings (case-insensitive).
 
@@ -82,8 +82,8 @@ def scan_suspicious_keywords_list(text: str) -> List[str]:
 
     if automaton is not None:
         # Aho path: iterate automaton, collect unique matched values
-        seen: List[str] = []
-        for end_index, value in automaton.iter(text.lower()):
+        seen: list[str] = []
+        for _end_index, value in automaton.iter(text.lower()):
             if value not in seen:
                 seen.append(value)
         return seen
@@ -96,7 +96,7 @@ def scan_suspicious_keywords_list(text: str) -> List[str]:
 # Pilot pattern set (from document_intelligence.DocumentIntelligence)
 # ------------------------------------------------------------------
 
-PILOT_PATTERNS: List[str] = [
+PILOT_PATTERNS: list[str] = [
     "confidential",
     "classified",
     "secret",
@@ -112,7 +112,7 @@ PILOT_PATTERNS: List[str] = [
 # Lazy import guard
 # ------------------------------------------------------------------
 
-_AhoCorasickModule: Optional[Any] = None
+_AhoCorasickModule: Any | None = None
 
 
 def _get_ahocorasick() -> Any:
@@ -129,7 +129,7 @@ def _get_ahocorasick() -> Any:
 # Cached automaton singleton
 # ------------------------------------------------------------------
 
-_automaton_cache: Optional[Any] = None
+_automaton_cache: Any | None = None
 
 
 def get_suspicious_keywords_automaton() -> Any:
@@ -155,7 +155,7 @@ def get_suspicious_keywords_automaton() -> Any:
 # ------------------------------------------------------------------
 
 
-def normalize_aho_match(end_index: int, match_value: str) -> Dict[str, Any]:
+def normalize_aho_match(end_index: int, match_value: str) -> dict[str, Any]:
     """
     Normalize a pyahocorasick (end_index, value) pair to exclusive end.
 
@@ -174,7 +174,7 @@ def normalize_aho_match(end_index: int, match_value: str) -> Dict[str, Any]:
 # ------------------------------------------------------------------
 
 
-def aho_scan_text(automaton: Any, text: str) -> List[Dict[str, Any]]:
+def aho_scan_text(automaton: Any, text: str) -> list[dict[str, Any]]:
     """
     Scan text with the Aho-Corasick automaton.
 
@@ -185,7 +185,7 @@ def aho_scan_text(automaton: Any, text: str) -> List[Dict[str, Any]]:
     Returns a list of normalized match dicts with exclusive end.
     Empty list if no matches.
     """
-    matches: List[Dict[str, Any]] = []
+    matches: list[dict[str, Any]] = []
     for end_index, value in automaton.iter(text.lower()):
         matches.append(normalize_aho_match(end_index, value))
     return matches
@@ -196,7 +196,7 @@ def aho_scan_text(automaton: Any, text: str) -> List[Dict[str, Any]]:
 # ------------------------------------------------------------------
 
 
-def regex_scan_suspicious_keywords(text: str) -> List[Dict[str, Any]]:
+def regex_scan_suspicious_keywords(text: str) -> list[dict[str, Any]]:
     """
     Ground-truth scan using the same substring semantics as document_intelligence.
 
@@ -204,7 +204,7 @@ def regex_scan_suspicious_keywords(text: str) -> List[Dict[str, Any]]:
     This mirrors that exactly.
     """
     text_lower = text.lower()
-    matches: List[Dict[str, Any]] = []
+    matches: list[dict[str, Any]] = []
     for pattern in PILOT_PATTERNS:
         start = 0
         while True:
@@ -223,7 +223,7 @@ def regex_scan_suspicious_keywords(text: str) -> List[Dict[str, Any]]:
 
 def compare_aho_vs_regex(
     text: str,
-) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], bool]:
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], bool]:
     """
     Compare Aho-Corasick vs regex (substring) outputs for a given text.
 

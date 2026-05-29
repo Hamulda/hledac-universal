@@ -1,14 +1,13 @@
 """Sprint 7E Tests: Local Truth Harness + Revision-Safe State Cache + Complete Offline Guards"""
 
-import pytest
 import asyncio
-import os
 import json
-import time
+import os
 import tempfile
 from pathlib import Path
-from unittest.mock import MagicMock, AsyncMock, patch
-from collections import deque
+from unittest.mock import patch
+
+import pytest
 
 # Constants from sprint spec
 HANDLERS_REQUIRE_ONLINE = [
@@ -179,6 +178,7 @@ class TestSprint7EOfflineGuards:
 
         # Re-import to get fresh value
         import importlib
+
         import hledac.universal.autonomous_orchestrator as ao
         importlib.reload(ao)
 
@@ -193,6 +193,7 @@ class TestSprint7EOfflineGuards:
         # Patch environment BEFORE importing orchestrator
         with patch.dict(os.environ, {"HLEDAC_OFFLINE": "1"}):
             import importlib
+
             import hledac.universal.autonomous_orchestrator as ao
             importlib.reload(ao)
 
@@ -214,8 +215,9 @@ class TestSprint7EOfflineGuards:
     @pytest.mark.asyncio
     async def test_local_handlers_remain_callable(self):
         """TEST 5: HANDLERS_LOCAL_ONLY should not have HLEDAC_OFFLINE guards"""
-        from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
         import inspect
+
+        from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
 
         source = inspect.getsource(FullyAutonomousOrchestrator)
 
@@ -233,15 +235,14 @@ class TestSprint7EBenchmarkHarness:
     @pytest.mark.asyncio
     async def test_benchmark_smoke_writes_files(self):
         """TEST 6: Run 10s smoke benchmark with silent mode, verify files written"""
-        import asyncio
-        from pathlib import Path
         import tempfile
+        from pathlib import Path
 
         # Import after setting env
         with patch.dict(os.environ, {"HLEDAC_OFFLINE": "1"}):
             from hledac.universal.benchmarks.run_sprint82j_benchmark import (
-                run_benchmark, BENCHMARK_SMOKE_SECONDS, BENCHMARK_LOG_PATH, BENCHMARK_SUMMARY_PATH,
-                CHECKPOINT_INTERVAL_S, OFFLINE_SMOKE_DURATION_S
+                OFFLINE_SMOKE_DURATION_S,
+                run_benchmark,
             )
 
             with tempfile.TemporaryDirectory() as tmpdir:
@@ -250,7 +251,7 @@ class TestSprint7EBenchmarkHarness:
 
                 # Run 10s smoke benchmark in OFFLINE_REPLAY mode
                 try:
-                    results = await run_benchmark(
+                    await run_benchmark(
                         duration_seconds=OFFLINE_SMOKE_DURATION_S,
                         mode="OFFLINE_REPLAY",
                         silent=True,
@@ -258,7 +259,7 @@ class TestSprint7EBenchmarkHarness:
                         summary_path=summary_path,
                         verbose=False,
                     )
-                except Exception as e:
+                except Exception:
                     # Some errors expected in mock environment
                     pass
 
@@ -290,12 +291,11 @@ class TestSprint7EBenchmarkHarness:
     @pytest.mark.asyncio
     async def test_no_zombie_tasks_after_smoke(self):
         """TEST 7: After smoke completes, no runaway task creation"""
-        import asyncio
         import gc
 
         # Run a short smoke
         with patch.dict(os.environ, {"HLEDAC_OFFLINE": "1"}):
-            from hledac.universal.benchmarks.run_sprint82j_benchmark import run_benchmark, OFFLINE_SMOKE_DURATION_S
+            from hledac.universal.benchmarks.run_sprint82j_benchmark import run_benchmark
 
             with tempfile.TemporaryDirectory() as tmpdir:
                 jsonl_path = str(Path(tmpdir) / "zombie_test.jsonl")
@@ -379,6 +379,7 @@ class TestSprint7EConstants:
     def test_offline_guards_present_in_orchestrator(self):
         """Verify offline guards are present in all required handlers"""
         import inspect
+
         from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
 
         source = inspect.getsource(FullyAutonomousOrchestrator)
@@ -402,10 +403,8 @@ class TestSprint7FReplaySafeGuards:
         try:
             # Create orchestrator - handlers should still be accessible
             # because replay mode is checked via self._data_mode, not module flag
-            from hledac.universal.utils import ActionResult
             # The guard pattern is: if _HLEDAC_OFFLINE and getattr(self, '_data_mode', None) != "OFFLINE_REPLAY"
             # So if _data_mode == "OFFLINE_REPLAY", the guard should NOT block
-            source = FullyAutonomousOrchestrator.__module__
             # Verify the guard pattern contains replay-safe check
             import inspect
             src = inspect.getsource(FullyAutonomousOrchestrator)
@@ -417,7 +416,6 @@ class TestSprint7FReplaySafeGuards:
     def test_live_path_blocked_by_hledac_offline(self):
         """TEST 2: Live path (non-replay) IS blocked by _HLEDAC_OFFLINE"""
         import hledac.universal.autonomous_orchestrator as _orch_module
-        from hledac.universal.utils import ActionResult
 
         # Save old value
         old_val = _orch_module._HLEDAC_OFFLINE
@@ -432,6 +430,7 @@ class TestSprint7FReplaySafeGuards:
     def test_replay_mode_flag_flows_to_research(self):
         """TEST 3: offline_replay parameter in research() sets _data_mode"""
         import inspect
+
         from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
 
         sig = inspect.signature(FullyAutonomousOrchestrator.research)
@@ -450,6 +449,7 @@ class TestSprint7FReplaySafeGuards:
     def test_replay_safe_guard_pattern_in_all_handlers(self):
         """TEST 5: All 16 handlers have replay-safe guard pattern"""
         import inspect
+
         from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
 
         source = inspect.getsource(FullyAutonomousOrchestrator)
@@ -463,6 +463,7 @@ class TestSprint7FReplaySafeGuards:
     def test_data_mode_set_before_action_init(self):
         """TEST 6: _data_mode is set BEFORE _initialize_actions() is called"""
         import inspect
+
         from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
 
         source = inspect.getsource(FullyAutonomousOrchestrator.research)

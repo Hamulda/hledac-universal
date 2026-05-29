@@ -19,7 +19,6 @@ CONTROLLED TARGET: https://raw.githubusercontent.com/torvalds/linux/master/MAINT
 import asyncio
 import gc
 import os
-import psutil
 import re
 import statistics
 import subprocess
@@ -27,8 +26,9 @@ import sys
 import time
 import unittest
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
+import psutil
 
 # ─── Checkpoint helpers ───────────────────────────────────────────────────────
 
@@ -50,7 +50,7 @@ def _get_rss_mb() -> float:
         return 0.0
 
 
-def _get_open_files() -> List[Dict[str, Any]]:
+def _get_open_files() -> list[dict[str, Any]]:
     """Get list of open files with status."""
     try:
         process = psutil.Process(os.getpid())
@@ -62,7 +62,7 @@ def _get_open_files() -> List[Dict[str, Any]]:
         return []
 
 
-def _get_connections() -> List[Dict[str, Any]]:
+def _get_connections() -> list[dict[str, Any]]:
     """Get list of open network connections."""
     try:
         process = psutil.Process(os.getpid())
@@ -80,7 +80,7 @@ def _get_connections() -> List[Dict[str, Any]]:
         return []
 
 
-def _classify_fd(fd_info: Dict[str, Any]) -> str:
+def _classify_fd(fd_info: dict[str, Any]) -> str:
     """Classify an FD as TIME_WAIT, ACTIVITY, or OTHER."""
     conn = fd_info.get("status", "").upper()
     if "TIME_WAIT" in conn:
@@ -90,12 +90,12 @@ def _classify_fd(fd_info: Dict[str, Any]) -> str:
     return "OTHER"
 
 
-def _count_non_timewait_fds(conns: List[Dict[str, Any]]) -> int:
+def _count_non_timewait_fds(conns: list[dict[str, Any]]) -> int:
     """Count non-TIME_WAIT FDs (ACTIVITY + OTHER)."""
     return sum(1 for c in conns if _classify_fd(c) != "TIME_WAIT")
 
 
-def _count_fds_by_category(conns: List[Dict[str, Any]]) -> Dict[str, int]:
+def _count_fds_by_category(conns: list[dict[str, Any]]) -> dict[str, int]:
     """Count FDs by category."""
     cats = {"TIME_WAIT": 0, "ACTIVITY": 0, "OTHER": 0}
     for c in conns:
@@ -103,7 +103,7 @@ def _count_fds_by_category(conns: List[Dict[str, Any]]) -> Dict[str, int]:
     return cats
 
 
-def _get_8aj_telemetry(orch: Any) -> Dict[str, Any]:
+def _get_8aj_telemetry(orch: Any) -> dict[str, Any]:
     """Read existing 8AJ telemetry fields from orchestrator."""
     return {
         "ramdisk_active": getattr(orch, "_runtime_ramdisk_active", None),
@@ -209,7 +209,7 @@ def _artifacts_outside_declared_root(declared_root: str) -> int:
     return count
 
 
-def _classify_open_files(declared_root: str) -> Dict[str, int]:
+def _classify_open_files(declared_root: str) -> dict[str, int]:
     """
     Classify all open files into artifact categories.
     Returns dict of category -> count.
@@ -251,7 +251,7 @@ def _get_sprint_state_value(orch: Any, key: str, default: Any = None) -> Any:
 
 # ─── Cold import baseline ────────────────────────────────────────────────────
 
-def measure_import_baseline() -> Dict[str, float]:
+def measure_import_baseline() -> dict[str, float]:
     """Measure cold import time 3x using exact subprocess method."""
     code = (
         "import time; t=time.perf_counter(); "
@@ -293,16 +293,16 @@ class BoundedLiveGateHarness:
     ):
         self.duration_seconds = duration_seconds
         self.query = query
-        self.cp: Dict[str, Dict[str, Any]] = {}
+        self.cp: dict[str, dict[str, Any]] = {}
         self.active_path_ok = False
         self.artifacts_outside_count: int = -1
         self.fd_delta_non_timewait: int = -1
-        self.scheduler_hhi_last_60s: Optional[float] = None
-        self.result_summary: Dict[str, Any] = {}
-        self._monitor_task: Optional[asyncio.Task] = None
+        self.scheduler_hhi_last_60s: float | None = None
+        self.result_summary: dict[str, Any] = {}
+        self._monitor_task: asyncio.Task | None = None
         self._orch = None
 
-    def _checkpoint(self, label: str) -> Dict[str, Any]:
+    def _checkpoint(self, label: str) -> dict[str, Any]:
         """Capture a checkpoint snapshot."""
         conns = _get_connections()
         files = _get_open_files()
@@ -338,14 +338,14 @@ class BoundedLiveGateHarness:
             # If cancelled before midpoint, still record whatever we can
             self.cp["cp3_mid_run"] = self._checkpoint("cp3_mid_run")
 
-    async def run(self) -> Dict[str, Any]:
+    async def run(self) -> dict[str, Any]:
         """Execute the bounded live-run."""
         # CP1: pre-import
         self.cp["cp1_pre_import"] = self._checkpoint("cp1_pre_import")
 
         # Import and create orchestrator
         from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
-        from hledac.universal.config import UniversalConfig, ResearchMode
+        from hledac.universal.config import ResearchMode, UniversalConfig
 
         # CP1b: pre-init
         self.cp["cp1b_pre_init"] = self._checkpoint("cp1b_pre_init")
@@ -392,7 +392,7 @@ class BoundedLiveGateHarness:
                 timeout=self.duration_seconds * 0.6,
             )
             research_done = True
-        except (asyncio.TimeoutError, asyncio.CancelledError):
+        except (TimeoutError, asyncio.CancelledError):
             research_task.cancel()
             try:
                 await research_task
@@ -550,7 +550,7 @@ class BoundedLiveGateHarness:
 
         return self.result_summary
 
-    def gate_decision(self) -> Tuple[str, List[str]]:
+    def gate_decision(self) -> tuple[str, list[str]]:
         """
         Compute the GO / SOFT NO-GO / HARD NO-GO / OPSEC FAIL decision.
 
@@ -733,7 +733,7 @@ class TestSprint8APBoundedLiveGate(unittest.TestCase):
         """8AJ telemetry fields must be visible in orchestrator after init."""
         async def _inner():
             from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
-            from hledac.universal.config import UniversalConfig, ResearchMode
+            from hledac.universal.config import ResearchMode, UniversalConfig
 
             config = UniversalConfig.for_mode(ResearchMode.AUTONOMOUS)
             orch = FullyAutonomousOrchestrator(config)
@@ -770,8 +770,8 @@ class TestSprint8APRegressionSubset(unittest.TestCase):
     def test_8an_hygiene_fd_delta_numeric(self):
         """FD delta computation uses numeric comparison, not string."""
         from hledac.universal.tests.test_sprint8ap_bounded_live_gate import (
-            _count_non_timewait_fds,
             _classify_fd,
+            _count_non_timewait_fds,
         )
         mock_conns = [
             {"status": "TIME_WAIT"},
@@ -821,7 +821,7 @@ class TestSprint8APGateDecision(unittest.TestCase):
         # Sprint 8AR: artifact classification breakdown
         ac = result.get('artifact_classification', {})
         if ac:
-            print(f"  Artifact Classification:")
+            print("  Artifact Classification:")
             for cat in sorted(ac.keys()):
                 print(f"    {cat}: {ac[cat]}")
         print(f"  RAMDISK_ACTIVE:   {result.get('ramdisk_active')}")
@@ -854,8 +854,8 @@ class TestSprint8ARArtifactClassifier(unittest.TestCase):
 
     def test_artifact_classifier_distinguishes_categories(self):
         """Classifier must distinguish APP_OWNED_LEAK from TEST_TEMP_NOISE/OS_NOISE."""
-        from pathlib import Path
         import tempfile
+        from pathlib import Path
 
         with tempfile.TemporaryDirectory() as tmpdir:
             decl_root = Path(tmpdir)
@@ -897,7 +897,7 @@ class TestSprint8ARArtifactClassifier(unittest.TestCase):
 
     def test_cache_root_constants_exist(self):
         """CACHE_ROOT must be under RAMDISK_ROOT/FALLBACK_ROOT."""
-        from hledac.universal.paths import CACHE_ROOT, RAMDISK_ROOT, FALLBACK_ROOT, RAMDISK_ACTIVE
+        from hledac.universal.paths import CACHE_ROOT, FALLBACK_ROOT, RAMDISK_ACTIVE, RAMDISK_ROOT
         base = RAMDISK_ROOT if RAMDISK_ACTIVE else FALLBACK_ROOT
         self.assertTrue(
             str(CACHE_ROOT).startswith(str(base)),
@@ -908,8 +908,8 @@ class TestSprint8ARArtifactClassifier(unittest.TestCase):
 
     def test_source_bandit_uses_lmdb_root(self):
         """SourceBandit must use LMDB_ROOT from paths.py (lazy import)."""
-        from hledac.universal.tools.source_bandit import SourceBandit
         from hledac.universal.paths import LMDB_ROOT
+        from hledac.universal.tools.source_bandit import SourceBandit
         sb = SourceBandit()
         env_path = sb._env.path()
         # Must be under LMDB_ROOT
@@ -939,8 +939,8 @@ class TestSprint8ATLeakClosure(unittest.TestCase):
 
     def test_ao_keys_lmdb_uses_paths_authority(self):
         """KeyManager must default to KEYS_ROOT, not Path.home()/.hledac."""
-        from hledac.universal.security.key_manager import KeyManager
         from hledac.universal.paths import KEYS_ROOT
+        from hledac.universal.security.key_manager import KeyManager
         km = KeyManager()
         self.assertTrue(
             str(km.db_path).startswith(str(KEYS_ROOT)),
@@ -951,6 +951,7 @@ class TestSprint8ATLeakClosure(unittest.TestCase):
         """LocalGraphStore must default to LMDB_ROOT."""
         from hledac.universal.dht.local_graph import LocalGraphStore
         from hledac.universal.paths import LMDB_ROOT
+
         # LocalGraphStore needs a key_manager; create a minimal mock
         from hledac.universal.security.key_manager import KeyManager
         km = KeyManager()
@@ -963,7 +964,7 @@ class TestSprint8ATLeakClosure(unittest.TestCase):
 
     def test_keys_and_graph_resolve_under_declared_root(self):
         """Both keys.lmdb and local_graph.lmdb must resolve under declared root."""
-        from hledac.universal.paths import KEYS_ROOT, LMDB_ROOT, FALLBACK_ROOT
+        from hledac.universal.paths import FALLBACK_ROOT, KEYS_ROOT, LMDB_ROOT
         declared = FALLBACK_ROOT
         if declared is None:
             declared = KEYS_ROOT.parent.parent  # fallback to parent

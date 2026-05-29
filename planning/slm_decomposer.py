@@ -4,19 +4,18 @@ Podporuje paralelní běh, cache a validaci.
 """
 
 import asyncio
-import logging
-import json
-import time
 import hashlib
+import json
+import logging
+
 import psutil
-from typing import List, Dict, Optional, Any
 
 logger = logging.getLogger(__name__)
 
 # Lazy import for mlx_lm
 MLX_LM_AVAILABLE = True
 try:
-    from mlx_lm import load, generate
+    from mlx_lm import generate, load
 except ImportError:
     MLX_LM_AVAILABLE = False
     logger.warning("mlx_lm not available, SLM decomposer will use fallback")
@@ -42,7 +41,7 @@ class SLMDecomposer:
             )
             logger.info(f"SLM model {self.model_name} loaded")
 
-    async def decompose(self, task_description: str, context: Dict) -> List[Dict]:
+    async def decompose(self, task_description: str, context: dict) -> list[dict]:
         if not MLX_LM_AVAILABLE:
             return self._rule_based_fallback(task_description, context)
 
@@ -88,7 +87,7 @@ class SLMDecomposer:
         await self.cache.put(cache_key, best, self._model_version)
         return best
 
-    def _build_prompts(self, task: str, context: Dict, count: int) -> List[str]:
+    def _build_prompts(self, task: str, context: dict, count: int) -> list[str]:
         """Vytvoří různé prompt varianty pro paralelní běh."""
         base = f"""Rozlož následující výzkumný úkol na posloupnost elementárních akcí.
 Úkol: {task}
@@ -103,7 +102,7 @@ Povolené typy: fetch, deep_read, branch, analyse, synthesize, hypothesis, expla
             variants.append(base + "\nPreferuj hloubkové, přesné akce.")
         return variants[:count]
 
-    async def _call_slm(self, prompt: str, timeout: float) -> Optional[Dict]:
+    async def _call_slm(self, prompt: str, timeout: float) -> dict | None:
         """Zavolá MLX LM a parsuje JSON výstup."""
         if not MLX_LM_AVAILABLE:
             return None
@@ -131,10 +130,10 @@ Povolené typy: fetch, deep_read, branch, analyse, synthesize, hypothesis, expla
             logger.error(f"SLM call error: {e}")
         return None
 
-    def _rule_based_fallback(self, task: str, context: Dict) -> List[Dict]:
+    def _rule_based_fallback(self, task: str, context: dict) -> list[dict]:
         """Jednoduchý fallback – pro ukázku vrací jeden fetch."""
         return [{'type': 'fetch', 'params': {'url': '...'}, 'priority': 5}]
 
-    def _cache_key(self, task: str, context: Dict) -> str:
+    def _cache_key(self, task: str, context: dict) -> str:
         content = f"{task}:{json.dumps(context, sort_keys=True)}"
         return hashlib.sha256(content.encode()).hexdigest()

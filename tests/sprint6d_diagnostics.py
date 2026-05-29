@@ -3,9 +3,9 @@
 Sprint 6D: Context Selection Diagnostics - Step 0B
 """
 import asyncio
+import logging
 import sys
 import time
-import logging
 
 logging.getLogger('hledac').setLevel(logging.WARNING)
 logging.basicConfig(level=logging.INFO, format='%(message)s')
@@ -15,7 +15,7 @@ sys.path.insert(0, '/Users/vojtechhamada/PycharmProjects/Hledac')
 
 async def run_diagnostics():
     from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
-    from hledac.universal.knowledge.atomic_storage import EvidencePacketStorage, EvidencePacket
+    from hledac.universal.knowledge.atomic_storage import EvidencePacket, EvidencePacketStorage
 
     print("="*70)
     print("[6D] CONTEXT SELECTION DIAGNOSTICS")
@@ -31,7 +31,7 @@ async def run_diagnostics():
             evidence_id=f"evidence_{i}",
             url=f"http://localhost:{64000+i}/test",
             final_url=f"http://localhost:{64000+i}/test",
-            domain=f"localhost",
+            domain="localhost",
             fetched_at=time.time() - (i * 86400),
             status=200,
             headers_digest="abc123",

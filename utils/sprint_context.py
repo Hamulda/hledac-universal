@@ -19,9 +19,8 @@ Usage:
 
 from __future__ import annotations
 
-from contextvars import ContextVar, Token
 import contextlib
-from typing import Optional
+from contextvars import ContextVar, Token
 
 import msgspec
 
@@ -65,7 +64,7 @@ class SprintContext(msgspec.Struct, frozen=True, gc=False):
 # propagation is needed via copy_context().run(fn). ContextVar does NOT
 # automatically flow across thread boundaries.
 
-_sprint_ctx: ContextVar[Optional[SprintContext]] = ContextVar(
+_sprint_ctx: ContextVar[SprintContext | None] = ContextVar(
     "sprint_context", default=None
 )
 
@@ -75,7 +74,7 @@ _sprint_ctx: ContextVar[Optional[SprintContext]] = ContextVar(
 # =============================================================================
 
 
-def get_current_context() -> Optional[SprintContext]:
+def get_current_context() -> SprintContext | None:
     """Return the current sprint context (or None)."""
     return _sprint_ctx.get()
 

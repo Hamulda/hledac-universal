@@ -28,12 +28,12 @@ import logging
 import random
 import re
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Callable, Optional
+from typing import Any
 
 import aiohttp
 import orjson
-
 from hledac.universal.network.session_runtime import async_get_aiohttp_session
 from hledac.universal.transport.circuit_breaker import checked_aiohttp_get
 
@@ -83,7 +83,7 @@ def parse_circl_pdns_text(text: str, max_results: int = 50) -> list[CIRCLPDNSRec
         if not line:
             continue
 
-        ip: Optional[str] = None
+        ip: str | None = None
         rrname = ""
         rrtype = ""
 
@@ -191,7 +191,7 @@ def _is_private_ip(ip: str) -> bool:
 
 
 # F206AW: Circuit breaker — lazily imported to avoid import-time side effects
-_circuit_breaker_check: Optional[Callable[[str], Any]] = None
+_circuit_breaker_check: Callable[[str], Any] | None = None
 
 
 def _get_circuit_breaker():
@@ -222,8 +222,8 @@ def _try_domain_breaker_check(domain: str) -> Any:
 async def resolve_doh(
     domain: str,
     provider: str = "cloudflare",
-    session_provider: Optional[aiohttp.ClientSession] = None,
-    fetch_func: Optional[Callable[..., Any]] = None,
+    session_provider: aiohttp.ClientSession | None = None,
+    fetch_func: Callable[..., Any] | None = None,
 ) -> list[str]:
     """
     Resolve hostname via DNS-over-HTTPS (DoH).
@@ -325,7 +325,7 @@ async def resolve_doh(
         if not ips:
             logger.debug(f"DoH {provider} returned no A records for {domain}")
 
-    except asyncio.TimeoutError:
+    except TimeoutError:
         logger.warning(f"DoH timeout for {domain}")
     except Exception as e:
         logger.warning(f"DoH error for {domain}: {e}")
@@ -335,8 +335,8 @@ async def resolve_doh(
 
 async def lookup_passive_dns(
     domain: str,
-    session_provider: Optional[aiohttp.ClientSession] = None,
-    fetch_func: Optional[Callable[..., Any]] = None,
+    session_provider: aiohttp.ClientSession | None = None,
+    fetch_func: Callable[..., Any] | None = None,
 ) -> list[str]:
     """
     Legacy compatibility wrapper for CIRCL PDNS lookup.
@@ -387,8 +387,8 @@ def _looks_like_domain(value: str) -> bool:
 
 async def call_lookup_passive_dns(
     domain: str,
-    session_provider: Optional[aiohttp.ClientSession] = None,
-    fetch_func: Optional[Callable[..., Any]] = None,
+    session_provider: aiohttp.ClientSession | None = None,
+    fetch_func: Callable[..., Any] | None = None,
 ) -> tuple[list[str], PassiveDNSOutcome]:
     """
     CIRCL PDNS lookup with normalized outcome — F207F.
@@ -542,7 +542,7 @@ async def call_lookup_passive_dns(
         records = parse_circl_pdns_text(text, max_results=50)
         ips = [record.ip for record in records]
 
-    except asyncio.TimeoutError:
+    except TimeoutError:
         elapsed = time.monotonic() - start
         outcome = PassiveDNSOutcome(
             attempted=True,

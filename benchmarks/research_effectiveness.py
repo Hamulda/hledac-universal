@@ -16,8 +16,8 @@ from __future__ import annotations
 
 import json
 from collections import defaultdict
-from datetime import datetime, timezone
-from typing import Any, Dict, List
+from datetime import UTC, datetime
+from typing import Any
 
 # ---------------------------------------------------------------------------
 # Canonical normalization helpers
@@ -109,7 +109,7 @@ def normalize_severity(severity: str) -> str:
 # HHI computation
 # ---------------------------------------------------------------------------
 
-def _hhi(fraction_map: Dict[str, int]) -> float:
+def _hhi(fraction_map: dict[str, int]) -> float:
     """
     Herfindahl-Hirschman Index for source concentration.
     Returns 0.0 (uniform) to 1.0 (monopoly).
@@ -125,7 +125,7 @@ def _hhi(fraction_map: Dict[str, int]) -> float:
 # ---------------------------------------------------------------------------
 
 
-def compute_research_breadth_index(data: Dict[str, Any]) -> Dict[str, Any]:
+def compute_research_breadth_index(data: dict[str, Any]) -> dict[str, Any]:
     """
     Compute ResearchBreadthIndex from aggregated run data.
 
@@ -145,11 +145,11 @@ def compute_research_breadth_index(data: Dict[str, Any]) -> Dict[str, Any]:
             return _unavailable("No acquisition data available")
 
         # Extract source families
-        families: Dict[str, int] = defaultdict(int)
-        domains: Dict[str, bool] = {}
-        tlds: Dict[str, bool] = {}
-        content_types: Dict[str, bool] = {}
-        hosts: Dict[str, bool] = {}
+        families: dict[str, int] = defaultdict(int)
+        domains: dict[str, bool] = {}
+        tlds: dict[str, bool] = {}
+        content_types: dict[str, bool] = {}
+        hosts: dict[str, bool] = {}
 
         for src in sources:
             src_name = str(src.get("source", src.get("host", src.get("url", ""))))
@@ -218,7 +218,7 @@ def compute_research_breadth_index(data: Dict[str, Any]) -> Dict[str, Any]:
         return _unavailable(f"Breadth computation failed: {e}")
 
 
-def compute_research_depth_index(data: Dict[str, Any]) -> Dict[str, Any]:
+def compute_research_depth_index(data: dict[str, Any]) -> dict[str, Any]:
     """
     Compute ResearchDepthIndex from aggregated run data.
 
@@ -255,7 +255,7 @@ def compute_research_depth_index(data: Dict[str, Any]) -> Dict[str, Any]:
         deepening_candidates = gating.get("deepening_gate_candidates", 0)
 
         # Estimate depth from evidence chains
-        evidence_depths: List[int] = []
+        evidence_depths: list[int] = []
         synthesis = data.get("synthesis", {})
         if "evidence_depth" in synthesis:
             evidence_depths = synthesis["evidence_depth"]
@@ -304,7 +304,7 @@ def compute_research_depth_index(data: Dict[str, Any]) -> Dict[str, Any]:
         return _unavailable(f"Depth computation failed: {e}")
 
 
-def compute_research_quality_index(data: Dict[str, Any]) -> Dict[str, Any]:
+def compute_research_quality_index(data: dict[str, Any]) -> dict[str, Any]:
     """
     Compute ResearchQualityIndex from aggregated run data.
 
@@ -394,7 +394,7 @@ def compute_research_quality_index(data: Dict[str, Any]) -> Dict[str, Any]:
         return _unavailable(f"Quality computation failed: {e}")
 
 
-def compute_research_friction_index(data: Dict[str, Any]) -> Dict[str, Any]:
+def compute_research_friction_index(data: dict[str, Any]) -> dict[str, Any]:
     """
     Compute ResearchFrictionIndex from aggregated run data.
 
@@ -492,11 +492,11 @@ def compute_research_friction_index(data: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def compute_deep_research_power_score(
-    breadth: Dict[str, Any],
-    depth: Dict[str, Any],
-    quality: Dict[str, Any],
-    friction: Dict[str, Any],
-) -> Dict[str, Any]:
+    breadth: dict[str, Any],
+    depth: dict[str, Any],
+    quality: dict[str, Any],
+    friction: dict[str, Any],
+) -> dict[str, Any]:
     """
     Compute DeepResearchPowerScore = weighted composite of all 4 indexes.
 
@@ -555,10 +555,10 @@ def compute_deep_research_power_score(
 # JSON/JSONL file aggregation
 # ---------------------------------------------------------------------------
 
-def load_benchmark_json(filepath: str) -> Dict[str, Any]:
+def load_benchmark_json(filepath: str) -> dict[str, Any]:
     """Load a single benchmark JSON file, fail-open."""
     try:
-        with open(filepath, "r", encoding="utf-8") as f:
+        with open(filepath, encoding="utf-8") as f:
             return json.load(f)
     except Exception:
         return {}
@@ -567,7 +567,7 @@ def load_benchmark_json(filepath: str) -> Dict[str, Any]:
 def aggregate_benchmark_jsons(
     pattern: str,
     max_files: int = 100,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Load and aggregate benchmark JSON files matching pattern.
     Returns merged dataset with averaged counters.
@@ -579,9 +579,9 @@ def aggregate_benchmark_jsons(
         return {}
 
     # Aggregate counters
-    merged: Dict[str, Any] = defaultdict(int)
-    timing_vals: List[float] = []
-    findings_vals: List[int] = []
+    merged: dict[str, Any] = defaultdict(int)
+    timing_vals: list[float] = []
+    findings_vals: list[int] = []
     sources_count = 0
 
     for fp in files:
@@ -639,7 +639,7 @@ def aggregate_benchmark_jsons(
 def compute_all_scorecards(
     benchmark_pattern: str,
     max_files: int = 100,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Compute all 5 scorecards from benchmark JSON files matching pattern.
 
@@ -663,12 +663,12 @@ def compute_all_scorecards(
             "aggregated_from_files": data.get("_aggregated_from", 0),
             "total_wall_clock_seconds": data.get("timing", {}).get("total_wall_clock_seconds", 0.0),
             "total_findings": data.get("findings_count", 0),
-            "computed_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+            "computed_at": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
         },
     }
 
 
-def generate_scorecard_markdown(scorecard: Dict[str, Any]) -> str:
+def generate_scorecard_markdown(scorecard: dict[str, Any]) -> str:
     """Generate human-readable markdown report from scorecard."""
     lines = [
         "# Research Effectiveness Scorecard",
@@ -725,7 +725,7 @@ def generate_scorecard_markdown(scorecard: Dict[str, Any]) -> str:
 # Internal helpers
 # ---------------------------------------------------------------------------
 
-def _unavailable(reason: str) -> Dict[str, Any]:
+def _unavailable(reason: str) -> dict[str, Any]:
     return {"status": "UNAVAILABLE_WITH_REASON", "reason": reason}
 
 

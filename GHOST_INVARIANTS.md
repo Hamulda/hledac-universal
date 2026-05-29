@@ -147,32 +147,33 @@ When httpx_h2 fails and h2 is not installed, `_httpx_reason="httpx_h2_fallback"`
 
 ### F229: IPFS Discovery Sidecar
 - Env gate: `HLEDAC_ENABLE_IPFS` (default: disabled)
-- Method: `SprintScheduler._run_ipfs_discovery_sidecar()` → `sidecar_orchestrator._run_ipfs_discovery_sidecar()`
+- Method: `sidecar_orchestrator._run_ipfs_discovery_sidecar()` → `SprintScheduler._run_ipfs_enrichment_sidecar()` (no args; fetches findings from self._result)
 - Entry: `run_advisory_runner()` step 5 (non-blocking, via create_task)
 - Fail-soft: all errors return empty list, never crash sprint
-- Bounds: max 20 CIDs per search, 30s timeout per fetch
-- Returns: CanonicalFinding list via `ipfs_search_as_findings()`
+- Bounds: max 20 CIDs per search, 25s timeout per fetch (F234 spec)
+- Returns: CanonicalFinding list via `fetch_findings_from_cids()`
 - Provenance: (cid, gateway, query)
 
 ### F229: BGP Enrichment Sidecar
 - Env gate: `HLEDAC_ENABLE_BGP` (default: disabled)
-- Method: `SprintScheduler._run_bgp_enrichment_sidecar()` → `sidecar_orchestrator._run_bgp_enrichment_sidecar()`
+- Method: `sidecar_orchestrator._run_bgp_enrichment_sidecar()` → `SprintScheduler._run_bgp_advisory_sidecar()`
 - Entry: `run_advisory_runner()` step 6 (non-blocking, via create_task)
 - Fail-soft: all errors return empty list, never crash sprint
-- Bounds: max 10 prefixes, 60s duration, max 1000 events
-- Returns: CanonicalFinding list via `monitor_bgp_as_findings()`
-- Prefix extraction: CIDR notation regex + bare IP
+- Bounds: max 3 IP/ASN seeds per sprint, 30s timeout per query, Semaphore(1)
+- Returns: CanonicalFinding list via `BGPAdapter.enrich_org()`
 - Provenance: (prefix, as_path, event_type)
+- INVARIANT: BGP sidecar requires HLEDAC_ENABLE_BGP=1, max 10 AS lookups per sprint
 
 ### F229: Banner Grab Sidecar
 - Env gate: `HLEDAC_ENABLE_BANNER_GRAB` (default: disabled)
 - Method: `SprintScheduler._run_banner_grab_sidecar()` → `sidecar_orchestrator._run_banner_grab_sidecar()`
 - Entry: `run_advisory_runner()` step 7 (non-blocking, via create_task)
 - Fail-soft: all errors return empty list, never crash sprint
-- Bounds: max 20 IPs, top 10 ports per IP, 100 results cap
-- Returns: CanonicalFinding list via `grab_batch_as_findings()`
-- Target extraction: IP regex, common ports [21,22,23,25,53,80,110,143,443,465,587,993,995,3306,3389,5432,6379,8080,8443]
+- Bounds: max 3 IPs per sprint, max 5 ports per IP, 100 results cap
+- Returns: CanonicalFinding list via `banner_grab_to_canonical()`
+- Target extraction: IP regex, default ports [22,80,443,8080,8443], configurable via HLEDAC_BANNER_GRAB_PORTS
 - Provenance: (ip, port, protocol)
+- INVARIANT: Banner grab = CLEARNET ONLY (active TCP probe), gated by HLEDAC_ENABLE_BANNER_GRAB=1
 
 ### F235: External Intelligence API Invariants
 External intelligence APIs (Shodan, Censys, GreyNoise) provide high-value unindexed data
@@ -217,6 +218,24 @@ that Google does not crawl. All integration follows these invariants:
 
 ---
 
+## Sprint 2026-05-27 — Stability & Memory Hardening
+
+### LMDB bulk write via cursor.putmulti()
+Canonical write path in `duckdb_store.py` uses `cursor.putmulti()` for batch LMDB writes
+(~15–30× faster than per-item `env.begin(write=True)` loops).
+Always use `put_many()` on a cursor, never per-item write in a loop.
+
+### adjust_fetch_workers atomicity
+`utils/concurrency.adjust_fetch_workers()` must update BOTH `_FETCH_SEMAPHORE` and
+`_clearnet_semaphore` atomically. Split-brain updates cause unbounded concurrency divergence.
+Both semaphores are adjusted together via the same call.
+
+### IPFS sidecar gate
+IPFS discovery sidecar is gated by `HLEDAC_ENABLE_IPFS` (default: disabled).
+See Sprint F229 section above for full invariant text.
+
+---
+
 ## Sprint F214Q: Cover Traffic OPSEC Noise
 
 Cover traffic is probabilistic inline injection (not background task — too complex for M1).
@@ -241,3 +260,116 @@ Cover traffic MUST use identical transport as real request:
 - Uses `curl_cffi.AsyncSession` with JA3 fingerprint (same as real requests)
 - `MetricsRegistry.inc("cover_traffic_fired")` for observability
 - Fail-soft: all errors are silent (cover traffic failures are expected behavior)
+
+---
+
+## Sprint F214K: Dark Surface Pivots
+
+Dark surface pivot advisory: generate onion/IPFS/DHT/I2P pivot queries from IOC findings.
+
+### Transport gate (CRITICAL - zero clearnet leakage)
+- Dark pivots MUST use Tor and/or I2P transport - NEVER clearnet aiohttp
+- `generate_dark_surface_queries()` gate: `if not (tor_available or i2p_available): return`
+- `SprintScheduler` detects availability via `self._tor_transport.available` and `self._i2p_transport.available`
+  (NOT class-existence check - TorTransport/I2PTransport classes always exist)
+- Gate: `HLEDAC_ENABLE_DARK_PIVOTS=1` env var + `accepted_findings >= 5`
+
+### Query bounds
+- Max `MAX_DARK_QUERIES_PER_SPRINT = 3` dark pivot queries per sprint (from `hypothesis_engine.py`)
+- Query content: NEVER log at INFO/WARNING level - only DEBUG level with `[REDACTED]` redaction
+- Query sources: onion addresses, IPFS CIDs, paste sites, I2P destinations from IOC clusters
+
+### Telemetry
+- `SprintSchedulerResult.dark_surface_pivots_attempted` = len(dark_queries) after generation
+- `SprintSchedulerResult.dark_surface_pivots_accepted` = len(items) after lane planning
+- Both fields updated at end of `_run_dark_surface_pivot_advisory()`
+
+### Skip conditions (all fail-soft return, no exceptions)
+- `HLEDAC_ENABLE_DARK_PIVOTS != "1"` -> return
+- `accepted_findings < 5` -> return
+- No dark transport available (tor + i2p both False) -> return, 0 pivots logged
+- No findings available for query generation -> return
+- No dark queries generated -> return
+---
+
+## Sidecar Memory Gates (F234)
+
+### IPFS sidecar — skip tier
+IPFS discovery sidecar skips when governor uma_state in (critical, emergency).
+See Sprint F229 section above for full invariant text.
+
+### BGP sidecar — skip tier
+BGP enrichment sidecar skips when governor uma_state in (critical, emergency).
+See Sprint F234 section above for full invariant text.
+
+### Dark surface pivot — skip tier
+Dark surface pivot advisory skips when governor uma_state in (critical, emergency).
+See Sprint F214K section above for full invariant text.
+
+### Všechny sidecary — hard timeout
+All sidecar operations use asyncio.wait_for with hard timeout <= 25s.
+Never exceed 25s per sidecar call — sidecar timeouts must not block sprint lifecycle.
+
+### M1ResourceGovernor.sidecar_admission() (Sprint F214K / F234)
+All heavy sidecar ops (IPFS, BGP, dark pivots, external intel) call
+M1ResourceGovernor.sidecar_admission() before executing.
+The governor returns (admitted: bool, reason: str) — if not admitted, sidecar skips silently.
+See: network_intelligence.py GHOST_INVARIANTS comment.
+
+---
+
+## Sprint F234: BGP Enrichment Sidecar
+
+BGP enrichment maps IP → ASN → owner → geoloc → netblocks → threat intel correlation.
+
+### IP Extraction (F234)
+- `extract_public_ips_from_text(text)` in `network/bgp_monitor.py`
+- Filters RFC1918 (10.x, 172.16-31.x, 192.168.x), loopback (127.x), link-local (fe80::, ::1)
+- **INVARIANT**: Private IPs are NEVER sent to BGP enrichment
+
+### Gate & bounds
+- Gate: `HLEDAC_ENABLE_BGP=1` env var
+- RAM guard: skip if governor `uma_state` in (`critical`, `emergency`)
+- Max 20 IPs per sprint (dedup + cap), was 3 before F234
+- Per-IP timeout: 30s via `asyncio.wait_for`
+
+### Telemetry
+- `SprintSchedulerResult.bgp_sidecar_ips_found`: IPs extracted before BGP lookup
+- `SprintSchedulerResult.bgp_sidecar_findings_returned`: findings returned from BGP
+- `SprintSchedulerResult.bgp_enrichment_findings_ingested`: findings written to DuckDB
+
+### Fail-soft
+- `bgp_enrich_to_canonical()` returns `[]` on any error
+- `_run_bgp_enrichment_sidecar()` returns `[]` on exception
+- No exceptions propagate to sprint lifecycle
+
+---
+
+## Sprint F220K: SOFT_WARN Memory Tier
+
+M1 8GB UMA threshold ladder (see also `uma_budget.py` M1_FETCH_SOFT_CEILING_GB):
+- 5.5 GiB → soft ceiling (fetch concurrency hard-cap via resource_allocator)
+- 5.8 GiB → SOFT_WARN (reduce concurrency 50%, proactive signal)
+- 6.0 GiB → WARN (reduce concurrency 75%)
+- 6.5 GiB → CRITICAL (stop new fetches)
+- 7.0 GiB → EMERGENCY (flush + GC)
+
+### SOFT_WARN state
+- `UMA_STATE_SOFT_WARN = "soft_warn"` in `core/resource_governor.py`
+- `evaluate_uma_state()` returns `"soft_warn"` at >= 5.8 GiB
+- `should_enter_io_only_mode()` enters io_only at SOFT_WARN when swap detected
+- `memory_high_water_mb` default lowered from 6000 → 5632 (5.5 GiB)
+
+### Sidecar skip at SOFT_WARN
+IPFS, BGP, dark pivots skip at CRITICAL/EMERGENCY only (unchanged — SOFT_WARN does not block sidecars).
+
+---
+
+## Sprint F220K: tor_transport.py blocking I/O fix
+
+`transport/tor_transport.py` `async def start()` contained blocking `open(hostname_file)` calls
+that could deadlock the async event loop. All file I/O in async methods must use
+`asyncio.to_thread()` or `run_in_executor()`.
+
+Fixed: `open(hostname_file)` → `await asyncio.to_thread(lambda: open(hostname_file))`
+

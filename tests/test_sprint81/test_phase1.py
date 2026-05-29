@@ -184,7 +184,6 @@ class TestEmergencyBrakeIntegration:
         """Test EmergencyBrake can be initialized in orchestrator."""
         # This is a smoke test - we just check imports work
         from hledac.universal.utils.memory_dashboard import UnifiedMemoryMonitor
-        from hledac.universal.utils.mlx_utils import mlx_managed
 
         # Create a mock setup
         monitor = UnifiedMemoryMonitor()

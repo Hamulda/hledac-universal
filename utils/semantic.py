@@ -25,11 +25,13 @@ Usage:
         # Skip, save tokens
 """
 
+from __future__ import annotations
+
 import logging
-from typing import Optional, Dict, Any, List, Tuple
-from dataclasses import dataclass
-from pathlib import Path
 import re
+from dataclasses import dataclass
+from typing import Any
+
 import numpy as np
 
 logger = logging.getLogger(__name__)
@@ -40,8 +42,8 @@ class FilterResult:
     """Result of semantic filtering."""
     passed: bool
     similarity: float
-    filtered_content: Optional[str]
-    metadata: Optional[Dict[str, Any]] = None
+    filtered_content: str | None
+    metadata: dict[str, Any] | None = None
 
 
 class LightweightTokenizer:
@@ -57,7 +59,7 @@ class LightweightTokenizer:
         self._pattern = re.compile(r'\b\w{3,}\b')
         self._use_bigrams = use_bigrams
 
-    def tokenize(self, text: str) -> List[str]:
+    def tokenize(self, text: str) -> list[str]:
         """
         Tokenize text into words.
 
@@ -77,7 +79,7 @@ class LightweightTokenizer:
 
         return words
 
-    def extract_keywords(self, text: str, top_k: int = 10) -> List[str]:
+    def extract_keywords(self, text: str, top_k: int = 10) -> list[str]:
         """
         Extract top keywords from text.
 
@@ -109,7 +111,7 @@ class ModernBERTEmbedding:
     EMBEDDING_DIM = 768
     DEFAULT_MODEL = "mlx-community/answerdotai-ModernBERT-base-6bit"
 
-    def __init__(self, model_path: Optional[str] = None):
+    def __init__(self, model_path: str | None = None):
         """
         Initialize ModernBERTEmbedding.
 
@@ -117,12 +119,12 @@ class ModernBERTEmbedding:
             model_path: Optional custom model path (default: 6bit ModernBERT)
         """
         self._model_path = model_path or self.DEFAULT_MODEL
-        self._embedder: Optional[Any] = None
+        self._embedder: Any | None = None
         self._initialized = False
 
         try:
             self._load_model()
-            logger.info(f"[EMBED] Using ModernBERT MLX (768d)")
+            logger.info("[EMBED] Using ModernBERT MLX (768d)")
             self._initialized = True
         except Exception as e:
             logger.error(f"Failed to initialize ModernBERT: {e}")
@@ -140,7 +142,7 @@ class ModernBERTEmbedding:
             normalize=True
         )
 
-    def encode(self, text: str) -> List[float]:
+    def encode(self, text: str) -> list[float]:
         """
         Encode text to embedding vector.
 
@@ -163,8 +165,8 @@ class ModernBERTEmbedding:
 
     def cosine_similarity(
         self,
-        vec1: List[float],
-        vec2: List[float]
+        vec1: list[float],
+        vec2: list[float]
     ) -> float:
         """
         Compute cosine similarity between two vectors.
@@ -218,14 +220,14 @@ class SimpleEmbedding:
 
     def __init__(self):
         """Initialize SimpleEmbedding."""
-        self._vocabulary: Dict[str, int] = {}
-        self._idf_cache: Dict[str, float] = {}
+        self._vocabulary: dict[str, int] = {}
+        self._idf_cache: dict[str, float] = {}
         self._doc_count = 0
         self._initialized = False
-        self._docs_for_idf: List[set] = []
+        self._docs_for_idf: list[set] = []
         self._tokenizer = LightweightTokenizer(use_bigrams=False)
 
-    def fit(self, documents: List[str]):
+    def fit(self, documents: list[str]):
         """
         Build vocabulary from documents.
 
@@ -249,7 +251,7 @@ class SimpleEmbedding:
 
         self._initialized = True
 
-    def encode(self, text: str) -> List[float]:
+    def encode(self, text: str) -> list[float]:
         """
         Encode text to embedding vector.
 
@@ -298,8 +300,8 @@ class SimpleEmbedding:
 
     def cosine_similarity(
         self,
-        vec1: List[float],
-        vec2: List[float]
+        vec1: list[float],
+        vec2: list[float]
     ) -> float:
         """
         Compute cosine similarity between two vectors.
@@ -314,7 +316,7 @@ class SimpleEmbedding:
         if len(vec1) != len(vec2):
             return 0.0
 
-        dot_product = sum(a * b for a, b in zip(vec1, vec2))
+        dot_product = sum(a * b for a, b in zip(vec1, vec2, strict=False))
         norm1 = sum(a ** 2 for a in vec1) ** 0.5
         norm2 = sum(b ** 2 for b in vec2) ** 0.5
 
@@ -440,7 +442,7 @@ class SemanticFilter:
         self,
         content: str,
         query: str,
-        threshnew: Optional[float] = None
+        threshnew: float | None = None
     ) -> FilterResult:
         """
         Filter content based on semantic similarity to query.
@@ -473,10 +475,10 @@ class SemanticFilter:
 
     def filter_batch(
         self,
-        contents: List[str],
+        contents: list[str],
         query: str,
-        threshnew: Optional[float] = None
-    ) -> List[FilterResult]:
+        threshnew: float | None = None
+    ) -> list[FilterResult]:
         """
         Filter multiple contents against a query.
 
@@ -523,7 +525,7 @@ class SemanticFilter:
         query: str,
         max_snippets: int = 3,
         snippet_length: int = 200
-    ) -> List[str]:
+    ) -> list[str]:
         """
         Extract most relevant snippets from content.
 
@@ -581,7 +583,7 @@ class KeywordFilter:
     def contains_keywords(
         self,
         content: str,
-        keywords: List[str],
+        keywords: list[str],
         min_matches: int = 1
     ) -> bool:
         """
@@ -610,8 +612,8 @@ class KeywordFilter:
     def extract_matching_keywords(
         self,
         content: str,
-        keywords: List[str]
-    ) -> List[str]:
+        keywords: list[str]
+    ) -> list[str]:
         """
         Extract keywords that appear in content.
 

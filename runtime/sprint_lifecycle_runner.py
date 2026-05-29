@@ -41,7 +41,8 @@ from __future__ import annotations
 import asyncio
 import logging
 import time as _time
-from typing import Any, Callable, Optional
+from collections.abc import Callable
+from typing import Any
 
 __all__ = ["SprintLifecycleRunner"]
 
@@ -63,12 +64,12 @@ class SprintLifecycleRunner:
         self,
         lifecycle: Any,
         adapter: Any,
-        pre_windup_barrier: Optional[Callable[[], bool]] = None,
+        pre_windup_barrier: Callable[[], bool] | None = None,
     ) -> None:
         self._lc = lifecycle
         self._adapter = adapter
-        self._wall_clock_start: Optional[float] = None
-        self._pre_windup_barrier: Optional[Callable[[], bool]] = pre_windup_barrier
+        self._wall_clock_start: float | None = None
+        self._pre_windup_barrier: Callable[[], bool] | None = pre_windup_barrier
         self._guard_observation: dict = {}
 
     # ── Setup ────────────────────────────────────────────────────────────────
@@ -83,7 +84,7 @@ class SprintLifecycleRunner:
 
     # ── Lifecycle tick ───────────────────────────────────────────────────────
 
-    def tick(self, now_monotonic: Optional[float] = None) -> Any:
+    def tick(self, now_monotonic: float | None = None) -> Any:
         """
         Advance the lifecycle phase machine.
         Returns the current phase after ticking.
@@ -97,7 +98,7 @@ class SprintLifecycleRunner:
 
     # ── WARMUP → ACTIVE ─────────────────────────────────────────────────────
 
-    def ensure_active(self, now_monotonic: Optional[float] = None) -> None:
+    def ensure_active(self, now_monotonic: float | None = None) -> None:
         """
         If lifecycle is in WARMUP, transition to ACTIVE.
         Handles the WARMUP→ACTIVE transition that follows initial setup.
@@ -114,8 +115,8 @@ class SprintLifecycleRunner:
 
     def windup_guard(
         self,
-        now_monotonic: Optional[float] = None,
-        pre_windup_barrier: Optional[Callable[[], bool]] = None,
+        now_monotonic: float | None = None,
+        pre_windup_barrier: Callable[[], bool] | None = None,
     ) -> bool:
         """
         Check if lifecycle should enter wind-down.
@@ -221,7 +222,7 @@ class SprintLifecycleRunner:
 
     # ── Post-sleep windup gate ──────────────────────────────────────────────
 
-    def post_sleep_gate(self, now_monotonic: Optional[float] = None) -> bool:
+    def post_sleep_gate(self, now_monotonic: float | None = None) -> bool:
         """
         Check if lifecycle should enter wind-down after a sleep interval.
 
@@ -304,5 +305,5 @@ class SprintLifecycleRunner:
     # ── Wall clock ───────────────────────────────────────────────────────────
 
     @property
-    def wall_clock_start(self) -> Optional[float]:
+    def wall_clock_start(self) -> float | None:
         return self._wall_clock_start

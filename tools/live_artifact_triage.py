@@ -14,16 +14,15 @@ import argparse
 import json
 import sys
 from dataclasses import dataclass
-from enum import Enum
+from enum import StrEnum
 from pathlib import Path
 from typing import Any
-
 
 # ---------------------------------------------------------------------------
 # Root Cause Taxonomy
 # ---------------------------------------------------------------------------
 
-class RootCause(str, Enum):
+class RootCause(StrEnum):
     MEMORY_BLOCKED = "MEMORY_BLOCKED"
     FEED_DOMINATED = "FEED_DOMINATED"
     PUBLIC_DISCOVERY_ZERO = "PUBLIC_DISCOVERY_ZERO"
@@ -52,7 +51,7 @@ class RootCause(str, Enum):
 # Sprint family recommendation
 # ---------------------------------------------------------------------------
 
-class SprintFamily(str, Enum):
+class SprintFamily(StrEnum):
     F208 = "F208"    # live multisource validation
     F215 = "F215"    # active300 exit / terminality
     F217 = "F217"    # nonfeed candidate ledger
@@ -663,7 +662,7 @@ def triage_live_artifact(data: dict, allow_high_swap: bool = False) -> TriageRes
                 ),
             )
 
-        reasons = [f"verdict=FAIL_TERMINALITY_UNSATISFIED"]
+        reasons = ["verdict=FAIL_TERMINALITY_UNSATISFIED"]
         if req_lanes:
             reasons.append(f"required_lanes={req_lanes}")
         if obs_lanes:
@@ -679,13 +678,13 @@ def triage_live_artifact(data: dict, allow_high_swap: bool = False) -> TriageRes
             confidence = 0.90
             next_action = "fix_ct_domain_terminality_surface"
             useful = True
-            rc_reasons = reasons + [f"CT required but not attempted — domain query lacks CT terminal outcome"]
+            rc_reasons = reasons + ["CT required but not attempted — domain query lacks CT terminal outcome"]
         elif needs_public and not pub_fetched:
             sub_type = RootCause.PUBLIC_TERMINALITY_MISSING
             confidence = 0.88
             next_action = "fix_public_terminality_surface"
             useful = True
-            rc_reasons = reasons + [f"PUBLIC required but public_fetch_attempted=False"]
+            rc_reasons = reasons + ["PUBLIC required but public_fetch_attempted=False"]
         elif obs_lanes and req_lanes:
             # Surface drift: outcomes exist but verdict says unsatisfied
             missing = set(req_lanes) - set(obs_lanes)
@@ -762,7 +761,7 @@ def triage_live_artifact(data: dict, allow_high_swap: bool = False) -> TriageRes
             root_cause_class=RootCause.DISCOVERY_NO_PROVIDER_SELECTED,
             confidence=0.88,
             reasons=[
-                f"discovery_selected_providers=[] — no providers selected during discovery planning",
+                "discovery_selected_providers=[] — no providers selected during discovery planning",
                 f"skipped_providers={skipped_providers}",
             ],
             next_best_action="inspect discovery planner output; check provider reliability scores and budget allocation",
@@ -1039,7 +1038,7 @@ def _public_quality_rejected_result(data: dict, reason: str) -> TriageResult:
         root_cause_class=RootCause.PUBLIC_QUALITY_REJECTED,
         confidence=0.90,
         reasons=[reason, f"top_public_reject_reason={top_rej}"],
-        next_best_action=f"inspect top_public_reject_reason; fix public_pipeline quality gate; check F207 public rejection KPIs",
+        next_best_action="inspect top_public_reject_reason; fix public_pipeline quality gate; check F207 public rejection KPIs",
         recommended_sprint_family=SprintFamily.F207,
         another_live_useful=True,
         memory_restart_recommended=False,
@@ -1146,7 +1145,7 @@ def main() -> None:
     print(f"Next Sprint:    {output['recommended_sprint_family']}")
     print(f"Live Useful:    {output['another_live_useful']}")
     print(f"Memory Restart: {output['memory_restart_recommended']}")
-    print(f"\nReasons:")
+    print("\nReasons:")
     for r in output["reasons"]:
         print(f"  • {r}")
     print(f"\nNext Action: {output['next_best_action']}")

@@ -26,16 +26,16 @@ Migration:
 import asyncio
 import json
 import logging
-from datetime import datetime
-from typing import Dict, List, Any, Optional
 from dataclasses import dataclass
+from datetime import datetime
 from enum import Enum
+from typing import Any
 
 # Import the connected coordination system
 try:
     from .hive_coordination import ConnectedCoordinationSystem, CoordinationTask
 except ImportError:
-    from hive_coordination import ConnectedCoordinationSystem, CoordinationTask
+    from hive_coordination import ConnectedCoordinationSystem
 
 # No module-level logging configuration - use lazy logger
 logger = logging.getLogger(__name__)
@@ -52,9 +52,9 @@ class SmartSpawnedAgent:
     agent_id: str
     name: str
     role: SmartSpawnedRole
-    capabilities: List[str]
-    current_task: Optional[str]
-    performance_metrics: Dict[str, float]
+    capabilities: list[str]
+    current_task: str | None
+    performance_metrics: dict[str, float]
     integration_status: str
 
 class SmartSpawnedCoordinationIntegration:
@@ -64,9 +64,9 @@ class SmartSpawnedCoordinationIntegration:
 
     def __init__(self, connected_system: ConnectedCoordinationSystem):
         self.connected_system = connected_system
-        self.smart_spawned_agents: Dict[str, SmartSpawnedAgent] = {}
-        self.coordination_history: List[Dict[str, Any]] = []
-        self.performance_cache: Dict[str, float] = {}
+        self.smart_spawned_agents: dict[str, SmartSpawnedAgent] = {}
+        self.coordination_history: list[dict[str, Any]] = []
+        self.performance_cache: dict[str, float] = {}
 
         # Initialize smart-spawned agents
         self._initialize_smart_spawned_agents()
@@ -108,7 +108,7 @@ class SmartSpawnedCoordinationIntegration:
         logger.info(f"Initialized {len(self.smart_spawned_agents)} smart-spawned agents")
 
     def _add_smart_agent(self, agent_id: str, name: str, role: SmartSpawnedRole,
-                        capabilities: List[str]):
+                        capabilities: list[str]):
         """Add a smart-spawned agent to the integration system"""
         agent = SmartSpawnedAgent(
             agent_id=agent_id,
@@ -127,7 +127,7 @@ class SmartSpawnedCoordinationIntegration:
         self.smart_spawned_agents[agent_id] = agent
 
     async def process_task_with_smart_coordination(self, task_description: str,
-                                                  priority: str = "medium") -> Dict[str, Any]:
+                                                  priority: str = "medium") -> dict[str, Any]:
         """
         Process a task using smart-spawned agents integrated with the connected coordination system
         """
@@ -163,7 +163,7 @@ class SmartSpawnedCoordinationIntegration:
             "total_processing_time": (datetime.now() - task_start_time).total_seconds()
         }
 
-    async def _coordinate_task_analysis(self, task_description: str, priority: str) -> Dict[str, Any]:
+    async def _coordinate_task_analysis(self, task_description: str, priority: str) -> dict[str, Any]:
         """Use smart coordinator to analyze and optimize task execution"""
         coordinator = self.smart_spawned_agents["agent_1762976821473_w4tl18"]
 
@@ -186,7 +186,7 @@ class SmartSpawnedCoordinationIntegration:
         logger.info(f"Smart coordinator analysis completed for task: {task_description[:50]}...")
         return analysis_result
 
-    async def _distribute_to_smart_agents(self, task_id: str, coordination_result: Dict[str, Any]) -> Dict[str, Any]:
+    async def _distribute_to_smart_agents(self, task_id: str, coordination_result: dict[str, Any]) -> dict[str, Any]:
         """Distribute task to appropriate smart-spawned agents"""
         assignments = {}
 
@@ -222,7 +222,7 @@ class SmartSpawnedCoordinationIntegration:
         logger.info(f"Distributed task {task_id} to {len(assignments)} smart coders")
         return assignments
 
-    async def _execute_with_smart_coders(self, task_id: str, agent_assignments: Dict[str, Any]) -> Dict[str, Any]:
+    async def _execute_with_smart_coders(self, task_id: str, agent_assignments: dict[str, Any]) -> dict[str, Any]:
         """Execute task components using smart-spawned coders"""
         implementation_results = {}
 
@@ -263,7 +263,7 @@ class SmartSpawnedCoordinationIntegration:
         logger.info(f"Smart coders completed {len(implementation_results)} components for task {task_id}")
         return implementation_results
 
-    async def _validate_with_smart_tester(self, task_id: str, implementation_results: Dict[str, Any]) -> Dict[str, Any]:
+    async def _validate_with_smart_tester(self, task_id: str, implementation_results: dict[str, Any]) -> dict[str, Any]:
         """Validate implementation using smart-spawned tester"""
         tester = self.smart_spawned_agents["agent_1762976849426_7aa7v5"]
         tester.current_task = f"testing_{task_id}"
@@ -305,7 +305,7 @@ class SmartSpawnedCoordinationIntegration:
         return validation_results
 
     async def _analyze_performance(self, task_start_time: datetime, task_id: str,
-                                 validation_results: Dict[str, Any]) -> Dict[str, Any]:
+                                 validation_results: dict[str, Any]) -> dict[str, Any]:
         """Analyze overall performance and provide optimization recommendations"""
         total_time = (datetime.now() - task_start_time).total_seconds()
 
@@ -334,7 +334,7 @@ class SmartSpawnedCoordinationIntegration:
         logger.info(f"Performance analysis completed for task {task_id} - Efficiency: {performance_analysis['efficiency_score']:.2f}")
         return performance_analysis
 
-    def get_smart_coordination_status(self) -> Dict[str, Any]:
+    def get_smart_coordination_status(self) -> dict[str, Any]:
         """Get comprehensive status of smart-spawned coordination integration"""
         return {
             "smart_agents_count": len(self.smart_spawned_agents),
@@ -377,7 +377,7 @@ class SmartSpawnedCoordinationIntegration:
         else:
                 return "standard_coordination_workflow"
 
-    def _optimize_resource_allocation(self, task_description: str) -> Dict[str, Any]:
+    def _optimize_resource_allocation(self, task_description: str) -> dict[str, Any]:
         """Optimize resource allocation using smart algorithms"""
         complexity = self._calculate_smart_complexity(task_description)
 
@@ -397,7 +397,7 @@ class SmartSpawnedCoordinationIntegration:
         else:
                 return "standard_integration_approach"
 
-    def _set_performance_targets(self, priority: str) -> Dict[str, float]:
+    def _set_performance_targets(self, priority: str) -> dict[str, float]:
         """Set performance targets based on priority"""
         base_targets = {
             "response_time": 0.5,
@@ -415,7 +415,7 @@ class SmartSpawnedCoordinationIntegration:
 
         return base_targets
 
-    def _identify_integration_points(self, assignment: Dict[str, Any]) -> List[str]:
+    def _identify_integration_points(self, assignment: dict[str, Any]) -> list[str]:
         """Identify integration points for task components"""
         return [
             "hive_mind_coordination_layer",
@@ -424,7 +424,7 @@ class SmartSpawnedCoordinationIntegration:
             "cognitive_pattern_mesh_network"
         ]
 
-    def _generate_optimization_recommendations(self, validation_results: Dict[str, Any]) -> List[str]:
+    def _generate_optimization_recommendations(self, validation_results: dict[str, Any]) -> list[str]:
         """Generate optimization recommendations based on validation results"""
         recommendations = []
 
@@ -445,7 +445,7 @@ class SmartSpawnedCoordinationIntegration:
 
                 return recommendations
 
-    def _calculate_efficiency_score(self, total_time: float, validation_results: Dict[str, Any]) -> float:
+    def _calculate_efficiency_score(self, total_time: float, validation_results: dict[str, Any]) -> float:
         """Calculate overall efficiency score"""
         time_efficiency = max(0, 1.0 - (total_time / 10.0))  # Normalize to 10 seconds max
         quality_factor = validation_results["overall_quality"]["code_quality_score"]
@@ -478,7 +478,7 @@ class SmartSpawnedCoordinationIntegration:
         else:
                 return "stable"
 
-    def _get_system_recommendations(self) -> List[str]:
+    def _get_system_recommendations(self) -> list[str]:
         """Get system-level recommendations"""
         recommendations = []
 

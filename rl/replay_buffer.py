@@ -4,9 +4,9 @@ Replay buffer pro MARL s ukládáním do numpy polí (bezpečné, serializovatel
 
 from __future__ import annotations
 
-import numpy as np
 from pathlib import Path
-from typing import Dict
+
+import numpy as np
 
 # Lazy MLX accessor — defer mlx.core to first use (M1 8GB import-time savings)
 _mlx_core_mod = None
@@ -52,7 +52,7 @@ class MARLReplayBuffer:
         self.pos = (self.pos + 1) % self.capacity
         self.size = min(self.size + 1, self.capacity)
 
-    def sample(self, batch_size: int) -> Dict:
+    def sample(self, batch_size: int) -> dict:
         idx = np.random.randint(0, self.size, batch_size)
         if _MLX_CORE_AVAILABLE:
             mx = _get_mlx_core()

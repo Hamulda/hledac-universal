@@ -3,10 +3,9 @@
 Sprint 6C: 300s Truth Preview - Step 4
 """
 import asyncio
+import logging
 import sys
 import time
-import logging
-import os
 
 logging.getLogger('hledac').setLevel(logging.WARNING)
 logging.basicConfig(level=logging.INFO, format='%(message)s')
@@ -16,7 +15,7 @@ sys.path.insert(0, '/Users/vojtechhamada/PycharmProjects/Hledac')
 
 async def run_300s():
     from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
-    from hledac.universal.knowledge.atomic_storage import EvidencePacketStorage, EvidencePacket
+    from hledac.universal.knowledge.atomic_storage import EvidencePacket, EvidencePacketStorage
 
     print("=" * 70)
     print("[6C] 300S TRUTH PREVIEW")
@@ -31,7 +30,7 @@ async def run_300s():
             evidence_id=f"evidence_{i}",
             url=f"http://localhost:{64000+i}/test",
             final_url=f"http://localhost:{64000+i}/test",
-            domain=f"localhost",
+            domain="localhost",
             fetched_at=time.time() - (i * 86400),
             status=200,
             headers_digest="abc123",
@@ -60,7 +59,7 @@ async def run_300s():
     DURATION = 300
     START_TIME = time.monotonic()
 
-    print(f"\n[START] 300s truth preview...")
+    print("\n[START] 300s truth preview...")
 
     result = await asyncio.wait_for(
         orch.run_benchmark(
@@ -94,7 +93,7 @@ async def run_300s():
 
     # Action distribution
     action_dist = result.get('actions_selected_distribution', {})
-    print(f"\n[ACTION DISTRIBUTION]")
+    print("\n[ACTION DISTRIBUTION]")
     for name, count in sorted(action_dist.items(), key=lambda x: -x[1])[:8]:
         pct = (count / iterations * 100) if iterations > 0 else 0
         print(f"  {name}: {count} ({pct:.1f}%)")
@@ -104,12 +103,12 @@ async def run_300s():
     network_recon_exec_rate = (network_recon_runs / iterations * 100) if iterations > 0 else 0
     wildcard_hits = getattr(orch, '_network_recon_wildcard_hit_count', 0)
 
-    print(f"\n[NETWORK_RECON]")
+    print("\n[NETWORK_RECON]")
     print(f"  Runs: {network_recon_runs} ({network_recon_exec_rate:.2f}% of total)")
     print(f"  Wildcard detected: {wildcard_hits}")
 
     # Calibration
-    print(f"\n[CALIBRATION]")
+    print("\n[CALIBRATION]")
     if hasattr(orch, '_compute_ts_calibration'):
         calib = orch._compute_ts_calibration()
         print(f"  ts_healthy: {calib.get('ts_healthy', False)}")
@@ -121,7 +120,7 @@ async def run_300s():
     # Adaptive exploration
     if hasattr(orch, '_compute_adaptive_exploration_ratio'):
         ratio = orch._compute_adaptive_exploration_ratio()
-        print(f"\n[ADAPTIVE EXPLORATION]")
+        print("\n[ADAPTIVE EXPLORATION]")
         print(f"  Ratio: {ratio:.3f}")
 
     print(f"\n{'='*70}")

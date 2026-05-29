@@ -4,8 +4,8 @@ Bypasses hledac.core.__init__.py chain which fails due to cross-dependencies in 
 """
 from __future__ import annotations
 
-import sys
 import importlib.util
+import sys
 from pathlib import Path
 
 _SELF_DIR = Path(__file__).parent.resolve()

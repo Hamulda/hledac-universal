@@ -30,10 +30,9 @@ import asyncio
 import json
 import logging
 import time as _time
-from dataclasses import dataclass, field
-from typing import Any, Callable, Sequence
-
-from typing import TYPE_CHECKING
+from collections.abc import Callable
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from hledac.universal.knowledge.duckdb_store import DuckDBShadowStore
@@ -62,6 +61,8 @@ def _safe_payload_json(obj: Any) -> str:
     return str(obj)
 
 logger = logging.getLogger(__name__)
+# Shared logger for _check_gathered — preserves hardcoded "sidecar_bus" identity
+_sidecar_logger = logging.getLogger("sidecar_bus")
 
 # ── Bounds ────────────────────────────────────────────────────────────────────
 MAX_SIDECAR_FINDINGS: int = 500
@@ -75,6 +76,7 @@ _HEAVY_SIDECARS: frozenset[str] = frozenset({
     "sprint_diff",
     "banner_grab",
     "ipv6_recon",
+    "pattern_mining",  # F250: pattern analysis can be memory-intensive
 })
 
 # F240A: Active-network sidecars — require explicit active/aggressive profile
@@ -112,6 +114,7 @@ SIDECAR_NETWORK_CLASS: dict[str, str] = {
     "kill_chain_tagging": "core",
     # duplicate_compat — derived, no independent canonical output
     "embedding": "duplicate_compat",
+    "pattern_mining": "core",  # F250: passive analysis of existing findings
 }
 
 
@@ -237,7 +240,7 @@ SIDECAR_FAMILY_MAP: dict[str, str] = {
 
 
 def sidecar_results_to_source_family_outcomes(
-    results: list["SidecarRunResult"],
+    results: list[SidecarRunResult],
 ) -> tuple[dict, ...]:
     """
     Convert SidecarRunResult list to normalized source_family_outcomes entries.
@@ -396,8 +399,9 @@ class FindingSidecarBus:
         for item in gathered:
             if isinstance(item, BaseException) and not isinstance(item, SidecarRunResult):
                 # Unexpected exception — log but don't crash (fail-soft)
-                _logger = logging.getLogger("sidecar_bus")
-                _logger.warning(
+                # NOTE: module-level `_sidecar_logger` is defined at line 64 — reusing it here
+                # instead of creating a new logger instance per exception.
+                _sidecar_logger.warning(
                     "Unexpected exception in gather: %s: %s",
                     type(item).__name__,
                     item,
@@ -408,7 +412,7 @@ class FindingSidecarBus:
     async def run_all_sidecars(
         self,
         batch: SidecarBatch,
-        store: "DuckDBShadowStore",
+        store: DuckDBShadowStore,
     ) -> list[SidecarRunResult]:
         """
         Fan out to all registered sidecar runners for the given batch, in stage order.
@@ -601,7 +605,7 @@ class FindingSidecarBus:
 
 async def _identity_stitching_runner(
     findings: list,
-    store: "DuckDBShadowStore",
+    store: DuckDBShadowStore,
     query: str,
 ) -> None:
     """F202B identity stitching — heavy, RAM-guarded by bus."""
@@ -638,9 +642,41 @@ async def _identity_stitching_runner(
         pass  # Fail-soft
 
 
+async def _pattern_mining_runner(
+    findings: list,
+    store: DuckDBShadowStore,
+    query: str,
+) -> None:
+    """F250 pattern mining — detects temporal/behavioral patterns in findings."""
+    if not findings or store is None:
+        return
+    try:
+        from hledac.universal.intelligence.pattern_mining_canonical import (
+            create_pattern_mining_adapter,
+        )
+    except Exception:
+        return
+
+    try:
+        adapter = create_pattern_mining_adapter(use_mlx=True)
+        result = adapter.extract_and_mine(findings)
+        if not result.temporal_patterns and not result.behavioral_patterns:
+            return
+
+        derived_findings = adapter.to_derived_findings(result, query)
+        if not derived_findings:
+            return
+
+        results = await store.async_ingest_findings_batch(derived_findings)
+        stored = sum(1 for r in results if isinstance(r, dict) and r.get("accepted"))
+        return stored
+    except Exception:
+        pass  # Fail-soft
+
+
 async def _exposure_correlator_runner(
     findings: list,
-    store: "DuckDBShadowStore",
+    store: DuckDBShadowStore,
     query: str,
 ) -> None:
     """F202C asset exposure correlator."""
@@ -667,7 +703,7 @@ async def _exposure_correlator_runner(
 
 async def _leak_sentinel_runner(
     findings: list,
-    store: "DuckDBShadowStore",
+    store: DuckDBShadowStore,
     query: str,
 ) -> None:
     """F202D leak and secret sentinel."""
@@ -694,7 +730,7 @@ async def _leak_sentinel_runner(
 
 async def _temporal_archaeology_runner(
     findings: list,
-    store: "DuckDBShadowStore",
+    store: DuckDBShadowStore,
     query: str,
 ) -> None:
     """F202E temporal archaeology timeline synthesis."""
@@ -725,7 +761,7 @@ async def _temporal_archaeology_runner(
 
 async def _evidence_triage_runner(
     findings: list,
-    store: "DuckDBShadowStore",
+    store: DuckDBShadowStore,
     query: str,
 ) -> None:
     """
@@ -761,7 +797,7 @@ async def _evidence_triage_runner(
 
 async def _sprint_diff_runner(
     findings: list,
-    store: "DuckDBShadowStore",
+    store: DuckDBShadowStore,
     query: str,
 ) -> None:
     """F203A cross-sprint diff — heavy, RAM-guarded by bus."""
@@ -862,7 +898,7 @@ async def _sprint_diff_runner(
 
 async def _kill_chain_tagging_runner(
     findings: list,
-    store: "DuckDBShadowStore",
+    store: DuckDBShadowStore,
     query: str,
 ) -> None:
     """F203C MITRE ATT&CK kill chain tagging."""
@@ -936,11 +972,17 @@ async def _kill_chain_tagging_runner(
 
 async def _wayback_diff_runner(
     findings: list,
-    store: "DuckDBShadowStore",
+    store: DuckDBShadowStore,
     query: str,
 ) -> None:
     """
     F203F Wayback CDX diff mining.
+
+    NOTE: WaybackDiffMiner.mine() is an async coroutine — CPU-bound CDX parsing
+    and string diffing execute inside the asyncio thread pool (awaited directly).
+    No run_in_executor wrapping is needed here. If mine() ever becomes sync,
+    the heavy diff work should be moved to run_in_executor to avoid event-loop
+    blocking.
 
     COMPATIBILITY runner — canonical owner is
     intelligence/wayback_diff_miner.py::WaybackDiffMiner (wired as direct
@@ -998,7 +1040,7 @@ async def _wayback_diff_runner(
 
 async def _embedding_runner(
     findings: list,
-    store: "DuckDBShadowStore",
+    store: DuckDBShadowStore,
     query: str,
 ) -> None:
     """F203I streaming embedding — heavy, RAM-guarded by bus."""
@@ -1047,7 +1089,7 @@ async def _embedding_runner(
 
 async def _passive_fingerprint_runner(
     findings: list,
-    store: "DuckDBShadowStore",
+    store: DuckDBShadowStore,
     query: str,
 ) -> None:
     """F204G passive service fingerprinting — deterministic, no active scan."""
@@ -1075,7 +1117,7 @@ async def _passive_fingerprint_runner(
 
 async def _rir_correlator_runner(
     findings: list,
-    store: "DuckDBShadowStore",
+    store: DuckDBShadowStore,
     query: str,
 ) -> None:
     """F204H RIR/ASN/WHOIS bulk correlator — bounded IP/domain attribution."""
@@ -1103,7 +1145,7 @@ async def _rir_correlator_runner(
 
 async def _social_identity_surface_runner(
     findings: list,
-    store: "DuckDBShadowStore",
+    store: DuckDBShadowStore,
     query: str,
 ) -> None:
     """F204I: Social identity surface miner — extract usernames/profiles from findings."""
@@ -1126,7 +1168,7 @@ async def _social_identity_surface_runner(
 
 async def _passive_tech_stack_runner(
     findings: list,
-    store: "DuckDBShadowStore",
+    store: DuckDBShadowStore,
     query: str,
 ) -> None:
     """
@@ -1169,7 +1211,7 @@ async def _passive_tech_stack_runner(
 
 async def _network_intel_runner(
     findings: list,
-    store: "DuckDBShadowStore",
+    store: DuckDBShadowStore,
     query: str,
 ) -> int | None:
     """
@@ -1243,7 +1285,7 @@ async def _network_intel_runner(
 
 async def _banner_grab_runner(
     findings: list,
-    store: "DuckDBShadowStore",
+    store: DuckDBShadowStore,
     query: str,
 ) -> None:
     """F214 banner grabber — TCP banner extraction, RAM-isolated."""
@@ -1286,7 +1328,7 @@ async def _banner_grab_runner(
 
 async def _ipv6_recon_runner(
     findings: list,
-    store: "DuckDBShadowStore",
+    store: DuckDBShadowStore,
     query: str,
 ) -> None:
     """F214 IPv6 reconnaissance — RDAP, WHOIS, DoH AAAA, BGP peer."""
@@ -1329,14 +1371,14 @@ async def _ipv6_recon_runner(
 
 async def _gopher_crawl_runner(
     findings: list,
-    store: "DuckDBShadowStore",
+    store: DuckDBShadowStore,
     query: str,
 ) -> int | None:
     """F216: Gopher archive crawler — crawls seed servers, extracts text, stores findings."""
     if store is None:
         return 0
     try:
-        from hledac.universal.discovery.gopher_crawler import GopherCrawler, SEED_SERVERS
+        from hledac.universal.discovery.gopher_crawler import GopherCrawler
 
         crawler = GopherCrawler()
         all_results = await crawler.crawl_seed_servers()
@@ -1365,6 +1407,7 @@ DEFAULT_SIDECAR_RUNNERS: list[tuple[str, SidecarRunner]] = [
     ("temporal_archaeology", _temporal_archaeology_runner),
     ("evidence_triage", _evidence_triage_runner),
     ("identity_stitching", _identity_stitching_runner),
+    ("pattern_mining", _pattern_mining_runner),
     ("sprint_diff", _sprint_diff_runner),
     ("kill_chain_tagging", _kill_chain_tagging_runner),
     ("wayback_diff", _wayback_diff_runner),

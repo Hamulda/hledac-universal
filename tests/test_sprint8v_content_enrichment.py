@@ -14,12 +14,11 @@ Tests for:
 10. offline replay non-regression still holds
 """
 
-import pytest
-import asyncio
-import time
-import sys
 import os
+import sys
+import time
 
+import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 
@@ -165,6 +164,7 @@ class TestSprint8VDeepReadEquivalence:
     def test_deep_read_exists_in_research_manager(self):
         """Test that deep_read() exists in _ResearchManager."""
         import inspect
+
         from hledac.universal.autonomous_orchestrator import _ResearchManager
 
         # Check that the class has the deep_read method
@@ -179,6 +179,7 @@ class TestSprint8VDeepReadEquivalence:
     def test_deep_read_provides_content_fetching(self):
         """Test that deep_read provides content fetching infrastructure."""
         import inspect
+
         from hledac.universal.autonomous_orchestrator import _ResearchManager
 
         method = getattr(_ResearchManager, 'deep_read', None)
@@ -204,6 +205,7 @@ class TestSprint8VOrchestratorIntegration:
     def test_surface_web_search_is_async_method(self):
         """Test that _surface_web_search is an async method in _ResearchManager."""
         import inspect
+
         from hledac.universal.autonomous_orchestrator import _ResearchManager
 
         method = getattr(_ResearchManager, '_surface_web_search', None)
@@ -213,7 +215,6 @@ class TestSprint8VOrchestratorIntegration:
 
     def test_execute_surface_search_is_async(self):
         """Test that execute_surface_search is an async method in _ResearchManager."""
-        import inspect
         from hledac.universal.autonomous_orchestrator import _ResearchManager
 
         method = getattr(_ResearchManager, 'execute_surface_search', None)

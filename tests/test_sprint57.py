@@ -5,7 +5,6 @@ Sprint 57 tests – PQ Index, DynamicModelManager, PagedAttentionCache.
 import asyncio
 import sys
 import unittest
-from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 sys.path.insert(0, '/Users/vojtechhamada/PycharmProjects/Hledac')
@@ -230,7 +229,7 @@ class TestPagedAttentionCache(unittest.IsolatedAsyncioTestCase):
 
         cache = PagedAttentionCache(max_pages=2, page_size=5)
 
-        for i in range(4):
+        for _i in range(4):
             keys = mx.ones((5, 1, 4))
             values = mx.ones((5, 1, 4))
             scores = mx.ones(5)

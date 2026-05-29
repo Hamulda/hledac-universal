@@ -22,10 +22,10 @@ Features:
 from __future__ import annotations
 
 import gc
-import json
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any
 
 import numpy as np
 
@@ -53,10 +53,10 @@ logger = logging.getLogger(__name__)
 @dataclass
 class MoERouterConfig:
     """Konfigurace pro MoE Router"""
-    expert_names: List[str] = field(default_factory=lambda: [
+    expert_names: list[str] = field(default_factory=lambda: [
         "osint", "security", "temporal", "graph", "synthesis"
     ])
-    model_paths: Dict[str, str] = field(default_factory=lambda: {
+    model_paths: dict[str, str] = field(default_factory=lambda: {
         "osint": "mlx-community/DeepHermes-3-Llama-3-3B-Preview-4bit",
         "security": "mlx-community/DeepHermes-3-Llama-3-3B-Preview-4bit",
         "temporal": "mlx-community/DeepHermes-3-Llama-3-3B-Preview-4bit",
@@ -145,7 +145,7 @@ class MoERouter:
     def __init__(
         self,
         config: MoERouterConfig = None,
-        sanitize_for_llm: Optional[Callable[[str], str]] = None
+        sanitize_for_llm: Callable[[str], str] | None = None
     ):
         """
         Initialize MoERouter.
@@ -161,15 +161,15 @@ class MoERouter:
         # Sanitizer injection - centralizes security in orchestrator
         self._sanitize_for_llm = sanitize_for_llm
 
-        self._router_mlp: Optional[RouterMLP] = None
-        self._experts: Dict[str, Tuple[Any, Any]] = {}
-        self._expert_usage: Dict[str, int] = {}  # Pro LRU eviction
+        self._router_mlp: RouterMLP | None = None
+        self._experts: dict[str, tuple[Any, Any]] = {}
+        self._expert_usage: dict[str, int] = {}  # Pro LRU eviction
         self._embedding_model = None
         self._embedding_tokenizer = None
-        self._prompt_cache_by_expert: Dict[str, Any] = {}  # Per-expert prompt cache
+        self._prompt_cache_by_expert: dict[str, Any] = {}  # Per-expert prompt cache
 
         # Embedding cache
-        self._embedding_cache: Dict[str, np.ndarray] = {}
+        self._embedding_cache: dict[str, np.ndarray] = {}
         self._max_cache_size = 100
 
     async def initialize(self) -> None:
@@ -324,8 +324,9 @@ class MoERouter:
 
             # Get embeddings - lazy import torch
             try:
-                import torch
                 from contextlib import nullcontext
+
+                import torch
 
                 with torch.no_grad():
                     outputs = self._embedding_model(**inputs)
@@ -411,7 +412,7 @@ class MoERouter:
         except Exception:
             return 2.0  # safe default
 
-    async def _route_experts(self, query: str) -> List[Tuple[str, float]]:
+    async def _route_experts(self, query: str) -> list[tuple[str, float]]:
         """
         Vybrat top_k experty na základě dotazu.
 
@@ -478,8 +479,8 @@ class MoERouter:
     async def route(
         self,
         query_text: str,
-        rag_context: List[str],
-    ) -> List[str]:
+        rag_context: list[str],
+    ) -> list[str]:
         """
         P16: Route query to experts based on content analysis.
 
@@ -507,7 +508,7 @@ class MoERouter:
     async def generate(
         self,
         query: str,
-        context: Dict[str, Any] = None,
+        context: dict[str, Any] = None,
         system_prompt: str = None
     ) -> str:
         """
@@ -585,7 +586,7 @@ class MoERouter:
         self,
         expert_name: str,
         query: str,
-        context: Dict[str, Any],
+        context: dict[str, Any],
         system_prompt: str = None
     ) -> str:
         """
@@ -645,7 +646,7 @@ class MoERouter:
         self,
         expert_name: str,
         query: str,
-        context: Dict[str, Any],
+        context: dict[str, Any],
         system_prompt: str = None
     ) -> str:
         """
@@ -687,8 +688,8 @@ class MoERouter:
     async def _synthesize_outputs(
         self,
         query: str,
-        expert_outputs: List[Dict[str, Any]],
-        context: Dict[str, Any],
+        expert_outputs: list[dict[str, Any]],
+        context: dict[str, Any],
         system_prompt: str = None
     ) -> str:
         """
@@ -729,7 +730,7 @@ class MoERouter:
     def _format_synthesis_input(
         self,
         query: str,
-        expert_outputs: List[Dict[str, Any]]
+        expert_outputs: list[dict[str, Any]]
     ) -> str:
         """
         Formátovat vstup pro synthesis experta.
@@ -751,7 +752,7 @@ class MoERouter:
 
         return "\n".join(parts)
 
-    def _fallback_synthesis(self, expert_outputs: List[Dict[str, Any]]) -> str:
+    def _fallback_synthesis(self, expert_outputs: list[dict[str, Any]]) -> str:
         """
         Jednoduchá syntéza když není dostupný synthesis expert.
 
@@ -795,7 +796,7 @@ class MoERouter:
 
         logger.info("✓ MoE router cleaned up")
 
-    def get_status(self) -> Dict[str, Any]:
+    def get_status(self) -> dict[str, Any]:
         """Get router status (non-async version for simple checks)."""
         return {
             "initialized": self._router_mlp is not None,
@@ -806,7 +807,7 @@ class MoERouter:
             "mlx_available": MLX_AVAILABLE,
         }
 
-    async def get_expert_info(self) -> Dict[str, Any]:
+    async def get_expert_info(self) -> dict[str, Any]:
         """
         Získat informace o routeru a expertech.
 
@@ -873,7 +874,7 @@ def route_embedding(memory_pressure: str) -> str:
 # Original create_moe_router
 # ---------------------------------------------------------------------------
 
-async def create_moe_router(config: Optional[MoERouterConfig] = None) -> Optional[MoERouter]:
+async def create_moe_router(config: MoERouterConfig | None = None) -> MoERouter | None:
     """
     Factory funkce pro vytvoření MoE routeru.
 

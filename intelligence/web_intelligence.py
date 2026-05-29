@@ -11,24 +11,21 @@ orchestration lives in the autonomous_orchestrator.
 
 import asyncio
 import heapq
+import logging
 import time
-from hledac.universal.utils.uuid7 import new_runtime_id
-from typing import Dict, List, Optional, Any, Union, Callable, Tuple, Set
 from collections import OrderedDict
 from dataclasses import dataclass, field
-from pathlib import Path
 from enum import Enum
-import logging
-from collections import deque
+from typing import Any
 
 import aiohttp
-
 from hledac.universal.network.session_runtime import async_get_aiohttp_session
+from hledac.universal.utils.uuid7 import new_runtime_id
 
 # psutil je optional — nepovinný pro M1 lightweight provoz
 try:
     import psutil
-    _PSUTIL_ERROR: Optional[Exception] = None
+    _PSUTIL_ERROR: Exception | None = None
 except ImportError as e:
     psutil = None  # type: ignore[assignment]
     _PSUTIL_ERROR = e
@@ -38,10 +35,10 @@ logger = logging.getLogger(__name__)
 # Import existing Hledac components (fail-soft, logger-based degradation)
 try:
     from hledac.advanced_web.automation_orchestrator import AutomationOrchestrator, AutomationWorkflow
-    from hledac.stealth_web_v2.intelligent_scraper import IntelligentScraper, ScrapingTarget, ScrapingConfig
     from hledac.intelligence.osint_reporting_generator import OSINTReportingGenerator, ReportConfig, ReportType
     from hledac.social_engineering.osint_aggregator import OSINTAggregator, OSINTConfig
-    _IMPORT_ERROR: Optional[Exception] = None
+    from hledac.stealth_web_v2.intelligent_scraper import IntelligentScraper, ScrapingConfig, ScrapingTarget
+    _IMPORT_ERROR: Exception | None = None
 except ImportError as e:
     _IMPORT_ERROR = e
     # Fallback for testing / degraded mode — NENASTAVUJEME třídy na None, zůstávají jako NoneType pro guardy
@@ -75,10 +72,10 @@ class IntelligenceTarget:
     """Unified intelligence target configuration."""
     target_id: str
     name: str
-    urls: List[str] = field(default_factory=list)
-    selectors: Dict[str, str] = field(default_factory=dict)
-    osint_sources: List[str] = field(default_factory=list)
-    operation_types: List[IntelligenceOperationType] = field(default_factory=list)
+    urls: list[str] = field(default_factory=list)
+    selectors: dict[str, str] = field(default_factory=dict)
+    osint_sources: list[str] = field(default_factory=list)
+    operation_types: list[IntelligenceOperationType] = field(default_factory=list)
     max_depth: int = 3
     priority: str = "medium"  # low, medium, high, critical
     compliance_level: str = "strict"  # strict, moderate, permissive
@@ -102,21 +99,21 @@ class IntelligenceResult:
     operation_type: IntelligenceOperationType
     status: OperationStatus
     started_at: float = field(default_factory=time.time)
-    completed_at: Optional[float] = None
+    completed_at: float | None = None
     execution_time: float = 0.0
 
     # Results data
-    web_data: Dict[str, Any] = field(default_factory=dict)
-    osint_data: Dict[str, Any] = field(default_factory=dict)
-    threat_assessment: Dict[str, Any] = field(default_factory=dict)
-    vulnerabilities: List[Dict[str, Any]] = field(default_factory=list)
+    web_data: dict[str, Any] = field(default_factory=dict)
+    osint_data: dict[str, Any] = field(default_factory=dict)
+    threat_assessment: dict[str, Any] = field(default_factory=dict)
+    vulnerabilities: list[dict[str, Any]] = field(default_factory=list)
 
     # Metadata
-    sources_used: List[str] = field(default_factory=list)
+    sources_used: list[str] = field(default_factory=list)
     confidence_score: float = 0.0
     stealth_score: float = 0.0
     requests_made: int = 0
-    errors: List[str] = field(default_factory=list)
+    errors: list[str] = field(default_factory=list)
 
     # Performance metrics
     flashattention_accelerations: int = 0
@@ -141,51 +138,51 @@ class UnifiedWebIntelligence:
     5. Memory pressure awareness for M1 8GB environments
     """
 
-    def __init__(self, config: Optional[Dict[str, Any]] = None):
+    def __init__(self, config: dict[str, Any] | None = None):
         self.config = config or {}
 
         # Initialize core components (LAZY — initialize on first use)
-        self.automation_orchestrator: Optional[AutomationOrchestrator] = None
-        self.intelligent_scraper: Optional[IntelligentScraper] = None
-        self.osint_reporter: Optional[OSINTReportingGenerator] = None
-        self.osint_aggregator: Optional[OSINTAggregator] = None
+        self.automation_orchestrator: AutomationOrchestrator | None = None
+        self.intelligent_scraper: IntelligentScraper | None = None
+        self.osint_reporter: OSINTReportingGenerator | None = None
+        self.osint_aggregator: OSINTAggregator | None = None
         self._components_initialized: bool = False
-        self._components_init_task: Optional[asyncio.Task] = None
+        self._components_init_task: asyncio.Task | None = None
 
         # Operation tracking
-        self.active_operations: Dict[str, IntelligenceResult] = {}
-        self._completed_operations: OrderedDict[str, IntelligenceResult] = OrderedDict()
+        self.active_operations: dict[str, IntelligenceResult] = {}
+        self._completed_operations: Ordereddict[str, IntelligenceResult] = OrderedDict()
         self._completed_operations_limit: int = self.config.get('completed_operations_limit', 1000)
         # Priority queue using heapq: (priority, counter, operation_id)
         # Priority: 0=low, 1=medium, 2=high, 3=critical (lower = higher priority)
-        self.operation_queue: List[tuple] = []
+        self.operation_queue: list[tuple] = []
         self._queue_counter = 0  # Tiebreaker for deterministic ordering
 
         # Queue bounds (DRIFT FIX 1: bounded + _queued_ops sync + no unbounded growth)
         self._MAX_QUEUE = 500
         self._MAX_QUEUED_OPS = 500  # mirror bound for _queued_ops dict
-        self._queued_ops: Dict[str, Tuple[IntelligenceTarget, List[IntelligenceOperationType], IntelligenceResult]] = {}
+        self._queued_ops: dict[str, tuple[IntelligenceTarget, list[IntelligenceOperationType], IntelligenceResult]] = {}
 
         # Priority aging for queued operations (DRIFT FIX 2: aging task shutdown symmetry)
         self._aging_threshold_seconds = 30  # age after 30 seconds
         self._aging_interval_seconds = 5    # check every 5 seconds
-        self._aging_task: Optional[asyncio.Task] = None
+        self._aging_task: asyncio.Task | None = None
         self._aging_shutdown = asyncio.Event()  # graceful exit for aging loop
 
         # Task ownership — operation tasks tracked for symmetric cleanup
         self._MAX_ACTIVE_TASKS = 200  # hard cap on concurrent operation tasks
-        self._active_tasks: Set[asyncio.Task] = set()  # owned tasks
-        self._queued_op_times: Dict[str, float] = {}  # operation_id -> enqueue timestamp
+        self._active_tasks: set[asyncio.Task] = set()  # owned tasks
+        self._queued_op_times: dict[str, float] = {}  # operation_id -> enqueue timestamp
 
         # Memory budget enforcement (DRIFT FIX 3: psutil.Process lazy + NoSuchProcess cache poison)
         self._memory_limit_bytes = 512 * 1024 * 1024  # 512 MB
-        self._process: Optional["psutil.Process"] = None  # lazy, created on first memory check
+        self._process: psutil.Process | None = None  # lazy, created on first memory check
         self._process_initialized: bool = False
         self._process_dead: bool = False  # True once process is known-dead (avoids repeated syscall)
 
         # Lazy init coordination (LANDMINE FIX 4: race condition on _components_initialized)
         self._init_lock = asyncio.Lock()
-        self._components_init_error: Optional[Exception] = None  # surface init failures
+        self._components_init_error: Exception | None = None  # surface init failures
 
         # Performance metrics
         self.metrics = {
@@ -219,12 +216,12 @@ class UnifiedWebIntelligence:
         return _IMPORT_ERROR is not None
 
     @property
-    def degradation_reason(self) -> Optional[str]:
+    def degradation_reason(self) -> str | None:
         """Důvod degraded módu, pokud existuje."""
         return str(_IMPORT_ERROR) if _IMPORT_ERROR else None
 
     @property
-    def queue_health(self) -> Dict[str, Any]:
+    def queue_health(self) -> dict[str, Any]:
         """Read-only seam: queue pressure and aging status at a glance."""
         return {
             'queued_count': len(self.operation_queue),
@@ -241,7 +238,7 @@ class UnifiedWebIntelligence:
         }
 
     @property
-    def memory_posture(self) -> Dict[str, Any]:
+    def memory_posture(self) -> dict[str, Any]:
         """Read-only seam: memory pressure state for M1 8GB."""
         try:
             # Lazy init psutil.Process if not yet initialized
@@ -271,7 +268,7 @@ class UnifiedWebIntelligence:
                     'error': 'unavailable' if not self._process_dead else 'process_dead'}
 
     @property
-    def active_posture(self) -> Dict[str, Any]:
+    def active_posture(self) -> dict[str, Any]:
         """Read-only seam: active vs queued posture."""
         return {
             'active_count': len(self.active_operations),
@@ -282,7 +279,7 @@ class UnifiedWebIntelligence:
         }
 
     @property
-    def completed_operations(self) -> Dict[str, IntelligenceResult]:
+    def completed_operations(self) -> dict[str, IntelligenceResult]:
         """Backward-compatible accessor for completed_operations (read-only copy)."""
         return dict(self._completed_operations)
 
@@ -355,7 +352,7 @@ class UnifiedWebIntelligence:
             logger.error(f"❌ Component initialization failed: {e}")
 
     async def execute_intelligence_operation(self, target: IntelligenceTarget,
-                                           operation_types: Optional[List[IntelligenceOperationType]] = None) -> str:
+                                           operation_types: list[IntelligenceOperationType] | None = None) -> str:
         """
         Execute comprehensive intelligence operation on target.
 
@@ -440,7 +437,7 @@ class UnifiedWebIntelligence:
         return operation_id
 
     async def _execute_operation_async(self, target: IntelligenceTarget,
-                                      operation_types: List[IntelligenceOperationType],
+                                      operation_types: list[IntelligenceOperationType],
                                       operation_id: str) -> None:
         """Execute intelligence operation asynchronously."""
         result = self.active_operations[operation_id]
@@ -552,7 +549,7 @@ class UnifiedWebIntelligence:
         task.add_done_callback(self._active_tasks.discard)
 
     @property
-    def task_posture(self) -> Dict[str, int]:
+    def task_posture(self) -> dict[str, int]:
         """Read-only snapshot of task ownership state."""
         return {
             'active_operations': len(self.active_operations),
@@ -574,7 +571,7 @@ class UnifiedWebIntelligence:
                 )
                 # shutdown event set — exit gracefully
                 break
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 pass  # normal tick
             except asyncio.CancelledError:
                 # Task was cancelled externally — exit immediately without processing
@@ -760,7 +757,7 @@ class UnifiedWebIntelligence:
 
         result.vulnerabilities = vulnerabilities
 
-    def _analyze_security_indicators(self, web_data: Dict[str, Any]) -> Dict[str, Any]:
+    def _analyze_security_indicators(self, web_data: dict[str, Any]) -> dict[str, Any]:
         """Analyze web data for security indicators."""
         indicators = {
             'ssl_certificates': [],
@@ -774,7 +771,7 @@ class UnifiedWebIntelligence:
 
         return indicators
 
-    def _analyze_personal_threats(self, osint_data: Dict[str, Any]) -> List[Dict[str, Any]]:
+    def _analyze_personal_threats(self, osint_data: dict[str, Any]) -> list[dict[str, Any]]:
         """Analyze OSINT data for personal threats."""
         threats = []
 
@@ -800,7 +797,7 @@ class UnifiedWebIntelligence:
 
             return threats
 
-    def _calculate_threat_score(self, threat_assessment: Dict[str, Any]) -> float:
+    def _calculate_threat_score(self, threat_assessment: dict[str, Any]) -> float:
         """Calculate overall threat score."""
         score = 0.0
 
@@ -827,7 +824,7 @@ class UnifiedWebIntelligence:
         else:
             return 'low'
 
-    def _analyze_web_vulnerabilities(self, web_data: Dict[str, Any]) -> List[Dict[str, Any]]:
+    def _analyze_web_vulnerabilities(self, web_data: dict[str, Any]) -> list[dict[str, Any]]:
         """Analyze web data for vulnerabilities."""
         vulnerabilities = []
 
@@ -845,7 +842,7 @@ class UnifiedWebIntelligence:
 
         return vulnerabilities
 
-    def _analyze_personal_vulnerabilities(self, osint_data: Dict[str, Any]) -> List[Dict[str, Any]]:
+    def _analyze_personal_vulnerabilities(self, osint_data: dict[str, Any]) -> list[dict[str, Any]]:
         """Analyze OSINT data for personal vulnerabilities."""
         vulnerabilities = []
 
@@ -865,7 +862,7 @@ class UnifiedWebIntelligence:
         if total > 0:
             self.metrics['success_rate'] = (self.metrics['completed_operations'] / total) * 100
 
-    async def get_operation_status(self, operation_id: str) -> Optional[Dict[str, Any]]:
+    async def get_operation_status(self, operation_id: str) -> dict[str, Any] | None:
         """Get status of a specific operation."""
         operation = self.active_operations.get(operation_id) or self._completed_operations.get(operation_id)
         if not operation:
@@ -889,7 +886,7 @@ class UnifiedWebIntelligence:
             'errors': operation.errors
         }
 
-    async def get_operation_results(self, operation_id: str, format: str = "json") -> Dict[str, Any]:
+    async def get_operation_results(self, operation_id: str, format: str = "json") -> dict[str, Any]:
         """Get comprehensive operation results."""
         operation = self._completed_operations.get(operation_id)
         if not operation:
@@ -935,7 +932,7 @@ class UnifiedWebIntelligence:
             # Could add other formats (html, pdf, etc.)
             return results
 
-    def get_system_metrics(self) -> Dict[str, Any]:
+    def get_system_metrics(self) -> dict[str, Any]:
         """Get comprehensive system metrics."""
         return {
             'operations': {
@@ -995,7 +992,7 @@ class UnifiedWebIntelligence:
         },
         "infrastructure": {
             "kubernetes", "docker", "terraform", "ansible", "aws", "gcp", "azure",
-            "kubernetes", "k8s", "helm", "istio", "envoy", "nginx", "traefik",
+            "k8s", "helm", "istio", "envoy", "nginx", "traefik",
             "linux", "unix", "windows server", "active directory",
         },
         "database": {
@@ -1044,7 +1041,6 @@ class UnifiedWebIntelligence:
             from spacy.matcher import PhraseMatcher
 
             cls._spacy_nlp = spacy.load("en_core_web_sm")
-            patterns = []
             # Build patterns from tech keywords
             all_techs = []
             for kw_set in cls._TECH_KEYWORDS.values():
@@ -1064,7 +1060,7 @@ class UnifiedWebIntelligence:
         import re
 
         found: dict[str, int] = {}
-        for category, keywords in self._TECH_KEYWORDS.items():
+        for _category, keywords in self._TECH_KEYWORDS.items():
             for kw in keywords:
                 # Word boundary match (case-insensitive)
                 pattern = r"\b" + re.escape(kw) + r"\b"
@@ -1081,7 +1077,7 @@ class UnifiedWebIntelligence:
         doc = nlp(text[:50000])  # cap at 50k chars for memory
         found: dict[str, int] = {}
         matches = matcher(doc)
-        for match_id, start, end in matches:
+        for match_id, _start, _end in matches:
             tech = nlp.vocab.strings[match_id]
             found[tech] = found.get(tech, 0) + 1
         return found
@@ -1207,7 +1203,7 @@ class UnifiedWebIntelligence:
                             # Malformed XML — try regex extraction as fallback
                             titles = re.findall(r"<title><!\[CDATA\[(.*?)\]\]></title>", raw)
                             descs = re.findall(r"<description><!\[CDATA\[(.*?)\]\]></description>", raw)
-                            for t, d in zip(titles, descs):
+                            for t, d in zip(titles, descs, strict=False):
                                 all_text_parts.append(f"{t} {d}"[:3000])
             except Exception:
                 pass
@@ -1387,7 +1383,7 @@ class UnifiedWebIntelligence:
 
 
 # Factory function
-async def create_unified_intelligence(config: Optional[Dict[str, Any]] = None) -> UnifiedWebIntelligence:
+async def create_unified_intelligence(config: dict[str, Any] | None = None) -> UnifiedWebIntelligence:
     """Factory function to create unified intelligence system."""
     system = UnifiedWebIntelligence(config)
     return system

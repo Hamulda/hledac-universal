@@ -97,7 +97,7 @@ def reset_httpx_h2_state() -> None:
     logger.debug("[HTTPX] httpx_h2 state reset (failures=0, auto-disable=False)")
 
 
-def record_httpx_h2_failure(_breaker: "H2CircuitBreaker | None" = None) -> None:
+def record_httpx_h2_failure(_breaker: H2CircuitBreaker | None = None) -> None:
     """
     Record a httpx_h2 failure and auto-disable if threshold reached.
 
@@ -127,7 +127,6 @@ def classify_httpx_h2_error(exc_or_result) -> str:
     Invariants:
       [H2-A5] CancelledError NOT in return list — caller must re-raise
     """
-    import asyncio
 
     # Handle CancelledError — MUST be re-raised, not classified
     if isinstance(exc_or_result, asyncio.CancelledError):
@@ -278,7 +277,7 @@ def should_use_httpx_h2(
     url: str,
     use_stealth: bool = False,
     use_js: bool = False,
-    _breaker: "H2CircuitBreaker | None" = None,
+    _breaker: H2CircuitBreaker | None = None,
 ) -> tuple[bool, str]:
     """
     Determine if URL should use HTTPX H2 lane.
@@ -363,7 +362,7 @@ async def fetch_via_httpx_h2(
     timeout_s: float = 20.0,
     _max_bytes: int = 2 * 1024 * 1024,  # noqa: F841  # reserved; body cap deferred — see TRANSPORT_COMMON_POLICY_AUDIT.md
     _max_redirects: int = 10,
-) -> "httpx.Response":  # type: ignore[name-defined]  # httpx imported lazily inside
+) -> httpx.Response:  # type: ignore[name-defined]  # httpx imported lazily inside
     """
     Execute HTTP GET via HTTPX AsyncClient (HTTP/2 capable).
 
@@ -495,7 +494,7 @@ async def _validate_redirect_url(redirect_url: str) -> None:
     # to a public IP but later redirects to a private IP
     try:
         raw_results = await async_getaddrinfo(hostname, 0, proto=socket.IPPROTO_TCP)
-        resolved_ips = sorted(set(str(r[4][0]) for r in raw_results))
+        resolved_ips = sorted({str(r[4][0]) for r in raw_results})
         if not resolved_ips:
             raise _SSRFBlockError(f"DNS resolution failed for redirect URL: {redirect_url}")
 

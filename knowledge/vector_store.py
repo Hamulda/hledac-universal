@@ -20,9 +20,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 from pathlib import Path
-from typing import Optional
 
 import numpy as np
 
@@ -156,11 +154,10 @@ class VectorStore:
         table = self._text_table if index_type == "text" else self._image_table
 
         try:
-            import pyarrow as pa
 
             # Convert numpy arrays to PyArrow format
             data = []
-            for i, (row_id, vector) in enumerate(zip(ids, vectors)):
+            for _i, (row_id, vector) in enumerate(zip(ids, vectors, strict=False)):
                 # Ensure float32
                 vec_float32 = vector.astype(np.float32)
                 data.append({
@@ -291,7 +288,7 @@ class VectorStore:
 
 
 # Singleton instance
-_vector_store: Optional[VectorStore] = None
+_vector_store: VectorStore | None = None
 
 
 def get_vector_store() -> VectorStore:

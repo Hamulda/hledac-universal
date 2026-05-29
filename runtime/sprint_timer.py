@@ -20,7 +20,8 @@ from __future__ import annotations
 import contextlib
 import time
 from collections import deque
-from typing import TYPE_CHECKING, Any, Callable, Optional
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     pass
@@ -73,7 +74,7 @@ class SprintTimer:
 
     def __init__(
         self,
-        emit_fn: Optional[Callable[[str, float, dict[str, Any]], None]] = None,
+        emit_fn: Callable[[str, float, dict[str, Any]], None] | None = None,
         *,
         maxlen: int = _MAX_TIMER_EVENTS,
     ) -> None:

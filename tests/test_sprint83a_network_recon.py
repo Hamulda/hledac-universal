@@ -7,13 +7,14 @@ Tests bounded state, scorer behavior, and candidate forwarding.
 """
 
 import asyncio
-import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
-from typing import Dict, Any, Tuple
+import os
 
 # Test imports
 import sys
-import os
+from typing import Any
+from unittest.mock import MagicMock
+
+import pytest
 
 # Ensure hledac.universal is in path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
@@ -58,7 +59,7 @@ class TestSprint83ANetworkRecon:
         # Create a scorer function similar to the one in the orchestrator
         _MAX_DOMAINS_PER_SPRINT = 20
 
-        def network_recon_scorer(state: Dict[str, Any]) -> Tuple[float, Dict[str, Any]]:
+        def network_recon_scorer(state: dict[str, Any]) -> tuple[float, dict[str, Any]]:
             """Scorer for network_recon action."""
             domain = state.get('new_domain', '')
             if not domain:
@@ -175,13 +176,13 @@ class TestSprint83ANetworkRecon:
     def test_network_recon_offline_fast_fail_truthful(self):
         """Test 8: network_recon respects offline mode fast-fail."""
         # Check that offline mode detection exists in types
-        from hledac.universal.project_types import is_offline_mode, OfflineModeError
+        from hledac.universal.project_types import is_offline_mode
 
         # Test offline mode detection
         original = os.getenv("HLEDAC_OFFLINE")
         try:
             os.environ["HLEDAC_OFFLINE"] = "1"
-            assert is_offline_mode() == True
+            assert is_offline_mode()
         finally:
             if original is not None:
                 os.environ["HLEDAC_OFFLINE"] = original
@@ -196,11 +197,12 @@ class TestSprint83ANetworkRecon:
         # The implementation should NOT call brute_force_subdomains with default=True
         # Check by reading the handler code
         import inspect
+
         from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
 
         # Get source around line where network_recon_handler is defined
         source_file = inspect.getsourcefile(FullyAutonomousOrchestrator)
-        with open(source_file, 'r') as f:
+        with open(source_file) as f:
             content = f.read()
 
         # Verify the pattern exists - handler should reference passive enumeration
@@ -213,8 +215,9 @@ class TestSprint83ANetworkRecon:
         # This is a design requirement - partial success is acceptable
 
         # Create mock host_info with partial data
-        from hledac.universal.intelligence.network_reconnaissance import HostInfo, WHOISData
         from datetime import datetime
+
+        from hledac.universal.intelligence.network_reconnaissance import HostInfo, WHOISData
 
         # Mock partial result - DNS fails but WHOIS succeeds
         mock_host_info = HostInfo(
@@ -261,12 +264,12 @@ class TestSprint83ABoundedConstants:
 
     def test_scanned_domains_maxsize_defined(self):
         """Verify _SCANNED_DOMAINS_MAXSIZE is defined."""
-        from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
-
         # Check the constant is referenced in the module
         import inspect
+
+        from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
         source_file = inspect.getsourcefile(FullyAutonomousOrchestrator)
-        with open(source_file, 'r') as f:
+        with open(source_file) as f:
             content = f.read()
 
         assert '_SCANNED_DOMAINS_MAXSIZE' in content
@@ -278,10 +281,11 @@ class TestSprint83AObservability:
     def test_handler_returns_downstream_flow_state(self):
         """Verify handler returns downstream_flow_state in metadata."""
         import inspect
+
         from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
 
         source_file = inspect.getsourcefile(FullyAutonomousOrchestrator)
-        with open(source_file, 'r') as f:
+        with open(source_file) as f:
             content = f.read()
 
         assert 'downstream_flow_state' in content
@@ -289,10 +293,11 @@ class TestSprint83AObservability:
     def test_handler_returns_handler_latency_ms(self):
         """Verify handler returns handler_latency_ms in metadata."""
         import inspect
+
         from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
 
         source_file = inspect.getsourcefile(FullyAutonomousOrchestrator)
-        with open(source_file, 'r') as f:
+        with open(source_file) as f:
             content = f.read()
 
         assert 'handler_latency_ms' in content

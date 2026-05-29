@@ -9,19 +9,17 @@ Run: uv run pytest tests/probe_f223d_corroboration_scorer -q
 from __future__ import annotations
 
 import pytest
-
 from hledac.universal.runtime.evidence_corroboration import (
-    score_indicators_by_corroboration,
-    score_seeds_by_corroboration,
     CorroborationScore,
-    build_top_indicators,
-    build_weak_unverified,
-    build_recommended_pivots,
     _check_noise,
     _normalize_source_type,
     _seed_source_to_family,
+    build_recommended_pivots,
+    build_top_indicators,
+    build_weak_unverified,
+    score_indicators_by_corroboration,
+    score_seeds_by_corroboration,
 )
-
 
 # --------------------------------------------------------------------------- #
 # Fixtures

@@ -385,7 +385,7 @@ class ModelSwapManager:
                 timed_out=False,
                 error=None,
             )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.warning(f"[SWAP] Drain timed out after {self._drain_timeout}s for {model_name}")
             return DrainResult(
                 cancelled_count=0,

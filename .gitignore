@@ -1,5 +1,6 @@
 # Python
 __pycache__/
+broken_imports.json
 *.py[cod]
 *.pyc
 *.so
@@ -11,42 +12,30 @@ build/
 
 # Virtual Environment
 .venv/
-
 # node_modules
 node_modules/
-
 # macOS
 .DS_Store
 ._*
-
 # IDE
 .idea/
 .vscode/
 *.swp
 *.swo
-
 # OMC session state (ephemeral)
 .omc/
 *.omc
-
 # Test artifacts
 .pytest_cache/
 .coverage
 htmlcov/
 *.mdb
 *.lmdb
-
 # Local config
 *.local
 .env
-
 # Artifact hygiene — bytecode
-*.pyc
 *.pyo
-__pycache__/
-*.so
-.Python
-
 # Artifact hygiene — backup/backup-source variants
 *.py.new
 *.py.new2
@@ -55,18 +44,12 @@ __pycache__/
 *.bak_*
 *_bak_*
 .bak_*
-
 # Artifact hygiene — srclight backup
 .srclight/
 .srclight_bak/
-
 # Artifact hygiene — probe test venv
 tests/probe_*/runtime/.venv*/
-tests/probe_*/runtime/.venv*/
-
-# Test artifacts
 tests/test_pattern_matcher.py
-
 # Tool artifacts
 .claude/
 .codebase-memory/
@@ -74,22 +57,14 @@ tests/test_pattern_matcher.py
 .mcp.json
 .repowise/
 .rtk/
-
 # OMC persistent state
-.omc/
-
 # Local artifacts
 .backup/
-.codebase-memory/
-.full-review/
-
 # RL state (ephemeral)
 rl/.sprint_policy_state.json
-
 # Test probes (can be large/generated)
 tests/probe_f*/
 probe_*/
-
 # Agent/Codegen artifacts
 .agent/
 .agentdb/
@@ -101,10 +76,8 @@ probe_*/
 .claude-flow/
 .claude_consciousness.m8
 .temporal_store/
-
 # Root anomalies — F223 cleanup 2026-05-25
 :memory:/
-*.bak_*
 better-sqlite3-*.tgz
 # Added by code-review-graph
 .code-review-graph/

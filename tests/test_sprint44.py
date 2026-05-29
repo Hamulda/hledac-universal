@@ -2,7 +2,6 @@
 Sprint 44 tests – Lightpanda + Forensics + Prediction + Deep Dive.
 """
 
-import asyncio
 import sys
 import tempfile
 import unittest
@@ -13,10 +12,10 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from hledac.universal.coordinators.fetch_coordinator import FetchCoordinator, LightpandaManager
-from hledac.universal.intelligence.document_intelligence import DocumentIntelligenceEngine, DeepForensicsAnalyzer
-from hledac.universal.intelligence.relationship_discovery import RelationshipDiscoveryEngine
 from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
+from hledac.universal.coordinators.fetch_coordinator import FetchCoordinator, LightpandaManager
+from hledac.universal.intelligence.document_intelligence import DeepForensicsAnalyzer
+from hledac.universal.intelligence.relationship_discovery import RelationshipDiscoveryEngine
 
 
 class TestSprint44(unittest.IsolatedAsyncioTestCase):
@@ -30,7 +29,7 @@ class TestSprint44(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             lm._bin_path = Path(tmpdir) / 'lightpanda'
             # Mock the download - don't actually download
-            with patch('aiohttp.ClientSession') as mock_session:
+            with patch('aiohttp.ClientSession'):
                 lm._download_if_missing()
             # Just verify the path is set correctly
             self.assertEqual(lm._bin_path, Path(tmpdir) / 'lightpanda')
@@ -219,7 +218,7 @@ class TestSprint44(unittest.IsolatedAsyncioTestCase):
             # Use return_value instead of side_effect for repeated calls
             orch.research = AsyncMock(return_value=mock_result)
 
-            result = await orch.extreme_research("spy agencies")
+            await orch.extreme_research("spy agencies")
             # Should have called research at least once
             self.assertGreaterEqual(orch.research.call_count, 1)
 

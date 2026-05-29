@@ -12,8 +12,9 @@ from pathlib import Path
 # Ensure hledac.universal is importable
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
-from runtime.sprint_scheduler import SprintSchedulerResult
 from runtime.acquisition_strategy import build_acquisition_report
+from runtime.sprint_scheduler import SprintSchedulerResult
+
 
 def test_doh_result_fields():
     """Verify SprintSchedulerResult has all DOH fields."""

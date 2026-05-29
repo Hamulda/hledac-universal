@@ -7,7 +7,7 @@ Tests that FOCA metadata types are properly wired into:
 """
 import asyncio
 import zipfile
-from unittest.mock import MagicMock, AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -20,10 +20,9 @@ class TestFOCATriageIntegration:
     @pytest.fixture
     def mock_extractor(self):
         """Create mock metadata extractor with FOCA results."""
-        from forensics.metadata_extractor import PPTXMetadata, EmailMetadata, CADMetadata
-        from forensics.metadata_extractor import GenericMetadata
+        from forensics.metadata_extractor import EmailMetadata, GenericMetadata, PPTXMetadata
 
-        extractor = MagicMock()
+        MagicMock()
 
         # PPTX result with FOCA metadata
         pptx_result = MagicMock()
@@ -146,7 +145,6 @@ class TestFOCAMacroExtraction:
 
     def test_macro_urls_in_pptx_via_zip(self, tmp_path):
         """Test URL extraction from VBA without olevba (fallback)."""
-        from forensics.metadata_extractor import PPTXMetadata
 
         # Create PPTX with VBA containing URL
         pptx_path = tmp_path / "macro.pptx"
@@ -157,6 +155,7 @@ class TestFOCAMacroExtraction:
 
         # Test extraction directly
         import asyncio
+
         from forensics.metadata_extractor import UniversalMetadataExtractor
 
         async def run():
@@ -177,7 +176,7 @@ class TestFOCABounds:
 
     def test_pptx_metadata_bounds(self):
         """Test PPTXMetadata respects bounds."""
-        from forensics.metadata_extractor import PPTXMetadata, MAX_SPEAKER_NOTES, MAX_MACRO_URLS
+        from forensics.metadata_extractor import MAX_MACRO_URLS, MAX_SPEAKER_NOTES, PPTXMetadata
 
         pptx = PPTXMetadata()
 
@@ -379,8 +378,9 @@ class TestFOCAConfidenceIntegration:
 
     def test_foca_confidence_modifier_in_enrichment_result(self):
         """Test enrich() returns foca_confidence_modifier when FOCA data present."""
-        from forensics.enrichment_service import ForensicsEnricher
         from unittest.mock import MagicMock
+
+        from forensics.enrichment_service import ForensicsEnricher
 
         enricher = ForensicsEnricher()
 
@@ -445,8 +445,9 @@ class TestFOCAConfidenceIntegration:
 
     def test_foca_modifier_absent_without_foca_data(self):
         """Test foca_confidence_modifier is absent when no FOCA data in enrichment."""
-        from forensics.enrichment_service import ForensicsEnricher
         from unittest.mock import MagicMock
+
+        from forensics.enrichment_service import ForensicsEnricher
 
         enricher = ForensicsEnricher()
 

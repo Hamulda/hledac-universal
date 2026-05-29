@@ -21,7 +21,6 @@ Tor/I2P/JS are protected from accidental curl routing.
 from __future__ import annotations
 
 import os
-from typing import Optional, Tuple
 
 # Protection hints that trigger curl_cffi escalation
 _PROTECTION_HINTS = {"cloudflare", "akamai", "datadome", "imperva", "perimeterx", "incapsula"}
@@ -36,10 +35,10 @@ def should_use_curl_cffi(
     *,
     use_stealth: bool = False,
     use_js: bool = False,
-    prior_status: Optional[int] = None,
-    prior_error: Optional[str] = None,
-    protection_hint: Optional[str] = None,
-) -> Tuple[bool, str]:
+    prior_status: int | None = None,
+    prior_error: str | None = None,
+    protection_hint: str | None = None,
+) -> tuple[bool, str]:
     """
     Determine if curl_cffi stealth lane should be used for this URL.
 

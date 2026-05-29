@@ -30,7 +30,6 @@ import asyncio
 import logging
 import re
 from dataclasses import dataclass
-from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -62,7 +61,7 @@ class GopherResponse:
     selector: str
     content: bytes
     content_type: str  # "file", "directory", "binary", "unknown"
-    items: list["GopherItem"]  # For directory listings
+    items: list[GopherItem]  # For directory listings
     error: str | None = None
 
     @property
@@ -169,7 +168,7 @@ class GopherTransport:
                 asyncio.open_connection(host, port),
                 timeout=timeout_s,
             )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             get_breaker(host).record_failure(is_timeout=True, failure_kind="timeout")
             return GopherResponse(
                 selector=selector,
@@ -190,7 +189,7 @@ class GopherTransport:
 
         try:
             # Send selector with CRLF
-            request = f"{selector}\r\n".encode("utf-8")
+            request = f"{selector}\r\n".encode()
             writer.write(request)
             await writer.drain()
 
@@ -231,7 +230,7 @@ class GopherTransport:
             writer.close()
             await writer.wait_closed()
 
-    def _parse_url(self, url: str) -> Optional[tuple[str, int, str]]:
+    def _parse_url(self, url: str) -> tuple[str, int, str] | None:
         """Parse gopher:// URL into (host, port, selector)."""
         if not url.startswith("gopher://"):
             return None
@@ -417,9 +416,6 @@ class GopherTransport:
 
         Returns dict with fields matching CanonicalFinding for sidecar ingestion.
         """
-        from hledac.universal.knowledge.duckdb_store import (
-            SprintSchedulerResult,
-        )
         finding = {
             "source_type": "gopher_discovery",
             "ioc_type": "url",
@@ -447,7 +443,7 @@ class GopherTransport:
 # ── Canonical singleton ───────────────────────────────────────────────────────
 
 
-_gopher_transport: Optional[GopherTransport] = None
+_gopher_transport: GopherTransport | None = None
 
 
 def get_gopher_transport() -> GopherTransport:

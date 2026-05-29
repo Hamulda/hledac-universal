@@ -6,10 +6,9 @@ Testy pro ověření napojení Structure Map do autonomní smyčky.
 import asyncio
 import os
 import sys
-import tempfile
 import unittest
 from collections import OrderedDict
-from unittest.mock import patch, MagicMock, AsyncMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 # Add project root to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))
@@ -255,8 +254,8 @@ class TestStructureMapActionRegistration(unittest.TestCase):
 
     def test_action_path_updates_fingerprint_and_logs_success(self):
         """Test that action path updates fingerprint and logs success."""
+
         from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
-        import time
         orch = FullyAutonomousOrchestrator.__new__(FullyAutonomousOrchestrator)
         orch._project_root = "/tmp/test"
         orch._HIGH_PRIORITY_STRUCTURE_MAP_LIMITS = {"max_files": 100}

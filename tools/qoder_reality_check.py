@@ -14,7 +14,7 @@ from __future__ import annotations
 import json
 import re
 from collections import defaultdict
-from dataclasses import dataclass, field, asdict
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 # --------------------------------------------------------------------------- #
@@ -1101,7 +1101,7 @@ def write_markdown(modules: dict[str, ModuleReality], overclaims: list[Overclaim
         for g in gaps:
             lines.append(f"\n### [{g.severity}] {g.gap_type}")
             lines.append(f"**Recommended Sprint**: {g.recommended_sprint}")
-            lines.append(f"**Affected paths**:")
+            lines.append("**Affected paths**:")
             for p in g.affected_paths:
                 lines.append(f"  - `{p}`")
     else:

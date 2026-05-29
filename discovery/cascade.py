@@ -27,7 +27,6 @@ from hledac.universal.discovery.duckduckgo_adapter import (
     DiscoveryBatchResult,
 )
 
-
 # ---------------------------------------------------------------------------
 # Env gate — re-checked on every call (not cached at import time)
 # ---------------------------------------------------------------------------
@@ -102,7 +101,7 @@ async def _run_ddg(query: str, max_results: int, timeout_s: float) -> DiscoveryB
     try:
         async with asyncio.timeout(timeout):
             return await async_search_public_web(query, max_results=max_results, timeout_s=timeout)
-    except asyncio.TimeoutError:
+    except TimeoutError:
         return DiscoveryBatchResult(
             hits=(),
             error="timeout",
@@ -123,7 +122,7 @@ async def _run_historical_frontier(query: str, max_results: int, timeout_s: floa
             return await async_search_historical_frontier(
                 query, max_results=max_results, timeout_s=timeout
             )
-    except asyncio.TimeoutError:
+    except TimeoutError:
         return DiscoveryBatchResult(
             hits=(),
             error="historical_frontier_timeout",
@@ -144,7 +143,7 @@ async def _run_wayback_cdx(query: str, max_results: int, timeout_s: float) -> Di
             return await async_search_wayback_cdx(
                 query, max_results=max_results, timeout_s=timeout
             )
-    except asyncio.TimeoutError:
+    except TimeoutError:
         return DiscoveryBatchResult(
             hits=(),
             error="wayback_cdx_timeout",
@@ -153,6 +152,48 @@ async def _run_wayback_cdx(query: str, max_results: int, timeout_s: float) -> Di
             provider_chain=("wayback_cdx",),
             source_family="archive",
             elapsed_s=timeout,
+        )
+
+
+# ---------------------------------------------------------------------------
+# DHT Discovery — Sprint F214Q / F229
+# Tier-3 experimental: last-resort in sequential cascade
+# ---------------------------------------------------------------------------
+
+_DHT_SEQUENTIAL_TIMEOUT_S = 30.0
+
+
+async def _run_dht(query: str, max_results: int, timeout_s: float) -> DiscoveryBatchResult:
+    """Run DHT discovery as last-resort in sequential cascade.
+
+    Gated by HLEDAC_ENABLE_DHT=1. Returns empty result if disabled or on error.
+    Max 30s per DHT call to avoid blocking the cascade.
+    """
+    dht_timeout = min(timeout_s, _DHT_SEQUENTIAL_TIMEOUT_S)
+    try:
+        async with asyncio.timeout(dht_timeout):
+            from .dht_adapter import async_search_dht
+
+            return await async_search_dht(query, max_results=max_results, timeout_s=dht_timeout)
+    except TimeoutError:
+        return DiscoveryBatchResult(
+            hits=(),
+            error="dht_timeout",
+            error_type="timeout",
+            provider_name="dht",
+            provider_chain=("dht",),
+            source_family="dht_discovery",
+            elapsed_s=dht_timeout,
+        )
+    except Exception as e:
+        return DiscoveryBatchResult(
+            hits=(),
+            error=str(e),
+            error_type="exception",
+            provider_name="dht",
+            provider_chain=("dht",),
+            source_family="dht_discovery",
+            elapsed_s=0.0,
         )
 
 
@@ -180,7 +221,7 @@ async def _async_search_sequential(
     try:
         async with asyncio.timeout(min(timeout_s, 20.0)):
             result = await async_search_public_web(query, max_results=max_results, timeout_s=timeout_s)
-    except asyncio.TimeoutError:
+    except TimeoutError:
         result = DiscoveryBatchResult(
             hits=(),
             error="timeout",
@@ -208,7 +249,7 @@ async def _async_search_sequential(
             hf_result = await async_search_historical_frontier(
                 query, max_results=max_results, timeout_s=2.0
             )
-    except asyncio.TimeoutError:
+    except TimeoutError:
         hf_result = DiscoveryBatchResult(
             hits=(),
             error="historical_frontier_timeout",
@@ -236,7 +277,7 @@ async def _async_search_sequential(
             wb_result = await async_search_wayback_cdx(
                 query, max_results=max_results, timeout_s=5.0
             )
-    except asyncio.TimeoutError:
+    except TimeoutError:
         wb_result = DiscoveryBatchResult(
             hits=(),
             error="wayback_cdx_timeout",
@@ -258,6 +299,13 @@ async def _async_search_sequential(
             error_type=wb_result.error_type or "none",
         )
 
+    # DHT last-resort — Sprint F214Q / F229
+    remaining = max(1.0, timeout_s - (time.monotonic() - start))
+    if remaining >= 5.0:
+        dht_result = await _run_dht(query, max_results, remaining)
+        if dht_result.hits:
+            return dht_result
+
     return DiscoveryBatchResult(
         hits=(),
         error=result.error,
@@ -265,7 +313,7 @@ async def _async_search_sequential(
         provider_name=None,
         provider_chain=("duckduckgo", "historical_frontier", "wayback_cdx"),
         source_family=None,
-        elapsed_s=elapsed,
+        elapsed_s=time.monotonic() - start,
         error_type=result.error_type or "unknown_backend_error",
     )
 

@@ -191,13 +191,12 @@ class TestMixinArchitectureRemoved(unittest.TestCase):
 
         self.assertEqual(
             violations, [],
-            f"Mixin inheritance found:\n" + "\n".join(violations)
+            "Mixin inheritance found:\n" + "\n".join(violations)
         )
 
     def test_universal_coordinator_has_inline_implementations(self):
         """UniversalCoordinator must have track_operation, get_load_factor, check_memory_pressure."""
         import sys
-        from pathlib import Path
         # Project root is parent.parent of test file (tests/ -> universal/ -> project/)
         base = _base_path()
         project_root = base.parent.parent
@@ -209,7 +208,7 @@ class TestMixinArchitectureRemoved(unittest.TestCase):
             self.assertTrue(hasattr(UniversalCoordinator, "get_load_factor"))
             self.assertTrue(hasattr(UniversalCoordinator, "check_memory_pressure"))
             # Verify they are not abstract methods
-            self.assertFalse(getattr(UniversalCoordinator, "track_operation").__isabstractmethod__ if hasattr(getattr(UniversalCoordinator, "track_operation"), "__isabstractmethod__") else False)
+            self.assertFalse(UniversalCoordinator.track_operation.__isabstractmethod__ if hasattr(UniversalCoordinator.track_operation, "__isabstractmethod__") else False)
         finally:
             sys.path.pop(0)
 

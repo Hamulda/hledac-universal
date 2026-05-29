@@ -19,9 +19,9 @@ from __future__ import annotations
 import json
 import re
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Dict, List, NamedTuple
+from typing import Any, NamedTuple
 
 
 class Finding(NamedTuple):
@@ -63,7 +63,7 @@ def classify(path: str) -> str:
     return "NEEDS_REVIEW"
 
 
-def audit_file(path: Path) -> List[Finding]:
+def audit_file(path: Path) -> list[Finding]:
     findings = []
     try:
         source = path.read_text(encoding="utf-8")
@@ -86,8 +86,8 @@ def audit_file(path: Path) -> List[Finding]:
     return findings
 
 
-def run_audit(root: Path) -> Dict[str, Any]:
-    findings: List[Finding] = []
+def run_audit(root: Path) -> dict[str, Any]:
+    findings: list[Finding] = []
 
     skip_dirs = {".venv", "__pycache__", "probe_f207o_async314"}
 
@@ -102,7 +102,7 @@ def run_audit(root: Path) -> Dict[str, Any]:
         buckets[f.classification].append(f._asdict())
 
     return {
-        "audit_timestamp": datetime.now(timezone.utc).isoformat(),
+        "audit_timestamp": datetime.now(UTC).isoformat(),
         "python_version": f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}",
         "total_findings": len(findings),
         "by_classification": {k: len(v) for k, v in buckets.items()},
@@ -125,7 +125,7 @@ if __name__ == "__main__":
         "# Python 3.14 Async Compatibility Audit",
         f"\n**Audit Date:** {report['audit_timestamp']}",
         f"**Python Version:** {report['python_version']}",
-        f"\n## Summary",
+        "\n## Summary",
     ]
 
     for classification in ["SIMPLE_HELPER_FIX", "NEEDS_REVIEW", "RUNTIME_CRITICAL_DEFER", "SAFE_TEST_ONLY"]:
@@ -133,7 +133,7 @@ if __name__ == "__main__":
         emoji = {"SIMPLE_HELPER_FIX": "🔧", "NEEDS_REVIEW": "👀", "RUNTIME_CRITICAL_DEFER": "🚧", "SAFE_TEST_ONLY": "✅"}.get(classification, "")
         lines.append(f"- **{emoji} {classification}:** {count}")
 
-    lines.append(f"\n## Findings by Classification\n")
+    lines.append("\n## Findings by Classification\n")
 
     for classification in ["SIMPLE_HELPER_FIX", "NEEDS_REVIEW", "RUNTIME_CRITICAL_DEFER", "SAFE_TEST_ONLY"]:
         items = [f for f in report["findings"] if f["classification"] == classification]
@@ -150,6 +150,6 @@ if __name__ == "__main__":
     print(f"Audit complete: {report['total_findings']} findings")
     print(f"  JSON: {out_json}")
     print(f"  MD:   {out_md}")
-    print(f"\nBy classification:")
+    print("\nBy classification:")
     for k, v in report["by_classification"].items():
         print(f"  {k}: {v}")

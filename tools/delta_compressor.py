@@ -15,7 +15,6 @@ import logging
 import re
 import struct
 import zlib
-from typing import Optional
 
 logger = logging.getLogger(__name__)
 

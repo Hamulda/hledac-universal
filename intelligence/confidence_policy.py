@@ -18,8 +18,6 @@ Policy rules (deterministic, no MLX, no network):
 
 from __future__ import annotations
 
-from typing import Optional
-
 # ------------------------------------------------------------------
 # Source baseline constants
 # ------------------------------------------------------------------
@@ -83,12 +81,12 @@ _SOURCE_BASELINES: dict[str, float] = {
 
 def compute_confidence(
     source_family: str,
-    evidence_type: Optional[str] = None,  # reserved for v2 evidence-type policy
+    evidence_type: str | None = None,  # reserved for v2 evidence-type policy
     has_provenance: bool = False,
     has_ioc: bool = False,
     corroboration_count: int = 0,
     rejection_count: int = 0,
-    model_score: Optional[float] = None,
+    model_score: float | None = None,
     default: float = DEFAULT_CONFIDENCE,
 ) -> float:
     """

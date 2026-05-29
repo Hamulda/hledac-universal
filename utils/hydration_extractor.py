@@ -16,9 +16,8 @@ from __future__ import annotations
 import re
 from typing import Final
 
-import orjson
-
 import msgspec
+import orjson
 
 # ---------------------------------------------------------------------------
 # Bounds (M1 8GB safe)

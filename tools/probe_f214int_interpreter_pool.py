@@ -30,10 +30,6 @@ METRICS:
 
 from __future__ import annotations
 
-import sys
-if sys.version_info < (3, 14):
-    raise SystemExit("Requires Python 3.14+ for InterpreterPoolExecutor probes")
-
 import gc
 import hashlib
 import importlib
@@ -45,9 +41,9 @@ import re
 import resource
 import sys
 import time
-from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor
+from collections.abc import Callable
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from dataclasses import dataclass
-from typing import Callable, Dict, List, Tuple
 
 # -----------------------------------------------------------------------
 # Candidate inventory (lazy import per candidate)
@@ -161,7 +157,7 @@ def candidate_entropy(items: list[bytes]) -> list[float]:
         if not data:
             results.append(0.0)
             continue
-        freq: Dict[int, int] = {}
+        freq: dict[int, int] = {}
         for b in data:
             freq[b] = freq.get(b, 0) + 1
         entropy = 0.0
@@ -176,7 +172,7 @@ def candidate_entropy(items: list[bytes]) -> list[float]:
 
 def candidate_aho_scan(items: list[str]) -> list[list[dict]]:
     """aho_extractor.py — Aho-Corasick scan."""
-    from utils.aho_extractor import get_suspicious_keywords_automaton, aho_scan_text
+    from utils.aho_extractor import aho_scan_text, get_suspicious_keywords_automaton
     automaton = get_suspicious_keywords_automaton()
     results = []
     for text in items:
@@ -262,7 +258,7 @@ def gen_text_items(n: int, seed: int = 42) -> list[str]:
 
 def gen_bytes_items(n: int, seed: int = 42) -> list[bytes]:
     """Generate n synthetic bytes items for entropy benchmark."""
-    rng = random.Random(seed)
+    random.Random(seed)
     items = []
     for i in range(n):
         size = 50000 + (i % 100000)  # 50KB-150KB per item
@@ -279,7 +275,7 @@ def gen_rrf_items(n: int, seed: int = 42) -> list[str]:
 
 def gen_entity_items(n: int, seed: int = 42) -> list[tuple]:
     """Generate (pattern_type, value) pairs for entity confidence benchmark."""
-    rng = random.Random(seed)
+    random.Random(seed)
     patterns = [
         ("email", "user@example.com"),
         ("email", "admin@company.org"),
@@ -312,7 +308,7 @@ def gen_html_items(n: int, seed: int = 42) -> list[str]:
 
 def gen_jaccard_items(n: int, seed: int = 42) -> list[tuple]:
     """Generate (text1, text2) pairs for Jaccard similarity benchmark."""
-    rng = random.Random(seed)
+    random.Random(seed)
     texts = gen_text_items(n * 2, seed)
     items = []
     for i in range(0, n * 2 - 1, 2):
@@ -387,7 +383,7 @@ def benchmark_candidate(
     # Warm-up with meaningful size
     try:
         warmup_size = min(100, len(workload))
-        warmup = func(workload[:warmup_size])
+        func(workload[:warmup_size])
     except Exception as e:
         result.notes = f"Warm-up failed: {e}"
         return result
@@ -397,7 +393,7 @@ def benchmark_candidate(
     for _ in range(n_iter):
         gc.collect()
         t0 = time.perf_counter()
-        result_serial = func(workload)
+        func(workload)
         t1 = time.perf_counter()
         times.append((t1 - t0) * 1000)
     serial_ms = min(times)
@@ -416,7 +412,7 @@ def benchmark_candidate(
                 chunk_size = max(1, len(workload) // workers)
                 futures = [exc.submit(func, workload[i*chunk_size:(i+1)*chunk_size])
                            for i in range(workers)]
-                results_thread = [f.result() for f in futures]
+                [f.result() for f in futures]
             t1 = time.perf_counter()
             times_thread.append((t1 - t0) * 1000)
         thread_ms = min(times_thread)
@@ -435,7 +431,7 @@ def benchmark_candidate(
                 chunk_size = max(1, len(workload) // workers)
                 futures = [exc.submit(func, workload[i*chunk_size:(i+1)*chunk_size])
                            for i in range(workers)]
-                results_interp = [f.result() for f in futures]
+                [f.result() for f in futures]
             t1 = time.perf_counter()
             times_interp.append((t1 - t0) * 1000)
         interp_ms = min(times_interp)
@@ -455,7 +451,7 @@ def benchmark_candidate(
                 chunk_size = max(1, len(workload) // workers)
                 futures = [exc.submit(func, workload[i*chunk_size:(i+1)*chunk_size])
                            for i in range(workers)]
-                results_proc = [f.result() for f in futures]
+                [f.result() for f in futures]
             t1 = time.perf_counter()
             times_proc.append((t1 - t0) * 1000)
         proc_ms = min(times_proc)
@@ -477,17 +473,17 @@ def benchmark_candidate(
 # Import overhead measurement
 # -----------------------------------------------------------------------
 
-def measure_import(module_path: str) -> Tuple[float, float]:
+def measure_import(module_path: str) -> tuple[float, float]:
     """Measure import time and return (import_time_ms, module_size_kb)."""
     gc.collect()
     t0 = time.perf_counter()
     try:
-        mod = importlib.import_module(module_path)
+        importlib.import_module(module_path)
         t1 = time.perf_counter()
         import_ms = (t1 - t0) * 1000
         size_kb = 0
         return import_ms, size_kb
-    except Exception as e:
+    except Exception:
         return -1.0, 0.0
 
 
@@ -495,7 +491,7 @@ def measure_import(module_path: str) -> Tuple[float, float]:
 # Main probe
 # -----------------------------------------------------------------------
 
-def run_probe() -> List[CandidateResult]:
+def run_probe() -> list[CandidateResult]:
     """Run all candidate benchmarks."""
     print("F214INT — InterpreterPoolExecutor Pure-Python POC Probe")
     print("=" * 60)
@@ -548,7 +544,7 @@ def run_probe() -> List[CandidateResult]:
          "Markdown report rendering from sprint results dict"),
     ]
 
-    results: List[CandidateResult] = []
+    results: list[CandidateResult] = []
     for name, func, workload, notes in candidates:
         print(f"\n--- {name} ---")
         print(f"    Workload: {len(workload)} items, ~{sys.getsizeof(workload)//1024}KB")

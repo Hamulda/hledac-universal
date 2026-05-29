@@ -35,9 +35,9 @@ except ImportError:
     psutil = None  # type: ignore[assignment]
     _PSUTIL_AVAILABLE = False
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -99,8 +99,8 @@ class MetricSnapshot:
     ts: datetime
     name: str
     value: float
-    labels: Optional[Dict[str, str]] = None  # Only if bounded
-    correlation: Optional[Dict[str, Optional[str]]] = None  # run_id, branch_id, provider_id, action_id
+    labels: dict[str, str] | None = None  # Only if bounded
+    correlation: dict[str, str | None] | None = None  # run_id, branch_id, provider_id, action_id
 
 
 class MetricsRegistry:
@@ -125,7 +125,7 @@ class MetricsRegistry:
         self,
         run_dir: Path,
         run_id: str = "default",
-        correlation: Optional[Dict[str, Optional[str]]] = None,
+        correlation: dict[str, str | None] | None = None,
     ):
         """
         Initialize metrics registry.
@@ -149,13 +149,13 @@ class MetricsRegistry:
             # Normalize to shared grammar keys only; merge run_id from __init__.
             self._correlation = {k: correlation.get(k) for k in _GRAMMAR_KEYS}
             self._correlation["run_id"] = run_id
-        self._last_flush = datetime.now(timezone.utc)
+        self._last_flush = datetime.now(UTC)
 
         # Counters (integers)
-        self._counters: Dict[str, int] = {}
+        self._counters: dict[str, int] = {}
 
         # Gauges (floats)
-        self._gauges: Dict[str, float] = {}
+        self._gauges: dict[str, float] = {}
 
         # Ring buffer for recent snapshots
         self._snapshots: deque = deque(maxlen=self.MAX_SNAPSHOTS)
@@ -171,7 +171,7 @@ class MetricsRegistry:
 
         # Persist state tracking for degraded mode visibility (F200K)
         self._persist_available = True
-        self._last_persist_failure: Optional[str] = None
+        self._last_persist_failure: str | None = None
 
         # Persist file — fail-soft, caller tracks degraded state
         self._persist_file = self._init_persist_file()
@@ -179,7 +179,7 @@ class MetricsRegistry:
 
         logger.info(f"MetricsRegistry initialized: run_id={run_id}")
 
-    def _init_persist_file(self) -> Optional[Any]:
+    def _init_persist_file(self) -> Any | None:
         """Initialize persistence file. Fail-soft: returns None on failure, caller tracks degraded state."""
         metrics_dir = self._run_dir / "logs"
         metrics_dir.mkdir(parents=True, exist_ok=True)
@@ -278,7 +278,7 @@ class MetricsRegistry:
         # Post-close flush guard — force=True bypasses for close() semantics
         if getattr(self, '_closed', False) and not force:
             return
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
 
         # Check time-based flush (skip if not forced and thresholds not met)
         if not force:
@@ -333,7 +333,7 @@ class MetricsRegistry:
 
         logger.debug(f"Flushed {len(metrics)} metrics to disk")
 
-    def get_summary(self) -> Dict[str, Any]:
+    def get_summary(self) -> dict[str, Any]:
         """
         Get metrics summary — observer ledger truth.
 
@@ -379,7 +379,7 @@ class MetricsRegistry:
         except Exception:
             return False
 
-    def ingest_sprint_event(self, event: Dict[str, object]) -> None:
+    def ingest_sprint_event(self, event: dict[str, object]) -> None:
         """
         Ingest a sprint telemetry event from runtime/telemetry.py.
 
@@ -416,7 +416,7 @@ class MetricsRegistry:
             finally:
                 self._persist_file = None
 
-    def __enter__(self) -> "MetricsRegistry":
+    def __enter__(self) -> MetricsRegistry:
         return self
 
     def __exit__(self, _exc_type, _exc_val, _exc_tb) -> None:

@@ -2,9 +2,10 @@
 Tests for energy and thermal-aware inference (Sprint 75).
 """
 
-import pytest
-from unittest.mock import patch, MagicMock
 import asyncio
+from unittest.mock import MagicMock
+
+import pytest
 
 
 class TestThermalAware:
@@ -37,8 +38,7 @@ class TestProfileThermal:
     @pytest.mark.asyncio
     async def test_profile_manager_checks_thermal(self):
         """Test profile manager checks thermal state."""
-        from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
-        from hledac.universal.autonomous_orchestrator import _BrainManager
+        from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator, _BrainManager
         from hledac.universal.coordinators.memory_coordinator import ThermalState
 
         orch = FullyAutonomousOrchestrator.__new__(FullyAutonomousOrchestrator)
@@ -53,14 +53,13 @@ class TestProfileThermal:
         # Run manager once
         try:
             await asyncio.wait_for(manager._profile_manager(), timeout=0.5)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             pass  # Expected
 
     @pytest.mark.asyncio
     async def test_profile_short_context_on_hot(self):
         """Test profile switches to short-context when HOT."""
-        from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
-        from hledac.universal.autonomous_orchestrator import _BrainManager
+        from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator, _BrainManager
         from hledac.universal.coordinators.memory_coordinator import ThermalState
 
         orch = FullyAutonomousOrchestrator.__new__(FullyAutonomousOrchestrator)

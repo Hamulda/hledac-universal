@@ -2,8 +2,9 @@
 Test renderer routing - Sprint 67
 Tests for asset blocking in Playwright renderer.
 """
+from unittest.mock import AsyncMock
+
 import pytest
-from unittest.mock import AsyncMock, MagicMock
 
 
 class TestRendererRouting:

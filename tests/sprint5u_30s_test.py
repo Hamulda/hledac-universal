@@ -3,10 +3,8 @@
 Sprint 5U: 30s Quick Test - Debug Run
 """
 import asyncio
-import sys
-import time
 import random
-import os
+import sys
 
 sys.path.insert(0, '/Users/vojtechhamada/PycharmProjects/Hledac')
 
@@ -31,7 +29,7 @@ async def run():
             timeout=45
         )
 
-        print(f"\n=== RESULTS ===")
+        print("\n=== RESULTS ===")
         print(f"data_mode: {result.get('data_mode')}")
         print(f"iterations: {result.get('iterations_completed')}")
         print(f"findings: {result.get('findings_total')}")

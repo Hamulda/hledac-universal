@@ -17,17 +17,10 @@ Targeted tests for the DuckDB shadow analytics hook:
 12. Narrow regression: evidence_log append still works
 """
 
-import asyncio
 import os
 import subprocess
 import sys
-import tempfile
-import threading
-import time
 from pathlib import Path
-from unittest.mock import MagicMock
-
-import pytest
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -72,7 +65,7 @@ class TestSprint8AXImportIsolation:
                  if l and not l.startswith("Warning") and not l.startswith("INFO")
                  and not l.startswith("DEBUG") and not l.startswith("ERROR")]
         assert len(lines) >= 3, f"Unexpected stdout: {stdout!r}"
-        dt = float(lines[0])
+        float(lines[0])
         assert "True" not in lines[1], f"duckdb leaked into sys.modules: {stdout}"
         assert "True" not in lines[2], f"duckdb_store leaked: {stdout}"
 

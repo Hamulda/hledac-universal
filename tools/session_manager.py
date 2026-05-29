@@ -12,7 +12,6 @@ import logging
 import os
 import secrets
 import sys
-from typing import Dict, Optional
 import time
 
 import lmdb
@@ -81,7 +80,7 @@ def _derive_encryption_key() -> bytes:
         elif sys.platform == 'linux':
             for mpath in ['/etc/machine-id', '/var/lib/dbus/machine-id']:
                 if os.path.exists(mpath):
-                    with open(mpath, 'r') as f:
+                    with open(mpath) as f:
                         machine_id = f.read().strip()
                     break
     except Exception:
@@ -130,7 +129,7 @@ class SessionManager:
 
     def __init__(self, lmdb_env: lmdb.Environment):
         self._env = lmdb_env
-        self._cache: Dict[str, Dict] = {}  # domain -> {cookies, headers, last_used}
+        self._cache: dict[str, dict] = {}  # domain -> {cookies, headers, last_used}
         # S49-B: Thread pool executor for async LMDB operations
         self._executor = concurrent.futures.ThreadPoolExecutor(
             max_workers=2, thread_name_prefix="session_lmdb"
@@ -138,8 +137,8 @@ class SessionManager:
         # F300K: explicit closed state — guards post-close truthfulness
         self._closed: bool = False
         # F206L: Fernet cipher for cookie encryption (P25)
-        self._fernet: Optional[Fernet] = None
-        self._encryption_key: Optional[bytes] = None
+        self._fernet: Fernet | None = None
+        self._encryption_key: bytes | None = None
         if FERNET_AVAILABLE:
             self._encryption_key = self._get_encryption_key()
             self._fernet = Fernet(self._encryption_key)
@@ -187,16 +186,16 @@ class SessionManager:
             return data
 
     # S48-P8: Fast serialization with F206L encryption (P25)
-    def _serialize(self, data: Dict) -> bytes:
+    def _serialize(self, data: dict) -> bytes:
         serialized = orjson.dumps(data) if USE_ORJSON else json.dumps(data).encode()
         return self._encrypt(serialized)
 
-    def _deserialize(self, data: bytes) -> Dict:
+    def _deserialize(self, data: bytes) -> dict:
         decrypted = self._decrypt(data)
         return orjson.loads(decrypted) if USE_ORJSON else json.loads(decrypted.decode())
 
     # S49-B: Sync LMDB operations for executor
-    def _sync_get(self, key: bytes) -> Optional[Dict]:
+    def _sync_get(self, key: bytes) -> dict | None:
         with self._env.begin() as txn:
             data = txn.get(key)
             return self._deserialize(data) if data else None
@@ -211,13 +210,13 @@ class SessionManager:
 
     # F300K: Helper to check and guard closed state for read-only methods.
     # Returns cached data if available after close, else None.
-    def _get_from_cache_after_close(self, domain: str) -> Optional[Dict]:
+    def _get_from_cache_after_close(self, domain: str) -> dict | None:
         if self._closed and domain in self._cache:
             return self._cache[domain]
         return None
 
     # S49-B: Async LMDB operations via executor
-    async def get_session(self, domain: str) -> Optional[Dict]:
+    async def get_session(self, domain: str) -> dict | None:
         """Vrátí uložené session pro domain."""
         # F300K: After close, return stale cached data (read-only, no LMDB write)
         if self._closed:
@@ -242,7 +241,7 @@ class SessionManager:
             pass
         return None
 
-    async def save_session(self, domain: str, cookies: Dict, headers: Dict = None):
+    async def save_session(self, domain: str, cookies: dict, headers: dict = None):
         """Uloží session pro domain. F300K: no-op after close."""
         # F300K: Guard — mutate operations blocked after close
         if self._closed:

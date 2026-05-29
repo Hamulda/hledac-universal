@@ -40,7 +40,7 @@ import socket
 import ssl
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 log = logging.getLogger(__name__)
 
@@ -48,13 +48,13 @@ log = logging.getLogger(__name__)
 _EXTERNAL_LOOKUP_TIMEOUT: float = 5.0
 
 # Lazy-loaded forensics modules
-_MetadataExtractor: Optional[type] = None
+_MetadataExtractor: type | None = None
 _METADATA_EXTRACTOR_AVAILABLE = False
 
-_SteganalysisResult: Optional[type] = None
+_SteganalysisResult: type | None = None
 _STEGANOGRAPHY_AVAILABLE = False
 
-_DigitalGhostResult: Optional[type] = None
+_DigitalGhostResult: type | None = None
 _DIGITAL_GHOST_AVAILABLE = False
 
 # Lazily-loaded standard library for WHOIS/SSL/DNS/rDNS
@@ -111,7 +111,7 @@ _SUPPORTED_EXTENSIONS = {
 }
 
 
-def _extract_file_path_from_payload(payload_text: str | None) -> Optional[str]:
+def _extract_file_path_from_payload(payload_text: str | None) -> str | None:
     """
     Extract a local file path from payload_text.
 
@@ -160,7 +160,7 @@ def _file_has_forensics_support(file_path: str) -> bool:
 # Domain extraction from URL payload_text
 # ---------------------------------------------------------------------------
 
-def _extract_domain_from_url(url: str | None) -> Optional[str]:
+def _extract_domain_from_url(url: str | None) -> str | None:
     """
     Extract domain from a URL string.
 
@@ -216,11 +216,11 @@ class ForensicsResult:
     """
 
     finding_id: str
-    file_path: Optional[str] = None
-    whois: Optional[dict[str, Any]] = None
-    ssl: Optional[dict[str, Any]] = None
-    dns: Optional[dict[str, Any]] = None
-    rdns: Optional[dict[str, Any]] = None
+    file_path: str | None = None
+    whois: dict[str, Any] | None = None
+    ssl: dict[str, Any] | None = None
+    dns: dict[str, Any] | None = None
+    rdns: dict[str, Any] | None = None
     enrichment_available: bool = False
 
     def to_dict(self) -> dict[str, Any]:
@@ -256,7 +256,7 @@ class ForensicsEnricher:
 
     def __init__(
         self,
-        cache_path: Optional[str] = None,
+        cache_path: str | None = None,
         enable_gps: bool = True,
         enable_audio: bool = True,
         enable_video: bool = False,
@@ -270,7 +270,7 @@ class ForensicsEnricher:
             enable_audio: Extract audio metadata.
             enable_video: Extract video metadata (requires ffmpeg).
         """
-        self._extractor: Optional[Any] = None
+        self._extractor: Any | None = None
         self._cache_path = cache_path
         self._enable_gps = enable_gps
         self._enable_audio = enable_audio
@@ -311,7 +311,7 @@ class ForensicsEnricher:
                 self._extractor = None
             self._initialized = False
 
-    async def enrich(self, finding: Any) -> Optional[dict[str, Any]]:
+    async def enrich(self, finding: Any) -> dict[str, Any] | None:
         """
         Enrich a CanonicalFinding with forensics analysis.
 
@@ -340,7 +340,7 @@ class ForensicsEnricher:
         # Extract file path from payload_text
         payload_text = getattr(finding, "payload_text", None)
         file_path = _extract_file_path_from_payload(payload_text)
-        domain: Optional[str] = None
+        domain: str | None = None
 
         if not file_path:
             # Sprint F198B: try extracting domain from URL payload for external lookups
@@ -476,7 +476,7 @@ class ForensicsEnricher:
 
         semaphore = asyncio.Semaphore(3)  # Max 3 concurrent enrichments (M1 8GB safe)
 
-        async def enrich_one(finding: Any) -> tuple[str, Optional[dict[str, Any]]]:
+        async def enrich_one(finding: Any) -> tuple[str, dict[str, Any] | None]:
             async with semaphore:
                 finding_id = getattr(finding, "finding_id", "unknown")
                 try:
@@ -499,7 +499,7 @@ class ForensicsEnricher:
 
         return out
 
-    def _score_foca_findings(self, enrichment: Optional[dict[str, Any]]) -> float:
+    def _score_foca_findings(self, enrichment: dict[str, Any] | None) -> float:
         """
         FOCA Step 3: Score FOCA findings for confidence integration.
 
@@ -559,7 +559,7 @@ class ForensicsEnricher:
 
     # ── Sprint F198B: External lookups (WHOIS/SSL/DNS/rDNS) ─────────────────
 
-    async def _whois_lookup(self, domain: str) -> Optional[dict[str, Any]]:
+    async def _whois_lookup(self, domain: str) -> dict[str, Any] | None:
         """
         Sprint F198B: WHOIS lookup with timeout + graceful fallback.
 
@@ -602,10 +602,10 @@ class ForensicsEnricher:
                 timeout=_EXTERNAL_LOOKUP_TIMEOUT,
             )
             return result if result else None
-        except (asyncio.TimeoutError, Exception):
+        except (TimeoutError, Exception):
             return None
 
-    async def _ssl_lookup(self, hostname: str, port: int = 443) -> Optional[dict[str, Any]]:
+    async def _ssl_lookup(self, hostname: str, port: int = 443) -> dict[str, Any] | None:
         """
         Sprint F198B: SSL certificate info with timeout + graceful fallback.
 
@@ -644,10 +644,10 @@ class ForensicsEnricher:
                 timeout=_EXTERNAL_LOOKUP_TIMEOUT,
             )
             return result if result else None
-        except (asyncio.TimeoutError, Exception):
+        except (TimeoutError, Exception):
             return None
 
-    async def _dns_lookup(self, domain: str) -> Optional[dict[str, Any]]:
+    async def _dns_lookup(self, domain: str) -> dict[str, Any] | None:
         """
         Sprint F198B: DNS A/AAAA record lookup with timeout + graceful fallback.
 
@@ -695,10 +695,10 @@ class ForensicsEnricher:
                 timeout=_EXTERNAL_LOOKUP_TIMEOUT,
             )
             return result if result else None
-        except (asyncio.TimeoutError, Exception):
+        except (TimeoutError, Exception):
             return None
 
-    async def _rdns_lookup(self, ip_address: str) -> Optional[dict[str, Any]]:
+    async def _rdns_lookup(self, ip_address: str) -> dict[str, Any] | None:
         """
         Sprint F198B: Reverse DNS lookup with timeout + graceful fallback.
 
@@ -724,5 +724,5 @@ class ForensicsEnricher:
                 timeout=_EXTERNAL_LOOKUP_TIMEOUT,
             )
             return result if result else None
-        except (asyncio.TimeoutError, Exception):
+        except (TimeoutError, Exception):
             return None

@@ -1,12 +1,15 @@
 """Offline DSPy prompt optimizer – MIPROv2, idle-only, memory/thermal guards, circuit breaker."""
+from __future__ import annotations
+
 import asyncio
 import logging
-import psutil
+import os
 import sys
 import time
-from pathlib import Path
-from typing import Optional, Dict, List
 from collections import defaultdict
+from pathlib import Path
+
+import psutil
 
 try:
     import orjson
@@ -21,12 +24,12 @@ logger = logging.getLogger(__name__)
 class DSPyOptimizer:
     def __init__(self, brain_manager):
         self._brain = brain_manager
-        self._task: Optional[asyncio.Task] = None
+        self._task: asyncio.Task | None = None
         self._stop = asyncio.Event()
         self._optimized_prompts = {}
-        self._prompt_versions: Dict[str, List[Dict]] = defaultdict(list)
-        self._current_version: Dict[str, int] = defaultdict(int)
-        self._performance_history: Dict[str, List[float]] = defaultdict(list)
+        self._prompt_versions: dict[str, list[Dict]] = defaultdict(list)
+        self._current_version: dict[str, int] = defaultdict(int)
+        self._performance_history: dict[str, list[float]] = defaultdict(list)
         self._rollback_threshold = 0.2
         self._max_versions_per_task = 10
 
@@ -73,6 +76,10 @@ class DSPyOptimizer:
 
     def _should_optimize(self) -> bool:
         """Check if system is idle enough (CPU < 15%, RAM > 4GB, not on battery unless >80%, thermal OK, circuit breaker)."""
+        # F234: Gate — optimization must be explicitly enabled
+        if os.getenv("HLEDAC_DSPY_OPTIMIZE") != "1":
+            return False
+
         if time.time() < self._circuit_open_until:
             return False
 
@@ -118,27 +125,124 @@ class DSPyOptimizer:
             if self._should_optimize():
                 await self._run_optimization()
 
-    async def _load_training_examples(self, limit: int = 1000) -> List[tuple]:
+
+    async def _generate_synthetic_examples(self, limit: int = 100) -> list[tuple]:
+        """
+        F234: Generate synthetic (query, answer) training pairs from packet data.
+
+        Reads packet files from ~/.hledac/evidence_packets/shards/ and extracts
+        (url, normalized_content) pairs as minimal OSINT training examples.
+
+        Falls back to curated seed examples when packet data is unavailable.
+        This ensures MIPROv2 always has a non-empty trainset.
+        """
+        examples: list[tuple] = []
+        packet_base = Path.home() / ".hledac" / "evidence_packets"
+
+        if packet_base.exists():
+            try:
+                shards = sorted(packet_base.glob("shards/*"))[:20]
+                for shard in shards:
+                    if len(examples) >= limit:
+                        break
+                    for pkt_file in sorted(shard.glob("*.json"))[:5]:
+                        try:
+                            with open(pkt_file, 'rb') as f:
+                                data = orjson.loads(f.read()) if ORJSON_AVAILABLE else _json.load(f)
+                            url = data.get("url", "")
+                            content = data.get("content", "")[:3000]
+                            if url and content and len(content) > 100:
+                                query = f"Analyze this OSINT target: {url}"
+                                normalized = content[:2000].strip()
+                                examples.append((query, normalized))
+                        except Exception:
+                            continue
+                        if len(examples) >= limit:
+                            break
+            except Exception as e:
+                logger.debug(f"[DSPy] Packet scan failed: {e}")
+
+        if len(examples) < 10:
+            seed_examples: list[tuple] = [
+                (
+                    "Analyze this domain for potential data exposure: example.onion",
+                    '{"indicator": "example.onion", "type": "darknet_domain", "risk": "medium", '
+                    '"findings": ["potential Tor hidden service", "requires Nym or I2P access"]}'
+                ),
+                (
+                    "Check if this URL shows signs of compromise: http://185.220.101.47/",
+                    '{"indicator": "185.220.101.47", "type": "ipv4", "risk": "high", '
+                    '"findings": ["high-risk Tor exit node IP", "potential hostile scanner"]}'
+                ),
+                (
+                    "Investigate this email pattern for breach correlation: user@company.com",
+                    '{"indicator": "user@company.com", "type": "email", "risk": "medium", '
+                    '"findings": ["email pattern matches corporate naming convention"]}'
+                ),
+                (
+                    "Analyze this URL structure for infrastructure tracking: http://target.com/api/v2/internal/users",
+                    '{"indicator": "target.com/api/v2/internal/users", "type": "url", "risk": "high", '
+                    '"findings": ["internal API endpoint exposed", "potential information disclosure"]}'
+                ),
+                (
+                    "Check this IP for threat intelligence: 194.5.249.253",
+                    '{"indicator": "194.5.249.253", "type": "ipv4", "risk": "critical", '
+                    '"findings": ["known infrastructure", "APT associated", "immediate block recommended"]}'
+                ),
+                (
+                    "Analyze this GitHub repository for secrets: https://github.com/org/repo",
+                    '{"indicator": "github.com/org/repo", "type": "github", "risk": "high", '
+                    '"findings": ["repository name suggests internal tooling", "requires auth for deep scan"]}'
+                ),
+                (
+                    "Investigate this ASN for infrastructure mapping: AS212238",
+                    '{"indicator": "AS212238", "type": "asn", "risk": "medium", '
+                    '"findings": ["Censys-infrastructure ASN", "known VPN/proxy provider"]}'
+                ),
+                (
+                    "Check this certificate for certificate pinning issues: *.example.com",
+                    '{"indicator": "*.example.com", "type": "cert_fingerprint", "risk": "low", '
+                    '"findings": ["wildcard cert observed", "certificate transparency log available"]}'
+                ),
+                (
+                    "Analyze this Pastebin paste for exposed credentials: https://pastebin.com/raw/abc123",
+                    '{"indicator": "pastebin.com/abc123", "type": "pastebin", "risk": "critical", '
+                    '"findings": ["contains potential API keys", "requires immediate takedown check"]}'
+                ),
+                (
+                    "Investigate domain for DNS history: suspicious-domain.com",
+                    '{"indicator": "suspicious-domain.com", "type": "domain", "risk": "high", '
+                    '"findings": ["recently registered", "nameservers in offshore jurisdiction"]}'
+                ),
+            ]
+            examples.extend(seed_examples)
+
+        return examples[:limit]
+
+    async def _load_training_examples(self, limit: int = 1000) -> list[tuple]:
         """
         Load training examples from evidence JSONL files.
 
         Reads from EVIDENCE_ROOT/*.jsonl — one JSON per line, each line is an
-        EvidenceEvent dict with event_type + payload. Fails safe on error (returns []).
+        EvidenceEvent dict with event_type + payload. Fails safe on err (returns []).
 
         GHOST_INVARIANTS: async only (aiofiles), fail-safe on empty/corrupt files.
+
+        F234: Falls back to _generate_synthetic_examples when evidence returns
+        fewer than 10 examples (ensures MIPROv2 always has a trainset).
         """
-        examples: List[tuple] = []
-        try:
-            from hledac.universal.paths import EVIDENCE_ROOT
-        except Exception:
-            # paths.py not available — skip
-            logger.debug("[DSPy] EVIDENCE_ROOT not available")
-            return []
+        examples: list[tuple] = []
 
         try:
             import aiofiles
         except ImportError:
             logger.debug("[DSPy] aiofiles not available, skipping evidence load")
+            return []
+
+        try:
+            from hledac.universal.paths import EVIDENCE_ROOT
+        except ImportError:
+            logger.debug("[DSPy] EVIDENCE_ROOT not available")
             return []
 
         evidence_files = []
@@ -148,12 +252,13 @@ class DSPyOptimizer:
                     EVIDENCE_ROOT.glob("*.jsonl"),
                     key=lambda p: p.stat().st_mtime,
                     reverse=True,
-                )[:10]  # newest 10 files to avoid scanning old history
+                )[:10]
         except Exception as e:
             logger.debug(f"[DSPy] Failed to list evidence files: {e}")
-            return []
 
         for ev_file in evidence_files:
+            if len(examples) >= limit:
+                break
             try:
                 async with aiofiles.open(ev_file, "rb") as f:
                     content = await f.read()
@@ -161,14 +266,9 @@ class DSPyOptimizer:
                 logger.debug(f"[DSPy] Failed to read {ev_file}: {e}")
                 continue
 
-            if not content:
-                continue
-
-            # Parse JSONL — each line is one EvidenceEvent dict
             try:
                 text = content.decode("utf-8") if isinstance(content, bytes) else content
                 lines = text.strip().split("\n")
-                events = []
                 for line in lines:
                     line = line.strip()
                     if not line:
@@ -177,39 +277,40 @@ class DSPyOptimizer:
                         ev = orjson.loads(line)
                     else:
                         ev = _json.loads(line)
-                    events.append(ev)
-            except Exception as e:
-                logger.debug(f"[DSPy] Failed to parse {ev_file}: {e}")
+
+                    ev_type = ev.get("event_type", "")
+                    if ev_type not in ("decision", "action_executed"):
+                        continue
+
+                    payload = ev.get("payload") or {}
+
+                    query = (
+                        payload.get("query") or
+                        payload.get("params", {}).get("query") or
+                        payload.get("action_params", {}).get("query") or
+                        ""
+                    )
+                    result = (
+                        payload.get("result") or
+                        payload.get("action_result") or
+                        payload.get("response", {}).get("content", "") or
+                        str(payload.get("response", "")) or
+                        ""
+                    )
+
+                    if query and result:
+                        examples.append((query, result))
+
+                    if len(examples) >= limit:
+                        break
+            except Exception:
                 continue
 
-            for ev in events:
-                ev_type = ev.get("event_type", "")
-                if ev_type not in ("decision", "action_executed"):
-                    continue
-
-                payload = ev.get("payload") or {}
-
-                # Query extraction (mirrors broken seam logic)
-                query = (
-                    payload.get("query") or
-                    payload.get("params", {}).get("query") or
-                    payload.get("action_params", {}).get("query") or
-                    ""
-                )
-
-                # Result extraction
-                result = (
-                    payload.get("result") or
-                    payload.get("action_result") or
-                    payload.get("response", {}).get("content", "") or
-                    ""
-                )
-
-                if query and result:
-                    examples.append((query, result))
-
-                if len(examples) >= limit:
-                    return examples
+        # F234: Fallback to synthetic generation when evidence is sparse
+        if len(examples) < 10:
+            logger.info(f"[DSPy] Evidence returned {len(examples)} examples, generating synthetic fallback...")
+            synthetic = await self._generate_synthetic_examples(limit - len(examples))
+            examples.extend(synthetic)
 
         return examples
 
@@ -227,8 +328,6 @@ class DSPyOptimizer:
                 logger.debug("Not enough training examples")
                 return
 
-            import dspy
-            from dspy.teleprompt import MIPROv2
 
             loop = asyncio.get_running_loop()
             new_prompts = await asyncio.wait_for(
@@ -257,7 +356,7 @@ class DSPyOptimizer:
                 self._failure_count = 0
                 logger.info(f"DSPy optimization done, updated {len(new_prompts)} prompts")
 
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.warning("DSPy optimization timed out after 10 minutes")
             self._failure_count += 1
         except Exception as e:
@@ -273,7 +372,7 @@ class DSPyOptimizer:
             self._circuit_open_until = time.time() + self._circuit_duration
             logger.warning(f"[DSPy] Circuit breaker opened after {self._failure_count} failures")
 
-    def _filter_training_examples(self, examples: List[tuple]) -> List[tuple]:
+    def _filter_training_examples(self, examples: list[tuple]) -> list[tuple]:
         """Filter examples by quality heuristics."""
         filtered = []
         for query, result in examples:
@@ -289,7 +388,7 @@ class DSPyOptimizer:
             filtered.append((query, result))
         return filtered[:50]  # keep top 50
 
-    def _dspy_optimize_mipro(self, examples: List[tuple]) -> dict:
+    def _dspy_optimize_mipro(self, examples: list[tuple]) -> dict:
         """Synchronní DSPy optimalizace s MIPROv2."""
         try:
             import dspy
@@ -307,11 +406,20 @@ class DSPyOptimizer:
 
             program = dspy.Predict(OSINTAnalyze)
 
-            # lokální LM (předpokládáme Hermes server)
-            lm = dspy.LM(model="openai/hermes3", base_url="http://localhost:8080/v1")
+            # lokální LM — mlx-lm.server endpoint (HLEDAC_LLM_MODEL env var or default)
+            model_id = os.getenv(
+                "HLEDAC_LLM_MODEL",
+                "/Users/" + os.getenv("USER", "root") + "/.hledac/models/DeepHermes-3-Llama-3-3B-Preview-4bit",
+            )
+            lm = dspy.LM(
+                model=model_id,
+                base_url="http://localhost:8080/v1",  # mlx_lm.server endpoint
+                api_key="none",
+                custom_llm_provider="openai",  # mlx-lm server speaks OpenAI-compatible API
+            )
 
             # better metric: JSON validity + length + key presence
-            def _osint_metric(example, pred):
+            def _osint_metric(example, pred, trace=None):
                 answer = str(pred.answer)
                 if len(answer) < 50:
                     return 0.0
@@ -331,8 +439,9 @@ class DSPyOptimizer:
                 return {}
 
             with dspy.context(lm=lm):
-                optimizer = MIPROv2(metric=_osint_metric)
-                optimized = optimizer.compile(program, trainset=trainset)
+                optimizer = MIPROv2(metric=_osint_metric, auto=None, num_candidates=2)
+                optimized = optimizer.compile(program, trainset=trainset, num_trials=2, minibatch=False)
+
 
             instr = None
             # DSPy 2.x API introspection — try multiple access patterns
@@ -443,8 +552,16 @@ Output as structured JSON with confidence scores.""",
         return False
 
     async def start(self):
+        # F234: Guard — skip if optimization disabled or brain unavailable
+        if os.getenv("HLEDAC_DSPY_OPTIMIZE") != "1":
+            logger.info("[DSPy] HLEDAC_DSPY_OPTIMIZE not set — skipping optimization loop")
+            return
+        if self._brain is None:
+            logger.warning("[DSPy] brain_manager=None — cannot track bg tasks")
+            self._task = asyncio.create_task(self._optimize_loop(), name="dspy_optimizer")
+            return
         self._task = asyncio.create_task(self._optimize_loop(), name="dspy_optimizer")
-        if hasattr(self._brain._orch, '_bg_tasks'):
+        if hasattr(self._brain, '_orch') and hasattr(self._brain._orch, '_bg_tasks'):
             self._brain._orch._bg_tasks.add(self._task)
 
 
@@ -471,7 +588,7 @@ def load_optimized_prompts() -> dict:
                 data = orjson.loads(f.read())
         else:
             import json as _json
-            with open(cache_path, 'r') as f:
+            with open(cache_path) as f:
                 data = _json.load(f)
         prompts = data.get('prompts', {})
         # Filter only valid non-empty prompts

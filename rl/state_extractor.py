@@ -18,7 +18,7 @@ except ImportError:
     mx = None
     np = None
 
-from typing import Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional
 
 if TYPE_CHECKING:
     from hledac.universal.runtime.sprint_scheduler import SprintSchedulerResult
@@ -49,7 +49,7 @@ class StateExtractor:
         self._reward_ema = 0.0
         self._ema_alpha = 0.1
 
-    def extract(self, result: "SprintSchedulerResult") -> np.ndarray:
+    def extract(self, result: SprintSchedulerResult) -> np.ndarray:
         """
         Extract 12-dim observation from SprintSchedulerResult fields.
 
@@ -122,7 +122,7 @@ class StateExtractor:
                 return mx.zeros(self.state_dim)
             return np.zeros(self.state_dim, dtype=np.float32)
 
-    def extract_next(self, result: "SprintSchedulerResult") -> np.ndarray:
+    def extract_next(self, result: SprintSchedulerResult) -> np.ndarray:
         """Alias for extract — next state = current observation in batch setting."""
         return self.extract(result)
 
@@ -156,6 +156,6 @@ class StateExtractor:
                 return mx.zeros(self.state_dim)
             return np.zeros(self.state_dim, dtype=np.float32)
 
-    def extract_from_result(self, result: "SprintSchedulerResult") -> np.ndarray:
+    def extract_from_result(self, result: SprintSchedulerResult) -> np.ndarray:
         """Alias for extract — accepts SprintSchedulerResult for QMIX inference."""
         return self.extract(result)

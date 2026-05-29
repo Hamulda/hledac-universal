@@ -10,13 +10,13 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any
 
 from benchmarks.live_measurement_terminality import (
-    has_terminal_source_outcomes as _has_terminal_source_outcomes_impl,
     has_scheduler_exit_path as _has_scheduler_exit_path_impl,
 )
-
+from benchmarks.live_measurement_terminality import (
+    has_terminal_source_outcomes as _has_terminal_source_outcomes_impl,
+)
 
 # ---------------------------------------------------------------------------
 # Backward-compatibility aliases — tests expect underscore names

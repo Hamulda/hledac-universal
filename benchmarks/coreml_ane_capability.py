@@ -22,9 +22,8 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Optional
 
 # Ensure hledac path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -194,7 +193,7 @@ def _check_vision_encoder() -> dict:
     result["compute_units_all"] = "compute_units=ct.ComputeUnit.ALL" in content
 
     # Check if dummy mode is default
-    if 'model_path: Optional[str] = None' in content and "mx.random.normal" in content:
+    if 'model_path: str | None = None' in content and "mx.random.normal" in content:
         result["default_dummy_mode"] = True
 
     return result
@@ -339,7 +338,7 @@ def _check_vlm_analyzer() -> dict:
     result["vlm_default_removed"] = "llava-1.5-7b-4bit" in content
     result["has_unload"] = "async def unload" in content or "def unload" in content
     result["has_metal_clear_cache"] = "mx.metal.clear_cache" in content or "metal.clear_cache" in content
-    result["singleton_pattern"] = "_model: Optional[Any] = None" in content and "_lock" in content
+    result["singleton_pattern"] = "_model: Any | None = None" in content and "_lock" in content
 
     return result
 
@@ -428,7 +427,7 @@ def _check_fallback_chains() -> dict:
 def _get_system_info() -> dict:
     """Gather hermetic system information (no external calls)."""
     info = {
-        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "timestamp": datetime.now(UTC).isoformat(),
         "platform": "darwin",
         "machine": "MacBookAir",
         "chip": None,
@@ -478,7 +477,7 @@ def _get_system_info() -> dict:
 # MAIN
 # =============================================================================
 
-def run_benchmark(hermetic: bool = True, json_path: Optional[str] = None) -> dict:
+def run_benchmark(hermetic: bool = True, json_path: str | None = None) -> dict:
     """Run the full CoreML/ANE capability benchmark."""
     print("=" * 60)
     print("CoreML/ANE Capability Benchmark — Sprint F216A (Hermetic)")
@@ -487,7 +486,7 @@ def run_benchmark(hermetic: bool = True, json_path: Optional[str] = None) -> dic
     results = {
         "sprint": "F216A",
         "hermetic": hermetic,
-        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "timestamp": datetime.now(UTC).isoformat(),
         "system": _get_system_info(),
         "runtime_availability": _check_runtime_availability(),
         "ane_embedder": _check_ane_embedder(),

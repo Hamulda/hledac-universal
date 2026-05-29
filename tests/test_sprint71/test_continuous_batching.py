@@ -2,7 +2,6 @@
 Test Continuous Batching - Sprint 71
 """
 import unittest
-from unittest.mock import patch, MagicMock, AsyncMock
 
 
 class TestContinuousBatching(unittest.TestCase):

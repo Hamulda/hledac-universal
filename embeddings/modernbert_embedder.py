@@ -14,9 +14,7 @@ Replaces: utils/semantic.py ModernBERTEmbedding (DEPRECATED)
 from __future__ import annotations
 
 import logging
-import warnings
 from dataclasses import dataclass
-from typing import List, Optional, Union
 
 import numpy as np
 
@@ -84,7 +82,7 @@ class ModernBERTEmbedder:
 
     def __init__(
         self,
-        model_path: Optional[str] = None,
+        model_path: str | None = None,
         lazy_load: bool = True,
         normalize: bool = True,
         batch_size: int = 8,
@@ -136,7 +134,7 @@ class ModernBERTEmbedder:
         """True if model is loaded and ready."""
         return self._is_loaded
 
-    def encode(self, texts: Union[str, List[str]], **kwargs) -> np.ndarray:
+    def encode(self, texts: str | list[str], **kwargs) -> np.ndarray:
         """
         Compatibility adapter: .encode() interface expected by EmbeddingRouter.
 
@@ -203,7 +201,7 @@ class ModernBERTEmbedder:
 
         return result
 
-    def embed_batch(self, texts: List[str], task: str = "search_document") -> np.ndarray:
+    def embed_batch(self, texts: list[str], task: str = "search_document") -> np.ndarray:
         """
         Encode a batch of texts to embedding matrix.
 

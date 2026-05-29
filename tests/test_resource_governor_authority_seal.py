@@ -33,7 +33,7 @@ class TestEvaluateBranchConcurrencyConsistency:
         mock.high_water = 0.5
         return mock
 
-    def _assert_branch_concurrency_match(self, gov: "M1ResourceGovernor", uma_state: str, expected: int) -> None:
+    def _assert_branch_concurrency_match(self, gov: M1ResourceGovernor, uma_state: str, expected: int) -> None:
         """Helper: branch_concurrency must match between evaluate() and branch_admission()."""
         with patch.object(gov, "_get_model_status", return_value={"loaded": False}):
             with patch("hledac.universal.runtime.resource_governor.sample_uma_status", return_value=self._mock_uma(uma_state)):
@@ -46,7 +46,7 @@ class TestEvaluateBranchConcurrencyConsistency:
                 )
                 assert branch.branch_concurrency == expected
 
-    def _assert_model_loaded_branch_concurrency_match(self, gov: "M1ResourceGovernor", expected: int) -> None:
+    def _assert_model_loaded_branch_concurrency_match(self, gov: M1ResourceGovernor, expected: int) -> None:
         """Helper: branch_concurrency must match when model is loaded."""
         with patch.object(gov, "_get_model_status", return_value={"loaded": True}):
             with patch("hledac.universal.runtime.resource_governor.sample_uma_status", return_value=self._mock_uma("ok")):
@@ -101,7 +101,7 @@ class TestRendererAdmissionConsistency:
         mock.high_water = 0.5
         return mock
 
-    def _assert_renderer_consistency(self, gov: "M1ResourceGovernor", uma_state: str, expected: bool) -> None:
+    def _assert_renderer_consistency(self, gov: M1ResourceGovernor, uma_state: str, expected: bool) -> None:
         with patch.object(gov, "_get_model_status", return_value={"loaded": False}):
             with patch("hledac.universal.runtime.resource_governor.sample_uma_status", return_value=self._mock_uma(uma_state)):
                 import asyncio
@@ -114,7 +114,7 @@ class TestRendererAdmissionConsistency:
                 )
                 assert renderer.allowed == expected
 
-    def _assert_renderer_model_loaded(self, gov: "M1ResourceGovernor", expected: bool) -> None:
+    def _assert_renderer_model_loaded(self, gov: M1ResourceGovernor, expected: bool) -> None:
         with patch.object(gov, "_get_model_status", return_value={"loaded": True}):
             with patch("hledac.universal.runtime.resource_governor.sample_uma_status", return_value=self._mock_uma("ok")):
                 import asyncio
@@ -161,7 +161,7 @@ class TestModelAdmissionConsistency:
         mock.high_water = 0.5
         return mock
 
-    def _assert_model_load_consistency(self, gov: "M1ResourceGovernor", uma_state: str, expected: bool) -> None:
+    def _assert_model_load_consistency(self, gov: M1ResourceGovernor, uma_state: str, expected: bool) -> None:
         with patch.object(gov, "_get_model_status", return_value={"loaded": False}):
             with patch("hledac.universal.runtime.resource_governor.sample_uma_status", return_value=self._mock_uma(uma_state)):
                 import asyncio

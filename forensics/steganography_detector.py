@@ -1,34 +1,31 @@
+"""
+Steganography Detector
+=====================
+
+Steganography detection for images using statistical analysis.
+Supports LSB detection, histogram analysis, and stegdetect wrapper.
+
+Features:
+- Chi-square histogram analysis
+- LSB (Least Significant Bit) steganography detection
+- stegdetect wrapper integration
+- Streaming for large files (max 5MB)
+- Bounded analysis with early termination
+
+M1 8GB Optimized:
+- Max 5MB file reads
+- Streaming chunked analysis
+- Memory-bounded histogram computation
+"""
+
+from __future__ import annotations
+
+import math
+import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Opt
 
-try:
-    from hledac_rust_extensions import chi_square as _rust_chi_square, entropy as _rust_entropy
-    try:
-        from hledac_rust_extensions import fast_ioc_extract_batch as _rust_extract_iocs
-    except ImportError:
-        _rust_extract_iocs = None
-    try:
-        from hledac_rust_extensions import url_normalize_batch as _rust_normalize_url
-    except ImportError:
-        _rust_normalize_url = None
-    try:
-        from hledac_rust_extensions import bloom_check_batch as _rust_bloom_check
-    except ImportError:
-        _rust_bloom_check = None
-    try:
-        from hledac_rust_extensions import batch_sha256 as _rust_batch_sha256
-    except ImportError:
-        _rust_batch_sha256 = None
-    _RUST_AVAILABLE = True
-except ImportError:
-    _RUST_AVAILABLE = False
-    _rust_extract_iocs = None
-    _rust_normalize_url = None
-    _rust_bloom_check = None
-    _rust_batch_sha256 = None
-
-# opt dep
+# Optional dependency
 STEGDETECT_AVAILABLE = False
 try:
     import subprocess
@@ -50,104 +47,9 @@ except Exception:
     pass
 
 
-import hashlib
-import math
-import re
-import urllib.parse
-from dataclasses import dataclass
-from typing import Opt
-
-__all__ = [
-    "SteganalysisResult",
-    "analyze_image_steganography",
-    "MAX_FILE_SIZE",
-    "STEGDETECT_AVAILABLE",
-]
-
-
-# Python pure-fallback implementations (used when Rust unavailable)
-
-def _python_extract_iocs(text: str) -> list[tuple[str, str]]:
-    """Pure-Python IOC extraction via regex."""
-    patterns = {
-        "ipv4": r"\b(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\b",
-        "ipv6": r"(?i)\b(?:[0-9a-f]{1,4}:){7}[0-9a-f]{1,4}\b",
-        "onion": r"\b[a-z2-7]{56}\.onion\b",
-        "domain": r"\b(?:[a-zA-Z0-9](?:[a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}\b",
-        "md5": r"\b[a-fA-F0-9]{32}\b",
-        "sha1": r"\b[a-fA-F0-9]{40}\b",
-        "sha256": r"\b[a-fA-F0-9]{64}\b",
-        "email": r"\b[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}\b",
-        "cve": r"\bCVE-\d{4}-\d{4,}\b",
-    }
-    results = []
-    seen = set()
-    for ioc_type, pattern in patterns.items():
-        for m in re.finditer(pattern, text):
-            val = m.group()
-            if val not in seen:
-                seen.add(val)
-                results.append((val, ioc_type))
-    return results
-
-
-def _python_normalize_url(url: str) -> str:
-    """Pure-Python URL normalization."""
-    try:
-        parsed = urllib.parse.urlparse(url)
-        scheme = parsed.scheme.lower()
-        host = parsed.hostname or ""
-        port = parsed.port
-        strip_port = (scheme == "http" and port == 80) or (scheme == "https" and port == 443)
-        out = f"{scheme}://{host}" + (f":{port}" if port and not strip_port else "")
-
-        params = urllib.parse.parse_qsl(parsed.query)
-        params = [(k, v) for k, v in params if not k.startswith("utm_") and not k.startswith("fb_") and not k.startswith("mc_")]
-        params.sort(key=lambda x: x[0])
-        if params:
-            qs = urllib.parse.urlencode(params)
-            out += f"?{qs}"
-        return out
-    except Exception:
-        return url
-
-
-def _python_batch_sha256(items: list[str]) -> list[str]:
-    """Pure-Python SHA256 batch."""
-    return [hashlib.sha256(s.encode()).hexdigest() for s in items]
-
-
-# Wrappers — use Rust if available, pure-Python fallback otherwise
-
-def extract_iocs(text: str) -> list[tuple[str, str]]:
-    """Extract IOCs from text: IPv4/IPv6/.onion/domain/MD5/SHA1/SHA256/email/CVE."""
-    if _RUST_AVAILABLE and _rust_extract_iocs is not None:
-        return _rust_extract_iocs(text)
-    return _python_extract_iocs(text)
-
-
-def normalize_url(url: str) -> str:
-    """Canonicalize URL: lowercase scheme+host, strip default ports, sort params, remove utm_*."""
-    if _RUST_AVAILABLE and _rust_normalize_url is not None:
-        return _rust_normalize_url(url)
-    return _python_normalize_url(url)
-
-
-def bloom_check(items: list[str], capacity: int = 100_000, fp_rate: float = 0.01) -> list[bool]:
-    """Batch Bloom filter check for URL dedup pre-screening."""
-    if _RUST_AVAILABLE and _rust_bloom_check is not None:
-        try:
-            return _rust_bloom_check(items, capacity)
-        except Exception:
-            pass
-    return [False] * len(items)
-
-
-def batch_sha256(items: list[str]) -> list[str]:
-    """SHA256 hash each string — for fast dedup fingerprinting."""
-    if _RUST_AVAILABLE and _rust_batch_sha256 is not None:
-        return _rust_batch_sha256(items)
-    return _python_batch_sha256(items)
+# Constants
+MAX_FILE_SIZE = 5 * 1024 * 1024  # 5MB max
+CHUNK_SIZE = 64 * 1024  # 64KB chunks for streaming
 
 
 @dataclass
@@ -159,79 +61,275 @@ class SteganalysisResult:
     histogram_suspicious: bool = False
     histogram_score: float = 0.0  # 0.0-1.0
     chi_square_score: float = 0.0
-    stegdetect_result: Opt[str] = None
+    stegdetect_result: str | None = None
     stegdetect_available: bool = False
     overall_suspicious: bool = False
     confidence: float = 0.0  # 0.0-1.0
-    err: Opt[str] = None
+    error: str | None = None
+
+    def to_dict(self) -> dict:
+        return {
+            "file_path": self.file_path,
+            "lsb_suspicious": self.lsb_suspicious,
+            "lsb_score": self.lsb_score,
+            "histogram_suspicious": self.histogram_suspicious,
+            "histogram_score": self.histogram_score,
+            "chi_square_score": self.chi_square_score,
+            "stegdetect_result": self.stegdetect_result,
+            "stegdetect_available": self.stegdetect_available,
+            "overall_suspicious": self.overall_suspicious,
+            "confidence": self.confidence,
+            "error": self.error,
+        }
 
 
-MAX_FILE_SIZE = 100 * 1024 * 1024  # 100 MB
+def _calculate_chi_square(data: bytes) -> float:
+    """
+    Calculate chi-square statistic for LSB steganalysis.
+
+    In clean images, even and odd byte values should have similar frequencies.
+    LSB steganography often distorts this distribution.
+
+    Args:
+        data: Raw bytes to analyze
+
+    Returns:
+        Chi-square score (higher = more suspicious)
+    """
+    if len(data) < 256:
+        return 0.0
+
+    # Count even/odd byte frequencies
+    even_count = 0
+    odd_count = 0
+
+    for byte in data:
+        if byte % 2 == 0:
+            even_count += 1
+        else:
+            odd_count += 1
+
+    total = even_count + odd_count
+    if total == 0:
+        return 0.0
+
+    expected = total / 2.0
+
+    # Chi-square: sum((observed - expected)^2 / expected)
+    chi_square = 0.0
+    if expected > 0:
+        even_diff = even_count - expected
+        chi_square += (even_diff * even_diff) / expected
+    if expected > 0:
+        odd_diff = odd_count - expected
+        chi_square += (odd_diff * odd_diff) / expected
+
+    return chi_square
+
+
+def _analyze_histogram(data: bytes) -> tuple[float, float]:
+    """
+    Analyze byte histogram for steganography signatures.
+
+    Detects:
+    - Unusual gaps in byte frequency distribution
+    - Abnormal entropy patterns
+    - Quantization artifacts from embedding
+
+    Args:
+        data: Raw bytes to analyze
+
+    Returns:
+        Tuple of (histogram_score, entropy_score)
+    """
+    if len(data) < 256:
+        return 0.0, 0.0
+
+    # Build histogram
+    histogram = [0] * 256
+    for byte in data:
+        histogram[byte] += 1
+
+    total = len(data)
+
+    # Calculate entropy
+    entropy = 0.0
+    for count in histogram:
+        if count > 0:
+            p = count / total
+            entropy -= p * math.log2(p)
+
+    # Max entropy for byte distribution is 8.0
+    normalized_entropy = entropy / 8.0
+
+    # Detect unusual gaps (steganography often creates them)
+    # Count how many byte values have exactly 0 or very low counts
+    zero_count = sum(1 for c in histogram if c == 0)
+    low_count = sum(1 for c in histogram if 0 < c < total * 0.001)
+
+    # Gaps score: 0-1 range
+    gap_score = (zero_count + low_count * 0.5) / 256.0
+    gap_score = min(gap_score, 1.0)
+
+    # Combined histogram suspicion score
+    histogram_score = (gap_score * 0.5 + (1 - normalized_entropy) * 0.5)
+
+    return histogram_score, normalized_entropy
+
+
+def _lsb_detection(file_path: str) -> tuple[bool, float]:
+    """
+    Detect LSB steganography by analyzing least significant bits.
+
+    Args:
+        file_path: Path to image file
+
+    Returns:
+        Tuple of (is_suspicious, score)
+    """
+    try:
+        file_size = os.path.getsize(file_path)
+        if file_size > MAX_FILE_SIZE:
+            return False, 0.0
+
+        with open(file_path, "rb") as f:
+            data = f.read()
+
+        # Focus on first 1MB for speed (steganography typically in early bytes)
+        analysis_data = data[:1024 * 1024]
+
+        chi_square = _calculate_chi_square(analysis_data)
+
+        # Chi-square threshold for suspicion (empirical)
+        # Clean images typically have chi-square < 10
+        # Embedded images often show chi-square > 50
+        is_suspicious = chi_square > 50.0
+        score = min(chi_square / 100.0, 1.0)  # Normalize to 0-1
+
+        return is_suspicious, score
+
+    except Exception:
+        return False, 0.0
 
 
 def analyze_image_steganography(file_path: str) -> SteganalysisResult:
-    """Analyze image for steganographic content using multiple techniques."""
+    """
+    Perform comprehensive steganalysis on an image file.
+
+    Args:
+        file_path: Path to image file
+
+    Returns:
+        SteganalysisResult with detection results
+    """
     result = SteganalysisResult(file_path=file_path)
+
     try:
         path = Path(file_path)
-        if path.stat().st_size > MAX_FILE_SIZE:
-            result.err = "file_too_large"
+        if not path.exists():
+            result.error = "File not found"
             return result
-        with open(path, "rb") as f:
+
+        file_size = path.stat().st_size
+        if file_size > MAX_FILE_SIZE:
+            result.error = f"File too large: {file_size} bytes (max: {MAX_FILE_SIZE})"
+            return result
+
+        # Check file extension (steganography typically in images)
+        ext = path.suffix.lower()
+        if ext not in {".jpg", ".jpeg", ".png", ".bmp", ".gif", ".tiff", ".tif"}:
+            result.error = f"Unsupported file type: {ext}"
+            return result
+
+        # LSB detection
+        result.lsb_suspicious, result.lsb_score = _lsb_detection(file_path)
+
+        # Histogram analysis
+        with open(file_path, "rb") as f:
             data = f.read()
+
+        # Analyze first 2MB for histogram
+        analysis_data = data[:2 * 1024 * 1024]
+        result.histogram_score, entropy = _analyze_histogram(analysis_data)
+        result.histogram_suspicious = result.histogram_score > 0.6
+
+        # Chi-square on LSB analysis data
+        result.chi_square_score = _calculate_chi_square(analysis_data)
+
+        # Stegdetect if available
+        result.stegdetect_available = STEGDETECT_AVAILABLE
+        if STEGDETECT_AVAILABLE:
+            try:
+                proc = subprocess.run(
+                    ["stegdetect", "-t", "j", file_path],
+                    capture_output=True,
+                    timeout=30,
+                )
+                output = proc.stdout.decode("utf-8", errors="ignore").strip()
+                if output:
+                    result.stegdetect_result = output
+                    # Parse stegdetect output for suspicion
+                    if "negative" not in output.lower():
+                        result.overall_suspicious = True
+            except Exception:
+                pass
+
+        # Overall suspicion
+        scores = [
+            result.lsb_score,
+            result.histogram_score,
+            result.chi_square_score / 100.0,  # Normalize
+        ]
+        result.confidence = sum(scores) / len(scores)
+
+        # Overall suspicious if any strong signal
+        result.overall_suspicious = (
+            result.overall_suspicious
+            or result.lsb_suspicious
+            or result.histogram_suspicious
+            or result.confidence > 0.5
+        )
+
     except Exception as e:
-        result.err = str(e)
-        return result
-
-    try:
-        result.chi_square_score = chi_square(data)
-    except Exception:
-        pass
-
-    try:
-        result.overall_suspicious = result.chi_square_score > 0.47
-        result.confidence = min(result.chi_square_score * 2, 1.0)
-    except Exception:
-        pass
+        result.error = str(e)
 
     return result
 
 
-def chi_square(data: bytes) -> float:
-    """Compute chi-square statistic on byte histogram. Rust-accelerated."""
-    if _RUST_AVAILABLE:
-        try:
-            return float(_rust_chi_square(data))
-        except Exception:
-            pass
-    # Pure-Python fallback
-    if not data:
-        return 0.0
-    hist = [0] * 256
-    for b in data:
-        hist[b] += 1
-    n = len(data)
-    expected = n / 256.0
-    chi = sum((obs - expected) ** 2 / expected for obs in hist)
-    return chi / 256.0
+def _stegdetect_wrapper(file_path: str, options: list[str] | None = None) -> str:
+    """
+    Wrapper for stegdetect binary.
+
+    Args:
+        file_path: Path to file to analyze
+        options: Additional stegdetect options
+
+    Returns:
+        stegdetect output string
+    """
+    if not STEGDETECT_AVAILABLE:
+        return ""
+
+    try:
+        cmd = ["stegdetect"]
+        if options:
+            cmd.extend(options)
+        cmd.append(file_path)
+
+        proc = subprocess.run(
+            cmd,
+            capture_output=True,
+            timeout=60,
+        )
+        return proc.stdout.decode("utf-8", errors="ignore").strip()
+
+    except Exception:
+        return ""
 
 
-def entropy(data: bytes) -> float:
-    """Compute Shannon entropy. Rust-accelerated."""
-    if _RUST_AVAILABLE:
-        try:
-            return float(_rust_entropy(data))
-        except Exception:
-            pass
-    if not data:
-        return 0.0
-    hist = [0] * 256
-    for b in data:
-        hist[b] += 1
-    n = len(data)
-    ent = 0.0
-    for count in hist:
-        if count > 0:
-            p = count / n
-            ent -= p * math.log2(p)
-    return ent
+__all__ = [
+    "SteganalysisResult",
+    "analyze_image_steganography",
+    "MAX_FILE_SIZE",
+    "STEGDETECT_AVAILABLE",
+]

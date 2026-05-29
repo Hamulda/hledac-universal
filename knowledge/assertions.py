@@ -19,13 +19,13 @@ VŠECHNY FUNKCE VRACEJÍ None — raise AssertionError pokud selžou.
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from hledac.universal.knowledge.rag_engine import RAGEngine
+    from hledac.universal.knowledge.graph_rag import GraphRAGOrchestrator
     from hledac.universal.knowledge.lancedb_store import LanceDBIdentityStore
     from hledac.universal.knowledge.pq_index import PQIndex
-    from hledac.universal.knowledge.graph_rag import GraphRAGOrchestrator
+    from hledac.universal.knowledge.rag_engine import RAGEngine
 
 
-def assert_rag_engine_is_not_identity_store(rag_engine: "RAGEngine") -> None:
+def assert_rag_engine_is_not_identity_store(rag_engine: RAGEngine) -> None:
     """
     RAGEngine NENÍ identity/entity store.
 
@@ -52,7 +52,7 @@ def assert_rag_engine_is_not_identity_store(rag_engine: "RAGEngine") -> None:
     )
 
 
-def assert_lancedb_is_not_grounding_authority(store: "LanceDBIdentityStore") -> None:
+def assert_lancedb_is_not_grounding_authority(store: LanceDBIdentityStore) -> None:
     """
     LanceDBIdentityStore NENÍ grounding authority.
 
@@ -80,7 +80,7 @@ def assert_lancedb_is_not_grounding_authority(store: "LanceDBIdentityStore") -> 
     )
 
 
-def assert_pq_index_is_compression_only(pq_index: "PQIndex") -> None:
+def assert_pq_index_is_compression_only(pq_index: PQIndex) -> None:
     """
     PQIndex NENÍ primární retrieval authority.
 
@@ -92,7 +92,7 @@ def assert_pq_index_is_compression_only(pq_index: "PQIndex") -> None:
     - hybrid retrieval
     - FTS index
     """
-    attrs = dir(pq_index)
+    dir(pq_index)
     # PQIndex má search() — ale jen na trained indexu, ne na kolekci
     assert hasattr(pq_index, "encode"), (
         "PQIndex postrádá encode() — není compression layer!"
@@ -102,7 +102,7 @@ def assert_pq_index_is_compression_only(pq_index: "PQIndex") -> None:
     )
 
 
-def assert_graph_rag_is_consumer_not_owner(orchestrator: "GraphRAGOrchestrator") -> None:
+def assert_graph_rag_is_consumer_not_owner(orchestrator: GraphRAGOrchestrator) -> None:
     """
     GraphRAGOrchestrator NENÍ backend owner.
 
@@ -127,10 +127,10 @@ def assert_graph_rag_is_consumer_not_owner(orchestrator: "GraphRAGOrchestrator")
 # =============================================================================
 
 def assert_all_boundaries(
-    rag_engine: "RAGEngine",
-    lancedb_store: "LanceDBIdentityStore",
-    pq_index: "PQIndex",
-    graph_rag: "GraphRAGOrchestrator",
+    rag_engine: RAGEngine,
+    lancedb_store: LanceDBIdentityStore,
+    pq_index: PQIndex,
+    graph_rag: GraphRAGOrchestrator,
 ) -> None:
     """
     Spustit všechny boundary assertions.

@@ -19,12 +19,11 @@ import asyncio
 import time
 
 from hledac.universal.discovery.duckduckgo_adapter import (
-    DiscoveryHit,
     DiscoveryBatchResult,
+    DiscoveryHit,
 )
 from hledac.universal.network.session_runtime import async_get_aiohttp_session
 from hledac.universal.transport.circuit_breaker import checked_aiohttp_get
-
 
 # ---------------------------------------------------------------------------
 # Wayback CDX API
@@ -189,7 +188,7 @@ async def async_search_wayback_cdx(
 
             data = await resp.json()
 
-    except asyncio.TimeoutError:
+    except TimeoutError:
         elapsed = time.monotonic() - start
         return DiscoveryBatchResult(
             hits=(),

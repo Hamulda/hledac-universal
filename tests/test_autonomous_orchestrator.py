@@ -30,17 +30,17 @@ If run directory exists and manifest incomplete:
 """
 
 import asyncio
-import gc
 import hashlib
 import json
 import logging
 import os
 import tempfile
 import time
-import pytest
 import unittest
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
 
 logger = logging.getLogger(__name__)
 
@@ -102,9 +102,7 @@ class TestCapabilitySystem:
 
     async def test_capability_registry_creation(self):
         """Test that capability registry can be created."""
-        from hledac.universal.capabilities import (
-            Capability, CapabilityRegistry, create_default_registry
-        )
+        from hledac.universal.capabilities import Capability, create_default_registry
 
         registry = create_default_registry()
         assert registry is not None
@@ -132,9 +130,7 @@ class TestCapabilitySystem:
 
     async def test_unavailable_capability_logs_reason(self):
         """Test that unavailable capabilities log reason but don't crash."""
-        from hledac.universal.capabilities import (
-            Capability, CapabilityRegistry, CapabilityStatus
-        )
+        from hledac.universal.capabilities import Capability, CapabilityRegistry
 
         registry = CapabilityRegistry()
 
@@ -156,9 +152,7 @@ class TestModelLifecycle:
 
     async def test_single_model_constraint(self):
         """Test that only one model is loaded at a time."""
-        from hledac.universal.capabilities import (
-            Capability, CapabilityRegistry, ModelLifecycleManager
-        )
+        from hledac.universal.capabilities import Capability, CapabilityRegistry, ModelLifecycleManager
 
         registry = CapabilityRegistry()
 
@@ -173,9 +167,7 @@ class TestModelLifecycle:
 
     async def test_phase_transitions(self):
         """Test phase transitions release models correctly."""
-        from hledac.universal.capabilities import (
-            Capability, CapabilityRegistry, ModelLifecycleManager
-        )
+        from hledac.universal.capabilities import Capability, CapabilityRegistry, ModelLifecycleManager
 
         registry = CapabilityRegistry()
         for cap in [Capability.HERMES, Capability.MODERNBERT, Capability.GLINER]:
@@ -184,15 +176,15 @@ class TestModelLifecycle:
         lifecycle = ModelLifecycleManager(registry)
 
         # Test BRAIN phase - should have only HERMES
-        with patch.object(registry, 'load', new_callable=AsyncMock) as mock_load, \
-             patch.object(registry, 'unload') as mock_unload:
+        with patch.object(registry, 'load', new_callable=AsyncMock), \
+             patch.object(registry, 'unload'):
 
             await lifecycle.enforce_phase_models("BRAIN")
             # After BRAIN phase, we should track active models
             # (actual loading depends on registry implementation)
 
         # Test CLEANUP phase - should have no models
-        with patch.object(registry, 'unload') as mock_unload:
+        with patch.object(registry, 'unload'):
             await lifecycle.enforce_phase_models("CLEANUP")
             # After cleanup, no models should be active
 
@@ -215,7 +207,7 @@ class TestEvidenceTrace:
             f.write(json.dumps({"event": "phase_end", "phase": "BRAIN"}) + "\n")
 
         # Read and verify
-        with open(log_file, 'r') as f:
+        with open(log_file) as f:
             lines = f.readlines()
             assert len(lines) == 3
 
@@ -254,6 +246,7 @@ class TestReactRemoval:
     def test_no_react_imports(self):
         """Test that ReAct imports have been removed from orchestrator."""
         import inspect
+
         from hledac.universal import autonomous_orchestrator
 
         source = inspect.getsource(autonomous_orchestrator)
@@ -387,7 +380,7 @@ class TestGraphWiring:
 
     async def test_multi_hop_search_returns_insights(self):
         """Test that multi-hop search returns formatted insights."""
-        from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator, _ResearchManager
+        from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
 
         orchestrator = FullyAutonomousOrchestrator()
 
@@ -493,9 +486,7 @@ class TestGraphIngestDedup:
 
     async def test_graph_ingest_dedup(self):
         """Test that duplicate documents are deduplicated based on content hash."""
-        from hledac.universal.autonomous_orchestrator import (
-            FullyAutonomousOrchestrator, normalize_url
-        )
+        from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator, normalize_url
 
         orchestrator = FullyAutonomousOrchestrator()
 
@@ -615,9 +606,7 @@ class TestGraphIngestDedup:
 
     async def test_multihop_returns_paths_and_novelty(self):
         """Test that multi-hop search returns paths and novelty information."""
-        from hledac.universal.autonomous_orchestrator import (
-            FullyAutonomousOrchestrator, _ResearchManager
-        )
+        from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
 
         orchestrator = FullyAutonomousOrchestrator()
 
@@ -720,7 +709,8 @@ class TestPersistentDedup:
         """
         import tempfile
         from pathlib import Path
-        from hledac.universal.knowledge.persistent_layer import PersistentKnowledgeLayer, NodeType
+
+        from hledac.universal.knowledge.persistent_layer import NodeType, PersistentKnowledgeLayer
 
         with tempfile.TemporaryDirectory() as tmpdir:
             db_path = Path(tmpdir) / "test_knowledge"
@@ -733,7 +723,7 @@ class TestPersistentDedup:
             doc_id = __import__('hashlib').sha256(content.strip().encode('utf-8')).hexdigest()[:32]
 
             # Add document in first run
-            node_id = layer1.add_knowledge(
+            layer1.add_knowledge(
                 content=content,
                 node_type=NodeType.DOCUMENT,
                 metadata={
@@ -750,7 +740,7 @@ class TestPersistentDedup:
             node1 = layer1._backend.get_node(doc_id)
             assert node1 is not None
             assert node1.metadata.get('ingest_count', 0) == 1
-            first_ingest_time = node1.metadata.get('ingested_at')
+            node1.metadata.get('ingested_at')
 
             # Second run - new instance pointing to same storage
             layer2 = PersistentKnowledgeLayer(db_path=db_path)
@@ -760,7 +750,6 @@ class TestPersistentDedup:
             assert layer2.has_node(doc_id), "Node should exist in second run"
 
             # Simulate touch_node (update metadata without creating duplicate)
-            from datetime import datetime
             layer2.touch_node(doc_id, {
                 'ingest_count': node1.metadata.get('ingest_count', 1) + 1,
                 'urls': ['https://example.com/ai', 'https://example.com/ai-v2']
@@ -789,10 +778,9 @@ class TestEvidenceIds:
         """
         import tempfile
         from pathlib import Path
-        from hledac.universal.knowledge.persistent_layer import (
-            PersistentKnowledgeLayer, NodeType, EdgeType
-        )
+
         from hledac.universal.knowledge.graph_rag import GraphRAGOrchestrator
+        from hledac.universal.knowledge.persistent_layer import EdgeType, NodeType, PersistentKnowledgeLayer
 
         with tempfile.TemporaryDirectory() as tmpdir:
             db_path = Path(tmpdir) / "test_knowledge"
@@ -803,7 +791,7 @@ class TestEvidenceIds:
 
             # Create test nodes with evidence_ids
             # Node A (seed)
-            node_a_id = layer.add_knowledge(
+            layer.add_knowledge(
                 content="Entity A is a technology company",
                 node_type=NodeType.ENTITY,
                 metadata={'evidence_id': 'evidence_a_123'},
@@ -811,7 +799,7 @@ class TestEvidenceIds:
             )
 
             # Node B
-            node_b_id = layer.add_knowledge(
+            layer.add_knowledge(
                 content="Entity B is a competitor of Entity A",
                 node_type=NodeType.ENTITY,
                 metadata={'evidence_id': 'evidence_b_456'},
@@ -819,7 +807,7 @@ class TestEvidenceIds:
             )
 
             # Node C
-            node_c_id = layer.add_knowledge(
+            layer.add_knowledge(
                 content="Entity C is a partner of Entity B",
                 node_type=NodeType.ENTITY,
                 metadata={'evidence_id': 'evidence_c_789'},
@@ -880,10 +868,9 @@ class TestContradictionDetection:
         """
         import tempfile
         from pathlib import Path
-        from hledac.universal.knowledge.persistent_layer import (
-            PersistentKnowledgeLayer, NodeType, EdgeType
-        )
+
         from hledac.universal.knowledge.graph_rag import GraphRAGOrchestrator
+        from hledac.universal.knowledge.persistent_layer import EdgeType, NodeType, PersistentKnowledgeLayer
 
         with tempfile.TemporaryDirectory() as tmpdir:
             db_path = Path(tmpdir) / "test_knowledge"
@@ -965,9 +952,10 @@ class TestTemporalMetadata:
         - seen_count increments
         """
         import tempfile
-        from pathlib import Path
-        from hledac.universal.knowledge.persistent_layer import PersistentKnowledgeLayer, NodeType
         from datetime import datetime
+        from pathlib import Path
+
+        from hledac.universal.knowledge.persistent_layer import NodeType, PersistentKnowledgeLayer
 
         with tempfile.TemporaryDirectory() as tmpdir:
             db_path = Path(tmpdir) / "test_temporal"
@@ -1043,10 +1031,11 @@ class TestTimelineAndDrift:
         - drift_events when claims change over time
         """
         import tempfile
-        from pathlib import Path
-        from hledac.universal.knowledge.persistent_layer import PersistentKnowledgeLayer, NodeType, EdgeType
-        from hledac.universal.knowledge.graph_rag import GraphRAGOrchestrator
         from datetime import datetime, timedelta
+        from pathlib import Path
+
+        from hledac.universal.knowledge.graph_rag import GraphRAGOrchestrator
+        from hledac.universal.knowledge.persistent_layer import EdgeType, NodeType, PersistentKnowledgeLayer
 
         with tempfile.TemporaryDirectory() as tmpdir:
             db_path = Path(tmpdir) / "test_timeline"
@@ -1183,8 +1172,9 @@ class TestNarratives:
         """
         import tempfile
         from pathlib import Path
-        from hledac.universal.knowledge.persistent_layer import PersistentKnowledgeLayer, NodeType, EdgeType
+
         from hledac.universal.knowledge.graph_rag import GraphRAGOrchestrator
+        from hledac.universal.knowledge.persistent_layer import EdgeType, NodeType, PersistentKnowledgeLayer
 
         with tempfile.TemporaryDirectory() as tmpdir:
             db_path = Path(tmpdir) / "test_narratives"
@@ -1291,9 +1281,7 @@ class TestDeepRead:
 
     async def test_deep_read_structure(self):
         """Test that deep_read returns correct structure."""
-        from hledac.universal.autonomous_orchestrator import (
-            FullyAutonomousOrchestrator, _ResearchManager
-        )
+        from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
 
         orchestrator = FullyAutonomousOrchestrator()
         research_mgr = _ResearchManager(orchestrator)
@@ -1438,9 +1426,7 @@ class TestDeepRead:
 
     async def test_robots_txt_blocking(self):
         """Test that robots.txt blocking is respected."""
-        from hledac.universal.autonomous_orchestrator import (
-            FullyAutonomousOrchestrator, _ResearchManager
-        )
+        from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
 
         orchestrator = FullyAutonomousOrchestrator()
         research_mgr = _ResearchManager(orchestrator)
@@ -1514,8 +1500,9 @@ class TestRobotsParserCache:
         parser = RobotsParser(cache_ttl=3600, max_cache_size=3)
 
         # Create mock docs
-        from hledac.universal.utils.robots_parser import RobotsDocument
         import time
+
+        from hledac.universal.utils.robots_parser import RobotsDocument
 
         doc1 = RobotsDocument(fetched_at=time.time(), ttl=3600)
         doc2 = RobotsDocument(fetched_at=time.time(), ttl=3600)
@@ -1546,8 +1533,9 @@ class TestRobotsParserCache:
 
     async def test_cache_ttl_expiration(self):
         """Test that expired cache entries are invalidated."""
-        from hledac.universal.utils.robots_parser import RobotsParser, RobotsDocument
         import time
+
+        from hledac.universal.utils.robots_parser import RobotsDocument, RobotsParser
 
         parser = RobotsParser(cache_ttl=1)  # 1 second TTL
 
@@ -1622,7 +1610,7 @@ class TestHttpDiskCache:
 
     def test_cache_set_get(self, temp_runs_dir):
         """Test basic cache set and get."""
-        from hledac.universal.autonomous_orchestrator import HttpDiskCache, HttpCacheEntry
+        from hledac.universal.autonomous_orchestrator import HttpCacheEntry, HttpDiskCache
 
         cache = HttpDiskCache(cache_dir=temp_runs_dir, max_ram_entries=10)
 
@@ -1649,7 +1637,7 @@ class TestHttpDiskCache:
 
     def test_cache_revalidation_headers(self, temp_runs_dir):
         """Test revalidation headers generation."""
-        from hledac.universal.autonomous_orchestrator import HttpDiskCache, HttpCacheEntry
+        from hledac.universal.autonomous_orchestrator import HttpCacheEntry, HttpDiskCache
 
         cache = HttpDiskCache(cache_dir=temp_runs_dir, max_ram_entries=10)
 
@@ -1780,7 +1768,7 @@ class TestNERMemoryStrict:
 
     def test_predict_strict_truncation(self):
         """Test that strict mode truncates long texts."""
-        from hledac.universal.brain.ner_engine import NEREngine, MAX_STRICT_TEXT_LENGTH
+        from hledac.universal.brain.ner_engine import MAX_STRICT_TEXT_LENGTH, NEREngine
 
         engine = NEREngine()
 
@@ -1805,7 +1793,7 @@ class TestNERMemoryStrict:
 
     def test_predict_strict_label_limit(self):
         """Test that strict mode limits number of labels."""
-        from hledac.universal.brain.ner_engine import NEREngine, MAX_STRICT_LABELS
+        from hledac.universal.brain.ner_engine import MAX_STRICT_LABELS, NEREngine
 
         engine = NEREngine()
 
@@ -1903,7 +1891,7 @@ class TestDomainStats:
 
     def test_domain_stats_penalty(self):
         """Test yield-based penalty calculation."""
-        from hledac.universal.autonomous_orchestrator import DomainStats, DomainStatsManager
+        from hledac.universal.autonomous_orchestrator import DomainStatsManager
 
         manager = DomainStatsManager()
 
@@ -1963,7 +1951,6 @@ class TestSnapshotStorage:
         assert entry.size_bytes == len(content)
 
         # Verify file exists
-        import os
         assert os.path.exists(entry.snapshot_path)
 
         # Load snapshot
@@ -2103,9 +2090,7 @@ class TestCrawlTrapFirewall:
 
     async def test_trap_high_entropy_query(self):
         """Test detection of high entropy query parameters."""
-        from hledac.universal.autonomous_orchestrator import (
-            FullyAutonomousOrchestrator, _ResearchManager
-        )
+        from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
 
         orchestrator = FullyAutonomousOrchestrator()
         research_mgr = _ResearchManager(orchestrator)
@@ -2124,9 +2109,7 @@ class TestCrawlTrapFirewall:
 
     async def test_trap_pagination(self):
         """Test detection of infinite pagination patterns."""
-        from hledac.universal.autonomous_orchestrator import (
-            FullyAutonomousOrchestrator, _ResearchManager
-        )
+        from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
 
         orchestrator = FullyAutonomousOrchestrator()
         research_mgr = _ResearchManager(orchestrator)
@@ -2141,9 +2124,7 @@ class TestCrawlTrapFirewall:
 
     async def test_trap_faceted_navigation(self):
         """Test detection of faceted navigation (combinatorial filters)."""
-        from hledac.universal.autonomous_orchestrator import (
-            FullyAutonomousOrchestrator, _ResearchManager
-        )
+        from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
 
         orchestrator = FullyAutonomousOrchestrator()
         research_mgr = _ResearchManager(orchestrator)
@@ -2160,9 +2141,7 @@ class TestCrawlTrapFirewall:
 
     async def test_safe_url_not_trap(self):
         """Test that normal URLs are not flagged as traps."""
-        from hledac.universal.autonomous_orchestrator import (
-            FullyAutonomousOrchestrator, _ResearchManager
-        )
+        from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
 
         orchestrator = FullyAutonomousOrchestrator()
         research_mgr = _ResearchManager(orchestrator)
@@ -2180,9 +2159,7 @@ class TestCrawlTrapFirewall:
 
     async def test_trap_stats_updated(self):
         """Test that trap stats are updated when traps are detected."""
-        from hledac.universal.autonomous_orchestrator import (
-            FullyAutonomousOrchestrator, _ResearchManager
-        )
+        from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
 
         orchestrator = FullyAutonomousOrchestrator()
         research_mgr = _ResearchManager(orchestrator)
@@ -2203,12 +2180,10 @@ class TestCanonicalUrlNormalization:
 
     async def test_canonical_link_extraction(self):
         """Test extraction of canonical link from HTML."""
-        from hledac.universal.autonomous_orchestrator import (
-            FullyAutonomousOrchestrator, _ResearchManager
-        )
+        from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
 
         orchestrator = FullyAutonomousOrchestrator()
-        research_mgr = _ResearchManager(orchestrator)
+        _ResearchManager(orchestrator)
 
         # HTML with canonical link
         html = '''
@@ -2249,7 +2224,7 @@ class TestCanonicalUrlNormalization:
 
     async def test_tracking_params_removed(self):
         """Test that tracking parameters are removed from canonical URL."""
-        from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
+        from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
         url = "https://example.com/page?utm_source=google&utm_medium=cpc&fbclid=abc123&ref=twitter"
 
@@ -2272,8 +2247,8 @@ class TestStructuredDataHarvest:
 
     async def test_json_ld_extraction(self):
         """Test JSON-LD extraction from HTML."""
-        import re
         import json
+        import re
 
         html = '''
         <html>
@@ -2305,8 +2280,8 @@ class TestStructuredDataHarvest:
 
     async def test_json_ld_hard_limits(self):
         """Test that JSON-LD extraction respects hard limits."""
-        import re
         import json
+        import re
 
         # Create HTML with many JSON-LD objects
         html = '<html><head>'
@@ -2440,10 +2415,9 @@ class TestContentExtractorFallback:
 
     async def test_deep_read_html_fallback_extraction(self):
         """Test that deep_read uses content_extractor when RustMiner is not available."""
-        from hledac.universal.autonomous_orchestrator import (
-            FullyAutonomousOrchestrator, _ResearchManager
-        )
-        from unittest.mock import MagicMock, AsyncMock
+        from unittest.mock import AsyncMock, MagicMock
+
+        from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
 
         # Setup minimal orchestrator
         orchestrator = FullyAutonomousOrchestrator()
@@ -2523,9 +2497,7 @@ class TestDeepReadIntegration:
 
     async def test_deep_read_with_domain_stats(self):
         """Test that deep_read updates DomainStats."""
-        from hledac.universal.autonomous_orchestrator import (
-            FullyAutonomousOrchestrator, _ResearchManager
-        )
+        from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
 
         orchestrator = FullyAutonomousOrchestrator()
         research_mgr = _ResearchManager(orchestrator)
@@ -2602,9 +2574,7 @@ class TestDeepReadIntegration:
 
     async def test_deep_read_simhash_integration(self):
         """Test SimHash integration in deep_read."""
-        from hledac.universal.autonomous_orchestrator import (
-            FullyAutonomousOrchestrator, _ResearchManager
-        )
+        from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
 
         orchestrator = FullyAutonomousOrchestrator()
         research_mgr = _ResearchManager(orchestrator)
@@ -2671,7 +2641,7 @@ class TestDeepReadIntegration:
         assert result1['is_near_duplicate'] is False
 
         # Store fingerprint
-        first_simhash = result1['simhash']
+        result1['simhash']
 
         # Second fetch with very similar content - check simhash is computed
         mock_response.final_url = 'https://example.com/page2'
@@ -2688,7 +2658,7 @@ class TestDeepReadIntegration:
         Ověří, že fallback_sanitize správně rediguje PII před
         vstupem do Claim.create_from_text (sanitize-first → trim-second pattern).
         """
-        from hledac.universal.knowledge.atomic_storage import EvidencePacketStorage, Claim
+        from hledac.universal.knowledge.atomic_storage import Claim
 
         # 1. Text s PII (phone - 10 číslic pro US pattern)
         raw_text_with_phone = "Alice is Bob 777-123-4567 and contact info here"
@@ -3030,6 +3000,7 @@ class TestDomainLimiterThrottle:
         compute_delay should return >= 2 seconds.
         """
         import time
+
         from hledac.universal.autonomous_orchestrator import DomainLimiter
 
         limiter = DomainLimiter()
@@ -3061,6 +3032,7 @@ class TestDomainLimiterThrottle:
         Test that DomainLimiter adds jitter to Retry-After delay.
         """
         import time
+
         from hledac.universal.autonomous_orchestrator import DomainLimiter
 
         limiter = DomainLimiter()
@@ -3091,12 +3063,11 @@ class TestHeadPreviewSnapshot:
         Test that deep_read uses HEAD to check Content-Length and skips
         snapshot storage for large non-high-value URLs.
         """
+        from unittest.mock import AsyncMock, MagicMock
+
         from aiohttp import web
-        from aiohttp.test_utils import TestServer, TestClient
-        from unittest.mock import MagicMock, AsyncMock, patch
-        from hledac.universal.autonomous_orchestrator import (
-            FullyAutonomousOrchestrator, _ResearchManager
-        )
+        from aiohttp.test_utils import TestClient, TestServer
+        from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
 
         # Create test server with large Content-Length (50MB)
         # Note: aiohttp handles HEAD automatically for GET routes
@@ -3238,12 +3209,11 @@ class TestStaleCacheFallback:
         Test that deep_read returns stale=True flag and cached content
         when server returns 500 error.
         """
+        from unittest.mock import AsyncMock, MagicMock
+
         from aiohttp import web
-        from aiohttp.test_utils import TestServer, TestClient
-        from unittest.mock import MagicMock, AsyncMock, patch
-        from hledac.universal.autonomous_orchestrator import (
-            FullyAutonomousOrchestrator, _ResearchManager, HttpDiskCache, HttpCacheEntry
-        )
+        from aiohttp.test_utils import TestClient, TestServer
+        from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator, HttpCacheEntry, HttpDiskCache
 
         # Create test server that first returns 200, then 500
         request_count = [0]
@@ -3384,7 +3354,7 @@ class TestStaleCacheFallback:
             assert stale_result.is_stale is False, "Entry should not be stale yet (just cached)"
 
             # Simulate the 500 response with stale fallback
-            result2 = await research_mgr.deep_read(url)
+            await research_mgr.deep_read(url)
 
             # Verify that we got the cached content
             # Note: The actual implementation may vary - this test verifies the expected behavior
@@ -3398,8 +3368,9 @@ class TestStaleCacheFallback:
         Test that HttpDiskCache.get_stale() returns proper StaleCacheResult
         with is_stale=True flag for expired entries.
         """
-        from hledac.universal.autonomous_orchestrator import HttpDiskCache, HttpCacheEntry
         import time
+
+        from hledac.universal.autonomous_orchestrator import HttpCacheEntry, HttpDiskCache
 
         cache_dir = tmp_path / "http_cache"
         cache_dir.mkdir()
@@ -3450,10 +3421,10 @@ class TestRangePreviewTruncation:
         Test that get_preview truncates response to max_bytes using Range header.
         Verifies streaming works correctly without memory issues.
         """
+
         from aiohttp import web
-        from aiohttp.test_utils import TestServer, TestClient
-        from unittest.mock import MagicMock, AsyncMock
-        from hledac.universal.stealth.stealth_manager import StealthSession, StealthManager
+        from aiohttp.test_utils import TestClient, TestServer
+        from hledac.universal.stealth.stealth_manager import StealthManager, StealthSession
 
         # Create test server returning large HTML (1MB)
         large_content = b'<html><body>' + b'X' * (1024 * 1024 - 30) + b'</body></html>'
@@ -3518,7 +3489,7 @@ class TestRangePreviewTruncation:
         """
         from aiohttp import web
         from aiohttp.test_utils import TestServer
-        from hledac.universal.stealth.stealth_manager import StealthSession, StealthManager
+        from hledac.universal.stealth.stealth_manager import StealthManager, StealthSession
 
         # Create 1MB response
         chunk_size = 8192
@@ -3703,6 +3674,7 @@ class TestSnapshotCASDedup:
         """Two evidence_ids with same content should share one blob."""
         import tempfile
         from pathlib import Path
+
         from hledac.universal.knowledge.atomic_storage import SnapshotStorage
 
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -3739,6 +3711,7 @@ class TestSnapshotCASDedup:
         """Different content should create different blobs."""
         import tempfile
         from pathlib import Path
+
         from hledac.universal.knowledge.atomic_storage import SnapshotStorage
 
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -3791,7 +3764,8 @@ class TestFrontierSpillRefill:
         """When frontier exceeds RAM limit, lowest priority entries spill to disk."""
         import tempfile
         from pathlib import Path
-        from hledac.universal.autonomous_orchestrator import UrlFrontier, FrontierEntry
+
+        from hledac.universal.autonomous_orchestrator import UrlFrontier
 
         with tempfile.TemporaryDirectory() as tmpdir:
             spill_dir = Path(tmpdir) / 'spill'
@@ -3821,6 +3795,7 @@ class TestFrontierSpillRefill:
         """When frontier drops below threshold, refill from disk."""
         import tempfile
         from pathlib import Path
+
         from hledac.universal.autonomous_orchestrator import UrlFrontier
 
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -3857,6 +3832,7 @@ class TestFrontierSpillRefill:
         """Spilled entries should not be re-added if already in RAM."""
         import tempfile
         from pathlib import Path
+
         from hledac.universal.autonomous_orchestrator import UrlFrontier
 
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -3883,7 +3859,7 @@ class TestFrontierSpillRefill:
             )
 
             # Should return False (deduped - already in RAM)
-            assert result == False
+            assert not result
 
 
 class TestEmbeddedJsonExtraction:
@@ -3974,7 +3950,8 @@ class TestStaleWhileRevalidate:
         """When cache is expired, SWR flag should be set."""
         import tempfile
         from pathlib import Path
-        from hledac.universal.autonomous_orchestrator import HttpDiskCache, HttpCacheEntry
+
+        from hledac.universal.autonomous_orchestrator import HttpCacheEntry, HttpDiskCache
 
         with tempfile.TemporaryDirectory() as tmpdir:
             cache = HttpDiskCache(cache_dir=Path(tmpdir), ttl_seconds=1)  # 1 second TTL
@@ -3996,7 +3973,7 @@ class TestStaleWhileRevalidate:
             stale = cache.get_stale("http://example.com/page")
 
             assert stale is not None
-            assert stale.is_stale == True
+            assert stale.is_stale
 
     def test_swr_logs_scheduled_recrawl(self):
         """SWR should log when scheduling recrawl."""
@@ -4004,8 +3981,9 @@ class TestStaleWhileRevalidate:
         # The actual integration test would require full crawler setup
 
         # Verify RecrawlPlanner has schedule_recheck method
-        from hledac.universal.autonomous_orchestrator import RecrawlPlanner, RecrawlItem
         import time
+
+        from hledac.universal.autonomous_orchestrator import RecrawlPlanner
 
         planner = RecrawlPlanner(max_queue_size=10)
 
@@ -4020,14 +3998,14 @@ class TestStaleWhileRevalidate:
             high_value=False  # Low priority
         )
 
-        assert result == True
+        assert result
         assert len(planner) == 1
 
         # Pop should return the item
         item = planner.pop_next()
         assert item is not None
         assert item.url == "http://example.com/page"
-        assert item.high_value == False  # Low priority
+        assert not item.high_value  # Low priority
 
 
 class TestDeepProbeSeedGenerator:
@@ -4074,7 +4052,6 @@ class TestDeepProbeWired:
 
     def test_deep_probe_caps_defined(self):
         """Test that deep_probe caps are defined in ResearchManager."""
-        from hledac.universal.autonomous_orchestrator import _ResearchManager
 
         # Verify caps are defined
         assert hasattr(_ResearchManager, 'MAX_DEEP_PROBE_CALLS_PER_RUN')
@@ -4086,7 +4063,6 @@ class TestDeepProbeWired:
 
     async def test_deep_probe_triggered_on_appropriate_queries(self):
         """Test deep_probe trigger heuristics - verify caps exist in class."""
-        from hledac.universal.autonomous_orchestrator import _ResearchManager
 
         # Verify caps exist and have correct values
         assert _ResearchManager.MAX_DEEP_PROBE_CALLS_PER_RUN == 2
@@ -4099,7 +4075,6 @@ class TestQuantumPathfinderWired:
 
     def test_quantum_pathfinder_caps_defined(self):
         """Test that quantum pathfinder caps are defined in ResearchManager."""
-        from hledac.universal.autonomous_orchestrator import _ResearchManager
 
         # Verify caps are defined
         assert hasattr(_ResearchManager, 'MAX_QUANTUM_WALKS_PER_RUN')
@@ -4171,12 +4146,12 @@ class TestEncryptionAtRest:
 
         with tempfile.TemporaryDirectory() as tmpdir:
             storage = SnapshotStorage(storage_dir=Path(tmpdir), encrypt_at_rest=False)
-            assert storage._encrypt_at_rest == False
+            assert not storage._encrypt_at_rest
 
             # Test with encryption enabled
             storage_enc = SnapshotStorage(storage_dir=Path(tmpdir), encrypt_at_rest=True)
             # Should have cipher initialized (or disabled if no crypto lib)
-            assert storage_enc._encrypt_at_rest == True or storage_enc._cipher is None
+            assert storage_enc._encrypt_at_rest or storage_enc._cipher is None
 
     async def test_evidence_log_encryption_flag(self):
         """Test that EvidenceLog respects encrypt_at_rest flag."""
@@ -4189,7 +4164,7 @@ class TestEncryptionAtRest:
                 enable_persist=True,
                 encrypt_at_rest=False
             )
-            assert log._encrypt_at_rest == False
+            assert not log._encrypt_at_rest
 
             log_enc = EvidenceLog(
                 run_id="test_run_enc",
@@ -4197,7 +4172,7 @@ class TestEncryptionAtRest:
                 enable_persist=True,
                 encrypt_at_rest=True
             )
-            assert log_enc._encrypt_at_rest == True or log_enc._cipher is None
+            assert log_enc._encrypt_at_rest or log_enc._cipher is None
 
     async def test_checkpoint_manager_encryption_flag(self):
         """Test that CheckpointManager respects encrypt_at_rest flag."""
@@ -4205,10 +4180,10 @@ class TestEncryptionAtRest:
 
         with tempfile.TemporaryDirectory() as tmpdir:
             cm = CheckpointManager(storage_dir=Path(tmpdir), encrypt_at_rest=False)
-            assert cm._encrypt_at_rest == False
+            assert not cm._encrypt_at_rest
 
             cm_enc = CheckpointManager(storage_dir=Path(tmpdir), encrypt_at_rest=True)
-            assert cm_enc._encrypt_at_rest == True or cm_enc._cipher is None
+            assert cm_enc._encrypt_at_rest or cm_enc._cipher is None
 
 
 class TestEvidencePacket:
@@ -4266,7 +4241,7 @@ class TestEvidencePacket:
 
             # Store
             stored = storage.store_packet("roundtrip_test", packet)
-            assert stored == True
+            assert stored
             assert storage.exists("roundtrip_test")
 
             # Load
@@ -4296,9 +4271,9 @@ class TestEvidencePacket:
 
         assert packet.snapshot_ref is not None
         assert packet.snapshot_ref["blob_hash"] == "b123"
-        assert packet.snapshot_ref["encrypted"] == True
-        assert packet.flags["stale"] == True
-        assert packet.flags["blocked"] == True
+        assert packet.snapshot_ref["encrypted"]
+        assert packet.flags["stale"]
+        assert packet.flags["blocked"]
 
     async def test_packet_graph_refs_hard_limit(self):
         """Test graph_refs edge_ids hard limit (ring-like eviction)."""
@@ -4475,7 +4450,6 @@ class TestInvestigativeMode:
 
     async def test_investigate_triggers_on_contested_or_drift(self):
         """Test investigation triggers on contested/drift conditions."""
-        from hledac.universal.knowledge.atomic_storage import PatternStatsManager
 
         # Test the investigation trigger logic directly
         # (The full integration is in _ResearchManager)
@@ -4550,9 +4524,8 @@ class TestOfflineReplay:
 
     async def test_offline_replay_blocks_network_calls(self):
         """Test offline mode blocks network calls."""
-        from hledac.universal.knowledge.atomic_storage import PatternStatsManager
 
-        with tempfile.TemporaryDirectory() as tmpdir:
+        with tempfile.TemporaryDirectory():
             # Create a simple test - offline mode flag should block deep_read
             # The actual test would need full orchestrator
 
@@ -4561,7 +4534,6 @@ class TestOfflineReplay:
 
     async def test_offline_evidence_selection_priority(self):
         """Test evidence selection priority: specific IDs > run_id > recent."""
-        from hledac.universal.knowledge.atomic_storage import PatternStatsManager
 
         # Test selection priority logic
         # Specific evidence_ids should be prioritized
@@ -4660,7 +4632,6 @@ class TestAPIInference:
     async def test_api_inference_from_embedded_json_finds_candidates(self):
         """Test API inference finds candidates from embedded JSON."""
         # Test limits are enforced - check class exists and method exists
-        from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
 
         # The method is on the _ResearchManager inner class
         # Just verify the budget manager integration works
@@ -4741,11 +4712,10 @@ class TestReportingLayer:
 
     async def test_report_structure_has_required_fields(self):
         """Test that report dict has all required fields."""
-        from hledac.universal.knowledge.atomic_storage import ClaimClusterIndex, EvidencePacket
-        from hledac.universal.tool_registry import SourceReputation
+        from hledac.universal.knowledge.atomic_storage import ClaimClusterIndex
 
         # Create minimal components
-        claim_index = ClaimClusterIndex()
+        ClaimClusterIndex()
 
         # Build a minimal report structure manually (simulating _build_final_report)
         report = {
@@ -4793,7 +4763,7 @@ class TestReportingLayer:
         """Test hard limits: findings<=12, sources<=30, timeline buckets<=12."""
         from hledac.universal.knowledge.atomic_storage import ClaimClusterIndex
 
-        claim_index = ClaimClusterIndex()
+        ClaimClusterIndex()
 
         # Create mock findings (20, should be limited to 12)
         mock_findings = [{'finding_id': f'f_{i}', 'confidence': 0.5} for i in range(20)]
@@ -4824,7 +4794,7 @@ class TestReportingLayer:
         }
 
         # Verify mode
-        assert mode['offline_replay'] == True
+        assert mode['offline_replay']
         assert mode['replay_run_id'] == "original_run_123"
         assert len(mode['replay_evidence_ids']) <= 50
 
@@ -4908,7 +4878,7 @@ class TestCompactionAndBackpressure:
 
     async def test_claim_cluster_compaction_respects_limits(self):
         """Test compaction respects per-cluster limits."""
-        from hledac.universal.knowledge.atomic_storage import ClaimClusterIndex, ClaimCluster
+        from hledac.universal.knowledge.atomic_storage import ClaimClusterIndex
 
         claim_index = ClaimClusterIndex()
 
@@ -5156,15 +5126,15 @@ class TestVectorLiteRetrieval:
 
     async def test_vector_retrieval_returns_topk(self):
         """Test vector retrieval returns top-K results."""
-        from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
         import tempfile
-        import os
+
+        from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
 
         orch = FullyAutonomousOrchestrator()
 
         # Use temp dir for embeddings
         temp_dir = tempfile.mkdtemp()
-        original_embed_dir = orch._get_embedding_dir()
+        orch._get_embedding_dir()
         orch._embedding_dir = temp_dir
 
         try:
@@ -5192,7 +5162,7 @@ class TestVectorLiteRetrieval:
 
     async def test_budget_can_skip_embedding_store(self):
         """Test budget enforcement can skip embedding storage."""
-        from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator, BudgetManager
+        from hledac.universal.autonomous_orchestrator import BudgetManager, FullyAutonomousOrchestrator
 
         orch = FullyAutonomousOrchestrator()
 
@@ -5493,9 +5463,9 @@ class TestAttributionDAGProvenance:
 
     async def test_attribution_edges_written_disk_first(self):
         """Test attribution edges are written to disk."""
-        from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
         import tempfile
-        import os
+
+        from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
 
         with tempfile.TemporaryDirectory() as tmpdir:
             # Create orchestrator with temp dir
@@ -5519,7 +5489,7 @@ class TestAttributionDAGProvenance:
             assert attr_path.exists()
 
             # Check content
-            with open(attr_path, 'r') as f:
+            with open(attr_path) as f:
                 content = f.read()
                 assert "ev_123" in content
                 assert "claim_456" in content
@@ -5563,7 +5533,7 @@ class TestVectorLiteV2:
         orch = FullyAutonomousOrchestrator()
 
         # Store embedding
-        result = orch.store_embedding(
+        orch.store_embedding(
             evidence_id="test_evidence_123",
             text_preview="Test content for signature",
             budget_manager=None
@@ -6141,7 +6111,7 @@ class TestChangePointDetection:
         orch._add_to_delta_ring(cluster_id, 'ev_high', 0.50)
 
         # Should detect change-point
-        cp = orch._detect_change_point(cluster_id)
+        orch._detect_change_point(cluster_id)
         # EMA may not trigger depending on values, but ring should be populated
         assert len(orch._delta_ring) > 0
 
@@ -6193,8 +6163,9 @@ class TestEvidenceLogHashChain:
 
     def test_evidence_log_hash_chain_fields_set_and_linked(self):
         """Test that hash-chain fields are set and linked correctly."""
-        from hledac.universal.evidence_log import EvidenceLog, EvidenceEvent
         import uuid
+
+        from hledac.universal.evidence_log import EvidenceLog
 
         run_id = f"test_{uuid.uuid4().hex[:8]}"
         log = EvidenceLog(run_id=run_id, enable_persist=False)
@@ -6270,9 +6241,10 @@ class TestClaimClusterSourceFPMap:
 
     def test_claimcluster_stores_source_fp_map_and_alignment_counts_unique_fps(self):
         """Test that ClaimCluster stores source_fp_map and alignment counts unique fps."""
-        from hledac.universal.knowledge.atomic_storage import ClaimClusterIndex, ClaimCluster
-        from pathlib import Path
         import tempfile
+        from pathlib import Path
+
+        from hledac.universal.knowledge.atomic_storage import ClaimClusterIndex
 
         with tempfile.TemporaryDirectory() as tmpdir:
             index = ClaimClusterIndex(storage_dir=Path(tmpdir))
@@ -6313,9 +6285,10 @@ class TestClaimClusterSourceFPMap:
 
     def test_claimcluster_source_fp_map_eviction_is_bounded(self):
         """Test that source_fp_map eviction is bounded by MAX_EVIDENCE."""
-        from hledac.universal.knowledge.atomic_storage import ClaimCluster, ClaimClusterIndex
-        from pathlib import Path
         import tempfile
+        from pathlib import Path
+
+        from hledac.universal.knowledge.atomic_storage import ClaimCluster, ClaimClusterIndex
 
         with tempfile.TemporaryDirectory() as tmpdir:
             index = ClaimClusterIndex(storage_dir=Path(tmpdir))
@@ -6350,10 +6323,11 @@ class TestContradictionChase:
     @pytest.mark.asyncio
     async def test_contradiction_chase_triggers_followups_and_deep_read_bounded(self):
         """Test contradiction chase generates followups and respects budget."""
-        from hledac.universal.knowledge.atomic_storage import ClaimCluster, ClaimClusterIndex
-        from unittest.mock import AsyncMock, MagicMock, patch
         import tempfile
         from pathlib import Path
+        from unittest.mock import AsyncMock, MagicMock
+
+        from hledac.universal.knowledge.atomic_storage import ClaimCluster, ClaimClusterIndex
 
         # Create a mock orchestrator
         class MockOrchestrator:
@@ -6376,7 +6350,6 @@ class TestContradictionChase:
             mock_orch._claim_index._add_to_ram_cache(f"uncertain_claim_{i}", cluster)
 
         # Create _ResearchManager with mock orchestrator
-        from hledac.universal.autonomous_orchestrator import _ResearchManager, BudgetManager
         research_mgr = _ResearchManager(mock_orch)
 
         # Mock the required methods
@@ -6454,9 +6427,9 @@ class TestWarcWriter:
 
     def test_warc_writer_request_response_pair(self):
         """Test request/response pair is written correctly."""
+        import json
         import tempfile
         from pathlib import Path
-        import json
 
         with tempfile.TemporaryDirectory() as tmpdir:
             from hledac.universal.knowledge.persistent_layer import WarcWriter
@@ -6489,7 +6462,7 @@ class TestWarcWriter:
             # Check index file
             writer.close()
 
-            with open(writer.idx_path, 'r') as f:
+            with open(writer.idx_path) as f:
                 idx_lines = f.readlines()
                 assert len(idx_lines) == 1  # One entry for response
 
@@ -6875,11 +6848,12 @@ class TestWaczPacker:
 
     def test_wacz_packer_creates_valid_zip_structure(self):
         """Test that WaczPacker creates valid zip with required structure."""
+        import json
         import tempfile
         import zipfile
         from pathlib import Path
-        from hledac.universal.knowledge.persistent_layer import WarcWriter, WaczPacker
-        import json
+
+        from hledac.universal.knowledge.persistent_layer import WaczPacker, WarcWriter
 
         with tempfile.TemporaryDirectory() as tmpdir:
             base_dir = Path(tmpdir)
@@ -6921,11 +6895,12 @@ class TestWaczPacker:
 
     def test_cdxj_line_contains_offset_length_and_filename(self):
         """Test CDXJ lines contain required fields."""
+        import json
         import tempfile
         import zipfile
         from pathlib import Path
-        from hledac.universal.knowledge.persistent_layer import WarcWriter, WaczPacker
-        import json
+
+        from hledac.universal.knowledge.persistent_layer import WaczPacker, WarcWriter
 
         with tempfile.TemporaryDirectory() as tmpdir:
             base_dir = Path(tmpdir)
@@ -6976,9 +6951,9 @@ class TestArchiveValidator:
     def test_archive_validator_ok_on_minimal_wacz(self):
         """Test ArchiveValidator passes on valid minimal WACZ."""
         import tempfile
-        import zipfile
         from pathlib import Path
-        from hledac.universal.knowledge.persistent_layer import WarcWriter, WaczPacker, ArchiveValidator
+
+        from hledac.universal.knowledge.persistent_layer import ArchiveValidator, WaczPacker, WarcWriter
 
         with tempfile.TemporaryDirectory() as tmpdir:
             base_dir = Path(tmpdir)
@@ -7006,18 +6981,18 @@ class TestArchiveValidator:
             result = validator.validate_wacz(wacz_path)
 
             # Assertions
-            assert result["ok"] == True, f"Validation failed: {result.get('errors', [])}"
+            assert result["ok"], f"Validation failed: {result.get('errors', [])}"
             assert result["validated_entries"] >= 1, "Should validate at least 1 entry"
             assert result["errors"] == [], f"Should have no errors: {result['errors']}"
-            assert result["sha256_checked"] == True, "Should have checked fixity"
+            assert result["sha256_checked"], "Should have checked fixity"
 
     def test_archive_validator_detects_bad_offset_or_length(self):
         """Test ArchiveValidator detects invalid CDXJ offset/length."""
         import tempfile
         import zipfile
-        import io
         from pathlib import Path
-        from hledac.universal.knowledge.persistent_layer import WarcWriter, WaczPacker, ArchiveValidator
+
+        from hledac.universal.knowledge.persistent_layer import ArchiveValidator, WaczPacker, WarcWriter
 
         with tempfile.TemporaryDirectory() as tmpdir:
             base_dir = Path(tmpdir)
@@ -7068,7 +7043,7 @@ class TestArchiveValidator:
             result = validator.validate_wacz(wacz_path)
 
             # Assertions - should have errors about invalid record
-            assert result["ok"] == False, "Should fail with bad offset"
+            assert not result["ok"], "Should fail with bad offset"
             assert len(result["errors"]) > 0, "Should have errors"
 
     def test_datapackage_fixity_enforced(self):
@@ -7076,7 +7051,8 @@ class TestArchiveValidator:
         import tempfile
         import zipfile
         from pathlib import Path
-        from hledac.universal.knowledge.persistent_layer import WarcWriter, WaczPacker, ArchiveValidator
+
+        from hledac.universal.knowledge.persistent_layer import ArchiveValidator, WaczPacker, WarcWriter
 
         with tempfile.TemporaryDirectory() as tmpdir:
             base_dir = Path(tmpdir)
@@ -7119,7 +7095,7 @@ class TestArchiveValidator:
 
             # Should fail due to fixity mismatch
             # Note: The datapackage.json still has the original sha256, so validation should fail
-            assert result["ok"] == False, "Should fail with corrupted WARC"
+            assert not result["ok"], "Should fail with corrupted WARC"
             has_fixity_error = any("fixity" in e.lower() or "mismatch" in e.lower() for e in result["errors"])
             # Either fixity error or WARC validation error is acceptable
             assert has_fixity_error or len(result["errors"]) > 0, f"Should detect corruption: {result['errors']}"
@@ -7226,6 +7202,7 @@ class TestRenderedTargets:
         """Test WARC metadata record written with concurrency link."""
         import tempfile
         from pathlib import Path
+
         from hledac.universal.knowledge.persistent_layer import WarcWriter
 
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -7266,15 +7243,16 @@ class TestPydanticV2Migration:
     def test_budget_models_have_no_deprecation_warnings(self):
         """Test that budget models don't emit class Config deprecation warnings."""
         import warnings
+
         from hledac.universal.cache.budget_manager import BudgetConfig, BudgetState, EvidenceLog
 
         with warnings.catch_warnings(record=True) as w:
             warnings.simplefilter("always")
 
             # Create instances - should not emit class Config warnings
-            config = BudgetConfig()
-            state = BudgetState()
-            log = EvidenceLog(iteration=1)
+            BudgetConfig()
+            BudgetState()
+            EvidenceLog(iteration=1)
 
             # Check no Pydantic class Config warnings
             pydantic_warnings = [x for x in w if "class-based `config`" in str(x.message)]
@@ -7283,13 +7261,14 @@ class TestPydanticV2Migration:
     def test_research_context_model_has_no_deprecation_warnings(self):
         """Test that ResearchContext doesn't emit class Config warnings."""
         import warnings
-        from hledac.universal.research_context import ResearchContext, Entity, Hypothesis
+
+        from hledac.universal.research_context import ResearchContext
 
         with warnings.catch_warnings(record=True) as w:
             warnings.simplefilter("always")
 
             # Create instance - should not emit class Config warnings
-            ctx = ResearchContext(
+            ResearchContext(
                 query="test",
                 research_id="test_001"
             )
@@ -7325,7 +7304,7 @@ class TestSecurityPipeline:
         assert breaker.failure_threshold == 3
         assert breaker.recovery_timeout == 30.0
         assert breaker.state == "closed"
-        assert breaker.is_open == False
+        assert not breaker.is_open
 
     async def test_security_sanitize_filters_overbroad_username_date_url(self):
         """
@@ -7390,19 +7369,19 @@ class TestSecurityPipeline:
 
         # If unicode analyzer available, check detection
         if sec_mgr._unicode:
-            assert result_bidi['has_bidi'] == True
+            assert result_bidi['has_bidi']
             assert result_bidi['bidi_count'] >= 1
         else:
             # Should return safe defaults
-            assert result_bidi['has_bidi'] == False
+            assert not result_bidi['has_bidi']
 
         # Test zero-width detection
         result_zw = sec_mgr.analyze_unicode(text_with_zw, context='test')
         if sec_mgr._unicode:
-            assert result_zw['has_zero_width'] == True
+            assert result_zw['has_zero_width']
             assert result_zw['zero_width_count'] >= 1
         else:
-            assert result_zw['has_zero_width'] == False
+            assert not result_zw['has_zero_width']
 
         # Verify bounded output - should always return keys
         assert 'findings_hash' in result_bidi
@@ -7466,7 +7445,7 @@ class TestSecurityPipeline:
 
         # If unicode analyzer available, check detection
         if sec_mgr._unicode:
-            assert result.get('suspicious_mixed_script') == True or result.get('has_homoglyph') == True
+            assert result.get('suspicious_mixed_script') or result.get('has_homoglyph')
 
     async def test_digital_ghost_trigger_is_gated_and_bounded(self):
         """
@@ -7486,28 +7465,28 @@ class TestSecurityPipeline:
             contradiction_rate=0.3,
             stance_entropy=1.0
         )
-        assert should_trigger == False
+        assert not should_trigger
 
         # Test 2: Should trigger for 404
         should_trigger_404 = sec_mgr.should_trigger_digital_ghost(
             http_status=404,
             drift_detected=False
         )
-        assert should_trigger_404 == True
+        assert should_trigger_404
 
         # Test 3: Should trigger for high contradiction rate
         should_trigger_contradiction = sec_mgr.should_trigger_digital_ghost(
             http_status=200,
             contradiction_rate=0.8
         )
-        assert should_trigger_contradiction == True
+        assert should_trigger_contradiction
 
         # Test 4: Should trigger for high stance entropy
         should_trigger_entropy = sec_mgr.should_trigger_digital_ghost(
             http_status=200,
             stance_entropy=2.5
         )
-        assert should_trigger_entropy == True
+        assert should_trigger_entropy
 
     async def test_circuit_breaker_opens_after_failures(self):
         """
@@ -7524,7 +7503,7 @@ class TestSecurityPipeline:
         try:
             from hledac.universal.security.self_healing import CircuitBreaker as CBCheck
             # Try to instantiate to verify it works
-            test_breaker = CBCheck(
+            CBCheck(
                 failure_threshold=2,
                 recovery_timeout=30.0,
                 expected_exception=Exception
@@ -7543,7 +7522,7 @@ class TestSecurityPipeline:
         sec_mgr._net_breaker = breaker
 
         # Simulate failures
-        for i in range(3):
+        for _i in range(3):
             try:
                 breaker.record_failure()
             except Exception:
@@ -7551,7 +7530,7 @@ class TestSecurityPipeline:
 
         # Check breaker is open
         is_open = sec_mgr.is_net_breaker_open()
-        assert is_open == True
+        assert is_open
 
 
 class TestSecurityPipelineIntegration:
@@ -7677,7 +7656,7 @@ class TestWaczValidatorUntrackedMembers:
 
     def test_wacz_validator_detects_untracked_members(self, tmp_path):
         """Test that validator detects files in ZIP not listed in datapackage.json."""
-        from hledac.universal.knowledge.persistent_layer import WarcWriter, WaczPacker, ArchiveValidator
+        from hledac.universal.knowledge.persistent_layer import ArchiveValidator, WaczPacker, WarcWriter
 
         base_dir = tmp_path / "warc"
         base_dir.mkdir()
@@ -7704,7 +7683,6 @@ class TestWaczValidatorUntrackedMembers:
 
         # Now modify the ZIP to add an untracked file
         import zipfile
-        import os
 
         # Extract, modify, and repack
         extract_dir = tmp_path / "extract"
@@ -7720,7 +7698,7 @@ class TestWaczValidatorUntrackedMembers:
         # Repack with extra file
         modified_wacz = tmp_path / "modified.wacz"
         with zipfile.ZipFile(str(modified_wacz), 'w') as zf:
-            for root, dirs, files in os.walk(extract_dir):
+            for root, _dirs, files in os.walk(extract_dir):
                 for file in files:
                     file_path = os.path.join(root, file)
                     arcname = os.path.relpath(file_path, extract_dir)
@@ -7737,7 +7715,7 @@ class TestWaczValidatorUntrackedMembers:
 
     def test_wacz_validator_detects_missing_resource_member(self, tmp_path):
         """Test that validator detects resources in datapackage.json not in ZIP."""
-        from hledac.universal.knowledge.persistent_layer import WarcWriter, WaczPacker, ArchiveValidator
+        from hledac.universal.knowledge.persistent_layer import ArchiveValidator, WaczPacker, WarcWriter
 
         base_dir = tmp_path / "warc"
         base_dir.mkdir()
@@ -7763,9 +7741,8 @@ class TestWaczValidatorUntrackedMembers:
         wacz_path = packer.pack()
 
         # Modify datapackage.json to add a fake resource
-        import zipfile
-        import os
         import json
+        import zipfile
 
         extract_dir = tmp_path / "extract"
         extract_dir.mkdir()
@@ -7787,7 +7764,7 @@ class TestWaczValidatorUntrackedMembers:
         # Repack
         modified_wacz = tmp_path / "modified.wacz"
         with zipfile.ZipFile(str(modified_wacz), 'w') as zf:
-            for root, dirs, files in os.walk(extract_dir):
+            for root, _dirs, files in os.walk(extract_dir):
                 for file in files:
                     file_path = os.path.join(root, file)
                     arcname = os.path.relpath(file_path, extract_dir)
@@ -7808,7 +7785,7 @@ class TestArchiveValidatorSamplingDeterminism:
 
     def test_archive_validator_replay_sanity_sampling_is_deterministic(self, tmp_path):
         """Test that sampling produces identical results across runs."""
-        from hledac.universal.knowledge.persistent_layer import WarcWriter, WaczPacker, ArchiveValidator
+        from hledac.universal.knowledge.persistent_layer import ArchiveValidator, WaczPacker, WarcWriter
 
         base_dir = tmp_path / "warc"
         base_dir.mkdir()
@@ -7899,7 +7876,7 @@ class TestMementoResolver:
 
     def test_discover_timemap_prefers_application_link_format(self):
         """Test that timemap discovery prefers application/link-format type."""
-        from hledac.universal.knowledge.persistent_layer import MementoResolver, parse_link_header
+        from hledac.universal.knowledge.persistent_layer import parse_link_header
 
         # Test the link parsing with type preference
         link_header = '<https://example.com/timemap/json>; rel="timemap"; type="application/json", <https://example.com/timemap/link>; rel="timemap"; type="application/link-format"'
@@ -7917,10 +7894,9 @@ class TestMementoResolver:
 
     def test_routing_cache_updates_on_success(self, tmp_path):
         """Test that routing cache is updated on successful timemap discovery."""
-        from hledac.universal.knowledge.persistent_layer import MementoResolver
-        import asyncio
         import json
-        from pathlib import Path
+
+        from hledac.universal.knowledge.persistent_layer import MementoResolver
 
         # Create resolver with cache dir
         cache_dir = tmp_path / "cache"
@@ -7938,7 +7914,7 @@ class TestMementoResolver:
 
         # Verify cache content
         entries = []
-        with open(cache_file, 'r') as f:
+        with open(cache_file) as f:
             for line in f:
                 if line.strip():
                     entries.append(json.loads(line))
@@ -8001,7 +7977,7 @@ class TestWarcRevisitDedupe:
         assert idx_path.exists()
 
         import json
-        with open(idx_path, 'r') as f:
+        with open(idx_path) as f:
             lines = f.readlines()
             assert len(lines) == 2
 
@@ -8016,8 +7992,8 @@ class TestArchiveValidatorRevisit:
 
     def test_archive_validator_accepts_revisit_and_checks_refers_to(self, tmp_path):
         """Test that ArchiveValidator correctly validates revisit records."""
-        from hledac.universal.knowledge.persistent_layer import WarcWriter, WaczPacker, ArchiveValidator
-        import zipfile
+
+        from hledac.universal.knowledge.persistent_layer import ArchiveValidator, WaczPacker, WarcWriter
 
         # Create WARC with revisit
         run_id = "test_revisit_val"
@@ -8086,7 +8062,7 @@ class TestWarcConcurrentTo:
         response_record_id = result["response_record_id"]
 
         # Write metadata linked to response
-        meta_result = writer.write_metadata_record(
+        writer.write_metadata_record(
             target_uri="https://example.com/page",
             metadata={"title": "Test"},
             concurrent_to_record_id=response_record_id
@@ -8150,8 +8126,8 @@ class TestC2PAAnalyzer:
 
     def test_c2pa_trigger_gated_by_size_and_high_value(self, tmp_path):
         """Test that C2PA analysis is gated by high_value and size."""
+
         from hledac.universal.knowledge.persistent_layer import C2PAAnalyzer
-        from pathlib import Path
 
         analyzer = C2PAAnalyzer()
 
@@ -8176,8 +8152,8 @@ class TestMementoAggregator:
 
     def test_memento_aggregator_fallback_used_when_all_else_fails(self, tmp_path):
         """Test that aggregator fallback is used when direct discovery fails."""
+
         from hledac.universal.knowledge.persistent_layer import MementoResolver
-        import asyncio
 
         # Create resolver with cache
         cache_dir = tmp_path / "cache"
@@ -8216,8 +8192,6 @@ class TestContentExtractorImportSafe:
         from hledac.universal.tools.content_extractor import (
             extract_main_text_from_html,
             extract_structured_snippet,
-            extract_content_bounded,
-            ExtractedContent
         )
 
         # Test basic functionality
@@ -8256,7 +8230,7 @@ class TestDeepWebHintsExtractor:
 
     def test_deep_web_hints_extractor_finds_forms_and_api_candidates_bounded(self):
         """Test that extractor finds forms and API candidates with bounds."""
-        from hledac.universal.tools.deep_web_hints import DeepWebHintsExtractor, DeepWebHints
+        from hledac.universal.tools.deep_web_hints import DeepWebHintsExtractor
 
         html = """
         <html>
@@ -8501,7 +8475,7 @@ class TestMetadataDeduplicator:
         ]
 
         dedup = MetadataDeduplicator(max_comparisons=100)
-        results = dedup.deduplicate(metadata_list)
+        dedup.deduplicate(metadata_list)
 
         # Should complete without error
 
@@ -8511,7 +8485,7 @@ class TestFtpExplorer:
 
     def test_ftp_explorer_imports_without_aioftp(self):
         """Test that FTPExplorer can be imported and initialized."""
-        from hledac.universal.tools.ftp_explorer import FTPExplorer, FTP_AVAILABLE
+        from hledac.universal.tools.ftp_explorer import FTPExplorer
 
         explorer = FTPExplorer(timeout=5, max_depth=1, max_entries=10)
 
@@ -8546,9 +8520,8 @@ class TestCdxjSortedInvariant:
 
     def test_cdxj_sorted_invariant_on_minimal_wacz(self, tmp_path):
         """Test that WaczPacker generates sorted CDXJ."""
-        import zipfile
-        from hledac.universal.knowledge.persistent_layer import WarcWriter, WaczPacker, ArchiveValidator
-        import json
+
+        from hledac.universal.knowledge.persistent_layer import ArchiveValidator, WaczPacker, WarcWriter
 
         # Create minimal WARC
         run_id = "test_sorted"
@@ -8591,8 +8564,8 @@ class TestCdxjSortedInvariant:
     def test_cdxj_sorted_invariant_detects_unsorted_index(self, tmp_path):
         """Test that ArchiveValidator detects unsorted CDXJ."""
         import zipfile
-        from hledac.universal.knowledge.persistent_layer import WarcWriter, WaczPacker, ArchiveValidator
-        import json
+
+        from hledac.universal.knowledge.persistent_layer import ArchiveValidator, WaczPacker, WarcWriter
 
         # Create minimal WARC with unsorted entries
         run_id = "test_unsorted"
@@ -8631,7 +8604,6 @@ class TestCdxjSortedInvariant:
 
                 # Replace in zip
                 # Need to delete and re-add
-                from zipfile import ZipInfo
                 zf.writestr("indexes/index.cdxj", unsorted_cdxj, compress_type=zipfile.ZIP_DEFLATED)
 
         # Validate
@@ -8643,13 +8615,12 @@ class TestCdxjSortedInvariant:
 
     def test_external_wacz_check_optional(self, tmp_path):
         """Test that external WACZ check is optional (skipped if deps missing)."""
+
         from hledac.universal.knowledge.persistent_layer import ArchiveValidator
-        import json
-        import zipfile
 
         # Create a minimal valid WACZ
         run_id = "test_ext"
-        from hledac.universal.knowledge.persistent_layer import WarcWriter, WaczPacker
+        from hledac.universal.knowledge.persistent_layer import WaczPacker, WarcWriter
         warc_writer = WarcWriter(tmp_path, run_id)
         warc_writer.write_warcinfo({"test": "metadata"})
         warc_writer.close()
@@ -8678,9 +8649,8 @@ class TestRevisitRecordValidation:
 
     def test_revisit_records_include_refers_to_target_uri_and_date(self, tmp_path):
         """Test that revisit records include WARC-Refers-To-Target-URI and WARC-Refers-To-Date."""
-        from hledac.universal.knowledge.persistent_layer import WarcWriter, WaczPacker
-        import zipfile
-        import re
+
+        from hledac.universal.knowledge.persistent_layer import WaczPacker, WarcWriter
 
         # Create WARC with revisit (duplicate payload)
         run_id = "test_revisit"
@@ -8689,7 +8659,7 @@ class TestRevisitRecordValidation:
         warc_writer.write_warcinfo({"test": "metadata"})
 
         # Write original response
-        resp1 = warc_writer.write_request_response_pair(
+        warc_writer.write_request_response_pair(
             target_uri="http://example.com/page",
             request_bytes=b"GET /page HTTP/1.1\r\nHost: example.com\r\n\r\n",
             response_bytes=b"HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: 5\r\n\r\nhello",
@@ -8854,9 +8824,9 @@ class TestArchiveDiscoveryEscalation:
 
     def test_archive_discovery_stage_triggers_on_drift(self):
         """Test that archive discovery triggers on drift detection."""
-        from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
         from unittest.mock import MagicMock
-        import asyncio
+
+        from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
 
         # Create orchestrator
         config = MagicMock()
@@ -8892,8 +8862,9 @@ class TestArchiveDiscoveryEscalation:
 
     def test_archive_discovery_bounded_caps_enforced(self):
         """Test that archive discovery caps are enforced."""
-        from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
         from unittest.mock import MagicMock
+
+        from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
 
         # Create orchestrator
         config = MagicMock()
@@ -8913,8 +8884,9 @@ class TestArchiveDiscoveryEscalation:
 
     def test_archive_discovery_stage_triggers_on_404(self):
         """Test that archive discovery triggers on 404 status."""
-        from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
         from unittest.mock import MagicMock
+
+        from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
 
         # Create orchestrator
         config = MagicMock()
@@ -8926,7 +8898,7 @@ class TestArchiveDiscoveryEscalation:
         orch._archive_discovery = mock_archive
 
         # Trigger with 404 status
-        result = orch.trigger_archive_escalation(
+        orch.trigger_archive_escalation(
             url="https://example.com",
             reason="http_404",
             http_status=404,
@@ -9001,9 +8973,9 @@ class TestBoundedStorage:
 
     def test_hypothesis_engine_evidence_is_capped_and_evicted_deterministically(self):
         """Test that HypothesisEngine evidence is capped and evicted deterministically."""
-        from hledac.universal.brain.hypothesis_engine import HypothesisEngine
-        from hledac.universal.brain.hypothesis_engine import Evidence
         from datetime import datetime
+
+        from hledac.universal.brain.hypothesis_engine import Evidence, HypothesisEngine
 
         engine = HypothesisEngine(max_hypotheses=10)
 
@@ -9030,8 +9002,8 @@ class TestBoundedStorage:
 
     def test_hypothesis_engine_source_credibility_capped(self):
         """Test that HypothesisEngine source credibility is capped."""
+
         from hledac.universal.brain.hypothesis_engine import HypothesisEngine, SourceCredibility
-        from datetime import datetime
 
         engine = HypothesisEngine(max_hypotheses=10)
 
@@ -9089,8 +9061,8 @@ class TestBoundedStorage:
 
     def test_semantic_deduplicator_embedding_cache_hard_capped(self):
         """Test that SemanticDeduplicator embedding cache enforces hard cap."""
-        from hledac.universal.utils.deduplication import SemanticDeduplicator, DeduplicationConfig
         import numpy as np
+        from hledac.universal.utils.deduplication import DeduplicationConfig, SemanticDeduplicator
 
         config = DeduplicationConfig()
         dedup = SemanticDeduplicator(config)
@@ -9124,7 +9096,6 @@ class TestE2EMockedResearchLoop:
 
     def test_no_react_references_in_universal_runtime(self):
         """Verify no ReAct references exist anywhere in universal runtime."""
-        import os
         import glob
 
         # Check all Python files in universal for ReAct imports
@@ -9139,7 +9110,7 @@ class TestE2EMockedResearchLoop:
             if "test_" in py_file:
                 continue  # Skip test files
 
-            with open(py_file, 'r', errors='ignore') as f:
+            with open(py_file, errors='ignore') as f:
                 content = f.read()
 
             for pattern in react_patterns:
@@ -9148,12 +9119,13 @@ class TestE2EMockedResearchLoop:
                     if pattern in line and not line.strip().startswith('#'):
                         # Check if it's an import
                         if 'import' in line or 'from' in line:
-                            assert False, f"Found ReAct reference in {py_file}: {line.strip()}"
+                            raise AssertionError(f"Found ReAct reference in {py_file}: {line.strip()}")
 
     @pytest.mark.asyncio
     async def test_orchestrator_starts_and_creates_evidence_events(self):
         """Test orchestrator can start and create evidence/decision events."""
         import tempfile
+
         from hledac.universal.evidence_log import EvidenceLog
 
         # Create evidence log with temporary directory
@@ -9196,6 +9168,7 @@ class TestE2EMockedResearchLoop:
     def test_orchestrator_instantiation_works(self):
         """Test that orchestrator can be instantiated without errors."""
         from unittest.mock import patch
+
         from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
 
         with patch('hledac.universal.autonomous_orchestrator.MLX_AVAILABLE', False):
@@ -9211,6 +9184,7 @@ class TestLayerManagerIntegration:
     def test_layer_manager_initialized_attribute_exists(self):
         """Test that orchestrator has _layers_initialized attribute."""
         from unittest.mock import patch
+
         from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
 
         with patch('hledac.universal.autonomous_orchestrator.MLX_AVAILABLE', False):
@@ -9222,6 +9196,7 @@ class TestLayerManagerIntegration:
     def test_layer_manager_attribute_exists(self):
         """Test that orchestrator has _layer_manager attribute."""
         from unittest.mock import patch
+
         from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
 
         with patch('hledac.universal.autonomous_orchestrator.MLX_AVAILABLE', False):
@@ -9234,6 +9209,7 @@ class TestLayerManagerIntegration:
     async def test_init_layers_idempotent(self):
         """Test that _init_layers is idempotent - calling twice returns quickly."""
         from unittest.mock import patch
+
         from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
 
         with patch('hledac.universal.autonomous_orchestrator.MLX_AVAILABLE', False):
@@ -9254,7 +9230,7 @@ class TestLayerManagerIntegration:
     @pytest.mark.asyncio
     async def test_init_layers_creates_layer_manager(self):
         """Test that _init_layers actually creates the layer manager when called."""
-        from unittest.mock import patch, AsyncMock, MagicMock
+        from unittest.mock import AsyncMock, MagicMock, patch
 
         # Need to reimport after patch
         from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
@@ -9279,7 +9255,7 @@ class TestLayerManagerIntegration:
     @pytest.mark.asyncio
     async def test_cleanup_shuts_down_layer_manager(self):
         """Test that cleanup properly shuts down layer manager if it exists."""
-        from unittest.mock import patch, AsyncMock, MagicMock
+        from unittest.mock import AsyncMock, MagicMock, patch
 
         from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
 
@@ -9305,6 +9281,7 @@ class TestPIIGateMandatory:
     def test_sanitize_for_logs_always_masks_email_and_phone(self):
         """Test that sanitize_for_logs masks email and phone."""
         from unittest.mock import MagicMock
+
         from hledac.universal.autonomous_orchestrator import _SecurityManager
 
         # Create manager with mock orchestrator
@@ -9339,6 +9316,7 @@ class TestPIIGateMandatory:
     def test_pii_gate_missing_dependency_uses_fallback_and_logs_once(self):
         """Test that fallback is used when PII gate is unavailable."""
         from unittest.mock import MagicMock
+
         from hledac.universal.autonomous_orchestrator import _SecurityManager
 
         # Create manager with mock orchestrator
@@ -9369,6 +9347,7 @@ class TestPIIGateMandatory:
     def test_tool_output_pipeline_cannot_bypass_sanitization(self):
         """Test that tool output always goes through sanitize_for_logs."""
         from unittest.mock import MagicMock
+
         from hledac.universal.autonomous_orchestrator import _SecurityManager
 
         # Create manager with mock orchestrator
@@ -9504,6 +9483,7 @@ class TestPIIGateMandatory:
     def test_sanitize_for_logs_returns_bounded_output(self):
         """Test that sanitize_for_logs always returns bounded output."""
         from unittest.mock import MagicMock
+
         from hledac.universal.autonomous_orchestrator import _SecurityManager
 
         # Create manager with mock orchestrator
@@ -9543,7 +9523,6 @@ class TestOrchestratorRefactorImports:
 
     def test_no_legacy_or_dead_import_markers_in_universal_runtime(self):
         """Scan universal/ for forbidden legacy terms in runtime code (not tests/docs)."""
-        import os
         from pathlib import Path
 
         universal_path = Path("/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal")
@@ -9629,9 +9608,7 @@ class TestBudgetEnforcement:
 
     def test_budget_hard_stop_exhausted_budget_stops_within_one_iteration(self):
         """Verify exhausted budget causes immediate stop within 1 iteration."""
-        from hledac.universal.cache.budget_manager import (
-            BudgetConfig, BudgetManager, IterationSnapshot, StopReason
-        )
+        from hledac.universal.cache.budget_manager import BudgetConfig, BudgetManager, IterationSnapshot, StopReason
 
         # Create budget with max_iterations=1
         config = BudgetConfig(max_iterations=1, max_docs=1, max_time_sec=3600)
@@ -9677,9 +9654,7 @@ class TestBudgetEnforcement:
 
     def test_budget_exhaustion_logs_decision_ledger_event(self):
         """Verify budget stop creates a decision ledger style event."""
-        from hledac.universal.cache.budget_manager import (
-            BudgetConfig, BudgetManager, IterationSnapshot, StopReason
-        )
+        from hledac.universal.cache.budget_manager import BudgetConfig, BudgetManager, IterationSnapshot
 
         # Create budget with very low limits
         config = BudgetConfig(max_iterations=1, max_docs=1)
@@ -9743,7 +9718,7 @@ class TestSmartDeduplicatorConsolidation:
 
     def test_dedup_regression_smart_deduplicator_removed_behavior_stable(self):
         """Verify deduplication behavior is stable using canonical dedup."""
-        from hledac.universal.utils.deduplication import DeduplicationEngine, DeduplicationConfig, QueryItem
+        from hledac.universal.utils.deduplication import DeduplicationConfig, DeduplicationEngine, QueryItem
 
         # Verify the canonical dedup module exists and can be imported
         config = DeduplicationConfig()
@@ -9795,7 +9770,7 @@ class TestEncryptionXORRemoval:
 
     def test_encryption_xor_fallback_removed_raises(self):
         """Verify XOR fallback is removed - should raise error."""
-        from hledac.universal.utils.encryption import DataEncryption, EncryptionResult
+        from hledac.universal.utils.encryption import DataEncryption
 
         enc = DataEncryption()
 
@@ -9839,9 +9814,10 @@ class TestRAGRetrieval:
 
     async def test_rag_retrieval_returns_relevant_results_for_query(self):
         """Test that orchestrator uses RAG retrieval with memory bounds."""
+        from unittest.mock import AsyncMock, MagicMock
+
         from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
         from hledac.universal.knowledge.rag_engine import Document, RetrievedChunk
-        from unittest.mock import MagicMock, AsyncMock, patch
 
         orchestrator = FullyAutonomousOrchestrator()
 
@@ -9888,8 +9864,9 @@ class TestRAGRetrieval:
 
     async def test_rag_context_bounded_by_top_k(self):
         """Test that RAG retrieval respects top_k bounds."""
-        from hledac.universal.knowledge.rag_engine import Document, RetrievedChunk
         from unittest.mock import MagicMock
+
+        from hledac.universal.knowledge.rag_engine import Document, RetrievedChunk
 
         # Create mock RAG with many documents
         mock_rag = MagicMock()
@@ -9933,8 +9910,8 @@ class TestCoordinatorsPackage:
     def test_coordinators_package_imports_cleanly_after_prune(self):
         """Test that coordinators package imports without errors."""
         from hledac.universal.coordinators import (
-            UniversalResearchCoordinator,
             UniversalExecutionCoordinator,
+            UniversalResearchCoordinator,
             UniversalSecurityCoordinator,
         )
         # Verify key coordinators are available
@@ -9958,7 +9935,6 @@ class TestExtractedManagers:
 
     def test_security_manager_extraction_keeps_pipeline_behavior(self):
         """Test that security manager extraction preserves security pipeline."""
-        from hledac.universal.orchestrator.security_manager import _SecurityManager
         from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
 
         # Verify the class is the same
@@ -9973,7 +9949,7 @@ class TestDeterminismHardening:
     def test_sampling_deterministic_given_run_id(self):
         """Test that sampling is deterministic given same run_id."""
         import hashlib
-        from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
+
 
         # Two different run_ids should produce different seeds
         run_id_1 = "test-run-001"
@@ -10000,7 +9976,7 @@ class TestDeterminismHardening:
 
         # Multiple shuffles with same seed should produce same result
         result1 = sorted(items, key=lambda x: rng.random())
-        result2 = sorted(items, key=lambda x: rng.random())
+        sorted(items, key=lambda x: rng.random())
 
         # With same seed, random() produces same sequence
         rng2 = random_module.Random(12345)
@@ -10015,8 +9991,6 @@ class TestResumeAfterCrash:
 
     def test_resume_run_continues_hash_chain_and_seq(self, temp_runs_dir):
         """Test that resume continues hash chain and seq_no."""
-        import json
-        from pathlib import Path
         from hledac.universal.evidence_log import EvidenceLog
 
         run_id = "test-resume-run"
@@ -10038,8 +10012,6 @@ class TestResumeAfterCrash:
 
     def test_resume_does_not_duplicate_manifest(self, temp_runs_dir):
         """Test that resume does not create duplicate manifest entries."""
-        import json
-        from pathlib import Path
         from hledac.universal.evidence_log import EvidenceLog
 
         run_id = "test-manifest-run"
@@ -10117,7 +10089,7 @@ class TestToolExecLogHashChain:
         # Tamper with the persisted file
         log_file = temp_runs_dir / "logs" / "tool_exec.jsonl"
         if log_file.exists():
-            with open(log_file, 'r') as f:
+            with open(log_file) as f:
                 lines = f.readlines()
             if lines:
                 # Modify output_hash in the line
@@ -10164,7 +10136,7 @@ class TestToolExecLogHashChain:
         # Verify disk file contains hashes, not raw data
         log_file = temp_runs_dir / "logs" / "tool_exec.jsonl"
         if log_file.exists():
-            with open(log_file, 'r') as f:
+            with open(log_file) as f:
                 content = f.read()
             # Should NOT contain raw data
             assert "x" * 10000 not in content
@@ -10180,7 +10152,6 @@ class TestMetricsRegistryBounded:
 
     def test_metrics_registry_bounded_and_flushes_to_disk(self, temp_runs_dir):
         """Test that metrics registry is bounded and flushes to disk."""
-        import json
         from hledac.universal.metrics_registry import MetricsRegistry
 
         registry = MetricsRegistry(run_dir=temp_runs_dir, run_id="test-metrics")
@@ -10201,7 +10172,7 @@ class TestMetricsRegistryBounded:
         assert metrics_file.exists()
 
         # Verify content is bounded (no large payloads)
-        with open(metrics_file, 'r') as f:
+        with open(metrics_file) as f:
             content = f.read()
         # Should have metric entries
         assert "orchestrator_tool_exec_events" in content
@@ -10232,7 +10203,7 @@ class TestMetricsRegistryBounded:
 
         # Read the file
         metrics_file = temp_runs_dir / "logs" / "metrics.jsonl"
-        with open(metrics_file, 'r') as f:
+        with open(metrics_file) as f:
             for line in f:
                 data = json.loads(line)
                 # Values should be numeric
@@ -10263,7 +10234,6 @@ class TestWiringVerification:
         - Check if _metrics_registry attribute exists
         - Check if tick/flush are called in research loop
         """
-        import json
         from pathlib import Path
 
         # Static analysis: Check if MetricsRegistry is imported in orchestrator
@@ -10321,7 +10291,8 @@ class TestWiringVerification:
         - Trigger at least one tool run
         - Assert log called >= 1 with bounded payload
         """
-        from unittest.mock import MagicMock, patch
+        from unittest.mock import patch
+
         from hledac.universal.tool_exec_log import ToolExecLog
 
         log_calls = []
@@ -10367,7 +10338,6 @@ class TestWiringVerification:
         - Static scan for direct tool calls outside wrapper
         - Runtime spy on _SecurityManager._sanitize_and_analyze_tool_text
         """
-        import ast
         from pathlib import Path
 
         # Static scan: search for direct tool calls in non-wrapper modules
@@ -10430,7 +10400,7 @@ class TestWiringVerification:
 
             # Check for actual usage (not just imports)
             # Look for coordinator instantiation or method calls
-            has_coordinator_usage = (
+            (
                 "self._" in content and "coordinator" in content.lower()
             ) or (
                 "Coordinator" in content and ("start(" in content or "step(" in content)
@@ -10543,8 +10513,9 @@ class TestSpinePatternCoordinators:
 
     async def test_orchestrator_delegates_fetch_step_to_fetch_coordinator(self):
         """Test that orchestrator delegates fetch to FetchCoordinator via step."""
+        from unittest.mock import AsyncMock, MagicMock
+
         from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
-        from unittest.mock import AsyncMock, MagicMock, patch
 
         orch = FullyAutonomousOrchestrator()
 
@@ -10573,8 +10544,9 @@ class TestSpinePatternCoordinators:
 
     async def test_orchestrator_delegates_claims_to_claims_coordinator(self):
         """Test that orchestrator delegates claims to ClaimsCoordinator via step."""
-        from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
         from unittest.mock import AsyncMock, MagicMock
+
+        from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
 
         orch = FullyAutonomousOrchestrator()
 
@@ -10672,8 +10644,9 @@ class TestSpinePatternCoordinators:
 
     async def test_orchestrator_delegates_graph_reasoning_to_graph_coordinator(self):
         """Test that orchestrator delegates graph reasoning to GraphCoordinator."""
-        from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
         from unittest.mock import AsyncMock, MagicMock
+
+        from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
 
         orch = FullyAutonomousOrchestrator()
 
@@ -10703,8 +10676,9 @@ class TestSpinePatternCoordinators:
 
     async def test_orchestrator_delegates_archive_escalation_to_archive_coordinator(self):
         """Test that orchestrator delegates archive escalation to ArchiveCoordinator."""
-        from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
         from unittest.mock import AsyncMock, MagicMock
+
+        from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
 
         orch = FullyAutonomousOrchestrator()
 
@@ -10743,9 +10717,8 @@ class TestSmokeRunner:
     def test_smoke_runner_returns_bounded_summary_without_network(self):
         """Test smoke runner returns valid bounded summary with mocked network."""
         import tempfile
-        import os
 
-        from hledac.universal.smoke_runner import run_smoke, MAX_URLS, MAX_RUNTIME_SECS
+        from hledac.universal.smoke_runner import MAX_URLS, run_smoke
 
         with tempfile.TemporaryDirectory() as tmpdir:
             result = run_smoke(
@@ -10779,13 +10752,12 @@ class TestSmokeRunner:
     def test_smoke_runner_check_resume_eligibility(self):
         """Test resume eligibility check."""
         import tempfile
-        import os
 
-        from hledac.universal.smoke_runner import run_smoke, check_resume_eligibility
+        from hledac.universal.smoke_runner import check_resume_eligibility, run_smoke
 
         with tempfile.TemporaryDirectory() as tmpdir:
             # Run that stopped due to runtime
-            result = run_smoke(
+            run_smoke(
                 query="test",
                 seeds=[],
                 run_id="resume_test_001",
@@ -10838,8 +10810,9 @@ class TestFailureInjection:
     @pytest.mark.asyncio
     async def test_js_gated_empty_preview_triggers_archive_escalation_with_caps(self):
         """Test JS-gated empty preview triggers archive escalation."""
-        from hledac.universal.coordinators.archive_coordinator import ArchiveCoordinator
         from unittest.mock import AsyncMock, MagicMock
+
+        from hledac.universal.coordinators.archive_coordinator import ArchiveCoordinator
 
         coord = ArchiveCoordinator()
 
@@ -10863,10 +10836,11 @@ class TestFailureInjection:
     def test_resume_after_crash_end_to_end(self):
         """Test resume after crash continues hash chain."""
         # Verify EvidenceLog has hash chain mechanism
-        from hledac.universal.evidence_log import EvidenceLog
         import tempfile
 
-        with tempfile.TemporaryDirectory() as tmpdir:
+        from hledac.universal.evidence_log import EvidenceLog
+
+        with tempfile.TemporaryDirectory():
             # EvidenceLog requires run_id parameter
             log = EvidenceLog(run_id="test_run")
             # Verify log can be created (hash chain mechanism exists)
@@ -10883,8 +10857,9 @@ class TestGoldenFixtures:
     def test_evidence_log_manifest_schema_stable(self):
         """Test EvidenceLog manifest schema has required keys."""
         # Verify EvidenceLog has correct signature
-        from hledac.universal.evidence_log import EvidenceLog
         import inspect
+
+        from hledac.universal.evidence_log import EvidenceLog
 
         sig = inspect.signature(EvidenceLog.__init__)
         params = list(sig.parameters.keys())
@@ -10923,8 +10898,7 @@ class TestToolExecLogWiring:
 
         This test FAILS if ToolExecLog is not wired into _ToolRegistryManager.execute().
         """
-        from unittest.mock import MagicMock, patch, AsyncMock
-        import asyncio
+        from unittest.mock import patch
 
         # Create a mock orchestrator with ToolExecLog
         from hledac.universal.tool_exec_log import ToolExecLog
@@ -11060,6 +11034,7 @@ class TestCrashResumeEndToEndWiring:
     async def test_crash_resume_preserves_chains_and_lifecycle(self):
         """Test crash/resume preserves hash chains and coordinator lifecycle."""
         from unittest.mock import MagicMock, patch
+
         from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
         from hledac.universal.evidence_log import EvidenceLog
         from hledac.universal.tool_exec_log import ToolExecLog
@@ -11201,7 +11176,7 @@ class TestSynthesisSanitization:
         Test that findings are sanitized before entering LLM synthesis prompt.
         Uses mocked security manager to verify sanitize_for_logs is called.
         """
-        from hledac.universal.autonomous_orchestrator import _SynthesisManager, FullyAutonomousOrchestrator
+        from hledac.universal.autonomous_orchestrator import _SynthesisManager
 
         # Create mock orchestrator with mocked security manager
         mock_orch = MagicMock()
@@ -11313,6 +11288,7 @@ class TestToolExecLogFsyncBatching:
         """
         import tempfile
         from pathlib import Path
+
         from hledac.universal.tool_exec_log import ToolExecLog
 
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -11321,7 +11297,6 @@ class TestToolExecLogFsyncBatching:
             # Track fsync calls
             fsync_calls = []
 
-            original_fsync = os.fsync
 
             def mock_fsync(fd):
                 fsync_calls.append(fd)
@@ -11353,6 +11328,7 @@ class TestToolExecLogFsyncBatching:
         """
         import tempfile
         from pathlib import Path
+
         from hledac.universal.tool_exec_log import ToolExecLog
 
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -11391,6 +11367,7 @@ class TestToolExecLogFsyncBatching:
         """
         import tempfile
         from pathlib import Path
+
         from hledac.universal.tool_exec_log import ToolExecLog
 
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -11411,7 +11388,7 @@ class TestToolExecLogFsyncBatching:
 
             # Count lines in JSONL file
             log_file = run_dir / "logs" / "tool_exec.jsonl"
-            with open(log_file, 'r') as f:
+            with open(log_file) as f:
                 lines = [line for line in f if line.strip()]
 
             assert len(lines) == 10, f"Expected 10 lines, got {len(lines)}"
@@ -11437,7 +11414,6 @@ class TestSanitizerInjection:
         Verifies P0.3 refactor: sanitizer is injected, not inline.
         """
         from hledac.universal.brain.hermes3_engine import Hermes3Engine
-        from hledac.universal.security import pii_gate
 
         # Create a callback that should be used
         def injected_sanitizer(text: str) -> str:
@@ -11488,7 +11464,8 @@ class TestOrchestratorSanitizerWiring:
     @pytest.mark.asyncio
     async def test_brain_manager_wires_sanitizer_to_hermes(self):
         """Test that BrainManager wires security_mgr.sanitize_for_logs to Hermes3Engine."""
-        from unittest.mock import MagicMock, patch, AsyncMock
+        from unittest.mock import AsyncMock, MagicMock, patch
+
         from hledac.universal.autonomous_orchestrator import _BrainManager
 
         # Create real sanitizer function
@@ -11533,8 +11510,9 @@ class TestSanitizeOrder:
         Test that pii_gate.detect() receives full text BEFORE trimming.
         This is the security invariant: sanitize/detect first, trim second.
         """
-        from unittest.mock import MagicMock, patch
-        from hledac.universal.autonomous_orchestrator import _SecurityManager, FullyAutonomousOrchestrator
+        from unittest.mock import MagicMock
+
+        from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator, _SecurityManager
 
         # Create orchestrator mock with config
         mock_orch = MagicMock(spec=FullyAutonomousOrchestrator)
@@ -11579,9 +11557,7 @@ class TestClaimsCoordinatorBounds:
 
     def test_pending_evidence_ids_is_bounded_and_deterministic(self):
         """Test that pending evidence IDs are bounded with keep-last determinism."""
-        from hledac.universal.coordinators.claims_coordinator import (
-            ClaimsCoordinator, MAX_PENDING_EVIDENCE_IDS
-        )
+        from hledac.universal.coordinators.claims_coordinator import MAX_PENDING_EVIDENCE_IDS, ClaimsCoordinator
 
         coordinator = ClaimsCoordinator()
 
@@ -11642,7 +11618,7 @@ class TestHermesHardLimit:
         except ImportError:
             pytest.skip("mlx_lm not available in this environment")
 
-        from hledac.universal.brain.hermes3_engine import Hermes3Engine, MAX_LLM_PROMPT_CHARS
+        from hledac.universal.brain.hermes3_engine import MAX_LLM_PROMPT_CHARS, Hermes3Engine
 
         # Create engine with mock model/tokenizer
         engine = Hermes3Engine()
@@ -11681,8 +11657,8 @@ class TestMoEWiring:
         Verifies the wiring is correct - sanitizer from security_mgr flows to MoE.
         This test verifies the code path without actual MoE initialization.
         """
-        from hledac.universal.security.pii_gate import fallback_sanitize
         from hledac.universal.brain.moe_router import MoERouter, MoERouterConfig
+        from hledac.universal.security.pii_gate import fallback_sanitize
 
         # Verify MoERouter accepts sanitize_for_llm parameter
         # (this is the wiring contract that BrainManager.initialize() uses)
@@ -11804,7 +11780,7 @@ class TestMetadataDedupWiring:
             mock_recrawl.return_value = MagicMock()
 
             # Create real MetadataDeduplicator for actual dedup logic
-            from hledac.universal.tools.metadata_dedup import MetadataDeduplicator, DedupResult
+            from hledac.universal.tools.metadata_dedup import MetadataDeduplicator
             real_dedup = MetadataDeduplicator(threshold=0.85)
             mock_dedup.return_value = real_dedup
 
@@ -11842,7 +11818,7 @@ class TestMetadataDedupWiring:
             research_mgr._run_metadata_dedup()
 
             # Now add second source - should be checked against loser hashes
-            result2 = research_mgr._add_source_with_limit(source2, score=0.9)
+            research_mgr._add_source_with_limit(source2, score=0.9)
 
             # Verify: The second source should either be added (if dedup didn't trigger)
             # or suppressed (if dedup found them similar and added loser hash)
@@ -11894,7 +11870,7 @@ class TestRerankerIntegration:
     async def test_sanitize_called(self):
         """Invariant 4: Sanitizace textu před rerankem."""
         from unittest.mock import MagicMock
-        from hledac.universal.autonomous_orchestrator import _ResearchManager
+
         from hledac.universal.tools.reranker import LightweightReranker
 
         # Vytvoříme mock security manageru, který vrací stringy
@@ -11930,8 +11906,7 @@ class TestRerankerIntegration:
     @pytest.mark.asyncio
     async def test_helper_calls_rerank_findings(self):
         """Invariant 5: _maybe_rerank_result zavolá _rerank_findings a nahradí findings."""
-        from unittest.mock import MagicMock, AsyncMock
-        from hledac.universal.autonomous_orchestrator import _ResearchManager
+        from unittest.mock import AsyncMock, MagicMock
 
         # Pro tento test nepotřebujeme sanitizaci, vypneme ji
         mock_orch = MagicMock()
@@ -11952,7 +11927,6 @@ class TestRerankerIntegration:
     async def test_no_mutation_on_error(self):
         """Invariant 1 a 7: Při chybě rerankeru se findings nemění a nevzniká výjimka."""
         from unittest.mock import MagicMock
-        from hledac.universal.autonomous_orchestrator import _ResearchManager
 
         mock_orch = MagicMock()
         mock_orch._security_mgr = None
@@ -11987,8 +11961,8 @@ class TestRerankerIntegration:
     async def test_boundedness(self):
         """Invariant 6: Omezení na MAX_RERANK_DOCS, původní list zůstává nedotčen."""
         from unittest.mock import MagicMock
-        from hledac.universal.autonomous_orchestrator import _ResearchManager
-        from hledac.universal.tools.reranker import LightweightReranker, MAX_RERANK_DOCS
+
+        from hledac.universal.tools.reranker import MAX_RERANK_DOCS, LightweightReranker
 
         mock_orch = MagicMock()
         mock_orch._security_mgr = None
@@ -12019,7 +11993,6 @@ class TestRerankerIntegration:
     async def test_confidence_updated(self):
         """Invariant 1: Když reranker vrátí skóre, confidence se aktualizuje."""
         from unittest.mock import MagicMock
-        from hledac.universal.autonomous_orchestrator import _ResearchManager
 
         mock_orch = MagicMock()
         mock_orch._security_mgr = None
@@ -12062,7 +12035,7 @@ class TestResearchEnrichment:
 
     def test_reputation_score_computed(self):
         """Invariant 4: Reputační skóre se počítá z confirmed/refuted."""
-        from hledac.universal.tools.reputation import get_reputation_score, update_reputation, reset_reputation
+        from hledac.universal.tools.reputation import get_reputation_score, reset_reputation, update_reputation
 
         reset_reputation()
         update_reputation("example.com", confirmed=True)
@@ -12073,7 +12046,7 @@ class TestResearchEnrichment:
 
     def test_reputation_score_bounds(self):
         """Invariant 5: Skóre je v rozsahu 0..1, neznámá doména = 0.5."""
-        from hledac.universal.tools.reputation import get_reputation_score, update_reputation, reset_reputation
+        from hledac.universal.tools.reputation import get_reputation_score, reset_reputation, update_reputation
 
         reset_reputation()
         assert get_reputation_score("unknown.com") == 0.5
@@ -12086,8 +12059,8 @@ class TestResearchEnrichment:
     async def test_reputation_applies_to_confidence(self):
         """Invariant 6: Confidence se násobí reputačním skóre."""
         from unittest.mock import MagicMock
-        from hledac.universal.autonomous_orchestrator import _ResearchManager
-        from hledac.universal.tools.reputation import get_reputation_score, update_reputation, reset_reputation
+
+        from hledac.universal.tools.reputation import reset_reputation, update_reputation
 
         reset_reputation()
         mock_orch = MagicMock()
@@ -12112,10 +12085,8 @@ class TestResearchEnrichment:
     async def test_temporal_drift_triggers_archive(self):
         """Invariant 1: Drift detekce spustí archive fallback."""
         from unittest.mock import MagicMock
-        from hledac.universal.autonomous_orchestrator import _ResearchManager
-        from hledac.universal.tools.temporal import (
-            detect_drift, record_previous_version, reset_temporal_counters
-        )
+
+        from hledac.universal.tools.temporal import record_previous_version, reset_temporal_counters
 
         reset_temporal_counters()
         mock_orch = MagicMock()
@@ -12142,11 +12113,13 @@ class TestResearchEnrichment:
     async def test_temporal_archive_bounded(self):
         """Invariant 2: Počet archive fallback je omezen."""
         from unittest.mock import MagicMock
-        from hledac.universal.autonomous_orchestrator import _ResearchManager
+
         from hledac.universal.tools.temporal import (
-            should_trigger_archive_fallback, increment_archive_fallback,
-            reset_temporal_counters, MAX_ARCHIVE_FALLBACKS_PER_RUN,
-            record_previous_version
+            MAX_ARCHIVE_FALLBACKS_PER_RUN,
+            increment_archive_fallback,
+            record_previous_version,
+            reset_temporal_counters,
+            should_trigger_archive_fallback,
         )
 
         reset_temporal_counters()
@@ -12177,10 +12150,8 @@ class TestResearchEnrichment:
     async def test_temporal_logs_drift(self):
         """Invariant 3: Drift se zapisuje do EvidenceLog."""
         from unittest.mock import MagicMock
-        from hledac.universal.autonomous_orchestrator import _ResearchManager
-        from hledac.universal.tools.temporal import (
-            record_previous_version, reset_temporal_counters
-        )
+
+        from hledac.universal.tools.temporal import record_previous_version, reset_temporal_counters
 
         reset_temporal_counters()
         mock_orch = MagicMock()
@@ -12209,7 +12180,6 @@ class TestResearchEnrichment:
     async def test_gating_skips_low_relevance(self):
         """Invariant 7: Low-relevance URL se přeskočí."""
         from unittest.mock import MagicMock
-        from hledac.universal.autonomous_orchestrator import _ResearchManager
 
         mock_orch = MagicMock()
         research_mgr = _ResearchManager(mock_orch)
@@ -12218,12 +12188,12 @@ class TestResearchEnrichment:
         research_mgr._gating_eval_count = 0
 
         # Low relevance - should skip
-        assert research_mgr._should_fetch_url(
+        assert not research_mgr._should_fetch_url(
             url="http://low.com",
             title="irrelevant",
             snippet="nothing",
             query="important query"
-        ) == False
+        )
 
         # High relevance - should fetch
         assert research_mgr._should_fetch_url(
@@ -12231,13 +12201,12 @@ class TestResearchEnrichment:
             title="important query",
             snippet="",
             query="important query"
-        ) == True
+        )
 
     @pytest.mark.asyncio
     async def test_gating_always_passes_highvalue(self):
         """Invariant 8: High-value signály vždy projdou."""
         from unittest.mock import MagicMock
-        from hledac.universal.autonomous_orchestrator import _ResearchManager
 
         mock_orch = MagicMock()
         research_mgr = _ResearchManager(mock_orch)
@@ -12248,7 +12217,7 @@ class TestResearchEnrichment:
             title="irrelevant",
             snippet="",
             query="unrelated"
-        ) == True
+        )
 
         # Government
         assert research_mgr._should_fetch_url(
@@ -12256,7 +12225,7 @@ class TestResearchEnrichment:
             title="irrelevant",
             snippet="",
             query="unrelated"
-        ) == True
+        )
 
         # Wikipedia
         assert research_mgr._should_fetch_url(
@@ -12264,13 +12233,12 @@ class TestResearchEnrichment:
             title="irrelevant",
             snippet="",
             query="unrelated"
-        ) == True
+        )
 
     @pytest.mark.asyncio
     async def test_gating_bounded(self):
         """Invariant 9: Gating evaluace je omezena."""
         from unittest.mock import MagicMock
-        from hledac.universal.autonomous_orchestrator import _ResearchManager
 
         mock_orch = MagicMock()
         research_mgr = _ResearchManager(mock_orch)
@@ -12285,14 +12253,13 @@ class TestResearchEnrichment:
         # After limit, returns True without counting
         before = research_mgr._gating_eval_count
         result = research_mgr._should_fetch_url("http://test6.com", query="query")
-        assert result == True
+        assert result
         assert research_mgr._gating_eval_count == before
 
     @pytest.mark.asyncio
     async def test_all_features_failsafe(self):
         """Invariant 10: Všechny funkce jsou fail-safe."""
         from unittest.mock import MagicMock, patch
-        from hledac.universal.autonomous_orchestrator import _ResearchManager
 
         mock_orch = MagicMock()
         mock_orch._evidence_log = MagicMock()
@@ -12312,7 +12279,7 @@ class TestResearchEnrichment:
 # =====================================================================
 
 from hledac.universal.autonomous_orchestrator import AutonomousWorkflowEngine, _ResearchManager
-from hledac.universal.tools.policies import AuthorityPolicy, TemporalPolicy, DiscoursePolicy
+from hledac.universal.tools.policies import AuthorityPolicy, DiscoursePolicy, TemporalPolicy
 
 
 class TestPolicyBeamPrompt1:
@@ -12375,7 +12342,6 @@ class TestPolicyBeamPrompt1:
 
     def test_gating_threshold_changes_with_time(self):
         """Invariant 6: Threshold adjusts based on elapsed time."""
-        from hledac.universal.autonomous_orchestrator import _ResearchManager
         orch = MagicMock()
         research_mgr = _ResearchManager(orch)
 
@@ -12422,8 +12388,8 @@ class TestPolicyBeamPrompt1:
 # TESTY PRO MICRO-PLÁNY, KONTRADIKCE A LEAD SCORING (PROMPT 2)
 # =====================================================================
 
-from hledac.universal.autonomous_orchestrator import AutonomousWorkflowEngine, MicroPlan
-from hledac.universal.tools.scoring import LeadScore, normalize_text, has_contradiction
+from hledac.universal.autonomous_orchestrator import MicroPlan
+from hledac.universal.tools.scoring import LeadScore, normalize_text
 
 
 class TestMicroplanAndContradiction:
@@ -12573,8 +12539,9 @@ class TestMicroplanAndContradiction:
     @pytest.mark.asyncio
     async def test_checkpoint_penalties_bounded_edge_513(self):
         """Invariant 1: Host penalties are bounded to MAX_HOST_PENALTIES when input size is 513."""
-        from hledac.universal.autonomous_orchestrator import Checkpoint, CheckpointManager, MAX_HOST_PENALTIES
         import tempfile
+
+        from hledac.universal.autonomous_orchestrator import MAX_HOST_PENALTIES, Checkpoint, CheckpointManager
 
         with tempfile.TemporaryDirectory() as tmpdir:
             manager = CheckpointManager(storage_dir=Path(tmpdir))
@@ -12612,7 +12579,6 @@ class TestMicroplanAndContradiction:
     @pytest.mark.asyncio
     async def test_checkpoint_microplan_restore_extends_deadline(self):
         """Invariant 2: When restoring microplans with expired deadline, reset to now + MICROPLAN_DEADLINE_SEC."""
-        from hledac.universal.autonomous_orchestrator import MicroPlan, MICROPLAN_DEADLINE_SEC
         from unittest.mock import patch
 
         orch = MagicMock()
@@ -12646,8 +12612,9 @@ class TestMicroplanAndContradiction:
     @pytest.mark.asyncio
     async def test_checkpoint_microplan_head_supports_5tuple_heap(self):
         """Invariant 3: Microplan head export supports both 4-tuple and 5-tuple heap shapes."""
-        from hledac.universal.autonomous_orchestrator import MicroPlan, MICROPLAN_DEADLINE_SEC
         import heapq
+
+        from hledac.universal.autonomous_orchestrator import MicroPlan
 
         orch = MagicMock()
         engine = AutonomousWorkflowEngine(orch)
@@ -12683,7 +12650,7 @@ class TestSprint7MemoryStabilization:
         """Invariant 1: Verify hermes3_engine.generate() code includes max_kv_size=8192 and kv_bits=4."""
         import hledac.universal.brain.hermes3_engine as hermes_module
         source = hermes_module.__file__
-        with open(source, 'r') as f:
+        with open(source) as f:
             source_code = f.read()
 
         # Check for max_kv_size=8192 and kv_bits=4 in generate call
@@ -12692,10 +12659,9 @@ class TestSprint7MemoryStabilization:
 
     def test_prompt_cache_initialized(self):
         """Invariant 2: Verify prompt cache is initialized in hermes3_engine."""
-        import ast
         import hledac.universal.brain.hermes3_engine as hermes_module
         source = hermes_module.__file__
-        with open(source, 'r') as f:
+        with open(source) as f:
             source_code = f.read()
 
         # Check for _prompt_cache attribute
@@ -12706,10 +12672,9 @@ class TestSprint7MemoryStabilization:
 
     def test_lmdb_get_zero_copy(self):
         """Invariant 3: Verify lmdb_kv.get() uses buffers=True."""
-        import ast
         import hledac.universal.tools.lmdb_kv as lmdb_module
         source = lmdb_module.__file__
-        with open(source, 'r') as f:
+        with open(source) as f:
             source_code = f.read()
 
         # Check for buffers=True in env.begin call
@@ -12718,10 +12683,9 @@ class TestSprint7MemoryStabilization:
 
     def test_cleanup_calls_malloc_relief(self):
         """Invariant 4: Verify _force_memory_cleanup calls malloc_zone_pressure_relief."""
-        import ast
         import hledac.universal.autonomous_orchestrator as orch_module
         source = orch_module.__file__
-        with open(source, 'r') as f:
+        with open(source) as f:
             source_code = f.read()
 
         # Check for malloc_zone_pressure_relief call
@@ -12731,9 +12695,10 @@ class TestSprint7MemoryStabilization:
     def test_cleanup_failsafe_no_libc(self):
         """Invariant 5: Verify _force_memory_cleanup has fail-safe (try/except around malloc)."""
         import ast
+
         import hledac.universal.autonomous_orchestrator as orch_module
         source = orch_module.__file__
-        with open(source, 'r') as f:
+        with open(source) as f:
             tree = ast.parse(f.read())
 
         # Find _force_memory_cleanup method and check for try/except around malloc_zone_pressure_relief
@@ -12758,15 +12723,14 @@ class TestSprint8FnocacheAndOCR:
 
     def test_fnocache_applied_for_large_content(self):
         """Invariant 1: F_NOCACHE applied only when content_length > 50MB."""
-        import sys
-        from unittest.mock import patch, MagicMock
+        from unittest.mock import patch
 
         # Patch fcntl module before importing the function
         with patch('fcntl.fcntl') as mock_fcntl:
             from hledac.universal.coordinators.fetch_coordinator import (
-                apply_fcntl_nocache,
+                F_NOCACHE,
                 NOCACHE_THRESHOLD_BYTES,
-                F_NOCACHE
+                apply_fcntl_nocache,
             )
 
             fd = 5  # fake file descriptor
@@ -12780,10 +12744,7 @@ class TestSprint8FnocacheAndOCR:
         from unittest.mock import patch
 
         with patch('fcntl.fcntl') as mock_fcntl:
-            from hledac.universal.coordinators.fetch_coordinator import (
-                apply_fcntl_nocache,
-                NOCACHE_THRESHOLD_BYTES
-            )
+            from hledac.universal.coordinators.fetch_coordinator import NOCACHE_THRESHOLD_BYTES, apply_fcntl_nocache
 
             fd = 5
 
@@ -12808,10 +12769,7 @@ class TestSprint8FnocacheAndOCR:
         with patch('fcntl.fcntl') as mock_fcntl:
             mock_fcntl.side_effect = OSError("Operation not supported")
 
-            from hledac.universal.coordinators.fetch_coordinator import (
-                apply_fcntl_nocache,
-                NOCACHE_THRESHOLD_BYTES
-            )
+            from hledac.universal.coordinators.fetch_coordinator import NOCACHE_THRESHOLD_BYTES, apply_fcntl_nocache
 
             fd = 5
 
@@ -12823,10 +12781,7 @@ class TestSprint8FnocacheAndOCR:
 
     def test_fnocache_constants(self):
         """Verify F_NOCACHE = 48 and threshold = 50MB."""
-        from hledac.universal.coordinators.fetch_coordinator import (
-            F_NOCACHE,
-            NOCACHE_THRESHOLD_BYTES
-        )
+        from hledac.universal.coordinators.fetch_coordinator import F_NOCACHE, NOCACHE_THRESHOLD_BYTES
 
         assert F_NOCACHE == 48, "F_NOCACHE must be 48"
         assert NOCACHE_THRESHOLD_BYTES == 50 * 1024 * 1024, "Threshold must be 50MB"
@@ -12843,7 +12798,7 @@ class TestSprint8FnocacheAndOCR:
         sys.modules['ocrmac'] = mock_ocrmac
 
         try:
-            from hledac.universal.tools.ocr_engine import VisionOCR, MAX_OCR_IMAGE_SIZE_MB
+            from hledac.universal.tools.ocr_engine import MAX_OCR_IMAGE_SIZE_MB, VisionOCR
 
             # Patch os.path.getsize to return > 20MB
             with patch('hledac.universal.tools.ocr_engine.os.path.getsize') as mock_getsize:
@@ -12862,7 +12817,6 @@ class TestSprint8FnocacheAndOCR:
     def test_vision_ocr_import_error(self):
         """Invariant 4: ImportError returns [] with no exception."""
         import sys
-        from unittest.mock import patch
 
         # Force ImportError by setting ocrmac to None
         sys.modules['ocrmac'] = None
@@ -12882,7 +12836,7 @@ class TestSprint8FnocacheAndOCR:
     def test_vision_ocr_runtime_error(self):
         """Invariant 5: Runtime error returns [] with no exception."""
         import sys
-        from unittest.mock import patch, MagicMock
+        from unittest.mock import MagicMock, patch
 
         # Create a mock module that raises RuntimeError
         mock_ocr_instance = MagicMock()
@@ -12913,7 +12867,7 @@ class TestSprint8FnocacheAndOCR:
     def test_vision_ocr_success(self):
         """Invariant 7: Success returns list[str]."""
         import sys
-        from unittest.mock import patch, MagicMock
+        from unittest.mock import MagicMock, patch
 
         # Create mock that returns text
         mock_ocr_instance = MagicMock()
@@ -12958,12 +12912,12 @@ class TestSprint9PromptCacheLmdbBatchingAndMemLog:
         """Invariant 1-3: Verify hermes3_engine.generate() passes prompt_cache."""
         import hledac.universal.brain.hermes3_engine as hermes_module
         source = hermes_module.__file__
-        with open(source, 'r') as f:
+        with open(source) as f:
             source_code = f.read()
-        
+
         # Check prompt_cache is passed to generate
         assert 'prompt_cache' in source_code and '_prompt_cache' in source_code,             "prompt_cache must be passed to mlx_lm.generate in hermes3_engine"
-        
+
         # Check make_prompt_cache is stored
         assert 'self._prompt_cache = make_prompt_cache' in source_code,             "make_prompt_cache result must be stored to self._prompt_cache"
 
@@ -12971,9 +12925,9 @@ class TestSprint9PromptCacheLmdbBatchingAndMemLog:
         """Invariant 4: Verify moe_router._generate_with_expert() passes prompt_cache."""
         import hledac.universal.brain.moe_router as moe_module
         source = moe_module.__file__
-        with open(source, 'r') as f:
+        with open(source) as f:
             source_code = f.read()
-        
+
         # Check prompt_cache is passed in MoE expert generation
         assert 'prompt_cache=self._prompt_cache' in source_code,             "prompt_cache must be passed to mlx_lm.generate in moe_router"
 
@@ -12991,33 +12945,34 @@ class TestSprint9PromptCacheLmdbBatchingAndMemLog:
         """Invariant 8: Read path uses buffers=True (zero-copy)."""
         import hledac.universal.tools.lmdb_kv as lmdb_module
         source = lmdb_module.__file__
-        with open(source, 'r') as f:
+        with open(source) as f:
             source_code = f.read()
-        
+
         assert 'buffers=True' in source_code, "buffers=True must be used in env.begin()"
 
     def test_memory_cleanup_rss_log_exists(self):
         """Invariant 9: RSS logging exists in _force_memory_cleanup."""
         import hledac.universal.autonomous_orchestrator as orch_module
         source = orch_module.__file__
-        with open(source, 'r') as f:
+        with open(source) as f:
             source_code = f.read()
-        
+
         assert '[MemCleanup] RSS after cleanup:' in source_code,             "Memory cleanup must log RSS after cleanup"
-        
+
         # Verify it's wrapped in try/except
         assert 'try:' in source_code and 'psutil' in source_code,             "psutil usage must be in try/except"
 
     def test_memory_cleanup_psutil_fail_safe(self):
         """Verify psutil import is fail-safe."""
         import ast
+
         import hledac.universal.autonomous_orchestrator as orch_module
         source = orch_module.__file__
-        with open(source, 'r') as f:
+        with open(source) as f:
             source_code = f.read()
-        
+
         tree = ast.parse(source_code)
-        
+
         # Find _force_memory_cleanup method
         found_rss_log = False
         for node in ast.walk(tree):
@@ -13030,7 +12985,7 @@ class TestSprint9PromptCacheLmdbBatchingAndMemLog:
                 if 'psutil' in method_source and 'try:' in method_source:
                     found_rss_log = True
                     break
-        
+
         assert found_rss_log, "psutil usage must be in try/except inside _force_memory_cleanup"
 
 
@@ -13044,9 +12999,10 @@ class TestSprint10MoeRouterPromptCache:
     def test_prompt_cache_is_per_expert_and_not_shared(self):
         """Verify _prompt_cache_by_expert is Dict[str, Any] keyed by expert_name."""
         import ast
+
         import hledac.universal.brain.moe_router as moe_module
         source = moe_module.__file__
-        with open(source, 'r') as f:
+        with open(source) as f:
             source_code = f.read()
 
         # Verify _prompt_cache_by_expert dict exists in __init__
@@ -13068,10 +13024,9 @@ class TestSprint10MoeRouterPromptCache:
 
     def test_load_unload_manage_only_target_expert_cache(self):
         """Verify _load_expert sets and _unload_expert clears only target expert cache."""
-        import ast
         import hledac.universal.brain.moe_router as moe_module
         source = moe_module.__file__
-        with open(source, 'r') as f:
+        with open(source) as f:
             source_code = f.read()
 
         # Verify _load_expert stores to _prompt_cache_by_expert[expert_name]
@@ -13085,10 +13040,9 @@ class TestSprint10MoeRouterPromptCache:
 
     def test_generate_uses_correct_expert_prompt_cache(self):
         """Verify _generate_with_expert uses _prompt_cache_by_expert.get(expert_name)."""
-        import ast
         import hledac.universal.brain.moe_router as moe_module
         source = moe_module.__file__
-        with open(source, 'r') as f:
+        with open(source) as f:
             source_code = f.read()
 
         # Verify _generate_with_expert gets cache for expert_name
@@ -13102,9 +13056,10 @@ class TestSprint10MoeRouterEmbedding:
     def test_fallback_embedding_is_768_dim(self):
         """Verify _fallback_embedding returns exactly 768 dims."""
         import ast
+
         import hledac.universal.brain.moe_router as moe_module
         source = moe_module.__file__
-        with open(source, 'r') as f:
+        with open(source) as f:
             source_code = f.read()
 
         tree = ast.parse(source_code)
@@ -13122,7 +13077,7 @@ class TestSprint10MoeRouterEmbedding:
                     "_fallback_embedding must handle 768 dims"
                 break
         else:
-            assert False, "_fallback_embedding method not found"
+            raise AssertionError("_fallback_embedding method not found")
 
 
 class TestSprint10MxEvalClearCache:
@@ -13131,9 +13086,10 @@ class TestSprint10MxEvalClearCache:
     def test_hermes_unload_eval_then_clear_cache(self):
         """Verify hermes3_engine.unload() calls mx.eval([]) before mx.clear_cache()."""
         import ast
+
         import hledac.universal.brain.hermes3_engine as hermes_module
         source = hermes_module.__file__
-        with open(source, 'r') as f:
+        with open(source) as f:
             source_code = f.read()
 
         tree = ast.parse(source_code)
@@ -13159,14 +13115,15 @@ class TestSprint10MxEvalClearCache:
                     "mx.eval([]) must be called before mx.clear_cache()"
                 break
         else:
-            assert False, "unload method not found in hermes3_engine"
+            raise AssertionError("unload method not found in hermes3_engine")
 
     def test_hermes_unload_failsafe(self):
         """Verify hermes3_engine.unload() has try/except around mx calls."""
         import ast
+
         import hledac.universal.brain.hermes3_engine as hermes_module
         source = hermes_module.__file__
-        with open(source, 'r') as f:
+        with open(source) as f:
             source_code = f.read()
 
         tree = ast.parse(source_code)
@@ -13186,9 +13143,10 @@ class TestSprint10MxEvalClearCache:
     def test_model_lifecycle_aggressive_gc_eval_then_clear_cache(self):
         """Verify model_lifecycle._aggressive_gc() calls mx.eval([]) before mx.clear_cache()."""
         import ast
+
         import hledac.universal.model_lifecycle as lifecycle_module
         source = lifecycle_module.__file__
-        with open(source, 'r') as f:
+        with open(source) as f:
             source_code = f.read()
 
         tree = ast.parse(source_code)
@@ -13214,14 +13172,15 @@ class TestSprint10MxEvalClearCache:
                     "mx.eval([]) must be called before mx.clear_cache()"
                 break
         else:
-            assert False, "_aggressive_gc method not found in model_lifecycle"
+            raise AssertionError("_aggressive_gc method not found in model_lifecycle")
 
     def test_model_lifecycle_aggressive_gc_failsafe(self):
         """Verify model_lifecycle._aggressive_gc() has try/except around mx calls."""
         import ast
+
         import hledac.universal.model_lifecycle as lifecycle_module
         source = lifecycle_module.__file__
-        with open(source, 'r') as f:
+        with open(source) as f:
             source_code = f.read()
 
         tree = ast.parse(source_code)
@@ -13245,9 +13204,10 @@ class TestSprint10EvidenceLogIndexes:
     def test_rebuild_indexes_includes_evidence_packet_key(self):
         """Verify _rebuild_indexes() always creates 'evidence_packet': [] key."""
         import ast
+
         import hledac.universal.evidence_log as evidence_module
         source = evidence_module.__file__
-        with open(source, 'r') as f:
+        with open(source) as f:
             source_code = f.read()
 
         tree = ast.parse(source_code)
@@ -13269,7 +13229,7 @@ class TestSprint10EvidenceLogIndexes:
                     "_rebuild_indexes must initialize evidence_packet to []"
                 break
         else:
-            assert False, "_rebuild_indexes method not found in evidence_log"
+            raise AssertionError("_rebuild_indexes method not found in evidence_log")
 
 
 class TestSprint11Reputation:
@@ -13318,8 +13278,9 @@ class TestSprint11Temporal:
 
     def test_detect_drift_changes_are_lists(self):
         """Verify detect_drift() returns lists, not tuples."""
-        import hledac.universal.tools.temporal as temp_module
         import json
+
+        import hledac.universal.tools.temporal as temp_module
 
         # Setup: record a previous version
         temp_module._previous_versions.clear()
@@ -13348,7 +13309,7 @@ class TestSprint11Temporal:
         try:
             json.dumps(changes)
         except Exception as e:
-            assert False, f"Changes must be JSON-serializable: {e}"
+            raise AssertionError(f"Changes must be JSON-serializable: {e}")
 
     def test_previous_versions_bounded(self):
         """Verify _previous_versions is bounded to max 5000 URLs."""
@@ -13409,10 +13370,9 @@ class TestSprint11Reranker:
 
     def test_uses_get_running_loop(self):
         """Verify reranker uses asyncio.get_running_loop, not get_event_loop."""
-        import ast
         import hledac.universal.tools.reranker as reranker_module
         source = reranker_module.__file__
-        with open(source, 'r') as f:
+        with open(source) as f:
             source_code = f.read()
 
         # Must use get_running_loop
@@ -13449,6 +13409,7 @@ class TestSprint12EvidenceLog:
     def test_log_is_deque(self):
         """Verify _log is a collections.deque instance."""
         import collections
+
         from hledac.universal.evidence_log import EvidenceLog
 
         ev = EvidenceLog(run_id="test-run", enable_persist=False)
@@ -13459,6 +13420,7 @@ class TestSprint12EvidenceLog:
     def test_overflow_triggers_rebuild(self):
         """Verify deque overflow triggers _rebuild_indexes."""
         from unittest.mock import MagicMock
+
         from hledac.universal.evidence_log import EvidenceLog
 
         ev = EvidenceLog(run_id="test-run", enable_persist=False)
@@ -13482,6 +13444,7 @@ class TestSprint12EvidenceLog:
     def test_overflow_failsafe(self):
         """Verify overflow rebuild is fail-safe (never crashes orchestration)."""
         from unittest.mock import MagicMock
+
         from hledac.universal.evidence_log import EvidenceLog
 
         ev = EvidenceLog(run_id="test-run", enable_persist=False)
@@ -13503,6 +13466,7 @@ class TestSprint12ModelLifecycle:
     def test_load_history_bounded(self):
         """Verify _load_history is deque(maxlen=1000) and never exceeds 1000."""
         from collections import deque
+
         from hledac.universal.model_lifecycle import ModelLifecycle, ModelLoadEvent, ModelType
 
         ml = ModelLifecycle(max_memory_mb=5500)
@@ -13531,7 +13495,7 @@ class TestSprint12PIIGate:
 
     def test_username_pattern_removed(self):
         """Verify PIICategory.USERNAME is not in compiled patterns."""
-        from hledac.universal.security.pii_gate import SecurityGate, PIICategory
+        from hledac.universal.security.pii_gate import PIICategory, SecurityGate
 
         gate = SecurityGate()
 
@@ -13545,7 +13509,7 @@ class TestSprint12Policies:
 
     def test_actions_taken_removed(self):
         """Verify BasePolicy has no actions_taken attribute."""
-        from hledac.universal.tools.policies import BasePolicy, AuthorityPolicy
+        from hledac.universal.tools.policies import AuthorityPolicy
 
         # Test BasePolicy
         policy = AuthorityPolicy()
@@ -13580,8 +13544,9 @@ class TestSprint13HermesMoD:
     def test_enable_mod_param_removed(self):
         """Verify enable_mod parameter removed from HermesConfig and Hermes3Engine.__init__."""
         import inspect
-        from hledac.universal.brain.hermes3_engine import Hermes3Engine, HermesConfig
         from dataclasses import fields
+
+        from hledac.universal.brain.hermes3_engine import Hermes3Engine, HermesConfig
 
         # Check HermesConfig has no enable_mod field
         config_fields = {f.name for f in fields(HermesConfig)}
@@ -13600,8 +13565,9 @@ class TestSprint13Scoring:
 
     def test_decay_horizon_is_72h(self):
         """Verify decay horizon is 72 hours."""
-        from hledac.universal.tools.scoring import LeadScore
         import time
+
+        from hledac.universal.tools.scoring import LeadScore
 
         current = time.time()
 
@@ -13622,11 +13588,11 @@ class TestSprint13PIIGate:
 
     def test_quick_sanitize_reuses_singleton(self):
         """Verify quick_sanitize reuses the same SecurityGate instance."""
-        from unittest.mock import patch, MagicMock
-        from hledac.universal.security.pii_gate import quick_sanitize, _DEFAULT_GATE
+        from unittest.mock import MagicMock, patch
 
         # Reset the singleton for test
         import hledac.universal.security.pii_gate as pii_module
+        from hledac.universal.security.pii_gate import quick_sanitize
 
         # Patch create_security_gate
         mock_gate = MagicMock()
@@ -13637,8 +13603,8 @@ class TestSprint13PIIGate:
         with patch.object(pii_module, 'create_security_gate', return_value=mock_gate) as mock_create:
             with patch.object(pii_module, '_DEFAULT_GATE', None):
                 # Call twice
-                result1 = quick_sanitize("test1")
-                result2 = quick_sanitize("test2")
+                quick_sanitize("test1")
+                quick_sanitize("test2")
 
                 # create_security_gate should be called exactly once
                 assert mock_create.call_count == 1, f"Expected 1 call, got {mock_create.call_count}"
@@ -13649,8 +13615,9 @@ class TestSprint13PIIGate:
     def test_quick_sanitize_fallback_on_error(self):
         """Verify quick_sanitize falls back to fallback_sanitize on error."""
         from unittest.mock import patch
-        from hledac.universal.security.pii_gate import quick_sanitize, fallback_sanitize
+
         import hledac.universal.security.pii_gate as pii_module
+        from hledac.universal.security.pii_gate import quick_sanitize
 
         # Patch to raise exception
         with patch.object(pii_module, 'create_security_gate', side_effect=Exception("Init failed")):
@@ -13667,6 +13634,7 @@ class TestSprint13LMDBKv:
     def test_no_unused_os_import(self):
         """Verify lmdb_kv.py does not import os."""
         import inspect
+
         from hledac.universal.tools import lmdb_kv
 
         source = inspect.getsource(lmdb_kv)
@@ -13677,9 +13645,9 @@ class TestSprint13LMDBKv:
             stripped = line.strip()
             if stripped.startswith('import os') and not stripped.startswith('import os.path'):
                 # Found import os - this is a failure
-                assert False, "lmdb_kv.py should not import os"
+                raise AssertionError("lmdb_kv.py should not import os")
             if stripped.startswith('from os import'):
-                assert False, "lmdb_kv.py should not import from os"
+                raise AssertionError("lmdb_kv.py should not import from os")
 
 
 class TestSprint14Rings:
@@ -13688,7 +13656,8 @@ class TestSprint14Rings:
     def test_execution_history_is_deque(self):
         """Verify execution_history is a deque with maxlen=100."""
         import collections
-        from unittest.mock import patch, MagicMock
+        from unittest.mock import MagicMock, patch
+
         from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
 
         with patch('hledac.universal.autonomous_orchestrator.UniversalConfig') as mock_config:
@@ -13703,7 +13672,8 @@ class TestSprint14Rings:
     def test_all_rings_are_deques(self):
         """Verify all ring attributes are deques with correct maxlen."""
         import collections
-        from unittest.mock import patch, MagicMock
+        from unittest.mock import MagicMock, patch
+
         from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
 
         with patch('hledac.universal.autonomous_orchestrator.UniversalConfig') as mock_config:
@@ -13738,6 +13708,7 @@ class TestSprint14ContentMiner:
     def test_no_get_event_loop(self):
         """Verify _extract_pdf uses get_running_loop instead of get_event_loop."""
         import inspect
+
         from hledac.universal.tools.content_miner import MetadataExtractor
 
         source = inspect.getsource(MetadataExtractor._extract_pdf)
@@ -13748,8 +13719,9 @@ class TestSprint14ContentMiner:
     def test_clean_patterns_module_level(self):
         """Verify clean_html_basic uses module-level _CLEAN_PATTERNS."""
         import inspect
-        from hledac.universal.tools.content_miner import RustMiner, _CLEAN_PATTERNS
         import re
+
+        from hledac.universal.tools.content_miner import _CLEAN_PATTERNS, RustMiner
 
         source = inspect.getsource(RustMiner._clean_html_basic)
 
@@ -13768,9 +13740,10 @@ class TestSprint14UrlDedup:
     """Test Sprint 14: url_dedup.py type annotation fix."""
 
     def test_optional_type_annotation(self):
-        """Verify _default_bloom has Optional[RotatingBloomFilter] type."""
-        import typing
+        """Verify _default_bloom has RotatingBloomFilter | None type."""
         import importlib
+        import typing
+
         from hledac.universal.tools.url_dedup import RotatingBloomFilter
 
         mod = importlib.import_module("hledac.universal.tools.url_dedup")
@@ -13781,8 +13754,8 @@ class TestSprint14UrlDedup:
             hints = getattr(mod, "__annotations__", {})
 
         assert "_default_bloom" in hints, "_default_bloom should have type annotation"
-        assert hints["_default_bloom"] == typing.Optional[RotatingBloomFilter], \
-            "_default_bloom should be Optional[RotatingBloomFilter]"
+        assert hints["_default_bloom"] == typing.RotatingBloomFilter | None, \
+            "_default_bloom should be RotatingBloomFilter | None"
 
 
 class TestSprint14Types:
@@ -13813,7 +13786,6 @@ class TestSprint15Comm:
     @pytest.mark.asyncio
     async def test_execute_query_fallback_returns_failure(self):
         """Verify _execute_query fallback returns success=False."""
-        from unittest.mock import MagicMock, AsyncMock, patch
         from hledac.universal.layers.communication_layer import CommunicationLayer
         from hledac.universal.project_types import CommunicationConfig
 
@@ -13854,7 +13826,7 @@ class TestSprint15Storage:
     def test_total_entries_counter_exists(self):
         """Verify _total_entries attribute exists and is int."""
         import tempfile
-        from pathlib import Path
+
         from hledac.universal.knowledge.atomic_storage import AtomicJSONKnowledgeGraph
 
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -13865,6 +13837,7 @@ class TestSprint15Storage:
     def test_add_entry_increments_counter(self):
         """Verify add_entry increments _total_entries."""
         import tempfile
+
         from hledac.universal.knowledge.atomic_storage import AtomicJSONKnowledgeGraph, KnowledgeEntry
 
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -13879,6 +13852,7 @@ class TestSprint15Storage:
     def test_delete_entry_decrements_counter(self):
         """Verify delete_entry decrements only on actual deletion."""
         import tempfile
+
         from hledac.universal.knowledge.atomic_storage import AtomicJSONKnowledgeGraph, KnowledgeEntry
 
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -13907,6 +13881,7 @@ class TestSprint15UrlDedup:
     def test_probables_import_is_guarded(self):
         """Verify probables import is guarded with try/except."""
         import inspect
+
         from hledac.universal.tools import url_dedup
 
         source = inspect.getsource(url_dedup)
@@ -13918,7 +13893,6 @@ class TestSprint15UrlDedup:
 
     def test_create_rotating_bloom_filter_raises_when_unavailable(self):
         """Verify factory raises ImportError when probables unavailable."""
-        import sys
         from hledac.universal.tools import url_dedup
 
         # Save original state
@@ -13943,6 +13917,7 @@ class TestSprint16:
     def test_kuzudb_touch_node_rings_bounded(self):
         """Verify KuzuDBBackend.touch_node() uses deque for rings."""
         import inspect
+
         from hledac.universal.knowledge.persistent_layer import KuzuDBBackend
 
         source = inspect.getsource(KuzuDBBackend.touch_node)
@@ -13959,6 +13934,7 @@ class TestSprint16:
     def test_json_touch_node_rings_bounded(self):
         """Verify JSONBackend.touch_node() uses deque for rings."""
         import inspect
+
         from hledac.universal.knowledge.persistent_layer import JSONBackend
 
         source = inspect.getsource(JSONBackend.touch_node)
@@ -14003,6 +13979,7 @@ class TestSprint16:
     def test_frontier_deque_popleft(self):
         """Verify FetchCoordinator._frontier is deque and uses popleft()."""
         import inspect
+
         from hledac.universal.coordinators.fetch_coordinator import FetchCoordinator
 
         # Check __init__ uses deque (with or without maxlen)
@@ -14017,6 +13994,7 @@ class TestSprint16:
     def test_evidence_ids_deque_maxlen(self):
         """Verify FetchCoordinator._evidence_ids is deque with maxlen=500."""
         import inspect
+
         from hledac.universal.coordinators.fetch_coordinator import FetchCoordinator
 
         init_source = inspect.getsource(FetchCoordinator.__init__)
@@ -14032,6 +14010,7 @@ class TestSprint17Comm:
     def test_execute_query_fallback_returns_failure(self):
         """Verify _execute_query fallback returns success=False."""
         import asyncio
+
         from hledac.universal.layers.communication_layer import CommunicationLayer
 
         # Create layer without model_bridge
@@ -14061,8 +14040,7 @@ class TestSprint17Coordination:
 
     def test_event_processor_metrics_guarded(self):
         """Verify EventDrivenProcessor.__init__ guards ProcessingMetrics."""
-        import asyncio
-        from unittest.mock import patch, MagicMock
+        from unittest.mock import patch
 
         # Patch at module level before import
         with patch("hledac.universal.layers.coordination_layer.NEUROMORPHIC_AVAILABLE", False):
@@ -14082,6 +14060,7 @@ class TestSprint17GraphRag:
     def test_no_run_until_complete_in_sync_wrapper(self):
         """Verify multi_hop_search_sync has no run_until_complete."""
         import inspect
+
         from hledac.universal.knowledge.graph_rag import GraphRAGOrchestrator
 
         source = inspect.getsource(GraphRAGOrchestrator.multi_hop_search_sync)
@@ -14113,9 +14092,9 @@ class TestSprint17MemoryCoordinator:
 
     def test_scipy_import_is_optional(self):
         """Verify scipy import is guarded and fails gracefully."""
-        import sys
         import importlib
-        from unittest.mock import patch, MagicMock
+        import sys
+        from unittest.mock import MagicMock, patch
 
         # Save original scipy modules
         original_scipy = sys.modules.get("scipy")
@@ -14154,7 +14133,7 @@ class TestSprint17Stealth:
     def test_ocr_offloads_blocking_work(self):
         """Verify OCR methods use asyncio.to_thread."""
         import inspect
-        import asyncio
+
         from hledac.universal.layers.stealth_layer import AdvancedCaptchaSolver
 
         # Check transformers OCR
@@ -14181,9 +14160,9 @@ class TestSprint18Memory:
     def test_similarities_bounded(self):
         """Verify stats['similarities'] is deque with maxlen."""
         import sys
-        import numpy as np
         from collections import deque
-        from unittest.mock import patch, MagicMock
+        from unittest.mock import MagicMock, patch
+
 
         # Patch heavy deps
         with patch.object(sys, 'modules', {
@@ -14192,8 +14171,8 @@ class TestSprint18Memory:
             'scipy.sparse': MagicMock(),
         }):
             from hledac.universal.coordinators.memory_coordinator import (
-                NeuromorphicMemoryManager,
                 MAX_SIMILARITIES,
+                NeuromorphicMemoryManager,
             )
 
             manager = NeuromorphicMemoryManager()
@@ -14223,7 +14202,7 @@ class TestSprint18Memory:
     def test_patterns_bounded_via_store_pattern(self, mock_update, mock_encode):
         """Verify _patterns never exceeds MAX_PATTERNS."""
         import sys
-        from unittest.mock import patch, MagicMock
+        from unittest.mock import MagicMock, patch
 
         # Patch scipy to avoid import issues
         mock_sparse = MagicMock()
@@ -14235,8 +14214,8 @@ class TestSprint18Memory:
             'scipy.sparse': mock_sparse,
         }):
             from hledac.universal.coordinators.memory_coordinator import (
-                NeuromorphicMemoryManager,
                 MAX_PATTERNS,
+                NeuromorphicMemoryManager,
             )
 
             manager = NeuromorphicMemoryManager()
@@ -14255,15 +14234,14 @@ class TestSprint18Research:
 
     def test_papers_bounded_via_add_paper(self):
         """Verify _papers never exceeds MAX_PAPERS."""
-        import sys
         from unittest.mock import MagicMock, patch
 
         # Patch base coordinator to avoid heavy init
         with patch("hledac.universal.coordinators.research_coordinator.UniversalCoordinator.__init__", return_value=None):
             from hledac.universal.coordinators.research_coordinator import (
-                UniversalResearchCoordinator,
                 MAX_PAPERS,
                 ResearchPaper,
+                UniversalResearchCoordinator,
             )
 
             coord = UniversalResearchCoordinator.__new__(UniversalResearchCoordinator)
@@ -14285,14 +14263,15 @@ class TestSprint18Research:
 
     def test_citation_links_bounded(self):
         """Verify _citation_links never exceeds MAX_CITATION_LINKS."""
-        from unittest.mock import MagicMock, patch
+        from unittest.mock import patch
 
         with patch("hledac.universal.coordinators.research_coordinator.UniversalCoordinator.__init__", return_value=None):
-            from hledac.universal.coordinators.research_coordinator import (
-                UniversalResearchCoordinator,
-                MAX_CITATION_LINKS,
-            )
             from collections import deque
+
+            from hledac.universal.coordinators.research_coordinator import (
+                MAX_CITATION_LINKS,
+                UniversalResearchCoordinator,
+            )
 
             coord = UniversalResearchCoordinator.__new__(UniversalResearchCoordinator)
             coord._papers = {}
@@ -14334,10 +14313,10 @@ class TestSprint18Stealth:
 
     def test_ocr_missing_deps_fails_safe(self):
         """Verify OCR methods fail safely when deps missing."""
-        import importlib
         import asyncio
+        import importlib
         import sys
-        from unittest.mock import patch, MagicMock
+        from unittest.mock import MagicMock, patch
 
         with patch.dict(sys.modules, {
             "pytesseract": None,
@@ -14365,6 +14344,7 @@ class TestSprint19GraphRAG:
     def test_no_run_until_complete(self):
         """Verify graph_rag.py contains no run_until_complete."""
         import inspect
+
         from hledac.universal.knowledge.persistent_layer import graph_rag
 
         source = inspect.getsource(graph_rag)
@@ -14381,7 +14361,7 @@ class TestSprint19Relationship:
         """Verify igraph is used when available (not networkx)."""
         import importlib
         import sys
-        from unittest.mock import patch, MagicMock
+        from unittest.mock import MagicMock, patch
 
         # Mock igraph
         fake_igraph = MagicMock()
@@ -14411,7 +14391,8 @@ class TestSprint19Document:
 
     def test_progressive_pdf_analysis_probe_then_deepen(self):
         """Verify PDF analysis is progressive: probe first, deepen only on high signal."""
-        from unittest.mock import MagicMock, patch
+        from unittest.mock import MagicMock
+
         from hledac.universal.intelligence import document_intelligence
 
         analyzer = document_intelligence.PDFAnalyzer()
@@ -14436,6 +14417,7 @@ class TestSprint19Patterns:
     def test_no_pop0_in_window(self):
         """Verify SlidingWindowCounter uses deque, not list.pop(0)."""
         import inspect
+
         from hledac.universal.intelligence import pattern_mining
 
         source = inspect.getsource(pattern_mining.SlidingWindowCounter)
@@ -14471,6 +14453,7 @@ class TestSprint19WebIntel:
     def test_priority_queue_used_not_fifo_pop0(self):
         """Verify web_intelligence uses heapq, not FIFO pop(0)."""
         import inspect
+
         from hledac.universal.intelligence import web_intelligence
 
         source = inspect.getsource(web_intelligence.UnifiedWebIntelligence)
@@ -14503,8 +14486,9 @@ class TestSprint20Frontier:
 
     def test_checkpoint_restore_respects_maxlen(self):
         """Verify checkpoint restore respects maxlen=1000."""
-        from hledac.universal.coordinators.fetch_coordinator import FetchCoordinator
         from unittest.mock import MagicMock
+
+        from hledac.universal.coordinators.fetch_coordinator import FetchCoordinator
 
         coordinator = FetchCoordinator()
 
@@ -14530,6 +14514,7 @@ class TestSprint20ExecOptimizer:
     def test_no_get_event_loop_in_async(self):
         """Verify no get_event_loop() in async methods."""
         import inspect
+
         import hledac.universal.utils.execution_optimizer as exec_mod
 
         # Get all async functions in the module
@@ -14556,7 +14541,6 @@ class TestSprint20ExecOptimizer:
 
     def test_sync_wrapper_safe(self):
         """Test that _run_in_executor_safe works correctly."""
-        import inspect
         from hledac.universal.utils.execution_optimizer import ParallelExecutionOptimizer
 
         # Check the helper exists
@@ -14570,7 +14554,8 @@ class TestSprint20Lifecycle:
     def test_shutdown_executor_called_on_cleanup(self):
         """Verify cleanup() calls _shutdown_executor()."""
         import asyncio
-        from unittest.mock import patch, MagicMock
+        from unittest.mock import MagicMock, patch
+
         from hledac.universal.brain.inference_engine import InferenceEngine
 
         # Create engine with mocked _shutdown_executor
@@ -14589,7 +14574,6 @@ class TestSprint20ProcessedHashes:
 
     def test_processed_hashes_bounded_5000(self):
         """Verify _processed_hashes bounded to 5000 with FIFO."""
-        from hledac.universal.autonomous_orchestrator import _ResearchManager
         from collections import OrderedDict
 
         # Create minimal manager to test the helper
@@ -14611,6 +14595,7 @@ class TestSprint20ProcessedHashes:
     def test_no_raw_set_add_in_source(self):
         """Verify no direct set.add() on _processed_hashes."""
         import inspect
+
         import hledac.universal.autonomous_orchestrator as auto_mod
 
         source = inspect.getsource(auto_mod._ResearchManager)
@@ -14626,7 +14611,8 @@ class TestSprint21MLX:
     def test_generate_offloaded_to_executor(self):
         """Verify generate uses executor and semaphore for MLX inference."""
         import asyncio
-        from unittest.mock import patch, MagicMock
+        from unittest.mock import MagicMock
+
         from hledac.universal.brain.hermes3_engine import Hermes3Engine
 
         engine = Hermes3Engine.__new__(Hermes3Engine)
@@ -14661,9 +14647,9 @@ class TestSprint21Streaming:
 
     def test_streaming_yields_early(self):
         """Verify streaming yields nodes before traversal completes."""
-        import asyncio
         import inspect
-        from unittest.mock import patch, MagicMock, AsyncMock
+        from unittest.mock import MagicMock
+
         from hledac.universal.knowledge.graph_rag import GraphRAGOrchestrator
 
         # Create orchestrator with mocked knowledge layer
@@ -14705,8 +14691,6 @@ class TestSprint21Concurrency:
 
     def test_controller_blocks_when_memory_low(self):
         """Verify controller blocks when memory is low."""
-        import asyncio
-        from unittest.mock import patch, MagicMock
         from hledac.universal.utils.execution_optimizer import _ConcurrencyController
 
         controller = _ConcurrencyController(max_memory_threshold_mb=1024)
@@ -14717,7 +14701,6 @@ class TestSprint21Concurrency:
 
     def test_controller_adjusts_limit(self):
         """Verify controller adjusts limit based on memory."""
-        import asyncio
         from hledac.universal.utils.execution_optimizer import _ConcurrencyController
 
         controller = _ConcurrencyController(max_memory_threshold_mb=1024)
@@ -14746,7 +14729,6 @@ class TestSprint21EvidenceLog:
 
     def test_flush_worker_commits(self):
         """Verify flush worker commits batches."""
-        import inspect
         from hledac.universal.evidence_log import EvidenceLog
 
         log = EvidenceLog(run_id="test_run", enable_persist=False)
@@ -14768,7 +14750,6 @@ class TestSprint22WebIntelligence:
 
     def test_queued_operation_executed(self):
         """Test that after completion, next queued operation is actually started."""
-        import inspect
         from hledac.universal.intelligence.web_intelligence import UnifiedWebIntelligence
 
         # Verify _queued_ops exists
@@ -14780,6 +14761,7 @@ class TestSprint22WebIntelligence:
     def test_comprehensive_parallel(self):
         """Test that COMPREHENSIVE_INTELLIGENCE runs sub-ops in parallel."""
         import inspect
+
         from hledac.universal.intelligence.web_intelligence import UnifiedWebIntelligence
 
         # Verify asyncio.gather is used in _execute_operation_type
@@ -14793,6 +14775,7 @@ class TestSprint22Temporal:
     def test_rate_limiting_and_head_check(self):
         """Test archive queries are rate-limited and HEAD check is performed."""
         import inspect
+
         from hledac.universal.intelligence.temporal_archaeologist import TemporalArchaeologist
 
         # Verify _rate_limiter attribute exists
@@ -14809,6 +14792,7 @@ class TestSprint22FetchCoordinator:
     def test_circuit_breaker_blocks_domain(self):
         """Test circuit breaker blocks domain after threshold failures."""
         import inspect
+
         from hledac.universal.coordinators.fetch_coordinator import FetchCoordinator
 
         # Verify circuit breaker attributes exist
@@ -14825,6 +14809,7 @@ class TestSprint22Relationship:
     def test_igraph_used_for_all_algorithms(self):
         """Test that igraph is used when available for all algorithms."""
         import inspect
+
         from hledac.universal.intelligence.relationship_discovery import RelationshipDiscoveryEngine
 
         # Verify find_cliques uses igraph
@@ -14854,7 +14839,8 @@ class TestSprint22IntelligentCache:
     def test_arc_eviction_and_getsizeof(self):
         """Test ARC eviction and sys.getsizeof usage."""
         import inspect
-        from hledac.universal.utils.intelligent_cache import IntelligentCache, _ARC
+
+        from hledac.universal.utils.intelligent_cache import _ARC, IntelligentCache
 
         # Verify _ARC class exists
         assert _ARC is not None
@@ -14879,6 +14865,7 @@ class TestSprint23WebIntelligence:
     def test_priority_aging(self):
         """Test that queued operations age over time (priority improves)."""
         import inspect
+
         from hledac.universal.intelligence.web_intelligence import UnifiedWebIntelligence
 
         # Verify aging-related attributes exist in __init__
@@ -14905,6 +14892,7 @@ class TestSprint23WebIntelligence:
     def test_memory_budget_enforcement(self):
         """Test that operations are queued when memory limit exceeded."""
         import inspect
+
         from hledac.universal.intelligence.web_intelligence import UnifiedWebIntelligence
 
         # Verify memory limit attribute exists
@@ -14924,6 +14912,7 @@ class TestSprint23Temporal:
     def test_snapshot_deduplication(self):
         """Test that duplicate snapshots are not fetched twice."""
         import inspect
+
         from hledac.universal.intelligence.temporal_archaeologist import TemporalArchaeologist
 
         # Verify _fetched_snapshots exists in __init__
@@ -14945,6 +14934,7 @@ class TestSprint23FetchCoordinator:
     def test_exponential_backoff(self):
         """Test that exponential backoff is applied on fetch failures."""
         import inspect
+
         from hledac.universal.coordinators.fetch_coordinator import FetchCoordinator
 
         # Verify backoff attributes in __init__
@@ -14967,7 +14957,7 @@ class TestSprint23Relationship:
     def test_save_load_graph_igraph(self):
         """Test save and load graph with igraph."""
         import inspect
-        from unittest.mock import patch, MagicMock
+
         from hledac.universal.intelligence.relationship_discovery import RelationshipDiscoveryEngine
 
         # Verify _save_graph method exists
@@ -14999,8 +14989,8 @@ class TestSprint23IntelligentCache:
     def test_warm_cache(self):
         """Test that cache warming uses asyncio.gather."""
         import inspect
-        from unittest.mock import AsyncMock
-        from hledac.universal.utils.intelligent_cache import IntelligentCache, CacheConfig
+
+        from hledac.universal.utils.intelligent_cache import IntelligentCache
 
         # Verify warm_cache method exists
         assert hasattr(IntelligentCache, '_warm_cache')
@@ -15029,6 +15019,7 @@ class TestSprint24GraphRAG:
     def test_thread_pool_shutdown(self):
         """Test that GraphRAGOrchestrator shuts down its thread pool."""
         from unittest.mock import MagicMock, patch
+
         from hledac.universal.knowledge.graph_rag import GraphRAGOrchestrator
 
         # Create orchestrator with mocked knowledge_layer
@@ -15051,7 +15042,8 @@ class TestSprint24StealthLayer:
     @pytest.mark.asyncio
     async def test_model_load_nonblocking(self):
         """Test that model loading uses asyncio.to_thread."""
-        from unittest.mock import patch, AsyncMock, MagicMock
+        from unittest.mock import AsyncMock, patch
+
         from hledac.universal.layers.stealth_layer import AdvancedCaptchaSolver
 
         with patch('asyncio.to_thread', new_callable=AsyncMock) as mock_thread:
@@ -15073,10 +15065,11 @@ class TestSprint24PatternMining:
 
     def test_fft_periodicity(self):
         """Test that _detect_periodicity uses FFT instead of autocorrelation."""
+        from datetime import datetime, timedelta
         from unittest.mock import patch
+
         import numpy as np
         from hledac.universal.intelligence.pattern_mining import PatternMiningEngine
-        from datetime import datetime, timedelta
 
         # Create FFT data with a peak
         fft_data = np.zeros(256, dtype=complex)
@@ -15092,7 +15085,7 @@ class TestSprint24PatternMining:
                 timestamps = [base + timedelta(hours=i*10) for i in range(20)]
 
                 # Call the method
-                result = engine._detect_periodicity(timestamps)
+                engine._detect_periodicity(timestamps)
 
                 # Verify FFT was called
                 mock_fft.assert_called_once()
@@ -15103,7 +15096,8 @@ class TestSprint24BloomFilter:
 
     def test_xxhash_used(self):
         """Test that xxhash is used when available."""
-        from unittest.mock import patch, MagicMock
+        from unittest.mock import MagicMock, patch
+
         from hledac.universal.utils.bloom_filter import BloomFilter
 
         mock_xx = MagicMock()
@@ -15112,12 +15106,13 @@ class TestSprint24BloomFilter:
         with patch('hledac.universal.utils.bloom_filter.XXHASH_AVAILABLE', True):
             with patch('hledac.universal.utils.bloom_filter.xxhash', mock_xx):
                 bf = BloomFilter()
-                pos = bf._get_hash_positions('test')
+                bf._get_hash_positions('test')
                 mock_xx.xxh64.assert_called()
 
     def test_hashlib_fallback(self):
         """Test that hashlib is used as fallback when xxhash unavailable."""
-        from unittest.mock import patch, MagicMock
+        from unittest.mock import patch
+
         from hledac.universal.utils.bloom_filter import BloomFilter
 
         with patch('hledac.universal.utils.bloom_filter.XXHASH_AVAILABLE', False):
@@ -15126,7 +15121,7 @@ class TestSprint24BloomFilter:
                 mock_sha1.return_value.hexdigest.return_value = 'b' * 40
 
                 bf = BloomFilter()
-                pos = bf._get_hash_positions('test')
+                bf._get_hash_positions('test')
 
                 mock_md5.assert_called()
                 mock_sha1.assert_called()
@@ -15137,7 +15132,8 @@ class TestSprint24RAGEngine:
 
     def test_rank_bm25_used(self):
         """Test that rank_bm25 is used when available."""
-        from unittest.mock import patch, MagicMock
+        from unittest.mock import MagicMock, patch
+
         import numpy as np
         from hledac.universal.knowledge.rag_engine import BM25Index, Document
 
@@ -15153,7 +15149,7 @@ class TestSprint24RAGEngine:
                 index._tokenize = lambda x: x.split()
                 index._rank_bm25 = mock_bm25
 
-                results = index.search('test query')
+                index.search('test query')
 
                 mock_bm25.get_scores.assert_called_once()
 
@@ -15163,7 +15159,8 @@ class TestSprint24ContentMiner:
 
     def test_lxml_link_extraction(self):
         """Test that lxml is used for link extraction when available."""
-        from unittest.mock import patch, MagicMock
+        from unittest.mock import MagicMock, patch
+
         from hledac.universal.tools.content_miner import RustMiner
 
         mock_lxml = MagicMock()
@@ -15192,7 +15189,8 @@ class TestSprint25InferenceEngine:
 
     def test_mlx_similarity(self):
         """Test that MLX is used when available."""
-        from unittest.mock import patch, MagicMock
+        from unittest.mock import MagicMock, patch
+
         from hledac.universal.brain.inference_engine import InferenceEngine
 
         engine = InferenceEngine()
@@ -15216,6 +15214,7 @@ class TestSprint25InferenceEngine:
     def test_numpy_fallback(self):
         """Test that NumPy is used as fallback."""
         from unittest.mock import patch
+
         from hledac.universal.brain.inference_engine import InferenceEngine
 
         engine = InferenceEngine()
@@ -15232,9 +15231,10 @@ class TestSprint25PersistentLayer:
 
     def test_hnsw_search(self):
         """Test that HNSW index is used for search."""
-        from unittest.mock import patch, MagicMock
+        from unittest.mock import MagicMock, patch
+
         import numpy as np
-        from hledac.universal.knowledge.persistent_layer import PersistentKnowledgeLayer, HNSWLIB_AVAILABLE
+        from hledac.universal.knowledge.persistent_layer import PersistentKnowledgeLayer
 
         with patch('hledac.universal.knowledge.persistent_layer.HNSWLIB_AVAILABLE', True):
             with patch('hledac.universal.knowledge.persistent_layer.hnswlib') as mock_hnswlib:
@@ -15259,7 +15259,8 @@ class TestSprint25AtomicStorage:
     def test_lmdb_operations(self):
         """Test that LMDB is used for storage when available."""
         import pickle
-        from unittest.mock import patch, MagicMock
+        from unittest.mock import MagicMock, patch
+
         from hledac.universal.knowledge.atomic_storage import AtomicJSONKnowledgeGraph, KnowledgeEntry
 
         mock_lmdb = MagicMock()
@@ -15285,13 +15286,14 @@ class TestSprint25AtomicStorage:
                         storage._env = mock_env
                         storage._total_entries = 0
 
-                        result = storage.get_entry("test1")
+                        storage.get_entry("test1")
                         assert mock_txn.get.called
 
     def test_migration(self):
         """Test migration from JSON to LMDB."""
         import json
-        from unittest.mock import patch, MagicMock, mock_open
+        from unittest.mock import MagicMock, mock_open, patch
+
         from hledac.universal.knowledge.atomic_storage import AtomicJSONKnowledgeGraph
 
         fake_shard = json.dumps({"key1": {"id": "key1", "content": "data", "metadata": {}}})
@@ -15323,10 +15325,9 @@ class TestSprint25Deduplication:
 
     def test_lsh_clustering(self):
         """Test that LSH clustering is used for deduplication."""
-        from unittest.mock import patch, MagicMock
-        from hledac.universal.utils.deduplication import ContentDeduplicator, DeduplicationConfig
-        from hledac.universal.utils.deduplication import QueryItem
-        from datetime import datetime
+        from unittest.mock import patch
+
+        from hledac.universal.utils.deduplication import ContentDeduplicator, DeduplicationConfig, QueryItem
 
         config = DeduplicationConfig()
         engine = ContentDeduplicator(config)
@@ -15365,7 +15366,8 @@ class TestSprint25StealthCrawler:
 
     def test_curl_cffi_used(self):
         """Test that curl_cffi is used when available."""
-        from unittest.mock import patch, MagicMock, AsyncMock
+        from unittest.mock import AsyncMock, MagicMock, patch
+
         from hledac.universal.intelligence.stealth_crawler import StealthCrawler
 
         mock_session_instance = AsyncMock()
@@ -15401,9 +15403,7 @@ class TestSprint26ToT:
 
     def test_tot_offloaded(self):
         """Test that ToT inference is offloaded to executor."""
-        import asyncio
-        import concurrent.futures
-        from unittest.mock import patch, MagicMock
+        from unittest.mock import MagicMock, patch
 
         # Test that run_in_executor is used in the code
         with patch('asyncio.get_running_loop') as mock_loop:
@@ -15452,15 +15452,16 @@ class TestSprint26Communication:
 
     def test_adaptive_batching(self):
         """Test adaptive batching with asyncio.Queue."""
-        from unittest.mock import patch, MagicMock, AsyncMock
         import asyncio
-        from hledac.universal.layers.communication_layer import CommunicationLayer, CommunicationConfig
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        from hledac.universal.layers.communication_layer import CommunicationConfig, CommunicationLayer
 
         # Create mock config
         config = CommunicationConfig()
 
         # Patch initialize to skip
-        with patch.object(CommunicationLayer, 'initialize', return_value=AsyncMock()) as mock_init:
+        with patch.object(CommunicationLayer, 'initialize', return_value=AsyncMock()):
             comm = CommunicationLayer(config)
             comm._batch_queue = asyncio.Queue()
             comm._batch_threshold = 3
@@ -15475,7 +15476,7 @@ class TestSprint26Communication:
 
             # Add items to queue
             async def add_items():
-                for i in range(5):
+                for _i in range(5):
                     await comm._batch_queue.put({"query": MagicMock(), "future": asyncio.Future()})
 
             loop = asyncio.new_event_loop()
@@ -15491,8 +15492,9 @@ class TestSprint26PatternMining:
 
     def test_heapq_topk(self):
         """Test that heapq.nlargest is used for top-k."""
-        from unittest.mock import patch, MagicMock
         import heapq
+        from unittest.mock import patch
+
         from hledac.universal.intelligence.pattern_mining import SlidingWindowCounter
 
         # Create counter with some data
@@ -15513,8 +15515,9 @@ class TestSprint26Budget:
 
     def test_stagnation_jaccard(self):
         """Test Jaccard similarity for stagnation detection."""
-        from unittest.mock import patch, MagicMock
-        from hledac.universal.cache.budget_manager import BudgetManager, BudgetConfig
+        from unittest.mock import MagicMock
+
+        from hledac.universal.cache.budget_manager import BudgetConfig, BudgetManager
 
         # Create manager
         config = BudgetConfig()
@@ -15561,9 +15564,10 @@ class TestSprint26StealthCrawlerProxy:
 
     def test_proxy_health_check(self):
         """Test TCP-based proxy health check."""
-        from unittest.mock import patch, MagicMock, AsyncMock
         import asyncio
-        from hledac.universal.intelligence.stealth_crawler import StealthWebScraper, ProxyConfig
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        from hledac.universal.intelligence.stealth_crawler import ProxyConfig, StealthWebScraper
 
         # Create scraper with proxies
         scraper = StealthWebScraper.__new__(StealthWebScraper)
@@ -15607,8 +15611,9 @@ class TestSprint27Frontier(unittest.TestCase):
 
     def test_frontier_scoring_unchanged_when_gain_disabled(self):
         """Test that scoring is unchanged when gain scoring is disabled."""
-        from hledac.universal.autonomous_orchestrator import UrlFrontier
         from unittest.mock import MagicMock
+
+        from hledac.universal.autonomous_orchestrator import UrlFrontier
 
         # Create mock domain stats manager
         mock_domain_stats = MagicMock()
@@ -15639,8 +15644,9 @@ class TestSprint27Frontier(unittest.TestCase):
 
     def test_frontier_scoring_uses_gain_when_enabled(self):
         """Test that scoring uses gain model when enabled."""
-        from hledac.universal.autonomous_orchestrator import UrlFrontier
         from unittest.mock import MagicMock
+
+        from hledac.universal.autonomous_orchestrator import UrlFrontier
 
         # Create mock domain stats manager with yield_score=0.5
         mock_domain_stats = MagicMock()
@@ -15674,8 +15680,9 @@ class TestSprint27Frontier(unittest.TestCase):
 
     def test_frontier_scoring_fallback_on_missing_stats(self):
         """Test fallback to old scoring if domain_stats raises exception."""
-        from hledac.universal.autonomous_orchestrator import UrlFrontier
         from unittest.mock import MagicMock
+
+        from hledac.universal.autonomous_orchestrator import UrlFrontier
 
         # Create mock domain stats that raises
         mock_domain_stats = MagicMock()
@@ -15707,8 +15714,9 @@ class TestSprint27Stagnation(unittest.TestCase):
 
     def test_stagnation_improved_with_voi_scheduling(self):
         """Test that VoI scheduling reduces stagnation by prioritizing high-gain URLs."""
-        from hledac.universal.autonomous_orchestrator import UrlFrontier
         from unittest.mock import MagicMock
+
+        from hledac.universal.autonomous_orchestrator import UrlFrontier
 
         # Create mock domain stats with varying yields
         def get_stats_mock(domain):
@@ -15768,8 +15776,7 @@ class TestSprint28GraphMigration(unittest.TestCase):
 
     def test_graph_operations_work(self):
         """Test that graph operations (add_knowledge, add_relation, search, get_related) work after migration."""
-        import sys
-        from unittest.mock import patch, MagicMock
+        from unittest.mock import MagicMock, patch
 
         # Mock PersistentKnowledgeLayer methods
         mock_layer = MagicMock()
@@ -15810,8 +15817,7 @@ class TestSprint28GraphMigration(unittest.TestCase):
 
     def test_atomic_storage_not_used(self):
         """Test that AtomicJSONKnowledgeGraph is not instantiated in _MemoryManager after migration."""
-        import sys
-        from unittest.mock import patch, MagicMock
+        from unittest.mock import MagicMock, patch
 
         # Patch PersistentKnowledgeLayer to avoid actual initialization
         mock_layer = MagicMock()
@@ -15819,7 +15825,7 @@ class TestSprint28GraphMigration(unittest.TestCase):
 
         with patch('hledac.universal.autonomous_orchestrator.PersistentKnowledgeLayer', return_value=mock_layer):
             # Track if AtomicJSONKnowledgeGraph is called
-            with patch('hledac.universal.autonomous_orchestrator.AtomicJSONKnowledgeGraph') as mock_atomic:
+            with patch('hledac.universal.autonomous_orchestrator.AtomicJSONKnowledgeGraph'):
                 from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
 
                 # Create a minimal orchestrator mock
@@ -15842,13 +15848,13 @@ class TestSprint28GraphMigration(unittest.TestCase):
 
                     # Verify knowledge_graph type hint is PersistentKnowledgeLayer
                     import typing
-                    hints = typing.get_type_hints(_MemoryManager.knowledge_graph.fget)
-                    # The property returns Optional[PersistentKnowledgeLayer]
+                    typing.get_type_hints(_MemoryManager.knowledge_graph.fget)
+                    # The property returns PersistentKnowledgeLayer | None
 
     def test_memory_usage(self):
         """Test that memory usage does not increase after migration."""
-        import sys
-        from unittest.mock import patch, MagicMock
+        from unittest.mock import MagicMock, patch
+
         import psutil
 
         mock_layer = MagicMock()
@@ -15885,7 +15891,7 @@ class TestSprint28GraphMigration(unittest.TestCase):
     def test_graph_rag_gets_correct_layer(self):
         """Test that GraphRAGOrchestrator receives the correct PersistentKnowledgeLayer instance."""
         import asyncio
-        from unittest.mock import patch, MagicMock, PropertyMock
+        from unittest.mock import MagicMock, PropertyMock, patch
 
         # Create a mock PersistentKnowledgeLayer instance
         mock_layer = MagicMock()
@@ -15894,7 +15900,7 @@ class TestSprint28GraphMigration(unittest.TestCase):
         # Test the logic in _ensure_knowledge_layer that reuses memory.knowledge_graph
         # by verifying the code path selection works correctly
 
-        with patch('hledac.universal.autonomous_orchestrator.PersistentKnowledgeLayer') as mock_pkl_class:
+        with patch('hledac.universal.autonomous_orchestrator.PersistentKnowledgeLayer'):
             # When memory.knowledge_graph returns a PersistentKnowledgeLayer instance,
             # the _ensure_knowledge_layer should use it instead of creating a new one
 
@@ -16006,6 +16012,7 @@ class TestSprint29Progressive(unittest.TestCase):
     def test_semantic_fallback(self):
         """Test semantic fallback when MLX unavailable."""
         from unittest.mock import patch
+
         from hledac.universal.intelligence.document_intelligence import DocumentIntelligenceEngine
 
         with patch('hledac.universal.intelligence.document_intelligence.MLX_AVAILABLE', False):
@@ -16028,6 +16035,7 @@ class TestSprint31Hybrid(unittest.TestCase):
     def test_hybrid_accuracy(self):
         """Test that hybrid sketch estimates are within 3% error for frequent items."""
         import random
+
         from hledac.universal.utils.sketches import HybridFrequencySketch
 
         sketch = HybridFrequencySketch(sketch_width=2**10, sketch_depth=3, top_k=1024)
@@ -16093,8 +16101,8 @@ class TestSprint31Hybrid(unittest.TestCase):
 
     def test_lmdb_offload(self):
         """Test LMDB offload for rare items."""
-        import os
-        from hledac.universal.utils.sketches import HybridFrequencySketch, LMDB_AVAILABLE
+
+        from hledac.universal.utils.sketches import LMDB_AVAILABLE, HybridFrequencySketch
 
         if not LMDB_AVAILABLE:
             self.skipTest("LMDB not available")
@@ -16174,8 +16182,9 @@ class TestSprint33(unittest.IsolatedAsyncioTestCase):
     @patch('hledac.universal.brain.hermes3_engine.OUTLINES_AVAILABLE', True)
     async def test_outlines_structured_generation(self):
         """Test structured generation with outlines returns valid Pydantic model."""
+        from unittest.mock import AsyncMock, MagicMock, patch
+
         from hledac.universal.brain.hermes3_engine import Hermes3Engine, _DecisionOutput
-        from unittest.mock import MagicMock, patch, AsyncMock
 
         # Create engine with mocked model - outlines available
         engine = Hermes3Engine()
@@ -16211,8 +16220,9 @@ class TestSprint33(unittest.IsolatedAsyncioTestCase):
     @patch('hledac.universal.brain.hermes3_engine.OUTLINES_AVAILABLE', False)
     async def test_outlines_fallback(self):
         """Test fallback to regular generation when outlines unavailable."""
+        from unittest.mock import AsyncMock, MagicMock, patch
+
         from hledac.universal.brain.hermes3_engine import Hermes3Engine, _DecisionOutput
-        from unittest.mock import MagicMock, patch, AsyncMock
 
         with patch('hledac.universal.brain.hermes3_engine.OUTLINES_AVAILABLE', False):
             engine = Hermes3Engine()
@@ -16478,9 +16488,8 @@ class TestSprint35Hardening(unittest.IsolatedAsyncioTestCase):
 
     async def test_locks_prevent_double_load(self):
         """FIX 0: Locks prevent double-load - asyncio.gather two concurrent acquire calls."""
-        import asyncio
-        from unittest.mock import AsyncMock, MagicMock, patch
         import sys
+        from unittest.mock import patch
 
         # Clear cached imports
         mods_to_clear = [k for k in sys.modules.keys() if 'model_manager' in k]
@@ -16523,8 +16532,8 @@ class TestSprint35Hardening(unittest.IsolatedAsyncioTestCase):
 
     async def test_finally_unload_on_exception(self):
         """FIX 4: Finally unload on exception - raise RuntimeError, assert unload called."""
-        from unittest.mock import AsyncMock, patch, MagicMock
         import sys
+        from unittest.mock import AsyncMock, MagicMock, patch
 
         # Clear cached imports
         mods_to_clear = [k for k in sys.modules.keys() if 'model_manager' in k]
@@ -16557,7 +16566,7 @@ class TestSprint35Hardening(unittest.IsolatedAsyncioTestCase):
 
     def test_circuit_breaker(self):
         """FIX 5: CircuitBreaker opens/closes - failure_threshold=2, record_failure 2x, is_open True."""
-        import time
+
         from hledac.universal.tools.searxng_client import _CircuitBreaker
 
         # Create breaker with threshold=2, cooldown=60
@@ -16578,7 +16587,6 @@ class TestSprint35Hardening(unittest.IsolatedAsyncioTestCase):
         assert breaker2.is_open()
 
         # Manually reset time to simulate cooldown passing
-        original_time = time.monotonic
         try:
             # Simulate time advancing past cooldown (61 seconds)
             current_time = [0]
@@ -16594,8 +16602,8 @@ class TestSprint35Hardening(unittest.IsolatedAsyncioTestCase):
 
     def test_circuit_breaker_recovery(self):
         """FIX 5: CircuitBreaker recovers after cooldown."""
+
         from hledac.universal.tools.searxng_client import _CircuitBreaker
-        import time
 
         breaker = _CircuitBreaker(failure_threshold=1, cooldown=60)
         breaker.record_failure()
@@ -16607,8 +16615,8 @@ class TestSprint35Hardening(unittest.IsolatedAsyncioTestCase):
 
     async def test_shutdown_all(self):
         """FIX 6: shutdown_all calls all close() - mock 3 components, call shutdown_all."""
-        from unittest.mock import MagicMock, patch
         import sys
+        from unittest.mock import MagicMock, patch
 
         # Clear cached imports
         mods_to_clear = [k for k in sys.modules.keys() if 'autonomous_orchestrator' in k]
@@ -16645,7 +16653,7 @@ class TestSprint35Hardening(unittest.IsolatedAsyncioTestCase):
         class MockOrch:
             pass
 
-        orch = MockOrch()
+        MockOrch()
 
         # Define the RRF merge function
         from collections import defaultdict
@@ -16691,8 +16699,8 @@ class TestSprint36Inference(unittest.IsolatedAsyncioTestCase):
 
     async def test_infer_hypotheses_empty(self):
         """FIX 1: _infer_hypotheses returns dict with 'paths' key (empty list when no entities)."""
-        from unittest.mock import AsyncMock, MagicMock, patch
         import sys
+        from unittest.mock import AsyncMock, MagicMock, patch
 
         # Clear cached imports
         mods_to_clear = [k for k in sys.modules.keys() if 'inference_engine' in k or 'tool_registry' in k]
@@ -16700,7 +16708,6 @@ class TestSprint36Inference(unittest.IsolatedAsyncioTestCase):
             del sys.modules[mod]
 
         with patch.dict('sys.modules', {}):
-            from hledac.universal.brain.inference_engine import InferenceEngine
             from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
             from hledac.universal.config import UniversalConfig
 
@@ -16737,8 +16744,8 @@ class TestSprint36Inference(unittest.IsolatedAsyncioTestCase):
 
     async def test_infer_hypotheses_adds_evidence(self):
         """FIX 2: _infer_hypotheses calls add_evidence for each observation (max 20)."""
-        from unittest.mock import AsyncMock, MagicMock, patch
         import sys
+        from unittest.mock import AsyncMock, MagicMock, patch
 
         # Clear cached imports
         mods_to_clear = [k for k in sys.modules.keys() if 'inference_engine' in k or 'tool_registry' in k]
@@ -16746,7 +16753,6 @@ class TestSprint36Inference(unittest.IsolatedAsyncioTestCase):
             del sys.modules[mod]
 
         with patch.dict('sys.modules', {}):
-            from hledac.universal.brain.inference_engine import InferenceEngine
             from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
             from hledac.universal.config import UniversalConfig
 
@@ -16774,17 +16780,15 @@ class TestSprint36Inference(unittest.IsolatedAsyncioTestCase):
 
             # Call with 25 observations
             observations = [f"Observation {i}" for i in range(25)]
-            result = await rm._infer_hypotheses(observations, query="Test query")
+            await rm._infer_hypotheses(observations, query="Test query")
 
             # Assert add_evidence was called exactly 20 times (max 20)
             assert mock_engine.add_evidence.call_count == 20
 
     def test_engine_lazy(self):
         """FIX 3: Engine is lazy - evidence graph empty before first use."""
+
         from hledac.universal.tool_registry import ToolRegistry
-        from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
-        from hledac.universal.config import UniversalConfig
-        import asyncio
 
         # Create fresh registry
         registry = ToolRegistry()
@@ -16799,7 +16803,7 @@ class TestSprint36Inference(unittest.IsolatedAsyncioTestCase):
 
         # Now do a quick inference call to populate evidence
         # Use abductive reasoning which is sync
-        result = registry._execute_inference({
+        registry._execute_inference({
             "mode": "abductive",
             "observations": ["Test observation 1", "Test observation 2"],
             "hypothesis": "Test hypothesis"
@@ -16903,8 +16907,8 @@ class TestSprint37Performance(unittest.IsolatedAsyncioTestCase):
                 mock_model.return_value = None
 
                 # Call _get_prefix_cache twice with same prompt
-                cache1 = engine._get_prefix_cache("same system prompt")
-                cache2 = engine._get_prefix_cache("same system prompt")
+                engine._get_prefix_cache("same system prompt")
+                engine._get_prefix_cache("same system prompt")
 
                 # make_prompt_cache should be called exactly once
                 assert mock_cache.call_count == 1, f"Expected 1 call, got {mock_cache.call_count}"
@@ -16938,7 +16942,7 @@ class TestSprint38RAPTOR(unittest.IsolatedAsyncioTestCase):
         if 'hledac.universal.knowledge.rag_engine' in sys.modules:
             del sys.modules['hledac.universal.knowledge.rag_engine']
 
-        from hledac.universal.knowledge.rag_engine import RAGEngine, Document, RaptorNode
+        from hledac.universal.knowledge.rag_engine import Document, RAGEngine, RaptorNode
 
         # Create engine
         engine = RAGEngine()
@@ -16979,7 +16983,7 @@ class TestSprint38RAPTOR(unittest.IsolatedAsyncioTestCase):
         if 'hledac.universal.knowledge.rag_engine' in sys.modules:
             del sys.modules['hledac.universal.knowledge.rag_engine']
 
-        from hledac.universal.knowledge.rag_engine import RAGEngine, Document
+        from hledac.universal.knowledge.rag_engine import Document, RAGEngine
 
         engine = RAGEngine()
 
@@ -17013,8 +17017,9 @@ class TestSprint38RAPTOR(unittest.IsolatedAsyncioTestCase):
         if 'hledac.universal.knowledge.rag_engine' in sys.modules:
             del sys.modules['hledac.universal.knowledge.rag_engine']
 
-        from hledac.universal.knowledge.rag_engine import RAGEngine, Document
         from unittest.mock import patch
+
+        from hledac.universal.knowledge.rag_engine import Document, RAGEngine
 
         engine = RAGEngine()
 
@@ -17118,8 +17123,9 @@ class TestSprint39WebHintsDelta(unittest.IsolatedAsyncioTestCase):
 
     def test_hints_extraction_called(self):
         """FIX 1: DeepWebHintsExtractor.extract() is called after successful fetch."""
-        from hledac.universal.coordinators.fetch_coordinator import FetchCoordinator, HINTS_AVAILABLE
         from unittest.mock import MagicMock, patch
+
+        from hledac.universal.coordinators.fetch_coordinator import HINTS_AVAILABLE, FetchCoordinator
 
         if not HINTS_AVAILABLE:
             self.skipTest("DeepWebHintsExtractor not available")
@@ -17149,8 +17155,8 @@ class TestSprint39WebHintsDelta(unittest.IsolatedAsyncioTestCase):
 
     def test_api_candidates_added_to_frontier(self):
         """FIX 2: API candidates are added to frontier with priority >= 0.85."""
-        from hledac.universal.coordinators.fetch_coordinator import FetchCoordinator, HINTS_AVAILABLE
-        from unittest.mock import MagicMock, patch
+
+        from hledac.universal.coordinators.fetch_coordinator import HINTS_AVAILABLE
 
         if not HINTS_AVAILABLE:
             self.skipTest("DeepWebHintsExtractor not available")
@@ -17197,7 +17203,7 @@ class TestSprint39WebHintsDelta(unittest.IsolatedAsyncioTestCase):
 
     def test_delta_bounded_output(self):
         """FIX 4: Delta roundtrip is bounded to MAX_OUTPUT_CHARS."""
-        from hledac.universal.tools.delta_compressor import DeltaCompressor, MAX_OUTPUT_CHARS
+        from hledac.universal.tools.delta_compressor import DeltaCompressor
 
         compressor = DeltaCompressor()
 
@@ -17216,7 +17222,7 @@ class TestSprint39WebHintsDelta(unittest.IsolatedAsyncioTestCase):
 
     def test_delta_compressor_wired(self):
         """FIX 5: DeltaCompressor is wired in SnapshotStorage."""
-        from hledac.universal.knowledge.atomic_storage import SnapshotStorage, DELTA_AVAILABLE
+        from hledac.universal.knowledge.atomic_storage import DELTA_AVAILABLE, SnapshotStorage
 
         if not DELTA_AVAILABLE:
             self.skipTest("DeltaCompressor not available")
@@ -17254,7 +17260,10 @@ class TestSprint40QuantumPattern(unittest.IsolatedAsyncioTestCase):
                 import sys
                 if not self._quantum_pathfinder_available:
                     try:
-                        from hledac.universal.graph.quantum_pathfinder import QuantumInspiredPathFinder, QuantumPathConfig
+                        from hledac.universal.graph.quantum_pathfinder import (
+                            QuantumInspiredPathFinder,
+                            QuantumPathConfig,
+                        )
                         # Check if module exists in sys.modules
                         if 'hledac.universal.graph.quantum_pathfinder' in sys.modules:
                             self._quantum_pathfinder_cls = QuantumInspiredPathFinder
@@ -17280,7 +17289,6 @@ class TestSprint40QuantumPattern(unittest.IsolatedAsyncioTestCase):
 
     async def test_quantum_pathfinder_called(self):
         """Test that multi_hop_graph_search calls QuantumInspiredPathFinder.find_paths when available."""
-        from hledac.universal.autonomous_orchestrator import _ResearchManager
 
         # Create mocks
         mock_orch_instance = MagicMock()
@@ -17313,7 +17321,7 @@ class TestSprint40QuantumPattern(unittest.IsolatedAsyncioTestCase):
             manager._quantum_pathfinder_cls = mock_pf_cls
             manager._quantum_pathfinder_config = mock_config
 
-            result = await manager.multi_hop_graph_search("test query", max_hops=2, top_k=10)
+            await manager.multi_hop_graph_search("test query", max_hops=2, top_k=10)
 
             # Verify find_paths was called
             mock_pf_instance.find_paths.assert_called_once()
@@ -17343,7 +17351,6 @@ class TestSprint40QuantumPattern(unittest.IsolatedAsyncioTestCase):
     async def test_pattern_mining_bounded(self, mock_orch):
         """Test that _mine_patterns passes at most 50 findings to the engine."""
         from hledac.universal.autonomous_orchestrator import _SynthesisManager
-        from hledac.universal.intelligence.pattern_mining import PatternMiningEngine
 
         mock_orch_instance = MagicMock()
         mock_orch_instance._security_mgr = None
@@ -17356,7 +17363,6 @@ class TestSprint40QuantumPattern(unittest.IsolatedAsyncioTestCase):
         findings = [FakeFinding() for _ in range(100)]
 
         # Mock the mining method
-        original_engine = PatternMiningEngine
         mock_engine_instance = MagicMock()
         mock_engine_instance.mine_temporal_patterns = MagicMock(return_value=[])
 
@@ -17376,7 +17382,6 @@ class TestSprint41DNSTunnel(unittest.IsolatedAsyncioTestCase):
 
     def setUp(self):
         """Add import for _SecurityManager."""
-        from hledac.universal.autonomous_orchestrator import _SecurityManager
 
     def test_tool_registered(self):
         """Test that dns_tunnel_check tool is registered in ToolRegistry."""
@@ -17392,8 +17397,9 @@ class TestSprint41DNSTunnel(unittest.IsolatedAsyncioTestCase):
 
     async def test_check_dns_tunneling_returns_dict(self):
         """Test that _check_dns_tunneling returns dict with findings key."""
+        from unittest.mock import AsyncMock, MagicMock, patch
+
         from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator, _SecurityManager
-        from unittest.mock import MagicMock, AsyncMock, patch
 
         mock_orch = MagicMock(spec=FullyAutonomousOrchestrator)
         mock_orch.config = MagicMock()
@@ -17420,8 +17426,9 @@ class TestSprint41DNSTunnel(unittest.IsolatedAsyncioTestCase):
 
     async def test_bounded_input(self):
         """Test that at most 200 domains are passed to the detector."""
+        from unittest.mock import AsyncMock, MagicMock, patch
+
         from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator, _SecurityManager
-        from unittest.mock import MagicMock, AsyncMock, patch
 
         mock_orch = MagicMock(spec=FullyAutonomousOrchestrator)
         mock_orch.config = MagicMock()
@@ -17446,8 +17453,9 @@ class TestSprint41DNSTunnel(unittest.IsolatedAsyncioTestCase):
 
     async def test_fail_safe(self):
         """Test fail-safe returns when tool is missing."""
-        from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator, _SecurityManager
         from unittest.mock import MagicMock, patch
+
+        from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator, _SecurityManager
 
         mock_orch = MagicMock(spec=FullyAutonomousOrchestrator)
         mock_orch.config = MagicMock()
@@ -17469,8 +17477,9 @@ class TestSprint42CoreML(unittest.IsolatedAsyncioTestCase):
 
     async def test_precondition_skip_conversion(self):
         """Test that conversion is skipped when no documents available."""
-        from hledac.universal.knowledge.rag_engine import RAGEngine, RAGConfig
         from unittest.mock import MagicMock
+
+        from hledac.universal.knowledge.rag_engine import RAGConfig, RAGEngine
 
         config = RAGConfig()
         engine = RAGEngine(config)
@@ -17481,9 +17490,10 @@ class TestSprint42CoreML(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(result)
     async def test_coreml_used_when_available(self):
         """Test that CoreML embedder is used when available."""
-        from hledac.universal.knowledge.rag_engine import RAGEngine, RAGConfig, COREML_AVAILABLE
-        from unittest.mock import MagicMock, patch
+        from unittest.mock import MagicMock
+
         import numpy as np
+        from hledac.universal.knowledge.rag_engine import RAGConfig, RAGEngine
 
         config = RAGConfig()
         engine = RAGEngine(config)
@@ -17503,9 +17513,10 @@ class TestSprint42CoreML(unittest.IsolatedAsyncioTestCase):
 
     async def test_fallback_on_coreml_failure(self):
         """Test fallback to MLX when CoreML fails."""
-        from hledac.universal.knowledge.rag_engine import RAGEngine, RAGConfig
         from unittest.mock import MagicMock
+
         import numpy as np
+        from hledac.universal.knowledge.rag_engine import RAGConfig, RAGEngine
 
         config = RAGConfig()
         engine = RAGEngine(config)
@@ -17529,10 +17540,11 @@ class TestSprint42CoreML(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(engine._coreml_embedder)
     async def test_conversion_runs_once(self):
         """Test that conversion runs only once if .mlpackage already exists."""
-        from hledac.universal.knowledge.rag_engine import RAGEngine, RAGConfig, COREML_AVAILABLE
-        from unittest.mock import MagicMock, AsyncMock, patch
-        from pathlib import Path
         import tempfile
+        from pathlib import Path
+        from unittest.mock import MagicMock, patch
+
+        from hledac.universal.knowledge.rag_engine import RAGConfig, RAGEngine
 
         config = RAGConfig()
         engine = RAGEngine(config)
@@ -17554,8 +17566,9 @@ class TestSprint42CoreML(unittest.IsolatedAsyncioTestCase):
 
     async def test_bounded_get_random_chunks(self):
         """Test that _get_random_chunks returns at most n chunks."""
-        from hledac.universal.knowledge.rag_engine import RAGEngine, RAGConfig
         from unittest.mock import MagicMock
+
+        from hledac.universal.knowledge.rag_engine import RAGConfig, RAGEngine
 
         config = RAGConfig()
         engine = RAGEngine(config)
@@ -17606,11 +17619,9 @@ class TestSprint46Fingerprinting(unittest.IsolatedAsyncioTestCase):
 
     def test_ct_log_scanner_cache(self):
         """Test: _CTLogScanner returns subdomains from local cache."""
-        import sys
-        import os
-        import tempfile
-        import sqlite3
         import json
+        import sqlite3
+        import tempfile
         import time
         from pathlib import Path
 
@@ -17661,10 +17672,8 @@ class TestSprint46Fingerprinting(unittest.IsolatedAsyncioTestCase):
     @patch('aiohttp.ClientSession')
     def test_ct_log_scanner_external(self, mock_session):
         """Test: _CTLogScanner fetches from crt.sh when allowed."""
-        import sys
-        import os
-        import tempfile
         import asyncio
+        import tempfile
         from pathlib import Path
 
         from hledac.universal.network.ct_log_scanner import _CTLogScanner
@@ -17713,7 +17722,7 @@ class TestSprint46Fingerprinting(unittest.IsolatedAsyncioTestCase):
 
     def test_favicon_hasher(self):
         """Test: _FaviconHasher computes stable MurmurHash3 or SHA256 fallback."""
-        from hledac.universal.network.favicon_hasher import _FaviconHasher, MMH3_AVAILABLE
+        from hledac.universal.network.favicon_hasher import MMH3_AVAILABLE, _FaviconHasher
 
         hasher = _FaviconHasher()
 
@@ -17743,7 +17752,6 @@ class TestSprint46Fingerprinting(unittest.IsolatedAsyncioTestCase):
     def test_onion_extraction(self):
         """Test: deep_web_hints.py adds .onion_links field from page content."""
         import sys
-        import os
 
         sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
 
@@ -17779,7 +17787,6 @@ class TestSprint46Fingerprinting(unittest.IsolatedAsyncioTestCase):
     def test_js_bundle_url_extraction(self):
         """Test: deep_web_hints.py extracts .js bundle URLs from HTML."""
         import sys
-        import os
 
         sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
 
@@ -17815,7 +17822,6 @@ class TestSprint46Fingerprinting(unittest.IsolatedAsyncioTestCase):
     def test_failsafe_bounded(self):
         """Test: All components are fail-safe and bounded."""
         import sys
-        import os
 
         sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
 
@@ -17843,12 +17849,10 @@ class TestSprint47TorEscalation(unittest.IsolatedAsyncioTestCase):
     def test_async_fingerprint_called(self):
         """Test: Async fingerprint components are called after successful fetch."""
         import sys
-        import os
-        from unittest.mock import MagicMock, AsyncMock, patch
+        from unittest.mock import AsyncMock, MagicMock, patch
 
         sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
 
-        from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
 
         # Create mock orchestrator
         orch = MagicMock()
@@ -17856,7 +17860,6 @@ class TestSprint47TorEscalation(unittest.IsolatedAsyncioTestCase):
         orch.config.allow_external_recon = False
 
         # Create research manager
-        from hledac.universal.autonomous_orchestrator import _ResearchManager
         research_mgr = _ResearchManager(orch)
 
         # Mock the fingerprint components
@@ -17913,8 +17916,7 @@ class TestSprint47TorEscalation(unittest.IsolatedAsyncioTestCase):
     def test_tor_manager_max_circuits(self):
         """Test: TorManager respects max 5 circuits."""
         import sys
-        import os
-        from unittest.mock import MagicMock, AsyncMock, patch
+        from unittest.mock import MagicMock, patch
 
         sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
 
@@ -17957,18 +17959,15 @@ class TestSprint47TorEscalation(unittest.IsolatedAsyncioTestCase):
     def test_escalation_triggers_tor(self):
         """Test: EscalationDecider triggers Tor only when score > 0.75."""
         import sys
-        import os
         from unittest.mock import MagicMock
 
         sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
 
-        from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
 
         # Create mock orchestrator
         orch = MagicMock()
         orch.config = MagicMock()
 
-        from hledac.universal.autonomous_orchestrator import _ResearchManager
         research_mgr = _ResearchManager(orch)
 
         # Test case: yield_score=0.8, fingerprint_score should give weighted > 0.75
@@ -17995,18 +17994,15 @@ class TestSprint47TorEscalation(unittest.IsolatedAsyncioTestCase):
     def test_tor_fail_safe(self):
         """Test: Fail-safe - Tor unavailable → surface only."""
         import sys
-        import os
-        from unittest.mock import MagicMock, AsyncMock, patch
+        from unittest.mock import MagicMock, patch
 
         sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
 
-        from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
 
         # Create mock orchestrator
         orch = MagicMock()
         orch.config = MagicMock()
 
-        from hledac.universal.autonomous_orchestrator import _ResearchManager
         research_mgr = _ResearchManager(orch)
 
         # Test with Tor not available - should not crash
@@ -18019,18 +18015,15 @@ class TestSprint47TorEscalation(unittest.IsolatedAsyncioTestCase):
     def test_bounded_tor_requests(self):
         """Test: Bounded - max 3 Tor requests per page."""
         import sys
-        import os
         from unittest.mock import MagicMock
 
         sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
 
-        from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
 
         # Create mock orchestrator
         orch = MagicMock()
         orch.config = MagicMock()
 
-        from hledac.universal.autonomous_orchestrator import _ResearchManager
         research_mgr = _ResearchManager(orch)
 
         url = 'https://highyield.com/page'
@@ -18042,7 +18035,7 @@ class TestSprint47TorEscalation(unittest.IsolatedAsyncioTestCase):
 
         # Call 5 times - should only allow 3
         results = []
-        for i in range(5):
+        for _i in range(5):
             result = research_mgr._should_escalate_to_tor(metadata, 0.9, url)
             results.append(result)
 
@@ -18058,7 +18051,6 @@ class TestSprint49HiddenDiscovery(unittest.IsolatedAsyncioTestCase):
 
     def test_js_source_map_extraction(self):
         """Test: JS Source Maps are extracted from bundle_urls."""
-        import asyncio
         from hledac.universal.network.js_source_map_extractor import _JSSourceMapExtractor
 
         extractor = _JSSourceMapExtractor()
@@ -18112,7 +18104,6 @@ class TestSprint49HiddenDiscovery(unittest.IsolatedAsyncioTestCase):
 
     def test_lazy_load(self):
         """Test: Components are lazy-loaded."""
-        from hledac.universal.autonomous_orchestrator import _ResearchManager
         from unittest.mock import MagicMock
 
         # Create mock orchestrator
@@ -18129,7 +18120,6 @@ class TestSprint49HiddenDiscovery(unittest.IsolatedAsyncioTestCase):
 
     def test_metadata_keys(self):
         """Test: Results stored in metadata keys (not GraphRAG)."""
-        from hledac.universal.autonomous_orchestrator import _ResearchManager
         from unittest.mock import MagicMock
 
         # Create mock orchestrator
@@ -18199,7 +18189,6 @@ class TestSprint50GraphIntegration(unittest.IsolatedAsyncioTestCase):
 
     async def test_fingerprint_boost_values(self):
         """Invariant 2: _compute_fingerprint_boost returns correct values"""
-        from hledac.universal.autonomous_orchestrator import _ResearchManager
 
         # Create mock orchestrator
         orch = MagicMock()
@@ -18300,8 +18289,7 @@ class TestSprint51JARMFingerprint(unittest.IsolatedAsyncioTestCase):
 
     async def test_jarm_hash_in_metadata(self):
         """Invariant 0: JARM hash stored in metadata"""
-        from hledac.universal.autonomous_orchestrator import _ResearchManager
-        from unittest.mock import patch, MagicMock, AsyncMock
+        from unittest.mock import AsyncMock, MagicMock, patch
 
         # Create mock orchestrator
         orch = MagicMock()
@@ -18352,8 +18340,7 @@ class TestSprint51JARMFingerprint(unittest.IsolatedAsyncioTestCase):
 
     async def test_per_session_dedup(self):
         """Invariant 2: Per-session dedup - fingerprint called once per domain"""
-        from hledac.universal.autonomous_orchestrator import _ResearchManager
-        from unittest.mock import patch, MagicMock
+        from unittest.mock import MagicMock, patch
 
         orch = MagicMock()
         orch.config = MagicMock()
@@ -18381,8 +18368,7 @@ class TestSprint51JARMFingerprint(unittest.IsolatedAsyncioTestCase):
 
     async def test_fail_safe_socket_error(self):
         """Invariant 3: Fail-safe - fingerprint returns None gracefully"""
-        from hledac.universal.autonomous_orchestrator import _ResearchManager
-        from unittest.mock import MagicMock, AsyncMock
+        from unittest.mock import AsyncMock, MagicMock
 
         # Create mock orchestrator
         orch = MagicMock()
@@ -18427,8 +18413,8 @@ class TestSprint52DocumentMeta(unittest.IsolatedAsyncioTestCase):
 
     async def test_pdf_metadata_extraction(self):
         """Invariant 0: PDF metadata extraction"""
+
         from hledac.universal.tools.document_metadata_extractor import _DocumentMetadataExtractor
-        from unittest.mock import patch, MagicMock
 
         # Test with FITZ_AVAILABLE=False fallback (simpler test)
         extractor = _DocumentMetadataExtractor()
@@ -18444,9 +18430,10 @@ class TestSprint52DocumentMeta(unittest.IsolatedAsyncioTestCase):
 
     async def test_docx_internal_paths_detection(self):
         """Invariant 1: DOCX internal paths detection"""
-        from hledac.universal.tools.document_metadata_extractor import _DocumentMetadataExtractor
         import io
         import zipfile
+
+        from hledac.universal.tools.document_metadata_extractor import _DocumentMetadataExtractor
 
         extractor = _DocumentMetadataExtractor()
 
@@ -18474,9 +18461,10 @@ class TestSprint52DocumentMeta(unittest.IsolatedAsyncioTestCase):
 
     async def test_xlsx_has_macros_detection(self):
         """Invariant 2: XLSX has_macros detection"""
-        from hledac.universal.tools.document_metadata_extractor import _DocumentMetadataExtractor
         import io
         import zipfile
+
+        from hledac.universal.tools.document_metadata_extractor import _DocumentMetadataExtractor
 
         extractor = _DocumentMetadataExtractor()
 
@@ -18511,9 +18499,10 @@ class TestSprint52DocumentMeta(unittest.IsolatedAsyncioTestCase):
 
     async def test_timeout_max_10s(self):
         """Invariant 4: Timeout - max 10s"""
-        from hledac.universal.tools.document_metadata_extractor import _DocumentMetadataExtractor
-        from unittest.mock import patch
         import time
+        from unittest.mock import patch
+
+        from hledac.universal.tools.document_metadata_extractor import _DocumentMetadataExtractor
 
         extractor = _DocumentMetadataExtractor()
 
@@ -18534,7 +18523,6 @@ class TestSprint52DocumentMeta(unittest.IsolatedAsyncioTestCase):
 
     async def test_only_pdf_docx_xlsx(self):
         """Invariant 5: Only extracts for .pdf/.docx/.xlsx"""
-        from hledac.universal.autonomous_orchestrator import _ResearchManager
         from unittest.mock import MagicMock, patch
 
         orch = MagicMock()
@@ -18568,8 +18556,8 @@ class TestSprint30(unittest.IsolatedAsyncioTestCase):
 
     def test_commvq_kmeans_87pct_savings(self):
         """Invariant 1 & 5: KV cache RAM usage < 20% baseline for context > 1024 tokens."""
+
         import psutil
-        import os
 
         # Skip if MLX not available
         try:
@@ -18630,7 +18618,6 @@ class TestSprint30(unittest.IsolatedAsyncioTestCase):
 
     def test_mlx_fail_safe_fallback(self):
         """Invariant 4 & 6: Fallback to original cache when MLX fails."""
-        from unittest.mock import patch
         from hledac.universal.utils.sketches import commvq_quantize
 
         # Test with invalid input that should trigger fail-safe
@@ -18681,7 +18668,7 @@ class TestSprint31(unittest.IsolatedAsyncioTestCase):
 
     async def test_kvp_o1_eviction(self):
         """Ověří, že 100 evikcí na 1k cache trvá < 2 s (O(1) chování)."""
-        from hledac.universal.utils.intelligent_cache import IntelligentCache, CacheConfig
+        from hledac.universal.utils.intelligent_cache import CacheConfig, IntelligentCache
 
         cache = IntelligentCache(CacheConfig(max_entries=1000, max_size_bytes=10*1024*1024))
         await cache.initialize()
@@ -18703,8 +18690,8 @@ class TestSprint31(unittest.IsolatedAsyncioTestCase):
 
     async def test_kvp_hit_improvement(self):
         """Ověří, že KVP heuristika má vyšší hit rate než čisté ARC."""
-        from hledac.universal.utils.intelligent_cache import IntelligentCache, CacheConfig
         import numpy as np
+        from hledac.universal.utils.intelligent_cache import CacheConfig, IntelligentCache
 
         # Třída pro baseline ARC (bez KVP)
         class ARCCache(IntelligentCache):
@@ -18792,8 +18779,9 @@ class TestSprint32_33(unittest.IsolatedAsyncioTestCase):
     async def test_monitor_check_interval(self):
         """Test že kontrola paměti používá adaptivní interval."""
         # Sprint 48: Kontrola adaptivního intervalu v kódu
-        from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
         import inspect
+
+        from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
 
         source = inspect.getsource(FullyAutonomousOrchestrator._autonomy_monitor_loop)
         # S48 používá last_monitor_interval s výchozí hodnotou 8.0
@@ -18801,8 +18789,9 @@ class TestSprint32_33(unittest.IsolatedAsyncioTestCase):
 
     async def test_monitor_phase_aware(self):
         """Test že akce se provádějí jen v heavy fázích."""
-        from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator, ResearchPhase
         from unittest.mock import MagicMock, patch
+
+        from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator, ResearchPhase
 
         orch = FullyAutonomousOrchestrator()
         orch._research_mgr = MagicMock()
@@ -18832,8 +18821,9 @@ class TestSprint32_33(unittest.IsolatedAsyncioTestCase):
 
     async def test_monitor_high_memory(self):
         """Test že při RSS > 70 % se MAX_HYPOTHESES sníží na 30."""
-        from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator, ResearchPhase
         from unittest.mock import MagicMock, patch
+
+        from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator, ResearchPhase
 
         orch = FullyAutonomousOrchestrator()
         orch._research_mgr = MagicMock()
@@ -18855,8 +18845,9 @@ class TestSprint32_33(unittest.IsolatedAsyncioTestCase):
 
     async def test_monitor_critical_memory(self):
         """Test že při RSS > 80 % se povolí KVP."""
-        from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator, ResearchPhase
         from unittest.mock import MagicMock, patch
+
+        from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator, ResearchPhase
 
         orch = FullyAutonomousOrchestrator()
         orch._research_mgr = MagicMock()
@@ -18878,8 +18869,9 @@ class TestSprint32_33(unittest.IsolatedAsyncioTestCase):
 
     async def test_monitor_recovery(self):
         """Test že po poklesu RSS pod 60 % se limity vrátí."""
-        from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator, ResearchPhase
         from unittest.mock import MagicMock, patch
+
+        from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator, ResearchPhase
 
         orch = FullyAutonomousOrchestrator()
         orch._research_mgr = MagicMock()
@@ -18902,8 +18894,9 @@ class TestSprint32_33(unittest.IsolatedAsyncioTestCase):
 
     async def test_monitor_cleanup(self):
         """Test že task končí s shutdown_all."""
-        from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
         import asyncio
+
+        from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
 
         orch = FullyAutonomousOrchestrator()
         orch._autonomy_monitor_task = asyncio.create_task(asyncio.sleep(999))
@@ -18925,6 +18918,7 @@ class TestSprint32_33(unittest.IsolatedAsyncioTestCase):
     async def test_bloom_memory_footprint(self):
         """Test že paměťová stopa každého filtru ≤ 1 MB."""
         import sys
+
         from hledac.universal.cache.budget_manager import BudgetManager
 
         bm = BudgetManager()
@@ -18983,6 +18977,7 @@ class TestSprint34SourceBandit(unittest.IsolatedAsyncioTestCase):
         """Ověří, že statistiky přežijí restart."""
         import tempfile
         from pathlib import Path
+
         from hledac.universal.tools.source_bandit import SourceBandit
 
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -19003,6 +18998,7 @@ class TestSprint34SourceBandit(unittest.IsolatedAsyncioTestCase):
         """Ověří, že UCB1 vybírá top-3 zdroje."""
         import tempfile
         from pathlib import Path
+
         from hledac.universal.tools.source_bandit import SourceBandit
 
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -19029,10 +19025,11 @@ class TestSprint34SourceBandit(unittest.IsolatedAsyncioTestCase):
 
     async def test_bandit_update_performance(self):
         """Ověří, že update je rychlý a nepoužívá mnoho RAM."""
-        import time
-        import psutil
         import tempfile
+        import time
         from pathlib import Path
+
+        import psutil
         from hledac.universal.tools.source_bandit import SourceBandit
 
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -19043,7 +19040,7 @@ class TestSprint34SourceBandit(unittest.IsolatedAsyncioTestCase):
             start_time = time.time()
             rss_before = process.memory_info().rss
 
-            for i in range(100):
+            for _i in range(100):
                 bandit.update('web', 0.5)
 
             elapsed = time.time() - start_time
@@ -19057,6 +19054,7 @@ class TestSprint34SourceBandit(unittest.IsolatedAsyncioTestCase):
         """Ověří fallback při selhání LMDB."""
         import tempfile
         from pathlib import Path
+
         from hledac.universal.tools.source_bandit import SourceBandit
 
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -19072,6 +19070,7 @@ class TestSprint34SourceBandit(unittest.IsolatedAsyncioTestCase):
         """Ověří, že se bandit učí – preferuje zdroje s vyšším reward."""
         import tempfile
         from pathlib import Path
+
         from hledac.universal.tools.source_bandit import SourceBandit
 
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -19102,6 +19101,7 @@ class TestSprint35Gaps(unittest.IsolatedAsyncioTestCase):
     async def test_ramdisk_no_del(self):
         """Ověří, že RAMDiskManager nemá metodu __del__."""
         import inspect
+
         from hledac.universal.layers.memory_layer import RAMDiskManager
         source = inspect.getsource(RAMDiskManager)
         self.assertNotIn("def __del__", source)
@@ -19109,6 +19109,7 @@ class TestSprint35Gaps(unittest.IsolatedAsyncioTestCase):
     async def test_ramdisk_shutdown_explicit(self):
         """Ověří, že shutdown() volá nuke()."""
         from unittest.mock import MagicMock
+
         from hledac.universal.layers.memory_layer import RAMDiskManager
         rm = RAMDiskManager.__new__(RAMDiskManager)
         rm.is_attached = True
@@ -19141,7 +19142,8 @@ class TestSprint35Gaps(unittest.IsolatedAsyncioTestCase):
     # === ČÁST C ===
     async def test_inference_engine_autowire(self):
         """Ověří auto‑wiring pouze při dostatku RAM."""
-        from unittest.mock import patch, MagicMock
+        from unittest.mock import MagicMock, patch
+
         from hledac.universal.autonomous_orchestrator import _BrainManager
 
         with patch('psutil.virtual_memory') as mock_vm:
@@ -19167,6 +19169,7 @@ class TestSprint35Gaps(unittest.IsolatedAsyncioTestCase):
     async def test_brain_cleanup_full(self):
         """Ověří, že cleanup volá unload/cleanup na všech motorech."""
         from unittest.mock import AsyncMock, MagicMock
+
         from hledac.universal.autonomous_orchestrator import _BrainManager
 
         bm = _BrainManager(MagicMock())
@@ -19198,8 +19201,8 @@ class TestSprint36Gaps(unittest.IsolatedAsyncioTestCase):
     # === ČÁST A – Gap 10 ===
     async def test_mlx_cache_conditional(self):
         """Ověří, že cache se inicializuje jen když KV_CACHE_AVAILABLE."""
-        from hledac.universal.brain.hermes3_engine import Hermes3Engine, KV_CACHE_AVAILABLE
-        import sys
+
+        from hledac.universal.brain.hermes3_engine import KV_CACHE_AVAILABLE, Hermes3Engine
         # Simulace KV_CACHE_AVAILABLE=False
         if KV_CACHE_AVAILABLE:
             # Patch na úrovni modulu
@@ -19220,8 +19223,9 @@ class TestSprint36Gaps(unittest.IsolatedAsyncioTestCase):
 
     async def test_hermes_cpu_fallback(self):
         """Ověří, že generate() funguje i bez cache (CPU fallback)."""
-        from hledac.universal.brain.hermes3_engine import Hermes3Engine
         from unittest.mock import AsyncMock, MagicMock, patch
+
+        from hledac.universal.brain.hermes3_engine import Hermes3Engine
         engine = Hermes3Engine()
         engine._model = MagicMock()
         engine._tokenizer = MagicMock()
@@ -19251,8 +19255,13 @@ class TestSprint36Gaps(unittest.IsolatedAsyncioTestCase):
     # === ČÁST B – Adversarial verification ===
     async def test_adversarial_triggers(self):
         """Ověří, že se spouští jen pro findings s confidence < 0.9 a max 1 counter."""
-        from hledac.universal.autonomous_orchestrator import _SynthesisManager, ResearchFinding, ResearchSource, SourceType
-        from unittest.mock import MagicMock, AsyncMock
+        from unittest.mock import AsyncMock, MagicMock
+
+        from hledac.universal.autonomous_orchestrator import (
+            ResearchFinding,
+            ResearchSource,
+            _SynthesisManager,
+        )
         orch = MagicMock()
         orch._brain_mgr = MagicMock()
         orch._brain_mgr.hermes = AsyncMock()
@@ -19271,8 +19280,9 @@ class TestSprint36Gaps(unittest.IsolatedAsyncioTestCase):
 
     async def test_adversarial_confidence(self):
         """Ověří správný výpočet nové confidence."""
-        from hledac.universal.autonomous_orchestrator import _SynthesisManager, ResearchFinding, ResearchSource
-        from unittest.mock import MagicMock, AsyncMock
+        from unittest.mock import AsyncMock, MagicMock
+
+        from hledac.universal.autonomous_orchestrator import ResearchFinding, ResearchSource, _SynthesisManager
         orch = MagicMock()
         orch._brain_mgr = MagicMock()
         orch._brain_mgr.hermes = AsyncMock()
@@ -19287,8 +19297,9 @@ class TestSprint36Gaps(unittest.IsolatedAsyncioTestCase):
 
     async def test_adversarial_fallback(self):
         """Ověří fail-safe – při selhání Hermes pokračuje dál."""
-        from hledac.universal.autonomous_orchestrator import _SynthesisManager, ResearchFinding, ResearchSource
-        from unittest.mock import MagicMock, AsyncMock
+        from unittest.mock import AsyncMock, MagicMock
+
+        from hledac.universal.autonomous_orchestrator import ResearchFinding, ResearchSource, _SynthesisManager
         orch = MagicMock()
         orch._brain_mgr = MagicMock()
         orch._brain_mgr.hermes = AsyncMock()
@@ -19307,8 +19318,9 @@ class TestSprint37(unittest.IsolatedAsyncioTestCase):
     # === A. KV Pruning ===
     async def test_prune_only_long_context(self):
         """Ověří, že prune se spustí pouze pokud context > 1024 tokenů."""
-        from hledac.universal.brain.hermes3_engine import Hermes3Engine
         from unittest.mock import MagicMock
+
+        from hledac.universal.brain.hermes3_engine import Hermes3Engine
 
         engine = Hermes3Engine()
         engine._kv_cache_enabled = True
@@ -19329,8 +19341,9 @@ class TestSprint37(unittest.IsolatedAsyncioTestCase):
 
     async def test_prune_offset_reduction(self):
         """Ověří, že prune snižuje offset na 80 % délky."""
-        from hledac.universal.brain.hermes3_engine import Hermes3Engine
         from unittest.mock import MagicMock
+
+        from hledac.universal.brain.hermes3_engine import Hermes3Engine
 
         engine = Hermes3Engine()
         engine._kv_cache_enabled = True
@@ -19380,9 +19393,9 @@ class TestSprint37(unittest.IsolatedAsyncioTestCase):
     # === C. Phase-Aware Monitor ===
     async def test_monitor_history(self):
         """Ověří, že monitor ukládá historické RSS do self._rss_history."""
+        from unittest.mock import AsyncMock, MagicMock, patch
+
         from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator, ResearchPhase
-        from unittest.mock import patch, MagicMock, AsyncMock
-        import asyncio
 
         orch = FullyAutonomousOrchestrator()
         orch._research_mgr = MagicMock()
@@ -19396,7 +19409,7 @@ class TestSprint37(unittest.IsolatedAsyncioTestCase):
 
         # Patch na úrovni modulu kde je asyncio importován
         with patch('psutil.Process') as mock_proc, \
-             patch('hledac.universal.autonomous_orchestrator.asyncio.sleep', new_callable=AsyncMock) as mock_sleep:
+             patch('hledac.universal.autonomous_orchestrator.asyncio.sleep', new_callable=AsyncMock):
             mock_proc.return_value.memory_percent.side_effect = [50, 55, 60, 65]
             # Spustíme 4 iterace (každá volá memory_percent)
             for _ in range(4):
@@ -19415,9 +19428,9 @@ class TestSprint37(unittest.IsolatedAsyncioTestCase):
 
     async def test_monitor_predictive_action(self):
         """Ověří, že při predikci > 80 % se sníží MAX_HYPOTHESES na 20."""
+        from unittest.mock import AsyncMock, MagicMock, patch
+
         from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator, ResearchPhase
-        from unittest.mock import patch, MagicMock, AsyncMock
-        import asyncio
 
         orch = FullyAutonomousOrchestrator()
         orch._research_mgr = MagicMock()
@@ -19435,7 +19448,7 @@ class TestSprint37(unittest.IsolatedAsyncioTestCase):
 
         # Simulace rostoucího RSS → predikce > 80 %
         with patch('psutil.Process') as mock_proc, \
-             patch('asyncio.sleep', new_callable=AsyncMock) as mock_sleep:
+             patch('asyncio.sleep', new_callable=AsyncMock):
             mock_proc.return_value.memory_percent.side_effect = [60, 65, 70, 75, 82]
             # První 4 iterace – pouze ukládá historii
             for _ in range(4):
@@ -19446,9 +19459,9 @@ class TestSprint37(unittest.IsolatedAsyncioTestCase):
 
     async def test_monitor_prediction_fallback(self):
         """Ověří fail-safe při selhání extrapolace."""
+        from unittest.mock import AsyncMock, MagicMock, patch
+
         from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator, ResearchPhase
-        from unittest.mock import patch, MagicMock, AsyncMock
-        import asyncio
 
         orch = FullyAutonomousOrchestrator()
         orch._research_mgr = MagicMock()
@@ -19464,7 +19477,7 @@ class TestSprint37(unittest.IsolatedAsyncioTestCase):
 
         # Méně než 3 hodnoty – extrapolace selže, použijí se reaktivní prahy
         with patch('psutil.Process') as mock_proc, \
-             patch('asyncio.sleep', new_callable=AsyncMock) as mock_sleep:
+             patch('asyncio.sleep', new_callable=AsyncMock):
             mock_proc.return_value.memory_percent.return_value = 75
             await orch._autonomy_monitor_loop()
             # Mělo by se použít reaktivní prahy (MAX_HYPOTHESES=20)
@@ -19475,9 +19488,10 @@ class TestSprint38Monitor(unittest.IsolatedAsyncioTestCase):
     """Sprint 38: Monitor Refactor – _autonomy_monitor_step() je samostatná testovatelná metoda."""
 
     def _make_orch(self):
-        from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator, ResearchPhase
-        from unittest.mock import MagicMock
         from collections import deque
+        from unittest.mock import MagicMock
+
+        from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator, ResearchPhase
 
         orch = FullyAutonomousOrchestrator()
         orch._research_mgr = MagicMock()
@@ -19519,7 +19533,7 @@ class TestSprint38Monitor(unittest.IsolatedAsyncioTestCase):
 
     async def test_monitor_predictive_action(self):
         """Invariant 4: Predikce > 80 % → MAX_HYPOTHESES = 20."""
-        from unittest.mock import patch, AsyncMock
+        from unittest.mock import AsyncMock, patch
 
         orch = self._make_orch()
         orch._brain_mgr = MagicMock()
@@ -19561,9 +19575,10 @@ class TestSprint39(unittest.IsolatedAsyncioTestCase):
 
     async def test_monitor_debounce_prevents_thrash(self):
         """Invariant A2: Po provedení akce se další akce neprovede dříve než za 30 s."""
-        from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator, ResearchPhase
-        from unittest.mock import patch, MagicMock
         from collections import deque
+        from unittest.mock import MagicMock, patch
+
+        from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator, ResearchPhase
 
         orch = FullyAutonomousOrchestrator()
         orch._research_mgr = MagicMock()
@@ -19592,9 +19607,10 @@ class TestSprint39(unittest.IsolatedAsyncioTestCase):
 
     async def test_monitor_debounce_allows_after_interval(self):
         """Invariant A3: Po uplynutí 30 s se akce může provést znovu."""
-        from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator, ResearchPhase
-        from unittest.mock import patch, MagicMock
         from collections import deque
+        from unittest.mock import MagicMock, patch
+
+        from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator, ResearchPhase
 
         orch = FullyAutonomousOrchestrator()
         orch._research_mgr = MagicMock()
@@ -19623,14 +19639,15 @@ class TestSprint39(unittest.IsolatedAsyncioTestCase):
     async def test_kvp_uses_mx_exp(self):
         """Invariant B1: Utility score používá mx.exp místo polynomiální aproximace."""
         import inspect
+
         from hledac.universal.utils import intelligent_cache
         source = inspect.getsource(intelligent_cache)
         self.assertIn('mx.exp', source)
 
     async def test_kvp_exp_accuracy(self):
         """Invariant B2: mx.exp dává stejné hodnoty jako np.exp v rozsahu recency_score 0–3."""
-        import numpy as np
         import mlx.core as mx
+        import numpy as np
         for score in np.linspace(0, 3, 20):
             mlx_val = float(mx.exp(mx.array(-score)).item())
             np_val = float(np.exp(-score))
@@ -19638,8 +19655,9 @@ class TestSprint39(unittest.IsolatedAsyncioTestCase):
 
     async def test_kvp_perf_unchanged(self):
         """Invariant B3: 100 evikcí na 1k cache trvá < 2 s (výkon zachován)."""
-        from hledac.universal.utils.intelligent_cache import IntelligentCache, CacheConfig
         import time
+
+        from hledac.universal.utils.intelligent_cache import CacheConfig, IntelligentCache
 
         cache = IntelligentCache(CacheConfig(max_entries=1000))
         await cache.initialize()
@@ -19652,8 +19670,8 @@ class TestSprint39(unittest.IsolatedAsyncioTestCase):
     # === Část C: CMS Drift Alert ===
     async def test_cms_drift_alert_fires(self):
         """Invariant C1: Při nárůstu frekvence > 50 % se zaloguje varování."""
+
         from hledac.universal.cache.budget_manager import BudgetManager
-        import logging
 
         bm = BudgetManager()
         # První volání: old_freq = 0
@@ -19666,10 +19684,10 @@ class TestSprint39(unittest.IsolatedAsyncioTestCase):
         bm2 = BudgetManager()
         # Nejprve přidáme prvek
         bm2._frequency_tracker.add(12345)
-        old_freq = bm2._frequency_tracker.estimate(12345)
+        bm2._frequency_tracker.estimate(12345)
         # Přidáme znovu - nárůst
         bm2._frequency_tracker.add(12345)
-        new_freq = bm2._frequency_tracker.estimate(12345)
+        bm2._frequency_tracker.estimate(12345)
 
         # Musíme otestovat správně - musíme mockovat estimate
         with self.assertLogs(level='WARNING') as log:
@@ -19683,8 +19701,9 @@ class TestSprint39(unittest.IsolatedAsyncioTestCase):
 
     async def test_cms_drift_no_false_alert(self):
         """Invariant C2: Při nárůstu ≤ 50 % se varování neloguje."""
-        from hledac.universal.cache.budget_manager import BudgetManager
         from unittest.mock import patch
+
+        from hledac.universal.cache.budget_manager import BudgetManager
 
         bm = BudgetManager()
         # Simulujeme, že estimate vrací 10 (stará) a pak 12 (nová) – nárůst 20% < 50%
@@ -19703,8 +19722,9 @@ class TestSprint71DeepAppleSilicon(unittest.IsolatedAsyncioTestCase):
     # === Část A: MLX Semaphores ===
     async def test_mlx_semaphores_exist(self):
         """Invariant A1: _mlx_main_semaphore a _mlx_bg_semaphore existují v __init__."""
-        from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
         import asyncio
+
+        from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
 
         orch = FullyAutonomousOrchestrator()
         self.assertTrue(hasattr(orch, '_mlx_main_semaphore'))
@@ -19919,8 +19939,9 @@ class TestSprint71EDeepAuditFixes(unittest.IsolatedAsyncioTestCase):
     # === Fix 2: Input analysis LRU bounded ===
     async def test_last_input_analysis_is_ordereddict(self):
         """_last_input_analysis je OrderedDict."""
-        from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
         from collections import OrderedDict
+
+        from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
         orch = FullyAutonomousOrchestrator()
         self.assertIsInstance(orch._last_input_analysis, OrderedDict)
 
@@ -19947,8 +19968,9 @@ class TestSprint71EDeepAuditFixes(unittest.IsolatedAsyncioTestCase):
     # === Fix 3: MLX cleanup has eval before clear ===
     async def test_mlx_post_action_cleanup_calls_eval_before_clear(self):
         """_mlx_post_action_cleanup volá mx.eval([]) před clear_cache."""
-        from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
         import inspect
+
+        from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
         orch = FullyAutonomousOrchestrator()
         source = inspect.getsource(orch._mlx_post_action_cleanup)
         # Check that mx.eval([]) appears before mx.metal.clear_cache()
@@ -19961,8 +19983,9 @@ class TestSprint71EDeepAuditFixes(unittest.IsolatedAsyncioTestCase):
     # === Fix 4: Cleanup cancels Sprint 71 tasks ===
     async def test_cleanup_has_sprint71_task_cancellation(self):
         """cleanup() ruší Sprint 71 tasky."""
-        from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
         import inspect
+
+        from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
         source = inspect.getsource(FullyAutonomousOrchestrator.cleanup)
         # Check for Sprint 71E comment and task cancellation
         self.assertIn('Sprint 71E', source)
@@ -20039,7 +20062,7 @@ class TestSprint82FDeepAcquisition(unittest.TestCase):
 
     def test_prf_expansion_basic(self):
         """PRF expansion vrací relevantní termíny bez stop slov."""
-        from hledac.universal.autonomous_orchestrator import _prf_expand, _PRF_STOP_WORDS
+        from hledac.universal.autonomous_orchestrator import _PRF_STOP_WORDS, _prf_expand
 
         # Test with stop words
         query = "quantum computing breakthroughs in cryptography"
@@ -20064,7 +20087,7 @@ class TestSprint82FDeepAcquisition(unittest.TestCase):
 
     def test_prf_expansion_bounded(self):
         """PRF expansion je omezena na max počet termínů."""
-        from hledac.universal.autonomous_orchestrator import _prf_expand, _PRF_MAX_EXPANSION_TERMS
+        from hledac.universal.autonomous_orchestrator import _PRF_MAX_EXPANSION_TERMS, _prf_expand
 
         query = "machine learning deep neural network artificial intelligence algorithm data science research"
         expansions = _prf_expand(query)
@@ -20102,6 +20125,7 @@ class TestSprint82FDeepAcquisition(unittest.TestCase):
     def test_tor_availability_cache(self):
         """Tor availability cache funguje."""
         import asyncio
+
         from hledac.universal.autonomous_orchestrator import _check_tor_available_cached
 
         cache = {}
@@ -20117,17 +20141,17 @@ class TestSprint82FDeepAcquisition(unittest.TestCase):
     def test_constants_defined(self):
         """Všechny konstanty jsou definovány."""
         from hledac.universal.autonomous_orchestrator import (
+            _COMMONS_CRAWL_MAX_LINES,
+            _CROSS_ARCHIVE_DIGEST_MAX,
             _CT_DISCOVERY_MAX_SUBDOMAINS,
             _CT_DISCOVERY_TIMEOUT_SEC,
-            _WAYBACK_QUICK_TIMEOUT_SEC,
-            _WAYBACK_CDX_MAX_LINES,
-            _COMMONS_CRAWL_MAX_LINES,
-            _NECROMANCER_MAX_ATTEMPTS,
             _NECROMANCER_BUDGET_PER_SPRINT,
-            _PRF_MAX_EXPANSION_TERMS,
+            _NECROMANCER_MAX_ATTEMPTS,
             _ONION_BUDGET_PER_SPRINT,
             _ONION_PREFLIGHT_CACHE_TTL_SEC,
-            _CROSS_ARCHIVE_DIGEST_MAX,
+            _PRF_MAX_EXPANSION_TERMS,
+            _WAYBACK_CDX_MAX_LINES,
+            _WAYBACK_QUICK_TIMEOUT_SEC,
         )
 
         # Verify values are reasonable
@@ -20146,8 +20170,9 @@ class TestSprint82FDeepAcquisition(unittest.TestCase):
     def test_sprint_state_metrics_exist(self):
         """Sprint state obsahuje Sprint 82F metriky."""
         # Check the source code for metrics
-        from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
         import inspect
+
+        from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
         source = inspect.getsource(FullyAutonomousOrchestrator.__init__)
 
         required_metrics = [
@@ -20166,8 +20191,9 @@ class TestSprint82FDeepAcquisition(unittest.TestCase):
 
     def test_instance_state_variables(self):
         """Instance proměnné pro Sprint 82F jsou inicializovány."""
-        from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
         import inspect
+
+        from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
         source = inspect.getsource(FullyAutonomousOrchestrator.__init__)
 
         required_vars = [
@@ -20221,8 +20247,8 @@ class TestSprint82GWinnerSynthesis(unittest.TestCase):
             _FINAL_SYNTHESIS_MAX_CHARS,
             _FINAL_SYNTHESIS_MAX_CLAIMS,
             _FINAL_SYNTHESIS_MAX_GAPS,
-            _GAP_CHECK_BUDGET,
             _FORCE_GC_BEFORE_SYNTHESIS,
+            _GAP_CHECK_BUDGET,
         )
 
         # Verify bounds
@@ -20266,8 +20292,9 @@ class TestSprint82GWinnerSynthesis(unittest.TestCase):
 
     def test_orchestrator_has_compression_state(self):
         """Orchestrator má compression state atribut."""
-        from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
         import inspect
+
+        from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
 
         source = inspect.getsource(FullyAutonomousOrchestrator.__init__)
 
@@ -20277,8 +20304,9 @@ class TestSprint82GWinnerSynthesis(unittest.TestCase):
 
     def test_orchestrator_has_memory_release_method(self):
         """Orchestrator má metodu pro uvolnění paměti před syntézou."""
-        from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
         import inspect
+
+        from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
 
         # Check method exists
         self.assertTrue(hasattr(FullyAutonomousOrchestrator, '_release_memory_before_synthesis'))
@@ -20579,9 +20607,8 @@ class TestSprintIdentityStitchingHardening(unittest.TestCase):
 
     def test_bounded_constants_exist(self):
         """Bounded constants jsou definovány."""
-        import os
         path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'autonomous_orchestrator.py')
-        with open(path, 'r') as f:
+        with open(path) as f:
             source = f.read()
 
         self.assertIn('_MAX_IDENTITY_CANDIDATES', source)
@@ -20591,9 +20618,8 @@ class TestSprintIdentityStitchingHardening(unittest.TestCase):
 
     def test_timeout_guard_exists(self):
         """Timeout guard je implementován."""
-        import os
         path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'autonomous_orchestrator.py')
-        with open(path, 'r') as f:
+        with open(path) as f:
             source = f.read()
 
         self.assertIn('asyncio.wait_for', source)
@@ -20602,9 +20628,8 @@ class TestSprintIdentityStitchingHardening(unittest.TestCase):
 
     def test_metadata_fields_exist(self):
         """Handler vrací správná metadata."""
-        import os
         path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'autonomous_orchestrator.py')
-        with open(path, 'r') as f:
+        with open(path) as f:
             source = f.read()
 
         self.assertIn('emails_processed', source)
@@ -20617,9 +20642,8 @@ class TestSprintIdentityStitchingHardening(unittest.TestCase):
 
     def test_seen_guard_exists(self):
         """Seen guard je implementován."""
-        import os
         path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'autonomous_orchestrator.py')
-        with open(path, 'r') as f:
+        with open(path) as f:
             source = f.read()
 
 
@@ -20632,9 +20656,8 @@ class TestSprintIdentityPropagation(unittest.TestCase):
 
     def test_propagation_constants_exist(self):
         """Konstanty pro propagation jsou definovány."""
-        import os
         path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'autonomous_orchestrator.py')
-        with open(path, 'r') as f:
+        with open(path) as f:
             source = f.read()
 
         self.assertIn('PROPAGATION_HINT_TTL_ITERATIONS', source)
@@ -20644,9 +20667,8 @@ class TestSprintIdentityPropagation(unittest.TestCase):
 
     def test_propagation_storage_exists(self):
         """Propagation hints storage je implementován."""
-        import os
         path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'autonomous_orchestrator.py')
-        with open(path, 'r') as f:
+        with open(path) as f:
             source = f.read()
 
         self.assertIn('_propagation_hints', source)
@@ -20654,18 +20676,16 @@ class TestSprintIdentityPropagation(unittest.TestCase):
 
     def test_propagation_depth_initialized(self):
         """Propagation depth je inicializován."""
-        import os
         path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'autonomous_orchestrator.py')
-        with open(path, 'r') as f:
+        with open(path) as f:
             source = f.read()
 
         self.assertIn('_propagation_depth = 0', source)
 
     def test_propagation_hints_in_analyze_state(self):
         """Analyze state vrací propagation hints."""
-        import os
         path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'autonomous_orchestrator.py')
-        with open(path, 'r') as f:
+        with open(path) as f:
             source = f.read()
 
         self.assertIn('"propagation_hints"', source)
@@ -20673,9 +20693,8 @@ class TestSprintIdentityPropagation(unittest.TestCase):
 
     def test_propagation_hints_in_metadata(self):
         """Identity stitching handler vrací propagation hints v metadata."""
-        import os
         path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'autonomous_orchestrator.py')
-        with open(path, 'r') as f:
+        with open(path) as f:
             source = f.read()
 
         self.assertIn('propagation_hints_generated', source)
@@ -20687,9 +20706,8 @@ class TestSprintIdentityPropagation(unittest.TestCase):
 
     def test_score_boost_in_decide_next_action(self):
         """Score boost z propagation hints je aplikován."""
-        import os
         path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'autonomous_orchestrator.py')
-        with open(path, 'r') as f:
+        with open(path) as f:
             source = f.read()
 
         self.assertIn('hint_boost_factor', source)
@@ -20697,9 +20715,8 @@ class TestSprintIdentityPropagation(unittest.TestCase):
 
     def test_low_value_domain_filter(self):
         """Low-value domény jsou filtrovány."""
-        import os
         path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'autonomous_orchestrator.py')
-        with open(path, 'r') as f:
+        with open(path) as f:
             source = f.read()
 
         self.assertIn('_LOW_VALUE_PLATFORMS', source)
@@ -20709,9 +20726,8 @@ class TestSprintIdentityPropagation(unittest.TestCase):
 
     def test_action_diversity_guard(self):
         """Action diversity guard je implementován."""
-        import os
         path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'autonomous_orchestrator.py')
-        with open(path, 'r') as f:
+        with open(path) as f:
             source = f.read()
 
         # Action count pro diversitu
@@ -20724,27 +20740,24 @@ class TestSprintPropagationExecutionContext(unittest.TestCase):
 
     def test_selected_hint_storage_exists(self):
         """_selected_hint instance variable existuje."""
-        import os
         path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'autonomous_orchestrator.py')
-        with open(path, 'r') as f:
+        with open(path) as f:
             source = f.read()
 
         self.assertIn('_selected_hint', source)
 
     def test_selected_hint_in_analyze_state(self):
         """selected_hint je vracen v analyze_state."""
-        import os
         path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'autonomous_orchestrator.py')
-        with open(path, 'r') as f:
+        with open(path) as f:
             source = f.read()
 
         self.assertIn('"selected_hint"', source)
 
     def test_propagation_reset_in_research(self):
         """Reset propagation state na začátku research()."""
-        import os
         path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'autonomous_orchestrator.py')
-        with open(path, 'r') as f:
+        with open(path) as f:
             source = f.read()
 
         # Reset při novém research runu
@@ -20753,9 +20766,8 @@ class TestSprintPropagationExecutionContext(unittest.TestCase):
 
     def test_ttl_expiration_cleanup(self):
         """TTL expiration cleanup v loopu."""
-        import os
         path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'autonomous_orchestrator.py')
-        with open(path, 'r') as f:
+        with open(path) as f:
             source = f.read()
 
         # Cleanup expired hints
@@ -20764,18 +20776,16 @@ class TestSprintPropagationExecutionContext(unittest.TestCase):
 
     def test_winning_hint_tracking(self):
         """winning_hint_for_action sleduje který hint vyhrál."""
-        import os
         path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'autonomous_orchestrator.py')
-        with open(path, 'r') as f:
+        with open(path) as f:
             source = f.read()
 
         self.assertIn('winning_hint_for_action', source)
 
     def test_selected_hint_after_action_selection(self):
         """_selected_hint je nastaven po výběru akce."""
-        import os
         path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'autonomous_orchestrator.py')
-        with open(path, 'r') as f:
+        with open(path) as f:
             source = f.read()
 
         # Sprint 4A: Assignment now via selected_hint variable (changed from direct winning_hint_for_action)
@@ -20783,9 +20793,8 @@ class TestSprintPropagationExecutionContext(unittest.TestCase):
 
     def test_consumption_after_one_iteration(self):
         """Hint je cleared po jedné iteraci."""
-        import os
         path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'autonomous_orchestrator.py')
-        with open(path, 'r') as f:
+        with open(path) as f:
             source = f.read()
 
         # Clear hint after one iteration
@@ -20797,18 +20806,16 @@ class TestSprintFairABBenchmark(unittest.TestCase):
 
     def test_propagation_enabled_flag_exists(self):
         """_propagation_enabled flag existuje."""
-        import os
         path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'autonomous_orchestrator.py')
-        with open(path, 'r') as f:
+        with open(path) as f:
             source = f.read()
 
         self.assertIn('_propagation_enabled', source)
 
     def test_propagation_enabled_default_true(self):
         """Default je True pro produkci."""
-        import os
         path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'autonomous_orchestrator.py')
-        with open(path, 'r') as f:
+        with open(path) as f:
             source = f.read()
 
         # Default je True
@@ -20816,9 +20823,8 @@ class TestSprintFairABBenchmark(unittest.TestCase):
 
     def test_propagation_boost_respects_flag(self):
         """Boost se aplikuje pouze když je _propagation_enabled."""
-        import os
         path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'autonomous_orchestrator.py')
-        with open(path, 'r') as f:
+        with open(path) as f:
             source = f.read()
 
         # Podmíněná aplikace boostu
@@ -20826,18 +20832,16 @@ class TestSprintFairABBenchmark(unittest.TestCase):
 
     def test_run_benchmark_method_exists(self):
         """run_benchmark metoda existuje."""
-        import os
         path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'autonomous_orchestrator.py')
-        with open(path, 'r') as f:
+        with open(path) as f:
             source = f.read()
 
         self.assertIn('async def run_benchmark', source)
 
     def test_run_benchmark_returns_dict(self):
         """run_benchmark vrací dict s metrikami."""
-        import os
         path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'autonomous_orchestrator.py')
-        with open(path, 'r') as f:
+        with open(path) as f:
             source = f.read()
 
         # Návratový typ
@@ -20846,9 +20850,8 @@ class TestSprintFairABBenchmark(unittest.TestCase):
 
     def test_benchmark_reset_contract(self):
         """Benchmark resetuje všechen propagation state."""
-        import os
         path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'autonomous_orchestrator.py')
-        with open(path, 'r') as f:
+        with open(path) as f:
             source = f.read()
 
         # Reset všech state proměnných
@@ -20859,9 +20862,8 @@ class TestSprintFairABBenchmark(unittest.TestCase):
 
     def test_benchmark_warmup_phase(self):
         """Benchmark má warmup fázi."""
-        import os
         path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'autonomous_orchestrator.py')
-        with open(path, 'r') as f:
+        with open(path) as f:
             source = f.read()
 
         # Warmup
@@ -20870,9 +20872,8 @@ class TestSprintFairABBenchmark(unittest.TestCase):
 
     def test_benchmark_metrics_structure(self):
         """Benchmark sbírá správné metriky."""
-        import os
         path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'autonomous_orchestrator.py')
-        with open(path, 'r') as f:
+        with open(path) as f:
             source = f.read()
 
         # Klíčové metriky
@@ -20883,9 +20884,8 @@ class TestSprintFairABBenchmark(unittest.TestCase):
 
     def test_hint_id_uniqueness(self):
         """Hint ID je unikátní přes benchmark běhy."""
-        import os
         path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'autonomous_orchestrator.py')
-        with open(path, 'r') as f:
+        with open(path) as f:
             source = f.read()
 
         # Benchmark run ID pro unikátnost
@@ -20894,9 +20894,8 @@ class TestSprintFairABBenchmark(unittest.TestCase):
 
     def test_hint_outcomes_tracking(self):
         """_hint_outcomes se správně plní."""
-        import os
         path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'autonomous_orchestrator.py')
-        with open(path, 'r') as f:
+        with open(path) as f:
             source = f.read()
 
         # Hint outcomes tracking
@@ -20906,9 +20905,8 @@ class TestSprintFairABBenchmark(unittest.TestCase):
 
     def test_hint_outcomes_reset(self):
         """_hint_outcomes se po resetu vyčistí."""
-        import os
         path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'autonomous_orchestrator.py')
-        with open(path, 'r') as f:
+        with open(path) as f:
             source = f.read()
 
         # Hint outcomes reset
@@ -20916,9 +20914,8 @@ class TestSprintFairABBenchmark(unittest.TestCase):
 
     def test_entity_discovery_rate(self):
         """Entity discovery rate je počítaná z explicitně definovaných typů."""
-        import os
         path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'autonomous_orchestrator.py')
-        with open(path, 'r') as f:
+        with open(path) as f:
             source = f.read()
 
         # Entity discovery tracking
@@ -20929,9 +20926,8 @@ class TestSprintFairABBenchmark(unittest.TestCase):
 
     def test_hhi_calculation(self):
         """HHI výpočet je korektní."""
-        import os
         path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'autonomous_orchestrator.py')
-        with open(path, 'r') as f:
+        with open(path) as f:
             source = f.read()
 
         # HHI formula
@@ -20940,9 +20936,8 @@ class TestSprintFairABBenchmark(unittest.TestCase):
 
     def test_data_mode_declaration(self):
         """Benchmark má explicitní data_mode declaration."""
-        import os
         path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'autonomous_orchestrator.py')
-        with open(path, 'r') as f:
+        with open(path) as f:
             source = f.read()
 
         # Data mode
@@ -20951,9 +20946,8 @@ class TestSprintFairABBenchmark(unittest.TestCase):
 
     def test_propagation_derived_rates(self):
         """Propagation derived rates jsou počítané."""
-        import os
         path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'autonomous_orchestrator.py')
-        with open(path, 'r') as f:
+        with open(path) as f:
             source = f.read()
 
         # Derived rates
@@ -20985,9 +20979,8 @@ class TestSprint3AOfflineReplayTemporal(unittest.TestCase):
 
     def test_temporal_metrics_in_benchmark(self):
         """Temporal metriky jsou v benchmark metrics."""
-        import os
         path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'autonomous_orchestrator.py')
-        with open(path, 'r') as f:
+        with open(path) as f:
             source = f.read()
 
         # Temporal metrics
@@ -20997,9 +20990,8 @@ class TestSprint3AOfflineReplayTemporal(unittest.TestCase):
 
     def test_freshness_bonus_in_scorer(self):
         """Freshness bonus je v surface_search scoreru."""
-        import os
         path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'autonomous_orchestrator.py')
-        with open(path, 'r') as f:
+        with open(path) as f:
             source = f.read()
 
         # Freshness bonus in scorer
@@ -21008,9 +21000,8 @@ class TestSprint3AOfflineReplayTemporal(unittest.TestCase):
 
     def test_contradiction_metrics_in_benchmark(self):
         """Contradiction metriky jsou v benchmark metrics."""
-        import os
         path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'autonomous_orchestrator.py')
-        with open(path, 'r') as f:
+        with open(path) as f:
             source = f.read()
 
         # Contradiction metrics
@@ -21019,9 +21010,8 @@ class TestSprint3AOfflineReplayTemporal(unittest.TestCase):
 
     def test_source_categories_tracking(self):
         """Source categories jsou trackované."""
-        import os
         path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'autonomous_orchestrator.py')
-        with open(path, 'r') as f:
+        with open(path) as f:
             source = f.read()
 
         # Source categories tracking
@@ -21033,9 +21023,8 @@ class TestSprint3BOfflineReplayOverlap(unittest.TestCase):
 
     def test_identity_pool_in_offline_replay(self):
         """Identity pool je v OFFLINE_REPLAY kódu."""
-        import os
         path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'autonomous_orchestrator.py')
-        with open(path, 'r') as f:
+        with open(path) as f:
             source = f.read()
 
         # Identity pool
@@ -21045,9 +21034,8 @@ class TestSprint3BOfflineReplayOverlap(unittest.TestCase):
 
     def test_identity_injection_in_snippet(self):
         """Identity je injectovaná do snippet/content."""
-        import os
         path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'autonomous_orchestrator.py')
-        with open(path, 'r') as f:
+        with open(path) as f:
             source = f.read()
 
         # Identity injection in content
@@ -21056,9 +21044,8 @@ class TestSprint3BOfflineReplayOverlap(unittest.TestCase):
 
     def test_source_type_from_identity_type(self):
         """Source type je odvozený z identity type, ne z localhost URL."""
-        import os
         path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'autonomous_orchestrator.py')
-        with open(path, 'r') as f:
+        with open(path) as f:
             source = f.read()
 
         # identity_type in metadata
@@ -21067,9 +21054,8 @@ class TestSprint3BOfflineReplayOverlap(unittest.TestCase):
 
     def test_synthetic_mock_still_works(self):
         """SYNTHETIC_MOCK režim stále funguje (regression guard)."""
-        import os
         path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'autonomous_orchestrator.py')
-        with open(path, 'r') as f:
+        with open(path) as f:
             source = f.read()
 
         # Check SYNTHETIC_MOCK data
@@ -21083,9 +21069,8 @@ class TestSprint4AOfflineReplayRealism(unittest.TestCase):
 
     def test_ttl_increased_to_20(self):
         """TTL bylo zvýšeno z 5 na 20 iterací."""
-        import os
         path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'autonomous_orchestrator.py')
-        with open(path, 'r') as f:
+        with open(path) as f:
             source = f.read()
 
         # Sprint 4A: TTL increased
@@ -21093,9 +21078,8 @@ class TestSprint4AOfflineReplayRealism(unittest.TestCase):
 
     def test_expired_counter_exists(self):
         """_propagation_hints_expired counter existuje."""
-        import os
         path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'autonomous_orchestrator.py')
-        with open(path, 'r') as f:
+        with open(path) as f:
             source = f.read()
 
         # Sprint 4A: expired counter
@@ -21103,9 +21087,8 @@ class TestSprint4AOfflineReplayRealism(unittest.TestCase):
 
     def test_burst_guard_exists(self):
         """_consecutive_hint_driven_count pro burst guard existuje."""
-        import os
         path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'autonomous_orchestrator.py')
-        with open(path, 'r') as f:
+        with open(path) as f:
             source = f.read()
 
         # Sprint 4A: burst guard
@@ -21113,9 +21096,8 @@ class TestSprint4AOfflineReplayRealism(unittest.TestCase):
 
     def test_hint_lag_tracking_exists(self):
         """_hint_lag_sum/_hint_lag_count pro lag tracking existují."""
-        import os
         path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'autonomous_orchestrator.py')
-        with open(path, 'r') as f:
+        with open(path) as f:
             source = f.read()
 
         # Sprint 4A: lag tracking
@@ -21124,9 +21106,8 @@ class TestSprint4AOfflineReplayRealism(unittest.TestCase):
 
     def test_expired_count_in_scorer(self):
         """Expired hints jsou počítány ve scoreru."""
-        import os
         path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'autonomous_orchestrator.py')
-        with open(path, 'r') as f:
+        with open(path) as f:
             source = f.read()
 
         # Sprint 4A: expired count in scorer
@@ -21135,9 +21116,8 @@ class TestSprint4AOfflineReplayRealism(unittest.TestCase):
 
     def test_propagation_hint_accounting_equation_holds(self):
         """Accounting equation: generated = consumed + expired + evicted + pending."""
-        import os
         path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'autonomous_orchestrator.py')
-        with open(path, 'r') as f:
+        with open(path) as f:
             source = f.read()
 
         # Sprint 4D: cumulative counter exists
@@ -21147,9 +21127,8 @@ class TestSprint4AOfflineReplayRealism(unittest.TestCase):
 
     def test_bounded_queue_evicts_with_accounting(self):
         """Bounded deque evicts with accounting."""
-        import os
         path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'autonomous_orchestrator.py')
-        with open(path, 'r') as f:
+        with open(path) as f:
             source = f.read()
 
         # Sprint 4D: eviction accounting before append
@@ -21157,9 +21136,8 @@ class TestSprint4AOfflineReplayRealism(unittest.TestCase):
 
     def test_cumulative_generated_counter(self):
         """Cumulative generated counter exists."""
-        import os
         path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'autonomous_orchestrator.py')
-        with open(path, 'r') as f:
+        with open(path) as f:
             source = f.read()
 
         # Sprint 4D: cumulative counter reset on benchmark
@@ -21185,7 +21163,6 @@ class TestSprint4EIdentityYield(unittest.IsolatedAsyncioTestCase):
 
     def test_generic_prefix_can_survive_with_corroboration(self):
         """Verify generic prefix filtering considers corroboration."""
-        from collections import deque
         from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
 
         orch = FullyAutonomousOrchestrator()
@@ -21212,9 +21189,8 @@ class TestSprint4EIdentityYield(unittest.IsolatedAsyncioTestCase):
 
     def test_offline_replay_overlay_is_clustered_not_uniform(self):
         """Verify OFFLINE_REPLAY overlay uses clustered identity assignment."""
-        import os
         path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'autonomous_orchestrator.py')
-        with open(path, 'r') as f:
+        with open(path) as f:
             source = f.read()
 
         # Check for clustered identity pool with temporal drift
@@ -21225,9 +21201,8 @@ class TestSprint4EIdentityYield(unittest.IsolatedAsyncioTestCase):
 
     def test_identity_signal_scoring_is_bounded_and_deterministic(self):
         """Verify signal scoring uses bounded buckets and is deterministic."""
-        import os
         path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'autonomous_orchestrator.py')
-        with open(path, 'r') as f:
+        with open(path) as f:
             source = f.read()
 
         # Check score buckets exist in source
@@ -21270,7 +21245,7 @@ class TestSprint4EIdentityYield(unittest.IsolatedAsyncioTestCase):
 
         # With base budget of 3, we should get at least 3 candidates
         hints_generated = 0
-        for c in candidates:
+        for _c in candidates:
             if hints_generated >= PROPAGATION_YIELD_BUDGET:
                 break
             hints_generated += 1
@@ -21290,9 +21265,8 @@ class TestSprint4EIdentityYield(unittest.IsolatedAsyncioTestCase):
 
     def test_synthetic_mock_still_works(self):
         """Verify synthetic mock fallback still works after changes."""
-        import os
         path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'autonomous_orchestrator.py')
-        with open(path, 'r') as f:
+        with open(path) as f:
             source = f.read()
 
         # Verify key propagation attributes exist in source
@@ -21307,9 +21281,8 @@ class TestSprint4GPrecisionTracking(unittest.TestCase):
 
     def test_true_target_consumption_is_tracked_separately(self):
         """Verify consumed_via_true_target_match counter exists and is tracked."""
-        import os
         path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'autonomous_orchestrator.py')
-        with open(path, 'r') as f:
+        with open(path) as f:
             source = f.read()
 
         # Check for true target match tracking
@@ -21318,9 +21291,8 @@ class TestSprint4GPrecisionTracking(unittest.TestCase):
 
     def test_relaxed_fallback_consumption_is_tracked_separately(self):
         """Verify consumed_via_relaxed_fallback counter exists and is tracked."""
-        import os
         path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'autonomous_orchestrator.py')
-        with open(path, 'r') as f:
+        with open(path) as f:
             source = f.read()
 
         # Check for relaxed fallback tracking
@@ -21329,9 +21301,8 @@ class TestSprint4GPrecisionTracking(unittest.TestCase):
 
     def test_hint_metadata_contains_small_precision_context(self):
         """Verify hint metadata contains match_type and identity_source."""
-        import os
         path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'autonomous_orchestrator.py')
-        with open(path, 'r') as f:
+        with open(path) as f:
             source = f.read()
 
         # Check for match_type in hint
@@ -21340,9 +21311,8 @@ class TestSprint4GPrecisionTracking(unittest.TestCase):
 
     def test_precision_score_uses_true_target_consumption(self):
         """Verify propagation_precision_score formula uses true_target."""
-        import os
         path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'autonomous_orchestrator.py')
-        with open(path, 'r') as f:
+        with open(path) as f:
             source = f.read()
 
         # Check for precision score calculation
@@ -21351,9 +21321,8 @@ class TestSprint4GPrecisionTracking(unittest.TestCase):
 
     def test_action_name_is_canonical_for_true_match_gate(self):
         """Verify action names are consistent between hint and _process_result."""
-        import os
         path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'autonomous_orchestrator.py')
-        with open(path, 'r') as f:
+        with open(path) as f:
             source = f.read()
 
         # Check for action comparison in _process_result
@@ -21366,9 +21335,8 @@ class TestSprint4IZombieHintEradication(unittest.TestCase):
 
     def test_consumed_hint_is_never_reused_for_score_boost(self):
         """Verify consumed hints are skipped in scorer boost path."""
-        import os
         path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'autonomous_orchestrator.py')
-        with open(path, 'r') as f:
+        with open(path) as f:
             source = f.read()
 
         # Check that scorer boost path checks consumed flag
@@ -21378,9 +21346,8 @@ class TestSprint4IZombieHintEradication(unittest.TestCase):
 
     def test_consumed_hint_is_never_recounted_in_process_result(self):
         """Verify _process_result marks original hint as consumed."""
-        import os
         path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'autonomous_orchestrator.py')
-        with open(path, 'r') as f:
+        with open(path) as f:
             source = f.read()
 
         # Check that _process_result finds and marks original hint
@@ -21390,9 +21357,8 @@ class TestSprint4IZombieHintEradication(unittest.TestCase):
 
     def test_fallback_skips_consumed_hints(self):
         """Verify fallback path also checks consumed flag."""
-        import os
         path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'autonomous_orchestrator.py')
-        with open(path, 'r') as f:
+        with open(path) as f:
             source = f.read()
 
         # Check fallback path in _process_result skips consumed
@@ -21402,9 +21368,8 @@ class TestSprint4IZombieHintEradication(unittest.TestCase):
 
     def test_consumed_flag_uses_dict_key_not_attribute(self):
         """Verify consumed flag is always accessed as dict key, not attribute."""
-        import os
         path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'autonomous_orchestrator.py')
-        with open(path, 'r') as f:
+        with open(path) as f:
             source = f.read()
 
         # Must use hint.get('consumed', False) not hint.consumed
@@ -21415,9 +21380,8 @@ class TestSprint4IZombieHintEradication(unittest.TestCase):
 
     def test_hhi_is_computed_in_benchmark(self):
         """Verify HHI is computed and logged in benchmark."""
-        import os
         path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'autonomous_orchestrator.py')
-        with open(path, 'r') as f:
+        with open(path) as f:
             source = f.read()
 
         # Check that HHI is computed
@@ -21425,9 +21389,8 @@ class TestSprint4IZombieHintEradication(unittest.TestCase):
 
     def test_synthetic_mock_still_works(self):
         """Verify synthetic mock mode is still functional."""
-        import os
         path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'autonomous_orchestrator.py')
-        with open(path, 'r') as f:
+        with open(path) as f:
             source = f.read()
 
         # Check that synthetic mock path exists
@@ -21440,9 +21403,7 @@ class TestSprint5ABaselineScorecard(unittest.TestCase):
 
     def test_benchmark_runs_without_error_in_offline_replay(self):
         """Benchmark can run in OFFLINE_REPLAY mode without errors."""
-        import asyncio
         import sys
-        import os
         sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
         # Quick test - just check the method exists and returns dict
@@ -21451,9 +21412,8 @@ class TestSprint5ABaselineScorecard(unittest.TestCase):
 
     def test_scorecard_contains_required_metrics(self):
         """Scorecard contains all required baseline metrics."""
-        import os
         path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'autonomous_orchestrator.py')
-        with open(path, 'r') as f:
+        with open(path) as f:
             source = f.read()
 
         # Check required metrics exist
@@ -21470,9 +21430,8 @@ class TestSprint5ABaselineScorecard(unittest.TestCase):
 
     def test_repeatability_runs_are_reported(self):
         """Benchmark reports can include repeatability data."""
-        import os
         path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'autonomous_orchestrator.py')
-        with open(path, 'r') as f:
+        with open(path) as f:
             source = f.read()
 
         # Sprint 5A-R2: Check iteration cap was raised to 5000
@@ -21480,9 +21439,8 @@ class TestSprint5ABaselineScorecard(unittest.TestCase):
 
     def test_hhi_warning_is_reported_above_threshold(self):
         """HHI > 0.70 triggers ACTION_DIVERSITY_WARNING."""
-        import os
         path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'autonomous_orchestrator.py')
-        with open(path, 'r') as f:
+        with open(path) as f:
             source = f.read()
 
         # Check HHI threshold logic
@@ -21491,9 +21449,8 @@ class TestSprint5ABaselineScorecard(unittest.TestCase):
 
     def test_memory_leak_warning_uses_rss_delta_per_iteration(self):
         """Memory leak warning uses RSS delta per iteration."""
-        import os
         path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'autonomous_orchestrator.py')
-        with open(path, 'r') as f:
+        with open(path) as f:
             source = f.read()
 
         # Check RSS delta per iteration
@@ -21502,9 +21459,8 @@ class TestSprint5ABaselineScorecard(unittest.TestCase):
 
     def test_benchmark_prefers_offline_replay_when_seeded(self):
         """Benchmark prefers OFFLINE_REPLAY when self-seeded data available."""
-        import os
         path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'autonomous_orchestrator.py')
-        with open(path, 'r') as f:
+        with open(path) as f:
             source = f.read()
 
         # Check offline replay preference
@@ -21513,9 +21469,8 @@ class TestSprint5ABaselineScorecard(unittest.TestCase):
 
     def test_inter_run_reset_clears_findings_sources_and_hints(self):
         """Benchmark inter-run reset clears findings, sources, and propagation hints."""
-        import os
         path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'autonomous_orchestrator.py')
-        with open(path, 'r') as f:
+        with open(path) as f:
             source = f.read()
 
         # Check repeatability benchmark logic exists
@@ -21532,9 +21487,8 @@ class TestSprint5CCapabilityRadar(unittest.TestCase):
 
     def test_capability_radar_attributes_exist(self):
         """Orchestrator has capability radar attributes."""
-        import os
         path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'autonomous_orchestrator.py')
-        with open(path, 'r') as f:
+        with open(path) as f:
             source = f.read()
 
         # Check capability radar attributes
@@ -21548,9 +21502,8 @@ class TestSprint5CCapabilityRadar(unittest.TestCase):
 
     def test_capability_radar_methods_exist(self):
         """Capability radar methods are defined."""
-        import os
         path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'autonomous_orchestrator.py')
-        with open(path, 'r') as f:
+        with open(path) as f:
             source = f.read()
 
         # Check radar methods
@@ -21565,7 +21518,6 @@ class TestSprint5CCapabilityRadar(unittest.TestCase):
 
     def test_onion_target_requires_high_anonymity(self):
         """ Onion URLs require HIGH anonymity."""
-        import os
         import sys
         sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
         from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
@@ -21584,9 +21536,8 @@ class TestSprint5CCapabilityRadar(unittest.TestCase):
 
     def test_federated_activation_without_config_flag(self):
         """Federated activation no longer requires config flag."""
-        import os
         path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'autonomous_orchestrator.py')
-        with open(path, 'r') as f:
+        with open(path) as f:
             source = f.read()
 
         # The old config gate should be replaced
@@ -21597,10 +21548,9 @@ class TestSprint5CCapabilityRadar(unittest.TestCase):
 
     def test_circuit_breaker_attributes_exist(self):
         """Circuit breaker for transports is defined."""
-        import os
         # Circuit breaker attributes are in the legacy module, not the facade
         path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'legacy', 'autonomous_orchestrator.py')
-        with open(path, 'r') as f:
+        with open(path) as f:
             source = f.read()
 
         # Check circuit breaker attributes
@@ -21611,7 +21561,6 @@ class TestSprint5CCapabilityRadar(unittest.TestCase):
 
     def test_transport_ema_update_logic(self):
         """Transport EMA updates correctly on success/failure."""
-        import os
         import sys
         sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
         from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
@@ -21633,9 +21582,8 @@ class TestSprint5CCapabilityRadar(unittest.TestCase):
 
     def test_federated_task_tracking_exists(self):
         """Federated task tracking attribute exists."""
-        import os
         path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'autonomous_orchestrator.py')
-        with open(path, 'r') as f:
+        with open(path) as f:
             source = f.read()
 
         # Check federated task tracking
@@ -21643,7 +21591,6 @@ class TestSprint5CCapabilityRadar(unittest.TestCase):
 
     def test_autonomous_federated_activation_conditions(self):
         """Federated activation has proper conditions."""
-        import os
         import sys
         sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
         from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
@@ -21675,9 +21622,8 @@ class TestSprint5DOnionTransportIntegration(unittest.TestCase):
 
     def test_onion_handler_uses_transport_selection(self):
         """Onion handler integrates autonomous transport selection."""
-        import os
         path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'autonomous_orchestrator.py')
-        with open(path, 'r') as f:
+        with open(path) as f:
             source = f.read()
 
         # Check that _handle_crawl_onion uses _select_transport_for_target
@@ -21686,9 +21632,8 @@ class TestSprint5DOnionTransportIntegration(unittest.TestCase):
 
     def test_onion_fetch_handler_uses_transport_selection(self):
         """onion_fetch_handler integrates autonomous transport selection."""
-        import os
         path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'autonomous_orchestrator.py')
-        with open(path, 'r') as f:
+        with open(path) as f:
             source = f.read()
 
         # Check that onion_fetch_handler uses transport selection
@@ -21698,7 +21643,6 @@ class TestSprint5DOnionTransportIntegration(unittest.TestCase):
 
     def test_transport_selection_tracking_attributes_exist(self):
         """Transport selection tracking attributes exist."""
-        import os
         import sys
         sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
         from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
@@ -21712,7 +21656,6 @@ class TestSprint5DOnionTransportIntegration(unittest.TestCase):
 
     def test_transport_selection_for_onion_target(self):
         """_select_transport_for_target returns 'tor' for .onion."""
-        import os
         import sys
         sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
         from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
@@ -21725,7 +21668,6 @@ class TestSprint5DOnionTransportIntegration(unittest.TestCase):
 
     def test_transport_selection_for_regular_target(self):
         """_select_transport_for_target returns 'default' for regular URLs."""
-        import os
         import sys
         sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
         from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
@@ -21742,7 +21684,6 @@ class TestSprint5EResearchDepthMetrics(unittest.TestCase):
 
     def test_source_category_entropy_safe_at_zero(self):
         """source_category_entropy returns 0.0 when no sources."""
-        import math
         # Simulate calculation
         source_type_counts = {}
         total = sum(source_type_counts.values())
@@ -21764,7 +21705,6 @@ class TestSprint5EResearchDepthMetrics(unittest.TestCase):
 
     def test_action_ema_attributes_exist(self):
         """Action EMA attributes exist in orchestrator."""
-        import os
         import sys
         sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
         from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
@@ -21778,7 +21718,6 @@ class TestSprint5EResearchDepthMetrics(unittest.TestCase):
 
     def test_action_ema_update_formula(self):
         """Action EMA updates with correct formula: alpha=0.2, init=0.5."""
-        import os
         import sys
         sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
         from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
@@ -21799,12 +21738,11 @@ class TestSprint5EResearchDepthMetrics(unittest.TestCase):
 
     def test_action_ema_grace_period(self):
         """EMA bias only applies after 5 runs."""
-        import os
         import sys
         sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
         from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
 
-        orch = FullyAutonomousOrchestrator()
+        FullyAutonomousOrchestrator()
 
         # Less than 5 runs - no bias
         total_runs = 3
@@ -21830,12 +21768,11 @@ class TestSprint5EResearchDepthMetrics(unittest.TestCase):
 
     def test_research_depth_proxy_bounded(self):
         """research_depth_proxy is bounded to MAX_DEPTH=5."""
-        import os
         import sys
         sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
         from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
 
-        orch = FullyAutonomousOrchestrator()
+        FullyAutonomousOrchestrator()
 
         # Test bounded depth
         hints_gen = 10
@@ -21867,7 +21804,6 @@ class TestSprint5FAcademicSearch(unittest.IsolatedAsyncioTestCase):
 
     async def test_academic_search_action_registered(self):
         """academic_search action is registered in orchestrator."""
-        import os
         import sys
         sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
         from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
@@ -21880,7 +21816,6 @@ class TestSprint5FAcademicSearch(unittest.IsolatedAsyncioTestCase):
 
     async def test_academic_search_handler_executable(self):
         """academic_search handler is callable."""
-        import os
         import sys
         sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
         from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
@@ -21894,7 +21829,6 @@ class TestSprint5FAcademicSearch(unittest.IsolatedAsyncioTestCase):
 
     async def test_academic_search_returns_findings(self):
         """academic_search returns findings from ArXiv (or skips on memory pressure)."""
-        import os
         import sys
         sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
         from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
@@ -21920,12 +21854,11 @@ class TestSprint5FAcademicSearch(unittest.IsolatedAsyncioTestCase):
 
     def test_academic_search_scorer_bounded(self):
         """academic_search_scorer returns bounded score."""
-        import os
         import sys
         sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
         from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
 
-        orch = FullyAutonomousOrchestrator()
+        FullyAutonomousOrchestrator()
 
         # Test formula exists
         base_score = 0.15
@@ -21933,7 +21866,6 @@ class TestSprint5FAcademicSearch(unittest.IsolatedAsyncioTestCase):
 
     def test_ema_grace_period_for_academic(self):
         """Academic search respects grace period: no EMA bias until 5 runs."""
-        import os
         import sys
         sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
         from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
@@ -21968,7 +21900,6 @@ class TestSprint5GCollector(unittest.IsolatedAsyncioTestCase):
 
     async def test_collector_queue_initialized(self):
         """Collector queue is initialized in orchestrator."""
-        import os
         import sys
         sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
         from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
@@ -21987,7 +21918,6 @@ class TestSprint5GCollector(unittest.IsolatedAsyncioTestCase):
 
     async def test_collector_processes_enqueued_result(self):
         """Collector processes results enqueued via _enqueue_action_result."""
-        import os
         import sys
         sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
         from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
@@ -22023,7 +21953,6 @@ class TestSprint5GCollector(unittest.IsolatedAsyncioTestCase):
 
     async def test_collector_queue_full_fallback(self):
         """When queue is full, fallback path processes result inline."""
-        import os
         import sys
         sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
         from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
@@ -22053,7 +21982,6 @@ class TestSprint5GCollector(unittest.IsolatedAsyncioTestCase):
 
     async def test_collector_graceful_shutdown(self):
         """Collector shuts down gracefully with poison pill."""
-        import os
         import sys
         sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
         from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
@@ -22084,7 +22012,6 @@ class TestSprint5GCollector(unittest.IsolatedAsyncioTestCase):
 
     async def test_collector_stats_tracking(self):
         """Collector stats are tracked correctly."""
-        import os
         import sys
         sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
         from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator

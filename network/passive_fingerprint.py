@@ -28,13 +28,12 @@ GHOST_INVARIANTS:
 
 from __future__ import annotations
 
-import aiohttp
 import asyncio
 import logging
 import time
-from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Any
 
+import aiohttp
 from hledac.universal.network.session_runtime import async_get_aiohttp_session
 
 logger = logging.getLogger(__name__)
@@ -55,7 +54,7 @@ class _FPCache:
     def _key(self, source: str, value: str) -> str:
         return f"{source}:{value}"
 
-    def get(self, source: str, value: str) -> Optional[dict]:
+    def get(self, source: str, value: str) -> dict | None:
         k = self._key(source, value)
         ts = self._timestamps.get(k, 0)
         if time.time() - ts > FP_CACHE_TTL_S:
@@ -96,7 +95,7 @@ class PassiveFingerprint:
     """
 
     def __init__(self):
-        self._session: Optional[aiohttp.ClientSession] = None
+        self._session: aiohttp.ClientSession | None = None
 
     async def _ensure_session(self) -> aiohttp.ClientSession:
         if self._session is None or self._session.closed:
@@ -194,7 +193,7 @@ class PassiveFingerprint:
         results = await asyncio.gather(*tasks, return_exceptions=True)
         merged: dict[str, Any] = {"ip": ip, "sources": {}}
         source_names = ["shodan_internetdb", "greynoise", "virustotal"]
-        for name, res in zip(source_names, results):
+        for name, res in zip(source_names, results, strict=False):
             if isinstance(res, dict) and res:
                 merged["sources"][name] = res
         return merged
@@ -209,7 +208,7 @@ class PassiveFingerprint:
         results = await asyncio.gather(*tasks, return_exceptions=True)
         merged: dict[str, Any] = {"domain": domain, "sources": {}}
         source_names = ["circl_pdns", "virustotal", "securitytrails"]
-        for name, res in zip(source_names, results):
+        for name, res in zip(source_names, results, strict=False):
             if isinstance(res, dict) and res:
                 merged["sources"][name] = res
         return merged
@@ -229,7 +228,6 @@ class PassiveFingerprintAdapter:
         self._fp = PassiveFingerprint()
 
     async def query(self, target: str) -> list[dict]:
-        from typing import Any
         findings: list[dict[str, Any]] = []
 
         if _is_ip(target):

@@ -22,7 +22,6 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from typing import List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -43,7 +42,7 @@ class TextAnalyzerHint:
 @dataclass
 class TextAnalyzerResult:
     """Aggregated result from all text analyzers."""
-    hints: List[TextAnalyzerHint] = field(default_factory=list)
+    hints: list[TextAnalyzerHint] = field(default_factory=list)
     analyzer_errors: int = 0  # count of failed analyzers (fail-soft)
 
     @property
@@ -229,7 +228,7 @@ class TextAnalyzerFacade:
 
 
 # Singleton instance
-_facade: Optional[TextAnalyzerFacade] = None
+_facade: TextAnalyzerFacade | None = None
 
 
 def get_text_analyzer_facade() -> TextAnalyzerFacade:

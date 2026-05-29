@@ -4,7 +4,7 @@ Bloom Filter - Memory-Efficient Existence Checking
 
 Integrated from hledac/utils/bloom_filter.py
 
-A lightweight, memory-efficient Bloom Filter implementation for 
+A lightweight, memory-efficient Bloom Filter implementation for
 deduplication and fast existence checking without external dependencies.
 
 Features:
@@ -28,9 +28,9 @@ from __future__ import annotations
 import hashlib
 import json
 import math
-from typing import Any, Dict, List, Optional, Union
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 # Boundedness constant for hash cache
 MAX_HASH_CACHE_SIZE = 10_000
@@ -60,46 +60,46 @@ class BloomFilterStats:
 class BloomFilter:
     """
     Memory-efficient Bloom Filter for fast existence checking.
-    
+
     Optimized for M1 MacBook with minimal memory footprint.
     Uses multiple hash functions for better false positive control.
     """
-    
+
     def __init__(self, max_elements: int = 100000, error_rate: float = 0.01):
         """
         Initialize Bloom Filter with optimal parameters.
-        
+
         Args:
             max_elements: Maximum number of elements expected
             error_rate: Desired false positive rate (0.01 = 1%)
         """
         self.max_elements = max_elements
         self.error_rate = error_rate
-        
+
         # Calculate optimal bit array size and hash count
         self.size = self._calculate_size(max_elements, error_rate)
         self.hash_count = self._calculate_hash_count(self.size, max_elements)
-        
+
         # Initialize bit array as bytearray for memory efficiency
         self._byte_array = bytearray((self.size + 7) // 8)
-        
+
         # Track element count for statistics
         self.element_count = 0
-        
+
         # Cache for hash positions (optimization for repeated checks)
-        self._hash_cache: Dict[str, List[int]] = {}
-    
+        self._hash_cache: dict[str, list[int]] = {}
+
     def _calculate_size(self, n: int, p: float) -> int:
         """Calculate optimal bit array size."""
         # m = -(n * ln(p)) / (ln(2)^2)
         return int(-(n * math.log(p)) / (math.log(2) ** 2))
-    
+
     def _calculate_hash_count(self, m: int, n: int) -> int:
         """Calculate optimal number of hash functions."""
         # k = (m/n) * ln(2)
         return max(1, int((m / n) * math.log(2)))
-    
-    def _get_hash_positions(self, item: str) -> List[int]:
+
+    def _get_hash_positions(self, item: str) -> list[int]:
         """Get bit positions for an item using multiple hash functions."""
         if item in self._hash_cache:
             return self._hash_cache[item]
@@ -130,23 +130,23 @@ class BloomFilter:
             except Exception:
                 pass
         return positions
-    
+
     def _set_bit(self, position: int) -> None:
         """Set bit at position."""
         byte_index = position // 8
         bit_index = position % 8
         self._byte_array[byte_index] |= (1 << bit_index)
-    
+
     def _get_bit(self, position: int) -> bool:
         """Get bit at position."""
         byte_index = position // 8
         bit_index = position % 8
         return (self._byte_array[byte_index] >> bit_index) & 1
-    
+
     def add(self, item: str) -> None:
         """
         Add item to Bloom Filter.
-        
+
         Args:
             item: String item to add
         """
@@ -154,37 +154,37 @@ class BloomFilter:
         for pos in positions:
             self._set_bit(pos)
         self.element_count += 1
-    
+
     def __contains__(self, item: str) -> bool:
         """
         Check if item might be in the set.
-        
+
         Args:
             item: String item to check
-            
+
         Returns:
             True if item might be in set, False if definitely not
         """
         positions = self._get_hash_positions(item)
         return all(self._get_bit(pos) for pos in positions)
-    
+
     def contains(self, item: str) -> bool:
         """Explicit check method (same as 'in' operator)."""
         return item in self
-    
+
     def get_stats(self) -> BloomFilterStats:
         """Get current statistics."""
         # Calculate fill ratio
         set_bits = sum(bin(byte).count('1') for byte in self._byte_array)
         fill_ratio = set_bits / self.size
-        
+
         # Calculate current false positive probability
         # fpp = (1 - e^(-kn/m))^k
         if self.element_count > 0:
             current_fpp = (1 - math.exp(-self.hash_count * self.element_count / self.size)) ** self.hash_count
         else:
             current_fpp = 0.0
-        
+
         return BloomFilterStats(
             size=self.size,
             hash_count=self.hash_count,
@@ -195,7 +195,7 @@ class BloomFilter:
             fill_ratio=fill_ratio,
             memory_bytes=len(self._byte_array)
         )
-    
+
     def save(self, filepath: Union[str, Path]) -> None:
         """Save Bloom Filter to file."""
         data = {
@@ -208,13 +208,13 @@ class BloomFilter:
         }
         with open(filepath, 'w') as f:
             json.dump(data, f)
-    
+
     @classmethod
-    def load(cls, filepath: Union[str, Path]) -> 'BloomFilter':
+    def load(cls, filepath: Union[str, Path]) -> BloomFilter:
         """Load Bloom Filter from file."""
-        with open(filepath, 'r') as f:
+        with open(filepath) as f:
             data = json.load(f)
-        
+
         bf = cls(
             max_elements=data['max_elements'],
             error_rate=data['error_rate']
@@ -224,7 +224,7 @@ class BloomFilter:
         bf.element_count = data['element_count']
         bf._byte_array = bytearray(data['byte_array'])
         return bf
-    
+
     def clear(self) -> None:
         """Clear all elements from Bloom Filter."""
         self._byte_array = bytearray((self.size + 7) // 8)
@@ -235,11 +235,11 @@ class BloomFilter:
 class ScalableBloomFilter:
     """
     Scalable Bloom Filter that grows as elements are added.
-    
+
     Automatically creates additional Bloom filters when the current
     one reaches capacity, maintaining a target false positive rate.
     """
-    
+
     def __init__(
         self,
         initial_capacity: int = 10000,
@@ -248,7 +248,7 @@ class ScalableBloomFilter:
     ):
         """
         Initialize scalable Bloom filter.
-        
+
         Args:
             initial_capacity: Initial capacity of first filter
             error_rate: Target false positive rate
@@ -257,24 +257,24 @@ class ScalableBloomFilter:
         self.initial_capacity = initial_capacity
         self.target_error_rate = error_rate
         self.growth_factor = growth_factor
-        self.filters: List[BloomFilter] = []
+        self.filters: list[BloomFilter] = []
         self._add_new_filter()
-    
+
     def _add_new_filter(self) -> None:
         """Add a new Bloom filter with increased capacity."""
         if not self.filters:
             capacity = self.initial_capacity
         else:
             capacity = int(self.initial_capacity * (self.growth_factor ** len(self.filters)))
-        
+
         # Allocate error rate budget among filters
         filter_error = self.target_error_rate / (2 ** len(self.filters))
-        
+
         self.filters.append(BloomFilter(
             max_elements=capacity,
             error_rate=filter_error
         ))
-    
+
     def add(self, item: str) -> None:
         """Add an item to the scalable Bloom filter."""
         # Check if we need to add a new filter
@@ -282,18 +282,18 @@ class ScalableBloomFilter:
         if current_filter.element_count >= current_filter.max_elements * 0.9:
             self._add_new_filter()
             current_filter = self.filters[-1]
-        
+
         current_filter.add(item)
-    
+
     def __contains__(self, item: str) -> bool:
         """Check if item may exist in any filter."""
         return any(item in bf for bf in self.filters)
-    
-    def get_stats(self) -> Dict[str, Any]:
+
+    def get_stats(self) -> dict[str, Any]:
         """Get statistics for all filters."""
         total_elements = sum(bf.element_count for bf in self.filters)
         total_memory = sum(bf.get_stats().memory_bytes for bf in self.filters)
-        
+
         # Combined false positive probability
         # P(fp) = 1 - product(1 - p_i) for all filters i
         combined_fpp = 1.0
@@ -301,7 +301,7 @@ class ScalableBloomFilter:
             stats = bf.get_stats()
             combined_fpp *= (1 - stats.current_fpp)
         combined_fpp = 1 - combined_fpp
-        
+
         return {
             'filter_count': len(self.filters),
             'total_elements': total_elements,
@@ -314,10 +314,10 @@ class ScalableBloomFilter:
 def create_url_deduplicator(expected_urls: int = 100000) -> BloomFilter:
     """
     Create a Bloom filter optimized for URL deduplication.
-    
+
     Args:
         expected_urls: Expected number of URLs to track
-        
+
     Returns:
         Configured BloomFilter for URL deduplication
     """
@@ -330,10 +330,10 @@ def create_url_deduplicator(expected_urls: int = 100000) -> BloomFilter:
 def create_content_fingerprint(expected_items: int = 50000) -> BloomFilter:
     """
     Create a Bloom filter for content fingerprinting.
-    
+
     Args:
         expected_items: Expected number of content items
-        
+
     Returns:
         Configured BloomFilter for content deduplication
     """

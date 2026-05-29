@@ -9,11 +9,10 @@ Tests for:
 """
 
 import asyncio
+import sys
 import unittest
 from collections import OrderedDict
-from unittest.mock import MagicMock, AsyncMock, patch
 
-import sys
 sys.path.insert(0, '/Users/vojtechhamada/PycharmProjects/Hledac')
 
 

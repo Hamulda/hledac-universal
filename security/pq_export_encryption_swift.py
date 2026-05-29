@@ -21,7 +21,7 @@ import os
 import subprocess
 import time
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -30,7 +30,6 @@ from .pq_export_encryption import (
     ExportEncryptionEnvelope,
     HPKEAvailability,
     HPKEStatus,
-    PostQuantumExportBackend,
     TestOnlyHPKERoundtripMaterial,
     compute_aad_hash,
 )
@@ -330,7 +329,7 @@ class HPKEExportBackend:
             recipient_public_key_fingerprint=fingerprint,
             decryptability=Decryptability.PERSISTENT_KEYCHAIN if recipient_key_id else Decryptability.UNSUPPORTED,
             pq=True,
-            created_at=datetime.now(timezone.utc).isoformat(),
+            created_at=datetime.now(UTC).isoformat(),
             backend=self.name,
         )
         self._encrypted_count += 1

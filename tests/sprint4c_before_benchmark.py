@@ -5,13 +5,15 @@ Sprint 4C Runtime Benchmark - BEFORE L1 Gate Fix
 import asyncio
 import gc
 import os
-import psutil
 import sys
 import time
+
+import psutil
 
 sys.path.insert(0, '/Users/vojtechhamada/PycharmProjects/Hledac')
 
 from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
+
 
 async def run_benchmark():
     process = psutil.Process(os.getpid())
@@ -109,7 +111,7 @@ async def run_benchmark():
 
         return metrics
 
-    except asyncio.TimeoutError:
+    except TimeoutError:
         print("[BENCHMARK] TIMEOUT - benchmark took too long")
         return {'error': 'timeout'}
     except Exception as e:

@@ -11,12 +11,10 @@ Environment: Python 3.13 (t-strings NOT available — NO_PATCH for runner)
 Requires: Python 3.14+ for t-string feature probes
 """
 
-import sys
-if sys.version_info < (3, 14):
-    raise SystemExit("Requires Python 3.14+ for t-string probes: run with .venv-py3135 or 3.14 interpreter")
 
-import re
+
 import html
+import re
 
 # ---------------------------------------------------------------------------
 # Candidate Map: user-controlled f-string sites in export/report pipeline

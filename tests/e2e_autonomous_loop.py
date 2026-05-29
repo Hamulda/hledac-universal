@@ -1,15 +1,12 @@
 """
 End-to-end testy pro autonomní loop - bez ReAct závislostí.
 """
-import pytest
-from unittest.mock import Mock, AsyncMock, patch, MagicMock
-from typing import Dict, Any, List
-import asyncio
 import tempfile
+from unittest.mock import patch
 
-from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator, DiscoveryDepth
+from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
+from hledac.universal.budget_manager import BudgetConfig, BudgetManager
 from hledac.universal.evidence_log import EvidenceLog
-from hledac.universal.budget_manager import BudgetManager, BudgetConfig
 from hledac.universal.project_types import ResearchMode
 
 
@@ -21,7 +18,7 @@ class TestNoReActReferences:
         import hledac.universal.autonomous_orchestrator as mod
         source = mod.__file__
 
-        with open(source, 'r') as f:
+        with open(source) as f:
             content = f.read()
 
         # Should not have ReAct imports
@@ -34,7 +31,7 @@ class TestNoReActReferences:
         import hledac.universal.evidence_log as mod
         source = mod.__file__
 
-        with open(source, 'r') as f:
+        with open(source) as f:
             content = f.read()
 
         assert 'from .react' not in content
@@ -45,7 +42,7 @@ class TestNoReActReferences:
         import hledac.universal.budget_manager as mod
         source = mod.__file__
 
-        with open(source, 'r') as f:
+        with open(source) as f:
             content = f.read()
 
         assert 'from .react' not in content

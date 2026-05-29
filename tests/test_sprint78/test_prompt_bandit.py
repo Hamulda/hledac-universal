@@ -1,10 +1,6 @@
 """Tests for prompt bandit - LinUCB, persistence, context vector, cold-start, A/B testing."""
+
 import pytest
-import asyncio
-import json
-import tempfile
-from pathlib import Path
-from unittest.mock import patch, MagicMock
 
 
 class TestPromptBanditInit:

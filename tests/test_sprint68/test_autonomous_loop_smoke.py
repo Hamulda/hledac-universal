@@ -3,9 +3,10 @@ Testy pro Sprint 68 - Autonomous Loop Smoke Tests
 """
 
 import asyncio
+from collections import OrderedDict, deque
+from unittest.mock import MagicMock
+
 import pytest
-from collections import deque, OrderedDict
-from unittest.mock import AsyncMock, MagicMock, patch
 
 
 @pytest.mark.asyncio
@@ -158,11 +159,7 @@ async def test_result_processing():
 async def test_loop_termination():
     """Test terminace smyčky."""
     # Simulace terminace
-    should_terminate = False
-    stagnation_counter = 0
-    iter_count = 0
     max_iters = 200
-    main_hypothesis_confidence = 0.0
 
     # Test conditions
     def check_terminate(budget_ok, confidence, stagnation, iters, contradiction_count):
@@ -237,7 +234,6 @@ def test_last_action_success_tracking():
 @pytest.mark.asyncio
 async def test_mock_orchestrator_instantiation():
     """Test vytvoření mock orchestrátoru."""
-    from unittest.mock import MagicMock
 
     # Vytvoř mock orchestrátor
     orch = MagicMock()
@@ -263,7 +259,6 @@ async def test_research_uses_sprint68_loop():
     """Test že research() používá Sprint 68 autonomous loop."""
     from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
     from hledac.universal.utils import ActionResult
-    from unittest.mock import AsyncMock, MagicMock, patch
 
     # Track calls
     analyze_state_called = []
@@ -341,7 +336,7 @@ async def test_research_uses_sprint68_loop():
     orch._known_paths_queue = asyncio.Queue(maxsize=20)
 
     # Track _execute_action
-    original_execute = orch.__class__._execute_action if hasattr(orch.__class__, '_execute_action') else None
+    orch.__class__._execute_action if hasattr(orch.__class__, '_execute_action') else None
 
     async def mock_execute_action(name: str, **params):
         execute_action_calls.append((name, params))
@@ -389,7 +384,7 @@ async def test_research_uses_sprint68_loop():
     orch._synthesize_results = mock_synthesize
 
     # Spusť research - měl by použít Sprint 68 loop
-    result = await orch.research("test query")
+    await orch.research("test query")
 
     # Ověření - Sprint 68 loop musí být použit
     assert len(analyze_state_called) > 0, "Sprint 68: _analyze_state musí být zavolána"
@@ -435,7 +430,7 @@ async def test_cooldown_prevents_repeated_action():
     # Simuluj 3 opakování
     for i in range(3):
         orch._repeat_action_count = i
-        result = orch._decide_next_action({"query": "test"})
+        orch._decide_next_action({"query": "test"})
 
     # Po 3 opakováních by měl být nastaven cooldown
     assert orch._action_cooldowns.get("render_page", 0) > 0, "Cooldown měl být nastaven po 3 opakováních"

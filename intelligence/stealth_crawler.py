@@ -26,17 +26,17 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-import heapq
 import json
 import logging
 import random
 import re
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from enum import Enum, auto
-from typing import Any, Callable, Dict, List, Optional, Set, Tuple, Union
-from urllib.parse import quote, unquote, urlparse, urljoin
+from enum import Enum
+from typing import Any
+from urllib.parse import quote, unquote, urlparse
 
 logger = logging.getLogger(__name__)
 
@@ -225,7 +225,7 @@ def get_stealth_crawler_transport_telemetry() -> dict:
         - breaker_fallbacks: total fail-soft allowances (import error or empty domain)
         - surface_blocks: dict mapping surface_name -> block count
     """
-    layers = set(s["transport"] for s in STEALTH_CRAWLER_NETWORK_SURFACES)
+    layers = {s["transport"] for s in STEALTH_CRAWLER_NETWORK_SURFACES}
 
     # M1 risk: subprocess curl + cloudscraper are highest memory consumers
     high_risk = [s for s in STEALTH_CRAWLER_NETWORK_SURFACES if s["risk"] == "high"]
@@ -251,12 +251,12 @@ def get_stealth_crawler_transport_telemetry() -> dict:
         "next_phase": None,
         "surface_breakdown": transport_counts,
         "high_risk_surfaces": [s["name"] for s in high_risk],
-        "bypass_states": list(set(s["bypass_state"] for s in STEALTH_CRAWLER_NETWORK_SURFACES)),
+        "bypass_states": list({s["bypass_state"] for s in STEALTH_CRAWLER_NETWORK_SURFACES}),
         # Phase 2 additions
         "patched_surface_count": len(_PATCHED_SURFACES),
         "unpatched_surface_count": len(_UNPATCHED_SURFACES),
-        "patched_surfaces": sorted(list(_PATCHED_SURFACES)),
-        "unpatched_surfaces": sorted(list(_UNPATCHED_SURFACES)),
+        "patched_surfaces": sorted(_PATCHED_SURFACES),
+        "unpatched_surfaces": sorted(_UNPATCHED_SURFACES),
         "breaker_checks": _TRANSPORT_BREAKER_CHECKS,
         "breaker_blocks": _TRANSPORT_BREAKER_BLOCKS,
         "breaker_fallbacks": _TRANSPORT_BREAKER_FALLBACKS,
@@ -280,7 +280,7 @@ except ImportError:
 class TorProxyManager:
     """Check if Tor SOCKS proxy is running on port 9050."""
     _SOCKS_PORT = 9050
-    _cache: Optional[bool] = None
+    _cache: bool | None = None
     _cache_time: float = 0.0
     _CACHE_TTL: float = 5.0  # seconds
 
@@ -347,17 +347,17 @@ class MonitoredSource:
     source_id: str
     source_type: str  # 'rss', 'api', 'url'
     url: str
-    last_check: Optional[datetime] = None
-    last_content_hash: Optional[str] = None
+    last_check: datetime | None = None
+    last_content_hash: str | None = None
     check_interval_minutes: int = 15
-    keywords: List[str] = field(default_factory=list)
+    keywords: list[str] = field(default_factory=list)
     is_active: bool = True
 
     # M1 optimization: connection reuse
-    session: Optional[Any] = field(default=None, repr=False)
+    session: Any | None = field(default=None, repr=False)
 
     # Additional metadata
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self):
         """Validate source configuration"""
@@ -372,8 +372,8 @@ class Change:
     """Represents a single detected change"""
     change_type: ChangeType
     position: int  # Position in content (for diff)
-    old_text: Optional[str]
-    new_text: Optional[str]
+    old_text: str | None
+    new_text: str | None
     context_before: str = ""  # For display purposes
     context_after: str = ""
 
@@ -390,17 +390,17 @@ class StreamEvent:
     source_id: str
     timestamp: datetime
     content: str
-    extracted_entities: List[str] = field(default_factory=list)
-    matched_keywords: List[str] = field(default_factory=list)
+    extracted_entities: list[str] = field(default_factory=list)
+    matched_keywords: list[str] = field(default_factory=list)
     change_type: str = "new"  # 'new', 'updated', 'deleted'
     severity: str = "info"
-    changes: List[Change] = field(default_factory=list)
+    changes: list[Change] = field(default_factory=list)
 
     # M1 optimization: lazy metadata
-    _metadata: Optional[Dict[str, Any]] = field(default=None, repr=False)
+    _metadata: dict[str, Any] | None = field(default=None, repr=False)
 
     @property
-    def metadata(self) -> Dict[str, Any]:
+    def metadata(self) -> dict[str, Any]:
         """Lazy metadata generation"""
         if self._metadata is None:
             self._metadata = {
@@ -420,11 +420,11 @@ class Alert:
     severity: str
     timestamp: datetime
     acknowledged: bool = False
-    acknowledged_at: Optional[datetime] = None
-    acknowledged_by: Optional[str] = None
+    acknowledged_at: datetime | None = None
+    acknowledged_by: str | None = None
 
     # M1 optimization: compact representation
-    def to_compact(self) -> Dict[str, Any]:
+    def to_compact(self) -> dict[str, Any]:
         """Convert to compact dict for storage/transmission"""
         return {
             'id': self.alert_id,
@@ -447,20 +447,20 @@ class AlertRule:
     name: str
 
     # Matching criteria
-    keywords: List[str] = field(default_factory=list)
-    entities: List[str] = field(default_factory=list)
-    source_types: List[str] = field(default_factory=list)
+    keywords: list[str] = field(default_factory=list)
+    entities: list[str] = field(default_factory=list)
+    source_types: list[str] = field(default_factory=list)
     min_severity: Severity = Severity.INFO
 
     # Custom predicate for complex matching
-    predicate: Optional[Callable[[StreamEvent], bool]] = field(default=None, repr=False)
+    predicate: Callable[[StreamEvent], bool] | None = field(default=None, repr=False)
 
     # Alert configuration
-    severity_override: Optional[Severity] = None
+    severity_override: Severity | None = None
     deduplicate_window_minutes: int = 5
 
     # M1 optimization: compiled patterns
-    _keyword_patterns: Optional[List[re.Pattern]] = field(default=None, repr=False)
+    _keyword_patterns: list[re.Pattern] | None = field(default=None, repr=False)
 
     def __post_init__(self):
         """Compile keyword patterns for efficient matching"""
@@ -543,16 +543,16 @@ class ScrapingResult:
     request_id: str
     url: str
     success: bool
-    content: Optional[str]
+    content: str | None
     status_code: int
     protection_detected: ProtectionType
     bypass_method_used: BypassMethod
-    headers: Dict[str, str]
-    cookies: Dict[str, str]
+    headers: dict[str, str]
+    cookies: dict[str, str]
     timestamp: datetime
     duration: float
-    proxy_used: Optional[str] = None
-    error: Optional[str] = None
+    proxy_used: str | None = None
+    error: str | None = None
 
 
 @dataclass
@@ -560,12 +560,12 @@ class ProxyConfig:
     """Proxy configuration (from stealth_osint)"""
     host: str
     port: int
-    username: Optional[str] = None
-    password: Optional[str] = None
+    username: str | None = None
+    password: str | None = None
     proxy_type: str = "http"
     success_count: int = 0
     failure_count: int = 0
-    last_used: Optional[datetime] = None
+    last_used: datetime | None = None
     is_residential: bool = False
 
 
@@ -579,8 +579,8 @@ class FingerprintProfile:
     color_depth: int
     timezone: str
     platform: str
-    plugins: List[str]
-    fonts: List[str]
+    plugins: list[str]
+    fonts: list[str]
     webgl_vendor: str
     webgl_renderer: str
 
@@ -594,38 +594,38 @@ class HeaderConfig:
     """Configuration for header spoofing"""
     # Rotation strategy
     rotation_strategy: str = 'random'  # 'random', 'sequential', 'weighted'
-    
+
     # Preserve certain headers
     preserve_cookies: bool = True
     preserve_auth: bool = True
-    
+
     # Custom headers to add
-    custom_headers: Dict[str, str] = field(default_factory=dict)
-    
+    custom_headers: dict[str, str] = field(default_factory=dict)
+
     # Platform preference
-    platform_preference: Optional[str] = None  # 'desktop', 'mobile', None
-    
+    platform_preference: str | None = None  # 'desktop', 'mobile', None
+
     # Language rotation
     rotate_languages: bool = True
-    preferred_languages: List[str] = field(default_factory=lambda: ['en-US', 'en'])
+    preferred_languages: list[str] = field(default_factory=lambda: ['en-US', 'en'])
 
 
 class HeaderSpoofer:
     """
     Sophisticated HTTP header rotation for stealth.
-    
+
     Integrated from stealth_toolkit/header_spoofer.py:
     - User-Agent rotation with realistic database
     - Accept headers, language preferences
     - Platform-specific headers
     - Context-aware selection
-    
+
     Example:
         >>> spoofer = HeaderSpoofer()
         >>> headers = spoofer.get_headers()
         >>> headers = spoofer.get_headers(platform='mobile', browser='safari')
     """
-    
+
     # Realistic User-Agent database
     USER_AGENTS = {
         'desktop': {
@@ -661,14 +661,14 @@ class HeaderSpoofer:
             ],
         }
     }
-    
+
     # Accept headers by content type
     ACCEPT_HEADERS = {
         'html': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
         'json': 'application/json,text/plain,*/*;q=0.01',
         'api': 'application/json,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
     }
-    
+
     # Language preferences
     LANGUAGES = [
         'en-US,en;q=0.9',
@@ -677,14 +677,14 @@ class HeaderSpoofer:
         'en-US,en;q=0.9,de;q=0.8',
         'en-GB,en-US;q=0.9,en;q=0.8',
     ]
-    
+
     # Encoding preferences
     ENCODINGS = [
         'gzip, deflate, br',
         'gzip, deflate',
         'identity',
     ]
-    
+
     # Platform-specific headers
     PLATFORM_HEADERS = {
         'macos': {
@@ -708,17 +708,17 @@ class HeaderSpoofer:
             'Sec-CH-UA-Mobile': '?1',
         },
     }
-    
-    def __init__(self, config: Optional[HeaderConfig] = None):
+
+    def __init__(self, config: HeaderConfig | None = None):
         self.config = config or HeaderConfig()
         self._rotation_index = 0
-        self._last_headers: Optional[Dict[str, str]] = None
+        self._last_headers: dict[str, str] | None = None
         self._request_count = 0
-    
+
     def _get_random_user_agent(
         self,
-        platform: Optional[str] = None,
-        browser: Optional[str] = None
+        platform: str | None = None,
+        browser: str | None = None
     ) -> str:
         """Get random user agent matching criteria"""
         # Determine platform
@@ -727,41 +727,41 @@ class HeaderSpoofer:
                 platform = self.config.platform_preference
             else:
                 platform = random.choice(['desktop', 'mobile'])
-        
+
         # Get browser list for platform
         browsers = self.USER_AGENTS.get(platform, self.USER_AGENTS['desktop'])
-        
+
         # Select browser
         if browser and browser in browsers:
             ua_list = browsers[browser]
         else:
             ua_list = random.choice(list(browsers.values()))
-        
+
         return random.choice(ua_list)
-    
+
     def _get_accept_header(self, content_type: str = 'html') -> str:
         """Get appropriate Accept header"""
         return self.ACCEPT_HEADERS.get(content_type, self.ACCEPT_HEADERS['html'])
-    
+
     def _get_language(self) -> str:
         """Get random language preference"""
         if not self.config.rotate_languages:
             return ', '.join(self.config.preferred_languages)
-        
+
         # 70% chance to use preferred, 30% random
         if random.random() < 0.7:
             return ', '.join(self.config.preferred_languages)
-        
+
         return random.choice(self.LANGUAGES)
-    
+
     def _get_encoding(self) -> str:
         """Get random encoding preference"""
         return random.choice(self.ENCODINGS)
-    
-    def _get_platform_headers(self, user_agent: str) -> Dict[str, str]:
+
+    def _get_platform_headers(self, user_agent: str) -> dict[str, str]:
         """Get platform-specific headers from UA"""
         headers = {}
-        
+
         # Detect platform from UA
         if 'Macintosh' in user_agent or 'Mac OS X' in user_agent:
             headers.update(self.PLATFORM_HEADERS.get('macos', {}))
@@ -773,33 +773,33 @@ class HeaderSpoofer:
             headers.update(self.PLATFORM_HEADERS.get('ios', {}))
         elif 'Android' in user_agent:
             headers.update(self.PLATFORM_HEADERS.get('android', {}))
-        
+
         return headers
-    
+
     def get_headers(
         self,
-        platform: Optional[str] = None,
-        browser: Optional[str] = None,
+        platform: str | None = None,
+        browser: str | None = None,
         content_type: str = 'html',
-        preserve: Optional[Dict[str, str]] = None
-    ) -> Dict[str, str]:
+        preserve: dict[str, str] | None = None
+    ) -> dict[str, str]:
         """
         Generate spoofed headers.
-        
+
         Args:
             platform: 'desktop' or 'mobile'
             browser: 'chrome', 'firefox', 'safari', 'edge'
             content_type: Type of content expected
             preserve: Headers to preserve (e.g., cookies, auth)
-            
+
         Returns:
             Dictionary of HTTP headers
         """
         self._request_count += 1
-        
+
         # Get user agent
         user_agent = self._get_random_user_agent(platform, browser)
-        
+
         # Build headers
         headers = {
             'User-Agent': user_agent,
@@ -815,34 +815,34 @@ class HeaderSpoofer:
             'Sec-Fetch-User': '?1',
             'Cache-Control': 'max-age=0',
         }
-        
+
         # Add platform-specific headers
         platform_headers = self._get_platform_headers(user_agent)
         headers.update(platform_headers)
-        
+
         # Add custom headers
         headers.update(self.config.custom_headers)
-        
+
         # Preserve certain headers if provided
         if preserve:
             if self.config.preserve_cookies and 'Cookie' in preserve:
                 headers['Cookie'] = preserve['Cookie']
             if self.config.preserve_auth and 'Authorization' in preserve:
                 headers['Authorization'] = preserve['Authorization']
-        
+
         self._last_headers = headers
-        
+
         logger.debug(f"Generated headers for {user_agent[:50]}...")
         return headers
-    
-    def rotate(self) -> Dict[str, str]:
+
+    def rotate(self) -> dict[str, str]:
         """Rotate to new set of headers"""
         return self.get_headers()
-    
-    def get_websocket_headers(self) -> Dict[str, str]:
+
+    def get_websocket_headers(self) -> dict[str, str]:
         """Get headers suitable for WebSocket connections"""
         base = self.get_headers()
-        
+
         # WebSocket-specific headers
         ws_headers = {
             'User-Agent': base['User-Agent'],
@@ -850,14 +850,14 @@ class HeaderSpoofer:
             'Cache-Control': 'no-cache',
             'Pragma': 'no-cache',
         }
-        
+
         return ws_headers
-    
-    def get_api_headers(self) -> Dict[str, str]:
+
+    def get_api_headers(self) -> dict[str, str]:
         """Get headers suitable for API requests"""
         return self.get_headers(content_type='api')
-    
-    def get_statistics(self) -> Dict[str, Any]:
+
+    def get_statistics(self) -> dict[str, Any]:
         """Get spoofing statistics"""
         return {
             'request_count': self._request_count,
@@ -867,9 +867,9 @@ class HeaderSpoofer:
 
 
 def get_stealth_headers(
-    platform: Optional[str] = None,
-    browser: Optional[str] = None
-) -> Dict[str, str]:
+    platform: str | None = None,
+    browser: str | None = None
+) -> dict[str, str]:
     """Quick stealth headers generation"""
     spoofer = HeaderSpoofer()
     return spoofer.get_headers(platform=platform, browser=browser)
@@ -883,37 +883,37 @@ class SearchResult:
     snippet: str
     source: str = "duckduckgo"
     rank: int = 0
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 class StealthCrawler:
     """
     Stealth web crawler with TLS fingerprinting.
-    
+
     From deep_research/distributed_dark_web_crawler.py:
     - curl_cffi for TLS fingerprinting (impersonate="chrome136")
     - DuckDuckGo HTML scraping (no CAPTCHA)
     - Google fallback
     - Zero memory leaks (M1 optimized)
-    
+
     Enhanced with stealth_toolkit:
     - HeaderSpoofer for dynamic header rotation
     - User-Agent rotation
     - Platform-specific headers
     """
-    
+
     def __init__(self, use_header_spoofer: bool = True):
         self._curl_cffi_available = False
         self._requests_available = False
         self._session = None
-        
+
         # Header spoofer for stealth
-        self._header_spoofer: Optional[HeaderSpoofer] = None
+        self._header_spoofer: HeaderSpoofer | None = None
         if use_header_spoofer:
             self._header_spoofer = HeaderSpoofer()
-        
+
         self._check_dependencies()
-    
+
     def _check_dependencies(self) -> None:
         """Check for available HTTP libraries."""
         try:
@@ -923,7 +923,7 @@ class StealthCrawler:
         except ImportError:
             logger.debug("curl_cffi not available")
             self._curl_cffi_available = False
-        
+
         if not self._curl_cffi_available:
             try:
                 import requests
@@ -931,13 +931,13 @@ class StealthCrawler:
                 logger.info("✓ requests available - using fallback")
             except ImportError:
                 logger.warning("Neither curl_cffi nor requests available")
-    
+
     def search(
         self,
         query: str,
         num_results: int = 10,
         source: str = "duckduckgo"
-    ) -> List[SearchResult]:
+    ) -> list[SearchResult]:
         """
         Search using stealth scraping with multi-provider fallback.
 
@@ -982,13 +982,13 @@ class StealthCrawler:
         except Exception as e:
             logger.error(f"Stealth search failed: {e}")
             return []
-    
-    def _search_duckduckgo(self, query: str, num_results: int) -> List[SearchResult]:
+
+    def _search_duckduckgo(self, query: str, num_results: int) -> list[SearchResult]:
         """Scrape DuckDuckGo HTML results."""
         try:
             encoded_query = quote(query)
             url = f"https://html.duckduckgo.com/html/?q={encoded_query}"
-            
+
             # Use HeaderSpoofer for dynamic headers
             if self._header_spoofer:
                 headers = self._header_spoofer.get_headers(content_type='html')
@@ -1001,23 +1001,23 @@ class StealthCrawler:
                     "DNT": "1",
                     "Connection": "keep-alive",
                 }
-            
+
             html = self._fetch_html(url, headers)
             if not html:
                 return []
-            
+
             return self._parse_duckduckgo(html, num_results)
-            
+
         except Exception as e:
             logger.error(f"DuckDuckGo search failed: {e}")
             return []
-    
-    def _search_google(self, query: str, num_results: int) -> List[SearchResult]:
+
+    def _search_google(self, query: str, num_results: int) -> list[SearchResult]:
         """Scrape Google HTML results (fallback)."""
         try:
             encoded_query = quote(query)
             url = f"https://www.google.com/search?q={encoded_query}&num={num_results}"
-            
+
             # Use HeaderSpoofer for dynamic headers
             if self._header_spoofer:
                 headers = self._header_spoofer.get_headers(content_type='html')
@@ -1026,18 +1026,18 @@ class StealthCrawler:
                     "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
                     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
                 }
-            
+
             html = self._fetch_html(url, headers)
             if not html:
                 return []
-            
+
             return self._parse_google(html, num_results)
-            
+
         except Exception as e:
             logger.error(f"Google search failed: {e}")
             return []
 
-    def _search_brave(self, query: str, num_results: int) -> List[SearchResult]:
+    def _search_brave(self, query: str, num_results: int) -> list[SearchResult]:
         """Scrape Brave Search HTML results (Sprint 8R)."""
         try:
             encoded_query = quote(query)
@@ -1066,7 +1066,7 @@ class StealthCrawler:
             logger.error(f"Brave search failed: {e}")
             return []
 
-    def _parse_brave(self, html: str, num_results: int) -> List[SearchResult]:
+    def _parse_brave(self, html: str, num_results: int) -> list[SearchResult]:
         """Parse Brave Search HTML results (Sprint 8R)."""
         results = []
 
@@ -1090,7 +1090,7 @@ class StealthCrawler:
 
         return results
 
-    def _fetch_html(self, url: str, headers: Dict[str, str]) -> Optional[str]:
+    def _fetch_html(self, url: str, headers: dict[str, str]) -> str | None:
         """
         Fetch HTML using available library with subprocess curl fallback (Sprint 8R).
 
@@ -1125,7 +1125,7 @@ class StealthCrawler:
             logger.error(f"Fetch failed: {e}")
             return None
 
-    async def _fetch_html_async(self, url: str, headers: Dict[str, str]) -> Optional[str]:
+    async def _fetch_html_async(self, url: str, headers: dict[str, str]) -> str | None:
         """
         Sprint 8X: Async HTML fetcher with proper async subprocess handling.
         Uses asyncio.create_subprocess_exec for non-blocking curl.
@@ -1161,7 +1161,7 @@ class StealthCrawler:
             logger.error(f"Async fetch failed: {e}")
             return None
 
-    async def _fetch_with_curl(self, url: str, headers: Dict[str, str]) -> Optional[str]:
+    async def _fetch_with_curl(self, url: str, headers: dict[str, str]) -> str | None:
         """Fetch using curl_cffi with TLS fingerprinting."""
         # Phase 2 breaker preflight
         allowed, reason = _crawler_domain_allowed(url, "_fetch_with_curl")
@@ -1187,7 +1187,7 @@ class StealthCrawler:
             logger.warning(f"curl_cffi fetch failed: {e}")
             return None
 
-    async def _fetch_with_requests_async(self, url: str, headers: Dict[str, str]) -> Optional[str]:
+    async def _fetch_with_requests_async(self, url: str, headers: dict[str, str]) -> str | None:
         """Fetch using aiohttp (fallback)."""
         # Phase 2 breaker preflight
         allowed, reason = _crawler_domain_allowed(url, "_fetch_with_requests_async")
@@ -1207,7 +1207,7 @@ class StealthCrawler:
             logger.warning(f"aiohttp fetch failed: {e}")
             return None
 
-    def _fetch_with_curl_cffi(self, url: str, headers: Dict[str, str]) -> Optional[str]:
+    def _fetch_with_curl_cffi(self, url: str, headers: dict[str, str]) -> str | None:
         """Fetch using curl_cffi with TLS fingerprinting."""
         # Phase 2 breaker preflight
         allowed, reason = _crawler_domain_allowed(url, "_fetch_with_curl_cffi")
@@ -1218,7 +1218,7 @@ class StealthCrawler:
         _mark_surface_patched("_fetch_with_curl_cffi")
         try:
             from curl_cffi import requests as curl_requests
-            
+
             session = curl_requests.Session()
             response = session.get(
                 url,
@@ -1228,12 +1228,12 @@ class StealthCrawler:
             )
             response.raise_for_status()
             return response.text
-            
+
         except Exception as e:
             logger.warning(f"curl_cffi fetch failed: {e}")
             return None
-    
-    def _fetch_with_requests(self, url: str, headers: Dict[str, str]) -> Optional[str]:
+
+    def _fetch_with_requests(self, url: str, headers: dict[str, str]) -> str | None:
         """Fetch using requests (fallback).
 
         B2: conditional SOCKS proxy — set only when Tor is running.
@@ -1257,9 +1257,10 @@ class StealthCrawler:
             return None
         _mark_surface_patched("_fetch_with_requests")
         try:
+            import socket as _socket
+
             import requests
             import socks
-            import socket as _socket
 
             # TICKET-001: Thread-local proxy patch — nesmí ovlivnit globální socket
             _orig_socket = _socket.socket
@@ -1285,7 +1286,7 @@ class StealthCrawler:
             logger.warning(f"requests fetch failed: {e}")
             return None
 
-    async def _fetch_with_requests_async_tor(self, url: str, headers: Dict[str, str]) -> Optional[str]:
+    async def _fetch_with_requests_async_tor(self, url: str, headers: dict[str, str]) -> str | None:
         """TICKET-001: Async fetch přes requests s thread-local Tor proxy.
 
         Používá asyncio.to_thread() pro non-blocking operaci.
@@ -1306,11 +1307,12 @@ class StealthCrawler:
             return None
         _mark_surface_patched("_fetch_with_requests_async_tor")
 
-        def _sync_fetch() -> Optional[str]:
+        def _sync_fetch() -> str | None:
             """Sync fetch v threadu s thread-local socket patch."""
+            import socket as _socket
+
             import requests
             import socks
-            import socket as _socket
 
             _orig = _socket.socket
             try:
@@ -1330,7 +1332,7 @@ class StealthCrawler:
 
         return await asyncio.to_thread(_sync_fetch)
 
-    def _fetch_with_subprocess_curl(self, url: str, headers: Dict[str, str]) -> Optional[str]:
+    def _fetch_with_subprocess_curl(self, url: str, headers: dict[str, str]) -> str | None:
         """Fetch using subprocess curl with Brotli support (Sprint 8R fallback)."""
         # Phase 2 breaker preflight
         allowed, reason = _crawler_domain_allowed(url, "_fetch_with_subprocess_curl")
@@ -1359,7 +1361,7 @@ class StealthCrawler:
             logger.warning(f"subprocess curl failed: {e}")
             return None
 
-    async def _fetch_with_subprocess_curl_async(self, url: str, headers: Dict[str, str]) -> Optional[str]:
+    async def _fetch_with_subprocess_curl_async(self, url: str, headers: dict[str, str]) -> str | None:
         """
         Sprint 8X: Async wrapper for subprocess curl.
         Uses asyncio.to_thread to avoid blocking the event loop.
@@ -1372,7 +1374,6 @@ class StealthCrawler:
             return None
         _mark_surface_patched("_fetch_with_subprocess_curl_async")
         try:
-            import subprocess
 
             cmd = ['curl', '-s', '-L', '-A', headers.get('User-Agent', 'Mozilla/5.0'),
                    '--compressed', '--max-filesize', '5242880']  # 5MB for M1 safety
@@ -1393,13 +1394,13 @@ class StealthCrawler:
                     process.communicate(),
                     timeout=15.0
                 )
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 # Sprint 8X: Proper terminate → kill on timeout (no zombies)
                 try:
                     process.terminate()
                     try:
                         await asyncio.wait_for(process.wait(), timeout=2.0)
-                    except asyncio.TimeoutError:
+                    except TimeoutError:
                         process.kill()
                         await process.wait()
                 except Exception:
@@ -1415,7 +1416,7 @@ class StealthCrawler:
             logger.warning(f"async subprocess curl failed: {e}")
             return None
 
-    def fetch_page_content(self, url: str, headers: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+    def fetch_page_content(self, url: str, headers: dict[str, str] | None = None) -> dict[str, Any]:
         """
         Sprint 8T: Fetch page content with text extraction and email extraction.
 
@@ -1492,7 +1493,7 @@ class StealthCrawler:
 
         return result
 
-    async def fetch_page_content_async(self, url: str, headers: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+    async def fetch_page_content_async(self, url: str, headers: dict[str, str] | None = None) -> dict[str, Any]:
         """
         Sprint 8X: Async version of fetch_page_content with proper async subprocess handling.
 
@@ -1584,14 +1585,14 @@ class StealthCrawler:
             text = re.sub(r'\s+', ' ', text)
             return text.strip()
 
-    def _parse_duckduckgo(self, html: str, num_results: int) -> List[SearchResult]:
+    def _parse_duckduckgo(self, html: str, num_results: int) -> list[SearchResult]:
         """Parse DuckDuckGo HTML."""
         results = []
-        
+
         # Primary pattern
         pattern = r'<a[^>]*class="result__a"[^>]*href="([^"]*)"[^>]*>(.*?)</a>.*?<a[^>]*class="result__snippet"[^>]*>(.*?)</a>'
         matches = re.findall(pattern, html, re.DOTALL)
-        
+
         for i, (url_raw, title, snippet) in enumerate(matches[:num_results]):
             clean_url = self._clean_ddg_url(url_raw)
             if clean_url:
@@ -1602,12 +1603,12 @@ class StealthCrawler:
                     source="duckduckgo",
                     rank=i
                 ))
-        
+
         # Fallback pattern
         if not results:
             pattern = r'<a[^>]*href="([^"]*)"[^>]*class="result__a"[^>]*>(.*?)</a>'
             matches = re.findall(pattern, html, re.DOTALL)
-            
+
             for i, (url_raw, title) in enumerate(matches[:num_results]):
                 clean_url = self._clean_ddg_url(url_raw)
                 if clean_url:
@@ -1618,16 +1619,16 @@ class StealthCrawler:
                         source="duckduckgo",
                         rank=i
                     ))
-        
+
         return results
-    
-    def _parse_google(self, html: str, num_results: int) -> List[SearchResult]:
+
+    def _parse_google(self, html: str, num_results: int) -> list[SearchResult]:
         """Parse Google HTML."""
         results = []
-        
+
         pattern = r'<div[^>]*class="g"[^>]*>.*?<h3[^>]*>.*?<a[^>]*href="([^"]*)"[^>]*>(.*?)</a>.*?<span[^>]*class="st"[^>]*>(.*?)</span>'
         matches = re.findall(pattern, html, re.DOTALL)
-        
+
         for i, (url_raw, title, snippet) in enumerate(matches[:num_results]):
             clean_url = self._clean_google_url(url_raw)
             if clean_url:
@@ -1638,10 +1639,10 @@ class StealthCrawler:
                     source="google",
                     rank=i
                 ))
-        
+
         return results
-    
-    def _clean_ddg_url(self, url: str) -> Optional[str]:
+
+    def _clean_ddg_url(self, url: str) -> str | None:
         """Clean DuckDuckGo redirect URL."""
         try:
             if url.startswith('/l/?uddg='):
@@ -1653,8 +1654,8 @@ class StealthCrawler:
             return None
         except Exception:
             return None
-    
-    def _clean_google_url(self, url: str) -> Optional[str]:
+
+    def _clean_google_url(self, url: str) -> str | None:
         """Clean Google redirect URL."""
         try:
             if url.startswith('/url?'):
@@ -1668,13 +1669,13 @@ class StealthCrawler:
             return None
         except Exception:
             return None
-    
+
     def _clean_html(self, text: str) -> str:
         """Remove HTML tags."""
         text = re.sub(r'<[^>]+>', '', text)
         text = re.sub(r'\s+', ' ', text)
         return text.strip()
-    
+
     def cleanup(self) -> None:
         """Cleanup resources (M1 optimization)."""
         if self._session:
@@ -1683,7 +1684,7 @@ class StealthCrawler:
             except Exception:
                 pass
             self._session = None
-        
+
         import gc
         gc.collect()
 
@@ -1695,7 +1696,7 @@ class StealthCrawler:
 class StealthWebScraper:
     """
     Advanced stealth web scraper with anti-detection capabilities.
-    
+
     Features:
     - Automatic protection detection
     - Multi-layer bypass strategies
@@ -1703,10 +1704,10 @@ class StealthWebScraper:
     - Proxy management
     - CAPTCHA solving
     - Rate limiting and backoff
-    
+
     Integrated from stealth_osint for universal orchestrator.
     """
-    
+
     # Detection patterns
     DETECTION_PATTERNS = {
         ProtectionType.CLOUDFLARE: [
@@ -1734,7 +1735,7 @@ class StealthWebScraper:
             b"px-captcha",
         ],
     }
-    
+
     # User agents for rotation
     USER_AGENTS = [
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
@@ -1743,13 +1744,13 @@ class StealthWebScraper:
         "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Safari/605.1.15",
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 Edg/120.0.0.0",
     ]
-    
+
     def __init__(
         self,
         max_retries: int = 3,
         retry_delay: float = 2.0,
         use_proxies: bool = False,
-        proxy_list: Optional[List[str]] = None,
+        proxy_list: list[str] | None = None,
         enable_cloudscraper: bool = True,
         enable_selenium: bool = False,
         request_timeout: int = 30
@@ -1760,42 +1761,42 @@ class StealthWebScraper:
         self.enable_cloudscraper = enable_cloudscraper
         self.enable_selenium = enable_selenium
         self.request_timeout = request_timeout
-        
+
         # Security components
         self._anonymizer = None
         self._zero_attribution = None
-        
+
         # Proxy management
-        self._proxies: List[ProxyConfig] = []
+        self._proxies: list[ProxyConfig] = []
         # Sprint 26: Proxy health check
-        self._proxy_health_task: Optional[asyncio.Task] = None
+        self._proxy_health_task: asyncio.Task | None = None
         self._health_check_interval = 60  # seconds
         if proxy_list:
             self._load_proxies(proxy_list)
-        
+
         # Fingerprint profiles
-        self._fingerprints: List[FingerprintProfile] = []
+        self._fingerprints: list[FingerprintProfile] = []
         self._generate_fingerprints()
-        
+
         # HTTP session
         self._session = None
-        
+
         # Request tracking
-        self._active_sessions: Dict[str, Dict[str, Any]] = {}
-        self._request_history: List[ScrapingResult] = []
-        
+        self._active_sessions: dict[str, dict[str, Any]] = {}
+        self._request_history: list[ScrapingResult] = []
+
         # Performance metrics
         self._requests_made = 0
         self._requests_succeeded = 0
-        self._bypasses_used = {method: 0 for method in BypassMethod}
-        
+        self._bypasses_used = dict.fromkeys(BypassMethod, 0)
+
         logger.info("StealthWebScraper initialized")
-    
+
     async def initialize(self) -> bool:
         """Initialize security components and HTTP session"""
         try:
             import aiohttp
-            
+
             # Initialize security components
             try:
                 from _shims.security_temporal_anonymizer import TemporalAnonymizer
@@ -1804,7 +1805,7 @@ class StealthWebScraper:
                 self._zero_attribution = ZeroAttributionEngine()
             except Exception as e:
                 logger.warning(f"Security components not available: {e}")
-            
+
             # Create HTTP session with default headers
             self._session = aiohttp.ClientSession(
                 headers=self._get_default_headers(),
@@ -1816,14 +1817,14 @@ class StealthWebScraper:
                     force_close=True,
                 )
             )
-            
+
             logger.info("✅ StealthWebScraper initialized")
             return True
         except Exception as e:
             logger.error(f"❌ Initialization failed: {e}")
             return False
-    
-    def _load_proxies(self, proxy_list: List[str]) -> None:
+
+    def _load_proxies(self, proxy_list: list[str]) -> None:
         """Load proxies from list"""
         for proxy_str in proxy_list:
             try:
@@ -1838,7 +1839,7 @@ class StealthWebScraper:
                     self._proxies.append(proxy)
             except Exception as e:
                 logger.warning(f"Failed to parse proxy {proxy_str}: {e}")
-        
+
         logger.info(f"Loaded {len(self._proxies)} proxies")
 
         # Sprint 26: Start proxy health check
@@ -1877,7 +1878,7 @@ class StealthWebScraper:
         platforms = ["Win32", "MacIntel", "Linux x86_64"]
         timezones = ["America/New_York", "Europe/London", "Asia/Tokyo"]
         screens = ["1920x1080", "2560x1440", "1366x768", "1440x900"]
-        
+
         for i in range(count):
             fingerprint = FingerprintProfile(
                 profile_id=f"fp_{i:03d}",
@@ -1893,10 +1894,10 @@ class StealthWebScraper:
                 webgl_renderer=random.choice(["Intel Iris OpenGL Engine", "NVIDIA GeForce GPU", "Apple GPU"]),
             )
             self._fingerprints.append(fingerprint)
-        
+
         logger.info(f"Generated {count} fingerprint profiles")
-    
-    def _get_default_headers(self) -> Dict[str, str]:
+
+    def _get_default_headers(self) -> dict[str, str]:
         """Get default HTTP headers"""
         return {
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
@@ -1911,16 +1912,16 @@ class StealthWebScraper:
             "Sec-Fetch-User": "?1",
             "Cache-Control": "max-age=0",
         }
-    
+
     def _get_random_fingerprint(self) -> FingerprintProfile:
         """Get random fingerprint profile"""
         return random.choice(self._fingerprints)
-    
-    def _get_random_proxy(self) -> Optional[ProxyConfig]:
+
+    def _get_random_proxy(self) -> ProxyConfig | None:
         """Get random proxy with load balancing"""
         if not self._proxies:
             return None
-        
+
         def score_proxy(proxy: ProxyConfig) -> float:
             total = proxy.success_count + proxy.failure_count
             if total == 0:
@@ -1931,80 +1932,80 @@ class StealthWebScraper:
                 seconds_since = (datetime.now() - proxy.last_used).total_seconds()
                 time_penalty = min(seconds_since / 60, 1.0)
             return success_rate - time_penalty * 0.3
-        
+
         sorted_proxies = sorted(self._proxies, key=score_proxy, reverse=True)
         return sorted_proxies[0] if sorted_proxies else None
-    
+
     async def scrape(
         self,
         url: str,
-        headers: Optional[Dict[str, str]] = None,
+        headers: dict[str, str] | None = None,
         use_proxy: bool = True,
-        max_retries: Optional[int] = None
+        max_retries: int | None = None
     ) -> ScrapingResult:
         """
         Scrape URL with automatic protection bypass.
-        
+
         Args:
             url: URL to scrape
             headers: Custom headers
             use_proxy: Use proxy if available
             max_retries: Max retry attempts
-            
+
         Returns:
             ScrapingResult
         """
         max_retries = max_retries or self.max_retries
         request_id = hashlib.sha256(f"{url}:{time.time()}".encode()).hexdigest()[:16]
         start_time = time.time()
-        
+
         logger.info(f"🔍 Scraping: {url}")
-        
+
         # Apply temporal delay
         if self._anonymizer:
             await asyncio.sleep(self._anonymizer.get_random_delay())
-        
+
         for attempt in range(max_retries):
             try:
                 fingerprint = self._get_random_fingerprint()
                 proxy = self._get_random_proxy() if (use_proxy and self.use_proxies) else None
-                
+
                 # Try direct request first
                 result = await self._try_direct_request(
                     request_id, url, fingerprint, proxy, headers
                 )
-                
+
                 if result.success:
                     self._requests_succeeded += 1
                     self._bypasses_used[BypassMethod.DIRECT] += 1
                     return result
-                
+
                 # Check if protection detected
                 if result.protection_detected != ProtectionType.NONE:
                     logger.warning(f"🛡️ Protection detected: {result.protection_detected.value}")
-                    
+
                     bypass_result = await self._try_bypass(
                         request_id, url, result.protection_detected, fingerprint, proxy
                     )
-                    
+
                     if bypass_result and bypass_result.success:
                         self._requests_succeeded += 1
                         return bypass_result
-                
+
                 # Retry with different proxy/fingerprint
                 if attempt < max_retries - 1:
                     delay = self.retry_delay * (2 ** attempt)
                     logger.debug(f"Retrying in {delay}s...")
                     await asyncio.sleep(delay)
-                
+
             except Exception as e:
                 logger.error(f"Scraping error: {e}")
                 if attempt < max_retries - 1:
                     await asyncio.sleep(self.retry_delay * (2 ** attempt))
-        
+
         # All attempts failed
         self._requests_made += max_retries
-        
+
         return ScrapingResult(
             request_id=request_id,
             url=url,
@@ -2019,25 +2020,25 @@ class StealthWebScraper:
             duration=time.time() - start_time,
             error="Max retries exceeded"
         )
-    
+
     async def _try_direct_request(
         self,
         request_id: str,
         url: str,
         fingerprint: FingerprintProfile,
-        proxy: Optional[ProxyConfig],
-        custom_headers: Optional[Dict[str, str]]
+        proxy: ProxyConfig | None,
+        custom_headers: dict[str, str] | None
     ) -> ScrapingResult:
         """Try direct HTTP request"""
         start_time = time.time()
-        
+
         headers = self._get_default_headers()
         headers["User-Agent"] = fingerprint.user_agent
         headers["Accept-Language"] = fingerprint.accept_language
-        
+
         if custom_headers:
             headers.update(custom_headers)
-        
+
         proxy_url = None
         if proxy:
             auth = ""
@@ -2045,7 +2046,7 @@ class StealthWebScraper:
                 auth = f"{proxy.username}:{proxy.password}@"
             proxy_url = f"http://{auth}{proxy.host}:{proxy.port}"
             proxy.last_used = datetime.now()
-        
+
         try:
             # Phase 2 breaker preflight
             allowed, reason = _crawler_domain_allowed(url, "StealthWebScraper._try_direct_request")
@@ -2075,17 +2076,17 @@ class StealthWebScraper:
                 allow_redirects=True
             ) as resp:
                 content = await resp.text()
-                
+
                 protection = self._detect_protection(content, resp.headers)
-                
+
                 if proxy:
                     if resp.status == 200 and protection == ProtectionType.NONE:
                         proxy.success_count += 1
                     else:
                         proxy.failure_count += 1
-                
+
                 self._requests_made += 1
-                
+
                 return ScrapingResult(
                     request_id=request_id,
                     url=url,
@@ -2100,11 +2101,11 @@ class StealthWebScraper:
                     duration=time.time() - start_time,
                     proxy_used=proxy_url
                 )
-                
+
         except Exception as e:
             if proxy:
                 proxy.failure_count += 1
-            
+
             return ScrapingResult(
                 request_id=request_id,
                 url=url,
@@ -2120,36 +2121,36 @@ class StealthWebScraper:
                 proxy_used=proxy_url,
                 error=str(e)
             )
-    
+
     def _detect_protection(
         self,
         content: str,
-        headers: Dict[str, str]
+        headers: dict[str, str]
     ) -> ProtectionType:
         """Detect anti-bot protection"""
         content_bytes = content.encode()
         headers_str = str(headers).encode()
-        
+
         for protection, patterns in self.DETECTION_PATTERNS.items():
             for pattern in patterns:
                 if pattern in content_bytes or pattern in headers_str:
                     return protection
-        
+
         if "cf-ray" in str(headers).lower():
             return ProtectionType.CLOUDFLARE
-        
+
         return ProtectionType.NONE
-    
+
     async def _try_bypass(
         self,
         request_id: str,
         url: str,
         protection: ProtectionType,
         fingerprint: FingerprintProfile,
-        proxy: Optional[ProxyConfig]
-    ) -> Optional[ScrapingResult]:
+        proxy: ProxyConfig | None
+    ) -> ScrapingResult | None:
         """Try to bypass protection"""
-        
+
         # Try cloudscraper for Cloudflare
         if protection == ProtectionType.CLOUDFLARE and self.enable_cloudscraper:
             logger.info("Trying cloudscraper bypass...")
@@ -2157,7 +2158,7 @@ class StealthWebScraper:
             if result and result.success:
                 self._bypasses_used[BypassMethod.CLOUDSCRAPER] += 1
                 return result
-        
+
         # Try proxy rotation
         if self.use_proxies and len(self._proxies) > 1:
             logger.info("Trying proxy rotation...")
@@ -2170,16 +2171,16 @@ class StealthWebScraper:
                 if result.success:
                     self._bypasses_used[BypassMethod.PROXY_ROTATION] += 1
                     return result
-        
+
         return None
-    
+
     async def _try_cloudscraper(
         self,
         request_id: str,
         url: str,
         fingerprint: FingerprintProfile,
-        proxy: Optional[ProxyConfig]
-    ) -> Optional[ScrapingResult]:
+        proxy: ProxyConfig | None
+    ) -> ScrapingResult | None:
         """Try using cloudscraper library"""
         # Phase 2 breaker preflight
         allowed, reason = _crawler_domain_allowed(url, "StealthWebScraper._try_cloudscraper")
@@ -2190,7 +2191,7 @@ class StealthWebScraper:
         _mark_surface_patched("StealthWebScraper._try_cloudscraper")
         try:
             import cloudscraper
-            
+
             scraper = cloudscraper.create_scraper(
                 browser={
                     'browser': 'chrome',
@@ -2198,14 +2199,14 @@ class StealthWebScraper:
                     'desktop': True
                 }
             )
-            
+
             loop = asyncio.get_running_loop()
-            
+
             def do_request():
                 return scraper.get(url, timeout=self.request_timeout)
-            
+
             response = await loop.run_in_executor(None, do_request)
-            
+
             return ScrapingResult(
                 request_id=request_id,
                 url=url,
@@ -2220,12 +2221,12 @@ class StealthWebScraper:
                 duration=0.0,
                 proxy_used=proxy.host if proxy else None
             )
-            
+
         except Exception as e:
             logger.debug(f"Cloudscraper failed: {e}")
             return None
-    
-    def get_statistics(self) -> Dict[str, Any]:
+
+    def get_statistics(self) -> dict[str, Any]:
         """Get scraper statistics"""
         return {
             "requests_made": self._requests_made,
@@ -2240,7 +2241,7 @@ class StealthWebScraper:
             "proxies_available": len(self._proxies),
             "fingerprints_available": len(self._fingerprints),
         }
-    
+
     async def cleanup(self) -> None:
         """Cleanup resources"""
         # Sprint 26: Cancel proxy health check task
@@ -2297,16 +2298,16 @@ class StreamingMonitor:
 
     def __init__(self, crawler: StealthCrawler):
         self.crawler = crawler
-        self._sources: Dict[str, MonitoredSource] = {}
-        self._alert_rules: Dict[str, AlertRule] = {}
-        self._alerts: List[Alert] = []
-        self._events: Dict[str, List[StreamEvent]] = {}  # Per-source event history
+        self._sources: dict[str, MonitoredSource] = {}
+        self._alert_rules: dict[str, AlertRule] = {}
+        self._alerts: list[Alert] = []
+        self._events: dict[str, list[StreamEvent]] = {}  # Per-source event history
         self._running = False
-        self._monitor_task: Optional[asyncio.Task] = None
+        self._monitor_task: asyncio.Task | None = None
         self._check_count = 0
 
         # M1 optimization: connection pool reuse
-        self._session: Optional[Any] = None
+        self._session: Any | None = None
         self._semaphore = asyncio.Semaphore(self.MAX_CONCURRENT_CHECKS)
 
         # Statistics
@@ -2363,7 +2364,7 @@ class StreamingMonitor:
             logger.error(f"❌ StreamingMonitor initialization failed: {e}")
             return False
 
-    def _get_default_headers(self) -> Dict[str, str]:
+    def _get_default_headers(self) -> dict[str, str]:
         """Get default HTTP headers for monitoring"""
         return {
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
@@ -2503,7 +2504,7 @@ class StreamingMonitor:
                 logger.error(f"Error checking source {source.source_id}: {e}")
                 self._stats['errors'] += 1
 
-    async def _check_source(self, source: MonitoredSource) -> Optional[StreamEvent]:
+    async def _check_source(self, source: MonitoredSource) -> StreamEvent | None:
         """
         Check a single source for changes.
 
@@ -2627,7 +2628,7 @@ class StreamingMonitor:
             # If HEAD fails, fall back to full request
             return True
 
-    async def _fetch_rss(self, source: MonitoredSource) -> Optional[str]:
+    async def _fetch_rss(self, source: MonitoredSource) -> str | None:
         """Fetch and parse RSS feed"""
         if not self._feedparser_available:
             # Fallback to raw fetch
@@ -2664,7 +2665,7 @@ class StreamingMonitor:
             logger.error(f"RSS fetch failed for {source.source_id}: {e}")
             return None
 
-    async def _fetch_api(self, source: MonitoredSource) -> Optional[str]:
+    async def _fetch_api(self, source: MonitoredSource) -> str | None:
         """Fetch from API endpoint"""
         try:
             headers = self._get_default_headers()
@@ -2696,7 +2697,7 @@ class StreamingMonitor:
             logger.error(f"API fetch failed for {source.source_id}: {e}")
             return None
 
-    async def _fetch_url(self, source: MonitoredSource) -> Optional[str]:
+    async def _fetch_url(self, source: MonitoredSource) -> str | None:
         """Fetch URL content"""
         # Phase 2 breaker preflight
         allowed, reason = _crawler_domain_allowed(source.url, "StreamingMonitor._fetch_url")
@@ -2715,7 +2716,7 @@ class StreamingMonitor:
         """Calculate content hash for change detection"""
         return hashlib.sha256(content.encode('utf-8')).hexdigest()[:32]
 
-    def _detect_changes(self, old_content: str, new_content: str) -> List[Change]:
+    def _detect_changes(self, old_content: str, new_content: str) -> list[Change]:
         """
         Detect changes between old and new content.
 
@@ -2789,7 +2790,7 @@ class StreamingMonitor:
 
         return changes
 
-    def _extract_entities(self, content: str) -> List[str]:
+    def _extract_entities(self, content: str) -> list[str]:
         """
         Extract entities from content.
 
@@ -2825,7 +2826,7 @@ class StreamingMonitor:
 
         return entities
 
-    def _match_keywords(self, content: str, keywords: List[str]) -> List[str]:
+    def _match_keywords(self, content: str, keywords: list[str]) -> list[str]:
         """Match keywords against content"""
         if not keywords:
             return []
@@ -2842,8 +2843,8 @@ class StreamingMonitor:
     def _determine_severity(
         self,
         change_type: ChangeType,
-        matched_keywords: List[str],
-        entities: List[str]
+        matched_keywords: list[str],
+        entities: list[str]
     ) -> Severity:
         """Determine event severity based on content"""
         # Critical keywords
@@ -2921,10 +2922,10 @@ class StreamingMonitor:
 
     def get_alerts(
         self,
-        severity: Optional[str] = None,
-        acknowledged: Optional[bool] = None,
+        severity: str | None = None,
+        acknowledged: bool | None = None,
         limit: int = 100
-    ) -> List[Alert]:
+    ) -> list[Alert]:
         """
         Get alerts with optional filtering.
 
@@ -2950,7 +2951,7 @@ class StreamingMonitor:
     def acknowledge_alert(
         self,
         alert_id: str,
-        acknowledged_by: Optional[str] = None
+        acknowledged_by: str | None = None
     ) -> bool:
         """
         Acknowledge an alert.
@@ -2972,9 +2973,9 @@ class StreamingMonitor:
 
     def get_events(
         self,
-        source_id: Optional[str] = None,
+        source_id: str | None = None,
         limit: int = 100
-    ) -> List[StreamEvent]:
+    ) -> list[StreamEvent]:
         """
         Get events with optional filtering.
 
@@ -2995,7 +2996,7 @@ class StreamingMonitor:
 
         return sorted(events, key=lambda e: e.timestamp, reverse=True)[:limit]
 
-    def get_statistics(self) -> Dict[str, Any]:
+    def get_statistics(self) -> dict[str, Any]:
         """Get monitoring statistics"""
         uptime = timedelta(0)
         if self._stats['start_time']:
@@ -3049,7 +3050,7 @@ class StreamingMonitor:
 # CONVENIENCE FUNCTIONS
 # =============================================================================
 
-async def quick_scrape(url: str) -> Optional[str]:
+async def quick_scrape(url: str) -> str | None:
     """Quick scrape URL and return content."""
     scraper = StealthWebScraper()
 
@@ -3079,4 +3080,4 @@ def get_stealth_web_scraper() -> StealthWebScraper:
 # StealthWebScraper() fresh per call (line ~729). The singleton below is
 # NEVER reached from the active fetch path. This is intentional: per-fetch
 # isolation, no session re-use across fetches.
-_stealth_web_scraper: Optional[StealthWebScraper] = None
+_stealth_web_scraper: StealthWebScraper | None = None

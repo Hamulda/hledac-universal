@@ -2,8 +2,8 @@
 Smoke tests for critical modules without test coverage.
 """
 
+
 import pytest
-from unittest.mock import patch, MagicMock
 
 
 class TestCriticalModules:

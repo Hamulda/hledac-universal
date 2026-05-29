@@ -2,13 +2,12 @@
 """
 Sprint 6A: Unit Tests for TS Calibration and GC Checkpoint
 """
-import unittest
 import sys
-import time
+import unittest
 
 sys.path.insert(0, '/Users/vojtechhamada/PycharmProjects/Hledac')
 
-from collections import OrderedDict, deque
+from collections import OrderedDict
 
 
 class BoundedOrderedDict(OrderedDict):
@@ -159,8 +158,9 @@ class TestGCCheckpoint(unittest.TestCase):
 class TestPrfExpandFix(unittest.TestCase):
     def test_prf_expand_registration(self):
         """Test prf_expand is registered in action registry."""
-        from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
         import asyncio
+
+        from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
 
         async def test():
             orch = FullyAutonomousOrchestrator()

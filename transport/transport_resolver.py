@@ -19,7 +19,7 @@ NOT AUTHORITY FOR:
 import logging
 from dataclasses import dataclass
 from enum import Enum, auto
-from typing import Any, Optional
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -124,8 +124,8 @@ class TransportResolver:
     """
 
     def __init__(self):
-        self._tor_class: Optional[type] = None
-        self._nym_class: Optional[type] = None
+        self._tor_class: type | None = None
+        self._nym_class: type | None = None
         self._checked = False
 
     def _check_transports(self):
@@ -175,7 +175,7 @@ class TransportResolver:
         """Return True if URL must use Tor transport (cannot be overridden)."""
         return _extract_host(url).endswith('.onion')
 
-    async def resolve(self, context: TransportContext) -> Optional['Transport']:
+    async def resolve(self, context: TransportContext) -> Transport | None:
         """
         Resolve appropriate transport based on context.
 
@@ -267,7 +267,7 @@ class TransportResolver:
 # =============================================================================
 
 
-def get_transport_for_url(url: str) -> 'Transport':
+def get_transport_for_url(url: str) -> Transport:
     """
     Sprint 4A: Get Transport classification for a URL.
 
@@ -364,7 +364,7 @@ Transport = Transport  # re-export via module-level alias
 #     True for .onion only — SourceTransportMap.is_mandatory_tor() facade
 #
 # DORMANT API (NOT recommended, not wired):
-#   TransportResolver.resolve(context: TransportContext) -> Optional[Transport]
+#   TransportResolver.resolve(context: TransportContext) -> Transport | None
 #     WHY DORMANT: attempts per-request transport.start() lifecycle
 #     which is incompatible with FetchCoordinator's pooled session model.
 #     NOT called from any production path.

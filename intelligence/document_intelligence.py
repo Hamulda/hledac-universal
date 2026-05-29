@@ -24,18 +24,16 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import io
-import json
 import logging
 import os
 import re
-import struct
 import tempfile
 import zipfile
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
-from typing import Any, BinaryIO, Dict, List, Optional, Set, Tuple, Union
+from typing import Any, BinaryIO
 
 import numpy as np
 
@@ -44,7 +42,7 @@ logger = logging.getLogger(__name__)
 # Optional dependencies with graceful fallback
 try:
     import piexif
-    from PIL import Image, ExifTags, ImageChops
+    from PIL import ExifTags, Image, ImageChops
     from PIL.TiffImagePlugin import IFDRational
     PIL_AVAILABLE = True
 except ImportError:
@@ -76,8 +74,8 @@ except ImportError:
 MPS_AVAILABLE = False
 
 # Sprint 8AW: Aho-Corasick lazy integration for suspicious_keywords
-_AhoExtractorModule: Optional[Any] = None
-_AHO_AVAILABLE: Optional[bool] = None
+_AhoExtractorModule: Any | None = None
+_AHO_AVAILABLE: bool | None = None
 
 
 def _get_aho_extractor():
@@ -141,14 +139,14 @@ class GeoLocation:
     """GPS coordinates extracted from EXIF."""
     latitude: float
     longitude: float
-    altitude: Optional[float] = None
-    timestamp: Optional[datetime] = None
-    gps_version: Optional[str] = None
+    altitude: float | None = None
+    timestamp: datetime | None = None
+    gps_version: str | None = None
     coordinate_system: str = "WGS84"
 
-    def to_dms(self) -> Tuple[Tuple[int, int, float], str]:
+    def to_dms(self) -> tuple[tuple[int, int, float], str]:
         """Convert decimal degrees to DMS (Degrees, Minutes, Seconds)."""
-        def decimal_to_dms(decimal: float) -> Tuple[int, int, float]:
+        def decimal_to_dms(decimal: float) -> tuple[int, int, float]:
             degrees = int(decimal)
             minutes_float = abs(decimal - degrees) * 60
             minutes = int(minutes_float)
@@ -168,21 +166,21 @@ class GeoLocation:
 @dataclass
 class EXIFData:
     """Comprehensive EXIF data from images."""
-    camera_make: Optional[str] = None
-    camera_model: Optional[str] = None
-    software: Optional[str] = None
-    date_time_original: Optional[datetime] = None
-    date_time_digitized: Optional[datetime] = None
-    gps_location: Optional[GeoLocation] = None
-    image_width: Optional[int] = None
-    image_height: Optional[int] = None
-    orientation: Optional[int] = None
-    flash: Optional[bool] = None
-    focal_length: Optional[float] = None
-    iso_speed: Optional[int] = None
-    aperture: Optional[str] = None
-    shutter_speed: Optional[str] = None
-    raw_exif: Dict[str, Any] = field(default_factory=dict)
+    camera_make: str | None = None
+    camera_model: str | None = None
+    software: str | None = None
+    date_time_original: datetime | None = None
+    date_time_digitized: datetime | None = None
+    gps_location: GeoLocation | None = None
+    image_width: int | None = None
+    image_height: int | None = None
+    orientation: int | None = None
+    flash: bool | None = None
+    focal_length: float | None = None
+    iso_speed: int | None = None
+    aperture: str | None = None
+    shutter_speed: str | None = None
+    raw_exif: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -196,38 +194,38 @@ class DocumentMetadata:
     file_extension: str
 
     # Author metadata
-    author: Optional[str] = None
-    creator: Optional[str] = None
-    last_modified_by: Optional[str] = None
-    company: Optional[str] = None
-    title: Optional[str] = None
-    subject: Optional[str] = None
-    keywords: List[str] = field(default_factory=list)
-    category: Optional[str] = None
+    author: str | None = None
+    creator: str | None = None
+    last_modified_by: str | None = None
+    company: str | None = None
+    title: str | None = None
+    subject: str | None = None
+    keywords: list[str] = field(default_factory=list)
+    category: str | None = None
 
     # Temporal metadata
-    creation_date: Optional[datetime] = None
-    modification_date: Optional[datetime] = None
-    last_printed: Optional[datetime] = None
+    creation_date: datetime | None = None
+    modification_date: datetime | None = None
+    last_printed: datetime | None = None
 
     # Software metadata
-    creating_application: Optional[str] = None
-    application_version: Optional[str] = None
-    os_platform: Optional[str] = None
+    creating_application: str | None = None
+    application_version: str | None = None
+    os_platform: str | None = None
 
     # Location metadata
-    location: Optional[str] = None
-    gps_coordinates: Optional[GeoLocation] = None
+    location: str | None = None
+    gps_coordinates: GeoLocation | None = None
 
     # Advanced metadata
-    revision_number: Optional[int] = None
-    total_editing_time_minutes: Optional[int] = None
-    template_used: Optional[str] = None
-    manager: Optional[str] = None
-    hyperlinks_base: Optional[str] = None
+    revision_number: int | None = None
+    total_editing_time_minutes: int | None = None
+    template_used: str | None = None
+    manager: str | None = None
+    hyperlinks_base: str | None = None
 
     # Raw metadata storage
-    raw_metadata: Dict[str, Any] = field(default_factory=dict)
+    raw_metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -235,25 +233,25 @@ class EmbeddedObject:
     """Represents an embedded object in a document."""
     object_type: str
     object_name: str
-    content_type: Optional[str]
+    content_type: str | None
     size_bytes: int
-    extracted_content: Optional[bytes] = None
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    extracted_content: bytes | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
 class DocumentAnalysis:
     """Complete document analysis result."""
     metadata: DocumentMetadata
-    embedded_objects: List[EmbeddedObject] = field(default_factory=list)
-    hyperlinks: List[str] = field(default_factory=list)
-    email_addresses: List[str] = field(default_factory=list)
-    ip_addresses: List[str] = field(default_factory=list)
-    comments: List[str] = field(default_factory=list)
-    revisions: List[Dict[str, Any]] = field(default_factory=list)
-    hidden_text: List[str] = field(default_factory=list)
-    suspicious_indicators: List[str] = field(default_factory=list)
-    exif_data: Optional[EXIFData] = None
+    embedded_objects: list[EmbeddedObject] = field(default_factory=list)
+    hyperlinks: list[str] = field(default_factory=list)
+    email_addresses: list[str] = field(default_factory=list)
+    ip_addresses: list[str] = field(default_factory=list)
+    comments: list[str] = field(default_factory=list)
+    revisions: list[dict[str, Any]] = field(default_factory=list)
+    hidden_text: list[str] = field(default_factory=list)
+    suspicious_indicators: list[str] = field(default_factory=list)
+    exif_data: EXIFData | None = None
 
 
 class PDFAnalyzer:
@@ -275,7 +273,7 @@ class PDFAnalyzer:
             "redacted", "sensitive"
         ]
 
-    def analyze(self, file_path: Union[str, bytes, BinaryIO]) -> DocumentAnalysis:
+    def analyze(self, file_path: str | bytes | BinaryIO) -> DocumentAnalysis:
         """
         Analyze PDF document.
 
@@ -357,7 +355,7 @@ class PDFAnalyzer:
             doc: PyMuPDF document object
 
         Returns:
-            dict with "signal_score" (float) and "candidate_pages" (List[int])
+            dict with "signal_score" (float) and "candidate_pages" (list[int])
         """
         MAX_DEEP_PDF_PAGES = 12
 
@@ -418,7 +416,7 @@ class PDFAnalyzer:
             logger.warning(f"PDF probing failed: {e}")
             return {"signal_score": 0.5, "candidate_pages": list(range(5))}
 
-    def _deep_parse_pages(self, doc, page_indices: List[int]) -> List[str]:
+    def _deep_parse_pages(self, doc, page_indices: list[int]) -> list[str]:
         """
         Deep parse specific pages of the PDF.
 
@@ -484,7 +482,7 @@ class PDFAnalyzer:
             raw_metadata=pdf_metadata
         )
 
-    def _parse_pdf_date(self, date_str: Optional[str]) -> Optional[datetime]:
+    def _parse_pdf_date(self, date_str: str | None) -> datetime | None:
         """Parse PDF date string format."""
         if not date_str:
             return None
@@ -506,13 +504,13 @@ class PDFAnalyzer:
         except Exception:
             return None
 
-    def _extract_pdf_objects(self, doc: fitz.Document) -> List[EmbeddedObject]:
+    def _extract_pdf_objects(self, doc: fitz.Document) -> list[EmbeddedObject]:
         """Extract embedded objects from PDF."""
         objects = []
 
         for xref in range(1, doc.xref_length()):
             try:
-                obj_type = doc.xref_get_key(xref, "Type")
+                doc.xref_get_key(xref, "Type")
                 subtype = doc.xref_get_key(xref, "Subtype")
 
                 if subtype[1] == "Image":
@@ -550,7 +548,7 @@ class PDFAnalyzer:
 
         return objects
 
-    def _detect_suspicious_content(self, text: str) -> List[str]:
+    def _detect_suspicious_content(self, text: str) -> list[str]:
         """Detect suspicious keywords in text using Aho-Corasick if available.
 
         Lazy integration (Sprint 8AW): ahocorasick is NOT loaded on boot.
@@ -632,7 +630,7 @@ class OfficeDocumentAnalyzer:
             self._foca_extractor = None
         return self._foca_extractor
 
-    def analyze(self, file_path: Union[str, bytes]) -> DocumentAnalysis:
+    def analyze(self, file_path: str | bytes) -> DocumentAnalysis:
         """Analyze Office document (sync)."""
         if isinstance(file_path, str):
             with open(file_path, "rb") as f:
@@ -647,7 +645,7 @@ class OfficeDocumentAnalyzer:
             # Legacy binary format (OLE)
             return self._analyze_ole(content)
 
-    async def analyze_async(self, file_path: Union[str, bytes]) -> DocumentAnalysis:
+    async def analyze_async(self, file_path: str | bytes) -> DocumentAnalysis:
         """Analyze Office document with FOCA enrichment (async, M1-safe)."""
         if isinstance(file_path, str):
             with open(file_path, "rb") as f:
@@ -662,7 +660,7 @@ class OfficeDocumentAnalyzer:
             # Legacy binary format (OLE)
             return self._analyze_ole(content)
 
-    async def _analyze_ooxml_async(self, content: bytes, file_path: Optional[str]) -> DocumentAnalysis:
+    async def _analyze_ooxml_async(self, content: bytes, file_path: str | None) -> DocumentAnalysis:
         """Analyze OOXML with FOCA metadata enrichment."""
         # Base analysis via ZIP parsing
         analysis = self._analyze_ooxml(content, file_path)
@@ -696,7 +694,7 @@ class OfficeDocumentAnalyzer:
         if foca_data:
             analysis.metadata.raw_metadata["foca"] = foca_data
 
-    def _analyze_ooxml(self, content: bytes, file_path: Optional[str]) -> DocumentAnalysis:
+    def _analyze_ooxml(self, content: bytes, file_path: str | None) -> DocumentAnalysis:
         """Analyze Office Open XML format (docx, xlsx, pptx)."""
         embedded_objects = []
         hyperlinks = []
@@ -786,7 +784,7 @@ class OfficeDocumentAnalyzer:
             raw_metadata=props
         )
 
-    def _parse_core_xml(self, xml_content: str) -> Dict[str, Any]:
+    def _parse_core_xml(self, xml_content: str) -> dict[str, Any]:
         """Parse core.xml properties."""
         props = {}
 
@@ -816,7 +814,7 @@ class OfficeDocumentAnalyzer:
 
         return props
 
-    def _extract_comments_from_xml(self, xml_content: str) -> List[str]:
+    def _extract_comments_from_xml(self, xml_content: str) -> list[str]:
         """Extract comments from Word XML."""
         comments = []
         # Simple regex for comment text
@@ -853,7 +851,7 @@ class ImageAnalyzer:
     Extracts EXIF data, GPS coordinates, and performs image forensics.
     """
 
-    def analyze(self, file_path: Union[str, bytes]) -> DocumentAnalysis:
+    def analyze(self, file_path: str | bytes) -> DocumentAnalysis:
         """Analyze image file."""
         if not PIL_AVAILABLE:
             logger.warning("PIL not available - cannot analyze image")
@@ -900,7 +898,7 @@ class ImageAnalyzer:
             logger.error(f"Image analysis error: {e}")
             return self._basic_image_analysis(file_path)
 
-    def _extract_exif(self, img: Image.Image) -> Optional[EXIFData]:
+    def _extract_exif(self, img: Image.Image) -> EXIFData | None:
         """Extract EXIF data from image."""
         try:
             exif = img._getexif()
@@ -951,7 +949,7 @@ class ImageAnalyzer:
             logger.error(f"EXIF extraction error: {e}")
             return None
 
-    def _parse_exif_datetime(self, value) -> Optional[datetime]:
+    def _parse_exif_datetime(self, value) -> datetime | None:
         """Parse EXIF datetime string."""
         if isinstance(value, str):
             try:
@@ -960,7 +958,7 @@ class ImageAnalyzer:
                 pass
         return None
 
-    def _extract_gps(self, exif: Dict) -> Optional[GeoLocation]:
+    def _extract_gps(self, exif: dict) -> GeoLocation | None:
         """Extract GPS coordinates from EXIF."""
         try:
             gps_info = exif.get("GPSInfo")
@@ -1109,7 +1107,7 @@ class DeepForensicsAnalyzer:
             pass
         return None
 
-    async def analyze_image(self, content: bytes, url: str = None) -> Dict[str, Any]:
+    async def analyze_image(self, content: bytes, url: str = None) -> dict[str, Any]:
         """Analyze image for forensic artifacts.
 
         Args:
@@ -1269,7 +1267,7 @@ class StegdetectServer:
     """Persistent stegdetect process with semaphore pool for concurrent analysis."""
 
     def __init__(self, max_workers: int = 4):
-        self._procs: List[asyncio.subprocess.Process] = []
+        self._procs: list[asyncio.subprocess.Process] = []
         self._bin_path = Path.home() / '.hledac' / 'bin' / 'stegdetect'
         self._semaphore = asyncio.Semaphore(max_workers)
         self._lock = asyncio.Lock()
@@ -1475,7 +1473,7 @@ class DocumentIntelligenceEngine:
 
         return DocumentAnalysis(metadata=metadata)
 
-    def batch_analyze(self, file_paths: List[str]) -> Dict[str, DocumentAnalysis]:
+    def batch_analyze(self, file_paths: list[str]) -> dict[str, DocumentAnalysis]:
         """Analyze multiple documents."""
         results = {}
         for path in file_paths:
@@ -1490,7 +1488,7 @@ class DocumentIntelligenceEngine:
     # Sprint 29: Progressive Document Parsing
     # ============================================================================
 
-    def probe(self, url: str, preview_bytes: bytes, query: str = "") -> Dict[str, Any]:
+    def probe(self, url: str, preview_bytes: bytes, query: str = "") -> dict[str, Any]:
         """
         Probe document to estimate value score for progressive parsing.
 
@@ -1502,7 +1500,7 @@ class DocumentIntelligenceEngine:
         Returns:
             dict with heuristic_score, semantic_score (if computed), final_score, keywords, entities
         """
-        result: Dict[str, Any] = {
+        result: dict[str, Any] = {
             "url": url,
             "heuristic_score": 0.5,
             "final_score": 0.5,
@@ -1580,7 +1578,7 @@ class DocumentIntelligenceEngine:
 
         return max(0.0, min(1.0, score))
 
-    def _compute_semantic_score(self, text: str, query: str) -> Optional[float]:
+    def _compute_semantic_score(self, text: str, query: str) -> float | None:
         """
         Compute semantic similarity score between text and query using ModernBERT.
         """
@@ -1629,12 +1627,12 @@ class DocumentIntelligenceEngine:
             logger.debug(f"Semantic scoring error: {e}")
             return None
 
-    def _cosine_similarity(self, a: List[float], b: List[float]) -> float:
+    def _cosine_similarity(self, a: list[float], b: list[float]) -> float:
         """Compute cosine similarity between two vectors."""
         if not a or not b or len(a) != len(b):
             return 0.0
 
-        dot_product = sum(x * y for x, y in zip(a, b))
+        dot_product = sum(x * y for x, y in zip(a, b, strict=False))
         norm_a = sum(x * x for x in a) ** 0.5
         norm_b = sum(x * x for x in b) ** 0.5
 
@@ -1643,7 +1641,7 @@ class DocumentIntelligenceEngine:
 
         return dot_product / (norm_a * norm_b)
 
-    def _split_preview_into_chunks(self, bytes_data: bytes, max_chunks: int = 5, max_tokens: int = 512) -> List[str]:
+    def _split_preview_into_chunks(self, bytes_data: bytes, max_chunks: int = 5, max_tokens: int = 512) -> list[str]:
         """
         Split preview bytes into chunks for embedding.
 
@@ -1679,7 +1677,7 @@ class DocumentIntelligenceEngine:
 
         return chunks
 
-    def _extract_keywords(self, text: str) -> List[str]:
+    def _extract_keywords(self, text: str) -> list[str]:
         """
         Extract high-value keywords from text.
         """
@@ -1717,7 +1715,7 @@ class CrossDocumentLink:
     """Link between entities across documents."""
     entity_type: str
     value: str
-    documents: List[str]
+    documents: list[str]
     confidence: float
     first_seen: str
     last_seen: str
@@ -1726,10 +1724,10 @@ class CrossDocumentLink:
 @dataclass
 class TimelineEvent:
     """Event extracted from document with temporal information."""
-    date: Optional[datetime]
+    date: datetime | None
     description: str
     source_document: str
-    entities_involved: List[str]
+    entities_involved: list[str]
     confidence: float
 
 
@@ -1738,11 +1736,11 @@ class LongContextAnalysis:
     """Results from MLX long-context analysis."""
     total_chunks: int
     total_tokens: int
-    entities: List[EntityMention]
-    cross_document_links: List[CrossDocumentLink]
-    timeline: List[TimelineEvent]
+    entities: list[EntityMention]
+    cross_document_links: list[CrossDocumentLink]
+    timeline: list[TimelineEvent]
     summary: str
-    key_findings: List[str]
+    key_findings: list[str]
     memory_usage_mb: float
     processing_time_seconds: float
 
@@ -1774,8 +1772,8 @@ class MLXLongContextAnalyzer:
         """
         self.chunk_size = chunk_size
         self.overlap = overlap
-        self.chunk_embeddings: Optional[mx.array] = None
-        self.chunk_texts: List[str] = []
+        self.chunk_embeddings: mx.array | None = None
+        self.chunk_texts: list[str] = []
 
         # Entity patterns for extraction
         self.patterns = {
@@ -1812,7 +1810,7 @@ class MLXLongContextAnalyzer:
         safe_tokens = int((available_ram_gb * 0.25 * 1024 * 1024 * 1024) / 4 / 2)
         return min(self.chunk_size, safe_tokens)
 
-    def chunk_text(self, text: str, source: str = "unknown") -> List[Dict]:
+    def chunk_text(self, text: str, source: str = "unknown") -> list[dict]:
         """
         Split text into overlapping chunks with metadata.
 
@@ -1855,7 +1853,7 @@ class MLXLongContextAnalyzer:
 
         return chunks
 
-    def extract_entities(self, text: str, source: str = "unknown", chunk_id: int = 0) -> List[EntityMention]:
+    def extract_entities(self, text: str, source: str = "unknown", chunk_id: int = 0) -> list[EntityMention]:
         """
         Extract entities from text using pattern matching.
 
@@ -1883,7 +1881,7 @@ class MLXLongContextAnalyzer:
 
         return entities
 
-    def compute_embeddings_mlx(self, chunks: List[str]) -> Optional[mx.array]:
+    def compute_embeddings_mlx(self, chunks: list[str]) -> mx.array | None:
         """
         Compute MLX embeddings for chunks.
 
@@ -1919,7 +1917,7 @@ class MLXLongContextAnalyzer:
             logger.error(f"MLX embedding computation failed: {e}")
             return None
 
-    def find_similar_chunks_mlx(self, query: str, top_k: int = 5) -> List[Tuple[int, float]]:
+    def find_similar_chunks_mlx(self, query: str, top_k: int = 5) -> list[tuple[int, float]]:
         """
         Find most similar chunks to query using MLX.
 
@@ -1959,7 +1957,7 @@ class MLXLongContextAnalyzer:
             logger.error(f"MLX similarity search failed: {e}")
             return []
 
-    def cross_reference_entities(self, all_entities: List[EntityMention]) -> List[CrossDocumentLink]:
+    def cross_reference_entities(self, all_entities: list[EntityMention]) -> list[CrossDocumentLink]:
         """
         Find entities that appear across multiple documents.
 
@@ -1970,7 +1968,7 @@ class MLXLongContextAnalyzer:
             List of cross-document links
         """
         # Group by value
-        by_value: Dict[Tuple[str, str], List[EntityMention]] = {}
+        by_value: dict[tuple[str, str], list[EntityMention]] = {}
 
         for entity in all_entities:
             key = (entity.entity_type, entity.text.lower())
@@ -1981,7 +1979,7 @@ class MLXLongContextAnalyzer:
         # Find cross-document links
         links = []
         for (entity_type, value), mentions in by_value.items():
-            sources = list(set(m.context[:50] for m in mentions))  # Unique sources
+            sources = list({m.context[:50] for m in mentions})  # Unique sources
 
             if len(sources) > 1:
                 link = CrossDocumentLink(
@@ -1998,7 +1996,7 @@ class MLXLongContextAnalyzer:
         links.sort(key=lambda x: x.confidence, reverse=True)
         return links
 
-    def reconstruct_timeline(self, entities: List[EntityMention], chunks: List[Dict]) -> List[TimelineEvent]:
+    def reconstruct_timeline(self, entities: list[EntityMention], chunks: list[dict]) -> list[TimelineEvent]:
         """
         Reconstruct timeline from temporal entities.
 
@@ -2131,9 +2129,9 @@ class MLXLongContextAnalyzer:
 
     def analyze_multiple_dumps(
         self,
-        dumps: Dict[str, str],
+        dumps: dict[str, str],
         cross_correlate: bool = True
-    ) -> Dict[str, LongContextAnalysis]:
+    ) -> dict[str, LongContextAnalysis]:
         """
         Analyze multiple document dumps and optionally cross-correlate.
 
@@ -2180,7 +2178,7 @@ class MLXLongContextAnalyzer:
 
         return results
 
-    def search_across_dumps(self, query: str, dumps: Dict[str, str], top_k_per_dump: int = 3) -> Dict[str, List[Dict]]:
+    def search_across_dumps(self, query: str, dumps: dict[str, str], top_k_per_dump: int = 3) -> dict[str, list[dict]]:
         """
         Search for query across multiple dumps using MLX similarity.
 
@@ -2196,7 +2194,7 @@ class MLXLongContextAnalyzer:
 
         for source, text in dumps.items():
             # Analyze this dump
-            analysis = self.analyze_massive_dump(text, source)
+            self.analyze_massive_dump(text, source)
 
             # Search for similar chunks
             similar = self.find_similar_chunks_mlx(query, top_k_per_dump)

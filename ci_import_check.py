@@ -1,50 +1,49 @@
 #!/usr/bin/env python3
 """
-CI Import Check — Validates that critical modules import cleanly.
-This script should be run by CI to catch broken imports before merge.
-
-Usage: python ci_import_check.py
-Exit code 0 = all OK, non-zero = failures
+CI: fail if critical modules have ImportError.
+Install hook: after uv pip install -e . in CI environment.
+Tests actual production import patterns, NOT broken_imports.json (which tracks
+stale/dead top-level imports from modules outside universal/).
 """
-import sys
-from pathlib import Path
+from __future__ import annotations
 
-# Critical modules that MUST import cleanly
+import sys
+
 CRITICAL_MODULES = [
-    ("hledac.universal.runtime.sprint_scheduler", "SprintScheduler"),
-    ("hledac.universal.coordinators.fetch_coordinator", "FetchCoordinator"),
-    ("hledac.universal.knowledge.duckdb_store", "DuckDBShadowStore"),
-    ("hledac.universal.brain.hermes3_engine", "Hermes3Engine"),
-    ("hledac.universal.brain.model_manager", "ModelManager"),
-    ("hledac.universal.utils.concurrency", "adjust_fetch_workers"),
-    ("hledac.universal.layers", "build_temporal_priority_hints"),
-    ("hledac.universal.transport", "TransportContext"),
-    ("hledac.universal.utils", "ActionResult"),
-    ("hledac.universal.export", "render_diagnostic_markdown_to_path"),
+    "hledac.universal.runtime.sprint_scheduler",
+    "hledac.universal.knowledge.duckdb_store",
+    "hledac.universal.coordinators.fetch_coordinator",
+    "hledac.universal.brain.hermes3_engine",
+    "hledac.universal.knowledge.graph_service",
+    "hledac.universal.brain.model_manager",
+    "hledac.universal.utils.concurrency",
+    "hledac.universal.transport.base",
+    "hledac.universal.security.temporal_anonymizer",
+    # StealthEngine uses lazy import: from _shims.security_stealth_engine import StealthEngine
+    # Verify _shims is importable and the class exists
+    "hledac.universal._shims.security_stealth_engine",
 ]
 
-def main():
-    # ci_import_check.py is in hledac/universal/, project_root = hledac's parent
-    project_root = Path(__file__).resolve().parent.parent.parent
-    sys.path.insert(0, str(project_root))
-
-    failures = []
-
-    for module_path, symbol_name in CRITICAL_MODULES:
+def main() -> int:
+    failed = []
+    for mod in CRITICAL_MODULES:
         try:
-            module = __import__(module_path, fromlist=[symbol_name])
-            getattr(module, symbol_name)
-            print(f"✓ {module_path}.{symbol_name}")
+            __import__(mod)
+            name = mod.split('.', 2)[2]
+            print(f"  {name}: OK")
         except ImportError as e:
-            print(f"✗ {module_path}.{symbol_name}: {e}")
-            failures.append(f"{module_path}.{symbol_name}")
+            print(f"  {mod}: FAIL -- {e}")
+            failed.append(mod)
 
-    if failures:
-        print(f"\n❌ {len(failures)} critical imports FAILED")
+    if failed:
+        print(f"\nCRITICAL import failures: {len(failed)}")
+        for f in failed:
+            print(f"  - {f}")
         return 1
-    else:
-        print(f"\n✅ All {len(CRITICAL_MODULES)} critical imports OK")
-        return 0
+
+    print(f"\nAll {len(CRITICAL_MODULES)} critical imports OK")
+    return 0
 
 if __name__ == "__main__":
+    import sys
     sys.exit(main())

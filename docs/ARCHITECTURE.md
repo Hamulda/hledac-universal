@@ -1,3 +1,6 @@
+<!-- ⚠️ ARCHITECTURE.md last updated: Tue May 12 16:46:28 2026 +0200 -->
+<!-- Sprint F234 added: IPFS sidecar, BGP sidecar, dynamic KV cache -->
+
 # hledac/universal Architecture
 
 ## Entry Points

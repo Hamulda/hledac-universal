@@ -7,11 +7,12 @@ To use a legacy module, import it directly:
     from legacy.atomic_storage import AtomicJSONKnowledgeGraph
 """
 
-import sys as _sys
 import os as _os
+import sys as _sys
 
 # Ensure this package exists in sys.modules
 import types as _types
+
 if "legacy" not in _sys.modules:
     _pkg = _types.ModuleType("legacy")
     _pkg.__path__ = [_os.path.dirname(__file__)]

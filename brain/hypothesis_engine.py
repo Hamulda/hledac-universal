@@ -38,14 +38,13 @@ import logging
 import re
 import uuid
 from collections import OrderedDict
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from enum import Enum, auto
-from typing import Any, AsyncIterator, Callable, Dict, List, Optional, Protocol, Set, Tuple, Union
+from enum import Enum
+from typing import Any, Protocol
 
 from brain.evidence_fusion import DempsterShafer
-
-import numpy as np
 
 # DSPy gate — import protected, dspy not in requirements.txt
 try:
@@ -97,7 +96,7 @@ class Evidence:
     timestamp: datetime
     reliability: float = 1.0  # 0-1, source reliability
     relevance: float = 1.0    # 0-1, relevance to hypothesis
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -106,8 +105,8 @@ class TestResult:
     test_type: str
     result: str  # passed, failed, inconclusive
     confidence: float
-    evidence_collected: List[str] = field(default_factory=list)
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    evidence_collected: list[str] = field(default_factory=list)
+    metadata: dict[str, Any] = field(default_factory=dict)
     timestamp: datetime = field(default_factory=datetime.now)
 
     def __post_init__(self):
@@ -120,7 +119,7 @@ class TestDesign:
     """Design for testing a hypothesis."""
     test_type: str
     description: str
-    required_data: List[str] = field(default_factory=list)
+    required_data: list[str] = field(default_factory=list)
     expected_outcome_if_true: str = ""
     expected_outcome_if_false: str = ""
     priority: float = 0.5  # 0-1, higher = test sooner
@@ -132,7 +131,7 @@ class FalsificationResult:
     """Result of a falsification attempt."""
     falsified: bool
     confidence: float
-    counter_evidence: List[str] = field(default_factory=list)
+    counter_evidence: list[str] = field(default_factory=list)
     reasoning: str = ""
     timestamp: datetime = field(default_factory=datetime.now)
 
@@ -160,14 +159,14 @@ class DarkQuery:
     query_type: DarkQueryType
     query: str
     priority: float  # 0-1, higher = explore first
-    source_iocs: Tuple[str, ...] = field(default_factory=lambda: tuple())  # IOC refs for context
+    source_iocs: tuple[str, ...] = field(default_factory=lambda: ())  # IOC refs for context
     reasoning: str = ""  # Why this query was generated
 
 
 @dataclass
 class _DarkQueryListResponse:
     """Response model for Hermes LLM dark query generation."""
-    queries: List[Dict[str, Any]] = field(default_factory=list)
+    queries: list[dict[str, Any]] = field(default_factory=list)
 
 
 # =============================================================================
@@ -184,7 +183,7 @@ class SourceCredibility:
     """
     source_id: str
     credibility_score: float  # 0-1, overall credibility
-    bias_indicators: List[str] = field(default_factory=list)
+    bias_indicators: list[str] = field(default_factory=list)
     historical_accuracy: float = 0.5  # 0-1, based on past verification
     last_updated: datetime = field(default_factory=datetime.now)
     total_claims: int = 0
@@ -212,7 +211,7 @@ class Event:
     description: str
     timestamp: datetime
     source: str
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -226,8 +225,8 @@ class Contradiction:
     claim_b: str
     contradiction_type: str  # temporal, factual, logical, source_bias
     severity: float  # 0-1, how serious the contradiction is
-    evidence_supporting_a: List[str] = field(default_factory=list)
-    evidence_supporting_b: List[str] = field(default_factory=list)
+    evidence_supporting_a: list[str] = field(default_factory=list)
+    evidence_supporting_b: list[str] = field(default_factory=list)
     detected_at: datetime = field(default_factory=datetime.now)
     resolution_notes: str = ""
 
@@ -238,9 +237,9 @@ class CrossReferenceResult:
     database_id: str
     claim_found: bool
     confidence: float
-    supporting_sources: List[str] = field(default_factory=list)
-    conflicting_sources: List[str] = field(default_factory=list)
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    supporting_sources: list[str] = field(default_factory=list)
+    conflicting_sources: list[str] = field(default_factory=list)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -253,15 +252,15 @@ class AdversarialReport:
     and overall confidence scoring.
     """
     hypothesis: str
-    supporting_evidence: List[Evidence]
-    contradicting_evidence: List[Evidence]
-    credibility_assessment: Dict[str, SourceCredibility]
-    contradictions_found: List[Contradiction]
+    supporting_evidence: list[Evidence]
+    contradicting_evidence: list[Evidence]
+    credibility_assessment: dict[str, SourceCredibility]
+    contradictions_found: list[Contradiction]
     temporal_consistency: bool
     overall_confidence: float  # 0-1, confidence in hypothesis after adversarial analysis
     devil_advocate_score: float  # 0-1, strength of counter-case (higher = stronger counter-arguments)
-    alternative_explanations: List[str] = field(default_factory=list)
-    logical_fallacies: List[str] = field(default_factory=list)
+    alternative_explanations: list[str] = field(default_factory=list)
+    logical_fallacies: list[str] = field(default_factory=list)
     generated_at: datetime = field(default_factory=datetime.now)
     verification_duration_ms: float = 0.0
 
@@ -282,14 +281,14 @@ class Hypothesis:
     prior_probability: float = 0.5
     posterior_probability: float = 0.5
     confidence: float = 0.5
-    supporting_evidence: List[str] = field(default_factory=list)
-    conflicting_evidence: List[str] = field(default_factory=list)
-    test_results: List[TestResult] = field(default_factory=list)
+    supporting_evidence: list[str] = field(default_factory=list)
+    conflicting_evidence: list[str] = field(default_factory=list)
+    test_results: list[TestResult] = field(default_factory=list)
     status: str = "pending"  # active, confirmed, rejected, pending, merged
     created_at: datetime = field(default_factory=datetime.now)
     updated_at: datetime = field(default_factory=datetime.now)
-    parent_hypotheses: List[str] = field(default_factory=list)  # For merged hypotheses
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    parent_hypotheses: list[str] = field(default_factory=list)  # For merged hypotheses
+    metadata: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self):
         if isinstance(self.created_at, str):
@@ -368,7 +367,7 @@ class Hypothesis:
 
         self.confidence = weighted_confidence / total_weight if total_weight > 0 else 0.5
 
-    def to_dict(self, ds_engine: Optional[Any] = None) -> Dict[str, Any]:
+    def to_dict(self, ds_engine: Any | None = None) -> dict[str, Any]:
         """
         Convert hypothesis to dictionary.
 
@@ -412,7 +411,7 @@ class Hypothesis:
         return result
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> Hypothesis:
+    def from_dict(cls, data: dict[str, Any]) -> Hypothesis:
         """Create hypothesis from dictionary."""
         test_results = [
             TestResult(
@@ -448,14 +447,14 @@ class InferenceEngineProtocol(Protocol):
     """Protocol for inference engine integration."""
 
     async def abductive_reasoning(
-        self, observations: List[Evidence], context: Dict[str, Any]
-    ) -> List[Dict[str, Any]]:
+        self, observations: list[Evidence], context: dict[str, Any]
+    ) -> list[dict[str, Any]]:
         """Generate possible explanations (hypotheses) from observations."""
         ...
 
     async def evidence_chaining(
-        self, hypothesis: Hypothesis, context: Dict[str, Any]
-    ) -> List[Dict[str, Any]]:
+        self, hypothesis: Hypothesis, context: dict[str, Any]
+    ) -> list[dict[str, Any]]:
         """Chain evidence to design tests for a hypothesis."""
         ...
 
@@ -516,7 +515,7 @@ class AdversarialVerifier:
         self.enable_streaming = enable_streaming
 
         # Source credibility cache (bounded with LRU eviction)
-        self._source_credibility: OrderedDict[str, SourceCredibility] = OrderedDict()
+        self._source_credibility: Ordereddict[str, SourceCredibility] = OrderedDict()
 
         # Bias detection keywords
         self._bias_keywords = {
@@ -542,7 +541,7 @@ class AdversarialVerifier:
         )
 
     async def verify_claim(
-        self, claim: str, context: Optional[Dict[str, Any]] = None
+        self, claim: str, context: dict[str, Any] | None = None
     ) -> AdversarialReport:
         """
         Perform comprehensive adversarial verification of a claim.
@@ -671,7 +670,7 @@ class AdversarialVerifier:
 
     async def find_counter_evidence(
         self, hypothesis: Hypothesis
-    ) -> List[Evidence]:
+    ) -> list[Evidence]:
         """
         Find evidence that contradicts a hypothesis.
 
@@ -690,8 +689,8 @@ class AdversarialVerifier:
         )
 
     async def find_counter_evidence_from_claim(
-        self, claim: str, context: Optional[Dict[str, Any]] = None
-    ) -> List[Evidence]:
+        self, claim: str, context: dict[str, Any] | None = None
+    ) -> list[Evidence]:
         """
         Find counter-evidence for a claim string.
 
@@ -703,12 +702,12 @@ class AdversarialVerifier:
             List of contradicting evidence items
         """
         context = context or {}
-        counter_evidence: List[Evidence] = []
+        counter_evidence: list[Evidence] = []
 
         # Search existing evidence in hypothesis engine
         # Protected access with LRU window bounds
         evidence_items = list(self.hypothesis_engine._evidence.items())[:self.max_contradiction_window]
-        for evidence_id, evidence in evidence_items:
+        for _evidence_id, evidence in evidence_items:
             # Check if evidence contradicts the claim
             if self._evidence_contradicts_claim(evidence, claim):
                 counter_evidence.append(evidence)
@@ -797,8 +796,8 @@ class AdversarialVerifier:
         return assessment
 
     def check_temporal_consistency(
-        self, events: List[Event]
-    ) -> Tuple[bool, List[Contradiction]]:
+        self, events: list[Event]
+    ) -> tuple[bool, list[Contradiction]]:
         """
         Check if a sequence of events is temporally consistent.
 
@@ -814,7 +813,7 @@ class AdversarialVerifier:
         if len(events) < 2:
             return True, []
 
-        contradictions: List[Contradiction] = []
+        contradictions: list[Contradiction] = []
 
         # Sort events by timestamp
         sorted_events = sorted(events, key=lambda e: e.timestamp)
@@ -855,7 +854,7 @@ class AdversarialVerifier:
         is_consistent = len(contradictions) == 0
         return is_consistent, contradictions
 
-    def detect_contradictions(self, evidence_list: List[Evidence]) -> List[Contradiction]:
+    def detect_contradictions(self, evidence_list: list[Evidence]) -> list[Contradiction]:
         """
         Detect contradictions within a set of evidence items.
 
@@ -868,7 +867,7 @@ class AdversarialVerifier:
         Returns:
             List of detected contradictions
         """
-        contradictions: List[Contradiction] = []
+        contradictions: list[Contradiction] = []
 
         # Limit window for M1 memory optimization
         window_size = min(len(evidence_list), self.max_contradiction_window)
@@ -894,7 +893,7 @@ class AdversarialVerifier:
 
     async def cross_reference_databases(
         self, claim: str
-    ) -> List[CrossReferenceResult]:
+    ) -> list[CrossReferenceResult]:
         """
         Cross-reference a claim across multiple databases.
 
@@ -907,7 +906,7 @@ class AdversarialVerifier:
         Returns:
             List of cross-reference results from different databases
         """
-        results: List[CrossReferenceResult] = []
+        results: list[CrossReferenceResult] = []
 
         # Define databases to query (simulated for M1 optimization)
         databases = [
@@ -921,7 +920,7 @@ class AdversarialVerifier:
         tasks = [self._query_database(db, claim) for db in databases]
         db_results = await asyncio.gather(*tasks, return_exceptions=True)
 
-        for db_id, result in zip(databases, db_results):
+        for db_id, result in zip(databases, db_results, strict=False):
             if isinstance(result, Exception):
                 logger.warning(f"Database query failed for {db_id}: {result}")
                 continue
@@ -942,7 +941,7 @@ class AdversarialVerifier:
         Returns:
             Devil's advocate argument text
         """
-        arguments: List[str] = []
+        arguments: list[str] = []
 
         # Challenge 1: Insufficient evidence
         if len(hypothesis.supporting_evidence) < 3:
@@ -1003,7 +1002,7 @@ class AdversarialVerifier:
     # Internal Helper Methods
     # -------------------------------------------------------------------------
 
-    def _detect_bias_indicators(self, source: str) -> List[str]:
+    def _detect_bias_indicators(self, source: str) -> list[str]:
         """Detect bias indicators in a source identifier."""
         indicators = []
         source_lower = source.lower()
@@ -1046,8 +1045,8 @@ class AdversarialVerifier:
         return False
 
     async def _query_counter_evidence_databases(
-        self, claim: str, context: Dict[str, Any]
-    ) -> List[Evidence]:
+        self, claim: str, context: dict[str, Any]
+    ) -> list[Evidence]:
         """Query external databases for counter-evidence."""
         # Simulated async database queries
         # In production, this would query actual fact-checking APIs
@@ -1073,7 +1072,7 @@ class AdversarialVerifier:
 
     def _check_pairwise_contradiction(
         self, evidence_a: Evidence, evidence_b: Evidence
-    ) -> Optional[Contradiction]:
+    ) -> Contradiction | None:
         """Check if two evidence items contradict each other."""
         content_a = evidence_a.content.lower()
         content_b = evidence_b.content.lower()
@@ -1108,9 +1107,9 @@ class AdversarialVerifier:
 
         return None
 
-    def _extract_events(self, evidence_list: List[Evidence]) -> List[Event]:
+    def _extract_events(self, evidence_list: list[Evidence]) -> list[Event]:
         """Extract temporal events from evidence items."""
-        events: List[Event] = []
+        events: list[Event] = []
 
         for evidence in evidence_list:
             # Check if evidence has temporal metadata
@@ -1128,10 +1127,10 @@ class AdversarialVerifier:
         return events
 
     async def _find_supporting_evidence(
-        self, claim: str, context: Dict[str, Any]
-    ) -> List[Evidence]:
+        self, claim: str, context: dict[str, Any]
+    ) -> list[Evidence]:
         """Find evidence supporting a claim."""
-        supporting: List[Evidence] = []
+        supporting: list[Evidence] = []
 
         for evidence in self.hypothesis_engine._evidence.values():
             # Check if evidence supports the claim
@@ -1168,14 +1167,14 @@ class AdversarialVerifier:
     async def _generate_devils_advocate_analysis(
         self,
         claim: str,
-        supporting: List[Evidence],
-        contradicting: List[Evidence],
-        context: Dict[str, Any],
-    ) -> Tuple[float, List[str], List[str]]:
+        supporting: list[Evidence],
+        contradicting: list[Evidence],
+        context: dict[str, Any],
+    ) -> tuple[float, list[str], list[str]]:
         """Generate devil's advocate analysis."""
         score = 0.0
-        alternatives: List[str] = []
-        fallacies: List[str] = []
+        alternatives: list[str] = []
+        fallacies: list[str] = []
 
         # Score based on counter-evidence strength
         if contradicting:
@@ -1200,7 +1199,7 @@ class AdversarialVerifier:
 
         return min(1.0, score), alternatives[:5], fallacies
 
-    def _detect_logical_fallacies(self, text: str) -> List[str]:
+    def _detect_logical_fallacies(self, text: str) -> list[str]:
         """Detect logical fallacies in text."""
         fallacies = []
         text_lower = text.lower()
@@ -1211,7 +1210,7 @@ class AdversarialVerifier:
 
         return fallacies
 
-    def _generate_alternative_explanations_for_claim(self, claim: str) -> List[str]:
+    def _generate_alternative_explanations_for_claim(self, claim: str) -> list[str]:
         """Generate alternative explanations for a claim."""
         alternatives = []
 
@@ -1231,7 +1230,7 @@ class AdversarialVerifier:
 
         return alternatives
 
-    def _identify_logical_gaps(self, hypothesis: Hypothesis) -> List[str]:
+    def _identify_logical_gaps(self, hypothesis: Hypothesis) -> list[str]:
         """Identify logical gaps in a hypothesis."""
         gaps = []
         statement = hypothesis.statement.lower()
@@ -1249,14 +1248,13 @@ class AdversarialVerifier:
 
         return gaps
 
-    def _generate_alternative_explanations(self, hypothesis: Hypothesis) -> List[str]:
+    def _generate_alternative_explanations(self, hypothesis: Hypothesis) -> list[str]:
         """Generate alternative explanations for hypothesis evidence."""
         return self._generate_alternative_explanations_for_claim(hypothesis.statement)
 
-    def _identify_assumptions(self, hypothesis: Hypothesis) -> List[str]:
+    def _identify_assumptions(self, hypothesis: Hypothesis) -> list[str]:
         """Identify underlying assumptions in a hypothesis."""
         assumptions = []
-        statement = hypothesis.statement
 
         # Common implicit assumptions
         if HypothesisType.CAUSAL.value in hypothesis.hypothesis_type:
@@ -1271,11 +1269,11 @@ class AdversarialVerifier:
 
     def _calculate_adversarial_confidence(
         self,
-        supporting: List[Evidence],
-        contradicting: List[Evidence],
-        credibility: Dict[str, SourceCredibility],
-        contradictions: List[Contradiction],
-        cross_references: List[CrossReferenceResult],
+        supporting: list[Evidence],
+        contradicting: list[Evidence],
+        credibility: dict[str, SourceCredibility],
+        contradictions: list[Contradiction],
+        cross_references: list[CrossReferenceResult],
     ) -> float:
         """Calculate overall confidence after adversarial analysis."""
         # Base confidence from evidence balance
@@ -1332,10 +1330,10 @@ class SimpleNodeAblationExplainer:
 
     async def explain_path(
         self,
-        path: List[str],
+        path: list[str],
         hypothesis: str,
         max_nodes: int = 5
-    ) -> Dict[str, float]:
+    ) -> dict[str, float]:
         """
         Explain path importance using node ablation.
 
@@ -1396,7 +1394,7 @@ class SimpleNodeAblationExplainer:
 
 async def explain_with_mlx(
     hypothesis: str,
-    path: List[str],
+    path: list[str],
     model_name: str = "mlx-community/Qwen2.5-0.5B-Instruct-4bit"
 ) -> tuple[str, str]:
     """
@@ -1447,7 +1445,7 @@ async def explain_with_mlx(
         prompt_hash = hashlib.sha256(prompt.encode()).hexdigest()[:8]
         return explanation.strip(), prompt_hash
 
-    except asyncio.TimeoutError:
+    except TimeoutError:
         return "Explanation generation timed out", ""
     except Exception as e:
         logger.debug(f"MLX explanation failed: {e}")
@@ -1485,10 +1483,10 @@ class HypothesisPack:
 
     Priority order for ranking: IOC pivots > entity-pair > relationship > broad entity
     """
-    hypotheses: List[Dict[str, Any]] = field(default_factory=list)
-    suggested_queries: List[Dict[str, Any]] = field(default_factory=list)  # Has priority, pivot_type
-    ioc_follow_ups: List[Dict[str, Any]] = field(default_factory=list)    # Has priority, to field
-    source_hints: List[Any] = field(default_factory=list)
+    hypotheses: list[dict[str, Any]] = field(default_factory=list)
+    suggested_queries: list[dict[str, Any]] = field(default_factory=list)  # Has priority, pivot_type
+    ioc_follow_ups: list[dict[str, Any]] = field(default_factory=list)    # Has priority, to field
+    source_hints: list[Any] = field(default_factory=list)
     provenance: str = "heuristic"  # "heuristic" or "model-assisted"
 
     # -------------------------------------------------------------------------
@@ -1551,7 +1549,7 @@ class HypothesisPack:
     # -------------------------------------------------------------------------
 
     @property
-    def operator_shortlist(self) -> List[Dict[str, Any]]:
+    def operator_shortlist(self) -> list[dict[str, Any]]:
         """Bounded operator shortlist (max 3) in scheduler-consumable shape.
 
         Returns items: {action: query, target: rationale[:80], rationale: pivot_type}
@@ -1592,11 +1590,11 @@ class HypothesisPack:
             parts.append(f"{len(self.source_hints)} sources")
         return ", ".join(parts) or "empty"
 
-    def top_queries(self, n: int = 3) -> List[Dict[str, Any]]:
+    def top_queries(self, n: int = 3) -> list[dict[str, Any]]:
         """Get top N queries by priority for scheduler."""
         return sorted(self.suggested_queries, key=lambda x: x.get("priority", 0.5), reverse=True)[:n]
 
-    def pivot_trail(self, ioc: str) -> List[Dict[str, Any]]:
+    def pivot_trail(self, ioc: str) -> list[dict[str, Any]]:
         """Get all pivots starting from a specific IOC."""
         return [p for p in self.ioc_follow_ups if p.get("from") == ioc]
 
@@ -1604,7 +1602,7 @@ class HypothesisPack:
     # Sprint F150H.1: next_best_actions - actionable shortlist from pack
     # -------------------------------------------------------------------------
 
-    def next_best_actions(self, max_actions: int = 4) -> List[Dict[str, Any]]:
+    def next_best_actions(self, max_actions: int = 4) -> list[dict[str, Any]]:
         """
         Return a small, ranked shortlist of next actions.
 
@@ -1613,8 +1611,8 @@ class HypothesisPack:
 
         Each action has: action_type, query, rationale, priority, pivot_type.
         """
-        actions: List[Dict[str, Any]] = []
-        seen_queries: Set[str] = set()
+        actions: list[dict[str, Any]] = []
+        seen_queries: set[str] = set()
 
         # Pre-populate dedup set from all sources (IOC + queries + source hints)
         # so source_hints never collide with existing queries
@@ -1672,7 +1670,7 @@ class HypothesisPack:
     # Sprint F150H.2: why_best_first - explain the best_first_path choice
     # -------------------------------------------------------------------------
 
-    def why_best_first(self) -> Optional[Dict[str, Any]]:
+    def why_best_first(self) -> dict[str, Any] | None:
         """
         Explain why best_first_path chose its action.
 
@@ -1707,7 +1705,7 @@ class HypothesisPack:
 
         pt = chosen.get("pivot_type", "general")
         rank = pivot_type_rank.get(pt, 9)
-        alternatives: List[Dict[str, Any]] = []
+        alternatives: list[dict[str, Any]] = []
 
         # Collect what ranked lower
         for pivot in self.ioc_follow_ups:
@@ -1761,7 +1759,7 @@ class HypothesisPack:
     # Sprint F150H.2: discarded_as_redundant - what was dropped and why
     # -------------------------------------------------------------------------
 
-    def discarded_as_redundant(self, max_items: int = 5) -> List[Dict[str, Any]]:
+    def discarded_as_redundant(self, max_items: int = 5) -> list[dict[str, Any]]:
         """
         Return items from the pack that were dropped by actionable_shortlist dedup.
 
@@ -1773,10 +1771,10 @@ class HypothesisPack:
         - 'below_priority_threshold': priority below 0.5 and shortlist already full
         - 'low_pivot_type_priority': general/organization pivot types deprioritized
         """
-        shortlist_queries: Set[str] = set(
+        shortlist_queries: set[str] = {
             a.get("query", "") for a in self.actionable_shortlist(max_items=999)
-        )
-        discarded: List[Dict[str, Any]] = []
+        }
+        discarded: list[dict[str, Any]] = []
 
         # Check IOC follow-ups
         for pivot in self.ioc_follow_ups:
@@ -1829,7 +1827,7 @@ class HypothesisPack:
     # Sprint F150H.2: action_confidence - confidence score for an action
     # -------------------------------------------------------------------------
 
-    def action_confidence(self, action: Dict[str, Any]) -> float:
+    def action_confidence(self, action: dict[str, Any]) -> float:
         """
         Score an action's confidence (0-1) based on pack context.
 
@@ -1876,7 +1874,7 @@ class HypothesisPack:
     # Sprint F150H.2: track_recommendation + best_track - track-level guidance
     # -------------------------------------------------------------------------
 
-    def track_recommendation(self) -> Dict[str, Any]:
+    def track_recommendation(self) -> dict[str, Any]:
         """
         Recommend which investigation track to pursue next.
 
@@ -1891,7 +1889,7 @@ class HypothesisPack:
             return {"recommended_track": None, "track_scores": {}, "reasoning": "empty pack", "next_action": None}
 
         # Score each track
-        track_scores: Dict[str, float] = {}
+        track_scores: dict[str, float] = {}
         for track_name, items in tracks.items():
             if not items:
                 track_scores[track_name] = 0.0
@@ -1933,7 +1931,7 @@ class HypothesisPack:
             "next_action": next_action,
         }
 
-    def best_track(self) -> Optional[str]:
+    def best_track(self) -> str | None:
         """Return the name of the highest-scoring track. Shortcut for track_recommendation."""
         tracks = self.investigation_tracks()
         if not tracks:
@@ -1944,7 +1942,7 @@ class HypothesisPack:
     # Sprint F150H.1: investigation_tracks - multi-pronged paths
     # -------------------------------------------------------------------------
 
-    def investigation_tracks(self) -> Dict[str, List[Dict[str, Any]]]:
+    def investigation_tracks(self) -> dict[str, list[dict[str, Any]]]:
         """
         Group pack contents into distinct investigation tracks.
 
@@ -1957,7 +1955,7 @@ class HypothesisPack:
 
         Each track is a list of structured items with action_type + details.
         """
-        tracks: Dict[str, List[Dict[str, Any]]] = {
+        tracks: dict[str, list[dict[str, Any]]] = {
             "ioc_pivots": [],
             "entity_tracking": [],
             "relationship_verification": [],
@@ -2045,7 +2043,7 @@ class HypothesisPack:
     # Sprint F150H.1: best_first_path - single optimal path through pack
     # -------------------------------------------------------------------------
 
-    def best_first_path(self) -> Optional[Dict[str, Any]]:
+    def best_first_path(self) -> dict[str, Any] | None:
         """
         Return the single best first action from the pack.
 
@@ -2106,7 +2104,7 @@ class HypothesisPack:
     # Sprint F150H.1: actionable_shortlist - compact sprint-ready output
     # -------------------------------------------------------------------------
 
-    def actionable_shortlist(self, max_items: int = 5) -> List[Dict[str, Any]]:
+    def actionable_shortlist(self, max_items: int = 5) -> list[dict[str, Any]]:
         """
         Return a compact, sprint-ready shortlist.
 
@@ -2114,8 +2112,8 @@ class HypothesisPack:
         Each item has: action_type, query, rationale, priority, pivot_type.
         Designed for direct scheduler consumption.
         """
-        shortlist: List[Dict[str, Any]] = []
-        seen_queries: Set[str] = set()
+        shortlist: list[dict[str, Any]] = []
+        seen_queries: set[str] = set()
 
         # Priority order for pivot_type selection
         pivot_order = {
@@ -2132,7 +2130,7 @@ class HypothesisPack:
             "general": 9,
         }
 
-        def item_priority(item: Dict[str, Any]) -> Tuple[float, int]:
+        def item_priority(item: dict[str, Any]) -> tuple[float, int]:
             p = item.get("priority", 0.5)
             pt = item.get("pivot_type", "general")
             return (p, pivot_order.get(pt, 9))
@@ -2214,12 +2212,12 @@ class HypothesisEngine:
 
     def __init__(
         self,
-        inference_engine: Optional[InferenceEngineProtocol] = None,
+        inference_engine: InferenceEngineProtocol | None = None,
         max_hypotheses: int = 100,
         min_confidence_threshold: float = 0.1,
         memory_limit_mb: float = 500.0,
         enable_adversarial_verification: bool = True,
-        use_dempster_shafer: bool = False,
+        use_dempster_shafer: bool = True,
         ds_contradiction_threshold: float = 0.5,
     ):
         """
@@ -2243,23 +2241,31 @@ class HypothesisEngine:
         self.ds_contradiction_threshold = ds_contradiction_threshold
 
         # Dempster-Shafer second-opinion engine (additive, non-destructive)
-        self._ds_engine: Optional[DempsterShafer] = (
+        self._ds_engine: DempsterShafer | None = (
             DempsterShafer(hypotheses={'support', 'conflict', 'unknown'}) if use_dempster_shafer else None
         )
 
+        if self._ds_engine is not None:
+            logger.info(
+                f"[DS] DempsterShafer evidence fusion ACTIVE — "
+                f"conflict_threshold={ds_contradiction_threshold}"
+            )
+        else:
+            logger.debug("[DS] DempsterShafer disabled (use_dempster_shafer=False)")
+
         # Hypothesis storage
-        self._hypotheses: Dict[str, Hypothesis] = {}
-        self._evidence: OrderedDict[str, Evidence] = OrderedDict()
+        self._hypotheses: dict[str, Hypothesis] = {}
+        self._evidence: Ordereddict[str, Evidence] = OrderedDict()
 
         # Test design templates
-        self._test_templates: Dict[str, Callable[[Hypothesis], TestDesign]] = {}
+        self._test_templates: dict[str, Callable[[Hypothesis], TestDesign]] = {}
         self._init_test_templates()
 
         # Adversarial verifier (initialized lazily)
-        self._adversarial_verifier: Optional[AdversarialVerifier] = None
+        self._adversarial_verifier: AdversarialVerifier | None = None
 
         # Source credibility tracking for adversarial verification (bounded)
-        self._source_credibility_cache: OrderedDict[str, SourceCredibility] = OrderedDict()
+        self._source_credibility_cache: Ordereddict[str, SourceCredibility] = OrderedDict()
 
         # Statistics
         self._stats = {
@@ -2283,7 +2289,7 @@ class HypothesisEngine:
     # Dempster-Shafer second-opinion API (additive, non-destructive)
     # -------------------------------------------------------------------------
 
-    def get_ds_belief(self, hypothesis: str = "support") -> Optional[float]:
+    def get_ds_belief(self, hypothesis: str = "support") -> float | None:
         """
         Return Dempster-Shafer belief for a hypothesis.
 
@@ -2297,7 +2303,7 @@ class HypothesisEngine:
             return None
         return self._ds_engine.belief(hypothesis)
 
-    def get_ds_conflict(self) -> Optional[float]:
+    def get_ds_conflict(self) -> float | None:
         """
         Return Dempster-Shafer conflict mass.
 
@@ -2308,7 +2314,7 @@ class HypothesisEngine:
             return None
         return self._ds_engine.conflict_mass()
 
-    def detect_contradiction_ds(self, threshold: Optional[float] = None) -> Optional[bool]:
+    def detect_contradiction_ds(self, threshold: float | None = None) -> bool | None:
         """
         Detect contradiction via Dempster-Shafer conflict mass.
 
@@ -2476,7 +2482,7 @@ class HypothesisEngine:
         return self._adversarial_verifier
 
     async def adversarial_verification(
-        self, hypothesis: Union[Hypothesis, str], context: Optional[Dict[str, Any]] = None
+        self, hypothesis: Hypothesis | str, context: dict[str, Any] | None = None
     ) -> AdversarialReport:
         """
         Perform comprehensive adversarial verification of a hypothesis.
@@ -2531,7 +2537,7 @@ class HypothesisEngine:
 
         return self.adversarial_verifier.assess_source_credibility(source)
 
-    def detect_contradictions(self, evidence_list: List[Evidence]) -> List[Contradiction]:
+    def detect_contradictions(self, evidence_list: list[Evidence]) -> list[Contradiction]:
         """
         Detect contradictions within a set of evidence items.
 
@@ -2547,8 +2553,8 @@ class HypothesisEngine:
         return self.adversarial_verifier.detect_contradictions(evidence_list)
 
     def check_temporal_consistency(
-        self, events: List[Event]
-    ) -> Tuple[bool, List[Contradiction]]:
+        self, events: list[Event]
+    ) -> tuple[bool, list[Contradiction]]:
         """
         Check if a sequence of events is temporally consistent.
 
@@ -2579,8 +2585,8 @@ class HypothesisEngine:
         return self.adversarial_verifier.generate_devils_advocate(hypothesis)
 
     async def generate_hypotheses_async(
-        self, context: Dict[str, Any], hermes_engine: Any = None, prev_reward: float = 0.0
-    ) -> List[str]:
+        self, context: dict[str, Any], hermes_engine: Any = None, prev_reward: float = 0.0
+    ) -> list[str]:
         """
         P12: Generate hypotheses from RAG context using Hermes 3.
         P17: Added prev_reward parameter for RL integration.
@@ -2692,8 +2698,8 @@ Formát (pouze seznam, žádný další text):
             return []
 
     def generate_hypotheses(
-        self, observations: List[Evidence], context: Optional[Dict[str, Any]] = None
-    ) -> List[Hypothesis]:
+        self, observations: list[Evidence], context: dict[str, Any] | None = None
+    ) -> list[Hypothesis]:
         """
         Generate hypotheses from observations using abductive reasoning.
 
@@ -2705,7 +2711,7 @@ Formát (pouze seznam, žádný další text):
             List of generated hypotheses
         """
         context = context or {}
-        generated: List[Hypothesis] = []
+        generated: list[Hypothesis] = []
 
         # Store evidence (bounded storage with LRU eviction)
         for obs in observations:
@@ -2746,7 +2752,7 @@ Formát (pouze seznam, žádný další text):
         logger.info(f"Generated {len(generated)} hypotheses from {len(observations)} observations")
         return generated
 
-    def _create_hypothesis_from_explanation(self, explanation: Dict[str, Any]) -> Hypothesis:
+    def _create_hypothesis_from_explanation(self, explanation: dict[str, Any]) -> Hypothesis:
         """Create a hypothesis from an inference engine explanation."""
         return Hypothesis(
             id=str(uuid.uuid4())[:8],
@@ -2758,13 +2764,13 @@ Formát (pouze seznam, žádný další text):
         )
 
     def _generate_hypotheses_from_patterns(
-        self, observations: List[Evidence], context: Dict[str, Any]
-    ) -> List[Hypothesis]:
+        self, observations: list[Evidence], context: dict[str, Any]
+    ) -> list[Hypothesis]:
         """Generate hypotheses by analyzing observation patterns."""
-        generated: List[Hypothesis] = []
+        generated: list[Hypothesis] = []
 
         # Group observations by source and topic
-        by_topic: Dict[str, List[Evidence]] = {}
+        by_topic: dict[str, list[Evidence]] = {}
         for obs in observations:
             topic = obs.metadata.get("topic", "general")
             if topic not in by_topic:
@@ -2829,7 +2835,7 @@ Formát (pouze seznam, žádný další text):
 
         return generated
 
-    def _check_co_occurrence(self, evidence_a: List[Evidence], evidence_b: List[Evidence]) -> float:
+    def _check_co_occurrence(self, evidence_a: list[Evidence], evidence_b: list[Evidence]) -> float:
         """Check co-occurrence rate between two evidence groups."""
         if not evidence_a or not evidence_b:
             return 0.0
@@ -2868,7 +2874,7 @@ Formát (pouze seznam, žádný další text):
         )
 
     async def execute_test(
-        self, test: TestDesign, context: Dict[str, Any]
+        self, test: TestDesign, context: dict[str, Any]
     ) -> TestResult:
         """
         Execute a test design and return results.
@@ -2986,10 +2992,10 @@ Formát (pouze seznam, žádný další text):
         Returns:
             Falsification result
         """
-        counter_evidence: List[str] = []
+        counter_evidence: list[str] = []
         falsified = False
         confidence = 0.0
-        reasoning_parts: List[str] = []  # F196C: O(1) append instead of O(n) string concat
+        reasoning_parts: list[str] = []  # F196C: O(1) append instead of O(n) string concat
 
         # Check for conflicting evidence
         if hypothesis.conflicting_evidence:
@@ -3061,7 +3067,7 @@ Formát (pouze seznam, žádný další text):
         Returns:
             Falsification result from adversarial analysis
         """
-        counter_evidence: List[str] = []
+        counter_evidence: list[str] = []
         contradictions_found = 0
         credibility_issues = 0
 
@@ -3130,7 +3136,7 @@ Formát (pouze seznam, žádný další text):
             reasoning="; ".join(reasoning_parts) if reasoning_parts else "No adversarial issues found",
         )
 
-    def _check_logical_inconsistency(self, hypothesis: Hypothesis) -> Optional[str]:
+    def _check_logical_inconsistency(self, hypothesis: Hypothesis) -> str | None:
         """Check for logical inconsistencies in a hypothesis."""
         # Check if hypothesis contradicts confirmed hypotheses
         for other_id, other in self._hypotheses.items():
@@ -3169,8 +3175,8 @@ Formát (pouze seznam, žádný další text):
         return False
 
     def rank_hypotheses(
-        self, hypotheses: Optional[List[Hypothesis]] = None
-    ) -> List[Hypothesis]:
+        self, hypotheses: list[Hypothesis] | None = None
+    ) -> list[Hypothesis]:
         """
         Rank hypotheses by composite score.
 
@@ -3188,7 +3194,7 @@ Formát (pouze seznam, žádný další text):
         """
         hypotheses = hypotheses or list(self._hypotheses.values())
 
-        scored: List[Tuple[float, Hypothesis]] = []
+        scored: list[tuple[float, Hypothesis]] = []
         for h in hypotheses:
             score = self._calculate_hypothesis_score(h)
             scored.append((score, h))
@@ -3210,10 +3216,10 @@ Formát (pouze seznam, žádný další text):
             test_score = 0.5
 
         # Evidence diversity score
-        unique_sources = len(set(
+        unique_sources = len({
             self._evidence.get(eid, Evidence("", "unknown", "", datetime.now())).source
             for eid in hypothesis.supporting_evidence
-        ))
+        })
         diversity_score = min(1.0, unique_sources / 3)
 
         # Falsification resistance
@@ -3231,8 +3237,8 @@ Formát (pouze seznam, žádný další text):
         return composite
 
     def get_most_likely(
-        self, hypotheses: Optional[List[Hypothesis]] = None
-    ) -> Optional[Hypothesis]:
+        self, hypotheses: list[Hypothesis] | None = None
+    ) -> Hypothesis | None:
         """
         Get the most likely hypothesis from a list.
 
@@ -3247,7 +3253,7 @@ Formát (pouze seznam, žádný další text):
 
     def merge_hypotheses(
         self, h1: Hypothesis, h2: Hypothesis
-    ) -> Optional[Hypothesis]:
+    ) -> Hypothesis | None:
         """
         Attempt to merge two hypotheses if they are compatible.
 
@@ -3320,10 +3326,10 @@ Formát (pouze seznam, žádný další text):
 
     def run_hypothesis_cycle(
         self,
-        observations: List[Evidence],
+        observations: list[Evidence],
         max_iterations: int = 10,
-        context: Optional[Dict[str, Any]] = None,
-    ) -> List[Hypothesis]:
+        context: dict[str, Any] | None = None,
+    ) -> list[Hypothesis]:
         """
         Run a complete hypothesis generation and testing cycle.
 
@@ -3423,7 +3429,7 @@ Formát (pouze seznam, žádný další text):
         ranked = self.rank_hypotheses()
 
         # Keep top hypotheses
-        to_keep = set(h.id for h in ranked[: self.max_hypotheses])
+        to_keep = {h.id for h in ranked[: self.max_hypotheses]}
 
         # Remove low-confidence hypotheses
         removed = 0
@@ -3438,13 +3444,13 @@ Formát (pouze seznam, žádný další text):
         if removed > 0:
             logger.debug(f"Pruned {removed} low-confidence hypotheses")
 
-    def get_hypothesis(self, hypothesis_id: str) -> Optional[Hypothesis]:
+    def get_hypothesis(self, hypothesis_id: str) -> Hypothesis | None:
         """Get a hypothesis by ID."""
         return self._hypotheses.get(hypothesis_id)
 
     def get_all_hypotheses(
-        self, status: Optional[str] = None
-    ) -> List[Hypothesis]:
+        self, status: str | None = None
+    ) -> list[Hypothesis]:
         """
         Get all hypotheses, optionally filtered by status.
 
@@ -3515,10 +3521,10 @@ Formát (pouze seznam, žádný další text):
 
     def suggest_next_queries(
         self,
-        findings: Union[List[str], str],
-        context: Optional[Dict[str, Any]] = None,
+        findings: list[str] | str,
+        context: dict[str, Any] | None = None,
         max_queries: int = 5,
-    ) -> List[Dict[str, str]]:
+    ) -> list[dict[str, str]]:
         """
         Generate bounded follow-up search queries from findings.
 
@@ -3547,7 +3553,7 @@ Formát (pouze seznam, žádný další text):
         # Hard cap
         max_queries = min(max_queries, 5)
 
-        queries: List[Dict[str, str]] = []
+        queries: list[dict[str, str]] = []
 
         # --- HEURISTIC PATH (primary, always available) ---
         queries.extend(self._heuristic_query_generation(findings, context))
@@ -3573,11 +3579,11 @@ Formát (pouze seznam, žádný další text):
 
     def _heuristic_query_generation(
         self,
-        findings: List[str],
-        context: Dict[str, Any],
-    ) -> List[Dict[str, str]]:
+        findings: list[str],
+        context: dict[str, Any],
+    ) -> list[dict[str, str]]:
         """Generate queries using cheap heuristics - no model required."""
-        queries: List[Dict[str, str]] = []
+        queries: list[dict[str, str]] = []
         all_text = " ".join(findings)
 
         # --- Entity Extraction ---
@@ -3664,14 +3670,14 @@ Formát (pouze seznam, žádný další text):
     # Generic words to filter out from entity extraction
     _GENERIC_ENTITY_WORDS = {
         "actor", "target", "victim", "group", "campaign", "operation",
-        "incident", "breach", "attack", "threat", "actor", "agent",
+        "incident", "breach", "attack", "threat", "agent",
         "person", "individual", "team", "unit", "party", "entity",
         "system", "network", "server", "host", "machine", "device",
         "software", "tool", "malware", "ransomware", "virus", "trojan",
         "data", "information", "file", "document", "report", "source",
     }
 
-    def _extract_entities_heuristic(self, text: str) -> List[str]:
+    def _extract_entities_heuristic(self, text: str) -> list[str]:
         """Extract high-value threat entities using targeted patterns."""
         entities = []
         seen = set()
@@ -3719,7 +3725,7 @@ Formát (pouze seznam, žádný další text):
 
         return entities[:12]  # Cap at 12 high-value entities
 
-    def _extract_iocs_heuristic(self, text: str) -> List[Tuple[str, str]]:
+    def _extract_iocs_heuristic(self, text: str) -> list[tuple[str, str]]:
         """Extract IOC-like patterns with better coverage."""
         iocs = []
 
@@ -3780,9 +3786,9 @@ Formát (pouze seznam, žádný další text):
 
     def build_hypothesis_pack(
         self,
-        findings: Union[List[str], str],
-        context: Optional[Dict[str, Any]] = None,
-    ) -> "HypothesisPack":
+        findings: list[str] | str,
+        context: dict[str, Any] | None = None,
+    ) -> HypothesisPack:
         """
         Build a practical hypothesis/query pack from findings.
 
@@ -3822,11 +3828,11 @@ Formát (pouze seznam, žádný další text):
             )
 
         all_text = " ".join(findings)
-        known_entities: Set[str] = context.get("known_entities", set())
-        known_iocs: Set[str] = context.get("known_iocs", set())
-        source_quality: Dict[str, float] = context.get("source_quality", {})
-        existing_rels: List[Tuple[str, str, str]] = context.get("existing_relationships", [])
-        temporal_anchors: List[Tuple[str, str]] = context.get("temporal_anchors", [])
+        known_entities: set[str] = context.get("known_entities", set())
+        known_iocs: set[str] = context.get("known_iocs", set())
+        source_quality: dict[str, float] = context.get("source_quality", {})
+        existing_rels: list[tuple[str, str, str]] = context.get("existing_relationships", [])
+        temporal_anchors: list[tuple[str, str]] = context.get("temporal_anchors", [])
 
         # --- HEURISTIC PATH (primary, always available) ---
         provenance = "heuristic"
@@ -3847,7 +3853,7 @@ Formát (pouze seznam, žádný další text):
         ]
 
         sources = self._extract_source_hints_heuristic(all_text, source_quality)
-        temporal = self._extract_temporal_anchors_heuristic(all_text, temporal_anchors)
+        self._extract_temporal_anchors_heuristic(all_text, temporal_anchors)
 
         # Generate hypotheses (concrete, OSINT-practical)
         hypotheses = self._generate_hypotheses_heuristic(
@@ -3902,20 +3908,20 @@ Formát (pouze seznam, žádný další text):
 
     def _generate_hypotheses_heuristic(
         self,
-        findings: List[str],
-        entities: List[str],
-        iocs: List[Tuple[str, str]],
-        relationships: List[Tuple[str, str, str]],
-    ) -> List[Dict[str, str]]:
+        findings: list[str],
+        entities: list[str],
+        iocs: list[tuple[str, str]],
+        relationships: list[tuple[str, str, str]],
+    ) -> list[dict[str, str]]:
         """Generate concrete, OSINT-practical hypotheses from extracted data."""
-        hypotheses: List[Dict[str, str]] = []
+        hypotheses: list[dict[str, str]] = []
 
         # Entity-based hypotheses
         for entity in entities[:3]:
             hypotheses.append({
                 "hypothesis": f"Entity '{entity}' is active in the threat space",
                 "confidence": "0.6",
-                "reason": f"Frequently mentioned in recent findings",
+                "reason": "Frequently mentioned in recent findings",
                 "type": "entity_tracking",
             })
 
@@ -3924,7 +3930,7 @@ Formát (pouze seznam, žádný další text):
             hypotheses.append({
                 "hypothesis": f"{ioc_type.upper()} indicator '{ioc_value}' belongs to active campaign",
                 "confidence": "0.5",
-                "reason": f"IOC observed in current findings",
+                "reason": "IOC observed in current findings",
                 "type": "ioc_attribution",
             })
 
@@ -3933,16 +3939,16 @@ Formát (pouze seznam, žádný další text):
             hypotheses.append({
                 "hypothesis": f"'{src}' {rel} '{dst}' — relationship is operational",
                 "confidence": "0.55",
-                "reason": f"Pattern-based relationship detection",
+                "reason": "Pattern-based relationship detection",
                 "type": "relationship_tracking",
             })
 
         # Cross-reference hypothesis (if we have multiple entities + IOCs)
         if len(entities) >= 2 and len(iocs) >= 1:
             hypotheses.append({
-                "hypothesis": f"Multiple entities share common IOC infrastructure",
+                "hypothesis": "Multiple entities share common IOC infrastructure",
                 "confidence": "0.45",
-                "reason": f"Entity cluster with shared IOC patterns",
+                "reason": "Entity cluster with shared IOC patterns",
                 "type": "cluster_correlation",
             })
 
@@ -3950,14 +3956,14 @@ Formát (pouze seznam, žádný další text):
 
     def _generate_ranked_queries(
         self,
-        findings: List[str],
-        entities: List[str],
-        iocs: List[Tuple[str, str]],
-        relationships: List[Tuple[str, str, str]],
-        sources: List["SourceHint"],
-    ) -> List[Dict[str, Any]]:
+        findings: list[str],
+        entities: list[str],
+        iocs: list[tuple[str, str]],
+        relationships: list[tuple[str, str, str]],
+        sources: list[SourceHint],
+    ) -> list[dict[str, Any]]:
         """Generate and rank follow-up queries with entity-pair and co-occurrence pivots."""
-        queries: List[Dict[str, Any]] = []
+        queries: list[dict[str, Any]] = []
         all_text = " ".join(findings)
 
         # IOC correlation queries (highest priority)
@@ -4049,7 +4055,7 @@ Formát (pouze seznam, žádný další text):
         queries.sort(key=lambda x: x.get("priority", 0.5), reverse=True)
         return queries[:10]  # Cap at 10 queries before dedup
 
-    def _find_entity_pairs(self, text: str, entities: List[str]) -> List[Tuple[str, str]]:
+    def _find_entity_pairs(self, text: str, entities: list[str]) -> list[tuple[str, str]]:
         """Find entity pairs that co-occur in the same sentences."""
         pairs = []
         # Split into sentences
@@ -4074,13 +4080,13 @@ Formát (pouze seznam, žádný další text):
         return pairs[:5]
 
     def _find_ioc_entity_pairs(
-        self, iocs: List[Tuple[str, str]], entities: List[str], text: str
-    ) -> List[Tuple[str, str]]:
+        self, iocs: list[tuple[str, str]], entities: list[str], text: str
+    ) -> list[tuple[str, str]]:
         """Find IOCs that co-occur near entities in the text."""
         pairs = []
         text_lower = text.lower()
 
-        for ioc_type, ioc_val in iocs:
+        for _ioc_type, ioc_val in iocs:
             if len(ioc_val) < 3:
                 continue
             ioc_lower = ioc_val.lower()
@@ -4098,9 +4104,9 @@ Formát (pouze seznam, žádný další text):
 
         return pairs[:5]
 
-    def _generate_ioc_follow_ups(self, iocs: List[Tuple[str, str]]) -> List[Dict[str, str]]:
+    def _generate_ioc_follow_ups(self, iocs: list[tuple[str, str]]) -> list[dict[str, str]]:
         """Generate IOC pivot suggestions with actionable pivot queries."""
-        follow_ups: List[Dict[str, str]] = []
+        follow_ups: list[dict[str, str]] = []
 
         for ioc_type, ioc_value in iocs:
             if ioc_type == "cve":
@@ -4205,11 +4211,11 @@ Formát (pouze seznam, žádný další text):
         return follow_ups[:8]  # Cap at 8 follow-ups
 
     def _deduplicate_and_rank_queries(
-        self, queries: List[Dict[str, Any]]
-    ) -> List[Dict[str, str]]:
+        self, queries: list[dict[str, Any]]
+    ) -> list[dict[str, str]]:
         """Deduplicate and finalize query list with priority preservation."""
-        seen: Set[str] = set()
-        unique: List[Dict[str, Any]] = []
+        seen: set[str] = set()
+        unique: list[dict[str, Any]] = []
 
         for q in queries:
             # Normalize query for dedup
@@ -4245,9 +4251,9 @@ Formát (pouze seznam, žádný další text):
             for q in unique[:8]
         ]
 
-    def _extract_relationships_heuristic(self, text: str) -> List[Tuple[str, str, str]]:
+    def _extract_relationships_heuristic(self, text: str) -> list[tuple[str, str, str]]:
         """Extract relationship triples from text."""
-        relationships: List[Tuple[str, str, str]] = []
+        relationships: list[tuple[str, str, str]] = []
 
         # Pattern: "X linked/connected to Y"
         for match in re.finditer(r"(\b\w+\b)\s+(?:linked|connected|related)\s+to\s+(\b\w+\b)", text, re.IGNORECASE):
@@ -4276,10 +4282,10 @@ Formát (pouze seznam, žádný další text):
         return relationships
 
     def _extract_source_hints_heuristic(
-        self, text: str, source_quality: Dict[str, float]
-    ) -> List["SourceHint"]:
+        self, text: str, source_quality: dict[str, float]
+    ) -> list[SourceHint]:
         """Extract source recommendations from findings."""
-        hints: List[SourceHint] = []
+        hints: list[SourceHint] = []
 
         # Known good source patterns
         good_source_patterns = [
@@ -4314,10 +4320,10 @@ Formát (pouze seznam, žádný další text):
         return hints
 
     def _extract_temporal_anchors_heuristic(
-        self, text: str, existing: List[Tuple[str, str]]
-    ) -> List[Tuple[str, str]]:
+        self, text: str, existing: list[tuple[str, str]]
+    ) -> list[tuple[str, str]]:
         """Extract temporal anchors for expansion."""
-        anchors: List[Tuple[str, str]] = list(existing)
+        anchors: list[tuple[str, str]] = list(existing)
 
         # Extract year mentions
         for match in re.finditer(r"\b(20[1-2]\d)\b", text):
@@ -4328,9 +4334,9 @@ Formát (pouze seznam, žádný další text):
 
         return anchors[:5]
 
-    def _extract_org_anchors(self, text: str) -> List[str]:
+    def _extract_org_anchors(self, text: str) -> list[str]:
         """Extract organization/domain anchors from text."""
-        orgs: List[str] = []
+        orgs: list[str] = []
 
         # Known org patterns
         org_patterns = [
@@ -4357,9 +4363,9 @@ Formát (pouze seznam, žádný další text):
     def _ner_capability_probe(
         self,
         text: str,
-        heuristic_entities: List[str],
-        heuristic_iocs: List[Tuple[str, str]],
-    ) -> Tuple[List[str], List[Tuple[str, str]]]:
+        heuristic_entities: list[str],
+        heuristic_iocs: list[tuple[str, str]],
+    ) -> tuple[list[str], list[tuple[str, str]]]:
         """
         Optional NER capability probe - augment heuristic extraction with NER if available.
 
@@ -4383,7 +4389,6 @@ Formát (pouze seznam, žádný další text):
 
         try:
             import threading
-            import time
 
             # Use a short timeout to avoid blocking
             result_holder = [None]  # Mutable container for thread result
@@ -4417,7 +4422,7 @@ Formát (pouze seznam, žádný další text):
                 return heuristic_entities, heuristic_iocs
 
             # Merge NER entities with heuristic, dedup
-            existing = set(e.lower() for e in heuristic_entities)
+            existing = {e.lower() for e in heuristic_entities}
             merged_entities = list(heuristic_entities)
             for ent in ner_entities:
                 if isinstance(ent, dict):
@@ -4438,12 +4443,12 @@ Formát (pouze seznam, žádný další text):
 
     def _model_assisted_hypothesis_pack(
         self,
-        findings: List[str],
-        context: Dict[str, Any],
-        new_entities: List[str],
-        new_iocs: List[Tuple[str, str]],
-        heuristic_queries: List[Dict[str, str]],
-    ) -> Optional["HypothesisPack"]:
+        findings: list[str],
+        context: dict[str, Any],
+        new_entities: list[str],
+        new_iocs: list[tuple[str, str]],
+        heuristic_queries: list[dict[str, str]],
+    ) -> HypothesisPack | None:
         """
         Optional model-assisted enhancement for hypothesis pack.
 
@@ -4486,10 +4491,10 @@ Formát (pouze seznam, žádný další text):
 
     def _model_assisted_query_suggestion(
         self,
-        findings: List[str],
-        context: Dict[str, Any],
+        findings: list[str],
+        context: dict[str, Any],
         max_to_add: int,
-    ) -> List[Dict[str, str]]:
+    ) -> list[dict[str, str]]:
         """
         Optional model-assisted query enhancement.
 
@@ -4502,38 +4507,34 @@ Formát (pouze seznam, žádný další text):
         if max_to_add <= 0:
             return []
 
-        try:
-            # Lazy import - don't load unless needed
-            from hledac.universal.utils.mlx_cache import get_mlx_model
-        except ImportError:
-            return []
-
+        # Phase C: DSPy-powered pivot suggestion (HLEDAC_ENABLE_DSPY=1)
         try:
             import asyncio
 
-            # Check if model is available (non-blocking check)
-            model_name = context.get("model_name", "mlx-community/Qwen2.5-0.5B-Instruct-4bit")
+            from hledac.universal.brain.dspy_service import suggest_pivots
 
-            # Quick timeout - if model doesn't load in 2s, skip
-            async def _try_load():
-                try:
-                    model, tokenizer = await asyncio.wait_for(
-                        get_mlx_model(model_name),
-                        timeout=2.0
-                    )
-                    return model is not None
-                except (asyncio.TimeoutError, Exception):
-                    return None
+            async def _dspy_suggest():
+                result = await suggest_pivots(findings, context)
+                return result if result else []
 
-            # This won't work in sync context, so just skip
-            # Model-assisted path is aspirational - fail soft
-            return []
-
+            pivots = asyncio.run(_dspy_suggest())
+            if pivots:
+                queries = []
+                for p in pivots[:max_to_add]:
+                    queries.append({
+                        "query": p.get("ioc_value", ""),
+                        "type": p.get("ioc_type", "domain"),
+                        "source": "dspy_pivot_suggestion",
+                    })
+                if queries:
+                    return queries
         except Exception:
-            # Any failure = fail soft, return empty
-            return []
+            pass
 
-    def get_statistics(self) -> Dict[str, Any]:
+        # Fallback: empty list (same as before — aspirational path)
+        return []
+
+    def get_statistics(self) -> dict[str, Any]:
         """Get engine statistics."""
         return {
             **self._stats,
@@ -4574,11 +4575,11 @@ Formát (pouze seznam, žádný další text):
 
     async def generate_dark_surface_queries(
         self,
-        findings: List[Any],
+        findings: list[Any],
         hermes_engine: Any = None,
         tor_available: bool = False,
         i2p_available: bool = False,
-    ) -> List[DarkQuery]:
+    ) -> list[DarkQuery]:
         """
         F214K: Generate queries for dark/unindexed surfaces from IOC findings.
 
@@ -4606,7 +4607,7 @@ Formát (pouze seznam, žádný další text):
             return []
 
         # Extract IOCs from findings for query context
-        iocs: List[str] = []
+        iocs: list[str] = []
         for f in findings[:50]:  # Cap at 50 findings
             if hasattr(f, 'ioc_value') and f.ioc_value:
                 iocs.append(str(f.ioc_value))
@@ -4661,7 +4662,7 @@ Formát (pouze seznam, žádný další text):
             # Inject research hints into prompt if available
             _research_hint_section = ""
             if context_hints:
-                _research_hint_section = f"\n\nDOPLNUJICI KONTEXT (research layer):\n" + "\n".join(f"- {h}" for h in context_hints)
+                _research_hint_section = "\n\nDOPLNUJICI KONTEXT (research layer):\n" + "\n".join(f"- {h}" for h in context_hints)
             prompt = f"""Z techto IOC z aktualniho sprintu: {ioc_brief}{_research_hint_section}
 
 Navrhuj {self.MAX_DARK_QUERIES_PER_SPRINT} specificke dotazy pro dark surface (neindexovane zdroje).
@@ -4708,7 +4709,7 @@ Zajimave patterny k hledani:
                             except Exception:
                                 pass  # keep original result
 
-                dark_queries: List[DarkQuery] = []
+                dark_queries: list[DarkQuery] = []
                 for item in (result.queries if hasattr(result, 'queries') else []):
                     dt = DarkQueryType(item.get('type', 'onion'))
                     dark_queries.append(DarkQuery(
@@ -4727,12 +4728,12 @@ Zajimave patterny k hledani:
 
     def _generate_dark_surface_queries_fallback(
         self,
-        iocs: List[str],
+        iocs: list[str],
         transport_str: str,
-    ) -> List[DarkQuery]:
+    ) -> list[DarkQuery]:
         """Heuristic fallback for dark surface query generation (no LLM)."""
-        queries: List[DarkQuery] = []
-        seen: Set[str] = set()
+        queries: list[DarkQuery] = []
+        seen: set[str] = set()
 
         for ioc in iocs[:20]:
             # ONION pattern: domain/IP -> onion query
@@ -4744,7 +4745,7 @@ Zajimave patterny k hledani:
                         query_type=DarkQueryType.ONION,
                         query=q,
                         priority=0.6,
-                        source_iocs=tuple([ioc]),
+                        source_iocs=(ioc,),
                         reasoning=f"IOC {ioc} -> onion mirror via {transport_str}",
                     ))
 
@@ -4757,7 +4758,7 @@ Zajimave patterny k hledani:
                         query_type=DarkQueryType.IPFS,
                         query=q,
                         priority=0.7,
-                        source_iocs=tuple([ioc]),
+                        source_iocs=(ioc,),
                         reasoning=f"CID-like IOC {ioc} -> IPFS content via {transport_str}",
                     ))
 
@@ -4770,7 +4771,7 @@ Zajimave patterny k hledani:
                         query_type=DarkQueryType.PASTE,
                         query=q,
                         priority=0.5,
-                        source_iocs=tuple([ioc]),
+                        source_iocs=(ioc,),
                         reasoning=f"Hash IOC {ioc} -> paste leak via {transport_str}",
                     ))
 
@@ -4815,7 +4816,7 @@ Zajimave patterny k hledani:
 
 # Factory function
 def create_hypothesis_engine(
-    inference_engine: Optional[InferenceEngineProtocol] = None,
+    inference_engine: InferenceEngineProtocol | None = None,
     **kwargs,
 ) -> HypothesisEngine:
     """

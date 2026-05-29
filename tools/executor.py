@@ -13,12 +13,12 @@ from __future__ import annotations
 
 import asyncio
 import inspect
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, Field
 
 if TYPE_CHECKING:
-    from .registry import ToolRegistry, Tool
+    from .registry import Tool, ToolRegistry
 
 
 # ============================================================================
@@ -43,8 +43,8 @@ class ToolExecutor:
         args: dict[str, Any],
         timeout_ms: int | None = None,
         available_capabilities: set[str] | None = None,
-        exec_logger: Optional[Any] = None,
-        correlation: Optional[dict[str, Optional[str]]] = None,
+        exec_logger: Any | None = None,
+        correlation: dict[str, str | None] | None = None,
     ) -> Any:
         """Execute tool with rate limiting and capability enforcement.
 
@@ -101,7 +101,7 @@ class ToolExecutor:
 
         async with semaphore:
             result = None
-            error: Optional[Exception] = None
+            error: Exception | None = None
             status = "success"
             output_bytes: bytes = b""
 
@@ -115,8 +115,8 @@ class ToolExecutor:
                     output_bytes = orjson.dumps(result)
                 except Exception:
                     output_bytes = str(result).encode("utf-8") if result is not None else b""
-            except asyncio.TimeoutError:
-                error = asyncio.TimeoutError(f"Tool '{tool_name}' timed out after {timeout}ms")
+            except TimeoutError:
+                error = TimeoutError(f"Tool '{tool_name}' timed out after {timeout}ms")
                 status = "error"
                 output_bytes = b""
                 raise
@@ -171,7 +171,7 @@ class ToolExecutor:
 # event loops that occur when asyncio.run() is called in run_in_executor.
 
 
-_DNS_TUNNEL_EXECUTOR: Optional[asyncio.AbstractEventLoop] = None
+_DNS_TUNNEL_EXECUTOR: asyncio.AbstractEventLoop | None = None
 
 
 def _get_dns_tunnel_executor() -> asyncio.AbstractEventLoop:
@@ -184,7 +184,6 @@ def _get_dns_tunnel_executor() -> asyncio.AbstractEventLoop:
 
 async def execute_dns_tunnel_async(args: dict) -> dict:
     """Async execution of DNS tunnel check in M1-safe manner."""
-    import concurrent.futures
 
     if not isinstance(args, dict):
         return {"error": "args must be a dict", "findings": []}
@@ -210,7 +209,7 @@ async def execute_dns_tunnel_async(args: dict) -> dict:
 
     # Lazy import for DNS tunnel detector
     try:
-        from .network.dns_tunnel_detector import create_dns_tunnel_detector, DNSTunnelConfig
+        from .network.dns_tunnel_detector import DNSTunnelConfig, create_dns_tunnel_detector
     except ImportError:
         return {"error": "dns_tunnel_detector not available", "findings": []}
 
@@ -252,9 +251,9 @@ def execute_dns_tunnel_sync(args: dict) -> dict:
 # ============================================================================
 
 
-def create_default_registry() -> "ToolRegistry":
+def create_default_registry() -> ToolRegistry:
     """Create ToolRegistry with all built-in tools registered."""
-    from tools.registry import ToolRegistry, Tool, CostModel, RateLimits, RiskLevel
+    from tools.registry import CostModel, RateLimits, RiskLevel, Tool, ToolRegistry
 
     registry = ToolRegistry()
 
@@ -425,9 +424,9 @@ async def _file_read_handler(
         raise FileNotFoundError(f"File not found: {path}")
 
     size = os.path.getsize(path)
-    read_size = min(size, max_bytes) if max_bytes else size
+    min(size, max_bytes) if max_bytes else size
 
-    with open(path, "r", encoding=encoding) as f:
+    with open(path, encoding=encoding) as f:
         content = f.read(max_bytes) if max_bytes else f.read()
 
     return {"content": content, "path": path, "size_bytes": size, "encoding": encoding}

@@ -10,12 +10,11 @@ import logging
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Optional, Dict, Tuple, Set
 
 logger = logging.getLogger(__name__)
 
 # Length-based hash identification
-LENGTH_HASHES: Dict[int, List[str]] = {
+LENGTH_HASHES: dict[int, list[str]] = {
     32: ['MD5', 'NTLM', 'MD4', 'RIPEMD128', 'HAVAL128', 'Tiger128'],
     40: ['SHA1', 'RIPEMD160', 'HAVAL160', 'Tiger160', 'MySQL5'],
     56: ['SHA224', 'SHA3-224', 'HAVAL224'],
@@ -25,7 +24,7 @@ LENGTH_HASHES: Dict[int, List[str]] = {
 }
 
 # Pattern-based hash identification (regex -> algorithm)
-PATTERN_HASHES: Dict[str, str] = {
+PATTERN_HASHES: dict[str, str] = {
     r'^\$1\$': 'MD5 (Unix crypt)',
     r'^\$2a\$': 'bcrypt',
     r'^\$2b\$': 'bcrypt',
@@ -53,7 +52,7 @@ PATTERN_HASHES: Dict[str, str] = {
 }
 
 # Hashcat mode mapping
-HASHCAT_MODES: Dict[str, int] = {
+HASHCAT_MODES: dict[str, int] = {
     'MD5': 0,
     'SHA1': 100,
     'SHA224': 1300,
@@ -97,7 +96,7 @@ HASHCAT_MODES: Dict[str, int] = {
 }
 
 # John the Ripper format mapping
-JOHN_FORMATS: Dict[str, str] = {
+JOHN_FORMATS: dict[str, str] = {
     'MD5': 'raw-md5',
     'SHA1': 'raw-sha1',
     'SHA224': 'raw-sha224',
@@ -164,9 +163,9 @@ class HashMatch:
     confidence: float
     length: int
     charset: str
-    pattern: Optional[str]
-    hashcat_mode: Optional[int]
-    john_format: Optional[str]
+    pattern: str | None
+    hashcat_mode: int | None
+    john_format: str | None
 
 
 @dataclass
@@ -181,7 +180,7 @@ class HashFinding:
     """
     position: int
     hash_string: str
-    matches: List[HashMatch]
+    matches: list[HashMatch]
     context: str
 
 
@@ -214,14 +213,14 @@ class HashIdentifier:
             print(f"{match.algorithm}: {match.confidence}")
     """
 
-    def __init__(self, config: Optional[HashConfig] = None):
+    def __init__(self, config: HashConfig | None = None):
         """Initialize the hash identifier.
 
         Args:
             config: Optional configuration object
         """
         self.config = config or HashConfig()
-        self._stats: Dict[str, int] = {
+        self._stats: dict[str, int] = {
             'hashes_processed': 0,
             'hashes_identified': 0,
             'pattern_matches': 0,
@@ -247,7 +246,7 @@ class HashIdentifier:
         else:
             return 'mixed'
 
-    def _match_by_pattern(self, hash_string: str) -> List[Tuple[str, str]]:
+    def _match_by_pattern(self, hash_string: str) -> list[tuple[str, str]]:
         """Match hash by pattern (e.g., $1$, $2a$).
 
         Args:
@@ -263,7 +262,7 @@ class HashIdentifier:
                 self._stats['pattern_matches'] += 1
         return matches
 
-    def _match_by_length(self, hash_string: str) -> List[str]:
+    def _match_by_length(self, hash_string: str) -> list[str]:
         """Match hash by length.
 
         Args:
@@ -278,7 +277,7 @@ class HashIdentifier:
             self._stats['length_matches'] += len(matches)
         return matches
 
-    def _match_by_charset(self, hash_string: str) -> List[str]:
+    def _match_by_charset(self, hash_string: str) -> list[str]:
         """Match hash by charset.
 
         Args:
@@ -302,7 +301,7 @@ class HashIdentifier:
 
         return matches
 
-    def _extract_salt(self, hash_string: str) -> Tuple[str, Optional[str]]:
+    def _extract_salt(self, hash_string: str) -> tuple[str, str | None]:
         """Extract salt from hash:salt or salt:hash format.
 
         Args:
@@ -326,7 +325,7 @@ class HashIdentifier:
 
         return hash_string, None
 
-    def _get_hashcat_mode(self, algorithm: str) -> Optional[int]:
+    def _get_hashcat_mode(self, algorithm: str) -> int | None:
         """Get hashcat mode for algorithm.
 
         Args:
@@ -337,7 +336,7 @@ class HashIdentifier:
         """
         return HASHCAT_MODES.get(algorithm)
 
-    def _get_john_format(self, algorithm: str) -> Optional[str]:
+    def _get_john_format(self, algorithm: str) -> str | None:
         """Get John the Ripper format for algorithm.
 
         Args:
@@ -348,7 +347,7 @@ class HashIdentifier:
         """
         return JOHN_FORMATS.get(algorithm)
 
-    async def identify(self, hash_string: str) -> List[HashMatch]:
+    async def identify(self, hash_string: str) -> list[HashMatch]:
         """Identify hash algorithm from hash string.
 
         Args:
@@ -366,8 +365,8 @@ class HashIdentifier:
         # Extract salt if present
         hash_part, salt = self._extract_salt(hash_string)
 
-        matches: List[HashMatch] = []
-        seen_algorithms: Set[str] = set()
+        matches: list[HashMatch] = []
+        seen_algorithms: set[str] = set()
 
         # Pattern-based matching (highest priority)
         pattern_matches = self._match_by_pattern(hash_part)
@@ -428,8 +427,8 @@ class HashIdentifier:
 
     async def identify_batch(
         self,
-        hashes: List[str]
-    ) -> Dict[str, List[HashMatch]]:
+        hashes: list[str]
+    ) -> dict[str, list[HashMatch]]:
         """Identify multiple hashes in batch.
 
         Args:
@@ -438,7 +437,7 @@ class HashIdentifier:
         Returns:
             Dictionary mapping hash strings to matches
         """
-        results: Dict[str, List[HashMatch]] = {}
+        results: dict[str, list[HashMatch]] = {}
 
         for i in range(0, len(hashes), self.config.batch_size):
             batch = hashes[i:i + self.config.batch_size]
@@ -448,7 +447,7 @@ class HashIdentifier:
 
         return results
 
-    async def identify_in_file(self, file_path: str) -> List[HashFinding]:
+    async def identify_in_file(self, file_path: str) -> list[HashFinding]:
         """Scan file for hash patterns.
 
         Args:
@@ -457,7 +456,7 @@ class HashIdentifier:
         Returns:
             List of hash findings
         """
-        findings: List[HashFinding] = []
+        findings: list[HashFinding] = []
 
         path = Path(file_path)
         if not path.exists():
@@ -465,7 +464,7 @@ class HashIdentifier:
             return findings
 
         try:
-            with open(path, 'r', encoding='utf-8', errors='ignore') as f:
+            with open(path, encoding='utf-8', errors='ignore') as f:
                 content = f.read()
 
             # Find potential hashes (hex strings of specific lengths)
@@ -509,7 +508,7 @@ class HashIdentifier:
 
         return findings
 
-    def get_stats(self) -> Dict[str, int]:
+    def get_stats(self) -> dict[str, int]:
         """Get identification statistics.
 
         Returns:
@@ -524,7 +523,7 @@ class HashIdentifier:
 
 
 # Factory function
-def create_hash_identifier(config: Optional[HashConfig] = None) -> HashIdentifier:
+def create_hash_identifier(config: HashConfig | None = None) -> HashIdentifier:
     """Create a configured HashIdentifier instance.
 
     Args:
@@ -537,7 +536,7 @@ def create_hash_identifier(config: Optional[HashConfig] = None) -> HashIdentifie
 
 
 # Convenience function
-async def identify_hash(hash_string: str, config: Optional[HashConfig] = None):
+async def identify_hash(hash_string: str, config: HashConfig | None = None):
     """Convenience function to identify a hash."""
     identifier = create_hash_identifier(config)
     return await identifier.identify(hash_string)

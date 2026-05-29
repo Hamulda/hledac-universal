@@ -29,11 +29,11 @@ from unittest.mock import MagicMock, patch
 _ROOT = Path(__file__).parent.parent.parent.parent  # tests->universal->hledac->Hledac
 sys.path.insert(0, str(_ROOT))
 
+from hledac.universal.export import jsonld_exporter, stix_exporter
 from hledac.universal.security.pq_crypto import (
     PQAvailability,
     PQSignature,
 )
-from hledac.universal.export import stix_exporter, jsonld_exporter
 
 
 class FakePQBackend:

@@ -3,7 +3,7 @@
 import asyncio
 import logging
 import time
-from typing import List, Dict, Any, Optional
+from typing import Any
 from urllib.parse import urlencode
 
 logger = logging.getLogger(__name__)
@@ -54,7 +54,7 @@ class SearxngClient:
         """
         self.base_url = base_url.rstrip('/')
         self.timeout = timeout
-        self._session: Optional[aiohttp.ClientSession] = None
+        self._session: aiohttp.ClientSession | None = None
         self._session_lock = asyncio.Lock()
         # FIX 5: Circuit breaker to prevent hammering dead service
         self._breaker = _CircuitBreaker()
@@ -71,8 +71,8 @@ class SearxngClient:
         self,
         query: str,
         max_results: int = 20,
-        categories: List[str] = None
-    ) -> List[Dict[str, Any]]:
+        categories: list[str] = None
+    ) -> list[dict[str, Any]]:
         """
         Perform search and return results.
 
@@ -127,7 +127,7 @@ class SearxngClient:
                 # FIX 5: Record success on successful request
                 self._breaker.record_success()
                 return results
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.warning("SearXNG request timed out")
             self._breaker.record_failure()
             return []
@@ -145,7 +145,7 @@ class SearxngClient:
 async def create_searxng_client(
     base_url: str = "http://localhost:8080",
     timeout: int = 30
-) -> Optional[SearxngClient]:
+) -> SearxngClient | None:
     """
     Factory function to create SearXNG client.
 

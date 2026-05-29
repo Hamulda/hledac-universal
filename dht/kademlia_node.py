@@ -14,8 +14,8 @@ STATUS: EXPERIMENTAL / SIMULATED
 
 M1 8GB MEMORY CEILING:
   - data_store: OrderedDict, max 10_000 položek, TTL 3600s — BOUNDED ✓
-  - routing_table: Dict[bucket_index → list of peers], k=20 peers per bucket
-  - _pending_rpcs: Dict[rpc_id → Future], bounded on MAX_PENDING_RPCS (5000), TTL 60s
+  - routing_table: dict[bucket_index → list of peers], k=20 peers per bucket
+  - _pending_rpcs: dict[rpc_id → Future], bounded on MAX_PENDING_RPCS (5000), TTL 60s
   - F185E: MAX_PENDING_RPCS hard cap + TTL eviction prevents unbounded growth
   - MAX_ITEM_BYTES = 256KB hard cap na store — BOUNDED ✓
   - Žádné MLX/alokace mimo síťové operace
@@ -79,9 +79,9 @@ import socket
 import time
 import uuid
 from collections import OrderedDict
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
-from hledac.universal.core.resource_governor import ResourceGovernor, Priority
+from hledac.universal.core.resource_governor import ResourceGovernor
 from hledac.universal.dht.local_graph import LocalGraphStore
 
 logger = logging.getLogger(__name__)
@@ -163,20 +163,20 @@ class _DHTBootstrapProtocol(asyncio.DatagramProtocol):
     def __init__(self, loop, node_id: str):
         self._loop = loop
         self._node_id = node_id
-        self._nodes_found: Dict[str, Dict[str, Any]] = {}
-        self._error: Optional[Exception] = None
-        self._transport: Optional[asyncio.DatagramTransport] = None
+        self._nodes_found: dict[str, dict[str, Any]] = {}
+        self._error: Exception | None = None
+        self._transport: asyncio.DatagramTransport | None = None
 
     def connection_made(self, transport: asyncio.DatagramTransport) -> None:
         self._transport = transport
 
-    def send(self, data: bytes, addr: Tuple[str, int]) -> tuple:
+    def send(self, data: bytes, addr: tuple[str, int]) -> tuple:
         """Send datagram. Call via asyncio.wait_for for timeout."""
         if self._transport:
             self._transport.sendto(data, addr)
         return (self._transport, None)
 
-    def datagram_received(self, data: bytes, addr: Tuple[str, int]) -> None:
+    def datagram_received(self, data: bytes, addr: tuple[str, int]) -> None:
         """Parse DHT FIND_NODE response, extract compact node info."""
         try:
             msg = self._bdecode(data)
@@ -209,7 +209,7 @@ class _DHTBootstrapProtocol(asyncio.DatagramProtocol):
         self._error = exc
 
     @staticmethod
-    def _bdecode(data: bytes) -> Optional[Dict[str, Any]]:
+    def _bdecode(data: bytes) -> dict[str, Any] | None:
         """Minimal bencode decoder for DHT responses."""
         try:
             return _bdecode_fixed(data)
@@ -217,7 +217,7 @@ class _DHTBootstrapProtocol(asyncio.DatagramProtocol):
             return None
 
 
-def _bdecode_fixed(data: bytes) -> Optional[Dict[str, Any]]:
+def _bdecode_fixed(data: bytes) -> dict[str, Any] | None:
     """
     Module-level bencode decoder for use in _DHTBootstrapProtocol.
     Mirrors KademliaNode._bdecode logic.
@@ -228,7 +228,7 @@ def _bdecode_fixed(data: bytes) -> Optional[Dict[str, Any]]:
                 return (None, p)
             ch = d[p:p+1]
             if ch == b"d":
-                res: Dict[str, Any] = {}
+                res: dict[str, Any] = {}
                 p += 1
                 while p < len(d) and d[p:p+1] != b"e":
                     kk, p = _dec_rec(d, p)
@@ -238,7 +238,7 @@ def _bdecode_fixed(data: bytes) -> Optional[Dict[str, Any]]:
                     res[str(kk)] = vv
                 return (res, p + 1 if p < len(d) else p)
             elif ch == b"l":
-                lst: List[Any] = []
+                lst: list[Any] = []
                 p += 1
                 while p < len(d) and d[p:p+1] != b"e":
                     itm, p = _dec_rec(d, p)
@@ -301,7 +301,6 @@ async def crawl_dht_for_keyword(
         bootstrap_nodes=BOOTSTRAP_PEERS,
     )
 
-    duckdb_store = None
     # Sprint F192B: DHT crawl is EXPERIMENTAL/SIMULATED — write-side persistence
     # bypass removed. Findings from DHT are returned but NOT stored to DuckDBShadowStore.
     # They may be incorporated via the canonical sprint path if needed.
@@ -324,7 +323,7 @@ async def crawl_dht_for_keyword(
         searched_tokens: set[str] = set()
         semaphore = asyncio.Semaphore(MAX_CONCURRENT_QUERIES)
 
-        async def search_token(token: str) -> Optional[dict]:
+        async def search_token(token: str) -> dict | None:
             async with semaphore:
                 dht_key = f"urn:btih:{hashlib.sha256(token.encode()).hexdigest()[:40]}"
                 try:
@@ -420,7 +419,7 @@ async def lookup_info_hash_metadata(
                 "source": "dht",
             }
         return {}
-    except (asyncio.TimeoutError, Exception):
+    except (TimeoutError, Exception):
         return {}
     finally:
         await node.stop()
@@ -431,10 +430,10 @@ class KademliaNode:
         self,
         node_id: str,
         governor: ResourceGovernor,
-        bootstrap_nodes: Optional[List[Tuple[str, int]]] = None,
+        bootstrap_nodes: list[tuple[str, int]] | None = None,
         k: int = 20,
         alpha: int = 3,
-        local_graph_store: "LocalGraphStore | None" = None,  # F214Q: LMDB routing table persistence
+        local_graph_store: LocalGraphStore | None = None,  # F214Q: LMDB routing table persistence
     ):
         self.node_id = node_id
         self.governor = governor
@@ -444,18 +443,18 @@ class KademliaNode:
         self.local_graph_store = local_graph_store
         self._routing_loaded = False
 
-        self.routing_table: Dict[int, List[Dict[str, Any]]] = {}
-        self.data_store: "OrderedDict[str, tuple[Any, float]]" = OrderedDict()
+        self.routing_table: dict[int, list[dict[str, Any]]] = {}
+        self.data_store: Ordereddict[str, tuple[Any, float]] = OrderedDict()
         self.data_store_max = 10_000
         self.data_store_ttl = 3600
 
         self._running = True
-        self._refresh_task: Optional[asyncio.Task] = None
+        self._refresh_task: asyncio.Task | None = None
         self._transport = None
 
-        self._pending_rpcs: Dict[str, asyncio.Future] = {}
+        self._pending_rpcs: dict[str, asyncio.Future] = {}
         # F185E: track creation time for TTL-based eviction
-        self._pending_rpcs_created: Dict[str, float] = {}
+        self._pending_rpcs_created: dict[str, float] = {}
 
     def set_transport(self, transport):
         self._transport = transport
@@ -557,7 +556,7 @@ class KademliaNode:
             return 0
         return min(dist.bit_length() - 1, 255)
 
-    def _update_routing(self, peer_id: str, peer_info: Optional[Dict[str, Any]] = None):
+    def _update_routing(self, peer_id: str, peer_info: dict[str, Any] | None = None):
         if peer_id == self.node_id:
             return
         peer_info = peer_info or {}
@@ -600,8 +599,8 @@ class KademliaNode:
         except Exception:
             pass  # Fail-soft: LMDB load never blocks DHT
 
-    def _find_closest_nodes(self, key: str, count: int) -> List[Dict[str, Any]]:
-        candidates: List[Dict[str, Any]] = []
+    def _find_closest_nodes(self, key: str, count: int) -> list[dict[str, Any]]:
+        candidates: list[dict[str, Any]] = []
         b = self._bucket_index(key)
         for i in range(max(0, b - 5), min(256, b + 6)):
             candidates.extend(self.routing_table.get(i, []))
@@ -614,7 +613,7 @@ class KademliaNode:
         if len(self.data_store) > self.data_store_max:
             self.data_store.popitem(last=False)
 
-    def _local_get(self, key: str) -> Optional[Any]:
+    def _local_get(self, key: str) -> Any | None:
         if key not in self.data_store:
             return None
         value, ts = self.data_store[key]
@@ -663,7 +662,7 @@ class KademliaNode:
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
 
-    async def find_value(self, key: str) -> Optional[Any]:
+    async def find_value(self, key: str) -> Any | None:
         self._cleanup_pending_rpcs()
         local = self._local_get(key)
         if local is not None:
@@ -673,8 +672,8 @@ class KademliaNode:
         shortlist = self._find_closest_nodes(key, self.alpha)
 
         while shortlist:
-            rpc_ids: List[str] = []
-            send_tasks: List[asyncio.Task] = []
+            rpc_ids: list[str] = []
+            send_tasks: list[asyncio.Task] = []
 
             for peer in shortlist[: self.alpha]:
                 pid = peer["id"]
@@ -734,7 +733,7 @@ class KademliaNode:
             ok = await asyncio.wait_for(fut, timeout=2.0)
             self._update_routing(peer_id)
             return bool(ok)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             return False
         finally:
             self._pending_rpcs.pop(rpc_id, None)
@@ -763,7 +762,7 @@ class KademliaNode:
         self._update_routing(peer_id)
 
     # Handlers
-    async def _handle_ping(self, data: Dict[str, Any]):
+    async def _handle_ping(self, data: dict[str, Any]):
         sender = data.get("sender")
         payload = data.get("payload", {})
         rpc_id = payload.get("rpc_id")
@@ -771,7 +770,7 @@ class KademliaNode:
             self._update_routing(sender)
             await self._transport.send_message(sender, "dht_pong", {"rpc_id": rpc_id}, "")
 
-    async def _handle_pong(self, data: Dict[str, Any]):
+    async def _handle_pong(self, data: dict[str, Any]):
         sender = data.get("sender")
         payload = data.get("payload", {})
         rpc_id = payload.get("rpc_id")
@@ -782,7 +781,7 @@ class KademliaNode:
             fut.set_result(True)
             self._pending_rpcs_created.pop(rpc_id, None)
 
-    async def _handle_store(self, data: Dict[str, Any]):
+    async def _handle_store(self, data: dict[str, Any]):
         sender = data.get("sender")
         payload = data.get("payload", {})
         if sender:
@@ -793,7 +792,7 @@ class KademliaNode:
             return
         self._local_put(key, value)
 
-    async def _handle_find_value(self, data: Dict[str, Any]):
+    async def _handle_find_value(self, data: dict[str, Any]):
         sender = data.get("sender")
         payload = data.get("payload", {})
         key = payload.get("key")
@@ -811,7 +810,7 @@ class KademliaNode:
         closest = self._find_closest_nodes(key, self.k)
         await self._transport.send_message(sender, "dht_find_value_resp", {"rpc_id": rpc_id, "nodes": closest}, "")
 
-    async def _handle_find_value_resp(self, data: Dict[str, Any]):
+    async def _handle_find_value_resp(self, data: dict[str, Any]):
         sender = data.get("sender")
         payload = data.get("payload", {})
         rpc_id = payload.get("rpc_id")
@@ -840,7 +839,7 @@ class KademliaNode:
     # P10: Real BEP-9/10 DHT Implementation
     # -------------------------------------------------------------------------
 
-    async def get_peers(self, info_hash: str) -> List[Tuple[str, int]]:
+    async def get_peers(self, info_hash: str) -> list[tuple[str, int]]:
         """
         F214Q: BEP-5 get_peers — find peer addresses for an info_hash.
 
@@ -855,7 +854,7 @@ class KademliaNode:
             List of (ip_address, port) tuples for peers advertising the hash.
             Empty list on timeout or error (fail-soft).
         """
-        peers: List[Tuple[str, int]] = []
+        peers: list[tuple[str, int]] = []
         try:
             ih_bytes = bytes.fromhex(info_hash)
         except ValueError:
@@ -876,7 +875,7 @@ class KademliaNode:
         if not sources:
             return peers
 
-        async def _query_peer(host: str, port: int) -> Optional[Tuple[str, int]]:
+        async def _query_peer(host: str, port: int) -> tuple[str, int] | None:
             try:
                 msg = {
                     "t": "gp",
@@ -961,7 +960,7 @@ class KademliaNode:
             sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             sock.settimeout(2.0)
             sock.setblocking(False)
-            loop = asyncio.get_running_loop()
+            asyncio.get_running_loop()
 
             # Bootstrap: ping known peers and populate routing table
             for peer_host, peer_port in BOOTSTRAP_PEERS:
@@ -1030,7 +1029,7 @@ class KademliaNode:
         logger.info(f"DHT crawl '{keyword}': {len(results)} results in {elapsed:.1f}s")
         return results[:max_results]
 
-    async def _dht_send_ping(self, sock: socket.socket, host: str, port: int) -> Optional[dict]:
+    async def _dht_send_ping(self, sock: socket.socket, host: str, port: int) -> dict | None:
         """Send DHT ping and receive response."""
         # Bencode format for DHT messages
         ping_msg = {
@@ -1054,7 +1053,7 @@ class KademliaNode:
 
     async def _dht_send_get_peers(
         self, sock: socket.socket, host: str, port: int, info_hash: bytes
-    ) -> Optional[dict]:
+    ) -> dict | None:
         """Send get_peers query for info_hash."""
         msg = {
             "t": "bb",
@@ -1137,7 +1136,7 @@ class KademliaNode:
 
     async def _fetch_torrent_metadata(
         self, peer_host: str, peer_port: int, info_hash: bytes
-    ) -> Optional[dict]:
+    ) -> dict | None:
         """
         P10: Fetch torrent metadata from peer using BEP-9 (ut_metadata).
 
@@ -1221,7 +1220,7 @@ class KademliaNode:
 
                         if len(metadata_parts) * 16384 >= metadata_size:
                             break
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     break
 
                 piece_index += 1
@@ -1249,7 +1248,7 @@ class KademliaNode:
         length = len(bencoded) + 1
         return length.to_bytes(4, "big") + bytes([msg_id]) + bencoded
 
-    def _parse_ext_message(self, data: bytes) -> Optional[dict]:
+    def _parse_ext_message(self, data: bytes) -> dict | None:
         """Parse BEP-10 extension protocol message."""
         try:
             if len(data) < 5:

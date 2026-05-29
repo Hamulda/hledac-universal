@@ -29,8 +29,9 @@ import asyncio
 import hashlib
 import logging
 import time
+from collections.abc import Generator
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Generator
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     import aiohttp
@@ -262,7 +263,7 @@ def _extract_jarm_from_payload(payload_text: str | None) -> str | None:
 
 # ── Cloud Bucket Enumeration ───────────────────────────────────────────────────
 
-def _generate_bucket_candidates(entity_name: str) -> Generator[tuple[str, str, str], None, None]:
+def _generate_bucket_candidates(entity_name: str) -> Generator[tuple[str, str, str]]:
     """
     Generate lazy bucket name candidates for an entity.
 
@@ -326,7 +327,7 @@ async def _detect_open_buckets_async(
     Returns list of accessible bucket dicts.
     """
     import asyncio
-    import aiohttp
+
 
     try:
         from hledac.universal.network.session_runtime import async_get_aiohttp_session
@@ -586,7 +587,7 @@ def scan_open_storage(domains: list[str]) -> list[OpenStorageResult]:
 
 # ── Signal Extraction ─────────────────────────────────────────────────────────
 
-def extract_signals(findings: list["CanonicalFinding"]) -> list[AssetSignal]:
+def extract_signals(findings: list[CanonicalFinding]) -> list[AssetSignal]:
     """
     Extract asset signals from a list of CanonicalFindings.
 
@@ -963,7 +964,7 @@ def _make_suspicious_fp_finding(asset: Asset, sig: AssetSignal) -> ExposureFindi
 def to_canonical_findings(
     findings: list[ExposureFinding],
     query: str,
-) -> list["CanonicalFinding"]:
+) -> list[CanonicalFinding]:
     """
     Convert ExposureFinding list to CanonicalFinding list.
 
@@ -1011,9 +1012,9 @@ def to_canonical_findings(
 # ── Public API ─────────────────────────────────────────────────────────────────
 
 def correlate_exposure_signals(
-    findings: list["CanonicalFinding"],
+    findings: list[CanonicalFinding],
     query: str,
-) -> list["CanonicalFinding"]:
+) -> list[CanonicalFinding]:
     """
     F202C: Correlate asset exposure signals from sprint findings.
 
@@ -1070,7 +1071,7 @@ class ExposureCorrelatorAdapter:
     def __init__(self) -> None:
         self._stats_snapshot: dict[str, int] = {}
 
-    def correlate(self, findings: list["CanonicalFinding"], query: str) -> list["CanonicalFinding"]:
+    def correlate(self, findings: list[CanonicalFinding], query: str) -> list[CanonicalFinding]:
         """
         Correlate exposure signals from findings.
 

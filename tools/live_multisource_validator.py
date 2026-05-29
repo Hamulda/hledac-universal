@@ -25,13 +25,13 @@ import argparse
 import json
 import sys
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
-from enum import Enum
+from datetime import UTC, datetime
+from enum import StrEnum
 from pathlib import Path
 
 # ── Verdict taxonomy ────────────────────────────────────────────────────────
 
-class Verdict(str, Enum):
+class Verdict(StrEnum):
     PASS_MULTISOURCE_TERMINALITY   = "PASS_MULTISOURCE_TERMINALITY"
     FAIL_TERMINALITY_NOT_CHECKED   = "FAIL_TERMINALITY_NOT_CHECKED"
     FAIL_TERMINALITY_NOT_SATISFIED = "FAIL_TERMINALITY_NOT_SATISFIED"
@@ -613,10 +613,10 @@ def _failures_from_dict(data: dict, profile: str, query_type: str, allow_hardwar
                 and prelude_terminal_lanes is not None and missing_lanes is not None):
             MUST_TERMINAL = frozenset(["PUBLIC", "CT"])
             prelude_has_mandatory = MUST_TERMINAL.intersection(
-                (l.upper() for l in prelude_terminal_lanes if isinstance(l, str))
+                l.upper() for l in prelude_terminal_lanes if isinstance(l, str)
             )
             final_has_mandatory = MUST_TERMINAL.intersection(
-                (l.upper() for l in missing_lanes if isinstance(l, str))
+                l.upper() for l in missing_lanes if isinstance(l, str)
             )
             if prelude_has_mandatory and final_has_mandatory:
                 # Prelude said these lanes terminal, but final says they're still missing
@@ -977,7 +977,7 @@ def validate_live_artifact(
         "query_type": query_type,
         "run_id": _extract_run_id(data),
         "run_date": data.get("run_date") or data.get("start_time_iso") or "unknown",
-        "validated_at": datetime.now(timezone.utc).isoformat(),
+        "validated_at": datetime.now(UTC).isoformat(),
     }
 
     return ValidationResult(overall=overall, failures=failures, metadata=metadata)
@@ -1017,18 +1017,12 @@ def emit_markdown(result: ValidationResult, output_path: str | Path) -> None:
 # ── CLI ─────────────────────────────────────────────────────────────────────
 
 def main(argv: list[str] | None = None) -> int:
-    if sys.version_info >= (3, 14):
-        parser = argparse.ArgumentParser(
-            description="Live Multisource Validator — F209B",
-            formatter_class=argparse.RawDescriptionHelpFormatter,
-            suggest_on_error=True,
-            color=True,
-        )
-    else:
-        parser = argparse.ArgumentParser(
-            description="Live Multisource Validator — F209B",
-            formatter_class=argparse.RawDescriptionHelpFormatter,
-        )
+    parser = argparse.ArgumentParser(
+        description="Live Multisource Validator — F209B",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        suggest_on_error=True,
+        color=True,
+    )
     parser.add_argument("--input-json", required=True, help="Path to live_sprint_measurement JSON artifact")
     parser.add_argument("--output-json", help="Path to write verdict JSON")
     parser.add_argument("--output-md", help="Path to write verdict Markdown report")

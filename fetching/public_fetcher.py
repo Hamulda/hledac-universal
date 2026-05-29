@@ -13,15 +13,15 @@ P4: Tor + stealth layer integration:
 """
 from __future__ import annotations
 
-import atexit
 import asyncio
+import atexit
 import logging
 import os
 import random
 import re
 import time
 import urllib.parse
-from typing import TYPE_CHECKING, Final, Optional
+from typing import Final
 
 # psutil lazy import — only needed inside fetch function at runtime
 _psutil = None
@@ -38,39 +38,34 @@ def _get_psutil():
     return _psutil
 
 # Sprint F206AL: Import canonical M1 8GB threshold from uma_budget.
-from hledac.universal.utils.uma_budget import M1_FETCH_SOFT_CEILING_GB
-
 import aiohttp
-
 import msgspec
-
 from hledac.universal.network.session_runtime import async_get_aiohttp_session
 from hledac.universal.patterns.pattern_matcher import match_text
+
 # Sprint F214: Centralized transport imports — protocol boundary
 from hledac.universal.transport.base import (
-    get_breaker,
     CircuitBreaker,
-    CircuitDecision,
-    should_use_httpx_h2,
-    fetch_via_httpx_h2,
-    should_use_curl_cffi,
-    fetch_via_curl_cffi,
-    route_transport,
     TransportDecision,
+    fetch_via_curl_cffi,
+    fetch_via_httpx_h2,
+    fetch_via_tor_curl_cffi,
+    get_breaker,
+    route_transport,
+    should_use_curl_cffi,
 )
 from hledac.universal.utils.concurrency import (
-    FETCH_SEMAPHORE,
     get_clearnet_semaphore,
     get_tor_semaphore,
-    get_fetch_semaphore,
 )
+from hledac.universal.utils.uma_budget import M1_FETCH_SOFT_CEILING_GB
 
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # P4: Tor + stealth constants
 # ---------------------------------------------------------------------------
-TOR_SOCKS_PROXY: Final[str] = "socks5://127.0.0.1:9050"
+TOR_SOCKS_PROXY: Final[str] = os.environ.get("TOR_SOCKS_PROXY_URL", "socks5h://127.0.0.1:9050")
 I2P_SOCKS_PROXY: Final[str] = os.environ.get("I2P_PROXY_URL", "socks5://127.0.0.1:7654")
 TOR_CIRCUIT_RENEWAL_REQUEST_COUNT: Final[int] = 10
 TOR_STEALTH_TIMEOUT_SCALE: Final[float] = 2.0  # Tor requests need longer timeouts
@@ -78,12 +73,12 @@ JITTER_MIN_S: Final[float] = 0.1
 JITTER_MAX_S: Final[float] = 0.5
 
 # Module-level state for Tor session management
-_tor_session: Optional["aiohttp.ClientSession"] = None
+_tor_session: aiohttp.ClientSession | None = None
 _tor_request_count: int = 0
-_tor_session_lock: "asyncio.Lock" = asyncio.Lock()
+_tor_session_lock: asyncio.Lock = asyncio.Lock()
 
 # P10: Module-level state for I2P session management
-_i2p_session: Optional["aiohttp.ClientSession"] = None
+_i2p_session: aiohttp.ClientSession | None = None
 
 # F219D: Module-level state to track whether local sessions were created by us.
 # Prevents closing injected sessions when close_public_fetcher_sessions_async is called.
@@ -99,9 +94,7 @@ PUBLIC_FETCHER_POOL_AUTHORITY: Final[str] = "local_fallback_until_transport_unif
 # F206AT: Optional injected session provider seam.
 # When set (via constructor or param), used instead of local _tor_session/_i2p_session.
 # Format: tuple of (tor_session, i2p_session) or None
-_injected_session_provider: Optional[
-    tuple["aiohttp.ClientSession | None", "aiohttp.ClientSession | None"]
-] = None
+_injected_session_provider: tuple[aiohttp.ClientSession | None, aiohttp.ClientSession | None] | None = None
 
 # F206AT: Session source telemetry — truth about where sessions come from.
 # Updated on each _get_tor_session / _get_i2p_session call.
@@ -112,8 +105,8 @@ _session_source_telemetry: dict[str, str] = {
 
 
 def inject_session_provider(
-    tor_session: "aiohttp.ClientSession | None",
-    i2p_session: "aiohttp.ClientSession | None",
+    tor_session: aiohttp.ClientSession | None,
+    i2p_session: aiohttp.ClientSession | None,
 ) -> None:
     """F206AT: Inject canonical session provider for Tor/I2P pools.
 
@@ -161,7 +154,7 @@ def get_session_source_telemetry() -> dict[str, str]:
     return result
 
 # P7: Camoufox singleton lock — max 1 instance across entire fetcher
-_CAMOUFOX_LOCK: "asyncio.Lock" = asyncio.Lock()
+_CAMOUFOX_LOCK: asyncio.Lock = asyncio.Lock()
 
 # ---------------------------------------------------------------------------
 # Public API — single entry point
@@ -288,6 +281,8 @@ class TransportCounters:
         "aiohttp_count",
         "httpx_h2_count",
         "curl_cffi_count",
+        "curl_cffi_tor_count",
+        "curl_cffi_tor_fallback_count",
         "tor_aiohttp_socks_count",
         "i2p_aiohttp_socks_count",
         "js_renderer_count",
@@ -307,6 +302,8 @@ class TransportCounters:
         aiohttp_count: int = 0,
         httpx_h2_count: int = 0,
         curl_cffi_count: int = 0,
+        curl_cffi_tor_count: int = 0,
+        curl_cffi_tor_fallback_count: int = 0,
         tor_aiohttp_socks_count: int = 0,
         i2p_aiohttp_socks_count: int = 0,
         js_renderer_count: int = 0,
@@ -373,7 +370,7 @@ class FetchResult(msgspec.Struct, frozen=True):
     transport_policy_reason: str | None = None  # api_like | darknet_url | stealth_required | js_required | clearnet_default | httpx_h2_disabled_env | httpx_h2_disabled | httpx_h2_fallback | freenet_not_httpx_supported | explicit_stealth | status_403_or_429 | protection_detected | default_aiohttp
     transport_fallback_reason: str | None = None  # set when fallback occurred (curl_cffi_failed:..., httpx_h2_fallback)
     # Added in F206N — Transport Telemetry Counters
-    transport_counters: "TransportCounters | None" = None
+    transport_counters: TransportCounters | None = None
     # Added in F207F — PUBLIC Yield: why JS renderer was skipped
     js_renderer_skipped_reason: str | None = None  # xml_or_feed_url | xml_recovered | browser_unavailable
     # Added in F214Z — Static Hydration Telemetry
@@ -861,7 +858,7 @@ def _is_freenet_url(url: str) -> bool:
         return False
 
 
-async def _get_tor_session() -> "aiohttp.ClientSession":
+async def _get_tor_session() -> aiohttp.ClientSession:
     """Get or create aiohttp session via Tor SOCKS5 proxy (lazy, singleton).
 
     F206AT: If _injected_session_provider is set, uses the injected Tor session
@@ -887,7 +884,7 @@ async def _get_tor_session() -> "aiohttp.ClientSession":
     return _tor_session
 
 
-async def _get_i2p_session() -> "aiohttp.ClientSession":
+async def _get_i2p_session() -> aiohttp.ClientSession:
     """
     P10: Get or create aiohttp session via I2P SOCKS5 proxy (lazy, singleton).
     Uses aiohttp_socks.ProxyConnector for .i2p/.b32.i2p URLs.
@@ -1337,7 +1334,7 @@ async def _fetch_with_camoufox(url: str, timeout: float = 15.0) -> str:
     # F202H: Use opsec_policy for M1 model+renderer conflict guard
     try:
         from hledac.universal.embedding_pipeline import is_embedding_context_active
-        from hledac.universal.runtime.opsec_policy import get_renderer_policy, OPSECContext
+        from hledac.universal.runtime.opsec_policy import OPSECContext, get_renderer_policy
 
         has_model = is_embedding_context_active()
         ctx = OPSECContext(has_model_context=has_model)
@@ -1387,13 +1384,12 @@ async def _fetch_with_nodriver(url: str) -> str:
 
     # Check env gate
     if os.environ.get("HLEDAC_ENABLE_NODRIVER", "0") != "1":
-        logger.debug(f"nodriver skipped: HLEDAC_ENABLE_NODRIVER != 1")
+        logger.debug("nodriver skipped: HLEDAC_ENABLE_NODRIVER != 1")
         return ""
 
     # Check chrome binary
     if not _check_chrome_binary_exists():
-        nodriver_reason = "chrome_binary_missing"
-        logger.debug(f"nodriver skipped: chrome binary not found")
+        logger.debug("nodriver skipped: chrome binary not found")
         return ""
 
     try:
@@ -1526,7 +1522,7 @@ async def async_fetch_public_text(
     # Fail-open: if breaker lookup fails, proceed normally.
 
     _circuit_breaker_domain: str = ""
-    _circuit_breaker: Optional["CircuitBreaker"] = None
+    _circuit_breaker: CircuitBreaker | None = None
     try:
         parsed_url = urllib.parse.urlparse(url)
         _circuit_breaker_domain = parsed_url.netloc
@@ -1664,7 +1660,6 @@ async def async_fetch_public_text(
         logger.debug(f"[HTTPX] H2 lane selected for {url}: {_router_reason}")
         _original_policy_reason = _router_reason
         try:
-            import httpx as _httpx
 
             _httpx_resp = await fetch_via_httpx_h2(url, timeout_s=timeout_s)
             _httpx_final_url = str(_httpx_resp.url)
@@ -1747,8 +1742,8 @@ async def async_fetch_public_text(
             # F206AF: Record httpx_h2 failure and classify
             try:
                 from hledac.universal.transport.httpx_transport import (
-                    record_httpx_h2_failure,
                     classify_httpx_h2_error,
+                    record_httpx_h2_failure,
                 )
                 _httpx_err_type = classify_httpx_h2_error(_e)
                 record_httpx_h2_failure()
@@ -1774,10 +1769,10 @@ async def async_fetch_public_text(
         timeout_s = timeout_s * TOR_STEALTH_TIMEOUT_SCALE
 
     # --- P16: Optional DoH resolution before connect ---
-    _resolved_ip: Optional[str] = None
+    _resolved_ip: str | None = None
     if use_doh:
         try:
-            from hledac.universal.security.passive_dns import resolve_doh, get_random_doh_provider
+            from hledac.universal.security.passive_dns import get_random_doh_provider, resolve_doh
             parsed_url = urllib.parse.urlparse(url)
             hostname = parsed_url.hostname or ""
             if hostname:
@@ -1867,6 +1862,61 @@ async def async_fetch_public_text(
             _curl_fallback_reason = f"curl_cffi_failed:{type(_curl_e).__name__}"
             _tc.curl_cffi_fallback_to_aiohttp_count += 1
             _tc.fallback_count += 1
+
+    # --- F251: curl_cffi Tor fetch path for .onion URLs ---
+    # Activated by HLEDAC_ENABLE_TOR=1 or when URL is .onion and Tor curl available
+    _try_tor_curl = os.environ.get("HLEDAC_ENABLE_TOR", "0") == "1"
+    if use_tor and _try_tor_curl and _is_onion_url(url):
+        try:
+            _stealth_headers = build_randomized_headers()
+            _tor_curl_result = await fetch_via_tor_curl_cffi(
+                url=url,
+                headers=_stealth_headers,
+                timeout_s=timeout_s * TOR_STEALTH_TIMEOUT_SCALE,
+                max_bytes=max_bytes,
+                profile="chrome110",
+                tor_manager=None,  # circuit rotation via _TOR_CURL_PROXY env + request counter
+                circuit_rotation_count=TOR_CIRCUIT_RENEWAL_REQUEST_COUNT,
+            )
+            _tor_curl_bytes = _tor_curl_result.get("content", b"")
+            _tor_curl_text: str | None
+            _tor_curl_decode_replaced = False
+            _tor_curl_decode_replacement_count = 0
+            _tor_curl_error = _tor_curl_result.get("error", None)
+            if _tor_curl_bytes:
+                _tor_curl_text, _tor_curl_decode_replaced, _tor_curl_decode_replacement_count = _try_decode(_tor_curl_bytes)
+            else:
+                _tor_curl_text = None
+            elapsed_ms = (time.monotonic() - t0) * 1000
+            _tc.curl_cffi_tor_count += 1
+            return FetchResult(
+                url=url,
+                final_url=_tor_curl_result.get("final_url", url),
+                status_code=_tor_curl_result.get("status_code", 0),
+                content_type=_tor_curl_result.get("content_type", ""),
+                text=_tor_curl_text,
+                fetched_bytes=len(_tor_curl_bytes) if _tor_curl_bytes else 0,
+                declared_length=-1,
+                elapsed_ms=elapsed_ms,
+                error=_tor_curl_error,
+                decode_replaced=_tor_curl_decode_replaced,
+                decode_replacement_count=_tor_curl_decode_replacement_count,
+                failure_stage=_tor_curl_result.get("failure_stage", None),
+                network_error_kind=_tor_curl_result.get("network_error_kind", None),
+                selected_transport="curl_cffi_tor",
+                transport_policy_reason="tor_curl_cffi",
+                transport_counters=_tc,
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception as _tor_curl_e:
+            elapsed_ms = (time.monotonic() - t0) * 1000
+            logger.W(f"[curl_cffi_tor] onion fetch failed for {url}, falling back to aiohttp_socks: {_tor_curl_e}")
+            _tc.curl_cffi_tor_fallback_count += 1
+            # fall through to aiohttp_socks path
+    elif use_tor and _is_onion_url(url):
+        # .onion URL without HLEDAC_ENABLE_TOR → skip with warning
+        logger.warning(f"onion_url_skipped: tor_not_enabled {url}")
 
     # --- P4: Tor session setup for .onion URLs ---
     tor_session = None  # Always defined for use_tor check below
@@ -2211,7 +2261,9 @@ async def async_fetch_public_text(
                                 skip_js_reason = "xml_recovered"
 
                             # F214Y: Try static hydration before expensive JS rendering
-                            from hledac.universal.utils.hydration_extractor import extract_static_hydration as _extract_static_hydration
+                            from hledac.universal.utils.hydration_extractor import (
+                                extract_static_hydration as _extract_static_hydration,
+                            )
 
                             hydration = _extract_static_hydration(text)
                             # F214Z: Update hydration counters
@@ -2420,7 +2472,7 @@ async def async_fetch_public_text(
                             js_renderer_skipped_reason=skip_js_reason,  # F207F
                         )
 
-        except asyncio.TimeoutError:
+        except TimeoutError:
             elapsed_ms = (time.monotonic() - t0) * 1000
             if _circuit_breaker:
                 _circuit_breaker.record_failure(is_timeout=True, failure_kind="timeout")
@@ -2581,7 +2633,7 @@ __all__ = [
 # HTML → text + pattern matching (CPU-bound, runs in shared CPU_EXECUTOR)
 # ---------------------------------------------------------------------------
 from hledac.universal.utils.executors import CPU_EXECUTOR
-from hledac.universal.utils.html_text_fast import html_to_text_fast, extract_html_metadata
+from hledac.universal.utils.html_text_fast import extract_html_metadata, html_to_text_fast
 
 
 def _sync_process_html(html: str) -> tuple[str, list, dict]:
