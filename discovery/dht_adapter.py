@@ -25,8 +25,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Gate — no-op unless explicitly enabled
-_DHT_ENABLED = os.getenv("HLEDAC_ENABLE_DHT", "0") == "1"
+# Gate — no-op unless explicitly enabled (expanded set matches kademlia_node.py)
+_DHT_ENABLED = os.getenv("HLEDAC_ENABLE_DHT", "").lower() in ("1", "true", "yes", "on")
 
 # Default bootstrap nodes (BitTorrent DHT router nodes)
 _DHT_BOOTSTRAP_NODES: list[tuple[str, int]] = [
@@ -268,3 +268,141 @@ async def async_search_dht(
             elapsed_s=elapsed,
             error_type="exception",
         )
+
+
+# ---------------------------------------------------------------------------
+# BEP-9 Metadata Fetcher (Sprint F229)
+# ---------------------------------------------------------------------------
+
+_METADATA_FETCHER: "TorrentMetadataFetcher | None" = None
+
+
+async def _get_metadata_fetcher() -> "TorrentMetadataFetcher":
+    """Lazily create shared TorrentMetadataFetcher instance."""
+    global _METADATA_FETCHER
+    if _METADATA_FETCHER is None:
+        from dht.metadata_fetcher import TorrentMetadataFetcher
+        _METADATA_FETCHER = TorrentMetadataFetcher()
+    return _METADATA_FETCHER
+
+
+async def async_fetch_dht_metadata(
+    info_hash: str,
+    max_results: int = 5,
+    timeout_s: float = 30.0,
+) -> dict:
+    """
+    Fetch torrent metadata via BEP-9 extension protocol.
+
+    Args:
+        info_hash: 40-char hex info hash (with or without urn:btih: prefix)
+        max_results: Max number of peers to try
+        timeout_s: Request timeout
+
+    Returns:
+        dict with source_type="dht_metadata", metadata fields, and findings
+    """
+    start = time.monotonic()
+
+    if not _DHT_ENABLED:
+        return {
+            "source_type": "dht_metadata",
+            "infohash": info_hash,
+            "success": False,
+            "error": "dht_disabled",
+            "elapsed_s": time.monotonic() - start,
+            "findings": []
+        }
+
+    # Normalize infohash
+    ih_hex = info_hash.replace("urn:btih:", "").lower()
+    if len(ih_hex) != 40:
+        return {
+            "source_type": "dht_metadata",
+            "infohash": info_hash,
+            "success": False,
+            "error": "invalid_infohash",
+            "elapsed_s": time.monotonic() - start,
+            "findings": []
+        }
+
+    node = await _get_dht_node()
+    if node is None:
+        return {
+            "source_type": "dht_metadata",
+            "infohash": info_hash,
+            "success": False,
+            "error": "dht_node_unavailable",
+            "elapsed_s": time.monotonic() - start,
+            "findings": []
+        }
+
+    try:
+        # Get peers from BEP-5
+        ih_bytes = bytes.fromhex(ih_hex)
+        peers = await asyncio.wait_for(
+            node.get_peers(ih_hex),
+            timeout=min(10.0, timeout_s)
+        )
+
+        if not peers:
+            return {
+                "source_type": "dht_metadata",
+                "infohash": info_hash,
+                "success": False,
+                "error": "no_peers_found",
+                "elapsed_s": time.monotonic() - start,
+                "findings": []
+            }
+
+        # Fetch metadata via BEP-9
+        fetcher = await _get_metadata_fetcher()
+        info = await asyncio.wait_for(
+            fetcher.fetch_metadata(ih_bytes, peers[:max_results], timeout=timeout_s),
+            timeout=timeout_s
+        )
+
+        if not info:
+            return {
+                "source_type": "dht_metadata",
+                "infohash": info_hash,
+                "success": False,
+                "error": "metadata_fetch_failed",
+                "elapsed_s": time.monotonic() - start,
+                "findings": []
+            }
+
+        # Extract OSINT findings
+        findings = fetcher.extract_intel_from_torrent(info, ih_hex)
+
+        return {
+            "source_type": "dht_metadata",
+            "infohash": ih_hex,
+            "success": True,
+            "name": info.name,
+            "total_size": info.total_size,
+            "file_count": len(info.files),
+            "trackers": info.trackers,
+            "elapsed_s": time.monotonic() - start,
+            "findings": findings
+        }
+
+    except TimeoutError:
+        return {
+            "source_type": "dht_metadata",
+            "infohash": info_hash,
+            "success": False,
+            "error": "timeout",
+            "elapsed_s": time.monotonic() - start,
+            "findings": []
+        }
+    except Exception as e:
+        logger.debug(f"[DHT] async_fetch_dht_metadata error (non-fatal): {e}")
+        return {
+            "source_type": "dht_metadata",
+            "infohash": info_hash,
+            "success": False,
+            "error": str(e),
+            "elapsed_s": time.monotonic() - start,
+            "findings": []
+        }

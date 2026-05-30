@@ -94,6 +94,7 @@ TOR_READ_TIMEOUT_S: float = 75.0
 
 _session_instance: aiohttp.ClientSession | None = None
 _session_lock: asyncio.Lock | None = None
+_session_closed: bool = False  # Track closed state for sync-close path
 _uvloop_enabled: bool = False
 
 
@@ -105,6 +106,42 @@ async def _get_session_lock() -> asyncio.Lock:
     return _session_lock
 _last_error: str | None = None
 _last_close_error: str | None = None
+
+
+# =============================================================================
+# Sprint 8AA: Standard gather result helper — invariant I6-I8
+# =============================================================================
+
+def _check_gathered(results: list) -> tuple[list, list]:
+    """
+    Process gather(return_exceptions=True) results.
+
+    Returns:
+        Tuple of (ok_results, error_exceptions)
+
+    Raises:
+        asyncio.CancelledError: if any result was cancelled
+        BaseException: if any result was a non-Exception BaseException
+
+    Invariants enforced:
+    - [I6] re-raises asyncio.CancelledError
+    - [I7] re-raises BaseException (not Exception)
+    - [I8] routes Exception objects to error_exceptions list (not strings)
+    """
+    ok_results = []
+    error_exceptions = []
+
+    for result in results:
+        if isinstance(result, asyncio.CancelledError):
+            raise result
+        if isinstance(result, BaseException) and not isinstance(result, Exception):
+            raise result
+        if isinstance(result, Exception):
+            error_exceptions.append(result)
+        else:
+            ok_results.append(result)
+
+    return ok_results, error_exceptions
 
 # =============================================================================
 # Domain Concurrency Bandit State — Sprint 8AC

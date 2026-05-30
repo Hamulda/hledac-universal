@@ -91,6 +91,85 @@ try:
 except ImportError:
     PQ_AVAILABLE = False
 
+# Vault Manager (Sprint F260)
+try:
+    from .vault_manager import (
+        CRYPTO_AVAILABLE,
+        CRYPTOKIT_AVAILABLE,
+        LootManager,
+        PYZIPPER_AVAILABLE,
+        VaultManager,
+    )
+    VAULT_AVAILABLE = True
+except ImportError:
+    VAULT_AVAILABLE = False
+
+# PQ Export Encryption (HPKE X-Wing for export bundles)
+try:
+    from .pq_export_encryption import (
+        ExportEncryptionEnvelope,
+        ExportPolicy,
+        HPKEAvailability,
+        encrypt_export_bundle,
+        decrypt_export_bundle,
+    )
+    HPKE_AVAILABLE = True
+except ImportError:
+    ExportEncryptionEnvelope = None
+    ExportPolicy = None
+    HPKEAvailability = None
+    encrypt_export_bundle = None
+    decrypt_export_bundle = None
+    HPKE_AVAILABLE = False
+
+# Audit Trail (HMAC-protected SQLite)
+try:
+    from .audit import (
+        AuditEvent,
+        AuditEventType,
+        AuditLevel,
+        AuditLogger,
+    )
+    AUDIT_AVAILABLE = True
+except ImportError:
+    AuditEvent = None
+    AuditEventType = None
+    AuditLevel = None
+    AuditLogger = None
+    AUDIT_AVAILABLE = False
+
+# Research Obfuscation (chaff traffic, timing jitter)
+try:
+    from .obfuscation import (
+        ObfuscationConfig,
+        ResearchObfuscator,
+    )
+    OBFUSCATION_AVAILABLE = True
+except ImportError:
+    ObfuscationConfig = None
+    ResearchObfuscator = None
+    OBFUSCATION_AVAILABLE = False
+
+# Secure Destruction (DoD 5220.22-M / NIST 800-88)
+try:
+    from .destruction import (
+        DestructionConfig,
+        SecureDestructor,
+    )
+    DESTRUCTION_AVAILABLE = True
+except ImportError:
+    DestructionConfig = None
+    SecureDestructor = None
+    DESTRUCTION_AVAILABLE = False
+
+# CAPTCHA Detection (F202X)
+try:
+    from .captcha_detector import CaptchaDetector
+    CAPTCHA_AVAILABLE = True
+except ImportError:
+    CaptchaDetector = None
+    CAPTCHA_AVAILABLE = False
+
 __all__ = [
     # PII Gate
     'SecurityGate',
@@ -147,4 +226,35 @@ __all__ = [
     'NullPostQuantumBackend',
     'create_post_quantum_backend',
     'PQ_AVAILABLE',
+    # Vault Manager
+    'LootManager',
+    'VaultManager',
+    'CRYPTO_AVAILABLE',
+    'CRYPTOKIT_AVAILABLE',
+    'PYZIPPER_AVAILABLE',
+    'VAULT_AVAILABLE',
+    # PQ Export Encryption
+    'ExportEncryptionEnvelope',
+    'ExportPolicy',
+    'HPKEAvailability',
+    'encrypt_export_bundle',
+    'decrypt_export_bundle',
+    'HPKE_AVAILABLE',
+    # Audit Trail
+    'AuditEvent',
+    'AuditEventType',
+    'AuditLevel',
+    'AuditLogger',
+    'AUDIT_AVAILABLE',
+    # Research Obfuscation
+    'ObfuscationConfig',
+    'ResearchObfuscator',
+    'OBFUSCATION_AVAILABLE',
+    # Secure Destruction
+    'DestructionConfig',
+    'SecureDestructor',
+    'DESTRUCTION_AVAILABLE',
+    # CAPTCHA Detection
+    'CaptchaDetector',
+    'CAPTCHA_AVAILABLE',
 ]

@@ -368,9 +368,9 @@ Expected: `Routing table buckets: > 0` and `get_peers("00000000..."): N peers fo
 | Bootstrap nodes set | ✅ YES | `router.bittorrent.com:6881`, `dht.transmissionbt.com:6881`, `router.utorrent.com:6881`, `dht.libtorrent.org:25401` |
 | BEP-5 ping/find_node/get_peers | ✅ YES | `dht_ping`, `find_node`, `get_peers` bencode messages implemented |
 | Routing table in-memory dict | ✅ YES | `self.routing_table = {}` (defaultdict-like) |
-| LMDB persistence via `LocalGraphStore` | ⚠️ PARTIAL | `LocalGraphStore.put_dht_node/get_dht_node/get_all_dht_nodes` exist in `local_graph.py` but **NOT called** from `kademlia_node.py` |
-| `scan_dht` in `probe_runner.py` | ❌ MISSING | Method did not exist |
-| `HLEDAC_ENABLE_DHT` gate | ❌ MISSING | Not present anywhere before fix |
+| LMDB persistence via `LocalGraphStore` | ✅ YES | `_persist_node_async()` calls `put_dht_node()` fire-and-forget; `_load_routing_from_lmdb()` loads on startup |
+| `scan_dht` in `probe_runner.py` | ✅ YES | `_scan_dht()` function at line ~460, returns `CanonicalFinding` list |
+| `HLEDAC_ENABLE_DHT` gate | ✅ YES |7 gate locations across codebase (fixed dht_adapter.py inconsistency2026-05-30) |
 | M1 concurrency limit (Semaphore(2)) | ✅ YES | `Semaphore(2)` on bootstrap |
 | 5s request timeout | ✅ YES | `asyncio.wait_for(..., timeout=DHT_BOOTSTRAP_TIMEOUT_S)` |
 | 120s MAX_PROBE_DURATION_S | ✅ YES | Constant present |

@@ -44,6 +44,7 @@ from hledac.universal.pipeline.scoring import (
     _assemble_enriched_feed_text,
     _classify_assembly_substance,
     _compute_entry_quality_signal,
+    _convert_rich_html_to_text,  # backward compat re-export for tests
     _entry_payload_text,
     _strip_html_tags_from_text,
 )

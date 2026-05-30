@@ -32,20 +32,8 @@ except ImportError as e:
 
 logger = logging.getLogger(__name__)
 
-# Import existing Hledac components (fail-soft, logger-based degradation)
-try:
-    from hledac.advanced_web.automation_orchestrator import AutomationOrchestrator, AutomationWorkflow
-    from hledac.intelligence.osint_reporting_generator import OSINTReportingGenerator, ReportConfig, ReportType
-    from hledac.social_engineering.osint_aggregator import OSINTAggregator, OSINTConfig
-    from hledac.stealth_web_v2.intelligent_scraper import IntelligentScraper, ScrapingConfig, ScrapingTarget
-    _IMPORT_ERROR: Exception | None = None
-except ImportError as e:
-    _IMPORT_ERROR = e
-    # Fallback for testing / degraded mode — NENASTAVUJEME třídy na None, zůstávají jako NoneType pro guardy
-    logger.warning(
-        "intel.webintel: optional Hledac components unavailable — "
-        "running in degraded mode. Error: %s", e
-    )
+# STUB: hledac.advanced_web, hledac.intelligence.osint_reporting_generator,
+# hledac.social_engineering, hledac.stealth_web_v2 deleted in prior sprints.
 
 
 class IntelligenceOperationType(Enum):

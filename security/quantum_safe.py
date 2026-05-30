@@ -6,9 +6,13 @@ Implementuje:
 - ML-DSA (Dilithium) - Digital signatures
 - SLH-DSA (SPHINCS+) - Stateless hash-based signatures
 - Steganography (DCT, LSB, Neural)
-- Neuromorphic Cryptography - SNN-based encryption
+- Neuromorphic Cryptography - SNN-based encryption (EXPERIMENTAL)
 
 Pro zabezpečení citlivých výzkumných dat proti budoucím kvantovým útokům.
+
+EXPERIMENTAL MODULES:
+- NeuromorphicCryptoEngine: Spiking neural network based cryptography.
+  NOT security-reviewed. Requires HLEDAC_EXPERIMENTAL_NEURO_CRYPTO=1 to use.
 """
 
 from __future__ import annotations
@@ -16,6 +20,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import logging
+import os
 import secrets
 import time
 from collections import deque
@@ -427,6 +432,9 @@ class NeuromorphicCryptoEngine:
 
     Implements encryption/decryption using spiking neural networks
     with hardware entropy integration and M1 8GB optimization.
+
+    EXPERIMENTAL: Not for production use. Not security-reviewed.
+    Requires HLEDAC_EXPERIMENTAL_NEURO_CRYPTO=1 to instantiate.
     """
 
     def __init__(
@@ -435,6 +443,10 @@ class NeuromorphicCryptoEngine:
         hidden_neurons: int = 512,
         output_neurons: int = 256
     ):
+        assert os.environ.get("HLEDAC_EXPERIMENTAL_NEURO_CRYPTO") == "1", (
+            "NeuromorphicCryptoEngine is EXPERIMENTAL and not security-reviewed. "
+            "Set HLEDAC_EXPERIMENTAL_NEURO_CRYPTO=1 to enable."
+        )
         self.input_neurons = input_neurons
         self.hidden_neurons = hidden_neurons
         self.output_neurons = output_neurons

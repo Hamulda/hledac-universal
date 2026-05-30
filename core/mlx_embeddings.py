@@ -83,7 +83,7 @@ class MLXEmbeddingManager:
     """
 
     DEFAULT_MODEL = "nomic-ai/modernbert-embed-base"  # Retrieval-tuned, NOT fill-mask
-    EMBEDDING_DIM = 768  # ModernBERT-base dimenze
+    EMBEDDING_DIM = 256  # MRL canonical dimension (Matryoshka Representation Learning)
     MRL_DIM = 256  # Matryoshka Representation Learning dimension
     MAX_LENGTH = 512
     SUPPORTS_TASK_PREFIX = True  # ModernBERT supports search_query/search_document prefixes

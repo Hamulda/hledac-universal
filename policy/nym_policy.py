@@ -6,7 +6,7 @@ from enum import Enum
 import numpy as np
 from hledac.universal.core.resource_governor import ResourceGovernor
 
-from transport.transport_resolver import Transport
+from hledac.universal.transport.transport_resolver import Transport
 
 logger = logging.getLogger(__name__)
 

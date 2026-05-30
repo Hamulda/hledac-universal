@@ -62,6 +62,281 @@ IPFS_GATEWAYS: list[tuple[str, str]] = [
     ("ipfs.io", "https://ipfs.io/ipfs/"),
 ]
 
+# =============================================================================
+# F230: IPNS Resolution (new)
+# =============================================================================
+# IPNS names (mutable pointers) resolve to CIDs via IPNS HTTP API
+IPNS_API_GATEWAYS: list[str] = [
+    "https://ipfs.io/api/v0/name/resolve?arg=",
+    "https://cloudflare-ipfs.com/api/v0/name/resolve?arg=",
+]
+
+IPNS_TIMEOUT: int = 15
+
+
+async def resolve_ipns(name: str, timeout: int = IPNS_TIMEOUT) -> str | None:
+    """
+    Resolve IPNS name to CID.
+
+    IPNS (InterPlanetary Name System) provides mutable content addressing.
+    Format: /ipns/<peer-id> or /ipns/<domain-name>
+
+    Args:
+        name: IPNS name (e.g., "Qm..." or "ipns://example.com/")
+        timeout: Request timeout in seconds
+
+    Returns:
+        CID string if resolved, None if resolution fails.
+    """
+    import re as _re
+
+    # Strip ipns:// prefix if present
+    name = name.replace("ipns://", "").strip("/")
+
+    # Validate it's a potential IPNS name (not a raw CID)
+    if name.startswith("Qm") or name.startswith("bafy"):
+        return None  # Already a CID, not an IPNS name
+
+    client_timeout = aiohttp.ClientTimeout(total=timeout)
+
+    for api_base in IPNS_API_GATEWAYS:
+        try:
+            url = f"{api_base}{name}"
+            async with aiohttp.ClientSession(timeout=client_timeout) as session:
+                async with session.get(url) as resp:
+                    if resp.status == 200:
+                        import json as _json
+
+                        data = await resp.json()
+                        # Response: {"Path": "/ipfs/<cid>"}
+                        path = data.get("Path", "")
+                        cid_match = _re.search(r"/ipfs/([a-zA-Z0-9]+)", path)
+                        if cid_match:
+                            cid = cid_match.group(1)
+                            logger.debug(f"IPNS {name} resolved to {cid}")
+                            return cid
+        except Exception as e:
+            logger.debug(f"IPNS resolve failed for {name} via {api_base}: {e}")
+            continue
+
+    logger.warning(f"IPNS resolution failed for all gateways: {name}")
+    return None
+
+
+# =============================================================================
+# F230: Directory Crawling (new)
+# =============================================================================
+MAX_DIR_DEPTH: int = 3
+MAX_DIR_FILES: int = 100  # Per-level cap
+
+
+async def fetch_directory_recursive(
+    cid: str,
+    max_depth: int = MAX_DIR_DEPTH,
+    current_depth: int = 0,
+    seen_cids: set[str] | None = None,
+) -> list[dict]:
+    """
+    Recursively fetch IPFS directory contents.
+
+    Args:
+        cid: IPFS CID of the directory
+        max_depth: Maximum recursion depth (default 3)
+        current_depth: Current recursion level (internal)
+        seen_cids: Set of already-visited CIDs (internal)
+
+    Returns:
+        List of dicts with keys: {cid, path, size, type}
+    """
+    if seen_cids is None:
+        seen_cids = set()
+
+    if current_depth > max_depth:
+        return []
+
+    if cid in seen_cids:
+        return []
+    seen_cids.add(cid)
+
+    results: list[dict] = []
+
+    for name, gateway_base in IPFS_GATEWAYS:
+        try:
+            # Try to fetch directory listing (dag.json or UnixFS directory)
+            url = f"{gateway_base}{cid}"
+            client_timeout = aiohttp.ClientTimeout(total=20)
+
+            async with aiohttp.ClientSession(timeout=client_timeout) as session:
+                # Check if this is a directory via API
+                api_url = f"https://ipfs.io/api/v0/ls/{cid}"
+                async with session.get(api_url) as resp:
+                    if resp.status == 200:
+                        import json as _json
+
+                        data = await resp.json()
+                        objects = data.get("Objects", [])
+                        if objects:
+                            links = objects[0].get("Links", [])
+                            for link in links[:MAX_DIR_FILES]:
+                                link_cid = link.get("Hash", "")
+                                link_name = link.get("Name", "")
+                                link_type = link.get("Type", 0)
+                                link_size = link.get("Size", 0)
+
+                                results.append({
+                                    "cid": link_cid,
+                                    "path": f"{cid}/{link_name}",
+                                    "size": link_size,
+                                    "type": "dir" if link_type == 2 else "file",  # 2 = directory
+                                })
+
+                                # Recurse into subdirectories
+                                if link_type == 2 and current_depth < max_depth:
+                                    sub_results = await fetch_directory_recursive(
+                                        link_cid, max_depth, current_depth + 1, seen_cids
+                                    )
+                                    results.extend(sub_results)
+                        break
+        except Exception as e:
+            logger.debug(f"Directory fetch for {cid} via {name}: {e}")
+            continue
+
+    return results
+
+
+# =============================================================================
+# F230: IPFS Search (new)
+# =============================================================================
+IPFS_SEARCH_GATEWAY: str = "https://ipfs-search.com/api/v1/search"
+IPFS_SEARCH_TIMEOUT: int = 30
+MAX_SEARCH_RESULTS: int = 20
+
+
+async def find_via_ipfs_search(query: str) -> list[str]:
+    """
+    Search IPFS content via ipfs-search.com free REST API.
+
+    Args:
+        query: Search query string
+
+    Returns:
+        List of CIDs matching the query.
+    """
+    cids: list[str] = []
+    seen: set[str] = set()
+
+    try:
+        client_timeout = aiohttp.ClientTimeout(total=IPFS_SEARCH_TIMEOUT)
+        params = {"q": query, "size": MAX_SEARCH_RESULTS}
+
+        async with aiohttp.ClientSession(timeout=client_timeout) as session:
+            async with session.get(IPFS_SEARCH_GATEWAY, params=params) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    # Response structure varies; handle common patterns
+                    hits = data.get("hits", [])
+                    if isinstance(data, list):
+                        hits = data
+                    for hit in hits:
+                        cid = hit.get("cid", "") or hit.get("hash", "")
+                        if cid and cid not in seen:
+                            seen.add(cid)
+                            cids.append(cid)
+    except Exception as e:
+        logger.debug(f"IPFS search failed for query '{query}': {e}")
+
+    return cids
+
+
+async def search_via_estuary(query: str) -> list[str]:
+    """
+    Search pinned content via Estuary API (https://estuary.tech).
+
+    Estuary indexes pinned content on IPFS and provides search.
+    Note: Requires API key for some endpoints; public endpoints limited.
+
+    Args:
+        query: Search query string
+
+    Returns:
+        List of CIDs matching the query.
+    """
+    cids: list[str] = []
+    seen: set[str] = set()
+
+    # Public Estuary search endpoint
+    ESTUARY_SEARCH: str = "https://api.estuary.tech/public/search"
+
+    try:
+        client_timeout = aiohttp.ClientTimeout(total=IPFS_SEARCH_TIMEOUT)
+        params = {"query": query}
+
+        async with aiohttp.ClientSession(timeout=client_timeout) as session:
+            async with session.get(ESTUARY_SEARCH, params=params) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    if isinstance(data, list):
+                        for item in data[:MAX_SEARCH_RESULTS]:
+                            cid = item.get("cid", "")
+                            if cid and cid not in seen:
+                                seen.add(cid)
+                                cids.append(cid)
+                elif resp.status == 429:
+                    logger.warning("Estuary API rate limited")
+    except Exception as e:
+        logger.debug(f"Estuary search failed for query '{query}': {e}")
+
+    return cids
+
+
+# =============================================================================
+# F230: IPFS as CanonicalFindings (extended)
+# =============================================================================
+async def ipfs_directory_as_findings(
+    cid: str, query: str, max_depth: int = 3
+) -> list:
+    """
+    Fetch IPFS directory recursively and return as CanonicalFinding list.
+
+    Args:
+        cid: IPFS directory CID
+        query: Original query string
+        max_depth: Maximum crawl depth
+
+    Returns:
+        list[CanonicalFinding] — one per discovered file
+    """
+    from hledac.universal.knowledge.duckdb_store import CanonicalFinding
+
+    try:
+        entries = await fetch_directory_recursive(cid, max_depth=max_depth)
+    except Exception:
+        return []
+
+    findings: list = []
+    import time as _time
+
+    for entry in entries:
+        entry_cid = entry.get("cid", "")
+        if not entry_cid or entry_cid.startswith("Qm") is False:
+            continue  # Skip directories, only files
+
+        finding_id = f"ipfs-dir-{entry_cid[:12]}-{_time.time_ns()}"
+        payload = f"Path: {entry.get('path', '')}\nSize: {entry.get('size', 0)} bytes\nType: {entry.get('type', 'file')}"
+
+        finding = CanonicalFinding(
+            finding_id=finding_id,
+            query=query,
+            source_type="ipfs_directory",
+            confidence=0.7,
+            ts=_time.time(),
+            provenance=(f"ipfs://{entry_cid}",),
+            payload_text=payload[:4096] if payload else None,
+        )
+        findings.append(finding)
+
+    return findings
+
 
 async def fetch_ipfs(cid: str, timeout: int = 30) -> bytes | None:
     """

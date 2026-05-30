@@ -107,11 +107,11 @@ class TestSecureExportRoundTrip:
             assert Path(exported).exists()
             assert exported.endswith(".enc")
 
-            # Verify it's not plaintext
+            # Verify it's encrypted (no plaintext content leak)
             with open(exported, "rb") as f:
                 content = f.read()
-            assert not content.startswith(b"PK\x03\x04")  # Not a plaintext ZIP
-            assert b"sensitive data" not in content
+            # CRITICAL: plaintext content must NOT be present in encrypted file
+            assert b"sensitive data" not in content, "Encrypted file must not contain plaintext"
 
             # Decrypt
             decrypt_dir = Path(tmpdir) / "decrypted"
@@ -138,6 +138,12 @@ class TestSecureExportRoundTrip:
             assert exported is not None
             assert Path(exported).exists()
 
+            # Verify content is encrypted (pyzipper AES encrypts file contents)
+            with open(exported, "rb") as f:
+                content = f.read()
+            # pyzipper produces ZIP with encrypted entries - content not directly readable
+            assert b"sensitive data" not in content
+
             # Decrypt
             decrypt_dir = Path(tmpdir) / "decrypted"
             decrypt_dir.mkdir()
@@ -147,6 +153,49 @@ class TestSecureExportRoundTrip:
             # Verify content
             decrypted_vault = Path(result)
             assert (decrypted_vault / "test.txt").read_text() == "sensitive data"
+
+    def test_pyzipper_content_encrypted(self, temp_vault):
+        """P1-6-4b: Verify pyzipper encrypts file contents, not just headers.
+
+        Note: When CryptoKit is available, LootManager uses it instead of pyzipper.
+        This test uses pyzipper directly to verify pyzipper's encryption behavior.
+        """
+        if not PYZIPPER_AVAILABLE:
+            pytest.skip("pyzipper not available")
+
+        import zipfile
+        import pyzipper
+
+        # Test pyzipper directly (not through LootManager which may use CryptoKit)
+        pwd = self._get_password()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            vault_dir = Path(tmpdir) / "test_vault"
+            vault_dir.mkdir()
+            (vault_dir / "test.txt").write_text("sensitive data")
+
+            # Create pyzipper AES encrypted ZIP directly
+            encrypted_path = Path(tmpdir) / "test.enc"
+            with pyzipper.AESZipFile(
+                encrypted_path,
+                'w',
+                encryption=pyzipper.WZ_AES,
+            ) as zipf:
+                zipf.setpassword(pwd.encode())
+                zipf.write(vault_dir / "test.txt", "test.txt")
+
+            # Verify: standard zipfile can open but cannot read without password
+            with zipfile.ZipFile(encrypted_path) as zf:
+                # File list is visible (ZIP structure intact)
+                assert len(zf.namelist()) > 0
+                # But content is NOT readable without password
+                with pytest.raises(RuntimeError, match="password required"):
+                    zf.read(zf.namelist()[0])
+
+            # With correct password, content IS readable
+            with pyzipper.AESZipFile(encrypted_path) as zf:
+                zf.setpassword(pwd.encode())
+                content = zf.read(zf.namelist()[0])
+                assert b"sensitive data" in content
 
     def test_invalid_password_returns_none(self, temp_vault):
         """P1-6-5: Invalid password returns None on decrypt."""

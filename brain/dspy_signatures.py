@@ -59,6 +59,44 @@ try:
             desc="List of hypotheses: type, statement, prior_probability, status"
         )
 
+    # ─────────────────────────────────────────────────────────────────────────────
+    # F260: Deep research chain signature for multi-hop reasoning
+    # ─────────────────────────────────────────────────────────────────────────────
+
+    class DeepResearchHopSignature(dspy.Signature):
+        """Given a query and current evidence, decide what to research next and why."""
+
+        query: str = dspy.InputField(desc="The OSINT research query or topic")
+        current_evidence: list[str] = dspy.InputField(
+            desc="Findings gathered so far (last 20 max)"
+        )
+        hop_number: int = dspy.InputField(desc="Current hop number (1 to max_hops)")
+
+        next_query: str = dspy.OutputField(
+            desc="Most promising next research direction to explore"
+        )
+        reasoning: str = dspy.OutputField(
+            desc="Why this direction reduces epistemic uncertainty about the query"
+        )
+        confidence: float = dspy.OutputField(
+            desc="Confidence this hop will yield new findings (0.0 to 1.0)"
+        )
+
+    # ChainOfThought wrapper for iterative reasoning
+    DeepResearchChain = dspy.ChainOfThought(DeepResearchHopSignature)
+
+    # Sprint F260: Epistemic Gap Detector — bridge DS evidence with DSPy
+    class EpistemicGapDetector(dspy.Signature):
+        """Given OSINT findings and prior gaps, identify what is unknown and must be investigated."""
+        findings: list[str] = dspy.InputField(desc="Current sprint findings as text")
+        known_gaps: list[str] = dspy.InputField(desc="Previously identified knowledge gaps")
+        query: str = dspy.InputField(desc="Research query")
+        gaps: list[str] = dspy.OutputField(desc="Prioritized list of unanswered questions")
+        evidence_needed: list[str] = dspy.OutputField(
+            desc="Specific evidence types needed to fill gaps"
+        )
+        confidence: float = dspy.OutputField(desc="Confidence that these gaps are real (0-1)")
+
     _DSPY_AVAILABLE = True
 
 except ImportError:
@@ -68,6 +106,9 @@ except ImportError:
     SummarizationSignature = None  # type: ignore
     DarkQuerySignature = None  # type: ignore
     HypothesisSignature = None  # type: ignore
+    DeepResearchHopSignature = None  # type: ignore
+    DeepResearchChain = None  # type: ignore
+    EpistemicGapDetector = None  # type: ignore
     _DSPY_AVAILABLE = False
 
 

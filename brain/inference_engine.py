@@ -38,6 +38,14 @@ from typing import Any
 
 import numpy as np
 
+# Sprint F259: EIG Calculator for action selection
+try:
+    from utils.eig import EIGCalculator
+    EIG_AVAILABLE = True
+except ImportError:
+    EIGCalculator = None
+    EIG_AVAILABLE = False
+
 logger = logging.getLogger(__name__)
 
 # MLX availability check (M1 optimization)
@@ -419,6 +427,10 @@ class InferenceEngine:
         # Internal counters for bounded operations
         self._graph_pruned_count = 0
         self._evidence_pruned_count = 0
+
+        # Sprint F259: Hypothesis set for EIG action selection
+        # Stores current beliefs for EIGCalculator.rank_actions()
+        self._hypothesis_set: list[dict] = []
 
         # Initialize OSINT-specific inference rules
         self._init_inference_rules()
@@ -1537,6 +1549,8 @@ class InferenceEngine:
         """Clear all evidence and reset state."""
         self._evidence.clear()
         self._evidence_graph.clear()
+        # Sprint F259: Reset hypothesis set for EIG
+        self._hypothesis_set.clear()
         logger.info("InferenceEngine state cleared")
 
     async def cleanup(self) -> None:
@@ -2019,8 +2033,30 @@ class MultiHopReasoner:
             if len(hops) >= effective_max_depth:
                 continue
 
-            # Explore neighbors
+            # Sprint F259: EIG-based neighbor selection — prioritize actions that reduce uncertainty
             neighbors = self._get_entity_neighbors(current_entity)
+            if neighbors and EIG_AVAILABLE:
+                try:
+                    # Build hypothesis set from current path state
+                    hypothesis_set = []
+                    for h in hops:
+                        hypothesis_set.append({
+                            "entity": h.from_entity,
+                            "relation": h.relation,
+                            "belief": h.confidence,
+                        })
+                    # EIG ranking with 50 candidate cap (M1 constraint)
+                    candidates = [
+                        {"entity": n[0], "relation": n[1], "confidence": n[2], "expected_reduction": 0.2}
+                        for n in neighbors[:50]
+                    ]
+                    eig_calculator = EIGCalculator()
+                    ranked = eig_calculator.rank_actions(hypothesis_set, candidates)
+                    # Reorder neighbors by EIG score
+                    ranked_dict = {r[0]["entity"]: r[1] for r in ranked}
+                    neighbors = sorted(neighbors, key=lambda n: ranked_dict.get(n[0], 0), reverse=True)
+                except Exception as e:
+                    logger.debug(f"[EIG] Neighbor ranking failed: {e}")
 
             for neighbor_entity, relation, hop_confidence in neighbors:
                 # Skip if already visited (cycle detection)
@@ -2066,6 +2102,17 @@ class MultiHopReasoner:
                     # Continue exploring
                     new_visited = visited | {neighbor_entity}
                     queue.append((neighbor_entity, new_hops, new_visited, new_confidence))
+
+        # Sprint F259: Update InferenceEngine hypothesis set with best path beliefs
+        if paths_found:
+            ranked = self.rank_paths(paths_found)
+            if ranked:
+                best_path = ranked[0]
+                beliefs = [
+                    {"entity": h.from_entity, "relation": h.relation, "belief": h.confidence}
+                    for h in best_path.hops
+                ]
+                self.inference_engine.update_hypothesis_set(beliefs)
 
         return paths_found
 
@@ -2264,6 +2311,29 @@ class MultiHopReasoner:
             )
 
         return sorted(paths, key=path_score, reverse=True)
+
+    def get_hypothesis_set(self) -> list[dict]:
+        """
+        Sprint F259: Return current hypothesis set for EIGCalculator.
+
+        Used by external consumers (e.g., HypothesisEngine) to get beliefs
+        computed during multi-hop reasoning.
+
+        Returns:
+            List of hypothesis dicts with keys: entity, relation, belief
+        """
+        return self._hypothesis_set.copy()
+
+    def update_hypothesis_set(self, beliefs: list[dict]) -> None:
+        """
+        Sprint F259: Update hypothesis set with new beliefs.
+
+        Called by HypothesisEngine after belief updates to refresh EIG rankings.
+
+        Args:
+            beliefs: List of belief dicts with keys: entity, relation, belief
+        """
+        self._hypothesis_set = beliefs[:50]  # Cap at 50 for M1 constraint
 
     def explain_path(self, path: MultiHopPath) -> str:
         """

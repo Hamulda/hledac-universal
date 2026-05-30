@@ -100,6 +100,7 @@ dependencies = [
     "flashrank>=0.2.10",      # neural reranking in reranker
     # NOTE: coremltools + sentence-transformers moved to coreml-export extra
     # (only needed for mlmodel export scripts, not runtime inference)
+    "curl-cffi>=0.15.0",
 ]
 
 # ------------------------------------------------------------------ optionals

@@ -23,6 +23,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+import numpy as np
+
 try:
     import compression.zstd as _zstd
     ZSTD_AVAILABLE = True
@@ -67,9 +69,19 @@ def _serialize_weights(weights: Any) -> dict[str, Any]:
     if weights is None:
         return {"flat": []}
     try:
+        # F257FIX: weights is nested dict (mixer, agent_0, ...) with nested param dicts
+        # Use tree_map to convert all mlx arrays to lists recursively
+        from mlx.utils import tree_map
+        flat_weights = tree_map(lambda x: x.tolist() if hasattr(x, 'tolist') else x, weights)
+        # Flatten into list of key paths and values
         flat = []
-        for key, val in weights.items():
-            flat.append({"key": key, "value": val.tolist()})
+        def collect(key, val, path=""):
+            if isinstance(val, dict):
+                for k, v in val.items():
+                    collect(k, v, f"{path}.{k}" if path else k)
+            else:
+                flat.append({"key": path, "value": val})
+        collect("_root", flat_weights)
         return {"flat": flat}
     except Exception:
         return {"flat": []}
@@ -81,10 +93,20 @@ def _deserialize_weights(data: dict[str, Any]) -> Any:
         return None
     try:
         import mlx.core as mx
-        params = {}
+        # F257FIX: weights is nested dict (mixer, agent_0, ...) with nested param dicts
+        # Reconstruct nested structure from flat list
+        nested = {}
         for item in data["flat"]:
-            params[item["key"]] = mx.array(item["value"])
-        return params
+            key_parts = item["key"].split(".")
+            value = mx.array(item["value"])
+            # Navigate/create nested structure
+            current = nested
+            for part in key_parts[:-1]:
+                if part not in current:
+                    current[part] = {}
+                current = current[part]
+            current[key_parts[-1]] = value
+        return nested
     except Exception:
         return None
 
@@ -157,23 +179,14 @@ class SprintPolicyManager:
             if self._state.sprint_rewards:
                 self._reward_history = list(self._state.sprint_rewards[-100:])
 
-    def _init_qmix(self) -> None:
-        self._state_extractor = None
-        self._qmix_trainer = None
-        self._agents = None
-        self._reward_history: list = []  # F257FIX: always initialize (used in update regardless of rl_train_mode)
-
-        if self._enabled:
-            self._load()
-            # F228F: initialize reward_history from loaded sprint_rewards
-            if self._state.sprint_rewards:
-                self._reward_history = list(self._state.sprint_rewards[-100:])
-
     # ── QMIX Initialization ─────────────────────────────────────────────────
 
     def _init_qmix(self) -> None:
         """Lazily init QMIX components: replay buffer, state extractor, agents, trainer."""
         if not self._enabled:
+            return
+        # F257FIX: Only initialize once — prevent buffer reset on every update()
+        if self._qmix_trainer is not None:
             return
         try:
             from rl.qmix import QMIXAgent, QMixer, QMIXJointTrainer
@@ -298,14 +311,20 @@ class SprintPolicyManager:
         """
         Compute reward from real SprintSchedulerResult fields.
 
-        Formula: log(1 + findings_accepted) * source_quality_mult - time_penalty
-          where source_quality_mult ∈ [0.5, 2.0] based on accepted/total ratio
-                time_penalty = runtime / 3600 (hours, bounded)
+        Formula per F257 spec:
+          reward = log1p(findings_accepted) * source_quality_multiplier
+                  - time_penalty * (runtime / budget_seconds)
+                  + novelty_bonus * new_iocs_ratio
+          clipped to [-1.0, 5.0]
         """
         try:
             findings_accepted = getattr(result, "findings_accepted", 0) or 0
             runtime = getattr(result, "actual_duration_s", 0.0) or 0.0
+            new_iocs = getattr(result, 'new_iocs', 0) or 0
             total_in = findings_accepted + getattr(result, 'findings_deduplicated', 0)
+
+            # Budget seconds (default 1800s = 30min)
+            budget_seconds = getattr(result, 'budget_seconds', 1800.0) or 1800.0
 
             # Source quality multiplier from acceptance ratio
             if total_in > 0:
@@ -315,16 +334,20 @@ class SprintPolicyManager:
                 source_quality_mult = 1.0
 
             # Log-scaled finding reward
-            finding_reward = math.log(1 + findings_accepted) * source_quality_mult
+            finding_reward = math.log1p(findings_accepted) * source_quality_mult
 
-            # Time efficiency penalty (scaled by hours, capped at -5)
-            time_penalty = min(runtime / 3600.0, 5.0)
+            # Time efficiency penalty (runtime / budget, capped at 1.0)
+            time_penalty = min(runtime / max(budget_seconds, 1.0), 1.0)
 
-            reward = finding_reward - time_penalty
+            # Novelty bonus from new IOCs
+            new_iocs_ratio = min(new_iocs / max(findings_accepted, 1), 1.0)
+            novelty_bonus = 2.0  # Scale factor for new IOC ratio
 
-            # Bonus for cycles completed
-            if hasattr(result, "cycles_completed") and result.cycles_completed > 0:
-                reward += min(result.cycles_completed / 10.0, 2.0)
+            reward = (
+                finding_reward
+                - time_penalty
+                + novelty_bonus * new_iocs_ratio
+            )
 
             # F228F/F235: Dark web high-confidence finding reward (+0.3 per finding)
             for src in ("tor", "i2p", "nym", "dht"):
@@ -337,30 +360,13 @@ class SprintPolicyManager:
             # F228F/F235: Unindexed source reward (+0.5 per finding from Gopher)
             reward += self._get_finding_count(result, 'gopher') * 0.5
 
-            # ── F235: KVALITATIVNÍ METRIKY ────────────────────────────────
             # Dedup efficiency — higher dedup ratio = more wasted work
             if total_in > 0:
                 dedup_ratio = findings_accepted / total_in
                 reward += dedup_ratio * 0.5
 
-            # BGP enrichment bonus
-            bgp_enrich = getattr(result, 'bgp_enrichment_findings_ingested', 0) or 0
-            reward += bgp_enrich * 0.2
-
-            # OPSEC cover traffic bonus
-            cover_fired = getattr(result, 'cover_traffic_fired', 0) or 0
-            reward += cover_fired * 0.1
-
-            # Hypothesis contradiction penalty
-            contradictions = getattr(result, 'hypothesis_contradictions_detected', 0) or 0
-            reward -= contradictions * 0.2
-
-            # Circuit breaker penalty
-            cb_opens = getattr(result, 'circuit_breaker_opens', 0) or 0
-            reward -= cb_opens * 0.1
-
-            # Clamp to [-3.0, 5.0] per F235 spec
-            return max(-3.0, min(5.0, reward))
+            # Clamp to [-1.0, 5.0] per F257 spec
+            return max(-1.0, min(5.0, reward))
         except Exception:
             return 0.0
 
@@ -406,14 +412,20 @@ class SprintPolicyManager:
                 state = self._state_extractor.extract(result)
                 next_state = self._state_extractor.extract_next(result)
 
-                # Last action (from result if available, else default)
-                # F257FIX: Store as 5-element vector (one per QMIX agent) — matches replay_buffer shape (n_agents,)
-                last_action = getattr(result, "last_rl_action", 0) % 5
-                action_vector = [last_action] * 5  # broadcast scalar to all agents
+                # F257FIX: Convert numpy/mlx array to list for replay buffer
+                if hasattr(state, 'tolist'):
+                    state = state.tolist()
+                if hasattr(next_state, 'tolist'):
+                    next_state = next_state.tolist()
 
-                self._replay_buffer.add(
+                # Last action (from result if available, else default)
+                # F257FIX: Store as numpy array for push() method signature
+                last_action = getattr(result, "last_rl_action", 0) % 5
+                action_vector = np.array([last_action] * 5, dtype=np.int32)
+
+                self._replay_buffer.push(
                     state=state,
-                    action=action_vector,
+                    actions=action_vector,
                     reward=reward,
                     next_state=next_state,
                     done=False,
@@ -424,7 +436,7 @@ class SprintPolicyManager:
                     reward,
                 )
             except Exception as e:
-                log.debug("[SprintPolicyManager] replay buffer add failed: %s", e)
+                log.debug("[SprintPolicyManager] replay buffer push failed: %s", e)
 
         # ── QMIX training step ────────────────────────────────────────────────
         if (
@@ -464,7 +476,8 @@ class SprintPolicyManager:
             pass  # UMA check is advisory; proceed if unavailable
         try:
             batch = self._replay_buffer.sample(_TRAIN_BATCH_SIZE)
-            if batch is None or batch["states"].shape[0] < _MIN_REPLAY_SIZE:
+            # F257FIX: Check replay buffer size, not batch size
+            if batch is None or self._replay_buffer.size < _MIN_REPLAY_SIZE:
                 return
 
             # F257FIX: QMIXJointTrainer.update() not train_step() — defensive hasattr

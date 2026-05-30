@@ -40,10 +40,9 @@ class MARLReplayBuffer:
         self.size = 0
 
     def push(self, state, actions: np.ndarray, reward: float, next_state, done: bool):
-        if _MLX_CORE_AVAILABLE:
-            mx = _get_mlx_core()
-            if mx is not None:
-                mx.eval(state, next_state)
+        mx = _get_mlx_core()
+        if mx is not None:
+            mx.eval(state, next_state)
         self.states[self.pos] = np.array(state)
         self.actions[self.pos] = actions
         self.rewards[self.pos] = reward
@@ -54,16 +53,15 @@ class MARLReplayBuffer:
 
     def sample(self, batch_size: int) -> dict:
         idx = np.random.randint(0, self.size, batch_size)
-        if _MLX_CORE_AVAILABLE:
-            mx = _get_mlx_core()
-            if mx is not None:
-                return {
-                    'states': mx.array(self.states[idx]),
-                    'actions': mx.array(self.actions[idx]),
-                    'rewards': mx.array(self.rewards[idx]),
-                    'next_states': mx.array(self.next_states[idx]),
-                    'dones': mx.array(self.dones[idx])
-                }
+        mx = _get_mlx_core()
+        if mx is not None:
+            return {
+                'states': mx.array(self.states[idx]),
+                'actions': mx.array(self.actions[idx]),
+                'rewards': mx.array(self.rewards[idx]),
+                'next_states': mx.array(self.next_states[idx]),
+                'dones': mx.array(self.dones[idx])
+            }
         return {
             'states': self.states[idx],
             'actions': self.actions[idx],

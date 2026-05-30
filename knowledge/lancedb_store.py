@@ -153,7 +153,8 @@ class LanceDBIdentityStore:
         self.db = None
         self._table = None
         self._orch = orchestrator
-        self._embedding_dim = 768
+        # Sprint F259: Changed from 768 to 256 for M1 memory efficiency
+        self._embedding_dim = 256
 
         # Sprint 76: LMDB embedding cache with float16 quantization
         self._cache_env = None
@@ -192,12 +193,14 @@ class LanceDBIdentityStore:
         self._embedder = None
         self._embedder_type: str | None = None
         self._embed_lock = asyncio.Lock()
-        self._current_mrl_dim = 768
+        # Sprint F259: Changed from 768 to 256 for M1 memory efficiency
+        # WARNING: existing768d embeddings require re-embed with: hledac --reembed
+        self._current_mrl_dim = 256
         self._mrl_enabled = False
         # Sprint 81 Fáze 4: MLXEmbeddingManager reference
         self._mlx_embed_manager = None
         # Sprint 81 Fáze 4: Numpy fallback dimension
-        self._fallback_dim = 768
+        self._fallback_dim = 256
 
         # Sprint 77: Writeback buffer
         self._writeback_buffer: OrderedDict = OrderedDict()
@@ -1061,7 +1064,8 @@ class LanceDBIdentityStore:
                 "entities",
                 schema=pa.schema([
                     pa.field("id", pa.string()),
-                    pa.field("embedding", pa.list_(pa.float32(), list_size=768)),
+                    # Sprint F259: Changed from 768 to 256 for M1 memory efficiency
+                    pa.field("embedding", pa.list_(pa.float32(), list_size=256)),
                     pa.field("aliases", pa.list_(pa.string())),
                     pa.field("first_seen", pa.timestamp('s')),
                     pa.field("last_seen", pa.timestamp('s')),
@@ -1254,6 +1258,63 @@ class LanceDBIdentityStore:
             logger.warning(f"Similarity computation failed: {e}")
             return 0.0
 
+    async def reembed_all(self) -> dict:
+        """
+        Re-embed all stored entities at new MRL dimension (256d).
+
+        Lazy migration: only run when explicitly called.
+        Use case: existing768d embeddings need re-embedding after dimension change.
+
+        Returns:
+            dict with 'reembedded' count, 'failed' count, 'skipped' count.
+        """
+        logger.info("[REEMBED] Starting re-embedding at 256d dimension")
+        stats = {"reembedded": 0, "failed": 0, "skipped": 0}
+
+        if self._table is None:
+            logger.warning("[REEMBED] No table available")
+            return stats
+
+        try:
+            # Read all existing entities
+            all_data = self._table.to_pandas()
+            if all_data.empty:
+                logger.info("[REEMBED] No entities to re-embed")
+                return stats
+
+            total = len(all_data)
+            logger.info(f"[REEMBED] Found {total} entities to re-embed")
+
+            # Re-embed in batches
+            batch_size = 16
+            for i in range(0, total, batch_size):
+                batch = all_data.iloc[i:i + batch_size]
+                texts = [row.get("text", "") or row.get("content", "") or str(row.get("id", ""))
+                         for _, row in batch.iterrows()]
+
+                try:
+                    embeddings = await self._embed_batch(texts, batch_size=batch_size)
+                    # Update embeddings in table
+                    for idx, (_, row) in enumerate(batch.iterrows()):
+                        entity_id = row["id"]
+                        if idx < len(embeddings) and embeddings[idx]:
+                            self._table.merge_insert("id").on("id").execute([{
+                                "id": entity_id,
+                                "embedding": embeddings[idx]
+                            }])
+                            stats["reembedded"] += 1
+                        else:
+                            stats["skipped"] += 1
+                except Exception as e:
+                    logger.warning(f"[REEMBED] Batch failed: {e}")
+                    stats["failed"] += len(batch)
+
+            logger.info(f"[REEMBED] Complete: {stats}")
+        except Exception as e:
+            logger.error(f"[REEMBED] Failed: {e}")
+
+        return stats
+
     async def close(self) -> None:
         """Close database connection and cache."""
         if self.db is not None:
@@ -1426,3 +1487,324 @@ def get_identity_store() -> LanceDBIdentityStore:
     if _identity_store is None:
         _identity_store = LanceDBIdentityStore()
     return _identity_store
+
+
+# =============================================================================
+# Sprint F259: LanceDBAcademicStore for semantic search over academic papers
+# =============================================================================
+# M1 8GB: Uses FastEmbed BAAI/bge-small-en-v1.5 (384d, 33MB) NOT ModernBERT
+
+
+class AcademicPaper:
+    """Academic paper with metadata for LanceDB storage."""
+
+    TABLE_NAME = "academic_papers"
+
+    def __init__(
+        self,
+        paper_id: str,
+        title: str,
+        abstract: str = "",
+        authors: list[str] | None = None,
+        year: int | None = None,
+        source: str = "",  # arxiv, s2orc, openalex, core, unpaywall
+        doi: str = "",
+        url: str = "",
+        citation_count: int = 0,
+        embedding: list[float] | None = None,
+    ) -> None:
+        self.paper_id = paper_id
+        self.title = title
+        self.abstract = abstract
+        self.authors = authors or []
+        self.year = year
+        self.source = source
+        self.doi = doi
+        self.url = url
+        self.citation_count = citation_count
+        self.embedding = embedding
+
+    def to_dict(self) -> dict:
+        """Convert to dict for LanceDB storage."""
+        return {
+            "paper_id": self.paper_id,
+            "title": self.title,
+            "abstract": self.abstract,
+            "authors": self.authors,
+            "year": self.year,
+            "source": self.source,
+            "doi": self.doi,
+            "url": self.url,
+            "citation_count": self.citation_count,
+            "embedding": self.embedding or [0.0] * 384,
+        }
+
+
+class LanceDBAcademicStore:
+    """
+    Semantic search over academic papers discovered during research.
+
+    Sprint F259: Canonical storage for academic papers from all adapters.
+    Uses FastEmbed BAAI/bge-small-en-v1.5 (384d, 33MB) for M1 memory efficiency.
+
+    Schema:
+        - paper_id: unique identifier
+        - title: paper title
+        - abstract: paper abstract
+        - authors: list of author names
+        - year: publication year
+        - source: adapter source (arxiv/s2orc/openalex/core/unpaywall)
+        - doi: DOI string
+        - url: paper URL
+        - citation_count: number of citations
+        - embedding: 384d FastEmbed vector
+    """
+
+    # FastEmbed BAAI/bge-small-en-v1.5 dimension
+    EMBEDDING_DIM = 384
+
+    def __init__(
+        self,
+        db_path: str | None = None,
+        dim: int = 384,
+    ) -> None:
+        """
+        Args:
+            db_path: Path to LanceDB database. If None, uses default.
+            dim: Embedding dimension (default 384 for FastEmbed BAAI).
+        """
+        import lancedb
+        from hledac.universal.paths import LMDB_ROOT
+
+        self._dim = dim
+        if db_path is None:
+            db_path = str(LMDB_ROOT / "academic_papers.lance")
+        self._db_path = db_path
+        self._db = lancedb.connect(db_path)
+        self._table = None
+        self._embedder = None
+        self._initialized = False
+
+    async def initialize(self) -> None:
+        """Initialize table and embedder."""
+        if self._initialized:
+            return
+
+        import pyarrow as pa
+
+        # Create table with schema
+        self._table = self._db.create_table(
+            AcademicPaper.TABLE_NAME,
+            schema=pa.schema([
+                pa.field("paper_id", pa.string()),
+                pa.field("title", pa.string()),
+                pa.field("abstract", pa.string()),
+                pa.field("authors", pa.list_(pa.string())),
+                pa.field("year", pa.int32()),
+                pa.field("source", pa.string()),
+                pa.field("doi", pa.string()),
+                pa.field("url", pa.string()),
+                pa.field("citation_count", pa.int32()),
+                pa.field("embedding", pa.list_(pa.float32(), list_size=self._dim)),
+            ]),
+            exist_ok=True
+        )
+
+        # Initialize FastEmbed embedder (M1-safe: 33MB model)
+        await self._init_embedder()
+        self._initialized = True
+
+    async def _init_embedder(self) -> None:
+        """Initialize FastEmbed embedder."""
+        try:
+            from sentence_transformers import SentenceTransformer
+            self._embedder = SentenceTransformer("BAAI/bge-small-en-v1.5")
+        except ImportError:
+            import logging
+            logging.getLogger(__name__).warning(
+                "[ACADEMIC] sentence_transformers not available, using numpy fallback"
+            )
+            self._embedder = None
+
+    async def _embed_texts(self, texts: list[str]) -> list[list[float]]:
+        """Embed texts using FastEmbed or numpy fallback."""
+        if not texts:
+            return []
+
+        if self._embedder is not None:
+            import asyncio
+            return await asyncio.to_thread(self._embedder.encode, texts)
+
+        # Numpy fallback: random normalized embeddings
+        import numpy as np
+        return [
+            list(np.random.randn(self._dim).astype(np.float32))
+            for _ in texts
+        ]
+
+    async def upsert_paper(self, paper: AcademicPaper) -> None:
+        """
+        Upsert a single academic paper.
+
+        Args:
+            paper: AcademicPaper instance to store.
+        """
+        if not self._initialized:
+            await self.initialize()
+
+        # Embed if needed
+        if paper.embedding is None:
+            embeddings = await self._embed_texts([paper.title + " " + paper.abstract])
+            paper.embedding = embeddings[0] if embeddings else [0.0] * self._dim
+
+        # Upsert to LanceDB
+        self._table.merge_insert("paper_id").on("paper_id").execute([paper.to_dict()])
+
+    async def upsert_papers(self, papers: list[AcademicPaper]) -> None:
+        """
+        Batch upsert academic papers.
+
+        Args:
+            papers: List of AcademicPaper instances.
+        """
+        if not self._initialized:
+            await self.initialize()
+
+        if not papers:
+            return
+
+        # Batch embed
+        texts = [p.title + " " + p.abstract for p in papers]
+        embeddings = await self._embed_texts(texts)
+
+        for i, paper in enumerate(papers):
+            if paper.embedding is None and i < len(embeddings):
+                paper.embedding = embeddings[i]
+
+        # Batch upsert
+        dicts = [p.to_dict() for p in papers]
+        self._table.merge_insert("paper_id").on("paper_id").execute(dicts)
+
+    async def search_similar(
+        self,
+        query: str,
+        top_k: int = 10,
+        filters: dict | None = None,
+    ) -> list[AcademicPaper]:
+        """
+        Semantic search for similar papers.
+
+        Args:
+            query: Search query text.
+            top_k: Number of results to return.
+            filters: Optional filters (e.g., {"source": "arxiv"}).
+
+        Returns:
+            List of AcademicPaper instances.
+        """
+        if not self._initialized:
+            await self.initialize()
+
+        # Embed query
+        embeddings = await self._embed_texts([query])
+        query_emb = embeddings[0] if embeddings else [0.0] * self._dim
+
+        # Search LanceDB
+        try:
+            results = self._table.search(query_emb, vector_column_name="embedding")
+            if filters:
+                for key, value in filters.items():
+                    results = results.where(f"{key} = '{value}'")
+            rows = results.limit(top_k).to_list()
+        except Exception:
+            return []
+
+        # Convert to AcademicPaper
+        papers = []
+        for row in rows:
+            papers.append(AcademicPaper(
+                paper_id=row.get("paper_id", ""),
+                title=row.get("title", ""),
+                abstract=row.get("abstract", ""),
+                authors=row.get("authors", []),
+                year=row.get("year"),
+                source=row.get("source", ""),
+                doi=row.get("doi", ""),
+                url=row.get("url", ""),
+                citation_count=row.get("citation_count", 0),
+                embedding=row.get("embedding"),
+            ))
+        return papers
+
+    async def get_citation_context(
+        self,
+        paper_id: str,
+        max_papers: int = 20,
+    ) -> list[AcademicPaper]:
+        """
+        Get papers that cite or are cited by the given paper.
+
+        Args:
+            paper_id: Paper ID to find citation context for.
+            max_papers: Max papers to return.
+
+        Returns:
+            List of related AcademicPaper instances.
+        """
+        if not self._initialized:
+            await self.initialize()
+
+        try:
+            # Find paper
+            results = self._table.search(
+                [0.0] * self._dim,
+                vector_column_name="embedding"
+            ).where(f"paper_id = '{paper_id}'").limit(1).to_list()
+
+            if not results:
+                return []
+
+            # Find similar papers by citation count
+            similar = self._table.search(
+                results[0].get("embedding", [0.0] * self._dim),
+                vector_column_name="embedding"
+            ).where(f"citation_count > {results[0].get('citation_count', 0) * 0.5}").limit(max_papers).to_list()
+
+            papers = []
+            for row in similar:
+                if row.get("paper_id") != paper_id:
+                    papers.append(AcademicPaper(
+                        paper_id=row.get("paper_id", ""),
+                        title=row.get("title", ""),
+                        abstract=row.get("abstract", ""),
+                        authors=row.get("authors", []),
+                        year=row.get("year"),
+                        source=row.get("source", ""),
+                        doi=row.get("doi", ""),
+                        url=row.get("url", ""),
+                        citation_count=row.get("citation_count", 0),
+                        embedding=row.get("embedding"),
+                    ))
+            return papers
+        except Exception:
+            return []
+
+    async def close(self) -> None:
+        """Close database connection."""
+        if self._db is not None:
+            try:
+                self._db.close()
+            except Exception:
+                pass
+
+
+# Module-level singleton
+_academic_store: LanceDBAcademicStore | None = None
+
+
+def get_academic_store() -> LanceDBAcademicStore:
+    """Get or create the singleton academic store."""
+    global _academic_store
+    if _academic_store is None:
+        _academic_store = LanceDBAcademicStore()
+    return _academic_store

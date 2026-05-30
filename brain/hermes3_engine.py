@@ -23,6 +23,7 @@ import json
 import logging
 import os
 import time
+from pathlib import Path
 from collections import OrderedDict
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -372,6 +373,25 @@ class Hermes3Engine:
 
         # GAP-3/1: Per-model inference circuit breaker
         self._model_breaker: ModelCircuitBreaker | None = None
+
+        # Sprint F259: PromptBandit integration — lazy init, not at __init__
+        self._prompt_bandit = None
+        self._last_bandit_arm: str | None = None
+
+    def _get_prompt_bandit(self):
+        """Lazy init PromptBandit (avoid heavy import at module load)."""
+        if self._prompt_bandit is None:
+            try:
+                from hledac.universal.brain.prompt_bandit import PromptBandit
+                self._prompt_bandit = PromptBandit(
+                    lambda_reg=0.01,
+                    persist_path=str(Path.home() / '.hledac' / 'hermes_prompt_bandit.json'),
+                )
+                logger.debug("PromptBandit initialized for Hermes3Engine")
+            except ImportError:
+                self._prompt_bandit = None
+                logger.debug("PromptBandit not available")
+        return self._prompt_bandit
 
     def init_model_breaker(self, model_id: str) -> None:
         """GAP-3/1: Initialize per-model circuit breaker."""
@@ -1335,6 +1355,19 @@ class Hermes3Engine:
 
             system = system_msg or "You are a helpful research assistant."
 
+            # Sprint F259: PromptBandit arm selection in generate() — pick strategy before inference
+            bandit = self._get_prompt_bandit()
+            arm_used = ""
+            modifier = ""
+            if bandit is not None:
+                try:
+                    arm_used = bandit.select_arm()
+                    modifier = bandit.get_prompt_modifier(arm_used)
+                    self._last_bandit_arm = arm_used
+                    logger.debug(f"[GENERATE] Bandit arm: {arm_used}")
+                except Exception as e:
+                    logger.debug(f"[GENERATE] Bandit select failed: {e}")
+
             # Sprint F214OPT-B: Bounded LRU prefix cache for tokenization
             cache_key = hashlib.sha256((system or "").encode()).hexdigest()
             if cache_key in self._prefix_cache:
@@ -1389,6 +1422,19 @@ class Hermes3Engine:
             # GAP-3/1: Record success in per-model breaker
             if self._model_breaker is not None:
                 self._model_breaker.record_success()
+
+            # Sprint F259: Update bandit reward after successful generation
+            if bandit is not None and arm_used and response:
+                try:
+                    import math
+                    # Reward = response_length_normalized × 0.8 (baseline confidence)
+                    response_len_norm = min(1.0, len(response) / 4000.0)
+                    reward = response_len_norm * 0.8
+                    bandit.update_reward(arm_used, reward, reward)
+                    logger.debug(f"[GENERATE] Bandit reward: arm={arm_used} reward={reward:.3f}")
+                except Exception as e:
+                    logger.debug(f"[GENERATE] Bandit update failed: {e}")
+
             return response
 
         except TimeoutError:
@@ -1540,9 +1586,22 @@ What should be the next action?"""
 
         context_str = "\n---\n".join(truncated_contexts)
 
+        # Sprint F259: PromptBandit arm selection — pick strategy before generate
+        bandit = self._get_prompt_bandit()
+        arm_used = ""
+        modifier = ""
+        if bandit is not None:
+            try:
+                arm_used = bandit.select_arm()
+                modifier = bandit.get_prompt_modifier(arm_used)
+                self._last_bandit_arm = arm_used
+                logger.debug(f"[GENERATE_REPORT] Bandit arm: {arm_used}")
+            except Exception as e:
+                logger.debug(f"[GENERATE_REPORT] Bandit select failed: {e}")
+
         prompt = f"""Research query: {bounded_query}
 
-Podklady pro analýzu:
+Podklady pro analýze:
 {context_str}
 
 Vytvoř strukturovaný OSINT report v češtině s následujícími sekcemi:
@@ -1550,15 +1609,28 @@ Vytvoř strukturovaný OSINT report v češtině s následujícími sekcemi:
 2. Klíčová zjištění (Key Findings) - hlavní IOC a poznatky
 3. Doporučení (Recommendations) - praktické kroky
 
-Report piš v češtině, buď konkrétní a stručný."""
+Report piš v češtině, buď konkrétní a stručný.{modifier}"""
 
         try:
-            return await self.generate(
+            report_text = await self.generate(
                 prompt=prompt,
                 temperature=0.3,
                 max_tokens=1024,
                 system_msg=self._REPORT_SYSTEM_PROMPT
             )
+
+            # Sprint F259: Update bandit reward — reward = response_length_normalized × confidence
+            if bandit is not None and arm_used and report_text:
+                try:
+                    response_len_norm = min(1.0, len(report_text) / 2000.0)
+                    confidence = min(1.0, len(truncated_contexts) / max(1, self._REPORT_MAX_ITEMS))
+                    reward = response_len_norm * confidence
+                    bandit.update_reward(arm_used, reward, reward)
+                    logger.debug(f"[GENERATE_REPORT] Bandit reward: arm={arm_used} reward={reward:.3f}")
+                except Exception as e:
+                    logger.debug(f"[GENERATE_REPORT] Bandit update failed: {e}")
+
+            return report_text
         except Exception as e:
             logger.error(f"[GENERATE_REPORT] Failed: {e}")
             return f"Report generation failed: {str(e)[:200]}"
@@ -2157,6 +2229,40 @@ Do not include any other text. Output valid JSON only."""
             pass
 
         logger.info("✓ Hermes-3 unloaded (Sprint 7K lifecycle closed)")
+
+    # =========================================================================
+    # F259: Session-local KV cache reset for M1 8GB stability
+    # =========================================================================
+
+    def reset_session(self) -> None:
+        """
+        Sprint F259: Reset session-local MLX KV cache between sprints.
+
+        Unlike unload(), this is a lightweight reset that clears only session-
+        specific state without fully unloading the model. Called at the start
+        of each new sprint to prevent KV cache accumulation.
+
+        M1 8GB invariant: Prevents KV cache from growing across sprints.
+        """
+        # Clear session-specific KV caches
+        self._prompt_cache = None
+        self._system_prompt_cache = None
+        self._system_prompt_hash = None
+
+        # Invalidate prefix cache
+        self.invalidate_prefix_cache()
+
+        # Force GPU sync to reclaim Metal memory
+        try:
+            import mlx.core as mx
+            mx.eval([])
+        except Exception:
+            pass  # mlx may not be loaded
+
+        # Reset KV cache stats for new session
+        self._kv_cache_stats = {'cache_uses': 0, 'cache_prefills': 1, 'quantized_count': 0}
+
+        logger.debug("[F259] Hermes3 session KV cache reset")
 
     # =========================================================================
     # ModelLifecycleProtocol implementation (Sprint 8Z bridge)

@@ -71,6 +71,155 @@ def _load_programs() -> dict:
     return _programs
 
 
+# ---------------------------------------------------------------------------
+# Part A: Hermes3 ↔ DSPy Bridge (Sprint HERMES3_WIRING)
+# ---------------------------------------------------------------------------
+# Hermes3DSPyLM wraps Hermes3Engine.generate_text() as a dspy.LM interface.
+# Gate: HLEDAC_ENABLE_LLM=1 (default OFF to save RAM when not needed)
+# M1 constraint: lazy load, unload after synthesis, mx.metal.clear_cache() on finish
+
+Hermes3LM_ENABLED = os.getenv("HLEDAC_ENABLE_LLM", "0") == "1"
+_HERMES_LM_INSTANCE: "Hermes3DSPyLM | None" = None
+
+
+class Hermes3DSPyLM:
+    """
+    DSPy LM wrapper around Hermes3Engine.
+
+    Implements dspy.LM interface: __call__(prompt) → str.
+
+    M1 8GB constraints:
+    - Lazy load: Hermes3Engine only initialized on first __call__
+    - Unload after synthesis: mx.metal.clear_cache() called in __exit__
+    - ANE/MLX mutex: acquire before loading, release after
+    """
+    # Track if model is currently loaded to avoid redundant loads
+    _loaded: bool = False
+
+    def __init__(self, model_path: str | None = None):
+        self._model_path = model_path
+        self._engine = None
+        self._loaded = False
+
+    def __call__(self, prompt: str, **kwargs) -> str:
+        """Synchronous call — runs Hermes3Engine.generate_text() via executor."""
+        import asyncio
+        import concurrent.futures
+
+        # Lazy load Hermes3Engine on first call
+        if not self._loaded:
+            self._load_engine()
+
+        # Run async inference in sync executor
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            result = loop.run_until_complete(self._engine.generate(prompt, **kwargs))
+        finally:
+            loop.close()
+        return result
+
+    def _load_engine(self) -> None:
+        """Load Hermes3Engine with ANE mutex protection."""
+        if self._loaded:
+            return
+
+        try:
+            # Acquire ANE/MLX mutex (ANEEmbedder and Hermes3 cannot be in RAM simultaneously)
+            from hledac.universal.brain.ane_embedder import get_ane_mlx_mutex
+            mutex = get_ane_mlx_mutex()
+            mutex.acquire_mlx(model_size_mb=2000.0)
+
+            # Import and init Hermes3Engine
+            from hledac.universal.brain.hermes3_engine import Hermes3Engine
+            self._engine = Hermes3Engine(
+                model_path=self._model_path,
+                sanitize_for_llm=None
+            )
+            import asyncio
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            try:
+                loop.run_until_complete(self._engine.initialize())
+            finally:
+                loop.close()
+
+            self._loaded = True
+        except Exception as e:
+            logger.warning("Hermes3DSPyLM load failed: %s", e)
+            self._loaded = False
+            raise
+
+    def unload(self) -> None:
+        """Unload model and clear Metal cache (M1 RAM recovery)."""
+        if not self._loaded or self._engine is None:
+            return
+        try:
+            import asyncio
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            try:
+                loop.run_until_complete(self._engine.unload())
+            finally:
+                loop.close()
+        except Exception:
+            pass
+        finally:
+            # F219B: mx.eval([]) + clear_cache
+            try:
+                import mlx.core as _mx
+                _mx.eval([])
+                if _mx.metal.is_available():
+                    _mx.metal.clear_cache()
+            except Exception:
+                pass
+            # Release ANE/MLX mutex
+            try:
+                from hledac.universal.brain.ane_embedder import get_ane_mlx_mutex
+                get_ane_mlx_mutex().release("mlx")
+            except Exception:
+                pass
+            self._loaded = False
+
+
+def get_hermes_dspy_lm() -> Hermes3DSPyLM | None:
+    """
+    Get singleton Hermes3DSPyLM instance.
+
+    Returns None if HLEDAC_ENABLE_LLM != "1".
+    """
+    global _HERMES_LM_INSTANCE
+    if not Hermes3LM_ENABLED:
+        return None
+    if _HERMES_LM_INSTANCE is None:
+        _HERMES_LM_INSTANCE = Hermes3DSPyLM()
+    return _HERMES_LM_INSTANCE
+
+
+def configure_dspy_with_hermes() -> bool:
+    """
+    Configure DSPy to use Hermes3Engine as the language model.
+
+    Call once at startup if HLEDAC_ENABLE_DSPY=1.
+    Returns True if configured, False if skipped/failed.
+    """
+    if not Hermes3LM_ENABLED:
+        logger.info("dspy_service: Hermes3 LM disabled (HLEDAC_ENABLE_LLM != '1')")
+        return False
+
+    try:
+        import dspy
+        hermes_lm = get_hermes_dspy_lm()
+        if hermes_lm is None:
+            return False
+        dspy.configure(lm=hermes_lm)
+        logger.info("dspy_service: DSPy configured with Hermes3Engine")
+        return True
+    except Exception as e:
+        logger.warning("dspy_service: DSPy configure with Hermes failed: %s", e)
+        return False
+
+
 def _get_dspy_lm():
     """Build DSPy LM instance using mlx_lm.server (same config as MIPROv2 setup)."""
     model_id = os.getenv(

@@ -3479,43 +3479,40 @@ async def async_run_live_public_pipeline(
                     discovery_telemetry, 0, 0, 0, 0, 0, 0
                 )
 
-            # P16: Academic discovery integration
+            # F259: Academic research lane via discovery/academic adapters
             academic_findings_count = 0
             if self.store is not None:
                 try:
-                    from hledac.universal.intelligence.academic_discovery import search_academic_all
-                    academic_semaphore = asyncio.Semaphore(3)
-                    async def limited_academic_search():
-                        async with academic_semaphore:
-                            return await search_academic_all(self.query, max_results=10, rate_limit=50)
-                    academic_results = await limited_academic_search()
-                    all_papers = []
-                    for source, papers in academic_results.items():
-                        for paper in papers:
-                            all_papers.append(paper)
-                    if all_papers:
-                        academic_findings = []
-                        for paper in all_papers[:20]:
-                            paper_id = hashlib.sha256(
-                                f"{self.query}\x00{paper.get('link', '')}\x00academic".encode()
-                            ).hexdigest()[:16]
-                            provenance = ("academic", source, paper.get('title', ''))
-                            academic_finding = CanonicalFinding(
-                                finding_id=paper_id,
-                                query=self.query,
-                                source_type="academic_discovery",
-                                confidence=0.7,
-                                ts=time.time(),
-                                provenance=provenance,
-                                payload_text=f"{paper.get('title', '')}\n{paper.get('abstract', '')}".strip()[:500],
-                            )
-                            academic_findings.append(academic_finding)
-                        if academic_findings:
-                            await self.store.async_ingest_findings_batch(academic_findings)
-                            academic_findings_count = len(academic_findings)
+                    # Check env gate and academic keywords
+                    academic_enabled = os.environ.get("HLEDAC_ENABLE_ACADEMIC", "0").strip().lower() in ("1", "true", "yes", "on")
+                    query_lower = self.query.lower()
+                    academic_keywords = ["paper", "research", "academic", "scholar", "study", "journal", "citation", "doi", "arxiv", "publication", "conference", "thesis"]
+                    has_academic_keywords = any(kw in query_lower for kw in academic_keywords)
+
+                    # Also check for --deep-research flag via query or env
+                    deep_research = os.environ.get("HLEDAC_DEEP_RESEARCH", "0").strip().lower() in ("1", "true", "yes", "on")
+
+                    if academic_enabled or has_academic_keywords or deep_research:
+                        from hledac.universal.discovery.academic import search_all_academic, ACADEMIC_ENABLED
+                        if ACADEMIC_ENABLED:
+                            academic_semaphore = asyncio.Semaphore(3)
+                            async def limited_academic_search():
+                                async with academic_semaphore:
+                                    return await search_all_academic(self.query, max_results_per_source=10)
+                            academic_results = await limited_academic_search()
+
+                            # Collect all findings from new adapters
+                            all_findings = []
+                            for source, findings in academic_results.items():
+                                all_findings.extend(findings)
+
+                            if all_findings:
+                                # Ingest directly (findings already CanonicalFinding)
+                                await self.store.async_ingest_findings_batch(all_findings)
+                                academic_findings_count = len(all_findings)
+                                logger.info(f"[F259] Academic lane: {academic_findings_count} findings from {len(academic_results)} sources")
                 except Exception as e:
-                    import logging
-                    logging.getLogger(__name__).warning(f"[P16] Academic discovery failed: {e}")
+                    logger.warning(f"[F259] Academic research lane failed: {e}")
 
             # Sprint F188B: CT winner-slice injection
             original_hit_count = len(hits)
@@ -4838,6 +4835,94 @@ async def async_run_live_public_pipeline(
             await extractor.close()
         except Exception as e:
             logger.debug(f"[F198C] Document discovery failed: {e}")
+
+    # ── Part B: Sprint Synthesis Activation (Sprint HERMES3_WIRING)
+    # Gate: len(findings) >= 5 AND HLEDAC_ENABLE_SYNTHESIS=1
+    # Cap: max 50 findings for M1 8GB RAM safety
+    # Timeout: 90 seconds max
+    synthesis_finding = None
+    if total_accepted >= 5 and os.environ.get("HLEDAC_ENABLE_SYNTHESIS") == "1":
+        try:
+            # Check RAM constraint: skip if RSS > 5.5GB
+            try:
+                import psutil
+                rss_gib = psutil.Process().memory_info().rss / (1024**3)
+                if rss_gib > 5.5:
+                    logger.debug("[SYNTHESIS] Skipped: RSS %.1fGiB > 5.5GiB", rss_gib)
+                else:
+                    from hledac.universal.brain.synthesis_runner import SynthesisRunner
+                    from hledac.universal.brain.model_lifecycle import ModelLifecycle
+
+                    # Build findings list from all_page_results
+                    findings_for_synth = []
+                    for pr in all_page_results:
+                        if pr.accepted:
+                            finding = {
+                                "content": pr.payload_text[:500] if pr.payload_text else "",
+                                "title": pr.title or "",
+                                "source_type": _SOURCE_TYPE,
+                                "confidence": pr.confidence or 0.5,
+                                "url": pr.url or "",
+                            }
+                            findings_for_synth.append(finding)
+
+                    if len(findings_for_synth) >= 5:
+                        # Limit to 50 findings for M1 RAM safety
+                        findings_for_synth = findings_for_synth[:50]
+
+                        # Initialize lifecycle for synthesis
+                        lifecycle = ModelLifecycle()
+                        runner = SynthesisRunner(lifecycle)
+
+                        # Run synthesis with 90s timeout
+                        import asyncio
+                        report = await asyncio.wait_for(
+                            runner.synthesize_findings(
+                                query=query,
+                                findings=findings_for_synth,
+                                max_findings=10,
+                                force_synthesis=False,
+                            ),
+                            timeout=90.0,
+                        )
+
+                        # Unload model after synthesis
+                        await runner.close()
+
+                        if report is not None:
+                            # Add synthesis result as CanonicalFinding
+                            from hledac.universal.knowledge.duckdb_store import CanonicalFinding
+                            import hashlib
+                            import time as _time
+
+                            report_id = f"synth_{hashlib.md5(query.encode()).hexdigest()[:12]}"
+                            synthesis_finding = CanonicalFinding(
+                                finding_id=report_id,
+                                query=query,
+                                source_type="llm_synthesis",
+                                confidence=getattr(report, 'confidence', 0.7) or 0.7,
+                                ts=_time.time(),
+                                ioc_val=getattr(report, 'threat_summary', '')[:500] if hasattr(report, 'threat_summary') else "",
+                                payload_text=f"Threat actors: {', '.join(getattr(report, 'threat_actors', []) or [])}",
+                                provenance=("synthesis", getattr(report, 'query', query)[:50]),
+                            )
+                            logger.info("[SYNTHESIS] Report produced: confidence=%.3f", synthesis_finding.confidence)
+
+                        # Also run DSPy query expansion for next sprint seeds
+                        if os.environ.get("HLEDAC_ENABLE_DSPY") == "1":
+                            try:
+                                from hledac.universal.brain import dspy_service
+                                expanded = await dspy_service.expand_query(query)
+                                if expanded:
+                                    logger.debug("[SYNTHESIS] DSPy expanded %d queries", len(expanded))
+                                    # Store expanded queries for next sprint
+                                    # (would write to SprintSchedulerConfig.next_seeds or sprint_seeds table)
+                            except Exception as e:
+                                logger.debug("[SYNTHESIS] DSPy expand_query failed: %s", e)
+            except Exception as e:
+                logger.debug("[SYNTHESIS] RAM check failed: %s", e)
+        except Exception as e:
+            logger.warning("[SYNTHESIS] Synthesis failed: %s", e)
 
     return PipelineRunResult(
         query=query,

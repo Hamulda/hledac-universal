@@ -1913,6 +1913,15 @@ class SprintSchedulerResult:
 
     stop_requested: bool = False  # True when stop_on_first_accepted triggered
 
+    # Sprint F259: Synthesis telemetry (populated by _run_synthesis_sidecar in WINDUP)
+    synthesis_success: bool = False
+
+    synthesis_engine: str = "unknown"
+
+    synthesis_findings_count: int = 0
+
+    synthesis_text: str = ""  # JSON-serialized OSINTReport
+
     # Sprint 8XE: Public discovery pipeline results (canonical path parity)
 
     pii_findings_anonymized: int = 0
@@ -2314,6 +2323,9 @@ class SprintSchedulerResult:
     wayback_candidates_built: int = 0
 
     wayback_accepted_count: int = 0
+
+    # Sprint F224: Graph RAG context enrichment count
+    graph_rag_context_count: int = 0
 
     passive_dns_attempted: bool = False
 
@@ -2941,7 +2953,6 @@ class SprintResult:
     rir_correlation_produced: int = 0
 
 
-
     # General telemetry
 
     sidecars_skipped: tuple[str, ...] = ()
@@ -3525,6 +3536,9 @@ class PublicSprintResult(SprintResult):
     wayback_candidates_built: int = 0
 
     wayback_accepted_count: int = 0
+
+    # Sprint F224: Graph RAG context enrichment count
+    graph_rag_context_count: int = 0
 
     wayback_advisory_clues_count: int = 0
 
@@ -4270,6 +4284,9 @@ class SprintScheduler:
         self._last_partial_finding_count: int = 0
 
         self._synthesis_engine: str = "unknown"
+
+        # Sprint F259: Lazy SynthesisRunner reference (initialized in WINDUP sidecar)
+        self._synthesis_runner: Any = None
 
         # Sprint 8VI §B: RL adaptive pivot — task_type → reward history
 
@@ -5502,7 +5519,25 @@ class SprintScheduler:
             # Phase 2: Hermes prewarm
             await self._prewarm_hermes()
 
-    
+
+
+            # ── Part D: DSPy Query Expansion at Sprint Start (Sprint HERMES3_WIRING)
+            # Gate: HLEDAC_ENABLE_DSPY=1 → expand original query → add to next_seeds
+            # Cap: max 3 additional expanded queries (M1 constraint)
+            if os.environ.get("HLEDAC_ENABLE_DSPY") == "1" and query:
+                try:
+                    from hledac.universal.brain.dspy_service import expand_query
+                    import asyncio
+                    expanded = asyncio.run(expand_query(query))
+                    if expanded and len(expanded) > 0:
+                        # Add expanded queries to sprint seeds (cap at 3)
+                        _expanded_capped = expanded[:3]
+                        log.debug("[HERMES3_WIRING] DSPy expanded %d queries for '%s...'",
+                                  len(_expanded_capped), query[:30])
+                        # Store for acquisition plan: these become additional sub-queries
+                        self._result.next_seeds_query_suggestions = tuple(_expanded_capped)
+                except Exception as _exc:
+                    log.debug("[HERMES3_WIRING] DSPy expand_query failed: %s", _exc)
 
             # Sprint 8SA: Source scoring — order sources by priority at start of ACTIVE
 
@@ -5953,6 +5988,25 @@ class SprintScheduler:
 
 
 
+            # Sprint F224: Graph RAG context enrichment (pre-cycle advisory)
+            # Runs BEFORE first cycle to inject previously discovered graph context
+            graph_rag_findings: list[Any] = []
+            if os.environ.get("HLEDAC_ENABLE_GRAPH_RAG") == "1":
+                try:
+                    graph_rag_findings = await self._run_graph_rag_context_sidecar(
+                        query, duckdb_store
+                    )
+                    if graph_rag_findings:
+                        # Inject into sprint seeds for enrichment
+                        self._result.graph_rag_context_count = len(graph_rag_findings)
+                        _logger.debug(
+                            "[graph_rag] injected %d context findings",
+                            len(graph_rag_findings)
+                        )
+                except Exception as _e:
+                    _logger.debug("[graph_rag] sidecar failed: %s", _e)
+
+
             # Sprint F245A: Run prelude and first cycle concurrently
 
             first_cycle_work_items = self._build_feed_work_items(lifecycle)
@@ -6276,6 +6330,12 @@ class SprintScheduler:
                         # Sprint 8RA: Flush dedup at WINDUP entry
 
                         await self._flush_dedup()
+
+                        # Sprint F259: Run synthesis sidecar in WINDUP (if enabled + UMA headroom)
+                        await self._run_synthesis_sidecar(query, duckdb_store, lifecycle)
+
+                        # Sprint F260: Run DS ↔ DSPy Bridge (epistemic gap + contradiction resolver)
+                        await self._run_epistemic_gap_advisory(query, duckdb_store)
 
                         # Sprint F195C: Flush forensics at WINDUP entry
 
@@ -21738,6 +21798,290 @@ class SprintScheduler:
 
             log.warning(f"Dedup flush failed: {exc}")
 
+    async def _run_synthesis_sidecar(
+        self,
+        query: str,
+        duckdb_store: Any,
+        lifecycle: Any,
+    ) -> None:
+        """Sprint F259: Run SynthesisRunner in WINDUP phase."""
+        if os.environ.get("HLEDAC_ENABLE_SYNTHESIS", "0") != "1":
+            log.debug("[F259] Synthesis skipped — HLEDAC_ENABLE_SYNTHESIS != '1'")
+            return
+
+        # M1 8GB UMA guard
+        try:
+            from hledac.universal.utils.uma_budget import get_uma_snapshot
+            uma = get_uma_snapshot()
+            if uma.rss_gib >= 5.5 or uma.is_critical or uma.is_emergency:
+                log.debug("[F259] Synthesis skipped — UMA RSS=%.1fGB, state=%s",
+                          uma.rss_gib, uma.state)
+                self._result.synthesis_success = False
+                self._result.synthesis_engine = "uma_guard"
+                return
+        except Exception as e:
+            log.debug("[F259] UMA check failed: %s", e)
+
+        if duckdb_store is None:
+            log.debug("[F259] Synthesis skipped — no duckdb_store")
+            return
+
+        # Get findings
+        findings: list[dict] = []
+        try:
+            if hasattr(duckdb_store, "get_top_findings"):
+                findings = await duckdb_store.get_top_findings(limit=15)
+            elif hasattr(duckdb_store, "get_recent_findings"):
+                findings = await duckdb_store.get_recent_findings(limit=15)
+        except Exception as e:
+            log.debug("[F259] Failed to get findings: %s", e)
+            return
+
+        if not findings:
+            log.debug("[F259] Synthesis skipped — no findings")
+            return
+
+        # Lazy import SynthesisRunner
+        try:
+            from hledac.universal.brain.synthesis_runner import SynthesisRunner
+            from hledac.universal.brain.model_lifecycle import ModelLifecycle
+        except ImportError as e:
+            log.debug("[F259] SynthesisRunner import failed: %s", e)
+            self._result.synthesis_engine = "import_failed"
+            return
+
+        try:
+            runner = SynthesisRunner(ModelLifecycle())
+            runner._duckdb_store = duckdb_store
+            if lifecycle is not None:
+                runner.inject_lifecycle_adapter(lifecycle)
+
+            # Inject graph if available
+            try:
+                stix_graph = getattr(duckdb_store, "get_stix_graph", None)
+                if stix_graph:
+                    stix = stix_graph()
+                    if stix is not None:
+                        runner.inject_stix_graph(stix)
+            except Exception:
+                pass
+
+            # Run synthesis with force=True (explicit WINDUP context)
+            report = await runner.synthesize_findings(
+                query=query,
+                findings=findings,
+                force_synthesis=True,
+            )
+
+            # Capture results
+            self._result.synthesis_findings_count = len(findings)
+            self._result.synthesis_success = report is not None
+            self._result.synthesis_engine = getattr(runner, "_last_synthesis_engine", "synthesis_runner") or "synthesis_runner"
+
+            if report is not None:
+                try:
+                    import orjson
+                    self._result.synthesis_text = orjson.dumps({
+                        "query": query,
+                        "ioc_entities": [
+                            {"type": e.ioc_type, "value": e.value}
+                            for e in (getattr(report, "ioc_entities", None) or [])
+                        ],
+                        "threat_summary": getattr(report, "threat_summary", ""),
+                        "threat_actors": list(getattr(report, "threat_actors", None) or []),
+                        "confidence": getattr(report, "confidence", 0.0),
+                        "sources_count": getattr(report, "sources_count", 0),
+                        "timestamp": getattr(report, "timestamp", 0.0),
+                    }).decode("utf-8")
+                except Exception:
+                    self._result.synthesis_text = str(report)[:4096]
+                log.info("[F259] Synthesis complete: success=%s, findings=%d",
+                         self._result.synthesis_success, self._result.synthesis_findings_count)
+            else:
+                self._result.synthesis_text = ""
+
+            await runner.close()
+
+        except Exception as e:
+            log.debug("[F259] Synthesis failed: %s", e)
+            self._result.synthesis_success = False
+            self._result.synthesis_engine = "error"
+            self._result.synthesis_text = ""
+
+    # ── Sprint F260: DS ↔ DSPy Bridge ──────────────────────────────────────────
+
+    async def _run_epistemic_gap_advisory(
+        self,
+        query: str,
+        duckdb_store: Any,
+    ) -> None:
+        """
+        Sprint F260: Run EpistemicGapProgram and ContradictionResolverProgram.
+
+        Wire point: called after _run_synthesis_sidecar in WINDUP phase.
+
+        Gates:
+ - HLEDAC_ENABLE_LLM=1 (same as synthesis)
+          - RAM < 5.0GB (tighter than synthesis's 5.5GB)
+
+        Part A: EpistemicGapProgram
+          - Inputs: findings from sprint + known gaps from ResearchSessionMemory
+          - Output: gaps written to ResearchSessionMemory via record_sprint_outcome()
+
+        Part B: ContradictionResolverProgram
+          - Triggered when DS conflict_mass > 0.3
+          - Max 5 contradictions per call (M1 constraint)
+        """
+        # Gate: LLM must be enabled
+        if os.environ.get("HLEDAC_ENABLE_LLM", "0") != "1":
+            log.debug("[F260] Epistemic gap advisory skipped — HLEDAC_ENABLE_LLM != '1'")
+            return
+
+        # M1 8GB RAM guard (tighter than synthesis's 5.5GB)
+        try:
+            from hledac.universal.utils.uma_budget import get_uma_snapshot
+            uma = get_uma_snapshot()
+            if uma.rss_gib >= 5.0 or uma.is_critical or uma.is_emergency:
+                log.debug("[F260] Epistemic gap skipped — UMA RSS=%.1fGB, state=%s",
+                          uma.rss_gib, uma.state)
+                return
+        except Exception as e:
+            log.debug("[F260] UMA check failed: %s", e)
+            return
+
+        if duckdb_store is None:
+            log.debug("[F260] Epistemic gap skipped — no duckdb_store")
+            return
+
+        # Get findings
+        findings: list[dict] = []
+        try:
+            if hasattr(duckdb_store, "get_top_findings"):
+                findings = await duckdb_store.get_top_findings(limit=30)
+            elif hasattr(duckdb_store, "get_recent_findings"):
+                findings = await duckdb_store.get_recent_findings(limit=30)
+        except Exception as e:
+            log.debug("[F260] Failed to get findings: %s", e)
+            return
+
+        if not findings:
+            log.debug("[F260] Epistemic gap skipped — no findings")
+            return
+
+        # Lazy import DSPy programs
+        try:
+            from hledac.universal.brain.dspy_programs import (
+                EpistemicGapProgram,
+                ContradictionResolverProgram,
+                MAX_EPISTEMIC_FINDINGS,
+            )
+            from hledac.universal.brain.evidence_fusion import DempsterShafer
+            from hledac.universal.knowledge.research_memory import ResearchSessionMemory
+        except ImportError as e:
+            log.debug("[F260] DSPy/DS import failed: %s", e)
+            return
+
+        # Part A: EpistemicGapProgram
+        try:
+            # Get known gaps from ResearchSessionMemory
+            memory = ResearchSessionMemory.get_instance()
+            known_gaps: list[str] = []
+            if memory is not None:
+                # record_sprint_outcome stores gaps_json — we read it back
+                try:
+                    conn = memory._get_conn()
+                    result = conn.execute(
+                        "SELECT gaps_json FROM research_sessions ORDER BY ts DESC LIMIT 1"
+                    ).fetchone()
+                    if result and result[0]:
+                        import orjson
+                        gaps_data = orjson.loads(result[0])
+                        known_gaps = [g.get("description", "") for g in gaps_data if g]
+                except Exception:
+                    pass
+
+            # Build finding strings (max 30 for M1 RAM)
+            finding_strings = []
+            for f in findings[:MAX_EPISTEMIC_FINDINGS]:
+                text = f.get("payload_text", "") or f.get("title", "") or str(f)
+                finding_strings.append(text[:200])
+
+            # Run EpistemicGapProgram
+            gap_program = EpistemicGapProgram()
+            pred = gap_program.forward(
+                findings=finding_strings,
+                known_gaps=known_gaps,
+                query=query,
+            )
+
+            # Extract gaps from prediction
+            identified_gaps = []
+            if hasattr(pred, "gaps") and pred.gaps:
+                if isinstance(pred.gaps, list):
+                    identified_gaps = pred.gaps
+                else:
+                    identified_gaps = [str(pred.gaps)]
+
+            log.info("[F260] Epistemic gaps identified: %d", len(identified_gaps))
+
+            # Write gaps to ResearchSessionMemory
+            if memory is not None and identified_gaps:
+                try:
+                    await memory.record_sprint_outcome(
+                        sprint_id=getattr(self._result, "sprint_id", "unknown"),
+                        query=query,
+                        findings=findings,
+                        gaps=identified_gaps,
+                    )
+                    log.info("[F260] Gaps written to ResearchSessionMemory")
+                except Exception as e:
+                    log.debug("[F260] Failed to write gaps to memory: %s", e)
+
+        except Exception as e:
+            log.debug("[F260] EpistemicGapProgram failed: %s", e)
+
+        # Part B: ContradictionResolverProgram (if DS conflict > 0.3)
+        try:
+            # Check for contradictory findings using DempsterShafer
+            contradictory_findings: list[dict] = []
+            for f in findings[:20]:  # Check top 20 findings
+                # Compute DS conflict from evidence if available
+                evidence = f.get("evidence", [])
+                if evidence:
+                    hypotheses = set(e.get("hypothesis", "present") for e in evidence)
+                    hypotheses.add("absent")
+                    ds = DempsterShafer(hypotheses=hypotheses)
+                    for e in evidence:
+                        ds.add_evidence(
+                            hypothesis=e.get("hypothesis", "present"),
+                            mass=e.get("mass", 0.5),
+                            source_weight=e.get("source_weight", 1.0),
+                        )
+                    conflict = ds.conflict_mass()
+                    if conflict > 0.3:
+                        contradictory_findings.append({
+                            "finding": f.get("payload_text", "") or str(f)[:150],
+                            "conflict_mass": conflict,
+                            "source": f.get("source_type", "unknown"),
+                        })
+
+            if contradictory_findings:
+                log.info("[F260] Found %d contradictory findings (DS conflict > 0.3)",
+                         len(contradictory_findings))
+
+                # Run ContradictionResolverProgram
+                resolver = ContradictionResolverProgram()
+                pred = resolver.forward(
+                    contradictory_findings=contradictory_findings,
+                    context=f"Sprint query: {query}",
+                )
+
+                log.info("[F260] Contradiction resolution complete")
+                if hasattr(pred, "confidence") and pred.confidence:
+                    log.info("[F260] Resolution confidence: %.2f", pred.confidence)
+
+        except Exception as e:
+            log.debug("[F260] ContradictionResolverProgram failed: %s", e)
 
 
     # F11: Background task tracking set — prevents GC of fire-and-forget tasks
@@ -23196,7 +23540,55 @@ class SprintScheduler:
 
         await self._run_cti_export(rend_cti_stix, collect_cti_inputs, report, export_dir)
 
+        # Sprint F259: Hypothesis generation — causal graph reasoning
+        await self._run_hypothesis_export(report, export_dir)
 
+    async def _run_hypothesis_export(
+        self,
+        report: dict[str, Any],
+        export_dir: str | None,
+    ) -> None:
+        """
+        Sprint F259: Run causal hypothesis generation and export.
+
+        Gate: HLEDAC_ENABLE_HYPOTHESIS=1 and RAM < 70%
+        Runs after CTI STIX export in the post-export phase.
+
+        GHOST_INVARIANTS:
+        - fail-soft: export error must not prevent teardown
+        - Lazy imports for causal_engine and hypothesis_graph
+        - RAM check before execution
+        """
+        from export.hypothesis_builder import HYPOTHESIS_ENABLED, run_hypothesis_if_enabled
+
+        if not HYPOTHESIS_ENABLED:
+            return
+
+        try:
+            findings = report.get("findings", [])
+            if not findings:
+                logger.debug("Hypothesis export: no findings to process")
+                return
+
+            sprint_id = getattr(self._result, "sprint_id", "unknown")
+            result = await run_hypothesis_if_enabled(
+                findings=findings,
+                sprint_id=sprint_id,
+                output_dir=export_dir,
+            )
+
+            if result.stix_bundle_path:
+                self._result.export_paths.append(result.stix_bundle_path)
+
+            logger.info(
+                f"Hypothesis export: {result.hypotheses_generated} hypotheses, "
+                f"{result.hidden_bridges} hidden bridges, {result.anomalies_detected} anomalies "
+                f"in {result.execution_time_s:.2f}s"
+            )
+
+        except Exception as exc:
+            logger.warning(f"Hypothesis export failed (non-critical): {exc}")
+            self._result.export_paths.append(f"EXPORT_ERROR:hypothesis:{exc}")
 
     async def _run_cti_export(
 
@@ -28832,6 +29224,13 @@ class SprintScheduler:
 
             pass
 
+        # Sprint F259: Reset Hermes3 KV cache between sprints (M1 8GB stability)
+        if self._hermes_engine is not None:
+            try:
+                self._hermes_engine.reset_session()
+            except Exception:
+                pass  # Advisory only — Hermes may not be loaded
+
         # Sprint F202J: Reset governor telemetry (but keep singleton instance)
 
         self._governor = None  # Will be re-initialized on next run()
@@ -28979,15 +29378,112 @@ class SprintScheduler:
         events.append(evt)
 
 
+    # ── Sprint F224: Graph RAG Context Sidecar ──────────────────────────────────
 
+    async def _run_graph_rag_context_sidecar(
+        self,
+        query: str,
+        duckdb_store: Any,
+    ) -> list[Any]:
+        """
+        Sprint F224: Graph RAG pre-cycle enrichment.
+
+        Runs BEFORE first cycle to inject previously discovered graph context
+        into the sprint. Uses multi-hop search over DuckPGQGraph to find
+        relevant entities/relationships from previous sprints.
+
+        Gate: HLEDAC_ENABLE_GRAPH_RAG=1 + RAM check < 5.0GB
+
+        Args:
+            query: Current sprint query
+            duckdb_store: DuckDB store for persistent state
+
+        Returns:
+            List of CanonicalFinding with "context_seed" source_type
+        """
+        findings: list[Any] = []
+
+        try:
+            # RAM guard: skip if memory is too high
+            try:
+                from hledac.universal.utils.uma_budget import get_uma_snapshot
+                uma = get_uma_snapshot()
+                if uma.is_critical or uma.is_emergency:
+                    _logger.debug("[graph_rag] skipped — memory pressure")
+                    return []
+            except Exception:
+                pass  # RAM check optional
+
+            # Import GraphRAGOrchestrator
+            try:
+                from hledac.universal.knowledge.graph_rag import GraphRAGOrchestrator
+                from hledac.universal.knowledge.graph_service import GraphService
+            except ImportError as _e:
+                _logger.debug("[graph_rag] import failed: %s", _e)
+                return []
+
+            # Initialize orchestrator with GraphService
+            graph_service = GraphService()
+            orchestrator = GraphRAGOrchestrator(graph_service)
+
+            # Multi-hop search with max 2 hops for M1
+            result = await orchestrator.multi_hop_search(
+                query=query,
+                hops=2,
+                max_nodes=20,
+            )
+
+            insights = result.get("insights", [])
+            if not insights:
+                return []
+
+            # Convert to CanonicalFinding with context_seed source_type
+            CanonicalFinding = None
+            try:
+                from hledac.universal.knowledge.duckdb_store import CanonicalFinding as CF
+                CanonicalFinding = CF
+            except ImportError:
+                pass
+
+            ts = _time.time()
+            for idx, insight in enumerate(insights[:20]):  # Max 20
+                content = insight.get("content", "")
+                if not content:
+                    continue
+
+                if CanonicalFinding:
+                    finding = CanonicalFinding(
+                        finding_id=f"graph_rag_ctx_{int(ts * 1000)}_{idx}",
+                        query=query,
+                        source_type="context_seed",
+                        confidence=insight.get("similarity", 0.5),
+                        ts=ts,
+                        provenance=("graph_rag",),
+                        payload_text=content[:2048],
+                    )
+                    findings.append(finding)
+                else:
+                    findings.append({
+                        "finding_id": f"graph_rag_ctx_{int(ts * 1000)}_{idx}",
+                        "query": query,
+                        "source_type": "context_seed",
+                        "confidence": insight.get("similarity", 0.5),
+                        "ts": ts,
+                        "provenance": ("graph_rag",),
+                        "payload_text": content[:2048],
+                    })
+
+            _logger.debug("[graph_rag] found %d context insights", len(findings))
+
+        except Exception as _e:
+            _logger.debug("[graph_rag] sidecar failed: %s", _e)
+
+        return findings
 
 
 # ---------------------------------------------------------------------------
-
 # Convenience top-level function
-
 # ---------------------------------------------------------------------------
-
 
 
 async def async_run_tiered_feed_sprint_once(

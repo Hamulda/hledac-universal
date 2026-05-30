@@ -72,6 +72,16 @@ do {
     case "hpke-decrypt":
         result = try parseHPKEDecrypt()
 
+    // CryptoKit AES-GCM for ZIP encryption (M1 hardware-accelerated)
+    case "cryptokit-status":
+        result = Commands.cryptokitStatus()
+
+    case "cryptokit-encrypt":
+        result = try parseCryptoKitEncrypt()
+
+    case "cryptokit-decrypt":
+        result = try parseCryptoKitDecrypt()
+
     case "--help", "-h", "help":
         printUsage()
         exit(0)
@@ -584,6 +594,126 @@ func parseHPKEDecrypt() throws -> CommandResult {
         recipientPrivateKeyB64: rkB64,
         infoB64: infoB64
     )
+}
+
+// MARK: - CryptoKit AES-GCM Command Parsing
+
+func parseCryptoKitEncrypt() throws -> CommandResult {
+    var password: String?
+    var outputPath: String?
+
+    let args = Array(CommandLine.arguments[2...])
+    var i = 0
+    while i < args.count {
+        switch args[i] {
+        case "--password":
+            guard i + 1 < args.count else {
+                return CommandResult.failure(
+                    errorCode: "MISSING_PASSWORD",
+                    message: "--password requires a value"
+                )
+            }
+            password = args[i + 1]
+            i += 2
+
+        case "--output":
+            guard i + 1 < args.count else {
+                return CommandResult.failure(
+                    errorCode: "MISSING_OUTPUT",
+                    message: "--output requires a value"
+                )
+            }
+            outputPath = args[i + 1]
+            i += 2
+
+        default:
+            i += 1  // Skip unknown args, stdin provides data
+        }
+    }
+
+    guard let pwd = password else {
+        return CommandResult.failure(
+            errorCode: "MISSING_PASSWORD",
+            message: "--password is required"
+        )
+    }
+
+    guard let outPath = outputPath else {
+        return CommandResult.failure(
+            errorCode: "MISSING_OUTPUT",
+            message: "--output is required"
+        )
+    }
+
+    return Commands.cryptokitEncrypt(password: pwd, outputPath: outPath)
+}
+
+func parseCryptoKitDecrypt() throws -> CommandResult {
+    var password: String?
+    var inputPath: String?
+    var outputPath: String?
+
+    let args = Array(CommandLine.arguments[2...])
+    var i = 0
+    while i < args.count {
+        switch args[i] {
+        case "--password":
+            guard i + 1 < args.count else {
+                return CommandResult.failure(
+                    errorCode: "MISSING_PASSWORD",
+                    message: "--password requires a value"
+                )
+            }
+            password = args[i + 1]
+            i += 2
+
+        case "--input":
+            guard i + 1 < args.count else {
+                return CommandResult.failure(
+                    errorCode: "MISSING_INPUT",
+                    message: "--input requires a value"
+                )
+            }
+            inputPath = args[i + 1]
+            i += 2
+
+        case "--output":
+            guard i + 1 < args.count else {
+                return CommandResult.failure(
+                    errorCode: "MISSING_OUTPUT",
+                    message: "--output requires a value"
+                )
+            }
+            outputPath = args[i + 1]
+            i += 2
+
+        default:
+            i += 1  // Skip unknown args
+        }
+    }
+
+    guard let pwd = password else {
+        return CommandResult.failure(
+            errorCode: "MISSING_PASSWORD",
+            message: "--password is required"
+        )
+    }
+
+    guard let inPath = inputPath else {
+        return CommandResult.failure(
+            errorCode: "MISSING_INPUT",
+            message: "--input is required"
+        )
+    }
+
+    guard let outPath = outputPath else {
+        return CommandResult.failure(
+            errorCode: "MISSING_OUTPUT",
+            message: "--output is required"
+        )
+    }
+
+    return Commands.cryptokitDecrypt(password: pwd, inputPath: inPath, outputPath: outPath)
 }
 
 func parseKeyId(_ args: [String]) throws -> String {

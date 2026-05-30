@@ -293,6 +293,46 @@ class JSONFormatter(ExportFormatter):
             with open(report_path, "w", encoding="utf-8") as f:
                 json.dump(sanitized_obj, f, indent=2, default=str)
             logger.info(f"[EXPORT] JSON report → {report_path}")
+
+            # Sprint F260B: PQ export encryption (HPKE X-Wing)
+            # Encrypt the report bundle when HLEDAC_ENABLE_PQ_EXPORT=1
+            _pq_encrypted_path = None
+            try:
+                import os as _os
+                if _os.environ.get("HLEDAC_ENABLE_PQ_EXPORT") == "1":
+                    from hledac.universal.security.pq_export_encryption import (
+                        ExportPolicy,
+                        encrypt_export_bundle,
+                    )
+                    import base64
+                    import time
+
+                    # Serialize report content to bytes
+                    report_bytes = json.dumps(sanitized_obj, indent=2, default=str).encode("utf-8")
+
+                    # AAD: sprint_id + timestamp for integrity binding
+                    aad = f"sprint_id={_sprint_id}&timestamp={int(time.time())}".encode()
+
+                    envelope, was_encrypted, error_code = await encrypt_export_bundle(
+                        plaintext=report_bytes,
+                        aad=aad,
+                        recipient_public_key_b64="",  # Generate new recipient key
+                        policy=ExportPolicy.PQ_PREFERRED,
+                    )
+                    if was_encrypted and envelope:
+                        _pq_encrypted_path = report_path.with_suffix(".pq.enc")
+                        encrypted_bundle = {
+                            "version": 1,
+                            "mode": envelope.mode,
+                            "encapsulated_key_b64": envelope.encapsulated_key_b64,
+                            "aad_b64": base64.b64encode(aad).decode(),
+                            "ciphertext_b64": envelope.ciphertext_b64,
+                        }
+                        with open(_pq_encrypted_path, "w") as f:
+                            json.dump(encrypted_bundle, f)
+                        logger.info(f"[EXPORT] PQ-encrypted report → {_pq_encrypted_path}")
+            except Exception as _pq_err:
+                logger.warning(f"[EXPORT] PQ encryption skipped: {_pq_err}")
         except Exception as e:
             logger.warning(f"[EXPORT] JSON write failed: {e}")
             report_path = None
@@ -439,6 +479,7 @@ class JSONFormatter(ExportFormatter):
 
         return {
             "report_json": str(report_path) if report_path else "",
+            "report_pq_encrypted": str(_pq_encrypted_path) if _pq_encrypted_path else "",
             "seeds_json": str(seeds_path),
             "product_value_summary": pvs,
             "sprint_summary": sprint_summary,

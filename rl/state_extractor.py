@@ -63,7 +63,7 @@ class StateExtractor:
         try:
             findings_accepted = getattr(result, 'findings_accepted', 0) or 0
             total_findings = getattr(result, 'findings_total', 0) or 0
-            runtime = getattr(result, 'runtime_seconds', 0) or 0
+            runtime = getattr(result, 'actual_duration_s', 0) or 0
             cycles = getattr(result, 'cycles_completed', 0) or 0
             new_iocs = getattr(result, 'new_iocs', 0) or 0
             queue_size = getattr(result, 'pending_count', 0) or 0

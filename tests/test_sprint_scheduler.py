@@ -618,3 +618,119 @@ async def test_scheduler_healthy_after_multiple_failsoft_paths(
     assert callable(sched.prioritize_sources)
     assert callable(sched.score_source)
     assert callable(sched.is_duplicate)
+
+
+# ── Sprint F259: Synthesis sidecar probe tests ─────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_synthesis_sidecar_skipped_when_env_disabled(minimal_config):
+    """
+    F259: HLEDAC_ENABLE_SYNTHESIS=0 (default) → synthesis skipped.
+    verify: _result fields remain at defaults.
+    """
+    SprintScheduler = _import_scheduler()
+    sched = SprintScheduler(minimal_config, ct_log_client=None)
+    sched._duckdb_store = AsyncMock()
+    sched._duckdb_store.get_top_findings = AsyncMock(return_value=[])
+    sched._duckdb_store.get_recent_findings = AsyncMock(return_value=[])
+
+    # Env disabled (default)
+    with patch.dict(os.environ, {}, clear=False):
+        await sched._run_synthesis_sidecar("test query", sched._duckdb_store, None)
+
+    assert sched._result.synthesis_success is False
+    assert sched._result.synthesis_engine in ("unknown", "import_failed")
+    assert sched._result.synthesis_findings_count == 0
+
+
+@pytest.mark.asyncio
+async def test_synthesis_sidecar_skipped_when_no_findings(minimal_config):
+    """
+    F259: No findings → synthesis skipped.
+    verify: _result fields updated, no crash.
+    """
+    SprintScheduler = _import_scheduler()
+    sched = SprintScheduler(minimal_config, ct_log_client=None)
+    sched._duckdb_store = AsyncMock()
+    # Return empty list - no findings
+    sched._duckdb_store.get_top_findings = AsyncMock(return_value=[])
+
+    with patch.dict(os.environ, {"HLEDAC_ENABLE_SYNTHESIS": "1"}):
+        await sched._run_synthesis_sidecar("test query", sched._duckdb_store, None)
+
+    # Should skip due to no findings
+    assert sched._result.synthesis_success is False
+
+
+@pytest.mark.asyncio
+async def test_synthesis_sidecar_skipped_when_uma_emergency(minimal_config):
+    """
+    F259: UMA emergency → synthesis skipped.
+    verify: _result.synthesis_engine = "uma_guard".
+    """
+    SprintScheduler = _import_scheduler()
+    sched = SprintScheduler(minimal_config, ct_log_client=None)
+    sched._duckdb_store = AsyncMock()
+    sched._duckdb_store.get_top_findings = AsyncMock(return_value=[
+        {"ioc": "1.2.3.4", "text": "malware test"}
+    ])
+
+    # Mock UMA emergency
+    mock_uma = MagicMock()
+    mock_uma.rss_gib = 6.5
+    mock_uma.is_emergency = True
+    mock_uma.is_critical = True
+    mock_uma.state = "emergency"
+
+    with patch.dict(os.environ, {"HLEDAC_ENABLE_SYNTHESIS": "1"}):
+        with patch("hledac.universal.utils.uma_budget.get_uma_snapshot", return_value=mock_uma):
+            await sched._run_synthesis_sidecar("test query", sched._duckdb_store, None)
+
+    assert sched._result.synthesis_success is False
+    assert sched._result.synthesis_engine == "uma_guard"
+
+
+@pytest.mark.asyncio
+async def test_synthesis_sidecar_graceful_on_error(minimal_config):
+    """
+    F259: Exception in synthesis → graceful degradation.
+    verify: _result fields updated but no crash.
+    """
+    SprintScheduler = _import_scheduler()
+    sched = SprintScheduler(minimal_config, ct_log_client=None)
+    sched._duckdb_store = AsyncMock()
+    sched._duckdb_store.get_top_findings = AsyncMock(return_value=[
+        {"ioc": "1.2.3.4", "text": "malware test"}
+    ])
+
+    # Mock SynthesisRunner that raises
+    mock_runner = MagicMock()
+    mock_runner.synthesize_findings = AsyncMock(side_effect=RuntimeError("model error"))
+    mock_runner.inject_lifecycle_adapter = MagicMock()
+
+    with patch.dict(os.environ, {"HLEDAC_ENABLE_SYNTHESIS": "1"}):
+        with patch("hledac.universal.brain.synthesis_runner.SynthesisRunner", return_value=mock_runner):
+            await sched._run_synthesis_sidecar("test query", sched._duckdb_store, None)
+
+    assert sched._result.synthesis_success is False
+    assert sched._result.synthesis_engine == "error"
+
+
+def test_sprint_scheduler_result_synthesis_fields_exist():
+    """
+    F259: SprintSchedulerResult has all required synthesis fields.
+    verify: fields exist with correct default values.
+    """
+    from hledac.universal.runtime.sprint_scheduler import SprintSchedulerResult
+
+    r = SprintSchedulerResult()
+    assert hasattr(r, "synthesis_success")
+    assert hasattr(r, "synthesis_engine")
+    assert hasattr(r, "synthesis_findings_count")
+    assert hasattr(r, "synthesis_text")
+
+    # Defaults
+    assert r.synthesis_success is False
+    assert r.synthesis_engine == "unknown"
+    assert r.synthesis_findings_count == 0
+    assert r.synthesis_text == ""

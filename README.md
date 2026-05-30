@@ -1,48 +1,100 @@
-# Hledac Universal — Runtime Data Locations
+# Hledac Universal
 
-## Overview
+Asynchronní autonomní OSINT orchestrátor pro M1 MacBook (8GB UMA).
 
-All runtime data lives under `hledac/universal/runtime/` (gitignored).
-No external XDG directories are used — everything is self-contained.
-
-## Runtime Directory Structure
-
-```
-hledac/universal/
-└── runtime/               ← gitignored, created at import
-    ├── cti/                ← CTI_EXPORT_DIR — STIX CTI bundle exports
-    ├── state/              ← RUNTIME_STATE — sprint state and reports
-    ├── embeddings/         ← EMBEDDING_CACHE — vector embeddings cache
-    └── benchmarks/          ← BENCHMARK_CACHE — benchmark results
-```
-
-## Path Constants (paths.py)
-
-| Constant | Path |
-|----------|------|
-| `CTI_EXPORT_DIR` | `runtime/cti/` |
-| `RUNTIME_STATE` | `runtime/state/` |
-| `EMBEDDING_CACHE` | `runtime/embeddings/` |
-| `BENCHMARK_CACHE` | `runtime/benchmarks/` |
-
-## Environment Variable Overrides
+## Rychlý start
 
 ```bash
-# Override CTI export directory (downstream backward compat)
-export GHOST_EXPORT_DIR=/custom/path
+# Základní sprint
+python -m hledac.universal --sprint "incident response target"
+
+# Aggressive mode s plnou rychlostí
+python -m hledac.universal --sprint "threat actor infrastructure" --aggressive
+
+# S časovým limitem
+python -m hledac.universal --sprint "domain reconnaissance" --duration 300
 ```
 
-## Clearing Runtime State
+## Architektura
+
+```
+┌─────────────────────────────────────────────────────────┐
+│                    SprintScheduler                        │
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────────┐ │
+│  │ Acquisition │  │  Sidecars   │  │  Brain (MLX)    │ │
+│  │   Lanes     │→ │  Advisory   │→ │  DSPy/Hypothesis│ │
+│  └─────────────┘  └─────────────┘  └─────────────────┘ │
+│         ↓                ↓                ↓              │
+│  ┌─────────────────────────────────────────────────────┐│
+│  │              DuckDBShadowStore                       ││
+│  │   DuckDB (canonical) │ LMDB (metadata) │ LanceDB   ││
+│  └─────────────────────────────────────────────────────┘│
+└─────────────────────────────────────────────────────────┘
+```
+
+## Klíčové funkce
+
+- **CT Intel**: Certstream, Passive DNS, Shodan, Censys, GreyNoise
+- **Discovery**: DuckDuckGo, Wayback, CommonCrawl, Providerless cascade
+- **Dark surface**: Tor, I2P, IPFS, DHT pivots
+- **Enrichment**: BGP, banner grab, identity stitching, leak detection
+- **Brain**: Hermes3 MLX inference, DSPy compiled programs
+
+## Feature Flags
+
+| Flag | Default | Popis |
+|------|---------|-------|
+| `HLEDAC_ENABLE_DSPY=1` | OFF | DSPy hypothesis generation |
+| `HLEDAC_ENABLE_HERMES_SYNTHESIS=1` | OFF | Hermes3 synthesis |
+| `HLEDAC_ENABLE_BGP=1` | OFF | BGP enrichment |
+| `HLEDAC_ENABLE_IPFS=1` | OFF | IPFS discovery |
+| `HLEDAC_ENABLE_DARK_PIVOTS=1` | OFF | Tor/I2P pivots |
+| `HLEDAC_ENABLE_SHODAN=1` | OFF | Shodan API |
+
+Viz `CLAUDE.md` pro kompletní seznam 45+ feature flags.
+
+## Testování
 
 ```bash
-# Clear all runtime data
-rm -rf hledac/universal/runtime/
+# Rychlý test suite
+pytest tests/ -x --timeout=30 -q
 
-# Clear only CTI exports
-rm -rf hledac/universal/runtime/cti/ghost_cti_*.stix.json
+# Smoke test
+python smoke_runner.py --smoke
+
+# Probe testy (sprint-specific)
+pytest probe_f226a_mission_runtime/ -v
 ```
 
-## Implementation
+## M1 8GB Memory Budget
 
-Path constants are defined in `paths.py` and initialized at import time.
-All directories are created with `mkdir(parents=True, exist_ok=True)`.
+| Komponenta | Limit |
+|------------|-------|
+| macOS | ~2.5 GB |
+| Orchestrátor | ~1 GB |
+| LLM (Hermes3 4bit) | ~2 GB |
+| KV cache | ~0.75 GB |
+| **Maximum** | **6.25 GB** |
+
+Metal cache: 2.5 GiB hard cap (`mx.metal.set_cache_limit`)
+
+## Invarianty (GHOST_INVARIANTS.md)
+
+- `asyncio.gather` vždy s `return_exceptions=True`
+- `mx.eval([])` před `mx.metal.clear_cache()`
+- Žádné `time.sleep()` v async kódu
+- DuckDB write pouze přes `async_ingest_findings_batch()`
+- LMDB bulk write přes `cursor.putmulti()`
+
+## Struktura projektu
+
+| Adresář | Účel |
+|---------|------|
+| `runtime/` | Sprint lifecycle, schedulers |
+| `knowledge/` | DuckDB, LMDB, LanceDB stores |
+| `brain/` | MLX inference, DSPy, hypothesis |
+| `fetching/` | HTTP fetching, curl_cffi |
+| `transport/` | Tor, I2P, stealth adapters |
+| `coordinators/` | Fetch, sidecar orchestration |
+| `utils/` | MLX cache, rate limiters, async helpers |
+| `tests/` | Unit a integration testy |

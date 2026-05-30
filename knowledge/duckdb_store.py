@@ -143,6 +143,7 @@ __all__ = [
     "CanonicalFinding",
     "FindingQualityDecision",
     "QualityRejectionRecord",  # backward compat — real def moved to quality_assessment
+    "_normalize_osint_url",  # re-exported from quality_assessment for backward compat
 ]
 
 # Import QualityRejectionRecord from quality_assessment (moved in Sprint F216G refactor)
@@ -159,6 +160,7 @@ from .quality_assessment import (
     _compute_entropy,
     _compute_url_fingerprint,
     _normalize_for_quality,
+    _normalize_osint_url,  # re-exported for backward compat with tests
 )
 
 # Sprint F216G: WAL Manager and Dedup Manager (extracted from this file)
@@ -547,6 +549,17 @@ _SCHEMA_SQL = """
         pivot_facets_json TEXT NOT NULL,
         confidence_drift_json TEXT NOT NULL,
         updated_by_sprint_id TEXT NOT NULL
+    );
+    -- Sprint F224A: DHT metadata table for torrent content discovery
+    CREATE TABLE IF NOT EXISTS dht_metadata (
+        infohash TEXT PRIMARY KEY,
+        name TEXT,
+        files_json TEXT,
+        size_bytes BIGINT,
+        first_seen DOUBLE,
+        last_seen DOUBLE,
+        peer_count INT,
+        sources_json TEXT
     );
 """
 
@@ -1077,6 +1090,92 @@ class DuckDBShadowStore:
             )
         except Exception:
             pass  # table already exists or connection not ready
+
+    # --------------------------------------------------------------------------
+    # Sprint F224A: DHT metadata ingestion
+    # --------------------------------------------------------------------------
+
+    async def async_ingest_dht_metadata(self, metadata: list[dict[str, Any]]) -> int:
+        """
+        Sprint F224A: Ingest DHT metadata from torrent discovery.
+
+        Args:
+            metadata: List of DHT metadata dicts with keys:
+                - infohash: str (required, primary key)
+                - name: str (optional)
+                - files: list[str] (optional, stored as JSON)
+                - size_bytes: int (optional)
+                - first_seen: float (optional, defaults to now)
+                - last_seen: float (optional, defaults to now)
+                - peer_count: int (optional)
+                - sources: list[str] (optional, stored as JSON)
+
+        Returns:
+            Number of records ingested
+        """
+        if not metadata:
+            return 0
+
+        if not self._initialized or self._closed: return 0
+
+        loop = asyncio.get_running_loop()
+        now = _time.time()
+
+        def _sync_ingest() -> int:
+            conn = self._file_conn if self._db_path else self._persistent_conn
+            if conn is None:
+                return 0
+
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS dht_metadata (
+                    infohash TEXT PRIMARY KEY,
+                    name TEXT,
+                    files_json TEXT,
+                    size_bytes BIGINT,
+                    first_seen DOUBLE,
+                    last_seen DOUBLE,
+                    peer_count INT,
+                    sources_json TEXT
+                )
+            """)
+
+            count = 0
+            for m in metadata:
+                infohash = m.get("infohash", "")
+                if not infohash:
+                    continue
+
+                files_json = orjson.dumps(m.get("files", [])).decode() if m.get("files") else None
+                sources_json = orjson.dumps(m.get("sources", [])).decode() if m.get("sources") else None
+
+                conn.execute("""
+                    INSERT INTO dht_metadata (
+                        infohash, name, files_json, size_bytes,
+                        first_seen, last_seen, peer_count, sources_json
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(infohash) DO UPDATE SET
+                        name = COALESCE(excluded.name, dht_metadata.name),
+                        files_json = COALESCE(excluded.files_json, dht_metadata.files_json),
+                        size_bytes = COALESCE(excluded.size_bytes, dht_metadata.size_bytes),
+                        last_seen = excluded.last_seen,
+                        peer_count = COALESCE(excluded.peer_count, dht_metadata.peer_count),
+                        sources_json = COALESCE(excluded.sources_json, dht_metadata.sources_json)
+                """, (
+                    infohash,
+                    m.get("name"),
+                    files_json,
+                    m.get("size_bytes"),
+                    m.get("first_seen", now),
+                    m.get("last_seen", now),
+                    m.get("peer_count"),
+                    sources_json,
+                ))
+                count += 1
+
+            conn.commit()
+            return count
+
+        return await loop.run_in_executor(None, _sync_ingest)
 
     # --------------------------------------------------------------------------
     # Sprint F214: DuckDB Query Executor — SQL template & transaction consolidation
@@ -1825,6 +1924,13 @@ class DuckDBShadowStore:
             return False
         if self._initialized:
             return True
+
+        # Sprint F259: Embedding dimension assertion — canonical MRL = 256d
+        from hledac.universal.core.mlx_embeddings import MLXEmbeddingManager
+        _EMBEDDING_DIM = getattr(MLXEmbeddingManager, 'EMBEDDING_DIM', 256)
+        assert _EMBEDDING_DIM == 256, (
+            f"Embedding dimension mismatch: MLXEmbeddingManager.EMBEDDING_DIM={_EMBEDDING_DIM}, expected 256 (MRL canonical)"
+        )
 
         # Sprint 8D: Only resolve path if not already injected via __init__
         if self._db_path is None:

@@ -27,7 +27,7 @@ from hledac.universal.project_types import (
     Severity,
 )
 
-from ..config import PrivacyConfig
+from hledac.universal.config import PrivacyConfig
 
 logger = logging.getLogger(__name__)
 

@@ -28,7 +28,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import re
+import time
 from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
@@ -82,6 +84,7 @@ class GopherItem:
     selector: str
     host: str
     port: int
+    raw_line: str = ""  # Optional: raw line for debugging
 
     @property
     def is_directory(self) -> bool:
@@ -90,6 +93,38 @@ class GopherItem:
     @property
     def is_file(self) -> bool:
         return self.item_type == GTYPE_FILE
+
+
+@dataclass
+class GopherFinding:
+    """Represents parsed gopher content as a finding for OSINT."""
+    title: str
+    content: str
+    url: str
+    item_type: str
+    source_server: str
+
+
+# Bootstrap gopher servers for discovery
+GOPHER_BOOTSTRAP_SERVERS: list[tuple[str, int]] = [
+    ("gopher.floodgap.com", DEFAULT_PORT),
+    ("gopher.quux.org", DEFAULT_PORT),
+]
+
+# Gophermap line types (RFC 1436)
+GOPHER_LINES: dict[str, str] = {
+    "0": "file", "1": "directory", "2": "CSO phone-book",
+    "3": "error", "4": "BinHex file", "5": "DOS file",
+    "6": "Uuencoded file", "7": "search", "8": "Telnet",
+    "9": "binary", "+": "mirror", "T": "TN3270",
+    "g": "gif", "I": "image", "h": "HTML", "s": "wav",
+    "e": "event", "M": "MIME",
+}
+
+# Crawling bounds
+MAX_CRAWL_HOPS: int = 5
+MAX_CRAWL_ITEMS: int = 100
+MAX_CRAWL_TIME: float = 60.0
 
 
 class GopherTransport:
@@ -383,6 +418,95 @@ class GopherTransport:
         """Graceful GopherTransport shutdown — no-op since connections are per-request."""
         pass
 
+    # ── Gopherspace Discovery & Crawling ────────────────────────────────────────
+
+    async def get_hole_index(self) -> list[GopherItem]:
+        """
+        Fetch the main index of active gopher servers from floodgap.
+
+        Returns:
+            List of GopherItem from the floodgap gopher hole directory
+        """
+        response = await self._fetch("gopher.floodgap.com", DEFAULT_PORT, "/", timeout_s=15.0, max_bytes=MAX_RESPONSE_BYTES)
+        return response.items
+
+    async def crawl_gopherspace(
+        self,
+        start_host: str = "gopher.floodgap.com",
+        start_port: int = DEFAULT_PORT,
+        start_selector: str = "/",
+        max_hops: int = MAX_CRAWL_HOPS,
+        max_items: int = MAX_CRAWL_ITEMS,
+        max_time: float = MAX_CRAWL_TIME,
+    ) -> list[GopherFinding]:
+        """
+        Crawl gopherspace starting from a bootstrap server.
+
+        Args:
+            start_host: Starting gopher server hostname
+            start_port: Starting gopher server port
+            start_selector: Starting gopher selector (default: root)
+            max_hops: Maximum link traversal depth (default 5)
+            max_items: Maximum items per server (default 100)
+            max_time: Maximum crawl time in seconds (default 60)
+
+        Returns:
+            List of GopherFinding from crawled content
+        """
+        import time as _time
+
+        findings: list[GopherFinding] = []
+        seen_urls: set[str] = set()
+        queue: list[tuple[str, int, str, int]] = [(start_host, start_port, start_selector, 0)]
+        start_time = _time.monotonic()
+
+        sem = asyncio.Semaphore(2)  # M1 memory: max 2 concurrent
+
+        while queue and (_time.monotonic() - start_time) < max_time:
+            host, port, selector, depth = queue.pop(0)
+
+            if depth > max_hops:
+                continue
+
+            url = f"gopher://{host}:{port}{selector}"
+            if url in seen_urls:
+                continue
+            seen_urls.add(url)
+
+            async with sem:
+                try:
+                    response = await self._fetch(host, port, selector, timeout_s=10.0, max_bytes=1_000_000)
+
+                    if response.items:
+                        # Directory - queue links for crawling
+                        for item in response.items[:max_items]:
+                            if item.item_type in (GTYPE_FILE, GTYPE_DIRECTORY, GTYPE_SEARCH):
+                                queue.append((item.host, item.port, item.selector, depth + 1))
+                            if item.item_type == GTYPE_FILE:
+                                findings.append(GopherFinding(
+                                    title=item.display_string,
+                                    content="",
+                                    url=f"gopher://{item.host}:{item.port}{item.selector}",
+                                    item_type="file",
+                                    source_server=host,
+                                ))
+                    elif response.content and response.content_type == "file":
+                        # Direct file content
+                        findings.append(GopherFinding(
+                            title=selector.split("/")[-1] or "root",
+                            content=response.text[:5000],
+                            url=url,
+                            item_type="content",
+                            source_server=host,
+                        ))
+
+                except Exception as e:
+                    logger.debug(f"Crawl error {host}:{port}: {e}")
+                    continue
+
+        logger.debug(f"Gopherspace crawl: {len(findings)} findings, {len(seen_urls)} URLs visited")
+        return findings[:max_items * 10]
+
     # ── Veronica-2 Search ────────────────────────────────────────────────────────
     VERONICA_HOST = "gopher.floodgap.com"
     VERONICA_PORT = 70
@@ -417,10 +541,10 @@ class GopherTransport:
         Returns dict with fields matching CanonicalFinding for sidecar ingestion.
         """
         finding = {
-            "source_type": "gopher_discovery",
+            "source_type": "gopher_content",
             "ioc_type": "url",
             "ioc_value": f"gopher://{item.host}:{item.port}/{item.selector}",
-            "confidence": 0.6,
+            "confidence": 0.7,
             "confidence_signal": "gopher_menu_item",
             "finding_data": {
                 "item_type": item.item_type,
@@ -438,6 +562,47 @@ class GopherTransport:
         if sprint_id:
             finding["sprint_id"] = sprint_id
         return finding
+
+    async def search_as_findings(self, query: str, max_results: int = 20) -> list:
+        """
+        Search gopherspace and return as CanonicalFinding list.
+
+        Args:
+            query: Search query string
+            max_results: Maximum number of results (default 20)
+
+        Returns:
+            List of CanonicalFinding
+        """
+        if os.getenv("HLEDAC_ENABLE_ALT_PROTOCOLS", "0") != "1":
+            return []
+
+        from hledac.universal.knowledge.duckdb_store import CanonicalFinding
+
+        findings: list = []
+        try:
+            response = await self.search(query)
+            for item in response.items[:max_results]:
+                if item.item_type in (GTYPE_FILE, GTYPE_DIRECTORY, GTYPE_SEARCH):
+                    content = ""
+                    if item.item_type == GTYPE_FILE:
+                        content_resp = await self._fetch(item.host, item.port, item.selector, timeout_s=10.0, max_bytes=1_000_000)
+                        content = content_resp.text[:4096] if content_resp.text else ""
+
+                    finding = CanonicalFinding(
+                        finding_id=f"gopher-{int(time.time() * 1000)}",
+                        query=query,
+                        source_type="gopher_content",
+                        confidence=0.7,
+                        ts=time.time(),
+                        provenance=(f"gopher://{item.host}:{item.port}/{item.selector}",),
+                        payload_text=content if content else None,
+                    )
+                    findings.append(finding)
+        except Exception as e:
+            logger.debug(f"Gopher search failed for '{query}': {e}")
+
+        return findings
 
 
 # ── Canonical singleton ───────────────────────────────────────────────────────

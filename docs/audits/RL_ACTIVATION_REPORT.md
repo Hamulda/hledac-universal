@@ -1,7 +1,7 @@
 # RL F257: QMIX Q-Network Activation Report
 
-**Date:** 2026-05-23
-**Status:** ACTIVATED — QMIX training loop wired, inference-only after 124-sprint warmup
+**Date:** 2026-05-30 (updated)
+**Status:** ACTIVATED & VERIFIED — Q-network weight updates working, 9/9 probe tests passing
 
 ---
 
@@ -88,6 +88,44 @@ mx.eval([])          # force lazy eval completion before cache clear
 mx.metal.clear_cache()  # reclaim GPU memory
 ```
 Prevents MLX Metal cache accumulation on 8GB UMA.
+
+---
+
+## Bug Fixes Applied (2026-05-30)
+
+| Bug | File | Fix |
+|-----|------|-----|
+| `add()` → `push()` | `sprint_policy_manager.py` | Replay buffer uses `push()` not `add()` |
+| `_init_qmix()` called every update() | `sprint_policy_manager.py` | Added guard: `if self._qmix_trainer is not None: return` |
+| Wrong field `runtime_seconds` | `state_extractor.py` | Changed to `actual_duration_s` |
+| Weight serialization empty | `sprint_policy_manager.py` | Recursive `tree_map` for nested MLX params |
+| Batch size check vs buffer size | `sprint_policy_manager.py` | Changed `batch["states"].shape[0]` to `replay_buffer.size` |
+| MLX lazy init broken | `replay_buffer.py` | Changed `_MLX_CORE_AVAILABLE` to `_get_mlx_core()` call |
+| numpy not imported | `sprint_policy_manager.py` | Added `import numpy as np` |
+
+---
+
+## Probe Tests (9/9 passing)
+
+```
+tests/probe_f257_qmix_training.py
+├── TestReplayBuffer
+│   ├── test_push_and_sample          ✓
+│   └── test_buffer_fills_and_overwrites ✓
+├── TestRewardFunction
+│   ├── test_reward_formula_log1p      ✓
+│   ├── test_reward_time_penalty      ✓
+│   └── test_reward_novelty_bonus     ✓
+├── TestQMIXTraining
+│   ├── test_qmix_update_produces_loss ✓
+│   └── test_weight_serialization_roundtrip ✓
+├── TestTrainingLoop
+│   └── test_five_train_steps_convergence ✓
+│       Loss curve: [0.54, 0.69, 0.53, 0.44, 0.35] ↓
+└── TestPolicyManagerIntegration
+    └── test_update_with_training_enabled ✓
+        last_train_sprint: 70
+```
 
 ---
 

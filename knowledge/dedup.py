@@ -31,7 +31,12 @@ from typing import Any
 import psutil
 
 # Sprint F222F: RotatingBloomFilter for cross-run URL dedup pre-check
-__all__ = ["DedupManager"]
+__all__ = ["DedupManager", "RotatingBloomFilter"]
+
+import hashlib
+import os
+import struct
+from typing import Any
 
 # Sprint 8AG §6.17: Default dedup LMDB map size
 _DEDUP_LMDB_MAP_SIZE: int = 64 * 1024 * 1024  # 64MB
@@ -46,6 +51,175 @@ def _load_dedup_hot_cache_max() -> int:
         return _DEDUP_HOT_CACHE_MAX
     except ImportError:
         return 10000
+
+
+class RotatingBloomFilter:
+    """
+    Cross-run URL dedup pre-check. Sprint F222F.
+
+    Two-generation bloom filter:
+    - active: current generation, being written to
+    - previous: previous generation, read-only for lookups
+
+    When active reaches capacity, rotate: active becomes previous, new active created.
+    This prevents unbounded memory growth while maintaining dedup across many runs.
+
+    Pure Python implementation using hashlib with multiple salt prefixes.
+    """
+
+    BLOOM_KEY_ACTIVE: str = "bloom_active"
+    BLOOM_KEY_PREVIOUS: str = "bloom_previous"
+    BLOOM_KEY_COUNTER: str = "bloom_counter"
+
+    def __init__(
+        self,
+        capacity: int = 100_000,
+        fp_rate: float = 0.001,
+        lmdb_path: str | None = None,
+    ) -> None:
+        """
+        Args:
+            capacity: Max items per generation before rotation.
+            fp_rate: Target false positive rate.
+            lmdb_path: Path to LMDB for persistence. If None, uses default.
+        """
+        self._capacity = capacity
+        self._fp_rate = fp_rate
+
+        # Calculate optimal bit count and hash count
+        # bit_count = -capacity * log(fp_rate) / (log(2)^2)
+        import math
+        self._bit_count = int(-capacity * math.log(fp_rate) / (math.log(2) ** 2))
+        # hash_count = (bit_count / capacity) * log(2)
+        self._hash_count = max(1, int((self._bit_count / capacity) * math.log(2)))
+        self._byte_count = (self._bit_count + 7) // 8
+
+        # LMDB path
+        if lmdb_path is None:
+            from hledac.universal.paths import LMDB_ROOT
+            lmdb_path = str(LMDB_ROOT / "bloom_filter.lmdb")
+        self._lmdb_path = lmdb_path
+        self._lmdb_env: Any | None = None
+
+        # In-memory bitsets
+        self._active: bytearray = bytearray(self._byte_count)
+        self._previous: bytearray | None = None
+        self._counter: int = 0
+
+        # Salt prefixes for multiple hash functions
+        self._salts = [f"hledac_bloom_gen{i}_" for i in range(self._hash_count)]
+
+    def _init_lmdb(self) -> None:
+        """Initialize LMDB for persistence."""
+        if self._lmdb_env is not None:
+            return
+        try:
+            import lmdb
+            path = os.path.dirname(self._lmdb_path)
+            if path:
+                os.makedirs(path, exist_ok=True)
+            self._lmdb_env = lmdb.open(self._lmdb_path, map_size=64 * 1024 * 1024)
+        except Exception:
+            self._lmdb_env = None
+
+    def _set_bit(self, bitset: bytearray, bit: int) -> None:
+        """Set a bit in the bitset."""
+        bitset[bit // 8] |= 1 << (bit % 8)
+
+    def _get_bit(self, bitset: bytearray, bit: int) -> bool:
+        """Get a bit from the bitset."""
+        return bool(bitset[bit // 8] & (1 << (bit % 8)))
+
+    def _hash_n(self, item: str, salt: str) -> int:
+        """Compute hash for item with salt, return int in range [0, bit_count)."""
+        h = hashlib.blake2b(f"{salt}{item}".encode(), digest_size=8).digest()
+        return struct.unpack("<Q", h)[0] % self._bit_count
+
+    def _hashes(self, item: str) -> list[int]:
+        """Compute all hash values for an item."""
+        return [self._hash_n(item, salt) for salt in self._salts]
+
+    def add(self, item: str) -> None:
+        """
+        Add item hash to active filter. Rotate if active is full.
+
+        Args:
+            item: URL or fingerprint string to add.
+        """
+        if self._counter >= self._capacity:
+            self._rotate()
+
+        for h in self._hashes(item):
+            self._set_bit(self._active, h)
+        self._counter += 1
+
+    def contains(self, item: str) -> bool:
+        """
+        Check both active and previous filters.
+
+        Args:
+            item: URL or fingerprint string to check.
+
+        Returns:
+            True if item was previously added (possible duplicate).
+        """
+        for h in self._hashes(item):
+            if not self._get_bit(self._active, h):
+                return False
+            if self._previous is not None and not self._get_bit(self._previous, h):
+                return False
+        return True
+
+    def _rotate(self) -> None:
+        """Rotate: active → previous, new empty active."""
+        self._previous = self._active
+        self._active = bytearray(self._byte_count)
+        self._counter = 0
+
+    def persist(self) -> None:
+        """Save both filters to LMDB."""
+        self._init_lmdb()
+        if self._lmdb_env is None:
+            return
+        try:
+            with self._lmdb_env.begin(write=True) as txn:
+                txn.put(self.BLOOM_KEY_ACTIVE.encode(), bytes(self._active))
+                txn.put(
+                    self.BLOOM_KEY_PREVIOUS.encode(),
+                    bytes(self._previous) if self._previous else b""
+                )
+                txn.put(self.BLOOM_KEY_COUNTER.encode(), struct.pack("<Q", self._counter))
+        except Exception:
+            pass
+
+    def load(self) -> None:
+        """Load from LMDB at startup."""
+        self._init_lmdb()
+        if self._lmdb_env is None:
+            return
+        try:
+            with self._lmdb_env.begin(write=False) as txn:
+                active = txn.get(self.BLOOM_KEY_ACTIVE.encode())
+                if active:
+                    self._active = bytearray(active)
+                previous = txn.get(self.BLOOM_KEY_PREVIOUS.encode())
+                if previous:
+                    self._previous = bytearray(previous)
+                counter = txn.get(self.BLOOM_KEY_COUNTER.encode())
+                if counter:
+                    self._counter = struct.unpack("<Q", counter)[0]
+        except Exception:
+            pass
+
+    def close(self) -> None:
+        """Close LMDB and persist data."""
+        if self._lmdb_env is not None:
+            self.persist()
+            try:
+                self._lmdb_env.close()
+            except Exception:
+                pass
+            self._lmdb_env = None
 
 
 class DedupManager:
