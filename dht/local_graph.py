@@ -214,5 +214,64 @@ class LocalGraphStore:
         loop = asyncio.get_running_loop()
         await loop.run_in_executor(None, _clear)
 
+    # =============================================================================
+    # DHT Routing Table Snapshot — Sprint F214
+    # =============================================================================
+    # Periodic snapshot of the full routing table (msgpack-encoded list of
+    # {node_id, host, port, last_seen} dicts). Stored under a single key
+    # ("routing_table_v1") to enable fast whole-routing-table restore on startup
+    # without per-node cursor scan.
+
+    async def save_routing_snapshot(self, nodes: list[dict]) -> None:
+        """
+        Persist full routing table snapshot to LMDB.
+
+        Args:
+            nodes: list of {node_id, host, port, last_seen} dicts (capped by
+                caller; typically <= 160 * 20 = 3200 entries).
+        """
+        try:
+            payload = orjson.dumps({"version": 1, "nodes": nodes})
+            bucket_key = self.key_manager.get_key_for_bucket(self.bucket_id)
+            encrypted = encrypt_aes_gcm(
+                bucket_key, payload, associated_data=b"routing_table_v1"
+            )
+            loop = asyncio.get_running_loop()
+
+            def _put():
+                with self.env.begin(write=True) as txn:
+                    txn.put(b"routing_table_v1", encrypted)
+
+            await loop.run_in_executor(None, _put)
+        except Exception:
+            pass  # Fail-soft: snapshot never blocks DHT
+
+    async def load_routing_snapshot(self) -> list[dict]:
+        """
+        Load persisted routing table snapshot. Returns empty list if missing
+        or on any decryption/deserialization error.
+        """
+        try:
+            bucket_key = self.key_manager.get_key_for_bucket(self.bucket_id)
+
+            def _get():
+                with self.env.begin() as txn:
+                    blob = txn.get(b"routing_table_v1")
+                    if blob is None:
+                        return None
+                    return decrypt_aes_gcm(
+                        bucket_key, blob, associated_data=b"routing_table_v1"
+                    )
+
+            loop = asyncio.get_running_loop()
+            plaintext = await loop.run_in_executor(None, _get)
+            if not plaintext:
+                return []
+            data = orjson.loads(plaintext)
+            nodes = data.get("nodes", []) if isinstance(data, dict) else []
+            return nodes if isinstance(nodes, list) else []
+        except Exception:
+            return []
+
     async def close(self) -> None:
         self.env.close()

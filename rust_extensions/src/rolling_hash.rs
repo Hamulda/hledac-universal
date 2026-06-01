@@ -1,6 +1,7 @@
 //! Rolling hash (Rabin-Karp) implementation for fast sliding-window URL hashing.
 
 use pyo3::prelude::*;
+use xxhash_rust::xxh3::xxh3_64;
 
 /// Rabin-Karp rolling hash engine for URL deduplication.
 ///
@@ -117,7 +118,16 @@ fn pow_mod(base: u128, exp: usize, modulus: u128) -> u128 {
     result
 }
 
-/// Fast xxhash64 implementation using std.
+/// Fast xxHash3-64 hash for general-purpose content hashing.
+///
+/// Implementation note: prior version used a DJB2 inline loop, which
+/// duplicated `xxhash_ext::content_hash_64` and was ~10× slower.
+/// Now delegates to the `xxhash-rust` crate (already in Cargo deps).
+///
+/// Kept as a separate `#[pyclass]` for API stability — the tests
+/// in `tests/test_hledac_core_rust.py::TestFastHasher` import
+/// `FastHasher.hash(...)` directly. Returning the same u64 space
+/// as `content_hash_64` means callers can swap implementations.
 #[pyclass]
 pub struct FastHasher {
     _private: (),
@@ -125,14 +135,11 @@ pub struct FastHasher {
 
 #[pymethods]
 impl FastHasher {
-    /// Compute xxhash64 for data (simple djb2 implementation).
+    /// Compute xxHash3-64 hash of `data`.
+    ///
+    /// Returns the same value as `hledac_rust_extensions.content_hash_64(data)`.
     #[staticmethod]
     fn hash(data: &[u8]) -> u64 {
-        // DJB2-style hash - fast and simple
-        let mut h: u64 = 5381;
-        for &byte in data {
-            h = h.wrapping_mul(33).wrapping_add(byte as u64);
-        }
-        h
+        xxh3_64(data)
     }
 }

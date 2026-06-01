@@ -83,3 +83,6 @@ better-sqlite3-*.tgz
 .code-review-graph/
 cache_storage/
 index.scip
+
+# AtomCode local-scope configs (machine-specific)
+.atomcode/local/

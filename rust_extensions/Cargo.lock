@@ -124,6 +124,7 @@ dependencies = [
  "aho-corasick",
  "once_cell",
  "pyo3",
+ "pyo3-build-config",
  "regex",
  "sha2",
  "url",

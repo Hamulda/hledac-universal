@@ -93,6 +93,22 @@ MAX_ITEM_BYTES = 256 * 1024  # 256KB hard cap
 MAX_PENDING_RPCS = 5000
 MAX_PENDING_RPC_TTL_S = 60.0
 
+# F214: Iterative get_peers crawl depth — max Kademlia lookup iterations
+MAXCRAWLDEPTH = 3
+# F214: Routing table snapshot threshold — persist every N newly discovered nodes
+DHT_SNAPSHOT_EVERY_N = 50
+# F214: LMDB snapshot key (msgpack-encoded routing table)
+DHT_SNAPSHOT_KEY = b"routing_table_v1"
+
+logger = logging.getLogger(__name__)
+
+MAX_ITEM_BYTES = 256 * 1024  # 256KB hard cap
+
+# F185E: MAX_PENDING_RPCS — hard upper bound na pending RPC count
+# TTL 60s — RPCs older than this are evicted on next cleanup
+MAX_PENDING_RPCS = 5000
+MAX_PENDING_RPC_TTL_S = 60.0
+
 # =============================================================================
 # DHT REAL UDP IMPLEMENTATION — Sprint F214
 # =============================================================================
@@ -120,7 +136,7 @@ MAX_PENDING_RPC_TTL_S = 60.0
 
 DHT_REAL_UDP = os.getenv("HLEDAC_ENABLE_DHT", "").lower() in ("1", "true", "yes", "on")
 MAX_DHT_PROBE_DURATION_S = 120
-DHT_BOOTSTRAP_TIMEOUT_S = 5.0
+DHT_BOOTSTRAP_TIMEOUT_S = 8.0
 DHT_BOOTSTRAP_SEMAPHORE = asyncio.Semaphore(2)  # M1: max 2 concurrent bootstraps
 DHT_REQUEST_SEMAPHORE = asyncio.Semaphore(50)  # M1: max 50 concurrent UDP requests
 DHT_REQUEST_TIMEOUT_S = 5.0  # 5s timeout per request
@@ -160,7 +176,7 @@ class _DHTBootstrapProtocol(asyncio.DatagramProtocol):
       - Fail-soft: no exceptions propagated to caller
     """
 
-    __slots__ = ("_loop", "_node_id", "_nodes_found", "_error")
+    __slots__ = ("_loop", "_node_id", "_nodes_found", "_error", "_transport")
 
     def __init__(self, loop, node_id: str):
         self._loop = loop
@@ -217,6 +233,137 @@ class _DHTBootstrapProtocol(asyncio.DatagramProtocol):
             return _bdecode_fixed(data)
         except Exception:
             return None
+
+
+class BEP5UDPProtocol(asyncio.DatagramProtocol):
+    """
+    F214: Real BEP-5 asyncio.DatagramProtocol with future-based pending map.
+
+    Bound to local UDP socket on construction. Caller invokes send_and_wait()
+    which encodes a bencode message, registers a Future keyed by transaction id,
+    and awaits response matched by transaction id. Datagram responses with
+    unknown tids are silently dropped (malformed packets).
+    """
+
+    __slots__ = ("_handler", "_transport", "_pending", "_loop")
+
+    def __init__(self, message_handler):
+        self._handler = message_handler
+        self._transport: asyncio.DatagramTransport | None = None
+        self._pending: dict[bytes, asyncio.Future] = {}
+        self._loop: asyncio.AbstractEventLoop | None = None
+
+    def connection_made(self, transport: asyncio.DatagramTransport) -> None:
+        self._transport = transport
+        self._loop = asyncio.get_running_loop()
+
+    def datagram_received(self, data: bytes, addr: tuple[str, int]) -> None:
+        try:
+            msg = bdecode(data)
+            tid = msg.get(b"t") if isinstance(msg, dict) else None
+            if tid and tid in self._pending:
+                fut = self._pending.pop(tid)
+                if not fut.done():
+                    fut.set_result((msg, addr))
+        except Exception:
+            pass  # malformed packet — silently drop
+
+    def error_received(self, exc: Exception) -> None:
+        logger.debug(f"[DHT] UDP transport error: {exc}")
+
+    async def send_and_wait(
+        self, addr: tuple[str, int], msg_dict: dict, timeout: float = 5.0
+    ) -> tuple[dict, tuple] | None:
+        """
+        Bencode msg_dict, send via UDP, await response matched by transaction id.
+
+        Returns:
+            (decoded_response_dict, source_addr) on success, or None on timeout.
+        """
+        tid = os.urandom(4)
+        msg_dict[b"t"] = tid
+        data = bencode(msg_dict)
+        loop = self._loop or asyncio.get_running_loop()
+        fut = loop.create_future()
+        self._pending[tid] = fut
+        try:
+            if self._transport:
+                self._transport.sendto(data, addr)
+            return await asyncio.wait_for(fut, timeout=timeout)
+        except asyncio.TimeoutError:
+            return None
+        finally:
+            self._pending.pop(tid, None)
+
+
+# =============================================================================
+# Module-level bencode/bdecode — BEP-3 standard
+# =============================================================================
+def bencode(obj: Any) -> bytes:
+    """
+    Standard BitTorrent bencode encoder (BEP-3).
+
+    Dicts MUST have bytes keys (BEP-5 requirement). Strings and bytes are
+    encoded as byte strings.
+    """
+    if isinstance(obj, dict):
+        items = []
+        for k, v in obj.items():
+            if isinstance(k, str):
+                k = k.encode("utf-8")
+            items.append(bencode(k))
+            items.append(bencode(v))
+        return b"d" + b"".join(items) + b"e"
+    if isinstance(obj, list):
+        return b"l" + b"".join(bencode(i) for i in obj) + b"e"
+    if isinstance(obj, bool):
+        # bool is subclass of int — encode as int explicitly
+        return f"i{1 if obj else 0}e".encode()
+    if isinstance(obj, int):
+        return f"i{obj}e".encode()
+    if isinstance(obj, (bytes, bytearray)):
+        return f"{len(obj)}:".encode() + bytes(obj)
+    if isinstance(obj, str):
+        b = obj.encode("utf-8")
+        return f"{len(b)}:".encode() + b
+    raise TypeError(f"bencode: unsupported type {type(obj).__name__}")
+
+
+def bdecode(data: bytes) -> Any:
+    """
+    Standard BitTorrent bencode decoder (BEP-3).
+    """
+    def _rec(d: bytes, p: int) -> tuple[Any, int]:
+        if p >= len(d):
+            raise ValueError("bdecode: unexpected end of data")
+        ch = d[p:p+1]
+        if ch == b"d":
+            res: dict = {}
+            p += 1
+            while p < len(d) and d[p:p+1] != b"e":
+                k, p = _rec(d, p)
+                v, p = _rec(d, p)
+                res[k] = v
+            return (res, p + 1)
+        if ch == b"l":
+            lst: list = []
+            p += 1
+            while p < len(d) and d[p:p+1] != b"e":
+                itm, p = _rec(d, p)
+                lst.append(itm)
+            return (lst, p + 1)
+        if ch == b"i":
+            p += 1
+            end = d.index(b"e", p)
+            return (int(d[p:end]), end + 1)
+        if ch.isdigit():
+            colon = d.index(b":", p)
+            ln = int(d[p:colon])
+            start = colon + 1
+            return (d[start:start + ln], start + ln)
+        raise ValueError(f"bdecode: unexpected byte {ch!r} at {p}")
+    result, _ = _rec(data, 0)
+    return result
 
 
 def _bdecode_fixed(data: bytes) -> dict[str, Any] | None:
@@ -446,13 +593,18 @@ class KademliaNode:
         self._routing_loaded = False
 
         self.routing_table: dict[int, list[dict[str, Any]]] = {}
-        self.data_store: Ordereddict[str, tuple[Any, float]] = OrderedDict()
+        self.data_store: OrderedDict[str, tuple[Any, float]] = OrderedDict()
         self.data_store_max = 10_000
         self.data_store_ttl = 3600
 
         self._running = True
         self._refresh_task: asyncio.Task | None = None
         self._transport = None
+        # F214: persistent BEP-5 UDP transport + protocol (set by start_udp)
+        self._bep5_transport: asyncio.DatagramTransport | None = None
+        self._bep5_protocol: BEP5UDPProtocol | None = None
+        # F214: counter of newly discovered nodes since last LMDB snapshot
+        self._nodes_since_snapshot = 0
 
         self._pending_rpcs: dict[str, asyncio.Future] = {}
         # F185E: track creation time for TTL-based eviction
@@ -466,77 +618,102 @@ class KademliaNode:
         transport.register_handler("dht_find_value", self._handle_find_value)
         transport.register_handler("dht_find_value_resp", self._handle_find_value_resp)
 
-    async def start(self):
-        self._refresh_task = asyncio.create_task(self._refresh_loop(), name="kademlia:refresh_loop")
-        # F214Q: load persisted routing table from LMDB before bootstrap
-        if self.local_graph_store:
-            await self._load_routing_from_lmdb()
-        if DHT_REAL_UDP:
-            # F214: Real UDP bootstrap using asyncio.DatagramProtocol
-            try:
-                await self._dht_bootstrap_real()
-            except Exception as e:
-                logger.debug(f"[DHT] real UDP bootstrap failed (non-fatal): {e}")
-        else:
-            for host, _port in self.bootstrap_nodes:
-                if f"{host}:{_port}" == self.node_id:
-                    continue
-                await self._ping(host)
+    async def start_udp(self, port: int = 0) -> bool:
+        """
+        F214: Create persistent UDP socket via asyncio.DatagramProtocol.
+
+        Binds to 0.0.0.0:<port> (port=0 = ephemeral). Stores transport and
+        BEP5UDPProtocol as self._bep5_transport / self._bep5_protocol for
+        future send_and_wait() calls. Returns True on success, False on error.
+        Gated by HLEDAC_ENABLE_DHT=1 — no-op when disabled.
+
+        Idempotent: if start_udp was already called and the transport is open,
+        returns True without creating a new endpoint.
+        """
+        if not DHT_REAL_UDP:
+            return False
+        if self._bep5_transport is not None and not self._bep5_transport.is_closing():
+            return True
+        try:
+            loop = asyncio.get_running_loop()
+            transport, protocol = await loop.create_datagram_endpoint(
+                lambda: BEP5UDPProtocol(self._handle_message),
+                local_addr=("0.0.0.0", port),
+            )
+            self._bep5_transport = transport
+            self._bep5_protocol = protocol
+            return True
+        except Exception as e:
+            logger.debug(f"[DHT] start_udp failed: {e}")
+            return False
 
     async def _dht_bootstrap_real(self) -> None:
         """
-        F214: Real DHT bootstrap via asyncio.DatagramProtocol.
+        F214: Real DHT bootstrap via persistent BEP-5 UDP protocol.
 
-        Sends FIND_NODE to all bootstrap peers to populate routing table.
-        Uses DHT_BOOTSTRAP_SEMAPHORE to limit concurrent bootstraps (M1: max 2).
-        Each request has 5s timeout. Fail-soft: logs but never propagates.
+        Sends FIND_NODE to all bootstrap peers using send_and_wait (future
+        pattern). Each request is bounded by DHT_BOOTSTRAP_SEMAPHORE (M1: max 2
+        concurrent), with 5s timeout per request. K-closest nodes from each
+        response are added to the routing table. Fail-soft: logs but never
+        propagates.
         """
         if not DHT_REAL_UDP:
             return
+        if not self._bep5_protocol:
+            ok = await self.start_udp()
+            if not ok:
+                return
 
-        async with DHT_BOOTSTRAP_SEMAPHORE:
-            loop = asyncio.get_running_loop()
+        our_id = self.node_id.encode()[:20].ljust(20, b"\x00")
 
-            def create_protocol():
-                return _DHTBootstrapProtocol(loop, self.node_id)
-
-            # Bind to random port (ephemeral)
-            transport, protocol = await loop.create_datagram_endpoint(
-                create_protocol,
-                local_addr=("0.0.0.0", 0),
-            )
-
-            try:
-                # Send FIND_NODE to each bootstrap peer
-                our_id = self.node_id.encode()[:20].ljust(20, b"\x00")
-                find_msg = {
-                    "t": "bn",
-                    "y": "q",
-                    "q": "find_node",
-                    "a": {"id": our_id, "target": our_id},
-                }
-                bencoded = self._bencode(find_msg)
-
-                pending = []
-                for host, port in self.bootstrap_nodes:
-                    try:
-                        _, sent = await asyncio.wait_for(
-                            protocol.send(bencoded, (host, port)),
-                            timeout=DHT_BOOTSTRAP_TIMEOUT_S,
+        async def _query_one(host: str, port: int) -> None:
+            async with DHT_BOOTSTRAP_SEMAPHORE:
+                try:
+                    msg = {
+                        b"y": b"q",
+                        b"q": b"find_node",
+                        b"a": {b"id": our_id, b"target": our_id},
+                    }
+                    result = await self._bep5_protocol.send_and_wait(
+                        (host, port), msg, timeout=DHT_BOOTSTRAP_TIMEOUT_S
+                    )
+                    if not result:
+                        return
+                    resp, _src = result
+                    r = resp.get(b"r") if isinstance(resp, dict) else None
+                    if not isinstance(r, dict):
+                        return
+                    # Parse compact node info: 20-byte node_id + 4-byte IP + 2-byte port
+                    compact = r.get(b"nodes", b"")
+                    if not isinstance(compact, bytes) or len(compact) < 26:
+                        return
+                    for i in range(0, len(compact) - 25, 26):
+                        chunk = compact[i: i + 26]
+                        if len(chunk) < 26:
+                            break
+                        nid = chunk[:20]
+                        ip_bytes = chunk[20:24]
+                        raw_port = chunk[24:26]
+                        ip = ".".join(str(b) for b in ip_bytes)
+                        nport = int.from_bytes(raw_port, "big")
+                        self._update_routing(
+                            nid.hex(), {"host": ip, "port": nport}
                         )
-                        pending.append((host, port))
-                    except Exception:
-                        pass
+                except Exception:
+                    pass
 
-                # Wait for responses (collect up to 4 routing table entries)
-                await asyncio.sleep(3.0)
-
-                if protocol.nodes_found:
-                    for node_id_hex, node_info in list(protocol.nodes_found.items())[:20]:
-                        self._update_routing(node_id_hex, node_info)
-
-            finally:
-                transport.close()
+        tasks = [_query_one(h, p) for h, p in self.bootstrap_nodes]
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+        logger.debug(
+            f"[DHT] bootstrap done: routing_table_size="
+            f"{sum(len(b) for b in self.routing_table.values())}"
+        )
+        # F214: if persistent protocol got 0 nodes, fall back to per-query socket
+        # (some M1 NAT/firewall setups block same-socket reuse for DHT responses)
+        if not self.routing_table:
+            logger.debug("[DHT] persistent protocol got 0 nodes, fallback to per-query socket")
+            await self._dht_bootstrap_fallback()
 
     async def stop(self):
         self._running = False
@@ -546,6 +723,91 @@ class KademliaNode:
                 await self._refresh_task
             except asyncio.CancelledError:
                 pass
+        # F214: persist final routing table snapshot to LMDB on graceful shutdown
+        if self.local_graph_store:
+            try:
+                await self._save_routing_snapshot_to_lmdb()
+            except Exception as e:
+                logger.debug(f"[DHT] routing snapshot save failed: {e}")
+        # F214: close persistent BEP-5 UDP transport
+        if self._bep5_transport is not None and not self._bep5_transport.is_closing():
+            try:
+                self._bep5_transport.close()
+            except Exception:
+                pass
+            self._bep5_transport = None
+            self._bep5_protocol = None
+
+    async def _handle_message(self, msg: dict, addr: tuple) -> None:
+        """
+        F214: Generic message handler for BEP5UDPProtocol.
+
+        For unsolicited inbound responses (no pending RPC), we use this to
+        opportunistically update the routing table with the sender's node id
+        and observed transport-level metadata. Fail-soft: any error swallowed.
+        """
+        try:
+            if not isinstance(msg, dict):
+                return
+            # Use the response's id field (if present) as the sender node id
+            r = msg.get(b"r")
+            if isinstance(r, dict):
+                nid = r.get(b"id")
+                if isinstance(nid, bytes) and len(nid) == 20:
+                    self._update_routing(nid.hex(), {"host": addr[0], "port": addr[1]})
+        except Exception:
+            pass
+
+    async def _dht_bootstrap_fallback(self) -> None:
+        """
+        F214: Fallback bootstrap using per-query UDP socket (used when persistent
+        BEP5UDPProtocol got 0 nodes — some NAT/firewall setups don't deliver
+        responses to long-lived sockets).
+        """
+        our_id = self.node_id.encode()[:20].ljust(20, b"\x00")
+
+        async def _query(host: str, port: int) -> None:
+            async with DHT_BOOTSTRAP_SEMAPHORE:
+                sock = None
+                try:
+                    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                    sock.settimeout(DHT_BOOTSTRAP_TIMEOUT_S)
+                    sock.setblocking(False)
+                    msg = {
+                        b"y": b"q", b"q": b"find_node",
+                        b"a": {b"id": our_id, b"target": our_id},
+                    }
+                    loop = asyncio.get_running_loop()
+                    await loop.sock_sendto(sock, bencode(msg), (host, port))
+                    data = await loop.sock_recv(sock, 65535)
+                    if not data:
+                        return
+                    resp = bdecode(data)
+                    if not isinstance(resp, dict):
+                        return
+                    r = resp.get(b"r")
+                    if not isinstance(r, dict):
+                        return
+                    compact = r.get(b"nodes", b"")
+                    if not isinstance(compact, bytes) or len(compact) < 26:
+                        return
+                    for i in range(0, len(compact) - 25, 26):
+                        chunk = compact[i: i + 26]
+                        if len(chunk) < 26:
+                            break
+                        nid = chunk[:20]
+                        nip = ".".join(str(b) for b in chunk[20:24])
+                        nport = int.from_bytes(chunk[24:26], "big")
+                        self._update_routing(nid.hex(), {"host": nip, "port": nport})
+                except Exception:
+                    pass
+                finally:
+                    if sock:
+                        sock.close()
+
+        tasks = [_query(h, p) for h, p in self.bootstrap_nodes]
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
 
     def _distance(self, key1: str, key2: str) -> int:
         h1 = int(hashlib.sha256(key1.encode()).hexdigest(), 16)
@@ -572,6 +834,9 @@ class KademliaNode:
         # F214Q: persist newly discovered node to LMDB (fire-and-forget)
         if peer_info.get("host") and peer_info.get("port"):
             self._persist_node_async(peer_id, peer_info["host"], peer_info["port"])
+            # F214: increment snapshot counter; trigger fire-and-forget snapshot
+            self._nodes_since_snapshot += 1
+            self._maybe_persist_snapshot()
 
     def _persist_node_async(self, node_id: str, host: str, port: int) -> None:
         """Persist a DHT node to LMDB via LocalGraphStore (fire-and-forget)."""
@@ -589,17 +854,79 @@ class KademliaNode:
         if not self.local_graph_store or self._routing_loaded:
             return
         try:
-            nodes = await self.local_graph_store.get_all_dht_nodes(limit=1000)
-            for n in nodes:
-                nid = n.get("id", "")
-                if nid and len(nid) == 40:
+            # F214: prefer snapshot (single key, fast), fall back to per-node scan
+            snapshot_nodes = await self.local_graph_store.load_routing_snapshot()
+            if snapshot_nodes:
+                for n in snapshot_nodes:
+                    if not isinstance(n, dict):
+                        continue
+                    nid = n.get("node_id", "")
                     host = n.get("host", "")
                     port = n.get("port", 0)
-                    if host and port:
+                    if nid and len(nid) == 40 and host and port:
                         self._update_routing(nid, {"host": host, "port": port})
+            else:
+                # Backward-compat: scan per-node keys from previous sprint
+                nodes = await self.local_graph_store.get_all_dht_nodes(limit=1000)
+                for n in nodes:
+                    nid = n.get("id", "")
+                    if nid and len(nid) == 40:
+                        host = n.get("host", "")
+                        port = n.get("port", 0)
+                        if host and port:
+                            self._update_routing(nid, {"host": host, "port": port})
             self._routing_loaded = True
         except Exception:
             pass  # Fail-soft: LMDB load never blocks DHT
+
+    def _flatten_routing_table(self) -> list[dict[str, Any]]:
+        """
+        F214: Flatten routing table into a list of {node_id, host, port, last_seen}
+        dicts suitable for LMDB snapshot persistence.
+        """
+        out: list[dict[str, Any]] = []
+        for bucket in self.routing_table.values():
+            for n in bucket:
+                nid = n.get("id")
+                host = n.get("host")
+                port = n.get("port")
+                if nid and host and port:
+                    out.append({
+                        "node_id": nid,
+                        "host": host,
+                        "port": int(port),
+                        "last_seen": float(n.get("last_seen", time.time())),
+                    })
+        return out
+
+    async def _save_routing_snapshot_to_lmdb(self) -> None:
+        """
+        F214: Persist full routing table snapshot to LMDB. Fail-soft.
+        """
+        if not self.local_graph_store:
+            return
+        nodes = self._flatten_routing_table()
+        if not nodes:
+            return
+        try:
+            await self.local_graph_store.save_routing_snapshot(nodes)
+            self._nodes_since_snapshot = 0
+        except Exception:
+            pass
+
+    def _maybe_persist_snapshot(self) -> None:
+        """
+        F214: Fire-and-forget snapshot persistence when 50+ new nodes have been
+        discovered since the last snapshot. Never blocks the caller.
+        """
+        if not self.local_graph_store:
+            return
+        if self._nodes_since_snapshot < DHT_SNAPSHOT_EVERY_N:
+            return
+        try:
+            asyncio.create_task(self._save_routing_snapshot_to_lmdb())
+        except Exception:
+            pass
 
     def _find_closest_nodes(self, key: str, count: int) -> list[dict[str, Any]]:
         candidates: list[dict[str, Any]] = []
@@ -843,18 +1170,21 @@ class KademliaNode:
 
     async def get_peers(self, info_hash: str) -> list[tuple[str, int]]:
         """
-        F214Q: BEP-5 get_peers — find peer addresses for an info_hash.
+        F214Q: BEP-5 get_peers — iterative Kademlia lookup for peer addresses.
 
-        Queries bootstrap peers for the info_hash. Returns raw (ip, port)
-        peer addresses without attempting metadata download (unlike crawl()).
-        Uses existing routing table from bootstrap for routing queries.
+        Performs up to MAXCRAWLDEPTH (3) iterations:
+          1. Pick K-closest nodes from routing table (or bootstrap peers on iter 0)
+          2. Send GET_PEERS in parallel (bounded by DHT_REQUEST_SEMAPHORE=50)
+          3. Collect `values` (peer addresses) and refresh routing table from
+             `nodes` field of responses
+          4. Stop when no closer nodes are found, or MAXCRAWLDEPTH reached
+          5. Return up to 50 unique (ip, port) tuples
 
         Args:
             info_hash: 40-char hex torrent info hash
 
         Returns:
-            List of (ip_address, port) tuples for peers advertising the hash.
-            Empty list on timeout or error (fail-soft).
+            List of (ip_address, port) tuples. Empty on timeout/error (fail-soft).
         """
         peers: list[tuple[str, int]] = []
         try:
@@ -864,70 +1194,137 @@ class KademliaNode:
             return peers
         ih_bytes = ih_bytes[:20].ljust(20, b"\x00")
 
-        # Use routing table nodes if available, otherwise bootstrap peers
-        sources = list(self.bootstrap_nodes)
-        if self.routing_table:
-            for bucket in self.routing_table.values():
-                for node in bucket:
-                    host = node.get("host")
-                    port = node.get("port")
-                    if host and port:
-                        sources.append((host, port))
+        our_id = self.node_id.encode()[:20].ljust(20, b"\x00")
+        queried: set[tuple[str, int]] = set()
+        seen_peers: set[tuple[str, int]] = set()
 
-        if not sources:
-            return peers
-
-        async def _query_peer(host: str, port: int) -> tuple[str, int] | None:
-            # M1: Acquire semaphore before network call (max 50 concurrent)
+        async def _query_peer(host: str, port: int) -> dict | None:
+            """Single GET_PEERS query. Returns decoded response dict or None."""
             async with DHT_REQUEST_SEMAPHORE:
                 try:
                     msg = {
-                        "t": "gp",
-                        "y": "q",
-                        "q": "get_peers",
-                        "a": {"id": self.node_id.encode()[:20].ljust(20, b"\x00"), "info_hash": ih_bytes},
+                        b"y": b"q",
+                        b"q": b"get_peers",
+                        b"a": {b"id": our_id, b"info_hash": ih_bytes},
                     }
-                    loop = asyncio.get_running_loop()
-                    sock = None
-                    try:
-                        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-                        sock.settimeout(DHT_REQUEST_TIMEOUT_S)
-                        sock.setblocking(False)
-                        await loop.sock_sendto(sock, self._bencode(msg), (host, port))
-                        data = await loop.sock_recv(sock, 65535)
-                        if data:
-                            res = self._bdecode(data)
-                            if res and isinstance(res, dict):
-                                r = res.get("r", {})
-                                # Extract peer addresses from 'values' field (BEP-5)
-                                for val in r.get("values", []) or []:
-                                    if isinstance(val, bytes) and len(val) == 6:
-                                        ip = ".".join(str(b) for b in val[:4])
-                                        p = int.from_bytes(val[4:6], "big")
-                                        peers.append((ip, p))
-                                # Also collect nodes for routing table refresh
-                                for i in range(0, len(r.get("nodes", b"")), 26):
-                                    chunk = r["nodes"][i : i + 26]
-                                    if len(chunk) == 26:
-                                        nid = chunk[:20].hex()
-                                        nip = ".".join(str(b) for b in chunk[20:24])
-                                        nport = int.from_bytes(chunk[24:26], "big")
-                                        self._update_routing(nid, {"host": nip, "port": nport})
-                    finally:
-                        if sock:
-                            sock.close()
+                    # Prefer persistent BEP-5 transport if available
+                    if self._bep5_protocol is not None:
+                        result = await self._bep5_protocol.send_and_wait(
+                            (host, port), msg, timeout=DHT_REQUEST_TIMEOUT_S
+                        )
+                        if not result:
+                            return None
+                        resp, _src = result
+                    else:
+                        # Fallback: per-query socket (back-compat)
+                        loop = asyncio.get_running_loop()
+                        sock = None
+                        try:
+                            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                            sock.settimeout(DHT_REQUEST_TIMEOUT_S)
+                            sock.setblocking(False)
+                            await loop.sock_sendto(sock, self._bencode(msg), (host, port))
+                            data = await loop.sock_recv(sock, 65535)
+                            resp = self._bdecode(data) if data else None
+                        finally:
+                            if sock:
+                                sock.close()
+                    if not isinstance(resp, dict):
+                        return None
+                    r = resp.get(b"r")
+                    if not isinstance(r, dict):
+                        r = resp.get("r", {})
+                        if not isinstance(r, dict):
+                            return None
+                    # Normalize: some decoders return str keys (kademlia_node._bdecode)
+                    # but our module bdecode returns bytes keys. Handle both.
+                    r_norm: dict = {}
+                    for k, v in r.items():
+                        r_norm[k if isinstance(k, bytes) else k.encode()] = v
+                    return r_norm
                 except Exception:
-                    pass
-                return None
+                    return None
 
-        # Race N queries against 5s timeout, stop early when we have peers
-        tasks = [_query_peer(h, p) for h, p in sources[:10]]
-        done, pending = await asyncio.wait_for(
-            asyncio.gather(*tasks, return_exceptions=True),
-            timeout=DHT_REQUEST_TIMEOUT_S,
-        )
-        for t in pending:
-            t.cancel()
+        def _peers_from_response(r_norm: dict) -> list[tuple[str, int]]:
+            out: list[tuple[str, int]] = []
+            values = r_norm.get(b"values") or r_norm.get("values") or []
+            if not isinstance(values, list):
+                return out
+            for val in values:
+                if isinstance(val, bytes) and len(val) == 6:
+                    ip = ".".join(str(b) for b in val[:4])
+                    p = int.from_bytes(val[4:6], "big")
+                    out.append((ip, p))
+            return out
+
+        def _nodes_from_response(r_norm: dict) -> list[tuple[str, str, int]]:
+            out: list[tuple[str, str, int]] = []
+            compact = r_norm.get(b"nodes") or r_norm.get("nodes") or b""
+            if not isinstance(compact, (bytes, bytearray)):
+                return out
+            for i in range(0, len(compact) - 25, 26):
+                chunk = compact[i: i + 26]
+                if len(chunk) < 26:
+                    break
+                nid = chunk[:20].hex()
+                nip = ".".join(str(b) for b in chunk[20:24])
+                nport = int.from_bytes(chunk[24:26], "big")
+                out.append((nid, nip, nport))
+            return out
+
+        # Iterative Kademlia lookup
+        for depth in range(MAXCRAWLDEPTH):
+            # Choose K closest nodes for this iteration
+            if depth == 0 or not self.routing_table:
+                # First iteration: use bootstrap + any routing table nodes
+                candidates: list[tuple[str, int]] = list(self.bootstrap_nodes)
+                for bucket in self.routing_table.values():
+                    for n in bucket:
+                        h = n.get("host")
+                        p = n.get("port")
+                        if h and p:
+                            candidates.append((h, int(p)))
+            else:
+                # Subsequent iterations: K-closest by XOR distance to info_hash
+                closest = self._find_closest_nodes(info_hash, self.alpha)
+                candidates = []
+                for n in closest:
+                    h = n.get("host")
+                    p = n.get("port")
+                    if h and p:
+                        candidates.append((h, int(p)))
+
+            # Filter out already-queried sources
+            new_sources = [(h, p) for h, p in candidates if (h, p) not in queried]
+            if not new_sources:
+                break
+            for h, p in new_sources[:10]:
+                queried.add((h, p))
+
+            # Parallel query all new sources
+            tasks = [_query_peer(h, p) for h, p in new_sources[:10]]
+            if not tasks:
+                break
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+
+            got_new_peers = False
+            for res in results:
+                if not isinstance(res, dict):
+                    continue
+                # Extract peer addresses
+                for ip, p in _peers_from_response(res):
+                    if (ip, p) not in seen_peers:
+                        seen_peers.add((ip, p))
+                        peers.append((ip, p))
+                        got_new_peers = True
+                # Update routing table from nodes field
+                for nid, nip, nport in _nodes_from_response(res):
+                    self._update_routing(nid, {"host": nip, "port": nport})
+
+            # If no new peers found AND no routing table growth, terminate early
+            if not got_new_peers and depth > 0:
+                break
+
         return peers[:50]
 
     async def crawl(self, keyword: str, duration_s: int = 120, max_results: int = 50) -> list[dict]:

@@ -1,5 +1,5 @@
+# M1 ARM64 dynamic Python loading — resolved at extension import time
+# by Python's framework dylib. The equivalent `-undefined dynamic_lookup`
+# flag is also emitted by `build.rs` for maturin-driven builds.
 [target.arm64-apple-darwin]
-rustflags = ["-C", "link-arg=-undefined", "-C", "link-arg=dynamic_lookup"]
-
-[build]
 rustflags = ["-C", "link-arg=-undefined", "-C", "link-arg=dynamic_lookup"]

@@ -27,10 +27,13 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import math
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Union, cast
+
+logger = logging.getLogger(__name__)
 
 # Boundedness constant for hash cache
 MAX_HASH_CACHE_SIZE = 10_000
@@ -42,6 +45,25 @@ try:
 except ImportError:
     xxhash = None
     XXHASH_AVAILABLE = False
+
+# Rust extension import guard — F259/F260 sprint invariant.
+# If hledac_rust_extensions is not compiled (e.g. fresh checkout without maturin
+# build), fall back to the pure-Python implementation below.
+# Mirrors the pattern in tools/ioc_dedup.py and patterns/pattern_matcher.py.
+_RustBloomFilter: type | None = None
+_RUST_BLOOM_AVAILABLE = False
+try:
+    import hledac_rust_extensions as _rust  # type: ignore[import]
+    _RustBloomFilter = _rust.BloomFilter
+    _RUST_BLOOM_AVAILABLE = True
+except ImportError:
+    _RustBloomFilter = None
+    _RUST_BLOOM_AVAILABLE = False
+
+logger.debug(
+    "bloom_filter_backend",
+    extra={"backend": "rust" if _RUST_BLOOM_AVAILABLE else "python"},
+)
 
 
 @dataclass
@@ -232,6 +254,93 @@ class BloomFilter:
         self._hash_cache.clear()
 
 
+class RotatingBloomFilter:
+    """
+    Rotating Bloom Filter with Rust acceleration + Python fallback.
+
+    When hledac_rust_extensions is importable, delegates to the native
+    FNV-1a BloomFilter (10x faster on M1, see HOTPATH_RUST_ANALYSIS.md).
+    Otherwise falls back to the pure-Python BloomFilter above.
+
+    API-compatible with pyprobables.RotatingBloomFilter (add, contains, check).
+    The rotating (multi-tier) layout is not yet implemented — the
+    single-tier Rust filter is already correct for the current dedup use
+    case (URL dedup uses one filter per host, not per process).
+    """
+
+    __slots__ = ("_impl", "_is_rust", "max_elements", "error_rate", "element_count")
+
+    def __init__(self, max_elements: int = 100_000, error_rate: float = 0.01) -> None:
+        self.max_elements = int(max_elements)
+        self.error_rate = float(error_rate)
+        if _RUST_BLOOM_AVAILABLE and _RustBloomFilter is not None:
+            self._impl = _RustBloomFilter(capacity=self.max_elements, fp_rate=self.error_rate)
+            self._is_rust = True
+        else:
+            self._impl = BloomFilter(max_elements=self.max_elements, error_rate=self.error_rate)
+            self._is_rust = False
+        self.element_count = 0
+
+    @property
+    def is_rust(self) -> bool:
+        """True when the Rust backend is active."""
+        return self._is_rust
+
+    def add(self, item: str) -> bool:
+        """
+        Add an item. Returns True if new, False if already present.
+        Falls back to a Python-side membership check for the Python backend,
+        which lacks the native new-entry return value.
+        """
+        if self._is_rust:
+            was_new: bool = bool(self._impl.add(item))
+            if was_new:
+                self.element_count += 1
+            return was_new
+        # Python backend: emulate `add` return value.
+        was_present = item in self._impl
+        self._impl.add(item)
+        if not was_present:
+            self.element_count += 1
+        return not was_present
+
+    def __contains__(self, item: str) -> bool:
+        return bool(self._impl.__contains__(item))
+
+    def contains(self, item: str) -> bool:
+        return bool(self._impl.contains(item))
+
+    def check(self, item: str) -> bool:
+        if self._is_rust:
+            check_fn = cast(Any, self._impl).check
+            return bool(check_fn(item))
+        return item in self._impl
+
+    def clear(self) -> None:
+        """Reset filter to empty state."""
+        if self._is_rust:
+            reset = getattr(self._impl, "reset", None)
+            if callable(reset):
+                reset()
+            else:
+                clear = getattr(self._impl, "clear", None)
+                if callable(clear):
+                    clear()
+        else:
+            clear = getattr(self._impl, "clear", None)
+            if callable(clear):
+                clear()
+        self.element_count = 0
+
+    def __len__(self) -> int:
+        if self._is_rust:
+            rust_len = getattr(self._impl, "__len__", None)
+            if callable(rust_len):
+                return int(cast(Any, rust_len)())
+        py_count = getattr(self._impl, "element_count", 0)
+        return int(py_count)
+
+
 class ScalableBloomFilter:
     """
     Scalable Bloom Filter that grows as elements are added.
@@ -346,6 +455,7 @@ def create_content_fingerprint(expected_items: int = 50000) -> BloomFilter:
 __all__ = [
     'BloomFilter',
     'BloomFilterStats',
+    'RotatingBloomFilter',
     'ScalableBloomFilter',
     'create_url_deduplicator',
     'create_content_fingerprint'

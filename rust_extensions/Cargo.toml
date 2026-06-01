@@ -25,5 +25,8 @@ codegen-units = 1
 [target.armv7-unknown-linux-gnueabihf]
 rustflags = ["-C", "target-cpu=generic+neon"]
 
+[build-dependencies]
+pyo3-build-config = "0.28"
+
 [build]
 rustflags = ["-C", "target-feature=+neon"]

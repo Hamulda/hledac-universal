@@ -10,6 +10,8 @@ without Rust toolchain.
 
 from __future__ import annotations
 
+from typing import Any
+
 # -----------------------------------------------------------------------------
 # Rust extension import guard
 # -----------------------------------------------------------------------------
@@ -28,6 +30,9 @@ except ImportError:
 # Default: 64-bit polynomial rolling hash with large prime modulus
 DEFAULT_BASE = 256
 DEFAULT_MODULUS = 2**61 - 1  # Mersenne prime — fast modular arithmetic
+
+# Bounded cache of per-window Rust engine instances (see hashes() override).
+MAX_RH_ENGINES = 16
 
 # -----------------------------------------------------------------------------
 # Python fallback implementation
@@ -121,7 +126,7 @@ class RollingHashEngine:
     falls back to pure Python.
     """
 
-    __slots__ = ("_impl", "_is_rust", "_window_size")
+    __slots__ = ("_impl", "_is_rust", "_window_size", "_rust_by_window")
 
     def __init__(
         self,
@@ -151,11 +156,43 @@ class RollingHashEngine:
         return self._impl.roll(old_hash, old_char, new_char, window_size)
 
     def hashes(self, data: bytes, window_size: int = 8) -> list[int]:
-        """Compute hashes for all windows."""
+        """
+        Compute hashes for all windows.
+
+        The Rust backend bakes `window_size` at construction time, so when a
+        caller requests a different window we transparently reuse a cached
+        engine instance for that size. The Python backend honours the
+        `window_size` argument directly on every call.
+        """
         if self._is_rust:
-            # Rust hashes() takes no window_size — baked at construction
-            return self._impl.hashes(data)
+            if window_size == self._window_size:
+                return self._impl.hashes(data)
+            # Per-window Rust engine cache — bounded (MAX_RH_ENGINES entries)
+            # to keep the hot path allocation-free for the common case.
+            return self._get_rust_for_window(window_size).hashes(data)
         return self._impl.hashes(data, window_size)
+
+    def _get_rust_for_window(self, window_size: int) -> Any:
+        """Return (and cache) a Rust engine configured for `window_size`."""
+        cache_attr = getattr(self, "_rust_by_window", None)
+        if cache_attr is None:
+            cache = dict[int, Any]()
+            self._rust_by_window = cache
+        else:
+            cache = cache_attr
+        engine = cache.get(window_size)
+        if engine is None:
+            engine = _RustRhEngine(  # type: ignore[misc]
+                base=DEFAULT_BASE,
+                modulus=DEFAULT_MODULUS,
+                window_size=window_size,
+            )
+            cache[window_size] = engine
+            if len(cache) > MAX_RH_ENGINES:
+                # FIFO eviction to keep cache bounded.
+                oldest = next(iter(cache))
+                cache.pop(oldest, None)
+        return engine
 
     def chunk_bytes(self, data: bytes, chunk_size: int = 64) -> list[bytes]:
         """
