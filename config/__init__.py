@@ -16,6 +16,7 @@ from hledac.universal.project_types import (
     AgentManagerConfig,
     CommunicationConfig,
     CoordinationConfig,
+    DeepResearchConfig,
     GhostConfig,
     MemoryConfig,
     ResearchConfig,
@@ -97,20 +98,6 @@ class PrivacyConfig:
     use_doh: bool = False
     enable_encryption: bool = True
     encryption_algorithm: str = "fernet"
-
-
-@dataclass
-class DeepResearchConfig:
-    max_depth: int = 10
-    strategy: str = "hybrid"
-    follow_citations: bool = True
-    explore_tangents: bool = True
-    max_threads: int = 5
-    max_documents: int = 1000
-    max_citations_per_doc: int = 20
-    citation_types: list = field(default_factory=lambda: ["academic", "patent", "preprint", "dataset"])
-    enable_auto_summarize: bool = True
-    summarization_model: str = "qwen3-1.7b"
 
 
 @dataclass

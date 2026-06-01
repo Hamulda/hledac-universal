@@ -38,7 +38,7 @@ import asyncio
 import gc
 import logging
 import time
-from collections import defaultdict
+from collections import OrderedDict, defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
@@ -135,6 +135,26 @@ def _get_lil_matrix():
     if sp is not None:
         return sp.lil_matrix
     return None
+
+
+# Sprint F26X: Cross-type index discard helper. Bounded LRU uses OrderedDict
+# (no .discard method); legacy unbounded path uses set (has .discard).
+# Centralising the call avoids per-callsite isinstance branching.
+def _idx_discard(index, key):
+    """Pop key from `index` if present, regardless of underlying type.
+
+    Works for both `set` (.discard) and `OrderedDict` (pop with default).
+    """
+    if isinstance(index, OrderedDict):
+        index.pop(key, None)
+        return
+    try:
+        index.discard(key)
+    except AttributeError:
+        try:
+            del index[key]
+        except KeyError:
+            return
 
 try:
     import community as community_louvain
@@ -606,7 +626,11 @@ class RelationshipDiscoveryEngine:
         # Core data structures
         self._entities: dict[str, Entity] = {}
         self._relationships: dict[str, list[Relationship]] = defaultdict(list)
-        self._relationship_index: set[tuple[str, str, str]] = set()
+        # Sprint F26X: bounded LRU relationship index using OrderedDict (preserves
+        # set-like O(1) membership test while capping memory at MAX_RELATIONSHIPS).
+        # Replaces the previous unbounded `set[tuple]` which could grow to >100k
+        # tuples under long-running discovery sessions (each tuple ~150 bytes).
+        self._relationship_index: OrderedDict[tuple[str, str, str], None] = OrderedDict()
         # S49-E: URL to node ID mapping for quick lookup
         self.url_to_node: dict[str, str] = {}
 
@@ -864,10 +888,15 @@ class RelationshipDiscoveryEngine:
                     existing.confidence = max(existing.confidence, relationship.confidence)
                     existing.evidence.extend(relationship.evidence)
                     existing.last_seen = datetime.now()
-                    return False
+            # F26X: mark as recently used in LRU
+            self._relationship_index.move_to_end(rel_key)
+            return False
 
         self._relationships[relationship.source].append(relationship)
-        self._relationship_index.add(rel_key)
+        # F26X: bounded LRU insertion — evict oldest when at capacity
+        self._relationship_index[rel_key] = None
+        if len(self._relationship_index) > self.MAX_RELATIONSHIPS:
+            self._relationship_index.popitem(last=False)
         self._stats["relationships_added"] += 1
 
         # Add reverse relationship for undirected types
@@ -926,7 +955,7 @@ class RelationshipDiscoveryEngine:
         # Remove relationships
         if entity_id in self._relationships:
             for rel in self._relationships[entity_id]:
-                self._relationship_index.discard((rel.source, rel.target, str(rel.type)))
+                self._idx_discard(self._relationship_index, (rel.source, rel.target, str(rel.type)))
             del self._relationships[entity_id]
 
         # Remove relationships pointing to this entity
@@ -934,7 +963,7 @@ class RelationshipDiscoveryEngine:
             self._relationships[source_id] = [r for r in rels if r.target != entity_id]
             for r in rels:
                 if r.target == entity_id:
-                    self._relationship_index.discard((r.source, r.target, str(r.type)))
+                    self._idx_discard(self._relationship_index, (r.source, r.target, str(r.type)))
 
         self._invalidate_caches()
         return True
@@ -2206,6 +2235,9 @@ class RelationshipDiscoveryEngine:
     # ========================================================================
 
     MAX_NODES: int = 10_000  # Memory bound for M1 8GB
+    # Sprint F26X: bounded LRU cap for _relationship_index. Each tuple key ~150 B
+    # raw; cap = 20k → ~3 MB hard ceiling, well within M1 8GB UMA headroom.
+    MAX_RELATIONSHIPS: int = 20_000
 
     def save_graph(self, path: Path) -> None:
         """Persist NetworkX graph to disk with node-count pruning."""

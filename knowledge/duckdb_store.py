@@ -114,7 +114,66 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, TypedDict
 
+# F26X: @deprecated with Python 3.11+ safe fallback (see utils/_deprecated.py)
+from hledac.universal.utils._deprecated import deprecated
+
 import msgspec
+
+# Sprint F26X: orjson for fast JSON path (3-11x vs stdlib json)
+try:
+    import orjson as _orjson
+    _HAS_ORJSON = True
+except ImportError:
+    _orjson = None  # type: ignore[assignment]
+    _HAS_ORJSON = False
+
+
+# Sprint F26X: Module-level reusable encoders/decoders — avoid per-call instantiation.
+# msgspec is ~5-7x faster than stdlib json for write-heavy hot paths (already canonical
+# in this module per Sprint 8R). orjson is ~3-5x faster than stdlib json for the
+# duckdb-varchar-bridge paths where DuckDB parameters must be `str`, not `bytes`.
+if _HAS_ORJSON:
+    _ORJSON_DECODER = _orjson.loads
+else:
+    import json as _stdjson
+
+    def _ORJSON_DECODER(b: Any) -> Any:
+        return _stdjson.loads(b.decode("utf-8") if isinstance(b, (bytes, bytearray)) else b)
+
+
+def _json_dumps_str(value: Any) -> str:
+    """Sprint F26X: Fast str-returning JSON encoder for DuckDB VARCHAR parameters.
+
+    Default behaviour: ``orjson.dumps(...).decode("utf-8")`` — single allocation,
+    explicit codec (avoids BOM detection). Fallback to stdlib json. Used at the
+    DuckDB boundary (parameterized INSERT/UPDATE) where DuckDB requires `str`
+    but most other call sites already feed `bytes` and stay zero-copy.
+    """
+    if value is None:
+        return "{}"
+    if _HAS_ORJSON:
+        return _orjson.dumps(value).decode("utf-8")
+    import json as _stdjson
+    return _stdjson.dumps(value, separators=(",", ":"))
+
+
+def _json_loads_flexible(raw: Any) -> Any:
+    """Sprint F26X: Single-shot JSON decode that handles str | bytes | None | empty.
+
+    Replaces the 6 hand-rolled ``orjson.loads(r[N]) if r[N] else {}`` patterns
+    that previously littered this module (lines 3038-3041, 4452-4455).
+    """
+    if raw is None or raw == b"" or raw == "":
+        return {}
+    if isinstance(raw, (bytes, bytearray)):
+        return _ORJSON_DECODER(raw)
+    if isinstance(raw, str):
+        if _HAS_ORJSON:
+            return _orjson.loads(raw.encode("utf-8"))
+        import json as _stdjson
+        return _stdjson.loads(raw)
+    return raw
+
 
 # Sprint F202K: TargetProfileSummary import with inline fallback
 try:
@@ -1145,8 +1204,8 @@ class DuckDBShadowStore:
                 if not infohash:
                     continue
 
-                files_json = orjson.dumps(m.get("files", [])).decode() if m.get("files") else None
-                sources_json = orjson.dumps(m.get("sources", [])).decode() if m.get("sources") else None
+                files_json = _json_dumps_str(m.get("files")) if m.get("files") else None
+                sources_json = _json_dumps_str(m.get("sources")) if m.get("sources") else None
 
                 conn.execute("""
                     INSERT INTO dht_metadata (
@@ -2898,9 +2957,9 @@ class DuckDBShadowStore:
                     data.get("sprint_id", ""),
                     data.get("query", ""),
                     data.get("summary", "")[:300] if data.get("summary") else "",
-                    orjson.dumps(data.get("top_findings", [])).decode(),
-                    orjson.dumps(data.get("ioc_clusters", [])).decode(),
-                    orjson.dumps(data.get("source_yield", {})).decode(),
+                    _json_dumps_str(data.get("top_findings", [])),
+                    _json_dumps_str(data.get("ioc_clusters", [])),
+                    _json_dumps_str(data.get("source_yield", {})),
                     data.get("synthesis_engine", "unknown"),
                     float(data.get("duration_s", 0.0)),
                     float(data.get("ts", _t.time())),
@@ -2984,10 +3043,10 @@ class DuckDBShadowStore:
                     memory.last_seen_ts,
                     memory.sprint_count,
                     memory.cumulative_finding_count,
-                    orjson.dumps(memory.entity_facets).decode(),
-                    orjson.dumps(memory.exposure_facets).decode(),
-                    orjson.dumps(memory.pivot_facets).decode(),
-                    orjson.dumps(memory.confidence_drift).decode(),
+                    _json_dumps_str(memory.entity_facets),
+                    _json_dumps_str(memory.exposure_facets),
+                    _json_dumps_str(memory.pivot_facets),
+                    _json_dumps_str(memory.confidence_drift),
                     memory.updated_by_sprint_id,
                     _time.time(),
                 ],
@@ -3032,10 +3091,10 @@ class DuckDBShadowStore:
                     last_seen_ts=r[2],
                     sprint_count=r[3],
                     cumulative_finding_count=r[4],
-                    entity_facets=orjson.loads(r[5]) if r[5] else {},
-                    exposure_facets=orjson.loads(r[6]) if r[6] else {},
-                    pivot_facets=orjson.loads(r[7]) if r[7] else {},
-                    confidence_drift=orjson.loads(r[8]) if r[8] else {},
+                    entity_facets=_json_loads_flexible(r[5]),
+                    exposure_facets=_json_loads_flexible(r[6]),
+                    pivot_facets=_json_loads_flexible(r[7]),
+                    confidence_drift=_json_loads_flexible(r[8]),
                     updated_by_sprint_id=r[9],
                 )
             except Exception:
@@ -4446,10 +4505,10 @@ class DuckDBShadowStore:
                     last_seen_ts=result[2],
                     sprint_count=result[3],
                     cumulative_finding_count=result[4],
-                    entity_facets=orjson.loads(result[5]),
-                    exposure_facets=orjson.loads(result[6]),
-                    pivot_facets=orjson.loads(result[7]),
-                    confidence_drift=orjson.loads(result[8]),
+                    entity_facets=_json_loads_flexible(result[5]),
+                    exposure_facets=_json_loads_flexible(result[6]),
+                    pivot_facets=_json_loads_flexible(result[7]),
+                    confidence_drift=_json_loads_flexible(result[8]),
                     updated_by_sprint_id=result[9],
                 )
 
@@ -6251,8 +6310,7 @@ class DuckDBShadowStore:
                             break
                         try:
                             vb = bytes(value_bytes) if isinstance(value_bytes, memoryview) else value_bytes
-                            import orjson
-                            value = orjson.loads(vb)
+                            value = _ORJSON_DECODER(vb)
                             ts = value.get("ts", 0.0)
                             markers.append((ts, key))
                         except Exception:
@@ -6355,7 +6413,7 @@ class DuckDBShadowStore:
                             break
                         try:
                             vb = bytes(value_bytes) if isinstance(value_bytes, memoryview) else value_bytes
-                            value = orjson.loads(vb)
+                            value = _ORJSON_DECODER(vb)
                             results.append(value)
                         except Exception:
                             continue

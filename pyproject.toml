@@ -102,6 +102,8 @@ dependencies = [
     # (only needed for mlmodel export scripts, not runtime inference)
     "curl-cffi>=0.15.0",
     "kuzu>=0.11.3",
+    "dspy>=3.2.1",
+    "llmlingua>=0.2.2",
 ]
 
 # ------------------------------------------------------------------ optionals
