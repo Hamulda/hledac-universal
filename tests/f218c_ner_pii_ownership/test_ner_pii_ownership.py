@@ -153,7 +153,7 @@ class TestConfigUnchanged:
         # config.py uses relative imports; test via brain/synthesis_runner import fallback
         # This test verifies the canonical LLM config hasn't been downgraded
         try:
-            from config import M1Presets
+            from hledac.universal.config import M1Presets
             model = M1Presets.HERMES_MODEL
             assert "DeepHermes" in model or "deephermes" in model.lower(), \
                 f"Expected DeepHermes in HERMES_MODEL, got: {model}"

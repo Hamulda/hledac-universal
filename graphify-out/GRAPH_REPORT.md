@@ -1,16 +1,16 @@
-# Graph Report - universal  (2026-05-30)
+# Graph Report - universal  (2026-06-01)
 
 ## Corpus Check
-- 1617 files · ~2,837,973 words
+- 1660 files · ~2,858,493 words
 - Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
-- 7217 nodes · 10724 edges · 533 communities (411 shown, 122 thin omitted)
-- Extraction: 94% EXTRACTED · 6% INFERRED · 0% AMBIGUOUS · INFERRED: 633 edges (avg confidence: 0.53)
+- 8346 nodes · 12453 edges · 607 communities (461 shown, 146 thin omitted)
+- Extraction: 94% EXTRACTED · 6% INFERRED · 0% AMBIGUOUS · INFERRED: 753 edges (avg confidence: 0.53)
 - Token cost: 0 input · 0 output
 
 ## Graph Freshness
-- Built from commit: `71400a7b`
+- Built from commit: `e6b901a6`
 - Run `git rev-parse HEAD` and compare to check if the graph is stale.
 - Run `graphify update .` after code changes (no API cost).
 
@@ -548,20 +548,87 @@
 - [[_COMMUNITY_Community 530|Community 530]]
 - [[_COMMUNITY_Community 531|Community 531]]
 - [[_COMMUNITY_Community 532|Community 532]]
+- [[_COMMUNITY_Community 533|Community 533]]
+- [[_COMMUNITY_Community 534|Community 534]]
+- [[_COMMUNITY_Community 535|Community 535]]
+- [[_COMMUNITY_Community 536|Community 536]]
+- [[_COMMUNITY_Community 537|Community 537]]
+- [[_COMMUNITY_Community 538|Community 538]]
+- [[_COMMUNITY_Community 539|Community 539]]
+- [[_COMMUNITY_Community 540|Community 540]]
+- [[_COMMUNITY_Community 541|Community 541]]
+- [[_COMMUNITY_Community 542|Community 542]]
+- [[_COMMUNITY_Community 543|Community 543]]
+- [[_COMMUNITY_Community 544|Community 544]]
+- [[_COMMUNITY_Community 545|Community 545]]
+- [[_COMMUNITY_Community 546|Community 546]]
+- [[_COMMUNITY_Community 547|Community 547]]
+- [[_COMMUNITY_Community 548|Community 548]]
+- [[_COMMUNITY_Community 549|Community 549]]
+- [[_COMMUNITY_Community 550|Community 550]]
+- [[_COMMUNITY_Community 551|Community 551]]
+- [[_COMMUNITY_Community 552|Community 552]]
+- [[_COMMUNITY_Community 553|Community 553]]
+- [[_COMMUNITY_Community 554|Community 554]]
+- [[_COMMUNITY_Community 555|Community 555]]
+- [[_COMMUNITY_Community 556|Community 556]]
+- [[_COMMUNITY_Community 557|Community 557]]
+- [[_COMMUNITY_Community 558|Community 558]]
+- [[_COMMUNITY_Community 559|Community 559]]
+- [[_COMMUNITY_Community 560|Community 560]]
+- [[_COMMUNITY_Community 561|Community 561]]
+- [[_COMMUNITY_Community 562|Community 562]]
+- [[_COMMUNITY_Community 563|Community 563]]
+- [[_COMMUNITY_Community 564|Community 564]]
+- [[_COMMUNITY_Community 565|Community 565]]
+- [[_COMMUNITY_Community 566|Community 566]]
+- [[_COMMUNITY_Community 567|Community 567]]
+- [[_COMMUNITY_Community 568|Community 568]]
+- [[_COMMUNITY_Community 569|Community 569]]
+- [[_COMMUNITY_Community 570|Community 570]]
+- [[_COMMUNITY_Community 571|Community 571]]
+- [[_COMMUNITY_Community 572|Community 572]]
+- [[_COMMUNITY_Community 573|Community 573]]
+- [[_COMMUNITY_Community 574|Community 574]]
+- [[_COMMUNITY_Community 575|Community 575]]
+- [[_COMMUNITY_Community 576|Community 576]]
+- [[_COMMUNITY_Community 577|Community 577]]
+- [[_COMMUNITY_Community 578|Community 578]]
+- [[_COMMUNITY_Community 579|Community 579]]
+- [[_COMMUNITY_Community 581|Community 581]]
+- [[_COMMUNITY_Community 583|Community 583]]
+- [[_COMMUNITY_Community 584|Community 584]]
+- [[_COMMUNITY_Community 585|Community 585]]
+- [[_COMMUNITY_Community 586|Community 586]]
+- [[_COMMUNITY_Community 587|Community 587]]
+- [[_COMMUNITY_Community 588|Community 588]]
+- [[_COMMUNITY_Community 589|Community 589]]
+- [[_COMMUNITY_Community 590|Community 590]]
+- [[_COMMUNITY_Community 591|Community 591]]
+- [[_COMMUNITY_Community 592|Community 592]]
+- [[_COMMUNITY_Community 593|Community 593]]
+- [[_COMMUNITY_Community 594|Community 594]]
+- [[_COMMUNITY_Community 595|Community 595]]
+- [[_COMMUNITY_Community 603|Community 603]]
+- [[_COMMUNITY_Community 604|Community 604]]
+- [[_COMMUNITY_Community 605|Community 605]]
+- [[_COMMUNITY_Community 606|Community 606]]
 
 ## God Nodes (most connected - your core abstractions)
 1. `DuckDBShadowStore` - 204 edges
-2. `SprintScheduler` - 184 edges
-3. `CanonicalFinding` - 148 edges
-4. `HypothesisEngine` - 124 edges
+2. `SprintScheduler` - 193 edges
+3. `CanonicalFinding` - 146 edges
+4. `HypothesisEngine` - 122 edges
 5. `str` - 104 edges
-6. `str` - 99 edges
+6. `str` - 100 edges
 7. `str` - 89 edges
 8. `Hledač — Real Architecture (aktualizováno 2026-04-28, F206J)` - 71 edges
 9. `int` - 70 edges
 10. `Hermes3Engine` - 58 edges
 
 ## Surprising Connections (you probably didn't know these)
+- `int` --uses--> `SprintSchedulerResult`  [INFERRED]
+  rl/state_extractor.py → runtime/sprint_scheduler.py
 - `bool` --uses--> `HypothesisEngine`  [INFERRED]
   export/hypothesis_builder.py → brain/hypothesis_engine.py
 - `DiscoveryBatchResult` --uses--> `TorrentMetadataFetcher`  [INFERRED]
@@ -570,10 +637,8 @@
   discovery/academic/__init__.py → knowledge/duckdb_store.py
 - `bytes` --uses--> `CanonicalFinding`  [INFERRED]
   discovery/academic/arxiv_adapter.py → knowledge/duckdb_store.py
-- `OpenAlexAuthor` --uses--> `CanonicalFinding`  [INFERRED]
-  discovery/academic/openalex_adapter.py → knowledge/duckdb_store.py
 
-## Communities (533 total, 122 thin omitted)
+## Communities (607 total, 146 thin omitted)
 
 ### Community 0 - "Community 0"
 Cohesion: 0.05
@@ -589,23 +654,23 @@ Nodes (39): HypothesisPack, operator_shortlist(), Any, int, str, Bounded hypothe
 
 ### Community 3 - "Community 3"
 Cohesion: 0.04
-Nodes (43): _abort_requested(), _compute_public_stage(), _derive_terminal_stage(), _gc_sprint_callback(), _import_live_public_pipeline(), bool, int, str (+35 more)
+Nodes (56): callable, object, _abort_reason(), _abort_requested(), canonical_lane_name(), _compute_public_stage(), _current_phase(), _derive_terminal_stage() (+48 more)
 
 ### Community 4 - "Community 4"
 Cohesion: 0.04
-Nodes (33): DuckDBShadowStore, Sprint F204D: Ensure target_memory table exists in DuckDB.         Safe to call, Sync insert — MUST be called on the worker thread.          Sprint F192F §2: use, Sync insert source hit — MUST be called on the worker thread., Sync query — MUST be called on the worker thread. Uses persistent _file_conn., Sync query — MUST be called on the worker thread. Uses persistent _file_conn., Sprint 8RC: Query source_type hit-rate stats for weight loading.         Returns, Sprint 7H: Amortize cold connect by issuing a no-op query.         Called on fir (+25 more)
+Nodes (30): _check_graph_capability(), Any, Sprint F224A: Ingest DHT metadata from torrent discovery.          Args:, Sprint 7H: True bulk insert using executemany in explicit transaction.         M, Sprint F203G: Insert a single hypothesis_feedback record.          Thread-safe:, Sync query — backward compat. For async use async_query_recent_findings()., Async context manager exit — cleans up the store.         Idempotent: safe to ca, Sprint 7H: True bulk insert using executemany in explicit transaction.         E (+22 more)
 
 ### Community 5 - "Community 5"
 Cohesion: 0.05
 Nodes (40): AnonymizationLevel, create_privacy_layer(), PrivacyContext, PrivacyLayer, Any, bool, int, Path (+32 more)
 
 ### Community 6 - "Community 6"
-Cohesion: 0.04
-Nodes (34): CanonicalFinding, I2P discovery: crawl .i2p addresses found in sprint IOCs.            Gate: HLEDA, Sprint F214Q: DHT torrent discovery via BitTorrent DHT network.            INVAR, Sprint F3FORENSICS: Digital ghost detection on file findings.         Gate: HLED, F214Q: BGP enrichment — AS path analysis for IP/ASN seeds.                    Ga, F214Q: Banner grab — service fingerprinting via TCP probe.                    Ga, F206D: Delegate all advisory orchestration to SidecarOrchestrator.            Si, Sprint R5: CT accepted domains → PassiveDNS one-hop pivot.            One-hop pi (+26 more)
+Cohesion: 0.02
+Nodes (47): CanonicalFinding, I2P discovery: crawl .i2p addresses found in sprint IOCs.            Gate: HLEDA, Sprint F214Q: DHT torrent discovery via BitTorrent DHT network.            INVAR, Sprint F214R: Gopher/Veronica-2 discovery via Floodgap proxy.         Gate: HLED, Sprint F3FORENSICS: Digital ghost detection on file findings.         Gate: HLED, Sprint F3FORENSICS: Steganography detection on image findings.         Gate: HLE, F214Q: BGP enrichment — AS path analysis for IP/ASN seeds.                    Ga, F214Q: Banner grab — service fingerprinting via TCP probe.                    Ga (+39 more)
 
 ### Community 7 - "Community 7"
 Cohesion: 0.07
-Nodes (34): Universal Security - PII Detection, Encryption, and Vault Management  Security c, _check_cryptokit(), _get_tempdir(), LootManager, bool, bytes, int, Path (+26 more)
+Nodes (34): hledac.security — Shim package re-exporting from hledac.universal.security  REDI, _check_cryptokit(), _get_tempdir(), LootManager, bool, bytes, int, Path (+26 more)
 
 ### Community 8 - "Community 8"
 Cohesion: 0.06
@@ -616,32 +681,32 @@ Cohesion: 0.06
 Nodes (16): Encodable, Error, LocalizedError, CommandResult, Commands, CryptoKitAESError, decryptionFailed, encryptionFailed (+8 more)
 
 ### Community 10 - "Community 10"
-Cohesion: 0.09
-Nodes (53): ContradictionResolverProgram, EpistemicGapProgram, DSPy program for identifying epistemic gaps in OSINT findings.      Inputs:, DSPy program for resolving contradictory OSINT findings.      Uses DS conflict_m, CanonicalFinding, Sprint 8P: Canonical internal finding DTO.      Minimální povinná pole:       -, FeedPipelineRunResult, Result for a full feed pipeline run. (+45 more)
+Cohesion: 0.08
+Nodes (58): ContradictionResolverProgram, EpistemicGapProgram, DSPy program for identifying epistemic gaps in OSINT findings.      Inputs:, DSPy program for resolving contradictory OSINT findings.      Uses DS conflict_m, CanonicalFinding, Sprint 8P: Canonical internal finding DTO.      Minimální povinná pole:       -, FeedPipelineRunResult, Result for a full feed pipeline run. (+50 more)
 
 ### Community 11 - "Community 11"
 Cohesion: 0.05
 Nodes (32): from_dict(), Hypothesis, Generate a devil's advocate argument against a hypothesis.          Creates a st, Result of executing a test against a hypothesis., Identify logical gaps in a hypothesis., Design for testing a hypothesis., Generate alternative explanations for hypothesis evidence., Identify underlying assumptions in a hypothesis. (+24 more)
 
 ### Community 12 - "Community 12"
-Cohesion: 0.05
-Nodes (33): _load_dedup_hot_cache_max(), bool, bytes, float, int, str, Initialize LMDB for persistence., Set a bit in the bitset. (+25 more)
+Cohesion: 0.07
+Nodes (27): bytearray, bool, bytes, float, int, str, Initialize LMDB for persistence., Set a bit in the bitset. (+19 more)
 
 ### Community 13 - "Community 13"
 Cohesion: 0.04
-Nodes (26): Any, Sprint F207Q-A: Attempt CT lane as part of pre-windup barrier.            Args:, Sprint F220D: Feed Dominance Nonfeed Rescue Window.            When feed has bee, Sprint F207T-A: Ensure mandatory nonfeed lanes have terminal state before, Sprint F207R-A: Synchronous pre-windup barrier check.            Called by the w, F204D: Update cross-sprint target memory after findings are accepted., Load hit-rate history from DuckDB and set source weights.            Bounds: 0.3, Inject IOCGraph reference for pivot operations. (+18 more)
+Nodes (37): async_run_tiered_feed_sprint_once(), Any, Sprint F207Q-A: Attempt CT lane as part of pre-windup barrier.            Args:, Sprint F220D: Feed Dominance Nonfeed Rescue Window.            When feed has bee, Sprint F209A: Mandatory Acquisition Prelude.            Runs BEFORE the main fee, Sprint F233D / F228A: Run nonfeed prelude lanes concurrently (Semaphore(3) for M, Sprint F234A / F214 / F228A: DOH prelude lane — DNS-over-HTTPS passive DNS recon, Sprint F207T-A: Ensure mandatory nonfeed lanes have terminal state before (+29 more)
 
 ### Community 14 - "Community 14"
 Cohesion: 0.04
 Nodes (46): 10. Final Recommendation, 1.1 Active Runtime Models (verified from code), 1.2 Model Registry (ModelManager — runtime-wide plane), 1.3 Model Sizes (from `brain/model_manager.py:35`), 1.4 Redundant / Overlapping Systems, 1.5 Model Config Drift (code vs docs), 1. Current Model Architecture Map, 2.1 primary_reasoner (+38 more)
 
 ### Community 15 - "Community 15"
-Cohesion: 0.05
-Nodes (26): invariant_max_temp(), invariant_memory_limit(), max_temp(), memory_limit(), str, Sprint F203G: Fetch hypothesis_feedback records ordered by ts DESC.          Thr, Return the most recent accepted findings for a given sprint,         ordered by, Sync — MUST be called on worker thread. (+18 more)
+Cohesion: 0.06
+Nodes (42): action_has_canonical_tool(), ActionResult, ActionType, get_action_canonical_tool_mapping(), _get_action_classification(), get_canonical_ready_actions(), get_canonical_tool_name(), get_delegation_matrix() (+34 more)
 
 ### Community 16 - "Community 16"
-Cohesion: 0.06
-Nodes (36): DedupManager, Any, Dedup Manager — Sprint F216G refactor ====================================  ROLE, Owns dedup storage lifecycle for DuckDBShadowStore.      Responsible for:, Return typed/cheap status surface for dedup subsystem.          Args:, semantic_dedup_cache(), create_owned_store(), db_path() (+28 more)
+Cohesion: 0.05
+Nodes (38): create_owned_store(), db_path(), executor(), for_testing(), invariant_max_temp(), invariant_memory_limit(), invariant_temp_dir(), is_closed() (+30 more)
 
 ### Community 17 - "Community 17"
 Cohesion: 0.04
@@ -672,52 +737,52 @@ Cohesion: 0.08
 Nodes (24): MultiHopPath, MultiHopReasoner, Perform multi-hop reasoning between entities.          Finds all inference paths, Synchronous wrapper for finding the strongest multi-hop path.          Convenien, Find all indirect connections from an entity.          Discovers entities connec, Multi-hop reasoning system for n-degree inference chains.      Implements breadt, Find all multi-hop paths from start to end entity.          Uses BFS with depth, Breadth-first search with depth limiting and confidence pruning.          Memory (+16 more)
 
 ### Community 24 - "Community 24"
-Cohesion: 0.05
-Nodes (21): int, Sync insert run — MUST be called on the worker thread., Sync query — MUST be called on the worker thread.         Returns raw dict rows, Return trend data for the last N sprints, ordered by ts DESC.         Thread-saf, Return entity-like pivot candidates extracted from finding queries         and p, Sync — MUST be called on worker thread., Return top sources by hit rate for the last N days.         Thread-safe, non-blo, DEPRECATED (Sprint F183D) — use async_query_sprint_trend() instead.          Con (+13 more)
+Cohesion: 0.03
+Nodes (42): DuckDBShadowStore, int, Sprint F204D: Ensure target_memory table exists in DuckDB.         Safe to call, Sprint F203G: Fetch hypothesis_feedback records ordered by ts DESC.          Thr, Sync query — MUST be called on the worker thread.         Returns raw dict rows, Query recent findings ordered by timestamp descending.          Thread-safe, non, Return trend data for the last N sprints, ordered by ts DESC.         Thread-saf, Return the most recent accepted findings for a given sprint,         ordered by (+34 more)
 
 ### Community 25 - "Community 25"
 Cohesion: 0.05
 Nodes (39): Async Lifecycle & Cancellation ✅, code:bash (cd /Users/vojtechhamada/PycharmProjects/Hledac/hledac/univer), code:python (def _persist_node_async(self, node_id: str, host: str, port:), code:python (def _update_routing(self, peer_id: str, peer_info: Optional[), code:python (async def start(self):), code:python (async def _scan_dht(query: str) -> List["CanonicalFinding"]:), code:python (async def _run_dht():), code:python (result = {) (+31 more)
 
 ### Community 26 - "Community 26"
-Cohesion: 0.11
-Nodes (41): AltProtocolResult, fetch_all_alt_protocols(), fetch_fediverse_only(), _fetch_from_fediverse(), _fetch_from_gemini(), _fetch_from_gopher(), _fetch_from_i2p(), _fetch_from_ipfs() (+33 more)
+Cohesion: 0.09
+Nodes (45): AltProtocolResult, fetch_all_alt_protocols(), fetch_fediverse_only(), _fetch_from_fediverse(), _fetch_from_gemini(), _fetch_from_gopher(), _fetch_from_i2p(), _fetch_from_ipfs() (+37 more)
 
 ### Community 27 - "Community 27"
 Cohesion: 0.12
-Nodes (35): Protocol, AcademicSidecarAdapter, AltProtocolSidecarAdapter, DHTSidecarAdapter, FediverseSidecarAdapter, LeakSentinelSidecarAdapter, runtime/sidecar_protocol_adapters.py — F350M-R: Protocol-Based Sidecar Adapters, DHT (BitTorrent Kademlia) Discovery Sidecar.      Queries DHT network for torren (+27 more)
+Nodes (34): AcademicSidecarAdapter, AltProtocolSidecarAdapter, DHTSidecarAdapter, FediverseSidecarAdapter, LeakSentinelSidecarAdapter, runtime/sidecar_protocol_adapters.py — F350M-R: Protocol-Based Sidecar Adapters, DHT (BitTorrent Kademlia) Discovery Sidecar.      Queries DHT network for torren, Academic Research Intelligence Sidecar.      Searches academic sources: arXiv, S (+26 more)
 
 ### Community 28 - "Community 28"
 Cohesion: 0.05
 Nodes (40): Adresář Inventory (verified), Architektonická Mapa — Deep Analysis, Bridge Nodes (architectural chokepoints), Broken Imports Summary, Canonical Entry Points (verified), Celkové statistiky, Code Communities (top-level domain map, verified), code:block1 (┌───────────────────────────────────────────────────────────) (+32 more)
 
 ### Community 29 - "Community 29"
-Cohesion: 0.07
-Nodes (22): _begin(), _commit(), _DuckDBQueryExecutor, Private SQL construction and execution engine for DuckDBShadowStore.          NO, Return the active write connection (MODE A file or MODE B persistent)., Run fn(conn) inside an explicit transaction.             Commits on success, rol, Insert a single shadow finding. Returns True on success., Bulk insert shadow findings. Returns number of successfully inserted records. (+14 more)
+Cohesion: 0.08
+Nodes (20): _begin(), _commit(), _DuckDBQueryExecutor, Private SQL construction and execution engine for DuckDBShadowStore.          NO, Return the active write connection (MODE A file or MODE B persistent)., Run fn(conn) inside an explicit transaction.             Commits on success, rol, Insert a single shadow finding. Returns True on success., Bulk insert shadow findings. Returns number of successfully inserted records. (+12 more)
 
 ### Community 30 - "Community 30"
 Cohesion: 0.08
 Nodes (20): Hermes3Engine, bool, Initialize persistent system-prompt cache (Sprint 75)., Try to load cache from disk., Sprint F214Q: Dynamické KV cache řízení dle RAM tier (M1 8GB).          Returns:, Run MLX inference synchronously in thread pool (Sprint 75).          Args:, Execute a list of PlannerRuntimeRequest objects via Hermes generate_structured., Return currently loaded model name, or None if no model loaded. (+12 more)
 
 ### Community 31 - "Community 31"
-Cohesion: 0.06
-Nodes (23): MLXEmbeddingManager, Uvolní model z paměti., Embedding manager používající ModernBERT přes MLX.      Nahrazuje sentence-trans, bytes, Lock, Typed result contract for pending-sync replay operations (Sprint 8H).      Field, Sprint F216G: Expose the quality rejection ledger to callers (e.g. scheduler)., Sprint 8L: Time-boxed startup replay integrated into async_initialize. (+15 more)
+Cohesion: 0.11
+Nodes (13): Lock, Typed result contract for pending-sync replay operations (Sprint 8H).      Field, Sprint 8L: Time-boxed startup replay integrated into async_initialize., Lazily initialize the replay lock on the current event loop., Sprint 8H: Replay a single pending marker by finding_id.          Recovery seman, Sprint 8H: Replay all pending markers with chunking and event-loop yields., Sprint 8F: Efficient prefix scan for all pending_duckdb_sync markers.          R, Sprint 8F: Clear a pending-sync marker after successful recovery.          Calle (+5 more)
 
 ### Community 32 - "Community 32"
 Cohesion: 0.05
 Nodes (36): Active Adapters Called From `SprintScheduler`, Active Discovery Adapters, Architecture Ground Truth — 20260522, Canonical Data Contracts, Canonical Owner: `SprintScheduler.run()` (runtime/sprint_scheduler.py), Canonical Path, CanonicalFinding (knowledge/duckdb_store.py:229), code:block1 (python -m hledac.universal --sprint "LockBit ransomware" --d) (+28 more)
 
 ### Community 33 - "Community 33"
-Cohesion: 0.06
-Nodes (21): _get_dedup_lmdb_path(), _get_forensics_lmdb_path(), _get_multimodal_lmdb_path(), _LifecycleAdapter, Path, runtime: tick() returns SprintPhase. Fallback: 'UNKNOWN' phase string., runtime: is_terminal(). Returns True when phase is TEARDOWN., runtime: should_enter_windup(). utils: is_windup_phase(). (+13 more)
+Cohesion: 0.13
+Nodes (8): runtime: tick() returns SprintPhase. Fallback: 'UNKNOWN' phase string., runtime: is_terminal(). Returns True when phase is TEARDOWN., Load existing hashes from LMDB at BOOT. Idempotent., Initialize MetricsRegistry fail-soft using config export_dir or default path., Tick metrics at cycle completion — captures RSS, open FDs.            Called onc, Sleep in short chunks so wind-down can be detected promptly.          Calls adap, Inject SprintPolicyManager reference (opt-in RL layer)., Phase 1: Sprint initialization - privacy, governor, sidecar, layers, CT, dedup.
 
 ### Community 34 - "Community 34"
 Cohesion: 0.06
 Nodes (35): Aktivní moduly (wired do pipeline), Architectural verdict, Coverage gaps worth calling out, F195C Probe Coverage (Sprint F196B), F196A Ghost Verdict (2026-04-23), F197A DeepProbe Canonical Ingest, F198A Cross-Sprint Graph Accumulation (2026-04-23), F198B Forensics Metadata on Canonical Findings (+27 more)
 
 ### Community 35 - "Community 35"
-Cohesion: 0.08
-Nodes (23): MatrixPublicAdapter, MatrixRoom, bool, ClientSession, int, str, Matrix Public Rooms Intelligence Adapter.  Search Matrix public rooms for intell, Search public rooms by term.          Args:             search_term: Search term (+15 more)
+Cohesion: 0.12
+Nodes (17): MatrixPublicAdapter, MatrixRoom, bool, ClientSession, int, str, Matrix Public Rooms Intelligence Adapter.  Search Matrix public rooms for intell, Search public rooms by term.          Args:             search_term: Search term (+9 more)
 
 ### Community 36 - "Community 36"
 Cohesion: 0.10
@@ -728,20 +793,20 @@ Cohesion: 0.06
 Nodes (30): adversarial_verifier(), AdversarialReport, AnomalySignal, CausalHypothesis, confidence_note(), create_hypothesis_engine(), _DarkQueryListResponse, DarkQueryType (+22 more)
 
 ### Community 38 - "Community 38"
-Cohesion: 0.09
-Nodes (19): Any, bool, str, Convert to dictionary representation., Convert to dictionary representation., Get statistics about stored evidence., Export evidence graph for visualization., Convert to dictionary representation. (+11 more)
+Cohesion: 0.07
+Nodes (26): Any, bool, str, Convert to dictionary representation., Merge fragmented entity identities using probabilistic matching.          Uses m, Compute similarity score between two entity fragments., Calculate string similarity using Jaro-Winkler-like approach., MLX-accelerated string similarity. (+18 more)
 
 ### Community 39 - "Community 39"
-Cohesion: 0.06
-Nodes (18): float, Sync insert — backward compat. For async use async_record_shadow_finding()., Sync insert — backward compat. For async use async_record_shadow_run()., Insert a run record into the shadow analytics store.          Thread-safe, non-b, Insert a single finding into the shadow analytics store.          Thread-safe, n, Insert a source_hit_log record.          Thread-safe, non-blocking., Sprint 8UC B.2: Načíst posledních `limit` epizod (recency-based)., Sprint 8TA B.4: Upsert entities into ghost_global store.          Path: ~/.hleda (+10 more)
+Cohesion: 0.05
+Nodes (30): FindingEnvelope, float, str, Sync insert — MUST be called on the worker thread., Sync insert run — MUST be called on the worker thread., Sync insert — backward compat. For async use async_record_shadow_finding()., Sync insert — backward compat. For async use async_record_shadow_run()., Insert a run record into the shadow analytics store.          Thread-safe, non-b (+22 more)
 
 ### Community 40 - "Community 40"
 Cohesion: 0.06
 Nodes (34): 1.1 OSINT Report Flow, 1.2 Where Each GAP Fits, 1.3 Key Classes, code:block1 (findings: list[dict]), code:python (# transport/circuit_breaker.py), code:python (# At inference call site), code:python (# brain/hermes3_engine.py), code:python (MODEL_REGISTRY_PATH = Path("~/.hledac/model_registry.json").) (+26 more)
 
 ### Community 41 - "Community 41"
-Cohesion: 0.08
-Nodes (25): HypothesisStatus, HypothesisType, Types of hypotheses supported by the engine., Status of a hypothesis in its lifecycle., Types of tests that can be designed and executed., TestType, InferenceType, Types of inference operations. (+17 more)
+Cohesion: 0.11
+Nodes (17): HypothesisStatus, HypothesisType, Types of hypotheses supported by the engine., Status of a hypothesis in its lifecycle., Types of tests that can be designed and executed., TestType, InferenceType, Types of inference operations. (+9 more)
 
 ### Community 42 - "Community 42"
 Cohesion: 0.06
@@ -764,8 +829,8 @@ Cohesion: 0.06
 Nodes (33): Category 10: File not found (4 errors), Category 11: Missing httpx_transport (1 error), Category 12: Other (2 errors), Category 1: Module "is not a package" (19 errors), Category 2: Missing stub modules (14 errors), Category 3: Missing functions in live_sprint_measurement.py (4 errors), Category 4: Missing acquisition_strategy exports (12 errors), Category 5: Missing sprint_scheduler exports (6 errors) (+25 more)
 
 ### Community 47 - "Community 47"
-Cohesion: 0.12
-Nodes (25): get_institution_network(), InstitutionNetwork, OpenAlexAdapter, OpenAlexAuthor, OpenAlexInstitution, OpenAlexResult, OpenAlexWork, discovery/academic/openalex_adapter.py — OpenAlex API Adapter  Sprint F259: Acad (+17 more)
+Cohesion: 0.18
+Nodes (15): OpenAlexAdapter, OpenAlexWork, OpenAlex API adapter., Get mailto param for polite pool., Fetch from OpenAlex API., Search works by query, optionally filtered by concepts.          Args:, Search works by concept IDs (sub-field specific)., Get collaboration network for an institution.          Args:             institu (+7 more)
 
 ### Community 48 - "Community 48"
 Cohesion: 0.11
@@ -781,7 +846,7 @@ Nodes (32): 10. NO CHANGES MADE (Audit Only), 1. ONION_DISCOVERY — NOT FOUND, 
 
 ### Community 51 - "Community 51"
 Cohesion: 0.07
-Nodes (18): async_run_tiered_feed_sprint_once(), Sprint F209A: Mandatory Acquisition Prelude.            Runs BEFORE the main fee, Wave 2: Export NetworkX latent relationships and upsert unseen ones to DuckPGQ., Outcome of one sprint run.        Attributes:          cycles_started: Number of, F238D: Build structured graph_stats dict for PivotPlanner scoring.            Ca, Flush in-memory hashes to LMDB. Called at WINDUP., Sprint F259: Run SynthesisRunner in WINDUP phase., Sprint F260: Run EpistemicGapProgram and ContradictionResolverProgram. (+10 more)
+Nodes (37): Any, str, Fetch citations for a paper (placeholder for academic APIs)., Get citation graph data for a thread., Perform meta-synthesis on research data.          Args:             research_dat, Detect meta-patterns across research data., Generate testable hypotheses., Assess quality of meta-synthesis. (+29 more)
 
 ### Community 52 - "Community 52"
 Cohesion: 0.09
@@ -804,8 +869,8 @@ Cohesion: 0.06
 Nodes (30): Actual Risks Identified, Architectural Verdicts, Brain / AI Engine, Brain — COMPLIANT, code:block1 (./utils/eig.py:8: from utils.eig import EIGCalculator  (self), Critical Findings, Dormant / Unwired, Evidence on Key Items (+22 more)
 
 ### Community 57 - "Community 57"
-Cohesion: 0.08
-Nodes (18): create_inference_tool(), InferenceEngine, Select the most canonical name from a list., Calculate joint probability of multiple hypotheses.          Assumes conditional, Clear all evidence and reset state., Clean up resources including thread pool executor., Get all entities reachable within max_hops from start., Extract primary entity identifier from evidence (sync version). (+10 more)
+Cohesion: 0.09
+Nodes (16): create_inference_tool(), InferenceEngine, ndarray, Cluster fragments based on similarity matrix., Update beliefs using Bayesian inference.          P(H|E) = P(E|H) * P(H) / P(E), Clear all evidence and reset state., Clean up resources including thread pool executor., Get all entities reachable within max_hops from start. (+8 more)
 
 ### Community 58 - "Community 58"
 Cohesion: 0.13
@@ -844,8 +909,8 @@ Cohesion: 0.07
 Nodes (17): Convenience function to run hypothesis generation if enabled.      Args:, run_hypothesis_if_enabled(), _import_correlate_findings(), _import_exporters(), _import_hypothesis_engine(), F206I: Build a bounded source health summary from per-source economics., F198A: Read graph signal at teardown without blocking sprint.            Returns, F206E: Extract read-only windup scorecard fields from active pipeline data. (+9 more)
 
 ### Community 67 - "Community 67"
-Cohesion: 0.09
-Nodes (13): LaneBudgetPool, float, Compute priority score per B.1 formula.            score(source) = base_tier_wei, Sort candidates by score — highest first.          Returns list of source_type s, Update EMA for domain fetch latency. Bounded to _MAX_FETCH_LATENCY_EMA entries., Get adaptive timeout based on EMA latency. Clamped to [5, 30]s., Enqueue a pivot task. Called on every new IOC hit from buffer_ioc.          Sile, Enqueue a pivot task driven by hypothesis/ToT output.            Sprint F193B: B (+5 more)
+Cohesion: 0.11
+Nodes (10): Enqueue a pivot task. Called on every new IOC hit from buffer_ioc.          Sile, Enqueue a pivot task driven by hypothesis/ToT output.            Sprint F193B: B, Drain up to max_tasks from pivot queue. Max 8s total deadline.          Called a, Dispatch pivot task to appropriate intelligence client., Wrapper: buffer IOC to graph and enqueue for further pivoting., Jeden OODA cyklus — 60s interval., Flush Arrow batch to Parquet when N or S threshold is hit.            F214OPT-D:, Buffer a finding into the Arrow batch. (+2 more)
 
 ### Community 68 - "Community 68"
 Cohesion: 0.07
@@ -860,12 +925,12 @@ Cohesion: 0.07
 Nodes (26): 1.1 Obsah legacy/, 1.2 Aktivní importy z legacy/, 1.3 Doporučení — LEGACY, 1. LEGACY ADRESÁŘ, 2.1 Shrnutí, 2.2 Probe s obsahem (.py soubory), 2.3 Doporučení — PROBE ADRESÁŘE, 2. PROBE ADRESÁŘE (+18 more)
 
 ### Community 71 - "Community 71"
-Cohesion: 0.08
-Nodes (15): _check_graph_capability(), Any, Sprint F224A: Ingest DHT metadata from torrent discovery.          Args:, Sprint 7H: True bulk insert using executemany in explicit transaction.         M, Sprint F203G: Insert a single hypothesis_feedback record.          Thread-safe:, Sync query — backward compat. For async use async_query_recent_findings()., Sprint 7H: True bulk insert using executemany in explicit transaction.         E, F231 C: Streaming Arrow batch query — yields batches without loading full result (+7 more)
+Cohesion: 0.09
+Nodes (55): ArgumentParser, _apply_swap_gate(), build_arg_parser(), _capture_uma(), _check_readiness_artifacts(), _derive_run_quality_verdict(), get_invocation_reality(), _get_profile_verdict() (+47 more)
 
 ### Community 72 - "Community 72"
-Cohesion: 0.11
-Nodes (25): _compute_fetch_policy(), default(), _ensure_ct_scanner_patched(), _ensure_patched(), _extract_base_domain(), _extract_provider_surface(), FetchPolicy, hits_from_result() (+17 more)
+Cohesion: 0.10
+Nodes (26): _add_pattern_hits_to_graph(), _compute_fetch_policy(), default(), _ensure_patched(), _extract_provider_surface(), FetchPolicy, generate_seed_context_bootstrap_urls(), hits_from_result() (+18 more)
 
 ### Community 73 - "Community 73"
 Cohesion: 0.07
@@ -876,8 +941,8 @@ Cohesion: 0.13
 Nodes (12): BurstDetector, HodgkinHuxleyNeuron, IzhikevichNeuron, float, Izhikevich neuron model - computationally efficient yet biologically plausible., Update neuron state with input current., Reset neuron to initial state., Hodgkin-Huxley neuron model - biophysically accurate.     Models action potentia (+4 more)
 
 ### Community 75 - "Community 75"
-Cohesion: 0.13
-Nodes (20): find_free_pdf(), _get_email(), OAPaper, discovery/academic/unpaywall_adapter.py — Unpaywall / OA Button PDF Resolver  Sp, Resolve a DOI to open access info.          Args:             doi: DOI string (e, Resolve multiple DOIs in parallel.          Args:             dois: List of DOI, Convert Unpaywall papers to CanonicalFinding., Resolve a single DOI to open access info. (+12 more)
+Cohesion: 0.12
+Nodes (22): find_free_pdf(), _get_email(), OAPaper, discovery/academic/unpaywall_adapter.py — Unpaywall / OA Button PDF Resolver  Sp, Resolve a DOI to open access info.          Args:             doi: DOI string (e, Resolve multiple DOIs in parallel.          Args:             dois: List of DOI, Convert Unpaywall papers to CanonicalFinding., Resolve a single DOI to open access info. (+14 more)
 
 ### Community 76 - "Community 76"
 Cohesion: 0.08
@@ -889,11 +954,11 @@ Nodes (25): 1. QMIX Training Loop (SprintPolicyManager.update()), 2. StateExtrac
 
 ### Community 78 - "Community 78"
 Cohesion: 0.10
-Nodes (17): confidence(), create_inference_engine(), final_score(), float, ndarray, InferenceEngine - Advanced Inference and Reasoning for OSINT ===================, Merge fragmented entity identities using probabilistic matching.          Uses m, Compute similarity score between two entity fragments. (+9 more)
+Nodes (17): confidence(), create_inference_engine(), final_score(), HopStep, InferenceRule, float, InferenceEngine - Advanced Inference and Reasoning for OSINT ===================, Calculate joint probability of multiple hypotheses.          Assumes conditional (+9 more)
 
 ### Community 79 - "Community 79"
 Cohesion: 0.13
-Nodes (16): FediverseAdapter, bool, ClientSession, int, str, Fediverse/Mastodon Intelligence Adapter.  Search public Mastodon/Fediverse insta, Search a single instance., Search hashtag timeline.          Args:             hashtag: Hashtag to search ( (+8 more)
+Nodes (15): FediverseAdapter, bool, int, str, Search a single instance., Search hashtag timeline.          Args:             hashtag: Hashtag to search (, Fetch hashtag timeline from a single instance., Resolve account cross-instance and fetch recent public posts.          Args: (+7 more)
 
 ### Community 80 - "Community 80"
 Cohesion: 0.08
@@ -924,8 +989,8 @@ Cohesion: 0.08
 Nodes (24): 1. Runtime / Scheduler, 2. Pipeline / Execution, 3. Coordinators / Fetch, 4. Tools / Utils, 5. Transport / Fetching, 6. fetching/public_fetcher.py, 7. Critical Findings, 8. Dormant / Unwired (+16 more)
 
 ### Community 87 - "Community 87"
-Cohesion: 0.14
-Nodes (15): bytearray, NeuromorphicCryptoEngine, ndarray, Extract entropy bytes from the pool.          Args:             length: Number o, Process input through the network., Cryptography Engine using Neuromorphic Computing.      Implements encryption/dec, Lazy initialization of SNN layers., Encrypt data using SNN-based transformation.          Args:             data: Da (+7 more)
+Cohesion: 0.07
+Nodes (33): NeuromorphicCryptoEngine, bool, bytes, ndarray, str, QuantumSafeVault, Verify neural signature.          Args:             data: Original data, Extract entropy bytes from the pool.          Args:             length: Number o (+25 more)
 
 ### Community 88 - "Community 88"
 Cohesion: 0.08
@@ -945,19 +1010,19 @@ Nodes (23): 10. Security Gaps, 11. Completeness Gaps (from code-review-expert re
 
 ### Community 92 - "Community 92"
 Cohesion: 0.08
-Nodes (8): Tests for network/i2p_client.py, Test known eepsites list structure., Integration tests that require actual network access., Tests for dht_adapter.py BEP-9 integration., Test async_fetch_dht_metadata is importable., TestAltProtocolsIntegration, TestDHTAdapterBEP9, TestI2PClient
+Nodes (9): Integration tests that require actual network access., Tests for discovery/fediverse_adapter.py, Test Fediverse constants are bounded., Test OSINT instances are defined., Tests for dht_adapter.py BEP-9 integration., Test async_fetch_dht_metadata is importable., TestAltProtocolsIntegration, TestDHTAdapterBEP9 (+1 more)
 
 ### Community 93 - "Community 93"
 Cohesion: 0.12
 Nodes (23): async_fetch_dht_metadata(), async_search_dht(), _get_dht_node(), _get_metadata_fetcher(), _make_node_id(), float, int, str (+15 more)
 
 ### Community 94 - "Community 94"
-Cohesion: 0.11
-Nodes (14): ActivationResult, FindingQualityDecision, Typed result contract for activation record operations.      Fields:         fin, Sprint 8W: Quality decision contract for CanonicalFinding ingest.      Fields:, Record a single finding with WAL-first semantics.          Order: LMDB WAL first, Record multiple findings with WAL-first semantics.          Order: LMDB WAL firs, Sprint 8P: Typed ingest API for CanonicalFinding DTO.          Adapts DTO → exis, Sprint F216G: Record a quality gate rejection to the bounded ledger.          De (+6 more)
+Cohesion: 0.05
+Nodes (25): ActivationResult, FindingQualityDecision, Typed result contract for activation record operations.      Fields:         fin, Sprint 8W: Quality decision contract for CanonicalFinding ingest.      Fields:, Record a single finding with WAL-first semantics.          Order: LMDB WAL first, Record multiple findings with WAL-first semantics.          Order: LMDB WAL firs, Sprint 8P: Typed ingest API for CanonicalFinding DTO.          Adapts DTO → exis, Sprint 8P: Batch typed ingest API for CanonicalFinding DTO list.          Adapts (+17 more)
 
 ### Community 95 - "Community 95"
-Cohesion: 0.16
-Nodes (12): bytes, str, Stealth komunikátor se steganografií.      Skrývá zprávy v obrazech pomocí:, Schovat zprávu v obrázku.          Args:             message: Zpráva k schování, Extrahovat zprávu z obrázku.          Args:             stego_image: Stego image, Vybrat nejlepší metodu, Detekovat použitou metodu, DCT steganografie (simplified) (+4 more)
+Cohesion: 0.23
+Nodes (7): Stealth komunikátor se steganografií.      Skrývá zprávy v obrazech pomocí:, Schovat zprávu v obrázku.          Args:             message: Zpráva k schování, Vybrat nejlepší metodu, Detekovat použitou metodu, DCT steganografie (simplified), StealthCommunicator, StegoMethod
 
 ### Community 96 - "Community 96"
 Cohesion: 0.08
@@ -980,8 +1045,8 @@ Cohesion: 0.09
 Nodes (22): Already Safe (No Change Needed), `brain/gnn_predictor.py:216`, code:python (# Before:), code:python (try:), code:python (except Exception:), code:python (except (ImportError, ModuleNotFoundError, AttributeError):), code:python (except Exception:), code:python (except (ImportError, ModuleNotFoundError, AttributeError):) (+14 more)
 
 ### Community 101 - "Community 101"
-Cohesion: 0.09
-Nodes (23): 22.10.1 Adversarial Reward Poisoning (CRITICAL), 22.10.2 State Injection Attack, 22.10.3 QMIX Neural Network Inputs (MEDIUM), 22.10.4 Source Weight Feedback Injection (MEDIUM), 22.10.5 File Permissions, 22.10 Security Analysis, 22.11 Dormant Code Summary, 22.1 Files Inventory (+15 more)
+Cohesion: 0.12
+Nodes (16): 22.11 Dormant Code Summary, 22.1 Files Inventory, 22.2 RL Algorithm: QMIX (Value Decomposition Networks), 22.3 SprintPolicyManager — F195C Integration, 22.4 Reward Computation, 22.5 State Persistence, 22.6 Epsilon-Greedy Exploration, 22.7 Source Weight Delegation (F199A) (+8 more)
 
 ### Community 102 - "Community 102"
 Cohesion: 0.09
@@ -1000,8 +1065,8 @@ Cohesion: 0.14
 Nodes (13): AcademicPaper, LanceDBAcademicStore, Academic paper with metadata for LanceDB storage., Convert to dict for LanceDB storage., Semantic search over academic papers discovered during research.      Sprint F25, Args:             db_path: Path to LanceDB database. If None, uses default., Initialize table and embedder., Initialize FastEmbed embedder. (+5 more)
 
 ### Community 106 - "Community 106"
-Cohesion: 0.11
-Nodes (12): _import_live_feed_pipeline(), runtime: remaining_time(). utils: remaining_time property., Stable mode: feed sources run first, then public discovery runs after., F212-B: Compute remaining-time-aware timeout for a named branch.            Form, Aggressive mode: feed, public discovery, and CT branches fire concurrently., Sprint F216G: Read quality rejection ledger from duckdb_store and          compu, Sprint R8: CT → PassiveDNS active-cycle bounded pivot.            One-hop pivot, Sprint F207J-A: Accumulate accepted lane findings into scheduler truth. (+4 more)
+Cohesion: 0.06
+Nodes (39): Protocol, create_rotating_bloom_filter(), create_rust_url_set(), DeduplicationStrategy, extract_domain(), fast_hash(), filter_valid_urls(), fingerprint_url() (+31 more)
 
 ### Community 107 - "Community 107"
 Cohesion: 0.09
@@ -1012,8 +1077,8 @@ Cohesion: 0.13
 Nodes (20): BaseModel, AnalysisSignature, DarkQuerySignature, EpistemicGapDetector, ExtractionSignature, HypothesisSignature, DSPy Signatures for OSINT hypothesis generation.  Minimal DSPy integration — fai, OSINT analysis — extract entities, identify gaps, recommend sources, flag challe (+12 more)
 
 ### Community 109 - "Community 109"
-Cohesion: 0.13
-Nodes (12): Evidence, Hypothesis, Generated hypothesis with probabilistic assessment., Update beliefs using Bayesian inference.          P(H|E) = P(E|H) * P(H) / P(E), Process evidence in streaming fashion for large datasets.          Memory-effici, Single piece of evidence with metadata., Perform abductive reasoning to find best explanations for observations., Generate candidate explanations from observations. (+4 more)
+Cohesion: 0.09
+Nodes (16): Evidence, Hypothesis, Generated hypothesis with probabilistic assessment., Process evidence in streaming fashion for large datasets.          Memory-effici, Single piece of evidence with metadata., Evict oldest evidence items if over MAX_EVIDENCE_ITEMS cap., Evict oldest graph nodes if over MAX_GRAPH_NODES cap., Add evidence to the inference engine with bounded storage.          Args: (+8 more)
 
 ### Community 110 - "Community 110"
 Cohesion: 0.09
@@ -1032,12 +1097,12 @@ Cohesion: 0.09
 Nodes (12): Tests for HypothesisGraph network-based reasoning., Test adding entities to the graph., Test adding duplicate entities., Test adding hypothesis edges., Test getting entity type., Test getting type for nonexistent entity., Test hidden bridge detection on empty graph., Test hidden bridge detection on small graph. (+4 more)
 
 ### Community 114 - "Community 114"
-Cohesion: 0.21
-Nodes (20): crawl_capsule(), extract_gemini_links(), fetch_capsule_content(), _fetch_gemini_tcp(), GeminiFinding, geminispace_to_findings(), get_capsule_index(), parse_gemini_url() (+12 more)
+Cohesion: 0.19
+Nodes (22): crawl_capsule(), extract_gemini_links(), fetch_capsule_content(), _fetch_gemini_tcp(), GeminiFinding, GeminiResponse, geminispace_to_findings(), get_capsule_index() (+14 more)
 
 ### Community 115 - "Community 115"
-Cohesion: 0.10
-Nodes (21): 23.2 Detailed Analysis, check_torrc.py, code:block10 (Purpose: Smoke-test for LLM model stack on M1 MacBook Air 8G), code:block11 (Purpose: Practical Model Stack Smoke & Assets — verify disk ), code:block12 (Purpose: Git pre-commit hook blocking commit of 'None' or 'N), code:python (staged = subprocess.run(["git", "diff", "--cached", "--name-), code:block14 (Purpose: Create a macOS RAM disk for Hledac scratch space), code:bash (MOUNT_POINT="${MOUNT_POINT:-/tmp/hledac_ramdisk}") (+13 more)
+Cohesion: 0.05
+Nodes (40): 21.10 Security Assessment, 21.11 Findings Summary, 21.1 Directory Inventory, 21.2 File Type Breakdown, 21.3 Report Categories, 21.4 Live Sprint JSON Schema, 21.5 Benchmark JSONL Schema, 21.6 Domain/Gate Audit JSON Schema (+32 more)
 
 ### Community 116 - "Community 116"
 Cohesion: 0.10
@@ -1064,8 +1129,8 @@ Cohesion: 0.12
 Nodes (12): _get_uma_budget(), Any, str, Search for similar entities.          Args:             embedding: Query embeddi, Re-embed all stored entities at new MRL dimension (256d).          Lazy migratio, Synchronous LMDB put operation - zero-copy via orjson., Delete embedding from cache., Embed single text via current embedder (for indexing - uses embed_document). (+4 more)
 
 ### Community 122 - "Community 122"
-Cohesion: 0.11
-Nodes (12): NymTransport, runtime: start() — transitions BOOT→WARMUP., Sprint F251: Dark web .onion discovery via Tor.            Gate: HLEDAC_ENABLE_T, F218Z: IPFS CID resolution and content fetch via Tor transport.            Gate:, Background init — DHT node singleton (F214). Fire-and-forget., Background init — I2PTransport singleton (F250). Fire-and-forget., Background init — TorTransport singleton (F214Q). Fire-and-forget., Background init — NymTransport singleton (F250). Fire-and-forget. (+4 more)
+Cohesion: 0.10
+Nodes (13): NymTransport, runtime: start() — transitions BOOT→WARMUP., Sprint F251: Dark web .onion discovery via Tor.            Gate: HLEDAC_ENABLE_T, F218Z: IPFS CID resolution and content fetch via Tor transport.            Gate:, F228F: Pre-run health check for critical dependencies.          Always returns H, Background init — DHT node singleton (F214). Fire-and-forget., Background init — I2PTransport singleton (F250). Fire-and-forget., Background init — TorTransport singleton (F214Q). Fire-and-forget. (+5 more)
 
 ### Community 123 - "Community 123"
 Cohesion: 0.10
@@ -1080,16 +1145,16 @@ Cohesion: 0.10
 Nodes (20): Architecture Map, Brain Contract: Hermes3Engine GenericResult Types, Brain Modules (LLM + Reasoning), Canonical Entry Points (F186A ROLE TABLE), code:block19 (python -m hledac.universal           ← canonical CLI entry p), code:block20 (GenericResult         ← base result wrapper), code:block28 (data/), data/ — Reference & Seed Data (+12 more)
 
 ### Community 126 - "Community 126"
-Cohesion: 0.19
-Nodes (10): LinUCBArm, NymPolicy, bool, float, int, ndarray, str, RiskLevel (+2 more)
+Cohesion: 0.20
+Nodes (9): LinUCBArm, NymPolicy, bool, float, int, ndarray, str, RiskLevel (+1 more)
 
 ### Community 127 - "Community 127"
-Cohesion: 0.17
-Nodes (20): async_run_live_public_pipeline(), _build_public_finding(), _compute_page_usable_fields(), _extract_live_public_findings_from_page(), _fetch_and_process_page(), _get_patterns_configured_count(), _make_finding_id(), float (+12 more)
+Cohesion: 0.16
+Nodes (22): async_run_live_public_pipeline(), _build_public_finding(), _compute_page_usable_fields(), _extract_live_public_findings_from_page(), _fetch_and_process_page(), _generate_and_store_report(), _get_patterns_configured_count(), _make_finding_id() (+14 more)
 
 ### Community 128 - "Community 128"
-Cohesion: 0.12
-Nodes (15): EmbeddingDimensionError, Raised when embedding dimension mismatch is detected., Exception, get_zkp_engine(), Zero-Knowledge Proof Research Engine — STUB.  ZKP requires complex cryptographic, Raised when ZKP operations are attempted., Zero-Knowledge Proof research engine — NOT IMPLEMENTED.      To implement ZKP fo, ZKP is never available from this stub. (+7 more)
+Cohesion: 0.11
+Nodes (16): EmbeddingDimensionError, Raised when embedding dimension mismatch is detected., Exception, get_zkp_engine(), Zero-Knowledge Proof Research Engine — STUB.  ZKP requires complex cryptographic, Raised when ZKP operations are attempted., Zero-Knowledge Proof research engine — NOT IMPLEMENTED.      To implement ZKP fo, ZKP is never available from this stub. (+8 more)
 
 ### Community 129 - "Community 129"
 Cohesion: 0.10
@@ -1100,8 +1165,8 @@ Cohesion: 0.11
 Nodes (17): 1. Academic Discovery — Source Coverage Matrix, 2. Citation Network Traversal — Implementation Gap, 3. Data Leak Hunter — API Coverage Matrix, 4. Missing Academic Sources — Implementation Plan, 4a. OpenAlex API (PRIORITY), 4b. Internet Archive Scholar, 4c. CORE.ac.uk, 4d. Preprint Servers (bioRxiv/medRxiv) (+9 more)
 
 ### Community 131 - "Community 131"
-Cohesion: 0.11
-Nodes (19): 21.10 Security Assessment, 21.11 Findings Summary, 21.1 Directory Inventory, 21.2 File Type Breakdown, 21.3 Report Categories, 21.4 Live Sprint JSON Schema, 21.5 Benchmark JSONL Schema, 21.6 Domain/Gate Audit JSON Schema (+11 more)
+Cohesion: 0.06
+Nodes (34): Configuration for one sprint run., SprintSchedulerConfig, Any, bool, str, QuantumResistantCrypto, QuantumResistantCrypto — Post-Quantum Cryptography wrapper.  Provides unified in, Post-quantum cryptography wrapper.      Wraps PostQuantumBackend from hledac.uni (+26 more)
 
 ### Community 132 - "Community 132"
 Cohesion: 0.16
@@ -1144,8 +1209,8 @@ Cohesion: 0.14
 Nodes (10): Infer seniority distribution from job posting text., Detect hiring patterns in job posting text., Detect inferred pain points from job posting text., Infer technology stack from job postings across multiple sources.          Sourc, Web intelligence helper — OSINT scraping and threat analysis utilities.      Pro, Initialize all intelligence components., Lazy initialization — spustí komponenty a aging task pouze jednou při první oper, Age queued operations to improve priority over time.          HARD EXIT: waits o (+2 more)
 
 ### Community 142 - "Community 142"
-Cohesion: 0.12
-Nodes (9): Sprint F202K: Ensure target_profiles table exists in DuckDB.         Safe to cal, Resolve _db_path and _temp_dir based on RAMDISK availability.          RAMDISK_A, Initialize DuckDB connection synchronously (backward compat wrapper).          F, Async initialize — creates connection on the worker thread.          Optional bo, Async context manager entry — initializes the store.          Usage:, Sync wrapper: CanonicalFinding DTO → ActivationResult dict.          Sprint 8R:, Sprint D7: Batch fail-open path — process N findings whose quality gate threw., Sync batch: CanonicalFinding list → list[dict] (not ActivationResult, avoid circ (+1 more)
+Cohesion: 0.14
+Nodes (8): Sprint F202K: Ensure target_profiles table exists in DuckDB.         Safe to cal, Resolve _db_path and _temp_dir based on RAMDISK availability.          RAMDISK_A, Initialize DuckDB connection synchronously (backward compat wrapper).          F, Async initialize — creates connection on the worker thread.          Optional bo, Async context manager entry — initializes the store.          Usage:, Sprint D7: Batch fail-open path — process N findings whose quality gate threw., Sync batch: CanonicalFinding list → list[dict] (not ActivationResult, avoid circ, Sprint 8R: Bulk insert using list[tuple] with 6 columns (id, query, source_type,
 
 ### Community 143 - "Community 143"
 Cohesion: 0.13
@@ -1336,8 +1401,8 @@ Cohesion: 0.14
 Nodes (13): 1. Run Environment, 2. Local Model Availability, 3. Model Quality Summary, 4. Runtime Summary, 5. Candidate Ranking, 6. Swap Readiness, 7. Recommendation, code:block1 (NO_SWAP_YET) (+5 more)
 
 ### Community 190 - "Community 190"
-Cohesion: 0.20
-Nodes (10): _deserialize_weights(), Any, str, Lazily init QMIX components: replay buffer, state extractor, agents, trainer., Return QMIX training stats for observability., Serialize MLX array weights to JSON-compatible dict. Returns {} if weights is No, Return RL telemetry snapshot for sprint_scheduler telemetry reporting., F228F: Return reward distribution statistics. (+2 more)
+Cohesion: 0.15
+Nodes (12): _deserialize_weights(), Any, str, Inject SprintPolicyManager ref (opt-in RL layer)., Lazily init QMIX components: replay buffer, state extractor, agents, trainer., Load persisted state from disk. Prefer .json.zst, fallback to .json., Return QMIX training stats for observability., Serialize MLX array weights to JSON-compatible dict. Returns {} if weights is No (+4 more)
 
 ### Community 191 - "Community 191"
 Cohesion: 0.18
@@ -1396,8 +1461,8 @@ Cohesion: 0.15
 Nodes (12): Acceptance Criteria, Baseline, Benchmark Prompts (12 minimum), Candidate Primary Reasoners, Fast/Router/Structured JSON Candidates, Files Created, Goal, Invariants (+4 more)
 
 ### Community 205 - "Community 205"
-Cohesion: 0.18
-Nodes (7): EntropyPool, Get current entropy pool fullness estimate (0.0 - 1.0)., Internal reseed operation to mix pool entropy., Initialize the crypto engine with lazy loading., Get the entropy pool for cryptographic randomness., Entropy pool for cryptographic operations.      Collects and manages entropy fro, Add entropy from a specific source to the pool.          Args:             sourc
+Cohesion: 0.29
+Nodes (4): EntropyPool, Get current entropy pool fullness estimate (0.0 - 1.0)., Get the entropy pool for cryptographic randomness., Entropy pool for cryptographic operations.      Collects and manages entropy fro
 
 ### Community 206 - "Community 206"
 Cohesion: 0.15
@@ -1408,8 +1473,8 @@ Cohesion: 0.15
 Nodes (13): 1. CausalEngine (`brain/causal_engine.py`), code:block2 (Input: List[CanonicalFinding]), code:block3 (Entities sorted by last_seen → chronological order), code:block4 (Entity A  Entity B  Entity C), code:block5 (For each entity:), code:block6 (Input: entity relationships from co-occurrence + temporal se), code:block7 (For each entity with ≥2 source findings:), Step 1: Entity Extraction (+5 more)
 
 ### Community 208 - "Community 208"
-Cohesion: 0.15
-Nodes (6): runtime: recommended_tool_mode(). Returns 'normal'/'prune'/'panic'., Run one bounded fetch cycle across all sources, tier-ordered.          In aggres, Build and tier-sort work items from source list., Drop ARCHIVE and OTHER tier items when in prune mode., F199A: Adapt _source_weights from per-source quality feedback collected during t, Re-sort work items by source economics.            Order:          1. Sources NO
+Cohesion: 0.09
+Nodes (24): IocDedupStore, get_global_manager(), IocDedupManager, bool, float, int, str, _PythonIocDedupStore (+16 more)
 
 ### Community 209 - "Community 209"
 Cohesion: 0.15
@@ -1440,8 +1505,8 @@ Cohesion: 0.17
 Nodes (10): Changes, code:python (# runtime_seconds → always 0 → time_penalty = 0 → reward inf), code:block2 (base: log(11)*2.0 - 0 + cycles_bonus = 2.3979 + 0.2 = 2.598), code:block3 (reward = 5.000  clamp: True ✅), _compute_reward() field fixes (F235-A), New SprintSchedulerResult fields (F235), pivot_map trimmed (F235-C), Post-fix reward (correct) (+2 more)
 
 ### Community 216 - "Community 216"
-Cohesion: 0.17
-Nodes (11): code:block9 (async_ingest_findings_batch()), Dedup Algorithm, DuckDB Safety, DuckDB Schema, GHOST_* / HLEDAC_* Env Variables, GHOST_* (runtime paths and sizing), HLEDAC_* (feature flags and sizing), Key Findings (+3 more)
+Cohesion: 0.09
+Nodes (22): code:python ({), code:block13 (add_or_use_provider_replay_fixture, continue_pivot_expansion), code:block9 (async_ingest_findings_batch()), _compute_runtime_diagnosis() — input/output, Dedup Algorithm, Distributed embedding components, DuckDB Safety, DuckDB Schema (+14 more)
 
 ### Community 217 - "Community 217"
 Cohesion: 0.17
@@ -1496,20 +1561,20 @@ Cohesion: 0.18
 Nodes (10): F3FORENSICS_ACTIVATE_REPORT — Sprint Completion, Files Changed, GHOST_INVARIANTS Compliance, Remaining Wiring (Not Completed), Task 1: Ghost/Stego Canonicalization, Task 2: DigitalGhostDetector Sidecar, Task 3: SteganalysisDetector Sidecar, Task 4: cascade.py Classification (+2 more)
 
 ### Community 230 - "Community 230"
-Cohesion: 0.18
-Nodes (6): Sprint F204D: Upsert a TargetMemory record into DuckDB.          Serializes face, Sync upsert target memory — MUST be called on worker thread., Sprint F204D: Read a TargetMemory record by target_id.         Returns None if n, Sprint F204D: Insert or update target memory from a TargetMemory.          Threa, Sprint F204D: Get target memory by target_id.          Thread-safe, non-blocking, TargetMemory
+Cohesion: 0.07
+Nodes (21): DedupManager, _load_dedup_hot_cache_max(), Any, Dedup Manager — Sprint F216G refactor ====================================  ROLE, Owns dedup storage lifecycle for DuckDBShadowStore.      Responsible for:, Initialize persistent dedup LMDB and semantic dedup cache., Initialize persistent dedup LMDB.          Fails softly: any exception is caught, Lazy-load hot cache max size. (+13 more)
 
 ### Community 231 - "Community 231"
-Cohesion: 0.20
-Nodes (6): FindingEnvelope, Query recent findings ordered by timestamp descending.          Thread-safe, non, Sprint F202A §2: Serialize FindingEnvelope to payload_text string.          Fail, Sprint F202A §2: Deserialize FindingEnvelope from payload_text string., Sprint F202A §3: Read and deserialize envelope from LMDB WAL entry.          Ret, Sprint F202A §3: Read recent findings with deserialized envelopes.          Retu
+Cohesion: 0.05
+Nodes (41): 1. Missing Classes Summary, 2.1 Import Location, 2.2 Usage Pattern, 2.3 Fallback Behavior, 2.4 Browser Automation Context, 2.5 Functionality Blocked Estimate, 2. AutomationOrchestrator Analysis (`intelligence/web_intelligence.py`), 3.1 Import Location (+33 more)
 
 ### Community 232 - "Community 232"
-Cohesion: 0.20
-Nodes (11): _filter_public_noise(), generate_rescue_urls(), _get_uma_state(), _is_shopping_noise_url(), _is_threat_query(), bool, Read UMA status via 8AB surface.     Returns (state_str, io_only_hint).     Rais, Detect if a URL is shopping/e-commerce noise.      For threat queries: blocks ob (+3 more)
+Cohesion: 0.15
+Nodes (14): _filter_public_noise(), _get_uma_state(), _inject_onion_hits(), _is_shopping_noise_url(), _onion_circuit_is_open(), _onion_circuit_record_failure(), bool, DuckDBShadowStore (+6 more)
 
 ### Community 233 - "Community 233"
-Cohesion: 0.18
-Nodes (11): _add_pattern_hits_to_graph(), _generate_and_store_report(), generate_seed_context_bootstrap_urls(), _patch_ct_scanner(), _patch_discovery(), _patch_fetcher_and_matcher(), Any, P6: Generate OSINT report from top findings and store in DuckDB.     P13: Integr (+3 more)
+Cohesion: 0.06
+Nodes (32): Batch Operations (100 items), Benchmark Results (M1 Apple Silicon), Build Commands, code:python (from hledac_rust_extensions import content_hash_64, batch_co), code:python (from hledac_rust_extensions import normalize, canonicalize_b), code:python (from hledac_rust_extensions import fast_ioc_extract), code:python (from hledac_rust_extensions import simhash, hamming_dist, Si), code:python (from hledac_rust_extensions import IocDedupStore) (+24 more)
 
 ### Community 234 - "Community 234"
 Cohesion: 0.18
@@ -1584,8 +1649,8 @@ Cohesion: 0.20
 Nodes (6): Tests for fetching/alternative_protocol_fetcher.py, Test alt protocols disabled by default., Test alt protocols enabled with env var., Test AltProtocolResult structure., Test status reporting., TestAlternativeProtocolFetcher
 
 ### Community 252 - "Community 252"
-Cohesion: 0.20
-Nodes (6): Tests for discovery/fediverse_adapter.py, Test FediverseAdapter initialization., Test Fediverse is_enabled gate., Test Fediverse constants are bounded., Test OSINT instances are defined., TestFediverseAdapter
+Cohesion: 0.06
+Nodes (30): 1. `ioc_dedup` (MISSING), 2. `simhash_ext` (MISSING), 3. `url_engine` (MISSING), 4. `url_set` (MISSING), 5. `xxhash_ext` (MISSING), Build Error Output, Cargo.toml dependencies, code:rust (// lib.rs declares these modules:) (+22 more)
 
 ### Community 253 - "Community 253"
 Cohesion: 0.20
@@ -1600,12 +1665,12 @@ Cohesion: 0.20
 Nodes (9): Audit Update 2026-04-24, Audit verdict, Changes since 2026-04-23 baseline, Hard assumptions carried through all phases, LONGTERM_PLAN, Phase 2 Roadmap, Planning Baseline, Recommended phase order (+1 more)
 
 ### Community 256 - "Community 256"
-Cohesion: 0.20
-Nodes (6): SprintPolicyManager — opt-in RL sprint policy layer. Plugged into SprintSchedule, Inject SprintPolicyManager ref (opt-in RL layer)., Load persisted state from disk. Prefer .json.zst, fallback to .json., Serialized policy state persisted to disk., Reset internal state and delete persisted file. Does nothing when disabled., SprintPolicyState
+Cohesion: 0.33
+Nodes (4): SprintPolicyManager — opt-in RL sprint policy layer. Plugged into SprintSchedule, Serialized policy state persisted to disk., Reset internal state and delete persisted file. Does nothing when disabled., SprintPolicyState
 
 ### Community 257 - "Community 257"
-Cohesion: 0.20
-Nodes (6): array, Path, Načte ModernBERT model přes mlx-embeddings., Zakóduje texty do embedding vektorů.          Args:             texts: Jeden tex, Mean pooling s ohledem na attention mask.          Args:             token_embed, Inicializace embedding manageru.          Args:             model_path: Cesta k
+Cohesion: 0.18
+Nodes (9): MLXEmbeddingManager, array, Path, Načte ModernBERT model přes mlx-embeddings., Zakóduje texty do embedding vektorů.          Args:             texts: Jeden tex, Mean pooling s ohledem na attention mask.          Args:             token_embed, Uvolní model z paměti., Embedding manager používající ModernBERT přes MLX.      Nahrazuje sentence-trans (+1 more)
 
 ### Community 258 - "Community 258"
 Cohesion: 0.20
@@ -1700,8 +1765,8 @@ Cohesion: 0.25
 Nodes (8): code:python (import mlx.core as mx   # line 29), code:python (generate_kwargs = {), code:python (class DempsterShafer:), code:python (class GraphSAGE(mlx.nn.Module):   # MLX-based GraphSAGE (not), Correction 1: kv_bits=4 IS SET in Hermes3Engine, Correction 2: Dempster-Shafer IS IMPLEMENTED (but not wired to hypothesis_engine), Correction 3: GNN IS IMPLEMENTED (MLX-based, wired to relationship_discovery only), CORRECTIONS TO PREVIOUS DOCUMENT VERSION (code-review-expert verified)
 
 ### Community 281 - "Community 281"
-Cohesion: 0.25
-Nodes (5): HopStep, Calculate compounded confidence for a hop sequence.          Args:             h, Single step in a multi-hop reasoning chain.      Represents one inference hop fr, Calculate compounded confidence across hops.          Formula: product(hop_confi, Validate and normalize hop step data.
+Cohesion: 0.12
+Nodes (7): ioc_dedup_from_bytes(), IocDedupStore, IocEntry, IocType, normalize_ioc(), test_batch_add(), test_ioc_dedup_store()
 
 ### Community 282 - "Community 282"
 Cohesion: 0.25
@@ -1796,8 +1861,8 @@ Cohesion: 0.33
 Nodes (5): _get_hermes_timeout_s(), float, Get Hermes inference timeout from environment.      Returns:         Timeout in, Sprint 7I: Adaptive flush interval — 3-tier policy based on queue depth., Sprint 7G: Batch-safe eligibility check.          Routing criteria:         - sc
 
 ### Community 305 - "Community 305"
-Cohesion: 0.29
-Nodes (7): _inject_onion_hits(), _onion_circuit_is_open(), _onion_circuit_record_failure(), DuckDBShadowStore, Check if onion circuit breaker is open., Record a failure in the onion circuit breaker., Sprint F193A: Onion discovery + scraping via Tor.      Discovers .onion URLs via
+Cohesion: 0.07
+Nodes (27): code:python (class ThreatIntelligence:), code:block2 (ThreatIntelligence: Using static IOCs (7 patterns)), code:python (class QuantumResistantCrypto:), code:block4 (QuantumResistantCrypto(backend=swift-helper-mldsa, available), code:python (class ZKPResearchEngine:), code:block6 (ZKPResearchEngine: Running in SIMULATION MODE.), code:block7 (INFO:coordinators.security_coordinator:SecurityCoordinator: ), Features (+19 more)
 
 ### Community 306 - "Community 306"
 Cohesion: 0.29
@@ -1924,8 +1989,8 @@ Cohesion: 0.33
 Nodes (4): Explains path importance using leave-one-node-out ablation.      Computes import, Initialize explainer.          Args:             graph_rag: GraphRAGOrchestrator, Explain path importance using node ablation.          Args:             path: Li, SimpleNodeAblationExplainer
 
 ### Community 337 - "Community 337"
-Cohesion: 0.33
-Nodes (4): InferenceRule, Definition of an inference rule., Initialize InferenceEngine.          Args:             max_chain_depth: Maximum, Initialize OSINT-specific inference rules.
+Cohesion: 0.14
+Nodes (18): batch_compute_simhash(), compute_simhash(), compute_simhash_from_tokens(), compute_tf_weights(), fnv64(), hamming_dist(), hamming_distance(), is_near_duplicate() (+10 more)
 
 ### Community 338 - "Community 338"
 Cohesion: 0.33
@@ -1980,8 +2045,8 @@ Cohesion: 0.33
 Nodes (6): Claude Code prompt, code:text ([FÁZE F202I — MULTIMODAL EVIDENCE TRIAGE]), Definition of Done, F202I — Multimodal Evidence Triage, Probe testy, Soubory k vytvoření/upravení
 
 ### Community 351 - "Community 351"
-Cohesion: 0.40
-Nodes (3): bool, Verify neural signature.          Args:             data: Original data, Verify neural signature.          Args:             data: Original data
+Cohesion: 0.12
+Nodes (19): batch_simhash(), compute_simhash(), load_state(), NearDuplicateDetector, bool, int, Path, str (+11 more)
 
 ### Community 352 - "Community 352"
 Cohesion: 0.33
@@ -1992,8 +2057,8 @@ Cohesion: 0.33
 Nodes (4): Tests for boundary conditions and limits., Test that graph respects MAX_NODES limit., Test that causal engine respects MAX_ENTITIES limit., TestBoundaries
 
 ### Community 354 - "Community 354"
-Cohesion: 0.40
-Nodes (5): Result of Unpaywall DOI lookup., UnpaywallResult, NamedTuple, GeminiResponse, Parsed Gemini response.
+Cohesion: 0.18
+Nodes (11): get_institution_network(), InstitutionNetwork, OpenAlexAuthor, OpenAlexInstitution, OpenAlexResult, discovery/academic/openalex_adapter.py — OpenAlex API Adapter  Sprint F259: Acad, Get institution collaboration network., OpenAlex institution. (+3 more)
 
 ### Community 355 - "Community 355"
 Cohesion: 0.40
@@ -2128,12 +2193,12 @@ Cohesion: 0.50
 Nodes (4): FIXABLE Imports (must fix), OPTIONAL Imports (30 total, fail-soft), STEP 1: Import Integrity, Summary Table
 
 ### Community 388 - "Community 388"
-Cohesion: 0.50
-Nodes (4): code:python ({), code:block13 (add_or_use_provider_replay_fixture, continue_pivot_expansion), _compute_runtime_diagnosis() — input/output, Runtime Diagnosis Categories
+Cohesion: 0.10
+Nodes (19): ModuleType, KeyManager, Stub key manager for bucket operations.      Real implementation manages master, TemporalAnonymizer — Stub implementation.  Provides random delay for rate limiti, Stub temporal anonymizer for rate-limiting delays.      Real implementation prov, Initialize with optional min/max delay bounds., TemporalAnonymizer, ZeroAttributionEngine — Stub implementation.  Provides zero-attribution metadata (+11 more)
 
 ### Community 389 - "Community 389"
-Cohesion: 0.50
-Nodes (4): knowledge/wal.py — WAL Manager, LMDB Configuration, memory/memory_manager.py — Session-scoped persistent memory, tools/lmdb_kv.py — Zero-copy KV store
+Cohesion: 0.11
+Nodes (16): Bridge: research_coordinator → hledac.advanced_rag.rag_orchestrator.  research_c, Any, float, int, str, RAGOrchestrator, Bridge: RAGOrchestrator for research_coordinator.py compatibility. Provides rese, Cleanup delegate resources. (+8 more)
 
 ### Community 390 - "Community 390"
 Cohesion: 0.50
@@ -2172,8 +2237,8 @@ Cohesion: 0.50
 Nodes (4): 5a. Aktuální stav — WIRED ✓, 5b. Co deep_probe.skenuje navíc oproti discovery/, code:block8 (deep_probe.py), KROK 5 — Deep Probe Integrace (AKTIVNÍ)
 
 ### Community 400 - "Community 400"
-Cohesion: 0.50
-Nodes (4): _get_gopher_transport(), Lazy import Gopher transport (canonical: transport/gopher_transport.py)., get_gopher_transport(), Get the canonical GopherTransport singleton.
+Cohesion: 0.17
+Nodes (14): Any, bool, int, str, Fallback fetch using httpx + BeautifulSoup., Extract same-domain links from nodriver tab., Crawl URL with same-domain link following., Return error result dict. (+6 more)
 
 ### Community 401 - "Community 401"
 Cohesion: 0.67
@@ -2212,32 +2277,196 @@ Cohesion: 0.67
 Nodes (3): ARCHITECTURE MAP, Canonical Entry Point, code:block1 (python -m hledac.universal)
 
 ### Community 411 - "Community 411"
-Cohesion: 0.67
-Nodes (3): Distributed embedding components, Embedding Pipeline, embedding_pipeline.py (1,064 lines, 37.4KB) — Semantic search integration (P13)
+Cohesion: 0.12
+Nodes (15): Any, bool, int, str, ThreatIntelligence — IOC lookup and threat analysis for OSINT findings.  Provide, Load static IOC patterns as fallback., Analyze context for threat indicators.          Args:             context: Dict, Classify entity type based on pattern. (+7 more)
 
 ### Community 412 - "Community 412"
 Cohesion: 0.67
 Nodes (3): 3. STIX 2.1 Export, code:json ({), Components
 
+### Community 533 - "Community 533"
+Cohesion: 0.09
+Nodes (22): 1. hledac_rust_extensions not built (~1 error), 2. FileNotFound errors (~varies), 3. AssertionError / ImportError (~varies), Category 1: Module is not a package, Category 2: Missing stub modules, Category 3: Missing functions in live_sprint_measurement.py, code:bash (uv add kuzu), code:block2 (16222 tests collected, 106 errors in 43.33s) (+14 more)
+
+### Community 534 - "Community 534"
+Cohesion: 0.09
+Nodes (21): 1. Missing Dependencies (Category 2) — CANNOT FIX, 2. Missing Stub Modules (Category 2) — NEED SHIMS, 3. Path Collision Issue (MAJOR), 4. Attribute Errors, Before/After Collection Errors, Category 3: live_sprint_measurement.py (APPLIED), Category 5: sprint_scheduler.py (APPLIED), code:python (# Backward-compatibility re-exports) (+13 more)
+
+### Community 535 - "Community 535"
+Cohesion: 0.10
+Nodes (20): 1. `StealthEngine`, 2. `ThreatIntelligence`, 3. `QuantumResistantCrypto`, 4. `ZKPResearchEngine`, 5. `TemporalAnonymizer`, 6. `ZeroAttributionEngine`, 7. `KeyManager`, ANALYSIS_A3: Missing `hledac.security.*` Namespace (+12 more)
+
+### Community 536 - "Community 536"
+Cohesion: 0.10
+Nodes (20): Change (core/__init__.py), Change (core/__init__.py), code:diff (-        self._network_driver = None), code:diff (-            logger.info("✓ GhostNetworkDriver loaded")), code:diff (try:), code:diff (if self._network_driver:), code:python (# MLX embeddings redirect (hledac.core.mlx_embeddings → core), code:python (# Watchdog shim (hledac.core.watchdog → _shims/core_watchdog) (+12 more)
+
+### Community 537 - "Community 537"
+Cohesion: 0.14
+Nodes (16): _extract_findings(), _extract_summary(), _get_unified_engine(), _map_depth(), Any, str, Bridge shim: UnifiedAIOrchestrator → UnifiedResearchEngine. Provides real implem, Cleanup engine resources. (+8 more)
+
+### Community 538 - "Community 538"
+Cohesion: 0.15
+Nodes (12): EvidenceNetworkAnalyzer, Any, float, str, EvidenceNetworkAnalyzer — Stub Implementation ==================================, Evidence network analyzer stub.      Provides network-based evidence analysis:, Initialize evidence network analyzer., Analyze entity network relationships.          Args:             entities: List (+4 more)
+
+### Community 539 - "Community 539"
+Cohesion: 0.18
+Nodes (15): batch_fingerprint(), canonicalize_batch(), canonicalize_url_internal(), filter_valid_urls(), fingerprint(), is_valid_url(), normalize(), strip_tracking_params() (+7 more)
+
+### Community 540 - "Community 540"
+Cohesion: 0.18
+Nodes (7): fnv1a_64(), test_add_and_contains(), test_clear(), test_different_urls_same_hash_different(), test_duplicate_rejected(), test_total_seen(), UrlSet
+
+### Community 541 - "Community 541"
+Cohesion: 0.11
+Nodes (17): ANALYSIS: Outdated Import + Missing Watchdog, Call Chain Analysis, Classification: **DEAD CODE — safe to delete**, Classification: **SHIM ALREADY EXISTS — no action needed**, code:block1 (ghost_executor.py:566), code:python (# DELETE lines 549-577 (_get_stealth_manager method)), code:block3 (monitoring_coordinator.py:189), Evidence (+9 more)
+
+### Community 542 - "Community 542"
+Cohesion: 0.12
+Nodes (15): ExcavationStrategy, HierarchicalPlan, MetaPattern, Universal Research Coordinator ==============================  Integrated resear, Research thread tracking context., Generate theories from detected patterns., Meta-pattern detected across research., Theory generated from research patterns. (+7 more)
+
+### Community 543 - "Community 543"
+Cohesion: 0.12
+Nodes (16): 1. API Discovery Results, 2.1 `hledac/universal/coordinators/research_coordinator.py`, 2.2 `hledac/universal/advanced_web/__init__.py`, 2.3 `hledac/universal/advanced_web/evidence_network_analyzer.py` (NEW), 2. Files Changed, 3. Verification, 4. Summary, code:python (# Before: raised ImportError hard error) (+8 more)
+
+### Community 544 - "Community 544"
+Cohesion: 0.12
+Nodes (15): code:python (# BEFORE (line55-58):), code:python (# BEFORE:), code:python (# BEFORE:), code:python (# BEFORE:), code:python (# BEFORE:), code:python (# BEFORE:), code:bash ($ uv run python -c "), Files Modified (+7 more)
+
+### Community 545 - "Community 545"
+Cohesion: 0.19
+Nodes (8): batch_content_hash(), content_hash_64(), content_hash_hex(), StreamHasher64, test_batch_hash(), test_content_hash_64(), test_content_hash_hex(), test_stream_hasher()
+
+### Community 546 - "Community 546"
+Cohesion: 0.14
+Nodes (12): `adjust_fetch_workers`, code:block1 (policy/nym_policy.py:11: from hledac.universal.transport.tra), code:python ("Transport": "hledac.universal.transport.transport_resolver"), code:block3 (autonomous_orchestrator.py (root) [line 137-143]), code:block4 (# Transport exists in transport_resolver.py:), `FullyAutonomousOrchestrator`, `GraphRAGOrchestrator`, Per-Symbol Analysis (+4 more)
+
+### Community 547 - "Community 547"
+Cohesion: 0.14
+Nodes (13): 1. DEDUPLICATION CHECK, 2. M1 FEASIBILITY FILTER, 3. DEPENDENCY GRAPH, 4. IMPLEMENTATION ORDER, 5. GHOST_INVARIANTS COMPLIANCE, Critical Path (ordered fix sequence), EXECUTION SUMMARY, Files Blocked by Multiple Missing Imports (+5 more)
+
+### Community 548 - "Community 548"
+Cohesion: 0.24
+Nodes (13): _bootstrap_advanced_rag(), _bootstrap_advanced_web(), _bootstrap_core(), _bootstrap_hledac_root(), _bootstrap_namespace(), _bootstrap_security(), _make_pkg_stub(), Wire up hledac.core using hledac.universal.core as canonical source. (+5 more)
+
+### Community 549 - "Community 549"
+Cohesion: 0.15
+Nodes (9): db_path(), bytes, int, Path, str, KeyManager — Stub implementation.  Provides key management for bucket operations, Initialize key manager.          Args:             db_path: Optional path to LMD, Get or create master key.          Returns:             bytes: Master key (stub: (+1 more)
+
+### Community 550 - "Community 550"
+Cohesion: 0.18
+Nodes (7): AutomationOrchestrator, Any, str, AutomationOrchestrator — minimal implementation for web_intelligence.py compatib, Minimal automation orchestrator stub.      web_intelligence.py expects:, Cleanup all active tasks and resources.          Called from web_intelligence.py, StealthBrowser — async browser for scraping JS-heavy or bot-protected sites.  In
+
+### Community 551 - "Community 551"
+Cohesion: 0.21
+Nodes (5): batch_sha256(), extract_iocs(), fast_ioc_extract(), fast_ioc_extract_batch(), sha256_hex()
+
+### Community 552 - "Community 552"
+Cohesion: 0.18
+Nodes (7): ExcavationConfig, float, Calculate relevance score with decay., Add paper with FIFO eviction when limit exceeded., Configuration for deep excavation., Research paper node with citation tracking., ResearchPaper
+
+### Community 553 - "Community 553"
+Cohesion: 0.18
+Nodes (6): bool, float, int, Adapter: UmaWatchdog → Watchdog interface. Bridges monitoring_coordinator.py to, Adapter wrapping hledac.universal.utils.uma_budget.UmaWatchdog     to expose the, Watchdog
+
+### Community 554 - "Community 554"
+Cohesion: 0.18
+Nodes (10): Class Mapping, code:block1 (hledac/security/), code:bash ($ uv run python -c "from hledac.security import StealthEngin), Constraints Followed, FIX_REPORT_P2 — Security Namespace T0 Redirects, Import Fixes (9 total), Root Cause, Shim Package Created (+2 more)
+
+### Community 555 - "Community 555"
+Cohesion: 0.18
+Nodes (10): 1. `advanced_web/__init__.py`, 2. `advanced_web/stealth_browser.py`, 3. `advanced_web/automation_orchestrator.py`, code:python (from hledac.universal.advanced_web.stealth_browser import St), code:block2 (Imports OK), Constraints Met, Created Files, FIX_REPORT_P5 — StealthBrowser + AutomationOrchestrator (+2 more)
+
+### Community 556 - "Community 556"
+Cohesion: 0.18
+Nodes (6): bytes, Sprint 8L: Return the number of deadletter_duckdb_sync:* markers in WAL LMDB., P0-9 fix: Evict oldest pending sync markers to enforce MAX_PENDING_SYNC_MARKERS, Sprint 8F: Write a pending-sync recovery marker to LMDB.         P0-9 fix: Enfor, Build dedup namespace key from BLAKE2b fingerprint., Extract fingerprint from dedup namespace key.
+
+### Community 557 - "Community 557"
+Cohesion: 0.20
+Nodes (5): Sprint F207V-A: Record the exact exit path taken by the scheduler.            Si, Sprint F215D: Compute canonical early exit classification.            Called in, Sprint F208I-B: Finalize SprintSchedulerResult before run() returns., Sprint F208L-A: Collect canonical CT terminal outcome from all CT surfaces., Sprint F210A: Canonical source family outcomes for terminality SSOT.
+
+### Community 558 - "Community 558"
+Cohesion: 0.20
+Nodes (6): Tests for discovery/matrix_adapter.py, Test MatrixPublicAdapter initialization., Test Matrix is_enabled gate., Test Matrix constants are bounded., Test Matrix homeserver is configured., TestMatrixAdapter
+
+### Community 559 - "Community 559"
+Cohesion: 0.22
+Nodes (8): Collection Errors (105 errors during collection), FINAL_STATUS.md — P1–P7-C Smoke Test & Validation, P1–P6 Fix Summary, Pytest Results, Recommended Next Sprint, Root Cause: Namespace Package Bootstrap, Smoke Test Results, Zbývající otevřené položky
+
+### Community 560 - "Community 560"
+Cohesion: 0.25
+Nodes (5): int, Set research depth mode., Get current research depth mode., Research depth modes for different investigation levels., ResearchDepth
+
+### Community 561 - "Community 561"
+Cohesion: 0.25
+Nodes (8): _ensure_ct_scanner_patched(), _extract_base_domain(), _inject_ct_subdomain_hits(), _query_looks_like_domain(), Sprint F188B: Detect if query is a domain name suitable for CT subdomain lookup., Sprint F188B: Extract base domain from a domain string for CT scanner input., Sprint F188B: Thin CT winner-slice adapter.      If query looks like a domain, c, Lazily patch the CT scanner from network.ct_log_scanner.
+
+### Community 562 - "Community 562"
+Cohesion: 0.25
+Nodes (4): runtime: request_abort(reason)., Sprint 8RA: Request immediate abort (called from UMA EMERGENCY callback)., Mark teardown on lifecycle., Fallback for direct calls to _final_phase (e.g. tests).
+
+### Community 563 - "Community 563"
+Cohesion: 0.25
+Nodes (4): F205C/F205F: Route accepted findings from any branch through SidecarOrchestrator, Sprint F193A: Run CT log canonical discovery in the current cycle.            Ex, F198A: Extract IOCs from accepted findings and upsert to graph_service., Sprint F214Q: Post-sprint quantum-inspired graph walk.          Find undiscovere
+
+### Community 564 - "Community 564"
+Cohesion: 0.32
+Nodes (5): Any, str, Verify a ZK proof (simulated).          In production, this would:         - Par, Initialize ZKP engine — simulation mode requires no setup., Generate a simulated ZK proof.          In production, this would:         - Com
+
+### Community 565 - "Community 565"
+Cohesion: 0.29
+Nodes (7): 22.10.1 Adversarial Reward Poisoning (CRITICAL), 22.10.2 State Injection Attack, 22.10.3 QMIX Neural Network Inputs (MEDIUM), 22.10.4 Source Weight Feedback Injection (MEDIUM), 22.10.5 File Permissions, 22.10 Security Analysis, code:block36 (.rw-r--r--@  .sprint_policy_state.json   # Anyone can read)
+
+### Community 566 - "Community 566"
+Cohesion: 0.40
+Nodes (5): str, __getattr__(), load_optional(), Universal Package — Minimal Export Surface =====================================, Load an optional module by name.      Args:         name: Full module name relat
+
+### Community 567 - "Community 567"
+Cohesion: 0.40
+Nodes (4): bench(), Micro-benchmarks: Python fallback vs Rust implementations., int, str
+
+### Community 568 - "Community 568"
+Cohesion: 0.40
+Nodes (4): __getattr__(), Any, str, STUB MODULE — hledac.universal.brain.llm_candidate_registry Status: Planned, not
+
+### Community 569 - "Community 569"
+Cohesion: 0.40
+Nodes (5): DiscoveryHit, generate_rescue_urls(), _is_threat_query(), Detect if query is a non-domain threat/malware/ransomware/entity query.      Ret, Generate lightweight rescue DiscoveryHits for non-domain threat queries.      Sp
+
+### Community 570 - "Community 570"
+Cohesion: 0.40
+Nodes (4): __getattr__(), Any, str, STUB MODULE — hledac.universal.federated.sketches Status: Planned, not yet imple
+
+### Community 571 - "Community 571"
+Cohesion: 0.40
+Nodes (3): Tests for network/i2p_client.py, Test known eepsites list structure., TestI2PClient
+
+### Community 572 - "Community 572"
+Cohesion: 0.50
+Nodes (3): ClientSession, Fediverse/Mastodon Intelligence Adapter.  Search public Mastodon/Fediverse insta, _session()
+
+### Community 573 - "Community 573"
+Cohesion: 0.50
+Nodes (3): int, str, Generate decoy URLs for cover traffic.          Args:             n_decoys: Numb
+
 ## Knowledge Gaps
-- **2398 isolated node(s):** `PROJECT OVERVIEW`, `CRITICAL INVARIANTS (Top 10)`, `code:block1 (CLI / __main__.py)`, `Storage Trinity`, `Brain Layer (MLX/Hermes3)` (+2393 more)
+- **2623 isolated node(s):** `code:bash (rgt blame $ARGUMENTS)`, `code:bash (rgt log $ARGUMENTS)`, `code:bash (rgt log)`, `code:bash (rgt show $ARGUMENTS)`, `Summary` (+2618 more)
   These have ≤1 connection - possible missing edges or undocumented components.
-- **122 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
+- **146 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
 
 ## Suggested Questions
 _Questions this graph is uniquely positioned to answer:_
 
-- **Why does `CanonicalFinding` connect `Community 10` to `Community 0`, `Community 3`, `Community 4`, `Community 6`, `Community 13`, `Community 142`, `Community 15`, `Community 16`, `Community 147`, `Community 20`, `Community 153`, `Community 26`, `Community 31`, `Community 33`, `Community 39`, `Community 47`, `Community 48`, `Community 305`, `Community 51`, `Community 54`, `Community 63`, `Community 67`, `Community 72`, `Community 75`, `Community 93`, `Community 94`, `Community 354`, `Community 99`, `Community 232`, `Community 233`, `Community 111`, `Community 114`, `Community 127`?**
-  _High betweenness centrality (0.074) - this node is a cross-community bridge._
-- **Why does `SprintScheduler` connect `Community 6` to `Community 3`, `Community 10`, `Community 13`, `Community 22`, `Community 33`, `Community 51`, `Community 435`, `Community 436`, `Community 437`, `Community 440`, `Community 441`, `Community 445`, `Community 448`, `Community 66`, `Community 67`, `Community 196`, `Community 450`, `Community 208`, `Community 339`, `Community 98`, `Community 106`, `Community 122`?**
+- **Why does `CanonicalFinding` connect `Community 10` to `Community 0`, `Community 257`, `Community 3`, `Community 4`, `Community 131`, `Community 6`, `Community 13`, `Community 142`, `Community 16`, `Community 147`, `Community 20`, `Community 24`, `Community 153`, `Community 26`, `Community 39`, `Community 47`, `Community 48`, `Community 54`, `Community 569`, `Community 63`, `Community 72`, `Community 75`, `Community 94`, `Community 354`, `Community 99`, `Community 230`, `Community 232`, `Community 111`, `Community 114`, `Community 127`?**
+  _High betweenness centrality (0.063) - this node is a cross-community bridge._
+- **Why does `SprintScheduler` connect `Community 6` to `Community 3`, `Community 131`, `Community 10`, `Community 13`, `Community 22`, `Community 33`, `Community 557`, `Community 562`, `Community 563`, `Community 435`, `Community 436`, `Community 437`, `Community 440`, `Community 441`, `Community 445`, `Community 448`, `Community 66`, `Community 67`, `Community 196`, `Community 450`, `Community 339`, `Community 98`, `Community 122`?**
   _High betweenness centrality (0.039) - this node is a cross-community bridge._
-- **Why does `DuckDBShadowStore` connect `Community 4` to `Community 0`, `Community 10`, `Community 142`, `Community 143`, `Community 16`, `Community 15`, `Community 24`, `Community 29`, `Community 31`, `Community 39`, `Community 305`, `Community 71`, `Community 72`, `Community 93`, `Community 94`, `Community 230`, `Community 231`, `Community 232`, `Community 233`, `Community 111`, `Community 127`?**
-  _High betweenness centrality (0.037) - this node is a cross-community bridge._
-- **Are the 30 inferred relationships involving `DuckDBShadowStore` (e.g. with `DedupManager` and `MLXEmbeddingManager`) actually correct?**
+- **Why does `DuckDBShadowStore` connect `Community 24` to `Community 0`, `Community 257`, `Community 4`, `Community 230`, `Community 39`, `Community 232`, `Community 72`, `Community 10`, `Community 556`, `Community 142`, `Community 143`, `Community 16`, `Community 111`, `Community 569`, `Community 127`, `Community 29`, `Community 94`, `Community 31`?**
+  _High betweenness centrality (0.033) - this node is a cross-community bridge._
+- **Are the 30 inferred relationships involving `DuckDBShadowStore` (e.g. with `MLXEmbeddingManager` and `DedupManager`) actually correct?**
   _`DuckDBShadowStore` has 30 INFERRED edges - model-reasoned connections that need verification._
-- **Are the 21 inferred relationships involving `SprintScheduler` (e.g. with `FeedPipelineRunResult` and `PipelineRunResult`) actually correct?**
-  _`SprintScheduler` has 21 INFERRED edges - model-reasoned connections that need verification._
-- **Are the 125 inferred relationships involving `CanonicalFinding` (e.g. with `str` and `object`) actually correct?**
-  _`CanonicalFinding` has 125 INFERRED edges - model-reasoned connections that need verification._
-- **Are the 47 inferred relationships involving `HypothesisEngine` (e.g. with `HypothesisResult` and `HypothesisBuilder`) actually correct?**
-  _`HypothesisEngine` has 47 INFERRED edges - model-reasoned connections that need verification._
+- **Are the 30 inferred relationships involving `SprintScheduler` (e.g. with `TestScanCtFix` and `TestStealthCrawlerFix`) actually correct?**
+  _`SprintScheduler` has 30 INFERRED edges - model-reasoned connections that need verification._
+- **Are the 123 inferred relationships involving `CanonicalFinding` (e.g. with `MLXEmbeddingManager` and `str`) actually correct?**
+  _`CanonicalFinding` has 123 INFERRED edges - model-reasoned connections that need verification._
+- **Are the 45 inferred relationships involving `HypothesisEngine` (e.g. with `HypothesisResult` and `HypothesisBuilder`) actually correct?**
+  _`HypothesisEngine` has 45 INFERRED edges - model-reasoned connections that need verification._

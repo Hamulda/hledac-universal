@@ -2477,7 +2477,26 @@ def main() -> None:
         action="store_true",
         help="RL F257: Enable QMIX training mode (updates Q-network weights every 10 sprints). Default is inference-only after 124 sprint warmup.",
     )
-    args = parser.parse_args()
+    parser.add_argument(
+        "--rl-no-train",
+        action="store_true",
+        help="RL F261QMIX: Force inference-only mode (overrides HLEDAC_ENABLE_RL=1). Use for production runs where Q-network must NOT be updated.",
+    )
+    parser.add_argument(
+        "--rl-train-interval",
+        type=int,
+        default=None,
+        help="RL F261QMIX: Override HLEDAC_RL_TRAIN_INTERVAL (default 10 sprints per QMIX training step).",
+    )
+    args = args_with_rl_resolution = parser.parse_args()
+    # F261QMIX: --rl-no-train overrides --rl-train (explicit disable wins)
+    if args.rl_no_train:
+        args.rl_train = False
+    # F261QMIX: env-var override for train interval
+    if args.rl_train_interval is not None:
+        import os as _os
+        _os.environ["HLEDAC_RL_TRAIN_INTERVAL"] = str(args.rl_train_interval)
+    args = args_with_rl_resolution
 
     logging.basicConfig(
         level=logging.INFO,

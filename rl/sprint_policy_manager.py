@@ -36,16 +36,26 @@ log = logging.getLogger(__name__)
 
 # Path for persisted policy state
 _POLICY_PATH = Path(__file__).parent / ".sprint_policy_state.json"
+# Q-network weights binary path (mlx.core.savez) — F261QMIX
+_QMIX_WEIGHTS_PATH = Path(__file__).parent / ".qmix_weights.npz"
 # Exploration interval (every N sprints)
 _EXPLORATION_INTERVAL = 5
 # Epsilon for epsilon-greedy exploration
 _DEFAULT_EPSILON = 0.1
-# QMIX training interval (every N sprints)
-_QMIX_TRAIN_INTERVAL = 10
+# QMIX training interval (every N sprints) — overridable via HLEDAC_RL_TRAIN_INTERVAL
+_QMIX_TRAIN_INTERVAL = int(os.environ.get("HLEDAC_RL_TRAIN_INTERVAL", "10"))
 # Replay buffer minimum size before training
 _MIN_REPLAY_SIZE = 64
 # Batch size for QMIX training
 _TRAIN_BATCH_SIZE = 32
+# F261QMIX: Memory pressure gate — skip train_step when system RAM exceeds this
+_RAM_TRAIN_SKIP_PCT = 80
+# F261QMIX: env var to disable RAM gate (e.g. for tests under low-RAM CI)
+_RAM_GATE_DISABLED = os.environ.get("HLEDAC_RL_SKIP_RAM_GATE", "0") == "1"
+# F261QMIX: Cooldown between training steps (seconds) — prevents M1 RAM thrashing
+_TRAIN_COOLDOWN_S = 1.0
+# F261QMIX: Maximum training steps per sprint (1 = once per interval sprint)
+_MAX_TRAIN_STEPS_PER_SPRINT = 1
 
 # QMIX field names in policy state JSON
 _QMIX_FIELD = "qmix_weights"
@@ -62,6 +72,11 @@ class SprintPolicyState:
     qmix_weights: dict[str, Any] | None = None
     last_train_sprint: int = -1
     last_action: int = 0  # F228F: last RL action taken
+    # F261QMIX: extended schema for Q-network weight persistence + training counters
+    q_network_weights_path: str = str(_QMIX_WEIGHTS_PATH)
+    last_train_step: int = -1
+    cumulative_train_steps: int = 0
+    last_loss: float = 0.0
 
 
 def _serialize_weights(weights: Any) -> dict[str, Any]:
@@ -128,7 +143,7 @@ class SprintPolicyManager:
         policy_path: Path | None = None,
         epsilon: float = _DEFAULT_EPSILON,
         exploration_interval: int = _EXPLORATION_INTERVAL,
-        qmix_train_interval: int = _QMIX_TRAIN_INTERVAL,
+        qmix_train_interval: int | None = None,
         rl_train_mode: bool = False,
     ) -> None:
         """
@@ -137,18 +152,34 @@ class SprintPolicyManager:
             policy_path: Override path for persisted state; defaults to _POLICY_PATH
             epsilon: Epsilon for epsilon-greedy fallback (used only when QMIX unavailable)
             exploration_interval: Every N sprints is exploration (default 5)
-            qmix_train_interval: Every N sprints run QMIX training step (default 10)
+            qmix_train_interval: Every N sprints run QMIX training step (default 10,
+                overridable via HLEDAC_RL_TRAIN_INTERVAL env var)
             rl_train_mode: If True, QMIX training is active; if False, inference-only (default)
         """
         self._enabled = enabled
         self._policy_path = policy_path or _POLICY_PATH
         self._epsilon = epsilon
         self._exploration_interval = exploration_interval
-        self._qmix_train_interval = qmix_train_interval
+        # F261QMIX: env-var override; explicit None falls back to module constant (which reads env)
+        self._qmix_train_interval = qmix_train_interval if qmix_train_interval is not None else _QMIX_TRAIN_INTERVAL
         self._rl_train_mode = rl_train_mode
         self._state = SprintPolicyState()
         self._loaded = False
         self._pending_feedback: dict[str, dict[str, int]] = {}  # F228A: per-source quality feedback pending delegation
+        # F261QMIX: training throttle state — bounded, fail-soft
+        self._last_train_at: float = 0.0          # monotonic seconds; cooldown gate
+        self._train_steps_this_sprint: int = 0    # per-sprint cap
+        # F261QMIX: pre-init QMIX component slots so _init_qmix and gates can check is-not-None safely
+        self._qmix_trainer: Any = None
+        self._replay_buffer: Any = None
+        self._state_extractor: Any = None
+        self._agents: Any = None
+        # F261QMIX: reward_history accessible even without inject_scheduler (used in update() and get_reward_stats())
+        self._reward_history: list[float] = []
+        # F261QMIX: load state from disk eagerly so _state is populated even without inject_scheduler
+        self._load()
+        if self._enabled and self._state.sprint_rewards:
+            self._reward_history = list(self._state.sprint_rewards[-100:])
 
     @property
     def enabled(self) -> bool:
@@ -245,30 +276,34 @@ class SprintPolicyManager:
     # ── Persistence ──────────────────────────────────────────────────────────
 
     def _load(self) -> None:
-        """Load persisted state from disk. Prefer .json.zst, fallback to .json."""
+        """Load persisted state from disk. Auto-detect zstd magic bytes vs plain JSON."""
         if self._loaded:
             return
         self._loaded = True
         try:
-            if self._policy_path.exists():
-                suffix = self._policy_path.suffix
-                if suffix == ".zst" or str(self._policy_path).endswith(".json.zst"):
-                    if ZSTD_AVAILABLE and _zstd:
-                        with open(self._policy_path, "rb") as f:
-                            raw = _zstd.decompress(f.read())
-                        data = json.loads(raw.decode("utf-8"))
-                    else:
-                        return
+            if not self._policy_path.exists():
+                return
+            with open(self._policy_path, "rb") as f:
+                raw_bytes = f.read()
+            # F261QMIX: detect zstd magic (0x28 0xB5 0x2F 0xFD) regardless of suffix
+            ZSTD_MAGIC = b"\x28\xb5\x2f\xfd"
+            if raw_bytes[:4] == ZSTD_MAGIC:
+                if ZSTD_AVAILABLE and _zstd:
+                    raw = _zstd.decompress(raw_bytes)
+                    data = json.loads(raw.decode("utf-8"))
                 else:
-                    with open(self._policy_path, encoding="utf-8") as f:
-                        data = json.load(f)
-                self._state = SprintPolicyState(**data)
-                log.debug(
-                    "[SprintPolicyManager] Loaded state: sprint=%d epsilon=%.3f total_reward=%.2f",
-                    self._state.sprint_sequence_number,
-                    self._state.epsilon,
-                    self._state.total_reward,
-                )
+                    log.debug("[SprintPolicyManager] zstd-compressed state but zstd unavailable")
+                    return
+            else:
+                # Plain JSON
+                data = json.loads(raw_bytes.decode("utf-8"))
+            self._state = SprintPolicyState(**data)
+            log.debug(
+                "[SprintPolicyManager] Loaded state: sprint=%d epsilon=%.3f total_reward=%.2f",
+                self._state.sprint_sequence_number,
+                self._state.epsilon,
+                self._state.total_reward,
+            )
         except Exception as e:
             log.debug("[SprintPolicyManager] _load failed (safe to ignore): %s", e)
 
@@ -284,6 +319,11 @@ class SprintPolicyManager:
                 "sprint_rewards": self._state.sprint_rewards[-100:],
                 _QMIX_FIELD: self._state.qmix_weights,
                 "last_train_sprint": self._state.last_train_sprint,
+                # F261QMIX: extended schema for Q-network weight persistence + training counters
+                "q_network_weights_path": self._state.q_network_weights_path,
+                "last_train_step": self._state.last_train_step,
+                "cumulative_train_steps": self._state.cumulative_train_steps,
+                "last_loss": self._state.last_loss,
             }
             encoded = json.dumps(payload, ensure_ascii=False).encode("utf-8")
             if ZSTD_AVAILABLE and _zstd:
@@ -311,59 +351,64 @@ class SprintPolicyManager:
         """
         Compute reward from real SprintSchedulerResult fields.
 
-        Formula per F257 spec:
-          reward = log1p(findings_accepted) * source_quality_multiplier
-                  - time_penalty * (runtime / budget_seconds)
-                  + novelty_bonus * new_iocs_ratio
-          clipped to [-1.0, 5.0]
+        F261QMIX formula (per task spec):
+            reward = log1p(findings_accepted) * source_quality_multiplier
+                   - time_overrun_penalty
+                   + novelty_bonus
+        Where:
+            - findings_accepted:    from result.findings_accepted
+            - source_quality_multiplier: average confidence of accepted findings (0.0-1.0)
+                                       from scorecard; falls back to acceptance ratio
+            - time_overrun_penalty: max(0, elapsed - 1800) / 60  # minutes over 30min wall
+            - novelty_bonus:        semantic_novelty score from scorecard (0.0-1.0)
+            Clipped to [-1.0, 5.0].
         """
         try:
-            findings_accepted = getattr(result, "findings_accepted", 0) or 0
-            runtime = getattr(result, "actual_duration_s", 0.0) or 0.0
-            new_iocs = getattr(result, 'new_iocs', 0) or 0
-            total_in = findings_accepted + getattr(result, 'findings_deduplicated', 0)
+            findings_accepted = float(getattr(result, "findings_accepted", 0) or 0)
+            runtime = float(getattr(result, "actual_duration_s", 0.0) or 0.0)
 
-            # Budget seconds (default 1800s = 30min)
-            budget_seconds = getattr(result, 'budget_seconds', 1800.0) or 1800.0
-
-            # Source quality multiplier from acceptance ratio
-            if total_in > 0:
-                accepted_ratio = findings_accepted / total_in
-                source_quality_mult = 0.5 + 1.5 * accepted_ratio  # ∈ [0.5, 2.0]
+            # F261QMIX: source quality multiplier — prefer scorecard, fall back to acceptance ratio
+            scorecard = getattr(result, "scorecard", None)
+            if scorecard is not None and hasattr(scorecard, "source_quality_avg"):
+                source_quality_multiplier = float(
+                    max(0.0, min(1.0, scorecard.source_quality_avg))
+                )
+            elif scorecard is not None and isinstance(scorecard, dict):
+                source_quality_multiplier = float(
+                    max(0.0, min(1.0, scorecard.get("source_quality_avg", 0.0)))
+                )
             else:
-                source_quality_mult = 1.0
+                # Fallback: derive from acceptance ratio (accepted / total_in)
+                total_in = findings_accepted + float(
+                    getattr(result, "findings_deduplicated", 0) or 0
+                )
+                if total_in > 0:
+                    source_quality_multiplier = max(0.0, min(1.0, findings_accepted / total_in))
+                else:
+                    source_quality_multiplier = 0.0
 
-            # Log-scaled finding reward
-            finding_reward = math.log1p(findings_accepted) * source_quality_mult
+            # F261QMIX: time_overrun_penalty — minutes past 30min wall
+            time_overrun_penalty = max(0.0, runtime - 1800.0) / 60.0
 
-            # Time efficiency penalty (runtime / budget, capped at 1.0)
-            time_penalty = min(runtime / max(budget_seconds, 1.0), 1.0)
-
-            # Novelty bonus from new IOCs
-            new_iocs_ratio = min(new_iocs / max(findings_accepted, 1), 1.0)
-            novelty_bonus = 2.0  # Scale factor for new IOC ratio
+            # F261QMIX: novelty_bonus from scorecard.semantic_novelty (0.0-1.0)
+            if scorecard is not None and hasattr(scorecard, "semantic_novelty"):
+                novelty_bonus = float(
+                    max(0.0, min(1.0, scorecard.semantic_novelty))
+                )
+            elif scorecard is not None and isinstance(scorecard, dict):
+                novelty_bonus = float(
+                    max(0.0, min(1.0, scorecard.get("semantic_novelty", 0.0)))
+                )
+            else:
+                # Fallback: derive from new_iocs ratio (0.0-1.0)
+                new_iocs = float(getattr(result, "new_iocs", 0) or 0)
+                novelty_bonus = min(new_iocs / max(findings_accepted, 1.0), 1.0)
 
             reward = (
-                finding_reward
-                - time_penalty
-                + novelty_bonus * new_iocs_ratio
+                math.log1p(findings_accepted) * source_quality_multiplier
+                - time_overrun_penalty
+                + novelty_bonus
             )
-
-            # F228F/F235: Dark web high-confidence finding reward (+0.3 per finding)
-            for src in ("tor", "i2p", "nym", "dht"):
-                count = self._get_finding_count(result, src)
-                reward += count * 0.3
-
-            # ipfs exists as findings_accepted directly
-            reward += (getattr(result, 'ipfs_findings_accepted', 0) or 0) * 0.3
-
-            # F228F/F235: Unindexed source reward (+0.5 per finding from Gopher)
-            reward += self._get_finding_count(result, 'gopher') * 0.5
-
-            # Dedup efficiency — higher dedup ratio = more wasted work
-            if total_in > 0:
-                dedup_ratio = findings_accepted / total_in
-                reward += dedup_ratio * 0.5
 
             # Clamp to [-1.0, 5.0] per F257 spec
             return max(-1.0, min(5.0, reward))
@@ -459,21 +504,57 @@ class SprintPolicyManager:
                 self._rl_train_mode,
             )
 
+        # F261QMIX: reset per-sprint training throttle at end of each sprint
+        self._train_steps_this_sprint = 0
+
         self._save()
 
     def _run_qmix_training(self) -> None:
-        """Sample batch from replay buffer and run QMIX joint training step."""
+        """Sample batch from replay buffer and run QMIX joint training step.
+
+        F261QMIX: bounded, fail-soft, M1-safe. 4-layer memory guard:
+          L1 — UMA critical check (M1 8GB pressure)
+          L2 — system RAM % gate (psutil, default skip > 80%)
+          L3 — cooldown (monotonic clock, default 1.0s between steps)
+          L4 — per-sprint cap (default 1 step per sprint)
+        Plus GHOST_INVARIANT I11: mx.eval([]) BEFORE mx.metal.clear_cache().
+        """
         if self._qmix_trainer is None or self._replay_buffer is None:
             return
-        # G1: UMA budget pre-check — skip if M1 memory critical (2GB training limit)
+
+        # ── L1: UMA budget pre-check (M1 8GB) ──
         try:
             from hledac.universal.utils.uma_budget import get_uma_budget
             uma = get_uma_budget()
             if uma.is_critical():
-                log.debug("[SprintPolicyManager] Skipping QMIX train_step — M1 memory critical")
+                log.debug("[SprintPolicyManager] Skipping QMIX train_step — M1 UMA critical")
                 return
         except Exception:
             pass  # UMA check is advisory; proceed if unavailable
+
+        # ── L2: System RAM % gate (F261QMIX: skip when > 80%) ──
+        if not _RAM_GATE_DISABLED:
+            try:
+                import psutil
+                if psutil.virtual_memory().percent > _RAM_TRAIN_SKIP_PCT:
+                    log.warning(
+                        "[SprintPolicyManager] QMIX train_step skipped — RAM >%d%%",
+                        _RAM_TRAIN_SKIP_PCT,
+                    )
+                    return
+            except Exception:
+                pass  # psutil is advisory; proceed if unavailable
+
+        # ── L3: Cooldown gate (prevent M1 RAM thrashing) ──
+        import time
+        now = time.monotonic()
+        if (now - self._last_train_at) < _TRAIN_COOLDOWN_S:
+            return
+
+        # ── L4: Per-sprint cap ──
+        if self._train_steps_this_sprint >= _MAX_TRAIN_STEPS_PER_SPRINT:
+            return
+
         try:
             batch = self._replay_buffer.sample(_TRAIN_BATCH_SIZE)
             # F257FIX: Check replay buffer size, not batch size
@@ -485,31 +566,60 @@ class SprintPolicyManager:
             if _train is None:
                 log.error("[SprintPolicyManager] No training method found on QMIXJointTrainer")
                 return
-            loss = _train(batch)
+            loss_result = _train(batch)
+            # Defensive: handle both dict and scalar return
+            if isinstance(loss_result, dict):
+                loss = float(loss_result.get("loss", 0.0))
+            else:
+                loss = float(loss_result)
 
-            # Persist updated weights
+            # Persist updated weights — binary npz + JSON mirror
             if hasattr(self._qmix_trainer, "joint_model"):
                 self._state.qmix_weights = _serialize_weights(
                     self._qmix_trainer.joint_model.parameters()
                 )
+                # F261QMIX: binary weight dump via mlx.core.savez
+                self._save_qmix_weights_binary(self._qmix_trainer.joint_model.parameters())
             self._state.last_train_sprint = self._state.sprint_sequence_number
+            self._state.last_train_step = self._state.sprint_sequence_number
+            self._state.cumulative_train_steps += 1
+            self._state.last_loss = loss
 
-            # M1 memory management per GHOST_INVARIANTS I11
+            # Update throttle state — AFTER successful training step
+            self._last_train_at = now
+            self._train_steps_this_sprint += 1
+
+            # GHOST_INVARIANTS I11: mx.eval([]) BEFORE mx.metal.clear_cache()
             try:
                 import mlx.core as mx
-                mx.eval([])
-                mx.metal.clear_cache()
+                mx.eval([])                        # barrier FIRST
+                mx.metal.clear_cache()             # THEN clear
             except Exception:
                 pass
 
             log.info(
-                "[SprintPolicyManager] QMIX train step %d: loss=%.4f replay=%d",
+                "[SprintPolicyManager] QMIX train_step %d: loss=%.4f replay=%d cum_steps=%d",
                 self._state.sprint_sequence_number,
                 loss,
                 self._replay_buffer.size,
+                self._state.cumulative_train_steps,
             )
         except Exception as e:
             log.debug("[SprintPolicyManager] QMIX training failed: %s", e)
+
+    def _save_qmix_weights_binary(self, params: Any) -> None:
+        """F261QMIX: Persist Q-network weights via mlx.core.savez to .npz.
+
+        Falls back silently on any error (advisory persistence only).
+        """
+        try:
+            import mlx.core as mx
+            from mlx.utils import tree_flatten
+            flat = dict(tree_flatten(params))
+            mx.savez(str(_QMIX_WEIGHTS_PATH), **flat)
+            log.debug("[SprintPolicyManager] Q-weights persisted to %s", _QMIX_WEIGHTS_PATH)
+        except Exception as e:
+            log.debug("[SprintPolicyManager] _save_qmix_weights_binary failed: %s", e)
 
     def should_explore(self) -> bool:
         """
@@ -782,8 +892,11 @@ class SprintPolicyManager:
             return
         self._state = SprintPolicyState()
         self._loaded = True
+        # F261QMIX: reset training throttle state
+        self._last_train_at = 0.0
+        self._train_steps_this_sprint = 0
         try:
             if self._policy_path.exists():
                 self._policy_path.unlink()
         except Exception as e:
-            log.W(f"[SprintPolicyManager] Failed to delete policy state file: {e}")
+            log.warning(f"[SprintPolicyManager] Failed to delete policy state file: {e}")

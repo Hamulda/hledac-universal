@@ -93,6 +93,21 @@ _HANDLE_PATTERN = re.compile(r'@([a-zA-Z][a-zA-Z0-9_]{2,15})')
 # Non-blocking FIFO with bounded maxsize and drop counting
 import collections
 
+# F260-B: Module-level executor for CoreML operations (GHOST_INVARIANTS I10)
+# asyncio.to_thread is FORBIDDEN for CoreML — use dedicated ThreadPoolExecutor
+import concurrent.futures
+_COREML_EXECUTOR: concurrent.futures.ThreadPoolExecutor | None = None
+
+def _get_coreml_executor() -> concurrent.futures.ThreadPoolExecutor:
+    """Get or create the CoreML executor singleton."""
+    global _COREML_EXECUTOR
+    if _COREML_EXECUTOR is None:
+        _COREML_EXECUTOR = concurrent.futures.ThreadPoolExecutor(
+            max_workers=1,
+            thread_name_prefix="coreml"
+        )
+    return _COREML_EXECUTOR
+
 
 class ThreadSafeBoundedQueue:
     __slots__ = ("_deque", "_lock", "maxsize", "_enqueued_total", "_drop_count")
@@ -1646,7 +1661,7 @@ mlx_generate = None
 mlx_load = None
 
 # Config and types
-from .config import UniversalConfig
+from hledac.universal.config import UniversalConfig
 from .layers import (
     MemoryLayer,
     PrivacyLayer,
@@ -4616,8 +4631,13 @@ class FullyAutonomousOrchestrator:
             return
         try:
             import coremltools as ct
-            self._coreml_classifier = await asyncio.to_thread(
-                ct.models.MLModel, str(path), compute_units=ct.ComputeUnit.CPU_AND_NE
+            # F260-B: Use run_in_executor instead of asyncio.to_thread (GHOST_INVARIANTS I10)
+            # CoreML has thread affinity; asyncio.to_thread is FORBIDDEN for CoreML
+            loop = asyncio.get_running_loop()
+            coreml_executor = _get_coreml_executor()
+            self._coreml_classifier = await loop.run_in_executor(
+                coreml_executor,
+                lambda: ct.models.MLModel(str(path), compute_units=ct.ComputeUnit.CPU_AND_NE)
             )
             logger.info("CoreML input classifier loaded on ANE")
         except Exception as e:

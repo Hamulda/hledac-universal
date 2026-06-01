@@ -32,12 +32,6 @@ except ImportError:
     PSUTIL_AVAILABLE = False
     psutil = None
 
-# Optional imports - fallback if not available
-try:
-    from hledac.config import get_settings
-except ImportError:
-    get_settings = None
-
 try:
     from _shims.core_resilience import AgentExecutionError, CircuitBreakerOpen
 except ImportError:

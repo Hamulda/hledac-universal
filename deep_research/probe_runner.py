@@ -498,6 +498,10 @@ async def _scan_dht(query: str) -> list[CanonicalFinding]:
                 return []
         lgs = _scan_dht._lgs
 
+        # Generate info_hash from query: SHA256 → hex[:40] (BTIH standard)
+        query_bytes = query.encode()[:256]  # Cap at 256 bytes
+        info_hash = hashlib.sha256(query_bytes).hexdigest()[:40]
+
         node = KademliaNode(
             node_id=f"hledac-probe-{uuid.uuid4().hex[:8]}",
             governor=ResourceGovernor(),
@@ -514,6 +518,7 @@ async def _scan_dht(query: str) -> list[CanonicalFinding]:
 
         findings = []
         for ip, port in peers[:50]:
+            # DHT peers are ephemeral - source_type=dht_discovery, NOT persisted
             fid = hashlib.sha256(f"{ip}:{port}:{info_hash}".encode()).hexdigest()[:16]
             findings.append(
                 CanonicalFinding(

@@ -183,6 +183,25 @@ class LocalGraphStore:
         await loop.run_in_executor(None, _scan)
         return out
 
+    async def count_dht_nodes(self) -> int:
+        """
+        F214Q: Count total persisted DHT nodes in LMDB.
+
+        Returns:
+            Total count of DHT nodes stored.
+        """
+        def _count() -> int:
+            count = 0
+            with self.env.begin() as txn:
+                cur = txn.cursor()
+                for k, _v in cur:
+                    if k.startswith(b"dht_node:"):
+                        count += 1
+            return count
+
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, _count)
+
     async def clear_dht_nodes(self) -> None:
         """Clear all persisted DHT nodes (e.g., on startup)."""
         def _clear():

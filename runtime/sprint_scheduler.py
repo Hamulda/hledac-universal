@@ -5527,8 +5527,10 @@ class SprintScheduler:
             if os.environ.get("HLEDAC_ENABLE_DSPY") == "1" and query:
                 try:
                     from hledac.universal.brain.dspy_service import expand_query
-                    import asyncio
-                    expanded = asyncio.run(expand_query(query))
+                    # F260-A: Use run_until_complete instead of asyncio.run() in async context
+                    # asyncio.run() creates nested event loop → M1 crash on ARM cores
+                    loop = asyncio.get_running_loop()
+                    expanded = loop.run_until_complete(expand_query(query))
                     if expanded and len(expanded) > 0:
                         # Add expanded queries to sprint seeds (cap at 3)
                         _expanded_capped = expanded[:3]
@@ -5536,6 +5538,15 @@ class SprintScheduler:
                                   len(_expanded_capped), query[:30])
                         # Store for acquisition plan: these become additional sub-queries
                         self._result.next_seeds_query_suggestions = tuple(_expanded_capped)
+                except RuntimeError:
+                    # No running loop — fallback to asyncio.run() (safe when no loop exists)
+                    try:
+                        expanded = asyncio.run(expand_query(query))
+                        if expanded and len(expanded) > 0:
+                            _expanded_capped = expanded[:3]
+                            self._result.next_seeds_query_suggestions = tuple(_expanded_capped)
+                    except Exception as _exc:
+                        log.debug("[HERMES3_WIRING] DSPy expand_query failed: %s", _exc)
                 except Exception as _exc:
                     log.debug("[HERMES3_WIRING] DSPy expand_query failed: %s", _exc)
 
@@ -22180,11 +22191,9 @@ class SprintScheduler:
 
             from hledac.universal.enhanced_research import (
 
-                DeepResearchRequest,
+                UnifiedResearchEngine,
 
-                DeepResearchResponse,
-
-                deep_research_provider_seam,
+                UnifiedResearchConfig,
 
             )
 
@@ -22232,33 +22241,117 @@ class SprintScheduler:
 
             pass  # fail-safe: guard is advisory
 
-        # Build request
+        # Build IOC seed list (top 10 from sprint result)
 
-        query = getattr(self._result, 'sprint_query', '') or getattr(self._config, 'query', '')
+        seed_iocs: list[str] = []
 
-        depth = ResearchDepth.EXHAUSTIVE if self._config.extreme_mode else ResearchDepth.DEEP
+        for src_field in (
 
-        req = DeepResearchRequest(
+            "pivot_seed_domains",
 
-            query=f"deep research: {query}",
+            "pivot_seed_ips",
 
-            depth=depth,
+            "pivot_seed_urls",
 
-            max_results=50,
+            "pivot_seed_hashes",
 
-            grounding_hints=[],
+            "pivot_seed_cves",
 
-        )
+            "next_seeds_ioc_domains",
 
-        # Execute with grounding shim
+            "next_seeds_ioc_ips",
+
+            "next_seeds_ioc_urls",
+
+            "next_seeds_ioc_hashes",
+
+            "next_seeds_ioc_cves",
+
+        ):
+
+            for v in getattr(self._result, src_field, ()) or ():
+
+                if isinstance(v, str) and v and v not in seed_iocs:
+
+                    seed_iocs.append(v)
+
+                if len(seed_iocs) >= 10:
+
+                    break
+
+            if len(seed_iocs) >= 10:
+
+                break
+
+        # Compose composite query from IOC seeds
+
+        if seed_iocs:
+
+            query = " ".join(seed_iocs[:10])
+
+        else:
+
+            query = getattr(self._config, 'sprint_query', '') or "OSINT"
+
+        depth = ResearchDepth.EXHAUSTIVE if self._config.extreme_mode else ResearchDepth.ADVANCED
+
+        # Conservative budget: remaining time until 30 min wall, capped
 
         try:
 
-            response: DeepResearchResponse = await deep_research_provider_seam(req, None)
+            start_mono = getattr(self, '_sprint_start_monotonic', None) or _time.monotonic()
+
+            elapsed = _time.monotonic() - start_mono
+
+        except Exception:
+
+            elapsed = 0.0
+
+        remaining_s = max(60.0, min(180.0, 1800.0 - elapsed))  # 60-180s cap
+
+        engine_config = UnifiedResearchConfig(
+
+            depth=depth,
+
+            max_concurrent_tools=2,
+
+            enable_temporal_analysis=True,
+
+            enable_data_leak_check=False,  # avoid extra I/O; LLM already saturated
+
+            enable_archive_search=True,
+
+            enable_stealth_crawling=False,  # post-sprint; no fresh creds
+
+            cache_results=True,
+
+            cache_ttl_seconds=3600,
+
+        )
+
+        # Execute via canonical UnifiedResearchEngine.deep_research()
+
+        try:
+
+            engine = UnifiedResearchEngine(config=engine_config)
+
+            response = await asyncio.wait_for(
+
+                engine.deep_research(query=query, depth=depth, max_results=50),
+
+                timeout=remaining_s,
+
+            )
+
+        except asyncio.TimeoutError:
+
+            log.warning(f"[F11] UnifiedResearchEngine timed out after {remaining_s:.0f}s")
+
+            return []
 
         except Exception as e:
 
-            log.warning("[F11] deep_research_provider_seam failed: {e}")
+            log.warning(f"[F11] UnifiedResearchEngine failed: {e}")
 
             return []
 

@@ -122,6 +122,8 @@ DHT_REAL_UDP = os.getenv("HLEDAC_ENABLE_DHT", "").lower() in ("1", "true", "yes"
 MAX_DHT_PROBE_DURATION_S = 120
 DHT_BOOTSTRAP_TIMEOUT_S = 5.0
 DHT_BOOTSTRAP_SEMAPHORE = asyncio.Semaphore(2)  # M1: max 2 concurrent bootstraps
+DHT_REQUEST_SEMAPHORE = asyncio.Semaphore(50)  # M1: max 50 concurrent UDP requests
+DHT_REQUEST_TIMEOUT_S = 5.0  # 5s timeout per request
 
 # =============================================================================
 # PROMOTION GATE
@@ -876,51 +878,53 @@ class KademliaNode:
             return peers
 
         async def _query_peer(host: str, port: int) -> tuple[str, int] | None:
-            try:
-                msg = {
-                    "t": "gp",
-                    "y": "q",
-                    "q": "get_peers",
-                    "a": {"id": self.node_id.encode()[:20].ljust(20, b"\x00"), "info_hash": ih_bytes},
-                }
-                loop = asyncio.get_running_loop()
-                sock = None
+            # M1: Acquire semaphore before network call (max 50 concurrent)
+            async with DHT_REQUEST_SEMAPHORE:
                 try:
-                    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-                    sock.settimeout(2.0)
-                    sock.setblocking(False)
-                    await loop.sock_sendto(sock, self._bencode(msg), (host, port))
-                    data = await loop.sock_recv(sock, 65535)
-                    if data:
-                        res = self._bdecode(data)
-                        if res and isinstance(res, dict):
-                            r = res.get("r", {})
-                            # Extract peer addresses from 'values' field (BEP-5)
-                            for val in r.get("values", []) or []:
-                                if isinstance(val, bytes) and len(val) == 6:
-                                    ip = ".".join(str(b) for b in val[:4])
-                                    p = int.from_bytes(val[4:6], "big")
-                                    peers.append((ip, p))
-                            # Also collect nodes for routing table refresh
-                            for i in range(0, len(r.get("nodes", b"")), 26):
-                                chunk = r["nodes"][i : i + 26]
-                                if len(chunk) == 26:
-                                    nid = chunk[:20].hex()
-                                    nip = ".".join(str(b) for b in chunk[20:24])
-                                    nport = int.from_bytes(chunk[24:26], "big")
-                                    self._update_routing(nid, {"host": nip, "port": nport})
-                finally:
-                    if sock:
-                        sock.close()
-            except Exception:
-                pass
-            return None
+                    msg = {
+                        "t": "gp",
+                        "y": "q",
+                        "q": "get_peers",
+                        "a": {"id": self.node_id.encode()[:20].ljust(20, b"\x00"), "info_hash": ih_bytes},
+                    }
+                    loop = asyncio.get_running_loop()
+                    sock = None
+                    try:
+                        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                        sock.settimeout(DHT_REQUEST_TIMEOUT_S)
+                        sock.setblocking(False)
+                        await loop.sock_sendto(sock, self._bencode(msg), (host, port))
+                        data = await loop.sock_recv(sock, 65535)
+                        if data:
+                            res = self._bdecode(data)
+                            if res and isinstance(res, dict):
+                                r = res.get("r", {})
+                                # Extract peer addresses from 'values' field (BEP-5)
+                                for val in r.get("values", []) or []:
+                                    if isinstance(val, bytes) and len(val) == 6:
+                                        ip = ".".join(str(b) for b in val[:4])
+                                        p = int.from_bytes(val[4:6], "big")
+                                        peers.append((ip, p))
+                                # Also collect nodes for routing table refresh
+                                for i in range(0, len(r.get("nodes", b"")), 26):
+                                    chunk = r["nodes"][i : i + 26]
+                                    if len(chunk) == 26:
+                                        nid = chunk[:20].hex()
+                                        nip = ".".join(str(b) for b in chunk[20:24])
+                                        nport = int.from_bytes(chunk[24:26], "big")
+                                        self._update_routing(nid, {"host": nip, "port": nport})
+                    finally:
+                        if sock:
+                            sock.close()
+                except Exception:
+                    pass
+                return None
 
         # Race N queries against 5s timeout, stop early when we have peers
         tasks = [_query_peer(h, p) for h, p in sources[:10]]
         done, pending = await asyncio.wait_for(
             asyncio.gather(*tasks, return_exceptions=True),
-            timeout=5.0,
+            timeout=DHT_REQUEST_TIMEOUT_S,
         )
         for t in pending:
             t.cancel()

@@ -1,1 +1,36 @@
-from hledac.config import *  # noqa: F401,F403
+"""
+utils/config.py — stub shim for hledac.universal.config
+======================================================
+
+Formerly imported from ``hledac.config`` (a non-packaged sibling directory).
+Now re-exports the canonical symbols from ``hledac.universal.config``.
+The ``from hledac.config import *`` line was BROKEN — ``hledac.config`` is
+NOT in the hledac-universal distribution (pyproject.toml only packages
+``hledac.universal``).
+"""
+
+from hledac.universal.config import (
+    UniversalConfig,
+    create_config,
+    load_config_from_file,
+    M1Presets,
+    ResearchPresets,
+    SecurityConfig,
+    StealthConfig,
+    PrivacyConfig,
+    DeepResearchConfig,
+    ResearchMode,
+)
+
+__all__ = [
+    "UniversalConfig",
+    "create_config",
+    "load_config_from_file",
+    "M1Presets",
+    "ResearchPresets",
+    "SecurityConfig",
+    "StealthConfig",
+    "PrivacyConfig",
+    "DeepResearchConfig",
+    "ResearchMode",
+]
