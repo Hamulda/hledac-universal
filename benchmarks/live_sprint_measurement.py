@@ -848,5 +848,34 @@ async def main() -> int:
         return 2
     else:
         return 1
+# ---------------------------------------------------------------------------
+# Backward-compatibility re-exports (Category 3 fix)
+# Tests import these from live_sprint_measurement but they moved to submodules
+# ---------------------------------------------------------------------------
+try:
+    from benchmarks.live_measurement_kpi import (
+        _derive_live_kpi,
+        LiveKpiInput,
+        _derive_live_kpi_from_input,
+    )
+except ImportError:
+    pass
+
+try:
+    from benchmarks.live_measurement_next_action import (
+        _derive_next_action,
+        _was_family_attempted,
+    )
+except ImportError:
+    pass
+
+try:
+    from benchmarks.live_measurement_quality import (
+        get_acquisition_profile_reality,
+    )
+except ImportError:
+    pass
+
+
 if __name__ == '__main__':
     sys.exit(asyncio.run(main()))

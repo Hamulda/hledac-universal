@@ -54,6 +54,27 @@ try:
 except ImportError:
     RustUrlSet = None  # type: ignore[assignment,sentinel]
 
+# Rust URL engine — normalization and fingerprinting
+_RUST_URL_ENGINE_AVAILABLE = False
+try:
+    from hledac_rust_extensions import (
+        normalize as rust_normalize,
+        fingerprint as rust_fingerprint,
+        strip_tracking_params as rust_strip_tracking,
+        is_valid_url as rust_is_valid_url,
+        filter_valid_urls as rust_filter_valid,
+        extract_domain as rust_extract_domain,
+    )
+
+    _RUST_URL_ENGINE_AVAILABLE = True
+except ImportError:
+    rust_normalize = None
+    rust_fingerprint = None
+    rust_strip_tracking = None
+    rust_is_valid_url = None
+    rust_filter_valid = None
+    rust_extract_domain = None
+
 
 @runtime_checkable
 class DeduplicationStrategy(Protocol):
@@ -218,3 +239,189 @@ def reset_default_bloom_filter() -> None:
     """Reset the default bloom filter (for testing)."""
     global _default_bloom
     _default_bloom = None
+
+
+# =============================================================================
+# Rust URL Engine Functions (normalized, fingerprint, strip_tracking)
+# =============================================================================
+
+
+def normalize_url(url: str) -> str:
+    """
+    Normalize URL for canonical representation.
+
+    Uses Rust implementation if available, falls back to Python.
+
+    Args:
+        url: Raw URL string to normalize
+
+    Returns:
+        Canonical URL string (lowercased host, sorted params, no fragment)
+    """
+    if _RUST_URL_ENGINE_AVAILABLE and rust_normalize:
+        try:
+            return rust_normalize(url)
+        except Exception:
+            pass  # Fall through to Python implementation
+    # Python fallback
+    from urllib.parse import urlparse, parse_qsl, urlencode
+
+    try:
+        parsed = urlparse(url)
+    except Exception:
+        return url
+
+    # Lowercase scheme and host
+    scheme = parsed.scheme.lower()
+    host = parsed.hostname or ""
+
+    # Remove default ports
+    port = parsed.port
+    if port == 80 and scheme == "http":
+        port = None
+    elif port == 443 and scheme == "https":
+        port = None
+
+    result = f"{scheme}://{host}"
+    if port:
+        result += f":{port}"
+    result += parsed.path or "/"
+
+    # Sort query parameters
+    params = sorted(parse_qsl(parsed.query or ""))
+    if params:
+        result += "?" + urlencode(params)
+
+    return result
+
+
+def fingerprint_url(url: str) -> int | None:
+    """
+    Compute 64-bit fingerprint of URL using xxhash3-64.
+
+    Uses Rust implementation if available, falls back to Python xxhash/blake2b.
+
+    Args:
+        url: URL string to fingerprint
+
+    Returns:
+        64-bit unsigned integer fingerprint
+    """
+    if _RUST_URL_ENGINE_AVAILABLE and rust_fingerprint:
+        try:
+            return rust_fingerprint(url)
+        except Exception:
+            pass
+    # Python fallback
+    if xxhash_available:
+        from urllib.parse import urlparse, parse_qsl, urlencode
+
+        try:
+            parsed = urlparse(url)
+            scheme = parsed.scheme.lower()
+            host = parsed.hostname or ""
+            port = parsed.port
+            if port == 80 and scheme == "http":
+                port = None
+            elif port == 443 and scheme == "https":
+                port = None
+            result = f"{scheme}://{host}"
+            if port:
+                result += f":{port}"
+            result += parsed.path or "/"
+            params = sorted(parse_qsl(parsed.query or ""))
+            if params:
+                result += "?" + urlencode(params)
+            return xxhash.xxh64(result).intdigest()
+        except Exception:
+            pass
+    return None
+
+
+def strip_tracking_params(url: str) -> str:
+    """
+    Strip tracking parameters (UTM, fbclid, etc.) from URL.
+
+    Uses Rust implementation if available, falls back to Python.
+    """
+    if _RUST_URL_ENGINE_AVAILABLE and rust_strip_tracking:
+        try:
+            return rust_strip_tracking(url)
+        except Exception:
+            pass
+    # Python fallback
+    from urllib.parse import urlparse, parse_qsl, urlencode
+
+    TRACKING_PARAMS = {
+        "utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content",
+        "fbclid", "gclid", "gclsrc", "dclid",
+        "msclkid", "twclid",
+        "mc_cid", "mc_eid",
+        "_ga", "_gl",
+    }
+
+    try:
+        parsed = urlparse(url)
+        scheme = parsed.scheme.lower()
+        host = parsed.hostname or ""
+        port = parsed.port
+        if port == 80 and scheme == "http":
+            port = None
+        elif port == 443 and scheme == "https":
+            port = None
+
+        result = f"{scheme}://{host}"
+        if port:
+            result += f":{port}"
+        result += parsed.path or "/"
+
+        # Filter tracking params
+        params = [(k, v) for k, v in parse_qsl(parsed.query or "") if k not in TRACKING_PARAMS]
+        if params:
+            result += "?" + urlencode(params)
+
+        return result
+    except Exception:
+        return url
+
+
+def is_valid_url(url: str) -> bool:
+    """Check if URL is valid and uses http/https scheme."""
+    if _RUST_URL_ENGINE_AVAILABLE and rust_is_valid_url:
+        return rust_is_valid_url(url)
+    # Python fallback
+    from urllib.parse import urlparse
+
+    try:
+        parsed = urlparse(url)
+        return parsed.scheme in ("http", "https") and bool(parsed.hostname)
+    except Exception:
+        return False
+
+
+def filter_valid_urls(urls: list[str]) -> list[str]:
+    """Filter list to only valid http/https URLs."""
+    if _RUST_URL_ENGINE_AVAILABLE and rust_filter_valid:
+        try:
+            return rust_filter_valid(urls)
+        except Exception:
+            pass
+    # Python fallback
+    return [u for u in urls if is_valid_url(u)]
+
+
+def extract_domain(url: str) -> str | None:
+    """Extract registrable domain from URL."""
+    if _RUST_URL_ENGINE_AVAILABLE and rust_extract_domain:
+        try:
+            return rust_extract_domain(url)
+        except Exception:
+            pass
+    # Python fallback
+    from urllib.parse import urlparse
+
+    try:
+        parsed = urlparse(url)
+        return parsed.hostname
+    except Exception:
+        return None

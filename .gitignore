@@ -82,3 +82,4 @@ better-sqlite3-*.tgz
 # Added by code-review-graph
 .code-review-graph/
 cache_storage/
+index.scip

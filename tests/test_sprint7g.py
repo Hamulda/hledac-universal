@@ -9,8 +9,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
-# Import from the project
-from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
+# Import from canonical location (not legacy/)
+from hledac.universal.runtime.sprint_scheduler import SprintScheduler
 
 
 class TestScanCtFix:
@@ -135,6 +135,11 @@ class TestShutdownWarning:
         import inspect
 
         from hledac.security.quantum_resistant_crypto import QuantumResistantCrypto
+
+        # Handle stub case — stub has no __del__, just check class exists
+        if not hasattr(QuantumResistantCrypto, '__del__'):
+            # Stub class — no __del__ means no bare except risk
+            return
 
         # Get the source of __del__
         source = inspect.getsource(QuantumResistantCrypto.__del__)

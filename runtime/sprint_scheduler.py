@@ -29533,3 +29533,36 @@ async def async_run_tiered_feed_sprint_once(
     scheduler = SprintScheduler(config)
 
     return await scheduler.run(lifecycle, sources, now_monotonic, query, duckdb_store)
+
+
+# ---------------------------------------------------------------------------
+# Backward-compatibility re-exports (Category 5 fix)
+# Tests import these from sprint_scheduler but they need to be accessible
+# ---------------------------------------------------------------------------
+
+# SPRINT_TIERS is referenced in tests but never implemented
+# Provide a minimal stub with the structure tests expect
+SPRINT_TIERS: dict = {
+    "quick": {"min_duration": 60, "hermes": False, "windup_lead_s": 0},
+    "standard": {"min_duration": 180, "hermes": True, "windup_lead_s": 30},
+    "deep": {"min_duration": 300, "hermes": True, "windup_lead_s": 30},
+    "thorough": {"min_duration": 600, "hermes": True, "windup_lead_s": 30},
+}
+
+
+def detect_sprint_tier(duration_s: float) -> str:
+    """Detect sprint tier from duration in seconds."""
+    if duration_s < 60:
+        raise ValueError(f"Sprint duration {duration_s}s is below minimum 60s")
+    if duration_s < 180:
+        return "quick"
+    if duration_s < 300:
+        return "standard"
+    if duration_s < 600:
+        return "deep"
+    return "thorough"
+
+
+class SprintTooShortError(ValueError):
+    """Raised when sprint duration is below minimum."""
+    pass

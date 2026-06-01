@@ -276,9 +276,10 @@ class UniversalResearchCoordinator(UniversalCoordinator):
         except Exception as e:
             logger.warning(f"ResearchCoordinator: UnifiedAI init failed: {e}")
 
-        # Try EvidenceNetworkAnalyzer
+        # Try EvidenceNetworkAnalyzer (FIX: wrap hard error → graceful degradation)
+        # TODO: implement EvidenceNetworkAnalyzer — tracked in IMPLEMENTATION_ROADMAP.md T1
         try:
-            from hledac.deep_research.evidence_network_analyzer import EvidenceNetworkAnalyzer
+            from advanced_web.evidence_network_analyzer import EvidenceNetworkAnalyzer
             self._evidence_analyzer = EvidenceNetworkAnalyzer()
             self._evidence_available = True
             initialized_any = True
@@ -287,10 +288,13 @@ class UniversalResearchCoordinator(UniversalCoordinator):
             logger.warning("ResearchCoordinator: EvidenceNetworkAnalyzer not available")
         except Exception as e:
             logger.warning(f"ResearchCoordinator: EvidenceAnalyzer init failed: {e}")
+            # Graceful degradation: return empty evidence instead of raising
+            self._evidence_analyzer = None
+            self._evidence_available = False
 
-        # Try RAGOrchestrator
+        # Try RAGOrchestrator (FIX: correct import path within universal/)
         try:
-            from hledac.advanced_rag.rag_orchestrator import RAGOrchestrator
+            from advanced_rag.rag_orchestrator import RAGOrchestrator
             self._rag_orchestrator = RAGOrchestrator()
             self._rag_available = True
             initialized_any = True
@@ -844,7 +848,7 @@ class UniversalResearchCoordinator(UniversalCoordinator):
             Crawled content
         """
         try:
-            from hledac.advanced_web.stealth_browser import StealthBrowser
+            from advanced_web.stealth_browser import StealthBrowser  # noqa: N813
 
             browser = StealthBrowser()
             content = await browser.fetch(url, depth=depth)

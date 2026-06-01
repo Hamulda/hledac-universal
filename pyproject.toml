@@ -101,6 +101,7 @@ dependencies = [
     # NOTE: coremltools + sentence-transformers moved to coreml-export extra
     # (only needed for mlmodel export scripts, not runtime inference)
     "curl-cffi>=0.15.0",
+    "kuzu>=0.11.3",
 ]
 
 # ------------------------------------------------------------------ optionals

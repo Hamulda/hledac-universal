@@ -484,7 +484,6 @@ class GhostExecutor:
 
         # Lazy-loaded komponenty
         self._network_driver = None
-        self._stealth_manager = None
         self._bloom_filter = None
 
         # Registr akcí
@@ -545,36 +544,6 @@ class GhostExecutor:
             await self._network_driver.initialize()
             logger.info("✓ GhostNetworkDriver loaded")
         return self._network_driver
-
-    async def _get_stealth_manager(self):
-        """
-        Lazy load stealth manager.
-
-        NOTE (Sprint F900G): This import path was stale — hledac.stealth_toolkit
-        does not exist as a top-level package. The canonical stealth system lives at:
-        - hledac.universal.stealth.stealth_manager (active, canonical)
-        - hledac.outdated.stealth_toolkit (deprecated, donor compat)
-
-        This lazy-load path is kept for backward compat with existing call-sites
-        that pass enable_stealth=True. If module resolution fails, returns None
-        (degraded stub) rather than crashing.
-        """
-        if self._stealth_manager is None and self.enable_stealth:
-            try:
-                # Sprint F900G: Truthful import path — was hledac.stealth_toolkit
-                # (non-existent), redirecting to actual deprecated location
-                from hledac.outdated.stealth_toolkit.stealth_orchestrator import StealthOrchestrator as _SO
-                logger.info("Loading StealthOrchestrator (outdated path)...")
-                self._stealth_manager = _SO()
-                logger.info("✓ StealthOrchestrator loaded (degraded/stub)")
-            except ModuleNotFoundError:
-                logger.warning(
-                    "StealthOrchestrator not available — "
-                    "hledac.outdated.stealth_toolkit not in path. "
-                    "Stealth features will be degraded/stub."
-                )
-                self._stealth_manager = None
-        return self._stealth_manager
 
     async def execute(
         self,
@@ -660,14 +629,7 @@ class GhostExecutor:
         logger.info(f"Google search: {query}")
 
         try:
-            if self.enable_stealth:
-                stealth_mgr = await self._get_stealth_manager()
-                if stealth_mgr:
-                    # Stealth režim: použít stealth Google search přes GhostNetworkDriver
-                    # Pokud driver není dostupný, fallback na ddgs
-                    pass
-
-            # Fallback: DuckDuckGo s Google backend emulací
+            # DuckDuckGo s Google backend emulací
             results = await self._ddgs_search(query)
 
             return ActionResult(
@@ -982,7 +944,6 @@ class GhostExecutor:
             await self._network_driver.close()
             self._network_driver = None
 
-        self._stealth_manager = None
         self._bloom_filter = None
 
         logger.info("✓ GhostExecutor unloaded")

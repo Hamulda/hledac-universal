@@ -1,0 +1,422 @@
+//! SimHash implementation for near-duplicate detection.
+//!
+//! SimHash (Charikar 2002) maps text to a 64-bit fingerprint.
+//! Similar texts have small Hamming distance between their fingerprints.
+//!
+//! ## Performance Characteristics
+//!
+//! For document stores < 100k items, linear O(n) search is sufficient.
+//! For larger scale, consider adding LSH (Locality Sensitive Hashing) index.
+//! Current implementation: O(n) per add_document() call.
+//!
+//! ## API
+//!
+//! - `simhash(text, ngram_size=2)` → u64 fingerprint
+//! - `hamming_dist(a, b)` → u32 distance
+//! - `is_near_duplicate(text_a, text_b, threshold=3, ngram_size=2)` → bool
+//! - `SimHashStore(threshold=3, ngram_size=2)` → mutable store
+
+use pyo3::prelude::*;
+use std::collections::HashMap;
+
+// ===== FNV-1a 64-bit hash (no external deps) =====
+
+/// FNV-1a 64-bit hash function for tokens.
+/// Pure Rust implementation - no external crates needed.
+#[inline]
+fn fnv64(s: &str) -> u64 {
+    const FNV_PRIME: u64 = 1099511628211;
+    const FNV_OFFSET: u64 = 14695981039346656037;
+    let mut hash = FNV_OFFSET;
+    for byte in s.bytes() {
+        hash ^= byte as u64;
+        hash = hash.wrapping_mul(FNV_PRIME);
+    }
+    hash
+}
+
+// ===== Tokenization =====
+
+/// Weighted token for SimHash computation.
+struct WeightedToken {
+    token: String,
+    weight: f64,
+}
+
+/// Tokenizes text into words or character n-grams.
+/// - ngram_size <= 1: word tokenization (filter stop words by length)
+/// - ngram_size > 1: character n-grams
+fn tokenize(text: &str, ngram_size: usize) -> Vec<String> {
+    let text = text.to_lowercase();
+    // Remove punctuation, preserve spaces
+    let clean: String = text
+        .chars()
+        .map(|c| if c.is_alphanumeric() || c.is_whitespace() {
+            c
+        } else {
+            ' '
+        })
+        .collect();
+
+    if ngram_size <= 1 {
+        // Word tokenization - filter short words (proxy for stop words)
+        clean
+            .split_whitespace()
+            .filter(|w| w.len() > 2)
+            .map(|w| w.to_string())
+            .collect()
+    } else {
+        // Character n-grams
+        let chars: Vec<char> = clean.chars().collect();
+        chars
+            .windows(ngram_size)
+            .map(|w| w.iter().collect())
+            .collect()
+    }
+}
+
+/// Computes term frequency (TF) weights for tokens.
+/// Sorts tokens for deterministic iteration order.
+fn compute_tf_weights(tokens: &[String]) -> Vec<WeightedToken> {
+    let mut freq: HashMap<String, usize> = HashMap::new();
+    let total = tokens.len() as f64;
+
+    for token in tokens {
+        *freq.entry(token.clone()).or_insert(0) += 1;
+    }
+
+    // Collect and sort by token for deterministic iteration order
+    let mut entries: Vec<(String, usize)> = freq.into_iter().collect();
+    entries.sort_by(|a, b| a.0.cmp(&b.0));  // Sort by token name for determinism
+
+    entries
+        .into_iter()
+        .map(|(token, count)| WeightedToken {
+            token,
+            weight: count as f64 / total,
+        })
+        .collect()
+}
+
+// ===== Core SimHash =====
+
+/// Alias for simhash() - maintains API compatibility with existing callers.
+/// See simhash() for documentation.
+#[pyfunction]
+#[pyo3(signature = (text, ngram_size=2))]
+pub fn compute_simhash(text: &str, ngram_size: usize) -> u64 {
+    simhash(text, ngram_size)
+}
+
+/// Computes SimHash fingerprints for a batch of texts.
+/// Returns vector of fingerprints in same order as input.
+///
+/// ## Example
+/// ```python
+/// from hledac_rust_extensions import batch_compute_simhash
+/// fps = batch_compute_simhash(["text1", "text2", "text3"], ngram_size=2)
+/// ```
+#[pyfunction]
+#[pyo3(signature = (texts, ngram_size=2))]
+pub fn batch_compute_simhash(texts: Vec<String>, ngram_size: usize) -> Vec<u64> {
+    texts.into_iter().map(|t| simhash(&t, ngram_size)).collect()
+}
+
+/// Computes SimHash fingerprint from weighted tokens.
+/// This is deterministic: same input always produces same output.
+fn compute_simhash_from_tokens(weighted_tokens: &[WeightedToken]) -> u64 {
+    let mut v = [0.0f64; 64];
+
+    for wt in weighted_tokens {
+        let h = fnv64(&wt.token);
+        for i in 0..64 {
+            if (h >> i) & 1 == 1 {
+                v[i] += wt.weight;
+            } else {
+                v[i] -= wt.weight;
+            }
+        }
+    }
+
+    let mut fingerprint: u64 = 0;
+    for i in 0..64 {
+        if v[i] > 0.0 {
+            fingerprint |= 1u64 << i;
+        }
+    }
+    fingerprint
+}
+
+/// Hamming distance between two 64-bit fingerprints.
+#[inline]
+pub fn hamming_distance(a: u64, b: u64) -> u32 {
+    (a ^ b).count_ones()
+}
+
+// ===== PyO3 Public API =====
+
+/// Computes SimHash fingerprint for text.
+/// Returns 64-bit integer representing the fingerprint.
+///
+/// ## Arguments
+/// - `text`: Input text to hash
+/// - `ngram_size`: Tokenization granularity (1=words, 2+=char n-grams)
+///
+/// ## Returns
+/// 64-bit fingerprint (deterministic)
+///
+/// ## Example
+/// ```python
+/// from hledac_rust_extensions import simhash
+/// fp = simhash("Hello world", ngram_size=2)
+/// ```
+#[pyfunction]
+#[pyo3(signature = (text, ngram_size=2))]
+pub fn simhash(text: &str, ngram_size: usize) -> u64 {
+    if text.is_empty() {
+        return 0;
+    }
+    let tokens = tokenize(text, ngram_size);
+    if tokens.is_empty() {
+        return 0;
+    }
+    let weighted = compute_tf_weights(&tokens);
+    compute_simhash_from_tokens(&weighted)
+}
+
+/// Computes Hamming distance between two fingerprints.
+/// Distance 0 = identical, <= 3 = near-duplicate, >= 10 = different.
+///
+/// ## Example
+/// ```python
+/// from hledac_rust_extensions import simhash, hamming_dist
+/// fp1 = simhash("Hello world")
+/// fp2 = simhash("Hello world!")
+/// dist = hamming_dist(fp1, fp2)  # Typically 0-3 for near duplicates
+/// ```
+#[pyfunction]
+pub fn hamming_dist(a: u64, b: u64) -> u32 {
+    hamming_distance(a, b)
+}
+
+/// Checks if two texts are near-duplicates.
+/// Uses threshold to determine similarity: <= threshold = near-duplicate.
+///
+/// ## Arguments
+/// - `text_a`: First text
+/// - `text_b`: Second text
+/// - `threshold`: Max Hamming distance for "same" (default: 3, ~95% accuracy)
+/// - `ngram_size`: Tokenization granularity
+///
+/// ## Example
+/// ```python
+/// from hledac_rust_extensions import is_near_duplicate
+/// same = is_near_duplicate("Article v1", "Article v1 (updated)", threshold=3)
+/// ```
+#[pyfunction]
+#[pyo3(signature = (text_a, text_b, threshold=3, ngram_size=2))]
+pub fn is_near_duplicate(text_a: &str, text_b: &str, threshold: u32, ngram_size: usize) -> bool {
+    let fp_a = simhash(text_a, ngram_size);
+    let fp_b = simhash(text_b, ngram_size);
+    hamming_distance(fp_a, fp_b) <= threshold
+}
+
+/// Near-duplicate store for document deduplication.
+/// Maintains fingerprint index and checks new documents against existing.
+///
+/// ## Capacity
+/// - Optimized for < 100k documents per store
+/// - O(n) search per add_document()
+/// - For larger scale: partition by bucket or use LSH index
+///
+/// ## Example
+/// ```python
+/// from hledac_rust_extensions import SimHashStore
+///
+/// store = SimHashStore(threshold=3, ngram_size=2)
+/// is_new, dup_id = store.add_document("Article content", "doc-1")
+/// print(f"New: {is_new}, Duplicate of: {dup_id}")
+/// ```
+#[pyclass]
+pub struct SimHashStore {
+    fingerprints: Vec<(u64, String)>, // (fingerprint, document_id)
+    threshold: u32,
+    ngram_size: usize,
+}
+
+#[pymethods]
+impl SimHashStore {
+    /// Creates new SimHashStore.
+    ///
+    /// ## Arguments
+    /// - `threshold`: Max Hamming distance for near-duplicate (default: 3)
+    /// - `ngram_size`: Tokenization granularity (default: 2)
+    #[new]
+    #[pyo3(signature = (threshold=3, ngram_size=2))]
+    pub fn new(threshold: u32, ngram_size: usize) -> Self {
+        Self {
+            fingerprints: Vec::with_capacity(10_000),
+            threshold,
+            ngram_size,
+        }
+    }
+
+    /// Get threshold value.
+    pub fn get_threshold(&self) -> u32 {
+        self.threshold
+    }
+
+    /// Get ngram_size value.
+    pub fn get_ngram_size(&self) -> usize {
+        self.ngram_size
+    }
+
+    /// Adds document to store, returns near-duplicate detection result.
+    ///
+    /// ## Returns
+    /// `(is_new: bool, nearest_duplicate_id: Option<String>)`
+    ///
+    /// If `is_new` is False, `nearest_duplicate_id` contains the ID
+    /// of the closest existing document.
+    pub fn add_document(&mut self, text: &str, doc_id: &str) -> (bool, Option<String>) {
+        let fp = simhash(text, self.ngram_size);
+
+        // Search for near-duplicate in existing fingerprints
+        let mut best_match: Option<(u32, String)> = None;
+        for (existing_fp, existing_id) in &self.fingerprints {
+            let dist = hamming_distance(fp, *existing_fp);
+            if dist <= self.threshold {
+                match &best_match {
+                    None => best_match = Some((dist, existing_id.clone())),
+                    Some((best_dist, _)) if dist < *best_dist => {
+                        best_match = Some((dist, existing_id.clone()));
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        if let Some((_, dup_id)) = best_match {
+            (false, Some(dup_id))
+        } else {
+            self.fingerprints.push((fp, doc_id.to_string()));
+            (true, None)
+        }
+    }
+
+    /// Gets fingerprint for text without adding to store.
+    pub fn fingerprint_for(&self, text: &str) -> u64 {
+        simhash(text, self.ngram_size)
+    }
+
+    /// Returns number of documents in store.
+    pub fn len(&self) -> usize {
+        self.fingerprints.len()
+    }
+
+    /// Python compatibility: len(store)
+    pub fn __len__(&self) -> usize {
+        self.len()
+    }
+
+    /// Pickle support for persistence.
+    /// Returns state tuple for pickle.dump()
+    pub fn __getstate__(&self) -> (Vec<(u64, String)>, u32, usize) {
+        (self.fingerprints.clone(), self.threshold, self.ngram_size)
+    }
+
+    /// Pickle support for restoration.
+    /// Restores from state tuple from pickle.load()
+    pub fn __setstate__(&mut self, state: (Vec<(u64, String)>, u32, usize)) {
+        self.fingerprints = state.0;
+        self.threshold = state.1;
+        self.ngram_size = state.2;
+    }
+}
+
+// ===== Module Registration =====
+
+/// Registers all SimHash functions and classes with Python module.
+///
+/// ## Registered
+/// - `simhash(text, ngram_size=2)` → u64
+/// - `compute_simhash(text, ngram_size=2)` → u64 (alias for simhash)
+/// - `batch_compute_simhash(texts, ngram_size=2)` → Vec<u64>
+/// - `hamming_dist(a, b)` → u32
+/// - `is_near_duplicate(text_a, text_b, threshold=3, ngram_size=2)` → bool
+/// - `SimHashStore(threshold=3, ngram_size=2)` → class
+pub fn register_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    m.add_function(wrap_pyfunction!(simhash, m)?)?;
+    m.add_function(wrap_pyfunction!(compute_simhash, m)?)?;
+    m.add_function(wrap_pyfunction!(batch_compute_simhash, m)?)?;
+    m.add_function(wrap_pyfunction!(hamming_dist, m)?)?;
+    m.add_function(wrap_pyfunction!(is_near_duplicate, m)?)?;
+    m.add_class::<SimHashStore>()?;
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_fnv64_deterministic() {
+        let h1 = fnv64("hello");
+        let h2 = fnv64("hello");
+        assert_eq!(h1, h2, "FNV must be deterministic");
+    }
+
+    #[test]
+    fn test_simhash_deterministic() {
+        let fp1 = simhash("The quick brown fox", 2);
+        let fp2 = simhash("The quick brown fox", 2);
+        assert_eq!(fp1, fp2, "SimHash must be deterministic");
+    }
+
+    #[test]
+    fn test_near_duplicate() {
+        let fp1 = simhash("Hello world", 2);
+        let fp2 = simhash("Hello world!", 2);
+        let dist = hamming_distance(fp1, fp2);
+        assert!(dist <= 3, "Near-duplicate should have small Hamming distance");
+    }
+
+    #[test]
+    fn test_different_texts() {
+        let fp1 = simhash("Apple banana cherry", 2);
+        let fp2 = simhash("Dog elephant frog", 2);
+        let dist = hamming_distance(fp1, fp2);
+        assert!(dist >= 10, "Different texts should have large Hamming distance");
+    }
+
+    #[test]
+    fn test_store_add() {
+        let mut store = SimHashStore::new(3, 2);
+        let (is_new, dup_id) = store.add_document("Test content", "doc-1");
+        assert!(is_new, "First document should be new");
+        assert!(dup_id.is_none(), "No duplicate for first document");
+
+        // Add same content - should detect duplicate
+        let (is_new2, dup_id2) = store.add_document("Test content", "doc-2");
+        assert!(!is_new2, "Duplicate should not be new");
+        assert_eq!(dup_id2, Some("doc-1".to_string()));
+
+        // Different content - should be new
+        let (is_new3, _) = store.add_document("Different content", "doc-3");
+        assert!(is_new3, "Different content should be new");
+    }
+
+    #[test]
+    fn test_pickle_roundtrip() {
+        let mut store = SimHashStore::new(3, 2);
+        store.add_document("Test", "doc-1");
+
+        let state = store.__getstate__();
+        let mut restored = SimHashStore::new(1, 1); // Different init params
+        restored.__setstate__(state);
+
+        assert_eq!(store.len(), restored.len());
+        assert_eq!(store.threshold, restored.threshold);
+        assert_eq!(store.ngram_size, restored.ngram_size);
+    }
+}

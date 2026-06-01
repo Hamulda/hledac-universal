@@ -129,13 +129,19 @@ pub fn extract_iocs(text: &str) -> Vec<(String, String)> {
 /// URL normalizer — delegates to url_engine::normalize() for canonical form.
 #[pyfunction]
 fn url_normalize(url: &str) -> String {
-    url_engine::normalize(url)
+    match url_engine::normalize(url) {
+        Ok(s) => s,
+        Err(_) => url.to_string(),
+    }
 }
 
 /// Alias for backwards compatibility.
 #[pyfunction]
 fn url_normalize_batch(url: &str) -> String {
-    url_engine::normalize(url)
+    match url_engine::normalize(url) {
+        Ok(s) => s,
+        Err(_) => url.to_string(),
+    }
 }
 
 /// In-memory URL deduplication with normalization.
@@ -144,7 +150,12 @@ fn url_normalize_batch(url: &str) -> String {
 fn batch_dedup_urls(urls: Vec<String>) -> Vec<String> {
     let mut seen = std::collections::HashSet::new();
     urls.into_iter()
-        .filter(|url| seen.insert(url_engine::normalize(url)))
+        .filter(|url| {
+            match url_engine::normalize(url) {
+                Ok(normalized) => seen.insert(normalized),
+                Err(_) => seen.insert(url.clone()),
+            }
+        })
         .collect()
 }
 

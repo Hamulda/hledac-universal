@@ -1086,6 +1086,7 @@ dependencies = [
     { name = "fast-langdetect" },
     { name = "flashrank" },
     { name = "httpx" },
+    { name = "kuzu" },
     { name = "lmdb" },
     { name = "mlx" },
     { name = "mlx-lm" },
@@ -1297,6 +1298,7 @@ requires-dist = [
     { name = "httpx", specifier = ">=0.27.0" },
     { name = "hypothesis", marker = "extra == 'graph-storage'", specifier = ">=6.155.0" },
     { name = "iniconfig", marker = "extra == 'dev'", specifier = ">=2.0.0" },
+    { name = "kuzu", specifier = ">=0.11.3" },
     { name = "lancedb", marker = "extra == 'graph-storage'", specifier = ">=0.2.5" },
     { name = "liboqs-python", marker = "(platform_machine == 'aarch64' and extra == 'security') or (platform_machine == 'arm64' and extra == 'security')", specifier = ">=0.15.0" },
     { name = "liboqs-python", marker = "extra == 'pq'", specifier = ">=0.10.0" },
@@ -1560,6 +1562,18 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/19/74/a633ee74eb36c44aa6d1095e7cc5569bebf04342ee146178e2d36600708b/jsonschema_specifications-2025.9.1.tar.gz", hash = "sha256:b540987f239e745613c7a9176f3edb72b832a4ac465cf02712288397832b5e8d", size = 32855, upload-time = "2025-09-08T01:34:59.186Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/41/45/1a4ed80516f02155c51f51e8cedb3c1902296743db0bbc66608a0db2814f/jsonschema_specifications-2025.9.1-py3-none-any.whl", hash = "sha256:98802fee3a11ee76ecaca44429fda8a41bff98b00a0f2838151b113f210cc6fe", size = 18437, upload-time = "2025-09-08T01:34:57.871Z" },
+]
+
+[[package]]
+name = "kuzu"
+version = "0.11.3"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/96/0c/f141a81485729a072dc527b474e7580d5632309c68ad1a5aa6ed9ac45387/kuzu-0.11.3.tar.gz", hash = "sha256:e7bea3ca30c4bb462792eedcaa7f2125c800b243bb4a872e1eedc16917c1967a", size = 19430620, upload-time = "2025-10-10T13:36:54.984Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/d6/b7/2a4569984995f09476dbf1ef2e0a7298aa9fdb8896f2e8195d80e11786f4/kuzu-0.11.3-cp314-cp314-manylinux_2_26_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:9d2752a9e37adda6aef3bf041932ae3a1cf74ca7e893bbbacdd5e62b3ac6f8c2", size = 6795649, upload-time = "2025-10-10T13:36:26.15Z" },
+    { url = "https://files.pythonhosted.org/packages/77/13/df6e06a7d7506743c3a6cfbe50ee3f9d3fc58228e2a2fcbe7e74e7c17b00/kuzu-0.11.3-cp314-cp314-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:86be7d113e4e2c6761b1701079af8aeffc04c6981517f2d6aa393e883cc46036", size = 7615882, upload-time = "2025-10-10T13:36:28.215Z" },
+    { url = "https://files.pythonhosted.org/packages/32/85/c52c3b167edcc67da3b8788a20a2fb5b4f045060cbe1aed6121ce3ce83d3/kuzu-0.11.3-cp314-cp314t-manylinux_2_26_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:d72ebd88e231b562e7a60ff88d200825d53e78a681bddd7f8d77b78126a5060c", size = 6798657, upload-time = "2025-10-10T13:36:29.935Z" },
+    { url = "https://files.pythonhosted.org/packages/06/be/5b4ff168718165c2ff5848ab79e22ecce72ad00522afee6820d390cb0753/kuzu-0.11.3-cp314-cp314t-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:64c7ec822906bdee154eb38d93e64f184d8f94b30bbeaceaa252725f2b9efab3", size = 7620394, upload-time = "2025-10-10T13:36:31.69Z" },
 ]
 
 [[package]]

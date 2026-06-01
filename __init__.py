@@ -42,9 +42,14 @@ _LAZY_EXPORTS = {
     "ReplayResult": "hledac.universal.knowledge.duckdb_store",
     "CanonicalFinding": "hledac.universal.knowledge.duckdb_store",
     "create_owned_store": "hledac.universal.knowledge.duckdb_store",
+    # Graph RAG
+    "GraphRAGOrchestrator": "hledac.universal.knowledge.graph_rag",
 
     # Resource allocator
     "AdaptiveSemaphore": "hledac.universal.resource_allocator",
+
+    # Orchestrator
+    "FullyAutonomousOrchestrator": "hledac.universal.autonomous_orchestrator",
 
     # Concurrency utilities
     "FETCH_SEMAPHORE": "hledac.universal.utils.concurrency",
@@ -55,6 +60,7 @@ _LAZY_EXPORTS = {
     # Transport
     "TransportContext": "hledac.universal.transport.transport_resolver",
     "TransportResolver": "hledac.universal.transport.transport_resolver",
+    "Transport": "hledac.universal.transport.transport_resolver",
     # Layers
     "build_temporal_priority_hints": "hledac.universal.layers.temporal_signal_runtime",
     # D ghost modules (fail fast with helpful msg)
@@ -178,6 +184,8 @@ __all__ = [
     "ReplayResult",
     "CanonicalFinding",
     "create_owned_store",
+    # Graph RAG
+    "GraphRAGOrchestrator",
     # Concurrency
     "FETCH_SEMAPHORE",
     "adjust_fetch_workers",
@@ -187,6 +195,7 @@ __all__ = [
     # Transport
     "TransportContext",
     "TransportResolver",
+    "Transport",
     # Layers
     "build_temporal_priority_hints",
     # Deleted ghost modules (fail fast with helpful message)
@@ -218,6 +227,8 @@ __all__ = [
     "SemanticFilter",
     # Resource allocator
     "AdaptiveSemaphore",
+    # Orchestrator
+    "FullyAutonomousOrchestrator",
     # Loader
     "load_optional",
 ]
