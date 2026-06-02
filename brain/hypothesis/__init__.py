@@ -8,18 +8,26 @@ symbol from here for **backward compatibility** — existing imports
 (``from brain.hypothesis_engine import Hypothesis, …``) keep working.
 
 Module layout (planned, incremental):
-- ``_types``     — enums + dataclass DTOs + Protocol (extracted: this commit)
-- ``adversarial`` — AdversarialVerifier (~840 LOC; planned)
-- ``explainer``  — SimpleNodeAblationExplainer (~140 LOC; planned)
-- ``packs``      — SourceHint + HypothesisPack (~713 LOC; planned)
-- ``engine``     — HypothesisEngine (~3 124 LOC; planned)
+- ``_types``     — enums + dataclass DTOs + Protocol (C4 Tier-1+2, extracted)
+- ``adversarial`` — AdversarialVerifier (837 LOC, C4 Tier-3 partial, extracted)
+- ``explainer``  — SimpleNodeAblationExplainer (78 LOC, C4 Tier-3 partial, extracted)
+- ``packs``      — SourceHint + HypothesisPack (711 LOC, C4 Tier-4, extracted)
+- ``engine``     — HypothesisEngine (~3 126 LOC; planned)
 
 GHOST_INVARIANTS:
 - Every public symbol that used to live in ``hypothesis_engine`` is still
   re-exported from there. No call site needs to change.
-- New code should prefer ``from brain.hypothesis._types import Hypothesis``.
+- New code should prefer
+  ``from brain.hypothesis._types import Hypothesis``,
+  ``from brain.hypothesis.adversarial import AdversarialVerifier``,
+  ``from brain.hypothesis.explainer import SimpleNodeAblationExplainer``,
+  ``from brain.hypothesis.packs import SourceHint, HypothesisPack``.
 - Submodule extraction is byte-for-byte; field names, defaults, and
   ordering are preserved exactly.
+- ``explain_with_mlx`` (the MLX-LM companion helper) is **not** part of
+  this package — it lives in ``brain.hypothesis_engine`` as a module-level
+  function and is imported lazily by ``AdversarialVerifier`` when path
+  explanations are requested.
 """
 from __future__ import annotations
 
@@ -57,6 +65,16 @@ from ._types import (
     # Protocol
     InferenceEngineProtocol,
 )
+from .adversarial import (
+    AdversarialVerifier,
+)
+from .explainer import (
+    SimpleNodeAblationExplainer,
+)
+from .packs import (
+    SourceHint,
+    HypothesisPack,
+)
 
 __all__ = [
     "HypothesisType",
@@ -83,5 +101,9 @@ __all__ = [
     "Contradiction",
     "CrossReferenceResult",
     "AdversarialReport",
+    "AdversarialVerifier",
+    "SimpleNodeAblationExplainer",
+    "SourceHint",
+    "HypothesisPack",
     "InferenceEngineProtocol",
 ]

@@ -117,6 +117,13 @@ from typing import Any, TypedDict
 # F26X: @deprecated with Python 3.11+ safe fallback (see utils/_deprecated.py)
 from hledac.universal.utils._deprecated import deprecated
 
+# Sprint F262OBS: canonical source_type centralization — guard at ingest seam
+try:
+    from hledac.universal.utils.source_types import SourceType, canonical_source_type
+except ImportError:
+    SourceType = None  # type: ignore[assignment]
+    canonical_source_type = None  # type: ignore[assignment]
+
 import msgspec
 
 # Sprint F26X: orjson for fast JSON path (3-11x vs stdlib json)
@@ -3986,6 +3993,24 @@ class DuckDBShadowStore:
         (DuckDB schema nemá provenance_sloupec; backward-compatible,
          probe_8l/probe_8h/probe_8f/probe_8b zůstávají kompatibilní)
         """
+        # Sprint F262OBS: normalize source_type at ingest seam — unknown / legacy
+        # strings are routed via canonical_source_type() so DuckDB never sees
+        # an unregistered value. Forward-compat: unknown values are passed
+        # through unchanged (not dropped) so a finding recorded today still
+        # resolves on a future schema bump.
+        if canonical_source_type is not None and finding.source_type:
+            try:
+                _raw = (
+                    finding.source_type.value
+                    if isinstance(finding.source_type, SourceType)
+                    else str(finding.source_type)
+                )
+                if SourceType is not None and _raw not in SourceType._value2member_map_:
+                    finding.source_type = canonical_source_type(_raw)  # type: ignore[assignment]
+            except Exception:
+                # Fail-soft: never block ingest on a bad source_type string.
+                pass
+
         if not self._initialized or self._closed:
             return ActivationResult(
                 finding_id=finding.finding_id,

@@ -1317,6 +1317,7 @@ async def run_sprint(
     deep_probe_enabled: bool = False,
     deep_research: bool = False,  # F11: enhanced deep research advisory
     extreme_mode: bool = False,  # F11: EXHAUSTIVE depth for deep research
+    no_communication: bool = False,  # F26X-3: opt-out of CommunicationLayer injection
     ui_mode: bool = False,
     windup_lead_s: float | None = None,
     acquisition_profile: str | None = None,  # F223A: explicit profile override
@@ -1436,6 +1437,18 @@ async def run_sprint(
         rl_train_mode=rl_train_mode,
     )
     scheduler.inject_policy_manager(policy_manager)
+
+    # Sprint F26X-3: CommunicationLayer injection (advisory, default-ON, --no-communication opt-out)
+    # Mirrors the F26X-2 --no-coordination contract. CommunicationLayer enables batched/bounded
+    # model queries for hot-spot consumers (privacy gate, LMDB ingest, forensic fan-out).
+    if not getattr(args, "no_communication", False):
+        try:
+            from hledac.universal.layers import get_communication_layer
+            _comm_layer = get_communication_layer()
+            if _comm_layer is not None:
+                scheduler.inject_communication_layer(_comm_layer)
+        except Exception as _e:
+            logger.debug("F26X-3: CommunicationLayer injection failed (fail-soft): %s", _e)
 
     # F228F CRITICAL: inject duckdb_store before health_check so health_check
     # reads self._duckdb_store (not always None). run() also sets it from param,
@@ -2488,6 +2501,11 @@ def main() -> None:
         default=None,
         help="RL F261QMIX: Override HLEDAC_RL_TRAIN_INTERVAL (default 10 sprints per QMIX training step).",
     )
+    parser.add_argument(
+        "--no-communication",
+        action="store_true",
+        help="F26X-3: Skip CommunicationLayer injection in run_sprint(). Default ON, mirroring --no-coordination opt-out contract from F26X-2.",
+    )
     args = args_with_rl_resolution = parser.parse_args()
     # F261QMIX: --rl-no-train overrides --rl-train (explicit disable wins)
     if args.rl_no_train:
@@ -2516,7 +2534,7 @@ def main() -> None:
         restore_signals = _install_signal_handler_for_loop(loop, shutdown_event)
         try:
             sprint_task = loop.create_task(
-                run_sprint(args.query, float(args.duration), args.export_dir, args.aggressive, args.deep_probe, deep_research=args.deep_research, extreme_mode=args.extreme, acquisition_profile=args.acquisition_profile, rl_train_mode=args.rl_train)
+                run_sprint(args.query, float(args.duration), args.export_dir, args.aggressive, args.deep_probe, deep_research=args.deep_research, extreme_mode=args.extreme, acquisition_profile=args.acquisition_profile, rl_train_mode=args.rl_train, no_communication=args.no_communication)
             )
             sig_task = loop.create_task(shutdown_event.wait())
             done, pending = loop.run_until_complete(

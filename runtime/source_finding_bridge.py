@@ -39,6 +39,11 @@ try:
 except ImportError:
     CanonicalFinding = None  # type: ignore[assignment]
 
+try:
+    from hledac.universal.utils.source_types import SourceType
+except ImportError:
+    SourceType = None  # type: ignore[assignment]
+
 __all__ = [
     "ct_results_to_findings",
     "wayback_results_to_findings",
@@ -2316,7 +2321,7 @@ def academic_results_to_findings(
 
             finding = CanonicalFinding(
                 finding_id=finding_id_str,
-                source_type="academic_search",
+                source_type=SourceType.ACADEMIC_SEARCH,
                 confidence=0.75,
                 query=query[:256] if query else "",
                 ts=time.time(),
@@ -2444,7 +2449,7 @@ def network_recon_result_to_findings(
             for ip in ips[:max_findings]:
                 if ip and isinstance(ip, str) and ip.strip():
                     finding = _make_network_recon_finding(
-                        source_type="network_recon",
+                        source_type=SourceType.NETWORK_RECON,
                         query=target,
                         target=target,
                         field_name="ip_address",
@@ -2472,7 +2477,7 @@ def network_recon_result_to_findings(
                         if asn_num:
                             extra["asn"] = str(asn_num)[:32]
                         finding = _make_network_recon_finding(
-                            source_type="network_recon",
+                            source_type=SourceType.NETWORK_RECON,
                             query=target,
                             target=target,
                             field_name="asn_info",
@@ -2494,7 +2499,7 @@ def network_recon_result_to_findings(
                     if city:
                         extra["city"] = str(city)[:64]
                     finding = _make_network_recon_finding(
-                        source_type="network_recon",
+                        source_type=SourceType.NETWORK_RECON,
                         query=target,
                         target=target,
                         field_name="geolocation",
@@ -2532,7 +2537,7 @@ def network_recon_result_to_findings(
             # Registrar
             if registrar and built < max_findings:
                 finding = _make_network_recon_finding(
-                    source_type="network_recon",
+                    source_type=SourceType.NETWORK_RECON,
                     query=target,
                     target=target,
                     field_name="whois_registrar",
@@ -2547,7 +2552,7 @@ def network_recon_result_to_findings(
             # Registrant org
             if registrant_org and built < max_findings:
                 finding = _make_network_recon_finding(
-                    source_type="network_recon",
+                    source_type=SourceType.NETWORK_RECON,
                     query=target,
                     target=target,
                     field_name="whois_registrant_org",
@@ -2565,7 +2570,7 @@ def network_recon_result_to_findings(
                     break
                 if ns and isinstance(ns, str) and ns.strip():
                     finding = _make_network_recon_finding(
-                        source_type="network_recon",
+                        source_type=SourceType.NETWORK_RECON,
                         query=target,
                         target=target,
                         field_name="whois_nameserver",
@@ -2580,7 +2585,7 @@ def network_recon_result_to_findings(
             # DNSSEC status
             if dnssec is not None and built < max_findings:
                 finding = _make_network_recon_finding(
-                    source_type="network_recon",
+                    source_type=SourceType.NETWORK_RECON,
                     query=target,
                     target=target,
                     field_name="whois_dnssec",
@@ -2616,7 +2621,7 @@ def network_recon_result_to_findings(
             # Issuer
             if issuer and built < max_findings:
                 finding = _make_network_recon_finding(
-                    source_type="network_recon",
+                    source_type=SourceType.NETWORK_RECON,
                     query=target,
                     target=target,
                     field_name="ssl_issuer",
@@ -2631,7 +2636,7 @@ def network_recon_result_to_findings(
             # Subject org
             if subject and built < max_findings:
                 finding = _make_network_recon_finding(
-                    source_type="network_recon",
+                    source_type=SourceType.NETWORK_RECON,
                     query=target,
                     target=target,
                     field_name="ssl_subject",
@@ -2649,7 +2654,7 @@ def network_recon_result_to_findings(
                     break
                 if san and isinstance(san, str) and san.strip():
                     finding = _make_network_recon_finding(
-                        source_type="network_recon",
+                        source_type=SourceType.NETWORK_RECON,
                         query=target,
                         target=target,
                         field_name="ssl_san",
@@ -2665,7 +2670,7 @@ def network_recon_result_to_findings(
             if days_until_expiry is not None and built < max_findings:
                 expiry_str = f"expires_in:{days_until_expiry}d"
                 finding = _make_network_recon_finding(
-                    source_type="network_recon",
+                    source_type=SourceType.NETWORK_RECON,
                     query=target,
                     target=target,
                     field_name="ssl_validity",

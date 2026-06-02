@@ -10,6 +10,28 @@ Integrates:
 
 This is a thin wrapper that imports existing security modules
 and adds integration logic for the universal orchestrator.
+
+VERDICT (F260 SecurityLayer / MissionAudit audit, 2026-06-02):
+  - MissionAudit is ACTIVE — wired to canonical sprint path:
+    * runtime/sprint_scheduler.py:15881 reads `getattr(security, "_mission_audit", None)`
+      and calls `audit.log_action("finding_accepted", ...)` for every accepted CT finding.
+  - SecurityLayer is instantiated lazily via LayerManager.security property
+    (layers/layer_manager.py:288-294), which is in turn constructed inside
+    try/except in sprint_scheduler.py:5162 / 5492. If LayerManager init fails,
+    the audit call site is skipped (fail-soft).
+  - PrivacyLayer.unified_audit delegates here (layers/privacy_layer.py):
+    `result = await self._security_layer.log_privacy_event(...)`.
+  - 0 results in core/ knowledge/ utils/ pipeline/ for raw "audit_log|audit_chain|
+    merkle|hmac" symbols — these are encapsulated inside this module and
+    exposed only via the SecurityLayer / MissionAudit / log_privacy_event APIs.
+  - 0 env flags gate this layer — it is always on when SecurityLayer is constructed.
+  - Git activity: 5 commits in 180 days (active development, not abandoned).
+  - User decision 2026-06-02: KEEP + document as security-relevant, do NOT move.
+  - Compliance relevance: the Merkle + HMAC chain is intended for legally
+    bulletproof evidence. Removing it would break the audit trail; altering
+    it would invalidate the chain. Any future refactor MUST preserve the
+    log_action(action, data, metadata) signature and the chained hash links.
+  - See SECURITY_MEMORY_LAYER_AUDIT.md (F260) for full evidence.
 """
 
 from __future__ import annotations

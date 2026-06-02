@@ -28,6 +28,11 @@ from __future__ import annotations
 
 import asyncio
 import json
+
+try:
+    from hledac.universal.utils.source_types import SourceType
+except ImportError:
+    SourceType = None  # type: ignore[assignment]
 import logging
 import time as _time
 from collections.abc import Callable
@@ -860,7 +865,7 @@ async def _sprint_diff_runner(
             try:
                 derived_findings.append(_DiffFinding(
                     finding_id=f"diff-new-{nf.get('finding_id', 'unknown')[:32]}",
-                    source_type="sprint_diff",
+                    source_type=SourceType.SPRINT_DIFF,
                     query=query,
                     target_id=target_id,
                     ioc_type=nf.get("ioc_type") or "unknown",
@@ -876,7 +881,7 @@ async def _sprint_diff_runner(
             try:
                 derived_findings.append(_DiffFinding(
                     finding_id=f"diff-gone-{df.get('finding_id', 'unknown')[:32]}",
-                    source_type="sprint_diff",
+                    source_type=SourceType.SPRINT_DIFF,
                     query=query,
                     target_id=target_id,
                     ioc_type=df.get("ioc_type") or "unknown",
@@ -950,7 +955,7 @@ async def _kill_chain_tagging_runner(
 
                 derived_findings.append(_KCTFinding(
                     finding_id=f"kct-{fid[:32]}",
-                    source_type="killchain_tag",
+                    source_type=SourceType.KILLCHAIN_TAG,
                     query=query,
                     target_id=query[:128],
                     ioc_type=ioc_type,

@@ -62,6 +62,7 @@ class SourceType(enum.StrEnum):
     CIRCL_PDNS = "circl_pdns"
     PASSIVE_FINGERPRINT = "passive_fingerprint"
     PASSIVE_TECH_STACK = "passive_tech_stack"
+    DOH = "doh"  # DNS-over-HTTPS — passive-DNS variant
 
     # ── Dark / Alt protocols ──────────────────────────────────────────────
     ONION_DISCOVERY = "onion_discovery"
@@ -153,6 +154,7 @@ class SourceType(enum.StrEnum):
 # runtime-validating constructor and route it to the canonical member.
 LEGACY_ALIASES: Final[dict[str, str]] = {
     "ct": SourceType.CT_LOG.value,
+    "certificate_transparency": SourceType.CT_LOG.value,  # Sprint F262 sweep
     "rss": SourceType.RSS_ATOM_PIPELINE.value,
     "ipfs": SourceType.IPFS_CONTENT.value,
     "i2p": SourceType.I2P_DISCOVERY.value,
@@ -163,6 +165,7 @@ LEGACY_ALIASES: Final[dict[str, str]] = {
     "github": SourceType.GITHUB_SECRET_SCANNER.value,
     "duckduckgo_search": SourceType.WEB_FETCH.value,
     "web": SourceType.WEB_FETCH.value,
+    "doh": SourceType.PASSIVE_DNS.value,  # DNS-over-HTTPS — passive-DNS variant
 }
 
 
@@ -191,7 +194,7 @@ SourceTypeLiteral = Literal[
     "duckduckgo_search",
     "shodan_search", "shodan_intel", "censys_intel", "greynoise_intel",
     "bgp_intelligence", "bgp_enrichment", "bgp_monitor", "bgp_ripe_stat", "rir_correlation",
-    "passive_dns", "circl_pdns", "passive_fingerprint", "passive_tech_stack",
+    "passive_dns", "circl_pdns", "passive_fingerprint", "passive_tech_stack", "doh",
     "onion_discovery", "i2p", "i2p_discovery", "i2p_content",
     "ipfs", "ipfs_content", "ipfs_directory", "ipfs_fetch", "ipfs_search",
     "gopher", "gopher_content", "gemini", "gemini_content",

@@ -22,6 +22,11 @@ import os
 import time
 from typing import NamedTuple
 
+try:
+    from hledac.universal.utils.source_types import SourceType
+except ImportError:
+    SourceType = None  # type: ignore[assignment]
+
 logger = logging.getLogger(__name__)
 
 # =============================================================================
@@ -130,7 +135,7 @@ async def _fetch_from_ipfs(
                     finding = CanonicalFinding(
                         finding_id=f"ipfs-alt-{cid[:12]}-{int(time.time() * 1000)}",
                         query=query,
-                        source_type="ipfs_content",
+                        source_type=SourceType.IPFS_CONTENT,
                         confidence=0.75,
                         ts=time.time(),
                         provenance=(f"ipfs://{cid}",),
@@ -141,16 +146,16 @@ async def _fetch_from_ipfs(
                     findings.append(finding)
 
             return findings, AltProtocolResult(
-                source_type="ipfs",
+                source_type=SourceType.IPFS_CONTENT,
                 findings_count=len(findings),
                 success=True,
                 error=None,
             )
         except asyncio.TimeoutError:
-            return [], AltProtocolResult(source_type="ipfs", findings_count=0, success=False, error="timeout")
+            return [], AltProtocolResult(source_type=SourceType.IPFS_CONTENT, findings_count=0, success=False, error="timeout")
         except Exception as e:
             logger.debug(f"IPFS alt fetch error: {e}")
-            return [], AltProtocolResult(source_type="ipfs", findings_count=0, success=False, error=str(e))
+            return [], AltProtocolResult(source_type=SourceType.IPFS_CONTENT, findings_count=0, success=False, error=str(e))
 
 
 async def _fetch_from_gopher(
@@ -176,16 +181,16 @@ async def _fetch_from_gopher(
             )
 
             return findings, AltProtocolResult(
-                source_type="gopher",
+                source_type=SourceType.GOPHER_CONTENT,
                 findings_count=len(findings),
                 success=True,
                 error=None,
             )
         except asyncio.TimeoutError:
-            return [], AltProtocolResult(source_type="gopher", findings_count=0, success=False, error="timeout")
+            return [], AltProtocolResult(source_type=SourceType.GOPHER_CONTENT, findings_count=0, success=False, error="timeout")
         except Exception as e:
             logger.debug(f"Gopher alt fetch error: {e}")
-            return [], AltProtocolResult(source_type="gopher", findings_count=0, success=False, error=str(e))
+            return [], AltProtocolResult(source_type=SourceType.GOPHER_CONTENT, findings_count=0, success=False, error=str(e))
 
 
 async def _fetch_from_gemini(
@@ -211,16 +216,16 @@ async def _fetch_from_gemini(
             )
 
             return findings, AltProtocolResult(
-                source_type="gemini",
+                source_type=SourceType.GEMINI_CONTENT,
                 findings_count=len(findings),
                 success=True,
                 error=None,
             )
         except asyncio.TimeoutError:
-            return [], AltProtocolResult(source_type="gemini", findings_count=0, success=False, error="timeout")
+            return [], AltProtocolResult(source_type=SourceType.GEMINI_CONTENT, findings_count=0, success=False, error="timeout")
         except Exception as e:
             logger.debug(f"Gemini alt fetch error: {e}")
-            return [], AltProtocolResult(source_type="gemini", findings_count=0, success=False, error=str(e))
+            return [], AltProtocolResult(source_type=SourceType.GEMINI_CONTENT, findings_count=0, success=False, error=str(e))
 
 
 async def _fetch_from_i2p(
@@ -243,7 +248,7 @@ async def _fetch_from_i2p(
             available = await i2p.is_i2p_available()
             if not available:
                 return [], AltProtocolResult(
-                    source_type="i2p", findings_count=0, success=True, error="i2p_unavailable"
+                    source_type=SourceType.I2P_DISCOVERY, findings_count=0, success=True, error="i2p_unavailable"
                 )
 
             # Fetch I2P eepsites
@@ -253,16 +258,16 @@ async def _fetch_from_i2p(
             )
 
             return findings, AltProtocolResult(
-                source_type="i2p",
+                source_type=SourceType.I2P_DISCOVERY,
                 findings_count=len(findings),
                 success=True,
                 error=None,
             )
         except asyncio.TimeoutError:
-            return [], AltProtocolResult(source_type="i2p", findings_count=0, success=False, error="timeout")
+            return [], AltProtocolResult(source_type=SourceType.I2P_DISCOVERY, findings_count=0, success=False, error="timeout")
         except Exception as e:
             logger.debug(f"I2P alt fetch error: {e}")
-            return [], AltProtocolResult(source_type="i2p", findings_count=0, success=False, error=str(e))
+            return [], AltProtocolResult(source_type=SourceType.I2P_DISCOVERY, findings_count=0, success=False, error=str(e))
 
 
 async def _fetch_from_fediverse(
@@ -297,7 +302,7 @@ async def _fetch_from_fediverse(
                     finding = CanonicalFinding(
                         finding_id=f"fediverse-{status.get('id', int(time.time() * 1000))}",
                         query=query,
-                        source_type="fediverse",
+                        source_type=SourceType.FEDIVERSE,
                         confidence=0.6,
                         ts=status.get("created_at", time.time()),
                         provenance=(f"https://infosec.exchange/@{acct}",),
@@ -306,7 +311,7 @@ async def _fetch_from_fediverse(
                     findings.append(finding)
 
                 return findings, AltProtocolResult(
-                    source_type="fediverse",
+                    source_type=SourceType.FEDIVERSE,
                     findings_count=len(findings),
                     success=True,
                     error=None,
@@ -314,10 +319,10 @@ async def _fetch_from_fediverse(
             finally:
                 await adapter.close()
         except asyncio.TimeoutError:
-            return [], AltProtocolResult(source_type="fediverse", findings_count=0, success=False, error="timeout")
+            return [], AltProtocolResult(source_type=SourceType.FEDIVERSE, findings_count=0, success=False, error="timeout")
         except Exception as e:
             logger.debug(f"Fediverse alt fetch error: {e}")
-            return [], AltProtocolResult(source_type="fediverse", findings_count=0, success=False, error=str(e))
+            return [], AltProtocolResult(source_type=SourceType.FEDIVERSE, findings_count=0, success=False, error=str(e))
 
 
 async def _fetch_from_matrix(
@@ -357,7 +362,7 @@ async def _fetch_from_matrix(
                         finding = CanonicalFinding(
                             finding_id=f"matrix-{msg.get('event_id', int(time.time() * 1000))}",
                             query=query,
-                            source_type="matrix_public",
+                            source_type=SourceType.MATRIX_PUBLIC,
                             confidence=0.5,
                             ts=msg.get("origin_server_ts", time.time()) / 1000,
                             provenance=(f"https://matrix.to/#/{room.room_id}",),
@@ -366,7 +371,7 @@ async def _fetch_from_matrix(
                         findings.append(finding)
 
                 return findings, AltProtocolResult(
-                    source_type="matrix",
+                    source_type=SourceType.MATRIX_PUBLIC,
                     findings_count=len(findings),
                     success=True,
                     error=None,
@@ -374,10 +379,10 @@ async def _fetch_from_matrix(
             finally:
                 await adapter.close()
         except asyncio.TimeoutError:
-            return [], AltProtocolResult(source_type="matrix", findings_count=0, success=False, error="timeout")
+            return [], AltProtocolResult(source_type=SourceType.MATRIX_PUBLIC, findings_count=0, success=False, error="timeout")
         except Exception as e:
             logger.debug(f"Matrix alt fetch error: {e}")
-            return [], AltProtocolResult(source_type="matrix", findings_count=0, success=False, error=str(e))
+            return [], AltProtocolResult(source_type=SourceType.MATRIX_PUBLIC, findings_count=0, success=False, error=str(e))
 
 
 # =============================================================================

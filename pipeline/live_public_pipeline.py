@@ -29,6 +29,7 @@ import msgspec
 
 if TYPE_CHECKING:
     from hledac.universal.knowledge.duckdb_store import DuckDBShadowStore
+    from hledac.universal.utils.source_types import SourceType
 
 # F206AB: discovery error taxonomy helper
 from hledac.universal.discovery.duckduckgo_adapter import (  # noqa: E402
@@ -52,6 +53,12 @@ MAX_METADATA_PREPEND_CHARS: int = 500
 """Max chars of title+snippet prepended to extracted text for pattern scan context."""
 
 _SOURCE_TYPE: str = "live_public_pipeline"
+
+# Sprint F262OBS: centralize source_type literals via utils.source_types
+try:
+    from hledac.universal.utils.source_types import SourceType as _SourceTypeEnum
+except ImportError:
+    _SourceTypeEnum = None  # type: ignore[assignment]
 """source_type value for all findings produced by this pipeline."""
 
 _PUBLIC_SOURCE_TYPE: str = "public"
@@ -2683,7 +2690,7 @@ async def _generate_and_store_report(
                 hermes_finding = CanonicalFinding(
                     finding_id=hermes_output.output_id,
                     query=query,
-                    source_type="hermes_inference",
+                    source_type=_SourceTypeEnum.HERMES_INFERENCE,
                     confidence=hermes_output.confidence,
                     ts=hermes_output.timestamp,
                     provenance=("source_family:public", "hermes_inference", hermes_engine.__class__.__name__),
@@ -3030,7 +3037,7 @@ async def _inject_onion_hits(
             findings.append(CanonicalFinding(
                 finding_id=pf_id,
                 query=query,
-                source_type="onion_discovery",
+                source_type=_SourceTypeEnum.ONION_DISCOVERY,
                 confidence=0.55,
                 ts=ts_now,
                 provenance=("onion_discovery", onion_url),
@@ -3557,7 +3564,7 @@ async def async_run_live_public_pipeline(
                                 p20_findings.append(CanonicalFinding(
                                     finding_id=pf_id,
                                     query=self.query,
-                                    source_type="pastebin_monitor",
+                                    source_type=_SourceTypeEnum.PASTEBIN_MONITOR,
                                     confidence=0.6,
                                     ts=time.time(),
                                     provenance=("pastebin", pf.source, target),
@@ -3590,7 +3597,7 @@ async def async_run_live_public_pipeline(
                                 gh_findings.append(CanonicalFinding(
                                     finding_id=gf_id,
                                     query=self.query,
-                                    source_type="github_secret_scanner",
+                                    source_type=_SourceTypeEnum.GITHUB_SECRET_SCANNER,
                                     confidence=0.55,
                                     ts=time.time(),
                                     provenance=("github", gf.pattern, org_candidate),
@@ -4618,7 +4625,7 @@ async def async_run_live_public_pipeline(
                             rl_finding = CanonicalFinding(
                                 finding_id=finding_id,
                                 query=query,
-                                source_type="rl_research",
+                                source_type=_SourceTypeEnum.RL_RESEARCH,
                                 confidence=0.7,
                                 ts=time.time(),
                                 provenance=("rl", loop_result.action),
@@ -4790,7 +4797,7 @@ async def async_run_live_public_pipeline(
                                 tot_finding = CanonicalFinding(
                                     finding_id=f"tot_{hashlib.sha256(tot_result.encode()).hexdigest()[:16]}",
                                     query=query,
-                                    source_type="tot_synthesis",
+                                    source_type=_SourceTypeEnum.TOT_SYNTHESIS,
                                     confidence=0.7,
                                     ts=time.time(),
                                     provenance=("tot", hypo[:100]),
@@ -4899,7 +4906,7 @@ async def async_run_live_public_pipeline(
                             synthesis_finding = CanonicalFinding(
                                 finding_id=report_id,
                                 query=query,
-                                source_type="llm_synthesis",
+                                source_type=_SourceTypeEnum.LLM_SYNTHESIS,
                                 confidence=getattr(report, 'confidence', 0.7) or 0.7,
                                 ts=_time.time(),
                                 ioc_val=getattr(report, 'threat_summary', '')[:500] if hasattr(report, 'threat_summary') else "",

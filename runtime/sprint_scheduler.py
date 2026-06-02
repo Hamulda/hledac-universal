@@ -174,6 +174,12 @@ from hledac.universal.runtime.graph_accumulator import SprintGraphAccumulator
 
 from hledac.universal.utils.async_helpers import _check_gathered
 
+# Sprint F262OBS: centralize source_type literals via utils.source_types
+try:
+    from hledac.universal.utils.source_types import SourceType
+except ImportError:
+    SourceType = None  # type: ignore[assignment]
+
 from hledac.universal.transport.circuit_breaker import (
 
     get_all_breaker_snapshots,
@@ -4316,6 +4322,9 @@ class SprintScheduler:
 
         self._layer_manager: Any = None
 
+        # Sprint F26X: Privacy layer injection (preferred over self._layer_manager.privacy)
+        self._privacy_layer: Any = None
+
         # Sprint F250F: Privacy layer context ID for lifecycle management
         self._privacy_context_id: str | None = None
 
@@ -4372,13 +4381,25 @@ class SprintScheduler:
 
             for f in findings:
                 try:
-                    text_fields = {
-                        'content': getattr(f, 'content', None) or "",
-                        'raw_content': getattr(f, 'raw_content', None) or "",
-                        'payload_text': getattr(f, 'payload_text', None) or "",
-                        'title': getattr(f, 'title', None) or "",
-                        'summary': getattr(f, 'summary', None) or "",
-                    }
+                    # Sprint F26X: support both CanonicalFinding objects AND
+                    # duckdb-compatible dicts (e.g. gopher sidecar). getattr
+                    # returns "" on dict, item access on object — both safe.
+                    if isinstance(f, dict):
+                        text_fields = {
+                            'content': f.get('content') or "",
+                            'raw_content': f.get('raw_content') or "",
+                            'payload_text': f.get('payload_text') or "",
+                            'title': f.get('title') or "",
+                            'summary': f.get('summary') or "",
+                        }
+                    else:
+                        text_fields = {
+                            'content': getattr(f, 'content', None) or "",
+                            'raw_content': getattr(f, 'raw_content', None) or "",
+                            'payload_text': getattr(f, 'payload_text', None) or "",
+                            'title': getattr(f, 'title', None) or "",
+                            'summary': getattr(f, 'summary', None) or "",
+                        }
 
                     has_pii = False
                     for field_name, field_value in text_fields.items():
@@ -4393,8 +4414,13 @@ class SprintScheduler:
                         if field_has_pii:
                             has_pii = True
                             anon_text = privacy_layer.anonymize_text(field_value)
+                            # Sprint F26X: write back via setattr (object)
+                            # or __setitem__ (dict). Both fail-soft.
                             try:
-                                setattr(f, field_name, anon_text)
+                                if isinstance(f, dict):
+                                    f[field_name] = anon_text
+                                else:
+                                    setattr(f, field_name, anon_text)
                             except Exception:
                                 pass
 
@@ -4402,7 +4428,10 @@ class SprintScheduler:
                         pii_count += 1
                         if _ctx_id:
                             try:
-                                f._privacy_context_id = _ctx_id
+                                if isinstance(f, dict):
+                                    f['_privacy_context_id'] = _ctx_id
+                                else:
+                                    f._privacy_context_id = _ctx_id
                             except Exception:
                                 pass
 
@@ -4413,6 +4442,58 @@ class SprintScheduler:
                     anonymized.append(f)
 
             return anonymized, pii_count
+
+        async def _gate_then_ingest(
+            self,
+            store: Any,
+            findings: list,
+        ) -> Any:
+            """PII-gated canonical write seam.
+
+            Sprint F26X: Centralizes the privacy gate + DuckDB ingest that
+            used to be duplicated at 20 call sites in sprint_scheduler.py.
+            When HLEDAC_ENABLE_PRIVACY_LAYER=1, anonymizes PII in
+            content/raw_content/payload_text/title/summary BEFORE the
+            findings hit async_ingest_findings_batch.
+
+            Fail-soft: never raises. On any error, findings pass through
+            to the canonical write path unmodified.
+
+            Args:
+                store: duckdb_store (or any object with
+                    async_ingest_findings_batch). None → no-op.
+                findings: list of CanonicalFinding (or duckdb-compatible
+                    dicts). Empty → no-op.
+
+            Returns:
+                Whatever async_ingest_findings_batch returns, or None on
+                skip / error.
+            """
+            if store is None or not findings:
+                return None
+            try:
+                _gated: list = findings
+                if os.environ.get("HLEDAC_ENABLE_PRIVACY_LAYER") == "1":
+                    try:
+                        _privacy = (self._privacy_layer or getattr(self._layer_manager, "privacy", None))
+                        if _privacy:
+                            _gated, _pii_count = await self._run_privacy_gate(
+                                findings, _privacy,
+                            )
+                            if _pii_count > 0:
+                                self._result.pii_findings_anonymized = (
+                                    getattr(self._result, "pii_findings_anonymized", 0)
+                                    + _pii_count
+                                )
+                    except Exception as _e:
+                        # Fail-soft: keep original findings on gate error
+                        _logger.debug("privacy_gate call failed: %s", _e)
+                        _gated = findings
+                return await store.async_ingest_findings_batch(_gated)
+            except Exception as _e:
+                # Fail-soft: never raise from the ingest path
+                _logger.debug("gate_then_ingest failed: %s", _e)
+                return None
 
         # Sprint 8VI §C: All findings collected during sprint
 
@@ -4501,6 +4582,12 @@ class SprintScheduler:
         # Sprint F195C: Sprint policy manager (opt-in RL layer)
 
         self._policy_manager: Any = None
+
+        # Sprint F26X-3: CommunicationLayer (advisory, default-OFF, fail-soft)
+        # Hot-spot consumers (privacy gate, LMDB ingest, forensic fan-out) may use it
+        # for batched/bounded model queries. Initialized via
+        # inject_communication_layer() from core/__main__.py unless --no-communication.
+        self._communication_layer: Any = None
 
         # Sprint F234A: DOH adapter
 
@@ -5134,7 +5221,7 @@ class SprintScheduler:
         """Phase 1: Sprint initialization - privacy, governor, sidecar, layers, CT, dedup."""
         # Sprint F250F: Privacy context
         try:
-            _privacy = getattr(self._layer_manager, 'privacy', None)
+            _privacy = (self._privacy_layer or getattr(self._layer_manager, "privacy", None))
             if _privacy and hasattr(_privacy, 'create_privacy_context'):
                 self._privacy_context_id = await _privacy.create_privacy_context()
                 log.debug("privacy_context created: %s", self._privacy_context_id)
@@ -5162,7 +5249,7 @@ class SprintScheduler:
                 self._layer_manager = LayerManager(config=None)
                 log.info("layers LayerManager initialized")
                 try:
-                    _privacy = getattr(self._layer_manager, 'privacy', None)
+                    _privacy = (self._privacy_layer or getattr(self._layer_manager, "privacy", None))
                     if _privacy and hasattr(_privacy, 'create_privacy_context'):
                         self._privacy_context_id = await _privacy.create_privacy_context()
                         log.info("layers privacy_context created: %s", self._privacy_context_id)
@@ -5362,7 +5449,7 @@ class SprintScheduler:
 
         # Sprint F250F: Close privacy context at TEARDOWN
         try:
-            _privacy = getattr(self._layer_manager, "privacy", None)
+            _privacy = (self._privacy_layer or getattr(self._layer_manager, "privacy", None))
             if _privacy and hasattr(_privacy, "close_privacy_context"):
                 await _privacy.close_privacy_context(self._privacy_context_id)
                 log.debug("privacy_context closed: %s", self._privacy_context_id)
@@ -5434,13 +5521,28 @@ class SprintScheduler:
 
         self._reset_result()
 
+        # Sprint F26X-3: CommunicationLayer advisory pre-sprint broadcast.
+        # Fan out a lightweight "sprint_start" signal to any subscribed channels
+        # (privacy gate, LMDB ingest, forensic fan-out). Fail-soft -- exception
+        # or None layer is a no-op (M1 invariant).
+        if self._communication_layer is not None:
+            try:
+                _broadcast = getattr(self._communication_layer, "broadcast_message", None)
+                if _broadcast is not None:
+                    _payload = {"event": "sprint_start", "sprint_id": self._sprint_id, "query": self._query}
+                    if asyncio.iscoroutine(_broadcast(_payload)):
+                        await _broadcast(_payload)
+            except Exception:
+                pass
+
+
         # Sprint F207V-D: Initialize wall-clock anchor for scheduler_exit_elapsed_s
 
         self._run_started_at: float = _time.monotonic()
 
         # Sprint F250F: Privacy context — created at STARTUP, closed at TEARDOWN
         try:
-            _privacy = getattr(self._layer_manager, 'privacy', None)
+            _privacy = (self._privacy_layer or getattr(self._layer_manager, "privacy", None))
             if _privacy and hasattr(_privacy, 'create_privacy_context'):
                 self._privacy_context_id = await _privacy.create_privacy_context()
                 _logger.debug("privacy_context created: %s", self._privacy_context_id)
@@ -5495,7 +5597,7 @@ class SprintScheduler:
 
                 # Sprint F250F: Create privacy context at startup (fail-soft)
                 try:
-                    _privacy = getattr(self._layer_manager, 'privacy', None)
+                    _privacy = (self._privacy_layer or getattr(self._layer_manager, "privacy", None))
                     if _privacy and hasattr(_privacy, 'create_privacy_context'):
                         self._privacy_context_id = await _privacy.create_privacy_context()
                         log.info("layers privacy_context created: %s", self._privacy_context_id)
@@ -6926,7 +7028,7 @@ class SprintScheduler:
                 # Sprint F250F: Close privacy context at TEARDOWN (fail-soft)
                 if os.environ.get("HLEDAC_ENABLE_PRIVACY_LAYER") == "1":
                     try:
-                        _privacy = getattr(self._layer_manager, 'privacy', None)
+                        _privacy = (self._privacy_layer or getattr(self._layer_manager, "privacy", None))
                         if _privacy and hasattr(self, '_privacy_context_id') and self._privacy_context_id:
                             await _privacy.close_privacy_context(self._privacy_context_id)
                     except Exception as _e:
@@ -7429,6 +7531,20 @@ class SprintScheduler:
             raise
 
 
+
+
+        # Sprint F26X-3: CommunicationLayer advisory post-sprint result broadcast.
+        # Publish the final SprintSchedulerResult summary so external subscribers
+        # (privacy gate, LMDB ingest, forensic fan-out) can flush buffers. Fail-soft.
+        if self._communication_layer is not None:
+            try:
+                _broadcast = getattr(self._communication_layer, "broadcast_message", None)
+                if _broadcast is not None:
+                    _summary = {"event": "sprint_end", "sprint_id": self._sprint_id, "findings": len(self._result.findings) if self._result is not None else 0}
+                    if asyncio.iscoroutine(_broadcast(_summary)):
+                        await _broadcast(_summary)
+            except Exception:
+                pass
 
         return self._result
 
@@ -8992,9 +9108,9 @@ class SprintScheduler:
 
                             try:
 
-                                ingest_results = await duckdb_store.async_ingest_findings_batch(
+                                ingest_results = await self._gate_then_ingest(
 
-                                    list(_candidate_findings)
+                                    duckdb_store, list(_candidate_findings)
 
                                 )
 
@@ -12166,7 +12282,7 @@ class SprintScheduler:
 
                 try:
 
-                    _ing = await duckdb_store.async_ingest_findings_batch(list(_wb_cands))
+                    _ing = await self._gate_then_ingest(duckdb_store, list(_wb_cands))
 
                     _wb_acc = sum(1 for r in _ing if isinstance(r, dict) and r.get("accepted"))
 
@@ -12262,7 +12378,7 @@ class SprintScheduler:
 
                 try:
 
-                    _ing = await duckdb_store.async_ingest_findings_batch(list(_pdns_cands))
+                    _ing = await self._gate_then_ingest(duckdb_store, list(_pdns_cands))
 
                     _pdns_acc = sum(1 for r in _ing if isinstance(r, dict) and r.get("accepted"))
 
@@ -12504,7 +12620,7 @@ class SprintScheduler:
 
                     try:
 
-                        _ing = await duckdb_store.async_ingest_findings_batch(list(_doh_cands))
+                        _ing = await self._gate_then_ingest(duckdb_store, list(_doh_cands))
 
                         _doh_acc = sum(1 for r in _ing if isinstance(r, dict) and r.get("accepted"))
 
@@ -15632,7 +15748,7 @@ class SprintScheduler:
 
                 self._result.ct_storage_attempted = True
 
-                results = await store.async_ingest_findings_batch(findings)
+                results = await self._gate_then_ingest(store, findings)
 
                 stored = sum(1 for r in results if isinstance(r, dict) and r.get("accepted"))
 
@@ -15785,7 +15901,7 @@ class SprintScheduler:
                     # Sprint F250F: Privacy gate — run BEFORE all storage paths
                     if os.environ.get("HLEDAC_ENABLE_PRIVACY_LAYER") == "1":
                         try:
-                            _privacy = getattr(self._layer_manager, 'privacy', None)
+                            _privacy = (self._privacy_layer or getattr(self._layer_manager, "privacy", None))
                             if _privacy and accepted_findings:
                                 accepted_findings, _pii_count = await self._run_privacy_gate(
                                     accepted_findings, _privacy
@@ -16182,7 +16298,7 @@ class SprintScheduler:
 
             if duckdb is not None:
 
-                await duckdb.async_ingest_findings_batch(findings)
+                _ = await self._gate_then_ingest(duckdb, findings)
 
                 log.debug("[F251] Ingested %d onion findings", len(findings))
 
@@ -16404,7 +16520,7 @@ class SprintScheduler:
 
                         query="i2p_discovery",
 
-                        source_type="i2p_discovery",
+                        source_type=SourceType.I2P_DISCOVERY,
 
                         confidence=0.5,
 
@@ -16460,7 +16576,7 @@ class SprintScheduler:
 
             if duckdb is not None:
 
-                await duckdb.async_ingest_findings_batch(findings)
+                _ = await self._gate_then_ingest(duckdb, findings)
 
                 log.debug("[F2P] Ingested %d I2P findings", len(findings))
 
@@ -16576,7 +16692,7 @@ class SprintScheduler:
 
                             "SELECT DISTINCT provenance FROM findings "
 
-                            "WHERE source_type = 'certificate_transparency' "
+                            "WHERE source_type = 'ct_log' "
 
                             "AND provenance LIKE '%info_hash%' "
 
@@ -16762,7 +16878,7 @@ class SprintScheduler:
 
             if duckdb is not None:
 
-                await duckdb.async_ingest_findings_batch(findings)
+                _ = await self._gate_then_ingest(duckdb, findings)
 
                 log.debug("[F214Q] Ingested %d DHT findings", len(findings))
 
@@ -16836,7 +16952,7 @@ class SprintScheduler:
 
             # Ingest findings through canonical write path
             if findings and self._duckdb is not None:
-                await self._duckdb.async_ingest_findings_batch(findings)
+                _ = await self._gate_then_ingest(self._duckdb, findings)
                 log.debug("[F214R] Ingested %d Gopher findings", len(findings))
 
         except Exception as e:
@@ -17016,7 +17132,7 @@ class SprintScheduler:
 
             if findings and self._duckdb is not None:
 
-                await self._duckdb.async_ingest_findings_batch(findings)
+                _ = await self._gate_then_ingest(self._duckdb, findings)
 
                 log.debug("[F218Z] Ingested %d IPFS findings", len(findings))
 
@@ -17107,7 +17223,7 @@ class SprintScheduler:
                 try:
                     if hasattr(r, 'ghost_signals') and len(r.ghost_signals) > 0:
                         finding = CanonicalFinding(
-                            source_type="digital_ghost_detection",
+                            source_type=SourceType.DIGITAL_GHOST_DETECTION,
                             ioc_type="file",
                             ioc_value=getattr(r, 'file_path', ""),
                             confidence=getattr(r, 'overall_confidence', 0.5),
@@ -17125,7 +17241,7 @@ class SprintScheduler:
 
             # Ingest findings through canonical write path
             if findings and self._duckdb is not None:
-                await self._duckdb.async_ingest_findings_batch(findings)
+                _ = await self._gate_then_ingest(self._duckdb, findings)
                 log.debug("[F3FORENSICS] Ingested %d digital ghost findings", len(findings))
 
         except Exception as e:
@@ -17212,7 +17328,7 @@ class SprintScheduler:
                     # Only emit if suspicious > 0.3
                     if suspicious and confidence > 0.3:
                         finding = CanonicalFinding(
-                            source_type="steganography_detection",
+                            source_type=SourceType.STEGANOGRAPHY_DETECTION,
                             ioc_type="file",
                             ioc_value=getattr(r, 'file_path', ""),
                             confidence=confidence,
@@ -17231,7 +17347,7 @@ class SprintScheduler:
 
             # Ingest findings through canonical write path
             if findings and self._duckdb is not None:
-                await self._duckdb.async_ingest_findings_batch(findings)
+                _ = await self._gate_then_ingest(self._duckdb, findings)
                 log.debug("[F3FORENSICS] Ingested %d steganography findings", len(findings))
 
         except Exception as e:
@@ -17366,7 +17482,7 @@ class SprintScheduler:
 
         if findings and self._duckdb is not None:
 
-            await self._duckdb.async_ingest_findings_batch(findings)
+            _ = await self._gate_then_ingest(self._duckdb, findings)
 
             log.debug("[F214Q] Ingested %d BGP enrichment findings", len(findings))
 
@@ -17510,7 +17626,7 @@ class SprintScheduler:
 
         if findings and self._duckdb is not None:
 
-            await self._duckdb.async_ingest_findings_batch(findings)
+            _ = await self._gate_then_ingest(self._duckdb, findings)
 
             log.debug("[F214Q] Ingested %d banner grab findings", len(findings))
 
@@ -18064,7 +18180,7 @@ class SprintScheduler:
 
                     try:
 
-                        ingest_results = await store.async_ingest_findings_batch(pdns_findings)
+                        ingest_results = await self._gate_then_ingest(store, pdns_findings)
 
                         stored = sum(1 for r in ingest_results if isinstance(r, dict) and r.get("accepted"))
 
@@ -18952,7 +19068,7 @@ class SprintScheduler:
 
             try:
 
-                storage_results = await duckdb_store.async_ingest_findings_batch(list(candidates))
+                storage_results = await self._gate_then_ingest(duckdb_store, list(candidates))
 
 
 
@@ -19898,7 +20014,7 @@ class SprintScheduler:
 
                             finding_id=f"bgp-{r.prefix or r.asn}",
 
-                            source_type="bgp_intelligence",
+                            source_type=SourceType.BGP_INTELLIGENCE,
 
                             confidence=0.75,
 
@@ -19918,7 +20034,7 @@ class SprintScheduler:
 
                     if findings:
 
-                        await store.async_ingest_findings_batch(findings)
+                        _ = await self._gate_then_ingest(store, findings)
 
                         self._result.bgp_advisory_findings_produced = len(findings)
 
@@ -19935,7 +20051,7 @@ class SprintScheduler:
                         except Exception:
                             pass
                     if pdns_findings:
-                        await store.async_ingest_findings_batch(pdns_findings)
+                        _ = await self._gate_then_ingest(store, pdns_findings)
                         self._result.pdns_advisory_findings_produced = len(pdns_findings)
 
                 # Record source_family_outcomes
@@ -20137,7 +20253,7 @@ class SprintScheduler:
 
                 if store is not None:
 
-                    ingested = await store.async_ingest_findings_batch(findings)
+                    ingested = await self._gate_then_ingest(store, findings)
 
                     stored = sum(1 for r in ingested if isinstance(r, dict) and r.get("accepted"))
 
@@ -22415,7 +22531,7 @@ class SprintScheduler:
 
             if store and hasattr(store, 'async_ingest_findings_batch'):
 
-                await store.async_ingest_findings_batch(canonicals)
+                _ = await self._gate_then_ingest(store, canonicals)
 
                 log.info(f"[F11] Deep research ingested {len(canonicals)} findings")
 
@@ -25417,6 +25533,20 @@ class SprintScheduler:
 
 
 
+
+    def inject_communication_layer(self, layer: Any) -> None:
+        """Inject CommunicationLayer reference (F26X-3, advisory, default-OFF).
+
+        Caller (core/__main__.py) wires a CommunicationLayer produced by
+        layers.get_communication_layer() unless --no-communication is set.
+        None injection is allowed (caller may pass None as a no-op or to
+        clear a previously injected layer).
+        All advisory call sites are guarded by `if self._communication_layer
+        is not None:` and wrapped in try/except (fail-soft, M1 invariant).
+        """
+        self._communication_layer = layer
+
+
     def inject_prefetch_oracle(self, oracle: Any) -> None:
 
         """
@@ -25606,6 +25736,26 @@ class SprintScheduler:
             store, "async_ingest_findings_batch"
 
         )
+
+    def inject_privacy_layer(self, layer: Any) -> None:
+
+        """
+
+        F26X: Inject PrivacyLayer reference for PII gate.
+
+        Preferred over self._layer_manager.privacy — removes the 7-site
+        lazy init scattering and makes the dependency explicit.
+
+        Fallback: if not injected, the helper still consults
+        self._layer_manager.privacy (legacy path). Never raises —
+        exception or None → no-op (same as other inject_* methods).
+
+        OWNERSHIP: caller owns the layer. Scheduler uses it for
+        _run_privacy_gate() before every async_ingest_findings_batch()
+        call when HLEDAC_ENABLE_PRIVACY_LAYER=1.
+        """
+
+        self._privacy_layer = layer
 
 
 
@@ -29548,7 +29698,7 @@ class SprintScheduler:
                     finding = CanonicalFinding(
                         finding_id=f"graph_rag_ctx_{int(ts * 1000)}_{idx}",
                         query=query,
-                        source_type="context_seed",
+                        source_type=SourceType.CONTEXT_SEED,
                         confidence=insight.get("similarity", 0.5),
                         ts=ts,
                         provenance=("graph_rag",),

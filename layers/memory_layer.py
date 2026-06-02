@@ -19,6 +19,19 @@ IMPORTANT: Layer-system memory surface — not the canonical Uma policy owner.
 Canonical sprint Uma governance lives in core/resource_governor.py.
 This module provides get_memory_pressure() for layer consumers.
 
+VERDICT (F260 MemoryLayer audit, 2026-06-02):
+  - 0 callers in canonical sprint path (runtime/, core/, pipeline/, knowledge/, brain/, fetching/, coordinators/)
+  - GhostLayer / StealthLayer do NOT import this module's public API
+    (create_ramdisk / get_ramdisk / inject_entropy_noise / EntropyMaskingManager)
+  - Consumers: layers/layer_manager.py (lazy property), layers/__init__.py (re-export),
+    tests/test_sprint82j_benchmark.py + tests/test_autonomous_orchestrator.py (tests only),
+    legacy/autonomous_orchestrator.py (legacy facade, 4×)
+  - runtime/memory_authority.py:11 explicitly classifies this as "layer_system"
+  - User decision 2026-06-02: KEEP in place + documented, do NOT move to legacy/layers/
+  - Reason: legacy/autonomous_orchestrator still imports the public surface, and tests
+    cover the layer-system behavior. No canonical-path impact, no urgency.
+  - See SECURITY_MEMORY_LAYER_AUDIT.md (F260) for full evidence.
+
 Refactored with internal classes for M1 8GB optimization:
 - _MemoryStateManager: System state machine and health monitoring
 - _StorageCoordinator: RAM disk and shared memory management

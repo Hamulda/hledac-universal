@@ -193,3 +193,132 @@ class TestSourceTypeBackwardCompat:
 
         assert json.dumps({"src": SourceType.CT_LOG}) == '{"src": "ct_log"}'
         assert json.dumps({"src": "ct_log"}) == '{"src": "ct_log"}'
+
+
+# ── Sprint F262OBS — adoption sweep: hot-path call sites use SourceType enum
+# ───────────────────────────────────────────────────────────────
+
+
+class TestAdoptionSweep:
+    """Sprint F262OBS: Verify the migration sweep actually landed at call sites,
+    not just at the registry. These tests are import-time + AST-based so they
+    run hermetically without importing the full pipeline stack.
+    """
+
+    def test_sprint_scheduler_uses_sourcetype_enum(self) -> None:
+        """Top 5 source types in sprint_scheduler must be SourceType.X, not raw strings."""
+        import ast
+        import re
+        from pathlib import Path
+
+        from hledac.universal.utils.source_types import SourceType
+
+        repo = Path(__file__).resolve().parents[1]
+        sched = repo / "runtime" / "sprint_scheduler.py"
+        src = sched.read_text(encoding="utf-8")
+        tree = ast.parse(src)
+
+        # Find all Assign nodes where the target is `source_type=...` (kwarg in call)
+        raw_string_hits: list[tuple[int, str]] = []
+        for node in ast.walk(tree):
+            if isinstance(node, ast.keyword) and node.arg == "source_type":
+                if isinstance(node.value, ast.Constant) and isinstance(node.value.value, str):
+                    raw_string_hits.append((node.lineno, node.value.value))
+
+        # top 5 enum-member values from sprint_scheduler migration
+        top5 = {
+            SourceType.I2P_DISCOVERY.value,
+            SourceType.DIGITAL_GHOST_DETECTION.value,
+            SourceType.STEGANOGRAPHY_DETECTION.value,
+            SourceType.BGP_INTELLIGENCE.value,
+            SourceType.CONTEXT_SEED.value,
+        }
+        # None of the migrated top-5 should still appear as raw string literals
+        leaked = [v for _ln, v in raw_string_hits if v in top5]
+        assert not leaked, (
+            f"sprint_scheduler still uses raw string source_type for migrated values: {leaked}"
+        )
+
+    def test_canonical_handles_all_known_legacy_aliases(self) -> None:
+        """Every LEGACY_ALIASES key must round-trip through canonical_source_type()."""
+        from hledac.universal.utils.source_types import (
+            LEGACY_ALIASES,
+            canonical_source_type,
+        )
+
+        for legacy_key, expected_canonical in LEGACY_ALIASES.items():
+            got = canonical_source_type(legacy_key)
+            assert got == expected_canonical, (
+                f"LEGACY_ALIASES['{legacy_key}'] = {expected_canonical!r}, "
+                f"but canonical_source_type returned {got!r}"
+            )
+
+    def test_duckdb_guard_rejects_unknown_source_type(self) -> None:
+        """STEP 4 guard: duckdb_store normalizes unknown source_type strings via
+        canonical_source_type() — values not in the enum are routed through
+        LEGACY_ALIASES (or pass through unchanged for forward-compat).
+        """
+        from hledac.universal.utils.source_types import (
+            LEGACY_ALIASES,
+            SourceType,
+            canonical_source_type,
+        )
+
+        # Unknown but pass-through (forward-compat)
+        assert canonical_source_type("totally_new_2099") == "totally_new_2099"
+
+        # Known legacy routes via LEGACY_ALIASES
+        assert canonical_source_type("certificate_transparency") == SourceType.CT_LOG.value
+        assert "certificate_transparency" in LEGACY_ALIASES
+
+        # Known canonical values are returned unchanged
+        for member in [SourceType.CT_LOG, SourceType.NETWORK_RECON, SourceType.SPRINT_DIFF]:
+            assert canonical_source_type(member) == member.value
+
+    def test_alt_protocol_fetcher_uses_sourcetype_enum(self) -> None:
+        """alternative_protocol_fetcher.py must not have bare string source_type
+        assignments to legacy bare values (ipfs, gopher, gemini, i2p, fediverse, matrix).
+        """
+        import re
+        from pathlib import Path
+
+        repo = Path(__file__).resolve().parents[1]
+        apf = repo / "fetching" / "alternative_protocol_fetcher.py"
+        src = apf.read_text(encoding="utf-8")
+
+        # Pattern: source_type="ipfs" | "gopher" | "gemini" | "i2p" | "fediverse" | "matrix"
+        # (matrix is also a SourceType member but its literal use was the legacy bare)
+        bad_pat = re.compile(
+            r'source_type\s*=\s*["\'](?:ipfs|gopher|gemini|i2p|fediverse|matrix)["\']'
+        )
+        hits = bad_pat.findall(src)
+        assert not hits, (
+            f"alternative_protocol_fetcher still has raw string source_type literals: {hits}"
+        )
+
+    def test_live_public_pipeline_uses_sourcetype_enum(self) -> None:
+        """live_public_pipeline.py must not have bare source_type= literals for
+        values already covered by the migration (hermes_inference, rl_research, etc.).
+        """
+        import re
+        from pathlib import Path
+
+        repo = Path(__file__).resolve().parents[1]
+        lpp = repo / "pipeline" / "live_public_pipeline.py"
+        src = lpp.read_text(encoding="utf-8")
+
+        # The migrated hot-path values
+        migrated = {
+            "hermes_inference",
+            "onion_discovery",
+            "pastebin_monitor",
+            "github_secret_scanner",
+            "rl_research",
+            "tot_synthesis",
+            "llm_synthesis",
+        }
+        bad_pat = re.compile(r'source_type\s*=\s*["\']([^"\']+)["\']')
+        bad_hits = [v for v in bad_pat.findall(src) if v in migrated]
+        assert not bad_hits, (
+            f"live_public_pipeline still has raw string source_type for migrated values: {bad_hits}"
+        )

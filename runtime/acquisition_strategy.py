@@ -52,6 +52,12 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
+# Sprint F262OBS: centralize source_type literals via utils.source_types
+try:
+    from hledac.universal.utils.source_types import SourceType
+except ImportError:
+    SourceType = None  # type: ignore[assignment]
+
 # [F207K-A] Non-feed bridge helpers — rejection tracking + candidate conversion
 # Used inside inner async lane runners (closures), not at module scope.
 from hledac.universal.runtime.acquisition_telemetry_reconcile import (
@@ -4252,7 +4258,7 @@ def _hits_to_ct_findings(hits: tuple, query: str) -> list:
         try:
             finding = CanonicalFinding(
                 finding_id=f"ct-{hit.url[:32]}-{hash(str(hit.rank)) % 10000:04d}",
-                source_type="ct_log",
+                source_type=SourceType.CT_LOG,
                 confidence=0.8,
                 query=query[:128],
                 ts=getattr(hit, "retrieved_ts", 0.0) or 0.0,
@@ -4277,7 +4283,7 @@ def _ips_to_pdns_findings(ips: list[str], query: str) -> list:
         try:
             finding = CanonicalFinding(
                 finding_id=f"pdns-{ip}",
-                source_type="passive_dns",
+                source_type=SourceType.PASSIVE_DNS,
                 confidence=0.7,
                 query=query[:128],
                 ts=0.0,
@@ -4306,7 +4312,7 @@ def _wallet_to_findings(wallet_analysis, query: str) -> list:
 
         finding = CanonicalFinding(
             finding_id=f"bc-{address[:16]}",
-            source_type="blockchain_forensics",
+            source_type=SourceType.BLOCKCHAIN_FORENSICS,
             confidence=0.75,
             query=query[:128],
             ts=0.0,

@@ -221,3 +221,25 @@ def get_content_layer() -> ContentCleaner | None:
         return ContentCleaner()
     except Exception:
         return None
+
+
+def get_communication_layer() -> CommunicationLayer | None:
+    """Lazy singleton CommunicationLayer accessor (F26X-3).
+
+    Returns None if CommunicationLayer import or init fails (fail-soft, M1 invariant).
+    Used by SprintScheduler hot-spot consumers (privacy gate, LMDB ingest, forensic fan-out).
+    Caller is responsible for calling .initialize() / .shutdown() if needed.
+
+    Sprint F26X-1 invariant: all config attribute reads in CommunicationLayer.__init__
+    are guarded by hasattr() — passing config=None is safe and yields defaults
+    (model_cache_size=100, model_cache_ttl=300, model_batch_size=5, model_batch_timeout=0.05).
+    """
+    try:
+        from hledac.universal.layers.communication_layer import CommunicationLayer as _CL
+    except Exception:
+        return None
+    try:
+        instance = _CL(config=None)
+        return instance
+    except Exception:
+        return None

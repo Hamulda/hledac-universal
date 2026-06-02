@@ -77,6 +77,17 @@ class SprintPolicyState:
     last_train_step: int = -1
     cumulative_train_steps: int = 0
     last_loss: float = 0.0
+    # F262OBS: RL training health observability — bounded histories.
+    # - loss_history: per-step TD loss, FIFO max 100
+    # - mean_q_value_history: per-step mean of global Q, FIFO max 100
+    # - epsilon_history: per-sprint epsilon value, FIFO max 100
+    # - last_train_step_sprint: sprint number when last train_step ran
+    # - training_steps_completed: monotonic counter, never decremented
+    loss_history: list[float] = field(default_factory=list)
+    mean_q_value_history: list[float] = field(default_factory=list)
+    epsilon_history: list[float] = field(default_factory=list)
+    last_train_step_sprint: int = 0
+    training_steps_completed: int = 0
 
 
 def _serialize_weights(weights: Any) -> dict[str, Any]:
@@ -257,6 +268,11 @@ class SprintPolicyManager:
     def last_loss(self) -> float:
         return getattr(self._state, "last_loss", 0.0)
 
+    @property
+    def is_training_enabled(self) -> bool:
+        """True when QMIX training step is active (--rl-train flag path)."""
+        return bool(self._rl_train_mode)
+
     # F262OBS: RL health observability — additional public properties on top
     # of the extended SprintPolicyState schema.
     @property
@@ -299,6 +315,31 @@ class SprintPolicyManager:
     def recent_rewards(self) -> list:
         """Reward history ring buffer (delegates to _reward_history)."""
         return list(getattr(self, "_reward_history", []))
+
+    # ── Training mode setters (F262OBS) ──────────────────────────────────────
+    # --rl-train flag sets _rl_train_mode=True via ctor. These setters allow
+    # post-construction activation (e.g. toggle from CLI flag after instantiate)
+    # and explicit disable (e.g. emergency stop when Q-network drifts).
+
+    def enable_training_mode(self) -> None:
+        """Activate QMIX training. Idempotent — safe to call multiple times.
+
+        Once enabled, _run_qmix_training() will be invoked every
+        _qmix_train_interval sprints (default 10) — subject to the 4-layer
+        M1 memory guard (UMA critical, system RAM > 80%, cooldown, per-sprint cap).
+        """
+        self._rl_train_mode = True
+        log.info("[SprintPolicyManager] Training mode ENABLED — QMIX updates every %d sprints",
+                 self._qmix_train_interval)
+
+    def disable_training_mode(self) -> None:
+        """Deactivate QMIX training. Idempotent.
+
+        The Q-network remains loaded for inference (get_action() / argmax path);
+        only the training step in update() is skipped.
+        """
+        self._rl_train_mode = False
+        log.info("[SprintPolicyManager] Training mode DISABLED — inference-only")
 
     def inject_scheduler(self, scheduler: Any) -> None:
         """Inject SprintPolicyManager ref (opt-in RL layer)."""
@@ -424,7 +465,13 @@ class SprintPolicyManager:
                     "stale disk state to avoid cross-session contamination"
                 )
                 return
-            self._state = SprintPolicyState(**data)
+            # F262OBS: filter to known dataclass fields. Pre-F262 state files lack
+            # training_steps_completed / loss_history / etc. — forwarding unknown keys
+            # into SprintPolicyState(**data) raises TypeError.
+            import dataclasses as _dc
+            _known = {f.name for f in _dc.fields(SprintPolicyState)}
+            _filtered = {k: v for k, v in data.items() if k in _known}
+            self._state = SprintPolicyState(**_filtered)
             log.debug(
                 "[SprintPolicyManager] Loaded state: sprint=%d epsilon=%.3f total_reward=%.2f",
                 self._state.sprint_sequence_number,
@@ -439,6 +486,9 @@ class SprintPolicyManager:
         if not self._enabled:
             return
         try:
+            # F262OBS: Getattr guards — older persisted state lacks new fields
+            # (training_steps_completed, loss_history, etc.) added in F262. Defaulting
+            # keeps the loader tolerant of pre-F262 state files.
             payload = {
                 "sprint_sequence_number": self._state.sprint_sequence_number,
                 "epsilon": self._state.epsilon,
@@ -451,6 +501,12 @@ class SprintPolicyManager:
                 "last_train_step": self._state.last_train_step,
                 "cumulative_train_steps": self._state.cumulative_train_steps,
                 "last_loss": self._state.last_loss,
+                # F262OBS: RL training health observability — bounded histories
+                "loss_history": list(getattr(self._state, "loss_history", []))[-100:],
+                "mean_q_value_history": list(getattr(self._state, "mean_q_value_history", []))[-100:],
+                "epsilon_history": list(getattr(self._state, "epsilon_history", []))[-100:],
+                "last_train_step_sprint": int(getattr(self._state, "last_train_step_sprint", 0)),
+                "training_steps_completed": int(getattr(self._state, "training_steps_completed", 0)),
             }
             encoded = json.dumps(payload, ensure_ascii=False).encode("utf-8")
             if ZSTD_AVAILABLE and _zstd:
@@ -609,6 +665,12 @@ class SprintPolicyManager:
         _EPSILON_DECAY = 0.995
         if self._state.epsilon > _EPSILON_FLOOR:
             self._state.epsilon = max(_EPSILON_FLOOR, self._state.epsilon * _EPSILON_DECAY)
+        # F262OBS: record epsilon after decay into bounded history (FIFO 100)
+        _eps_hist = list(getattr(self._state, "epsilon_history", []))
+        _eps_hist.append(self._state.epsilon)
+        if len(_eps_hist) > 100:
+            _eps_hist = _eps_hist[-100:]
+        self._state.epsilon_history = _eps_hist
         reward = self._compute_reward(result)
 
         # Accumulate reward stats
@@ -690,6 +752,13 @@ class SprintPolicyManager:
           L3 — cooldown (monotonic clock, default 1.0s between steps)
           L4 — per-sprint cap (default 1 step per sprint)
         Plus GHOST_INVARIANT I11: mx.eval([]) BEFORE mx.metal.clear_cache().
+
+        F262OBS: also records:
+          - loss_history (FIFO 100)
+          - mean_q_value_history (FIFO 100) — mean of global Q over the batch
+          - training_steps_completed (monotonic)
+          - last_train_step_sprint (sprint number at last step)
+        All inside a single try/except — training MUST be fail-soft, never crash sprint.
         """
         if self._qmix_trainer is None or self._replay_buffer is None:
             return
@@ -727,6 +796,8 @@ class SprintPolicyManager:
         if self._train_steps_this_sprint >= _MAX_TRAIN_STEPS_PER_SPRINT:
             return
 
+        # F262OBS: training step timing — time.monotonic() per GHOST_INVARIANTS I12
+        _step_t0 = time.monotonic()
         try:
             batch = self._replay_buffer.sample(_TRAIN_BATCH_SIZE)
             # F257FIX: Check replay buffer size, not batch size
@@ -742,8 +813,28 @@ class SprintPolicyManager:
             # Defensive: handle both dict and scalar return
             if isinstance(loss_result, dict):
                 loss = float(loss_result.get("loss", 0.0))
+                mean_q = float(loss_result.get("mean_q", 0.0))
             else:
                 loss = float(loss_result)
+                mean_q = 0.0
+
+            # F262OBS: compute mean_q from global Q if not provided by trainer.
+            # Fall back to running mean Q across agents on the trained batch.
+            if mean_q == 0.0 and hasattr(self._qmix_trainer, "joint_model") and hasattr(self._qmix_trainer, "mixer"):
+                try:
+                    import mlx.core as mx
+                    states = batch.get("states")
+                    actions = batch.get("actions")
+                    if states is not None and actions is not None:
+                        agent_nets = self._qmix_trainer.joint_model.get_agent_nets()
+                        all_qs = mx.stack([net(states) for net in agent_nets], axis=1)
+                        chosen = mx.take_along_axis(
+                            all_qs, mx.expand_dims(actions, -1), axis=2
+                        ).squeeze(-1)
+                        q_total = self._qmix_trainer.mixer(chosen, states)
+                        mean_q = float(mx.mean(q_total).item())
+                except Exception:
+                    mean_q = 0.0
 
             # Persist updated weights — binary npz + JSON mirror
             if hasattr(self._qmix_trainer, "joint_model"):
@@ -757,6 +848,28 @@ class SprintPolicyManager:
             self._state.cumulative_train_steps += 1
             self._state.last_loss = loss
 
+            # F262OBS: bounded health-observability histories — all FIFO 100.
+            # Defensive getattr guards so missing fields don't crash under legacy state.
+            _loss_hist = list(getattr(self._state, "loss_history", []))
+            _loss_hist.append(loss)
+            if len(_loss_hist) > 100:
+                _loss_hist = _loss_hist[-100:]
+            self._state.loss_history = _loss_hist
+
+            _q_hist = list(getattr(self._state, "mean_q_value_history", []))
+            _q_hist.append(mean_q)
+            if len(_q_hist) > 100:
+                _q_hist = _q_hist[-100:]
+            self._state.mean_q_value_history = _q_hist
+
+            # F262OBS: training step bookkeeping
+            self._state.training_steps_completed = int(
+                getattr(self._state, "training_steps_completed", 0)
+            ) + 1
+            self._state.last_train_step_sprint = int(
+                self._state.sprint_sequence_number
+            )
+
             # Update throttle state — AFTER successful training step
             self._last_train_at = now
             self._train_steps_this_sprint += 1
@@ -769,12 +882,16 @@ class SprintPolicyManager:
             except Exception:
                 pass
 
+            _step_dt = time.monotonic() - _step_t0
             log.info(
-                "[SprintPolicyManager] QMIX train_step %d: loss=%.4f replay=%d cum_steps=%d",
+                "[SprintPolicyManager] QMIX train_step %d: loss=%.4f mean_q=%.3f "
+                "replay=%d cum_steps=%d step_dt=%.2fs",
                 self._state.sprint_sequence_number,
                 loss,
+                mean_q,
                 self._replay_buffer.size,
                 self._state.cumulative_train_steps,
+                _step_dt,
             )
         except Exception as e:
             log.debug("[SprintPolicyManager] QMIX training failed: %s", e)
