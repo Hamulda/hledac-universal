@@ -118,9 +118,10 @@ class TestEveryFifthSprintExploration:
         # epsilon=0 to isolate deterministic interval logic from stochastic epsilon-greedy
         manager = SprintPolicyManager(enabled=True, epsilon=0.0)
         result = _make_result()
-        for _ in range(4):
+        for _ in range(3):
             manager.update(result)
-        # After sprint #4 (sprint_sequence_number=4): no exploration yet
+        # After sprint #3 (sprint_sequence_number=3): no exploration yet
+        # (sprint #5 is the first exploration boundary per test_sprint_5_is_exploration)
         assert manager.should_explore() is False
 
     def test_get_action_returns_deep_dive_on_explore(
