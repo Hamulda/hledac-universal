@@ -44,6 +44,12 @@ __all__ = ["SprintAdvisoryRunner", "AdvisoryRunOutcome", "build_search_documents
 
 log = logging.getLogger(__name__)
 
+# Sprint F262OBS: centralize source_type literals via utils.source_types
+try:
+    from hledac.universal.utils.source_types import SourceType
+except ImportError:
+    SourceType = None  # type: ignore[assignment]
+
 # Bounds
 MAX_PIVOTS: int = 20  # from pivot_planner.py
 
@@ -290,7 +296,7 @@ class SprintAdvisoryRunner:
                     from hledac.universal.runtime.hermes_pivot_contract import HermesInferenceOutput
 
                     rows = await store._conn.execute(
-                        "SELECT payload_text FROM findings WHERE source_type = 'hermes_inference' AND query = $1 LIMIT 50",
+                        f"SELECT payload_text FROM findings WHERE source_type = '{SourceType.HERMES_INFERENCE}' AND query = $1 LIMIT 50",
                         getattr(self._scheduler, "_query", "") or "",
                     )
                     hermes_outputs = []

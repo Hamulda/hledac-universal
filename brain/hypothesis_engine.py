@@ -188,64 +188,21 @@ class _DarkQueryListResponse:
 # =============================================================================
 # Sprint F259: Causal Reasoning Data Classes
 # =============================================================================
+# Re-exported from brain.hypothesis._types (extracted in C4 Tier-1+2).
+# We alias the dataclass names to keep the engine's public surface
+# unchanged while ensuring Pyright sees a single class identity.
 
-@dataclass(frozen=True)
-class CausalEntity:
-    """An entity extracted from findings for causal reasoning."""
-    entity_id: str
-    entity_type: str  # ip, domain, person, org, email, url, etc.
-    value: str  # the actual value (e.g., "192.168.1.1")
-    source_findings: tuple[str, ...] = ()  # finding IDs that mention this entity
-    first_seen: float = 0.0
-    last_seen: float = 0.0
-
-
-@dataclass(frozen=True)
-class TemporalSequence:
-    """An ordered sequence of events."""
-    sequence_id: str
-    entities: list[str]  # entity IDs in temporal order
-    timestamps: list[float]
-    source_findings: tuple[str, ...]
-    confidence: float = 0.0
-
-
-@dataclass(frozen=True)
-class AnomalySignal:
-    """An anomaly signal from unexpected source combinations."""
-    anomaly_type: str  # cross_domain, temporal_gap, source_conflict, etc.
-    entities: tuple[str, ...]
-    expected_sources: tuple[str, ...]
-    actual_sources: tuple[str, ...]
-    score: float = 0.0  # 0.0 - 1.0
-    description: str = ""
-
-
-@dataclass(frozen=True)
-class CausalHypothesis:
-    """A causal hypothesis generated from entity co-occurrence and temporal sequences."""
-    hypothesis_id: str
-    source_entity: str
-    target_entity: str
-    hypothesis_type: str  # causal, correlative, temporal
-    statement: str  # human-readable hypothesis
-    confidence: float  # 0.0 - 1.0
-    source_count: int
-    source_diversity: int
-    temporal_consistent: bool
-    supporting_findings: tuple[str, ...] = ()
-    contradiction_hints: tuple[str, ...] = ()
-
-
-# =============================================================================
-# Bounds for M1 8GB optimization
-# =============================================================================
-
-MAX_CAUSAL_ENTITIES = 5000
-MAX_CAUSAL_FINDINGS = 50000
-MAX_CAUSAL_HYPOTHESES = 200
-MAX_CO_OCCURRENCE_MATRIX_SIZE = 2000
-CO_OCCURRENCE_FP16 = True  # Use float16 for RAM savings
+from brain.hypothesis._types import (  # noqa: E402,F401
+    CausalEntity,
+    TemporalSequence,
+    AnomalySignal,
+    CausalHypothesis,
+    MAX_CAUSAL_ENTITIES,
+    MAX_CAUSAL_FINDINGS,
+    MAX_CAUSAL_HYPOTHESES,
+    MAX_CO_OCCURRENCE_MATRIX_SIZE,
+    CO_OCCURRENCE_FP16,
+)
 
 # =============================================================================
 # Adversarial Verification Data Classes
@@ -557,65 +514,6 @@ from brain.hypothesis.adversarial import (  # noqa: E402,F401
 from brain.hypothesis.explainer import (  # noqa: E402,F401
     SimpleNodeAblationExplainer,
 )
-async def explain_with_mlx(
-    hypothesis: str,
-    path: list[str],
-    model_name: str = "mlx-community/Qwen2.5-0.5B-Instruct-4bit"
-) -> tuple[str, str]:
-    """
-    Generate textual explanation using MLX-LM.
-
-    Args:
-        hypothesis: The hypothesis
-        path: Graph path
-        model_name: Model identifier
-
-    Returns:
-        Tuple of (explanation, prompt_hash)
-    """
-    import asyncio
-    import hashlib
-
-    try:
-        from hledac.universal.utils.mlx_cache import get_mlx_model, get_mlx_semaphore
-
-        model, tokenizer = await get_mlx_model(model_name)
-        if model is None or tokenizer is None:
-            return "MLX model unavailable", ""
-
-        prompt = f"Explain why this path in a knowledge graph is important for the hypothesis: '{hypothesis}'. Path: {' -> '.join(path)}"
-
-        from mlx_lm import generate
-        loop = asyncio.get_running_loop()
-
-        async with get_mlx_semaphore():
-            try:
-                explanation = await asyncio.wait_for(
-                    loop.run_in_executor(
-                        None,
-                        lambda: generate(model, tokenizer, prompt, max_tokens=80, temp=0.0)
-                    ),
-                    timeout=10.0
-                )
-            except TypeError:
-                # Fallback if temp not supported
-                explanation = await asyncio.wait_for(
-                    loop.run_in_executor(
-                        None,
-                        lambda: generate(model, tokenizer, prompt, max_tokens=80)
-                    ),
-                    timeout=10.0
-                )
-
-        prompt_hash = hashlib.sha256(prompt.encode()).hexdigest()[:8]
-        return explanation.strip(), prompt_hash
-
-    except TimeoutError:
-        return "Explanation generation timed out", ""
-    except Exception as e:
-        logger.debug(f"MLX explanation failed: {e}")
-        return f"Generation failed: {e}", ""
-
 
 # =============================================================================
 # SourceHint + HypothesisPack (extracted to brain.hypothesis.packs — C4 Tier-4)
@@ -623,6 +521,24 @@ async def explain_with_mlx(
 from brain.hypothesis.packs import (  # noqa: E402,F401
     SourceHint,
     HypothesisPack,
+)
+# =============================================================================
+# Sprint F259 CausalReasoner (extracted to brain.hypothesis.causal — C4 Tier-5)
+# =============================================================================
+from brain.hypothesis.causal import (  # noqa: E402,F401
+    CausalReasoner,
+)
+# =============================================================================
+# explain_with_mlx helper (extracted to brain.hypothesis.explainer — C4 Tier-5)
+# =============================================================================
+from brain.hypothesis.explainer import (  # noqa: E402,F401
+    explain_with_mlx,
+)
+# =============================================================================
+# explain_with_mlx helper (extracted to brain.hypothesis.explainer — C4 Tier-5)
+# =============================================================================
+from brain.hypothesis.explainer import (  # noqa: E402,F401
+    explain_with_mlx,
 )
 
 
@@ -743,66 +659,40 @@ class HypothesisEngine:
             f"use_dempster_shafer={use_dempster_shafer})"
         )
 
-        # Sprint F259: Causal reasoning storage
-        self._causal_entities: dict[str, CausalEntity] = {}
-        self._co_occurrence_matrix: Any | None = None
-        self._entity_id_to_idx: dict[str, int] = {}
-        self._idx_to_entity_id: dict[int, str] = {}
-        self._temporal_sequences: list[TemporalSequence] = []
-        self._anomaly_signals: list[AnomalySignal] = []
-        self._source_types: set[str] = set()
+        # Sprint F259: Causal reasoning storage — delegated to CausalReasoner
+        # (extracted to brain.hypothesis.causal in C4 Tier-5)
+        self._causal_reasoner: CausalReasoner = CausalReasoner()
+        # Legacy attribute aliases — kept for backward compat with any
+        # external code that introspected HypothesisEngine internals.
+        # type: ignore[assignment] — CausalEntity is identical class
+        # (re-exported); Pyright is overly strict about invariance.
+        self._causal_entities: dict[str, CausalEntity] = self._causal_reasoner._causal_entities  # type: ignore[assignment]
+        self._co_occurrence_matrix: Any | None = self._causal_reasoner._co_occurrence_matrix
+        self._entity_id_to_idx: dict[str, int] = self._causal_reasoner._entity_id_to_idx
+        self._idx_to_entity_id: dict[int, str] = self._causal_reasoner._idx_to_entity_id
+        self._temporal_sequences: list[TemporalSequence] = self._causal_reasoner._temporal_sequences  # type: ignore[assignment]
+        self._anomaly_signals: list[AnomalySignal] = self._causal_reasoner._anomaly_signals  # type: ignore[assignment]
+        self._source_types: set[str] = self._causal_reasoner._source_types
 
     # -------------------------------------------------------------------------
-    # Causal Reasoning Methods (Sprint F259)
+    # Causal Reasoning Methods (Sprint F259) — facades over CausalReasoner
+    # (extracted to brain.hypothesis.causal in C4 Tier-5)
     # -------------------------------------------------------------------------
 
     def extract_causal_entities(self, findings: list[Any]) -> list[CausalEntity]:
         """
         Sprint F259: Extract entities from findings for causal reasoning.
 
-        Args:
-            findings: List of CanonicalFinding or finding-like objects
-
-        Returns:
-            List of extracted CausalEntity objects
+        Backward-compat facade — delegates to
+        :meth:`CausalReasoner.extract_entities` and refreshes the legacy
+        attribute aliases so any external reader still sees the
+        populated state.
         """
-        entities: list[CausalEntity] = []
-        seen_values: dict[str, str] = {}
-
-        for i, finding in enumerate(findings):
-            if i >= MAX_CAUSAL_FINDINGS:
-                break
-
-            payload = getattr(finding, "payload_text", "") or ""
-            source_type = getattr(finding, "source_type", "unknown")
-            finding_id = getattr(finding, "finding_id", f"finding_{i}")
-            ts = getattr(finding, "ts", time.time())
-
-            self._source_types.add(source_type)
-            extracted = self._extract_iocs_from_text(payload, source_type, finding_id, ts)
-
-            for entity in extracted:
-                if entity.value not in seen_values:
-                    seen_values[entity.value] = entity.entity_id
-                    if len(self._causal_entities) < MAX_CAUSAL_ENTITIES:
-                        self._causal_entities[entity.entity_id] = entity
-                        entities.append(entity)
-                else:
-                    existing_id = seen_values[entity.value]
-                    if existing_id in self._causal_entities:
-                        existing = self._causal_entities[existing_id]
-                        new_sources = existing.source_findings + entity.source_findings
-                        self._causal_entities[existing_id] = CausalEntity(
-                            entity_id=existing.entity_id,
-                            entity_type=existing.entity_type,
-                            value=existing.value,
-                            source_findings=new_sources[:100],
-                            first_seen=min(existing.first_seen, entity.first_seen),
-                            last_seen=max(existing.last_seen, entity.last_seen),
-                        )
-
-        logger.info(f"HypothesisEngine: extracted {len(entities)} causal entities from {len(findings)} findings")
-        return entities
+        result = self._causal_reasoner.extract_entities(findings)
+        # Refresh aliases (CausalReasoner owns the storage now)
+        self._causal_entities = self._causal_reasoner._causal_entities
+        self._source_types = self._causal_reasoner._source_types
+        return result
 
     def _extract_iocs_from_text(
         self,
@@ -811,230 +701,38 @@ class HypothesisEngine:
         finding_id: str,
         ts: float,
     ) -> list[CausalEntity]:
-        """Extract IOCs (IP, domain, email, URL) from text."""
-        import re
-
-        entities = []
-
-        # IP patterns
-        ip_pattern = r'\b(?:[0-9]{1,3}\.){3}[0-9]{1,3}\b'
-        for match in re.findall(ip_pattern, text):
-            if self._is_valid_ip(match):
-                entities.append(CausalEntity(
-                    entity_id=f"ip_{match}",
-                    entity_type="ip",
-                    value=match,
-                    source_findings=(finding_id,),
-                    first_seen=ts,
-                    last_seen=ts,
-                ))
-
-        # Domain patterns
-        domain_pattern = r'\b(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}\b'
-        for match in re.findall(domain_pattern, text):
-            if len(match) > 4 and match not in ("example.com", "test.com", "localhost"):
-                entities.append(CausalEntity(
-                    entity_id=f"domain_{match}",
-                    entity_type="domain",
-                    value=match,
-                    source_findings=(finding_id,),
-                    first_seen=ts,
-                    last_seen=ts,
-                ))
-
-        # Email patterns
-        email_pattern = r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b'
-        for match in re.findall(email_pattern, text):
-            entities.append(CausalEntity(
-                entity_id=f"email_{match}",
-                entity_type="email",
-                value=match,
-                source_findings=(finding_id,),
-                first_seen=ts,
-                last_seen=ts,
-            ))
-
-        # URL patterns
-        url_pattern = r'https?://[^\s<>"{}|\\^`\[\]]+'
-        for match in re.findall(url_pattern, text):
-            entities.append(CausalEntity(
-                entity_id=f"url_{match[:100]}",
-                entity_type="url",
-                value=match[:200],
-                source_findings=(finding_id,),
-                first_seen=ts,
-                last_seen=ts,
-            ))
-
-        return entities
+        """Back-compat facade — delegates to CausalReasoner._extract_iocs_from_text."""
+        return self._causal_reasoner._extract_iocs_from_text(
+            text, source_type, finding_id, ts
+        )
 
     def _is_valid_ip(self, ip: str) -> bool:
-        """Validate IP address."""
-        parts = ip.split(".")
-        if len(parts) != 4:
-            return False
-        try:
-            return all(0 <= int(p) <= 255 for p in parts)
-        except ValueError:
-            return False
+        """Back-compat facade — delegates to CausalReasoner._is_valid_ip."""
+        return self._causal_reasoner._is_valid_ip(ip)
 
     def build_temporal_sequences(self, gap_threshold: float = 3600.0) -> list[TemporalSequence]:
-        """
-        Sprint F259: Build temporal sequences from entity timestamps.
-
-        Args:
-            gap_threshold: Seconds within which entities are in same sequence (default: 1 hour)
-
-        Returns:
-            List of TemporalSequence objects
-        """
-        by_time: list[tuple[float, CausalEntity]] = [
-            (e.last_seen, e) for e in self._causal_entities.values() if e.last_seen > 0
-        ]
-        by_time.sort(key=lambda x: x[0])
-
-        sequences: list[TemporalSequence] = []
-        current_seq: list[str] = []
-        current_ts: list[float] = []
-        current_findings: set[str] = set()
-
-        for ts, entity in by_time:
-            if not current_seq:
-                current_seq.append(entity.entity_id)
-                current_ts.append(ts)
-                current_findings.update(entity.source_findings)
-            else:
-                if ts - current_ts[-1] <= gap_threshold:
-                    current_seq.append(entity.entity_id)
-                    current_ts.append(ts)
-                    current_findings.update(entity.source_findings)
-                else:
-                    if len(current_seq) >= 2:
-                        sequences.append(TemporalSequence(
-                            sequence_id=f"seq_{len(sequences)}",
-                            entities=current_seq,
-                            timestamps=current_ts,
-                            source_findings=tuple(current_findings),
-                            confidence=min(1.0, len(current_seq) / 5.0),
-                        ))
-                    current_seq = [entity.entity_id]
-                    current_ts = [ts]
-                    current_findings = set(entity.source_findings)
-
-        if len(current_seq) >= 2:
-            sequences.append(TemporalSequence(
-                sequence_id=f"seq_{len(sequences)}",
-                entities=current_seq,
-                timestamps=current_ts,
-                source_findings=tuple(current_findings),
-                confidence=min(1.0, len(current_seq) / 5.0),
-            ))
-
-        self._temporal_sequences = sequences
-        logger.info(f"HypothesisEngine: built {len(sequences)} temporal sequences")
-        return sequences
+        """Back-compat facade — delegates to CausalReasoner.build_temporal_sequences."""
+        result = self._causal_reasoner.build_temporal_sequences(gap_threshold)
+        self._temporal_sequences = self._causal_reasoner._temporal_sequences
+        return result
 
     def compute_co_occurrence_matrix(self) -> Any | None:
-        """
-        Sprint F259: Compute co-occurrence matrix using numpy float16 for M1 RAM savings.
-
-        Returns:
-            numpy array or None if too many entities
-        """
-        try:
-            import numpy as np
-
-            entities = list(self._causal_entities.values())
-            n = len(entities)
-
-            if n > MAX_CO_OCCURRENCE_MATRIX_SIZE or n == 0:
-                return None
-
-            self._entity_id_to_idx = {e.entity_id: i for i, e in enumerate(entities)}
-            self._idx_to_entity_id = {i: e.entity_id for i, e in enumerate(entities)}
-
-            dtype = np.float16 if CO_OCCURRENCE_FP16 else np.float32
-            matrix = np.zeros((n, n), dtype=dtype)
-
-            finding_to_entities: dict[str, set[str]] = defaultdict(set)
-            for entity in entities:
-                for fid in entity.source_findings:
-                    finding_to_entities[fid].add(entity.entity_id)
-
-            for fid, entity_ids in finding_to_entities.items():
-                entity_list = list(entity_ids)
-                for e1 in entity_list:
-                    for e2 in entity_list:
-                        if e1 in self._entity_id_to_idx and e2 in self._entity_id_to_idx:
-                            idx1 = self._entity_id_to_idx[e1]
-                            idx2 = self._entity_id_to_idx[e2]
-                            matrix[idx1, idx2] += 1
-
-            self._co_occurrence_matrix = matrix
-            logger.info(f"HypothesisEngine: computed {n}x{n} co-occurrence matrix (dtype={dtype.__name__})")
-            return matrix
-
-        except ImportError:
-            logger.warning("HypothesisEngine: numpy not available, skipping co-occurrence")
-            return None
-        except Exception as e:
-            logger.error(f"HypothesisEngine: co-occurrence failed: {e}")
-            return None
+        """Back-compat facade — delegates to CausalReasoner.compute_co_occurrence_matrix."""
+        result = self._causal_reasoner.compute_co_occurrence_matrix()
+        self._co_occurrence_matrix = self._causal_reasoner._co_occurrence_matrix
+        self._entity_id_to_idx = self._causal_reasoner._entity_id_to_idx
+        self._idx_to_entity_id = self._causal_reasoner._idx_to_entity_id
+        return result
 
     def get_co_occurrence(self, entity_a: str, entity_b: str) -> float:
-        """Get co-occurrence score between two entities."""
-        if self._co_occurrence_matrix is None:
-            return 0.0
-
-        idx_a = self._entity_id_to_idx.get(entity_a)
-        idx_b = self._entity_id_to_idx.get(entity_b)
-
-        if idx_a is None or idx_b is None:
-            return 0.0
-
-        return float(self._co_occurrence_matrix[idx_a, idx_b])
+        """Back-compat facade — delegates to CausalReasoner.get_co_occurrence."""
+        return self._causal_reasoner.get_co_occurrence(entity_a, entity_b)
 
     def detect_causal_anomalies(self, findings: list[Any]) -> list[AnomalySignal]:
-        """
-        Sprint F259: Detect anomalies from unexpected source combinations.
-
-        Args:
-            findings: List of findings for source analysis
-
-        Returns:
-            List of AnomalySignal objects
-        """
-        anomalies: list[AnomalySignal] = []
-
-        for entity in self._causal_entities.values():
-            sources = list(entity.source_findings)
-
-            source_domains = set()
-            for source in sources:
-                if any(kw in source.lower() for kw in ["dark", "tor", "i2p"]):
-                    source_domains.add("dark_web")
-                elif any(kw in source.lower() for kw in ["paste", "bin"]):
-                    source_domains.add("paste")
-                elif any(kw in source.lower() for kw in ["cert", "ct", "transparency"]):
-                    source_domains.add("cert_log")
-                elif any(kw in source.lower() for kw in ["github", "gitlab"]):
-                    source_domains.add("code_repo")
-                else:
-                    source_domains.add("other")
-
-            if len(source_domains) >= 3:
-                anomalies.append(AnomalySignal(
-                    anomaly_type="cross_domain",
-                    entities=(entity.entity_id,),
-                    expected_sources=(),
-                    actual_sources=tuple(source_domains),
-                    score=min(1.0, len(source_domains) / 5.0),
-                    description=f"Entity {entity.value} found across {len(source_domains)} different source domains",
-                ))
-
-        self._anomaly_signals = anomalies
-        logger.info(f"HypothesisEngine: detected {len(anomalies)} anomalies")
-        return anomalies
+        """Back-compat facade — delegates to CausalReasoner.detect_anomalies."""
+        result = self._causal_reasoner.detect_anomalies(findings)
+        self._anomaly_signals = self._causal_reasoner._anomaly_signals
+        return result
 
     async def generate_causal_hypotheses(
         self,
@@ -1042,91 +740,24 @@ class HypothesisEngine:
         max_hypotheses: int = MAX_CAUSAL_HYPOTHESES,
     ) -> list[CausalHypothesis]:
         """
-        Sprint F259: Generate causal hypotheses from entity relationships.
-
-        Args:
-            findings: List of findings
-            max_hypotheses: Maximum number of hypotheses to generate
-
-        Returns:
-            List of CausalHypothesis objects
+        Back-compat facade — delegates the entire causal pipeline to
+        :meth:`CausalReasoner.generate_hypotheses` (sync, run via
+        ``asyncio.to_thread`` to avoid blocking the event loop on large
+        finding sets), then refreshes legacy attribute aliases for any
+        external reader.
         """
-        # Extract entities
-        self.extract_causal_entities(findings)
-
-        # Build temporal sequences
-        self.build_temporal_sequences()
-
-        # Compute co-occurrence matrix
-        self.compute_co_occurrence_matrix()
-
-        # Generate hypotheses
-        hypotheses: list[CausalHypothesis] = []
-
-        relationships: list[tuple[str, str, float]] = []
-
-        if self._co_occurrence_matrix is not None:
-            n = self._co_occurrence_matrix.shape[0]
-            for i in range(n):
-                for j in range(i + 1, n):
-                    score = float(self._co_occurrence_matrix[i, j])
-                    if score >= 2:
-                        e1 = self._idx_to_entity_id.get(i, "")
-                        e2 = self._idx_to_entity_id.get(j, "")
-                        if e1 and e2:
-                            relationships.append((e1, e2, score))
-
-        for seq in self._temporal_sequences:
-            for i in range(len(seq.entities) - 1):
-                relationships.append((seq.entities[i], seq.entities[i + 1], 1.0))
-
-        # Deduplicate
-        seen_pairs: set[tuple[str, str]] = set()
-        unique_relationships = []
-        for e1, e2, score in relationships:
-            pair = (e1, e2) if e1 < e2 else (e2, e1)
-            if pair not in seen_pairs:
-                seen_pairs.add(pair)
-                unique_relationships.append((e1, e2, score))
-
-        for e1, e2, co_score in unique_relationships[:max_hypotheses]:
-            entity1 = self._causal_entities.get(e1)
-            entity2 = self._causal_entities.get(e2)
-
-            if entity1 is None or entity2 is None:
-                continue
-
-            source_count = len(set(entity1.source_findings + entity2.source_findings))
-            source_diversity = len(self._source_types)
-            temporal_consistent = any(
-                e1 in s.entities and e2 in s.entities for s in self._temporal_sequences
-            )
-
-            confidence = self._calculate_causal_confidence(
-                source_count=source_count,
-                source_diversity=source_diversity,
-                co_occurrence_score=co_score,
-                temporal_consistent=temporal_consistent,
-            )
-
-            statement = self._generate_causal_statement(entity1, entity2, confidence)
-
-            hypotheses.append(CausalHypothesis(
-                hypothesis_id=f"hyp_{len(hypotheses)}",
-                source_entity=e1,
-                target_entity=e2,
-                hypothesis_type="causal" if temporal_consistent else "correlative",
-                statement=statement,
-                confidence=confidence,
-                source_count=source_count,
-                source_diversity=source_diversity,
-                temporal_consistent=temporal_consistent,
-                supporting_findings=entity1.source_findings + entity2.source_findings,
-            ))
-
-        hypotheses.sort(key=lambda h: h.confidence, reverse=True)
-        logger.info(f"HypothesisEngine: generated {len(hypotheses)} causal hypotheses")
-        return hypotheses[:max_hypotheses]
+        import asyncio as _asyncio
+        result = await _asyncio.to_thread(
+            self._causal_reasoner.generate_hypotheses, findings, max_hypotheses
+        )
+        # Refresh aliases (CausalReasoner owns the storage)
+        self._causal_entities = self._causal_reasoner._causal_entities
+        self._co_occurrence_matrix = self._causal_reasoner._co_occurrence_matrix
+        self._entity_id_to_idx = self._causal_reasoner._entity_id_to_idx
+        self._idx_to_entity_id = self._causal_reasoner._idx_to_entity_id
+        self._temporal_sequences = self._causal_reasoner._temporal_sequences
+        self._source_types = self._causal_reasoner._source_types
+        return result
 
     def _calculate_causal_confidence(
         self,
@@ -1135,19 +766,13 @@ class HypothesisEngine:
         co_occurrence_score: float,
         temporal_consistent: bool,
     ) -> float:
-        """Calculate hypothesis confidence score."""
-        source_factor = min(1.0, source_count / 10.0)
-        diversity_factor = min(1.0, source_diversity / 5.0)
-        co_occurrence_factor = min(1.0, co_occurrence_score / 5.0)
-        temporal_factor = 1.0 if temporal_consistent else 0.3
-
-        confidence = (
-            0.25 * source_factor +
-            0.25 * diversity_factor +
-            0.25 * co_occurrence_factor +
-            0.25 * temporal_factor
+        """Back-compat facade — delegates to CausalReasoner._calculate_confidence."""
+        return self._causal_reasoner._calculate_confidence(
+            source_count=source_count,
+            source_diversity=source_diversity,
+            co_occurrence_score=co_occurrence_score,
+            temporal_consistent=temporal_consistent,
         )
-        return round(confidence, 3)
 
     def _generate_causal_statement(
         self,
@@ -1155,16 +780,8 @@ class HypothesisEngine:
         entity2: CausalEntity,
         confidence: float,
     ) -> str:
-        """Generate human-readable causal hypothesis statement."""
-        if entity1.entity_type == entity2.entity_type:
-            return (
-                f"Entities of type '{entity1.entity_type}' at values '{entity1.value}' and '{entity2.value}' "
-                f"appear together with confidence {confidence:.1%}"
-            )
-        return (
-            f"Entity '{entity1.value}' ({entity1.entity_type}) is associated with "
-            f"'{entity2.value}' ({entity2.entity_type}) with confidence {confidence:.1%}"
-        )
+        """Back-compat facade — delegates to CausalReasoner._generate_statement."""
+        return self._causal_reasoner._generate_statement(entity1, entity2, confidence)
 
     # -------------------------------------------------------------------------
     # Dempster-Shafer second-opinion API (additive, non-destructive)

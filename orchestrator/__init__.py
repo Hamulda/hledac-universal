@@ -1,3 +1,7 @@
+# NON_CANONICAL: Secondary facade for legacy/autonomous_orchestrator.py
+# See autonomous_orchestrator.py (root) and LEGACY_ORCHESTRATOR_DETACH_AUDIT.md
+# Do not add new functionality here.
+
 """
 Orchestrator Module — SECONDARY THIN FACADE (Sprint F181A)
 =========================================================

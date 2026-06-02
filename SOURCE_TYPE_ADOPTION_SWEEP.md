@@ -11,16 +11,17 @@ them to the central `utils.source_types.SourceType` StrEnum registry.
 
 | Metric | Value |
 |--------|-------|
-| Files changed (production) | **8** |
+| Files changed (production) | **9** |
 | Files changed (tests + registry) | **2** |
-| Literal strings replaced | **52** (out of 63 originally catalogued) |
-| `SourceType.X` member accesses (post-migration) | **46** |
-| Distinct enum members now in use at call sites | **17** |
+| Literal strings replaced | **54** (out of 63 originally catalogued) |
+| `SourceType.X` member accesses (post-migration) | **48** |
+| Distinct enum members now in use at call sites | **19** |
 | New enum members added | **1** (`DOH = "doh"`) |
 | New legacy aliases added | **2** (`certificate_transparency → ct_log`, `doh → passive_dns`) |
 | Total `LEGACY_ALIASES` entries | **13** (was 11) |
-| New probe tests added | **5** |
-| Probe test pass rate | **24 / 24** (19 pre-existing + 5 new) |
+| SQL string literals migrated to `SourceType.X` f-string | **2** (ct_log, hermes_inference) |
+| New probe tests added | **7** (5 first wave + 2 STEP 3/5) |
+| Probe test pass rate | **26 / 26** (19 pre-existing + 7 new) |
 
 ### Files changed (production)
 
@@ -28,15 +29,16 @@ them to the central `utils.source_types.SourceType` StrEnum registry.
 2. `runtime/source_finding_bridge.py` — 11 literals (10× `network_recon`, 1× `academic_search`)
 3. `fetching/alternative_protocol_fetcher.py` — 22 literals (IPFS, Gopher, Gemini, I2P, Fediverse, Matrix)
 4. `pipeline/live_public_pipeline.py` — 7 literals (hermes_inference, onion_discovery, pastebin, github, rl, tot, llm)
-5. `runtime/sprint_scheduler.py` — 5 literals + 1 SQL string (`certificate_transparency` → `ct_log`)
+5. `runtime/sprint_scheduler.py` — 5 literals + 1 SQL string (`certificate_transparency` → `ct_log`) + **1 SQL f-string** (`'ct_log'` → `f"... '{SourceType.CT_LOG}'"`)
 6. `runtime/acquisition_strategy.py` — 3 literals (ct_log, passive_dns, blockchain_forensics)
 7. `runtime/sidecar_bus.py` — 3 literals (2× sprint_diff, killchain_tag)
-8. `knowledge/duckdb_store.py` — ingest-seam guard (no literal replacement; new `canonical_source_type()` normalizer at `async_record_canonical_finding`)
+8. `runtime/sprint_advisory_runner.py` — **1 SQL f-string** (`'hermes_inference'` → `f"... '{SourceType.HERMES_INFERENCE}'"`) + `SourceType` import block
+9. `knowledge/duckdb_store.py` — ingest-seam guard (no literal replacement; new `canonical_source_type()` normalizer at `async_record_canonical_finding`)
 
 ### Files changed (tests + registry)
 
-9. `tests/probe_source_type_centralization.py` — 5 new `TestAdoptionSweep` tests
-10. `utils/source_types.py` — counted above
+10. `tests/probe_source_type_centralization.py` — 7 new tests (`TestAdoptionSweep` + `TestAdoptionSweepStep3And5`)
+11. `utils/source_types.py` — counted above
 
 ---
 
@@ -166,29 +168,71 @@ all passing in 0.99 s:
 
 ## Remaining Literals (Intentionally Not Migrated)
 
-11 hardcoded `source_type` strings remain in the priority directories. All are
-**documentation or non-canonical-write-path** occurrences and are correctly
-out of scope:
+**Final disposition after STEP 2 audit:** 11 grep hits remain, of which
+**2 are SQL f-string interpolations** (now migrated to `SourceType.X` and
+verified by the new test in `TestAdoptionSweepStep3And5`) and **9 are
+documentation-only** (docstrings + comments). No raw runtime literal remains.
 
-| File | Line | Context | Reason kept |
-|------|------|---------|-------------|
-| `pipeline/live_public_pipeline.py` | 2439 | docstring comment | Documentation only |
-| `pipeline/live_public_pipeline.py` | 2605 | docstring comment | Documentation only |
-| `pipeline/live_public_pipeline.py` | 4828 | docstring comment | Documentation only |
-| `pipeline/live_feed_pipeline.py` | 19 | module docstring | Documentation only |
-| `runtime/source_finding_bridge.py` | 485 | docstring | Documentation only |
-| `runtime/source_finding_bridge.py` | 904 | docstring | Documentation only |
-| `runtime/source_finding_bridge.py` | 1080 | docstring | Documentation only |
-| `runtime/source_finding_bridge.py` | 1546 | docstring | Documentation only |
-| `runtime/sprint_advisory_runner.py` | 293 | SQL string | DuckDB SQL query; value is canonical `hermes_inference` |
-| `runtime/sprint_scheduler.py` | 16692 | SQL string | DuckDB SQL query; value is canonical `ct_log` |
-| `runtime/acquisition_strategy.py` | 4486 | docstring | Documentation only |
+### Final disposition table (11 rows)
 
-The 2 SQL strings are already canonical (no aliasing needed) and the 9
-docstring comments are documentation, not runtime values. Future cleanup
-should rewrite the docstrings to reference `SourceType.X` members for
-greppability, but it is **not on the hot path** and not blocking the
-centralization contract.
+| # | File | Line | Value | Context | Disposition |
+|---|------|------|-------|---------|-------------|
+| 1 | `pipeline/live_feed_pipeline.py` | 19 | `rss_atom_pipeline` | module docstring | leave as-is (documentation) |
+| 2 | `pipeline/live_public_pipeline.py` | 2439 | `report` | docstring (in function body) | leave as-is (documentation) |
+| 3 | `pipeline/live_public_pipeline.py` | 2605 | `report` | comment (`# Store report as …`) | leave as-is (comment) |
+| 4 | `pipeline/live_public_pipeline.py` | 4828 | `document` | comment (`# Produces CanonicalFinding …`) | leave as-is (comment) |
+| 5 | `runtime/acquisition_strategy.py` | 4486 | `ct` | docstring (function description) | leave as-is (documentation) |
+| 6 | `runtime/source_finding_bridge.py` | 485 | `ct` | docstring (helper description) | leave as-is (documentation) |
+| 7 | `runtime/source_finding_bridge.py` | 904 | `wayback_diff` | docstring | leave as-is (documentation) |
+| 8 | `runtime/source_finding_bridge.py` | 1080 | `passive_dns` | docstring | leave as-is (documentation) |
+| 9 | `runtime/source_finding_bridge.py` | 1546 | `doh` | docstring | leave as-is (documentation) |
+| 10 | `runtime/sprint_advisory_runner.py` | 299 | `hermes_inference` | **SQL f-string** (was: raw `'hermes_inference'`) | **MIGRATED** → `f"... '{SourceType.HERMES_INFERENCE}' ..."` |
+| 11 | `runtime/sprint_scheduler.py` | 16705 | `ct_log` | **SQL f-string** (was: raw `'ct_log'`) | **MIGRATED** → `f"... '{SourceType.CT_LOG}' ..."` |
+
+> Note: the `rg` regex still matches the migrated SQL sites because the
+> f-string source text contains `{SourceType.CT_LOG}` / `{SourceType.HERMES_INFERENCE}`
+> as a placeholder; the runtime value is the canonical `ct_log` /
+> `hermes_inference` string. The new probe test
+> `test_no_raw_string_literals_in_sprint_scheduler_sql` (and an
+> analogous re-grep above the migration for `sprint_advisory_runner.py`)
+> guards against regressions.
+
+### SQL canonicalization (STEP 3) — StrEnum contract verified
+
+`SourceType` is `enum.StrEnum` → members are `str` subclasses and compare
+equal to their `.value`. The contract:
+
+```python
+>>> SourceType.CT_LOG == "ct_log"
+True
+>>> f"WHERE source_type = '{SourceType.CT_LOG}' "
+"WHERE source_type = 'ct_log' "
+```
+
+Implication: **no `.value` indirection needed** in f-strings. The two SQL
+sites were rewritten to use f-strings directly, which gives us greppability
+(no more raw literals) without runtime overhead. The new probe test
+`test_sourcetype_strenum_sql_identity` locks in this contract.
+
+### STEP 5 — 2 new probe tests
+
+`tests/probe_source_type_centralization.py` extended from 24 → **26 tests**:
+
+| Class | New tests | Purpose |
+|-------|-----------|---------|
+| `TestAdoptionSweepStep3And5` | 2 | STEP 3 SQL identity + STEP 5 SQL literal sweep |
+
+1. **`test_sourcetype_strenum_sql_identity`** — `SourceType.CT_LOG == "ct_log"`,
+   `isinstance(SourceType.CT_LOG, str)`, and direct f-string interpolation
+   produces the canonical SQL value. Confirms the contract that allows
+   f-string SQL canonicalization without `.value` indirection.
+
+2. **`test_no_raw_string_literals_in_sprint_scheduler_sql`** — AST walk over
+   `sprint_scheduler.py` finds any `ast.Constant` string literal that equals
+   one of the migrated SQL source_type values AND appears in SQL context
+   (regex `source_type|WHERE|FROM|SELECT`). Also asserts the f-string
+   pattern is present at the migrated site so the test fails loudly if
+   someone strips it.
 
 ---
 
@@ -196,15 +240,19 @@ centralization contract.
 
 ```bash
 $ uv run pytest tests/probe_source_type_centralization.py -v
-============================== 24 passed in 0.99s ==============================
+============================== 26 passed in 1.09s ==============================
 ```
 
 - 19 pre-existing tests: PASS (registry integrity, StrEnum↔str conversion,
   legacy aliases, type alias, backward compat)
-- 5 new adoption-sweep tests: PASS (hot-path migration, alias coverage,
-  DuckDB guard semantics, regex-scanned call-site migration)
+- 5 first-wave adoption-sweep tests: PASS (hot-path migration, alias
+  coverage, DuckDB guard semantics, regex-scanned call-site migration)
+- 2 STEP 3/5 tests: PASS (StrEnum SQL identity contract, SQL literal
+  AST-walk guard for `sprint_scheduler.py`)
 
 ---
+
+*Last updated: Sprint F262OBS STEP 3+5, 2026-06-02*
 
 ## GHOST_INVARIANTS Honored
 

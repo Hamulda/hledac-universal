@@ -848,6 +848,26 @@ class SprintPolicyManager:
             self._state.cumulative_train_steps += 1
             self._state.last_loss = loss
 
+            # F263QCB: loss spike guard — skip weight update if new_loss > 2.5x
+            # the last recorded loss. Without this, a single bad batch (memory
+            # pressure, extreme reward outlier) can destabilize the Q-network
+            # before target-DQN correction. We compare against the last value
+            # already in loss_history (not a fresh compute) so transient spikes
+            # can't poison the baseline.
+            _prev_loss_hist = list(getattr(self._state, "loss_history", []))
+            if _prev_loss_hist:
+                _prev_loss = _prev_loss_hist[-1]
+                if _prev_loss > 0.0 and loss > 2.5 * _prev_loss:
+                    log.warning(
+                        "[SprintPolicyManager] QMIX loss spike %.4f > 2.5x prev %.4f — "
+                        "skipping weight update (training_steps not incremented)",
+                        loss, _prev_loss,
+                    )
+                    # Persist the new weight dump we already did above so
+                    # the npz stays in sync, but do NOT touch loss_history,
+                    # mean_q_value_history, or training_steps_completed.
+                    return
+
             # F262OBS: bounded health-observability histories — all FIFO 100.
             # Defensive getattr guards so missing fields don't crash under legacy state.
             _loss_hist = list(getattr(self._state, "loss_history", []))

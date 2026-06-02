@@ -75,6 +75,9 @@ from .packs import (
     SourceHint,
     HypothesisPack,
 )
+from .causal import (
+    CausalReasoner,
+)
 
 __all__ = [
     "HypothesisType",
@@ -105,5 +108,6 @@ __all__ = [
     "SimpleNodeAblationExplainer",
     "SourceHint",
     "HypothesisPack",
+    "CausalReasoner",
     "InferenceEngineProtocol",
 ]

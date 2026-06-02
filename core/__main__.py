@@ -1450,6 +1450,31 @@ async def run_sprint(
         except Exception as _e:
             logger.debug("F26X-3: CommunicationLayer injection failed (fail-soft): %s", _e)
 
+    # Sprint F260: StealthLayer injection (advisory, default-ON, --no-stealth opt-out)
+    # Mirrors --no-coordination/--no-communication contract. StealthLayer exposes
+    # circuit-breaker / JA3 fingerprint rotation surfaces for advisory call sites.
+    if not getattr(args, "no_stealth", False):
+        try:
+            from hledac.universal.layers import get_stealth_layer
+            _stealth_layer = get_stealth_layer()
+            if _stealth_layer is not None:
+                scheduler.inject_stealth_layer(_stealth_layer)
+        except Exception as _e:
+            logger.debug("F260: StealthLayer injection failed (fail-soft): %s", _e)
+
+    # Sprint F260: GhostLayer injection (advisory, default-ON, --no-ghost opt-out)
+    # Mirrors --no-coordination/--no-communication contract. GhostLayer exposes
+    # is_vm_environment() / force_neural_cleanup() for stealth-mode-activation pre-fetch
+    # and anti-VM / neural-cleanup advisory call sites.
+    if not getattr(args, "no_ghost", False):
+        try:
+            from hledac.universal.layers import get_ghost_layer
+            _ghost_layer = get_ghost_layer()
+            if _ghost_layer is not None:
+                scheduler.inject_ghost_layer(_ghost_layer)
+        except Exception as _e:
+            logger.debug("F260: GhostLayer injection failed (fail-soft): %s", _e)
+
     # F228F CRITICAL: inject duckdb_store before health_check so health_check
     # reads self._duckdb_store (not always None). run() also sets it from param,
     # but health_check runs BEFORE run(), so injection must happen here first.
@@ -2505,6 +2530,16 @@ def main() -> None:
         "--no-communication",
         action="store_true",
         help="F26X-3: Skip CommunicationLayer injection in run_sprint(). Default ON, mirroring --no-coordination opt-out contract from F26X-2.",
+    )
+    parser.add_argument(
+        "--no-ghost",
+        action="store_true",
+        help="F260: Skip GhostLayer injection in run_sprint(). Default ON, mirroring --no-coordination/--no-communication opt-out contract.",
+    )
+    parser.add_argument(
+        "--no-stealth",
+        action="store_true",
+        help="F260: Skip StealthLayer injection in run_sprint(). Default ON, mirroring --no-coordination/--no-communication opt-out contract.",
     )
     args = args_with_rl_resolution = parser.parse_args()
     # F261QMIX: --rl-no-train overrides --rl-train (explicit disable wins)

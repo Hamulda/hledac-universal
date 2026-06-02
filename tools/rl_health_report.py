@@ -36,8 +36,12 @@ from pathlib import Path
 
 # ZSTD magic bytes (RFC 8478) — used to detect compressed state files
 ZSTD_MAGIC = b"\x28\xb5\x2f\xfd"
-# Q-value explosion threshold
-Q_EXPLOSION_THRESHOLD = 100.0
+# Q-value explosion threshold — F263QCB: calibrated from dryrun baseline.
+# Observed mean_q range across 3 train_steps: 0.96 - 1.60. Setting threshold
+# to 50.0 (≈ 30× the max observed) gives a wide safety margin for normal
+# training while still catching genuine divergence (e.g. mean_q > 10 after
+# a TD-loss spike). Re-calibrate if production mean_q exceeds 10.
+Q_EXPLOSION_THRESHOLD = 50.0
 # Reward-trend slope (per-sprint) below which we flag decay
 REWARD_TREND_SLOPE_THRESHOLD = -0.1
 # Minimum training steps before evaluating epsilon decay

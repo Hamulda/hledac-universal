@@ -3,30 +3,33 @@ Hypothesis Engine — Simple Node Ablation Explainer (C4 Sprint Refactoring)
 ==========================================================================
 
 Extracted from :mod:`brain.hypothesis_engine` to break the 5 373 LOC monolith
-into focused modules. This module hosts the
-:class:`SimpleNodeAblationExplainer` — the leave-one-node-out path
-importance explainer used by the AdversarialVerifier to surface why a
-path in the knowledge graph is significant for a hypothesis.
+into focused modules. This module hosts:
+
+- :class:`SimpleNodeAblationExplainer` — the leave-one-node-out path
+  importance explainer used by the AdversarialVerifier.
+- :func:`explain_with_mlx` — module-level MLX-LM helper for generating
+  textual explanations (Sprint 67, **moved here in C4 Tier-5**).
 
 GHOST_INVARIANTS:
 - The extraction is **byte-for-byte identical** to the original — no
   behaviour change, no field rename, no default mutation. Existing tests
   must pass unchanged.
-- ``brain.hypothesis_engine`` re-exports :class:`SimpleNodeAblationExplainer`
-  for backward compat.
+- ``brain.hypothesis_engine`` re-exports both symbols
+  (:class:`SimpleNodeAblationExplainer` and ``explain_with_mlx``) for
+  backward compat.
 - New code should
-  ``from brain.hypothesis.explainer import SimpleNodeAblationExplainer``.
-- Zero dependency on :mod:`brain.hypothesis_engine` types — this class
+  ``from brain.hypothesis.explainer import SimpleNodeAblationExplainer, explain_with_mlx``.
+- Zero dependency on :mod:`brain.hypothesis_engine` types — the class
   is graph-RAG-agnostic and operates on duck-typed ``graph_rag.score_path``
   / ``graph_rag._get_embedder`` interfaces.
-- The companion module-level ``explain_with_mlx`` helper is **not** part
-  of this module: it lives in ``hypothesis_engine`` (kept adjacent to the
-  MLX-LM glue code) and is imported lazily by :class:`AdversarialVerifier`
-  when path explanations are requested. M1 RAM-bound helper extraction
-  is deferred to a future sprint.
+- ``explain_with_mlx`` is M1-safe: it loads the MLX model lazily, uses
+  ``asyncio.wait_for`` with a 10s timeout, and returns fail-soft tuples
+  on any error. The helper never raises.
 """
 from __future__ import annotations
 
+import asyncio
+import hashlib
 import logging
 
 logger = logging.getLogger(__name__)
@@ -111,3 +114,60 @@ class SimpleNodeAblationExplainer:
             return {}
 
         return importances
+
+
+async def explain_with_mlx(
+    hypothesis: str,
+    path: list[str],
+    model_name: str = "mlx-community/Qwen2.5-0.5B-Instruct-4bit"
+) -> tuple[str, str]:
+    """
+    Generate textual explanation using MLX-LM.
+
+    Args:
+        hypothesis: The hypothesis
+        path: Graph path
+        model_name: Model identifier
+
+    Returns:
+        Tuple of (explanation, prompt_hash)
+    """
+    try:
+        from hledac.universal.utils.mlx_cache import get_mlx_model, get_mlx_semaphore
+
+        model, tokenizer = await get_mlx_model(model_name)
+        if model is None or tokenizer is None:
+            return "MLX model unavailable", ""
+
+        prompt = f"Explain why this path in a knowledge graph is important for the hypothesis: '{hypothesis}'. Path: {' -> '.join(path)}"
+
+        from mlx_lm import generate
+        loop = asyncio.get_running_loop()
+
+        async with get_mlx_semaphore():
+            try:
+                explanation = await asyncio.wait_for(
+                    loop.run_in_executor(
+                        None,
+                        lambda: generate(model, tokenizer, prompt, max_tokens=80, temp=0.0)
+                    ),
+                    timeout=10.0
+                )
+            except TypeError:
+                # Fallback if temp not supported
+                explanation = await asyncio.wait_for(
+                    loop.run_in_executor(
+                        None,
+                        lambda: generate(model, tokenizer, prompt, max_tokens=80)
+                    ),
+                    timeout=10.0
+                )
+
+        prompt_hash = hashlib.sha256(prompt.encode()).hexdigest()[:8]
+        return explanation.strip(), prompt_hash
+
+    except TimeoutError:
+        return "Explanation generation timed out", ""
+    except Exception as e:
+        logger.debug(f"MLX explanation failed: {e}")
+        return f"Generation failed: {e}", ""

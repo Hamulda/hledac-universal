@@ -270,7 +270,91 @@ Pokud by se v budoucnu rozhodlo pro plné odpojení, F3xx sprint může:
 
 ---
 
-## 8. Reference
+## 8. Variant C Implementation (F260, 2026-06-02)
+
+**Status:** ✅ COMPLETED
+**Scope:** 3 soubory, dokumentační F260 verdict komentáře, **0 řádků funkčního kódu změněno**.
+**Risk:** Žádný runtime risk, žádný test impact očekáván.
+
+### 8.1 Změněné soubory
+
+| # | Soubor | Typ | Rozsah | Nové řádky |
+|---|--------|-----|--------|------------|
+| 1 | `autonomous_orchestrator.py` (root, 274 LOC) | F260 verdict blok uvnitř existujícího modulu docstringu | 13 řádků (`.. f260_verdict::` … `Last reviewed: 2026-06-02`) | **68–78** |
+| 2 | `orchestrator/__init__.py` (35 LOC) | NON_CANONICAL komentář prepend na řádek 1 | 3 řádky | **1–3** |
+| 3 | `legacy/autonomous_orchestrator.py` (31 054 LOC) | F260 verdict prepend na řádek 1 | 7 řádků (před existujícím docstringem na řádku 8) | **1–7** |
+
+### 8.2 Přesné znění přidaných bloků
+
+**1) `autonomous_orchestrator.py` — řádky 68–78** (uvnitř existujícího modulu docstringu, těsně před koncové `"""`):
+```
+.. f260_verdict::
+    NON_CANONICAL FACADE (F181A)
+    ============================
+    This file is a backward-compatibility shim for legacy/autonomous_orchestrator.py.
+    It is NOT part of the canonical sprint path (core/__main__.py → runtime/sprint_scheduler.py).
+    Active callers: 0 production, 290 test methods in tests/test_autonomous_orchestrator.py.
+    The test suite covers unique research surface (graph RAG, multihop, narratives, deep_read,
+    stealth, temporal ring) with no duplicate coverage in test_sprint_scheduler.py.
+    Detach decision: DEFERRED — requires dedicated sprint with test migration analysis.
+    Do NOT refactor this file without reading LEGACY_ORCHESTRATOR_DETACH_AUDIT.md first.
+    Last reviewed: 2026-06-02
+```
+
+**2) `orchestrator/__init__.py` — řádky 1–3** (prepended před existující docstring na řádku 4):
+```
+# NON_CANONICAL: Secondary facade for legacy/autonomous_orchestrator.py
+# See autonomous_orchestrator.py (root) and LEGACY_ORCHESTRATOR_DETACH_AUDIT.md
+# Do not add new functionality here.
+```
+
+**3) `legacy/autonomous_orchestrator.py` — řádky 1–7** (prepended před existující docstring na řádku 8):
+```
+# CANONICAL LEGACY IMPLEMENTATION — F181A NON_CANONICAL designation
+# This is the implementation truth for the autonomous orchestrator (v6.2).
+# Facade: autonomous_orchestrator.py (root) → orchestrator/__init__.py
+# Production callers: 0 (canonical sprint path uses runtime/sprint_scheduler.py)
+# Test coverage: tests/test_autonomous_orchestrator.py (22057 LOC, 290 methods)
+# Status: MAINTAINED for test coverage only. No new features.
+# Detach plan: LEGACY_ORCHESTRATOR_DETACH_AUDIT.md §Variant A (deferred)
+```
+
+### 8.3 Syntax verification
+
+| Soubor | Příkaz | Výsledek |
+|--------|--------|----------|
+| `autonomous_orchestrator.py` | `python -c "import py_compile; py_compile.compile('autonomous_orchestrator.py', doraise=True)"` | ✅ OK |
+| `orchestrator/__init__.py` | `python -c "import py_compile; py_compile.compile('orchestrator/__init__.py', doraise=True)"` | ✅ OK |
+| `legacy/autonomous_orchestrator.py` | (přeskočeno per prompt — 31 054 LOC, příliš velké pro rychlý syntax check) | n/a |
+
+### 8.4 Splnění invariantů
+
+- ✅ **Zero functional changes** — pouze komentáře / docstring blok
+- ✅ **Zero runtime impact** — `import` chain nezměněn
+- ✅ **Zero test impact expected** — nové komentáře nemění žádnou viditelnou signaturu
+- ✅ **Aligned with F260 verdict convention** — formát odpovídá existujícím F260 verdiktům v `layers/memory_layer.py:27-31`
+- ✅ **Canonical chain intact** — `core/__main__.py::run_sprint() → runtime/sprint_scheduler.py::SprintScheduler` beze změn
+
+### 8.5 Timeline
+
+| Krok | Akce | Čas |
+|------|------|-----|
+| 1 | Přečtení auditu + 3 cílových souborů | 2026-06-02 (session start) |
+| 2 | Edit `autonomous_orchestrator.py` (root facade) — F260 verdict blok | 2026-06-02 |
+| 3 | Edit `orchestrator/__init__.py` — NON_CANONICAL komentář | 2026-06-02 |
+| 4 | Edit `legacy/autonomous_orchestrator.py` — F260 verdict prepend | 2026-06-02 |
+| 5 | Syntax check obou menších souborů | 2026-06-02 |
+| 6 | Update tohoto auditu (§8) | 2026-06-02 |
+
+### 8.6 Navazující kroky (mimo scope tohoto sprintu)
+
+- Varianta A (plné odpojení) zůstává **deferred** do budoucího sprintu
+- `tests/legacy_orchestrator/` kategorie **nevzniká** v tomto sprintu (per scope)
+- Žádné git operace provedeny (per ZÁKAZ)
+
+---
+
+## 9. Reference
 
 - `legacy/autonomous_orchestrator.py` (31054 LOC) — implementation truth
 - `autonomous_orchestrator.py` (root facade, 274 LOC) — F181A NON_CANONICAL
@@ -284,7 +368,7 @@ Pokud by se v budoucnu rozhodlo pro plné odpojení, F3xx sprint může:
 
 ---
 
-## 9. Open questions pro uživatele
+## 10. Open questions pro uživatele
 
 1. **Souhlasíš s Variantou C** (dokumentační), nebo chceš Varianta A (plné
    odpojení) naplánovanou jako celý sprint?

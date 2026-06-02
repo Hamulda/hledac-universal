@@ -64,6 +64,18 @@ autonomous_orchestrator — ROOT RE-EXPORT FACADE (Sprint F181A)
     - DiscoveryDepth, ResearchPhase, SourceType
     - AutonomousStrategy, ResearchSource, ResearchFinding
     - ComprehensiveResearchResult
+
+.. f260_verdict::
+    NON_CANONICAL FACADE (F181A)
+    ============================
+    This file is a backward-compatibility shim for legacy/autonomous_orchestrator.py.
+    It is NOT part of the canonical sprint path (core/__main__.py → runtime/sprint_scheduler.py).
+    Active callers: 0 production, 290 test methods in tests/test_autonomous_orchestrator.py.
+    The test suite covers unique research surface (graph RAG, multihop, narratives, deep_read,
+    stealth, temporal ring) with no duplicate coverage in test_sprint_scheduler.py.
+    Detach decision: DEFERRED — requires dedicated sprint with test migration analysis.
+    Do NOT refactor this file without reading LEGACY_ORCHESTRATOR_DETACH_AUDIT.md first.
+    Last reviewed: 2026-06-02
 """
 
 import os

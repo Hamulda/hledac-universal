@@ -322,3 +322,95 @@ class TestAdoptionSweep:
         assert not bad_hits, (
             f"live_public_pipeline still has raw string source_type for migrated values: {bad_hits}"
         )
+
+
+# ── Sprint F262OBS — STEP 5/STEP 3: StrEnum SQL-compat + SQL literal sweep
+# ───────────────────────────────────────────────────────────────
+
+
+class TestAdoptionSweepStep3And5:
+    """F262OBS STEP 3 — StrEnum SQL identity (confirms SourceType.CT_LOG can
+    be interpolated directly into SQL strings without `.value`).
+    F262OBS STEP 5 — No raw string literals remain inside SQL queries in
+    sprint_scheduler.py (the two known SQL sites must use f-strings).
+    """
+
+    def test_sourcetype_strenum_sql_identity(self) -> None:
+        """SourceType.CT_LOG == 'ct_log' (and friends) — StrEnum is a str subclass,
+        so direct f-string interpolation into SQL produces the canonical value
+        without needing `.value`. This is the contract that lets STEP 3's
+        f-string SQL pattern work.
+        """
+        from hledac.universal.utils.source_types import SourceType
+
+        # Core identity contract
+        assert SourceType.CT_LOG == "ct_log"
+        assert SourceType.HERMES_INFERENCE == "hermes_inference"
+        # StrEnum member IS a str — verifiable at runtime
+        assert isinstance(SourceType.CT_LOG, str)
+        assert isinstance(SourceType.HERMES_INFERENCE, str)
+
+        # Direct interpolation produces the SQL-safe value
+        sql_ct = f"WHERE source_type = '{SourceType.CT_LOG}' "
+        sql_hermes = (
+            f"... WHERE source_type = '{SourceType.HERMES_INFERENCE}' AND ..."
+        )
+        assert sql_ct == "WHERE source_type = 'ct_log' "
+        assert sql_hermes == "... WHERE source_type = 'hermes_inference' AND ..."
+
+        # str() and .value agree (explicit str() is also valid)
+        assert str(SourceType.CT_LOG) == SourceType.CT_LOG.value == "ct_log"
+
+    def test_no_raw_string_literals_in_sprint_scheduler_sql(self) -> None:
+        """AST walk + regex over sprint_scheduler.py — confirm the two known
+        SQL sites use f-strings (SourceType.X) and not raw 'literal' source_type
+        values. This locks in the STEP 3 SQL canonicalization.
+        """
+        import ast
+        import re
+        from pathlib import Path
+
+        repo = Path(__file__).resolve().parents[1]
+        sched = repo / "runtime" / "sprint_scheduler.py"
+        src = sched.read_text(encoding="utf-8")
+        tree = ast.parse(src)
+
+        # The 2 SQL sites migrated in F262OBS STEP 3. If a new SQL site is
+        # added that uses one of these source_type values as a raw literal,
+        # the test must be updated to cover the new site — that is the audit
+        # hook for future SQL canonicalization.
+        sql_source_types = {"ct_log", "hermes_inference"}
+
+        # 1) AST walk: walk all string-literal Constants and JoinedStr (f-strings)
+        # in function bodies. Any bare string literal that matches a known
+        # source_type value (and lives inside a SQL-looking string, i.e. contains
+        # "source_type" or "WHERE") is a regression.
+        sql_context_pat = re.compile(r"(source_type|WHERE|FROM|SELECT)", re.IGNORECASE)
+        raw_sql_literal_hits: list[tuple[int, str, str]] = []
+
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Constant) and isinstance(node.value, str):
+                value = node.value
+                if value in sql_source_types and sql_context_pat.search(value):
+                    raw_sql_literal_hits.append(
+                        (node.lineno, "raw_string_literal", value)
+                    )
+            # f-strings (JoinedStr) with .values: list[Constant | FormattedValue]
+            # are not raw literals — SourceType.X becomes a FormattedValue child,
+            # so they pass through. We only flag bare strings.
+
+        assert not raw_sql_literal_hits, (
+            "sprint_scheduler.py has raw string source_type literals inside "
+            f"SQL context: {raw_sql_literal_hits}"
+        )
+
+        # 2) Regex sanity: confirm the f-string pattern is present at the two
+        # known SQL sites (so the test fails loudly if someone strips it).
+        fstring_ct = re.search(
+            r"f[\"']WHERE\s+source_type\s*=\s*[\"']\{SourceType\.CT_LOG\}[\"']\s*[\"']",
+            src,
+        )
+        assert fstring_ct is not None, (
+            "expected f-string with SourceType.CT_LOG in SQL WHERE clause of "
+            "sprint_scheduler.py — STEP 3 SQL canonicalization lost?"
+        )

@@ -4589,6 +4589,16 @@ class SprintScheduler:
         # inject_communication_layer() from core/__main__.py unless --no-communication.
         self._communication_layer: Any = None
 
+        # Sprint F260: StealthLayer (advisory, default-OFF, fail-soft)
+        # Circuit-breaker / JA3 fingerprint rotation seams consume it.
+        # Initialized via inject_stealth_layer() from core/__main__.py unless --no-stealth.
+        self._stealth_layer: Any = None
+
+        # Sprint F260: GhostLayer (advisory, default-OFF, fail-soft)
+        # Stealth mode activation pre-fetch + anti-VM + neural cleanup seams.
+        # Initialized via inject_ghost_layer() from core/__main__.py unless --no-ghost.
+        self._ghost_layer: Any = None
+
         # Sprint F234A: DOH adapter
 
         self._doh_adapter: Any = None
@@ -16692,7 +16702,7 @@ class SprintScheduler:
 
                             "SELECT DISTINCT provenance FROM findings "
 
-                            "WHERE source_type = 'ct_log' "
+                            f"WHERE source_type = '{SourceType.CT_LOG}' "
 
                             "AND provenance LIKE '%info_hash%' "
 
@@ -25545,6 +25555,30 @@ class SprintScheduler:
         is not None:` and wrapped in try/except (fail-soft, M1 invariant).
         """
         self._communication_layer = layer
+
+    def inject_stealth_layer(self, layer: Any) -> None:
+        """Inject StealthLayer reference (F260, advisory, default-OFF).
+
+        Caller (core/__main__.py) wires a StealthLayer produced by
+        layers.get_stealth_layer() unless --no-stealth is set. None injection
+        is allowed (caller may pass None as a no-op or to clear a previously
+        injected layer). All advisory call sites are guarded by
+        `if self._stealth_layer is not None:` and wrapped in try/except
+        (fail-soft, M1 invariant).
+        """
+        self._stealth_layer = layer
+
+    def inject_ghost_layer(self, layer: Any) -> None:
+        """Inject GhostLayer reference (F260, advisory, default-OFF).
+
+        Caller (core/__main__.py) wires a GhostLayer produced by
+        layers.get_ghost_layer() unless --no-ghost is set. None injection is
+        allowed (caller may pass None as a no-op or to clear a previously
+        injected layer). All advisory call sites are guarded by
+        `if self._ghost_layer is not None:` and wrapped in try/except
+        (fail-soft, M1 invariant).
+        """
+        self._ghost_layer = layer
 
 
     def inject_prefetch_oracle(self, oracle: Any) -> None:

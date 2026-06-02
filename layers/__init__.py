@@ -243,3 +243,27 @@ def get_communication_layer() -> CommunicationLayer | None:
         return instance
     except Exception:
         return None
+
+
+def get_ghost_layer() -> "GhostLayer | None":
+    """Lazy singleton GhostLayer accessor (F260).
+
+    Returns None if GhostLayer import or init fails (fail-soft, M1 invariant).
+    Used by SprintScheduler advisory call sites (stealth mode activation pre-fetch,
+    anti-VM detection, neural cleanup). Caller is responsible for calling
+    .initialize() / .shutdown() if needed.
+
+    Sprint F260 invariant: GhostLayer.__init__(config=None) is safe and yields
+    a fully-wired instance exposing is_vm_environment() and force_neural_cleanup()
+    surfaces. Anti-loop and anti-VM protection are gated on M1 optimization
+    (default True) and a non-None SystemContext.
+    """
+    try:
+        from hledac.universal.layers.ghost_layer import GhostLayer as _GL
+    except Exception:
+        return None
+    try:
+        instance = _GL(config=None)
+        return instance
+    except Exception:
+        return None

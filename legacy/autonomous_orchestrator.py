@@ -1,3 +1,11 @@
+# CANONICAL LEGACY IMPLEMENTATION — F181A NON_CANONICAL designation
+# This is the implementation truth for the autonomous orchestrator (v6.2).
+# Facade: autonomous_orchestrator.py (root) → orchestrator/__init__.py
+# Production callers: 0 (canonical sprint path uses runtime/sprint_scheduler.py)
+# Test coverage: tests/test_autonomous_orchestrator.py (22057 LOC, 290 methods)
+# Status: MAINTAINED for test coverage only. No new features.
+# Detach plan: LEGACY_ORCHESTRATOR_DETACH_AUDIT.md §Variant A (deferred)
+
 """
 Autonomous Research Orchestrator v6.2 - REFACTORED WITH COORDINATORS
 =====================================================================
