@@ -1501,7 +1501,7 @@ async def run_sprint(
     _ct_log_client = None
     try:
         from pathlib import Path
-        _ct_cache = Path(os.path.expanduser("~/.hledac/ct_cache"))
+        _ct_cache = Path.home() / ".hledac" / "ct_cache"
         _ct_cache.mkdir(parents=True, exist_ok=True)
         _ct_log_client = CTLogClient(cache_dir=_ct_cache)
     except Exception as e:
@@ -1528,15 +1528,37 @@ async def run_sprint(
 
         # Run sprint via scheduler directly (enables compute_sprint_intelligence access)
         # now_monotonic=None: scheduler uses live time internally via adapter.tick()
-        result = await scheduler.run(
-            lifecycle=lifecycle,
-            sources=live_feed_urls,
-            now_monotonic=None,
-            query=query,
-            duckdb_store=store,
-            ct_log_client=_ct_log_client,
-            progress_callback=_on_cycle,
-        )
+        # F261.1: soft-fail wrapper. Any non-cancellation exception from the
+        # scheduler is captured into a synthetic SprintSchedulerResult so the
+        # caller (and downstream dashboard / export) still sees a structured
+        # outcome rather than a 30-minute hard crash with no telemetry.
+        # CancelledError (asyncio.CancelledError) is NOT caught — it must
+        # propagate so cancellation semantics remain intact.
+        try:
+            result = await scheduler.run(
+                lifecycle=lifecycle,
+                sources=live_feed_urls,
+                now_monotonic=None,
+                query=query,
+                duckdb_store=store,
+                ct_log_client=_ct_log_client,
+                progress_callback=_on_cycle,
+            )
+        except Exception as _fatal_exc:
+            logger.exception("SprintScheduler.run() raised; returning soft-fail result")
+            try:
+                from hledac.universal.runtime.sprint_scheduler import (
+                    SprintSchedulerResult,
+                )
+                _sf = SprintSchedulerResult()
+                _sf.scheduler_exit_path = "soft_fail"
+                _sf.scheduler_exit_reason = (
+                    f"{type(_fatal_exc).__name__}: {_fatal_exc}"
+                )
+                result = _sf
+            except Exception:
+                # Last-ditch fallback: raise the original exception.
+                raise
 
         # Sprint F150H: Pull scheduler intelligence (fail-soft, additive)
         # correlation, hypothesis_pack, signal_path, feed_verdict,

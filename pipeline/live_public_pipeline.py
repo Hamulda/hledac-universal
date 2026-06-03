@@ -4575,7 +4575,7 @@ async def async_run_live_public_pipeline(
     # FÁZE P9: Export graph after pipeline completes (legacy path)
     if graph is not None and graph.node_count() > 0:
         try:
-            export_path = os.path.expanduser("~/new_hledac_graph.html")
+            export_path = str(Path("~/new_hledac_graph.html").expanduser())
             graph.export_html(export_path)
         except Exception:
             pass  # Fail-soft: graph export errors don't fail pipeline

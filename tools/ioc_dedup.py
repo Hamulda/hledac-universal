@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 
 logger = logging.getLogger(__name__)
 
@@ -50,7 +50,7 @@ class IocDedupManager:
 
     def __init__(
         self,
-        persist_path: Optional[str] = None,
+        persist_path: str | None = None,
         sprint_id: int = 0,
     ):
         self.persist_path = Path(persist_path) if persist_path else None
@@ -246,10 +246,10 @@ class _PythonIocDedupStore:
 
 
 # Global singleton instance
-_global_manager: Optional[IocDedupManager] = None
+_global_manager: IocDedupManager | None = None
 
 
-def get_global_manager(persist_path: Optional[str] = None) -> IocDedupManager:
+def get_global_manager(persist_path: str | None = None) -> IocDedupManager:
     """Get or create global IocDedupManager singleton."""
     global _global_manager
     if _global_manager is None:

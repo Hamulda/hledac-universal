@@ -40,6 +40,7 @@ import asyncio
 import concurrent.futures
 import hashlib
 import logging
+from pathlib import Path
 from typing import Any
 
 from hledac.universal.project_types import (
@@ -675,22 +676,23 @@ class SecurityLayer:
         import time as time_module
 
         try:
-            if os.path.exists(file_path):
-                size = os.path.getsize(file_path)
+            p = Path(file_path)
+            if p.exists():
+                size = p.stat().st_size
 
                 # Simple overwrite with random bytes (best-effort on SSD/APFS)
-                with open(file_path, 'wb') as f:
+                with open(p, 'wb') as f:
                     f.write(os.urandom(size))
 
                 # Remove file
-                os.remove(file_path)
+                p.unlink()
 
                 return DestructionResult(
                     file_path=file_path,
                     standard=standard,
                     passes_completed=1,
                     bytes_overwritten=size,
-                    verification_passed=not os.path.exists(file_path),
+                    verification_passed=not p.exists(),
                     timestamp=time_module.time()
                 )
             else:
@@ -812,8 +814,9 @@ class SecurityLayer:
                 def _walk_sync():
                     file_paths = []
                     for root, _dirs, files in os.walk(dir_path, topdown=False):
+                        root_p = Path(root)
                         for file in files:
-                            file_paths.append(os.path.join(root, file))
+                            file_paths.append(str(root_p / file))
                     return file_paths
 
                 all_files = await loop.run_in_executor(
@@ -829,10 +832,11 @@ class SecurityLayer:
                 # Remove directory structure (sync in thread pool)
                 def _remove_dirs_sync():
                     for root, dirs, _files in os.walk(dir_path, topdown=False):
+                        root_p = Path(root)
                         for d in dirs:
-                            os.rmdir(os.path.join(root, d))
-                    if os.path.exists(dir_path):
-                        os.rmdir(dir_path)
+                            (root_p / d).rmdir()
+                    if Path(dir_path).exists():
+                        Path(dir_path).rmdir()
 
                 await loop.run_in_executor(
                     self._file_destroy_executor,
@@ -842,7 +846,7 @@ class SecurityLayer:
                 # Non-recursive: glob and destroy files only
                 def _glob_sync():
                     import glob
-                    return [f for f in glob.glob(os.path.join(dir_path, "*")) if os.path.isfile(f)]
+                    return [f for f in glob.glob(str(Path(dir_path) / "*")) if Path(f).is_file()]
 
                 files = await loop.run_in_executor(
                     self._file_destroy_executor,

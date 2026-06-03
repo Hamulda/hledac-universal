@@ -1435,7 +1435,7 @@ class UniversalMetadataExtractor:
 
         try:
             # Limit file read for large PDFs (streaming approach)
-            file_size = os.path.getsize(file_path)
+            file_size = Path(file_path).stat().st_size
             if file_size > 5 * 1024 * 1024:
                 # For large files, only extract basic metadata
                 with open(file_path, "rb") as f:
@@ -1682,7 +1682,7 @@ class UniversalMetadataExtractor:
                 return None, []
 
             # Check file size - don't process images > 50MB (anti-pattern compliance)
-            file_size = os.path.getsize(file_path)
+            file_size = Path(file_path).stat().st_size
             if file_size > 50 * 1024 * 1024:
                 return None, []
 

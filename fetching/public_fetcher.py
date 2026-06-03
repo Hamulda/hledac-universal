@@ -1219,7 +1219,8 @@ def _check_chrome_binary_exists() -> bool:
         "/usr/bin/chromium",
         "/usr/bin/chromium-browser",
     ]
-    return any(os.path.exists(p) and os.access(p, os.X_OK) for p in candidates)
+    from pathlib import Path
+    return any(Path(p).exists() and os.access(p, os.X_OK) for p in candidates)
 
 
 def _get_js_renderer_capability() -> dict[str, str | None]:

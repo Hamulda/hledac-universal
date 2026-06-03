@@ -1257,33 +1257,32 @@ class StealthCrawler:
             return None
         _mark_surface_patched("_fetch_with_requests")
         try:
-            import socket as _socket
-
-            import requests
-            import socks
-
-            # TICKET-001: Thread-local proxy patch — nesmí ovlivnit globální socket
-            _orig_socket = _socket.socket
+            import httpx
             try:
-                # B2: only enable SOCKS if Tor is confirmed running
+                from httpx_socks import SyncProxyTransport
+            except ImportError:
+                SyncProxyTransport = None  # type: ignore[assignment]
+
+            # httpx + httpx_socks: native SOCKS5 transport, no thread-local socket patch.
+            if TorProxyManager.is_running() and SyncProxyTransport is not None:
+                transport = SyncProxyTransport.from_url("socks5h://127.0.0.1:9050")
+                logger.debug("Tor SOCKS proxy enabled for httpx fallback")
+            else:
                 if TorProxyManager.is_running():
-                    socks.set_default_proxy(socks.SOCKS5, "127.0.0.1", 9050)
-                    _socket.socket = socks.socksocket
-                    logger.debug("Tor SOCKS proxy enabled for requests fallback (thread-local)")
+                    logger.warning("httpx_socks not installed; falling back to direct (Tor-aware routing disabled)")
                 else:
                     logger.warning("stealth_crawler: Tor unavailable, direct fallback")
+                transport = None
 
-                response = requests.get(url, headers=headers, timeout=30)
+            with httpx.Client(transport=transport, timeout=30.0) as client:
+                response = client.get(url, headers=headers)
                 response.raise_for_status()
                 return response.text
-            finally:
-                # VŽDY restore původního socketu
-                _socket.socket = _orig_socket
 
         except TorUnavailableError:
             raise  # re-raise B5 errors without catching
         except Exception as e:
-            logger.warning(f"requests fetch failed: {e}")
+            logger.warning(f"httpx fetch failed: {e}")
             return None
 
     async def _fetch_with_requests_async_tor(self, url: str, headers: dict[str, str]) -> str | None:
@@ -1308,27 +1307,29 @@ class StealthCrawler:
         _mark_surface_patched("_fetch_with_requests_async_tor")
 
         def _sync_fetch() -> str | None:
-            """Sync fetch v threadu s thread-local socket patch."""
-            import socket as _socket
-
-            import requests
-            import socks
-
-            _orig = _socket.socket
+            """Sync httpx fetch v threadu s native SOCKS5 transport."""
+            import httpx
             try:
-                if TorProxyManager.is_running():
-                    socks.set_default_proxy(socks.SOCKS5, "127.0.0.1", 9050)
-                    _socket.socket = socks.socksocket
-                    logger.debug("Tor SOCKS proxy enabled (async to_thread)")
+                from httpx_socks import SyncProxyTransport
+            except ImportError:
+                SyncProxyTransport = None  # type: ignore[assignment]
 
-                response = requests.get(url, headers=headers, timeout=30)
-                response.raise_for_status()
-                return response.text
+            try:
+                if TorProxyManager.is_running() and SyncProxyTransport is not None:
+                    transport = SyncProxyTransport.from_url("socks5h://127.0.0.1:9050")
+                    logger.debug("Tor SOCKS proxy enabled (async to_thread)")
+                else:
+                    transport = None
+                    if TorProxyManager.is_running():
+                        logger.warning("httpx_socks not installed; falling back to direct")
+
+                with httpx.Client(transport=transport, timeout=30.0) as client:
+                    response = client.get(url, headers=headers)
+                    response.raise_for_status()
+                    return response.text
             except Exception as e:
-                logger.warning(f"async_tor fetch failed: {e}")
+                logger.warning(f"async_tor httpx fetch failed: {e}")
                 return None
-            finally:
-                _socket.socket = _orig
 
         return await asyncio.to_thread(_sync_fetch)
 

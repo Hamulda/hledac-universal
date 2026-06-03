@@ -120,13 +120,10 @@ def _probe_worker_capability() -> tuple[bool, str]:
 
         async def _probe() -> tuple[bool, str]:
             nonlocal proc
-            import os
+            from pathlib import Path
 
-            worker_path = os.path.join(
-                os.path.dirname(__file__),
-                "macos_webkit_worker.py",
-            )
-            if not os.path.isfile(worker_path):
+            worker_path = Path(__file__).parent / "macos_webkit_worker.py"
+            if not worker_path.is_file():
                 return (False, MACOS_WEBKIT_REASONS.UNAVAILABLE)
 
             proc = await asyncio.create_subprocess_exec(
@@ -240,13 +237,10 @@ async def fetch_with_macos_webkit(
             async def _render() -> WebKitRenderResult:
                 nonlocal proc
 
-                import os
+                from pathlib import Path
 
-                worker_path = os.path.join(
-                    os.path.dirname(__file__),
-                    "macos_webkit_worker.py",
-                )
-                if not os.path.isfile(worker_path):
+                worker_path = Path(__file__).parent / "macos_webkit_worker.py"
+                if not worker_path.is_file():
                     return WebKitRenderResult(
                         html=None,
                         ok=False,

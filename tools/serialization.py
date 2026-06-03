@@ -64,7 +64,7 @@ if ORJSON_AVAILABLE:
         """
         return orjson.dumps(obj, option=ORJSON_OPTIONS)
 
-    def deserialize_storage(data: Union[bytes, str]) -> dict[str, Any]:
+    def deserialize_storage(data: bytes | str) -> dict[str, Any]:
         """
         Deserializace dat ze souboru.
 
@@ -88,7 +88,7 @@ else:
             default=str
         ).encode('utf-8')
 
-    def deserialize_storage(data: Union[bytes, str]) -> dict[str, Any]:
+    def deserialize_storage(data: bytes | str) -> dict[str, Any]:
         """Fallback deserializace."""
         if isinstance(data, bytes):
             data = data.decode('utf-8')

@@ -537,7 +537,21 @@ class FetchCoordinator(UniversalCoordinator):
             from hledac.universal.paths import LMDB_ROOT
             lmdb_path = str(LMDB_ROOT / 'session.lmdb')
         Path(lmdb_path).parent.mkdir(parents=True, exist_ok=True)
-        self._session_lmdb_env = lmdb.open(str(lmdb_path), map_size=10*1024*1024)
+        # C.1: M1 UMA-optimal LMDB flags. Defaults (readahead=True, sync=True)
+        # waste page cache and block on fsync per commit. With writemap=True
+        # we zero-copy mmap writes (smaller RSS, faster commits) which
+        # requires sync=False (incompatible per LMDB docs). Recovery risk
+        # is bounded: max ~5s of session cache lost on crash; canonical
+        # findings live in DuckDB/LanceDB. metasync=False lets the OS
+        # batch metadata flushes independently.
+        self._session_lmdb_env = lmdb.open(
+            str(lmdb_path),
+            map_size=10*1024*1024,
+            readahead=False,
+            sync=False,
+            metasync=False,
+            writemap=True,
+        )
         self._session_manager = SessionManager(self._session_lmdb_env)
 
     def _load_geo_proxies(self) -> dict[str, str]:

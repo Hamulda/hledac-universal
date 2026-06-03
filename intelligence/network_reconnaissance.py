@@ -281,16 +281,16 @@ class DNSEnumerator:
                     for rdata in answers:
                         found.append((full_domain, str(rdata), "A"))
                         logger.info(f"Found subdomain: {full_domain} -> {rdata}")
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug(f"[DNS] A lookup failed for {full_domain}: {e}")
 
                 try:
                     # Try CNAME
                     answers = await self.resolver.resolve(full_domain, "CNAME")
                     for rdata in answers:
                         found.append((full_domain, str(rdata), "CNAME"))
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug(f"[DNS] CNAME lookup failed for {full_domain}: {e}")
 
         # Run checks concurrently
         _check_gathered(

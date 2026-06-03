@@ -36,6 +36,15 @@ from typing import TYPE_CHECKING, Any
 
 logger = logging.getLogger(__name__)
 
+# B.6: Hard ceiling on quantum pathfinder graph size.
+# 4096 nodes × 4096 × float32 = 64 MB dense matrix — fits M1 8GB UMA.
+# Above this, mx.zeros(n) and the dense-fallback np.zeros((n,n)) at line 407
+# risk OOM (16k nodes = 1 GB; 65k = 16 GB). Caller's max_nodes is clamped
+# DOWN to this ceiling — never enlarged — to keep the cap safety-first.
+# Env override: QUANTUM_MAX_NODES for ops tuning.
+import os as _os
+MAX_QUANTUM_NODES: int = int(_os.environ.get("QUANTUM_MAX_NODES", "4096"))
+
 
 # =============================================================================
 # LAZY HELPERS — loaded on-demand, not at module import time
@@ -223,6 +232,15 @@ class QuantumInspiredPathFinder:
         """
         try:
             max_nodes = max_nodes or self.config.max_nodes
+            # B.6: clamp to module-level hard ceiling. Caller's value is
+            # restricted (never enlarged) so the dense matrix and mx.zeros
+            # sites stay within M1 8GB UMA budget. Warn when clamping.
+            if max_nodes > MAX_QUANTUM_NODES:
+                logger.warning(
+                    f"QuantumPathFinder: max_nodes={max_nodes} exceeds "
+                    f"MAX_QUANTUM_NODES={MAX_QUANTUM_NODES}, clamping down."
+                )
+                max_nodes = MAX_QUANTUM_NODES
 
             # Convert graph to adjacency matrix representation
             if hasattr(graph, 'nodes') and hasattr(graph, 'edges'):

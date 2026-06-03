@@ -67,8 +67,8 @@ from .base import (
     UniversalCoordinator,
 )
 
-# Benchmark coordinator
-from .benchmark_coordinator import (
+# Benchmark coordinator (DEPRECATED 2026-06-03 → _deprecated/benchmark_coordinator_shim)
+from ._deprecated.benchmark_coordinator_shim import (
     AgentBenchmarker,
     AgentBenchmarkResult,
     BenchmarkConfig,

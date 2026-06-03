@@ -706,11 +706,12 @@ class RelationshipDiscoveryEngine:
 
         # F196B: Security hardening — validate path is within expected graph directory
         # This prevents loading malicious pickle files from unexpected locations
-        graph_base_dir = os.path.expanduser("~/.hledac/graphs")
-        resolved_path = os.path.realpath(path)
-        resolved_base = os.path.realpath(graph_base_dir)
+        from pathlib import Path
+        graph_base_dir = Path("~/.hledac/graphs").expanduser()
+        resolved_path = Path(path).resolve()
+        resolved_base = graph_base_dir.resolve()
 
-        is_safe_path = resolved_path.startswith(resolved_base + os.sep)
+        is_safe_path = str(resolved_path).startswith(str(resolved_base) + "/")
 
         if IGRAPH_AVAILABLE:
             try:

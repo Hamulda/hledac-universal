@@ -471,8 +471,8 @@ class LanceDBIdentityStore:
                 logger.info("[INDEX] Low memory (<3GB), deferring index build")
                 self._index_build_deferred = True
                 return
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"[LANCE] memory check failed: {e}")
 
         # If we have deferred index build and now have enough memory, build it
         if self._index_build_deferred and not force:

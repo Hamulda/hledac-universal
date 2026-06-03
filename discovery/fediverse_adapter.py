@@ -13,7 +13,6 @@ import logging
 import os
 import time
 from dataclasses import dataclass, field
-from typing import Optional
 
 from aiohttp import ClientSession
 
@@ -49,7 +48,7 @@ class FediverseAdapter:
         default_factory=lambda: asyncio.Semaphore(MAX_CONCURRENT_INSTANCES)
     )
     _instance_timestamps: dict = field(default_factory=dict)
-    _session_cache: Optional[ClientSession] = None
+    _session_cache: ClientSession | None = None
 
     @property
     def _session(self) -> ClientSession:
@@ -79,7 +78,7 @@ class FediverseAdapter:
         self,
         query: str,
         max_results: int = MAX_RESULTS_PER_INSTANCE,
-        instances: Optional[list[str]] = None
+        instances: list[str] | None = None
     ) -> list[dict]:
         """Search public timeline across Fediverse instances.
 
@@ -148,7 +147,7 @@ class FediverseAdapter:
         self,
         hashtag: str,
         max_results: int = 40,
-        instances: Optional[list[str]] = None
+        instances: list[str] | None = None
     ) -> list[dict]:
         """Search hashtag timeline.
 
@@ -209,7 +208,7 @@ class FediverseAdapter:
         self,
         account: str,
         limit: int = 40,
-        instances: Optional[list[str]] = None
+        instances: list[str] | None = None
     ) -> list[dict]:
         """Resolve account cross-instance and fetch recent public posts.
 

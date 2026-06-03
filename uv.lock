@@ -17,24 +17,6 @@ resolution-markers = [
 ]
 
 [[package]]
-name = "accelerate"
-version = "1.13.0"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "huggingface-hub" },
-    { name = "numpy" },
-    { name = "packaging" },
-    { name = "psutil" },
-    { name = "pyyaml" },
-    { name = "safetensors" },
-    { name = "torch" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/ca/14/787e5498cd062640f0f3d92ef4ae4063174f76f9afd29d13fc52a319daae/accelerate-1.13.0.tar.gz", hash = "sha256:d631b4e0f5b3de4aff2d7e9e6857d164810dfc3237d54d017f075122d057b236", size = 402835, upload-time = "2026-03-04T19:34:12.359Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/7e/46/02ac5e262d4af18054b3e922b2baedbb2a03289ee792162de60a865defc5/accelerate-1.13.0-py3-none-any.whl", hash = "sha256:cf1a3efb96c18f7b152eb0fa7490f3710b19c3f395699358f08decca2b8b62e0", size = 383744, upload-time = "2026-03-04T19:34:10.313Z" },
-]
-
-[[package]]
 name = "aiofiles"
 version = "25.1.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1103,10 +1085,7 @@ dependencies = [
     { name = "dspy" },
     { name = "duckdb" },
     { name = "fast-langdetect" },
-    { name = "flashrank" },
     { name = "httpx" },
-    { name = "kuzu" },
-    { name = "llmlingua" },
     { name = "lmdb" },
     { name = "mlx" },
     { name = "mlx-lm" },
@@ -1115,7 +1094,6 @@ dependencies = [
     { name = "numpy" },
     { name = "onnxscript" },
     { name = "orjson" },
-    { name = "outlines" },
     { name = "pillow" },
     { name = "psutil" },
     { name = "pyahocorasick" },
@@ -1124,7 +1102,6 @@ dependencies = [
     { name = "pyprobables" },
     { name = "pyyaml" },
     { name = "pyzipper" },
-    { name = "transformers" },
     { name = "xxhash" },
 ]
 
@@ -1140,13 +1117,16 @@ all = [
     { name = "cryptography" },
     { name = "curl-cffi" },
     { name = "datasketch" },
+    { name = "dspy" },
     { name = "duckdb" },
     { name = "duckduckgo-search" },
     { name = "fast-langdetect" },
     { name = "flashrank" },
     { name = "h2" },
+    { name = "httpx-socks" },
     { name = "hypothesis" },
     { name = "iniconfig" },
+    { name = "kuzu" },
     { name = "lancedb" },
     { name = "liboqs-python", marker = "platform_machine == 'aarch64' or platform_machine == 'arm64'" },
     { name = "maturin" },
@@ -1155,6 +1135,7 @@ all = [
     { name = "mypy" },
     { name = "nodriver" },
     { name = "numpy" },
+    { name = "outlines" },
     { name = "pluggy" },
     { name = "polars" },
     { name = "pyarrow" },
@@ -1173,6 +1154,7 @@ all = [
     { name = "selectolax" },
     { name = "sentence-transformers" },
     { name = "stem" },
+    { name = "transformers" },
     { name = "uvloop", marker = "sys_platform == 'darwin'" },
     { name = "xxhash" },
 ]
@@ -1209,6 +1191,9 @@ dev = [
 dspy = [
     { name = "dspy" },
 ]
+flashrank-rerank = [
+    { name = "flashrank" },
+]
 graph-storage = [
     { name = "duckdb" },
     { name = "hypothesis" },
@@ -1216,6 +1201,9 @@ graph-storage = [
     { name = "polars" },
     { name = "pyarrow" },
     { name = "pytest-hypothesis" },
+]
+kuzu-graph = [
+    { name = "kuzu" },
 ]
 legacy-html = [
     { name = "beautifulsoup4" },
@@ -1228,16 +1216,20 @@ m1-local = [
     { name = "aiohttp-socks" },
     { name = "curl-cffi" },
     { name = "duckdb" },
+    { name = "flashrank" },
     { name = "h2" },
+    { name = "httpx-socks" },
     { name = "hypothesis" },
     { name = "lancedb" },
     { name = "mlx", marker = "platform_machine == 'arm64' and sys_platform == 'darwin'" },
     { name = "mlx-embeddings" },
+    { name = "outlines" },
     { name = "polars" },
     { name = "pyarrow" },
     { name = "pytest-hypothesis" },
     { name = "rapidfuzz" },
     { name = "selectolax" },
+    { name = "transformers" },
     { name = "uvloop", marker = "sys_platform == 'darwin'" },
     { name = "xxhash" },
 ]
@@ -1272,9 +1264,14 @@ torch = [
     { name = "torch" },
     { name = "torchvision" },
 ]
+transformers-stack = [
+    { name = "outlines" },
+    { name = "transformers" },
+]
 transport = [
     { name = "aiohttp-socks" },
     { name = "h2" },
+    { name = "httpx-socks" },
 ]
 webkit = [
     { name = "pyobjc-framework-cocoa", marker = "sys_platform == 'darwin'" },
@@ -1311,19 +1308,19 @@ requires-dist = [
     { name = "fast-langdetect", specifier = ">=1.0.1" },
     { name = "fast-langdetect", marker = "extra == 'light'", specifier = ">=1.0.0" },
     { name = "fast-langdetect", marker = "extra == 'nlp'", specifier = ">=1.0.0" },
-    { name = "flashrank", specifier = ">=0.2.10" },
+    { name = "flashrank", marker = "extra == 'flashrank-rerank'", specifier = ">=0.2.10" },
     { name = "flashrank", marker = "extra == 'rerank'", specifier = ">=0.2.10" },
     { name = "h2", marker = "extra == 'transport'", specifier = ">=4.1.0" },
-    { name = "hledac-universal", extras = ["apple-accel", "osint-html", "graph-storage", "acceleration", "transport"], marker = "extra == 'm1-local'" },
-    { name = "hledac-universal", extras = ["light", "apple-accel", "osint-html", "graph-storage", "dev", "acceleration", "nlp", "rerank", "browser", "webkit", "security", "transport", "ocr", "coreml", "coreml-export", "search", "tor", "legacy-html", "m1-local"], marker = "extra == 'all'" },
+    { name = "hledac-universal", extras = ["apple-accel", "osint-html", "graph-storage", "acceleration", "transport", "transformers-stack", "flashrank-rerank"], marker = "extra == 'm1-local'" },
+    { name = "hledac-universal", extras = ["light", "apple-accel", "osint-html", "graph-storage", "dev", "acceleration", "nlp", "rerank", "browser", "webkit", "security", "transport", "ocr", "coreml", "coreml-export", "search", "tor", "legacy-html", "transformers-stack", "flashrank-rerank", "kuzu-graph", "dspy", "m1-local"], marker = "extra == 'all'" },
     { name = "httpx", specifier = ">=0.27.0" },
+    { name = "httpx-socks", marker = "extra == 'transport'", specifier = ">=0.10.0" },
     { name = "hypothesis", marker = "extra == 'graph-storage'", specifier = ">=6.155.0" },
     { name = "iniconfig", marker = "extra == 'dev'", specifier = ">=2.0.0" },
-    { name = "kuzu", specifier = ">=0.11.3" },
+    { name = "kuzu", marker = "extra == 'kuzu-graph'", specifier = ">=0.11.3" },
     { name = "lancedb", marker = "extra == 'graph-storage'", specifier = ">=0.2.5" },
     { name = "liboqs-python", marker = "(platform_machine == 'aarch64' and extra == 'security') or (platform_machine == 'arm64' and extra == 'security')", specifier = ">=0.15.0" },
     { name = "liboqs-python", marker = "extra == 'pq'", specifier = ">=0.10.0" },
-    { name = "llmlingua", specifier = ">=0.2.2" },
     { name = "lmdb", specifier = ">=2.2.0" },
     { name = "maturin", marker = "extra == 'dev'", specifier = ">=1.0.0" },
     { name = "mlx", specifier = ">=0.31.2" },
@@ -1338,7 +1335,7 @@ requires-dist = [
     { name = "numpy", marker = "extra == 'dev'", specifier = ">=1.24.0" },
     { name = "onnxscript", specifier = ">=0.7.0" },
     { name = "orjson", specifier = ">=3.9.0" },
-    { name = "outlines", specifier = ">=1.3.0" },
+    { name = "outlines", marker = "extra == 'transformers-stack'", specifier = ">=1.3.0" },
     { name = "pillow", specifier = ">=12.2.0" },
     { name = "pluggy", marker = "extra == 'dev'", specifier = ">=1.0.0" },
     { name = "polars", marker = "extra == 'graph-storage'", specifier = ">=1.0.0" },
@@ -1367,12 +1364,12 @@ requires-dist = [
     { name = "stem", marker = "extra == 'tor'", specifier = ">=1.8.0" },
     { name = "torch", marker = "extra == 'torch'", specifier = ">=2.1.0" },
     { name = "torchvision", marker = "extra == 'torch'", specifier = ">=0.16.0" },
-    { name = "transformers", specifier = ">=5.8.0" },
+    { name = "transformers", marker = "extra == 'transformers-stack'", specifier = ">=5.8.0" },
     { name = "uvloop", marker = "sys_platform == 'darwin' and extra == 'apple-accel'", specifier = ">=0.21.0" },
     { name = "xxhash", specifier = ">=3.7.0" },
     { name = "xxhash", marker = "extra == 'osint-html'", specifier = ">=3.6.0" },
 ]
-provides-extras = ["light", "nlp", "apple-accel", "osint-html", "pq", "graph-storage", "torch", "dev", "acceleration", "ocr", "coreml", "coreml-export", "search", "tor", "legacy-html", "rerank", "browser", "webkit", "security", "transport", "dspy", "m1-local", "all"]
+provides-extras = ["light", "nlp", "apple-accel", "osint-html", "pq", "graph-storage", "torch", "dev", "acceleration", "ocr", "coreml", "coreml-export", "search", "tor", "legacy-html", "rerank", "browser", "webkit", "security", "transport", "kuzu-graph", "transformers-stack", "flashrank-rerank", "dspy", "m1-local", "all"]
 
 [package.metadata.requires-dev]
 dev = [{ name = "pytest-asyncio", specifier = ">=1.4.0" }]
@@ -1412,6 +1409,21 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/b1/df/48c586a5fe32a0f01324ee087459e112ebb7224f646c0b5023f5e79e9956/httpx-0.28.1.tar.gz", hash = "sha256:75e98c5f16b0f35b567856f597f06ff2270a374470a5c2392242528e3e3e42fc", size = 141406, upload-time = "2024-12-06T15:37:23.222Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/2a/39/e50c7c3a983047577ee07d2a9e53faf5a69493943ec3f6a384bdc792deb2/httpx-0.28.1-py3-none-any.whl", hash = "sha256:d909fcccc110f8c7faf814ca82a9a4d816bc5a6dbfea25d6591d6985b8ba59ad", size = 73517, upload-time = "2024-12-06T15:37:21.509Z" },
+]
+
+[[package]]
+name = "httpx-socks"
+version = "0.11.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "httpcore" },
+    { name = "httpx" },
+    { name = "python-socks" },
+    { name = "sniffio" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/17/b4/1a5a0f67207a117ca554677ccde6f30679d4b5c10a1bf838b93c7644f468/httpx_socks-0.11.0.tar.gz", hash = "sha256:2e2de097d87dfc228dd36e3c5ae0588c836e48159f5996b33cef540497af9b32", size = 117971, upload-time = "2025-12-05T05:46:41.997Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/36/2a/78b08da3f2c8eb4dd31420d0a38ed4fd4cce272dbe6a8a0d154c0300002b/httpx_socks-0.11.0-py3-none-any.whl", hash = "sha256:8c28ad569ccf681b45437ea8465203cbc082206659b6f623e4ea509b1eb4e8a7", size = 13308, upload-time = "2025-12-05T05:46:40.193Z" },
 ]
 
 [[package]]
@@ -1742,23 +1754,6 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/0f/78/9130ce2d49e33637de372c22620b00ae6b816c4636a3a0dee0d2390a649d/llguidance-1.7.5-cp39-abi3-manylinux_2_39_riscv64.whl", hash = "sha256:f1f9fb791a8def3de4feec9c40b5d4bd63b9f06e5315586a209d567467443293", size = 3604816, upload-time = "2026-04-29T19:11:05.244Z" },
     { url = "https://files.pythonhosted.org/packages/b2/98/067b0cac8143f00e72dfe81d463059fe4e3615182121df3be977443ea744/llguidance-1.7.5-cp39-abi3-win32.whl", hash = "sha256:01da2d40298c3487c188a0b3c5fba982afcccf8ed0ec523b05b6210ffa745036", size = 2612422, upload-time = "2026-04-29T19:11:06.932Z" },
     { url = "https://files.pythonhosted.org/packages/96/10/81469d27185bec13720ff1eff4b07c3d157d5633d0b2522ffb11ae09e81b/llguidance-1.7.5-cp39-abi3-win_amd64.whl", hash = "sha256:502e55c4521dde4be352b34e508dc665ddea3ae1f73c55c869f2d8b63475e4e5", size = 2883265, upload-time = "2026-04-29T19:11:08.414Z" },
-]
-
-[[package]]
-name = "llmlingua"
-version = "0.2.2"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "accelerate" },
-    { name = "nltk" },
-    { name = "numpy" },
-    { name = "tiktoken" },
-    { name = "torch" },
-    { name = "transformers" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/fd/02/7ed8ad9cec4b2f0a8a45c5b50a2435b559d2c764b5865e896d1c511080b1/llmlingua-0.2.2.tar.gz", hash = "sha256:1a0caedd8d5a65512a85dadb6bfda6f5b3c4b45e5cb9e7b1c6009573f9058572", size = 59753, upload-time = "2024-04-09T08:21:56.88Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/6e/3e/221fe46a3338f2babdb2082ee42df88fcaa8ea0e639e832cbb1b93c5923a/llmlingua-0.2.2-py3-none-any.whl", hash = "sha256:da55137efe0db78063b3395396efe8a0dcfe4ae5a09aea0d503c34b7bf1d800c", size = 30536, upload-time = "2024-04-09T08:21:55.428Z" },
 ]
 
 [[package]]
@@ -2214,21 +2209,6 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/6a/51/63fe664f3908c97be9d2e4f1158eb633317598cfa6e1fc14af5383f17512/networkx-3.6.1.tar.gz", hash = "sha256:26b7c357accc0c8cde558ad486283728b65b6a95d85ee1cd66bafab4c8168509", size = 2517025, upload-time = "2025-12-08T17:02:39.908Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/9e/c9/b2622292ea83fbb4ec318f5b9ab867d0a28ab43c5717bb85b0a5f6b3b0a4/networkx-3.6.1-py3-none-any.whl", hash = "sha256:d47fbf302e7d9cbbb9e2555a0d267983d2aa476bac30e90dfbe5669bd57f3762", size = 2068504, upload-time = "2025-12-08T17:02:38.159Z" },
-]
-
-[[package]]
-name = "nltk"
-version = "3.9.4"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "click" },
-    { name = "joblib" },
-    { name = "regex" },
-    { name = "tqdm" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/74/a1/b3b4adf15585a5bc4c357adde150c01ebeeb642173ded4d871e89468767c/nltk-3.9.4.tar.gz", hash = "sha256:ed03bc098a40481310320808b2db712d95d13ca65b27372f8a403949c8b523d0", size = 2946864, upload-time = "2026-03-24T06:13:40.641Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/9d/91/04e965f8e717ba0ab4bdca5c112deeab11c9e750d94c4d4602f050295d39/nltk-3.9.4-py3-none-any.whl", hash = "sha256:f2fa301c3a12718ce4a0e9305c5675299da5ad9e26068218b69d692fda84828f", size = 1552087, upload-time = "2026-03-24T06:13:38.47Z" },
 ]
 
 [[package]]

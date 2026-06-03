@@ -661,37 +661,57 @@ class ForensicsEnricher:
             return None
 
         try:
-            def _sync_dns() -> dict[str, Any]:
+            # Sprint F207N-C: prefer dns.asyncresolver (non-blocking on M1, no thread slot).
+            # Fallback to sync dns.resolver via asyncio.to_thread if async resolver unavailable.
+            async def _async_dns() -> dict[str, Any]:
                 try:
-                    import dns.resolver
-
+                    import dns.asyncresolver
+                    resolver = dns.asyncresolver.Resolver()
+                    resolver.lifetime = _EXTERNAL_LOOKUP_TIMEOUT
+                    resolver.timeout = _EXTERNAL_LOOKUP_TIMEOUT
                     result: dict[str, Any] = {"a": [], "aaaa": [], "mx": [], "ns": []}
                     try:
-                        a_records = dns.resolver.resolve(domain, "A", lifetime=_EXTERNAL_LOOKUP_TIMEOUT)
-                        result["a"] = [str(r) for r in a_records]
+                        ans = await resolver.resolve(domain, "A")
+                        result["a"] = [str(r) for r in ans]
                     except Exception:
                         pass
                     try:
-                        aaaa_records = dns.resolver.resolve(domain, "AAAA", lifetime=_EXTERNAL_LOOKUP_TIMEOUT)
-                        result["aaaa"] = [str(r) for r in aaaa_records]
+                        ans = await resolver.resolve(domain, "AAAA")
+                        result["aaaa"] = [str(r) for r in ans]
                     except Exception:
                         pass
                     try:
-                        mx_records = dns.resolver.resolve(domain, "MX", lifetime=_EXTERNAL_LOOKUP_TIMEOUT)
-                        result["mx"] = [f"{r.preference} {r.exchange}" for r in mx_records]
+                        ans = await resolver.resolve(domain, "MX")
+                        result["mx"] = [f"{r.preference} {r.exchange}" for r in ans]
                     except Exception:
                         pass
                     try:
-                        ns_records = dns.resolver.resolve(domain, "NS", lifetime=_EXTERNAL_LOOKUP_TIMEOUT)
-                        result["ns"] = [str(r) for r in ns_records]
+                        ans = await resolver.resolve(domain, "NS")
+                        result["ns"] = [str(r) for r in ans]
                     except Exception:
                         pass
                     return result
-                except Exception:
-                    return {}
+                except ImportError:
+                    # Fallback: sync resolver in thread (slightly heavier, still bounded)
+                    import dns.resolver
+                    res: dict[str, Any] = {"a": [], "aaaa": [], "mx": [], "ns": []}
+                    for rtype, key, fmt in (
+                        ("A", "a", lambda r: str(r)),
+                        ("AAAA", "aaaa", lambda r: str(r)),
+                        ("MX", "mx", lambda r: f"{r.preference} {r.exchange}"),
+                        ("NS", "ns", lambda r: str(r)),
+                    ):
+                        try:
+                            ans = await asyncio.to_thread(
+                                dns.resolver.resolve, domain, rtype, lifetime=_EXTERNAL_LOOKUP_TIMEOUT
+                            )
+                            res[key] = [fmt(rec) for rec in ans]
+                        except Exception:
+                            pass
+                    return res
 
             result = await asyncio.wait_for(
-                asyncio.to_thread(_sync_dns),
+                _async_dns(),
                 timeout=_EXTERNAL_LOOKUP_TIMEOUT,
             )
             return result if result else None

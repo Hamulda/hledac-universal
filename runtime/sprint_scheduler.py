@@ -78,7 +78,7 @@ from pathlib import Path
 
 from enum import Enum, auto
 
-from typing import TYPE_CHECKING, Any, Callable, Final, Optional, Sequence
+from typing import TYPE_CHECKING, Any, Callable, Final, Sequence
 
 
 
@@ -200,7 +200,7 @@ MAX_LANE_REJECTIONS: int = 1000
 
 # E4: gc.callbacks for sprint-level GC telemetry — module-level state
 
-_gc_sprint_callback_handle: Optional[Callable] = None  # stores registered callback function
+_gc_sprint_callback_handle: Callable | None = None  # stores registered callback function
 
 MAX_GC_STATS: int = 1000  # Sprint F219M: bound GC telemetry
 
@@ -1028,7 +1028,7 @@ class _LifecycleAdapter:
 
 
 
-    def tick(self, now_monotonic: Optional[float] = None):
+    def tick(self, now_monotonic: float | None = None):
 
         """runtime: tick() returns SprintPhase. Fallback: 'UNKNOWN' phase string."""
 
@@ -1050,7 +1050,7 @@ class _LifecycleAdapter:
 
 
 
-    def remaining_time(self, now_monotonic: Optional[float] = None) -> float:
+    def remaining_time(self, now_monotonic: float | None = None) -> float:
 
         """runtime: remaining_time(). utils: remaining_time property."""
 
@@ -1094,7 +1094,7 @@ class _LifecycleAdapter:
 
 
 
-    def should_enter_windup(self, now_monotonic: Optional[float] = None) -> bool:
+    def should_enter_windup(self, now_monotonic: float | None = None) -> bool:
 
         """runtime: should_enter_windup(). utils: is_windup_phase()."""
 
@@ -1172,7 +1172,7 @@ class _LifecycleAdapter:
 
 
 
-    def recommended_tool_mode(self, now_monotonic: Optional[float] = None) -> str:
+    def recommended_tool_mode(self, now_monotonic: float | None = None) -> str:
 
         """runtime: recommended_tool_mode(). Returns 'normal'/'prune'/'panic'."""
 
@@ -4137,11 +4137,11 @@ class SprintScheduler:
 
         # Sprint 8SA: Lifecycle adapter — normalizes runtime/ vs utils/ API
 
-        self._lc_adapter: Optional[_LifecycleAdapter] = None
+        self._lc_adapter: _LifecycleAdapter | None = None
 
         # Sprint 8RA: Persistent cross-sprint dedup
 
-        self._dedup_env: Optional[lmdb.Environment] = None
+        self._dedup_env: lmdb.Environment | None = None
 
         self._dedup_seen: set[str] = set()  # in-memory cache for fast lookup
 
@@ -4231,7 +4231,7 @@ class SprintScheduler:
 
         self._arrow_last_flush: float = 0.0
 
-        self._duckdb_read_con: Optional[Any] = None
+        self._duckdb_read_con: Any | None = None
 
         # Sprint 8BK: Wall-clock start for duration budget guard
 
@@ -4271,7 +4271,7 @@ class SprintScheduler:
 
         self._arrow_batch_dropped_after_flush_failure: int = 0
 
-        self._arrow_last_flush_error: Optional[str] = None
+        self._arrow_last_flush_error: str | None = None
 
         self._fetch_semaphore: asyncio.Semaphore = asyncio.Semaphore(20)
 
@@ -4421,8 +4421,8 @@ class SprintScheduler:
                                     f[field_name] = anon_text
                                 else:
                                     setattr(f, field_name, anon_text)
-                            except Exception:
-                                pass
+                            except Exception as e:
+                                logger.debug(f"[PII] anonymization setattr failed for field {field_name}: {e}")
 
                     if has_pii:
                         pii_count += 1
@@ -4515,11 +4515,11 @@ class SprintScheduler:
 
         # Bounded: max 500 findings to prevent OOM on M1 8GB
 
-        self._correlation_cache: Optional[dict] = None
+        self._correlation_cache: dict | None = None
 
-        self._hypothesis_pack_cache: Optional[dict] = None
+        self._hypothesis_pack_cache: dict | None = None
 
-        self._branch_value_summary: Optional[dict] = None
+        self._branch_value_summary: dict | None = None
 
         # Sprint F206BG: Acquisition strategy plan — built at sprint start, diagnostic only
 
@@ -4615,7 +4615,7 @@ class SprintScheduler:
 
         # Sprint F204D: Target memory service for cross-sprint target state
 
-        self._target_memory_service: Optional[TargetMemoryService] = None
+        self._target_memory_service: TargetMemoryService | None = None
 
         # Sprint F204E: Analyst workbench for sprint brief generation
 
@@ -5477,7 +5477,7 @@ class SprintScheduler:
 
         sources: Sequence[str],
 
-        now_monotonic: Optional[float] = None,
+        now_monotonic: float | None = None,
 
         query: str = "",
 
@@ -5487,7 +5487,7 @@ class SprintScheduler:
 
         policy_manager: Any = None,
 
-        progress_callback: Optional[Any] = None,
+        progress_callback: Any | None = None,
 
     ) -> SprintSchedulerResult:
 
@@ -5513,9 +5513,14 @@ class SprintScheduler:
 
         """
 
-        # Sprint 8SA: Lifecycle adapter — bridges runtime/ vs utils/ API
+        adapter: _LifecycleAdapter | None = None
+        try:
+            # Sprint 8SA: Lifecycle adapter — bridges runtime/ vs utils/ API
 
-        adapter = _LifecycleAdapter(lifecycle)
+            adapter = _LifecycleAdapter(lifecycle)
+
+        except Exception as _adapter_exc:
+            logger.debug(f"[LIFECYCLE] adapter init failed: {_adapter_exc}")
 
         # Sprint F210A: Store query for terminality recompute at export time
 
@@ -7426,7 +7431,6 @@ class SprintScheduler:
 
                     log.debug(f"[F228A] policy_quality_feedback decision collection failed: {_e}")
 
-    
 
             # Sprint F208I-B: Finalize result ONCE before returning.
 
@@ -7546,15 +7550,18 @@ class SprintScheduler:
         # Sprint F26X-3: CommunicationLayer advisory post-sprint result broadcast.
         # Publish the final SprintSchedulerResult summary so external subscribers
         # (privacy gate, LMDB ingest, forensic fan-out) can flush buffers. Fail-soft.
-        if self._communication_layer is not None:
-            try:
-                _broadcast = getattr(self._communication_layer, "broadcast_message", None)
-                if _broadcast is not None:
-                    _summary = {"event": "sprint_end", "sprint_id": self._sprint_id, "findings": len(self._result.findings) if self._result is not None else 0}
-                    if asyncio.iscoroutine(_broadcast(_summary)):
-                        await _broadcast(_summary)
-            except Exception:
-                pass
+        try:
+            if self._communication_layer is not None:
+                try:
+                    _broadcast = getattr(self._communication_layer, "broadcast_message", None)
+                    if _broadcast is not None:
+                        _summary = {"event": "sprint_end", "sprint_id": self._sprint_id, "findings": len(self._result.findings) if self._result is not None else 0}
+                        if asyncio.iscoroutine(_broadcast(_summary)):
+                            await _broadcast(_summary)
+                except Exception:
+                    pass
+        except Exception as _broadcast_layer_exc:
+            logger.debug(f"[F26X-3] communication layer post-sprint broadcast failed: {_broadcast_layer_exc}")
 
         return self._result
 
@@ -11848,7 +11855,7 @@ class SprintScheduler:
 
             # F228A / F235C: Build NonfeedSeedContext from pivot seeds + next_seeds_ioc values.
 
-            _seed_ctx: Optional[NonfeedSeedContext] = None
+            _seed_ctx: NonfeedSeedContext | None = None
 
             _pivot_has_seeds = (self._result.pivot_seed_domains or self._result.pivot_seed_ips
 
@@ -12050,9 +12057,9 @@ class SprintScheduler:
 
         nonfeed_prelude_errors: dict[str, str],
 
-        pivot_lanes: Optional[Sequence[Any]] = None,
+        pivot_lanes: (Sequence[Any] | None) = None,
 
-        seed_context: Optional["NonfeedSeedContext"] = None,
+        seed_context: "NonfeedSeedContext" | None = None,
 
     ) -> None:
 
@@ -12236,7 +12243,7 @@ class SprintScheduler:
 
         nonfeed_prelude_skipped: dict[str, str],
 
-        seed_context: Optional["NonfeedSeedContext"] = None,
+        seed_context: "NonfeedSeedContext" | None = None,
 
     ) -> tuple[str, int]:
 
@@ -12340,7 +12347,7 @@ class SprintScheduler:
 
         nonfeed_prelude_accepted: dict[str, int],
 
-        seed_context: Optional["NonfeedSeedContext"] = None,
+        seed_context: "NonfeedSeedContext" | None = None,
 
     ) -> tuple[str, int]:
 
@@ -12428,9 +12435,9 @@ class SprintScheduler:
 
         nonfeed_prelude_accepted: dict[str, int],
 
-        pivot_doh_items: Optional[Sequence[Any]] = None,
+        pivot_doh_items: (Sequence[Any] | None) = None,
 
-        seed_context: Optional["NonfeedSeedContext"] = None,
+        seed_context: "NonfeedSeedContext" | None = None,
 
     ) -> tuple[str, int]:
 
@@ -12482,7 +12489,7 @@ class SprintScheduler:
 
         # pivot_doh_items is a Sequence of LanePlanItem(lane="DOH", seed_value=..., seed_type=...)
 
-        _doh_domain: Optional[str] = None
+        _doh_domain: str | None = None
 
         if pivot_doh_items:
 
@@ -13388,7 +13395,7 @@ class SprintScheduler:
 
         sources: Sequence[str],
 
-        now_monotonic: Optional[float] = None,
+        now_monotonic: float | None = None,
 
         query: str = "",
 
@@ -27763,7 +27770,7 @@ class SprintScheduler:
 
             # Shadow path uses source_tier_map as lightweight heuristic (avoids cold-import cost).
 
-            registry_tools: Optional[list[str]] = None  # deferred: no full registry init in shadow path
+            registry_tools: (list[str] | None) = None  # deferred: no full registry init in shadow path
 
 
 
@@ -27795,7 +27802,7 @@ class SprintScheduler:
 
                 # Correlation context from scheduler run (run_id present in sprint context)
 
-                correlation_context: Optional[Dict[str, Any]] = None
+                correlation_context: (Dict[str, Any] | None) = None
 
                 if hasattr(self, "_run_id") and self._run_id:
 
@@ -29767,11 +29774,11 @@ async def async_run_tiered_feed_sprint_once(
 
     sources: Sequence[str],
 
-    config: Optional[SprintSchedulerConfig] = None,
+    config: SprintSchedulerConfig | None = None,
 
-    lifecycle: Optional[object] = None,
+    lifecycle: object | None = None,
 
-    now_monotonic: Optional[float] = None,
+    now_monotonic: float | None = None,
 
     query: str = "",
 
@@ -29827,10 +29834,15 @@ SPRINT_TIERS: dict = {
 }
 
 
+class SprintTooShortError(ValueError):
+    """Raised when sprint duration is below minimum."""
+    pass
+
+
 def detect_sprint_tier(duration_s: float) -> str:
     """Detect sprint tier from duration in seconds."""
     if duration_s < 60:
-        raise ValueError(f"Sprint duration {duration_s}s is below minimum 60s")
+        raise SprintTooShortError(f"Sprint duration {duration_s}s is below minimum 60s")
     if duration_s < 180:
         return "quick"
     if duration_s < 300:
@@ -29838,8 +29850,3 @@ def detect_sprint_tier(duration_s: float) -> str:
     if duration_s < 600:
         return "deep"
     return "thorough"
-
-
-class SprintTooShortError(ValueError):
-    """Raised when sprint duration is below minimum."""
-    pass

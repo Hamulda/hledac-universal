@@ -220,8 +220,8 @@ class _DHTBootstrapProtocol(asyncio.DatagramProtocol):
                 ip = ".".join(str(b) for b in ip_bytes)
                 port = int.from_bytes(raw_port, "big")
                 self._nodes_found[nid.hex()] = {"id": nid.hex(), "host": ip, "port": port}
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"[DHT] node parse failed: {e}")
 
     def error_received(self, exc: Exception) -> None:
         self._error = exc
@@ -488,8 +488,8 @@ async def crawl_dht_for_keyword(
                                 "peers": value.get("peers", 0),
                                 "source": "dht",
                             }
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug(f"[DHT] result collection failed: {e}")
                 return None
 
         while (time.monotonic() - start_time) < duration_s and len(results) < max_results:

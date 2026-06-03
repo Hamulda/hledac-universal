@@ -23,6 +23,11 @@ class PromptBandit:
         "contextual",   # inject global context z ghost_global
     ]
 
+    # Cap on per-arm LinUCB state entries. d=9 → 9*9*8=648 B/entry (np.float64).
+    # 256 arms × 648 B ≈ 162 KB — well within M1 8GB UMA budget. Eviction
+    # uses _counts as the LRU signal: arm with fewest pulls gets dropped first.
+    MAX_BANDIT_ARMS: int = 256
+
     def __init__(self, brain_manager=None, alpha: float = 1.0, lambda_reg: float = 0.01,
                  context_dim: int = 9, persist_path: str = None):
         self._brain = brain_manager
@@ -76,6 +81,9 @@ class PromptBandit:
                     self._A[int(k)] = np.array(v, dtype=np.float64)
                 for k, v in data.get('b', {}).items():
                     self._b[int(k)] = np.array(v, dtype=np.float64)
+                # B.5: enforce arm cap after bulk load — persistence file
+                # may have grown beyond MAX_BANDIT_ARMS across runs.
+                self._enforce_arm_cap()
 
                 self._n_variants = data.get('n_variants', 0)
             except Exception as e:
@@ -110,6 +118,32 @@ class PromptBandit:
                 temp.replace(self._persist_path)
             except Exception as e:
                 logger.warning(f"Bandit save failed: {e}")
+
+    def _enforce_arm_cap(self) -> None:
+        """
+        Evict least-pulled arms if we exceed MAX_BANDIT_ARMS.
+        LRU signal: arm with fewest _counts[i] is dropped first.
+        Removes state from _A, _b, _counts, _rewards in lock-step so
+        update() never sees a half-deleted arm. Fail-soft: any error
+        is logged, never raised — bandit continues with the over-cap
+        entry rather than crashing the inference path.
+        """
+        try:
+            if len(self._A) <= self.MAX_BANDIT_ARMS:
+                return
+            n_to_evict = len(self._A) - self.MAX_BANDIT_ARMS
+            # Sort arms by pull count ascending — least-pulled first
+            sorted_arms = sorted(
+                self._A.keys(),
+                key=lambda i: (self._counts.get(i, 0), i)
+            )
+            for i in sorted_arms[:n_to_evict]:
+                self._A.pop(i, None)
+                self._b.pop(i, None)
+                self._counts.pop(i, None)
+                self._rewards.pop(i, None)
+        except Exception as e:
+            logger.warning(f"Bandit arm cap eviction failed: {e}")
 
     def _get_context_vector(self, context: dict = None) -> list:
         """9‑dimenzionální kontextový vektor."""
@@ -188,6 +222,9 @@ class PromptBandit:
                 if i not in self._A:
                     self._A[i] = self._lambda * np.eye(self._d, dtype=np.float64)
                     self._b[i] = np.zeros(self._d, dtype=np.float64)
+                    # B.5: cap-check after each lazy arm init in select loop
+                    if len(self._A) > self.MAX_BANDIT_ARMS:
+                        self._enforce_arm_cap()
 
                 A_i = self._A[i]
                 b_i = self._b[i]
@@ -230,6 +267,9 @@ class PromptBandit:
             if idx not in self._A:
                 self._A[idx] = self._lambda * np.eye(self._d, dtype=np.float64)
                 self._b[idx] = np.zeros(self._d, dtype=np.float64)
+                # B.5: cap-check after adding a new arm in update()
+                if len(self._A) > self.MAX_BANDIT_ARMS:
+                    self._enforce_arm_cap()
             self._A[idx] += np.outer(x_np, x_np)
             self._b[idx] += reward * x_np
         except ImportError:

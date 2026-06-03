@@ -22,7 +22,7 @@ _VN_AVAILABLE = False
 _YOLO_AVAILABLE = False
 
 # CoreML tools version
-_COREMLTOOLS_VERSION: Optional[float] = None
+_COREMLTOOLS_VERSION: float = 0.0
 
 try:
     import coremltools as ct
@@ -100,7 +100,7 @@ class VisionCaptchaSolver:
 
     def __init__(
         self,
-        model_path: Optional[str] = None,
+        model_path: str | None = None,
         use_ane: bool = True
     ):
         """
@@ -153,7 +153,7 @@ class VisionCaptchaSolver:
         """Generate cache key from data hash."""
         return hashlib.sha256(data).hexdigest()[:16]
 
-    def _get_cached_result(self, cache_key: str) -> Optional[object]:
+    def _get_cached_result(self, cache_key: str) -> object | None:
         """Get cached result if not expired."""
         if cache_key not in self._result_cache:
             return None
@@ -289,7 +289,7 @@ class VisionCaptchaSolver:
     # P7: OCR and 2Captcha integration
     # ========================================================================
 
-    async def solve_image_captcha(self, image_bytes: bytes) -> Optional[str]:
+    async def solve_image_captcha(self, image_bytes: bytes) -> str | None:
         """
         OCR via pytesseract (free, local). Returns None if unavailable.
 
@@ -319,7 +319,7 @@ class VisionCaptchaSolver:
             logger.warning(f"pytesseract OCR failed: {e}")
             return None
 
-    async def solve_via_2captcha(self, image_bytes: bytes) -> Optional[str]:
+    async def solve_via_2captcha(self, image_bytes: bytes) -> str | None:
         """
         Cloud CAPTCHA solving via 2Captcha API. Only if API key configured.
         Polls with backoff (10 attempts, 3s interval).
@@ -371,7 +371,7 @@ class VisionCaptchaSolver:
             logger.warning(f"2Captcha request failed: {e}")
         return None
 
-    async def solve(self, image_bytes: bytes) -> Optional[str]:
+    async def solve(self, image_bytes: bytes) -> str | None:
         """
         Unified CAPTCHA solving: OCR first (free), 2Captcha fallback (paid).
 
@@ -404,7 +404,7 @@ class VisionCaptchaSolver:
 # P7: Legacy function-based API for compatibility
 # ========================================================================
 
-async def solve_captcha(image_bytes: bytes, api_key: Optional[str] = None) -> Optional[str]:
+async def solve_captcha(image_bytes: bytes, api_key: str | None = None) -> str | None:
     """
     Standalone CAPTCHA solver function.
 

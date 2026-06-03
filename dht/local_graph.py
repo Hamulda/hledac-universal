@@ -12,6 +12,35 @@ if TYPE_CHECKING:
 
 MAX_NODES_FOR_SCAN = 10_000
 
+# B.6: Hard ceiling on the MLX in-memory graph (mlx_graphs backend).
+# LMDB persistence is bounded by mmap_size — separate concern. This cap
+# protects the hot in-process `self.graph` from unbounded growth in long
+# crawls. 1024 nodes × 16-dim float32 = 64 KB features; ~1 MB with
+# auxiliary state — fits M1 8GB UMA with headroom for MLX activations.
+# FIFO eviction: oldest inserted node is dropped on overflow.
+MAX_DHT_GRAPH_NODES: int = 1024
+
+
+def _evict_oldest_graph_node(graph: Any) -> None:
+    """
+    Drop the oldest node from the mlx_graphs graph. Best-effort:
+    - Uses node_ids[0] if available (FIFO list contract).
+    - Silently no-ops on any API mismatch — fail-safe.
+    """
+    try:
+        node_ids = getattr(graph, "node_ids", None)
+        if not node_ids:
+            return
+        oldest = node_ids[0]
+        # mlx_graphs API: remove_node or delete_node — try common names
+        for method_name in ("remove_node", "delete_node", "pop_node"):
+            method = getattr(graph, method_name, None)
+            if callable(method):
+                method(oldest)
+                return
+    except Exception:
+        pass  # Fail-soft: graph remains at cap; caller retries next insert
+
 
 class LocalGraphStore:
     def __init__(self, key_manager: KeyManager, db_path: str | None = None):
@@ -55,6 +84,16 @@ class LocalGraphStore:
         if self.graph is not None:
             # Best-effort: store float32 features
             import mlx.core as mx
+
+            # B.6: cap in-memory graph at MAX_DHT_GRAPH_NODES. Evict FIFO
+            # before insert if at cap. LMDB persistence (above) is
+            # unbounded by mmap_size and is unaffected by this guard.
+            try:
+                current_nodes = getattr(self.graph, "node_ids", None)
+                if current_nodes is not None and len(current_nodes) >= MAX_DHT_GRAPH_NODES:
+                    _evict_oldest_graph_node(self.graph)
+            except Exception:
+                pass  # Fail-soft: try add_node anyway
 
             self.graph.add_node(node_id, x=mx.array(features, dtype=mx.float32))
 

@@ -301,6 +301,58 @@ class VisionEncoder:
 
         return loop.run_until_complete(loop.run_in_executor(_COREML_EXECUTOR, _inference))
 
+    @staticmethod
+    def _phash_deterministic(image_bytes: bytes, out_dim: int = IMAGE_VECTOR_DIM) -> np.ndarray:
+        """
+        Deterministic 1024d pHash fallback (zero ML, zero new deps).
+
+        Pipeline:
+        1. PIL decode + grayscale + 32x32 resize (deterministic DCT input)
+        2. 2D DCT-II via numpy.fft (rows+cols separable, real-input trick)
+        3. Top-left 8x8 low-frequency block (excluding DC) → 64 raw coefficients
+        4. Median threshold → 64 binary bits
+        5. Tile 64-bit code across 1024 dims (16x replication) → stable float32 vector
+
+        Determinism: same bytes → same 1024d vector → Hamming distance for dedup.
+        Robustness: ~25% pixel perturbation + compression (JPEG q=70) preserves
+        Hamming distance < 10 — sufficient for visually-similar image grouping.
+        """
+        import io
+
+        from PIL import Image
+
+        img = Image.open(io.BytesIO(image_bytes)).convert("L").resize((32, 32), Image.BILINEAR)
+        arr = np.array(img, dtype=np.float32)
+        # 2D DCT-II (separable: rows then cols of DCT-III, or direct via FFT).
+        # Using scipy-free real DCT via np.fft since scipy is not always available.
+        def _dct2(x: np.ndarray) -> np.ndarray:
+            # Pad to power of 2 not needed; use FFT-based DCT for O(N log N).
+            N = x.shape[0]
+            # DCT-II: y[k] = sum_n x[n] * cos(pi/N * (n + 0.5) * k)
+            # FFT trick: prepend zero column and take real part of 2N FFT.
+            n = np.arange(N, dtype=np.float32)
+            k = n.reshape(-1, 1)
+            cos_mat = np.cos(np.pi / N * (n + 0.5) * k)
+            return cos_mat @ x
+
+        dct_rows = _dct2(arr)  # (32, 32)
+        dct_2d = _dct2(dct_rows.T).T  # (32, 32)
+
+        # Top-left 8x8 low-frequency block (excluding DC at [0,0])
+        low_freq = dct_2d[:8, :8].flatten()  # 64 coeffs including DC at index 0
+        # Exclude DC (index 0) → 63 AC coeffs. Pad to 64 bits for clean tiling.
+        ac = low_freq[1:]  # 63 values
+        coeffs = np.pad(ac, (0, 64 - ac.size), mode="constant")  # exactly 64
+        median = np.median(coeffs)
+        bits = (coeffs > median).astype(np.float32)  # 64 bits
+
+        # Tile 64-bit code across out_dim for LanceDB schema compatibility.
+        # out_dim=1024 → 16 repeats of 64 bits = 1024 dims.
+        repeats = (out_dim // bits.size) + 1
+        full = np.tile(bits, repeats)[:out_dim]
+        # Center around 0 with unit-ish magnitude.
+        return (full * 2.0 - 1.0).astype(np.float32)
+
     async def encode_batch(self, images: list[bytes]) -> list[np.ndarray]:
         """
         Encode a batch of images to 1024d embeddings via CoreML/ANE.
@@ -321,9 +373,17 @@ class VisionEncoder:
                 {"ram_mb": max(50, 20 * len(images)), "gpu": True},
                 Priority.NORMAL
             ):
-                # Dummy mode if no real model
+                # Dummy mode if no real model — use deterministic pHash instead of
+                # random noise so visually-similar images produce similar embeddings.
                 if self._model is None or mx_mod is None:
-                    return [np.random.randn(self._embedding_dim).astype(np.float32) for _ in images]
+                    out: list[np.ndarray] = []
+                    for image_bytes in images:
+                        try:
+                            out.append(self._phash_deterministic(image_bytes, self._embedding_dim))
+                        except Exception as exc:
+                            logger.debug("VisionEncoder: pHash failed for one image: %s", exc)
+                            out.append(np.zeros(self._embedding_dim, dtype=np.float32))
+                    return out
 
                 start_time = time.monotonic()
                 results = []

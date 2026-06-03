@@ -13,7 +13,7 @@ import logging
 import os
 import time
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Any
 
 from aiohttp import ClientSession
 
@@ -34,9 +34,9 @@ MATRIX_RATE_LIMIT_DELAY = 2.0  # seconds between requests
 class MatrixRoom:
     """Represents a Matrix public room."""
     room_id: str
-    name: Optional[str]
-    topic: Optional[str]
-    canonical_alias: Optional[str]
+    name: str | None
+    topic: str | None
+    canonical_alias: str | None
     num_joined_members: int
     world_readable: bool
     guest_can_join: bool
@@ -51,9 +51,9 @@ class MatrixPublicAdapter:
     Requires guest access token for reading room messages.
     """
     _homeserver: str = field(default=MATRIX_HOMESERVER)
-    _access_token: Optional[str] = field(default=None, repr=False)
+    _access_token: str | None = field(default=None, repr=False)
     _token_acquired_at: float = field(default=0.0, repr=False)
-    _session: Optional[ClientSession] = field(default=None, repr=False)
+    _session: ClientSession | None = field(default=None, repr=False)
     _last_request_time: float = field(default=0.0, repr=False)
 
     @property
@@ -204,7 +204,7 @@ class MatrixPublicAdapter:
             logger.debug(f"Room messages fetch failed for {room_id}: {e}")
             return []
 
-    async def get_room_info(self, room_id: str) -> Optional[dict]:
+    async def get_room_info(self, room_id: str) -> dict | None:
         """Get room state information.
 
         Args:

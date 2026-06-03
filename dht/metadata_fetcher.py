@@ -12,7 +12,7 @@ import asyncio
 import hashlib
 import struct
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Any
 import logging
 
 logger = logging.getLogger(__name__)
@@ -39,9 +39,9 @@ class TorrentInfo:
     piece_length: int
     pieces: bytes
     trackers: list[str]
-    creation_date: Optional[int] = None
-    created_by: Optional[str] = None
-    comment: Optional[str] = None
+    creation_date: int | None = None
+    created_by: str | None = None
+    comment: str | None = None
 
 
 @dataclass
@@ -59,7 +59,7 @@ class TorrentMetadataFetcher:
         infohash: bytes,
         peers: list[tuple[str, int]],
         timeout: float = BEP_9_TIMEOUT
-    ) -> Optional[TorrentInfo]:
+    ) -> TorrentInfo | None:
         """Fetch torrent metadata from available peers.
 
         Args:
@@ -99,7 +99,7 @@ class TorrentMetadataFetcher:
         port: int,
         infohash: bytes,
         timeout: float
-    ) -> Optional[TorrentInfo]:
+    ) -> TorrentInfo | None:
         """Attempt to fetch metadata from a single peer."""
         try:
             reader, writer = await asyncio.wait_for(
@@ -238,7 +238,7 @@ class TorrentMetadataFetcher:
         msg = bytes([msg_id]) + bencoded
         return struct.pack(">I", len(msg)) + msg
 
-    def _parse_extended_handshake(self, data: bytes) -> tuple[Optional[int], Optional[int]]:
+    def _parse_extended_handshake(self, data: bytes) -> tuple[int | None, int | None]:
         """Parse extended handshake to extract metadata_size and ut_metadata_id."""
         try:
             decoded = self._decode_bencode(data)

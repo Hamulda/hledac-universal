@@ -30,9 +30,12 @@ from __future__ import annotations
 
 import hashlib
 import heapq
+import logging
 import re
 import time
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 try:
     from hledac.universal.knowledge.duckdb_store import CanonicalFinding
@@ -1875,8 +1878,8 @@ def rdap_result_to_findings(
                 registrar_name = registrar_list.get("name", "") or registrar_list.get("fullName", "")
             elif registrar_list:
                 registrar_name = str(registrar_list)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"[RDAP] registrar extraction failed: {e}")
 
         ns_list = []
         try:

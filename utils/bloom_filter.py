@@ -31,7 +31,7 @@ import logging
 import math
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Union, cast
+from typing import Any, cast
 
 logger = logging.getLogger(__name__)
 
@@ -218,7 +218,7 @@ class BloomFilter:
             memory_bytes=len(self._byte_array)
         )
 
-    def save(self, filepath: Union[str, Path]) -> None:
+    def save(self, filepath: str | Path) -> None:
         """Save Bloom Filter to file."""
         data = {
             'size': self.size,
@@ -232,7 +232,7 @@ class BloomFilter:
             json.dump(data, f)
 
     @classmethod
-    def load(cls, filepath: Union[str, Path]) -> BloomFilter:
+    def load(cls, filepath: str | Path) -> BloomFilter:
         """Load Bloom Filter from file."""
         with open(filepath) as f:
             data = json.load(f)

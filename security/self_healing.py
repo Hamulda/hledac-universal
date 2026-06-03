@@ -461,7 +461,7 @@ class SelfHealingCICD:
         self.health_checks["health_check"] = HealthCheck(
             component=CIComponent.HEALTH_CHECKS,
             name="Application Health Check",
-            command=["python", "-c", "import requests; requests.get('http://localhost:8000/health', timeout=10).status_code == 200"],
+            command=["python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=10).status == 200"],
             timeout=30,
             success_criteria="exit_code == 0",
             retry_count=3,

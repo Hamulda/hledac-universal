@@ -1047,8 +1047,8 @@ class DuckDBShadowStore:
             self._file_conn.execute("PRAGMA enable_object_cache=false")
             try:
                 self._file_conn.execute("SET preserve_insertion_order = false")
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"[DUCKDB] preserve_insertion_order config failed: {e}")
         else:
             # MODE B: RAMDISK inactive — :memory: with PERSISTENT single connection
             self._persistent_conn = duckdb.connect(":memory:")
@@ -3158,11 +3158,12 @@ class DuckDBShadowStore:
         """
         import os as _os
         import sqlite3
+        from pathlib import Path
 
-        ghost_home = _os.path.join(_os.path.expanduser("~"), ".hledac")
-        _os.makedirs(ghost_home, exist_ok=True)
-        db_path = _os.path.join(ghost_home, "ghost_global.duckdb")
-        lock_path = _os.path.join(ghost_home, "ghost_global.lock")
+        ghost_home = Path.home() / ".hledac"
+        ghost_home.mkdir(parents=True, exist_ok=True)
+        db_path = ghost_home / "ghost_global.duckdb"
+        lock_path = ghost_home / "ghost_global.lock"
 
         # Use file-based locking
         import fcntl
