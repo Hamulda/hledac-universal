@@ -558,54 +558,69 @@ async def enrich_ip_as_finding(ip: str) -> list[CanonicalFinding]:
     actual_ip = public_ips[0]
     aiohttp = _get_aiohttp()
 
+    # Lazy imports for circuit breaker + IPFS session pool reuse
+    from hledac.universal.network.ipfs_client import (
+        _get_ipfs_session,
+        _ipfs_checked_get,
+        _host_from_url,
+    )
+    from hledac.universal.transport.circuit_breaker import get_breaker
+
+    client_timeout = aiohttp.ClientTimeout(total=_RIPE_TIMEOUT)
+
     try:
-        async with aiohttp.ClientSession(
-            timeout=aiohttp.ClientTimeout(total=_RIPE_TIMEOUT)
-        ) as session:
-            # Fetch prefix-overview and whois concurrently
-            async with session.get(
-                f"{_RIPE_PREFIX_URL}?resource={actual_ip}",
-                headers={"Accept": "application/json"},
-            ) as pref_resp:
-                pref_data = await pref_resp.json()
+        pref_url = f"{_RIPE_PREFIX_URL}?resource={actual_ip}"
+        host = _host_from_url(_RIPE_PREFIX_URL)
+        session = await _get_ipfs_session(host, timeout=client_timeout)
 
-            # Extract ASN from prefix-overview
-            asns = pref_data.get("data", {}).get("prefixes", [])
-            if not asns:
-                return []
+        # Fetch prefix-overview — circuit-breaker guarded
+        pref_resp, pref_err = await _ipfs_checked_get(
+            session, pref_url, failure_kind="bgp_ripe_prefix"
+        )
+        if pref_err is not None or pref_resp is None or pref_resp.status != 200:
+            return []
+        pref_data = await pref_resp.json()
 
-            # Use the most-specific (first) prefix entry
-            entry = asns[0]
-            asn = entry.get("asn")
-            prefix = entry.get("prefix")
-            holder = entry.get("holder")
+        # Extract ASN from prefix-overview
+        asns = pref_data.get("data", {}).get("prefixes", [])
+        if not asns:
+            return []
 
-            if not asn:
-                return []
+        # Use the most-specific (first) prefix entry
+        entry = asns[0]
+        asn = entry.get("asn")
+        prefix = entry.get("prefix")
+        holder = entry.get("holder")
 
-            # Fetch whois for ASN — country, org, abuse contact
-            country = ""
-            org_name = ""
-            abuse_contact = ""
-            try:
-                async with session.get(
-                    f"{_RIPE_WHOIS_URL}?resource={asn}",
-                    headers={"Accept": "application/json"},
-                ) as whois_resp:
-                    whois_data = (await whois_resp.json()).get("data", {})
-                    if "objects" in whois_data:
-                        for obj in whois_data["objects"].get("object", []):
-                            for attr in obj.get("attributes", {}).get("attribute", []):
-                                name = attr.get("name", "")
-                                value = attr.get("value", "")
-                                if name == "country":
-                                    country = value
-                                elif name == "org-name":
-                                    org_name = value
-                                elif name == "abuse-mailbox":
-                                    abuse_contact = value
-            except Exception:
-                pass  # fail-soft: whois is supplementary
+        if not asn:
+            return []
+
+        get_breaker(host).record_success()
+
+        # Fetch whois for ASN — country, org, abuse contact
+        country = ""
+        org_name = ""
+        abuse_contact = ""
+        try:
+            whois_url = f"{_RIPE_WHOIS_URL}?resource={asn}"
+            whois_resp, whois_err = await _ipfs_checked_get(
+                session, whois_url, failure_kind="bgp_ripe_whois"
+            )
+            if whois_err is None and whois_resp is not None and whois_resp.status == 200:
+                whois_data = (await whois_resp.json()).get("data", {})
+                if "objects" in whois_data:
+                    for obj in whois_data["objects"].get("object", []):
+                        for attr in obj.get("attributes", {}).get("attribute", []):
+                            name = attr.get("name", "")
+                            value = attr.get("value", "")
+                            if name == "country":
+                                country = value
+                            elif name == "org-name":
+                                org_name = value
+                            elif name == "abuse-mailbox":
+                                abuse_contact = value
+        except Exception:
+            pass  # fail-soft: whois is supplementary
 
             from hledac.universal.knowledge.duckdb_store import CanonicalFinding
             import hashlib

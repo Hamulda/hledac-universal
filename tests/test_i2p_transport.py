@@ -105,18 +105,22 @@ class TestI2PSessionPool:
         mock_aiohttp_socks.ProxyConnector = mock_pc_cls
 
         async def run_test():
-            with patch.object(pf.aiohttp, 'ClientSession', return_value=mock_session) as mock_cs:
-                with patch.dict('sys.modules', {'aiohttp_socks': mock_aiohttp_socks}):
-                    session = await pf._get_i2p_session()
+            # F260: Force the aiohttp_socks fallback path by pretending
+            # curl_cffi is unavailable. The F260 default prefers curl_cffi
+            # (JA3 unification), but these legacy tests verify the fallback.
+            with patch.object(pf, "is_curl_cffi_available", return_value=(False, "test_forced_fallback")):
+                with patch.object(pf.aiohttp, 'ClientSession', return_value=mock_session) as mock_cs:
+                    with patch.dict('sys.modules', {'aiohttp_socks': mock_aiohttp_socks}):
+                        session = await pf._get_i2p_session()
 
-                    # Verify ProxyConnector was created with I2P proxy URL
-                    mock_pc_cls.from_url.assert_called_once()
-                    call_url = mock_pc_cls.from_url.call_args[0][0]
-                    assert "socks5://" in call_url
+                        # Verify ProxyConnector was created with I2P proxy URL
+                        mock_pc_cls.from_url.assert_called_once()
+                        call_url = mock_pc_cls.from_url.call_args[0][0]
+                        assert "socks5://" in call_url
 
-                    # Verify ClientSession was created with connector
-                    mock_cs.assert_called_once()
-                    assert session is mock_session
+                        # Verify ClientSession was created with connector
+                        mock_cs.assert_called_once()
+                        assert session is mock_session
 
         anyio.run(run_test)
 
@@ -156,9 +160,12 @@ class TestI2PFallback:
         pf._injected_session_provider = None
 
         async def run_test():
-            with patch.dict('sys.modules', {'aiohttp_socks': None}):
-                with pytest.raises(RuntimeError, match="aiohttp_socks required"):
-                    await pf._get_i2p_session()
+            # F260: Force the aiohttp_socks fallback path so the missing-dep
+            # error path is exercised (curl_cffi is preferred by default).
+            with patch.object(pf, "is_curl_cffi_available", return_value=(False, "test_forced_fallback")):
+                with patch.dict('sys.modules', {'aiohttp_socks': None}):
+                    with pytest.raises(RuntimeError, match="aiohttp_socks required"):
+                        await pf._get_i2p_session()
 
         anyio.run(run_test)
 

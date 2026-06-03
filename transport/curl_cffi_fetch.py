@@ -25,6 +25,10 @@ DEFAULT_MAX_BYTES = 10 * 1024 * 1024  # 10MB hard cap
 # Tor SOCKS5H proxy — DNS resolved by Tor, not localhost
 _TOR_CURL_PROXY: str = os.environ.get("TOR_SOCKS_PROXY_URL", "socks5h://127.0.0.1:9050")
 
+# I2P SOCKS5H proxy — default 4447 is I2P SAM bridge port (standard install)
+# F260: I2P has no NEWNYM equivalent — circuit rotation is intentionally absent
+_I2P_CURL_PROXY: str = os.environ.get("I2P_SOCKS_PROXY_URL", "socks5h://127.0.0.1:4447")
+
 # Tor-specific circuit tracking for curl_cffi Tor fetcher
 _tor_curl_request_count: int = 0
 
@@ -63,7 +67,40 @@ async def fetch_via_tor_curl_cffi(
             logger.warning(f"[TOR] circuit rotation failed: {e}")
 
     # Tor SOCKS5H proxy — DNS resolved by Tor, not localhost
-    proxies = {"https": TOR_SOCKS_PROXY}
+    proxies = {"https": _TOR_CURL_PROXY}
+    return await fetch_via_curl_cffi(
+        url=url,
+        headers=headers,
+        timeout_s=timeout_s,
+        max_bytes=max_bytes,
+        profile=profile,
+        proxies=proxies,
+    )
+
+
+async def fetch_via_i2p_curl_cffi(
+    url: str,
+    headers: dict[str, str] | None = None,
+    timeout_s: float = DEFAULT_TIMEOUT_S,
+    max_bytes: int = DEFAULT_MAX_BYTES,
+    profile: str = "chrome110",
+) -> dict[str, Any]:
+    """
+    Fetch URL via curl_cffi through I2P SOCKS5H proxy.
+
+    F260: I2P has no NEWNYM equivalent — circuit rotation is intentionally
+    absent. I2P tunnels are inherently e2e and short-lived; explicit rotation
+    would break the destination lookup. Documented invariant: this function
+    takes no `tor_manager` / `circuit_rotation_count` parameters.
+
+    Args:
+        url: URL to fetch (.i2p or .b32.i2p only)
+        headers: Optional HTTP headers
+        timeout_s: Request timeout
+        max_bytes: Max bytes to read
+        profile: TLS profile for JA3 fingerprint
+    """
+    proxies = {"https": _I2P_CURL_PROXY}
     return await fetch_via_curl_cffi(
         url=url,
         headers=headers,

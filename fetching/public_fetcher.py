@@ -21,6 +21,7 @@ import random
 import re
 import time
 import urllib.parse
+from dataclasses import dataclass
 from typing import Final
 
 # psutil lazy import — only needed inside fetch function at runtime
@@ -54,6 +55,12 @@ from hledac.universal.transport.base import (
     route_transport,
     should_use_curl_cffi,
 )
+# F226: Body-cap helper — replaces inline duplicitu v httpx_h2 + aiohttp cestách
+from hledac.universal.transport.body_limiter import BodyReadResult, _read_body_into
+# F260: JA3 unification — curl_cffi wrappers for Tor/I2P, honest Accept-Encoding
+from hledac.universal.transport.curl_cffi_runtime import is_curl_cffi_available
+from hledac.universal.transport.curl_cffi_fetch import fetch_via_i2p_curl_cffi
+from hledac.universal.transport.decompression import build_accept_encoding_header
 from hledac.universal.utils.concurrency import (
     get_clearnet_semaphore,
     get_tor_semaphore,
@@ -248,7 +255,7 @@ def build_randomized_headers() -> dict[str, str]:
         "User-Agent": get_random_ua(),
         "Accept-Language": get_random_accept_language(),
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        "Accept-Encoding": "gzip, deflate, br",
+        "Accept-Encoding": build_accept_encoding_header(),
         "Sec-Ch-Ua": random.choice(_CHROME_TOKEN_CHOICES),  # noqa: S311
         "Sec-Ch-Ua-Mobile": random.choice(_MOBILE_CHOICES),  # noqa: S311
         "Sec-Ch-Ua-Platform": random.choice(_OS_CHOICES),  # noqa: S311
@@ -858,25 +865,35 @@ def _is_freenet_url(url: str) -> bool:
         return False
 
 
-async def _get_tor_session() -> aiohttp.ClientSession:
-    """Get or create aiohttp session via Tor SOCKS5 proxy (lazy, singleton).
+async def _get_tor_session():
+    """Get Tor session for .onion URL fetches.
 
-    F206AT: If _injected_session_provider is set, uses the injected Tor session
-    and records source as 'injected'. Otherwise uses local _tor_session and
-    records source as 'local_tor'.
+    F260 JA3 unification: prefers curl_cffi wrapper (chrome_120 JA3, no
+    Python TLS fingerprint leak). Falls back to aiohttp_socks when curl_cffi
+    is unavailable. Telemetry records the chosen path.
+
+    F206AT: If _injected_session_provider is set, returns the injected
+    aiohttp session verbatim and records source as 'injected' — the wrapper
+    path is skipped to preserve back-compat with tests using fake aiohttp.
     """
     global _tor_session, _session_source_telemetry, _tor_session_locally_created
-    # F206AT: Check for injected provider first
+    # F206AT: Injected provider short-circuits — return as-is
     if _injected_session_provider is not None:
         injected_tor, _ = _injected_session_provider
         if injected_tor is not None and not injected_tor.closed:
             _session_source_telemetry["tor"] = "injected"
             return injected_tor
+    # F260: Prefer curl_cffi — JA3 impersonation through Tor SOCKS5H
+    _cc_available, _cc_reason = is_curl_cffi_available()
+    if _cc_available:
+        _session_source_telemetry["tor"] = "curl_cffi"
+        return _TorCurlCffiWrapper()
+    # Fallback: aiohttp_socks (Python TLS — known JA3 leak on .onion)
     if _tor_session is None or _tor_session.closed:
         try:
             from aiohttp_socks import ProxyConnector
         except ImportError:
-            raise RuntimeError("aiohttp_socks required for Tor: pip install aiohttp_socks")
+            raise RuntimeError("aiohttp_socks required for Tor fallback: pip install aiohttp_socks")
         connector = ProxyConnector.from_url(TOR_SOCKS_PROXY, rdns=True)
         _tor_session = aiohttp.ClientSession(connector=connector)
         _tor_session_locally_created = True
@@ -884,32 +901,222 @@ async def _get_tor_session() -> aiohttp.ClientSession:
     return _tor_session
 
 
-async def _get_i2p_session() -> aiohttp.ClientSession:
+async def _get_i2p_session():
     """
-    P10: Get or create aiohttp session via I2P SOCKS5 proxy (lazy, singleton).
-    Uses aiohttp_socks.ProxyConnector for .i2p/.b32.i2p URLs.
+    P10: Get I2P session for .i2p/.b32.i2p URL fetches.
 
-    F206AT: If _injected_session_provider is set, uses the injected I2P session
-    and records source as 'injected'. Otherwise uses local _i2p_session and
-    records source as 'local_i2p'.
+    F260 JA3 unification: prefers curl_cffi wrapper (chrome_120 JA3). I2P
+    has no NEWNYM equivalent so circuit rotation is intentionally absent.
+    Falls back to aiohttp_socks when curl_cffi is unavailable.
     """
     global _i2p_session, _session_source_telemetry, _i2p_session_locally_created
-    # F206AT: Check for injected provider first
+    # F206AT: Injected provider short-circuits
     if _injected_session_provider is not None:
         _, injected_i2p = _injected_session_provider
         if injected_i2p is not None and not injected_i2p.closed:
             _session_source_telemetry["i2p"] = "injected"
             return injected_i2p
+    # F260: Prefer curl_cffi
+    _cc_available, _cc_reason = is_curl_cffi_available()
+    if _cc_available:
+        _session_source_telemetry["i2p"] = "curl_cffi"
+        return _I2pCurlCffiWrapper()
+    # Fallback: aiohttp_socks
     if _i2p_session is None or _i2p_session.closed:
         try:
             from aiohttp_socks import ProxyConnector
         except ImportError:
-            raise RuntimeError("aiohttp_socks required for I2P: pip install aiohttp_socks")
+            raise RuntimeError("aiohttp_socks required for I2P fallback: pip install aiohttp_socks")
         connector = ProxyConnector.from_url(I2P_SOCKS_PROXY, rdns=True)
         _i2p_session = aiohttp.ClientSession(connector=connector)
         _i2p_session_locally_created = True
     _session_source_telemetry["i2p"] = "local_i2p"
     return _i2p_session
+
+
+# ---------------------------------------------------------------------------
+# F260: curl_cffi wrapper classes — aiohttp-like API over JA3-impersonating fetcher
+# ---------------------------------------------------------------------------
+
+
+class _CurlCffiResponseAdapter:
+    """Minimal aiohttp-compatible response adapter for curl_cffi fetch results.
+
+    Provides the surface that async_fetch_public_text() needs when iterating
+    over a body via `async with session.get(url) as resp:`. We do not aim
+    for full aiohttp.ClientResponse parity — only the fields used by the
+    aiohttp body-read loop (.url, .status, .headers, .iter_chunked()).
+    """
+
+    __slots__ = ("url", "status", "headers", "content_type", "_content")
+
+    def __init__(
+        self,
+        url: str,
+        status: int,
+        headers: dict[str, str] | None,
+        content: bytes,
+    ) -> None:
+        self.url = url
+        self.status = status
+        self.headers: dict[str, str] = dict(headers) if headers else {}
+        ct = self.headers.get("Content-Type") or self.headers.get("content-type") or ""
+        self.content_type = ct
+        self._content = content
+
+    async def read(self) -> bytes:
+        return self._content
+
+    async def text(self, encoding: str = "utf-8", errors: str = "strict") -> str:
+        return self._content.decode(encoding, errors=errors)
+
+    async def iter_chunked(self, n: int):
+        """Yield body in n-byte chunks (matches aiohttp's iter_chunked API)."""
+        data = self._content
+        for i in range(0, len(data), n):
+            yield data[i : i + n]
+
+
+class _CurlCffiGetContextManager:
+    """Async context manager wrapping an adapter-yielding object.
+
+    Mirrors aiohttp's `session.get(...)` return value: a context manager
+    you can `async with` to get the response. The wrapped object must
+    implement `__aenter__` returning a _CurlCffiResponseAdapter.
+    """
+
+    def __init__(self, future: object) -> None:
+        self._future = future
+
+    async def __aenter__(self):
+        return await self._future.__aenter__()
+
+    async def __aexit__(self, exc_type, exc, tb) -> None:
+        return None
+
+
+class _TorCurlCffiFetchFuture:
+    """Lazy adapter: defer the fetch until __aenter__.
+
+    Wraps fetch_via_tor_curl_cffi() and exposes aiohttp-like response
+    surface on completion. Created by _TorCurlCffiWrapper.get().
+    """
+
+    __slots__ = ("_url", "_kwargs", "_fetched", "_err", "_adapter")
+
+    def __init__(self, url: str, kwargs: dict) -> None:
+        self._url = url
+        self._kwargs = kwargs
+        self._fetched = False
+        self._err: str | None = None
+        self._adapter: _CurlCffiResponseAdapter | None = None
+
+    async def __aenter__(self) -> _CurlCffiResponseAdapter:
+        if not self._fetched:
+            try:
+                result = await fetch_via_tor_curl_cffi(
+                    url=self._url,
+                    headers=self._kwargs.get("headers"),
+                    timeout_s=self._kwargs.get("timeout_s", 35.0),
+                    max_bytes=self._kwargs.get("max_bytes", 10 * 1024 * 1024),
+                    profile="chrome110",
+                )
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                self._fetched = True
+                self._err = f"tor_curl_cffi_failed:{type(exc).__name__}:{exc}"
+                raise aiohttp.ClientError(self._err) from exc
+            self._fetched = True
+            if not result.get("success", False):
+                self._err = f"tor_curl_cffi_failed:{result.get('error', 'unknown')}"
+                raise aiohttp.ClientError(self._err)
+            self._adapter = _CurlCffiResponseAdapter(
+                url=result.get("final_url", self._url),
+                status=int(result.get("status_code", 0)),
+                headers=result.get("headers"),
+                content=result.get("content", b"") or b"",
+            )
+        if self._adapter is None:
+            raise aiohttp.ClientError("tor_curl_cffi_failed:no_adapter")
+        return self._adapter
+
+
+class _I2pCurlCffiFetchFuture:
+    """Lazy adapter for I2P curl_cffi fetch. No circuit rotation (I2P invariant)."""
+
+    __slots__ = ("_url", "_kwargs", "_fetched", "_adapter")
+
+    def __init__(self, url: str, kwargs: dict) -> None:
+        self._url = url
+        self._kwargs = kwargs
+        self._fetched = False
+        self._adapter: _CurlCffiResponseAdapter | None = None
+
+    async def __aenter__(self) -> _CurlCffiResponseAdapter:
+        if not self._fetched:
+            try:
+                result = await fetch_via_i2p_curl_cffi(
+                    url=self._url,
+                    headers=self._kwargs.get("headers"),
+                    timeout_s=self._kwargs.get("timeout_s", 35.0),
+                    max_bytes=self._kwargs.get("max_bytes", 10 * 1024 * 1024),
+                    profile="chrome110",
+                )
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                self._fetched = True
+                raise aiohttp.ClientError(f"i2p_curl_cffi_failed:{type(exc).__name__}:{exc}") from exc
+            self._fetched = True
+            if not result.get("success", False):
+                raise aiohttp.ClientError(f"i2p_curl_cffi_failed:{result.get('error', 'unknown')}")
+            self._adapter = _CurlCffiResponseAdapter(
+                url=result.get("final_url", self._url),
+                status=int(result.get("status_code", 0)),
+                headers=result.get("headers"),
+                content=result.get("content", b"") or b"",
+            )
+        if self._adapter is None:
+            raise aiohttp.ClientError("i2p_curl_cffi_failed:no_adapter")
+        return self._adapter
+
+
+class _TorCurlCffiWrapper:
+    """Aiohttp-like session wrapper backed by fetch_via_tor_curl_cffi.
+
+    Provides .get(url) returning an async context manager with an
+    aiohttp-like response. State-light: each call creates its own future.
+    """
+
+    __slots__ = ()
+
+    closed: bool = False
+
+    def get(self, url: str, **kwargs) -> _CurlCffiGetContextManager:
+        return _CurlCffiGetContextManager(_TorCurlCffiFetchFuture(url, kwargs))
+
+    async def close(self) -> None:
+        # No-op: curl_cffi session lifetime is owned by curl_cffi_runtime cache.
+        return None
+
+
+class _I2pCurlCffiWrapper:
+    """Aiohttp-like session wrapper backed by fetch_via_i2p_curl_cffi.
+
+    Same shape as _TorCurlCffiWrapper but I2P-invariant: no circuit
+    rotation. I2P has no NEWNYM equivalent.
+    """
+
+    __slots__ = ()
+
+    closed: bool = False
+
+    def get(self, url: str, **kwargs) -> _CurlCffiGetContextManager:
+        return _CurlCffiGetContextManager(_I2pCurlCffiFetchFuture(url, kwargs))
+
+    async def close(self) -> None:
+        return None
 
 
 async def _renew_tor_circuit() -> bool:
@@ -1323,6 +1530,168 @@ def _needs_js_fetch(text: str) -> bool:
     return bool(_NOSCRIPT_RE.search(text))
 
 
+# F226A: Adaptive MAX_BYTES cap — halves size on UMA critical (M1 8GB budget).
+# 25 in-flight × 10MB = 250MB worst case; under pressure → 5MB × 25 = 125MB.
+# Mirrors transport/decompression.py:31 self-contained 10MB ceiling pattern.
+try:
+    from hledac.universal.utils.uma_budget import is_uma_critical as _is_uma_critical
+except Exception:  # fail-soft: never crash import
+    def _is_uma_critical() -> bool:  # type: ignore[no-redef]
+        return False
+
+
+MAX_BYTES_HARD_PRESSURE: Final[int] = 5_000_000  # 5MB on UMA critical
+# MAX_BYTES_HARD stays 10MB (final declared below); computed dynamically here.
+
+
+def _compute_effective_max_bytes(requested: int) -> int:
+    """
+    F226A: Adaptive body cap honoring caller request, hard cap, and UMA pressure.
+
+    Behavior:
+    - Clamps requested to [1, MAX_BYTES_HARD].
+    - On UMA critical, further halves the cap to MAX_BYTES_HARD_PRESSURE (5MB).
+    - Fail-soft: if UMA sampler throws, falls back to MAX_BYTES_HARD (10MB).
+
+    Why this matters: 25 in-flight × 10MB = 250MB just for fetch bodies on M1 8GB.
+    Under pressure, halving brings that to 125MB, leaving headroom for browser
+    processes (300-500MB) and MLX (2GB).
+    """
+    try:
+        hard = MAX_BYTES_HARD_PRESSURE if _is_uma_critical() else MAX_BYTES_HARD
+    except Exception:
+        hard = MAX_BYTES_HARD
+    if requested <= 0:
+        return hard
+    return min(max(requested, 1), hard)
+
+
+# F226A: Shared JS-renderer semaphore — never more than 1 browser process alive.
+# Camoufox AND nodriver MUST serialize; both are RAM-heavy (250-500MB each on M1).
+# The original _CAMOUFOX_LOCK (asyncio.Lock) is kept for backward compat as a
+# second-tier intra-Camoufox guard, but cross-renderer serialization goes through
+# this bounded Semaphore(1) so we never hit 2 browser processes simultaneously.
+#
+# F226A: Lazy init — Semaphore must be created in the running event loop, otherwise
+# we'd hit "bound to a different event loop" errors in tests / alt loops. The
+# getter guarantees a per-loop singleton.
+_JS_RENDERER_SEMAPHORE: asyncio.Semaphore | None = None
+
+
+def _get_js_renderer_semaphore() -> asyncio.Semaphore:
+    """F226A: Lazily-initialized, per-event-loop JS renderer Semaphore(1)."""
+    global _JS_RENDERER_SEMAPHORE
+    if _JS_RENDERER_SEMAPHORE is None:
+        _JS_RENDERER_SEMAPHORE = asyncio.Semaphore(1)
+    return _JS_RENDERER_SEMAPHORE
+
+
+# F226B: aiohttp body-cap helper — single source of truth for the chunked
+# read loop. Originally duplicated at public_fetcher.py ~2207-2294 alongside
+# the httpx_h2 inline copy (~1768-1796). Now both call into helpers in
+# transport.body_limiter; this wrapper adds the aiohttp-specific first-chunk
+# XML peek (used by content_type rejection recovery).
+@dataclass(frozen=True, slots=True)
+class AiohttpBodyOutcome:
+    """F226B: aiohttp body read outcome with peek + size cap."""
+    body: bytes
+    total_read: int
+    truncated: bool
+    chunks_consumed: int
+    xml_recovered: bool
+    first_chunk_peeked: bool
+
+
+async def _read_aiohttp_body_with_peek(
+    chunks: AsyncIterator[bytes],
+    max_bytes: int,
+    *,
+    enable_peek: bool,
+) -> AiohttpBodyOutcome:
+    """
+    F226B: Read an aiohttp chunked body stream with hard byte cap.
+
+    Replaces inline chunked loop (was duplicated body_limiter.read_body_with_cap).
+    Adds first-chunk XML peek for content-type recovery decisions.
+
+    Behavior:
+    - O(1) amortized append via bytearray.extend().
+    - Bounded by CHUNKS_BUDGET (8k chunks) for safety against pathological sources.
+    - Truncates in-place when projected size exceeds max_bytes.
+    - If enable_peek=True, the first chunk is inspected via _looks_xmlish().
+    - CancelledError propagates unchanged.
+
+    Returns AiohttpBodyOutcome with all context caller needs to build FetchResult.
+    """
+    from hledac.universal.transport.body_limiter import CHUNKS_BUDGET
+
+    content_bytes = bytearray()
+    xml_recovered = False
+    first_chunk_peeked = False
+    chunks_consumed = 0
+    truncated = False
+
+    async for chunk in chunks:
+        if chunks_consumed >= CHUNKS_BUDGET:
+            logger.warning(
+                f"Aiohttp body read hit CHUNKS_BUDGET={CHUNKS_BUDGET}; "
+                f"truncating at {len(content_bytes)} bytes"
+            )
+            truncated = True
+            break
+
+        chunks_consumed += 1
+
+        # First-chunk peek for XML recovery (used by CT-rejection fast path).
+        if enable_peek and not first_chunk_peeked:
+            first_chunk_peeked = True
+            if _looks_xmlish(chunk):
+                xml_recovered = True
+
+        # Size cap — mirror body_limiter semantics (O(1) truncation).
+        if max_bytes > 0 and (len(content_bytes) + len(chunk)) > max_bytes:
+            remaining = max_bytes - len(content_bytes)
+            if remaining > 0:
+                content_bytes.extend(chunk[:remaining])
+            logger.debug(f"Aiohttp body truncated to {max_bytes} bytes after {chunks_consumed} chunks")
+            truncated = True
+            break
+
+        content_bytes.extend(chunk)
+
+    return AiohttpBodyOutcome(
+        body=bytes(content_bytes),
+        total_read=len(content_bytes),
+        truncated=truncated,
+        chunks_consumed=chunks_consumed,
+        xml_recovered=xml_recovered,
+        first_chunk_peeked=first_chunk_peeked,
+    )
+
+
+async def _peek_aiohttp_first_chunk(
+    chunks: AsyncIterator[bytes],
+) -> tuple[bool, bytes | None]:
+    """
+    F226B: Peek at the first chunk of an aiohttp body stream.
+
+    Returns:
+        (is_xmlish, first_chunk_bytes or None)
+        - is_xmlish=True if the first chunk looks like XML (used for CT recovery).
+        - first_chunk_bytes is the raw first chunk (caller keeps ownership of
+          it — must include in final body to avoid losing data).
+
+    The first chunk is consumed but yielded back to the caller so the subsequent
+    body read sees the complete stream. (Caller appends it to body_chunks before
+    reading the rest.)
+    """
+    try:
+        first_chunk = await anext(chunks)
+    except StopAsyncIteration:
+        return False, None
+    return _looks_xmlish(first_chunk), first_chunk
+
+
 async def _fetch_with_camoufox(url: str, timeout: float = 15.0) -> str:
     """
     Fetch JS-heavy page via Camoufox (Firefox-based anti-detect).
@@ -1355,6 +1724,24 @@ async def _fetch_with_camoufox(url: str, timeout: float = 15.0) -> str:
         logger.debug("camoufox not installed, JS fetch unavailable")
         return ""
 
+    # F226A: Outer guard — serialize against nodriver so we never run 2 browsers.
+    async with _get_js_renderer_semaphore():
+        # Inner guard — original _CAMOUFOX_LOCK (intra-Camoufox consistency).
+        return await _camoufox_locked(url, timeout)
+
+
+async def _camoufox_locked(url: str, timeout: float) -> str:
+    """
+    F226A: Camoufox body inside the original _CAMOUFOX_LOCK + outer JS semaphore.
+
+    Split from _fetch_with_camoufox so the outer _JS_RENDERER_SEMAPHORE wrapper
+    can be honored even when nodriver races in. The original behavior (lock +
+    AsyncCamoufox context manager + fail-soft on exception) is preserved.
+    """
+    try:
+        from camoufox.async_api import AsyncCamoufox
+    except ImportError:
+        return ""
     async with _CAMOUFOX_LOCK:
         try:
             async with AsyncCamoufox(
@@ -1399,6 +1786,23 @@ async def _fetch_with_nodriver(url: str) -> str:
         _js_renderer_capability["nodriver"] = "nodriver_unavailable"
         logger.debug("nodriver not installed, CDP fetch unavailable")
         return ""
+
+    # F226A: Serialize against Camoufox — never run 2 browser processes on M1.
+    # Combined ~500-900MB RAM; halving that risk is the whole point.
+    async with _get_js_renderer_semaphore():
+        return await _nodriver_locked(url)
+
+
+async def _nodriver_locked(url: str) -> str:
+    """
+    F226A: nodriver body wrapped inside the shared _JS_RENDERER_SEMAPHORE.
+
+    Original cleanup invariants preserved:
+    - page.close() in finally
+    - browser.stop() on cancellation + finally
+    - CancelledError re-raised (must propagate)
+    """
+    import nodriver as uc  # already imported by caller; here for isolation
 
     browser = None
     page = None
@@ -1554,12 +1958,14 @@ async def async_fetch_public_text(
         logger.debug(f"Circuit breaker check failed (non-fatal): {e}")
 
     # -------------------------------------------------------------------------
-    # PHASE 2: Size cap enforcement (line 1366-1368)
+    # PHASE 2: Size cap enforcement (F226A — adaptive)
     # -------------------------------------------------------------------------
+    # Adaptive cap: MAX_BYTES_HARD (10MB) normally, MAX_BYTES_HARD_PRESSURE (5MB)
+    # when UMA is critical. Bounds the 25-in-flight worst case from 250MB to
+    # 125MB under M1 8GB pressure. Caller's max_bytes is honored within the cap.
 
-    # --- Size cap enforcement ---
-    if max_bytes > MAX_BYTES_HARD:
-        max_bytes = MAX_BYTES_HARD
+    # --- F226A: Size cap enforcement (UMA-aware) ---
+    max_bytes = _compute_effective_max_bytes(max_bytes)
 
     # -------------------------------------------------------------------------
     # PHASE 3: Explicit JS rendering mode (lines 1370-1412)
@@ -1675,43 +2081,35 @@ async def async_fetch_public_text(
                 if _http_ver:
                     _http_ver = f"http/{_http_ver.decode() if isinstance(_http_ver, bytes) else _http_ver}"
 
-            # Read body with size cap (mirrors aiohttp chunked read logic)
-            # TODO(F226-body-cap): This inline loop duplicates body_limiter.read_body_with_cap
-            # logic but cannot be replaced by the helper due to return-type mismatch
-            # (helper returns tuple[bytes, bool], this path needs FetchResult error envelope)
-            # and missing declared_length tracking. See TRANSPORT_COMMON_POLICY_AUDIT.md §1.2 Future Work.
-            _body_chunks: list[bytes] = []
-            _total_read = 0
-            async for _chunk in _httpx_resp.aiter_chunked(8192):
-                _chunk_len = len(_chunk)
-                if _total_read + _chunk_len > max_bytes:
-                    _remaining = max_bytes - _total_read
-                    if _remaining > 0:
-                        _body_chunks.append(_chunk[:_remaining])
-                        _total_read += _remaining
-                    elapsed_ms = (time.monotonic() - t0) * 1000
-                    _tc.httpx_h2_count += 1
-                    return FetchResult(
-                        url=url,
-                        final_url=_httpx_final_url,
-                        status_code=_httpx_status,
-                        content_type=_httpx_content_type,
-                        text=None,
-                        fetched_bytes=_total_read,
-                        declared_length=-1,
-                        elapsed_ms=elapsed_ms,
-                        error="size_cap_exceeded",
-                        failure_stage="size",
-                        selected_transport="httpx_h2",
-                        http_version=_http_ver,
-                        transport_policy_reason=_router_reason,
-                        transport_counters=_tc,
-                    )
-                _body_chunks.append(_chunk)
-                _total_read += _chunk_len
+            # F226B: Body cap — delegated to body_limiter._read_body_into (single source
+            # of truth for chunked body reads). The previous inline loop duplicated
+            # body_limiter.read_body_with_cap logic with a different return contract;
+            # _read_body_into returns BodyReadResult(body, total_read, truncated, chunks)
+            # which is enough context to build the FetchResult below without inline math.
+            _body: BodyReadResult = await _read_body_into(
+                _httpx_resp.aiter_chunked(8192), max_bytes
+            )
+            if _body.truncated:
+                elapsed_ms = (time.monotonic() - t0) * 1000
+                _tc.httpx_h2_count += 1
+                return FetchResult(
+                    url=url,
+                    final_url=_httpx_final_url,
+                    status_code=_httpx_status,
+                    content_type=_httpx_content_type,
+                    text=None,
+                    fetched_bytes=_body.total_read,
+                    declared_length=-1,
+                    elapsed_ms=elapsed_ms,
+                    error="size_cap_exceeded",
+                    failure_stage="size",
+                    selected_transport="httpx_h2",
+                    http_version=_http_ver,
+                    transport_policy_reason=_router_reason,
+                    transport_counters=_tc,
+                )
 
-            _body_bytes = b"".join(_body_chunks)
-            _text, _decode_replaced, _decode_replacement_count = _try_decode(_body_bytes)
+            _text, _decode_replaced, _decode_replacement_count = _try_decode(_body.body)
 
             elapsed_ms = (time.monotonic() - t0) * 1000
             redirected, redirect_target = _derive_redirect_fields(url, _httpx_final_url)
@@ -1722,7 +2120,7 @@ async def async_fetch_public_text(
                 status_code=_httpx_status,
                 content_type=_httpx_content_type,
                 text=_text,
-                fetched_bytes=_total_read,
+                fetched_bytes=_body.total_read,
                 declared_length=-1,
                 elapsed_ms=elapsed_ms,
                 error=None,
@@ -2126,62 +2524,27 @@ async def async_fetch_public_text(
                         except (ValueError, TypeError):
                             declared_length = -1
 
-                        # --- Chunked body read with size cap ---
+                        # --- F226B: Chunked body read delegated to body_limiter helpers ---
+                        # Peek on first chunk (for CT recovery), then read remainder with cap.
+                        # The previous inline loop (~90 lines) duplicated body_limiter logic;
+                        # this refactor splits the two concerns and reuses the helper.
                         body_chunks: list[bytes] = []
                         total_read = 0
                         accumulated_ok = True
                         first_chunk_peeked = False
 
-                        async for chunk in resp.content.iter_chunked(8192):
-                            chunk_len = len(chunk)
-
-                            # Peek: check first chunk for XML-ish body when CT is wrong
-                            if rejected_ct and not first_chunk_peeked:
-                                first_chunk_peeked = True
-                                if _looks_xmlish(chunk):
-                                    # Feed ingress recovery: wrong CT but XML body — accept it
-                                    xml_recovered = True
-                                elif total_read == 0:
-                                    # First chunk is not XML-ish and we haven't accumulated anything —
-                                    # non-XML body under wrong CT: reject without reading remainder
-                                    elapsed_ms = (time.monotonic() - t0) * 1000
-                                    redirected, redirect_target = _derive_redirect_fields(url, final_url)
-                                    if _httpx_fallback_reason == "httpx_h2_fallback":
-                                        _tc.httpx_h2_fallback_to_aiohttp_count += 1
-                                        _tc.fallback_count += 1
-                                    elif _curl_fallback_reason is not None:
-                                        _tc.fallback_count += 1
-                                    elif use_tor:
-                                        _tc.tor_aiohttp_socks_count += 1
-                                    elif use_i2p:
-                                        _tc.i2p_aiohttp_socks_count += 1
-                                    else:
-                                        _tc.aiohttp_count += 1
-                                    return FetchResult(
-                                        url=url,
-                                        final_url=final_url,
-                                        status_code=last_status_code,
-                                        content_type=content_type,
-                                        text=None,
-                                        fetched_bytes=0,
-                                        declared_length=declared_length,
-                                        elapsed_ms=elapsed_ms,
-                                        error=f"content_type_rejected:{raw_content_type}",
-                                        redirected=redirected,
-                                        redirect_target=redirect_target,
-                                        failure_stage="http",
-                                        selected_transport="httpx_h2" if _use_httpx_h2 else ("aiohttp_socks" if (use_tor or use_i2p) else "aiohttp"),
-                                        transport_policy_reason=_router_reason if _use_httpx_h2 else ("darknet_url" if (use_tor or use_i2p) else "clearnet_default"),
-                                        transport_fallback_reason="httpx_h2_fallback" if _httpx_fallback_reason == "httpx_h2_fallback" else None,
-                                        transport_counters=_tc,
-                                    )
-
-                            if total_read + chunk_len > max_bytes:
-                                remaining = max_bytes - total_read
-                                if remaining > 0:
-                                    body_chunks.append(chunk[:remaining])
-                                    total_read += remaining
-                                accumulated_ok = False
+                        # F226B Phase 1: Peek at the first chunk for XML recovery.
+                        # The full body read below will re-include this chunk in body.
+                        if rejected_ct:
+                            first_chunk_peeked = True
+                            is_xmlish, first_chunk = await _peek_aiohttp_first_chunk(
+                                resp.content.iter_chunked(8192)
+                            )
+                            if is_xmlish:
+                                # Feed ingress recovery: wrong CT but XML body — accept it
+                                xml_recovered = True
+                            else:
+                                # First chunk is not XML-ish under wrong CT: reject fast
                                 elapsed_ms = (time.monotonic() - t0) * 1000
                                 redirected, redirect_target = _derive_redirect_fields(url, final_url)
                                 if _httpx_fallback_reason == "httpx_h2_fallback":
@@ -2201,24 +2564,77 @@ async def async_fetch_public_text(
                                     status_code=last_status_code,
                                     content_type=content_type,
                                     text=None,
-                                    fetched_bytes=total_read,
+                                    fetched_bytes=0,
                                     declared_length=declared_length,
                                     elapsed_ms=elapsed_ms,
-                                    error="size_cap_exceeded",
+                                    error=f"content_type_rejected:{raw_content_type}",
                                     redirected=redirected,
                                     redirect_target=redirect_target,
-                                    failure_stage="size",
+                                    failure_stage="http",
                                     selected_transport="httpx_h2" if _use_httpx_h2 else ("aiohttp_socks" if (use_tor or use_i2p) else "aiohttp"),
                                     transport_policy_reason=_router_reason if _use_httpx_h2 else ("darknet_url" if (use_tor or use_i2p) else "clearnet_default"),
                                     transport_fallback_reason="httpx_h2_fallback" if _httpx_fallback_reason == "httpx_h2_fallback" else None,
                                     transport_counters=_tc,
                                 )
-                            body_chunks.append(chunk)
-                            total_read += chunk_len
 
-                        if accumulated_ok and body_chunks:
+                        # F226B Phase 2: Read remainder with size cap. If we already peeked,
+                        # prepend the first chunk to the stream so the helper sees the full body.
+                        async def _read_with_first_chunk() -> AiohttpBodyOutcome:
+                            if not first_chunk_peeked:
+                                return await _read_aiohttp_body_with_peek(
+                                    resp.content.iter_chunked(8192), max_bytes, enable_peek=False
+                                )
+                            # Already consumed first chunk — prepend it via a chain.
+                            async def _prepended() -> AsyncIterator[bytes]:
+                                yield first_chunk
+                                async for c in resp.content.iter_chunked(8192):
+                                    yield c
+                            return await _read_aiohttp_body_with_peek(
+                                _prepended(), max_bytes, enable_peek=False
+                            )
+
+                        outcome = await _read_with_first_chunk()
+                        body_chunks = [outcome.body] if outcome.body else []
+                        total_read = outcome.total_read
+                        accumulated_ok = not outcome.truncated
+
+                        if outcome.truncated:
+                            elapsed_ms = (time.monotonic() - t0) * 1000
+                            redirected, redirect_target = _derive_redirect_fields(url, final_url)
+                            if _httpx_fallback_reason == "httpx_h2_fallback":
+                                _tc.httpx_h2_fallback_to_aiohttp_count += 1
+                                _tc.fallback_count += 1
+                            elif _curl_fallback_reason is not None:
+                                _tc.fallback_count += 1
+                            elif use_tor:
+                                _tc.tor_aiohttp_socks_count += 1
+                            elif use_i2p:
+                                _tc.i2p_aiohttp_socks_count += 1
+                            else:
+                                _tc.aiohttp_count += 1
+                            return FetchResult(
+                                url=url,
+                                final_url=final_url,
+                                status_code=last_status_code,
+                                content_type=content_type,
+                                text=None,
+                                fetched_bytes=total_read,
+                                declared_length=declared_length,
+                                elapsed_ms=elapsed_ms,
+                                error="size_cap_exceeded",
+                                redirected=redirected,
+                                redirect_target=redirect_target,
+                                failure_stage="size",
+                                selected_transport="httpx_h2" if _use_httpx_h2 else ("aiohttp_socks" if (use_tor or use_i2p) else "aiohttp"),
+                                transport_policy_reason=_router_reason if _use_httpx_h2 else ("darknet_url" if (use_tor or use_i2p) else "clearnet_default"),
+                                transport_fallback_reason="httpx_h2_fallback" if _httpx_fallback_reason == "httpx_h2_fallback" else None,
+                                transport_counters=_tc,
+                            )
+
+                        if accumulated_ok and outcome.body:
                             try:
-                                body_bytes = b"".join(body_chunks)
+                                # F226B: body already collected by _read_aiohttp_body_with_peek.
+                                body_bytes = outcome.body
                                 # F178E: detect decode quality — replacement count for truth
                                 text, decode_replaced, decode_replacement_count = _try_decode(body_bytes)
                                 # --- F214Q: ContentLayer HTML cleaning — fail-soft ---

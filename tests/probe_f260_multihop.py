@@ -35,8 +35,15 @@ class TestF260Signature:
         if not is_dspy_available():
             pytest.skip("DSPy not available")
 
-        # Check class has input fields
-        sig_fields = DeepResearchHopSignature._fields
+        # DSPy 3.x exposes fields via pydantic's model_fields; older versions
+        # used __fields__. Resolve with getattr fallback to stay portable.
+        sig_fields = getattr(
+            DeepResearchHopSignature,
+            "model_fields",
+            getattr(DeepResearchHopSignature, "__fields__", None),
+        )
+        if sig_fields is None:
+            pytest.skip("DSPy signature has no introspectable fields")
         assert "query" in sig_fields
         assert "current_evidence" in sig_fields
         assert "hop_number" in sig_fields
@@ -46,7 +53,13 @@ class TestF260Signature:
         if not is_dspy_available():
             pytest.skip("DSPy not available")
 
-        sig_fields = DeepResearchHopSignature._fields
+        sig_fields = getattr(
+            DeepResearchHopSignature,
+            "model_fields",
+            getattr(DeepResearchHopSignature, "__fields__", None),
+        )
+        if sig_fields is None:
+            pytest.skip("DSPy signature has no introspectable fields")
         assert "next_query" in sig_fields
         assert "reasoning" in sig_fields
         assert "confidence" in sig_fields

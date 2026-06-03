@@ -138,6 +138,12 @@ class MatrixPublicAdapter:
                 if resp.status == 200:
                     data = await resp.json()
                     chunk = data.get("chunk", [])
+                    from hledac.universal.transport.circuit_breaker import get_breaker
+                    try:
+                        from urllib.parse import urlparse as _urlparse
+                        get_breaker(_urlparse(api_url).netloc).record_success()
+                    except Exception:
+                        pass
                     return [
                         MatrixRoom(
                             room_id=r.get("room_id", ""),
@@ -150,6 +156,15 @@ class MatrixPublicAdapter:
                         )
                         for r in chunk
                     ]
+                elif resp.status == 429:
+                    from hledac.universal.transport.circuit_breaker import get_breaker
+                    try:
+                        from urllib.parse import urlparse as _urlparse
+                        get_breaker(_urlparse(api_url).netloc).record_failure(
+                            failure_kind="matrix_search:429"
+                        )
+                    except Exception:
+                        pass
                 return []
         except Exception as e:
             logger.debug(f"Public rooms search failed: {e}")

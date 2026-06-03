@@ -1430,6 +1430,40 @@ class SprintSchedulerConfig:
 
     source_tier_map: dict[str, SourceTier] = field(default_factory=dict)
 
+    @property
+    def effective_windup_lead_s(self) -> float:
+        """
+        F250: Dynamic windup that scales with sprint duration.
+
+        Returns the windup lead in seconds as 30% of sprint_duration_s, clamped
+        to [30, 180] so:
+          - 60s quick sprint → 30s windup (minimum floor, not 18s from 30%)
+          - 600s thorough sprint → 180s windup (preserves pre-F250 behavior)
+          - 1800s default → 180s windup (hard cap)
+
+        Floor 30s prevents active budget from collapsing below a minimum viable
+        window. Cap 180s prevents long sprints from spending 50%+ in windup.
+
+        Used by tests/test_f250_dynamic_windup.py and tests/test_f253_sprint_tiers.py.
+        """
+        raw = self.sprint_duration_s * 0.30
+        return float(max(30.0, min(180.0, raw)))
+
+    @property
+    def hermes_budget_s(self) -> int:
+        """
+        F253: Adaptive Hermes synthesis budget = 35% of the active window,
+        floored at 30s. Prevents short sprints from starving the synthesis
+        lane while ensuring long sprints reserve enough budget.
+
+        Examples:
+          - 60s quick (active=30s) → 30 (floor)
+          - 300s deep   (active=210s) → 73 (35%)
+          - 600s thoro  (active=420s) → 147 (35%)
+        """
+        active = max(0, self.sprint_duration_s - self.effective_windup_lead_s)
+        return max(30, int(active * 0.35))
+
     # F223A: Explicit acquisition profile — overrides env var / profile-name inference
 
     acquisition_profile: str | None = None

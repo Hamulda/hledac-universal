@@ -1,7 +1,12 @@
 import asyncio
 import logging
+import os
 
 logger = logging.getLogger(__name__)
+
+# F5.2: opt-in env gate. MobileCLIP weights are ~150 MB; the model stays
+# unloaded unless HLEDAC_ENABLE_MOBILECLIP=1, matching the M1 RAM budget.
+_MOBILECLIP_ENV_GATE = "HLEDAC_ENABLE_MOBILECLIP"
 
 # Lazy MLX accessors — defer mlx.core/nn/utils to first use
 _mlx_core_mod = None
@@ -184,6 +189,13 @@ class MobileCLIPFusion:
         async with self._lock():
             if self._model is not None:
                 return
+            # F5.2: opt-in env gate. When unset/0, raise a clear error so callers
+            # can fall back to the deterministic pHash encoder instead.
+            if os.environ.get(_MOBILECLIP_ENV_GATE, "").lower() not in ("1", "true", "yes"):
+                raise RuntimeError(
+                    f"{_MOBILECLIP_ENV_GATE} not set — MobileCLIP gated off. "
+                    f"Set {_MOBILECLIP_ENV_GATE}=1 to enable (loads ~150 MB)."
+                )
             try:
                 from mobileclip import create_model_and_transforms, get_tokenizer
             except ImportError as e:

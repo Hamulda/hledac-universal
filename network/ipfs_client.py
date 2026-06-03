@@ -17,16 +17,206 @@ import logging
 import os
 import re
 import time as _time
+from collections import OrderedDict
+from typing import Final
+from urllib.parse import urlparse
 
 import aiohttp
 
 from hledac.universal.knowledge.duckdb_store import CanonicalFinding
+from hledac.universal.transport.circuit_breaker import (
+    domain_breaker_check,
+    get_breaker,
+)
 
 logger = logging.getLogger(__name__)
 
 # CID extraction pattern — matches Qm (v0, base58, 44 chars) and
 # bafy (v1, base32, 52+ chars) CID formats.
 CID_PATTERN = re.compile(r'\b(Qm[1-9A-HJ-NP-Za-km-z]{44}|bafy[a-z2-7]{52,})\b')
+
+# =============================================================================
+# IPFS SESSION POOL — bounded per-host aiohttp sessions
+# =============================================================================
+# Replaces per-call ClientSession churn (5 sites). Each gateway gets its own
+# session keyed by host. LRU eviction at MAX_POOL_SIZE caps M1 memory use.
+# M1 8GB: 8 sessions × ~200KB + connector DNS cache ≈ 1.6MB peak — negligible.
+#
+# Invariants:
+# - [SP1] Lazy — session created on first request to a host
+# - [SP2] Same host → same session across calls
+# - [SP3] Tor connector (ProxyConnector) keyed separately as host|tor
+# - [SP4] LRU eviction closes oldest session when pool grows past MAX_POOL_SIZE
+# - [SP5] Fail-soft — on any error in _get_session, return a fresh transient
+#         session (no breaker hit, no shared state corruption)
+# - [SP6] Thread-safe via asyncio.Lock (single event loop, no race)
+MAX_POOL_SIZE: Final[int] = 8
+_SESSION_POOL: OrderedDict[str, aiohttp.ClientSession] = OrderedDict()
+_SESSION_POOL_LOCK: asyncio.Lock | None = None
+
+
+def _get_pool_lock() -> asyncio.Lock:
+    """Lazily create the async lock (must be called from running loop)."""
+    global _SESSION_POOL_LOCK
+    if _SESSION_POOL_LOCK is None:
+        _SESSION_POOL_LOCK = asyncio.Lock()
+    return _SESSION_POOL_LOCK
+
+
+def _host_from_url(url: str) -> str:
+    """Extract hostname from a URL. Empty string on parse failure."""
+    try:
+        return urlparse(url).netloc or ""
+    except Exception:
+        return ""
+
+
+async def _get_ipfs_session(
+    host: str,
+    *,
+    timeout: aiohttp.ClientTimeout,
+    connector: aiohttp.ClientConnector | None = None,
+) -> aiohttp.ClientSession:
+    """
+    Get or create a pooled aiohttp.ClientSession for a host.
+
+    Args:
+        host: hostname key (e.g. "ipfs.io"); combined with connector identity
+        timeout: aiohttp.ClientTimeout
+        connector: optional connector (e.g. ProxyConnector for Tor)
+
+    Returns:
+        aiohttp.ClientSession — pooled or freshly created on cache miss.
+
+    Fail-soft: returns a transient (non-pooled) session on any error.
+    """
+    if not host:
+        # No host key — create transient session, don't pollute pool
+        return aiohttp.ClientSession(timeout=timeout, connector=connector)
+
+    # Pool key = host, or host|tor if non-default connector (ProxyConnector
+    # for Tor must not be mixed with plain TCP sessions).
+    pool_key = host if connector is None else f"{host}|tor"
+
+    lock = _get_pool_lock()
+    async with lock:
+        existing = _SESSION_POOL.get(pool_key)
+        if existing is not None and not existing.closed:
+            _SESSION_POOL.move_to_end(pool_key)
+            return existing
+
+        # LRU eviction before insert
+        while len(_SESSION_POOL) >= MAX_POOL_SIZE:
+            try:
+                old_key, old_sess = _SESSION_POOL.popitem(last=False)
+                if old_sess is not None and not old_sess.closed:
+                    try:
+                        await old_sess.close()
+                    except Exception:
+                        pass
+            except Exception:
+                break
+
+        try:
+            sess = aiohttp.ClientSession(timeout=timeout, connector=connector)
+            _SESSION_POOL[pool_key] = sess
+            return sess
+        except Exception as e:
+            logger.debug(f"IPFS session pool create failed for {pool_key}: {e}")
+            return aiohttp.ClientSession(timeout=timeout, connector=connector)
+
+
+async def close_ipfs_session_pool() -> None:
+    """Close all pooled sessions. Idempotent. Safe to call on teardown."""
+    lock = _get_pool_lock()
+    async with lock:
+        sessions = list(_SESSION_POOL.values())
+        _SESSION_POOL.clear()
+    for sess in sessions:
+        try:
+            if sess is not None and not sess.closed:
+                await sess.close()
+        except Exception:
+            pass
+
+
+def reset_ipfs_session_pool_for_tests() -> None:
+    """
+    Synchronous reset of the pool state. TEST-ONLY.
+
+    Does not await close on remaining sessions — caller is responsible
+    for invoking close_ipfs_session_pool() in an async context first.
+    """
+    global _SESSION_POOL_LOCK
+    _SESSION_POOL.clear()
+    _SESSION_POOL_LOCK = None
+
+
+def get_ipfs_pool_status() -> dict:
+    """Read-only pool telemetry for debug dashboards."""
+    return {
+        "pool_size": len(_SESSION_POOL),
+        "max_pool_size": MAX_POOL_SIZE,
+        "hosts": list(_SESSION_POOL.keys()),
+    }
+
+
+# =============================================================================
+# IPFS-CIRCUIT-BREAKER HELPER — fail-soft wrapping for aiohttp calls
+# =============================================================================
+# Reuses transport.circuit_breaker.get_breaker(domain) so state is shared
+# with all other sidecars (one broken host = one breaker across the app).
+# Returns (response_or_none, error_label) — caller treats both as fail-soft.
+async def _ipfs_checked_get(
+    session: aiohttp.ClientSession,
+    url: str,
+    *,
+    timeout: aiohttp.ClientTimeout | None = None,
+    failure_kind: str = "ipfs_fetch_error",
+) -> tuple[aiohttp.ClientResponse | None, str | None]:
+    """
+    aiohttp GET guarded by domain circuit breaker.
+
+    Returns (resp, None) on 2xx/3xx/4xx (caller checks status), (None, label) on
+    circuit-open / timeout / client_error / unknown_error. Never raises.
+    """
+    domain = _host_from_url(url)
+    if not domain:
+        return None, "empty_domain"
+    decision = domain_breaker_check(domain)
+    if not decision.allowed:
+        return None, f"circuit_breaker_open:{decision.reason}"
+    try:
+        if timeout is not None:
+            async with session.get(url, timeout=timeout) as resp:
+                if 200 <= resp.status < 400:
+                    return resp, None
+                get_breaker(domain).record_failure(
+                    failure_kind=f"{failure_kind}:{resp.status}"
+                )
+                return resp, None
+        async with session.get(url) as resp:
+            if 200 <= resp.status < 400:
+                return resp, None
+            get_breaker(domain).record_failure(
+                failure_kind=f"{failure_kind}:{resp.status}"
+            )
+            return resp, None
+    except TimeoutError:
+        get_breaker(domain).record_failure(
+            is_timeout=True, failure_kind=f"{failure_kind}:timeout"
+        )
+        return None, "timeout"
+    except aiohttp.ClientError:
+        get_breaker(domain).record_failure(
+            is_timeout=False, failure_kind=failure_kind
+        )
+        return None, "client_error"
+    except Exception:
+        get_breaker(domain).record_failure(
+            is_timeout=False, failure_kind=failure_kind
+        )
+        return None, "unknown_error"
 
 
 def extract_cids_from_text(content: str) -> list[str]:
@@ -102,19 +292,23 @@ async def resolve_ipns(name: str, timeout: int = IPNS_TIMEOUT) -> str | None:
     for api_base in IPNS_API_GATEWAYS:
         try:
             url = f"{api_base}{name}"
-            async with aiohttp.ClientSession(timeout=client_timeout) as session:
-                async with session.get(url) as resp:
-                    if resp.status == 200:
-                        import json as _json
+            host = _host_from_url(api_base)
+            session = await _get_ipfs_session(host, timeout=client_timeout)
+            resp, err = await _ipfs_checked_get(
+                session, url, failure_kind="ipns_resolve"
+            )
+            if err is None and resp is not None and resp.status == 200:
+                import json as _json
 
-                        data = await resp.json()
-                        # Response: {"Path": "/ipfs/<cid>"}
-                        path = data.get("Path", "")
-                        cid_match = _re.search(r"/ipfs/([a-zA-Z0-9]+)", path)
-                        if cid_match:
-                            cid = cid_match.group(1)
-                            logger.debug(f"IPNS {name} resolved to {cid}")
-                            return cid
+                data = await resp.json()
+                # Response: {"Path": "/ipfs/<cid>"}
+                path = data.get("Path", "")
+                cid_match = _re.search(r"/ipfs/([a-zA-Z0-9]+)", path)
+                if cid_match:
+                    cid = cid_match.group(1)
+                    get_breaker(host).record_success()
+                    logger.debug(f"IPNS {name} resolved to {cid}")
+                    return cid
         except Exception as e:
             logger.debug(f"IPNS resolve failed for {name} via {api_base}: {e}")
             continue
@@ -166,37 +360,51 @@ async def fetch_directory_recursive(
             url = f"{gateway_base}{cid}"
             client_timeout = aiohttp.ClientTimeout(total=20)
 
-            async with aiohttp.ClientSession(timeout=client_timeout) as session:
-                # Check if this is a directory via API
-                api_url = f"https://ipfs.io/api/v0/ls/{cid}"
-                async with session.get(api_url) as resp:
-                    if resp.status == 200:
-                        import json as _json
+            host = _host_from_url(gateway_base)
+            session = await _get_ipfs_session(host, timeout=client_timeout)
+            # Check if this is a directory via API
+            api_url = f"https://ipfs.io/api/v0/ls/{cid}"
+            api_host = _host_from_url(api_url)
+            # Use the same pooled session for both (different host key, but
+            # api_host and host may differ — pick one canonical key per call).
+            if api_host == host:
+                resp, err = await _ipfs_checked_get(
+                    session, api_url, failure_kind="ipfs_dir_ls"
+                )
+            else:
+                # Distinct host (api.ipfs.io) — use its own pooled session
+                api_session = await _get_ipfs_session(api_host, timeout=client_timeout)
+                resp, err = await _ipfs_checked_get(
+                    api_session, api_url, failure_kind="ipfs_dir_ls"
+                )
+            if err is None and resp is not None and resp.status == 200:
+                import json as _json
 
-                        data = await resp.json()
-                        objects = data.get("Objects", [])
-                        if objects:
-                            links = objects[0].get("Links", [])
-                            for link in links[:MAX_DIR_FILES]:
-                                link_cid = link.get("Hash", "")
-                                link_name = link.get("Name", "")
-                                link_type = link.get("Type", 0)
-                                link_size = link.get("Size", 0)
+                data = await resp.json()
+                objects = data.get("Objects", [])
+                if objects:
+                    links = objects[0].get("Links", [])
+                    for link in links[:MAX_DIR_FILES]:
+                        link_cid = link.get("Hash", "")
+                        link_name = link.get("Name", "")
+                        link_type = link.get("Type", 0)
+                        link_size = link.get("Size", 0)
 
-                                results.append({
-                                    "cid": link_cid,
-                                    "path": f"{cid}/{link_name}",
-                                    "size": link_size,
-                                    "type": "dir" if link_type == 2 else "file",  # 2 = directory
-                                })
+                        results.append({
+                            "cid": link_cid,
+                            "path": f"{cid}/{link_name}",
+                            "size": link_size,
+                            "type": "dir" if link_type == 2 else "file",  # 2 = directory
+                        })
 
-                                # Recurse into subdirectories
-                                if link_type == 2 and current_depth < max_depth:
-                                    sub_results = await fetch_directory_recursive(
-                                        link_cid, max_depth, current_depth + 1, seen_cids
-                                    )
-                                    results.extend(sub_results)
-                        break
+                        # Recurse into subdirectories
+                        if link_type == 2 and current_depth < max_depth:
+                            sub_results = await fetch_directory_recursive(
+                                link_cid, max_depth, current_depth + 1, seen_cids
+                            )
+                            results.extend(sub_results)
+                    get_breaker(_host_from_url(api_url)).record_success()
+                break
         except Exception as e:
             logger.debug(f"Directory fetch for {cid} via {name}: {e}")
             continue
@@ -229,19 +437,25 @@ async def find_via_ipfs_search(query: str) -> list[str]:
         client_timeout = aiohttp.ClientTimeout(total=IPFS_SEARCH_TIMEOUT)
         params = {"q": query, "size": MAX_SEARCH_RESULTS}
 
-        async with aiohttp.ClientSession(timeout=client_timeout) as session:
-            async with session.get(IPFS_SEARCH_GATEWAY, params=params) as resp:
-                if resp.status == 200:
-                    data = await resp.json()
-                    # Response structure varies; handle common patterns
-                    hits = data.get("hits", [])
-                    if isinstance(data, list):
-                        hits = data
-                    for hit in hits:
-                        cid = hit.get("cid", "") or hit.get("hash", "")
-                        if cid and cid not in seen:
-                            seen.add(cid)
-                            cids.append(cid)
+        host = _host_from_url(IPFS_SEARCH_GATEWAY)
+        session = await _get_ipfs_session(host, timeout=client_timeout)
+        resp, err = await _ipfs_checked_get(
+            session, IPFS_SEARCH_GATEWAY,
+            timeout=client_timeout,
+            failure_kind="ipfs_search",
+        )
+        if err is None and resp is not None and resp.status == 200:
+            data = await resp.json()
+            # Response structure varies; handle common patterns
+            hits = data.get("hits", [])
+            if isinstance(data, list):
+                hits = data
+            for hit in hits:
+                cid = hit.get("cid", "") or hit.get("hash", "")
+                if cid and cid not in seen:
+                    seen.add(cid)
+                    cids.append(cid)
+            get_breaker(host).record_success()
     except Exception as e:
         logger.debug(f"IPFS search failed for query '{query}': {e}")
 
@@ -271,18 +485,25 @@ async def search_via_estuary(query: str) -> list[str]:
         client_timeout = aiohttp.ClientTimeout(total=IPFS_SEARCH_TIMEOUT)
         params = {"query": query}
 
-        async with aiohttp.ClientSession(timeout=client_timeout) as session:
-            async with session.get(ESTUARY_SEARCH, params=params) as resp:
-                if resp.status == 200:
-                    data = await resp.json()
-                    if isinstance(data, list):
-                        for item in data[:MAX_SEARCH_RESULTS]:
-                            cid = item.get("cid", "")
-                            if cid and cid not in seen:
-                                seen.add(cid)
-                                cids.append(cid)
-                elif resp.status == 429:
-                    logger.warning("Estuary API rate limited")
+        host = _host_from_url(ESTUARY_SEARCH)
+        session = await _get_ipfs_session(host, timeout=client_timeout)
+        resp, err = await _ipfs_checked_get(
+            session, ESTUARY_SEARCH,
+            timeout=client_timeout,
+            failure_kind="estuary_search",
+        )
+        if err is None and resp is not None and resp.status == 200:
+            data = await resp.json()
+            if isinstance(data, list):
+                for item in data[:MAX_SEARCH_RESULTS]:
+                    cid = item.get("cid", "")
+                    if cid and cid not in seen:
+                        seen.add(cid)
+                        cids.append(cid)
+            get_breaker(host).record_success()
+        elif resp is not None and resp.status == 429:
+            logger.warning("Estuary API rate limited")
+            get_breaker(host).record_failure(failure_kind="estuary_search:429")
     except Exception as e:
         logger.debug(f"Estuary search failed for query '{query}': {e}")
 
@@ -386,12 +607,13 @@ async def fetch_ipfs(cid: str, timeout: int = 30) -> bytes | None:
     for name, base_url in IPFS_GATEWAYS:
         try:
             url = f"{base_url}{cid}"
-            # F218Z: Apply Tor SOCKS5H connector if available
-            session_kwargs = {"timeout": client_timeout}
-            if connector is not None:
-                session_kwargs["connector"] = connector
-            async with aiohttp.ClientSession(**session_kwargs) as session:
-                # HEAD req first to check Content-Length
+            host = _host_from_url(base_url)
+            session = await _get_ipfs_session(
+                host, timeout=client_timeout, connector=connector
+            )
+
+            # HEAD probe — not breaker-guarded; 4xx/5xx just skips gateway.
+            try:
                 async with session.head(url) as head_resp:
                     if head_resp.status != 200:
                         continue
@@ -403,27 +625,36 @@ async def fetch_ipfs(cid: str, timeout: int = 30) -> bytes | None:
                             if file_size > MAX_FILE_SIZE_BYTES:
                                 logger.warning(
                                     f"IPFS file {cid} from {name} exceeds 10MB limit "
-                                    f"({file_size} bytes) — skipping"
+                                    f"({file_size} bytes) → skipping"
                                 )
                                 return None
                         except (ValueError, TypeError):
                             pass
+            except (TimeoutError, aiohttp.ClientError):
+                continue
+            except Exception:
+                continue
 
-                # GET req to download
-                async with session.get(url) as get_resp:
-                    if get_resp.status != 200:
-                        continue
+            # GET download — circuit-breaker guarded
+            resp, err = await _ipfs_checked_get(
+                session, url, failure_kind="ipfs_fetch"
+            )
+            if err is not None or resp is None or resp.status != 200:
+                if err is not None:
+                    logger.debug(f"IPFS GET breaker result for {cid} via {name}: {err}")
+                continue
 
-                    body = await get_resp.read()
-                    if len(body) > MAX_FILE_SIZE_BYTES:
-                        logger.warning(
-                            f"IPFS file {cid} from {name} exceeds 10MB limit "
-                            f"after download ({len(body)} bytes) — skipping"
-                        )
-                        return None
+            body = await resp.read()
+            if len(body) > MAX_FILE_SIZE_BYTES:
+                logger.warning(
+                    f"IPFS file {cid} from {name} exceeds 10MB limit "
+                    f"after download ({len(body)} bytes) → skipping"
+                )
+                return None
 
-                    logger.debug(f"IPFS fetch success: {cid} via {name} ({len(body)} bytes)")
-                    return body
+            get_breaker(host).record_success()
+            logger.debug(f"IPFS fetch success: {cid} via {name} ({len(body)} bytes)")
+            return body
 
         except TimeoutError:
             logger.debug(f"IPFS timeout for {cid} via {name}")
@@ -434,7 +665,6 @@ async def fetch_ipfs(cid: str, timeout: int = 30) -> bytes | None:
 
     logger.warning(f"IPFS fetch failed for all gateways: {cid}")
     return None
-
 
 async def search_ipfs(query: str) -> list[str]:
     """

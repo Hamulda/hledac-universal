@@ -1063,6 +1063,17 @@ class BannerGrabber:
 
         elapsed_ms = (time.monotonic() - t0) * 1000
 
+        # Record outcome to domain circuit breaker (sibling of domain_breaker_check)
+        try:
+            from hledac.universal.transport.circuit_breaker import get_breaker
+            br = get_breaker(ip)
+            if error or banner.startswith("error:"):
+                br.record_failure(failure_kind=f"banner_grab:{error or "http_error"}")
+            else:
+                br.record_success()
+        except Exception:
+            pass
+
 
 
         return BannerResult(

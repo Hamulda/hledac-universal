@@ -135,9 +135,23 @@ class FediverseAdapter:
             ) as resp:
                 if resp.status == 200:
                     data = await resp.json()
+                    from hledac.universal.transport.circuit_breaker import get_breaker
+                    try:
+                        from urllib.parse import urlparse as _urlparse
+                        get_breaker(_urlparse(api_url).netloc).record_success()
+                    except Exception:
+                        pass
                     return data.get("statuses", [])
                 elif resp.status == 429:
                     logger.debug(f"Rate limited: {instance}")
+                    from hledac.universal.transport.circuit_breaker import get_breaker
+                    try:
+                        from urllib.parse import urlparse as _urlparse
+                        get_breaker(_urlparse(api_url).netloc).record_failure(
+                            failure_kind="fediverse_search:429"
+                        )
+                    except Exception:
+                        pass
                 return []
         except Exception as e:
             logger.debug(f"Fediverse search failed for {instance}: {e}")
