@@ -3014,10 +3014,8 @@ Formát (pouze seznam, žádný další text):
 
             async def _try_load():
                 try:
-                    return await asyncio.wait_for(
-                        get_mlx_model(model_name),
-                        timeout=3.0
-                    )
+                    async with asyncio.timeout(3.0):
+                        return await get_mlx_model(model_name)
                 except Exception:
                     return None, None
 

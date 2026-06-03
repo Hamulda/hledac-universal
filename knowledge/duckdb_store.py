@@ -3982,10 +3982,8 @@ class DuckDBShadowStore:
         # Sprint 8L: Boot barrier — wait for startup replay to complete before accepting writes
         if not self._startup_ready.is_set():
             try:
-                await asyncio.wait_for(
-                    self._startup_ready.wait(),
-                    timeout=30.0,
-                )
+                async with asyncio.timeout(30.0):
+                    await self._startup_ready.wait()
             except TimeoutError:
                 return ActivationResult(
                     finding_id=finding_id,
@@ -4061,10 +4059,8 @@ class DuckDBShadowStore:
         # Sprint 8L: Boot barrier — wait for startup replay to complete before accepting writes
         if not self._startup_ready.is_set():
             try:
-                await asyncio.wait_for(
-                    self._startup_ready.wait(),
-                    timeout=30.0,
-                )
+                async with asyncio.timeout(30.0):
+                    await self._startup_ready.wait()
             except TimeoutError:
                 return [
                     ActivationResult(
@@ -4183,7 +4179,8 @@ class DuckDBShadowStore:
         # Boot barrier (Sprint 8L)
         if not self._startup_ready.is_set():
             try:
-                await asyncio.wait_for(self._startup_ready.wait(), timeout=30.0)
+                async with asyncio.timeout(30.0):
+                    await self._startup_ready.wait()
             except TimeoutError:
                 return ActivationResult(
                     finding_id=finding.finding_id,
@@ -4455,7 +4452,8 @@ class DuckDBShadowStore:
         # Boot barrier (Sprint 8L)
         if not self._startup_ready.is_set():
             try:
-                await asyncio.wait_for(self._startup_ready.wait(), timeout=30.0)
+                async with asyncio.timeout(30.0):
+                    await self._startup_ready.wait()
             except TimeoutError:
                 return [
                     ActivationResult(
@@ -5968,10 +5966,8 @@ class DuckDBShadowStore:
                     await asyncio.sleep(0)
                 # Individual marker replay with timeout via the event loop
                 try:
-                    await asyncio.wait_for(
-                        self.async_replay_single_pending_marker(fid),
-                        timeout=max(deadline - _time.monotonic(), 0.1),
-                    )
+                    async with asyncio.timeout(max(deadline - _time.monotonic(), 0.1)):
+                        await self.async_replay_single_pending_marker(fid)
                 except TimeoutError:
                     # Timeout on single marker — stop replay, leave remaining pending
                     break
@@ -7122,3 +7118,4 @@ def create_owned_store() -> DuckDBShadowStore:
     except Exception:
         # Fallback: :memory: even if paths.py import fails
         return DuckDBShadowStore()
+

@@ -883,8 +883,12 @@ class GraphRAGOrchestrator:
         if hasattr(self, '_thread_pool'):
             try:
                 self._thread_pool.shutdown(wait=False, cancel_futures=True)
-            except Exception:
-                pass  # noqa: BARE-EXCEPT  # fail-soft suppression: shutdown
+            except Exception as _e:
+                logger.debug(
+                    "fail-soft suppression: shutdown (thread_pool): %s",
+                    _e,
+                    exc_info=True,
+                )
 
     # =============================================================================
     # NETWORK ANALYSIS METHODS (from evidence_network_analyzer.py comments)
@@ -2032,8 +2036,12 @@ class GraphRAGOrchestrator:
             if ts_str:
                 try:
                     return datetime.fromisoformat(ts_str.replace('Z', '+00:00'))
-                except (ValueError, AttributeError):
-                    pass  # noqa: BARE-EXCEPT  # fail-soft suppression: get_timestamp
+                except (ValueError, AttributeError) as _e:
+                    logger.debug(
+                        "fail-soft suppression: get_timestamp (min): %s",
+                        _e,
+                        exc_info=True,
+                    )
             return None
 
         filtered = []
@@ -2075,8 +2083,12 @@ class GraphRAGOrchestrator:
             if ts_str:
                 try:
                     return datetime.fromisoformat(ts_str.replace('Z', '+00:00'))
-                except (ValueError, AttributeError):
-                    pass  # noqa: BARE-EXCEPT  # fail-soft suppression: get_timestamp
+                except (ValueError, AttributeError) as _e:
+                    logger.debug(
+                        "fail-soft suppression: get_timestamp (max): %s",
+                        _e,
+                        exc_info=True,
+                    )
             # Default to very old date
             return datetime.min
 
@@ -2514,8 +2526,12 @@ class GraphRAGOrchestrator:
             worker_task.cancel()
             try:
                 await worker_task
-            except asyncio.CancelledError:
-                pass  # noqa: BARE-EXCEPT  # fail-soft suppression: multi_hop_search_streaming
+            except asyncio.CancelledError as _e:
+                logger.debug(
+                    "fail-soft suppression: multi_hop_search_streaming (cancel): %s",
+                    _e,
+                    exc_info=True,
+                )
 
     async def _traversal_worker(
         self,
@@ -2581,8 +2597,12 @@ class GraphRAGOrchestrator:
                         break
                     await queue.put(fact)
 
-        except asyncio.CancelledError:
-            pass  # noqa: BARE-EXCEPT  # fail-soft suppression: _traversal_worker
+        except asyncio.CancelledError as _e:
+            logger.debug(
+                "fail-soft suppression: _traversal_worker (cancel): %s",
+                _e,
+                exc_info=True,
+            )
         except Exception as e:
             logger.warning(f"Traversal worker error: {e}")
         finally:

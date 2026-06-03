@@ -553,10 +553,8 @@ class UnifiedWebIntelligence:
         """
         while True:
             try:
-                await asyncio.wait_for(
-                    self._aging_shutdown.wait(),
-                    timeout=self._aging_interval_seconds
-                )
+                async with asyncio.timeout(self._aging_interval_seconds):
+                    await self._aging_shutdown.wait()
                 # shutdown event set — exit gracefully
                 break
             except TimeoutError:
@@ -1431,3 +1429,4 @@ async def example_usage():
 if __name__ == "__main__":
     import json
     asyncio.run(example_usage())
+

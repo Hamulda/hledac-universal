@@ -1730,15 +1730,13 @@ async def _fetch_and_process_page(
         policy = _compute_fetch_policy(hit_url, discovery_score, discovery_reason, strong_signal)
 
         try:
-            result = await asyncio.wait_for(
-                _ASYNC_FETCH_PUBLIC_TEXT(
-                    hit_url, effective_timeout, fetch_max_bytes,
-                    use_stealth=policy.use_stealth,
-                    use_js=policy.use_js,
-                    use_doh=policy.use_doh,
-                ),
-                timeout=effective_timeout + 5.0,
-            )
+            async with asyncio.timeout(effective_timeout + 5.0):
+                result = await _ASYNC_FETCH_PUBLIC_TEXT(
+                        hit_url, effective_timeout, fetch_max_bytes,
+                        use_stealth=policy.use_stealth,
+                        use_js=policy.use_js,
+                        use_doh=policy.use_doh,
+                    ),
         except TimeoutError:
             usable_signal, value_tier, resolution_reason, discovery_false_positive, waste_category, structural_quality = _compute_page_usable_fields(
                 fetched=False, matched_patterns=0, stored_findings=0,
@@ -4775,7 +4773,8 @@ async def async_run_live_public_pipeline(
                     async def run_tot_with_timeout(hypo: str, timeout_s: float = 15.0) -> str:
                         """Run ToT solve with per-hypothesis timeout. Fail-soft: returns empty string on timeout/error."""
                         try:
-                            return await asyncio.wait_for(tot_layer.solve_with_tot(hypo), timeout=timeout_s)
+                            async with asyncio.timeout(timeout_s):
+                                return await tot_layer.solve_with_tot(hypo)
                         except TimeoutError:
                             logger.debug(f"[P12] ToT timed out after {timeout_s}s for hypothesis: {hypo[:50]}...")
                             return ""
@@ -5134,3 +5133,4 @@ def _ensure_ct_scanner_patched() -> None:
     except Exception:
         # Fail-soft: CT scanner unavailable
         _CT_SCANNER_GET_SUBDOMAINS = None
+

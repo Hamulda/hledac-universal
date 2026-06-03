@@ -102,10 +102,8 @@ class TorrentMetadataFetcher:
     ) -> TorrentInfo | None:
         """Attempt to fetch metadata from a single peer."""
         try:
-            reader, writer = await asyncio.wait_for(
-                asyncio.open_connection(ip, port),
-                timeout=min(10.0, timeout)
-            )
+            async with asyncio.timeout(min(10.0, timeout)):
+                reader, writer = await asyncio.open_connection(ip, port)
         except Exception:
             return None
 
@@ -151,14 +149,16 @@ class TorrentMetadataFetcher:
 
             while True:
                 try:
-                    msg = await asyncio.wait_for(reader.readexactly(6), timeout=10.0)
+                    async with asyncio.timeout(10.0):
+                        msg = await reader.readexactly(6)
                     if len(msg) < 4:
                         break
                     msg_len = struct.unpack(">I", msg[:4])[0]
                     if msg_len > 1024 * 1024:  # Sanity check
                         break
 
-                    msg_data = await asyncio.wait_for(reader.readexactly(msg_len), timeout=5.0)
+                    async with asyncio.timeout(5.0):
+                        msg_data = await reader.readexactly(msg_len)
                     msg_id = msg_data[0] if msg_data else 0
 
                     if msg_id == 20:  # Extended message
@@ -191,12 +191,14 @@ class TorrentMetadataFetcher:
             while remaining > 0:
                 remaining_time = max(1.0, deadline - asyncio.get_event_loop().time())
                 try:
-                    header = await asyncio.wait_for(reader.readexactly(6), timeout=remaining_time)
+                    async with asyncio.timeout(remaining_time):
+                        header = await reader.readexactly(6)
                     msg_len = struct.unpack(">I", header[:4])[0]
                     if msg_len > METADATA_PIECE_SIZE + 100:
                         break
 
-                    msg_data = await asyncio.wait_for(reader.readexactly(msg_len), timeout=5.0)
+                    async with asyncio.timeout(5.0):
+                        msg_data = await reader.readexactly(msg_len)
                     msg_id = msg_data[0] if msg_data else 0
 
                     if msg_id == ut_metadata_id:
@@ -457,3 +459,4 @@ class TorrentMetadataFetcher:
                 return f"{size_bytes:.1f} {unit}"
             size_bytes /= 1024
         return f"{size_bytes:.1f} PB"
+

@@ -306,10 +306,8 @@ class BatchScheduler:
 
                 # Wait for first item with flush timeout
                 try:
-                    first_item = await asyncio.wait_for(
-                        self._batch_queue.get(),
-                        timeout=flush_interval
-                    )
+                    async with asyncio.timeout(flush_interval):
+                        first_item = await self._batch_queue.get()
                     current_schema_key = first_item[2]
                     items.append(first_item)
 
@@ -322,10 +320,8 @@ class BatchScheduler:
                     # Gather up to max_size items with boundary checks
                     while len(items) < self._max_size:
                         try:
-                            item = await asyncio.wait_for(
-                                self._batch_queue.get_nowait(),
-                                timeout=0.01
-                            )
+                            async with asyncio.timeout(0.01):
+                                item = await self._batch_queue.get_nowait()
                             item_schema = item[2]
                             item_payload = item[3]
                             item_prompt = item_payload.get('prompt', '')
@@ -498,3 +494,4 @@ class BatchScheduler:
         if not system_msg:
             return 'default'
         return hashlib.md5(system_msg.encode(), usedforsecurity=False).hexdigest()[:8]
+

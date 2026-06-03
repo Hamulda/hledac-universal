@@ -489,7 +489,8 @@ class E2EBenchmark:
             # Sprint 82N: Increased timeout to 30s for full initialization
             init_task = asyncio.create_task(real_orch.initialize())
             try:
-                init_result = await asyncio.wait_for(init_task, timeout=30.0)
+                async with asyncio.timeout(30.0):
+                    init_result = await init_task
                 if not init_result:
                     logger.warning("⚠️ Real orchestrator init returned False")
                     logger.warning("Falling back to mock orchestrator")
@@ -1318,14 +1319,12 @@ class E2EBenchmark:
             cfg_mode = self.config.mode
 
             try:
-                result = await asyncio.wait_for(
-                    orch.research(
-                        query=cfg_query,
-                        timeout=cfg_timeout,
-                        offline_replay=(cfg_mode == "OFFLINE_REPLAY"),
-                    ),
-                    timeout=float(cfg_timeout) + 60.0
-                )
+                async with asyncio.timeout(float(cfg_timeout) + 60.0):
+                    result = await orch.research(
+                            query=cfg_query,
+                            timeout=cfg_timeout,
+                            offline_replay=(cfg_mode == "OFFLINE_REPLAY"),
+                        ),
             except TimeoutError:
                 logger.warning("Research timed out - collecting partial results")
                 result = None
@@ -1778,3 +1777,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

@@ -98,10 +98,8 @@ async def run_pipeline_iteration(
             # F191B: Mock fetch — simulates I/O overhead without network
             await asyncio.sleep(0.001)
         else:
-            await asyncio.wait_for(
-                _run_sprint_mode(query, duration_s=duration_s * 0.4, mode=mode),
-                timeout=duration_s * 0.5,
-            )
+            async with asyncio.timeout(duration_s * 0.5):
+                await _run_sprint_mode(query, duration_s=duration_s * 0.4, mode=mode)
     except TimeoutError:
         phase_errors["fetch"] = "timeout"
     except Exception as e:
@@ -377,3 +375,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

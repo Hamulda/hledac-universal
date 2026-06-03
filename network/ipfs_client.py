@@ -847,10 +847,8 @@ async def fetch_findings_from_cids(
         nonlocal query
         async with sem:
             try:
-                results = await asyncio.wait_for(
-                    ipfs_fetch_as_findings(cid, query),
-                    timeout=timeout_per_cid,
-                )
+                async with asyncio.timeout(timeout_per_cid):
+                    results = await ipfs_fetch_as_findings(cid, query)
                 return results[0] if results else None
             except (asyncio.TimeoutError, Exception) as e:
                 logger.debug("IPFS CID %s skip: %s", cid[:8], type(e).__name__)
@@ -909,3 +907,4 @@ async def ipfs_search_as_findings(query: str, timeout_per_result: int = 30) -> l
             continue
 
     return findings
+

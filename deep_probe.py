@@ -855,10 +855,8 @@ class DeepProbeScanner:
 
             # Use crawl with single info_hash to find peers
             # crawl() internally sends GET_PEERS and collects responses
-            results = await asyncio.wait_for(
-                node.crawl(infohash, duration_s=timeout_s, max_results=50),
-                timeout=timeout_s,
-            )
+            async with asyncio.timeout(timeout_s):
+                results = await node.crawl(infohash, duration_s=timeout_s, max_results=50)
 
             for r in results:
                 peers = r.get("peers", [])

@@ -145,7 +145,8 @@ class LightpandaManager:
         if self._proc is not None and self._proc.returncode is None:
             try:
                 self._proc.terminate()
-                await asyncio.wait_for(self._proc.wait(), timeout=2.0)
+                async with asyncio.timeout(2.0):
+                    await self._proc.wait()
             except Exception:
                 try:
                     self._proc.kill()

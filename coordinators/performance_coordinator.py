@@ -479,10 +479,8 @@ class AsyncExecutionOptimizer:
 
         # Acquire semaphore
         try:
-            await asyncio.wait_for(
-                self._semaphore.acquire(),
-                timeout=timeout or self.config.agent_timeout_seconds
-            )
+            async with asyncio.timeout(timeout or self.config.agent_timeout_seconds):
+                await self._semaphore.acquire()
         except TimeoutError:
             raise AgentExecutionError(f"Timeout waiting for execution slot for {agent_name}")
 
@@ -799,3 +797,4 @@ class AgentPerformanceOptimizer:
                 "agent_timeout_seconds": self.config.agent_timeout_seconds,
             }
         }
+

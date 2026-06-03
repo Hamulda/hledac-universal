@@ -171,24 +171,24 @@ class I2PTransport(Transport):
         This allows creating I2P destinations without a full I2P router.
         """
         try:
-            reader, writer = await asyncio.wait_for(
-                asyncio.open_connection("127.0.0.1", self.sam_port),
-                timeout=3.0
-            )
+            async with asyncio.timeout(3.0):
+                reader, writer = await asyncio.open_connection("127.0.0.1", self.sam_port)
 
             # SAM Hello
             hello_msg = f"HELLO VERSION {SAM_VERSION}\n"
             writer.write(hello_msg.encode())
             await writer.drain()
 
-            response = await asyncio.wait_for(reader.readline(), timeout=3.0)
+            async with asyncio.timeout(3.0):
+                response = await reader.readline()
             if SAM_OK in response.decode():
                 # Generate destination
                 dest_msg = "DEST GENERATE\n"
                 writer.write(dest_msg.encode())
                 await writer.drain()
 
-                dest_response = await asyncio.wait_for(reader.readline(), timeout=5.0)
+                async with asyncio.timeout(5.0):
+                    dest_response = await reader.readline()
                 if SAM_OK in dest_response.decode():
                     # Parse destination from response
                     # Format: OK DESTINATION=<base64> PUBLICKEY=<base64> ...

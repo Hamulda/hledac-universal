@@ -1391,16 +1391,15 @@ class StealthCrawler:
             )
 
             try:
-                stdout, stderr = await asyncio.wait_for(
-                    process.communicate(),
-                    timeout=15.0
-                )
+                async with asyncio.timeout(15.0):
+                    stdout, stderr = await process.communicate()
             except TimeoutError:
                 # Sprint 8X: Proper terminate → kill on timeout (no zombies)
                 try:
                     process.terminate()
                     try:
-                        await asyncio.wait_for(process.wait(), timeout=2.0)
+                        async with asyncio.timeout(2.0):
+                            await process.wait()
                     except TimeoutError:
                         process.kill()
                         await process.wait()
@@ -1861,9 +1860,8 @@ class StealthWebScraper:
         for proxy in self._proxies:
             try:
                 # TCP connect to proxy host/port
-                reader, writer = await asyncio.wait_for(
-                    asyncio.open_connection(proxy.host, proxy.port), timeout=5
-                )
+                async with asyncio.timeout(5):
+                    reader, writer = await asyncio.open_connection(proxy.host, proxy.port)
                 writer.close()
                 await writer.wait_closed()
                 healthy.append(proxy)
@@ -3082,3 +3080,4 @@ def get_stealth_web_scraper() -> StealthWebScraper:
 # NEVER reached from the active fetch path. This is intentional: per-fetch
 # isolation, no session re-use across fetches.
 _stealth_web_scraper: StealthWebScraper | None = None
+

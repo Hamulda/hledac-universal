@@ -159,10 +159,8 @@ async def _fetch_paste_findings(
             # Run with timeout
             pastes: list[PasteFinding] = []
             try:
-                pastes = await asyncio.wait_for(
-                    run_pastebin(query),
-                    timeout=TIMEOUT_PER_SOURCE,
-                )
+                async with asyncio.timeout(TIMEOUT_PER_SOURCE):
+                    pastes = await run_pastebin(query)
             except TimeoutError:
                 result.errors.append("pastebin_monitor timeout")
                 return result
@@ -238,10 +236,8 @@ async def _fetch_github_secret_findings(
 
             secrets: list[SecretFinding] = []
             try:
-                secrets = await asyncio.wait_for(
-                    scan_repo(repo_name),
-                    timeout=TIMEOUT_PER_SOURCE,
-                )
+                async with asyncio.timeout(TIMEOUT_PER_SOURCE):
+                    secrets = await scan_repo(repo_name)
             except TimeoutError:
                 result.errors.append("github_secret_scanner timeout")
                 return result
@@ -317,10 +313,8 @@ async def _fetch_breach_findings(
 
             alerts = []
             try:
-                alerts = await asyncio.wait_for(
-                    hunter.check_target(query, target_type),
-                    timeout=TIMEOUT_PER_SOURCE,
-                )
+                async with asyncio.timeout(TIMEOUT_PER_SOURCE):
+                    alerts = await hunter.check_target(query, target_type)
             except TimeoutError:
                 result.errors.append("data_leak_hunter timeout")
                 return result
@@ -548,10 +542,8 @@ class LeakSentinelAdapter:
 
         # Wait for all sources with timeout
         try:
-            results: list[LeakSourceResult] = await asyncio.wait_for(
-                asyncio.gather(*[t for _, t in sources_to_run], return_exceptions=True),
-                timeout=TIMEOUT_PER_SOURCE * 2,
-            )
+            async with asyncio.timeout(TIMEOUT_PER_SOURCE * 2):
+                await asyncio.gather(*[t for _, t in sources_to_run], return_exceptions=True)
         except TimeoutError:
             # Cancel pending tasks
             for _, t in sources_to_run:
@@ -609,3 +601,4 @@ class LeakSentinelAdapter:
 def create_leak_sentinel_adapter() -> LeakSentinelAdapter:
     """Create a LeakSentinelAdapter instance."""
     return LeakSentinelAdapter()
+

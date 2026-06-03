@@ -175,10 +175,8 @@ class IPv6Recon:
             return {}
 
         try:
-            reader, writer = await asyncio.wait_for(
-                asyncio.open_connection(server, 43),
-                timeout=WHOIS_TIMEOUT_S,
-            )
+            async with asyncio.timeout(WHOIS_TIMEOUT_S):
+                reader, writer = await asyncio.open_connection(server, 43)
         except Exception as e:
             logger.debug(f"[IPv6] WHOIS connection failed: {e}")
             return {}
@@ -187,7 +185,8 @@ class IPv6Recon:
             writer.write(f"{ip}\r\n".encode())
             await writer.drain()
 
-            data = await asyncio.wait_for(reader.read(4096), timeout=WHOIS_TIMEOUT_S)
+            async with asyncio.timeout(WHOIS_TIMEOUT_S):
+                data = await reader.read(4096)
             text = data.decode("utf-8", errors="replace")
             return self._parse_whois(text)
         except Exception as e:

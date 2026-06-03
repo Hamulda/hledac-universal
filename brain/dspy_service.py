@@ -294,7 +294,8 @@ async def expand_query(query: str) -> list | None:
                 pred = program(query=query.strip())
                 return str(pred.answer) if hasattr(pred, "answer") else None
 
-        answer = await asyncio.wait_for(_run(), timeout=TIMEOUT_SECONDS)
+        async with asyncio.timeout(TIMEOUT_SECONDS):
+            answer = await _run()
         if answer is None:
             return None
 
@@ -502,7 +503,8 @@ async def suggest_pivots(findings: list, context: dict | None = None) -> list | 
                 pred = program(query=findings_str[:400])
                 return str(pred.answer) if hasattr(pred, "answer") else None
 
-        answer = await asyncio.wait_for(_run(), timeout=TIMEOUT_SECONDS)
+        async with asyncio.timeout(TIMEOUT_SECONDS):
+            answer = await _run()
         if answer is None:
             return None
 
@@ -588,3 +590,4 @@ async def check_health() -> dict:
         health["status"] = "warn"
 
     return health
+

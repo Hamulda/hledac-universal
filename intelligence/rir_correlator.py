@@ -166,12 +166,10 @@ async def _resolve_domains_async(
             if _is_private(domain):
                 return (domain, None)
             try:
-                ip = await asyncio.wait_for(
-                    asyncio.get_running_loop().run_in_executor(
+                async with asyncio.timeout(RIR_TIMEOUT_S):
+                    ip = await asyncio.get_running_loop().run_in_executor(
                         None, lambda: socket.gethostbyname(domain)
-                    ),
-                    timeout=RIR_TIMEOUT_S,
-                )
+                    )
                 return (domain, ip)  # type: ignore
             except Exception:
                 return (domain, None)
@@ -294,10 +292,8 @@ async def _whois_lookup_domain(domain: str) -> dict[str, Any] | None:
                 return None
 
         loop = asyncio.get_running_loop()
-        return await asyncio.wait_for(
-            loop.run_in_executor(None, _blocking_whois),
-            timeout=RIR_TIMEOUT_S + 1.0,
-        )
+        async with asyncio.timeout(RIR_TIMEOUT_S + 1.0):
+            return await loop.run_in_executor(None, _blocking_whois)
     except Exception:
         return None
 

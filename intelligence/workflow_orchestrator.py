@@ -565,24 +565,18 @@ class WorkflowOrchestrator:
 
             # Execute with timeout
             if inspect.iscoroutinefunction(module_instance):
-                result = await asyncio.wait_for(
-                    module_instance(input_data),
-                    timeout=self.config.module_timeout
-                )
+                async with asyncio.timeout(self.config.module_timeout):
+                    result = await module_instance(input_data)
             elif hasattr(module_instance, 'analyze'):
                 if inspect.iscoroutinefunction(module_instance.analyze):
-                    result = await asyncio.wait_for(
-                        module_instance.analyze(input_data),
-                        timeout=self.config.module_timeout
-                    )
+                    async with asyncio.timeout(self.config.module_timeout):
+                        result = await module_instance.analyze(input_data)
                 else:
                     result = module_instance.analyze(input_data)
             elif hasattr(module_instance, 'process'):
                 if inspect.iscoroutinefunction(module_instance.process):
-                    result = await asyncio.wait_for(
-                        module_instance.process(input_data),
-                        timeout=self.config.module_timeout
-                    )
+                    async with asyncio.timeout(self.config.module_timeout):
+                        result = await module_instance.process(input_data)
                 else:
                     result = module_instance.process(input_data)
             else:
@@ -1847,3 +1841,4 @@ def create_workflow_orchestrator(
         Configured WorkflowOrchestrator instance
     """
     return WorkflowOrchestrator(orchestrator, config)
+

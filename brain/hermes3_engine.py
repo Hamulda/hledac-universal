@@ -563,10 +563,8 @@ class Hermes3Engine:
 
                 # Sprint 7E: wait_for pattern with flush_interval timeout
                 try:
-                    first_item = await asyncio.wait_for(
-                        self._batch_queue.get(),
-                        timeout=flush_interval
-                    )
+                    async with asyncio.timeout(flush_interval):
+                        first_item = await self._batch_queue.get()
                     current_schema_key = first_item[2]  # schema_key from (priority, tie, schema, item)
                     items.append(first_item)
 
@@ -580,10 +578,8 @@ class Hermes3Engine:
                     # Try to get more items up to max batch, respecting all boundaries
                     while len(items) < self._batch_max_size:
                         try:
-                            item = await asyncio.wait_for(
-                                self._batch_queue.get_nowait(),
-                                timeout=0.01
-                            )
+                            async with asyncio.timeout(0.01):
+                                item = await self._batch_queue.get_nowait()
                             item_schema = item[2]
                             item_payload = item[3]
                             item_prompt = item_payload.get('prompt', '')
@@ -2729,3 +2725,4 @@ Do not include any other text. Output valid JSON only."""
         logger.warning(f"[STRUCTURED] All attempts failed for {response_model.__name__}, using defaults")
         fields = dict.fromkeys(response_model.model_fields.keys())
         return response_model.model_construct(**fields)
+

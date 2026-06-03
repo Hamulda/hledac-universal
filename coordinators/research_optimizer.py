@@ -177,10 +177,8 @@ class ResearchOptimizer:
 
                 # Step 7: Execute with timeout
                 try:
-                    data = await asyncio.wait_for(
-                        research_func(query, **kwargs),
-                        timeout=timeout
-                    )
+                    async with asyncio.timeout(timeout):
+                        data = await research_func(query, **kwargs)
                     optimizations.append(f"timeout_{timeout}s")
                 except TimeoutError:
                     future.set_exception(TimeoutError(f"Query timed out after {timeout}s"))
@@ -461,3 +459,4 @@ def create_optimized_pipeline(
     privacy = PrivacyEnhancedResearch(PrivacyConfig())
 
     return optimizer, privacy
+

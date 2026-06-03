@@ -166,10 +166,8 @@ class TorProxyManager:
 
         try:
             # Test if Tor is running
-            reader, writer = await asyncio.wait_for(
-                asyncio.open_connection(self.proxy_host, self.proxy_port),
-                timeout=5.0
-            )
+            async with asyncio.timeout(5.0):
+                reader, writer = await asyncio.open_connection(self.proxy_host, self.proxy_port)
             writer.close()
             await writer.wait_closed()
 

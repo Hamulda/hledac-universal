@@ -199,10 +199,8 @@ class GopherTransport:
             )
 
         try:
-            reader, writer = await asyncio.wait_for(
-                asyncio.open_connection(host, port),
-                timeout=timeout_s,
-            )
+            async with asyncio.timeout(timeout_s):
+                reader, writer = await asyncio.open_connection(host, port)
         except TimeoutError:
             get_breaker(host).record_failure(is_timeout=True, failure_kind="timeout")
             return GopherResponse(
@@ -617,3 +615,4 @@ def get_gopher_transport() -> GopherTransport:
     if _gopher_transport is None:
         _gopher_transport = GopherTransport()
     return _gopher_transport
+

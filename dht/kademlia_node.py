@@ -289,7 +289,8 @@ class BEP5UDPProtocol(asyncio.DatagramProtocol):
         try:
             if self._transport:
                 self._transport.sendto(data, addr)
-            return await asyncio.wait_for(fut, timeout=timeout)
+            async with asyncio.timeout(timeout):
+                return await fut
         except asyncio.TimeoutError:
             return None
         finally:
@@ -554,10 +555,8 @@ async def lookup_info_hash_metadata(
 
     try:
         # Použij existující find_value API
-        value = await asyncio.wait_for(
-            node.find_value(info_hash),
-            timeout=timeout_s,
-        )
+        async with asyncio.timeout(timeout_s):
+            value = await node.find_value(info_hash)
         if value and isinstance(value, dict):
             return {
                 "info_hash": info_hash,
@@ -1442,10 +1441,8 @@ class KademliaNode:
         try:
             loop = asyncio.get_running_loop()
             await loop.sock_sendto(sock, self._bencode(ping_msg), (host, port))
-            data = await asyncio.wait_for(
-                loop.sock_recv(sock, 65535),
-                timeout=2.0
-            )
+            async with asyncio.timeout(2.0):
+                data = await loop.sock_recv(sock, 65535)
             if data:
                 return self._bdecode(data)
         except Exception:
@@ -1468,10 +1465,8 @@ class KademliaNode:
         try:
             loop = asyncio.get_running_loop()
             await loop.sock_sendto(sock, self._bencode(msg), (host, port))
-            data = await asyncio.wait_for(
-                loop.sock_recv(sock, 65535),
-                timeout=2.0
-            )
+            async with asyncio.timeout(2.0):
+                data = await loop.sock_recv(sock, 65535)
             if data:
                 return self._bdecode(data)
         except Exception:
@@ -1545,10 +1540,8 @@ class KademliaNode:
         handshake to download metadata (info dict) without downloading content.
         """
         try:
-            reader, writer = await asyncio.wait_for(
-                asyncio.open_connection(peer_host, peer_port),
-                timeout=5.0
-            )
+            async with asyncio.timeout(5.0):
+                reader, writer = await asyncio.open_connection(peer_host, peer_port)
 
             # BitTorrent handshake (BEP-10: 19-byte protocol name length prefix)
             protocol = bytes([19]) + b"BitTorrent protocol"
@@ -1562,7 +1555,8 @@ class KademliaNode:
             await writer.drain()
 
             # Read handshake response
-            response = await asyncio.wait_for(reader.read(68), timeout=5.0)
+            async with asyncio.timeout(5.0):
+                response = await reader.read(68)
             if len(response) < 68:
                 writer.close()
                 await writer.wait_closed()
@@ -1586,7 +1580,8 @@ class KademliaNode:
             await writer.drain()
 
             # Read extension handshake response
-            ext_response = await asyncio.wait_for(reader.read(65535), timeout=5.0)
+            async with asyncio.timeout(5.0):
+                ext_response = await reader.read(65535)
             if not ext_response:
                 writer.close()
                 await writer.wait_closed()
@@ -1605,7 +1600,8 @@ class KademliaNode:
                 await writer.drain()
 
                 try:
-                    data = await asyncio.wait_for(reader.read(65535), timeout=5.0)
+                    async with asyncio.timeout(5.0):
+                        data = await reader.read(65535)
                     if not data:
                         break
 
@@ -1732,4 +1728,5 @@ class KademliaNode:
         """Refresh routing table - called periodically during crawl."""
         # This is handled by _update_routing calls in response handlers
         pass
+
 

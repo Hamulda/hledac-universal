@@ -213,8 +213,12 @@ class SprintDiffEngine:
         entity_summary: dict = {}
         try:
             entity_summary = self._compute_entity_summary(current_findings)
-        except Exception:
-            pass  # noqa: BARE-EXCEPT  # fail-soft suppression: build_target_profile
+        except Exception as _e:
+            logger.debug(
+                "fail-soft suppression: build_target_profile (entity_summary): %s",
+                _e,
+                exc_info=True,
+            )
 
         try:
             entity_summary_json = orjson.dumps(entity_summary).decode()

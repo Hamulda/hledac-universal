@@ -220,7 +220,8 @@ class TorTransport(Transport):
         elif self.tor_process:
             self.tor_process.terminate()
             try:
-                await asyncio.wait_for(self.tor_process.wait(), timeout=5)
+                async with asyncio.timeout(5):
+                    await self.tor_process.wait()
             except TimeoutError:
                 self.tor_process.kill()
 
@@ -489,16 +490,16 @@ async def jarm_fingerprint(host: str, port: int = 443) -> str | None:
             ctx.verify_mode = ssl.CERT_NONE
             ctx.minimum_version = min_ver
             ctx.options |= extra_op
-            r, w = await asyncio.wait_for(
-                asyncio.open_connection(host, port, ssl=ctx), timeout=4.0
-            )
+            async with asyncio.timeout(4.0):
+                r, w = await asyncio.open_connection(host, port, ssl=ctx)
             ssl_obj = w.get_extra_info("ssl_object")
             cipher = ssl_obj.cipher() if ssl_obj else None
             proto = ssl_obj.version() if ssl_obj else "NONE"
             tokens.append(f"{cipher[0] if cipher else 'NONE'}|{proto}")
             w.close()
             try:
-                await asyncio.wait_for(w.wait_closed(), timeout=1.0)
+                async with asyncio.timeout(1.0):
+                    await w.wait_closed()
             except Exception:
                 pass
         except (TimeoutError, OSError, ssl.SSLError, ConnectionRefusedError):
@@ -514,3 +515,4 @@ async def jarm_fingerprint(host: str, port: int = 443) -> str | None:
 def check_jarm_malicious(fp: str) -> str | None:
     """Sprint 8TC B.2: Vrátí název known C2/RAT nebo None."""
     return KNOWN_MALICIOUS_JARM.get(fp)
+

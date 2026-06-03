@@ -551,8 +551,12 @@ class EntityLinker:
             try:
                 sitelinks = int(sitelinks_str) if sitelinks_str else 0
                 max_sitelinks = max(max_sitelinks, sitelinks)
-            except ValueError:
-                pass  # noqa: BARE-EXCEPT  # fail-soft suppression: _parse_sparql_results
+            except ValueError as _e:
+                logger.debug(
+                    "fail-soft suppression: _parse_sparql_results (sitelinks): %s",
+                    _e,
+                    exc_info=True,
+                )
 
         for binding in bindings:
             try:

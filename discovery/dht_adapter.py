@@ -199,10 +199,8 @@ async def async_search_dht(
                 info_hash = ih_candidate.replace("urn:btih:", "")
 
                 try:
-                    peers = await asyncio.wait_for(
-                        node.get_peers(info_hash),
-                        timeout=5.0,
-                    )
+                    async with asyncio.timeout(5.0):
+                        peers = await node.get_peers(info_hash)
                 except (TimeoutError, asyncio.CancelledError):
                     continue
                 except Exception:
@@ -340,10 +338,8 @@ async def async_fetch_dht_metadata(
     try:
         # Get peers from BEP-5
         ih_bytes = bytes.fromhex(ih_hex)
-        peers = await asyncio.wait_for(
-            node.get_peers(ih_hex),
-            timeout=min(10.0, timeout_s)
-        )
+        async with asyncio.timeout(min(10.0, timeout_s)):
+            peers = await node.get_peers(ih_hex)
 
         if not peers:
             return {
@@ -357,10 +353,8 @@ async def async_fetch_dht_metadata(
 
         # Fetch metadata via BEP-9
         fetcher = await _get_metadata_fetcher()
-        info = await asyncio.wait_for(
-            fetcher.fetch_metadata(ih_bytes, peers[:max_results], timeout=timeout_s),
-            timeout=timeout_s
-        )
+        async with asyncio.timeout(timeout_s):
+            info = await fetcher.fetch_metadata(ih_bytes, peers[:max_results], timeout=timeout_s)
 
         if not info:
             return {
@@ -406,3 +400,4 @@ async def async_fetch_dht_metadata(
             "elapsed_s": time.monotonic() - start,
             "findings": []
         }
+

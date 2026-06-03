@@ -54,7 +54,8 @@ class InMemoryTransport(Transport):
     async def receive(self) -> dict:
         """Receive a message from the queue. Bounded timeout."""
         try:
-            msg_type, data = await asyncio.wait_for(self._queue.get(), timeout=1.0)
+            async with asyncio.timeout(1.0):
+                msg_type, data = await self._queue.get()
             return data
         except TimeoutError:
             return {}
@@ -62,7 +63,8 @@ class InMemoryTransport(Transport):
     async def poll_once(self):
         """Process a single incoming message. Bounded timeout."""
         try:
-            msg_type, data = await asyncio.wait_for(self._queue.get(), timeout=0.01)
+            async with asyncio.timeout(0.01):
+                msg_type, data = await self._queue.get()
             handler = self.handlers.get(msg_type)
             if handler:
                 if inspect.iscoroutinefunction(handler):
@@ -95,3 +97,4 @@ class InMemoryTransport(Transport):
                     await handler(data)
                 else:
                     handler(data)
+

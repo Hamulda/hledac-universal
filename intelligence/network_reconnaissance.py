@@ -433,16 +433,15 @@ class WHOISLookup:
     async def _query_whois_server(self, domain: str, server: str) -> str:
         """Query specific WHOIS server."""
         try:
-            reader, writer = await asyncio.wait_for(
-                asyncio.open_connection(server, 43),
-                timeout=10
-            )
+            async with asyncio.timeout(10):
+                reader, writer = await asyncio.open_connection(server, 43)
 
             query = f"{domain}\r\n"
             writer.write(query.encode())
             await writer.drain()
 
-            response = await asyncio.wait_for(reader.read(), timeout=10)
+            async with asyncio.timeout(10):
+                response = await reader.read()
             writer.close()
             await writer.wait_closed()
 
@@ -543,10 +542,8 @@ class SSLAnalyzer:
             context.check_hostname = False
             context.verify_mode = ssl.CERT_NONE
 
-            reader, writer = await asyncio.wait_for(
-                asyncio.open_connection(hostname, port, ssl=context),
-                timeout=10
-            )
+            async with asyncio.timeout(10):
+                reader, writer = await asyncio.open_connection(hostname, port, ssl=context)
 
             # Get SSL socket
             ssl_socket = writer.get_extra_info("ssl_object")
@@ -731,10 +728,8 @@ class NetworkReconnaissance:
             try:
                 # Use asyncio.to_thread for async-safe DNS resolution
                 # since dns.asyncresolver.resolve is already async, we can use it directly
-                answers = await asyncio.wait_for(
-                    self.dns.resolver.resolve(hostname, "A"),
-                    timeout=self._WILDCARD_PROBE_TIMEOUT_S
-                )
+                async with asyncio.timeout(self._WILDCARD_PROBE_TIMEOUT_S):
+                    answers = await self.dns.resolver.resolve(hostname, "A")
                 # Return first IP if found
                 for rdata in answers:
                     return str(rdata)
@@ -947,10 +942,8 @@ class PassiveDNSClient:
     async def resolve_domain(self, domain: str) -> list[str]:
         """A-record lookup — returns list of IPv4 addresses."""
         try:
-            ans = await asyncio.wait_for(
-                self._resolver.resolve(domain, "A"),
-                timeout=self._TIMEOUT_S,
-            )
+            async with asyncio.timeout(self._TIMEOUT_S):
+                ans = await self._resolver.resolve(domain, "A")
             return [str(a) for a in ans]
         except Exception as e:
             logger.debug(f"PassiveDNS A {domain}: {e}")
@@ -959,10 +952,8 @@ class PassiveDNSClient:
     async def resolve_aaaa(self, domain: str) -> list[str]:
         """AAAA-record lookup — returns list of IPv6 addresses."""
         try:
-            ans = await asyncio.wait_for(
-                self._resolver.resolve(domain, "AAAA"),
-                timeout=self._TIMEOUT_S,
-            )
+            async with asyncio.timeout(self._TIMEOUT_S):
+                ans = await self._resolver.resolve(domain, "AAAA")
             return [str(a) for a in ans]
         except Exception:
             return []
@@ -971,10 +962,8 @@ class PassiveDNSClient:
         """PTR record lookup — returns list of hostnames."""
         try:
             rev = dns.reversename.from_address(ip)
-            ans = await asyncio.wait_for(
-                self._resolver.resolve(rev, "PTR"),
-                timeout=self._TIMEOUT_S,
-            )
+            async with asyncio.timeout(self._TIMEOUT_S):
+                ans = await self._resolver.resolve(rev, "PTR")
             return [str(a).rstrip(".") for a in ans]
         except Exception:
             return []
@@ -1079,7 +1068,8 @@ class DHTProbe:
             try:
                 import dns.asyncresolver
                 r = dns.asyncresolver.Resolver()
-                ans = await asyncio.wait_for(r.resolve(host, "A"), timeout=3.0)
+                async with asyncio.timeout(3.0):
+                    ans = await r.resolve(host, "A")
                 ips = [str(a) for a in ans]
                 nodes.extend([(ip, port) for ip in ips[:2]])
             except Exception:
@@ -1120,13 +1110,11 @@ class DHTProbe:
             for host, port in bootstrap[:3]:
                 try:
                     loop = asyncio.get_running_loop()
-                    transport, _ = await asyncio.wait_for(
-                        loop.create_datagram_endpoint(
+                    async with asyncio.timeout(self._TIMEOUT_S):
+                        transport, _ = await loop.create_datagram_endpoint(
                             asyncio.DatagramProtocol,
                             remote_addr=(host, port),
-                        ),
-                        timeout=self._TIMEOUT_S,
-                    )
+                        )
                     transport.sendto(msg)
                     await asyncio.sleep(1.0)
                     transport.close()
@@ -1195,10 +1183,8 @@ async def resolve_cname_chain(domain: str, max_depth: int = 10) -> list[CNAMERec
             seen.add(current)
 
             try:
-                answers = await asyncio.wait_for(
-                    resolver.resolve(current, "CNAME"),
-                    timeout=5.0,
-                )
+                async with asyncio.timeout(5.0):
+                    answers = await resolver.resolve(current, "CNAME")
                 cname_value = str(answers[0]).rstrip(".")
                 chain.append(CNAMERecord(source=current, target=cname_value, ttl=answers.ttl))
                 current = cname_value
@@ -1385,3 +1371,4 @@ __all__ = [
     "graph_add_domain_ip_relations",
     "graph_add_ip_asn_relations",
 ]
+

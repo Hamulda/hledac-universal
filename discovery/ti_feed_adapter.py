@@ -666,7 +666,8 @@ async def certstream_monitor(
                 if len(results) >= max_certs:
                     break
                 try:
-                    msg  = await asyncio.wait_for(ws.recv(), timeout=5.0)
+                    async with asyncio.timeout(5.0):
+                        msg  = await ws.recv()
                     data = _json.loads(msg)
                     if data.get("message_type") != "certificate_update":
                         continue
@@ -1124,16 +1125,14 @@ class WaybackArchiveAdapter(SourceAdapter):
         try:
             discovery = ArchiveDiscovery()
             # search_url is a coroutine - await it properly
-            results_dict: dict[
-                str, list[ArchiveResult]
-            ] = await asyncio.wait_for(
-                discovery.search_url(
-                    url,
-                    sources=["wayback", "archive_today"],
-                    limit_per_source=limit,
-                ),
-                timeout=self.TIMEOUT_PER_SOURCE,
-            )
+            async with asyncio.timeout(self.TIMEOUT_PER_SOURCE):
+                results_dict: dict[
+                    str, list[ArchiveResult]
+                ] = await discovery.search_url(
+                        url,
+                        sources=["wayback", "archive_today"],
+                        limit_per_source=limit,
+                    ),
 
             for _source_name, archive_results in results_dict.items():
                 for ar in archive_results[:limit]:
@@ -1617,16 +1616,15 @@ async def fetch_gopher(host: str, selector: str = "/", port: int = 70) -> dict:
     Timeout 15s.
     """
     try:
-        reader, writer = await asyncio.wait_for(
-            asyncio.open_connection(host, port),
-            timeout=15.0,
-        )
+        async with asyncio.timeout(15.0):
+            reader, writer = await asyncio.open_connection(host, port)
         writer.write(f"{selector}\r\n".encode())
         await writer.drain()
         # Use bytearray for O(1) extend vs O(n) bytes +=
         data = bytearray()
         while True:
-            chunk = await asyncio.wait_for(reader.read(8192), timeout=15.0)
+            async with asyncio.timeout(15.0):
+                chunk = await reader.read(8192)
             if not chunk:
                 break
             data.extend(chunk)
@@ -1634,7 +1632,8 @@ async def fetch_gopher(host: str, selector: str = "/", port: int = 70) -> dict:
                 break
         writer.close()
         try:
-            await asyncio.wait_for(writer.wait_closed(), timeout=2.0)
+            async with asyncio.timeout(2.0):
+                await writer.wait_closed()
         except Exception as e:
             logger.debug(f"[Gopher] Wait closed failed for {host}{selector}: {e}")
         content = data.decode("utf-8", errors="replace")
@@ -1848,7 +1847,8 @@ async def query_team_cymru_asn(ip: str) -> dict:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
-        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=5.0)
+        async with asyncio.timeout(5.0):
+            stdout, _ = await proc.communicate()
         output = stdout.decode()
         asn_match = _re.search(r'"(\d+)\s*\|', output)
         return {
@@ -2027,3 +2027,4 @@ async def _handle_malwarebazaar_search(task, scheduler):
         # Tag search
         for item in await fetch_malwarebazaar_recent(tag=ioc):
             await scheduler._buffer_ioc_pivot("sha256", item["sha256"], 0.75)
+

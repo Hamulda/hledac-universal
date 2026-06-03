@@ -327,10 +327,8 @@ class SocialIdentityMiner:
 
         gathered: list[Any] = []
         try:
-            gathered = await asyncio.wait_for(
-                asyncio.gather(*tasks, return_exceptions=True),
-                timeout=30.0,
-            )
+            async with asyncio.timeout(30.0):
+                gathered = await asyncio.gather(*tasks, return_exceptions=True)
         except TimeoutError:
             for t in tasks:
                 try:
@@ -655,3 +653,4 @@ class SocialIdentityMiner:
 def create_social_identity_miner_adapter() -> SocialIdentityMiner:
     """Create a SocialIdentityMiner instance."""
     return SocialIdentityMiner()
+

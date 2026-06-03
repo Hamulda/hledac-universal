@@ -182,10 +182,8 @@ class _JARMFingerprinter:
             return cached
 
         try:
-            result = await asyncio.wait_for(
-                self._compute_jarm_async(domain, port),
-                timeout=TOTAL_TIMEOUT
-            )
+            async with asyncio.timeout(TOTAL_TIMEOUT):
+                result = await self._compute_jarm_async(domain, port)
             if result:
                 self._cache(domain, result)
             return result
@@ -568,3 +566,4 @@ class _JARMFingerprinter:
         if self._db_conn:
             self._db_conn.close()
             self._db_conn = None
+

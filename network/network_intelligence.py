@@ -170,10 +170,8 @@ class NetworkIntelAdapter:
 
         try:
             # Run BGP monitor with short timeout — monitor_bgp is async, call directly
-            await asyncio.wait_for(
-                monitor_bgp([f"{target}/32"], _callback, 5),
-                timeout=10.0,
-            )
+            async with asyncio.timeout(10.0):
+                await monitor_bgp([f"{target}/32"], _callback, 5)
         except Exception as e:
             logger.debug(f"[NetIntel] BGP query error: {e}")
         return results

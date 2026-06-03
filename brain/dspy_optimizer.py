@@ -330,10 +330,8 @@ class DSPyOptimizer:
 
 
             loop = asyncio.get_running_loop()
-            new_prompts = await asyncio.wait_for(
-                loop.run_in_executor(None, self._dspy_optimize_mipro, examples),
-                timeout=600
-            )
+            async with asyncio.timeout(600):
+                new_prompts = await loop.run_in_executor(None, self._dspy_optimize_mipro, examples)
 
             if new_prompts:
                 self._optimized_prompts.update(new_prompts)
@@ -595,3 +593,4 @@ def load_optimized_prompts() -> dict:
         return {k: v for k, v in prompts.items() if v and isinstance(v, str)}
     except Exception:
         return {}
+

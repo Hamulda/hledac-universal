@@ -572,10 +572,8 @@ class TotIntegrationLayer:
                          context.get('timeout', self.config.tot_max_time))
 
             # Execute ToT with timeout
-            result = await asyncio.wait_for(
-                self._tot_orchestrator.solve_problem(problem, context),
-                timeout=timeout
-            )
+            async with asyncio.timeout(timeout):
+                result = await self._tot_orchestrator.solve_problem(problem, context)
 
             # Calculate memory usage
             end_memory = self._get_memory_usage_mb()
@@ -688,10 +686,8 @@ class TotIntegrationLayer:
             timeout = min(self.config.tot_max_time * 0.6,  # 60% of max time
                          context.get('timeout', self.config.tot_max_time * 0.6))
 
-            result = await asyncio.wait_for(
-                self._tot_orchestrator.solve_problem(problem, context),
-                timeout=timeout
-            )
+            async with asyncio.timeout(timeout):
+                result = await self._tot_orchestrator.solve_problem(problem, context)
 
             end_memory = self._get_memory_usage_mb()
             memory_used = end_memory - start_memory
@@ -773,7 +769,8 @@ class TotIntegrationLayer:
         # Run ToT if complex — apply per-hypothesis timeout if provided
         if timeout > 0:
             try:
-                result = await asyncio.wait_for(self.solve_problem(prompt), timeout=timeout)
+                async with asyncio.timeout(timeout):
+                    result = await self.solve_problem(prompt)
             except TimeoutError:
                 logger.warning(f"solve_with_tot timed out after {timeout}s")
                 return ""
@@ -835,3 +832,4 @@ def create_tot_integration(config: dict[str, Any] | None = None) -> TotIntegrati
         tot_config = TotConfig()
 
     return TotIntegrationLayer(tot_config)
+

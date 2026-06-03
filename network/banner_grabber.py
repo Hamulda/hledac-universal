@@ -517,19 +517,8 @@ class BannerGrabber:
 
 
 
-                        banner = await asyncio.wait_for(
-
-
-
-                            reader.read(1024),
-
-
-
-                            timeout=3.0,
-
-
-
-                        )
+                        async with asyncio.timeout(3.0):
+                            banner = await reader.read(1024)
 
 
 
@@ -1737,7 +1726,8 @@ async def banner_grab_to_canonical(host: str, ports: list[int], query: str) -> l
 
             async with sem:
 
-                return await asyncio.wait_for(grabber.grab(host, port), timeout=10.0)
+                async with asyncio.timeout(10.0):
+                    return await grabber.grab(host, port)
 
         except Exception:
 
@@ -1802,3 +1792,4 @@ async def banner_grab_to_canonical(host: str, ports: list[int], query: str) -> l
 
 
     return findings[:100]
+

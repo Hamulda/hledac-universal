@@ -39,6 +39,7 @@ If model is used (opt-in):
 from __future__ import annotations
 
 import logging
+logger = logging.getLogger(__name__)
 import re
 import time
 from dataclasses import dataclass, field
@@ -1023,8 +1024,10 @@ class AnalystWorkbench:
                         confidence=0.3,
                         generated_ts=ts,
                     )
-            except Exception:
-                pass  # noqa: BARE-EXCEPT  # fail-soft suppression: build_sprint_brief
+            except Exception as _e:
+                self._logger.debug(
+                    "fail-soft suppression: build_sprint_brief: %s", _e, exc_info=True
+                )
 
         # F206G: Read graph analytics summary (bounded, fail-soft)
         graph_analytics: dict[str, Any] = {}
@@ -1855,15 +1858,23 @@ def create_analyst_workbench() -> AnalystWorkbench:
         from knowledge.vector_store import get_vector_store
 
         vector = get_vector_store()
-    except Exception:
-        pass  # noqa: BARE-EXCEPT  # fail-soft suppression: create_analyst_workbench
+    except Exception as _e:
+        logger.debug(
+            "fail-soft suppression: create_analyst_workbench (vector_store): %s",
+            _e,
+            exc_info=True,
+        )
 
     try:
         from knowledge.graph_service import _get_graph
 
         graph = _get_graph()
-    except Exception:
-        pass  # noqa: BARE-EXCEPT  # fail-soft suppression: create_analyst_workbench
+    except Exception as _e:
+        logger.debug(
+            "fail-soft suppression: create_analyst_workbench (graph): %s",
+            _e,
+            exc_info=True,
+        )
 
     return AnalystWorkbench(
         duckdb_store=duckdb,

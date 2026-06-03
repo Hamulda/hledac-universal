@@ -585,10 +585,8 @@ async def _cancel_orphan_tasks() -> None:
     if all_tasks:
         try:
             # C.8.1: drain protected by 5s timeout — don't wait forever
-            await asyncio.wait_for(
-                asyncio.gather(*all_tasks, return_exceptions=True),
-                timeout=5.0,
-            )
+            async with asyncio.timeout(5.0):
+                await asyncio.gather(*all_tasks, return_exceptions=True)
         except TimeoutError:
             _boot_record("task_cancellation", "drain_timeout_5s")
             logger.warning("[MAIN] Orphan task drain timed out after 5s, continuing shutdown")
@@ -3333,3 +3331,4 @@ async def run_warmup(
         "t_warmup_start": t_start,
         "t_warmup_end": time.monotonic(),
     }
+

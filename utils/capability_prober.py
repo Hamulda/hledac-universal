@@ -148,10 +148,8 @@ class CapabilityProber:
         """
         loop = asyncio.get_running_loop()
         try:
-            module = await asyncio.wait_for(
-                loop.run_in_executor(None, importlib.import_module, name),
-                timeout=timeout
-            )
+            async with asyncio.timeout(timeout):
+                module = await loop.run_in_executor(None, importlib.import_module, name)
             return module
         except (TimeoutError, ImportError):
             self._stats["misses"] += 1
@@ -273,3 +271,4 @@ def get_cache_stats() -> dict[str, int]:
         s = _PROBER.stats()
         return {"size": s["cache_size"], "max_size": _MAX_CACHE_SIZE}
     return {"size": 0, "max_size": _MAX_CACHE_SIZE}
+

@@ -136,3 +136,26 @@ def decode_response_bytes(
 
     # 5) latin-1 — ALWAYS succeeds (1:1 byte->char mapping, no replacement chars)
     return raw_b.decode("latin-1", errors="strict")
+
+
+def parse_charset_from_content_type(content_type: str | None) -> str | None:
+    """F261: Extract charset= value from a Content-Type header.
+
+    Examples:
+        "text/html; charset=utf-8"            -> "utf-8"
+        "text/html;charset=windows-1252"      -> "windows-1252"
+        'text/html; charset="iso-8859-1"'     -> "iso-8859-1"
+        "text/html"                           -> None
+    Returns None on empty / malformed input. Never raises.
+    """
+    if not content_type or not isinstance(content_type, str):
+        return None
+    try:
+        for part in content_type.split(";"):
+            token = part.strip()
+            if token.lower().startswith("charset="):
+                value = token[len("charset="):].strip().strip('"').strip("'")
+                return value or None
+    except Exception:
+        return None
+    return None

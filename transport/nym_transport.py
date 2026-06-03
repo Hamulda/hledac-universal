@@ -113,7 +113,8 @@ class NymTransport(Transport):
                     logger.debug(f"Ignored non-selfAddress message: {data.get('type')}")
 
         try:
-            self.nym_address = await asyncio.wait_for(wait_for_self_address(), timeout=10.0)
+            async with asyncio.timeout(10.0):
+                await wait_for_self_address()
             logger.info(f"Nym address: {self.nym_address}")
         except TimeoutError:
             raise RuntimeError("Nym client did not send selfAddress")
@@ -140,7 +141,8 @@ class NymTransport(Transport):
         self._stop_event.set()
         if graceful:
             try:
-                await asyncio.wait_for(self._outgoing_queue.join(), timeout=5.0)
+                async with asyncio.timeout(5.0):
+                    await self._outgoing_queue.join()
             except TimeoutError:
                 logger.warning("Outgoing queue not empty, discarding pending messages")
         for task in [self._sender_task, self._receiver_task, self._health_check_task,
@@ -159,7 +161,8 @@ class NymTransport(Transport):
         if self.client_process:
             self.client_process.terminate()
             try:
-                await asyncio.wait_for(self.client_process.wait(), timeout=5.0)
+                async with asyncio.timeout(5.0):
+                    await self.client_process.wait()
             except TimeoutError:
                 logger.warning("Nym process did not terminate gracefully, killing")
                 self.client_process.kill()
@@ -187,7 +190,8 @@ class NymTransport(Transport):
             }
         }
         try:
-            await asyncio.wait_for(self._outgoing_queue.put((msg_id, message)), timeout=1.0)
+            async with asyncio.timeout(1.0):
+                await self._outgoing_queue.put((msg_id, message))
         except TimeoutError:
             logger.warning(f"Outgoing queue full, dropping message {msg_id}")
             return
@@ -264,3 +268,4 @@ class NymTransport(Transport):
                     self.circuit_breaker_open = False
                     self.circuit_breaker_failures = 0
                     logger.info("Circuit breaker reset for Nym")
+

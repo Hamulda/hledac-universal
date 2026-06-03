@@ -119,18 +119,14 @@ async def _fetch_from_ipfs(
     async with semaphore:
         try:
             # Search IPFS for CIDs
-            cids = await asyncio.wait_for(
-                ipfs.find_via_ipfs_search(query),
-                timeout=IPFS_TIMEOUT,
-            )
+            async with asyncio.timeout(IPFS_TIMEOUT):
+                cids = await ipfs.find_via_ipfs_search(query)
 
             findings: list[CanonicalFinding] = []
 
             for cid in cids[:10]:  # Cap results
-                content = await asyncio.wait_for(
-                    ipfs.fetch_ipfs(cid),
-                    timeout=IPFS_TIMEOUT,
-                )
+                async with asyncio.timeout(IPFS_TIMEOUT):
+                    content = await ipfs.fetch_ipfs(cid)
                 if content:
                     finding = CanonicalFinding(
                         finding_id=f"ipfs-alt-{cid[:12]}-{int(time.time() * 1000)}",
@@ -175,10 +171,8 @@ async def _fetch_from_gopher(
     async with semaphore:
         try:
             # Search gopherspace via Veronica-2
-            findings = await asyncio.wait_for(
-                gopher.search_as_findings(query),
-                timeout=GOPHER_TIMEOUT,
-            )
+            async with asyncio.timeout(GOPHER_TIMEOUT):
+                findings = await gopher.search_as_findings(query)
 
             return findings, AltProtocolResult(
                 source_type=SourceType.GOPHER_CONTENT,
@@ -210,10 +204,8 @@ async def _fetch_from_gemini(
     async with semaphore:
         try:
             # Search and crawl geminispace
-            findings = await asyncio.wait_for(
-                gemini.geminispace_to_findings(query, max_pages=10),
-                timeout=GEMINI_TIMEOUT,
-            )
+            async with asyncio.timeout(GEMINI_TIMEOUT):
+                findings = await gemini.geminispace_to_findings(query, max_pages=10)
 
             return findings, AltProtocolResult(
                 source_type=SourceType.GEMINI_CONTENT,
@@ -252,10 +244,8 @@ async def _fetch_from_i2p(
                 )
 
             # Fetch I2P eepsites
-            findings = await asyncio.wait_for(
-                i2p.i2p_to_findings(query),
-                timeout=I2P_TIMEOUT,
-            )
+            async with asyncio.timeout(I2P_TIMEOUT):
+                findings = await i2p.i2p_to_findings(query)
 
             return findings, AltProtocolResult(
                 source_type=SourceType.I2P_DISCOVERY,

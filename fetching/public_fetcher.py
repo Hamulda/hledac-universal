@@ -66,8 +66,36 @@ from hledac.universal.utils.concurrency import (
     get_tor_semaphore,
 )
 from hledac.universal.utils.uma_budget import M1_FETCH_SOFT_CEILING_GB
+from hledac.universal.utils.encoding import decode_response_bytes, parse_charset_from_content_type
 
 logger = logging.getLogger(__name__)
+
+
+# --- F261: bounded helper — try decode_response_bytes, fall back to _try_decode ---
+def _try_decode_with_charset(
+    body: bytes,
+    *,
+    http_charset: str | None = None,
+    max_bytes: int = 5 * 1024 * 1024,
+) -> tuple[str, bool, int]:
+    """STORAGE-FIX-4 wiring: charset_normalizer chain with fail-soft fallback.
+
+    Tries the bounded encoding chain from utils.encoding first; on any exception,
+    falls back to the legacy _try_decode (UTF-8 → windows-1252 → latin-1 → UTF-8 replace).
+
+    Returns (text, decode_replaced, decode_replacement_count) — same shape as _try_decode.
+    """
+    try:
+        text = decode_response_bytes(
+            body,
+            http_charset=http_charset,
+            max_bytes=max_bytes,
+        )
+        replacement_count = text.count("�")
+        return (text, replacement_count > 0, replacement_count)
+    except Exception as e:
+        logger.debug("decode_response_bytes failed, falling back to _try_decode: %s", e)
+        return _try_decode(body)
 
 # ---------------------------------------------------------------------------
 # P4: Tor + stealth constants
@@ -2465,7 +2493,16 @@ async def async_fetch_public_text(
                                             _esc_decode_replaced = False
                                             _esc_decode_replacement_count = 0
                                             if _esc_bytes:
-                                                _esc_text, _esc_decode_replaced, _esc_decode_replacement_count = _try_decode(_esc_bytes)
+                                                # F261: STORAGE-FIX-4 wiring — charset_normalizer chain
+                                                # (decode_response_bytes) with _try_decode fallback.
+                                                # Charset hint parsed from curl_cffi content-type header.
+                                                _esc_charset = parse_charset_from_content_type(
+                                                    _esc_result.get("content_type", "")
+                                                )
+                                                _esc_text, _esc_decode_replaced, _esc_decode_replacement_count = _try_decode_with_charset(
+                                                    _esc_bytes,
+                                                    http_charset=_esc_charset,
+                                                )
                                             else:
                                                 _esc_text = None
                                             _esc_elapsed_ms = (time.monotonic() - t0) * 1000
@@ -2635,8 +2672,15 @@ async def async_fetch_public_text(
                             try:
                                 # F226B: body already collected by _read_aiohttp_body_with_peek.
                                 body_bytes = outcome.body
-                                # F178E: detect decode quality — replacement count for truth
-                                text, decode_replaced, decode_replacement_count = _try_decode(body_bytes)
+                                # F261: STORAGE-FIX-4 wiring — charset_normalizer chain
+                                # (decode_response_bytes) with _try_decode fallback.
+                                # Charset hint from aiohttp response header (parsed from
+                                # Content-Type) for accuracy on non-UTF-8 OSINT sources.
+                                _charset_hint = parse_charset_from_content_type(content_type)
+                                text, decode_replaced, decode_replacement_count = _try_decode_with_charset(
+                                    body_bytes,
+                                    http_charset=_charset_hint,
+                                )
                                 # --- F214Q: ContentLayer HTML cleaning — fail-soft ---
                                 if (
                                     text

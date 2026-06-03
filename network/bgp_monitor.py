@@ -317,13 +317,8 @@ async def monitor_bgp(
 
         loop = asyncio.get_running_loop()
 
-        await asyncio.wait_for(
-
-            loop.run_in_executor(None, _stream_events),
-
-            timeout=duration_seconds + 5,
-
-        )
+        async with asyncio.timeout(duration_seconds + 5):
+            await loop.run_in_executor(None, _stream_events)
 
 
 
@@ -656,3 +651,4 @@ async def enrich_ip_as_finding(ip: str) -> list[CanonicalFinding]:
 
     except Exception:
         return []
+

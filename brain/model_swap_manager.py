@@ -376,10 +376,8 @@ class ModelSwapManager:
             return DrainResult(cancelled_count=0, timed_out=False, error=None)
 
         try:
-            cancelled = await asyncio.wait_for(
-                self._lifecycle.cancel_pending_model_tasks(model_name),
-                timeout=self._drain_timeout,
-            )
+            async with asyncio.timeout(self._drain_timeout):
+                cancelled = await self._lifecycle.cancel_pending_model_tasks(model_name)
             return DrainResult(
                 cancelled_count=cancelled,
                 timed_out=False,
@@ -417,3 +415,4 @@ class ModelSwapManager:
         except Exception as e:
             logger.error(f"[SWAP] Rollback to {previous_model} failed: {e}")
             return False
+

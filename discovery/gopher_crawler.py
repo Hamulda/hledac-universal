@@ -161,10 +161,8 @@ class GopherCrawler:
             return result  # already crawling this selector
 
         try:
-            items = await asyncio.wait_for(
-                self._transport.list_directory(host, port, selector, self._timeout_s),
-                timeout=self._timeout_s + 5,
-            )
+            async with asyncio.timeout(self._timeout_s + 5):
+                items = await self._transport.list_directory(host, port, selector, self._timeout_s)
         except TimeoutError:
             result.errors.append(f"timeout listing {host}:{port}{selector}")
             return result
@@ -330,3 +328,4 @@ class GopherCrawler:
             findings.append(finding)
 
         return findings
+

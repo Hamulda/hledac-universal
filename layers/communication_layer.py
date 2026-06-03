@@ -503,7 +503,8 @@ class CommunicationLayer:
             self._batch_task = asyncio.create_task(self._batch_processor(), name="communication_layer:batch_processor")
 
         try:
-            return await asyncio.wait_for(future, timeout=10.0)
+            async with asyncio.timeout(10.0):
+                await future
         except TimeoutError:
             return {"success": False, "error": "batch_timeout", "response": None}
 
@@ -838,3 +839,4 @@ async def create_communication_layer(
     layer = CommunicationLayer(config)
     await layer.initialize()
     return layer
+

@@ -139,15 +139,14 @@ def _probe_worker_capability() -> tuple[bool, str]:
             # Payload: just the action field — worker replies with its status
             payload = json.dumps({"action": "capability_check"}).encode()
             try:
-                stdout_bytes, stderr_bytes = await asyncio.wait_for(
-                    proc.communicate(input=payload),
-                    timeout=5.0,
-                )
+                async with asyncio.timeout(5.0):
+                    stdout_bytes, stderr_bytes = await proc.communicate(input=payload)
             except TimeoutError:
                 if proc:
                     proc.terminate()
                     try:
-                        await asyncio.wait_for(proc.wait(), timeout=2.0)
+                        async with asyncio.timeout(2.0):
+                            await proc.wait()
                     except TimeoutError:
                         proc.kill()
                         await proc.wait()
@@ -270,16 +269,15 @@ async def fetch_with_macos_webkit(
                 ).encode("utf-8")
 
                 try:
-                    stdout_bytes, stderr_bytes = await asyncio.wait_for(
-                        proc.communicate(input=payload),
-                        timeout=timeout_s + 5.0,
-                    )
+                    async with asyncio.timeout(timeout_s + 5.0):
+                        stdout_bytes, stderr_bytes = await proc.communicate(input=payload)
                 except TimeoutError:
                     # Timeout on wait_for — worker is still alive, terminate it
                     if proc:
                         proc.terminate()
                         try:
-                            await asyncio.wait_for(proc.wait(), timeout=2.0)
+                            async with asyncio.timeout(2.0):
+                                await proc.wait()
                         except TimeoutError:
                             proc.kill()
                             await proc.wait()
@@ -382,7 +380,8 @@ async def fetch_with_macos_webkit(
             if proc:
                 try:
                     proc.terminate()
-                    await asyncio.wait_for(proc.wait(), timeout=2.0)
+                    async with asyncio.timeout(2.0):
+                        await proc.wait()
                 except TimeoutError:
                     proc.kill()
                     await proc.wait()
@@ -398,3 +397,4 @@ async def fetch_with_macos_webkit(
                 elapsed_ms=elapsed_ms,
                 rendered_bytes=0,
             )
+

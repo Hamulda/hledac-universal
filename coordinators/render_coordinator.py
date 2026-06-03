@@ -333,10 +333,8 @@ class RenderCoordinator:
         async with self._get_semaphore():
             for backend in self._backends:
                 try:
-                    result = await asyncio.wait_for(
-                        backend.render(url, deadline_ms, mode),
-                        timeout=deadline_sec + 1.0  # Small buffer
-                    )
+                    async with asyncio.timeout(deadline_sec + 1.0):  # Small buffer
+                        result = await backend.render(url, deadline_ms, mode)
                     # Cache only if TTL > 0
                     ttl = self._ttl.get(result.status, 0)
                     if ttl > 0:
@@ -356,3 +354,4 @@ class RenderCoordinator:
         if len(self._cache) > self._cache_max:
             self._cache.popitem(last=False)
         return result
+

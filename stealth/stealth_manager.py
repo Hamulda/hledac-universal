@@ -247,7 +247,8 @@ class StealthManager:
         # Execute
         try:
             if timeout:
-                result = await asyncio.wait_for(coro, timeout=timeout)
+                async with asyncio.timeout(timeout):
+                    result = await coro
             else:
                 result = await coro
 

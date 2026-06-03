@@ -217,10 +217,8 @@ class _ShadowRecorder:
         while not self._closed:
             try:
                 # Wait for next item with timeout
-                item = await asyncio.wait_for(
-                    self._queue.get(),
-                    timeout=_SHADOW_FLUSH_INTERVAL
-                )
+                async with asyncio.timeout(_SHADOW_FLUSH_INTERVAL):
+                    item = await self._queue.get()
                 batch.append(item)
 
                 # Flush when batch full or timeout
@@ -423,3 +421,4 @@ def shadow_reset_failures() -> None:
     global _SHADOW_INGEST_FAILURES, _QUEUE_FULL_WARNED
     _SHADOW_INGEST_FAILURES = 0
     _QUEUE_FULL_WARNED = False
+

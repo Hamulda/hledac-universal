@@ -205,7 +205,8 @@ class BranchManager:
     async def _explore_entity(self, entity: str):
         """Explore an entity using available search/graph backends."""
         try:
-            results = await asyncio.wait_for(self._do_explore_entity(entity), timeout=30.0)
+            async with asyncio.timeout(30.0):
+                results = await self._do_explore_entity(entity)
             if results:
                 self._entity_cache[entity] = results
                 logger.debug(f"Explored entity {entity}: {len(results)} results cached")
@@ -256,3 +257,4 @@ class BranchManager:
     def get_seen_entities(self) -> set:
         """Vrátí množinu již viděných entit."""
         return self.seen_entities.copy()
+

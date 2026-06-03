@@ -325,8 +325,10 @@ class TargetMemoryService:
                     update.target_id,
                     MAX_MEMORY_JSON_BYTES,
                 )
-        except Exception:
-            pass  # noqa: BARE-EXCEPT  # fail-soft suppression: merge_update
+        except Exception as _e:
+            _logger.debug(
+                "fail-soft suppression: merge_update: %s", _e, exc_info=True
+            )
 
         self._cache[update.target_id] = memory
         return memory

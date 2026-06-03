@@ -265,39 +265,29 @@ class EvidenceTriageCoordinator:
                 self._extract_ocr_with_timeout(path)
             )
 
-            results = await asyncio.wait_for(
-                asyncio.gather(
+            async with asyncio.timeout(METADATA_TIMEOUT_S + OCR_TIMEOUT_S):
+                results = await asyncio.gather(
                     metadata_task, ocr_task,
                     return_exceptions=True,
-                ),
-                timeout=METADATA_TIMEOUT_S + OCR_TIMEOUT_S,
-            )
-            md_result, ocr_text = results
-
-            if md_result and not isinstance(md_result, BaseException):
-                self._apply_metadata_to_facets(md_result, path, facets)
-
-            if ocr_text and not isinstance(ocr_text, BaseException):
-                self._apply_ocr_to_facets(ocr_text, facets)
-
-            facets.triage_complete = True
-
+                )
+                md_result, ocr_text = results
+                if md_result and not isinstance(md_result, BaseException):
+                    self._apply_metadata_to_facets(md_result, path, facets)
+                if ocr_text and not isinstance(ocr_text, BaseException):
+                    self._apply_ocr_to_facets(ocr_text, facets)
+                facets.triage_complete = True
         except asyncio.CancelledError:
             logger.debug("[EvidenceTriage] Triage cancelled for: %s", file_path)
         except Exception as e:
             logger.debug("[EvidenceTriage] Triage failed for %s: %s", file_path, e)
-
         return facets
-
     async def _extract_metadata(self, path: Path) -> Any | None:
         """Extract forensic metadata with timeout."""
         if self._metadata_extractor is None:
             return None
         try:
-            return await asyncio.wait_for(
-                self._metadata_extractor.extract(str(path)),
-                timeout=METADATA_TIMEOUT_S,
-            )
+            async with asyncio.timeout(5.0):
+                return await self._metadata_extractor.extract(str(path))
         except TimeoutError:
             logger.debug("[EvidenceTriage] Metadata extraction timeout: %s", path)
             return None
@@ -308,10 +298,8 @@ class EvidenceTriageCoordinator:
     async def _extract_ocr_with_timeout(self, path: Path) -> str:
         """Extract OCR text with timeout."""
         try:
-            text = await asyncio.wait_for(
-                self._run_ocr(path),
-                timeout=OCR_TIMEOUT_S,
-            )
+            async with asyncio.timeout(OCR_TIMEOUT_S):
+                text = await self._run_ocr(path)
             return text
         except TimeoutError:
             logger.debug("[EvidenceTriage] OCR timeout: %s", path)
@@ -516,3 +504,4 @@ async def extract_triage_facets(
         return facets
     finally:
         await coordinator.close()
+

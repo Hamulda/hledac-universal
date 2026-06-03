@@ -129,10 +129,8 @@ class ParallelResearchScheduler:
     async def _run_io_task(self, task: PrioritizedTask):
         """Spustí I/O úlohu s timeoutem."""
         try:
-            result = await asyncio.wait_for(
-                task.coro_or_fn(*task.args, **task.kwargs),
-                timeout=task.timeout
-            )
+            async with asyncio.timeout(task.timeout):
+                result = await task.coro_or_fn(*task.args, **task.kwargs)
             self.completed[task.task_id] = result
         except TimeoutError:
             self.completed[task.task_id] = TimeoutError(f"Task {task.task_id} timed out")
@@ -214,7 +212,8 @@ class ParallelResearchScheduler:
         Uses asyncio.Event for efficient wait instead of busy-sleep polling.
         """
         try:
-            await asyncio.wait_for(self._work_done.wait(), timeout=timeout)
+            async with asyncio.timeout(timeout):
+                await self._work_done.wait()
         except TimeoutError:
             pass  # timeout exceeded, return anyway
 
@@ -240,3 +239,4 @@ class ParallelResearchScheduler:
             estimated_bytes=estimated_bytes,
             metadata=metadata
         )
+

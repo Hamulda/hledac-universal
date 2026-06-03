@@ -16,6 +16,7 @@ import os
 from typing import Any
 
 from .body_limiter import read_body_with_cap
+from hledac.universal.utils.encoding import decode_response_bytes, parse_charset_from_content_type
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +32,34 @@ _I2P_CURL_PROXY: str = os.environ.get("I2P_SOCKS_PROXY_URL", "socks5h://127.0.0.
 
 # Tor-specific circuit tracking for curl_cffi Tor fetcher
 _tor_curl_request_count: int = 0
+
+
+def decode_curl_cffi_result(result: dict, *, max_bytes: int = 5 * 1024 * 1024) -> str | None:
+    """F261 helper: decode raw bytes from a curl_cffi result dict to str.
+
+    Uses the bounded encoding chain from utils.encoding (charset_normalizer →
+    chardet → UTF-8 → latin-1). Honours the http_charset_hint produced by
+    fetch_via_curl_cffi when present.
+
+    Returns decoded str, or None when the dict has no content / is an error.
+    Never raises — bounded by max_bytes.
+    """
+    if not isinstance(result, dict):
+        return None
+    if not result.get("success"):
+        return None
+    content = result.get("content", b"")
+    if not content:
+        return None
+    try:
+        return decode_response_bytes(
+            content,
+            http_charset=result.get("http_charset_hint"),
+            max_bytes=max_bytes,
+        )
+    except Exception as e:
+        logger.debug("decode_curl_cffi_result failed (fail-soft): %s", e)
+        return None
 
 
 async def fetch_via_tor_curl_cffi(
@@ -189,12 +218,17 @@ async def fetch_via_curl_cffi(
         if response.headers:
             content_type = response.headers.get("content-type", "")
 
+        # F261: STORAGE-FIX-4 wiring — extract charset hint for downstream decoding
+        # (decode_response_bytes uses this as priority 0 before charset_normalizer).
+        http_charset_hint = parse_charset_from_content_type(content_type)
+
         return {
             "url": url,
             "final_url": url,
             "content": bytes(content_bytes),  # bytearray → bytes for response contract
             "status_code": response.status_code,
             "content_type": content_type,
+            "http_charset_hint": http_charset_hint,  # F261: STORAGE-FIX-4
             "headers": dict(response.headers) if response.headers else {},
             "success": True,
             "error": None,

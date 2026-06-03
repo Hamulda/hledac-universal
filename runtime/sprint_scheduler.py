@@ -13627,19 +13627,11 @@ class SprintScheduler:
 
                 try:
 
-                    result = await asyncio.wait_for(
-
-                        async_run_live_feed(
-
-                            feed_url=work.feed_url,
-
-                            max_entries=work.max_entries,
-
-                        ),
-
-                        timeout=30.0,
-
-                    )
+                    async with asyncio.timeout(30.0):
+                        result = await async_run_live_feed(
+                                feed_url=work.feed_url,
+                                max_entries=work.max_entries,
+                            )
 
                     return work.feed_url, result
 
@@ -14267,19 +14259,11 @@ class SprintScheduler:
 
                     try:
 
-                        result = await _asyncio.wait_for(
-
-                            async_run_live_feed(
-
-                                feed_url=work.feed_url,
-
-                                max_entries=work.max_entries,
-
-                            ),
-
-                            timeout=30.0,
-
-                        )
+                        async with asyncio.timeout(30.0):
+                            result = await async_run_live_feed(
+                                    feed_url=work.feed_url,
+                                    max_entries=work.max_entries,
+                                )
 
                         return work.feed_url, result
 
@@ -22334,7 +22318,8 @@ class SprintScheduler:
 
         try:
 
-            await asyncio.wait_for(self._run_enhanced_research(), timeout=180.0)
+            async with asyncio.timeout(180.0):
+                await self._run_enhanced_research()
 
         except asyncio.TimeoutError:
 
@@ -22508,13 +22493,10 @@ class SprintScheduler:
 
             engine = UnifiedResearchEngine(config=engine_config)
 
-            response = await asyncio.wait_for(
-
-                engine.deep_research(query=query, depth=depth, max_results=50),
-
-                timeout=remaining_s,
-
-            )
+            async with asyncio.timeout(remaining_s):
+                response = await engine.deep_research(
+                    query=query, depth=depth, max_results=50
+                )
 
         except asyncio.TimeoutError:
 
@@ -26342,13 +26324,8 @@ class SprintScheduler:
 
             try:
 
-                await asyncio.wait_for(
-
-                    self._execute_pivot(task),
-
-                    timeout=6.0,
-
-                )
+                async with asyncio.timeout(6.0):
+                    await self._execute_pivot(task)
 
                 self._pivot_stats["processed"] += 1
 
@@ -29890,3 +29867,4 @@ def detect_sprint_tier(duration_s: float) -> str:
     if duration_s < 600:
         return "deep"
     return "thorough"
+

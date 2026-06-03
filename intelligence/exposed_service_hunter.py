@@ -418,17 +418,16 @@ class DatabasePortScanner:
     async def _check_port(self, host: str, port: int) -> ExposedService | None:
         """Check if a specific port is open and identify service."""
         try:
-            reader, writer = await asyncio.wait_for(
-                asyncio.open_connection(host, port),
-                timeout=self.timeout
-            )
+            async with asyncio.timeout(self.timeout):
+                reader, writer = await asyncio.open_connection(host, port)
 
             # Try to grab banner
             banner = ""
             try:
                 writer.write(b"\r\n")
                 await writer.drain()
-                banner = await asyncio.wait_for(reader.read(1024), timeout=2)
+                async with asyncio.timeout(2):
+                    banner = await reader.read(1024)
                 banner = banner.decode("utf-8", errors="ignore").strip()
             except Exception:
                 pass
@@ -469,10 +468,8 @@ class DatabasePortScanner:
         result = {"auth_required": None, "version": None}
 
         try:
-            reader, writer = await asyncio.wait_for(
-                asyncio.open_connection(host, port),
-                timeout=self.timeout
-            )
+            async with asyncio.timeout(self.timeout):
+                reader, writer = await asyncio.open_connection(host, port)
 
             # Send MongoDB isMaster command
             is_master_cmd = b'\x3d\x00\x00\x00\x01\x00\x00\x00\x00\x00\x00\x00\xd4\x07\x00\x00'
@@ -483,7 +480,8 @@ class DatabasePortScanner:
             writer.write(is_master_cmd)
             await writer.drain()
 
-            response = await asyncio.wait_for(reader.read(1024), timeout=5)
+            async with asyncio.timeout(5):
+                response = await reader.read(1024)
             writer.close()
             await writer.wait_closed()
 
@@ -508,16 +506,15 @@ class DatabasePortScanner:
         result = {"auth_required": None, "version": None}
 
         try:
-            reader, writer = await asyncio.wait_for(
-                asyncio.open_connection(host, port),
-                timeout=self.timeout
-            )
+            async with asyncio.timeout(self.timeout):
+                reader, writer = await asyncio.open_connection(host, port)
 
             # Try INFO command
             writer.write(b"INFO\r\n")
             await writer.drain()
 
-            response = await asyncio.wait_for(reader.read(2048), timeout=5)
+            async with asyncio.timeout(5):
+                response = await reader.read(2048)
             writer.close()
             await writer.wait_closed()
 
@@ -1675,3 +1672,4 @@ __all__ = [
     "search_censys",
     "APICache",
 ]
+

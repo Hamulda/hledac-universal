@@ -430,10 +430,8 @@ class EvidenceLog:
             try:
                 # Wait for event or timeout
                 try:
-                    event = await asyncio.wait_for(
-                        self._queue.get(),
-                        timeout=self._SQLITE_FLUSH_INTERVAL
-                    )
+                    async with asyncio.timeout(self._SQLITE_FLUSH_INTERVAL):
+                        event = await self._queue.get()
                     if event is None:  # Shutdown signal
                         break
                     batch.append(event)
@@ -2011,3 +2009,4 @@ class EvidenceLog:
 
         traverse(event_id)
         return chain
+
