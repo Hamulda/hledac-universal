@@ -89,7 +89,7 @@ class EntityType(Enum):
 # DATACLASSES
 # =============================================================================
 
-@dataclass
+@dataclass(slots=True)
 class ArchivedVersion:
     """Represents a single archived version of content."""
     url: str
@@ -121,7 +121,7 @@ class ArchivedVersion:
         }
 
 
-@dataclass
+@dataclass(slots=True)
 class EntitySnapshot:
     """Snapshot of an entity at a specific point in time."""
     timestamp: datetime

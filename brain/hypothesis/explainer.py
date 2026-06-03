@@ -146,22 +146,18 @@ async def explain_with_mlx(
 
         async with get_mlx_semaphore():
             try:
-                explanation = await asyncio.wait_for(
-                    loop.run_in_executor(
+                async with asyncio.timeout(10.0):
+                    explanation = await loop.run_in_executor(
                         None,
                         lambda: generate(model, tokenizer, prompt, max_tokens=80, temp=0.0)
-                    ),
-                    timeout=10.0
-                )
+                    )
             except TypeError:
                 # Fallback if temp not supported
-                explanation = await asyncio.wait_for(
-                    loop.run_in_executor(
+                async with asyncio.timeout(10.0):
+                    explanation = await loop.run_in_executor(
                         None,
                         lambda: generate(model, tokenizer, prompt, max_tokens=80)
-                    ),
-                    timeout=10.0
-                )
+                    )
 
         prompt_hash = hashlib.sha256(prompt.encode()).hexdigest()[:8]
         return explanation.strip(), prompt_hash

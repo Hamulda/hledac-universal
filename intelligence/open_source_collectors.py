@@ -48,6 +48,7 @@ if TYPE_CHECKING:
 from hledac.universal.fetching.public_fetcher import FetchResult, async_fetch_public_text
 from hledac.universal.network.session_runtime import async_get_aiohttp_session
 from hledac.universal.runtime.resource_governor import M1ResourceGovernor
+from hledac.universal.utils.async_helpers import safe_gather
 
 logger = logging.getLogger(__name__)
 
@@ -66,7 +67,7 @@ TIMEOUT_S: float = 30.0
 # Finding Types
 # =============================================================================
 
-@dataclass
+@dataclass(slots=True)
 class PasteFinding:
     uri: str
     source: str  # "pastebin" | "paste_gg" | "rentry" | "privatebin" | "ghostbin" | "0bin"
@@ -134,7 +135,7 @@ class ChatMessage:
         }
 
 
-@dataclass
+@dataclass(slots=True)
 class AcademicPaper:
     title: str
     authors: list[str]
@@ -471,13 +472,14 @@ async def search_paste_sites(query: str, max_results: int = MAX_PASTE_RESULTS) -
             logger.debug(f"rentry search failed: {e}")
             return []
 
-    gathered = await asyncio.gather(
+    # F261: safe_gather centralizes [I6][I7][I8] invariants.
+    _result = await safe_gather(
         search_pastebin(),
         search_paste_gg(),
         search_rentry(),
-        return_exceptions=True,
+        label="paste_sites",
     )
-    _check_gathered(list(gathered), "paste_sites")
+    gathered = _result.ok
 
     for res in gathered:
         if isinstance(res, list):
@@ -584,12 +586,13 @@ async def search_usenet(query: str, max_results: int = MAX_USENET_ARTICLES) -> l
             logger.debug(f"GMane search failed: {e}")
             return []
 
-    gathered = await asyncio.gather(
+    # F261: safe_gather centralizes [I6][I7][I8] invariants.
+    _result = await safe_gather(
         search_google_groups(),
         search_gmane(),
-        return_exceptions=True,
+        label="usenet",
     )
-    _check_gathered(list(gathered), "usenet")
+    gathered = _result.ok
 
     seen_ids: set[str] = set()
     for res in gathered:
@@ -686,8 +689,9 @@ async def search_matrix(query: str, max_results: int = MAX_CHAT_MESSAGES) -> lis
 
     # Fetch messages from rooms concurrently
     tasks = [fetch_room_messages(rid) for rid in room_ids[:10]]
-    gathered = await asyncio.gather(*tasks, return_exceptions=True)
-    _check_gathered(list(gathered), "matrix")
+    # F261: safe_gather centralizes [I6][I7][I8] invariants.
+    _result = await safe_gather(*tasks, label="matrix")
+    gathered = _result.ok
 
     for res in gathered:
         if isinstance(res, list):
@@ -855,14 +859,15 @@ async def search_academic(query: str, max_results: int = MAX_ACADEMIC_PAPERS) ->
             logger.debug(f"RePEc search failed: {e}")
             return []
 
-    gathered = await asyncio.gather(
+    # F261: safe_gather centralizes [I6][I7][I8] invariants.
+    _result = await safe_gather(
         search_biorxiv(),
         search_medrxiv(),
         search_ssrn(),
         search_repec(),
-        return_exceptions=True,
+        label="academic",
     )
-    _check_gathered(list(gathered), "academic")
+    gathered = _result.ok
 
     for res in gathered:
         if isinstance(res, list):
@@ -1112,16 +1117,16 @@ class OpenSourceCollectors:
             cases = await self.search_court_records(query)
             results["court_records"] = [c.to_finding_dict() for c in cases]
 
-        gathered = await asyncio.gather(
+        # F261: safe_gather centralizes [I6][I7][I8] invariants.
+        _result = await safe_gather(
             gather_pastebin(),
             gather_usenet(),
             gather_matrix(),
             gather_academic(),
             gather_sec_edgar(),
             gather_court_records(),
-            return_exceptions=True,
+            label="open_source_collectors.gather_all",
         )
-        _check_gathered(list(gathered), "open_source_collectors.gather_all")
 
         return results
 

@@ -1140,6 +1140,71 @@ class LanceDBIdentityStore:
             logger.warning(f"Failed to add entity: {e}")
             return False
 
+    # ── STORAGE-FIX-2: LanceDB compaction scheduler ──────────────────────────
+    # Bound semantics:
+    #   - Trigger A: _insert_count_since_compact >= 1000
+    #   - Trigger B: time-based >= 1h since last compact
+    #   - Min interval: 60s (prevent thrashing on hot ingestion)
+    #   - Off event loop: blocking I/O in executor
+    #   - Fail-soft: any exception -> _metrics["compaction_failures"]++
+    async def _maybe_compact_async(self) -> None:
+        """Non-blocking compaction trigger; actual work in executor."""
+        if self._compact_in_flight:
+            return
+        if self._table is None:
+            return
+        now = time.time()
+        count_due = self._insert_count_since_compact >= self._COMPACT_FRAGMENT_THRESHOLD
+        time_due = (now - self._last_compact_ts) >= self._COMPACT_TIME_THRESHOLD_S
+        if not (count_due or time_due):
+            return
+        # Min interval guard
+        if (now - self._last_compact_ts) < self._COMPACT_MIN_INTERVAL_S:
+            return
+        self._compact_in_flight = True
+        try:
+            loop = asyncio.get_running_loop()
+            await loop.run_in_executor(None, self._maybe_compact_blocking)
+        except Exception as e:
+            try:
+                self._metrics["compaction_failures"] += 1
+            except Exception:
+                pass
+            logger.debug(f"[LANCEDB] compact dispatch failed: {e}")
+        finally:
+            self._compact_in_flight = False
+
+    def _maybe_compact_blocking(self) -> None:
+        """Run lancedb optimize/compact_files in calling thread. Fail-soft.
+
+        LanceDB >= 0.4 API: Table.optimize() returns OptimizeResult.
+        Older API used compact_files(). Try optimize() first, then
+        compact_files(), else no-op. Never raises.
+        """
+        if self._table is None:
+            return
+        try:
+            if hasattr(self._table, "optimize"):
+                self._table.optimize()
+            elif hasattr(self._table, "compact_files"):
+                self._table.compact_files()
+            else:
+                return
+            self._insert_count_since_compact = 0
+            self._last_compact_ts = time.time()
+            try:
+                self._metrics["compaction_runs"] += 1
+                self._metrics["last_compaction_ts"] = self._last_compact_ts
+            except Exception:
+                pass
+            logger.debug("[LANCEDB] compact ok (reset, ts=%d)", int(self._last_compact_ts))
+        except Exception as e:
+            try:
+                self._metrics["compaction_failures"] += 1
+            except Exception:
+                pass
+            logger.debug(f"[LANCEDB] compact failed (fail-soft): {e}")
+
     async def search_similar(
         self,
         embedding: list[float],

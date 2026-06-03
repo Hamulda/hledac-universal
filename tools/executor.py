@@ -106,20 +106,19 @@ class ToolExecutor:
             output_bytes: bytes = b""
 
             try:
-                result = await asyncio.wait_for(
-                    self._execute_handler(tool, validated),
-                    timeout=timeout / 1000,
-                )
+                # asyncio.timeout (3.11+) preferred over wait_for — better cancellation semantics.
+                async with asyncio.timeout(timeout / 1000):
+                    result = await self._execute_handler(tool, validated)
                 try:
                     import orjson
                     output_bytes = orjson.dumps(result)
                 except Exception:
                     output_bytes = str(result).encode("utf-8") if result is not None else b""
-            except TimeoutError:
+            except TimeoutError as e:
                 error = TimeoutError(f"Tool '{tool_name}' timed out after {timeout}ms")
                 status = "error"
                 output_bytes = b""
-                raise
+                raise error from e
             except Exception as e:
                 error = e
                 status = "error"

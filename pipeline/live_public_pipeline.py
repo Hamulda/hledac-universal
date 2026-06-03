@@ -3899,12 +3899,12 @@ async def async_run_live_public_pipeline(
         )
         tasks.append(task)
 
-    # asyncio.gather preserves order; _check_gathered enforces [I6][I7][I8]
-    raw_results = await asyncio.gather(*tasks, return_exceptions=True)
-
-    # _check_gathered propagates CancelledError [I6] and BaseException [I7]
-    from hledac.universal.utils.async_helpers import _check_gathered
-    ok_results, error_results = _check_gathered(raw_results)
+    # F261: safe_gather centralizes [I6][I7][I8] invariants at the gather boundary.
+    # Same return shape as before (ok_results + error_results) so downstream
+    # code at 3911/4225/4227 keeps working unchanged.
+    from hledac.universal.utils.async_helpers import safe_gather
+    _result = await safe_gather(*tasks, label="live_public_page_fetch")
+    ok_results, error_results = _result.ok, _result.errors
 
     # Assemble page results in discovery order (skipping exceptions)
     all_page_results: list[PipelinePageResult] = []

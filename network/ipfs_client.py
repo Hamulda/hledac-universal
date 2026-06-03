@@ -714,6 +714,9 @@ def ipfs_content_to_finding_dict(
     content: bytes,
     query: str,
     source_type: str = "ipfs_fetch",
+    gateway: str | None = None,
+    ts: float | None = None,
+    finding_id_prefix: str = "ipfs",
 ) -> dict:
     """
     Convert raw IPFS content to a CanonicalFinding dict.
@@ -726,6 +729,9 @@ def ipfs_content_to_finding_dict(
         content: Raw bytes from IPFS fetch
         query: Original query string
         source_type: "ipfs_fetch" or "ipfs_search" (default: ipfs_fetch)
+        gateway: Optional gateway name/URL (e.g. "cloudflare", "ipfs.io") — included in provenance
+        ts: Optional explicit timestamp (default: current time) — useful for batch determinism
+        finding_id_prefix: Prefix for finding_id (default: "ipfs") — disambiguates sources
 
     Returns:
         Finding dict with all required CanonicalFinding fields.
@@ -734,18 +740,23 @@ def ipfs_content_to_finding_dict(
 
     content_text = content.decode("utf-8", errors="replace") if isinstance(content, bytes) else content
 
-    finding_id = f"ipfs-{cid[:16]}-{_time.time_ns()}"
+    _ts = ts if ts is not None else _time.time()
+    finding_id = f"{finding_id_prefix}-{cid[:16]}-{_time.time_ns()}"
 
     # payload_text: content preview (up to 4096 chars for LMDB WAL)
     payload_text = content_text[:4096] if content_text else ""
+
+    provenance: tuple[str, ...] = (f"ipfs://{cid}",)
+    if gateway:
+        provenance = provenance + (f"https://{gateway}.ipfs.example/{cid}" if not gateway.startswith("http") else f"{gateway}/{cid}",)
 
     return {
         "finding_id": finding_id,
         "query": query,
         "source_type": source_type,
         "confidence": 0.75,  # IPFS content is authoritative but unverified
-        "ts": _time.time(),
-        "provenance": (f"ipfs://{cid}",),
+        "ts": _ts,
+        "provenance": provenance,
         "payload_text": payload_text,
         "accepted": True,  # IPFS is bounded source — auto-accept
         "reason": source_type,

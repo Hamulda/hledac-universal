@@ -62,6 +62,10 @@ class _ANNIndex:
         "_boot_error",
         "_initialized",
         "_lock",
+        # STORAGE-FIX-2: compaction scheduler state (bounded)
+        "_insert_count_since_compact",
+        "_last_compact_ts",
+        "_compact_in_flight",
     )
 
     def __init__(self, db_path: Path) -> None:
@@ -72,6 +76,10 @@ class _ANNIndex:
         self._boot_error: str | None = None
         self._initialized: bool = False
         self._lock = threading.Lock()
+        # STORAGE-FIX-2: compaction scheduler
+        self._insert_count_since_compact: int = 0
+        self._last_compact_ts: float = 0.0
+        self._compact_in_flight: bool = False
         # SAFETY: SAFE_SYNC_BOUNDARY — _lock guards LanceDB table.search() and table.add()
         # operations in ann_search() and upsert(). Both are called from the embedding_pipeline
         # sync context (not async). The lock prevents concurrent LanceDB operations across threads
@@ -210,6 +218,10 @@ class _ANNIndex:
             # Evict oldest if over cap
             self._maybe_evict()
 
+            # STORAGE-FIX-2: schedule compaction on fragment growth
+            self._insert_count_since_compact += 1
+            self._maybe_compact_blocking()
+
             return True
 
         except Exception as e:
@@ -233,6 +245,42 @@ class _ANNIndex:
                         self._table.delete(f"finding_key = '{key}'")
         except Exception as e:
             logger.debug(f"[ANN] evict failed: {e}")
+
+    def _maybe_compact_blocking(self) -> None:
+        """STORAGE-FIX-2: LanceDB compaction trigger (sync, fail-soft).
+
+        Bound semantics:
+          - Trigger: _insert_count_since_compact >= 1000 OR time >= 1h
+          - Min interval: 60s
+          - Fail-soft: any exception logged + ignored
+        """
+        if self._compact_in_flight:
+            return
+        if self._table is None:
+            return
+        import time as _t
+        now = _t.time()
+        count_due = self._insert_count_since_compact >= 1000
+        time_due = (now - self._last_compact_ts) >= 3600.0
+        if not (count_due or time_due):
+            return
+        if (now - self._last_compact_ts) < 60.0:
+            return
+        self._compact_in_flight = True
+        try:
+            if hasattr(self._table, "optimize"):
+                self._table.optimize()
+            elif hasattr(self._table, "compact_files"):
+                self._table.compact_files()
+            else:
+                return
+            self._insert_count_since_compact = 0
+            self._last_compact_ts = _t.time()
+            logger.debug("[ANN] compact ok (reset, ts=%d)", int(self._last_compact_ts))
+        except Exception as e:
+            logger.debug(f"[ANN] compact failed (fail-soft): {e}")
+        finally:
+            self._compact_in_flight = False
 
     def _get_oldest_timestamp(self) -> float | None:
         """Get timestamp of oldest entry."""

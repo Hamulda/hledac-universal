@@ -1201,17 +1201,21 @@ class DuckPGQGraph:
 
     def get_top_nodes_by_degree(self, n: int = 20) -> list[dict]:
         """Top N IOC nodes seřazených podle out-degree (nejpropojeno)."""
+        import duckdb
         try:
-            return self.con.execute(f"""
+            cur = self.con.execute("""
                 SELECT n.value, n.ioc_type, n.confidence,
                        COUNT(e.dst_id) as degree
                 FROM ioc_nodes n
                 LEFT JOIN ioc_edges e ON e.src_id = n.id
                 GROUP BY n.id, n.value, n.ioc_type, n.confidence
                 ORDER BY degree DESC
-                LIMIT {n}
-            """).fetchdf().to_dict("records")
-        except Exception:
+                LIMIT ?
+            """, [n])
+            cols = [c[0] for c in cur.description]
+            return [dict(zip(cols, row)) for row in cur.fetchall()]
+        except (duckdb.Error, ImportError) as e:
+            logger.warning(f"[GRAPH] get_top_nodes_by_degree failed: {e}")
             return []
 
     def _init_schema(self):

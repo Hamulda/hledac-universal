@@ -135,7 +135,7 @@ class GPSCoordinates:
         }
 
 
-@dataclass
+@dataclass(slots=True)
 class TimelineEvent:
     """Single timeline event from metadata."""
     timestamp: datetime
@@ -605,7 +605,7 @@ class SteganalysisMetadata:
         }
 
 
-@dataclass
+@dataclass(slots=True)
 class MetadataResult:
     """Complete metadata extraction result."""
     file_path: str

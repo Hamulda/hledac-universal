@@ -19,7 +19,7 @@ NOT AUTHORITY FOR:
 import logging
 from dataclasses import dataclass
 from enum import Enum, auto
-from typing import Any
+from typing import Any, cast
 
 logger = logging.getLogger(__name__)
 
@@ -234,7 +234,8 @@ class TransportResolver:
         # Low risk or fallback: use InMemory for testing/internal
         if context.allow_inmemory:
             logger.info("Using InMemory transport (fallback)")
-            return Transport.INMEMORY
+            from .inmemory_transport import InMemoryTransport
+            return cast(Transport, InMemoryTransport(node_id="fallback"))
 
         # No transport available - return None, caller will handle
         logger.warning("No transport available, returning None")

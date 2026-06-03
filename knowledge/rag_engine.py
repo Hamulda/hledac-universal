@@ -59,7 +59,7 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 
-@dataclass
+@dataclass(slots=True)
 class RAGConfig:
     """Konfigurace pro RAG"""
     enable_ultra_context: bool = True

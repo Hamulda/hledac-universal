@@ -655,10 +655,8 @@ except Exception as e:
             )
 
             # Pošli data a čekej na výsledek
-            stdout, stderr = await asyncio.wait_for(
-                proc.communicate(input=json.dumps(input_data).encode()),
-                timeout=timeout
-            )
+            async with asyncio.timeout(timeout):
+                stdout, stderr = await proc.communicate(input=json.dumps(input_data).encode())
 
             if proc.returncode != 0:
                 error_msg = stderr.decode() if stderr else "Unknown error"

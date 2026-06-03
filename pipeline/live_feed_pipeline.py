@@ -34,7 +34,7 @@ import asyncio
 import hashlib
 import logging
 import time
-from collections import Counter
+from collections import OrderedDict, Counter
 from typing import TYPE_CHECKING, Any
 
 import msgspec
@@ -872,17 +872,28 @@ class _RunDeduper:
 
     Backwards-compatible: is_new(entry_url) for pattern-backed pipeline,
     is_new(entry_url, title, published_raw) for legacy entry-backed callers.
+
+    STORAGE-FIX-5: bounded LRU (OrderedDict, max _DEDUP_MAX) to protect M1 8GB
+    against unbounded growth. Evicts oldest 10% on overflow.
     """
 
+    # Bounded: 50K URLs per sprint (~5 MB max)
+    _DEDUP_MAX: int = 50_000
+
     def __init__(self) -> None:
-        self._seen: dict[str, bool] = {}
+        self._seen: "OrderedDict[str, None]" = OrderedDict()
 
     def is_new(self, entry_url: str, _title: str = "", _raw: str = "") -> bool:
         # Legacy entry-backed callers pass (url, title, raw) — key is entry_url only
         # Pattern-backed callers pass just (entry_url,)
         if entry_url in self._seen:
+            self._seen.move_to_end(entry_url)
             return False
-        self._seen[entry_url] = True
+        self._seen[entry_url] = None
+        if len(self._seen) > self._DEDUP_MAX:
+            evict_count = self._DEDUP_MAX // 10
+            for _ in range(evict_count):
+                self._seen.popitem(last=False)
         return True
 
 
@@ -898,16 +909,28 @@ from hledac.universal.patterns.pattern_matcher import match_text
 # ---------------------------------------------------------------------------
 
 class _EntryDeduper:
-    """Per-entry dedup by (label, pattern, value) preserve-first."""
+    """Per-entry dedup by (label, pattern, value) preserve-first.
+
+    STORAGE-FIX-5: bounded LRU (OrderedDict, max _DEDUP_MAX) to protect M1 8GB
+    against unbounded growth. Evicts oldest 10% on overflow.
+    """
+
+    # Bounded: 50K IOC triples per sprint
+    _DEDUP_MAX: int = 50_000
 
     def __init__(self) -> None:
-        self._seen: set[tuple[str, str, str]] = set()
+        self._seen: "OrderedDict[tuple[str, str, str], None]" = OrderedDict()
 
     def is_new(self, label: str, pattern: str, value: str) -> bool:
         key = (label or "", pattern, value)
         if key in self._seen:
+            self._seen.move_to_end(key)
             return False
-        self._seen.add(key)
+        self._seen[key] = None
+        if len(self._seen) > self._DEDUP_MAX:
+            evict_count = self._DEDUP_MAX // 10
+            for _ in range(evict_count):
+                self._seen.popitem(last=False)
         return True
 
 

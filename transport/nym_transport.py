@@ -104,7 +104,8 @@ class NymTransport(Transport):
 
         async def wait_for_self_address():
             while True:
-                response = await asyncio.wait_for(self.websocket.recv(), timeout=5.0)
+                async with asyncio.timeout(5.0):
+                    response = await self.websocket.recv()
                 data = json.loads(response)
                 if data.get('type') == 'selfAddress':
                     return data['address']

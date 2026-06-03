@@ -200,7 +200,7 @@ class RelationshipType(Enum):
     CO_OCCURS_WITH = "co_occurs_with"
 
 
-@dataclass
+@dataclass(slots=True)
 class Entity:
     """Represents an entity in the relationship graph."""
     id: str
@@ -229,7 +229,7 @@ class Entity:
         }
 
 
-@dataclass
+@dataclass(slots=True)
 class Relationship:
     """Represents a relationship between two entities."""
     source: str

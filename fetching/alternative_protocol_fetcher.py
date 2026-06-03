@@ -288,10 +288,8 @@ async def _fetch_from_fediverse(
         try:
             adapter = fediverse.FediverseAdapter()
             try:
-                statuses = await asyncio.wait_for(
-                    adapter.search_public_timeline(query, max_results=50),
-                    timeout=FEDIVERSE_TIMEOUT,
-                )
+                async with asyncio.timeout(FEDIVERSE_TIMEOUT):
+                    statuses = await adapter.search_public_timeline(query, max_results=50)
 
                 findings: list[CanonicalFinding] = []
                 for status in statuses[:20]:  # Cap results
@@ -344,17 +342,13 @@ async def _fetch_from_matrix(
             adapter = matrix.MatrixPublicAdapter()
             try:
                 # Search public rooms
-                rooms = await asyncio.wait_for(
-                    adapter.search_public_rooms(query, limit=5),
-                    timeout=MATRIX_TIMEOUT,
-                )
+                async with asyncio.timeout(MATRIX_TIMEOUT):
+                    rooms = await adapter.search_public_rooms(query, limit=5)
 
                 findings: list[CanonicalFinding] = []
                 for room in rooms[:3]:  # Top 3 rooms
-                    messages = await asyncio.wait_for(
-                        adapter.get_room_messages(room.room_id, limit=50),
-                        timeout=MATRIX_TIMEOUT,
-                    )
+                    async with asyncio.timeout(MATRIX_TIMEOUT):
+                        messages = await adapter.get_room_messages(room.room_id, limit=50)
 
                     for msg in messages[:10]:  # Cap per room
                         content = msg.get("content", {}).get("body", "")

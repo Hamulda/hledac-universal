@@ -1541,7 +1541,7 @@ WaybackCDXClient = WaybackCDX
 # =============================================================================
 
 
-@dataclass
+@dataclass(slots=True)
 class WaybackSnapshot:
     """Structured Wayback Machine snapshot result."""
     timestamp: str

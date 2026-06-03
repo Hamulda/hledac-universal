@@ -279,15 +279,18 @@ class _DocumentMetadataExtractor:
 
         try:
             loop = asyncio.get_running_loop()
-            result = await asyncio.wait_for(
-                loop.run_in_executor(None, self._extract_sync, content, ext),
-                timeout=EXTRACTION_TIMEOUT
-            )
+            # asyncio.timeout (3.11+) preferred over wait_for — better cancellation semantics.
+            async with asyncio.timeout(EXTRACTION_TIMEOUT):
+                result = await loop.run_in_executor(None, self._extract_sync, content, ext)
             if result:
                 self._cache(content, result)
             return result
         except TimeoutError:
-            logger.debug(f"[DOCMETA] Timeout extracting from {url}")
+            logger.debug(
+                "[DOCMETA] Timeout extracting from %s (%.1fs)",
+                url, EXTRACTION_TIMEOUT,
+                extra={"url": url, "ext": ext, "timeout_s": EXTRACTION_TIMEOUT},
+            )
             return {}
         except Exception as e:
             logger.debug(f"[DOCMETA] Extraction failed for {url}: {e}")

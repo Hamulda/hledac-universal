@@ -1721,7 +1721,7 @@ class CrossDocumentLink:
     last_seen: str
 
 
-@dataclass
+@dataclass(slots=True)
 class TimelineEvent:
     """Event extracted from document with temporal information."""
     date: datetime | None

@@ -28,7 +28,7 @@ MAX_DRIFT_DELTA_KEYS = 20
 _logger = logging.getLogger(__name__)
 
 
-@dataclass(frozen=True)
+@dataclass(slots=True, frozen=True)
 class TargetMemoryUpdate:
     target_id: str
     sprint_id: str
@@ -39,7 +39,7 @@ class TargetMemoryUpdate:
     observed_ts: float
 
 
-@dataclass(frozen=True)
+@dataclass(slots=True, frozen=True)
 class TargetMemory:
     target_id: str
     first_seen_ts: float
@@ -326,7 +326,7 @@ class TargetMemoryService:
                     MAX_MEMORY_JSON_BYTES,
                 )
         except Exception:
-            pass  # fail-soft
+            pass  # noqa: BARE-EXCEPT  # fail-soft suppression: merge_update
 
         self._cache[update.target_id] = memory
         return memory

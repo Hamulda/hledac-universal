@@ -35,7 +35,7 @@ MAX_EVENT_AGE_DAYS: int = 365 * 5  # 5 years max span
 # ── Dataclasses ──────────────────────────────────────────────────────────────
 
 
-@dataclass
+@dataclass(slots=True)
 class TimelineEvent:
     """
     A single timestamped event in the synthesized timeline.

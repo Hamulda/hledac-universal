@@ -3,8 +3,13 @@ import pathlib
 import tempfile
 import sys
 
+import pytest
+
 _universal = pathlib.Path(__file__).parent.parent.parent.parent
 sys.path.insert(0, str(_universal))
+
+pytest.importorskip("pyarrow")
+pytest.importorskip("duckdb")
 
 import pyarrow as pa
 import pyarrow.parquet as pq

@@ -509,10 +509,8 @@ async def _scan_dht(query: str) -> list[CanonicalFinding]:
         )
         await node.start()  # F214Q: init routing table from LMDB + start refresh loop
         try:
-            peers = await asyncio.wait_for(
-                node.get_peers(info_hash),
-                timeout=120.0,
-            )
+            async with asyncio.timeout(120.0):
+                peers = await node.get_peers(info_hash)
         finally:
             await node.stop()
 

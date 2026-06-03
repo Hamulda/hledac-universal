@@ -513,12 +513,13 @@ class WorkflowOrchestrator:
         results: dict[str, Any] = {}
 
         for group in module_groups:
-            # Execute group in parallel with timeout
+            # Execute group in parallel with per-module timeout
+            async def _run_with_timeout(module: str) -> Any:
+                async with asyncio.timeout(self.config.module_timeout):
+                    return await self._execute_module(module, input_data, context)
+
             tasks = [
-                asyncio.wait_for(
-                    self._execute_module(module, input_data, context),
-                    timeout=self.config.module_timeout
-                )
+                asyncio.create_task(_run_with_timeout(module), name=f"workflow:module:{module}")
                 for module in group
             ]
 

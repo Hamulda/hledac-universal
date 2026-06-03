@@ -4,12 +4,16 @@ import pathlib
 import tempfile
 import sys
 
+import pytest
+
 _universal = pathlib.Path(__file__).parent.parent.parent.parent
 sys.path.insert(0, str(_universal))
 
 from runtime.sprint_scheduler import SprintScheduler
-from unittest.mock import patch, MagicMock
-import pyarrow.parquet as pq
+from unittest.mock import patch
+
+# M1-8GB-friendly: pyarrow is optional. Skip if not installed.
+pytest.importorskip("pyarrow")
 
 
 def test_arrow_batch_flush():

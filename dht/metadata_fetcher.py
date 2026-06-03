@@ -122,7 +122,8 @@ class TorrentMetadataFetcher:
             writer.write(handshake)
 
             # Step 2: Read handshake response
-            response = await asyncio.wait_for(reader.readexactly(BT_HEADER_SIZE), timeout=10.0)
+            async with asyncio.timeout(10.0):
+                response = await reader.readexactly(BT_HEADER_SIZE)
             if len(response) < BT_HEADER_SIZE:
                 return None
 

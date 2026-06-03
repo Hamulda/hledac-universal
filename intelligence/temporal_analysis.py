@@ -56,7 +56,7 @@ class TrendAnalysis:
     time_period_days: int
 
 
-@dataclass
+@dataclass(slots=True)
 class TemporalPattern:
     """Detected temporal pattern."""
     pattern_type: PatternType

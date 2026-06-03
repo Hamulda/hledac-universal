@@ -135,6 +135,14 @@ osint-html = [
     "xxhash>=3.6.0",        # fast non-crypto hash for IOC deduplication
     "curl_cffi>=0.7.0",     # JA3 TLS fingerprint impersonation
 ]
+# --- osint-compression: optional brotli decoder for Content-Encoding: br bodies ---
+# Required ONLY for sites that serve brotli-compressed responses.
+# Default install omits this; transport/decompression.py then drops `br` from
+# Accept-Encoding (honest header advertisement) and warns on receive.
+# Install: uv pip install ".[osint-compression]"
+osint-compression = [
+    "brotlicffi>=1.1.0",  # pure CFFI binding, M1 arm64 wheel, ~5MB resident
+]
 # --- pq: post-quantum cryptography via liboqs (Apple Silicon homebrew) ---
 # Requires: brew install liboqs && uv pip install liboqs-python
 pq = [

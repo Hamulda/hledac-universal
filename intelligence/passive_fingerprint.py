@@ -58,7 +58,7 @@ FINGERPRINT_TIMEOUT_S: float = 10.0
 # ── Dataclasses ───────────────────────────────────────────────────────────────
 
 
-@dataclass(frozen=True)
+@dataclass(slots=True, frozen=True)
 class ServiceFingerprint:
     """A single passive service fingerprint derived from finding data."""
     finding_id: str

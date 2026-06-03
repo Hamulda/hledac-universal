@@ -115,7 +115,10 @@ async def bounded_map[T](
             try:
                 async with sem:
                     if timeout is not None:
-                        return await asyncio.wait_for(fn(*args, **kwargs), timeout)
+                        # asyncio.timeout (3.11+) — preferred over wait_for:
+                        # better cancellation semantics, less Python overhead (M1 8GB UMA).
+                        async with asyncio.timeout(timeout):
+                            return await fn(*args, **kwargs)
                     else:
                         return await fn(*args, **kwargs)
             except asyncio.CancelledError:
@@ -202,25 +205,41 @@ async def map_as_completed[T](
 async def bounded_gather[T](
     *coros: Awaitable[T],
     max_concurrent: int = 3,
-    return_exceptions: bool = False
+    return_exceptions: bool = False,
+    per_task_timeout: float | None = None
 ) -> list[T]:
     """
-    Jednodušší wrapper pro bounded gather.
+    Jednodušší wrapper pro bounded gather s per-task timeout (asyncio.timeout).
 
     Args:
         *coros: coroutines to gather
         max_concurrent: max paralelních úloh
         return_exceptions: pokud True, chyby se vrátí jako výsledky místo raised
+        per_task_timeout: timeout pro jednotlivé coroutine (asyncio.timeout, Python 3.11+)
 
     Returns:
-        Seznam výsledků
+        Seznam výsledků. Při return_exceptions=True mohou být na indexech výjimky
+        (včetně TimeoutError z per_task_timeout).
+
+    Notes:
+        - Používá asyncio.gather + asyncio.Semaphore (ne TaskGroup) aby zachoval
+          return_exceptions=True sémantiku. TaskGroup vždy canceluje siblings.
+        - S per_task_timeout=None je chování identické s bounded_map (ale bez
+          return_exceptions=True bugu v bounded_map; bounded_gather je preferované).
     """
-    # Create wrapper functions that await the coroutines
-    async def _run_coro(coro: Awaitable[T]) -> T:
-        return await coro
-    tasks = [(_run_coro, (c,), {}) for c in coros]
-    return await bounded_map(tasks, max_concurrent=max_concurrent,
-                             cancel_on_error=not return_exceptions)
+    if not coros:
+        return []
+
+    sem = asyncio.Semaphore(max_concurrent)
+
+    async def _run(coro: Awaitable[T]) -> T:
+        async with sem:
+            if per_task_timeout is not None:
+                async with asyncio.timeout(per_task_timeout):
+                    return await coro
+            return await coro
+
+    return await asyncio.gather(*(_run(c) for c in coros), return_exceptions=return_exceptions)  # type: ignore[return-value]
 
 
 __all__ = [

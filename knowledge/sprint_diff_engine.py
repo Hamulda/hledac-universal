@@ -35,7 +35,7 @@ MAX_PROFILE_ENTRIES: int = 500
 
 # ── Dataclasses ────────────────────────────────────────────────────────────────
 
-@dataclass(frozen=True)
+@dataclass(slots=True, frozen=True)
 class SprintDiffResult:
     target_id: str
     current_sprint_id: str
@@ -214,7 +214,7 @@ class SprintDiffEngine:
         try:
             entity_summary = self._compute_entity_summary(current_findings)
         except Exception:
-            pass
+            pass  # noqa: BARE-EXCEPT  # fail-soft suppression: build_target_profile
 
         try:
             entity_summary_json = orjson.dumps(entity_summary).decode()

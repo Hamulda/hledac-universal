@@ -60,7 +60,7 @@ except ImportError:
 
 # ── Dataclasses ──────────────────────────────────────────────────────────────
 
-@dataclass
+@dataclass(slots=True)
 class IdentityCandidate:
     """
     A derived identity candidate produced by the stitching engine.

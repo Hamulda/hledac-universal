@@ -172,7 +172,7 @@ def resolve_nonfeed_expected_lanes(
 
 from hledac.universal.runtime.graph_accumulator import SprintGraphAccumulator
 
-from hledac.universal.utils.async_helpers import _check_gathered
+from hledac.universal.utils.async_helpers import _check_gathered, safe_gather
 
 # Sprint F262OBS: centralize source_type literals via utils.source_types
 try:
@@ -21214,9 +21214,12 @@ class SprintScheduler:
 
 
 
-                raw_results = await asyncio.gather(*[enrich_one(f) for f in findings], return_exceptions=True)
-
-                _check_gathered(raw_results, log, "multimodal_enrichment")
+                # F261: safe_gather centralizes [I6][I7][I8] invariants.
+                await safe_gather(
+                    *[enrich_one(f) for f in findings],
+                    label="multimodal_enrichment",
+                    logger_instance=log,
+                )
 
         except Exception:
 
@@ -21698,9 +21701,12 @@ class SprintScheduler:
 
 
 
-                raw_results = await asyncio.gather(*[enrich_one(f) for f in findings], return_exceptions=True)
-
-                _check_gathered(raw_results, log, "forensics_enrichment")
+                # F261: safe_gather centralizes [I6][I7][I8] invariants.
+                await safe_gather(
+                    *[enrich_one(f) for f in findings],
+                    label="forensics_enrichment",
+                    logger_instance=log,
+                )
 
         except Exception:
 

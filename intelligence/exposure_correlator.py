@@ -178,7 +178,7 @@ def reset_correlator_stats() -> None:
 
 # ── Dataclasses ───────────────────────────────────────────────────────────────
 
-@dataclass
+@dataclass(slots=True)
 class AssetSignal:
     """A single signal associated with an asset."""
     signal_type: str           # SIGNAL_TYPE_*
@@ -188,7 +188,7 @@ class AssetSignal:
     finding_id: str            # source finding that produced this signal
 
 
-@dataclass
+@dataclass(slots=True)
 class Asset:
     """An asset (host, domain, IP) with collected signals."""
     key: str
@@ -211,7 +211,7 @@ class Asset:
         return any(s.signal_type == SIGNAL_TYPE_PASSIVE_DNS for s in self.signals)
 
 
-@dataclass
+@dataclass(slots=True)
 class ExposureFinding:
     """A correlated exposure finding with evidence."""
     corr_type: str             # CORR_* constant

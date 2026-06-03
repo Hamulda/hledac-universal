@@ -199,10 +199,9 @@ async def main(mode: str = "public", query: str = "smoke test query", run_loop: 
             profiler = cProfile.Profile()
             profiler.enable()
 
-            await asyncio.wait_for(
-                _run_sprint_mode(query, duration_s=60.0, mode=mode),
-                timeout=120.0,  # 2min timeout
-            )
+            # asyncio.timeout (3.11+) preferred over wait_for — better cancellation semantics.
+            async with asyncio.timeout(120.0):  # 2min timeout
+                await _run_sprint_mode(query, duration_s=60.0, mode=mode)
 
             profiler.disable()
 
@@ -218,12 +217,15 @@ async def main(mode: str = "public", query: str = "smoke test query", run_loop: 
             log.info(f"[PROFILE] Top 15 functions by cumulative time:\n{s.getvalue()}")
         else:
             # Sprint s 60s durací
-            await asyncio.wait_for(
-                _run_sprint_mode(query, duration_s=60.0, mode=mode),
-                timeout=120.0,  # 2min timeout
-            )
+            # asyncio.timeout (3.11+) preferred over wait_for — better cancellation semantics.
+            async with asyncio.timeout(120.0):  # 2min timeout
+                await _run_sprint_mode(query, duration_s=60.0, mode=mode)
     except TimeoutError:
-        log.error("Sprint timeout — přesáhl 120s")
+        log.error(
+            "Sprint timeout — přesáhl 120s (mode=%s, query=%r)",
+            mode, query[:80],
+            extra={"mode": mode, "query": query[:80], "timeout_s": 120.0},
+        )
         return 1
     except Exception as e:
         log.error(f"Sprint selhal: {e}", exc_info=True)

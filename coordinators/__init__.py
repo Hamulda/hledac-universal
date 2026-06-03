@@ -282,3 +282,36 @@ __all__ = [
     # Catalog
     'catalog',
 ]
+
+
+# ---------------------------------------------------------------------------
+# Usage patterns (F4.1 — aggregator docs)
+# ---------------------------------------------------------------------------
+# Two ways to consume a coordinator:
+#
+# 1) Eager import (simple, but loads deps at import-time):
+#    from hledac.universal.coordinators.memory_coordinator import UniversalMemoryCoordinator
+#    coordinator = UniversalMemoryCoordinator(...)
+#
+# 2) Lazy load via the domain catalog (preferred for M1 — only pays import
+#    cost when the coordinator is actually needed):
+#    from hledac.universal.coordinators import catalog
+#    MemoryCoordinator = catalog.load("UniversalMemoryCoordinator")
+#    coordinator = MemoryCoordinator(...)
+#
+# Introspection (no coordinator modules imported, zero RAM):
+#    catalog.domains                        # ['core', 'advanced', 'optimization', 'infrastructure', 'specialized']
+#    catalog.list_all()                     # {domain: [name, ...], ...}
+#    catalog.list_domain("core")            # ['UniversalResearchCoordinator', 'UniversalExecutionCoordinator', ...]
+#    catalog.search("memory")               # case-insensitive substring match
+#    catalog.is_known("FetchCoordinator")   # True/False without importing
+#
+# Domain groups (see _catalog.py):
+#   - core          : Research, Execution, Security, Monitoring, Memory, Validation
+#   - advanced      : Swarm, MetaReasoning, PrivacyEnhanced
+#   - optimization  : Performance, Benchmark* (deprecated), Resource, ResearchOptimizer
+#   - infrastructure: Base, Registry, Mixins, enums
+#   - specialized   : Fetch, Graph, Archive, Claims, Multimodal, Render, AgentCoordination
+#
+# * Benchmark coordinator moved to _deprecated/ on 2026-06-03 (F3.3).
+#   Importing it still works but emits DeprecationWarning.

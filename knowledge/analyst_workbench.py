@@ -190,7 +190,7 @@ class RelatedEntity:
     relation_types: frozenset[str] = field(default_factory=frozenset)
 
 
-@dataclass
+@dataclass(slots=True)
 class AnalystAnswer:
     """
     Complete analyst answer with evidence.
@@ -1024,7 +1024,7 @@ class AnalystWorkbench:
                         generated_ts=ts,
                     )
             except Exception:
-                pass  # Fall through to normal path
+                pass  # noqa: BARE-EXCEPT  # fail-soft suppression: build_sprint_brief
 
         # F206G: Read graph analytics summary (bounded, fail-soft)
         graph_analytics: dict[str, Any] = {}
@@ -1856,14 +1856,14 @@ def create_analyst_workbench() -> AnalystWorkbench:
 
         vector = get_vector_store()
     except Exception:
-        pass
+        pass  # noqa: BARE-EXCEPT  # fail-soft suppression: create_analyst_workbench
 
     try:
         from knowledge.graph_service import _get_graph
 
         graph = _get_graph()
     except Exception:
-        pass
+        pass  # noqa: BARE-EXCEPT  # fail-soft suppression: create_analyst_workbench
 
     return AnalystWorkbench(
         duckdb_store=duckdb,

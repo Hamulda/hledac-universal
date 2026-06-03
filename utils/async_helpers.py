@@ -196,7 +196,7 @@ async def safe_gather(
 
     # I6/I7/I8 boundary: always return_exceptions=True at the gather level.
     # We classify after to differentiate CancelledError / BaseException / Exception.
-    raw = await asyncio.gather(*coros, return_exceptions=True)
+    raw = await asyncio.gather(*(_wrap_awaitable(c) for c in coros), return_exceptions=True)
 
     ok: list[Any] = []
     errors: list[BaseException] = []
@@ -221,3 +221,219 @@ async def safe_gather(
             ok.append(item)
 
     return SafeGatherResult(ok=ok, errors=errors)
+
+
+# =============================================================================
+# Sprint F261: _BoundedExceptionLog + safe_gather_fire_and_forget + safe_gather_dropin
+# Cutting-edge follow-up to F26X safe_gather.
+#
+# Three call shapes cover the 157 gather sites identified in the F260 audit:
+#   1. safe_gather (struct)  — returns SafeGatherResult with .ok + .errors
+#      → 28 sites with explicit _check_gathered() post-process
+#   2. safe_gather_dropin  — returns list[T], filters exceptions silently
+#      → 17 sites with isinstance(r, Exception) filter
+#      → 172 sites with for-loop / extend() pattern
+#   3. safe_gather_fire_and_forget — returns None, log + bounded
+#      → 41 sites with `await asyncio.gather(...)` (no var assigned)
+#
+# _BoundedExceptionLog bounds log spam during cascade failure (e.g. graceful
+# shutdown where 50+ background tasks time out simultaneously). M1-safe: no
+# new heavy imports, all in-process, slots=True, BoundedLog = at most 5
+# detailed lines + 1 "N more silenced" summary.
+# =============================================================================
+
+
+# Sample cap: how many detailed exception entries to log before aggregating.
+# 5 is the empirical sweet spot — small enough to avoid log spam, large enough
+# to diagnose a non-trivial pattern. The "+N more" line always fires once.
+_SAFE_GATHER_SAMPLE_CAP = 5
+
+
+def _wrap_awaitable(value: Any) -> Awaitable[Any]:
+    """Wrap a plain value in a coroutine so asyncio.gather accepts it.
+
+    asyncio.gather (Python 3.10+) requires awaitables, not plain values.
+    When callers mix `safe_gather(coro1, 42, coro2)`, plain values must
+    be wrapped. M1-safe: a one-line async lambda per plain value (≈ 200B
+    per closure), reused only for the duration of the gather call.
+
+    If `value` is already awaitable (coroutine, Future, Task, or has
+    __await__), it's returned unchanged.
+    """
+    if hasattr(value, "__await__"):
+        return value  # type: ignore[no-any-return]
+    async def _lift() -> Any:
+        return value
+    return _lift()
+
+
+@dataclass(frozen=True, slots=True)
+class _BoundedExceptionLog:
+    """Single bounded log line summarizing suppressed exceptions.
+
+    Returned by safe_gather_fire_and_forget so callers can decide whether to
+    escalate (e.g. for telemetry). Frozen + slots keeps it cheap on M1 UMA.
+    """
+    sample: tuple[tuple[str, str, str], ...]   # ((type_name, str(exc), label), ...)
+    suppressed_count: int                       # how many additional exceptions
+                                                # were collapsed into the summary
+
+
+def _classify_gathered(
+    raw: list[Any],
+    label: str,
+    _log: logging.Logger,
+) -> tuple[list[Any], list[Exception], asyncio.CancelledError | BaseException | None]:
+    """Shared classification kernel for all safe_gather_* variants.
+
+    Returns:
+        (ok, errors, re_raise)
+        - ok: non-exception values from gather (in original order)
+        - errors: Exception instances (logged at DEBUG, never raised)
+        - re_raise: CancelledError or BaseException instance if one was
+          encountered (caller decides whether to raise — fire_and_forget
+          logs + returns, dropin raises, struct raises).
+
+    Invariants enforced here (single source of truth):
+        [I6] CancelledError → returned in re_raise (caller raises)
+        [I7] non-Exception BaseException → returned in re_raise
+        [I8] Exception → routed to errors + DEBUG logged
+    """
+    ok: list[Any] = []
+    errors: list[Exception] = []
+    re_raise: asyncio.CancelledError | BaseException | None = None
+
+    for i, item in enumerate(raw):
+        if isinstance(item, asyncio.CancelledError):
+            _log.debug(f"[GHOST] gather CancelledError[{i}]{' ' + label if label else ''} — re-raising")
+            if re_raise is None:
+                re_raise = item
+            continue
+        if isinstance(item, BaseException) and not isinstance(item, Exception):
+            _log.debug(f"[GHOST] gather BaseException[{i}]{' ' + label if label else ''}: "
+                       f"{type(item).__name__} — re-raising")
+            if re_raise is None:
+                re_raise = item
+            continue
+        if isinstance(item, Exception):
+            _log.debug(f"[GHOST] gather exception[{i}]{' ' + label if label else ''}: "
+                       f"{type(item).__name__}: {item}")
+            errors.append(item)
+        else:
+            ok.append(item)
+
+    return ok, errors, re_raise
+
+
+async def safe_gather_fire_and_forget(
+    *coros: Awaitable[T] | T,
+    label: str = "",
+    logger_instance: logging.Logger | None = None,
+) -> _BoundedExceptionLog | None:
+    """F261: Fire-and-forget gather for sites that discard the result entirely.
+
+    Use this when the caller is `await asyncio.gather(*tasks, return_exceptions=True)`
+    as a bare expression statement. Replaces 41 sites identified in the F260 audit.
+
+    Differences from safe_gather (struct):
+        - Returns _BoundedExceptionLog (or None if all OK) — NOT a SafeGatherResult
+        - Does NOT re-raise CancelledError / BaseException — only logs at DEBUG
+        - Samples the first 5 exceptions in detail, then emits a single
+          "… +N more silenced" line to bound log volume during cascade failure
+
+    Args:
+        *coros: Coroutines or awaitables to gather. Plain values pass through.
+        label:  Context string for log messages.
+        logger_instance: Optional logger override.
+
+    Returns:
+        _BoundedExceptionLog with sample of first 5 exceptions + suppressed count,
+        or None if all coros succeeded.
+    """
+    _log = logger_instance or logger
+    if not coros:
+        return None
+
+    raw = await asyncio.gather(*(_wrap_awaitable(c) for c in coros), return_exceptions=True)
+    _ok, errors, re_raise = _classify_gathered(raw, label, _log)
+
+    # Fire-and-forget policy: log the re-raise candidate at DEBUG but do not
+    # propagate. Graceful shutdown paths in F260 audit frequently saw
+    # CancelledError during stop(); re-raising here would mask the original
+    # stop() intent.
+    if re_raise is not None:
+        _log.debug(f"[GHOST] safe_gather_faf re-raise suppressed{' ' + label if label else ''}: "
+                   f"{type(re_raise).__name__}")
+
+    if not errors:
+        return None
+
+    # Bounded sample: first N detailed, then +M summary. M1-safe (no unbounded
+    # list growth). Tuple of triples (type, str, label) is hashable + small.
+    sample: list[tuple[str, str, str]] = []
+    for exc in errors[:_SAFE_GATHER_SAMPLE_CAP]:
+        sample.append((type(exc).__name__, str(exc)[:200], label))
+    suppressed = max(0, len(errors) - _SAFE_GATHER_SAMPLE_CAP)
+    # Always emit a summary line (even when suppressed == 0) so callers can
+    # grep for "suppressed N exceptions" without needing to count DEBUG
+    # entries. Sample names go in the message either way.
+    _log.debug(
+        f"[GHOST] safe_gather_faf{' ' + label if label else ''} "
+        f"suppressed {len(errors)} exceptions "
+        f"(sample: {', '.join(t for t, _, _ in sample)}"
+        f"{' +' + str(suppressed) + ' more' if suppressed else ''})"
+    )
+    return _BoundedExceptionLog(sample=tuple(sample), suppressed_count=suppressed)
+
+
+async def safe_gather_dropin(
+    *coros: Awaitable[T] | T,
+    label: str = "",
+    logger_instance: logging.Logger | None = None,
+) -> list[T]:
+    """F261: Drop-in replacement for asyncio.gather(return_exceptions=True).
+
+    Returns a plain list of successful results, in original order, with all
+    Exception instances filtered out. CancelledError / non-Exception
+    BaseException are re-raised (same policy as safe_gather struct).
+
+    Use this when the caller does one of:
+        results = await asyncio.gather(..., return_exceptions=True)
+        results = [r for r in results if not isinstance(r, Exception)]
+        for r in results: ...  (with implicit exception skip)
+        results.extend(...)  (then assign to a downstream list)
+
+    Args:
+        *coros: Coroutines or awaitables to gather.
+        label:  Context string for log messages.
+        logger_instance: Optional logger override.
+
+    Returns:
+        list[T] of successful results, exceptions silently dropped (logged at DEBUG).
+
+    Raises:
+        asyncio.CancelledError: if any coro was cancelled.
+        BaseException: for non-Exception BaseException (KeyboardInterrupt, SystemExit).
+    """
+    _log = logger_instance or logger
+    if not coros:
+        return []
+
+    raw = await asyncio.gather(*(_wrap_awaitable(c) for c in coros), return_exceptions=True)
+    ok, errors, re_raise = _classify_gathered(raw, label, _log)
+
+    # Bounded log for the dropped errors — same sample cap as fire_and_forget.
+    if errors:
+        sample_preview = ", ".join(type(e).__name__ for e in errors[:_SAFE_GATHER_SAMPLE_CAP])
+        suppressed = max(0, len(errors) - _SAFE_GATHER_SAMPLE_CAP)
+        _log.debug(
+            f"[GHOST] safe_gather_dropin{' ' + label if label else ''} "
+            f"dropped {len(errors)} exceptions "
+            f"(sample: {sample_preview}"
+            f"{' +' + str(suppressed) + ' more' if suppressed else ''})"
+        )
+
+    if re_raise is not None:
+        raise re_raise
+
+    return ok

@@ -177,6 +177,28 @@ class CoordinatorCatalog:
             raise ValueError(f"Unknown domain '{domain}'")
         return list(_DOMAIN_MODULES[domain].keys())
 
+    def list_all(self) -> dict[str, list[str]]:
+        """
+        Aggregate every domain → its coordinator names. Useful for ops dashboards
+        and per-flag smoke runners that need to introspect what is available
+        without importing any coordinator module (lazy, zero RAM).
+
+        Returns:
+            {"core": ["UniversalResearchCoordinator", ...],
+             "advanced": [...], ...}
+        """
+        return {d: self.list_domain(d) for d in self._domains}
+
+    def is_known(self, name: str) -> bool:
+        """Check whether a coordinator or export name exists in any domain. Cheap."""
+        for mappings in _DOMAIN_MODULES.values():
+            if name in mappings:
+                return True
+        for exports in _COORDINATOR_EXPORTS.values():
+            if name in exports:
+                return True
+        return False
+
     def search(self, query: str) -> list[str]:
         """
         Search for coordinators/exports matching query (case-insensitive).

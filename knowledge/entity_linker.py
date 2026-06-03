@@ -90,7 +90,7 @@ except Exception:
     logger.debug("GLiNER check failed, using fallback NER")
 
 
-@dataclass
+@dataclass(slots=True)
 class EntityCandidate:
     """
     Represents a candidate entity from Wikidata.
@@ -142,7 +142,7 @@ class EntityCandidate:
         )
 
 
-@dataclass
+@dataclass(slots=True)
 class LinkedEntity:
     """
     Represents a successfully linked entity.
@@ -552,7 +552,7 @@ class EntityLinker:
                 sitelinks = int(sitelinks_str) if sitelinks_str else 0
                 max_sitelinks = max(max_sitelinks, sitelinks)
             except ValueError:
-                pass
+                pass  # noqa: BARE-EXCEPT  # fail-soft suppression: _parse_sparql_results
 
         for binding in bindings:
             try:

@@ -110,7 +110,7 @@ class ChainStep:
     reason: str
 
 
-@dataclass
+@dataclass(slots=True)
 class EvidenceChain:
     """
     Complete reasoning chain for a root finding.

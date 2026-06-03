@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any
 
 import lmdb
-from hledac.universal.utils.async_helpers import _check_gathered
+from hledac.universal.utils.async_helpers import _check_gathered, safe_gather
 
 log = logging.getLogger(__name__)
 
@@ -145,10 +145,12 @@ class EnrichmentServices:
                     except Exception:
                         pass  # Fail-safe: never crash
 
-            raw_results = await asyncio.gather(
-                *[enrich_one(f) for f in findings], return_exceptions=True
+            # F261: safe_gather centralizes [I6][I7][I8] invariants.
+            await safe_gather(
+                *[enrich_one(f) for f in findings],
+                label="forensics_enrichment",
+                logger_instance=log,
             )
-            _check_gathered(raw_results, log, "forensics_enrichment")
         except Exception:
             pass  # Fail-safe: never crash
 
@@ -192,10 +194,12 @@ class EnrichmentServices:
                     except Exception:
                         pass  # Fail-safe: never crash
 
-            raw_results = await asyncio.gather(
-                *[enrich_one(f) for f in findings], return_exceptions=True
+            # F261: safe_gather centralizes [I6][I7][I8] invariants.
+            await safe_gather(
+                *[enrich_one(f) for f in findings],
+                label="multimodal_enrichment",
+                logger_instance=log,
             )
-            _check_gathered(raw_results, log, "multimodal_enrichment")
         except Exception:
             pass  # Fail-safe: never crash
 

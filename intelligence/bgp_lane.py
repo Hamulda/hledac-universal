@@ -35,6 +35,8 @@ try:
 except ImportError:
     CanonicalFinding = None
 
+from hledac.universal.utils.async_helpers import safe_gather
+
 logger = logging.getLogger(__name__)
 
 # ── Bounds ─────────────────────────────────────────────────────────────────────
@@ -379,13 +381,13 @@ async def ip_bulk_to_asn(
             result = await ip_to_asn(ip, session)
             return result
 
-    results = await asyncio.gather(
+    # F261: safe_gather centralizes [I6][I7][I8] invariants at the gather boundary.
+    _result = await safe_gather(
         *[_fetch_one(ip) for ip in ips],
-        return_exceptions=True,
+        label="bgp_ip_to_asn_bulk",
     )
-    _check_gathered(results, {})
 
-    for r in results:
+    for r in _result.ok:
         if isinstance(r, BGPFinding):
             findings.append(r)
 
@@ -430,11 +432,12 @@ async def org_bulk_to_asns_with_prefixes(
             last_request = time.monotonic()
             return await org_to_asns(org, session)
 
-    org_results: list[Any] = await asyncio.gather(
+    # F261: safe_gather centralizes [I6][I7][I8] invariants.
+    _result = await safe_gather(
         *[_org_to_asns(q) for q in org_queries],
-        return_exceptions=True,
+        label="bgp_org_to_asns",
     )
-    _check_gathered(org_results, {})
+    org_results: list[Any] = _result.ok
 
     # Collect all ASNs
     all_asns: list[tuple[int, BGPFinding]] = []  # (asn, org_finding)
@@ -462,11 +465,12 @@ async def org_bulk_to_asns_with_prefixes(
             last_request = time.monotonic()
             return await asn_to_prefixes(asn, session)
 
-    prefix_results: list[Any] = await asyncio.gather(
+    # F261: safe_gather centralizes [I6][I7][I8] invariants.
+    _result = await safe_gather(
         *[_asn_prefixes(asn) for asn in unique_asns],
-        return_exceptions=True,
+        label="bgp_asn_prefixes",
     )
-    _check_gathered(prefix_results, {})
+    prefix_results: list[Any] = _result.ok
 
     findings: list[BGPFinding] = []
     for res in prefix_results:

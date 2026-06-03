@@ -41,7 +41,7 @@ import dns.name
 import dns.rdatatype
 import dns.resolver
 
-from ..utils.async_helpers import _check_gathered
+from ..utils.async_helpers import _check_gathered, safe_gather
 
 logger = logging.getLogger(__name__)
 
@@ -293,9 +293,11 @@ class DNSEnumerator:
                     logger.debug(f"[DNS] CNAME lookup failed for {full_domain}: {e}")
 
         # Run checks concurrently
-        _check_gathered(
-            await asyncio.gather(*[check_subdomain(s) for s in wordlist], return_exceptions=True),
-            logger, context="brute_force_subdomains"
+        # F261: safe_gather centralizes [I6][I7][I8] invariants at the gather boundary.
+        await safe_gather(
+            *[check_subdomain(s) for s in wordlist],
+            label="brute_force_subdomains",
+            logger_instance=logger,
         )
 
         return found
@@ -331,9 +333,11 @@ class DNSEnumerator:
                 except Exception:
                     pass
 
-        _check_gathered(
-            await asyncio.gather(*[check_perm(p) for p in list(permutations)[:100]], return_exceptions=True),
-            logger, context="permutation_scan"
+        # F261: safe_gather centralizes [I6][I7][I8] invariants at the gather boundary.
+        await safe_gather(
+            *[check_perm(p) for p in list(permutations)[:100]],
+            label="permutation_scan",
+            logger_instance=logger,
         )
         return found
 

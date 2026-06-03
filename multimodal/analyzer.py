@@ -538,7 +538,7 @@ class MultimodalEnricher:
 
 
 
-@dataclass
+@dataclass(slots=True)
 class DocumentResult:
     """
     Typed result from document extraction.

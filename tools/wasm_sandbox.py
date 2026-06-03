@@ -182,20 +182,23 @@ class WasmSandbox:
         try:
             # Run in executor to not block event loop
             loop = asyncio.get_running_loop()
-            result = await asyncio.wait_for(
-                loop.run_in_executor(
+            # asyncio.timeout (3.11+) preferred over wait_for — better cancellation semantics.
+            async with asyncio.timeout(self.timeout):
+                result = await loop.run_in_executor(
                     None,
                     self._run_sync,
                     wasm_bytes,
                     function_name,
                     args
-                ),
-                timeout=self.timeout
-            )
+                )
 
         except TimeoutError:
             result['error'] = f"Execution timeout ({self.timeout}s)"
-            logger.warning(f"WASM execution timeout: {function_name}")
+            logger.warning(
+                "WASM execution timeout: %s (%.1fs)",
+                function_name, self.timeout,
+                extra={"fn": function_name, "timeout_s": self.timeout},
+            )
         except Exception as e:
             result['error'] = str(e)
             logger.error(f"WASM execution error: {e}")

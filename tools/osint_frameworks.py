@@ -4,12 +4,27 @@ Sprint 46: Access to Unreachable Data (Sessions + Paywall + OSINT + Darknet)
 """
 
 import asyncio
+import contextlib
 import json
 import logging
 import os
 import tempfile
 
 logger = logging.getLogger(__name__)
+
+
+async def _reap_proc(proc: asyncio.subprocess.Process | None) -> None:
+    """Fail-safe subprocess teardown — kill if alive, then wait to reap zombie.
+
+    Critical on M1 8GB UMA: leaked subprocesses accumulate RSS pressure
+    that the M1ResourceGovernor cannot reclaim.
+    """
+    if proc is None or proc.returncode is not None:
+        return
+    with contextlib.suppress(ProcessLookupError):
+        proc.kill()
+    with contextlib.suppress(Exception):
+        await proc.wait()
 
 
 class OSINTFrameworkRunner:
@@ -21,27 +36,37 @@ class OSINTFrameworkRunner:
     async def run_theharvester(self, target: str) -> list[dict]:
         """Spustí theHarvester na doménu/jméno."""
         # Check if theHarvester is available
+        proc_check: asyncio.subprocess.Process | None = None
         try:
             proc_check = await asyncio.create_subprocess_exec(
                 'theHarvester', '--help',
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE
             )
-            await asyncio.wait_for(proc_check.communicate(), timeout=5)
-        except (TimeoutError, FileNotFoundError):
-            logger.debug("[theHarvester] Not installed, skipping")
+            # asyncio.timeout (3.11+) preferred over wait_for — better cancellation semantics.
+            async with asyncio.timeout(5):
+                await proc_check.communicate()
+        except (TimeoutError, FileNotFoundError) as e:
+            logger.debug(
+                "[theHarvester] Probe failed (%s), skipping",
+                type(e).__name__,
+            )
+            await _reap_proc(proc_check)
             return []
 
         with tempfile.NamedTemporaryFile(suffix='', delete=False, dir=tempfile.gettempdir()) as f:
             out_file = f.name
 
+        proc: asyncio.subprocess.Process | None = None
         try:
             proc = await asyncio.create_subprocess_exec(
                 'theHarvester', '-d', target, '-b', 'all', '-f', out_file,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE
             )
-            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=self._timeout)
+            # asyncio.timeout (3.11+) preferred over wait_for — better cancellation semantics.
+            async with asyncio.timeout(self._timeout):
+                stdout, stderr = await proc.communicate()
 
             findings = []
             # Try to parse JSON output
@@ -72,10 +97,16 @@ class OSINTFrameworkRunner:
 
             return findings
         except TimeoutError:
-            logger.warning(f"[theHarvester] Timeout for {target}")
+            logger.warning(
+                "[theHarvester] Timeout for %s after %.1fs",
+                target, self._timeout,
+                extra={"tool": "theharvester", "target": target, "timeout_s": self._timeout},
+            )
+            await _reap_proc(proc)
             return []
         except Exception as e:
             logger.warning(f"[theHarvester] Failed: {e}")
+            await _reap_proc(proc)
             return []
         finally:
             # Cleanup temp files
@@ -89,17 +120,25 @@ class OSINTFrameworkRunner:
     async def run_sherlock(self, username: str) -> list[dict]:
         """Spustí Sherlock na username s --json flagem pro strukturální výstup."""
         # Check if sherlock is available
+        proc_check: asyncio.subprocess.Process | None = None
         try:
             proc_check = await asyncio.create_subprocess_exec(
                 'sherlock', '--help',
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE
             )
-            await asyncio.wait_for(proc_check.communicate(), timeout=5)
-        except (TimeoutError, FileNotFoundError):
-            logger.debug("[Sherlock] Not installed, skipping")
+            # asyncio.timeout (3.11+) preferred over wait_for — better cancellation semantics.
+            async with asyncio.timeout(5):
+                await proc_check.communicate()
+        except (TimeoutError, FileNotFoundError) as e:
+            logger.debug(
+                "[Sherlock] Probe failed (%s), skipping",
+                type(e).__name__,
+            )
+            await _reap_proc(proc_check)
             return []
 
+        proc: asyncio.subprocess.Process | None = None
         try:
             # Sprint 47: Use --json for structured output from stdout
             proc = await asyncio.create_subprocess_exec(
@@ -107,7 +146,9 @@ class OSINTFrameworkRunner:
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE
             )
-            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=self._timeout)
+            # asyncio.timeout (3.11+) preferred over wait_for — better cancellation semantics.
+            async with asyncio.timeout(self._timeout):
+                stdout, stderr = await proc.communicate()
 
             findings = []
             # Sprint 47: Parse JSON from stdout instead of text parsing
@@ -136,32 +177,48 @@ class OSINTFrameworkRunner:
 
             return findings
         except TimeoutError:
-            logger.warning(f"[Sherlock] Timeout for {username}")
+            logger.warning(
+                "[Sherlock] Timeout for %s after %.1fs",
+                username, self._timeout,
+                extra={"tool": "sherlock", "target": username, "timeout_s": self._timeout},
+            )
+            await _reap_proc(proc)
             return []
         except Exception as e:
             logger.warning(f"[Sherlock] Failed: {e}")
+            await _reap_proc(proc)
             return []
 
     async def run_maigret(self, username: str) -> list[dict]:
         """Spustí Maigret na username (modernější než Sherlock)."""
+        proc_check: asyncio.subprocess.Process | None = None
         try:
             proc_check = await asyncio.create_subprocess_exec(
                 'maigret', '--help',
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE
             )
-            await asyncio.wait_for(proc_check.communicate(), timeout=5)
-        except (TimeoutError, FileNotFoundError):
-            logger.debug("[Maigret] Not installed, skipping")
+            # asyncio.timeout (3.11+) preferred over wait_for — better cancellation semantics.
+            async with asyncio.timeout(5):
+                await proc_check.communicate()
+        except (TimeoutError, FileNotFoundError) as e:
+            logger.debug(
+                "[Maigret] Probe failed (%s), skipping",
+                type(e).__name__,
+            )
+            await _reap_proc(proc_check)
             return []
 
+        proc: asyncio.subprocess.Process | None = None
         try:
             proc = await asyncio.create_subprocess_exec(
                 'maigret', username, '--timeout', '5', '-j',
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE
             )
-            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=self._timeout)
+            # asyncio.timeout (3.11+) preferred over wait_for — better cancellation semantics.
+            async with asyncio.timeout(self._timeout):
+                stdout, stderr = await proc.communicate()
 
             findings = []
             try:
@@ -180,10 +237,16 @@ class OSINTFrameworkRunner:
 
             return findings
         except TimeoutError:
-            logger.warning(f"[Maigret] Timeout for {username}")
+            logger.warning(
+                "[Maigret] Timeout for %s after %.1fs",
+                username, self._timeout,
+                extra={"tool": "maigret", "target": username, "timeout_s": self._timeout},
+            )
+            await _reap_proc(proc)
             return []
         except Exception as e:
             logger.warning(f"[Maigret] Failed: {e}")
+            await _reap_proc(proc)
             return []
 
     async def search_username(self, username: str) -> list[dict]:

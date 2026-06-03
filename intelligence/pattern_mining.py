@@ -138,22 +138,18 @@ Next:"""
         from hledac.universal.utils.mlx_cache import get_mlx_semaphore
         async with get_mlx_semaphore():
             try:
-                output = await asyncio.wait_for(
-                    loop.run_in_executor(
+                async with asyncio.timeout(0.5):
+                    output = await loop.run_in_executor(
                         None,
                         lambda: generate(model, tokenizer, prompt, max_tokens=horizon * 5, temp=0.0)
-                    ),
-                    timeout=0.5
-                )
+                    )
             except TypeError:
                 # Fallback if temp not supported
-                output = await asyncio.wait_for(
-                    loop.run_in_executor(
+                async with asyncio.timeout(0.5):
+                    output = await loop.run_in_executor(
                         None,
                         lambda: generate(model, tokenizer, prompt, max_tokens=horizon * 5)
-                    ),
-                    timeout=0.5
-                )
+                    )
 
         # Parse numbers with correct regex
         numbers = re.findall(r"[-+]?\d*\.?\d+", output)
@@ -298,7 +294,7 @@ class AnomalyType(Enum):
 # DATACLASSES - Input Data
 # =============================================================================
 
-@dataclass
+@dataclass(slots=True)
 class Event:
     """Generic event for pattern mining."""
     timestamp: datetime

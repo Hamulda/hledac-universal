@@ -1025,10 +1025,8 @@ class KademliaNode:
             if not futures:
                 break
 
-            results = await asyncio.wait_for(
-                asyncio.gather(*futures, return_exceptions=True),
-                timeout=3.0,
-            )
+            async with asyncio.timeout(3.0):
+                results = await asyncio.gather(*futures, return_exceptions=True)
             # remove all rpcs
             for rid in rpc_ids:
                 self._pending_rpcs.pop(rid, None)
@@ -1059,7 +1057,9 @@ class KademliaNode:
         self._pending_rpcs_created[rpc_id] = time.time()
         await self._transport.send_message(peer_id, "dht_ping", {"rpc_id": rpc_id}, "")
         try:
-            ok = await asyncio.wait_for(fut, timeout=2.0)
+            # asyncio.timeout (3.11+) preferred over wait_for — better cancellation semantics.
+            async with asyncio.timeout(2.0):
+                ok = await fut
             self._update_routing(peer_id)
             return bool(ok)
         except TimeoutError:

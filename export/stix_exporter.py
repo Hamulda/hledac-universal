@@ -254,15 +254,18 @@ async def collect_cti_export_inputs(
         cands = report.get("identity_candidates") or []
         return tuple(cands) if isinstance(cands, (list, tuple)) else ()
 
-    results = await asyncio.gather(
+    # F261: safe_gather centralizes [I6][I7][I8] and filters Exception instances
+    # from .ok (previously they slipped through into `results[i]` downstream).
+    from hledac.universal.utils.async_helpers import safe_gather
+    _result = await safe_gather(
         _fetch_findings(),
         _get_identity_candidates(),
-        return_exceptions=True,
+        label="collect_cti_export_inputs",
     )
-    _check_gathered(results, "collect_cti_export_inputs")
+    ok = _result.ok
 
-    findings_result = results[0] if results[0] is not None else []
-    identity_candidates = results[1] if isinstance(results[1], tuple) else ()
+    findings_result = ok[0] if (ok and ok[0] is not None) else []
+    identity_candidates = ok[1] if (len(ok) > 1 and isinstance(ok[1], tuple)) else ()
 
     # Attribution scores — from report
     attribution_scores = report.get("attribution_scores") or {}

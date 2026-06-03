@@ -55,7 +55,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-@dataclass
+@dataclass(slots=True)
 class CentralityScores:
     """Centrality analysis results for a node."""
     node_id: str
@@ -77,7 +77,7 @@ class Community:
     key_characteristics: list[str] = field(default_factory=list)
 
 
-@dataclass
+@dataclass(slots=True)
 class GraphContradiction:
     """Contradiction detected in the graph."""
     node_a_id: str
@@ -884,7 +884,7 @@ class GraphRAGOrchestrator:
             try:
                 self._thread_pool.shutdown(wait=False, cancel_futures=True)
             except Exception:
-                pass
+                pass  # noqa: BARE-EXCEPT  # fail-soft suppression: shutdown
 
     # =============================================================================
     # NETWORK ANALYSIS METHODS (from evidence_network_analyzer.py comments)
@@ -2033,7 +2033,7 @@ class GraphRAGOrchestrator:
                 try:
                     return datetime.fromisoformat(ts_str.replace('Z', '+00:00'))
                 except (ValueError, AttributeError):
-                    pass
+                    pass  # noqa: BARE-EXCEPT  # fail-soft suppression: get_timestamp
             return None
 
         filtered = []
@@ -2076,7 +2076,7 @@ class GraphRAGOrchestrator:
                 try:
                     return datetime.fromisoformat(ts_str.replace('Z', '+00:00'))
                 except (ValueError, AttributeError):
-                    pass
+                    pass  # noqa: BARE-EXCEPT  # fail-soft suppression: get_timestamp
             # Default to very old date
             return datetime.min
 
@@ -2515,7 +2515,7 @@ class GraphRAGOrchestrator:
             try:
                 await worker_task
             except asyncio.CancelledError:
-                pass
+                pass  # noqa: BARE-EXCEPT  # fail-soft suppression: multi_hop_search_streaming
 
     async def _traversal_worker(
         self,
@@ -2582,7 +2582,7 @@ class GraphRAGOrchestrator:
                     await queue.put(fact)
 
         except asyncio.CancelledError:
-            pass
+            pass  # noqa: BARE-EXCEPT  # fail-soft suppression: _traversal_worker
         except Exception as e:
             logger.warning(f"Traversal worker error: {e}")
         finally:

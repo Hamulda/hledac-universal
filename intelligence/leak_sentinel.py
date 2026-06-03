@@ -106,7 +106,7 @@ def _redact_text(text: str) -> str:
 
 # ── Dataclasses ───────────────────────────────────────────────────────────────
 
-@dataclass
+@dataclass(slots=True)
 class LeakSourceResult:
     """Result from one leak source."""
     source: str           # "pastebin" | "github" | "breach"

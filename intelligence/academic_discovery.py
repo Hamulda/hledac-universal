@@ -53,7 +53,7 @@ MAX_HOPS = 2
 # RESULT DATA CLASSES
 # =============================================================================
 
-@dataclass
+@dataclass(slots=True)
 class AcademicPaper:
     """Structured academic paper result."""
     title: str
