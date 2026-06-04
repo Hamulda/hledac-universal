@@ -4730,6 +4730,8 @@ async def async_run_live_public_pipeline(
     # Canonical sprint: gated on store+hermes_engine (not memory_manager alone).
     # M1 8GB: bounded to 5 hypotheses, fail-soft, no ToT in hot path.
     # NOTE: This block executes BEFORE the return so it is always reachable.
+    # Downstream: enqueue_hypothesis_pivot (scheduler) consumes first 3 ToT results
+    # via asyncio.as_completed — pivot enqueue is fail-soft and bounded.
     tot_solution_count = 0
     if store is not None and hermes_engine is not None and total_stored > 0:
         try:
@@ -4773,9 +4775,13 @@ async def async_run_live_public_pipeline(
                     async def run_tot_with_timeout(hypo: str, timeout_s: float = 15.0) -> str:
                         """Run ToT solve with per-hypothesis timeout. Fail-soft: returns empty string on timeout/error."""
                         try:
-                            async with asyncio.timeout(timeout_s):
-                                return await tot_layer.solve_with_tot(hypo)
-                        except TimeoutError:
+                            # Primary path: asyncio.wait_for (P12 invariant — bounded per-task timeout)
+                            result = await asyncio.wait_for(
+                                tot_layer.solve_with_tot(hypo),
+                                timeout=timeout_s,
+                            )
+                            return result
+                        except asyncio.TimeoutError:
                             logger.debug(f"[P12] ToT timed out after {timeout_s}s for hypothesis: {hypo[:50]}...")
                             return ""
                         except Exception as e:
@@ -4881,7 +4887,12 @@ async def async_run_live_public_pipeline(
                         runner = SynthesisRunner(lifecycle)
 
                         # Run synthesis with 90s timeout
-                        import asyncio
+                        # NOTE: `asyncio` is module-scoped (line 14). Do NOT add a local
+                        # `import asyncio` here — Python scoping would make `asyncio` a
+                        # local name throughout `async_run_live_public_pipeline` and
+                        # every earlier `asyncio.X` reference (e.g. line 3770's
+                        # `asyncio.Semaphore(...)`) would raise UnboundLocalError.
+                        # Regression test: tests/test_f_pipeline_asyncio_shadowing.py
                         report = await asyncio.wait_for(
                             runner.synthesize_findings(
                                 query=query,

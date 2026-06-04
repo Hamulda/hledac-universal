@@ -3075,7 +3075,7 @@ async def _windup_synthesis(
             from hledac.universal.brain.hypothesis_engine import HypothesisEngine
             _hyp_engine = HypothesisEngine()
             finding_texts = [f.get("text", "")[:200] for f in findings[:10]]
-            hypotheses = _hyp_engine.generate_sprint_hypotheses(
+            hypotheses = await _hyp_engine.generate_sprint_hypotheses(
                 findings=finding_texts,
                 ioc_graph=None,
                 max_hypotheses=3,

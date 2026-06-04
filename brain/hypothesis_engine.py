@@ -2007,11 +2007,13 @@ Formát (pouze seznam, žádný další text):
     # Sprint 8TD: Sprint-aware hypothesis generation
     # ------------------------------------------------------------------
 
-    def generate_sprint_hypotheses(
+    async def generate_sprint_hypotheses(
         self,
         findings: list[str],
         ioc_graph: Any = None,
         max_hypotheses: int = 3,
+        duckdb_store: Any = None,
+        sprint_id: str | None = None,
     ) -> list[str]:
         """
         Sprint 8TD: Generovat testovatelné hypotézy z IOC findings.
@@ -2023,12 +2025,57 @@ Formát (pouze seznam, žádný další text):
             findings: List of top finding strings
             ioc_graph: Optional IOC graph for context
             max_hypotheses: Max počet hypotéz (default 3)
+            duckdb_store: Optional DuckDBShadowStore for cross-sprint retrieval
+                (F-C per BRAIN_HYPOTHESIS_AUDIT §4.1). When provided with a
+                sprint_id, enriches the working set with the most recent
+                accepted findings from the same sprint. Fail-soft: never
+                crashes if the store is unavailable.
+            sprint_id: Sprint scope for cross-sprint retrieval. Required for
+                DuckDB enrichment to activate; ignored if duckdb_store is None.
 
         Returns:
             List of hypothesis strings
         """
         if not findings:
             return []
+
+        # F-C: Cross-sprint retrieval via DuckDBShadowStore (optional, fail-soft).
+        # Merges historical findings from the same sprint so the heuristic can
+        # surface hypotheses backed by both in-memory and persisted IOC context.
+        # Invariant: bound = max_hypotheses * 4 (2x headroom for dedup); the
+        # final cap to max_hypotheses happens at the return.
+        if duckdb_store is not None and sprint_id:
+            try:
+                historical = await duckdb_store.async_query_recent_findings_by_sprint(  # type: ignore[attr-defined]
+                    sprint_id=sprint_id,
+                    limit=max_hypotheses * 4,
+                )
+                if historical:
+                    # Historical findings are dicts; extract text representation
+                    # to merge with the in-memory `findings: list[str]`.
+                    extra_texts: list[str] = []
+                    for f in historical:
+                        if isinstance(f, dict):
+                            text = (
+                                f.get("payload_text")
+                                or f.get("text")
+                                or f.get("summary")
+                                or f.get("ioc_value")
+                                or ""
+                            )
+                        else:
+                            text = str(f)
+                        if text and text not in findings:
+                            extra_texts.append(text)
+                    findings = list(findings) + extra_texts
+            except (AttributeError, TypeError):
+                # duckdb_store is None-shaped, doesn't expose the API, or
+                # returned a non-awaitable. Fail-soft — keep original findings.
+                pass
+            except Exception:
+                # Any other error (DB locked, schema mismatch, etc.) — skip
+                # the enrichment. The caller still gets a valid hypothesis list.
+                pass
 
         # Sestavit hypotézy z findings
         hypotheses: list[str] = []

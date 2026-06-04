@@ -21,6 +21,7 @@ import os
 import socket
 import time
 from collections import deque
+from collections.abc import Callable
 
 import lmdb
 
@@ -238,9 +239,33 @@ class FetchCoordinator(UniversalCoordinator):
         self,
         config: FetchCoordinatorConfig | None = None,
         max_concurrent: int = 3,
+        # Sprint F-EXTRACT-2: pivot queue + hypothesis state providers.
+        # All optional with safe defaults; SprintScheduler wires real providers.
+        pivot_queue_provider: Callable[[], Any] = lambda: None,
+        pivot_stats_provider: Callable[[], dict] = lambda: None,
+        hypothesis_query_count_provider: Callable[[], int] = lambda: 0,
+        hypothesis_query_count_setter: Callable[[int], None] = lambda v: None,
+        hypothesis_depth_provider: Callable[[], int] = lambda: 0,
+        hypothesis_depth_setter: Callable[[int], None] = lambda v: None,
+        sprint_config_provider: Callable[[], Any] = lambda: None,
+        adaptive_priority_provider: Callable[[str, float], float] = lambda tt, base: base,
+        # Sprint F-EXTRACT-2: callback to SprintScheduler.enqueue_pivot.
+        # Bound to `self` (SprintScheduler) at construction so test-patch
+        # pattern `scheduler.enqueue_pivot = mock` resolves correctly.
+        enqueue_pivot_provider: Callable[..., Any] = lambda **kw: None,
     ):
         super().__init__(name="FetchCoordinator", max_concurrent=max_concurrent)
         self._config = config or FetchCoordinatorConfig()
+        # Sprint F-EXTRACT-2: store provider callbacks
+        self._pivot_queue_provider = pivot_queue_provider
+        self._pivot_stats_provider = pivot_stats_provider
+        self._hypothesis_query_count_provider = hypothesis_query_count_provider
+        self._hypothesis_query_count_setter = hypothesis_query_count_setter
+        self._hypothesis_depth_provider = hypothesis_depth_provider
+        self._hypothesis_depth_setter = hypothesis_depth_setter
+        self._sprint_config_provider = sprint_config_provider
+        self._adaptive_priority_provider = adaptive_priority_provider
+        self._enqueue_pivot_provider = enqueue_pivot_provider
 
         # State
         self._frontier: deque = deque(maxlen=1000)
@@ -1705,3 +1730,136 @@ class FetchCoordinator(UniversalCoordinator):
     async def _fire_cover_traffic(self, url: str, delay: float, transport: str) -> None:
         """Legacy wrapper — redirect to transport-aware implementation."""
         await self._fire_cover_traffic_url(url, delay, transport)
+
+    # ── Sprint F-EXTRACT-2: pivot queue enqueue methods ──────────────────
+    #
+    # Extracted from SprintScheduler as part of GOD_OBJECT_ANALYSIS Phase 2.
+    # State is owned by SprintScheduler; this coordinator accesses it via
+    # provider callbacks. The `enqueue_pivot_provider` callback makes the
+    # test-patch pattern `scheduler.enqueue_pivot = mock` work: the lambda
+    # binds to the SprintScheduler instance, so attribute lookup resolves
+    # to the patched mock at call time.
+    #
+    # PivotTask is imported lazily inside enqueue_pivot to break the
+    # circular dependency (sprint_scheduler imports FetchCoordinator from
+    # this module at module load).
+
+    def enqueue_pivot(
+        self,
+        ioc_value: str,
+        ioc_type: str,
+        confidence: float,
+        degree: float = 1.0,
+        task_type: str | None = None,
+    ) -> None:
+        """Enqueue a pivot task. Silently drops if queue is full (M1 8GB).
+
+        Sprint 8VI §B.4: RL-adaptive priority — for generic_pivot task
+        types, blend EMA reward with base priority.
+
+        Sprint F-EXTRACT-2: moved from SprintScheduler. State
+        (`_pivot_queue`, `_pivot_stats`) and helper (`_get_adaptive_priority`)
+        accessed via provider callbacks.
+        """
+        # Late import — break circular dependency: sprint_scheduler
+        # imports FetchCoordinator at module load.
+        from hledac.universal.runtime.sprint_scheduler import PivotTask
+
+        pivot_queue = self._pivot_queue_provider()
+        if pivot_queue is None:
+            return
+        if pivot_queue.full():
+            return
+
+        # Multi-pivot: enqueue ALL applicable task types per IOC
+        if task_type is not None:
+            task_types_list: list[str] = [task_type]
+        else:
+            task_types_list = {
+                "cve": ["cve_to_github", "cve_to_academic"],
+                "ipv4": ["ip_to_ct", "ip_to_greynoise", "shodan_enrich"],
+                "ipv6": ["ip_to_ct"],
+                "domain": ["domain_to_dns", "domain_to_wayback", "domain_to_pdns",
+                           "domain_to_ct", "ahmia_search", "rdap_lookup"],
+                "md5": ["hash_to_mb"],
+                "sha256": ["hash_to_mb"],
+                "sha1": ["hash_to_mb"],
+                "url": ["wayback_search", "commoncrawl_search", "paste_keyword_search",
+                        "github_dork", "multi_engine_search"],
+                "hypothesis": ["multi_engine_search", "rdap_lookup"],
+            }.get(ioc_type, [])
+
+        if not task_types_list:
+            return
+
+        base_priority = confidence * max(1.0, float(degree))
+        pivot_stats = self._pivot_stats_provider()
+        for tt in task_types_list:
+            # Sprint 8VI §B.4: RL-adaptive priority blend
+            effective = self._adaptive_priority_provider(tt, base_priority)
+            priority = -effective
+            task = PivotTask(priority, ioc_type, ioc_value, tt)
+            try:
+                pivot_queue.put_nowait(task)
+                if pivot_stats is not None:
+                    pivot_stats["total"] = pivot_stats.get("total", 0) + 1
+            except asyncio.QueueFull:
+                pass
+
+    def enqueue_hypothesis_pivot(
+        self,
+        ioc_value: str,
+        ioc_type: str = "hypothesis",
+        confidence: float = 0.7,
+        depth: int = 1,
+    ) -> bool:
+        """Enqueue a hypothesis-driven pivot task with bounded caps.
+
+        Sprint F193B: Bounded hypothesis → finding feedback loop.
+        Enforces max_hypothesis_depth (default 3) and
+        max_hypothesis_queries (default 10). Returns True if
+        enqueued, False if dropped due to cap.
+
+        Sprint F-EXTRACT-2: moved from SprintScheduler. State
+        (`_hypothesis_query_count`, `_hypothesis_depth`) accessed via
+        read/write provider callbacks. Cap values read from
+        `sprint_config_provider()`. Actual enqueue is delegated via
+        `enqueue_pivot_provider` (test-patchable).
+        """
+        config = self._sprint_config_provider()
+        if config is not None and depth > config.max_hypothesis_depth:
+            logger.debug(
+                f"[F193B] Hypothesis pivot dropped: depth {depth} > "
+                f"max {config.max_hypothesis_depth}"
+            )
+            return False
+        if config is not None and self._hypothesis_query_count_provider() >= config.max_hypothesis_queries:
+            logger.debug(
+                f"[F193B] Hypothesis pivot dropped: query count "
+                f"{self._hypothesis_query_count_provider()} >= max "
+                f"{config.max_hypothesis_queries}"
+            )
+            return False
+
+        # Delegate to the bound SprintScheduler.enqueue_pivot wrapper
+        # (or test-patched mock). The lambda provider captures `self`
+        # by reference, so attribute lookup at call time resolves to
+        # the current state of the instance.
+        self._enqueue_pivot_provider(
+            ioc_value=ioc_value,
+            ioc_type=ioc_type,
+            confidence=confidence,
+            degree=float(depth),
+            task_type=None,
+        )
+
+        # Update hypothesis state via setter providers
+        self._hypothesis_query_count_setter(self._hypothesis_query_count_provider() + 1)
+        self._hypothesis_depth_setter(
+            max(self._hypothesis_depth_provider(), depth)
+        )
+        logger.debug(
+            f"[F193B] Hypothesis pivot enqueued: {ioc_value} "
+            f"(depth={depth}, total_queries={self._hypothesis_query_count_provider()})"
+        )
+        return True

@@ -544,6 +544,11 @@ _SCHEMA_SQL = """
         ioc_count INT,
         hit_rate REAL
     );
+    -- Sprint F-B: indexes for per-sprint + time-range source_hit_log lookups
+    CREATE INDEX IF NOT EXISTS idx_source_hit_log_sprint_ts
+        ON source_hit_log(sprint_id, ts DESC);
+    CREATE INDEX IF NOT EXISTS idx_source_hit_log_ts
+        ON source_hit_log(ts DESC);
     CREATE TABLE IF NOT EXISTS sprint_scorecard (
         sprint_id TEXT PRIMARY KEY,
         ts DOUBLE NOT NULL,
@@ -556,6 +561,8 @@ _SCHEMA_SQL = """
         accepted_findings INT,
         ioc_nodes INT
     );
+    CREATE INDEX IF NOT EXISTS idx_sprint_scorecard_ts
+        ON sprint_scorecard(ts DESC);
     CREATE TABLE IF NOT EXISTS research_episodes (
         episode_id   TEXT PRIMARY KEY,
         sprint_id    TEXT NOT NULL,
@@ -569,6 +576,8 @@ _SCHEMA_SQL = """
         ts           DOUBLE NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_episodes_ts ON research_episodes(ts DESC);
+    CREATE INDEX IF NOT EXISTS idx_episodes_sprint
+        ON research_episodes(sprint_id);
     CREATE TABLE IF NOT EXISTS target_profiles (
         target_id TEXT PRIMARY KEY,
         first_seen DOUBLE,
@@ -576,6 +585,10 @@ _SCHEMA_SQL = """
         cumulative_finding_count INTEGER,
         entity_summary_json TEXT
     );
+    -- Sprint F-B: target_profiles is queried by last_seen DESC for
+    -- "recent targets" lookups; without index = full table scan.
+    CREATE INDEX IF NOT EXISTS idx_target_profiles_last_seen
+        ON target_profiles(last_seen DESC);
     CREATE TABLE IF NOT EXISTS hypothesis_feedback (
         id TEXT PRIMARY KEY,
         target_id TEXT,
@@ -586,6 +599,10 @@ _SCHEMA_SQL = """
         signal_value DOUBLE,
         ts DOUBLE
     );
+    -- Sprint F-B: hypothesis_feedback target_id is the primary filter
+    -- for per-target pivot analytics. Index avoids scan.
+    CREATE INDEX IF NOT EXISTS idx_hypothesis_feedback_target_ts
+        ON hypothesis_feedback(target_id, ts DESC);
     CREATE TABLE IF NOT EXISTS hypothesis_tracking (
         hypothesis_id TEXT PRIMARY KEY,
         sprint_id TEXT,
@@ -596,6 +613,12 @@ _SCHEMA_SQL = """
         disproved_by_sprint_id TEXT,
         ts DOUBLE
     );
+    -- Sprint F-B: hypothesis_tracking is queried by sprint_id and status
+    -- in the windup_engine hypothesis summarizer.
+    CREATE INDEX IF NOT EXISTS idx_hypothesis_tracking_sprint
+        ON hypothesis_tracking(sprint_id);
+    CREATE INDEX IF NOT EXISTS idx_hypothesis_tracking_status_ts
+        ON hypothesis_tracking(status, ts DESC);
     CREATE TABLE IF NOT EXISTS target_memory (
         target_id TEXT PRIMARY KEY,
         first_seen_ts DOUBLE,
@@ -609,6 +632,10 @@ _SCHEMA_SQL = """
         updated_by_sprint_id TEXT,
         updated_ts DOUBLE
     );
+    -- Sprint F-B: target_memory last_seen_ts is the primary sort key
+    -- for "recent targets" queries in F204D.
+    CREATE INDEX IF NOT EXISTS idx_target_memory_last_seen
+        ON target_memory(last_seen_ts DESC);
     CREATE TABLE IF NOT EXISTS target_memory (
         target_id TEXT PRIMARY KEY,
         first_seen_ts DOUBLE NOT NULL,
@@ -632,6 +659,12 @@ _SCHEMA_SQL = """
         peer_count INT,
         sources_json TEXT
     );
+    -- Sprint F-B: dht_metadata is queried by last_seen DESC and peer_count
+    -- for "recent active torrents" and "popular torrents" lookups.
+    CREATE INDEX IF NOT EXISTS idx_dht_metadata_last_seen
+        ON dht_metadata(last_seen DESC);
+    CREATE INDEX IF NOT EXISTS idx_dht_metadata_peer_count
+        ON dht_metadata(peer_count DESC);
 """
 
 # Sprint 8R: Module-level reusable encoder singleton for CanonicalFinding serialization

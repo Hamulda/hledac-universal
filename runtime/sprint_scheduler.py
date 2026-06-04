@@ -4388,6 +4388,26 @@ class SprintScheduler:
 
         self._hypothesis_query_count: int = 0  # total hypothesis-driven queries enqueued
 
+        # Sprint F-EXTRACT-2: instantiate FetchCoordinator with pivot queue +
+        # hypothesis state providers. Provider lambdas always return current
+        # attribute values (handles _reset_result-style reassignment safely).
+        # The enqueue_pivot_provider lambda is bound to `self`, so test-patch
+        # pattern `scheduler.enqueue_pivot = mock` resolves correctly at
+        # call time (Python late-binding of attribute lookup).
+        from hledac.universal.coordinators.fetch_coordinator import (
+            FetchCoordinator as _FC,
+        )
+        self._fetch_coordinator = _FC(
+            pivot_queue_provider=lambda: getattr(self, "_pivot_queue", None),
+            pivot_stats_provider=lambda: getattr(self, "_pivot_stats", None),
+            hypothesis_query_count_provider=lambda: getattr(self, "_hypothesis_query_count", 0),
+            hypothesis_query_count_setter=lambda v: setattr(self, "_hypothesis_query_count", v),
+            hypothesis_depth_provider=lambda: getattr(self, "_hypothesis_depth", 0),
+            hypothesis_depth_setter=lambda v: setattr(self, "_hypothesis_depth", v),
+            sprint_config_provider=lambda: self._config,
+            adaptive_priority_provider=lambda tt, base: self._get_adaptive_priority(tt, base),
+            enqueue_pivot_provider=lambda **kw: self.enqueue_pivot(**kw),
+        )
         # Sprint F250F: Privacy context ID — created at STARTUP, closed at TEARDOWN
         self._privacy_context_id: str | None = None
 
@@ -5668,6 +5688,7 @@ class SprintScheduler:
             )
 
             # Phase 2: Hermes prewarm
+            await self._prewarm_hermes_for_sprint()
             await self._prewarm_hermes()
 
 
@@ -7095,7 +7116,7 @@ class SprintScheduler:
 
 
 
-            # P12: Release Hermes engine at teardown via ModelManager (bounded M1 8GB lifecycle)
+            # P12: hermes_engine teardown via ModelManager (bounded M1 8GB lifecycle)
 
             await self._unload_hermes_at_teardown()
 
@@ -26122,175 +26143,56 @@ class SprintScheduler:
 
     ) -> None:
 
+        """Sprint F-EXTRACT-2: Delegation wrapper to FetchCoordinator.enqueue_pivot.
+
+        Original 104-LOC implementation moved to
+        coordinators/fetch_coordinator.py (GOD_OBJECT_ANALYSIS Phase 2).
+        100% backward compatibility preserved — no caller code change.
+
+        State (`_pivot_queue`, `_pivot_stats`) and helper
+        (`_get_adaptive_priority`) accessed via provider callbacks
+        supplied at FetchCoordinator construction. PivotTask imported
+        lazily in coordinator to break circular dependency.
         """
-
-        Enqueue a pivot task. Called on every new IOC hit from buffer_ioc.
-
-        Silently drops if queue is full (M1 8GB constraint).
-
-
-
-        Sprint 8VI §B.4: RL-adaptive priority — for generic_pivot task types,
-
-        blend EMA reward with base priority.
-
-        """
-
-        if self._pivot_queue.full():
-
-            return
-
-        # Multi-pivot: enqueue ALL applicable task types per IOC
-
-        task_types_list: list[str]
-
-        if task_type is not None:
-
-            # Single explicit task type
-
-            task_types_list = [task_type]
-
-        else:
-
-            task_types_list = {
-
-                # Sprint 8TB original
-
-                "cve": ["cve_to_github", "cve_to_academic"],
-
-                "ipv4": ["ip_to_ct", "ip_to_greynoise", "shodan_enrich"],
-
-                "ipv6": ["ip_to_ct"],
-
-                "domain": ["domain_to_dns", "domain_to_wayback", "domain_to_pdns",
-
-                           "domain_to_ct", "ahmia_search", "rdap_lookup"],
-
-                "md5": ["hash_to_mb"],
-
-                "sha256": ["hash_to_mb"],
-
-                "sha1": ["hash_to_mb"],
-
-                # Sprint 8VB: Maximum OSINT Coverage
-
-                "url": ["wayback_search", "commoncrawl_search", "paste_keyword_search",
-
-                        "github_dork", "multi_engine_search"],
-
-                # Sprint 8VI §C: hypothesis feedback
-
-                "hypothesis": ["multi_engine_search", "rdap_lookup"],
-
-            }.get(ioc_type, [])
-
-        if not task_types_list:
-
-            return
-
-
-
-        base_priority = confidence * max(1.0, float(degree))
-
-        for tt in task_types_list:
-
-            # Sprint 8VI §B.4: RL-adaptive priority blend
-
-            effective = self._get_adaptive_priority(tt, base_priority=base_priority)
-
-            priority = -effective
-
-            task = PivotTask(priority, ioc_type, ioc_value, tt)
-
-            try:
-
-                self._pivot_queue.put_nowait(task)
-
-                self._pivot_stats["total"] += 1
-
-            except asyncio.QueueFull:
-
-                pass
-
-
-
-    def enqueue_hypothesis_pivot(
-
-        self,
-
-        ioc_value: str,
-
-        ioc_type: str = "hypothesis",
-
-        confidence: float = 0.7,
-
-        depth: int = 1,
-
-    ) -> bool:
-
-        """
-
-        Enqueue a pivot task driven by hypothesis/ToT output.
-
-
-
-        Sprint F193B: Bounded hypothesis → finding feedback loop.
-
-        Enforces:
-
-        - max_hypothesis_depth: iteration depth cap (default 3)
-
-        - max_hypothesis_queries: total query count cap (default 10)
-
-
-
-        Returns True if enqueued, False if dropped due to cap.
-
-        """
-
-        # Sprint F193B: Enforce depth cap
-
-        if depth > self._config.max_hypothesis_depth:
-
-            log.debug(f"[F193B] Hypothesis pivot dropped: depth {depth} > max {self._config.max_hypothesis_depth}")
-
-            return False
-
-
-
-        # Sprint F193B: Enforce query count cap
-
-        if self._hypothesis_query_count >= self._config.max_hypothesis_queries:
-
-            log.debug(f"[F193B] Hypothesis pivot dropped: query count {self._hypothesis_query_count} >= max {self._config.max_hypothesis_queries}")
-
-            return False
-
-
-
-        # Enqueue with "hypothesis" ioc_type which maps to multi_engine_search, rdap_lookup
-
-        self.enqueue_pivot(
-
+        return self._fetch_coordinator.enqueue_pivot(
             ioc_value=ioc_value,
-
             ioc_type=ioc_type,
-
             confidence=confidence,
-
-            degree=float(depth),
-
-            task_type=None,  # Use ioc_type mapping for task types
-
+            degree=degree,
+            task_type=task_type,
         )
 
-        self._hypothesis_query_count += 1
+    def enqueue_hypothesis_pivot(
+        self,
+        ioc_value: str,
+        ioc_type: str = "hypothesis",
+        confidence: float = 0.7,
+        depth: int = 1,
+    ) -> bool:
+        """Sprint F-EXTRACT-2: Delegation wrapper to FetchCoordinator.enqueue_hypothesis_pivot.
 
-        self._hypothesis_depth = max(self._hypothesis_depth, depth)
+        Original 76-LOC implementation moved to
+        coordinators/fetch_coordinator.py. 100% backward compatibility.
 
-        log.debug(f"[F193B] Hypothesis pivot enqueued: {ioc_value} (depth={depth}, total_queries={self._hypothesis_query_count})")
+        State (`_hypothesis_query_count`, `_hypothesis_depth`) and cap
+        values (`_config.max_hypothesis_depth/queries`) accessed via
+        provider callbacks. Cap check logs and IOC enqueue happen in
+        the coordinator. Setters (lambda) in the coordinator mutate
+        the underlying SprintScheduler attributes via setattr, so
+        `scheduler._hypothesis_query_count == N` assertions in F193B
+        tests still hold.
 
-        return True
+        This method is passed as a callback to the public pipeline
+        (Sprint F193B) and to windup_engine (BoundedW hypothesis
+        loop). Keeping it on SprintScheduler (as a thin wrapper)
+        avoids breaking those callback contracts.
+        """
+        return self._fetch_coordinator.enqueue_hypothesis_pivot(
+            ioc_value=ioc_value,
+            ioc_type=ioc_type,
+            confidence=confidence,
+            depth=depth,
+        )
 
 
 
