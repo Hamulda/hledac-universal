@@ -249,17 +249,20 @@ class VectorStore:
         table = self._text_table if index_type == "text" else self._image_table
 
         try:
+            # Polars native ARM64, zero-copy Arrow → 5-20× faster than pandas.
+            # Lazy import: polars is in graph-storage extra.
+            import polars as pl
+
             # Search using LanceDB's vector search
             # LanceDB returns results with _distance column (cosine distance)
-            results = (
-                table.search(vector.tolist(), vector_column_name="vector")
-                .limit(k)
-                .to_pandas()
-            )
+            # Native .to_polars() skips intermediate Arrow allocation that
+            # pl.from_arrow(.to_arrow()) requires. Polars 1.x + LanceDB ≥0.9.
+            results = table.search(vector.tolist(), vector_column_name="vector").limit(k).to_polars()
 
             # Convert distance to similarity (1 - distance for cosine)
+            # polars .iter_rows(named=True) is 5-10× faster than pandas .iterrows().
             output = []
-            for _, row in results.iterrows():
+            for row in results.iter_rows(named=True):
                 doc_id = str(row["id"])
                 distance = row.get("_distance", 1.0)
                 # Convert cosine distance to similarity

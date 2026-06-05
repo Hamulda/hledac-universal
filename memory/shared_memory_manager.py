@@ -20,40 +20,32 @@ except ImportError:
     PA = None
     PYARROW_AVAILABLE = False
 
-# Try to import orjson for fast JSON serialization
-try:
-    import orjson
-    ORJSON_AVAILABLE = True
-except ImportError:
-    import json
-    ORJSON_AVAILABLE = False
+# Sprint F264: Use msgspec facade for fast JSON serialization.
+# Falls back to orjson (then stdlib json) on type errors.
+from hledac.universal.utils.msgspec_json import ORJSON_AVAILABLE as _FACADE_ORJSON_AVAILABLE
+from hledac.universal.utils.msgspec_json import decode as _msgspec_decode
+from hledac.universal.utils.msgspec_json import encode as _msgspec_encode
 
 
 def _json_dumps(obj: Any) -> bytes:
-    """Serialize object to JSON bytes."""
-    if ORJSON_AVAILABLE:
-        return orjson.dumps(obj)
-    return json.dumps(obj).encode('utf-8')
+    """Serialize object to JSON bytes via msgspec facade (10-20x stdlib)."""
+    return _msgspec_encode(obj)
 
 
 def _json_loads(data) -> Any:
-    """Deserialize JSON bytes to object."""
+    """Deserialize JSON bytes to object via msgspec facade."""
     if data is None:
         return {}
-    if ORJSON_AVAILABLE:
+    if isinstance(data, (bytes, bytearray, memoryview, str)):
         try:
-            return orjson.loads(data)
+            return _msgspec_decode(data)
         except Exception:
             pass
-    # Fallback to standard json
-    try:
-        if isinstance(data, bytes):
-            return json.loads(data.decode('utf-8'))
-        elif isinstance(data, str):
-            return json.loads(data)
-    except Exception:
-        pass
     return {}
+
+
+# Backwards-compat aliases (some callers inspect the flag).
+ORJSON_AVAILABLE = _FACADE_ORJSON_AVAILABLE
 
 
 class ArrowSharedMemory:

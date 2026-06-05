@@ -28,6 +28,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+
+from utils.async_helpers import safe_gather_dropin
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -568,7 +570,8 @@ async def search_academic_all(
         async with semaphore:
             return await search_func(query, max_results)
 
-    results_raw: tuple[Any, ...] = await asyncio.gather(
+    # F262D: migrated asyncio.gather → safe_gather_dropin (fail-soft invariant preserved)
+    results_raw: list[Any] = await safe_gather_dropin(
         limited_search("arxiv", search_arxiv),
         limited_search("crossref", search_crossref),
         limited_search("semantic_scholar", search_semantic_scholar),
@@ -577,7 +580,7 @@ async def search_academic_all(
         limited_search("core", search_core),
         limited_search("biorxiv", search_biorxiv),
         limited_search("medrxiv", search_medrxiv),
-        return_exceptions=True,
+        label="academic_discovery:571",
     )
 
     arxiv_result: list[dict[str, Any]] = results_raw[0] if not isinstance(results_raw[0], Exception) else []

@@ -2,14 +2,16 @@
 LMDB Zero-Copy KV Store
 ========================
 
-Zero-copy key-value storage using LMDB with orjson.
+Zero-copy key-value storage using LMDB with msgspec (orjson fallback).
 Optimized for M1 MacBook with 8GB RAM constraints.
 
 Features:
 - Zero-copy reads via buffers=True
-- orjson for fast JSON serialization
+- msgspec.json for fast JSON serialization (10-20x stdlib json, 2-3x orjson)
 - Bounded storage with max size
 - Async LMDB support via aiolmdb (if available)
+
+Sprint F264: Migrated to ``utils.msgspec_json`` facade.
 """
 
 from __future__ import annotations
@@ -18,7 +20,10 @@ import asyncio
 import logging
 from pathlib import Path
 
-import orjson
+from hledac.universal.utils.msgspec_json import decode, encode
+
+# Note: msgspec facade (utils.msgspec_json) handles its own orjson/json
+# fallback chain, so this module does not need to import orjson directly.
 
 try:
     import lmdb
@@ -131,7 +136,7 @@ class LMDBKVStore:
                 if value is None:
                     return None
                 # orjson.loads accepts bytes/memoryview directly - no decode() needed
-                return orjson.loads(value)
+                return decode(value)
         except Exception as e:
             logger.error(f"LMDB get failed for key {key}: {e}")
             return None
@@ -154,7 +159,7 @@ class LMDBKVStore:
                     logger.warning(f"Max keys ({self._max_keys}) reached")
                     return False
 
-                serialized = orjson.dumps(value)
+                serialized = encode(value)
                 txn.put(key.encode("utf-8"), serialized)
             return True
         except Exception as e:
@@ -187,7 +192,7 @@ class LMDBKVStore:
                             return False
 
                         for key, value in batch:
-                            serialized = orjson.dumps(value)
+                            serialized = encode(value)
                             txn.put(key.encode("utf-8"), serialized)
                 except Exception as batch_err:
                     logger.warning(f"Batch write failed, falling back to single transaction: {batch_err}")
@@ -196,7 +201,7 @@ class LMDBKVStore:
                         with self._env.begin(write=True) as txn:
                             for key, value in batch:
                                 try:
-                                    serialized = orjson.dumps(value)
+                                    serialized = encode(value)
                                     txn.put(key.encode("utf-8"), serialized)
                                 except Exception as single_err:
                                     logger.error(f"Individual write failed for {key}: {single_err}")
@@ -296,7 +301,7 @@ class AsyncLMDBKVStore:
                 val = await self._env.get(key_bytes)
                 if val is None:
                     return None
-                return orjson.loads(val)
+                return decode(val)
             except Exception as e:
                 logger.error(f"AsyncLMDB get failed: {e}")
                 return None
@@ -311,7 +316,7 @@ class AsyncLMDBKVStore:
                 val = await loop.run_in_executor(None, _get)
                 if val is None:
                     return None
-                return orjson.loads(val)
+                return decode(val)
             except Exception as e:
                 logger.error(f"AsyncLMDB get (executor) failed: {e}")
                 return None
@@ -319,7 +324,7 @@ class AsyncLMDBKVStore:
     async def put(self, key: str, value: dict) -> bool:
         """Async put operation."""
         key_bytes = key.encode()
-        data = orjson.dumps(value)
+        data = encode(value)
 
         if self._use_async and self._env:
             try:

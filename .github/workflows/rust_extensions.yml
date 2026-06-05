@@ -1,0 +1,161 @@
+name: Rust Extensions CI
+
+# Verifies the hledac-rust-extensions maturin build on every push and PR.
+# Runs ONLY on macos-latest because:
+#   - aarch64-apple-darwin is the production target (M1 8GB UMA)
+#   - .cargo/config.toml and build.rs emit macOS-specific link flags
+#     (`-undefined dynamic_lookup`) that would fail on Linux/Windows runners
+#   - the project's own verify_build.py and benchmark scripts are tuned
+#     for the same M1 target
+#
+# Pipeline:
+#   1. checkout (full history for change detection)
+#   2. install Rust stable (dtolnay/rust-toolchain) + Python 3.14 (uv)
+#   3. uv sync to materialize the project venv
+#   4. maturin develop --release into that venv
+#   5. verify_build.py smoke test (5/5 PASS required)
+#   6. benchmarks/bench_rust_vs_python.py (must finish under 30s budget)
+#   7. pytest tests/ -k "rust or extension" -x
+#
+# Cache: cargo target/ keyed on Cargo.lock so incremental runs stay fast.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "rust_extensions/**"
+      - ".github/workflows/rust_extensions.yml"
+      - "pyproject.toml"
+      - "uv.lock"
+  pull_request:
+    branches: [main]
+    paths:
+      - "rust_extensions/**"
+      - ".github/workflows/rust_extensions.yml"
+      - "pyproject.toml"
+      - "uv.lock"
+
+# Cancel in-flight runs on the same ref to save CI minutes.
+concurrency:
+  group: rust-extensions-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: "1"
+
+jobs:
+  build-and-test:
+    name: maturin build · macos-arm64
+    runs-on: macos-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain (stable)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+          targets: aarch64-apple-darwin
+
+      - name: Cache cargo target
+        uses: actions/cache@v4
+        with:
+          path: |
+            rust_extensions/target
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-cargo-${{ hashFiles('rust_extensions/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          version: "0.5.x"
+
+      - name: Set up Python
+        run: uv python install 3.14
+
+      - name: Sync project venv
+        run: uv sync --python 3.14
+        # Creates .venv/ with all runtime deps from pyproject.toml.
+        # Rust extension is intentionally NOT in pyproject deps — built below
+        # via maturin so the build step is explicit and reproducible.
+
+      - name: Build & install Rust extension
+        uses: PyO3/maturin-action@v1
+        with:
+          working-directory: rust_extensions
+          command: develop
+          args: --release
+          # maturin-action auto-detects the active Python from PATH;
+          # `uv sync` above places .venv/bin first, so this lands in
+          # the project venv (not the runner's system Python).
+        env:
+          # maturin's auto-detection prefers UV_PYTHON when set; we unset
+          # to fall back to the venv's Python.
+          UV_PYTHON: ""
+
+      - name: Smoke test — verify_build.py
+        working-directory: rust_extensions
+        run: |
+          # verify_build.py exits 1 on any FAIL, 0 on all-PASS.
+          # 5/5 modules: aho_corasick, bloom, rolling_hash, fast_hasher, content_hash.
+          uv run --no-sync python verify_build.py
+
+      - name: Benchmark — bench_rust_vs_python.py
+        run: |
+          # Must finish in <30s and report a valid speedup row.
+          uv run --no-sync python benchmarks/bench_rust_vs_python.py
+
+      - name: Test suite (rust + extension)
+        run: |
+          # Targeted at the two dedicated test modules. The repo-wide
+          # `tests/` tree contains older sprint probes with collection
+          # errors (e.g. swigvarlink deprecation) that are out of scope
+          # for the rust_extensions CI lane. Run those in a separate
+          # workflow (`sprint_tests.yml` etc.).
+          uv run --no-sync pytest tests/test_rust_extensions.py tests/test_hledac_core_rust.py -v
+
+      - name: Verify fallback guard (Python without Rust)
+        # Sanity check: when the Rust extension is removed, the Python
+        # modules must still import and operate. This guarantees the
+        # always-on / fail-soft invariant in CLAUDE.md.
+        run: |
+          uv run --no-sync python - <<'PY'
+          import sys, importlib, types
+
+          # Hide the extension so any `import hledac_rust_extensions` raises ImportError.
+          sys.modules["hledac_rust_extensions"] = None  # type: ignore[assignment]
+
+          for mod_name in [
+              "patterns.pattern_matcher",
+              "tools.url_dedup",
+              "tools.rolling_hash_engine",
+              "tools.ioc_dedup",
+              "utils.bloom_filter",
+          ]:
+              # Re-import fresh.
+              if mod_name in sys.modules:
+                  del sys.modules[mod_name]
+              m = importlib.import_module(mod_name)
+              has_aco = hasattr(m, "_RUST_ACO_AVAILABLE")
+              has_bloom = getattr(m, "_RUST_BLOOM_AVAILABLE", False)
+              has_rh = getattr(m, "_RUST_RH_AVAILABLE", False)
+              has_url = getattr(m, "_RUST_URL_DEDUP_AVAILABLE", False)
+              has_engine = getattr(m, "_RUST_URL_ENGINE_AVAILABLE", False)
+              print(f"OK {mod_name} "
+                    f"aco={has_aco} bloom={has_bloom} rh={has_rh} "
+                    f"url={has_url} engine={has_engine}")
+
+          # Python fallback should be importable without the extension.
+          from patterns.pattern_matcher import get_backend_info
+          from tools.rolling_hash_engine import RollingHashEngine
+          eng = RollingHashEngine()
+          assert eng.is_rust is False, "fallback should not advertise Rust"
+          assert eng.hash(b"hello world") != 0, "Python fallback must still work"
+          print("OK Python fallback: RollingHashEngine.hash(b'hello world') =", eng.hash(b"hello world"))
+          PY

@@ -3,7 +3,8 @@ Sprint F214Q: sprint_seeds.lmdb — cross-sprint quantum pathfinder seed persist
 
 Canonical path: LMDB_ROOT / "sprint_seeds.lmdb"
 Key pattern: b"seeds:{sprint_id}"
-Value: orjson.dumps(list[str]) — list of IOC values discovered via quantum path walk.
+Value: msgspec.json-encoded list[str] — list of IOC values discovered via
+        quantum path walk. (Sprint F264: migrated orjson → msgspec facade.)
 Max map size: 256MB (256 * 1024 * 1024).
 
 Rationale:
@@ -18,8 +19,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-import orjson
 from hledac.universal.paths import LMDB_ROOT
+from hledac.universal.utils.msgspec_json import decode, encode
 
 if TYPE_CHECKING:
     pass
@@ -66,7 +67,7 @@ async def async_save_sprint_seeds(sprint_id: str, seeds: list[str]) -> None:
             map_size=_LMDB_MAP_SIZE,
         )
         key = _make_key(sprint_id)
-        val = orjson.dumps(seeds)
+        val = encode(seeds)
         await store.put(key.decode(), val)
     except Exception as e:
         import logger
@@ -99,7 +100,7 @@ async def async_load_sprint_seeds(sprint_id: str) -> list[str]:
             return []
         if isinstance(raw, bytes):
             raw = raw.decode("utf-8")
-        return orjson.loads(raw)
+        return decode(raw)
     except Exception as e:
         import logger
 
@@ -124,7 +125,7 @@ def sync_save_sprint_seeds(sprint_id: str, seeds: list[str]) -> None:
         _LMDB_PATH.parent.mkdir(parents=True, exist_ok=True)
         with lmdb.open(str(_LMDB_PATH), map_size=_LMDB_MAP_SIZE, readahead=False) as env:
             key = _make_key(sprint_id)
-            val = orjson.dumps(seeds)
+            val = encode(seeds)
             with env.begin(write=True) as txn:
                 txn.put(key, val)
     except Exception as e:
@@ -156,7 +157,7 @@ def sync_load_sprint_seeds(sprint_id: str) -> list[str]:
                 raw = txn.get(key)
                 if raw is None:
                     return []
-                return orjson.loads(raw)
+                return decode(raw)
     except Exception as e:
         import logger
 

@@ -27,6 +27,8 @@ from typing import Any
 
 from hledac.universal.tools.ocr_engine import VisionOCR, recognize_async
 
+from utils.async_helpers import safe_gather_dropin
+
 logger = logging.getLogger(__name__)
 
 # ── Bounds ────────────────────────────────────────────────────────────────────
@@ -266,9 +268,11 @@ class EvidenceTriageCoordinator:
             )
 
             async with asyncio.timeout(METADATA_TIMEOUT_S + OCR_TIMEOUT_S):
-                results = await asyncio.gather(
+                # F262D: migrated asyncio.gather → safe_gather_dropin
+                # (fail-soft invariant preserved; timeout context stays external)
+                results = await safe_gather_dropin(
                     metadata_task, ocr_task,
-                    return_exceptions=True,
+                    label="evidence_triage:269",
                 )
                 md_result, ocr_text = results
                 if md_result and not isinstance(md_result, BaseException):

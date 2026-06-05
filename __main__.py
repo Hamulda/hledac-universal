@@ -2854,25 +2854,29 @@ async def _run_sprint_mode(
                     lifecycle.request_windup()
                 break
 
-            # Run pipelines every 60s — both in parallel via TaskGroup
+            # Run pipelines every 60s — both in parallel via safe_gather_strict
+            # F262D: standardized asyncio.TaskGroup → safe_gather_strict
+            # (PEP 654 / 3.11+ TaskGroup-based, all-or-nothing preserved)
             now = time.monotonic()
             if now - last_pipeline_time >= 60.0:
                 if store_instance is not None:
                     try:
-                        async with asyncio.TaskGroup() as tg:
-                            tg.create_task(async_run_live_public_pipeline(
+                        await safe_gather_strict(
+                            async_run_live_public_pipeline(
                                 query=target,
                                 store=store_instance,
                                 max_results=5,
-                            ), name="main:live_public_pipeline")
-                            tg.create_task(async_run_default_feed_batch(
+                            ),
+                            async_run_default_feed_batch(
                                 store=store_instance,
                                 max_entries_per_feed=10,
                                 query_context=target,
-                            ), name="main:feed_batch")
+                            ),
+                            label="main:pipeline_pair",
+                        )
                         _boot_record("sprint_mode", "pipeline_run_ok")
-                    except Exception as e:
-                        _boot_record("sprint_mode", "pipeline_run_error", error=str(e))
+                    except* ExceptionGroup as eg:
+                        _boot_record("sprint_mode", "pipeline_run_error", error="; ".join(str(e) for e in eg.exceptions))
                     else:
                         _active_pipeline_iterations += 1
                         last_pipeline_time = now
@@ -3233,7 +3237,7 @@ if __name__ == "__main__":
 # =============================================================================
 
 import logging
-from utils.async_helpers import safe_gather_dropin, safe_gather_fire_and_forget
+from utils.async_helpers import safe_gather_dropin, safe_gather_fire_and_forget, safe_gather_strict
 TYPE_CHECKING
 
 if TYPE_CHECKING:

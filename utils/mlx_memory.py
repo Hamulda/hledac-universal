@@ -33,17 +33,19 @@ logger = logging.getLogger(__name__)
 # Fail-open: if uma_budget is unavailable, fall back to safe defaults.
 try:
 
-    # MLX budget is a conservative fraction of total UMA (6.0 GiB warn threshold).
-    # WARNING at 80% of MLX budget (~4.0 GiB), CRITICAL at 90% (~4.5 GiB).
-    _MLX_BUDGET_GIB: float = 5.0
+    # MLX budget matches the M1 8GB UMA total app budget documented in
+    # CLAUDE.md / docs: macOS ~2.5GB + orchestrator ~1GB + LLM ~2GB + KV cache
+    # ~0.75GB = 6.25 GiB max for MLX-loaded artifacts.
+    # WARNING at 80% of MLX budget (~5.0 GiB), CRITICAL at 90% (~5.625 GiB).
+    _MLX_BUDGET_GIB: float = 6.25
     MLX_WARNING_GIB: float = _MLX_BUDGET_GIB * 0.8
     MLX_CRITICAL_GIB: float = _MLX_BUDGET_GIB * 0.9
-    MAX_MEMORY_MB: int = int(_MLX_BUDGET_GIB * 1024)
+    MAX_MEMORY_MB: int = int(_MLX_BUDGET_GIB * 1024)  # 6_400 MB
 except Exception:
     # Fail-open: no hardcoded thresholds at module level
     MLX_WARNING_GIB = 5.0
     MLX_CRITICAL_GIB = 5.625
-    MAX_MEMORY_MB = 6_250
+    MAX_MEMORY_MB = 6_400
 
 # Lazy availability singleton
 _MLX_AVAILABLE: bool | None = None

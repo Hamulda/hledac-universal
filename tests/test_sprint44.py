@@ -56,12 +56,10 @@ class TestSprint44(unittest.IsolatedAsyncioTestCase):
         fc._lightpanda.fetch_js = AsyncMock(side_effect=Exception("fail"))
         fc._fetch_with_curl = AsyncMock(return_value={'content': b'curl', 'url': 'https://test.com'})
 
-        # Patch the quick HEAD request
-        with patch('requests.head') as mock_head:
-            with patch('requests.get') as mock_get:
-                mock_head.return_value = MagicMock(headers={'content-type': 'text/html'}, text='')
-                mock_get.return_value = MagicMock(text='')
-                result = await fc._fetch_url("https://react-app.com")
+        # _fetch_url() internally uses curl_cffi/StealthCrawler (not `requests`),
+        # so a global `requests.head/get` patch is a no-op. Result comes from
+        # the AsyncMock above.
+        result = await fc._fetch_url("https://react-app.com")
 
         self.assertEqual(result['content'], b'curl')
         fc._fetch_with_curl.assert_called_once()

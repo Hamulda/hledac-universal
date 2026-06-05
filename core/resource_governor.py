@@ -30,17 +30,29 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any
 
-import psutil
+# psutil je canonical dep (requirements.txt: psutil # memory pressure monitoring),
+# ale lazy-guarded pro env-flex (M1 8GB UMA cold start, sessions bez psutil,
+# static analysis / doc builds). Vzor: core/mlx_embeddings.py:29-34.
+try:
+    import psutil
+    _PSUTIL_AVAILABLE = True
+except ImportError:
+    psutil = None  # type: ignore[assignment]
+    _PSUTIL_AVAILABLE = False
 
 _mx = None  # lazy singleton
 
-# Sprint 8AB: cached psutil.Process() — single syscall point per status sample
-_process_cache: psutil.Process | None = None
+# Sprint 8AB: cached psutil.Process() — single syscall point per status sample.
+# Type hint lazy: `from __future__ import annotations` (ř. 22) → string, runtime neevaluuje.
+_process_cache: Any = None  # psutil.Process | None při plném env
 
 
-def _get_cached_process() -> psutil.Process:
+def _get_cached_process() -> Any:
+    """Lazy psutil.Process() accessor. Raises RuntimeError if psutil unavailable."""
     global _process_cache
     if _process_cache is None:
+        if psutil is None:
+            raise RuntimeError("psutil not available in this environment")
         _process_cache = psutil.Process()
     return _process_cache
 
@@ -243,7 +255,14 @@ class ResourceGovernor:
         """
         Synchronní kontrola zdrojů bez rezervace.
         """
-        ram_used = psutil.virtual_memory().used / (1024 * 1024)
+        # Fail-open: pokud psutil chybí nebo selže, treat as 0 used (vždy can_afford).
+        # Kontrakt: při chybějícím psutil se kontrola RAM přeskočí — cost_estimate rozhodne.
+        ram_used = 0.0
+        if psutil is not None:
+            try:
+                ram_used = psutil.virtual_memory().used / (1024 * 1024)
+            except Exception:
+                ram_used = 0.0
         ram_needed = cost_estimate.get('ram_mb', 0)
         factor = self._priority_factor[priority]
 

@@ -3,9 +3,9 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
-import orjson
 from hledac.universal.security import decrypt_aes_gcm, encrypt_aes_gcm
 from hledac.universal.security.key_manager import KeyManager
+from hledac.universal.utils.msgspec_json import decode, encode
 
 if TYPE_CHECKING:
     import mlx.core as mx
@@ -68,7 +68,7 @@ class LocalGraphStore:
     async def put_node(self, node_id: str, features: mx.array, neighbors: list[str]) -> None:
         arr = np.array(features, dtype=np.float16)
         node_data = {"features": arr.tobytes().hex(), "shape": list(arr.shape)}
-        plaintext = orjson.dumps(node_data)
+        plaintext = encode(node_data)
 
         bucket_key, _ = await self.key_manager.get_bucket_key(self.bucket_id)
         encrypted = encrypt_aes_gcm(bucket_key, plaintext, associated_data=node_id.encode())
@@ -76,7 +76,7 @@ class LocalGraphStore:
         def _put():
             with self.env.begin(write=True) as txn:
                 txn.put(node_id.encode(), encrypted)
-                txn.put(f"neighbors:{node_id}".encode(), orjson.dumps(neighbors[:1000]))
+                txn.put(f"neighbors:{node_id}".encode(), encode(neighbors[:1000]))
 
         loop = asyncio.get_running_loop()
         await loop.run_in_executor(None, _put)
@@ -107,7 +107,7 @@ class LocalGraphStore:
                     def _get_neighbors():
                         with self.env.begin() as txn:
                             data = txn.get(f"neighbors:{node_id}".encode())
-                            return orjson.loads(data) if data else []
+                            return decode(data) if data else []
 
                     loop = asyncio.get_running_loop()
                     neighbors = await loop.run_in_executor(None, _get_neighbors)
@@ -124,7 +124,7 @@ class LocalGraphStore:
                 if blob is None:
                     return None
                 neigh = txn.get(f"neighbors:{node_id}".encode())
-                neighbors = orjson.loads(neigh) if neigh else []
+                neighbors = decode(neigh) if neigh else []
                 return blob, neighbors
 
         loop = asyncio.get_running_loop()
@@ -134,7 +134,7 @@ class LocalGraphStore:
         blob, neighbors = result
 
         plaintext = decrypt_aes_gcm(bucket_key, blob, associated_data=node_id.encode())
-        node_data = orjson.loads(plaintext)
+        node_data = decode(plaintext)
         arr = np.frombuffer(bytes.fromhex(node_data["features"]), dtype=np.float16).reshape(node_data["shape"])
         import mlx.core as mx
 
@@ -172,7 +172,7 @@ class LocalGraphStore:
             host: IP address string
             port: UDP port number
         """
-        node_data = orjson.dumps({"host": host, "port": port, "node_id": node_id})
+        node_data = encode({"host": host, "port": port, "node_id": node_id})
         try:
             bucket_key = self.key_manager.get_key_for_bucket(self.bucket_id)
             encrypted = encrypt_aes_gcm(bucket_key, node_data, associated_data=node_id.encode())
@@ -197,7 +197,7 @@ class LocalGraphStore:
                     if blob is None:
                         return None
                     plaintext = decrypt_aes_gcm(bucket_key, blob, associated_data=node_id.encode())
-                    return orjson.loads(plaintext)
+                    return decode(plaintext)
 
             loop = asyncio.get_running_loop()
             return await loop.run_in_executor(None, _get)
@@ -270,7 +270,7 @@ class LocalGraphStore:
                 caller; typically <= 160 * 20 = 3200 entries).
         """
         try:
-            payload = orjson.dumps({"version": 1, "nodes": nodes})
+            payload = encode({"version": 1, "nodes": nodes})
             bucket_key = self.key_manager.get_key_for_bucket(self.bucket_id)
             encrypted = encrypt_aes_gcm(
                 bucket_key, payload, associated_data=b"routing_table_v1"
@@ -306,7 +306,7 @@ class LocalGraphStore:
             plaintext = await loop.run_in_executor(None, _get)
             if not plaintext:
                 return []
-            data = orjson.loads(plaintext)
+            data = decode(plaintext)
             nodes = data.get("nodes", []) if isinstance(data, dict) else []
             return nodes if isinstance(nodes, list) else []
         except Exception:

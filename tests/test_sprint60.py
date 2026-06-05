@@ -326,7 +326,7 @@ class TestHypothesis:
 
     def test_dempster_shafer_init(self):
         """Test inicializace DempsterShafer."""
-        from hledac.universal.hypothesis.dempster_shafer import DempsterShafer
+        from hledac_hypothesis.dempster_shafer import DempsterShafer
 
         ds = DempsterShafer({'h1', 'h2', 'h3'})
 
@@ -336,7 +336,7 @@ class TestHypothesis:
 
     def test_dempster_shafer_add_evidence(self):
         """Test přidávání evidence."""
-        from hledac.universal.hypothesis.dempster_shafer import DempsterShafer
+        from hledac_hypothesis.dempster_shafer import DempsterShafer
 
         ds = DempsterShafer({'h1', 'h2'})
 
@@ -346,7 +346,7 @@ class TestHypothesis:
 
     def test_dempster_shafer_belief(self):
         """Test belief výpočet."""
-        from hledac.universal.hypothesis.dempster_shafer import DempsterShafer
+        from hledac_hypothesis.dempster_shafer import DempsterShafer
 
         ds = DempsterShafer({'h1', 'h2'})
 
@@ -357,8 +357,8 @@ class TestHypothesis:
 
     def test_eig_calculator(self):
         """Test EIG calculator."""
-        from hledac.universal.hypothesis.dempster_shafer import DempsterShafer
-        from hledac.universal.hypothesis.eig import EIGCalculator
+        from hledac_hypothesis.dempster_shafer import DempsterShafer
+        from hledac_hypothesis.eig import EIGCalculator
 
         calc = EIGCalculator()
 

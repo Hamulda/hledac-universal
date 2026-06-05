@@ -1639,6 +1639,66 @@ class UnifiedResearchEngine:
 
         return query
 
+    async def _task_source_discovery(
+        self,
+        query: str,
+        context: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Task: Source Discovery via DeepSourceRegistry (Sprint F270, Phase 2.7).
+
+        Discovers curated beyond-surface OSINT sources (dark web, archives,
+        paste sites, code intelligence, leak DBs, P2P gateways) that are
+        relevant to the current query. Filters by current transport
+        capabilities so unreachable sources are pruned eagerly.
+
+        Returns a dict compatible with the rest of the UnifiedResearchEngine
+        task pipeline:
+            {
+                "query": str,
+                "findings": list[CanonicalFinding],   # source_type="source_discovery"
+                "count": int,
+                "tier": str | None,                    # tier filter used
+            }
+        """
+        logger.info(f"Task: Source discovery for '{query}'")
+
+        # Pull optional tier filter from context (set by orchestrator/policy).
+        tier = context.get("tier") if isinstance(context, dict) else None
+
+        # Pull optional transport override from context (rare — most callers
+        # let the autodetect run).
+        caps_override = context.get("transport_capabilities") if isinstance(context, dict) else None
+        transport_caps = caps_override if isinstance(caps_override, set) else None
+
+        # max_results is bounded by caller context or default 20.
+        max_results = 20
+        if isinstance(context, dict) and isinstance(context.get("max_results"), int):
+            max_results = max(1, min(100, context["max_results"]))
+
+        try:
+            findings = await asyncio.to_thread(
+                discover_deep_sources,
+                query,
+                transport_caps,
+                max_results,
+                tier,
+            )
+        except Exception as exc:
+            logger.warning(f"Source discovery failed: {exc}")
+            return {
+                "query": query,
+                "findings": [],
+                "count": 0,
+                "tier": tier,
+            }
+
+        return {
+            "query": query,
+            "findings": findings,
+            "count": len(findings),
+            "tier": tier,
+        }
+
     # ========================================================================
     # UTILITY METHODS
     # ========================================================================
@@ -3515,3 +3575,149 @@ __all__ = [
 
 # DEPRECATED F187A: flag for orchestrator residue detection
 DEPRECATED_ENHANCED_ORCHESTRATOR_RESIDUE = True
+
+
+# ---------------------------------------------------------------------------
+# Sprint F270: DeepSourceRegistry integration — Phase 2.7
+# ---------------------------------------------------------------------------
+def _detect_transport_capabilities() -> set[str]:
+    """Best-effort detection of currently-available transports.
+
+    Lazy: never raises, never imports at module level. Mirrors the canonical
+    TransportResolver._check_transports() logic in transport/transport_resolver.py
+    but is decoupled (no ImportError surface) for the DeepResearch seam.
+
+    Returns a subset of {"direct", "tor", "i2p", "curl_cffi", "nym"}.
+    Direct + curl_cffi are always assumed available on the M1 baseline.
+    """
+    caps: set[str] = {"direct", "curl_cffi"}
+    try:
+        from hledac.universal.transport.transport_resolver import (
+            TransportResolver,
+        )
+        resolver = TransportResolver()
+        # _check_transports populates _tor_class / _nym_class.
+        resolver._check_transports()
+        if getattr(resolver, "_tor_class", None) is not None:
+            caps.add("tor")
+        if getattr(resolver, "_nym_class", None) is not None:
+            caps.add("nym")
+    except Exception:
+        pass  # fail-soft — direct/curl_cffi are sufficient for discovery
+    return caps
+
+
+def discover_deep_sources(
+    query: str,
+    transport_capabilities: set[str] | None = None,
+    max_results: int = 20,
+    tier: str | None = None,
+) -> list[Any]:
+    """Curated, transport-aware discovery of beyond-surface OSINT sources.
+
+    Phase 2.7 of the UnifiedResearchEngine pipeline. Returns up to
+    `max_results` relevant `CanonicalFinding` objects (source_type="source_discovery"),
+    filtered by current transport capabilities and (optionally) source tier.
+
+    Args:
+        query: Research query — used for relevance scoring (substring match on
+            source name + URL, case-insensitive).
+        transport_capabilities: Set of available transport identifiers
+            (e.g., {"direct", "tor"}). If None, autodetect via
+            `_detect_transport_capabilities()`.
+        max_results: Hard cap on returned findings (default 20, M1-bounded).
+        tier: Optional source tier filter — "surface" | "dark" | "archive" |
+            "p2p" | "academic".
+
+    Returns:
+        list of CanonicalFinding with source_type="source_discovery".
+        Empty list on any error (fail-soft).
+
+    Sprint F270 invariants:
+        - M1 fail-safe: no exception ever escapes.
+        - Pure in-memory catalog — no eager I/O.
+        - LMDB persistence is opt-in (caller-controlled).
+        - Relevance score is a simple substring match in [0.0, 1.0].
+    """
+    if not query or not isinstance(query, str):
+        return []
+
+    try:
+        from hledac.universal.discovery.deep_source_registry import (
+            DeepSourceRegistry,
+        )
+        from hledac.universal.knowledge.duckdb_store import (
+            CanonicalFinding,
+        )
+    except Exception as exc:
+        logger.debug("discover_deep_sources: import failed: %s", exc)
+        return []
+
+    try:
+        registry = DeepSourceRegistry()
+    except Exception as exc:
+        logger.warning("discover_deep_sources: registry build failed: %s", exc)
+        return []
+
+    if transport_capabilities is None:
+        transport_capabilities = _detect_transport_capabilities()
+
+    try:
+        sources = registry.get_available_sources(transport_capabilities)
+    except Exception as exc:
+        logger.warning("discover_deep_sources: filter failed: %s", exc)
+        return []
+
+    if tier is not None:
+        sources = [s for s in sources if s.source_tier == tier]
+
+    # Relevance scoring: substring match on name + URL (case-insensitive).
+    q_lower = query.lower().strip()
+    scored: list[tuple[float, Any]] = []
+    for src in sources:
+        name_hit = q_lower in src.name.lower() if q_lower else 0.0
+        url_hit = q_lower in src.base_url.lower() if q_lower else 0.0
+        # Combined: name 60% + URL 30% + base reliability 10%
+        score = 0.0
+        if q_lower:
+            if name_hit:
+                score += 0.6
+            if url_hit:
+                score += 0.3
+        score += 0.1 * src.reliability
+        scored.append((score, src))
+
+    # Sort by score desc, then reliability desc, then name asc.
+    scored.sort(key=lambda x: (-x[0], -x[1].reliability, x[1].name))
+
+    findings: list[Any] = []
+    now_ts = time.time()
+    for score, src in scored[:max_results]:
+        try:
+            finding = CanonicalFinding(
+                finding_id=f"dsr:{src.source_id}",
+                query=query,
+                source_type="source_discovery",
+                # Confidence is a blend of score and reliability.
+                confidence=min(1.0, max(0.0, 0.5 * score + 0.5 * src.reliability)),
+                ts=now_ts,
+                provenance=("DeepSourceRegistry", src.name),
+                payload_text=(
+                    f"name={src.name}\n"
+                    f"base_url={src.base_url}\n"
+                    f"tier={src.source_tier}\n"
+                    f"transport={src.transport_required}\n"
+                    f"data_type={src.data_type}\n"
+                    f"reliability={src.reliability}\n"
+                    f"last_verified={src.last_verified}\n"
+                    f"relevance_score={score:.3f}\n"
+                ),
+            )
+            findings.append(finding)
+        except Exception as exc:
+            logger.debug(
+                "discover_deep_sources: skip %s (%s)", src.source_id, exc
+            )
+            continue
+
+    return findings

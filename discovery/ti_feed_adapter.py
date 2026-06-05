@@ -1868,10 +1868,11 @@ async def _handle_bgp_asn_lookup(task, scheduler):
     ioc = task.ioc_value
     if not _is_valid_ip(ioc):
         return
-    ripe, cymru = await asyncio.gather(
+    # F262D: migrated asyncio.gather → safe_gather_dropin (fail-soft invariant preserved)
+    ripe, cymru = await safe_gather_dropin(
         query_ripe_stat_asn(ioc),
         query_team_cymru_asn(ioc),
-        return_exceptions=True,
+        label="ti_feed_adapter:1871",
     )
     if ripe.get("asn") or cymru.get("asn"):
         await scheduler._buffer_ioc_pivot("ipv4", ioc, 0.80)

@@ -33,7 +33,7 @@ import sys
 from collections.abc import AsyncIterator, Awaitable, Callable
 from typing import TypeVar
 
-from utils.async_helpers import safe_gather_dropin
+from utils.async_helpers import safe_gather_dropin, safe_gather_strict
 logger = logging.getLogger(__name__)
 
 T = TypeVar('T')
@@ -136,14 +136,10 @@ async def bounded_map[T](
     results: list[T | None] = [None] * len(tasks)
 
     if sys.version_info >= (3, 11) and cancel_on_error:
-        async with asyncio.TaskGroup() as tg:
-            futures = [
-                tg.create_task(_run(i, fn, a, k), name=f"async_utils:run-{i}")
-                for i, (fn, a, k) in enumerate(tasks)
-            ]
-        for i, f in enumerate(futures):
-            results[i] = f.result()
-        return results
+        # F262D: standardized asyncio.TaskGroup → safe_gather_strict
+        # (PEP 654 / 3.11+ TaskGroup-based, all-or-nothing preserved)
+        coros = [_run(i, fn, a, k) for i, (fn, a, k) in enumerate(tasks)]
+        return await safe_gather_strict(*coros, label=f"async_utils:run[{len(tasks)}]")
 
     # Python < 3.11 nebo cancel_on_error=False
     coros = [_run(i, fn, a, k) for i, (fn, a, k) in enumerate(tasks)]

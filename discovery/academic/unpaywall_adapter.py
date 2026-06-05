@@ -23,6 +23,8 @@ from typing import NamedTuple
 
 import orjson
 
+from utils.async_helpers import safe_gather_dropin
+
 from hledac.universal.knowledge.duckdb_store import CanonicalFinding
 
 logger = logging.getLogger(__name__)
@@ -179,9 +181,10 @@ class UnpaywallAdapter:
                 result = await self.resolve_doi(doi)
                 return result.paper
 
-        results = await asyncio.gather(
+        # F262D: migrated asyncio.gather → safe_gather_dropin (fail-soft invariant preserved)
+        results = await safe_gather_dropin(
             *[lookup_one(doi) for doi in dois[:MAX_DOI_LOOKUPS]],
-            return_exceptions=True,
+            label="unpaywall_adapter:182",
         )
 
         return [r if isinstance(r, OAPaper) else None for r in results]

@@ -106,11 +106,53 @@ class TestMLXProviderCapabilities:
             pytest.skip("MLX not available")
 
     def test_mlx_embedding_dimension(self):
-        """MLX má správnou dimenzi."""
+        """MLX má správnou MRL architekturu (canonical 256, native 768, MRL_DIMS)."""
         try:
             mgr = MLXEmbeddingManager(lazy_load=True)
-            assert mgr.EMBEDDING_DIM == 768
-            assert mgr.MRL_DIM == 256
+            # MRL canonical: 256d is the M1 8GB UMA sweet-spot
+            assert mgr.EMBEDDING_DIM == 256, (
+                f"EMBEDDING_DIM must be 256 (MRL canonical), got {mgr.EMBEDDING_DIM}"
+            )
+            # MRL_DIM aliases EMBEDDING_DIM by design (MRL canonical)
+            assert mgr.MRL_DIM == 256, (
+                f"MRL_DIM must be 256 (MRL canonical), got {mgr.MRL_DIM}"
+            )
+            # ModernBERT native hidden size is 768
+            assert mgr.NATIVE_DIM == 768, (
+                f"NATIVE_DIM must be 768 (ModernBERT native), got {mgr.NATIVE_DIM}"
+            )
+            # MRL_DIMS must contain all valid Matryoshka dimensions
+            assert mgr.MRL_DIMS == (256, 512, 768), (
+                f"MRL_DIMS must be (256, 512, 768), got {mgr.MRL_DIMS}"
+            )
+        except ImportError:
+            pytest.skip("MLX not available")
+
+    def test_mlx_validate_mrl_dim(self):
+        """validate_mrl_dim() accepts 256/512/768, rejects others."""
+        try:
+            mgr = MLXEmbeddingManager(lazy_load=True)
+            # Valid MRL dims
+            assert mgr.validate_mrl_dim(256) is True
+            assert mgr.validate_mrl_dim(512) is True
+            assert mgr.validate_mrl_dim(768) is True
+            # Invalid dims (non-MRL slices)
+            assert mgr.validate_mrl_dim(384) is False  # MiniLM fallback, not MRL
+            assert mgr.validate_mrl_dim(128) is False
+            assert mgr.validate_mrl_dim(1024) is False
+            assert mgr.validate_mrl_dim(0) is False
+        except ImportError:
+            pytest.skip("MLX not available")
+
+    def test_mlx_get_mrl_dims(self):
+        """get_mrl_dims() returns the canonical MRL dimensions tuple."""
+        try:
+            mgr = MLXEmbeddingManager(lazy_load=True)
+            dims = mgr.get_mrl_dims()
+            assert dims == (256, 512, 768)
+            assert 256 in dims
+            assert 512 in dims
+            assert 768 in dims
         except ImportError:
             pytest.skip("MLX not available")
 

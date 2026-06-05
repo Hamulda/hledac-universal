@@ -4,7 +4,7 @@ Sprint F230A: Hypothesis Engine Comprehensive Tests
 
 Covers critical paths from audit:
 - Dempster-Shafer belief propagation (brain/evidence_fusion.py)
-- DSPy gate fallback paths (hypothesis/hypothesisgenerator.py)
+- DSPy gate fallback paths (hledac_hypothesis/hypothesisgenerator.py)
 - Heuristic extractors (IP, domain, email, hash)
 - All 4 hypothesis types: entity_expansion | temporal | lateral | adversarial
 
@@ -17,7 +17,7 @@ from unittest.mock import patch, MagicMock
 import pytest
 
 from brain.evidence_fusion import DempsterShafer
-from hypothesis.hypothesisgenerator import (
+from hledac_hypothesis.hypothesisgenerator import (
     HypothesisGenerator,
     ResearchHypothesis,
     _heuristic_generate,
@@ -66,7 +66,7 @@ def test_generate_with_dspy_enabled_but_unavailable(monkeypatch):
     """
     monkeypatch.setenv("HLEDAC_ENABLE_DSPY", "1")
 
-    with patch("hypothesis.hypothesisgenerator._load_dspy_program", return_value=None):
+    with patch("hledac_hypothesis.hypothesisgenerator._load_dspy_program", return_value=None):
         findings = [
             MockFinding("f1", "8.8.8.8 DNS query from 1.2.3.4"),
         ]
@@ -89,7 +89,7 @@ def test_generate_with_dspy_forward_exception(monkeypatch):
     mock_program = MagicMock()
     mock_program.forward.side_effect = RuntimeError("DSPy forward failed")
 
-    with patch("hypothesis.hypothesisgenerator._load_dspy_program", return_value=mock_program):
+    with patch("hledac_hypothesis.hypothesisgenerator._load_dspy_program", return_value=mock_program):
         findings = [MockFinding("f1", "10.0.0.1 beacon")]
         gen = HypothesisGenerator(graph=None)
         result = gen.generate(findings, current_seeds=[], sprint_depth=1)
@@ -304,7 +304,7 @@ def test_extract_hashes():
 
 def test_extract_none_returns_empty_lists():
     """Empty payload → no extractions."""
-    from hypothesis.hypothesisgenerator import _extract_ips, _extract_domains, _extract_emails, _extract_hashes
+    from hledac_hypothesis.hypothesisgenerator import _extract_ips, _extract_domains, _extract_emails, _extract_hashes
 
     assert _extract_ips("") == []
     assert _extract_domains("") == []

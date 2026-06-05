@@ -2563,6 +2563,18 @@ def main() -> None:
         action="store_true",
         help="F260: Skip StealthLayer injection in run_sprint(). Default ON, mirroring --no-coordination/--no-communication opt-out contract.",
     )
+    parser.add_argument(
+        "--list-sources",
+        action="store_true",
+        help="F270: Print DeepSourceRegistry catalog (curated beyond-surface sources) and exit.",
+    )
+    parser.add_argument(
+        "--tier",
+        type=str,
+        default=None,
+        choices=["surface", "dark", "archive", "p2p", "academic"],
+        help="F270: Filter --list-sources output by source tier.",
+    )
     args = args_with_rl_resolution = parser.parse_args()
     # F261QMIX: --rl-no-train overrides --rl-train (explicit disable wins)
     if args.rl_no_train:
@@ -2580,6 +2592,33 @@ def main() -> None:
 
     # P1E-A: Set acquisition profile env var so build_acquisition_plan picks it up
     os.environ["HLEDAC_ACQUISITION_PROFILE"] = args.acquisition_profile
+
+    if args.list_sources:
+        # F270: Print DeepSourceRegistry catalog and exit.
+        from hledac.universal.discovery.deep_source_registry import (
+            DeepSourceRegistry,
+        )
+        registry = DeepSourceRegistry()
+        sources = registry.get_sources(tier=args.tier)
+        print(f"DeepSourceRegistry (F270): {len(sources)} curated sources")
+        if args.tier:
+            print(f"  tier filter: {args.tier}")
+        print("-" * 110)
+        print(f"{'source_id':<18} {'tier':<10} {'transport':<10} {'data_type':<14} {'rel':<5} {'name':<30} url")
+        print("-" * 110)
+        for src in sorted(sources, key=lambda s: (s.source_tier, s.name)):
+            print(
+                f"{src.source_id:<18} "
+                f"{src.source_tier:<10} "
+                f"{src.transport_required:<10} "
+                f"{src.data_type:<14} "
+                f"{src.reliability:<5.2f} "
+                f"{src.name[:28]:<30} "
+                f"{src.base_url}"
+            )
+        print("-" * 110)
+        print(f"Total: {len(sources)} sources (catalog cap: 200)")
+        return
 
     if args.ct_pivot:
         asyncio.run(run_ct_pivot(args.ct_pivot))

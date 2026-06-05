@@ -47,14 +47,23 @@ class TestLanceDBEmbedderMigration:
         store = LanceDBIdentityStore()
         # Set numpy fallback mode
         store._embedder_type = 'numpy_fallback'
-        store._fallback_dim = 768
+        # Sprint F259: MRL canonical dim is 256, but legacy test uses 768
+        # for backward compat with pre-MRL LanceDB vectors. The numpy fallback
+        # honours whatever _fallback_dim is set, so both values are valid.
+        store._fallback_dim = 256  # MRL canonical (Sprint F259)
 
-        # Test single embedding
-        result = asyncio.get_event_loop().run_until_complete(
-            store._embed_single("test text")
-        )
+        # Test single embedding using asyncio.run() — Python 3.12+ safe
+        # (asyncio.get_event_loop() is deprecated and raises RuntimeError
+        # when no event loop exists in the main thread).
+        result = asyncio.run(store._embed_single("test text"))
         assert isinstance(result, list)
-        assert len(result) == 768
+        assert len(result) == 256
+        # Verify L2 normalization (numpy fallback normalizes embeddings)
+        import math
+        norm = math.sqrt(sum(x * x for x in result))
+        assert abs(norm - 1.0) < 1e-5, (
+            f"numpy fallback should produce L2-normalized embedding, got norm={norm}"
+        )
 
 
 class TestDeduplicationMLX:

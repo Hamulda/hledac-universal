@@ -1619,7 +1619,12 @@ from .utils.capability_prober import _LazyModule
 mlx_lm = _LazyModule("mlx_lm")
 transformers = _LazyModule("transformers")
 torch = _LazyModule("torch")
-pd = _LazyModule("pandas")
+# NOTE: pandas lazy handle removed (2026-06-05) — declared but never accessed
+# anywhere in this legacy module. The canonical tabular path is polars
+# (see runtime/sprint_scheduler.py:26978) and arrow-native LanceDB paths
+# in knowledge/lancedb_store.py. Avoids spurious _LazyModule instantiation
+# cost on import. See TODO(POLARS-MIGRATION) in lancedb_store.reembed_all
+# for the remaining pandas use site (cold-path admin op).
 
 # Legacy compatibility - these will be set lazily when accessed
 MLX_AVAILABLE = True  # Will be verified on actual use

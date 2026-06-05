@@ -36,6 +36,7 @@ from pathlib import Path
 from typing import Any
 
 from hledac.universal.utils.serialization import _safe_dataclass_to_dict
+from hledac.universal.utils.async_helpers import safe_gather_strict
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -173,46 +174,47 @@ async def run_hermetic_sprint(duration_s: float = DEFAULT_DURATION_S) -> Benchma
     findings_accepted = 0
     uma_states = []
 
-    async with asyncio.TaskGroup() as tg:
-        async def _sprint_loop() -> None:
-            nonlocal cycle_count, findings_total, findings_accepted, rss_peak_mb
+    # F262D: standardized asyncio.TaskGroup → safe_gather_strict
+    # (PEP 654 / 3.11+ TaskGroup-based, all-or-nothing preserved)
+    async def _sprint_loop() -> None:
+        nonlocal cycle_count, findings_total, findings_accepted, rss_peak_mb
 
-            while time.monotonic() - start_time < duration_s:
-                await asyncio.sleep(0.05)  # cycle tick
+        while time.monotonic() - start_time < duration_s:
+            await asyncio.sleep(0.05)  # cycle tick
 
-                # Sample RSS
-                rss_mb = get_rss_mb()
-                if rss_mb > rss_peak_mb:
-                    rss_peak_mb = rss_mb
+            # Sample RSS
+            rss_mb = get_rss_mb()
+            if rss_mb > rss_peak_mb:
+                rss_peak_mb = rss_mb
 
-                # Sample UMA
-                uma = sample_uma_status()
-                uma_states.append(uma.state)
+            # Sample UMA
+            uma = sample_uma_status()
+            uma_states.append(uma.state)
 
-                # Governor evaluation (advisory)
-                decision = await governor.evaluate()
-                await governor.apply_decision(decision)
+            # Governor evaluation (advisory)
+            decision = await governor.evaluate()
+            await governor.apply_decision(decision)
 
-                # Simulate cycle processing
-                cycle_entries = entries[(cycle_count * entries_per_cycle) % len(entries):]
-                cycle_findings = 0
-                for entry in cycle_entries:
-                    text = entry["title"] + " " + entry["summary"]
-                    matches = _canned_match_text(text)
-                    cycle_findings += len(matches)
-                findings_total += cycle_findings
+            # Simulate cycle processing
+            cycle_entries = entries[(cycle_count * entries_per_cycle) % len(entries):]
+            cycle_findings = 0
+            for entry in cycle_entries:
+                text = entry["title"] + " " + entry["summary"]
+                matches = _canned_match_text(text)
+                cycle_findings += len(matches)
+            findings_total += cycle_findings
 
-                # Accept ~80% of findings
-                accepted = int(cycle_findings * 0.8)
-                findings_accepted += accepted
+            # Accept ~80% of findings
+            accepted = int(cycle_findings * 0.8)
+            findings_accepted += accepted
 
-                cycle_count += 1
+            cycle_count += 1
 
-                # Memory ceiling check
-                if rss_peak_mb > M1_8GB_CEILING_MB:
-                    break
+            # Memory ceiling check
+            if rss_peak_mb > M1_8GB_CEILING_MB:
+                break
 
-        tg.create_task(_sprint_loop())
+    await safe_gather_strict(_sprint_loop(), label="benchmark:sprint_loop")
 
     elapsed_s = time.monotonic() - start_time
 

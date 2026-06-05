@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import pytest
 
-from hypothesis.hypothesisgenerator import (
+from hledac_hypothesis.hypothesisgenerator import (
     HypothesisGenerator,
     ResearchHypothesis,
     MAX_HYPOTHESES,

@@ -1286,11 +1286,13 @@ class UnifiedWebIntelligence:
                 pass
 
         # Execute all three sources concurrently
-        await asyncio.gather(
+        # F262D: migrated from asyncio.gather → safe_gather_fire_and_forget
+        # (bare await, results not consumed; fail-soft invariant preserved)
+        await safe_gather_fire_and_forget(
             fetch_indeed_jobs(),
             fetch_hn_jobs(),
             fetch_remoteok_jobs(),
-            return_exceptions=True,
+            label="web_intelligence:1289",
         )
 
         # Aggregate all text and extract tech signals

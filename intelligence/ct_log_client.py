@@ -3,6 +3,8 @@ CTLogClient — Certificate Transparency log pivot přes crt.sh JSON API.
 
 Sprint 8SC: CT log pivot pro doménový OSINT (SubjectAltNames, cert history).
 B3: Max 1 request per 5s rate limit, 24h cache.
+Sprint F264: Migrated orjson → msgspec facade (utils.msgspec_json).
+Cache file format (.json and .json.zst) is preserved for backward compat.
 """
 
 from __future__ import annotations
@@ -15,6 +17,8 @@ import logging
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING
+
+from hledac.universal.utils.msgspec_json import decode, encode
 
 if TYPE_CHECKING:
     import aiohttp
@@ -56,14 +60,13 @@ class CTLogClient:
             if age < self._CACHE_TTL:
                 try:
                     import compression.zstd as _zstd
-                    return orjson.loads(_zstd.decompress(zst_path.read_bytes()))
+                    return decode(_zstd.decompress(zst_path.read_bytes()))
                 except (ImportError, Exception):
                     pass
         if cache_path.exists():
             age = time.time() - cache_path.stat().st_mtime
             if age < self._CACHE_TTL:
-                import orjson
-                return orjson.loads(cache_path.read_bytes())
+                return decode(cache_path.read_bytes())
 
         # Serialize concurrent pivots to prevent redundant rate-limited requests
         async with self._lock:
@@ -73,14 +76,13 @@ class CTLogClient:
                 if age < self._CACHE_TTL:
                     try:
                         import compression.zstd as _zstd
-                        return orjson.loads(_zstd.decompress(zst_path.read_bytes()))
+                        return decode(_zstd.decompress(zst_path.read_bytes()))
                     except (ImportError, Exception):
                         pass
             if cache_path.exists():
                 age = time.time() - cache_path.stat().st_mtime
                 if age < self._CACHE_TTL:
-                    import orjson
-                    return orjson.loads(cache_path.read_bytes())
+                    return decode(cache_path.read_bytes())
 
             # Rate limit
             elapsed = time.time() - self._last_request
@@ -109,12 +111,11 @@ class CTLogClient:
 
         # Cache write (outside lock — no throttle needed)
         self._cache_dir.mkdir(parents=True, exist_ok=True)
-        import orjson
         try:
             import compression.zstd as _zstd
-            zst_path.write_bytes(_zstd.compress(orjson.dumps(result)))
+            zst_path.write_bytes(_zstd.compress(encode(result)))
         except (ImportError, Exception):
-            cache_path.write_bytes(orjson.dumps(result))
+            cache_path.write_bytes(encode(result))
         return result
 
     def _parse_crt_response(self, domain: str, raw: list) -> dict:
@@ -183,14 +184,13 @@ class CTLogClient:
             if age < self._CACHE_TTL:
                 try:
                     import compression.zstd as _zstd
-                    return orjson.loads(_zstd.decompress(zst_path.read_bytes()))
+                    return decode(_zstd.decompress(zst_path.read_bytes()))
                 except (ImportError, Exception):
                     pass
         if cache_path.exists():
             age = time.time() - cache_path.stat().st_mtime
             if age < self._CACHE_TTL:
-                import orjson
-                return orjson.loads(cache_path.read_bytes())
+                return decode(cache_path.read_bytes())
 
             elapsed = time.time() - self._last_request
             if elapsed < self._RATE_LIMIT_S:
@@ -212,9 +212,9 @@ class CTLogClient:
         self._cache_dir.mkdir(parents=True, exist_ok=True)
         try:
             import compression.zstd as _zstd
-            zst_path.write_bytes(_zstd.compress(orjson.dumps(certs)))
+            zst_path.write_bytes(_zstd.compress(encode(certs)))
         except (ImportError, Exception):
-            cache_path.write_bytes(orjson.dumps(certs))
+            cache_path.write_bytes(encode(certs))
         return certs
 
     def _parse_certs(self, raw: list) -> list[dict]:

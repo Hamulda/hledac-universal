@@ -36,11 +36,12 @@ except (ImportError, Exception):
     _zstd = None
 
 try:
-    import orjson
-    ORJSON_AVAILABLE = True
-except ImportError:
+    from hledac.universal.utils.msgspec_json import ORJSON_AVAILABLE  # noqa: F401
+except ImportError:  # pragma: no cover
     ORJSON_AVAILABLE = False
-    import json as _json
+
+# Sprint F264: msgspec facade replaces orjson/json for cache serialization.
+from hledac.universal.utils.msgspec_json import decode, encode
 
 try:
     import numpy as _np
@@ -107,7 +108,7 @@ def _list_to_ndarray(obj: Any, target_type: Any = None) -> Any:
 
 
 def _serialize_cache(data: dict[str, CacheEntry]) -> bytes:
-    """Serialize cache data to bytes using orjson, compressed with zstd."""
+    """Serialize cache data to bytes using msgspec facade, compressed with zstd."""
     serializable = {}
     for k, v in data.items():
         entry_dict = {
@@ -122,23 +123,23 @@ def _serialize_cache(data: dict[str, CacheEntry]) -> bytes:
             'metadata': v.metadata,
         }
         serializable[k] = entry_dict
-    payload = orjson.dumps(serializable) if ORJSON_AVAILABLE else _json.dumps(serializable).encode()
+    payload = encode(serializable)
     if ZSTD_AVAILABLE and _zstd is not None:
         return _zstd.compress(payload)
     return payload
 
 
 def _deserialize_cache(data: bytes) -> dict[str, CacheEntry]:
-    """Deserialize cache data from bytes; zstd-compressed or raw orjson JSON."""
+    """Deserialize cache data from bytes; zstd-compressed or raw JSON (msgspec facade)."""
     raw: Any
     if ZSTD_AVAILABLE:
         try:
-            raw = orjson.loads(_zstd.decompress(data))
+            raw = decode(_zstd.decompress(data))
         except Exception:
             # Backward compat: try raw JSON (old .json files)
-            raw = orjson.loads(data) if ORJSON_AVAILABLE else _json.loads(data.decode())
+            raw = decode(data)
     else:
-        raw = orjson.loads(data) if ORJSON_AVAILABLE else _json.loads(data.decode())
+        raw = decode(data)
 
     result = {}
     for k, v in raw.items():

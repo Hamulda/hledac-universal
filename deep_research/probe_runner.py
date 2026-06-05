@@ -41,6 +41,8 @@ import os
 import time
 import uuid
 
+from utils.async_helpers import safe_gather_dropin
+
 logger = logging.getLogger(__name__)
 
 # Cache-first threshold: score > 0.7 triggers cache hit
@@ -205,12 +207,13 @@ async def run_deep_probe(
                 return ("dht", 0, [])
 
         # Race all tasks against timeout using gather
-        all_results = await asyncio.gather(
+        # F262D: migrated asyncio.gather → safe_gather_dropin (fail-soft invariant preserved)
+        all_results = await safe_gather_dropin(
             _run_discovery(),
             _run_bucket_scan(),
             _run_ipfs(),
             _run_dht(),
-            return_exceptions=True,
+            label="probe_runner:208",
         )
 
         # Apply timeout post-wait (bounded by design)

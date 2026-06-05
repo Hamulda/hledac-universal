@@ -457,14 +457,21 @@ async def crawl_dht_for_keyword(
     # They may be incorporated via the canonical sprint path if needed.
 
     try:
+        # F264: async-only bootstrap reachability check — sock.connect() previously
+        # blocked the event loop up to 2s × len(BOOTSTRAP_PEERS). Migrated to
+        # loop.sock_connect() + asyncio.wait_for() so the loop stays responsive.
+        loop = asyncio.get_running_loop()
         for host, port in BOOTSTRAP_PEERS:
             sock = None
             try:
                 sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-                sock.settimeout(2.0)
-                sock.connect((host, port))
+                sock.setblocking(False)
+                await asyncio.wait_for(
+                    loop.sock_connect(sock, (host, port)),
+                    timeout=2.0,
+                )
                 logger.debug(f"[DHT] Bootstrap peer {host}:{port} reachable")
-            except OSError as e:
+            except (OSError, asyncio.TimeoutError) as e:
                 logger.debug(f"[DHT] Bootstrap peer {host}:{port} unreachable: {e}")
             finally:
                 if sock:

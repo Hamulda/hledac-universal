@@ -32,6 +32,8 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
 
+from utils.async_helpers import safe_gather_dropin
+
 import aiohttp
 
 try:
@@ -312,9 +314,10 @@ async def cdx_deep_search_batch(
                 seen_urls.add(r.original)
             return unique
 
-    gathered = await asyncio.gather(
+    # F262D: migrated asyncio.gather → safe_gather_dropin (fail-soft invariant preserved)
+    gathered = await safe_gather_dropin(
         *[_fetch_one(d) for d in domains],
-        return_exceptions=True,
+        label="wayback_cdx:315",
     )
 
     for res in gathered:
@@ -407,9 +410,10 @@ class WaybackCDXDeepSearch:
                     limit=limit_per_domain,
                 )
 
-        gathered = await asyncio.gather(
+        # F262D: migrated asyncio.gather → safe_gather_dropin (fail-soft invariant preserved)
+        gathered = await safe_gather_dropin(
             *[_fetch_one(d) for d in domains_or_urls],
-            return_exceptions=True,
+            label="wayback_cdx:410",
         )
 
         all_results: list[CDXSearchResult] = []

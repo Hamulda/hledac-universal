@@ -2,10 +2,19 @@
 Deep explainer – využívá mlx-graphs native explain nebo fallback GNNExplainer v MLX.
 """
 
+from __future__ import annotations
+
 import logging
 
-import mlx.core as mx
-import mlx.nn as nn
+_MLX_AVAILABLE = False
+try:
+    import mlx.core as mx
+    import mlx.nn as nn
+    _MLX_AVAILABLE = True
+except ImportError:
+    mx = None  # type: ignore[assignment]
+    nn = None  # type: ignore[assignment]
+
 from hledac.universal.core.resource_governor import Priority, ResourceGovernor
 
 logger = logging.getLogger(__name__)
@@ -30,6 +39,8 @@ class DeepExplainer:
         Vysvětlí predikci pro daný uzel.
         Vrací slovník s důležitými hranami a případně důležitými features.
         """
+        if not _MLX_AVAILABLE:
+            return {}
         async with self.governor.reserve({'ram_mb': 200, 'gpu': True}, Priority.NORMAL):
             # 1. Extrahujeme subgraf (ego‑kruh)
             subgraph = await self._extract_subgraph(node, max_nodes)
@@ -60,6 +71,8 @@ class DeepExplainer:
 
     async def _fallback_explain(self, subgraph: dict, optimize_features: bool) -> dict:
         """Fallback GNN explainer s gradient-based mask."""
+        if not _MLX_AVAILABLE:
+            return {}
         node_features = mx.array(subgraph['node_features'])
         edge_index = mx.array(subgraph['edges']).T
         edge_weights = mx.array(subgraph.get('edge_weights', [1.0] * edge_index.shape[1]))

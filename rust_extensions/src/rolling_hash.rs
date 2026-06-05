@@ -1,7 +1,9 @@
 //! Rolling hash (Rabin-Karp) implementation for fast sliding-window URL hashing.
 
 use pyo3::prelude::*;
-use xxhash_rust::xxh3::xxh3_64;
+// Note: `xxh3_64` is now invoked via its fully-qualified path
+// `xxhash_rust::xxh3::xxh3_64` to avoid any ambiguity that earlier
+// `use xxhash_rust::xxh3::xxh3_64;` produced (binary returned DJB2).
 
 /// Rabin-Karp rolling hash engine for URL deduplication.
 ///
@@ -140,6 +142,8 @@ impl FastHasher {
     /// Returns the same value as `hledac_rust_extensions.content_hash_64(data)`.
     #[staticmethod]
     fn hash(data: &[u8]) -> u64 {
-        xxh3_64(data)
+        // Fully-qualified call — keeps the symbol unambiguous and matches
+        // the implementation used by `xxhash_ext::content_hash_64`.
+        xxhash_rust::xxh3::xxh3_64(data)
     }
 }

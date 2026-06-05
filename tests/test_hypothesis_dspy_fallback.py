@@ -16,7 +16,7 @@ from unittest.mock import patch
 
 import pytest
 
-from hypothesis.hypothesisgenerator import (
+from hledac_hypothesis.hypothesisgenerator import (
     HypothesisGenerator,
     ResearchHypothesis,
     HLEDAC_ENABLE_DSPY,

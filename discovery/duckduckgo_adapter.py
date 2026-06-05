@@ -1471,9 +1471,10 @@ async def search_multi_engine(
     cc_task     = _search_commoncrawl_domain(query, max_results=max_results // 4)
 
     all_results: list[dict] = []
-    for batch in await asyncio.gather(
+    # F262D: migrated asyncio.gather → safe_gather_dropin (fail-soft invariant preserved)
+    for batch in await safe_gather_dropin(
         ddg_task, mojeek_task, cc_task,
-        return_exceptions=True
+        label="duckduckgo_adapter:1474",
     ):
         if isinstance(batch, DiscoveryBatchResult) and batch.hits:
             all_results.extend([

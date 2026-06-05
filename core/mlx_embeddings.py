@@ -20,6 +20,7 @@ from __future__ import annotations
 import logging
 import warnings
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 
@@ -83,10 +84,16 @@ class MLXEmbeddingManager:
     """
 
     DEFAULT_MODEL = "nomic-ai/modernbert-embed-base"  # Retrieval-tuned, NOT fill-mask
+    NATIVE_DIM = 768  # Native ModernBERT hidden size (full model output)
     EMBEDDING_DIM = 256  # MRL canonical dimension (Matryoshka Representation Learning)
     MRL_DIM = 256  # Matryoshka Representation Learning dimension
+    # MRL_DIMS: tuple of Matryoshka-supported output dimensions.
+    # ModernBERT trained for nested 256/512/768; slicing the first k dims preserves
+    # retrieval quality. Use 256 by default for M1 8GB UMA RAM/bandwidth sweet-spot.
+    MRL_DIMS: tuple[int, ...] = (256, 512, 768)
     MAX_LENGTH = 512
     SUPPORTS_TASK_PREFIX = True  # ModernBERT supports search_query/search_document prefixes
+    BATCH_SIZE = 32  # M1 8GB UMA sweet-spot; hard cap to prevent OOM
 
     # Task safety: track current embedding task
     _current_task: EmbeddingTask | None = None
@@ -109,8 +116,13 @@ class MLXEmbeddingManager:
             )
 
         self.model_path = Path(model_path) if model_path else Path(self.DEFAULT_MODEL)
-        self._model = None
-        self._tokenizer = None
+        # Type-annotated to silence Pyright reportOptionalCall warnings on the
+        # None-typed self._model / self._tokenizer / self._processor attributes.
+        # Real types are model-specific; we use Any here because mlx-embeddings
+        # returns dynamic types (Model + Processor) without a stable interface.
+        self._model: Any = None
+        self._tokenizer: Any = None
+        self._processor: Any = None
         self._is_loaded = False
 
         if not lazy_load:
@@ -152,6 +164,30 @@ class MLXEmbeddingManager:
     def supports_task_prefix(self) -> bool:
         """Vrátí True pokud provider podporuje task prefixy (ModernBERT ano, FastEmbed ne)."""
         return self.SUPPORTS_TASK_PREFIX
+
+    @classmethod
+    def validate_mrl_dim(cls, dim: int) -> bool:
+        """
+        Validate that a dimension is a supported MRL slice.
+
+        Matryoshka Representation Learning (MRL) allows truncating ModernBERT
+        embeddings to smaller dimensions while preserving retrieval quality.
+        The native ModernBERT output is 768d; MRL supports slicing to any
+        of (256, 512, 768). Using 256 is the M1 8GB UMA RAM/bandwidth
+        sweet-spot (~3x smaller LanceDB vectors, ~3x faster cosine sim).
+
+        Args:
+            dim: Candidate embedding dimension.
+
+        Returns:
+            True if dim is a valid MRL dimension, False otherwise.
+        """
+        return dim in cls.MRL_DIMS
+
+    @classmethod
+    def get_mrl_dims(cls) -> tuple[int, ...]:
+        """Return the tuple of supported MRL dimensions (single source of truth)."""
+        return cls.MRL_DIMS
 
     # === Task-aware embedding methods (prefix discipline) ===
 
@@ -270,6 +306,9 @@ class MLXEmbeddingManager:
         if not self._is_loaded:
             self._load_model()
 
+        # Hard cap batch size (M1 8GB UMA — prevents OOM on larger batches)
+        batch_size = min(batch_size, self.BATCH_SIZE)
+
         # Normalizace vstupu
         if isinstance(texts, str):
             texts = [texts]
@@ -298,6 +337,8 @@ class MLXEmbeddingManager:
             # Forward pass - mlx-embeddings returns pooled text_embeds
             # B4: scope Metal buffers to with-block for immediate release on UMA.
             # F219L: single-source guard via mlx_memory helper
+            # M218A+: Batched mx.eval() — single ANE/Metal dispatch per batch,
+            # not per-item. Avoids ~15-30μs queue overhead per embedding.
             from hledac.universal.utils.mlx_memory import get_metal_stream_context
             with get_metal_stream_context():
                 outputs = self._model(
@@ -305,17 +346,21 @@ class MLXEmbeddingManager:
                     attention_mask=inputs.attention_mask
                 )
 
-            # Use pre-pooled embeddings from the model (includes attention mask pooling internally)
-            embeddings = outputs.text_embeds
+                # Use pre-pooled embeddings from the model (includes attention mask pooling internally)
+                embeddings = outputs.text_embeds
 
-            # Matryoshka truncation: slice BEFORE normalization
-            if truncate_dim and truncate_dim < self.EMBEDDING_DIM:
-                embeddings = embeddings[:, :truncate_dim]
+                # Matryoshka truncation: slice BEFORE normalization
+                if truncate_dim and truncate_dim < self.EMBEDDING_DIM:
+                    embeddings = embeddings[:, :truncate_dim]
 
-            # L2 normalization
-            if normalize:
-                norms = mx.linalg.norm(embeddings, axis=1, keepdims=True)
-                embeddings = embeddings / mx.clip(norms, a_min=1e-12, a_max=None)
+                # L2 normalization (kept under stream guard to avoid dispatch overhead)
+                if normalize:
+                    norms = mx.linalg.norm(embeddings, axis=1, keepdims=True)
+                    embeddings = embeddings / mx.clip(norms, a_min=1e-12, a_max=None)
+
+                # Batched eval — single ANE/Metal dispatch for the entire batch.
+                # Canonical MLX 2026 pattern; never call mx.eval() in a per-item loop.
+                mx.eval(embeddings)
 
             # B4: Convert to numpy THEN release MLX refs while still in scope.
             # This ensures Metal buffers are freed before next batch on UMA.
@@ -507,13 +552,23 @@ def assert_embedding_dimension(expected_dim: int, context: str = "") -> None:
     """
     Verify that current embedding dimension matches expected dimension.
 
+    Supports all canonical embedding backends:
+    - 256  (MRL canonical — M1 8GB UMA sweet-spot, 3x smaller vectors)
+    - 384  (MiniLM-L6-v2 fallback — backward compat)
+    - 512  (MRL mid — half the native dim, balanced)
+    - 768  (ModernBERT native / MRL full — max quality, max RAM)
+
     Args:
-        expected_dim: Expected dimension (256, 384, 768)
+        expected_dim: Expected dimension (256, 384, 512, or 768)
         context: Context string for error message
 
     Raises:
         EmbeddingDimensionError: If dimension doesn't match
     """
+    # Canonical dim set: MRL (256/512/768) + legacy MiniLM (384).
+    # Use frozenset for O(1) membership check and immutability.
+    _VALID_DIMS = frozenset({256, 384, 512, 768})
+
     global _default_manager
     if _default_manager is None:
         raise EmbeddingDimensionError(
@@ -522,9 +577,10 @@ def assert_embedding_dimension(expected_dim: int, context: str = "") -> None:
         )
 
     actual_dim = _default_manager.EMBEDDING_DIM
-    if expected_dim not in (256, 384, 768):
+    if expected_dim not in _VALID_DIMS:
         raise EmbeddingDimensionError(
-            f"Invalid expected_dim {expected_dim}. Must be 256, 384, or 768. Context: {context}"
+            f"Invalid expected_dim {expected_dim}. Must be 256, 384, 512, or 768. "
+            f"Context: {context}"
         )
 
     if actual_dim != expected_dim:

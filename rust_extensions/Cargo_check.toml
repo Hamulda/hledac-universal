@@ -1,0 +1,14 @@
+[package]
+name = "xxh3_check"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "xxh3_check"
+path = "/tmp/xxh3_check.rs"
+
+[dependencies]
+xxhash-rust = { version = "0.8", features = ["xxh3", "const_xxh3", "xxh64"] }
+
+[profile.release]
+opt-level = 3

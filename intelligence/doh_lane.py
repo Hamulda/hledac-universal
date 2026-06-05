@@ -336,8 +336,9 @@ class DOHAdapter:
         profile_task = full_doh_profile(domain, session)
         sub_task = subdomain_probe(domain, session)
 
-        profile_findings, subdomains = await asyncio.gather(
-            profile_task, sub_task, return_exceptions=True
+        # F262D: migrated asyncio.gather → safe_gather_dropin (fail-soft invariant preserved)
+        profile_findings, subdomains = await safe_gather_dropin(
+            profile_task, sub_task, label="doh_lane:339"
         )
 
         if isinstance(profile_findings, Exception):

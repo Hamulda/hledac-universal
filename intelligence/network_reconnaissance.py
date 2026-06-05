@@ -822,9 +822,10 @@ class NetworkReconnaissance:
         whois_task = self.whois.lookup(domain)
         ssl_task = self.ssl.analyze_certificate(domain)
 
-        dns_results, whois_data, ssl_cert = await asyncio.gather(
+        # F262D: migrated asyncio.gather → safe_gather_dropin (fail-soft invariant preserved)
+        dns_results, whois_data, ssl_cert = await safe_gather_dropin(
             dns_task, whois_task, ssl_task,
-            return_exceptions=True
+            label="network_reconnaissance:825"
         )
 
         # Extract IP addresses from DNS (with private IP filtering - Sprint 85)

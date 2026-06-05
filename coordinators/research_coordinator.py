@@ -19,7 +19,9 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 import logging
+import os as _os
 import time
 from collections import defaultdict, deque
 from dataclasses import dataclass, field
@@ -876,10 +878,204 @@ class UniversalResearchCoordinator(UniversalCoordinator):
                 'content': None
             }
 
+    async def _run_graph_path_analysis(
+        self,
+        entities: list[dict[str, Any]],
+        query: str,
+        sprint_id: str = "",
+    ) -> list[dict[str, Any]]:
+        """
+        F264: Bounded quantum-inspired path analysis post evidence network.
+
+        Picks top-10 nodes by combined centrality (degree + betweenness)
+        from EvidenceNetworkAnalyzer output, builds an undirected adjacency
+        list, finds shortest paths between the top centrality node and the
+        remaining top nodes using QuantumInspiredPathFinder (quantum random
+        walk + Grover amplitude amplification).
+
+        Stores each path as a CanonicalFinding with source_type=
+        "graph_path_analysis" via DuckDBShadowStore.async_ingest_findings_batch
+        (the canonical write path).
+
+        M1 RAM bounded: QuantumInspiredPathFinder enforces MAX_QUANTUM_NODES
+        (4096) and MAX_QUANTUM_EDGES (50000). Per-path timeout = 60s / N
+        targets. Fail-soft: any exception → return []. Gate:
+        HLEDAC_ENABLE_GRAPH_PATHS=1.
+        """
+        if _os.environ.get("HLEDAC_ENABLE_GRAPH_PATHS", "0") != "1":
+            return []
+        if not entities or not self._evidence_analyzer:
+            return []
+
+        pathfinder: Any = None
+        try:
+            # 1) Get centrality + edges from evidence network
+            net_result = await self._evidence_analyzer.analyze_network(entities)
+            if not isinstance(net_result, dict):
+                return []
+            centrality: dict[str, float] = net_result.get("centrality") or {}
+            edges: list[dict[str, Any]] = net_result.get("edges") or []
+            if not centrality or not edges or len(centrality) < 2:
+                return []
+
+            # 2) Top-10 by centrality
+            ranked = sorted(
+                centrality.items(),
+                key=lambda kv: float(kv[1] or 0.0),
+                reverse=True,
+            )[:10]
+            if len(ranked) < 2:
+                return []
+            top_nodes: list[str] = [str(n) for n, _ in ranked]
+
+            # 3) Build undirected adjacency list, bounded to top_nodes
+            adj: dict[str, list[str]] = {n: [] for n in top_nodes}
+            for e in edges:
+                try:
+                    src = str(e.get("src", ""))
+                    dst = str(e.get("dst", ""))
+                    if not src or not dst or src == dst:
+                        continue
+                    if src in adj and dst not in adj[src]:
+                        adj[src].append(dst)
+                    if dst in adj and src not in adj[dst]:
+                        adj[dst].append(src)
+                except Exception:
+                    continue
+
+            # 4) Lazy import of quantum_pathfinder (avoids module-level tax)
+            from graph.quantum_pathfinder import create_quantum_pathfinder
+            pathfinder = create_quantum_pathfinder()
+            if pathfinder is None:
+                return []
+            await pathfinder.initialize(adj)
+
+            # 5) Bounded path search: top-1 vs each of the rest
+            ts_now = time.time()
+            start = top_nodes[0]
+            targets = top_nodes[1:]
+            per_target_timeout = max(1.0, 60.0 / max(1, len(targets)))
+            findings: list[Any] = []
+
+            # Lazy import for CanonicalFinding — keep research_coordinator
+            # importable even if duckdb_store is unavailable
+            try:
+                from knowledge.duckdb_store import CanonicalFinding
+            except Exception as e:
+                logger.warning(
+                    f"ResearchCoordinator: CanonicalFinding unavailable, "
+                    f"graph path ingest skipped: {e}"
+                )
+                return []
+
+            for tgt in targets:
+                try:
+                    paths = await asyncio.wait_for(
+                        pathfinder.find_paths(
+                            start_nodes=[start],
+                            target_nodes=[tgt],
+                            max_steps=50,
+                        ),
+                        timeout=per_target_timeout,
+                    )
+                except (asyncio.TimeoutError, Exception) as e:
+                    logger.debug(
+                        f"ResearchCoordinator: path find {start}→{tgt} "
+                        f"failed: {e}"
+                    )
+                    continue
+                if not paths:
+                    continue
+                # Shortest path wins
+                paths.sort(key=len)
+                path = paths[0]
+                if not path:
+                    continue
+                fid_seed = f"{start}|{tgt}|{ts_now}"
+                fid = "graph_path_" + hashlib.sha256(
+                    fid_seed.encode("utf-8")
+                ).hexdigest()[:16]
+                try:
+                    findings.append(
+                        CanonicalFinding(
+                            finding_id=fid,
+                            query=query or "",
+                            source_type="graph_path_analysis",
+                            confidence=0.5,
+                            ts=ts_now,
+                            provenance=(
+                                "graph_path_analysis",
+                                "research_coordinator",
+                                start,
+                                tgt,
+                            ),
+                            payload_text=json.dumps(
+                                {
+                                    "start": start,
+                                    "target": tgt,
+                                    "path": path,
+                                    "length": len(path),
+                                    "centrality": {
+                                        "start": centrality.get(start, 0.0),
+                                        "target": centrality.get(tgt, 0.0),
+                                    },
+                                    "sprint_id": sprint_id,
+                                },
+                                default=str,
+                            ),
+                        )
+                    )
+                except Exception as e:
+                    logger.debug(
+                        f"ResearchCoordinator: CanonicalFinding build failed: {e}"
+                    )
+                    continue
+
+            # 6) Canonical write path
+            if findings:
+                try:
+                    from knowledge.duckdb_store import DuckDBShadowStore
+                    store = DuckDBShadowStore()
+                    await store.async_ingest_findings_batch(findings)
+                except Exception as e:
+                    logger.warning(
+                        f"ResearchCoordinator: graph path ingest failed: {e}"
+                    )
+
+            # 7) Return compact view to caller
+            return [
+                {
+                    "agent": "graph_path_analysis",
+                    "start": f.provenance[2] if len(f.provenance) > 2 else "",
+                    "target": f.provenance[3] if len(f.provenance) > 3 else "",
+                    "path": json.loads(f.payload_text or "{}").get("path", []),
+                    "length": json.loads(f.payload_text or "{}").get("length", 0),
+                    "finding_id": f.finding_id,
+                }
+                for f in findings
+            ]
+
+        except Exception as e:
+            logger.warning(
+                f"ResearchCoordinator: graph path analysis failed: {e}"
+            )
+            return []
+        finally:
+            # Always release pathfinder resources (mx.eval+clear_cache guarded
+            # inside cleanup() itself; here we just ensure the call)
+            try:
+                if pathfinder is not None and getattr(
+                    pathfinder, "initialized", False
+                ):
+                    await pathfinder.cleanup()
+            except Exception:
+                pass
+
     async def execute_research_plan(
         self,
         plan: dict[str, Any],
-        context: dict[str, Any] | None = None
+        context: dict[str, Any] | None = None,
+        graph_analysis: bool = False,
     ) -> list[dict[str, Any]]:
         """
         Execute a research plan with multiple steps (from Hermes3).
@@ -887,6 +1083,10 @@ class UniversalResearchCoordinator(UniversalCoordinator):
         Args:
             plan: Research plan with agents and tasks
             context: Optional context
+            graph_analysis: F264 — when True, run quantum-inspired path
+                analysis on the entities supplied via plan['entities'] or
+                context['entities'] (fail-soft if absent). Gated by
+                HLEDAC_ENABLE_GRAPH_PATHS=1.
 
         Returns:
             List of results from each step
@@ -921,7 +1121,7 @@ class UniversalResearchCoordinator(UniversalCoordinator):
                         decision, task
                     )
                     result = {
-                        'success': research_result.success,
+                        'success': getattr(research_result, 'success', None),
                         'source': 'unified_ai',
                         'result': research_result.full_result
                     }
@@ -935,6 +1135,32 @@ class UniversalResearchCoordinator(UniversalCoordinator):
                     'error': str(e),
                     'agent_type': agent_type
                 })
+
+        # F264: optional post-execution graph path analysis step
+        if graph_analysis:
+            try:
+                entities = (
+                    plan.get('entities')
+                    or (context or {}).get('entities')
+                    or []
+                )
+                if entities:
+                    graph_results = await self._run_graph_path_analysis(
+                        entities=list(entities),
+                        query=str(plan.get('query', '') or ''),
+                        sprint_id=str(plan.get('sprint_id', '') or ''),
+                    )
+                    if graph_results:
+                        results.append({
+                            'agent': 'graph_path_analysis',
+                            'type': 'graph_path_analysis',
+                            'count': len(graph_results),
+                            'results': graph_results,
+                        })
+            except Exception as e:
+                logger.warning(
+                    f"execute_research_plan: graph_analysis step failed: {e}"
+                )
 
         return results
 

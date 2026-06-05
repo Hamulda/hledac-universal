@@ -36,6 +36,7 @@ from typing import Any
 import aiohttp
 from hledac.universal.network.session_runtime import async_get_aiohttp_session
 from hledac.universal.paths import open_lmdb
+from hledac.universal.utils.msgspec_json import decode, encode
 
 logger = logging.getLogger(__name__)
 
@@ -437,7 +438,6 @@ class GitHubCodeSearchClient:
 
         Returns [{repo, url, path, stars}] — max 10 results.
         """
-        import orjson
         import xxhash
 
         key = xxhash.xxh64(f"ghcs_{cve_id}".encode()).hexdigest()
@@ -447,11 +447,11 @@ class GitHubCodeSearchClient:
         if zst_path.exists() and (time.time() - zst_path.stat().st_mtime < self._CACHE_TTL):
             try:
                 import compression.zstd as _zstd
-                return orjson.loads(_zstd.decompress(zst_path.read_bytes()))
+                return decode(_zstd.decompress(zst_path.read_bytes()))
             except (ImportError, Exception):
                 pass
         if json_path.exists() and (time.time() - json_path.stat().st_mtime < self._CACHE_TTL):
-            return orjson.loads(json_path.read_bytes())
+            return decode(json_path.read_bytes())
 
         await self._throttle()
         headers = {
@@ -492,12 +492,12 @@ class GitHubCodeSearchClient:
             for i in data.get("items", [])
         ]
         self._cache_dir.mkdir(parents=True, exist_ok=True)
-        import orjson
+        # msgspec facade imported at module top (utils.msgspec_json)
         try:
             import compression.zstd as _zstd
-            zst_path.write_bytes(_zstd.compress(orjson.dumps(items)))
+            zst_path.write_bytes(_zstd.compress(encode(items)))
         except (ImportError, Exception):
-            json_path.write_bytes(orjson.dumps(items))
+            json_path.write_bytes(encode(items))
         return items
 
     async def close(self) -> None:
@@ -539,7 +539,6 @@ class MalwareBazaarClient:
 
         Returns raw MB response dict with query_status and data.
         """
-        import orjson
         import xxhash
 
         key = xxhash.xxh64(f"mb_{file_hash}".encode()).hexdigest()
@@ -548,11 +547,11 @@ class MalwareBazaarClient:
         if zst_path.exists() and (time.time() - zst_path.stat().st_mtime < self._CACHE_TTL):
             try:
                 import compression.zstd as _zstd
-                return orjson.loads(_zstd.decompress(zst_path.read_bytes()))
+                return decode(_zstd.decompress(zst_path.read_bytes()))
             except (ImportError, Exception):
                 pass
         if json_path.exists() and (time.time() - json_path.stat().st_mtime < self._CACHE_TTL):
-            return orjson.loads(json_path.read_bytes())
+            return decode(json_path.read_bytes())
 
         await self._throttle()
         try:
@@ -568,12 +567,12 @@ class MalwareBazaarClient:
             return {"query_status": "error", "data": []}
 
         self._cache_dir.mkdir(parents=True, exist_ok=True)
-        import orjson
+        # msgspec facade imported at module top (utils.msgspec_json)
         try:
             import compression.zstd as _zstd
-            zst_path.write_bytes(_zstd.compress(orjson.dumps(data)))
+            zst_path.write_bytes(_zstd.compress(encode(data)))
         except (ImportError, Exception):
-            json_path.write_bytes(orjson.dumps(data))
+            json_path.write_bytes(encode(data))
         return data
 
     def extract_iocs(self, mb_resp: dict) -> list[tuple[str, str]]:
@@ -640,7 +639,6 @@ class GreyNoiseClient:
         session: aiohttp.ClientSession,
     ) -> dict:
         """Vrátí {"ip", "classification", "name", "link", "noise", "riot"}"""
-        import orjson
         import xxhash
 
         key = xxhash.xxh64(f"gn_{ip}".encode()).hexdigest()
@@ -649,11 +647,11 @@ class GreyNoiseClient:
         if zst_path.exists() and (time.time() - zst_path.stat().st_mtime < self._CACHE_TTL):
             try:
                 import compression.zstd as _zstd
-                return orjson.loads(_zstd.decompress(zst_path.read_bytes()))
+                return decode(_zstd.decompress(zst_path.read_bytes()))
             except (ImportError, Exception):
                 pass
         if json_path.exists() and (time.time() - json_path.stat().st_mtime < self._CACHE_TTL):
-            return orjson.loads(json_path.read_bytes())
+            return decode(json_path.read_bytes())
 
         await self._throttle()
         try:
@@ -674,12 +672,12 @@ class GreyNoiseClient:
             return {"ip": ip, "classification": "error"}
 
         self._cache_dir.mkdir(parents=True, exist_ok=True)
-        import orjson
+        # msgspec facade imported at module top (utils.msgspec_json)
         try:
             import compression.zstd as _zstd
-            zst_path.write_bytes(_zstd.compress(orjson.dumps(data)))
+            zst_path.write_bytes(_zstd.compress(encode(data)))
         except (ImportError, Exception):
-            json_path.write_bytes(orjson.dumps(data))
+            json_path.write_bytes(encode(data))
         return data
 
     async def _throttle(self) -> None:
@@ -792,7 +790,7 @@ class CVIntelligenceClient:
         Fetch CVEs via OSV.dev batch API.
         Yields dicts with CVE data. Falls back to NVD on 0 results.
         """
-        import orjson
+        # msgspec facade imported at module top (utils.msgspec_json)
 
         # Build queries for OSV batch API
         queries = []
@@ -837,7 +835,7 @@ class CVIntelligenceClient:
                             continue
                         try:
                             # OSV batch returns NDJSON
-                            data = orjson.loads(line_bytes)
+                            data = decode(line_bytes)
                             vulns = data.get("vulns", []) if isinstance(data, dict) else []
                             for vuln in vulns:
                                 if cves_yielded >= self._MAX_CVES:

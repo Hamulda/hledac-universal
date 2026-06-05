@@ -44,6 +44,7 @@ from hledac.universal.utils.query_expansion import (
 )
 
 from utils.async_helpers import safe_gather_dropin
+from hledac.universal.utils.msgspec_json import decode, encode
 logger = logging.getLogger(__name__)
 
 
@@ -1274,7 +1275,6 @@ class SemanticScholarClient:
         limit: int = 10,
     ) -> list[dict]:
         """Semantic Scholar: [{title, abstract, year, doi, authors}]"""
-        import orjson
         import xxhash
 
         key = xxhash.xxh64(f"ss_{query[:80]}".encode()).hexdigest()
@@ -1283,11 +1283,11 @@ class SemanticScholarClient:
         if zst_path.exists() and (time.time() - zst_path.stat().st_mtime < self._CACHE_TTL):
             try:
                 import compression.zstd as _zstd
-                return orjson.loads(_zstd.decompress(zst_path.read_bytes()))
+                return decode(_zstd.decompress(zst_path.read_bytes()))
             except (ImportError, Exception):
                 pass
         if json_path.exists() and (time.time() - json_path.stat().st_mtime < self._CACHE_TTL):
-            return orjson.loads(json_path.read_bytes())
+            return decode(json_path.read_bytes())
 
         await self._throttle()
         params = {
@@ -1317,12 +1317,12 @@ class SemanticScholarClient:
             for p in data.get("data", [])
         ]
         self._cache_dir.mkdir(parents=True, exist_ok=True)
-        import orjson
+        # msgspec facade imported at module top (utils.msgspec_json)
         try:
             import compression.zstd as _zstd
-            zst_path.write_bytes(_zstd.compress(orjson.dumps(items)))
+            zst_path.write_bytes(_zstd.compress(encode(items)))
         except (ImportError, Exception):
-            json_path.write_bytes(orjson.dumps(items))
+            json_path.write_bytes(encode(items))
         return items
 
     async def search_arxiv(
@@ -1332,7 +1332,6 @@ class SemanticScholarClient:
         max_results: int = 5,
     ) -> list[dict]:
         """ArXiv API — security preprints. [{title, summary, published, link}]"""
-        import orjson
         import xxhash
 
         key = xxhash.xxh64(f"ax_{query[:80]}".encode()).hexdigest()
@@ -1341,11 +1340,11 @@ class SemanticScholarClient:
         if zst_path.exists() and (time.time() - zst_path.stat().st_mtime < self._CACHE_TTL):
             try:
                 import compression.zstd as _zstd
-                return orjson.loads(_zstd.decompress(zst_path.read_bytes()))
+                return decode(_zstd.decompress(zst_path.read_bytes()))
             except (ImportError, Exception):
                 pass
         if json_path.exists() and (time.time() - json_path.stat().st_mtime < self._CACHE_TTL):
-            return orjson.loads(json_path.read_bytes())
+            return decode(json_path.read_bytes())
 
         await self._throttle()
         params = {
@@ -1385,12 +1384,12 @@ class SemanticScholarClient:
             items = []
 
         self._cache_dir.mkdir(parents=True, exist_ok=True)
-        import orjson
+        # msgspec facade imported at module top (utils.msgspec_json)
         try:
             import compression.zstd as _zstd
-            zst_path.write_bytes(_zstd.compress(orjson.dumps(items)))
+            zst_path.write_bytes(_zstd.compress(encode(items)))
         except (ImportError, Exception):
-            json_path.write_bytes(orjson.dumps(items))
+            json_path.write_bytes(encode(items))
         return items
 
     async def _throttle(self) -> None:

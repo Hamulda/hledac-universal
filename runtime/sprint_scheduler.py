@@ -172,7 +172,7 @@ def resolve_nonfeed_expected_lanes(
 
 from hledac.universal.runtime.graph_accumulator import SprintGraphAccumulator
 
-from hledac.universal.utils.async_helpers import _check_gathered, safe_gather, safe_gather_dropin, safe_gather_fire_and_forget
+from hledac.universal.utils.async_helpers import _check_gathered, safe_gather, safe_gather_dropin, safe_gather_fire_and_forget, safe_gather_strict
 
 # Sprint F262OBS: centralize source_type literals via utils.source_types
 try:
@@ -13706,7 +13706,10 @@ class SprintScheduler:
 
         tasks = [fetch_one(w) for w in work_items]
 
-        results: list[tuple[str, FeedPipelineRunResult]] = await asyncio.gather(*tasks, return_exceptions=True)
+        # F262D: migrated asyncio.gather → safe_gather_dropin (fail-soft invariant preserved)
+        results: list[tuple[str, FeedPipelineRunResult]] = await safe_gather_dropin(
+            *tasks, label="sprint_scheduler:13709"
+        )
 
 
 
@@ -14336,7 +14339,10 @@ class SprintScheduler:
 
             tasks = [fetch_one(w) for w in work_items]
 
-            results: list[tuple[str, FeedPipelineRunResult]] = await _asyncio.gather(*tasks, return_exceptions=True)
+            # F262D: migrated _asyncio.gather → safe_gather_dropin (fail-soft invariant preserved)
+            results: list[tuple[str, FeedPipelineRunResult]] = await safe_gather_dropin(
+                *tasks, label="sprint_scheduler:14339"
+            )
 
             for feed_url, result in results:
 
@@ -14648,11 +14654,13 @@ class SprintScheduler:
 
                 async with _asyncio.timeout(outer_timeout):
 
-                    results = await _asyncio.gather(
+                    # F262D: migrated _asyncio.gather → safe_gather_dropin
+                    # (fail-soft invariant preserved; timeout context stays external)
+                    results = await safe_gather_dropin(
 
                         feed_branch, public_branch, ct_branch,
 
-                        return_exceptions=True,
+                        label="sprint_scheduler:14651",
 
                     )
 
@@ -15042,45 +15050,49 @@ class SprintScheduler:
 
 
 
+        # F262D: standardized asyncio.TaskGroup → safe_gather_strict
+        # (PEP 654 / 3.11+ TaskGroup-based, all-or-nothing preserved)
+        _had_error = False
+        public_result: Any = None
         try:
 
-            async with asyncio.TaskGroup() as tg:
+            [public_result] = await safe_gather_strict(
 
-                public_task = tg.create_task(
+                async_run_public(
 
-                    async_run_public(
+                    query=query_hint,
 
-                        query=query_hint,
+                    store=duckdb_store,  # Sprint 8XE: real store for finding persistence
 
-                        store=duckdb_store,  # Sprint 8XE: real store for finding persistence
+                    max_results=5,
 
-                        max_results=5,
+                    fetch_timeout_s=35.0,
 
-                        fetch_timeout_s=35.0,
+                    fetch_concurrency=3,
 
-                        fetch_concurrency=3,
+                    hermes_engine=hermes_engine,  # P12: post-storage ToT hypothesis layer
 
-                        hermes_engine=hermes_engine,  # P12: post-storage ToT hypothesis layer
+                    memory_manager=memory_manager,  # P11: session history for RAG context
 
-                        memory_manager=memory_manager,  # P11: session history for RAG context
+                    enqueue_hypothesis_pivot=self.enqueue_hypothesis_pivot,  # Sprint F193B: bounded feedback seam
 
-                        enqueue_hypothesis_pivot=self.enqueue_hypothesis_pivot,  # Sprint F193B: bounded feedback seam
+                    public_bootstrap_enabled=public_bootstrap_enabled,  # Sprint F217C: deterministic bootstrap
 
-                        public_bootstrap_enabled=public_bootstrap_enabled,  # Sprint F217C: deterministic bootstrap
+                    seed_context=seed_context,  # Sprint F223C: bounded seed_context bootstrap
 
-                        seed_context=seed_context,  # Sprint F223C: bounded seed_context bootstrap
+                ),
 
-                    ),
+                label="sprint:public",
 
-                    name="sprint:public",
+            )
 
-                )
+        except* ExceptionGroup as eg:
+            _had_error = True
 
-        except ExceptionGroup as eg:
+            # F196A: safe_gather_strict ExceptionGroup handler (PEP 654).
 
-            # F196A: TaskGroup ExceptionGroup handler for Python 3.11+.
-
-            # TaskGroup __exit__ raises ExceptionGroup when a task fails.
+            # safe_gather_strict __exit__ raises ExceptionGroup when a task fails
+            # (matches what asyncio.TaskGroup raises for regular Exception in task body).
 
             # Handle CancelledError propagation, log others.
 
@@ -15176,51 +15188,18 @@ class SprintScheduler:
 
             self._public_pipeline_result = None
 
-            return
+            # PEP 654: no `return` allowed inside except* (handler may run multiple times
+            # for nested groups). Use `_had_error` flag set at top of this block, and
+            # return AFTER the try/except* statement below.
+            #
+            # The original `except Exception as exc:` safety net was removed because
+            # safe_gather_strict only raises BaseExceptionGroup, never a bare Exception.
 
-        except Exception as exc:
-
-            log.debug(f"[8XE] Public pipeline error: {exc}")
-
-            self._result.public_error = f"{type(exc).__name__}:{exc}"
-
-            # F214-E: Always emit PUBLIC outcome so Lane Execution Truth never loses PUBLIC
-
-            self._public_outcome = {
-
-                "lane": "PUBLIC",
-
-                "attempted": True,
-
-                "skipped": False,
-
-                "skip_reason": None,
-
-                "raw_count": self._result.public_discovered,
-
-                "built_count": 0,
-
-                "accepted_count": self._result.public_accepted_findings,
-
-                "error": f"{type(exc).__name__}:{exc}",
-
-                "timeout": False,
-
-                "duration_s": None,
-
-            }
-
-            # Sprint F216C: Clear stale PipelineRunResult on early exit
-
-            self._public_pipeline_result = None
-
-            return
-
-
+        if _had_error:
+            return  # OK: outside the except* block (PEP 654)
 
         # Task succeeded - accumulate results
-
-        public_result = public_task.result()
+        # (public_result was captured from safe_gather_strict above)
 
 
 
@@ -17266,9 +17245,10 @@ class SprintScheduler:
                     log.debug("[F3FORENSICS] Ghost analysis failed for %s: %s", path, e)
                     return None
 
-            results = await asyncio.gather(
+            # F262D: migrated asyncio.gather → safe_gather_dropin (fail-soft invariant preserved)
+            results = await safe_gather_dropin(
                 *[analyze_one(fp) for fp in file_paths],
-                return_exceptions=True
+                label="sprint_scheduler:17269"
             )
 
             from core.findings import CanonicalFinding
@@ -17368,9 +17348,10 @@ class SprintScheduler:
                     log.debug("[F3FORENSICS] Stego analysis failed for %s: %s", path, e)
                     return None
 
-            results = await asyncio.gather(
+            # F262D: migrated asyncio.gather → safe_gather_dropin (fail-soft invariant preserved)
+            results = await safe_gather_dropin(
                 *[analyze_one(fp) for fp in image_paths],
-                return_exceptions=True
+                label="sprint_scheduler:17380"
             )
 
             from core.findings import CanonicalFinding
@@ -18170,11 +18151,12 @@ class SprintScheduler:
 
         try:
 
-            gather_results = await asyncio.gather(
+            # F262D: migrated asyncio.gather → safe_gather_dropin (fail-soft invariant preserved)
+            gather_results = await safe_gather_dropin(
 
                 *[_run_pdns_for_domain(d) for d in pivot_domains],
 
-                return_exceptions=True,
+                label="sprint_scheduler:18182",
 
             )
 
@@ -19764,11 +19746,12 @@ class SprintScheduler:
 
         try:
 
-            gather_results = await asyncio.gather(
+            # F262D: migrated asyncio.gather → safe_gather_dropin (fail-soft invariant preserved)
+            gather_results = await safe_gather_dropin(
 
                 *[_run_pdns_for_domain(d) for d in pivot_domains],
 
-                return_exceptions=True,
+                label="sprint_scheduler:19776",
 
             )
 
@@ -26953,9 +26936,18 @@ class SprintScheduler:
 
     def query_sprint_results(self, sql: str) -> list[dict]:
 
-        """DuckDB vectorized query over Parquet files. Zero-copy style."""
+        """DuckDB vectorized query over Parquet files. Zero-copy style.
 
-        return self._get_duckdb_con().execute(sql).fetchdf().to_dict("records")
+        Polars native ARM64, zero-copy Arrow → 5-20× faster than pandas.
+        Lazy import: polars is in graph-storage extra.
+        """
+        try:
+            import polars as pl
+            arrow_tbl = self._get_duckdb_con().execute(sql).fetch_arrow_table()
+            return pl.from_arrow(arrow_tbl).to_dicts()
+        except ImportError:
+            # Fallback: legacy pandas path (cold-path when extra not installed)
+            return self._get_duckdb_con().execute(sql).fetchdf().to_dict("records")
 
 
 

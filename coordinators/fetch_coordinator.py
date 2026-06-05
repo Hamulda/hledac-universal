@@ -23,6 +23,8 @@ import time
 from collections import deque
 from collections.abc import Callable
 
+from utils.async_helpers import safe_gather_dropin
+
 import lmdb
 
 # Sprint 41: zstd compression — re-exported from tools/zstd_compressor
@@ -1106,10 +1108,11 @@ class FetchCoordinator(UniversalCoordinator):
 
         # Sprint 5B: Batch fetch with gather + return_exceptions
         # Each _fetch_url handles AIMD semaphore internally
+        # F262D: migrated asyncio.gather → safe_gather_dropin (fail-soft invariant preserved)
         batch_start = time.time()
-        results = await asyncio.gather(
+        results = await safe_gather_dropin(
             *[self._fetch_url(url) for url in urls_to_fetch],
-            return_exceptions=True
+            label="fetch_coordinator:1110"
         )
         batch_elapsed = time.time() - batch_start
 
@@ -1521,8 +1524,10 @@ class FetchCoordinator(UniversalCoordinator):
             wayback_task = wayback_cdx_lookup(query, limit=8)
             urlscan_task = urlscan_search(query, size=8)
 
-            ddgs_rows, news_rows, wayback_rows, urlscan_rows = await asyncio.gather(
-                ddgs_task, news_task, wayback_task, urlscan_task, return_exceptions=True
+            # F262D: migrated asyncio.gather → safe_gather_dropin (fail-soft invariant preserved)
+            ddgs_rows, news_rows, wayback_rows, urlscan_rows = await safe_gather_dropin(
+                ddgs_task, news_task, wayback_task, urlscan_task,
+                label="fetch_coordinator:1524",
             )
 
             # Sprint 4B: Gather hygiene - collect with explicit exception logging

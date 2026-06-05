@@ -26,6 +26,11 @@ duckduckgo-search>=8.0.0
 # Sprint F195: Fast JSON serialization (required - used throughout codebase)
 orjson>=3.9.0
 
+# F-ADV-JSONLD: Rust-backed HTML parser for structured_extractor microdata path
+# (itemscope/itemprop via CSS attribute selectors). Default dep; legacy-html
+# extra keeps beautifulsoup4 as a fallback.
+selectolax>=0.4.10
+
 # torch and torchvision are optional — install via:
 #   pip install -r requirements-optional.txt
 # or for Apple Silicon MPS:
