@@ -16,6 +16,7 @@ from dataclasses import dataclass, field
 
 from aiohttp import ClientSession
 
+from utils.async_helpers import safe_gather_dropin
 logger = logging.getLogger(__name__)
 
 # Fediverse constants
@@ -101,7 +102,7 @@ class FediverseAdapter:
                 break
             tasks.append(self._search_instance(instance, query, max_results))
 
-        results = await asyncio.gather(*tasks, return_exceptions=True)
+        results = await safe_gather_dropin(*tasks, label="fediverse_adapter:104")
         all_statuses = []
 
         for result in results:
@@ -184,7 +185,7 @@ class FediverseAdapter:
                 break
             tasks.append(self._fetch_hashtag(instance, hashtag, max_results))
 
-        results = await asyncio.gather(*tasks, return_exceptions=True)
+        results = await safe_gather_dropin(*tasks, label="fediverse_adapter:187")
         all_statuses = []
 
         for result in results:
@@ -251,7 +252,7 @@ class FediverseAdapter:
                 break
             tasks.append(self._fetch_account(instance, account, limit))
 
-        results = await asyncio.gather(*tasks, return_exceptions=True)
+        results = await safe_gather_dropin(*tasks, label="fediverse_adapter:254")
 
         for result in results:
             if isinstance(result, list) and result:

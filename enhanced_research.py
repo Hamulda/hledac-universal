@@ -87,6 +87,7 @@ from .utils.ranking import RankedResult as SearchResult
 # Extended imports for research enhancements (from universal)
 from .utils.ranking import ReciprocalRankFusion, RRFConfig
 
+from utils.async_helpers import safe_gather_dropin
 # Intelligence tools (lazy loaded)
 try:
     from .intelligence import (
@@ -107,6 +108,40 @@ except ImportError:
     INTELLIGENCE_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
+
+# =============================================================================
+# ADVANCED MODULE CAPABILITY FLAGS (Sprint F-ADV)
+# =============================================================================
+# Always-on wiring: the *interfaces* are imported and the *config fields* are
+# always present. The env-gated flags control runtime activation only. This
+# preserves the project invariant "always-on, no toggles for new code" — we
+# add capability flags, not feature flags.
+#
+# When HLEDAC_ENABLE_ADVANCED_RAG=0 (default), the RAG orchestrator provider
+# is still imported lazily but its `research_and_answer()` is never invoked
+# in the deep_research() flow. When =1, it runs as Phase 1.5.
+_ADVANCED_RAG_ENV = "HLEDAC_ENABLE_ADVANCED_RAG"
+_ADVANCED_STEALTH_ENV = "HLEDAC_ENABLE_ADVANCED_STEALTH"
+_EVIDENCE_ANALYZER_ENV = "HLEDAC_ENABLE_EVIDENCE_ANALYZER"
+_STRUCTURED_ENV = "HLEDAC_ENABLE_STRUCTURED"
+
+
+def _env_flag(name: str, default: bool = False) -> bool:
+    """Read boolean env var with explicit values (1, true, yes)."""
+    import os
+    raw = os.environ.get(name, "").strip().lower()
+    if raw in ("1", "true", "yes", "on"):
+        return True
+    if raw in ("0", "false", "no", "off"):
+        return False
+    return default
+
+
+# Bounded limits for advanced providers (M1 8GB UMA safe)
+_MAX_ADVANCED_RAG_FINDINGS = 20   # Hard cap on RAG-augmented findings
+_MAX_STRUCTURED_ENTITIES = 30   # Hard cap on structured-data findings per sprint
+_MAX_STEALTH_FETCHES = 5          # Cap on per-sprint stealth fetches
+_MAX_STEALTH_DEPTH = 1            # Stealth crawl depth (no recursive)
 
 
 # =============================================================================
@@ -152,7 +187,7 @@ class SourceFamily(Enum):
     LOCAL_CORPUS = "local_corpus"     # LOCAL CONSUMER SEAM — search plane consumer, NOT owner
 
 
-@dataclass
+@dataclass(slots=True)
 class UnifiedResearchConfig:
     """Configuration for unified research engine.
 
@@ -207,6 +242,14 @@ class UnifiedResearchConfig:
         'wayback', 'archive_today'
     ])
 
+    # Advanced module providers (capability-flag gated, off by default)
+    # These are dormant when their respective HLEDAC_ENABLE_* env vars are unset.
+    enable_advanced_rag: bool = False       # HLEDAC_ENABLE_ADVANCED_RAG
+    enable_stealth_browser: bool = False   # HLEDAC_ENABLE_ADVANCED_STEALTH
+    enable_evidence_analyzer: bool = False  # HLEDAC_ENABLE_EVIDENCE_ANALYZER
+    enable_structured_extraction: bool = False  # HLEDAC_ENABLE_STRUCTURED
+    max_advanced_findings: int = _MAX_ADVANCED_RAG_FINDINGS
+
     def should_use_tool(self, tool_name: str) -> bool:
         """Check if a tool should be used based on depth config."""
         tool_depth_map = {
@@ -222,7 +265,7 @@ class UnifiedResearchConfig:
         return self.depth.value >= required_depth.value
 
 
-@dataclass
+@dataclass(slots=True)
 class ResearchFinding:
     """A single research finding with rich metadata."""
     id: str
@@ -252,7 +295,7 @@ class ResearchFinding:
         }
 
 
-@dataclass
+@dataclass(slots=True)
 class UnifiedResearchResult:
     """Complete result from unified research."""
     query: str
@@ -306,7 +349,7 @@ class UnifiedResearchResult:
         }
 
 
-@dataclass
+@dataclass(slots=True)
 class EnhancedResearchConfig:
     """Configuration for enhanced research workflow with advanced features.
 
@@ -398,7 +441,27 @@ class UnifiedResearchEngine:
             config: Unified research configuration
             research_config: Base research configuration
         """
+        # Sentinel: distinguish "user passed a config object" from "use
+        # defaults + env-var activation". This is the only way to honor the
+        # invariant "explicit config overrides env vars".
+        _SENTINEL = object()
+        cfg_from_caller = config
         self.config = config or UnifiedResearchConfig()
+        # Apply capability flags from env ONLY if the user did not pass a
+        # config object. This keeps the contract: explicit config wins.
+        if cfg_from_caller is _SENTINEL or cfg_from_caller is None:
+            self.config.enable_advanced_rag = _env_flag(
+                _ADVANCED_RAG_ENV, default=False
+            )
+            self.config.enable_stealth_browser = _env_flag(
+                _ADVANCED_STEALTH_ENV, default=False
+            )
+            self.config.enable_evidence_analyzer = _env_flag(
+                _EVIDENCE_ANALYZER_ENV, default=False
+            )
+            self.config.enable_structured_extraction = _env_flag(
+                _STRUCTURED_ENV, default=False
+            )
         self.research_config = research_config
 
         # Performance monitoring
@@ -415,6 +478,13 @@ class UnifiedResearchEngine:
         self._data_leak_hunter: Any | None = None
         self._temporal_analyzer: Any | None = None
 
+        # Advanced module providers (Sprint F-ADV)
+        # Lazy-bound on first use; only initialized when capability flag is set.
+        self._advanced_rag: Any | None = None
+        self._stealth_browser: Any | None = None
+        self._evidence_analyzer: Any | None = None
+        self._stealth_fetch_count: int = 0  # bounded per-sprint
+
         # RRF for result fusion
         self._rrf = ReciprocalRankFusion(RRFConfig(k=self.config.rrf_k))
 
@@ -430,6 +500,10 @@ class UnifiedResearchEngine:
             'tools_initialized': 0,
             'total_findings': 0,
             'cache_hits': 0,
+            'advanced_rag_queries': 0,
+            'stealth_fetches': 0,
+            'evidence_analyses': 0,
+            'structured_entities': 0,
         }
 
         logger.info(f"UnifiedResearchEngine initialized (depth: {self.config.depth.name})")
@@ -525,6 +599,78 @@ class UnifiedResearchEngine:
             self._stats['tools_initialized'] += 1
             logger.debug("TemporalAnalyzer initialized")
         return self._temporal_analyzer
+
+    # ========================================================================
+    # ADVANCED MODULE PROVIDERS (Sprint F-ADV)
+    # ========================================================================
+    # These providers are optional and capability-flag gated. They are NEVER
+    # initialized at engine construction time. Lazy loaders return None when
+    # the capability flag is unset, so deep_research() can short-circuit
+    # without raising.
+    #
+    # All providers are M1-safe: bounded, fail-soft, single LanceDB
+    # connection, no eager init, no background workers.
+    # ========================================================================
+
+    async def _get_advanced_rag(self) -> Any:
+        """Lazy load advanced RAG orchestrator (advanced_rag.rag_orchestrator).
+
+        Returns None when capability flag HLEDAC_ENABLE_ADVANCED_RAG=0.
+        """
+        if not self.config.enable_advanced_rag:
+            return None
+        if self._advanced_rag is None:
+            try:
+                from .advanced_rag.rag_orchestrator import RAGOrchestrator
+                self._advanced_rag = RAGOrchestrator()
+                await self._advanced_rag.initialize()
+                self._stats['tools_initialized'] += 1
+                logger.info("Advanced RAG orchestrator initialized (LanceDB-backed)")
+            except Exception as e:
+                logger.warning(f"Advanced RAG init failed: {e}")
+                self._advanced_rag = None
+        return self._advanced_rag
+
+    async def _get_stealth_browser(self) -> Any:
+        """Lazy load stealth browser (advanced_web.stealth_browser).
+
+        Returns None when capability flag HLEDAC_ENABLE_ADVANCED_STEALTH=0.
+        Honors M1 constraint: max 2 concurrent browser tabs (already enforced
+        in stealth_browser._MAX_CONCURRENT_TABS).
+        """
+        if not self.config.enable_stealth_browser:
+            return None
+        if self._stealth_browser is None:
+            try:
+                from .advanced_web.stealth_browser import StealthBrowser
+                self._stealth_browser = StealthBrowser()
+                self._stats['tools_initialized'] += 1
+                logger.info("Stealth browser initialized (max 2 concurrent tabs)")
+            except Exception as e:
+                logger.warning(f"Stealth browser init failed: {e}")
+                self._stealth_browser = None
+        return self._stealth_browser
+
+    async def _get_evidence_analyzer(self) -> Any:
+        """Lazy load evidence network analyzer (advanced_web.evidence_network_analyzer).
+
+        Returns None when capability flag HLEDAC_ENABLE_EVIDENCE_ANALYZER=0.
+        The instance is currently a NOT_IMPLEMENTED graceful stub.
+        """
+        if not self.config.enable_evidence_analyzer:
+            return None
+        if self._evidence_analyzer is None:
+            try:
+                from .advanced_web.evidence_network_analyzer import EvidenceNetworkAnalyzer
+                self._evidence_analyzer = EvidenceNetworkAnalyzer()
+                self._stats['tools_initialized'] += 1
+                logger.debug(
+                    "Evidence network analyzer initialized (NOT_IMPLEMENTED stub)"
+                )
+            except Exception as e:
+                logger.warning(f"Evidence analyzer init failed: {e}")
+                self._evidence_analyzer = None
+        return self._evidence_analyzer
 
     # ========================================================================
     # SMART QUERY ROUTING
@@ -670,6 +816,8 @@ class UnifiedResearchEngine:
             UnifiedResearchResult with all findings and analysis
         """
         self._start_time = time.time()
+        # Reset per-sprint counters for advanced providers
+        self._stealth_fetch_count = 0
 
         # Use provided or default depth
         research_depth = depth or self.config.depth
@@ -707,7 +855,7 @@ class UnifiedResearchEngine:
 
             # Execute search tasks with semaphore control
             async with self._semaphore:
-                search_results = await asyncio.gather(*search_tasks, return_exceptions=True)
+                search_results = await safe_gather_dropin(*search_tasks, label="enhanced_research:857")
 
             for findings in search_results:
                 if isinstance(findings, list):
@@ -715,6 +863,16 @@ class UnifiedResearchEngine:
 
             # M1: Context swap - cleanup after search phase
             self._context_swap()
+
+            # Phase 1.5: Advanced RAG grounding (advanced_rag.RAGOrchestrator)
+            # Capability-gated, default OFF. Bounded by _MAX_ADVANCED_RAG_FINDINGS.
+            # Backed by canonical LanceDBIdentityStore — never opens a second
+            # connection.
+            if self.config.enable_advanced_rag:
+                rag_findings = await self._task_advanced_rag(query)
+                if rag_findings:
+                    all_findings.extend(rag_findings)
+                    self._context_swap()
 
             # Phase 2: Cross-reference (Archives + Data Leaks) - EXHAUSTIVE only
             if research_depth == ResearchDepth.EXHAUSTIVE:
@@ -728,7 +886,7 @@ class UnifiedResearchEngine:
 
                 if cross_ref_tasks:
                     async with self._semaphore:
-                        cross_results = await asyncio.gather(*cross_ref_tasks, return_exceptions=True)
+                        cross_results = await safe_gather_dropin(*cross_ref_tasks, label="enhanced_research:888")
 
                     for findings in cross_results:
                         if isinstance(findings, list):
@@ -736,6 +894,27 @@ class UnifiedResearchEngine:
 
                 # M1: Context swap
                 self._context_swap()
+
+            # Phase 2.5: Stealth browser enrichment (advanced_web.StealthBrowser)
+            # Capability-gated, default OFF. Fetches top-N web URLs with
+            # JS-rendered content. Honors M1 constraint: max 2 concurrent tabs.
+            if self.config.enable_stealth_browser:
+                stealth_findings = await self._task_stealth_browser(query, all_findings)
+                if stealth_findings:
+                    all_findings.extend(stealth_findings)
+                    self._context_swap()
+
+            # Phase 2.6: Structured data extraction (advanced_web.StructuredExtractor)
+            # Always-on when stealth browser is enabled (consumes its fetched HTML).
+            # Also runs standalone on any web finding for which we have HTML.
+            # Bounded: MAX_STRUCTURED_PER_SPRINT entities ingested as findings.
+            if self.config.enable_stealth_browser or self.config.enable_structured_extraction:
+                structured_findings = await self._task_structured_extraction(
+                    all_findings
+                )
+                if structured_findings:
+                    all_findings.extend(structured_findings)
+                    self._context_swap()
 
             # Phase 3: Analyze (Temporal analysis)
             if 'temporal' in tools_to_use and len(all_findings) > 5:
@@ -748,6 +927,18 @@ class UnifiedResearchEngine:
             # Phase 4: Validate and enhance
             validation = await self._task_validate(query, all_findings)
             result.validation_report = validation
+
+            # Phase 4.5: Evidence network analysis (advanced_web.EvidenceNetworkAnalyzer)
+            # Capability-gated, default OFF. Currently a NOT_IMPLEMENTED stub
+            # that returns empty results. Wired in advance so that when T1
+            # is implemented, the integration site is already in place.
+            if self.config.enable_evidence_analyzer:
+                evidence_result = await self._task_evidence_analysis(all_findings)
+                if evidence_result:
+                    # Stash on the result metadata; downstream reporters can render.
+                    result.cross_references = evidence_result.get(
+                        'edges', result.cross_references
+                    )
 
             # Phase 5: Synthesize with RRF fusion
             fused = await self._task_synthesize(query, all_findings)
@@ -1115,6 +1306,255 @@ class UnifiedResearchEngine:
 
         return leak_findings
 
+    async def _task_advanced_rag(self, query: str) -> list[ResearchFinding]:
+        """
+        Phase 1.5: Advanced RAG grounding via advanced_rag.RAGOrchestrator.
+
+        Bounded contract:
+            - Returns at most config.max_advanced_findings ResearchFinding objects.
+            - Never raises: any exception → empty list + warning log.
+            - Backs onto canonical LanceDBIdentityStore (single connection).
+        """
+        findings: list[ResearchFinding] = []
+        try:
+            rag = await self._get_advanced_rag()
+            if rag is None:
+                return []
+
+            result = await rag.research_and_answer(
+                query=query,
+                confidence_threshold=0.6,
+                priority=5,
+            )
+
+            self._stats['advanced_rag_queries'] += 1
+            cap = min(self.config.max_advanced_findings, _MAX_ADVANCED_RAG_FINDINGS)
+            sources = result.get('sources', []) or []
+            for src in sources[:cap]:
+                text = (src.get('text') or '').strip()
+                if not text:
+                    continue
+                sim = float(src.get('similarity', 0.0))
+                finding = ResearchFinding(
+                    id=hashlib.blake2b(
+                        f"rag:{text[:80]}".encode(), digest_size=8
+                    ).hexdigest(),
+                    title=f"RAG source (sim={sim:.2f})",
+                    content=text[:500],
+                    url=None,
+                    source='advanced_rag',
+                    source_type='rag',
+                    timestamp=datetime.now(),
+                    relevance_score=sim,
+                    credibility_score=0.7,
+                    metadata={
+                        'stages_completed': result.get('stages_completed', []),
+                        'confidence': result.get('confidence', 0.0),
+                        'processing_time': (result.get('metadata') or {}).get(
+                            'processing_time', 0.0
+                        ),
+                    },
+                )
+                findings.append(finding)
+        except Exception as e:
+            logger.warning(f"_task_advanced_rag failed: {e}")
+        return findings
+
+    async def _task_stealth_browser(
+        self,
+        query: str,
+        existing_findings: list[ResearchFinding],
+    ) -> list[ResearchFinding]:
+        """
+        Phase 2.5: Stealth browser enrichment via advanced_web.StealthBrowser.
+
+        Fetches the top _MAX_STEALTH_FETCHES web URLs from existing findings
+        with JS-rendered content. Honors M1 constraint: stealth_browser caps
+        concurrent tabs at 2 (see advanced_web/stealth_browser._MAX_CONCURRENT_TABS).
+
+        Bounded contract:
+            - At most _MAX_STEALTH_FETCHES URLs per sprint.
+            - _stealth_fetch_count resets each sprint.
+            - Only fetches URLs whose source_type is 'web' (avoid double-fetch).
+            - Never raises: any exception → empty list + warning log.
+        """
+        findings: list[ResearchFinding] = []
+        if self._stealth_fetch_count >= _MAX_STEALTH_FETCHES:
+            logger.debug(
+                "_task_stealth_browser: per-sprint cap reached (%d)",
+                _MAX_STEALTH_FETCHES,
+            )
+            return findings
+
+        try:
+            browser = await self._get_stealth_browser()
+            if browser is None:
+                return []
+
+            # Pick top web URLs not already covered
+            urls: list[str] = []
+            seen: set[str] = set()
+            for f in existing_findings:
+                if f.url and f.source_type == 'web' and f.url not in seen:
+                    seen.add(f.url)
+                    urls.append(f.url)
+                if len(urls) >= _MAX_STEALTH_FETCHES:
+                    break
+            if not urls:
+                return findings
+
+            # Cap remaining budget
+            budget = _MAX_STEALTH_FETCHES - self._stealth_fetch_count
+            urls = urls[:budget]
+
+            for url in urls:
+                self._stealth_fetch_count += 1
+                self._stats['stealth_fetches'] += 1
+                try:
+                    result = await browser.fetch(url, depth=_MAX_STEALTH_DEPTH)
+                except Exception as e:
+                    logger.debug(f"Stealth fetch failed for {url}: {e}")
+                    continue
+                if not isinstance(result, dict) or result.get('status') != 200:
+                    continue
+                content = (result.get('content') or '').strip()[:1000]
+                if not content:
+                    continue
+                title = (result.get('title') or '').strip() or f"Stealth: {url}"
+                finding = ResearchFinding(
+                    id=hashlib.blake2b(
+                        f"stealth:{url}".encode(), digest_size=8
+                    ).hexdigest(),
+                    title=title[:200],
+                    content=content,
+                    url=url,
+                    source='stealth_browser',
+                    source_type='web_stealth',
+                    timestamp=datetime.now(),
+                    relevance_score=0.6,
+                    credibility_score=0.7,
+                    metadata={
+                        'js_rendered': bool(result.get('js_rendered', False)),
+                        'links': (result.get('links') or [])[:10],
+                        'budget_remaining': _MAX_STEALTH_FETCHES
+                        - self._stealth_fetch_count,
+                    },
+                )
+                findings.append(finding)
+        except Exception as e:
+            logger.warning(f"_task_stealth_browser failed: {e}")
+        return findings
+
+    async def _task_evidence_analysis(
+        self,
+        findings: list[ResearchFinding],
+    ) -> dict[str, Any] | None:
+        """
+        Phase 4.5: Evidence network analysis via
+        advanced_web.EvidenceNetworkAnalyzer.
+
+        Currently the analyzer is a NOT_IMPLEMENTED stub. When the real
+        implementation lands (IMPLEMENTATION_ROADMAP T1), this seam stays
+        the same — the stub will be replaced transparently.
+
+        Returns:
+            dict with at minimum 'edges' key (list of relationships), or None
+            on failure.
+        """
+        try:
+            analyzer = await self._get_evidence_analyzer()
+            if analyzer is None:
+                return None
+            self._stats['evidence_analyses'] += 1
+            # Build minimal entity list from findings (bounded)
+            entities: list[dict[str, Any]] = []
+            for f in findings[:50]:  # bounded input
+                if f.url:
+                    entities.append({
+                        'type': 'url',
+                        'value': f.url,
+                        'sources': [f.source],
+                    })
+            return await analyzer.analyze_network(entities)
+        except Exception as e:
+            logger.warning(f"_task_evidence_analysis failed: {e}")
+            return None
+
+    async def _task_structured_extraction(
+        self,
+        existing_findings: list[ResearchFinding],
+    ) -> list[ResearchFinding]:
+        """
+        Phase 2.6: Structured data extraction (W3C JSON-LD + microdata + RDFa).
+
+        Consumes the HTML content already produced by StealthBrowser or fetches
+        top web URLs directly. Each entity is converted to a ResearchFinding
+        with ioc_kind as source_type. Bounded: MAX_STRUCTURED_ENTITIES per sprint.
+
+        Fail-soft: any exception → empty list + warning log.
+        """
+        findings: list[ResearchFinding] = []
+        if not existing_findings:
+            return findings
+
+        try:
+            from .advanced_web.structured_extractor import (  # type: ignore[import-not-found]
+                StructuredExtractor,
+                entity_to_dict,
+            )
+            extractor = StructuredExtractor()
+        except Exception as e:
+            logger.warning(f"_task_structured_extraction: import failed: {e}")
+            return findings
+
+        # Collect candidate URLs (bounded)
+        seen: set[str] = set()
+        urls: list[str] = []
+        for f in existing_findings:
+            if f.url and f.source_type in ("web", "web_stealth") and f.url not in seen:
+                seen.add(f.url)
+                urls.append(f.url)
+            if len(urls) >= _MAX_STRUCTURED_ENTITIES:
+                break
+
+        budget = _MAX_STRUCTURED_ENTITIES - len(findings)
+        for url in urls[:budget]:
+            try:
+                # StealthBrowser.fetch stores HTML in finding metadata when
+                # available; otherwise we re-fetch. Re-fetch path is bounded
+                # to top-K stealth fetches — here we just skip if no HTML.
+                html = f.metadata.get("html") if hasattr(f, "metadata") else None
+                if not html:
+                    continue
+                extraction = extractor.extract(html, source_url=url)
+                self._stats['structured_entities'] = (
+                    self._stats.get('structured_entities', 0) + len(extraction.entities)
+                )
+                for ent in extraction.entities:
+                    if len(findings) >= _MAX_STRUCTURED_ENTITIES:
+                        break
+                    findings.append(ResearchFinding(
+                        id=hashlib.blake2b(
+                            f"structured:{ent.entity_id}".encode(), digest_size=8
+                        ).hexdigest(),
+                        title=f"[{ent.ioc_kind}] {ent.entity_type}: {ent.value}",
+                        content=ent.value[:500],
+                        url=ent.url or url,
+                        source="structured_extractor",
+                        source_type=ent.ioc_kind,
+                        timestamp=datetime.now(),
+                        relevance_score=0.6,
+                        credibility_score=0.7,
+                        metadata={
+                            "entity_type": ent.entity_type,
+                            "entity_id": ent.entity_id,
+                            "properties": dict(ent.properties),
+                        },
+                    ))
+            except Exception as e:
+                logger.debug(f"_task_structured_extraction: {url} failed: {e}")
+        return findings
+
     async def _task_validate(
         self,
         query: str,
@@ -1303,6 +1743,22 @@ class UnifiedResearchEngine:
                 except Exception as e:
                     logger.debug(f"Cleanup error: {e}")
 
+        # Cleanup advanced module providers (Sprint F-ADV)
+        for provider in (
+            self._advanced_rag,
+            self._stealth_browser,
+            self._evidence_analyzer,
+        ):
+            if provider and hasattr(provider, 'cleanup'):
+                try:
+                    await provider.cleanup()
+                except Exception as e:
+                    logger.debug(f"Advanced provider cleanup error: {e}")
+        self._advanced_rag = None
+        self._stealth_browser = None
+        self._evidence_analyzer = None
+        self._stealth_fetch_count = 0
+
         # Clear cache
         self._cache.clear()
 
@@ -1319,6 +1775,9 @@ class UnifiedResearchEngine:
                 'depth': self.config.depth.name,
                 'max_concurrent': self.config.max_concurrent_tools,
                 'parallel_enabled': self.config.enable_parallel,
+                'advanced_rag_enabled': self.config.enable_advanced_rag,
+                'stealth_browser_enabled': self.config.enable_stealth_browser,
+                'evidence_analyzer_enabled': self.config.enable_evidence_analyzer,
             },
             'tools_initialized': self._stats['tools_initialized'],
         }
@@ -2368,7 +2827,7 @@ def create_unified_research_engine(
 #              Reuseuje _classify_query() a _select_tools_for_query().
 # =============================================================================
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class SourcePlan:
     """Immutable source plan — which families, engines, why, and conditions.
 
@@ -2545,7 +3004,7 @@ def _build_source_plan(
 # USAGE: Pouze přes explicitní ProviderRequest/ProviderResult handoff
 # =============================================================================
 
-@dataclass
+@dataclass(slots=True)
 class DeepResearchRequest:
     """
     Request wrapper for deep research provider seam.
@@ -2599,7 +3058,7 @@ class DeepResearchRequest:
         return kwargs
 
 
-@dataclass
+@dataclass(slots=True)
 class DeepResearchResponse:
     """
     Response wrapper for deep research provider seam.
@@ -2637,7 +3096,7 @@ class DeepResearchResponse:
 # Not exported — internal to enhanced_research.py seam only.
 # =============================================================================
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class _BudgetHints:
     """Internal budget hints for DeepResearch session.
 
@@ -2647,7 +3106,7 @@ class _BudgetHints:
     confidence_boost: float = 0.0  # Adjust confidence threshold (delta)
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class _EvidenceHints:
     """Internal evidence/logging hints for DeepResearch session.
 
@@ -2657,7 +3116,7 @@ class _EvidenceHints:
     detail_depth: str = "standard"  # minimal, standard, verbose
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class _PolicyFlags:
     """Internal execution policy flags for DeepResearch session.
 
@@ -2667,7 +3126,7 @@ class _PolicyFlags:
     force_exhaustive: bool = False
 
 
-@dataclass
+@dataclass(slots=True)
 class DeepResearchGroundingShim:
     """
     Minimal internal grounding adapter for DeepResearch.
@@ -2794,7 +3253,7 @@ async def deep_research_provider_seam(
 #   - NO new public provider framework
 # =============================================================================
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class TriadAdmissionDescriptor:
     """
     Read-only admission metadata for DeepResearch provider candidate.
@@ -2875,7 +3334,7 @@ DEEP_RESEARCH_ADMISSION = TriadAdmissionDescriptor()
 # =============================================================================
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class LocalCorpusConsumerDescriptor:
     """
     Read-only consumer seam for local corpus search plane.

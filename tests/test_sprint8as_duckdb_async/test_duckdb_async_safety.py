@@ -25,6 +25,7 @@ import pytest
 sys.path.insert(0, "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal")
 from hledac.universal.knowledge.duckdb_store import DuckDBShadowStore
 
+from utils.async_helpers import safe_gather_fire_and_forget
 # ---------------------------------------------------------------------------
 # Tests 1-2: Boot isolation
 # ---------------------------------------------------------------------------
@@ -190,7 +191,7 @@ class TestEventLoopNonBlocking:
                 await store.async_record_shadow_finding(f"blkatest_{i}", f"q{i}", "web", 0.5)
 
         # Run both concurrently
-        await asyncio.gather(heartbeat(), concurrent_work())
+        await safe_gather_fire_and_forget(heartbeat(), concurrent_work(), label="test_duckdb_async_safety:193")
 
         assert heartbeat_fired, "Heartbeat must have fired"
         # Event loop lag should be < 50ms for a simple heartbeat yield

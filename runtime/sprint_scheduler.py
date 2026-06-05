@@ -172,7 +172,7 @@ def resolve_nonfeed_expected_lanes(
 
 from hledac.universal.runtime.graph_accumulator import SprintGraphAccumulator
 
-from hledac.universal.utils.async_helpers import _check_gathered, safe_gather
+from hledac.universal.utils.async_helpers import _check_gathered, safe_gather, safe_gather_dropin, safe_gather_fire_and_forget
 
 # Sprint F262OBS: centralize source_type literals via utils.source_types
 try:
@@ -6204,7 +6204,7 @@ class SprintScheduler:
 
     
 
-            _results = await asyncio.gather(prelude_task, first_cycle_task, return_exceptions=True)
+            _results = await safe_gather_dropin(prelude_task, first_cycle_task, label="sprint_scheduler:6207")
 
             _prelude_exc, _cycle_exc = _results[0], _results[1]
 
@@ -7138,7 +7138,7 @@ class SprintScheduler:
 
             if self._bg_tasks:
 
-                await asyncio.gather(*self._bg_tasks, return_exceptions=True)
+                await safe_gather_fire_and_forget(*self._bg_tasks, label="sprint_scheduler:7141")
 
             self._bg_tasks.clear()
 
@@ -12260,7 +12260,7 @@ class SprintScheduler:
 
         if _tasks:
 
-            _lane_results = await asyncio.gather(*_tasks, return_exceptions=True)
+            _lane_results = await safe_gather_dropin(*_tasks, label="sprint_scheduler:12263")
 
             for _result in _lane_results:
 
@@ -16324,7 +16324,7 @@ class SprintScheduler:
 
                 tasks = [crawl_seed(seed) for seed in seeds]
 
-                results = await _asyncio.gather(*tasks, return_exceptions=True)
+                results = await safe_gather_dropin(*tasks, label="sprint_scheduler:16327")
 
                 for result in results:
 
@@ -16604,7 +16604,7 @@ class SprintScheduler:
 
                 tasks = [fetch_i2p_address(addr) for addr in i2p_addresses]
 
-                results = await _asyncio.gather(*tasks, return_exceptions=True)
+                results = await safe_gather_dropin(*tasks, label="sprint_scheduler:16607")
 
                 for result in results:
 
@@ -16878,7 +16878,7 @@ class SprintScheduler:
 
             results = await _asyncio.wait_for(
 
-                _asyncio.gather(*tasks, return_exceptions=True),
+                safe_gather_dropin(*tasks, label="sprint_scheduler:16881"),
 
                 timeout=60.0
 
@@ -17520,7 +17520,7 @@ class SprintScheduler:
 
         try:
 
-            results = await asyncio.gather(*[_query_one(ip) for ip in seed_ips], return_exceptions=True)
+            results = await safe_gather_dropin(*[_query_one(ip) for ip in seed_ips], label="sprint_scheduler:17523")
 
             for r in results:
 
@@ -17664,7 +17664,7 @@ class SprintScheduler:
 
         try:
 
-            results = await asyncio.gather(*[_grab_one(ip) for ip in seed_ips], return_exceptions=True)
+            results = await safe_gather_dropin(*[_grab_one(ip) for ip in seed_ips], label="sprint_scheduler:17667")
 
             for r in results:
 

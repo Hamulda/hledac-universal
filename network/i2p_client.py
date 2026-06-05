@@ -21,6 +21,7 @@ import logging
 import os
 import time
 
+from utils.async_helpers import safe_gather_dropin
 logger = logging.getLogger(__name__)
 
 # =============================================================================
@@ -296,7 +297,7 @@ async def discover_eepsites() -> list[dict]:
     import asyncio
 
     tasks = [fetch_one(e) for e in KNOWN_EEPSITES]
-    results = await asyncio.gather(*tasks, return_exceptions=True)
+    results = await safe_gather_dropin(*tasks, label="i2p_client:299")
 
     for result in results:
         if isinstance(result, dict) and result:

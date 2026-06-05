@@ -515,7 +515,7 @@ async def _validate_redirect_url(redirect_url: str) -> None:
         raise
     except Exception as exc:
         # Fail-safe: block on any resolution error
-        raise _SSRFBlockError(f"DNS resolution error for redirect URL: {redirect_url}: {exc}")
+        raise _SSRFBlockError(f"DNS resolution error for redirect URL: {redirect_url}: {exc}") from exc
 
 
 __all__ = [

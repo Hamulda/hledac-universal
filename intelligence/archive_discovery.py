@@ -1110,7 +1110,7 @@ class ArchiveResurrector:
                 return await self._extract_snapshot(snapshot)
 
         tasks = [extract_with_limit(s) for s in snapshots]
-        results = await asyncio.gather(*tasks, return_exceptions=True)
+        results = await safe_gather_dropin(*tasks, label="archive_discovery:1113")
 
         # Filter out exceptions and None results
         return [r for r in results if r is not None and not isinstance(r, Exception)]
@@ -1391,6 +1391,7 @@ async def discover_from_wayback(
 import orjson
 import xxhash
 
+from utils.async_helpers import safe_gather_dropin
 
 class WaybackCDX:
     """Wayback Machine CDX API — low-level domain/URL snapshot discovery.

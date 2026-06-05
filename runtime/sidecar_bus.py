@@ -39,6 +39,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+from utils.async_helpers import safe_gather_dropin, safe_gather_fire_and_forget
 if TYPE_CHECKING:
     from hledac.universal.knowledge.duckdb_store import DuckDBShadowStore
 
@@ -545,7 +546,7 @@ class FindingSidecarBus:
                 continue
 
             try:
-                gathered = await asyncio.gather(*stage_tasks, return_exceptions=True)
+                gathered = await safe_gather_dropin(*stage_tasks, label="sidecar_bus:548")
                 self._check_gathered(gathered)
                 for item in gathered:
                     if isinstance(item, SidecarRunResult):
@@ -569,7 +570,7 @@ class FindingSidecarBus:
                 for t in stage_tasks:
                     if not t.done():
                         t.cancel()
-                await asyncio.gather(*stage_tasks, return_exceptions=True)
+                await safe_gather_fire_and_forget(*stage_tasks, label="sidecar_bus:572")
                 raise
 
         # ── Execute any remaining registered runners not in a stage ──────────────
@@ -582,7 +583,7 @@ class FindingSidecarBus:
 
         if remaining_tasks:
             try:
-                gathered = await asyncio.gather(*remaining_tasks, return_exceptions=True)
+                gathered = await safe_gather_dropin(*remaining_tasks, label="sidecar_bus:585")
                 self._check_gathered(gathered)
                 for item in gathered:
                     if isinstance(item, SidecarRunResult):
@@ -593,7 +594,7 @@ class FindingSidecarBus:
                 for t in remaining_tasks:
                     if not t.done():
                         t.cancel()
-                await asyncio.gather(*remaining_tasks, return_exceptions=True)
+                await safe_gather_fire_and_forget(*remaining_tasks, label="sidecar_bus:596")
                 raise
 
         # Cap results at bound

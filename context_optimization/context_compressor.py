@@ -30,6 +30,7 @@ except ImportError:
 
 import numpy as np
 
+from utils.async_helpers import safe_gather_dropin
 logger = logging.getLogger(__name__)
 
 try:
@@ -698,7 +699,7 @@ class ContextCompressor:
             task = self.compress_context(context, metadata=metadata)
             tasks.append(task)
 
-        return await asyncio.gather(*tasks, return_exceptions=True)
+        return await safe_gather_dropin(*tasks, label="context_compressor:701")
 
     async def batch_decompress(
         self,
@@ -712,7 +713,7 @@ class ContextCompressor:
             task = self.decompress_context(context_id, detail_level, query)
             tasks.append(task)
 
-        return await asyncio.gather(*tasks, return_exceptions=True)
+        return await safe_gather_dropin(*tasks, label="context_compressor:715")
 
     def list_compressed_contexts(self) -> list[dict[str, Any]]:
         """List all compressed contexts with metadata."""

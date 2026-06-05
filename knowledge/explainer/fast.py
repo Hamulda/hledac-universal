@@ -7,6 +7,7 @@ import logging
 
 from hledac.universal.core.resource_governor import ResourceGovernor
 
+from utils.async_helpers import safe_gather_dropin
 logger = logging.getLogger(__name__)
 
 
@@ -34,7 +35,7 @@ class FastExplainer:
         tasks = [self._delta_for_edge(edge, start_node, end_node, max_hops) for edge in edges]
 
         # Spustíme paralelně (max 5 najednou)
-        results = await asyncio.gather(*tasks, return_exceptions=True)
+        results = await safe_gather_dropin(*tasks, label="fast:37")
 
         important_edges = []
         for edge, res in zip(edges, results, strict=False):

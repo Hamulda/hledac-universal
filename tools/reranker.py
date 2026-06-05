@@ -14,6 +14,7 @@ import logging
 from dataclasses import dataclass
 from typing import Any
 
+from utils.async_helpers import safe_gather_dropin
 logger = logging.getLogger(__name__)
 
 # Konstanty pro reranking
@@ -252,7 +253,7 @@ class LightweightReranker:
             for req in requests
         ]
 
-        return await asyncio.gather(*tasks, return_exceptions=True)
+        return await safe_gather_dropin(*tasks, label="reranker:255")
 
     def get_memory_usage(self) -> dict[str, Any]:
         """Get estimated memory usage."""

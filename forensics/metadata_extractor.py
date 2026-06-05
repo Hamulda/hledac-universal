@@ -36,6 +36,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from utils.async_helpers import safe_gather_dropin
 # Optional dependencies - imported lazily inside methods
 # PIL, pypdf, docx, mutagen, ffmpeg
 
@@ -115,7 +116,7 @@ MAX_MACRO_URLS: int = 50
 # DATACLASSES
 # =============================================================================
 
-@dataclass
+@dataclass(slots=True)
 class GPSCoordinates:
     """GPS coordinates with accuracy information."""
     latitude: float
@@ -153,7 +154,7 @@ class TimelineEvent:
         }
 
 
-@dataclass
+@dataclass(slots=True)
 class AttributionData:
     """Attribution data extracted from metadata."""
     software: str | None = None
@@ -177,7 +178,7 @@ class AttributionData:
         }
 
 
-@dataclass
+@dataclass(slots=True)
 class ScrubbingAnalysis:
     """Analysis of potential metadata scrubbing."""
     is_scrubbed: bool
@@ -197,7 +198,7 @@ class ScrubbingAnalysis:
         }
 
 
-@dataclass
+@dataclass(slots=True)
 class ImageMetadata:
     """Image-specific metadata."""
     width: int | None = None
@@ -241,7 +242,7 @@ class ImageMetadata:
         }
 
 
-@dataclass
+@dataclass(slots=True)
 class PDFMetadata:
     """PDF document metadata."""
     title: str | None = None
@@ -275,7 +276,7 @@ class PDFMetadata:
         }
 
 
-@dataclass
+@dataclass(slots=True)
 class DocxMetadata:
     """DOCX document metadata."""
     title: str | None = None
@@ -313,7 +314,7 @@ class DocxMetadata:
         }
 
 
-@dataclass
+@dataclass(slots=True)
 class AudioMetadata:
     """Audio file metadata."""
     title: str | None = None
@@ -363,7 +364,7 @@ class AudioMetadata:
         }
 
 
-@dataclass
+@dataclass(slots=True)
 class VideoMetadata:
     """Video file metadata."""
     title: str | None = None
@@ -401,7 +402,7 @@ class VideoMetadata:
         }
 
 
-@dataclass
+@dataclass(slots=True)
 class ArchiveMetadata:
     """Archive file metadata."""
     archive_type: str | None = None  # zip, rar, 7z, tar, etc.
@@ -429,7 +430,7 @@ class ArchiveMetadata:
 # FOCA METADATA CLASSES (Sprint FOCADI-16)
 # =============================================================================
 
-@dataclass
+@dataclass(slots=True)
 class PPTXMetadata:
     """Presentation metadata (PPTX/ODP) - FOCA-style forensics."""
     author: str | None = None
@@ -466,7 +467,7 @@ class PPTXMetadata:
         }
 
 
-@dataclass
+@dataclass(slots=True)
 class EmailMetadata:
     """Email header forensics - FOCA-style infrastructure analysis."""
     from_addr: str | None = None
@@ -499,7 +500,7 @@ class EmailMetadata:
         }
 
 
-@dataclass
+@dataclass(slots=True)
 class CADMetadata:
     """CAD/technical drawing metadata (DXF, DWG, SVG) - FOCA-style."""
     author: str | None = None
@@ -528,7 +529,7 @@ class CADMetadata:
         }
 
 
-@dataclass
+@dataclass(slots=True)
 class GenericMetadata:
     """Generic file metadata from filesystem."""
     file_name: str
@@ -578,7 +579,7 @@ class GenericMetadata:
         }
 
 
-@dataclass
+@dataclass(slots=True)
 class SteganalysisMetadata:
     """Steganalysis results for images."""
     lsb_suspicious: bool = False
@@ -1128,7 +1129,7 @@ class UniversalMetadataExtractor:
         for i in range(0, len(file_paths), self.batch_size):
             batch = file_paths[i:i + self.batch_size]
             tasks = [self.extract(path) for path in batch]
-            batch_results = await asyncio.gather(*tasks, return_exceptions=True)
+            batch_results = await safe_gather_dropin(*tasks, label="metadata_extractor:1131")
 
             for path, result in zip(batch, batch_results, strict=False):
                 if isinstance(result, Exception):

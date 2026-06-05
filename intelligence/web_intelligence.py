@@ -22,6 +22,7 @@ import aiohttp
 from hledac.universal.network.session_runtime import async_get_aiohttp_session
 from hledac.universal.utils.uuid7 import new_runtime_id
 
+from utils.async_helpers import safe_gather_fire_and_forget
 # psutil je optional — nepovinný pro M1 lightweight provoz
 try:
     import psutil
@@ -597,7 +598,7 @@ class UnifiedWebIntelligence:
                     self._execute_threat_assessment(result, target),
                     self._execute_vulnerability_analysis(result, target),
                 ]
-                await asyncio.gather(*tasks, return_exceptions=True)
+                await safe_gather_fire_and_forget(*tasks, label="web_intelligence:600")
 
         except Exception as e:
             result.errors.append(f"{op_type.value} failed: {str(e)}")
@@ -1349,7 +1350,7 @@ class UnifiedWebIntelligence:
             for task in list(self._active_tasks):
                 if not task.done():
                     task.cancel()
-            await asyncio.gather(*self._active_tasks, return_exceptions=True)
+            await safe_gather_fire_and_forget(*self._active_tasks, label="web_intelligence:1352")
             self._active_tasks.clear()
 
             # Cleanup components

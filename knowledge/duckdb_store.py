@@ -232,6 +232,7 @@ from .quality_assessment import (
 # Sprint F216G: WAL Manager and Dedup Manager (extracted from this file)
 from .wal import WALManager
 
+from utils.async_helpers import safe_gather_fire_and_forget
 # Sprint F222: Semantic buffering (extracted from this file)
 
 
@@ -5743,7 +5744,7 @@ class DuckDBShadowStore:
         if _bg:
             for t in _bg:
                 t.cancel()
-            await asyncio.gather(*_bg, return_exceptions=True)
+            await safe_gather_fire_and_forget(*_bg, label="duckdb_store:5746")
             _bg.clear()
 
         # Sprint 8WA: close truth-write graph (IOCGraph with buffer_ioc/flush_buffers)

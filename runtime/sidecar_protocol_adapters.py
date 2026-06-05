@@ -388,3 +388,57 @@ class LeakSentinelSidecarAdapter(BaseSidecarAdapter):
             if ioc_type in ("domain", "email", "username") and ioc_value:
                 targets.append(ioc_value)
         return targets[:10]
+
+
+# ── Federated Research Sidecar (F350M-FED) ───────────────────────────────────
+
+@SidecarRegistry.register("federated_research")
+class FederatedResearchSidecarAdapter:  # duck-typed SidecarAdapterProtocol
+    """
+    Federated Multi-Node Research Sidecar.
+
+    Wraps FederatedResearchCoordinator to expose the federated pattern
+    (multi-virtual-node, parallel, dedup) through the canonical
+    SidecarAdapterProtocol pipeline. Output is converted to
+    CanonicalFinding (or dict fallback) with source_type="federated_research".
+
+    This adapter does NOT inherit from BaseSidecarAdapter to keep the
+    federated/ package zero-coupled to runtime.sidecar_protocol. The
+    duck-typed subset of SidecarAdapterProtocol is sufficient:
+        - sidecar_id, env_gate, ram_budget_mb, priority  (class attrs)
+        - is_available()                                     (method)
+        - async run(ctx) -> list                            (method, fail-soft)
+
+    Env: HLEDAC_ENABLE_FEDERATED=1
+    RAM: 30MB budget
+    Priority: 5 (medium, runs alongside other research sidecars)
+    """
+
+    sidecar_id: str = "federated_research"
+    env_gate: str = "HLEDAC_ENABLE_FEDERATED"
+    ram_budget_mb: int = 30
+    priority: int = 5
+
+    def is_available(self) -> bool:
+        """Env-gated check delegating to the federated module's gate."""
+        try:
+            from hledac.universal.federated import is_federated_enabled
+            return is_federated_enabled()
+        except Exception:
+            return False
+
+    async def run(self, ctx: SidecarContext) -> list[Any]:
+        """Fail-soft wrapper that delegates to the federated sidecar adapter."""
+        try:
+            from hledac.universal.federated.sidecar_adapter import (
+                FederatedSidecarAdapter,
+            )
+            adapter = FederatedSidecarAdapter()
+            return await adapter.run(ctx)
+        except Exception:
+            logger.warning(
+                "FederatedResearchSidecarAdapter.run: fail-soft",
+                exc_info=True,
+            )
+            return []
+

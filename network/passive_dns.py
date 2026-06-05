@@ -34,6 +34,7 @@ import time
 import aiohttp
 from hledac.universal.network.session_runtime import async_get_aiohttp_session
 
+from utils.async_helpers import safe_gather_dropin
 logger = logging.getLogger(__name__)
 
 # ── Bounds ────────────────────────────────────────────────────────────────────
@@ -195,7 +196,7 @@ class PassiveDNSResolver:
             self._do_query(name, rdtype, resolver, url)
             for resolver, url in DOH_RESOLVERS.items()
         ]
-        results = await asyncio.gather(*tasks, return_exceptions=True)
+        results = await safe_gather_dropin(*tasks, label="passive_dns:198")
         merged: list[str] = []
         for res in results:
             if isinstance(res, list):
@@ -219,7 +220,7 @@ class PassiveDNSResolver:
             resolver: self._do_query(name, rdtype, resolver, url)
             for resolver, url in DOH_RESOLVERS.items()
         }
-        results = await asyncio.gather(*tasks.values(), return_exceptions=True)
+        results = await safe_gather_dropin(*tasks.values(), label="passive_dns:222")
         comparison: dict[str, list[str]] = {}
         for resolver, res in zip(tasks.keys(), results, strict=False):
             if isinstance(res, list):

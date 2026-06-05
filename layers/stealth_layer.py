@@ -39,7 +39,7 @@ logger = logging.getLogger(__name__)
 # ADVANCED CAPTCHA SOLVER - Self-hosted on M1 8GB
 # =============================================================================
 
-@dataclass
+@dataclass(slots=True)
 class CaptchaSolverConfig:
     """Configuration for self-hosted CAPTCHA solving"""
     # OCR Model settings (lightweight for M1)
@@ -57,7 +57,7 @@ class CaptchaSolverConfig:
     confidence_threshold: float = 0.6
 
 
-@dataclass
+@dataclass(slots=True)
 class CaptchaResult:
     """Result of CAPTCHA solving attempt"""
     success: bool
@@ -457,7 +457,7 @@ class AdvancedCaptchaSolver:
 # JAVASCRIPT EVASION - Advanced anti-detection techniques
 # =============================================================================
 
-@dataclass
+@dataclass(slots=True)
 class JavaScriptEvasionConfig:
     """Configuration for JavaScript evasion"""
     # Evasion modules
@@ -1109,7 +1109,7 @@ class BehaviorPattern(Enum):
     CAREFUL = "careful"  # Very slow, cautious
 
 
-@dataclass
+@dataclass(slots=True)
 class SimulationConfig:
     """Configuration for behavior simulation"""
     pattern: BehaviorPattern = BehaviorPattern.RESEARCHER
@@ -1133,7 +1133,7 @@ class SimulationConfig:
     viewport_variation: bool = True  # Vary viewport slightly
 
 
-@dataclass
+@dataclass(slots=True)
 class MouseMovement:
     """Mouse movement point"""
     x: float
@@ -1141,7 +1141,7 @@ class MouseMovement:
     timestamp: float
 
 
-@dataclass
+@dataclass(slots=True)
 class ScrollAction:
     """Scroll action"""
     delta_y: int
@@ -1532,7 +1532,7 @@ class BehaviorSimulator:
         }
 
 
-@dataclass
+@dataclass(slots=True)
 class FingerprintConfig:
     """Configuration for fingerprint randomization (from stealth_toolkit)"""
     randomize_canvas: bool = True
@@ -1547,7 +1547,7 @@ class FingerprintConfig:
     platform: str | None = None  # 'macos', 'windows', 'linux', None=random
 
 
-@dataclass
+@dataclass(slots=True)
 class BrowserProfile:
     """Browser fingerprint profile (from stealth_toolkit)"""
     screen_width: int = 1920

@@ -27,6 +27,7 @@ from functools import wraps
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from utils.async_helpers import safe_gather_dropin
 try:
     import compression.zstd as _zstd
     ZSTD_AVAILABLE = True
@@ -786,7 +787,7 @@ class MultiLevelContextCache:
                 # Compute and cache
                 tasks.append(compute_func(input_data))
 
-        results = await asyncio.gather(*tasks, return_exceptions=True)
+        results = await safe_gather_dropin(*tasks, label="context_cache:789")
 
         for input_data, result in zip(inputs, results, strict=False):
             await self.set(input_data, result, cache_type)

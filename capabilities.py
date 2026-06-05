@@ -956,4 +956,30 @@ def create_default_registry() -> CapabilityRegistry:
         PASSIVE_DNS_AVAILABLE = False
         _bgp_pdns_available = False
 
+    # F350M-FED: Federated research — gate on HLEDAC_ENABLE_FEDERATED=1
+    # Multi-virtual-node coordinator for distributed research queries on a
+    # single host. No real P2P transport (out of scope for M1 8GB); the
+    # coordinator runs N≤3 in-process "virtual nodes" with independent
+    # Q-tables and aggregates their findings by (ioc_type, ioc_value) dedup.
+    _federated_env = os.environ.get("HLEDAC_ENABLE_FEDERATED", "").lower() in ("1", "true", "yes", "on")
+    try:
+        from hledac.universal.federated import is_federated_enabled
+        # Double-check: the env-var resolution in the federated package
+        # uses the same token set as the env check above. We do NOT call
+        # the runtime gate function — capability registration must be
+        # driven by the env var, not by dynamic state.
+        _federated_module_ok = True
+    except ImportError:
+        _federated_module_ok = False
+    registry.register(
+        capability=Capability.FEDERATED,
+        available=_federated_env and _federated_module_ok,
+        reason=(
+            "Federated coordinator enabled (HLEDAC_ENABLE_FEDERATED=1)"
+            if (_federated_env and _federated_module_ok)
+            else "Federated disabled — set HLEDAC_ENABLE_FEDERATED=1 to enable"
+        ),
+        module_path="hledac.universal.federated.coordinator"
+    )
+
     return registry

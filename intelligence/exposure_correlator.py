@@ -33,6 +33,7 @@ from collections.abc import Generator
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
+from utils.async_helpers import safe_gather_dropin
 if TYPE_CHECKING:
     import aiohttp
     from hledac.universal.knowledge.duckdb_store import CanonicalFinding
@@ -350,7 +351,7 @@ async def _detect_open_buckets_async(
     if not tasks:
         return []
 
-    results = await asyncio.gather(*tasks, return_exceptions=True)
+    results = await safe_gather_dropin(*tasks, label="exposure_correlator:353")
     findings = []
     for r in results:
         if isinstance(r, Exception):
@@ -559,7 +560,7 @@ def scan_open_storage(domains: list[str]) -> list[OpenStorageResult]:
     async def _scan_all():
         import asyncio
         tasks = [scanner.scan_domain(d) for d in domains]
-        return await asyncio.gather(*tasks, return_exceptions=True)
+        return await safe_gather_dropin(*tasks, label="exposure_correlator:562")
 
     try:
         loop = asyncio.new_event_loop()

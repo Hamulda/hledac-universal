@@ -22,6 +22,7 @@ import os
 import time
 from typing import NamedTuple
 
+from utils.async_helpers import safe_gather_dropin
 try:
     from hledac.universal.utils.source_types import SourceType
 except ImportError:
@@ -408,7 +409,7 @@ async def fetch_all_alt_protocols(
         tasks.append(_fetch_from_fediverse(query, sem))
         tasks.append(_fetch_from_matrix(query, sem))
 
-    results = await asyncio.gather(*tasks, return_exceptions=True)
+    results = await safe_gather_dropin(*tasks, label="alternative_protocol_fetcher:411")
 
     for result in results:
         if isinstance(result, Exception):

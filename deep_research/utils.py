@@ -11,6 +11,7 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
+from utils.async_helpers import safe_gather_dropin
 logger = logging.getLogger(__name__)
 
 
@@ -176,7 +177,7 @@ class LinkRotDetector:
                 return await self.check(url)
 
         tasks = [check_with_limit(url) for url in urls]
-        return await asyncio.gather(*tasks, return_exceptions=True)
+        return await safe_gather_dropin(*tasks, label="utils:179")
 
     async def close(self):
         """Close HTTP session"""

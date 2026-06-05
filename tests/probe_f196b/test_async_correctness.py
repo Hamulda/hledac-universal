@@ -7,6 +7,7 @@ Tests verify that asyncio patterns are correctly implemented.
 import asyncio
 import pytest
 
+from utils.async_helpers import safe_gather_dropin
 
 class TestAsyncCorrectness:
     """Verify async patterns are correctly implemented."""
@@ -35,7 +36,7 @@ class TestAsyncCorrectness:
                 asyncio.wait_for(coro, timeout=1.0)
                 for coro in coros
             ]
-            results = await asyncio.gather(*tasks, return_exceptions=True)
+            results = await safe_gather_dropin(*tasks, label="test_async_correctness:38")
             return results
 
         results = asyncio.run(test_pattern())

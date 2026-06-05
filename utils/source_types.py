@@ -105,6 +105,7 @@ class SourceType(enum.StrEnum):
     STEGANOGRAPHY_DETECTION = "steganography_detection"
     DIGITAL_GHOST_DETECTION = "digital_ghost_detection"
     BLOCKCHAIN_FORENSICS = "blockchain_forensics"
+    FORENSIC_ANALYSIS = "forensic_analysis"  # Sprint F261
 
     # ── Identity / Exposure / Temporal ───────────────────────────────────
     IDENTITY_STITCHING = "identity_stitching"
@@ -203,6 +204,7 @@ SourceTypeLiteral = Literal[
     "academic", "academic_search", "arxiv_bulk", "openalex", "s2orc", "unpaywall",
     "pastebin_monitor", "github_secret_scanner", "github", "leak_sentinel",
     "steganography_detection", "digital_ghost_detection", "blockchain_forensics",
+    "forensic_analysis",  # Sprint F265 — closes cosmetic gap with SourceType.FORENSIC_ANALYSIS
     "identity_stitching", "identity_attribution", "exposure_correlation", "temporal_archaeology",
     "network_recon", "banner_grab", "nvd_cve", "cve_lookup",
     "hermes_inference", "llm_synthesis", "tot_synthesis",

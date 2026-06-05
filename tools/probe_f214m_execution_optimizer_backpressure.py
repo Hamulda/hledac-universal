@@ -22,6 +22,7 @@ from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
+from utils.async_helpers import safe_gather_dropin, safe_gather_fire_and_forget
 # ── Probe Configuration ──────────────────────────────────────────────────────
 
 IO_WORKLOAD_SIZES = [4, 8, 16, 32]  # Simulate caller patterns
@@ -235,7 +236,7 @@ async def probe_strategy_comparison():
         elif mp:
             results = await execute_parallel_bounded(tasks, mp, thread_pool)
         else:
-            results = await asyncio.gather(*[t() for t in tasks], return_exceptions=True)
+            results = await safe_gather_dropin(*[t() for t in tasks], label="probe_f214m_execution_optimizer_backpressure:238")
 
         elapsed = time.time() - start
         _, peak = tracemalloc.get_traced_memory()

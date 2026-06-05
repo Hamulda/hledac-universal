@@ -586,7 +586,7 @@ async def _cancel_orphan_tasks() -> None:
         try:
             # C.8.1: drain protected by 5s timeout — don't wait forever
             async with asyncio.timeout(5.0):
-                await asyncio.gather(*all_tasks, return_exceptions=True)
+                await safe_gather_fire_and_forget(*all_tasks, label="__main__:589")
         except TimeoutError:
             _boot_record("task_cancellation", "drain_timeout_5s")
             logger.warning("[MAIN] Orphan task drain timed out after 5s, continuing shutdown")
@@ -1777,7 +1777,7 @@ async def _run_observed_default_feed_batch_once(
                 _run_single_source(url, lbl, org, pri)
                 for url, lbl, org, pri in seed_sources
             ]
-            batch_results = await asyncio.gather(*tasks, return_exceptions=True)
+            batch_results = await safe_gather_dropin(*tasks, label="__main__:1780")
             for res in batch_results:
                 if isinstance(res, asyncio.CancelledError):
                     raise res
@@ -3233,6 +3233,7 @@ if __name__ == "__main__":
 # =============================================================================
 
 import logging
+from utils.async_helpers import safe_gather_dropin, safe_gather_fire_and_forget
 TYPE_CHECKING
 
 if TYPE_CHECKING:

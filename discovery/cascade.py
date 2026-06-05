@@ -27,6 +27,7 @@ from hledac.universal.discovery.duckduckgo_adapter import (
     DiscoveryBatchResult,
 )
 
+from utils.async_helpers import safe_gather_dropin
 # ---------------------------------------------------------------------------
 # Env gate — re-checked on every call (not cached at import time)
 # ---------------------------------------------------------------------------
@@ -64,7 +65,7 @@ async def _search_all_providers(
     hf_task = _run_historical_frontier(query, max_results, timeout_s)
     wb_task = _run_wayback_cdx(query, max_results, timeout_s)
 
-    results = await asyncio.gather(ddg_task, hf_task, wb_task, return_exceptions=True)
+    results = await safe_gather_dropin(ddg_task, hf_task, wb_task, label="cascade:67")
 
     def coerce(result, name, default_chain, default_family):
         if isinstance(result, asyncio.TimeoutError):

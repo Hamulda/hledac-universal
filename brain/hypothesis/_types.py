@@ -66,7 +66,7 @@ class TestType(Enum):
 # Core Hypothesis Dataclasses
 # ============================================================================
 
-@dataclass
+@dataclass(slots=True)
 class Evidence:
     """Evidence item supporting or conflicting with a hypothesis."""
     evidence_id: str
@@ -78,7 +78,7 @@ class Evidence:
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
-@dataclass
+@dataclass(slots=True)
 class TestResult:
     """Result of executing a test against a hypothesis."""
     test_type: str
@@ -93,7 +93,7 @@ class TestResult:
             self.timestamp = datetime.fromisoformat(self.timestamp)
 
 
-@dataclass
+@dataclass(slots=True)
 class TestDesign:
     """Design for testing a hypothesis."""
     test_type: str
@@ -105,7 +105,7 @@ class TestDesign:
     cost_estimate: float = 1.0  # Estimated computational cost
 
 
-@dataclass
+@dataclass(slots=True)
 class FalsificationResult:
     """Result of a falsification attempt."""
     falsified: bool
@@ -142,7 +142,7 @@ class DarkQuery:
     reasoning: str = ""  # Why this query was generated
 
 
-@dataclass
+@dataclass(slots=True)
 class _DarkQueryListResponse:
     """Response model for Hermes LLM dark query generation."""
     queries: list[dict[str, Any]] = field(default_factory=list)
@@ -152,7 +152,7 @@ class _DarkQueryListResponse:
 # Sprint F259: Causal Reasoning Data Classes
 # ============================================================================
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class CausalEntity:
     """An entity extracted from findings for causal reasoning."""
     entity_id: str
@@ -163,7 +163,7 @@ class CausalEntity:
     last_seen: float = 0.0
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class TemporalSequence:
     """An ordered sequence of events."""
     sequence_id: str
@@ -173,7 +173,7 @@ class TemporalSequence:
     confidence: float = 0.0
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class AnomalySignal:
     """An anomaly signal from unexpected source combinations."""
     anomaly_type: str  # cross_domain, temporal_gap, source_conflict, etc.
@@ -184,7 +184,7 @@ class AnomalySignal:
     description: str = ""
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class CausalHypothesis:
     """A causal hypothesis generated from entity co-occurrence and temporal sequences."""
     hypothesis_id: str
@@ -215,7 +215,7 @@ CO_OCCURRENCE_FP16 = True  # Use float16 for RAM savings
 # Adversarial Verification Data Classes
 # ============================================================================
 
-@dataclass
+@dataclass(slots=True)
 class SourceCredibility:
     """
     Credibility assessment for an evidence source.
@@ -246,7 +246,7 @@ class SourceCredibility:
         self.last_updated = datetime.now()
 
 
-@dataclass
+@dataclass(slots=True)
 class Event:
     """Temporal event for consistency checking."""
     event_id: str
@@ -256,7 +256,7 @@ class Event:
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
-@dataclass
+@dataclass(slots=True)
 class Contradiction:
     """
     Represents a contradiction between two claims or evidence items.
@@ -273,7 +273,7 @@ class Contradiction:
     resolution_notes: str = ""
 
 
-@dataclass
+@dataclass(slots=True)
 class CrossReferenceResult:
     """Result of cross-referencing a claim across databases."""
     database_id: str
@@ -284,7 +284,7 @@ class CrossReferenceResult:
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
-@dataclass
+@dataclass(slots=True)
 class AdversarialReport:
     """
     Comprehensive adversarial verification report.

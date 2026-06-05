@@ -12,7 +12,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from pathlib import Path
@@ -32,12 +32,27 @@ __all__ = [
     "render_jsonld_to_path",
     "render_analyst_evidence_jsonld",
     "render_analyst_evidence_jsonld_str",
+    "build_forensic_analysis_jsonld",
 ]
 
 # ---------------------------------------------------------------------------
 # Ghost namespace URI (local, self-hosted)
 # ---------------------------------------------------------------------------
 _GHOST_NS = "https://ghost-prime.ai/ns/2024/jsonld"
+
+# Sprint F263: Bounded forensic-render budgets. Shared semantics with
+# markdown_reporter — kept in lockstep for cross-format determinism.
+_FORENSIC_SOURCE_TYPES: tuple[str, ...] = (
+    "forensic_analysis",
+    "steganography_detection",
+    "digital_ghost_detection",
+    "blockchain_forensics",
+)
+_FORENSIC_MAX_RENDER: int = 200
+_FORENSIC_MAX_IOC_SAMPLE: int = 5
+_FORENSIC_MAX_IOC_TYPE_LEN: int = 24
+_FORENSIC_MAX_VALUE_LEN: int = 96
+_FORENSIC_MAX_PAYLOAD_PARSE: int = 2048
 
 # JSON-LD @context (schema.org + ghost namespace)
 _JSONLD_CONTEXT: list[str | dict[str, Any]] = [
@@ -104,6 +119,16 @@ _JSONLD_CONTEXT: list[str | dict[str, Any]] = [
         "entriesWithEmptyAssembledText": "https://schema.org/Number",
         "entriesWithText": "https://schema.org/Number",
         "avgAssembledTextLen": "https://schema.org/Number",
+        # Sprint F263: forensic analysis surface
+        "forensicAnalysis": "https://schema.org/DigitalDocument",
+        "forensicTotalCount": "https://schema.org/Number",
+        "forensicBySourceType": "https://schema.org/ItemList",
+        "forensicIOCHistogram": "https://schema.org/ItemList",
+        "forensicSampleValues": "https://schema.org/ItemList",
+        "forensicConfidenceMin": "https://schema.org/Number",
+        "forensicConfidenceMax": "https://schema.org/Number",
+        "forensicConfidenceAvg": "https://schema.org/Number",
+        "forensicTruncated": "https://schema.org/Boolean",
     },
 ]
 
@@ -286,6 +311,154 @@ def _build_root_cause(data: dict[str, Any]) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
+# Sprint F263: Forensic analysis JSON-LD builder
+# ---------------------------------------------------------------------------
+def _parse_forensic_payload_jsonld(payload: str | None) -> dict[str, str] | None:
+    """
+    Parse a forensic finding's payload_text into a small dict.
+
+    Mirrors the markdown-side helper exactly to keep both formats in
+    lockstep. Bounded: trims to ``_FORENSIC_MAX_PAYLOAD_PARSE`` bytes
+    before parsing. Returns None on missing / unparseable input.
+    """
+    if not payload or not isinstance(payload, str):
+        return None
+    bounded = payload[:_FORENSIC_MAX_PAYLOAD_PARSE]
+    if bounded.lstrip().startswith("{"):
+        try:
+            import json as _json
+            obj = _json.loads(bounded)
+        except Exception:
+            return None
+        if not isinstance(obj, dict):
+            return None
+        out: dict[str, str] = {}
+        for k, v in obj.items():
+            if not isinstance(k, str):
+                continue
+            if isinstance(v, (str, int, float, bool)):
+                out[k[:_FORENSIC_MAX_IOC_TYPE_LEN]] = str(v)[:_FORENSIC_MAX_VALUE_LEN]
+        return out or None
+    out2: dict[str, str] = {}
+    for chunk in bounded.split(";"):
+        chunk = chunk.strip()
+        if not chunk or "=" not in chunk:
+            continue
+        k, _, v = chunk.partition("=")
+        k = k.strip()[:_FORENSIC_MAX_IOC_TYPE_LEN]
+        v = v.strip()[:_FORENSIC_MAX_VALUE_LEN]
+        if k:
+            out2[k] = v
+    return out2 or None
+
+
+def build_forensic_analysis_jsonld(
+    findings: Iterable[Any] | None,
+) -> dict[str, Any]:
+    """
+    Sprint F263: Render forensic findings as a JSON-LD ``ghost:ForensicAnalysis``
+    entity. Reads findings in the same shape as
+    :func:`markdown_reporter.aggregate_forensic_findings` and emits a
+    stable, bounded dict with:
+
+      * total count, by-source-type histogram
+      * IOC histogram (sorted by count desc, then name asc)
+      * sample values (≤ ``_FORENSIC_MAX_IOC_SAMPLE`` per IOC type)
+      * confidence min/max/avg
+      * truncation flag (bounded at ``_FORENSIC_MAX_RENDER`` findings)
+
+    Always returns a fully-shaped dict (no ``None`` at top level) so the
+    downstream ``_clean`` filter can drop only the optional sub-fields.
+    Fail-safe: never raises; returns an empty forensic surface on any error.
+    """
+    empty: dict[str, Any] = {
+        "@type": "ghost:ForensicAnalysis",
+        "ghost:forensicTotalCount": 0,
+        "ghost:forensicBySourceType": [],
+        "ghost:forensicIOCHistogram": [],
+        "ghost:forensicSampleValues": [],
+        "ghost:forensicTruncated": False,
+    }
+    if not findings:
+        return empty
+    try:
+        by_source: dict[str, int] = {}
+        ioc_hist: dict[str, int] = {}
+        samples: dict[str, list[str]] = {}
+        confs: list[float] = []
+        truncated = False
+        seen = 0
+        for f in findings:
+            seen += 1
+            if seen > _FORENSIC_MAX_RENDER:
+                truncated = True
+                break
+            if not isinstance(f, dict):
+                continue
+            src = str(f.get("source_type", "") or "")[:64]
+            if src not in _FORENSIC_SOURCE_TYPES:
+                continue
+            by_source[src] = by_source.get(src, 0) + 1
+            try:
+                c = float(f.get("confidence", 0.0) or 0.0)
+            except (TypeError, ValueError):
+                c = 0.0
+            if 0.0 <= c <= 1.0:
+                confs.append(c)
+            parsed = _parse_forensic_payload_jsonld(f.get("payload_text"))
+            if not parsed:
+                continue
+            ioc_t = parsed.get("ioc_type", "unknown")[:_FORENSIC_MAX_IOC_TYPE_LEN]
+            val = parsed.get("value", "")[:_FORENSIC_MAX_VALUE_LEN]
+            if not ioc_t:
+                continue
+            ioc_hist[ioc_t] = ioc_hist.get(ioc_t, 0) + 1
+            if val and ioc_t not in samples:
+                samples[ioc_t] = []
+            if val and ioc_t in samples and len(samples[ioc_t]) < _FORENSIC_MAX_IOC_SAMPLE:
+                if val not in samples[ioc_t]:
+                    samples[ioc_t].append(val)
+        if not by_source:
+            return empty
+        out: dict[str, Any] = {
+            "@type": "ghost:ForensicAnalysis",
+            "ghost:forensicTotalCount": sum(by_source.values()),
+            "ghost:forensicBySourceType": [
+                {
+                    "@type": "ghost:ForensicSourceCount",
+                    "ghost:sourceType": src,
+                    "ghost:count": by_source[src],
+                }
+                for src in sorted(by_source.keys())
+            ],
+            "ghost:forensicIOCHistogram": [
+                {
+                    "@type": "ghost:ForensicIOCEntry",
+                    "ghost:iocType": ioc_t,
+                    "ghost:count": cnt,
+                }
+                for ioc_t, cnt in sorted(ioc_hist.items(), key=lambda kv: (-kv[1], kv[0]))
+            ],
+            "ghost:forensicSampleValues": [
+                {
+                    "@type": "ghost:ForensicIOCSample",
+                    "ghost:iocType": ioc_t,
+                    "ghost:values": list(vals)[:_FORENSIC_MAX_IOC_SAMPLE],
+                }
+                for ioc_t, vals in sorted(samples.items())
+            ],
+            "ghost:forensicTruncated": truncated,
+        }
+        if confs:
+            out["ghost:forensicConfidenceMin"] = min(confs)
+            out["ghost:forensicConfidenceMax"] = max(confs)
+            out["ghost:forensicConfidenceAvg"] = sum(confs) / len(confs)
+        return out
+    except Exception:
+        return empty
+
+
+# ---------------------------------------------------------------------------
 # Main renderer
 # ---------------------------------------------------------------------------
 def render_jsonld(report: object) -> dict[str, Any]:
@@ -321,6 +494,9 @@ def render_jsonld(report: object) -> dict[str, Any]:
         "ghost:runtimeTruth": _build_runtime_truth(data),
         "ghost:rootCause": root_cause_data,
         "ghost:perSourceHealth": _build_per_source_health(data),
+        "ghost:forensicAnalysis": build_forensic_analysis_jsonld(
+            data.get("forensic_findings")
+        ),
         "ghost:diagnosticRunId": _safe_str(data.get("diagnostic_run_id") or data.get("run_id") or "unknown"),
     }
 

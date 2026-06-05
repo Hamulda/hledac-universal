@@ -45,6 +45,7 @@ import numpy as np
 
 from ..utils.rate_limiter import RateLimitConfig, RateLimiter
 
+from utils.async_helpers import safe_gather_dropin
 logger = logging.getLogger(__name__)
 
 
@@ -388,7 +389,7 @@ class TemporalArchaeologist:
 
         # Query all sources concurrently
         tasks = [check_source(source) for source in sources]
-        results = await asyncio.gather(*tasks, return_exceptions=True)
+        results = await safe_gather_dropin(*tasks, label="temporal_archaeologist:391")
 
         for source, result in zip(sources, results, strict=False):
             if isinstance(result, Exception):

@@ -18,10 +18,9 @@ Přístup:
 import re
 import sys
 from pathlib import Path
-from typing import List, Optional, Tuple
 
 
-def find_call_extent(lines: List[str], start: int) -> Optional[Tuple[int, int]]:
+def find_call_extent(lines: list[str], start: int) -> tuple[int, int] | None:
     """Najde rozsah asyncio.wait_for(...) přes závorky (0-indexed)."""
     line = lines[start]
     pos = line.find("asyncio.wait_for(")
@@ -48,7 +47,7 @@ def find_call_extent(lines: List[str], start: int) -> Optional[Tuple[int, int]]:
     return None
 
 
-def find_lhs_span(lines: List[str], call_start: int) -> Tuple[int, int, int]:
+def find_lhs_span(lines: list[str], call_start: int) -> tuple[int, int, int]:
     """
     Najde LHS rozsah. Vrací (lhs_start, lhs_end_inclusive, end_col_on_lhs_start).
 
@@ -95,7 +94,7 @@ def find_lhs_span(lines: List[str], call_start: int) -> Tuple[int, int, int]:
     return (lhs_start, await_line, eq_pos)
 
 
-def find_timeout_arg(lines: List[str], call_start: int, call_end: int) -> Optional[Tuple[str, int, int, int]]:
+def find_timeout_arg(lines: list[str], call_start: int, call_end: int) -> tuple[str, int, int, int] | None:
     """
     Najde timeout= argument v rozsahu [call_start, call_end].
     Vrací (timeout_str, line_idx, col_start, col_end) kde (col_start, col_end) jsou
@@ -172,7 +171,7 @@ def find_timeout_arg(lines: List[str], call_start: int, call_end: int) -> Option
     return (value, line_idx, arg_start_col, arg_end_col)
 
 
-def is_in_try_with_timeout(lines: List[str], call_start: int) -> bool:
+def is_in_try_with_timeout(lines: list[str], call_start: int) -> bool:
     """Ověří, že wait_for je uvnitř try-bloku s except TimeoutError."""
     try_line = None
     for i in range(call_start - 1, max(-1, call_start - 30), -1):
@@ -198,8 +197,8 @@ def is_in_try_with_timeout(lines: List[str], call_start: int) -> bool:
     return False
 
 
-def transform_block(lines: List[str], lhs_start: int, call_start: int, call_end: int,
-                    timeout_str: str, t_line: int, t_col_start: int, t_col_end: int) -> List[str]:
+def transform_block(lines: list[str], lhs_start: int, call_start: int, call_end: int,
+                    timeout_str: str, t_line: int, t_col_start: int, t_col_end: int) -> list[str]:
     """
     Sestaví nový blok řádků.
     Vstupní rozsah: [lhs_start, call_end].
@@ -279,7 +278,7 @@ def transform_block(lines: List[str], lhs_start: int, call_start: int, call_end:
     return new_block
 
 
-def migrate_file(filepath: Path) -> Tuple[int, List[str]]:
+def migrate_file(filepath: Path) -> tuple[int, list[str]]:
     """Migruje všechny TIGHT wait_for sites v souboru."""
     text = filepath.read_text(encoding="utf-8", errors="ignore")
     line_only = text.split("\n")

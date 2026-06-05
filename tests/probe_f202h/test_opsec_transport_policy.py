@@ -50,6 +50,7 @@ from hledac.universal.transport.transport_resolver import (
     get_transport_hint_string,
 )
 
+from utils.async_helpers import safe_gather_dropin
 
 class TestRendererPolicyM1Guard:
     """invariant_1: renderer_policy blocks when model context is active."""
@@ -248,7 +249,7 @@ class TestCheckGathered:
         await asyncio.sleep(0.01)  # let task start
         task.cancel()
 
-        results = await asyncio.gather(task, return_exceptions=True)
+        results = await safe_gather_dropin(task, label="test_opsec_transport_policy:251")
         with pytest.raises(asyncio.CancelledError):
             await _check_gathered(results)
 

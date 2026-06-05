@@ -55,6 +55,7 @@ except ImportError:
 
 import re as _re_pi  # dedikovaný alias pro injection patterns
 
+from utils.async_helpers import safe_gather_dropin
 _INJECTION_PATTERNS: list = [
     _re_pi.compile(r"ignore\s+(?:all\s+)?previous\s+(?:instructions?|commands?)", _re_pi.I),
     _re_pi.compile(r"(?:system|prompt)\s*:\s*you\s+are\s+(?:now\s+)?a", _re_pi.I),
@@ -433,7 +434,10 @@ class Hermes3Engine:
         # Cancel worker with bounded timeout
         self._batch_worker_task.cancel()
         try:
-            await asyncio.wait_for(asyncio.shield(self._batch_worker_task), timeout=timeout)
+            # shield() inside timeout ctx: ctx cancel does NOT propagate to shielded task
+            # (preserves the original wait_for(shield(...)) semantics)
+            async with asyncio.timeout(timeout):
+                await asyncio.shield(self._batch_worker_task)
         except (TimeoutError, asyncio.CancelledError):
             pass
         self._batch_worker_task = None
@@ -1411,6 +1415,10 @@ class Hermes3Engine:
                     lambda: self._run_inference(formatted_prompt, temp, max_tok, prefix_cache)
                 )
                 response = await asyncio.wait_for(inference_future, timeout=timeout_s)
+                # NOTE: kept as wait_for here — inference_future is a concurrent.futures.Future
+                # which is not an awaitable in the asyncio.timeout ctx sense; the runtime
+                # `.result()` call inside the future is a sync block, so structured
+                # cancellation via asyncio.timeout is not applicable.
 
             # P1A: Record successful inference
             if record_model_success is not None:
@@ -2137,7 +2145,7 @@ Do not include any other text. Output valid JSON only."""
             chunk = requests[i:i + self._BRIDGE_CHUNK_SIZE]
             # Execute chunk in parallel via gather (invariant B.13)
             chunk_tasks = [execute_single(req) for req in chunk]
-            chunk_results = await asyncio.gather(*chunk_tasks, return_exceptions=True)
+            chunk_results = await safe_gather_dropin(*chunk_tasks, label="hermes3_engine:2147")
 
             # Handle exceptions (invariant B.16: fail-open for unsupported task)
             for req, result in zip(chunk, chunk_results, strict=False):

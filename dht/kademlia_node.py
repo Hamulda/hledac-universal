@@ -84,6 +84,7 @@ from typing import Any
 from hledac.universal.core.resource_governor import ResourceGovernor
 from hledac.universal.dht.local_graph import LocalGraphStore
 
+from utils.async_helpers import safe_gather_dropin, safe_gather_fire_and_forget
 logger = logging.getLogger(__name__)
 
 MAX_ITEM_BYTES = 256 * 1024  # 256KB hard cap
@@ -503,7 +504,7 @@ async def crawl_dht_for_keyword(
                 searched_tokens.add(token)
 
             tasks = [search_token(t) for t in new_tokens]
-            found = await asyncio.gather(*tasks, return_exceptions=True)
+            found = await safe_gather_dropin(*tasks, label="kademlia_node:506")
 
             for item in found:
                 if isinstance(item, dict) and item:
@@ -703,7 +704,7 @@ class KademliaNode:
 
         tasks = [_query_one(h, p) for h, p in self.bootstrap_nodes]
         if tasks:
-            await asyncio.gather(*tasks, return_exceptions=True)
+            await safe_gather_fire_and_forget(*tasks, label="kademlia_node:706")
         logger.debug(
             f"[DHT] bootstrap done: routing_table_size="
             f"{sum(len(b) for b in self.routing_table.values())}"
@@ -806,7 +807,7 @@ class KademliaNode:
 
         tasks = [_query(h, p) for h, p in self.bootstrap_nodes]
         if tasks:
-            await asyncio.gather(*tasks, return_exceptions=True)
+            await safe_gather_fire_and_forget(*tasks, label="kademlia_node:809")
 
     def _distance(self, key1: str, key2: str) -> int:
         h1 = int(hashlib.sha256(key1.encode()).hexdigest(), 16)
@@ -988,7 +989,7 @@ class KademliaNode:
         closest = self._find_closest_nodes(key, self.k)
         tasks = [self._send_store(p["id"], key, value) for p in closest if p["id"] != self.node_id]
         if tasks:
-            await asyncio.gather(*tasks, return_exceptions=True)
+            await safe_gather_fire_and_forget(*tasks, label="kademlia_node:991")
 
     async def find_value(self, key: str) -> Any | None:
         self._cleanup_pending_rpcs()
@@ -1025,7 +1026,7 @@ class KademliaNode:
                 break
 
             async with asyncio.timeout(3.0):
-                results = await asyncio.gather(*futures, return_exceptions=True)
+                results = await safe_gather_dropin(*futures, label="kademlia_node:1028")
             # remove all rpcs
             for rid in rpc_ids:
                 self._pending_rpcs.pop(rid, None)
@@ -1304,7 +1305,7 @@ class KademliaNode:
             tasks = [_query_peer(h, p) for h, p in new_sources[:10]]
             if not tasks:
                 break
-            results = await asyncio.gather(*tasks, return_exceptions=True)
+            results = await safe_gather_dropin(*tasks, label="kademlia_node:1307")
 
             got_new_peers = False
             for res in results:

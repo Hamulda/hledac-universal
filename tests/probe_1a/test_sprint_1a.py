@@ -26,6 +26,7 @@ from hledac.universal.utils.sprint_lifecycle import (
     SprintLifecycleState,
 )
 
+from utils.async_helpers import safe_gather_fire_and_forget
 
 # =============================================================================
 # Test: SprintLifecycleManager State Transitions
@@ -227,7 +228,7 @@ class TestBgTasksHelper:
         assert task in mgr._bg_tasks
 
         await asyncio.sleep(0.05)  # let task complete naturally
-        await asyncio.gather(task, return_exceptions=True)
+        await safe_gather_fire_and_forget(task, label="test_sprint_1a:230")
 
     @pytest.mark.asyncio
     async def test_task_exception_is_discarded(self):

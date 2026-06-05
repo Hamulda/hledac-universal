@@ -1,17 +1,24 @@
 """
-STUB MODULE — hledac.universal.federated.sketches
-Status: Planned, not yet implemented.
-See IMPLEMENTATION_ROADMAP.md for implementation priority.
+LEGACY STUB — hledac.universal.federated.sketches
+
+This module is RETAINED for backward compatibility with any code that
+imports from `hledac.universal.federated.sketches`. It is no longer
+the canonical entry for the federated capability.
+
+Canonical entry: hledac.universal.federated.__init__.py
+Canonical class: FederatedResearchCoordinator
+
+Sprint: F350M-FED / 2026-06-04
 """
+
 from __future__ import annotations
 
-import logging
 from typing import Any
 
-logger = logging.getLogger(__name__)
 __all__: list[str] = []
 
 
-def __getattr__(name: str) -> Any:
-    logger.debug("Stub %s.%s accessed", __name__, name)
+def __getattr__(name: str) -> Any:  # noqa: ARG001 — stub, no attribute resolution
+    # No-op stub. Direct the caller to the canonical entry.
     return None
+

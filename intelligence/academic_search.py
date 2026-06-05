@@ -43,6 +43,7 @@ from hledac.universal.utils.query_expansion import (
     SyntacticExpansionStrategy,
 )
 
+from utils.async_helpers import safe_gather_dropin
 logger = logging.getLogger(__name__)
 
 
@@ -1030,7 +1031,7 @@ class AcademicSearchEngine:
                 tasks.append(task)
                 task_info.append((source_name, query))
 
-        search_results = await asyncio.gather(*tasks, return_exceptions=True)
+        search_results = await safe_gather_dropin(*tasks, label="academic_search:1033")
 
         # Process results
         source_results_map: dict[str, list[SearchResult]] = {}

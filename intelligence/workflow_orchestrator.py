@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
+from utils.async_helpers import safe_gather_dropin
 logger = logging.getLogger(__name__)
 
 # Module timeout in seconds
@@ -523,7 +524,7 @@ class WorkflowOrchestrator:
                 for module in group
             ]
 
-            group_results = await asyncio.gather(*tasks, return_exceptions=True)
+            group_results = await safe_gather_dropin(*tasks, label="workflow_orchestrator:526")
 
             for module, result in zip(group, group_results, strict=False):
                 if isinstance(result, Exception):

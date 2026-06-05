@@ -21,6 +21,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
+from utils.async_helpers import safe_gather_dropin, safe_gather_fire_and_forget
 # Sprint 5N: Lazy MLX import - MLX is optional, not a hard dependency
 _MLX_AVAILABLE = None
 _MLX_CORE = None
@@ -283,7 +284,7 @@ class IntelligentCache:
         for task in list(self._background_tasks):
             task.cancel()
         if self._background_tasks:
-            await asyncio.gather(*self._background_tasks, return_exceptions=True)
+            await safe_gather_fire_and_forget(*self._background_tasks, label="intelligent_cache:286")
             self._background_tasks.clear()
 
         if self._cleanup_task:
@@ -636,7 +637,7 @@ class IntelligentCache:
     async def _warm_cache(self, keys: list[str], loader: Callable) -> None:
         """Warm cache with keys using async loader (Fix 4)."""
         tasks = [loader(key) for key in keys]
-        results = await asyncio.gather(*tasks, return_exceptions=True)
+        results = await safe_gather_dropin(*tasks, label="intelligent_cache:639")
         for key, value in zip(keys, results, strict=False):
             if not isinstance(value, Exception):
                 await self.set(key, value)

@@ -46,6 +46,7 @@ from ._types import (
 # because the type is used in method signatures on this class.
 from brain.hypothesis_engine import Hypothesis  # noqa: E402
 
+from utils.async_helpers import safe_gather_dropin
 if TYPE_CHECKING:
     from brain.hypothesis_engine import HypothesisEngine  # noqa: F401
 
@@ -506,7 +507,7 @@ class AdversarialVerifier:
 
         # Query all databases concurrently
         tasks = [self._query_database(db, claim) for db in databases]
-        db_results = await asyncio.gather(*tasks, return_exceptions=True)
+        db_results = await safe_gather_dropin(*tasks, label="adversarial:509")
 
         for db_id, result in zip(databases, db_results, strict=False):
             if isinstance(result, Exception):

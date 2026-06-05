@@ -833,6 +833,172 @@ class EvidenceLog:
         )
 
     # =========================================================================
+    # FORENSIC ANALYSIS ATTACHMENT - Sprint F261
+    # =========================================================================
+    # Persists forensic analysis results in the tamper-evident evidence chain
+    # so they participate in verify_all() and get_chain(). Forensic results
+    # are bounded (_FORENSIC_*) to prevent payload blowup. Failure to attach
+    # is fail-safe: returns None, never raises.
+
+    # Sprint F261: Forensic analysis hard limits
+    _FORENSIC_MAX_KEYS = 30
+    _FORENSIC_MAX_VALUE_LEN = 1000
+    _FORENSIC_MAX_LIST_ITEMS = 20
+    _FORENSIC_MAX_DEPTH = 3
+
+    def _bound_forensic_value(
+        self, value: Any, depth: int = 0
+    ) -> Any:
+        """Bound forensic result values to prevent payload blowup.
+
+        F261 invariant: bounded payloads only — never trust caller sizes.
+        Trims strings, caps list lengths, recurses into dicts up to
+        _FORENSIC_MAX_DEPTH.
+        """
+        if depth > self._FORENSIC_MAX_DEPTH:
+            return "[depth_truncated]"
+        if value is None or isinstance(value, bool):
+            return value
+        if isinstance(value, int):
+            return value
+        if isinstance(value, float):
+            return value
+        if isinstance(value, str):
+            if len(value) > self._FORENSIC_MAX_VALUE_LEN:
+                return value[: self._FORENSIC_MAX_VALUE_LEN] + "..."
+            return value
+        if isinstance(value, (list, tuple)):
+            cap = self._FORENSIC_MAX_LIST_ITEMS
+            items = [self._bound_forensic_value(v, depth + 1) for v in value[:cap]]
+            truncated = len(value) - len(items)
+            if truncated > 0:
+                items.append(f"[...{truncated}_more_items_truncated]")
+            return items
+        if isinstance(value, dict):
+            out: dict[str, Any] = {}
+            for i, (k, v) in enumerate(value.items()):
+                if i >= self._FORENSIC_MAX_KEYS:
+                    out["_truncated_keys"] = list(value.keys())[i:][:5]
+                    break
+                out[str(k)[:80]] = self._bound_forensic_value(v, depth + 1)
+            return out
+        # Fallback: serialize other types to bounded string
+        return str(value)[: self._FORENSIC_MAX_VALUE_LEN]
+
+    def attach_forensic_analysis(
+        self,
+        finding_id: str,
+        forensic_result: dict[str, Any] | None,
+        source_id: str | None = None,
+        confidence: float = 0.95,
+    ) -> EvidenceEvent | None:
+        """
+        Attach a forensic analysis result to a finding in the evidence chain.
+
+        Sprint F261: Forensic-grade evidence handling for OSINT. Persists a
+        bounded forensic analysis payload as an evidence_packet event,
+        linked to the parent finding via source_ids. Forensic results are
+        fail-safe — never crash the caller. The full result is recoverable
+        from the bounded envelope + the source_id pointer.
+
+        Bounded by _FORENSIC_MAX_KEYS / _FORENSIC_MAX_VALUE_LEN /
+        _FORENSIC_MAX_LIST_ITEMS / _FORENSIC_MAX_DEPTH to prevent payload
+        blowup. Stored in the same tamper-evident chain as other evidence
+        events, so forensic analyses participate in verify_all() and
+        get_chain().
+
+        Args:
+            finding_id: ID of the parent finding (event_id of original
+                observation/evidence_packet, or canonical finding id).
+            forensic_result: Dict from ForensicsResult.to_dict() or a
+                compatible nested dict. None is allowed (logs a debug
+                line and returns None).
+            source_id: Optional source event_id. Defaults to finding_id.
+            confidence: Confidence of the forensic analysis
+                (default 0.95, clamped to [0.0, 1.0]).
+
+        Returns:
+            Created EvidenceEvent, or None on validation failure.
+        """
+        # Fail-safe: empty / invalid input
+        if not finding_id:
+            logger.warning("[FORENSIC] attach_forensic_analysis called with empty finding_id")
+            return None
+        if forensic_result is None:
+            logger.debug(f"[FORENSIC] attach_forensic_analysis: no forensic_result for {finding_id}")
+            return None
+        if not isinstance(forensic_result, dict):
+            logger.warning(
+                f"[FORENSIC] attach_forensic_analysis: forensic_result must be dict, "
+                f"got {type(forensic_result).__name__} for {finding_id}"
+            )
+            return None
+
+        # Clamp confidence to valid range
+        try:
+            confidence = max(0.0, min(1.0, float(confidence)))
+        except (TypeError, ValueError):
+            confidence = 0.95
+
+        # Bound the payload — never trust caller sizes
+        bounded_result = self._bound_forensic_value(forensic_result)
+
+        payload = {
+            "kind": "forensic_analysis",
+            "finding_id": str(finding_id)[:128],
+            "forensic_result": bounded_result,
+            "attached_at": datetime.now(UTC).isoformat(),
+        }
+
+        # source_id defaults to finding_id for traceability
+        effective_source_id = (source_id or finding_id)[:128]
+
+        try:
+            return self.create_event(
+                event_type="evidence_packet",
+                payload=payload,
+                source_ids=[effective_source_id],
+                confidence=confidence,
+            )
+        except (RuntimeError, ValueError) as exc:
+            # Closed / frozen / run_id mismatch — fail-safe
+            logger.warning(
+                f"[FORENSIC] attach_forensic_analysis failed for {finding_id}: {exc}"
+            )
+            return None
+
+    def get_forensic_analyses(
+        self,
+        finding_id: str,
+    ) -> list[EvidenceEvent]:
+        """
+        Retrieve all forensic analysis events for a given finding_id.
+
+        Sprint F261: Read-side companion to attach_forensic_analysis().
+        Scans evidence_packet events with payload['kind'] == "forensic_analysis"
+        and matching payload['finding_id']. Bounded to MAX_RAM_EVENTS.
+
+        Args:
+            finding_id: The finding_id to filter on.
+
+        Returns:
+            List of matching EvidenceEvent objects (may be empty).
+        """
+        if not finding_id:
+            return []
+        out: list[EvidenceEvent] = []
+        for event in self._log:
+            if event.event_type != "evidence_packet":
+                continue
+            payload = event.payload or {}
+            if payload.get("kind") != "forensic_analysis":
+                continue
+            if payload.get("finding_id") != finding_id:
+                continue
+            out.append(event)
+        return out
+
+    # =========================================================================
     # DECISION LEDGER - Decision events with hard limits
     # =========================================================================
 

@@ -32,6 +32,7 @@ logger = logging.getLogger(__name__)
 # Sprint 47: Added counter for tie-breaking when VoI is equal
 import itertools
 
+from utils.async_helpers import safe_gather_dropin
 _counter = itertools.count()
 
 @dataclass(order=True)
@@ -593,7 +594,7 @@ class CommunicationLayer:
             except Exception as e:
                 return {"success": False, "error": str(e), "response": None}
 
-        return await asyncio.gather(*[run_one(q) for q in queries], return_exceptions=True)
+        return await safe_gather_dropin(*[run_one(q) for q in queries], label="communication_layer:596")
 
     async def _process_batch(self, batch: list[dict]) -> None:
         """Process a batch of queries (Sprint 26)."""

@@ -78,6 +78,7 @@ except ImportError:
 # ── import context ──────────────────────────────────────────────────────────────
 from contextlib import contextmanager
 
+from utils.async_helpers import safe_gather_dropin
 
 @contextmanager
 def package_import_context():
@@ -745,11 +746,11 @@ async def _async_semaphore_impl(n_tasks: int, sem_limit: int):
             return await plain_task(idx)
 
     async def plain_gather():
-        return await asyncio.gather(*(plain_task(i) for i in range(n_tasks)))
+        return await safe_gather_dropin(*(plain_task(i) for i in range(n_tasks)), label="bench_f214_python314_runtime:748")
 
     async def semaphore_gather():
         sem = asyncio.Semaphore(sem_limit)
-        return await asyncio.gather(*(sem_task(i, sem) for i in range(n_tasks)))
+        return await safe_gather_dropin(*(sem_task(i, sem) for i in range(n_tasks)), label="bench_f214_python314_runtime:752")
 
     t0 = time.perf_counter()
     plain_result = await plain_gather()

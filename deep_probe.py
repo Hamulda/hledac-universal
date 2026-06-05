@@ -32,6 +32,7 @@ import aiohttp
 import numpy as np
 from hledac.universal.transport.circuit_breaker import CircuitBreaker, CircuitDecision, get_breaker
 
+from utils.async_helpers import safe_gather_dropin
 logger = logging.getLogger(__name__)
 
 @dataclass
@@ -780,7 +781,7 @@ class DeepProbeScanner:
 
         # Execute all concurrently
         all_tasks = s3_tasks + gcs_tasks + azure_tasks
-        scan_results = await asyncio.gather(*all_tasks, return_exceptions=True)
+        scan_results = await safe_gather_dropin(*all_tasks, label="deep_probe:783")
 
         # Process results
         s3_results = scan_results[:len(s3_tasks)]

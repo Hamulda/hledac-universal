@@ -30,6 +30,7 @@ from hledac.universal.pipeline.live_public_pipeline import (
 )
 from hledac.universal.network.session_runtime import _check_gathered
 
+from utils.async_helpers import safe_gather_fire_and_forget
 
 # ------------------------------------------------------------------
 # invariant_1-5: gather + _check_gathered hygiene
@@ -166,7 +167,7 @@ class TestF200CConcurrency:
                 )
                 tasks.append(task)
 
-            await asyncio.gather(*tasks, return_exceptions=True)
+            await safe_gather_fire_and_forget(*tasks, label="test_async_batch_public_pipeline:169")
 
             # Verify all 3 fetches were called
             start_calls = [t for t in call_times if t[0].startswith("start:")]
@@ -270,7 +271,7 @@ class TestF200CSemaphoreLimiting:
                 )
                 tasks.append(task)
 
-            await asyncio.gather(*tasks, return_exceptions=True)
+            await safe_gather_fire_and_forget(*tasks, label="test_async_batch_public_pipeline:273")
 
             # Semaphore should have limited to 2 concurrent
             assert max_concurrent <= 2, f"Expected max 2 concurrent, got {max_concurrent}"

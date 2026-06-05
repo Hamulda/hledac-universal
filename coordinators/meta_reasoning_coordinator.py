@@ -27,6 +27,7 @@ from typing import Any
 
 from .base import DecisionResponse, OperationResult, OperationType, UniversalCoordinator
 
+from utils.async_helpers import safe_gather_dropin
 logger = logging.getLogger(__name__)
 
 
@@ -419,7 +420,7 @@ class UniversalMetaReasoningCoordinator(UniversalCoordinator):
 
         # Execute all strategies in parallel
         tasks = [self.reason(query, s) for s in strategies]
-        results = await asyncio.gather(*tasks, return_exceptions=True)
+        results = await safe_gather_dropin(*tasks, label="meta_reasoning_coordinator:422")
 
         # Collect successful results
         successful = [

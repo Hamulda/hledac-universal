@@ -76,6 +76,51 @@ def _get_sprint_advisory_runner():
 
 
 # ---------------------------------------------------------------------------
+# F350M-FED: Plugin Sidecar Context (duck-typed SidecarContext)
+# ---------------------------------------------------------------------------
+
+
+class _PluginSidecarContext:
+    """
+    F350M-FED: Lightweight duck-typed SidecarContext for plugin sidecars.
+
+    Constructed by SidecarOrchestrator._build_plugin_sidecar_context() from
+    the bound scheduler state. Avoids a hard import of SidecarContext
+    (which lives in runtime.sidecar_protocol) at module load time and
+    matches the attribute-based access pattern that registered adapters
+    use (getattr(ctx, "query") etc.).
+
+    SidecarRegistry.get_available() returns adapter instances; their
+    run(ctx) implementations read ctx attributes via getattr, so any
+    object with the 5 fields is accepted. We use this typed shim for
+    IDE/typing clarity but it is structurally compatible with
+    SidecarContext.
+    """
+
+    __slots__ = (
+        "query",
+        "sprint_id",
+        "findings",
+        "sprint_mode",
+        "memory_pressure",
+    )
+
+    def __init__(
+        self,
+        query: str,
+        sprint_id: str,
+        findings: list,
+        sprint_mode: str,
+        memory_pressure: float,
+    ) -> None:
+        self.query = query
+        self.sprint_id = sprint_id
+        self.findings = findings
+        self.sprint_mode = sprint_mode
+        self.memory_pressure = float(memory_pressure)
+
+
+# ---------------------------------------------------------------------------
 # SidecarOrchestrator
 # ---------------------------------------------------------------------------
 
@@ -186,6 +231,10 @@ class SidecarOrchestrator:
           5. run_ipfs_discovery_sidecar          (F229, gated by HLEDAC_ENABLE_IPFS)
           6. run_bgp_enrichment_sidecar          (F229, gated by HLEDAC_ENABLE_BGP)
           7. run_banner_grab_sidecar              (F229, gated by HLEDAC_ENABLE_BANNER_GRAB)
+          8. run_plugin_sidecars                  (F350M-FED, iterates SidecarRegistry
+                                                    for any @SidecarRegistry.register'd
+                                                    adapter — federated_research is
+                                                    the first such plugin)
         """
         # Step 1: SprintAdvisoryRunner for 4 core advisories
         if self._scheduler is not None:
@@ -316,6 +365,190 @@ class SidecarOrchestrator:
                 )
                 bg_tasks.add(_ti_task)
                 _ti_task.add_done_callback(bg_tasks.discard)
+
+        # Step 8 (F350M-FED): Plugin sidecars from SidecarRegistry.
+        # Non-blocking, fail-soft. Each registered adapter is dispatched as
+        # its own asyncio task. The federated_research sidecar is the first
+        # user of this seam; future plugins can register via
+        # @SidecarRegistry.register("my_id") and will be auto-discovered.
+        _plugin_ctx = self._build_plugin_sidecar_context()
+        if _plugin_ctx is not None:
+            _plugin_task = _asyncio.create_task(
+                self.run_plugin_sidecars(_plugin_ctx),
+                name="sprint:plugin_sidecars",
+            )
+            if self._scheduler is not None:
+                _bg_tasks: set | None = getattr(self._scheduler, "_bg_tasks", None)
+                if _bg_tasks is not None:
+                    _bg_tasks.add(_plugin_task)
+                    _plugin_task.add_done_callback(_bg_tasks.discard)
+
+    async def run_plugin_sidecars(self, ctx: Any) -> None:
+        """
+        F350M-FED: Iterate over SidecarRegistry.get_available() and dispatch
+        each registered plugin sidecar in a non-blocking asyncio task.
+
+        Args:
+            ctx: A SidecarContext (or duck-typed equivalent) with
+                 .query, .sprint_id, .findings, .sprint_mode, .memory_pressure.
+
+        Behavior:
+            - Reads the canonical M1 budget from the governor if available
+              (defaults to 100MB).
+            - Iterates in priority order (highest first).
+            - Each sidecar runs in its own task with the supplied ctx.
+            - Fail-soft: any exception is caught and logged, never raised.
+        """
+        try:
+            from runtime.sidecar_protocol import (
+                SidecarContext,
+                SidecarRegistry,
+            )
+        except Exception as e:
+            log.debug("[F350M-FED] SidecarRegistry import failed: %s", e)
+            return
+
+        try:
+            # Determine the available memory budget from the governor, if any.
+            memory_budget_mb = 100  # default conservative budget
+            try:
+                if self._governor is not None:
+                    snap = getattr(self._governor, "snapshot", None)
+                    if snap is not None:
+                        # Memory pressure is 0..1, so budget is inverse
+                        pressure = float(getattr(snap, "memory_pressure", 0.0) or 0.0)
+                        memory_budget_mb = max(
+                            10, int(200 * (1.0 - pressure))  # 10..200MB
+                        )
+            except Exception:
+                pass  # fall back to default
+
+            available = SidecarRegistry.get_available(memory_budget_mb)
+            if not available:
+                log.debug("[F350M-FED] no plugin sidecars available "
+                          "(budget=%dMB)", memory_budget_mb)
+                return
+
+            # Build a proper SidecarContext if we got a duck-typed one.
+            # SidecarContext requires the 4 mandatory fields; we coerce.
+            sidecar_ctx = ctx
+            if not isinstance(ctx, SidecarContext):
+                try:
+                    sidecar_ctx = SidecarContext(
+                        query=str(getattr(ctx, "query", "") or ""),
+                        sprint_id=str(getattr(ctx, "sprint_id", "unknown") or "unknown"),
+                        findings=list(getattr(ctx, "findings", []) or []),
+                        sprint_mode=str(getattr(ctx, "sprint_mode", "active") or "active"),
+                        memory_pressure=float(
+                            getattr(ctx, "memory_pressure", 0.0) or 0.0
+                        ),
+                    )
+                except Exception as e:
+                    log.debug("[F350M-FED] cannot build SidecarContext: %s", e)
+                    return
+
+            # Dispatch each plugin sidecar as its own non-blocking task.
+            for adapter in available:
+                try:
+                    _asyncio.create_task(
+                        self._dispatch_plugin_sidecar(adapter, sidecar_ctx),
+                        name=f"sprint:plugin_sidecar:{adapter.sidecar_id}",
+                    )
+                except Exception as e:
+                    log.warning(
+                        "[F350M-FED] failed to launch plugin sidecar %s: %s",
+                        adapter.sidecar_id, e,
+                    )
+        except Exception as e:
+            log.warning(
+                "[F350M-FED] run_plugin_sidecars: fail-soft: %s: %s",
+                type(e).__name__, e,
+            )
+
+    async def _dispatch_plugin_sidecar(
+        self, adapter: Any, ctx: Any,
+    ) -> None:
+        """Dispatch a single plugin sidecar. Fail-soft. Returns nothing."""
+        try:
+            result = await adapter.run(ctx)
+            # Optional: pass findings to the canonical dispatcher if a
+            # result sink is available. For the F350M-FED activation we
+            # log only; downstream ingestion is the responsibility of
+            # the adapter (which already converts to CanonicalFinding).
+            if result and self._dispatcher is not None:
+                # Best-effort: do not raise if dispatcher rejects shape
+                try:
+                    for finding in result[:50]:  # cap per sidecar
+                        await self._dispatcher.dispatch(
+                            source_branch=f"federated:{adapter.sidecar_id}",
+                            finding=finding,
+                            query=getattr(ctx, "query", "") or "",
+                        )
+                except Exception:
+                    pass  # dispatcher may not be available
+        except Exception as e:
+            log.warning(
+                "[F350M-FED] plugin sidecar %s raised: %s: %s",
+                getattr(adapter, "sidecar_id", "?"),
+                type(e).__name__, e,
+            )
+
+    def _build_plugin_sidecar_context(self) -> Any | None:
+        """
+        Construct a SidecarContext (or duck-typed equivalent) from the
+        current scheduler state. Returns None if no scheduler is bound.
+        """
+        if self._scheduler is None:
+            return None
+        try:
+            # Best-effort attribute reads. The scheduler may not have all
+            # of these — that's fine, defaults are safe.
+            query = getattr(self._scheduler, "_sprint_query", "") or ""
+            # sprint_id may live in the scheduler config or result
+            sprint_id = (
+                getattr(self._scheduler, "_sprint_id", None)
+                or getattr(getattr(self._scheduler, "_config", None),
+                           "sprint_id", None)
+                or "unknown"
+            )
+            # findings live on the result_sink or are accumulated per-sprint
+            findings = []
+            try:
+                if self._result is not None:
+                    findings = list(getattr(self._result, "findings", []) or [])
+            except Exception:
+                findings = []
+            # sprint_mode
+            sprint_mode = (
+                getattr(getattr(self._scheduler, "_config", None),
+                        "sprint_mode", None)
+                or "active"
+            )
+            # memory_pressure from governor snapshot
+            memory_pressure = 0.0
+            try:
+                if self._governor is not None:
+                    snap = getattr(self._governor, "snapshot", None)
+                    if snap is not None:
+                        memory_pressure = float(
+                            getattr(snap, "memory_pressure", 0.0) or 0.0
+                        )
+            except Exception:
+                pass
+
+            # Build a minimal duck-typed context (avoid hard import for
+            # speed; SidecarRegistry/SidecarContext will accept this if
+            # its adapter reads via getattr, which our adapter does).
+            return _PluginSidecarContext(
+                query=query,
+                sprint_id=sprint_id,
+                findings=findings,
+                sprint_mode=sprint_mode,
+                memory_pressure=memory_pressure,
+            )
+        except Exception as e:
+            log.debug("[F350M-FED] build context failed: %s", e)
+            return None
 
     async def run_target_memory_update(
         self,

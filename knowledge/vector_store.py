@@ -112,7 +112,7 @@ class VectorStore:
 
         except ImportError as e:
             logger.error(f"[VECTOR] LanceDB not available: {e}")
-            raise RuntimeError("LanceDB is required for vector store. Install with: pip install 'lancedb>=0.2.5'")
+            raise RuntimeError("LanceDB is required for vector store. Install with: pip install 'lancedb>=0.2.5'") from e
         except Exception as e:
             logger.error(f"[VECTOR] Failed to initialize LanceDB: {e}")
             raise

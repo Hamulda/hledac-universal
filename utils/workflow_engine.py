@@ -20,6 +20,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
+from utils.async_helpers import safe_gather_dropin
 # Sprint 8U: Lazy networkx import to avoid loading 285 modules at cold-start
 _nx = None
 
@@ -239,7 +240,7 @@ class WorkflowEngine:
                         workflow.tasks[task_id].status = TaskStatus.FAILED
                         logger.error(f"Task {task_id} permanently failed: {e}")
 
-            results = await asyncio.gather(*[run_task(tid) for tid in level_tasks], return_exceptions=True)
+            results = await safe_gather_dropin(*[run_task(tid) for tid in level_tasks], label="workflow_engine:242")
             # Log any unexpected exceptions (shouldn't happen since run_task catches them)
             for tid, result in zip(level_tasks, results, strict=False):
                 if isinstance(result, Exception):

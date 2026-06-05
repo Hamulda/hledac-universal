@@ -242,10 +242,8 @@ class _ShadowRecorder:
         # Final flush on shutdown
         if batch and self._store is not None:
             try:
-                await asyncio.wait_for(
-                    self._store.async_record_shadow_findings_batch(batch),
-                    timeout=2.0
-                )
+                async with asyncio.timeout(2.0):
+                    await self._store.async_record_shadow_findings_batch(batch)
             except Exception as e:
                 logger.warning(f"[SHADOW] final flush failed: {e}")
 
@@ -300,10 +298,8 @@ class _ShadowRecorder:
         if drained:
             if self._store is not None:
                 try:
-                    await asyncio.wait_for(
-                        self._store.async_record_shadow_findings_batch(drained),
-                        timeout=timeout
-                    )
+                    async with asyncio.timeout(timeout):
+                        await self._store.async_record_shadow_findings_batch(drained)
                 except Exception as e:
                     _SHADOW_INGEST_FAILURES += len(drained)
                     logger.warning(f"[SHADOW] final flush of {len(drained)} drained records failed: {e}")
@@ -317,7 +313,13 @@ class _ShadowRecorder:
 
         if self._store is not None:
             try:
-                await asyncio.wait_for(self._store.aclose(), timeout=timeout)
+                # Critical cleanup: shield() protects aclose() from outer cancellation
+                # (e.g., event loop shutdown). Inner timeout caps the absolute worst case
+                # so a hanging aclose cannot block process exit indefinitely.
+                # asyncio.shield + asyncio.timeout layered — the modern pattern for
+                # bounded critical cleanup (PEP 654 + asyncio.shield).
+                async with asyncio.timeout(timeout):
+                    await asyncio.shield(self._store.aclose())
             except Exception:
                 pass
 

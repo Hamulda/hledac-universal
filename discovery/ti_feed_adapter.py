@@ -1753,7 +1753,7 @@ async def search_usenet(
         )
         for grp in groups[:3]
     ]
-    results_nested = await asyncio.gather(*tasks_coro, return_exceptions=True)
+    results_nested = await safe_gather_dropin(*tasks_coro, label="ti_feed_adapter:1756")
     results = []
     for r in results_nested:
         if isinstance(r, list):
@@ -1776,6 +1776,7 @@ async def _handle_usenet_search(task, scheduler):
 
 import re as _ip_re_mod
 
+from utils.async_helpers import safe_gather_dropin
 _IP_PATTERN = _ip_re_mod.compile(r'^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$')
 
 

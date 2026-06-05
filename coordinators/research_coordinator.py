@@ -29,6 +29,7 @@ from typing import Any
 
 from .base import DecisionResponse, OperationResult, OperationType, UniversalCoordinator
 
+from utils.async_helpers import safe_gather_dropin
 logger = logging.getLogger(__name__)
 
 # Memory bounds
@@ -50,7 +51,7 @@ class ExcavationStrategy(Enum):
     HYBRID = "hybrid"                # Adaptive strategy
 
 
-@dataclass
+@dataclass(slots=True)
 class ResearchContext:
     """Context for research operations."""
     query: str
@@ -60,7 +61,7 @@ class ResearchContext:
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
-@dataclass
+@dataclass(slots=True)
 class ResearchResult:
     """Structured research result."""
     source: str  # 'unified_ai', 'evidence', 'rag'
@@ -71,7 +72,7 @@ class ResearchResult:
     sources_found: int = 0
 
 
-@dataclass
+@dataclass(slots=True)
 class ExcavationConfig:
     """Configuration for deep excavation."""
     max_depth: int = 10
@@ -87,7 +88,7 @@ class ExcavationConfig:
     progress_callback: callable | None = None
 
 
-@dataclass
+@dataclass(slots=True)
 class ResearchPaper:
     """Research paper node with citation tracking."""
     id: str
@@ -113,7 +114,7 @@ class ResearchPaper:
         return False
 
 
-@dataclass
+@dataclass(slots=True)
 class ResearchThread:
     """Research thread tracking context."""
     id: str
@@ -125,7 +126,7 @@ class ResearchThread:
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
 
 
-@dataclass
+@dataclass(slots=True)
 class MetaPattern:
     """Meta-pattern detected across research."""
     pattern_id: str
@@ -137,7 +138,7 @@ class MetaPattern:
     cross_domain: bool = False
 
 
-@dataclass
+@dataclass(slots=True)
 class ResearchTheory:
     """Theory generated from research patterns."""
     theory_id: str
@@ -151,7 +152,7 @@ class ResearchTheory:
     confidence: float
 
 
-@dataclass
+@dataclass(slots=True)
 class HierarchicalPlan:
     """Hierarchical research plan."""
     plan_id: str
@@ -606,7 +607,7 @@ class UniversalResearchCoordinator(UniversalCoordinator):
             ))
 
         # Gather all results
-        raw_results = await asyncio.gather(*tasks, return_exceptions=True)
+        raw_results = await safe_gather_dropin(*tasks, label="research_coordinator:609")
 
         for result in raw_results:
             if isinstance(result, ResearchResult):

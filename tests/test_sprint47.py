@@ -22,6 +22,7 @@ from hledac.universal.layers.communication_layer import CommunicationLayer
 from hledac.universal.project_types import CommunicationConfig
 from hledac.universal.tools.osint_frameworks import OSINTFrameworkRunner
 
+from utils.async_helpers import safe_gather_dropin, safe_gather_fire_and_forget
 
 class TestSprint47(unittest.IsolatedAsyncioTestCase):
     """Tests for Sprint 47 - Performance + Entity Resolution."""
@@ -56,7 +57,7 @@ class TestSprint47(unittest.IsolatedAsyncioTestCase):
 
             # Run 10 concurrent analyses
             tasks = [server.analyze(b'test_image_content') for _ in range(10)]
-            results = await asyncio.gather(*tasks, return_exceptions=True)
+            results = await safe_gather_dropin(*tasks, label="test_sprint47:59")
 
             # All should complete without exceptions
             errors = [r for r in results if isinstance(r, Exception)]
@@ -145,7 +146,7 @@ class TestSprint47(unittest.IsolatedAsyncioTestCase):
         f_high = asyncio.create_task(comm.query_model("high_priority", voi_score=0.9))
 
         # Wait for both
-        await asyncio.gather(f_low, f_high)
+        await safe_gather_fire_and_forget(f_low, f_high, label="test_sprint47:148")
 
         # High priority should have been processed first
         # (we check that it completed after being submitted)
@@ -167,7 +168,7 @@ class TestSprint47(unittest.IsolatedAsyncioTestCase):
         # Submit many queries
         tasks = [comm.query_model(f"q{i}", voi_score=0.5) for i in range(10)]
 
-        await asyncio.gather(*tasks, return_exceptions=True)
+        await safe_gather_fire_and_forget(*tasks, label="test_sprint47:170")
 
         # Should have processed in batches
 

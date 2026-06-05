@@ -4775,11 +4775,9 @@ async def async_run_live_public_pipeline(
                     async def run_tot_with_timeout(hypo: str, timeout_s: float = 15.0) -> str:
                         """Run ToT solve with per-hypothesis timeout. Fail-soft: returns empty string on timeout/error."""
                         try:
-                            # Primary path: asyncio.wait_for (P12 invariant — bounded per-task timeout)
-                            result = await asyncio.wait_for(
-                                tot_layer.solve_with_tot(hypo),
-                                timeout=timeout_s,
-                            )
+                            # Primary path: asyncio.timeout ctx (P12 invariant — bounded per-task timeout)
+                            async with asyncio.timeout(timeout_s):
+                                result = await tot_layer.solve_with_tot(hypo)
                             return result
                         except asyncio.TimeoutError:
                             logger.debug(f"[P12] ToT timed out after {timeout_s}s for hypothesis: {hypo[:50]}...")
@@ -4893,15 +4891,13 @@ async def async_run_live_public_pipeline(
                         # every earlier `asyncio.X` reference (e.g. line 3770's
                         # `asyncio.Semaphore(...)`) would raise UnboundLocalError.
                         # Regression test: tests/test_f_pipeline_asyncio_shadowing.py
-                        report = await asyncio.wait_for(
-                            runner.synthesize_findings(
+                        async with asyncio.timeout(90.0):
+                            report = await runner.synthesize_findings(
                                 query=query,
                                 findings=findings_for_synth,
                                 max_findings=10,
                                 force_synthesis=False,
-                            ),
-                            timeout=90.0,
-                        )
+                            )
 
                         # Unload model after synthesis
                         await runner.close()

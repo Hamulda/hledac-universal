@@ -477,6 +477,35 @@ class JSONFormatter(ExportFormatter):
         except Exception as _ane_err:
             logger.debug("[ANE:export] dedup skipped: %s", _ane_err)
 
+        # Sprint F263: forensic findings — bounded extraction from DuckDB store
+        # via the canonical async read seam. Fail-soft: returns [] on any error.
+        _FORENSIC_ST: tuple[str, ...] = (
+            "forensic_analysis",
+            "steganography_detection",
+            "digital_ghost_detection",
+            "blockchain_forensics",
+        )
+        _FORENSIC_EXPORT_LIMIT: int = 200  # matches _FORENSIC_MAX_RENDER in reporters
+        forensic_findings: list[dict] = []
+        try:
+            if hasattr(store, "async_query_recent_findings"):
+                _raw = await store.async_query_recent_findings(limit=_FORENSIC_EXPORT_LIMIT)
+                for _f in _raw:
+                    _fd: dict | None = None
+                    if isinstance(_f, dict):
+                        _fd = _f
+                    elif hasattr(_f, "keys"):
+                        try:
+                            _fd = dict(_f)
+                        except Exception:
+                            _fd = None
+                    if _fd and _fd.get("source_type") in _FORENSIC_ST:
+                        forensic_findings.append(_fd)
+                        if len(forensic_findings) >= _FORENSIC_EXPORT_LIMIT:
+                            break
+        except Exception as _for_err:
+            logger.debug("[EXPORT] forensic_findings extraction skipped: %s", _for_err)
+
         return {
             "report_json": str(report_path) if report_path else "",
             "report_pq_encrypted": str(_pq_encrypted_path) if _pq_encrypted_path else "",
@@ -494,6 +523,7 @@ class JSONFormatter(ExportFormatter):
             "sprint_diff_findings": sprint_diff_findings,
             "kill_chain_findings": kill_chain_findings,
             "evidence_chains": evidence_chains,
+            "forensic_findings": forensic_findings,
             "capability_synthesis": capability_synthesis,
             "capability_synthesis_generated": True,
             "capability_synthesis_skip_reason": None,

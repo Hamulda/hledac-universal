@@ -27,6 +27,7 @@ from typing import Any
 
 from .base import DecisionResponse, OperationResult, OperationType, UniversalCoordinator
 
+from utils.async_helpers import safe_gather_dropin
 logger = logging.getLogger(__name__)
 
 
@@ -1696,7 +1697,7 @@ class UniversalSecurityCoordinator(UniversalCoordinator):
                 )
 
         tasks = [fetch_with_limit(url) for url in urls]
-        results = await asyncio.gather(*tasks, return_exceptions=True)
+        results = await safe_gather_dropin(*tasks, label="security_coordinator:1699")
 
         # Convert exceptions to error results
         processed_results = []

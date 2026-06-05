@@ -809,9 +809,10 @@ class ModelManager:
                 # P1E-B: Bounded timeout — prevents shutdown hang if engine.unload() freezes
                 timeout_s = _load_unload_timeout()
                 try:
-                    await asyncio.wait_for(unload_coro, timeout=timeout_s)
+                    async with asyncio.timeout(timeout_s):
+                        await unload_coro
                 except asyncio.CancelledError:
-                    # P1E-B: CancelledError from our wait_for — re-raise per spec
+                    # P1E-B: CancelledError propagation — re-raise per spec
                     raise
                 except TimeoutError:
                     # P1E-B: Timeout — log warning, fail-soft, teardown continues
@@ -877,9 +878,10 @@ class ModelManager:
                 # P1E-B: Bounded timeout — prevents shutdown hang if engine.unload() freezes
                 timeout_s = _load_unload_timeout()
                 try:
-                    await asyncio.wait_for(unload_coro, timeout=timeout_s)
+                    async with asyncio.timeout(timeout_s):
+                        await unload_coro
                 except asyncio.CancelledError:
-                    # P1E-B: CancelledError from our wait_for — re-raise per spec
+                    # P1E-B: CancelledError propagation — re-raise per spec
                     raise
                 except TimeoutError:
                     # P1E-B: Timeout — log warning, fail-soft, teardown continues

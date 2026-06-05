@@ -329,7 +329,7 @@ class I2PTransport(Transport):
                 return await resp.text()
         except Exception as e:
             logger.error(f"I2P message send failed to {target}: {e}")
-            raise I2PUnavailableError(f"Message send failed: {e}")
+            raise I2PUnavailableError(f"Message send failed: {e}") from e
 
     async def get_session(self, scheme: str = "http") -> aiohttp.ClientSession:
         """

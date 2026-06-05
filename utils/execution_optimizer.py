@@ -24,6 +24,7 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 import psutil
 
+from utils.async_helpers import safe_gather_dropin
 if TYPE_CHECKING:
     pass
 
@@ -49,7 +50,7 @@ class TaskType(Enum):
     MIXED = "mixed"
 
 
-@dataclass
+@dataclass(slots=True)
 class TaskMetrics:
     """Task execution metrics"""
     task_id: str
@@ -64,7 +65,7 @@ class TaskMetrics:
     parallel_group: str | None = None
 
 
-@dataclass
+@dataclass(slots=True)
 class WorkerMetrics:
     """Worker performance metrics"""
     worker_id: str
@@ -77,7 +78,7 @@ class WorkerMetrics:
     last_updated: datetime
 
 
-@dataclass
+@dataclass(slots=True)
 class ParallelGroup:
     """Parallel execution group"""
     group_id: str
@@ -486,7 +487,7 @@ class ParallelExecutionOptimizer:
 
         # Run all chunks concurrently
         chunk_tasks = [execute_chunk(chunk) for chunk in task_chunks]
-        chunk_results = await asyncio.gather(*chunk_tasks, return_exceptions=True)
+        chunk_results = await safe_gather_dropin(*chunk_tasks, label="execution_optimizer:489")
 
         # Flatten results
         return [result for chunk_result in chunk_results for result in chunk_result]
@@ -518,7 +519,7 @@ class ParallelExecutionOptimizer:
             for worker_id, tasks in task_distribution.items()
         ]
 
-        worker_results = await asyncio.gather(*worker_tasks, return_exceptions=True)
+        worker_results = await safe_gather_dropin(*worker_tasks, label="execution_optimizer:521")
 
         # Flatten results
         return [result for worker_result in worker_results for result in worker_result]
@@ -1083,7 +1084,7 @@ class OptimizationLevel(Enum):
     AGGRESSIVE = "aggressive"
 
 
-@dataclass
+@dataclass(slots=True)
 class ResourceMetrics:
     """Current resource utilization metrics."""
     cpu_percent: float = 0.0
@@ -1097,7 +1098,7 @@ class ResourceMetrics:
     timestamp: float = field(default_factory=time.time)
 
 
-@dataclass
+@dataclass(slots=True)
 class ResourceLimits:
     """Resource utilization limits for M1 8GB systems."""
     max_cpu_percent: float = 80.0
@@ -1489,7 +1490,7 @@ if __name__ == "__main__":
 # Predictive Cache Manager (Integrated from cutting_edge/advanced_optimization)
 # ============================================================================
 
-@dataclass
+@dataclass(slots=True)
 class CacheEntry:
     """Entry in predictive cache."""
     key: str

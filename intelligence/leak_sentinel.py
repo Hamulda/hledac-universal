@@ -37,6 +37,7 @@ import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+from utils.async_helpers import safe_gather_fire_and_forget
 if TYPE_CHECKING:
     from hledac.universal.knowledge.duckdb_store import CanonicalFinding
 
@@ -543,7 +544,7 @@ class LeakSentinelAdapter:
         # Wait for all sources with timeout
         try:
             async with asyncio.timeout(TIMEOUT_PER_SOURCE * 2):
-                await asyncio.gather(*[t for _, t in sources_to_run], return_exceptions=True)
+                await safe_gather_fire_and_forget(*[t for _, t in sources_to_run], label="leak_sentinel:546")
         except TimeoutError:
             # Cancel pending tasks
             for _, t in sources_to_run:

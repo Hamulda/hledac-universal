@@ -101,7 +101,7 @@ class TestType(Enum):
     PREDICTION_TEST = "prediction_test"
 
 
-@dataclass
+@dataclass(slots=True)
 class Evidence:
     """Evidence item supporting or conflicting with a hypothesis."""
     evidence_id: str
@@ -113,7 +113,7 @@ class Evidence:
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
-@dataclass
+@dataclass(slots=True)
 class TestResult:
     """Result of executing a test against a hypothesis."""
     test_type: str
@@ -128,7 +128,7 @@ class TestResult:
             self.timestamp = datetime.fromisoformat(self.timestamp)
 
 
-@dataclass
+@dataclass(slots=True)
 class TestDesign:
     """Design for testing a hypothesis."""
     test_type: str
@@ -140,7 +140,7 @@ class TestDesign:
     cost_estimate: float = 1.0  # Estimated computational cost
 
 
-@dataclass
+@dataclass(slots=True)
 class FalsificationResult:
     """Result of a falsification attempt."""
     falsified: bool
@@ -177,7 +177,7 @@ class DarkQuery:
     reasoning: str = ""  # Why this query was generated
 
 
-@dataclass
+@dataclass(slots=True)
 class _DarkQueryListResponse:
     """Response model for Hermes LLM dark query generation."""
     queries: list[dict[str, Any]] = field(default_factory=list)
@@ -208,7 +208,7 @@ from brain.hypothesis._types import (  # noqa: E402,F401
 # Adversarial Verification Data Classes
 # =============================================================================
 
-@dataclass
+@dataclass(slots=True)
 class SourceCredibility:
     """
     Credibility assessment for an evidence source.
@@ -239,7 +239,7 @@ class SourceCredibility:
         self.last_updated = datetime.now()
 
 
-@dataclass
+@dataclass(slots=True)
 class Event:
     """Temporal event for consistency checking."""
     event_id: str
@@ -249,7 +249,7 @@ class Event:
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
-@dataclass
+@dataclass(slots=True)
 class Contradiction:
     """
     Represents a contradiction between two claims or evidence items.
@@ -266,7 +266,7 @@ class Contradiction:
     resolution_notes: str = ""
 
 
-@dataclass
+@dataclass(slots=True)
 class CrossReferenceResult:
     """Result of cross-referencing a claim across databases."""
     database_id: str
@@ -277,7 +277,7 @@ class CrossReferenceResult:
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
-@dataclass
+@dataclass(slots=True)
 class AdversarialReport:
     """
     Comprehensive adversarial verification report.
@@ -300,7 +300,7 @@ class AdversarialReport:
     verification_duration_ms: float = 0.0
 
 
-@dataclass
+@dataclass(slots=True)
 class Hypothesis:
     """
     A hypothesis with full tracking and Bayesian updating.

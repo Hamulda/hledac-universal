@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import os
 
+from utils.async_helpers import safe_gather_dropin
 # ---------------------------------------------------------------------------
 # Env gate
 # ---------------------------------------------------------------------------
@@ -206,7 +207,7 @@ async def search_all_academic(
         pass
 
     # Run all
-    completed = await asyncio.gather(*tasks, return_exceptions=True)
+    completed = await safe_gather_dropin(*tasks, label="__init__:209")
 
     for item in completed:
         if isinstance(item, tuple) and len(item) == 2:

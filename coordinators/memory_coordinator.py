@@ -184,7 +184,7 @@ class NeuromorphicMemoryZone(Enum):
     EPISODIC_BUFFER = "episodic_buffer"
 
 
-@dataclass
+@dataclass(slots=True)
 class MemoryPattern:
     """
     A memory pattern stored in neuromorphic memory.
@@ -212,7 +212,7 @@ class MemoryPattern:
         self.strength = min(1.0, self.strength + amount)
 
 
-@dataclass
+@dataclass(slots=True)
 class STDPParameters:
     """Spike-Timing-Dependent Plasticity parameters."""
     A_plus: float = 0.01       # LTP learning rate
@@ -735,7 +735,7 @@ class MemoryZone(Enum):
     LOW = "low"
 
 
-@dataclass
+@dataclass(slots=True)
 class MemoryAllocation:
     """Represents a memory allocation."""
     allocation_id: str
@@ -748,7 +748,7 @@ class MemoryAllocation:
     on_evict: Callable | None = None
 
 
-@dataclass
+@dataclass(slots=True)
 class MemoryStatistics:
     """Memory usage statistics."""
     total_memory_mb: float
@@ -761,7 +761,7 @@ class MemoryStatistics:
     allocation_count: int = 0
 
 
-@dataclass
+@dataclass(slots=True)
 class ZoneStatistics:
     """Statistics for a specific memory zone."""
     zone: str
@@ -1980,7 +1980,7 @@ class ResearchPhase(Enum):
     VALIDATION = "validation"
 
 
-@dataclass
+@dataclass(slots=True)
 class ContextItem:
     """Individual context item with metadata for three-tier storage."""
     item_id: str
@@ -1995,7 +1995,7 @@ class ContextItem:
     confidence: float = 0.5
 
 
-@dataclass
+@dataclass(slots=True)
 class CompressedContext:
     """Compressed context container."""
     context_id: str
@@ -2398,7 +2398,7 @@ class CacheLocation(Enum):
     L2_DISK = "l2_disk"
 
 
-@dataclass
+@dataclass(slots=True)
 class CacheEntry:
     """Single cache entry with FAISS embedding support."""
     cache_id: str

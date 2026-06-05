@@ -42,6 +42,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from utils.async_helpers import safe_gather_dropin
 log = logging.getLogger(__name__)
 
 # Default timeout for external lookups (seconds)
@@ -439,6 +440,56 @@ class ForensicsEnricher:
                 except Exception:
                     pass  # Fail-soft: invalid IP or lookup failed
 
+        # Sprint F262: Sub-step 6 — IOC extraction from payload_text + email IP
+        # Emits per-IOC CanonicalFinding objects into enrichment["_ioc_canonical_findings"]
+        # (consumed downstream by EnrichmentServices.enrich_one for batched
+        # async_ingest_findings_batch(parent + IOC children)).
+        # Fail-soft, bounded by IOC_FINDINGS_MAX (per-finding) + global budget.
+        try:
+            from forensics.ioc_extractor import ioc_extract_to_canonical_findings
+
+            ioc_text_parts: list[str] = []
+            if payload_text:
+                ioc_text_parts.append(str(payload_text)[:8192])  # bound scan length
+            if x_originating_ip:
+                ioc_text_parts.append(str(x_originating_ip))
+            ioc_text = "\n".join(ioc_text_parts) if ioc_text_parts else ""
+
+            if ioc_text:
+                finding_id = getattr(finding, "finding_id", None) or "unknown"
+                finding_query = getattr(finding, "query", "") or ""
+                # budget_remaining is provided by EnrichmentServices when
+                # SprintResult.ioc_findings_total is available; else defaults.
+                ioc_findings = ioc_extract_to_canonical_findings(
+                    text=ioc_text,
+                    source_finding_id=str(finding_id)[:128],
+                    query=str(finding_query)[:512],
+                )
+                if ioc_findings:
+                    # Stash raw CanonicalFinding list for downstream batched write
+                    enrichment["_ioc_canonical_findings"] = ioc_findings
+                    # Bounded dict summary for LMDB payload (no CanonicalFinding
+                    # serialization, just the IOC content for replay/inspect)
+                    enrichment["ioc_findings"] = [
+                        {
+                            "finding_id": getattr(cf, "finding_id", ""),
+                            "ioc_type": (getattr(cf, "payload_text", "") or "")
+                            .split(";", 1)[0]
+                            .replace("ioc_type=", "")
+                            .strip(),
+                            "value": (getattr(cf, "payload_text", "") or "")
+                            .split(";", 1)[1]
+                            .replace("value=", "")
+                            .strip()
+                            if ";" in (getattr(cf, "payload_text", "") or "")
+                            else "",
+                        }
+                        for cf in ioc_findings
+                    ]
+                    forensics_result.enrichment_available = True
+        except Exception as exc:
+            log.debug("Forensics IOC sub-step failed for %s: %s", finding_id, exc)
+
         # Mark enrichment available if any module produced data
         if any(v is not None for k, v in enrichment.items() if k not in ("finding_id", "file_path", "enrichment_available")):
             enrichment["enrichment_available"] = True
@@ -487,7 +538,7 @@ class ForensicsEnricher:
                     return (finding_id, None)
 
         tasks = [enrich_one(f) for f in findings]
-        results = await asyncio.gather(*tasks, return_exceptions=True)
+        results = await safe_gather_dropin(*tasks, label="enrichment_service:540")
 
         out = {}
         for item in results:
@@ -597,10 +648,8 @@ class ForensicsEnricher:
                 except Exception:
                     return {}
 
-            result = await asyncio.wait_for(
-                asyncio.to_thread(_sync_whois),
-                timeout=_EXTERNAL_LOOKUP_TIMEOUT,
-            )
+            async with asyncio.timeout(_EXTERNAL_LOOKUP_TIMEOUT):
+                result = await asyncio.to_thread(_sync_whois)
             return result if result else None
         except (TimeoutError, Exception):
             return None
@@ -639,10 +688,8 @@ class ForensicsEnricher:
                 except Exception:
                     return {}
 
-            result = await asyncio.wait_for(
-                asyncio.to_thread(_sync_ssl),
-                timeout=_EXTERNAL_LOOKUP_TIMEOUT,
-            )
+            async with asyncio.timeout(_EXTERNAL_LOOKUP_TIMEOUT):
+                result = await asyncio.to_thread(_sync_ssl)
             return result if result else None
         except (TimeoutError, Exception):
             return None
@@ -710,10 +757,8 @@ class ForensicsEnricher:
                             pass
                     return res
 
-            result = await asyncio.wait_for(
-                _async_dns(),
-                timeout=_EXTERNAL_LOOKUP_TIMEOUT,
-            )
+            async with asyncio.timeout(_EXTERNAL_LOOKUP_TIMEOUT):
+                result = await _async_dns()
             return result if result else None
         except (TimeoutError, Exception):
             return None
@@ -739,10 +784,280 @@ class ForensicsEnricher:
                 except Exception:
                     return {}
 
-            result = await asyncio.wait_for(
-                asyncio.to_thread(_sync_rdns),
-                timeout=_EXTERNAL_LOOKUP_TIMEOUT,
-            )
+            async with asyncio.timeout(_EXTERNAL_LOOKUP_TIMEOUT):
+                result = await asyncio.to_thread(_sync_rdns)
             return result if result else None
         except (TimeoutError, Exception):
             return None
+
+
+# ---------------------------------------------------------------------------
+# Sprint F261: CanonicalFinding wiring for forensic analysis
+# ---------------------------------------------------------------------------
+# Bridges ForensicsEnricher.enrich() output to the canonical DuckDB write
+# path (DuckDBShadowStore.async_ingest_findings_batch). Forensic results
+# become first-class CanonicalFindings with source_type="forensic_analysis"
+# and are bounded to prevent payload blowup. All functions are fail-safe
+# — return None / [] on any error, never raise.
+
+# Canonical source_type string for the forensic analysis ingest path
+FORENSIC_SOURCE_TYPE: str = "forensic_analysis"
+
+# Hard limits for bounded payload_text serialization
+_FORENSIC_PAYLOAD_MAX_BYTES = 4096
+_FORENSIC_PAYLOAD_KEYS_MAX = 25
+_FORENSIC_PAYLOAD_STR_MAX = 512
+_FORENSIC_PAYLOAD_LIST_MAX = 10
+_FORENSIC_PAYLOAD_LIST_ITEM_STR_MAX = 200
+
+
+# ── Sprint F264: provenance_json forensics facet ──────────────────────────
+# A structured facet co-located in payload_text so downstream DuckDB queries
+# (and STIX export) can distinguish forensic-analysis-derived findings from
+# raw CT/web findings without joining LMDB. The facet is a bounded JSON dict
+# with a fixed schema (capability, parent_source, signal_flags) so it stays
+# SQL queryable via ``payload_text LIKE '%"facet":"forensic_analysis"%'``.
+#
+# Bounded: max 5 keys, 128 chars per string, 1 KB total — well under the
+# parent _FORENSIC_PAYLOAD_MAX_BYTES envelope. The bounded dict is merged
+# into the existing payload_text at the top level (no schema change).
+_FORENSIC_FACET_STR_MAX = 128
+
+
+def _build_forensic_facet(
+    enrichment: dict[str, Any],
+    parent_source_type: str,
+    finding_id_suffix: str,
+) -> dict[str, Any]:
+    """Build a bounded ``provenance_json``-style facet for a forensic finding.
+
+    Sprint F264: returns a dict with a fixed key schema (5 keys, ≤128 chars
+    each, ≤1 KB total) suitable for embedding in ``payload_text`` JSON. The
+    facet is a **read-side helper** for downstream consumers (DuckDB
+    ``payload_text LIKE '%"facet":"forensic_analysis"%'``, STIX exporter,
+    markdown reporter) — it does not add a new DB column.
+
+    Capability is inferred from which enrichment sub-dicts are non-empty:
+    ``whois/ssl/dns/rdns`` → ``"network"``, ``steganography`` → ``"steg"``,
+    ``ghosts`` → ``"ghost"``, ``metadata`` → ``"meta"``, otherwise ``"mixed"``.
+
+    Returns empty dict on any error (fail-soft, never raises).
+    """
+    if not isinstance(enrichment, dict):
+        return {}
+    try:
+        # Signal flags bitmask
+        flags = 0
+        capability_kinds: list[str] = []
+        if enrichment.get("whois") and isinstance(enrichment["whois"], dict):
+            flags |= 0x01
+            capability_kinds.append("whois")
+        if enrichment.get("ssl") and isinstance(enrichment["ssl"], dict):
+            flags |= 0x02
+            capability_kinds.append("ssl")
+        if enrichment.get("dns") and isinstance(enrichment["dns"], dict):
+            flags |= 0x04
+            capability_kinds.append("dns")
+        if enrichment.get("rdns") and isinstance(enrichment["rdns"], dict):
+            flags |= 0x08
+            capability_kinds.append("rdns")
+        if enrichment.get("steganography") and isinstance(
+            enrichment["steganography"], dict
+        ):
+            flags |= 0x10
+            capability_kinds.append("steg")
+        if enrichment.get("ghosts") and isinstance(enrichment["ghosts"], dict):
+            flags |= 0x20
+            capability_kinds.append("ghost")
+        if enrichment.get("metadata") and isinstance(enrichment["metadata"], dict):
+            flags |= 0x40
+            capability_kinds.append("meta")
+
+        if not capability_kinds:
+            capability = "mixed"
+        elif len(capability_kinds) == 1:
+            capability = capability_kinds[0]
+        else:
+            capability = "network" if all(
+                k in ("whois", "ssl", "dns", "rdns") for k in capability_kinds
+            ) else "mixed"
+
+        return {
+            "facet": FORENSIC_SOURCE_TYPE,
+            "capability": capability[:_FORENSIC_FACET_STR_MAX],
+            "parent_source": str(parent_source_type or "")[:_FORENSIC_FACET_STR_MAX],
+            "finding_id_suffix": str(finding_id_suffix or "_forensic")[:32],
+            "signal_flags": int(flags) & 0x7F,
+        }
+    except Exception:
+        return {}
+
+
+def _merge_facet_into_enrichment(
+    enrichment: dict[str, Any],
+    facet: dict[str, Any],
+) -> dict[str, Any]:
+    """Merge bounded facet dict into enrichment so it lands in payload_text JSON.
+
+    Sprint F264: prepends the facet dict under the key ``_forensic_facet``
+    so it appears as a top-level field in the bounded payload_text. Total
+    cost is ≤ 1 KB (5 keys × 128 chars) — well under the 4 KB envelope.
+    Fail-soft: returns enrichment unchanged on any error.
+    """
+    if not isinstance(enrichment, dict) or not isinstance(facet, dict) or not facet:
+        return enrichment
+    try:
+        # Use a fresh dict to avoid mutating caller state.
+        merged = dict(enrichment)
+        merged["_forensic_facet"] = dict(facet)
+        return merged
+    except Exception:
+        return enrichment
+
+
+def _bound_enrichment_for_payload(enrichment: dict[str, Any]) -> str:
+    """Bound the enrichment dict to a JSON string for CanonicalFinding.payload_text.
+
+    F261 invariant: payload_text must be bounded to prevent write-blowup in
+    DuckDBShadowStore. Truncates per-key strings, caps key count, and
+    caps list/dict nesting depth. Returns "" on any serialization error.
+    """
+    if not isinstance(enrichment, dict):
+        return ""
+    try:
+        import orjson
+        _dumps = lambda v: orjson.dumps(v).decode("utf-8", errors="replace")
+    except ImportError:
+        import json
+        _dumps = lambda v: json.dumps(v, ensure_ascii=False)
+
+    bounded: dict[str, Any] = {}
+    keys = list(enrichment.keys())
+    for i, k in enumerate(keys):
+        if i >= _FORENSIC_PAYLOAD_KEYS_MAX:
+            bounded["_truncated_keys"] = keys[i:][:5]
+            break
+        v = enrichment[k]
+        bk = str(k)[:64]
+        if isinstance(v, str):
+            bounded[bk] = v[:_FORENSIC_PAYLOAD_STR_MAX]
+        elif isinstance(v, (list, tuple)):
+            bounded[bk] = [
+                str(x)[:_FORENSIC_PAYLOAD_LIST_ITEM_STR_MAX]
+                for x in list(v)[:_FORENSIC_PAYLOAD_LIST_MAX]
+            ]
+        elif isinstance(v, dict):
+            if len(v) <= 8 and all(
+                isinstance(x, (str, int, float, bool, type(None))) for x in v.values()
+            ):
+                bounded[bk] = {str(kk)[:32]: vv for kk, vv in v.items()}
+            else:
+                bounded[bk] = _dumps(v)[:_FORENSIC_PAYLOAD_STR_MAX]
+        elif isinstance(v, (int, float, bool)) or v is None:
+            bounded[bk] = v
+        else:
+            bounded[bk] = str(v)[:_FORENSIC_PAYLOAD_STR_MAX]
+    return _dumps(bounded)[:_FORENSIC_PAYLOAD_MAX_BYTES]
+
+
+def make_canonical_finding_from_enrichment(
+    original_finding: Any,
+    enrichment: dict[str, Any],
+    *,
+    source_type: str | None = None,
+    finding_id_suffix: str = "_forensic",
+) -> Any:
+    """
+    Convert a ForensicsEnricher.enrich() result into a CanonicalFinding.
+
+    Sprint F261: Forensic capabilities → CanonicalFinding wiring.
+    The new finding is a *derived* finding: it points back to the
+    original via its parent finding_id (encoded in the new finding_id
+    as ``<parent_finding_id>_forensic``) and via the bounded payload_text.
+
+    source_type defaults to :data:`FORENSIC_SOURCE_TYPE` but can be
+    overridden for sub-capabilities (e.g., ``"steganography_detection"``,
+    ``"digital_ghost_detection"``).
+
+    Fail-safe: returns None on any error — never raises. Caller decides
+    whether to skip the finding or fall back to legacy storage.
+
+    Args:
+        original_finding: The parent finding (any object with
+            ``finding_id``, ``query``, ``source_type``, ``confidence``).
+        enrichment: Dict from ForensicsEnricher.enrich() or compatible.
+        source_type: Override for the new finding's source_type.
+        finding_id_suffix: Suffix appended to parent finding_id.
+
+    Returns:
+        A :class:`knowledge.duckdb_store.CanonicalFinding` instance,
+        or None on validation / construction failure.
+    """
+    if not original_finding or not isinstance(enrichment, dict):
+        return None
+    try:
+        # Lazy import — duckdb_store is heavy; forensics loads early.
+        from knowledge.duckdb_store import CanonicalFinding
+
+        parent_id = getattr(original_finding, "finding_id", None)
+        if not parent_id:
+            return None
+
+        try:
+            import time as _time
+            ts = float(_time.time())
+        except Exception:
+            ts = 0.0
+
+        try:
+            confidence = float(getattr(original_finding, "confidence", 0.7) or 0.7)
+        except (TypeError, ValueError):
+            confidence = 0.7
+        confidence = max(0.0, min(1.0, confidence))
+
+        query_raw = getattr(original_finding, "query", "") or ""
+        query = str(query_raw)[:512]
+
+        parent_source_type = str(
+            getattr(original_finding, "source_type", "") or ""
+        )[:64]
+        new_source_type = str(source_type or FORENSIC_SOURCE_TYPE)[:64]
+
+        payload_text = _bound_enrichment_for_payload(enrichment)
+
+        finding_id = f"{parent_id}{finding_id_suffix}"[:128]
+
+        # Sprint F264: embed structured provenance_json facet in payload_text
+        # so downstream DuckDB queries can filter by forensic capability
+        # (e.g. ``payload_text LIKE '%"facet":"forensic_analysis"%'``).
+        # The facet is built from the enrichment sub-dicts and is bounded
+        # to 5 keys × 128 chars — well under the 4 KB envelope. Fail-soft:
+        # an empty/None enrichment simply produces an empty facet, which is
+        # filtered out by ``_merge_facet_into_enrichment``.
+        try:
+            facet = _build_forensic_facet(
+                enrichment, parent_source_type, finding_id_suffix
+            )
+            if facet:
+                enrichment_with_facet = _merge_facet_into_enrichment(enrichment, facet)
+                payload_text = _bound_enrichment_for_payload(enrichment_with_facet)
+        except Exception:
+            # Facet is advisory — payload_text already set above is fine
+            pass
+
+        return CanonicalFinding(
+            finding_id=finding_id,
+            query=query,
+            source_type=new_source_type,
+            confidence=confidence,
+            ts=ts,
+            provenance=("forensic_analysis", parent_source_type),
+            payload_text=payload_text,
+        )
+    except Exception as exc:
+        log.debug(
+            "make_canonical_finding_from_enrichment failed for parent=%s: %s",
+            getattr(original_finding, "finding_id", "?"),
+            exc,
+        )
+        return None

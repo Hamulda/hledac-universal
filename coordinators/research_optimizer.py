@@ -22,6 +22,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
+from utils.async_helpers import safe_gather_dropin
 logger = logging.getLogger(__name__)
 
 
@@ -244,7 +245,7 @@ class ResearchOptimizer:
                 self.execute(q, research_func, **kwargs)
                 for q in queries
             ]
-            return await asyncio.gather(*tasks, return_exceptions=True)
+            return await safe_gather_dropin(*tasks, label="research_optimizer:247")
 
         # Batch execution
         all_results = []
@@ -258,7 +259,7 @@ class ResearchOptimizer:
                 self.execute(q, research_func, **kwargs)
                 for q in unique_queries
             ]
-            batch_results = await asyncio.gather(*tasks, return_exceptions=True)
+            batch_results = await safe_gather_dropin(*tasks, label="research_optimizer:261")
 
             # Map results back to original queries
             result_map = dict(zip(unique_queries, batch_results, strict=False))

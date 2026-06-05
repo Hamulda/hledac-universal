@@ -650,6 +650,7 @@ async def _ddgs_text_search(
 # ---------------------------------------------------------------------------
 from collections import OrderedDict
 
+from utils.async_helpers import safe_gather_dropin
 _QUERY_CACHE: OrderedDict[str, DiscoveryBatchResult] = OrderedDict()
 _QUERY_CACHE_MAX = 20  # max entries; oldest evicted when full
 
@@ -943,7 +944,7 @@ async def async_search_public_web(
             return (hits_v, None)
 
         # Run all variants concurrently
-        results = await asyncio.gather(*[search_variant(v) for v in variants], return_exceptions=True)
+        results = await safe_gather_dropin(*[search_variant(v) for v in variants], label="duckduckgo_adapter:946")
         seen_urls: dict[str, int] = {}
         for res in results:
             if isinstance(res, BaseException):

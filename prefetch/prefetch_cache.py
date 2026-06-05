@@ -10,6 +10,7 @@ from typing import Any
 
 import orjson
 
+from utils.async_helpers import safe_gather_fire_and_forget
 logger = logging.getLogger(__name__)
 
 
@@ -52,7 +53,7 @@ class PrefetchCache:
         for task in list(self._background_tasks):
             task.cancel()
         if self._background_tasks:
-            await asyncio.gather(*self._background_tasks, return_exceptions=True)
+            await safe_gather_fire_and_forget(*self._background_tasks, label="prefetch_cache:55")
             self._background_tasks.clear()
 
     def close(self):

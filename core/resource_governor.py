@@ -107,6 +107,7 @@ def get_swap_policy_tier(swap_gib: float) -> tuple[str, str]:
 # Protected by a simple threading.Lock — not an async subsystem
 import threading as _threading
 
+from utils.async_helpers import safe_gather_fire_and_forget
 _io_only_latch: bool = False
 _io_only_latch_lock: _threading.Lock = _threading.Lock()
 
@@ -645,7 +646,7 @@ class UMAAlarmDispatcher:
                 cb()
             # else: not callable, silently ignore
 
-        await asyncio.gather(*[_dispatch_one(cb) for cb in callbacks], return_exceptions=True)
+        await safe_gather_fire_and_forget(*[_dispatch_one(cb) for cb in callbacks], label="resource_governor:648")
 
 
 # =============================================================================

@@ -30,6 +30,7 @@ from urllib.parse import urlparse
 
 from .confidence_policy import compute_confidence as _compute_confidence
 
+from utils.async_helpers import safe_gather_dropin
 if TYPE_CHECKING:
     from ..project_types import CanonicalFinding
 
@@ -328,7 +329,7 @@ class SocialIdentityMiner:
         gathered: list[Any] = []
         try:
             async with asyncio.timeout(30.0):
-                gathered = await asyncio.gather(*tasks, return_exceptions=True)
+                gathered = await safe_gather_dropin(*tasks, label="social_identity_miner:331")
         except TimeoutError:
             for t in tasks:
                 try:

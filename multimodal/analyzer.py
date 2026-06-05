@@ -36,6 +36,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from utils.async_helpers import safe_gather_dropin
 if TYPE_CHECKING:
     from knowledge.duckdb_store import CanonicalFinding
 
@@ -519,7 +520,7 @@ class MultimodalEnricher:
                     return (finding_id, None)
 
         tasks = [enrich_one(f) for f in findings]
-        results = await asyncio.gather(*tasks, return_exceptions=True)
+        results = await safe_gather_dropin(*tasks, label="analyzer:522")
 
         out = {}
         for item in results:
@@ -795,7 +796,7 @@ class DocumentExtractor:
                     return None
 
         tasks = [extract_one(fp) for fp in file_paths]
-        results = await asyncio.gather(*tasks, return_exceptions=True)
+        results = await safe_gather_dropin(*tasks, label="analyzer:798")
 
         findings = []
         for item in results:

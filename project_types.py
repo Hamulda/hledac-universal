@@ -17,7 +17,7 @@ import os
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from typing import TYPE_CHECKING, Any, Union
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     import numpy as np  # noqa: F401 — type annotations only
@@ -183,7 +183,7 @@ class ReasoningMode(Enum):
 # DATACLASSES - CONFIGURATION
 # =============================================================================
 
-@dataclass
+@dataclass(slots=True)
 class ModelConfig:
     """Model configuration for M1 8GB - 3 model stack only"""
     # LLM: Hermes-3 for reasoning and generation
@@ -199,7 +199,7 @@ class ModelConfig:
     GLINER_MODEL: str = "knowledgator/gliner-relex-large-v0.5"
 
 
-@dataclass
+@dataclass(slots=True)
 class ResearchConfig:
     """Research execution configuration"""
     mode: ResearchMode = ResearchMode.STANDARD
@@ -208,9 +208,16 @@ class ResearchConfig:
     memory_limit_mb: float = 5500.0
 
     # Models - 3 model stack only
-    hermes_model: str = ModelConfig.HERMES_MODEL
-    modernbert_model: str = ModelConfig.MODERNBERT_MODEL
-    gliner_model: str = ModelConfig.GLINER_MODEL
+    # NOTE: literal values, NOT `ModelConfig.HERMES_MODEL` cross-class refs.
+    # Python 3.14.5 `@dataclass` introspector fails on slotted-class
+    # attribute defaults: when `ModelConfig` is `@dataclass(slots=True)`,
+    # `ModelConfig.HERMES_MODEL` is a slot descriptor and downstream
+    # `@dataclass` consumers (this class) see it as "no default" → TypeError.
+    # Workaround: inline the literal here, keep `ModelConfig` as the
+    # single source of truth for these strings (verified by tests).
+    hermes_model: str = "mlx-community/DeepHermes-3-Llama-3-3B-Preview-4bit"
+    modernbert_model: str = "mlx-community/answerdotai-ModernBERT-base-6bit"
+    gliner_model: str = "knowledgator/gliner-relex-large-v0.5"
 
     # Knowledge (optional - no Neo4j)
     enable_knowledge_graph: bool = False
@@ -242,7 +249,7 @@ class ResearchConfig:
     agent_timeout: int = 300
 
 
-@dataclass
+@dataclass(slots=True)
 class MemoryConfig:
     """Memory management configuration (from InfrastructureOrchestrator)"""
     memory_limit_mb: float = 5500.0
@@ -254,7 +261,7 @@ class MemoryConfig:
     health_check_interval_seconds: float = 5.0
 
 
-@dataclass
+@dataclass(slots=True)
 class GhostConfig:
     """Ghost layer configuration"""
     max_steps: int = 20
@@ -265,7 +272,7 @@ class GhostConfig:
     enable_loot_manager: bool = True
 
 
-@dataclass
+@dataclass(slots=True)
 class SecurityConfig:
     """Security configuration for privacy protection"""
     # Basic
@@ -291,7 +298,7 @@ class SecurityConfig:
     jitter_percent: float = 50.0
 
 
-@dataclass
+@dataclass(slots=True)
 class StealthConfig:
     """Stealth mode configuration"""
     # Basic
@@ -362,7 +369,7 @@ class StealthConfig:
     scroll_pause: float = 0.2
 
 
-@dataclass
+@dataclass(slots=True)
 class CoordinationConfig:
     """Coordination layer configuration"""
     max_context_length: int = 1024  # Minimal context for M1 optimization
@@ -371,7 +378,7 @@ class CoordinationConfig:
     enable_delegation: bool = True
 
 
-@dataclass
+@dataclass(slots=True)
 class AgentManagerConfig:
     """Agent management configuration (from EnhancedUnifiedOrchestrator)"""
     max_concurrent_agents: int = 6  # M1 constraint
@@ -386,7 +393,7 @@ class AgentManagerConfig:
 # DATACLASSES - EXECUTION CONTEXT
 # =============================================================================
 
-@dataclass
+@dataclass(slots=True)
 class ExecutionContext:
     """Context for research execution (from v1 + v2)"""
     query: str
@@ -424,7 +431,7 @@ class ExecutionContext:
         })
 
 
-@dataclass
+@dataclass(slots=True)
 class DecisionContext:
     """Context for decision making (from Hermes3)"""
     research_id: str
@@ -439,7 +446,7 @@ class DecisionContext:
 # DATACLASSES - RESULTS
 # =============================================================================
 
-@dataclass
+@dataclass(slots=True)
 class SubAgentResult:
     """Result from sub-agent execution"""
     agent_type: SubAgentType
@@ -451,7 +458,7 @@ class SubAgentResult:
     state: AgentState
 
 
-@dataclass
+@dataclass(slots=True)
 class ResearchResult:
     """Final research result"""
     success: bool
@@ -505,7 +512,7 @@ class ResearchResult:
         return json.dumps(d, indent=2, default=str)
 
 
-@dataclass
+@dataclass(slots=True)
 class DecisionRequest:
     """Request for decision making (from DeepSeek R1)"""
     operation_type: OperationType
@@ -515,7 +522,7 @@ class DecisionRequest:
     requires_delegation: bool = True
 
 
-@dataclass
+@dataclass(slots=True)
 class DecisionResponse:
     """Response from decision making"""
     decision_id: str
@@ -527,7 +534,7 @@ class DecisionResponse:
     reasoning: str | None = None
 
 
-@dataclass
+@dataclass(slots=True)
 class ActionResult:
     """Result from Ghost action execution"""
     action: ActionType
@@ -538,7 +545,7 @@ class ActionResult:
     stored_in_vault: bool = False
 
 
-@dataclass
+@dataclass(slots=True)
 class SystemMetrics:
     """System health metrics (from InfrastructureOrchestrator)"""
     memory_used_mb: float
@@ -549,7 +556,7 @@ class SystemMetrics:
     timestamp: float
 
 
-@dataclass
+@dataclass(slots=True)
 class AgentMetrics:
     """Agent performance metrics"""
     agent_type: SubAgentType
@@ -560,7 +567,7 @@ class AgentMetrics:
     total_executions: int
 
 
-@dataclass
+@dataclass(slots=True)
 class ComplexityAnalysis:
     """Complexity analysis result for ToT decision making"""
     score: float
@@ -574,7 +581,7 @@ class ComplexityAnalysis:
 # ANALYZER RESULT (Sprint 8SD: CapabilityRouter Bridge)
 # =============================================================================
 
-@dataclass
+@dataclass(slots=True)
 class AnalyzerResult:
     """
     Structured output from AutonomousAnalyzer.
@@ -856,7 +863,7 @@ class ContentSource(Enum):
 # DATACLASSES - SECURITY & CRYPTO (NEW)
 # =============================================================================
 
-@dataclass
+@dataclass(slots=True)
 class ObfuscationResult:
     """Result of string obfuscation"""
     original_hash: str
@@ -866,7 +873,7 @@ class ObfuscationResult:
     success: bool
 
 
-@dataclass
+@dataclass(slots=True)
 class DestructionResult:
     """Result of secure data destruction"""
     file_path: str
@@ -877,7 +884,7 @@ class DestructionResult:
     timestamp: float
 
 
-@dataclass
+@dataclass(slots=True)
 class StealthSession:
     """Stealth browsing session"""
     session_id: str
@@ -888,7 +895,7 @@ class StealthSession:
     created_at: float
 
 
-@dataclass
+@dataclass(slots=True)
 class CaptchaSolution:
     """CAPTCHA solving result"""
     solution: str
@@ -898,7 +905,7 @@ class CaptchaSolution:
     provider: str
 
 
-@dataclass
+@dataclass(slots=True)
 class PrivacyStatus:
     """Current privacy/anonymity status"""
     vpn_connected: bool
@@ -909,7 +916,7 @@ class PrivacyStatus:
     overall_level: PrivacyLevel
 
 
-@dataclass
+@dataclass(slots=True)
 class DeepResearchConfig:
     """Configuration for deep research"""
     max_depth: int = 10
@@ -922,7 +929,7 @@ class DeepResearchConfig:
     ])
 
 
-@dataclass
+@dataclass(slots=True)
 class ExplorationNode:
     """Node in deep research exploration graph"""
     node_id: str
@@ -935,7 +942,7 @@ class ExplorationNode:
     quality_score: float = 0.0
 
 
-@dataclass
+@dataclass(slots=True)
 class GhostAction:
     """GhostDirector action"""
     action_type: ActionType
@@ -945,7 +952,7 @@ class GhostAction:
     vault_storage: bool = True
 
 
-@dataclass
+@dataclass(slots=True)
 class GhostMission:
     """GhostDirector mission"""
     mission_id: str
@@ -956,7 +963,7 @@ class GhostMission:
     anti_loop_counter: int = 0
 
 
-@dataclass
+@dataclass(slots=True)
 class DataLeakAlert:
     """Data leak detection alert"""
     alert_id: str
@@ -967,7 +974,7 @@ class DataLeakAlert:
     timestamp: float
 
 
-@dataclass
+@dataclass(slots=True)
 class ArchiveSnapshot:
     """Web archive snapshot"""
     url: str
@@ -1011,7 +1018,7 @@ class ProtocolType(Enum):
     MPC = "mpc"
 
 
-@dataclass
+@dataclass(slots=True)
 class PrivacyConfig:
     """Privacy layer configuration"""
     level: PrivacyLevel = PrivacyLevel.STANDARD
@@ -1045,7 +1052,7 @@ class PrivacyConfig:
 
 # Security aliases
 ObfuscationPattern = dict[str, str]
-EncryptionKey = Union[str, bytes]
+EncryptionKey = str | bytes
 FingerprintConfig = dict[str, Any]
 
 # Research aliases
@@ -1076,7 +1083,7 @@ class MessagePriority(Enum):
     BACKGROUND = 5
 
 
-@dataclass
+@dataclass(slots=True)
 class CommunicationConfig:
     """Communication layer configuration"""
     enable_agent_messaging: bool = True
@@ -1123,7 +1130,7 @@ class ProcessingState(Enum):
     SLEEPING = "sleeping"
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class SpikeData:
     """Immutable spike event data"""
     neuron_id: int
@@ -1131,7 +1138,7 @@ class SpikeData:
     amplitude: float = 1.0
 
 
-@dataclass
+@dataclass(slots=True)
 class NeuralEvent:
     """Neural event for event-driven processing"""
     event_type: EventType
@@ -1147,7 +1154,7 @@ class NeuralEvent:
             object.__setattr__(self, 'timestamp', datetime.now().timestamp())
 
 
-@dataclass
+@dataclass(slots=True)
 class ProcessingMetrics:
     """Metrics for neuromorphic processing"""
     energy_consumption_joules: float = 0.0
@@ -1158,7 +1165,7 @@ class ProcessingMetrics:
     memory_used_bytes: int = 0
 
 
-@dataclass
+@dataclass(slots=True)
 class ProcessingResult:
     """Result from neuromorphic processing"""
     success: bool
@@ -1169,7 +1176,7 @@ class ProcessingResult:
     error_message: str | None = None
 
 
-@dataclass
+@dataclass(slots=True)
 class SNNConfig:
     """Configuration for Spiking Neural Network"""
     n_neurons: int = 1000
@@ -1183,7 +1190,7 @@ class SNNConfig:
     refractory_period: float = 2.0
 
 
-@dataclass
+@dataclass(slots=True)
 class STDPParams:
     """STDP (Spike-Timing-Dependent Plasticity) parameters"""
     A_plus: float = 0.01       # LTP amplitude
@@ -1194,7 +1201,7 @@ class STDPParams:
     w_max: float = 1.0         # Maximum weight
 
 
-@dataclass
+@dataclass(slots=True)
 class NeuronParameters:
     """Biological parameters for LIF neurons"""
     v_rest: float = -65.0      # Resting potential (mV)
@@ -1206,7 +1213,7 @@ class NeuronParameters:
     noise_std: float = 0.5     # Synaptic noise standard deviation (mV)
 
 
-@dataclass
+@dataclass(slots=True)
 class NeuromorphicEnergyReport:
     """Energy efficiency report for neuromorphic computing"""
     total_energy_joules: float
@@ -1219,7 +1226,7 @@ class NeuromorphicEnergyReport:
     timestamp: float = field(default_factory=lambda: datetime.now().timestamp())
 
 
-@dataclass
+@dataclass(slots=True)
 class ReservoirConfig:
     """Configuration for Reservoir Computing (ESN/LSM)"""
     reservoir_size: int = 1000
@@ -1231,7 +1238,7 @@ class ReservoirConfig:
     reservoir_type: str = "esn"  # "esn" or "lsm"
 
 
-@dataclass
+@dataclass(slots=True)
 class SNNEncryptedContainer:
     """Encrypted container using SNN-based cryptography"""
     ciphertext: bytes
@@ -1310,7 +1317,7 @@ class SNNEncryptedContainer:
 # Future phases may extend with additional fields or promote to full dataclass.
 # -----------------------------------------------------------------------------
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class RunCorrelation:
     """
     Immutable correlation identity for a single research run.
@@ -1734,7 +1741,7 @@ class ExportHandoff:
 #   [3] from_shim() is COMPAT ONLY — not for use in hot path
 # =============================================================================
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class CanonicalGroundingHints:
     """
     Canonical minimal grounding hints for deep research handoff.

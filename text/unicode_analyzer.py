@@ -21,7 +21,7 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 
-@dataclass
+@dataclass(slots=True)
 class UnicodeConfig:
     """Configuration for Unicode attack analysis."""
     detect_zero_width: bool = True
@@ -34,7 +34,7 @@ class UnicodeConfig:
     context_window: int = 20
 
 
-@dataclass
+@dataclass(slots=True)
 class ZeroWidthFinding:
     """Finding for zero-width character detection."""
     position: int
@@ -43,7 +43,7 @@ class ZeroWidthFinding:
     context: str | None = None
 
 
-@dataclass
+@dataclass(slots=True)
 class HomoglyphFinding:
     """Finding for homoglyph/confusable character detection."""
     position: int
@@ -53,7 +53,7 @@ class HomoglyphFinding:
     char_code: str = ""
 
 
-@dataclass
+@dataclass(slots=True)
 class BidiFinding:
     """Finding for bidirectional text attack detection."""
     position: int
@@ -63,7 +63,7 @@ class BidiFinding:
     context: str | None = None
 
 
-@dataclass
+@dataclass(slots=True)
 class NormalizationFinding:
     """Finding for Unicode normalization anomaly detection."""
     position: int
@@ -73,7 +73,7 @@ class NormalizationFinding:
     char_code: str = ""
 
 
-@dataclass
+@dataclass(slots=True)
 class UnicodeAnalysisResult:
     """Complete result of Unicode attack analysis."""
     zero_width_findings: list[ZeroWidthFinding] = field(default_factory=list)

@@ -38,6 +38,7 @@ from enum import Enum
 from typing import Any
 from urllib.parse import quote, unquote, urlparse
 
+from utils.async_helpers import safe_gather_fire_and_forget
 logger = logging.getLogger(__name__)
 
 # =============================================================================
@@ -2474,7 +2475,7 @@ class StreamingMonitor:
                         self._check_source_with_semaphore(source)
                         for source in sources_to_check
                     ]
-                    await asyncio.gather(*tasks, return_exceptions=True)
+                    await safe_gather_fire_and_forget(*tasks, label="stealth_crawler:2477")
 
                 # Periodic memory cleanup
                 self._check_count += 1

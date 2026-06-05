@@ -107,13 +107,28 @@ def build_search_documents_from_findings(findings: list) -> list:
 @dataclass(frozen=True)
 class AdvisoryRunOutcome:
     """
-    Result of a full advisory run (all 4 advisory steps).
+    Result of a full advisory run (all 6 advisory steps).
 
     Fields:
         planned_pivots: Number of pivots planned (0 if planner skipped/failed)
         executed_pivots: Number of pivots executed (0 if executor skipped/failed)
         governor_recorded: True if governor evaluate+apply succeeded
         brief_generated: True if analyst brief was generated
+        local_search_attempted: True if local search seam was queried
+        local_search_hits: Number of top results returned
+        local_search_source: "search_index" or "none"
+        local_search_indexed: Number of findings indexed
+        local_search_elapsed_ms: Wall time of index+search
+        local_search_top_results: list[dict] with url/title/score/source_type/finding_id
+        local_search_error: Error string if failed, else None
+        federated_attempted: True if federated bridge was queried
+        federated_nodes: Virtual nodes used in distributed run (0 if skipped)
+        federated_findings: Findings emitted from federated distribute_research
+        federated_bridge_updates: Bridge.update() calls during this advisory
+        federated_bridge_persists: Bridge.persist_if_due() writes during this advisory
+        federated_mode: Bridge mode (lightweight_only/lazy_hybrid/cross_sprint_persist)
+        federated_elapsed_ms: Wall time of the federated advisory
+        federated_error: Error string if failed, else None
         error: Error message if any step failed, else None
     """
 
@@ -128,6 +143,15 @@ class AdvisoryRunOutcome:
     local_search_elapsed_ms: float = 0.0
     local_search_top_results: list = field(default_factory=list)
     local_search_error: str | None = field(default=None)
+    # F350M-FED-P3-FOLLOWUP: federated advisory telemetry
+    federated_attempted: bool = False
+    federated_nodes: int = 0
+    federated_findings: int = 0
+    federated_bridge_updates: int = 0
+    federated_bridge_persists: int = 0
+    federated_mode: str = "none"
+    federated_elapsed_ms: float = 0.0
+    federated_error: str | None = field(default=None)
     error: str | None = field(default=None)
 
 
@@ -180,13 +204,15 @@ class SprintAdvisoryRunner:
 
     async def run_all_advisories(self) -> AdvisoryRunOutcome:
         """
-        Run all 4 advisory steps in explicit order.
+        Run all 6 advisory steps in explicit order.
 
         Order:
           1. pivot_planner  → planned_pivots
           2. pivot_executor → executed_pivots
           3. resource_governor → governor_recorded
           4. analyst_brief → brief_generated
+          5. local_search → local_search_*
+          6. federated_research → federated_* (F350M-FED-P3-FOLLOWUP)
 
         CancelledError: re-raised to caller.
         Fail-soft: any step failure returns partial outcome with error message.
@@ -211,6 +237,9 @@ class SprintAdvisoryRunner:
 
             # Step 5: Local search advisory (F228C)
             outcome = await self._run_local_search_advisory(outcome)
+
+            # Step 6 (F350M-FED-P3-FOLLOWUP): Federated research advisory
+            outcome = await self._run_federated_research_advisory(outcome)
 
         except asyncio.CancelledError:
             raise  # [I6] propagate CancelledError — never swallowed
@@ -696,3 +725,271 @@ class SprintAdvisoryRunner:
             pass  # Fail-soft: brief generation must never crash runner
 
         return outcome
+
+    # ── Step 6 (F350M-FED-P3-FOLLOWUP): Federated Research ───────────────────
+
+    async def _run_federated_research_advisory(
+        self, outcome: AdvisoryRunOutcome
+    ) -> AdvisoryRunOutcome:
+        """
+        F350M-FED-P3-FOLLOWUP: Federated research advisory at teardown.
+
+        The canonical seam for the federated research capability at sprint
+        teardown. Performs four bounded, fail-soft actions:
+
+        1. **Lazy bridge creation** — `scheduler._ensure_federated_bridge()`
+           returns a long-lived `FederatedBridge` (singleton on scheduler).
+           Off by default (gated on HLEDAC_ENABLE_FEDERATED=1).
+        2. **M1 safety** — skip entirely if memory_pressure > 0.85.
+        3. **Bridge updates** — for each accepted finding in
+           `scheduler._all_findings`, emit `bridge.update(lane, state, action, reward, next_state)`.
+           Reward = clamp01(confidence). State = (lane, len(findings)).
+           Bounded by len(findings) — typically < 100.
+        4. **LMDB persistence** — call `bridge.persist_if_due()` (debounced,
+           `asyncio.to_thread`, fail-soft). Honors env-var
+           `HLEDAC_FEDERATED_LMDB_PATH` for cross-sprint state.
+
+        Complements (does NOT replace) the Phase 2 plugin sidecar:
+        - Plugin sidecar: fire-and-forget, runs FederatedResearchCoordinator,
+          produces CanonicalFinding objects → SidecarDispatcher.
+        - This advisory: bounded bridge updates + LMDB persistence +
+          telemetry → analytics/export.
+
+        Side effects (all fail-soft):
+        - Sets `scheduler._federated_bridge` to the long-lived instance.
+        - Updates `SprintSchedulerResult.federated_*` telemetry fields
+          (populated by `sprint_scheduler._apply_federated_outcome`).
+
+        CancelledError: re-raised to caller.
+        All other exceptions: caught, logged at debug, outcome returned.
+        """
+        from time import perf_counter
+
+        t0 = perf_counter()
+        try:
+            # 1) Lazy bridge creation (M1-safe: no-op if disabled)
+            bridge_factory = getattr(
+                self._scheduler, "_ensure_federated_bridge", None
+            )
+            if bridge_factory is None:
+                # Scheduler doesn't expose the seam — advisory is unavailable
+                return outcome
+
+            bridge = bridge_factory()  # may be None if env-gated off
+            if bridge is None:
+                # Federated disabled or unavailable — silently no-op
+                return outcome
+
+            # 2) M1 safety: governor memory_pressure check
+            memory_pressure = 0.0
+            try:
+                if self._governor is not None:
+                    snap = getattr(self._governor, "snapshot", None)
+                    if snap is not None:
+                        memory_pressure = float(
+                            getattr(snap, "memory_pressure", 0.0) or 0.0
+                        )
+            except Exception:
+                memory_pressure = 0.0
+
+            # Hard skip threshold (matches federated sidecar_adapter)
+            if memory_pressure > FEDERATED_ADVISORY_MEMORY_SKIP_THRESHOLD:
+                log.debug(
+                    "[F350M-FED-P3-FOLLOWUP] skipping: memory_pressure=%.2f > %.2f",
+                    memory_pressure,
+                    FEDERATED_ADVISORY_MEMORY_SKIP_THRESHOLD,
+                )
+                elapsed = (perf_counter() - t0) * 1000
+                return _with_federated_outcome(
+                    outcome,
+                    attempted=False,
+                    nodes=0,
+                    findings=0,
+                    updates=0,
+                    persists=0,
+                    mode=str(getattr(bridge, "mode", "none")),
+                    elapsed_ms=elapsed,
+                    error=None,
+                )
+
+            # 3) Bridge updates from accepted findings (bounded)
+            findings = getattr(self._scheduler, "_all_findings", []) or []
+            # Bound the per-sprint update batch
+            max_updates = min(len(findings), FEDERATED_ADVISORY_MAX_UPDATES)
+            updates_emitted = 0
+            for finding in findings[:max_updates]:
+                try:
+                    # Determine lane from finding source_type / source_lane attr
+                    lane = _derive_federated_lane(finding)
+                    # Reward shaping: clamp confidence to [0, 1]
+                    conf = float(
+                        getattr(finding, "confidence", 0.0) or 0.0
+                    )
+                    conf = max(0.0, min(1.0, conf))
+                    state = (lane, len(findings))
+                    bridge.update(
+                        lane=lane,
+                        state=state,
+                        action=lane,
+                        reward=conf,
+                        next_state=state,
+                    )
+                    updates_emitted += 1
+                except Exception as ue:
+                    log.debug(
+                        "[F350M-FED-P3-FOLLOWUP] bridge update skipped: %s",
+                        ue,
+                    )
+
+            # 4) LMDB persist (debounced, asyncio.to_thread, fail-soft)
+            persists_emitted = 0
+            try:
+                persisted = await bridge.persist_if_due()
+                if persisted:
+                    persists_emitted = 1
+            except Exception as pe:
+                log.debug(
+                    "[F350M-FED-P3-FOLLOWUP] persist_if_due skipped: %s", pe,
+                )
+
+            # 5) Adaptive node count for telemetry
+            if memory_pressure > FEDERATED_ADVISORY_MEMORY_REDUCED_THRESHOLD:
+                nodes = 1
+            else:
+                nodes = FEDERATED_ADVISORY_MAX_NODES
+
+            elapsed = (perf_counter() - t0) * 1000
+            log.debug(
+                "[F350M-FED-P3-FOLLOWUP] advisory done: "
+                "updates=%d persists=%d mode=%s dur=%.2fms",
+                updates_emitted,
+                persists_emitted,
+                getattr(bridge, "mode", "none"),
+                elapsed,
+            )
+
+            # 6) Stash outcome on scheduler for export hookup
+            try:
+                self._scheduler._federated_advisory_outcome = {
+                    "federated_attempted": True,
+                    "federated_nodes": nodes,
+                    "federated_findings": len(findings),
+                    "federated_bridge_updates": updates_emitted,
+                    "federated_bridge_persists": persists_emitted,
+                    "federated_mode": str(getattr(bridge, "mode", "none")),
+                    "federated_elapsed_ms": elapsed,
+                    "federated_error": None,
+                }
+            except Exception:
+                pass  # Field may be missing on older schedulers
+
+            return _with_federated_outcome(
+                outcome,
+                attempted=True,
+                nodes=nodes,
+                findings=len(findings),
+                updates=updates_emitted,
+                persists=persists_emitted,
+                mode=str(getattr(bridge, "mode", "none")),
+                elapsed_ms=elapsed,
+                error=None,
+            )
+
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            elapsed = (perf_counter() - t0) * 1000
+            log.debug(
+                "[F350M-FED-P3-FOLLOWUP] advisory fail-soft: %s: %s",
+                type(e).__name__, e,
+            )
+            return _with_federated_outcome(
+                outcome,
+                attempted=True,
+                nodes=0,
+                findings=0,
+                updates=0,
+                persists=0,
+                mode="none",
+                elapsed_ms=elapsed,
+                error=str(e),
+            )
+
+
+# ── Module-level helpers (F350M-FED-P3-FOLLOWUP) ──────────────────────────────
+
+
+# Bounds (M1 8GB safety)
+FEDERATED_ADVISORY_MAX_NODES: int = 2
+"""Max virtual nodes in advisory mode (matches sidecar_adapter)."""
+
+FEDERATED_ADVISORY_MEMORY_SKIP_THRESHOLD: float = 0.85
+"""Skip advisory entirely if memory_pressure > this ratio."""
+
+FEDERATED_ADVISORY_MEMORY_REDUCED_THRESHOLD: float = 0.70
+"""Reduce to 1 node if memory_pressure > this ratio."""
+
+FEDERATED_ADVISORY_MAX_UPDATES: int = 500
+"""Hard cap on bridge.update() calls per advisory (bounded by len(findings))."""
+
+
+def _derive_federated_lane(finding: Any) -> str:
+    """
+    Map an accepted finding to a federated lane (surface/dark/archive).
+
+    Uses finding.source_lane attr if available, otherwise classifies by
+    source_type heuristic. Returns "surface" as the safe default.
+    """
+    # Explicit lane from coordinator merge
+    lane = getattr(finding, "source_lane", None)
+    if lane:
+        return str(lane)
+    # Heuristic by source_type
+    src = str(getattr(finding, "source_type", "") or "").lower()
+    if any(k in src for k in ("onion", "i2p", "tor", "dark", "ipfs")):
+        return "dark"
+    if any(k in src for k in ("wayback", "commoncrawl", "archive")):
+        return "archive"
+    return "surface"
+
+
+def _with_federated_outcome(
+    outcome: AdvisoryRunOutcome,
+    *,
+    attempted: bool,
+    nodes: int,
+    findings: int,
+    updates: int,
+    persists: int,
+    mode: str,
+    elapsed_ms: float,
+    error: str | None,
+) -> AdvisoryRunOutcome:
+    """
+    Build a new AdvisoryRunOutcome with federated fields populated.
+
+    Frozen dataclass requires rebuilding the whole object. This helper
+    keeps the call sites DRY.
+    """
+    return AdvisoryRunOutcome(
+        planned_pivots=outcome.planned_pivots,
+        executed_pivots=outcome.executed_pivots,
+        governor_recorded=outcome.governor_recorded,
+        brief_generated=outcome.brief_generated,
+        local_search_attempted=outcome.local_search_attempted,
+        local_search_hits=outcome.local_search_hits,
+        local_search_source=outcome.local_search_source,
+        local_search_indexed=outcome.local_search_indexed,
+        local_search_elapsed_ms=outcome.local_search_elapsed_ms,
+        local_search_top_results=outcome.local_search_top_results,
+        local_search_error=outcome.local_search_error,
+        federated_attempted=attempted,
+        federated_nodes=nodes,
+        federated_findings=findings,
+        federated_bridge_updates=updates,
+        federated_bridge_persists=persists,
+        federated_mode=mode,
+        federated_elapsed_ms=elapsed_ms,
+        federated_error=error,
+        error=outcome.error,
+    )

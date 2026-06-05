@@ -25,6 +25,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
+from utils.async_helpers import safe_gather_dropin
 logger = logging.getLogger(__name__)
 
 
@@ -278,7 +279,7 @@ class AgentCoordinationEngine:
                 return await self.execute_task(request, strategy)
 
         tasks = [execute_with_limit(req) for req in requests]
-        results = await asyncio.gather(*tasks, return_exceptions=True)
+        results = await safe_gather_dropin(*tasks, label="agent_coordination_engine:281")
 
         # Convert exceptions to error results
         processed_results = []

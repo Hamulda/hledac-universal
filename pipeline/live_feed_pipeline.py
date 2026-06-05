@@ -904,6 +904,7 @@ class _RunDeduper:
 # Import here so that absence of pattern_matcher is a hard fail at import time
 from hledac.universal.patterns.pattern_matcher import match_text
 
+from utils.async_helpers import safe_gather_dropin
 # ---------------------------------------------------------------------------
 # Per-entry dedup for pattern-backed findings
 # ---------------------------------------------------------------------------
@@ -2359,7 +2360,7 @@ async def async_run_feed_source_batch(
                     _run_single(url, lbl, org, pri)
                     for url, lbl, org, pri in batch_slice
                 ]
-                batch_results = await asyncio.gather(*tasks, return_exceptions=True)
+                batch_results = await safe_gather_dropin(*tasks, label="live_feed_pipeline:2362")
                 for res in batch_results:
                     if isinstance(res, asyncio.CancelledError):
                         raise res

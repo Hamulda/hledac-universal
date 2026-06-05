@@ -85,6 +85,7 @@ except ImportError:
 
 import warnings
 
+from utils.async_helpers import safe_gather_dropin
 warnings.warn(
     "orchestrator_integration is DEPRECATED and DORMANT. "
     "Do not use for new development. "
@@ -160,7 +161,7 @@ class IntegratedOrchestrator(FullyAutonomousOrchestrator):
             init_tasks.append(self._init_coordinator("quantum", self.quantum))
 
         if init_tasks:
-            results = await asyncio.gather(*init_tasks, return_exceptions=True)
+            results = await safe_gather_dropin(*init_tasks, label="orchestrator_integration:163")
             for i, result in enumerate(results):
                 if isinstance(result, Exception):
                     logger.warning(f"Coordinator {i} failed to initialize: {result}")

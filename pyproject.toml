@@ -105,6 +105,7 @@ dependencies = [
     # Canonical graph is DuckPGQGraph (knowledge/graph_service.py) — kuzu is opt-in.
     "dspy>=3.2.1",
     # llmlingua removed: 0 importers, no cp314 wheel, fail-soft if re-added
+    "selectolax>=0.4.10",
 ]
 
 # ------------------------------------------------------------------ optionals

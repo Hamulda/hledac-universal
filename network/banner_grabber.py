@@ -109,6 +109,7 @@ import logging
 import time
 from dataclasses import dataclass
 
+from utils.async_helpers import safe_gather_dropin
 logger = logging.getLogger(__name__)
 
 
@@ -1113,7 +1114,7 @@ class BannerGrabber:
 
 
 
-        results = await asyncio.gather(*tasks, return_exceptions=True)
+        results = await safe_gather_dropin(*tasks, label="banner_grabber:1116")
 
 
 
@@ -1157,7 +1158,7 @@ class BannerGrabber:
 
 
 
-        results = await asyncio.gather(*tasks, return_exceptions=True)
+        results = await safe_gather_dropin(*tasks, label="banner_grabber:1160")
 
 
 
@@ -1737,7 +1738,7 @@ async def banner_grab_to_canonical(host: str, ports: list[int], query: str) -> l
 
     try:
 
-        results = await asyncio.gather(*[_grab_one(p) for p in ports], return_exceptions=True)
+        results = await safe_gather_dropin(*[_grab_one(p) for p in ports], label="banner_grabber:1740")
 
         results = [r for r in results if r is not None and not isinstance(r, Exception)]
 

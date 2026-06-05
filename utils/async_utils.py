@@ -33,6 +33,7 @@ import sys
 from collections.abc import AsyncIterator, Awaitable, Callable
 from typing import TypeVar
 
+from utils.async_helpers import safe_gather_dropin
 logger = logging.getLogger(__name__)
 
 T = TypeVar('T')
@@ -146,7 +147,7 @@ async def bounded_map[T](
 
     # Python < 3.11 nebo cancel_on_error=False
     coros = [_run(i, fn, a, k) for i, (fn, a, k) in enumerate(tasks)]
-    gathered = await asyncio.gather(*coros, return_exceptions=True)
+    gathered = await safe_gather_dropin(*coros, label="async_utils:149")
 
     if cancel_on_error:
         for res in gathered:
@@ -239,7 +240,7 @@ async def bounded_gather[T](
                     return await coro
             return await coro
 
-    return await asyncio.gather(*(_run(c) for c in coros), return_exceptions=return_exceptions)  # type: ignore[return-value]
+    return await safe_gather_dropin(*(_run(c) for c in coros), label="async_utils:242")  # type: ignore[return-value]
 
 
 __all__ = [

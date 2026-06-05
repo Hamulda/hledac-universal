@@ -18,6 +18,7 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import TYPE_CHECKING
 
+from utils.async_helpers import safe_gather_dropin
 if TYPE_CHECKING:
     import aiohttp
 else:
@@ -232,7 +233,7 @@ async def full_doh_profile(
                 resolve_doh(domain, rt, session, provider=provider, timeout=timeout)
             )
 
-    results = await asyncio.gather(*tasks, return_exceptions=True)
+    results = await safe_gather_dropin(*tasks, label="doh_lane:235")
 
     all_findings: list[DOHFinding] = []
     for r in results:
@@ -271,7 +272,7 @@ async def subdomain_probe(
         for sub in wordlist
     ]
 
-    results = await asyncio.gather(*tasks, return_exceptions=True)
+    results = await safe_gather_dropin(*tasks, label="doh_lane:274")
 
     alive: list[str] = []
     for sub, res in zip(wordlist, results, strict=False):

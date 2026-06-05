@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import os
+from collections.abc import Iterable
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -20,7 +21,43 @@ __all__ = [
     "render_diagnostic_markdown",
     "render_diagnostic_markdown_to_path",
     "normalize_report_input",
+    "aggregate_forensic_findings",
+    "render_forensic_findings_section",
 ]
+
+# ---------------------------------------------------------------------------
+# Sprint F263: Forensic findings constants — bounded, deterministic, fail-safe
+# ---------------------------------------------------------------------------
+# Canonical forensic source types in render order. Anything outside this
+# tuple is bucketed under "other_forensic" with the original string echoed.
+_FORENSIC_SOURCE_TYPES: tuple[str, ...] = (
+    "forensic_analysis",
+    "steganography_detection",
+    "digital_ghost_detection",
+    "blockchain_forensics",
+)
+
+_FORENSIC_LABELS: dict[str, str] = {
+    "forensic_analysis": "Forensic Analysis (IOC extraction / enrichment)",
+    "steganography_detection": "Steganography Detection",
+    "digital_ghost_detection": "Digital Ghost Detection",
+    "blockchain_forensics": "Blockchain Forensics",
+}
+
+_FORENSIC_ICONS: dict[str, str] = {
+    "forensic_analysis": "🔬",
+    "steganography_detection": "🖼️",
+    "digital_ghost_detection": "👻",
+    "blockchain_forensics": "⛓️",
+}
+
+# Bounded render budgets. M1 8GB-safe: aggregation is pure-Python over ≤ 200
+# findings × ≤ 25 IOC types × ≤ 5 samples. Total in-memory footprint < 50 KiB.
+_FORENSIC_MAX_RENDER: int = 200
+_FORENSIC_MAX_IOC_SAMPLE: int = 5
+_FORENSIC_MAX_IOC_TYPE_LEN: int = 24
+_FORENSIC_MAX_VALUE_LEN: int = 96
+_FORENSIC_MAX_PAYLOAD_PARSE: int = 2048
 
 # ---------------------------------------------------------------------------
 # Root-cause → recommendation fallback map (stable, no new values invented)
@@ -133,6 +170,147 @@ def _render_dict_ordered(data: dict, indent: int = 2) -> str:
         else:
             parts.append(f"{' ' * indent}{_esc(key)}: {_linkify(str(val))}")
     return "\n".join(parts)
+
+
+# ---------------------------------------------------------------------------
+# Sprint F263: Forensic findings aggregation (pure-Python, fail-safe, bounded)
+# ---------------------------------------------------------------------------
+def _parse_forensic_payload(payload: str | None) -> dict[str, str] | None:
+    """
+    Parse a forensic finding's payload_text into a small dict.
+
+    Two payload shapes are supported:
+      1. ``forensics/enrichment_service.py:_bound_enrichment_for_payload``
+         — JSON with bounded keys (metadata / steganography / ghosts / etc.).
+      2. ``forensics/ioc_extractor.py:ioc_extract_to_canonical_findings``
+         — ``ioc_type=<...>; value=<...>; parent=<...>`` semicolon string.
+
+    Returns None when the payload is missing, unparseable, or yields no
+    useful signal. M1-safe: bounded parse, no regex, no recursion.
+    """
+    if not payload or not isinstance(payload, str):
+        return None
+    bounded = payload[:_FORENSIC_MAX_PAYLOAD_PARSE]
+    # Shape 1: JSON
+    if bounded.lstrip().startswith("{"):
+        try:
+            import json as _json
+            obj = _json.loads(bounded)
+        except Exception:
+            return None
+        if not isinstance(obj, dict):
+            return None
+        out: dict[str, str] = {}
+        for k, v in obj.items():
+            if not isinstance(k, str):
+                continue
+            if isinstance(v, (str, int, float, bool)):
+                out[k[:_FORENSIC_MAX_IOC_TYPE_LEN]] = str(v)[:_FORENSIC_MAX_VALUE_LEN]
+        return out or None
+    # Shape 2: semicolon key=value
+    out2: dict[str, str] = {}
+    for chunk in bounded.split(";"):
+        chunk = chunk.strip()
+        if not chunk or "=" not in chunk:
+            continue
+        k, _, v = chunk.partition("=")
+        k = k.strip()[:_FORENSIC_MAX_IOC_TYPE_LEN]
+        v = v.strip()[:_FORENSIC_MAX_VALUE_LEN]
+        if k:
+            out2[k] = v
+    return out2 or None
+
+
+def aggregate_forensic_findings(
+    findings: Iterable[Any] | None,
+) -> dict[str, Any]:
+    """
+    Sprint F263: Aggregate forensic findings into a render-ready dict.
+
+    Input: iterable of finding dicts with keys
+        ``source_type``, ``confidence``, ``ts``, ``payload_text``,
+        ``finding_id`` (any subset tolerated). Any non-forensic
+        ``source_type``, non-dict item, or unexpected type is silently
+        ignored — fail-soft.
+
+    Output: deterministic dict with:
+        - ``total_count``: int — total forensic findings seen
+        - ``by_source_type``: dict[str, int] — counts per source type
+        - ``ioc_histogram``: dict[str, int] — IOC type counts (sorted)
+        - ``sample_values``: dict[str, list[str]] — bounded sample per IOC type
+        - ``confidence_min/max/avg``: float — bounded confidence stats
+        - ``truncated``: bool — True if input exceeded ``_FORENSIC_MAX_RENDER``
+        - ``empty``: bool — True if no forensic findings present
+    """
+    empty: dict[str, Any] = {
+        "total_count": 0,
+        "by_source_type": {},
+        "ioc_histogram": {},
+        "sample_values": {},
+        "confidence_min": None,
+        "confidence_max": None,
+        "confidence_avg": None,
+        "truncated": False,
+        "empty": True,
+    }
+    if not findings:
+        return empty
+
+    by_source_type: dict[str, int] = {}
+    ioc_histogram: dict[str, int] = {}
+    sample_values: dict[str, list[str]] = {}
+    confs: list[float] = []
+    truncated = False
+    seen_count = 0
+
+    for f in findings:
+        seen_count += 1
+        if seen_count > _FORENSIC_MAX_RENDER:
+            truncated = True
+            break
+        if not isinstance(f, dict):
+            continue
+        src = str(f.get("source_type", "") or "")[:64]
+        if src not in _FORENSIC_SOURCE_TYPES:
+            continue
+        by_source_type[src] = by_source_type.get(src, 0) + 1
+
+        try:
+            c = float(f.get("confidence", 0.0) or 0.0)
+        except (TypeError, ValueError):
+            c = 0.0
+        if 0.0 <= c <= 1.0:
+            confs.append(c)
+
+        parsed = _parse_forensic_payload(f.get("payload_text"))
+        if not parsed:
+            continue
+        ioc_t = parsed.get("ioc_type", "unknown")[:_FORENSIC_MAX_IOC_TYPE_LEN]
+        val = parsed.get("value", "")[:_FORENSIC_MAX_VALUE_LEN]
+        if not ioc_t:
+            continue
+        ioc_histogram[ioc_t] = ioc_histogram.get(ioc_t, 0) + 1
+        if val and ioc_t not in sample_values:
+            sample_values[ioc_t] = []
+        if val and ioc_t in sample_values:
+            bucket = sample_values[ioc_t]
+            if len(bucket) < _FORENSIC_MAX_IOC_SAMPLE and val not in bucket:
+                bucket.append(val)
+
+    if not by_source_type:
+        return empty
+
+    return {
+        "total_count": sum(by_source_type.values()),
+        "by_source_type": dict(sorted(by_source_type.items())),
+        "ioc_histogram": dict(sorted(ioc_histogram.items(), key=lambda kv: (-kv[1], kv[0]))),
+        "sample_values": {k: list(v) for k, v in sorted(sample_values.items())},
+        "confidence_min": min(confs) if confs else None,
+        "confidence_max": max(confs) if confs else None,
+        "confidence_avg": (sum(confs) / len(confs)) if confs else None,
+        "truncated": truncated,
+        "empty": False,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -292,6 +470,68 @@ def _render_per_source_health(report: dict[str, Any]) -> str:
     return "\n".join(parts)
 
 
+def render_forensic_findings_section(report: dict[str, Any]) -> str:
+    """
+    Sprint F263: render a forensic-findings section from a report dict.
+
+    Reads ``report["forensic_findings"]`` (list of dicts with at least
+    ``source_type`` in :data:`_FORENSIC_SOURCE_TYPES`). Falls back to an
+    "empty" placeholder when no forensic findings are present, and is
+    fully bounded / fail-safe (never raises).
+
+    The render shape is a deterministic markdown block with:
+      * 1-line summary: total count, by-source-type breakdown
+      * per-source-type sub-block with confidence stats
+      * IOC histogram table (sorted by count desc, then name asc)
+      * bounded sample values per IOC type
+    """
+    findings_raw = report.get("forensic_findings")
+    if isinstance(findings_raw, (list, tuple)):
+        findings_list: list[dict[str, Any]] = [f for f in findings_raw if isinstance(f, dict)]
+    else:
+        findings_list = []
+    agg = aggregate_forensic_findings(findings_list)
+    if agg["empty"]:
+        return "_No forensic findings recorded for this sprint._"
+
+    parts: list[str] = []
+    parts.append(f"- **Total forensic findings**: {agg['total_count']}")
+    if agg["truncated"]:
+        parts.append(f"- **Truncated**: True (bounded at {_FORENSIC_MAX_RENDER} findings)")
+    parts.append("- **By source type**:")
+    for src in _FORENSIC_SOURCE_TYPES:
+        if src in agg["by_source_type"]:
+            icon = _FORENSIC_ICONS.get(src, "•")
+            label = _FORENSIC_LABELS.get(src, src)
+            parts.append(f"  - {icon} `{src}` ({label}): {agg['by_source_type'][src]}")
+
+    cmin = agg["confidence_min"]
+    cmax = agg["confidence_max"]
+    cavg = agg["confidence_avg"]
+    if cmin is not None and cmax is not None and cavg is not None:
+        parts.append(
+            f"- **Confidence**: min={cmin:.2f} · max={cmax:.2f} · avg={cavg:.2f}"
+        )
+
+    hist = agg["ioc_histogram"]
+    if hist:
+        parts.append("\n**IOC Histogram** (sorted by count desc):\n")
+        parts.append("| IOC Type | Count | Sample Values |")
+        parts.append("| --- | ---: | --- |")
+        for ioc_t, count in hist.items():
+            samples = agg["sample_values"].get(ioc_t, [])
+            if samples:
+                sample_str = ", ".join(f"`{_esc(v)}`" for v in samples[:_FORENSIC_MAX_IOC_SAMPLE])
+                if len(samples) > _FORENSIC_MAX_IOC_SAMPLE:
+                    sample_str += f" … (+{len(samples) - _FORENSIC_MAX_IOC_SAMPLE} more)"
+            else:
+                sample_str = "_(no sample)_"
+            parts.append(
+                f"| `{_esc(ioc_t)}` | {count} | {sample_str} |"
+            )
+    return "\n".join(parts)
+
+
 def _render_root_cause(report: dict[str, Any]) -> str:
     root = report.get("diagnostic_root_cause", "unknown")
     label = _ROOT_CAUSE_LABELS.get(root, _ROOT_CAUSE_LABELS["unknown"])
@@ -361,6 +601,7 @@ def _render_machine_readable_summary(report: dict[str, Any]) -> str:
         "completed_sources",
         "entries_scanned",
         "entries_with_hits",
+        "forensic_findings_total",
     ]
 
     def _safe_val(key: str) -> Any:
@@ -369,6 +610,10 @@ def _render_machine_readable_summary(report: dict[str, Any]) -> str:
             return _FALLBACK_RECOMMENDATION.get(root, _FALLBACK_RECOMMENDATION["unknown"])
         if key == "actual_live_run_executed":
             return bool(report.get("actual_live_run_executed", True))
+        if key == "forensic_findings_total":
+            # Sprint F263: surface forensic total in machine summary
+            agg = aggregate_forensic_findings(report.get("forensic_findings"))
+            return int(agg.get("total_count", 0))
         val = report.get(key)
         if val is None:
             return None
@@ -409,6 +654,7 @@ def render_diagnostic_markdown(report: object) -> str:
         ("Signal Funnel", _render_signal_funnel),
         ("Store Rejection Trace", _render_store_rejection_trace),
         ("Per-Source Health", _render_per_source_health),
+        ("Forensic Findings", render_forensic_findings_section),
         ("Root Cause", _render_root_cause),
         ("Recommended Next Sprint", _render_recommendation),
         ("Known Limits", _render_known_limits),

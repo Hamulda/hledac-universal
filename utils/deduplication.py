@@ -47,7 +47,7 @@ class DeduplicationStrategy(Enum):
     HYBRID = "hybrid"
 
 
-@dataclass
+@dataclass(slots=True)
 class DeduplicationConfig:
     """Configuration for deduplication engine."""
     # Thresholds
@@ -91,7 +91,7 @@ class DeduplicationConfig:
 # DATA CLASSES
 # =============================================================================
 
-@dataclass
+@dataclass(slots=True)
 class QueryItem:
     """Item for deduplication processing."""
     id: str
@@ -109,7 +109,7 @@ class QueryItem:
         return hashlib.md5(content).hexdigest()[:12]
 
 
-@dataclass
+@dataclass(slots=True)
 class SimilarityScore:
     """Similarity score with details."""
     score: float
@@ -118,7 +118,7 @@ class SimilarityScore:
     details: dict[str, Any] = field(default_factory=dict)
 
 
-@dataclass
+@dataclass(slots=True)
 class DeduplicationMatch:
     """Match between two items."""
     original_item: QueryItem
@@ -128,7 +128,7 @@ class DeduplicationMatch:
     decision: str = "pending"  # pending, keep, remove, merge
 
 
-@dataclass
+@dataclass(slots=True)
 class DeduplicationResult:
     """Result of deduplication process."""
     original_items: list[QueryItem]
@@ -146,7 +146,7 @@ class DeduplicationResult:
         return len(self.duplicates_removed) / len(self.original_items)
 
 
-@dataclass
+@dataclass(slots=True)
 class DeduplicationStats:
     """Statistics for deduplication."""
     total_items_processed: int = 0
@@ -1104,7 +1104,7 @@ class DeduplicationEngine:
 # DOMAIN STATS - Per-domain tracking for frontier learning
 # =============================================================================
 
-@dataclass
+@dataclass(slots=True)
 class DomainStats:
     """Per-domain statistiky pro yield tracking a domain diversity - M1 8GB."""
     domain: str

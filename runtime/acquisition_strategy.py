@@ -71,6 +71,7 @@ from hledac.universal.runtime.source_finding_bridge import (
     wayback_results_to_findings,
 )
 
+from utils.async_helpers import safe_gather_dropin
 __all__ = [
     "AcquisitionLane",
     "AcquisitionProfile",
@@ -4208,7 +4209,7 @@ async def run_enabled_acquisition_lanes(
 
     # Run all lanes concurrently; return_exceptions=True means one lane
     # crash cannot fail others
-    results = await asyncio.gather(*tasks, return_exceptions=True)
+    results = await safe_gather_dropin(*tasks, label="acquisition_strategy:4211")
 
     for result in results:
         if isinstance(result, AcquisitionLaneOutcome):

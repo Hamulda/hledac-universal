@@ -8,6 +8,7 @@ from hledac.universal.core.resource_governor import Priority, ResourceGovernor
 from hledac.universal.dht.kademlia_node import KademliaNode
 from hledac.universal.dht.local_graph import LocalGraphStore
 
+from utils.async_helpers import safe_gather_fire_and_forget
 logger = logging.getLogger(__name__)
 
 MAX_SKETCH_ITEMS = 10_000
@@ -66,7 +67,7 @@ class SketchExchange:
         for task in list(self._background_tasks):
             task.cancel()
         if self._background_tasks:
-            await asyncio.gather(*self._background_tasks, return_exceptions=True)
+            await safe_gather_fire_and_forget(*self._background_tasks, label="sketch_exchange:69")
             self._background_tasks.clear()
 
     async def _refresh_digests(self):

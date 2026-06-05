@@ -31,6 +31,7 @@ from benchmarks.bench_8c0.common_stats import (
     write_results,
 )
 
+from utils.async_helpers import safe_gather_fire_and_forget
 
 # ---------------------------------------------------------------------------
 # Workload generators
@@ -59,7 +60,7 @@ async def run_coroutine_workload(n_tasks: int) -> Tuple[List[float], int]:
 
     # Launch all tasks
     start = time.perf_counter_ns()
-    await asyncio.gather(*[worker(i) for i in range(n_tasks)])
+    await safe_gather_fire_and_forget(*[worker(i) for i in range(n_tasks)], label="test_bench_event_loop:62")
     total_ns = time.perf_counter_ns() - start
 
     return results, total_ns

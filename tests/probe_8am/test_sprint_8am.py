@@ -28,6 +28,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from utils.async_helpers import safe_gather_fire_and_forget
 # =============================================================================
 # C.0: UTM Tracking Param Normalization Tests
 # =============================================================================
@@ -249,7 +250,7 @@ class TestOrphanTaskDrain:
         task.cancel()
         try:
             async with asyncio.timeout(2.0):
-                await asyncio.gather(task, return_exceptions=True)
+                await safe_gather_fire_and_forget(task, label="test_sprint_8am:252")
         except asyncio.TimeoutError:
             pass  # Expected — drain timeout
         elapsed = time.monotonic() - start

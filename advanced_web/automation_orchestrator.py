@@ -14,6 +14,7 @@ import asyncio
 import logging
 from typing import Any
 
+from utils.async_helpers import safe_gather_fire_and_forget
 logger = logging.getLogger(__name__)
 
 
@@ -48,7 +49,7 @@ class AutomationOrchestrator:
             for task in self._active_tasks:
                 if not task.done():
                     task.cancel()
-            await asyncio.gather(*self._active_tasks, return_exceptions=True)
+            await safe_gather_fire_and_forget(*self._active_tasks, label="automation_orchestrator:51")
             self._active_tasks.clear()
 
         self._initialized = False

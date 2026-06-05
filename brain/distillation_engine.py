@@ -33,6 +33,7 @@ from typing import Any
 
 import numpy as np
 
+from utils.async_helpers import safe_gather_dropin
 logger = logging.getLogger(__name__)
 
 # MLX imports
@@ -388,7 +389,7 @@ class DistillationEngine:
                     loop.run_in_executor(executor, self._get_chain_embedding, example.chain)
                     for example in examples
                 ]
-                embeddings = await asyncio.gather(*embedding_tasks, return_exceptions=True)
+                embeddings = await safe_gather_dropin(*embedding_tasks, label="distillation_engine:391")
 
             X_list = embeddings
             y_list = [example.score for example in examples]

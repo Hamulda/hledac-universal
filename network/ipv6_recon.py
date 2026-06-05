@@ -34,6 +34,7 @@ from typing import Any
 
 import aiohttp
 
+from utils.async_helpers import safe_gather_dropin
 logger = logging.getLogger(__name__)
 
 # ── Bounds ────────────────────────────────────────────────────────────────────
@@ -270,7 +271,7 @@ class IPv6Recon:
             return answers
 
         tasks = [_query(url) for url in DOH_RESOLVERS.values()]
-        all_results = await asyncio.gather(*tasks, return_exceptions=True)
+        all_results = await safe_gather_dropin(*tasks, label="ipv6_recon:273")
         for res in all_results:
             if isinstance(res, list):
                 results.extend(res)

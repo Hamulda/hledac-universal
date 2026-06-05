@@ -68,6 +68,14 @@ __all__ = [
 _STIX_SPEC_VERSION = "2.1"
 _BUNDLE_TYPE = "bundle"
 
+# Sprint F261: Forensic analysis STIX extension
+# Custom STIX Object Type — must use "x-" prefix per STIX 2.1 §3.4.
+# The companion custom property on existing objects would be
+# "x_hledac_forensic" (underscore per STIX 2.1 §3.5). Both are exported.
+_FORENSIC_ANALYSIS_OBJECT_TYPE = "x-hledac-forensic"
+_FORENSIC_ANALYSIS_PROPERTY = "x_hledac_forensic"
+_FORENSIC_SCHEMA_VERSION = "F261"
+
 # Canonical root-cause → label (shared with markdown_reporter / jsonld_exporter)
 _ROOT_CAUSE_LABELS: dict[str, str] = {
     "network_variance": "Network Variance",
@@ -818,6 +826,140 @@ def _build_evidence_chain_object(
 
 
 # ---------------------------------------------------------------------------
+# Sprint F261: Forensic Analysis STIX Extension Builders
+# ---------------------------------------------------------------------------
+# Custom STIX Object Type "x-hledac-forensic" + relationship builder.
+# The forensic_data dict is expected to contain:
+#   - finding_id: str  (parent finding id, required)
+#   - forensic_result: dict  (bounded ForensicsResult.to_dict())
+#   - parent_source_type: str  (optional, for provenance)
+# Bounded — large forensic_result is JSON-serialized to a string and capped.
+
+_FORENSIC_OBJECT_CONTENT_MAX = 4096  # cap for serialized forensic_result content
+_FORENSIC_OBJECT_KEYS_MAX = 25
+
+
+def _bound_forensic_object_content(forensic_result: dict[str, Any] | None) -> str:
+    """Bound forensic_result dict to a JSON string for STIX object content.
+
+    F261 invariant: STIX observed-data / custom-object content must be bounded
+    to keep bundles small enough to ingest into MISP/OpenCTI on the laptop.
+    """
+    if not isinstance(forensic_result, dict):
+        return ""
+    keys = list(forensic_result.keys())[:_FORENSIC_OBJECT_KEYS_MAX]
+    bounded: dict[str, Any] = {}
+    for k in keys:
+        v = forensic_result[k]
+        bk = str(k)[:64]
+        if isinstance(v, str):
+            bounded[bk] = v[:512]
+        elif isinstance(v, (list, tuple)):
+            bounded[bk] = [str(x)[:200] for x in list(v)[:10]]
+        elif isinstance(v, dict):
+            try:
+                bounded[bk] = json.dumps(v, ensure_ascii=False)[:512]
+            except Exception:
+                bounded[bk] = "{}"
+        elif isinstance(v, (int, float, bool)) or v is None:
+            bounded[bk] = v
+        else:
+            bounded[bk] = str(v)[:512]
+    try:
+        return json.dumps(bounded, ensure_ascii=False, sort_keys=True)[
+            :_FORENSIC_OBJECT_CONTENT_MAX
+        ]
+    except Exception:
+        return ""
+
+
+def _build_forensic_analysis_object(
+    forensic_data: dict[str, Any],
+    created: str,
+) -> dict[str, Any]:
+    """Build a custom STIX 2.1 object of type ``x-hledac-forensic``.
+
+    Sprint F261: Forensic-grade evidence handling for OSINT. Each forensic
+    analysis attached to a parent finding becomes a custom STIX object.
+    The custom property ``x_hledac_forensic`` is also added to the
+    ``extensions`` dict so consumers that do not understand custom object
+    types can still surface the forensic content.
+
+    Args:
+        forensic_data: Dict with keys:
+            - finding_id: str (parent finding id, required)
+            - forensic_result: dict (bounded ForensicsResult.to_dict())
+            - parent_source_type: str (optional)
+        created: RFC3339 timestamp for created/modified.
+
+    Returns:
+        STIX 2.1 dict with type="x-hledac-forensic".
+    """
+    if not isinstance(forensic_data, dict):
+        forensic_data = {}
+
+    parent_fid = str(
+        forensic_data.get("finding_id", "") or ""
+    )[:128]
+    parent_source_type = str(
+        forensic_data.get("parent_source_type", "") or ""
+    )[:64]
+    content = _bound_forensic_object_content(
+        forensic_data.get("forensic_result")
+    )
+
+    obj_id = _make_stix_id("x-hledac-forensic", parent_fid)
+
+    return {
+        "type": _FORENSIC_ANALYSIS_OBJECT_TYPE,
+        "spec_version": _STIX_SPEC_VERSION,
+        "id": f"{_FORENSIC_ANALYSIS_OBJECT_TYPE}--{obj_id}",
+        "created": created,
+        "modified": created,
+        "description": (
+            f"Forensic analysis for parent finding {parent_fid}"
+            if parent_fid
+            else "Forensic analysis (orphan)"
+        ),
+        "finding_id": parent_fid,
+        "parent_source_type": parent_source_type,
+        "content": content,
+        "extensions": {
+            _FORENSIC_ANALYSIS_PROPERTY: {
+                "version": _FORENSIC_SCHEMA_VERSION,
+                "parent_finding_id": parent_fid,
+                "parent_source_type": parent_source_type,
+                "content_kind": "forensic_analysis",
+            },
+        },
+    }
+
+
+def _build_forensic_relationship(
+    forensic_ref: str,
+    parent_ref: str,
+    created: str,
+) -> dict[str, Any]:
+    """Build a STIX ``relationship`` linking a forensic object to its parent.
+
+    relationship_type: ``derived-from`` (forensic analysis is derived from
+    the original finding). Bounded: returns a minimal valid STIX
+    relationship dict.
+    """
+    rel_id = _make_stix_id("relationship", forensic_ref, parent_ref)
+    return {
+        "type": "relationship",
+        "spec_version": _STIX_SPEC_VERSION,
+        "id": f"relationship--{rel_id}",
+        "created": created,
+        "modified": created,
+        "relationship_type": "derived-from",
+        "source_ref": forensic_ref,
+        "target_ref": parent_ref,
+    }
+
+
+# ---------------------------------------------------------------------------
 # F234: Full STIX 2.1 Object Builders
 # Campaign, Intrusion Set, Malware, Tool, Attack Pattern
 # ---------------------------------------------------------------------------
@@ -986,6 +1128,7 @@ def render_full_stix_bundle(
     attribution_scores: dict[str, Any] | None = None,
     killchain_tags: dict[str, Any] | None = None,
     evidence_chains: list[dict[str, Any]] | None = None,
+    forensic_analyses: list[dict[str, Any]] | None = None,  # Sprint F261
     campaigns: list[dict[str, Any]] | None = None,
     intrusion_sets: list[dict[str, Any]] | None = None,
     malware_samples: list[dict[str, Any]] | None = None,
@@ -1036,6 +1179,8 @@ def render_full_stix_bundle(
         killchain_tags = {}
     if evidence_chains is None:
         evidence_chains = []
+    if forensic_analyses is None:
+        forensic_analyses = []  # Sprint F261
     if campaigns is None:
         campaigns = []
     if intrusion_sets is None:
@@ -1068,6 +1213,8 @@ def render_full_stix_bundle(
     finding_ids_seen: set[str] = set()
     indicator_refs: list[str] = []
     observed_refs: list[str] = []
+    # Sprint F261: track finding_id → STIX ref for forensic relationship linking
+    finding_to_stix_ref: dict[str, str] = {}
 
     for finding_raw in findings:
         if len(objects) >= max_objects:
@@ -1087,12 +1234,18 @@ def render_full_stix_bundle(
         if ind is not None:
             objects.append(ind)
             indicator_refs.append(ind["id"])
+            # Sprint F261: track for forensic relationship linking
+            if fid:
+                finding_to_stix_ref[fid] = ind["id"]
         else:
             # Fall back to observed-data
             obs = _finding_to_observed_data(finding, created)
             if obs and obs.get("objects"):
                 objects.append(obs)
                 observed_refs.append(obs["id"])
+                # Sprint F261: track for forensic relationship linking
+                if fid:
+                    finding_to_stix_ref[fid] = obs["id"]
 
         # Kill-chain note per finding (if tags present)
         if finding_kc_tags:
@@ -1139,6 +1292,22 @@ def render_full_stix_bundle(
         chain_obj = _build_evidence_chain_object(chain, created)
         objects.append(chain_obj)
         chain_refs.append(chain_obj["id"])
+
+    # ── Sprint F261: Forensic analyses → x-hledac-forensic objects ──────────
+    forensic_refs: list[str] = []
+    forensic_to_parent: list[tuple[str, str]] = []  # (forensic_ref, parent_ref)
+    for fr in forensic_analyses:
+        if len(objects) >= max_objects:
+            break
+        if not isinstance(fr, dict):
+            fr = dict(fr) if hasattr(fr, "__dict__") else {}
+        parent_fid = _safe_str(fr.get("finding_id", ""))
+        parent_ref = finding_to_stix_ref.get(parent_fid, "")
+        fr_obj = _build_forensic_analysis_object(fr, created)
+        objects.append(fr_obj)
+        forensic_refs.append(fr_obj["id"])
+        if parent_ref:
+            forensic_to_parent.append((fr_obj["id"], parent_ref))
 
     # ── Campaigns ─────────────────────────────────────────────────────────────
     for camp in campaigns:
@@ -1230,6 +1399,15 @@ def render_full_stix_bundle(
                 "target_ref": f"attack-pattern--{_make_stix_id('attack-pattern', ttp_id)}",
                 "relationship_type": "uses",
             })
+
+    # Sprint F261: Link forensic analyses to their parent findings
+    # via "derived-from" relationships.
+    for fr_ref, parent_ref in forensic_to_parent:
+        if len(objects) >= max_objects:
+            break
+        objects.append(
+            _build_forensic_relationship(fr_ref, parent_ref, created)
+        )
 
     # ── Report object ───────────────────────────────────────────────────────
     report_name = f"Ghost Prime Full CTI {datetime.now(UTC).strftime('%Y-%m-%d')}"
@@ -1446,6 +1624,8 @@ def render_cti_stix_bundle(
     finding_ids_seen: set[str] = set()
     indicator_refs: list[str] = []
     observed_refs: list[str] = []
+    # Sprint F261: track finding_id → STIX ref for forensic relationship linking
+    finding_to_stix_ref: dict[str, str] = {}
 
     for finding_raw in findings:
         if len(objects) >= max_objects:
@@ -1465,12 +1645,18 @@ def render_cti_stix_bundle(
         if ind is not None:
             objects.append(ind)
             indicator_refs.append(ind["id"])
+            # Sprint F261: track for forensic relationship linking
+            if fid:
+                finding_to_stix_ref[fid] = ind["id"]
         else:
             # Fall back to observed-data
             obs = _finding_to_observed_data(finding, created)
             if obs and obs.get("objects"):
                 objects.append(obs)
                 observed_refs.append(obs["id"])
+                # Sprint F261: track for forensic relationship linking
+                if fid:
+                    finding_to_stix_ref[fid] = obs["id"]
 
         # Kill-chain note per finding (if tags present)
         if finding_kc_tags:

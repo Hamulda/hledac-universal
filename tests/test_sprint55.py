@@ -8,6 +8,7 @@ import sys
 import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from utils.async_helpers import safe_gather_fire_and_forget
 sys.path.insert(0, '/Users/vojtechhamada/PycharmProjects/Hledac')
 
 
@@ -150,7 +151,7 @@ class TestIncrementalHNSW(unittest.IsolatedAsyncioTestCase):
             await hnsw.add_items(vectors, ids)
 
         # Run 5 concurrent batches
-        await asyncio.gather(*[add_batch(i) for i in range(5)])
+        await safe_gather_fire_and_forget(*[add_batch(i) for i in range(5)], label="test_sprint55:153")
 
         # Should have 50 vectors total
         self.assertEqual(hnsw.get_count(), 50)

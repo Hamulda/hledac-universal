@@ -10,6 +10,7 @@ import logging
 
 import psutil
 
+from utils.async_helpers import safe_gather_dropin
 logger = logging.getLogger(__name__)
 
 # Lazy import for mlx_lm
@@ -68,7 +69,7 @@ class SLMDecomposer:
         prompts = self._build_prompts(task_description, context, parallel)
 
         tasks = [self._call_slm(prompt, timeout=2.0) for prompt in prompts]
-        results = await asyncio.gather(*tasks, return_exceptions=True)
+        results = await safe_gather_dropin(*tasks, label="slm_decomposer:71")
 
         best = None
         best_score = -1

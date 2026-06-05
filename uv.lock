@@ -1123,6 +1123,7 @@ dependencies = [
     { name = "pyprobables" },
     { name = "pyyaml" },
     { name = "pyzipper" },
+    { name = "selectolax" },
     { name = "xxhash" },
 ]
 
@@ -1384,6 +1385,7 @@ requires-dist = [
     { name = "pyzipper", specifier = ">=0.3.6" },
     { name = "rapidfuzz", marker = "extra == 'acceleration'", specifier = ">=3.0.0" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.1.0" },
+    { name = "selectolax", specifier = ">=0.4.10" },
     { name = "selectolax", marker = "extra == 'osint-html'", specifier = ">=0.3.21" },
     { name = "sentence-transformers", marker = "extra == 'coreml-export'", specifier = ">=5.5.1" },
     { name = "stem", marker = "extra == 'tor'", specifier = ">=1.8.0" },

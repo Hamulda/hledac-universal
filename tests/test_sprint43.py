@@ -26,6 +26,7 @@ from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
 from hledac.universal.layers.communication_layer import CommunicationLayer
 from hledac.universal.tools.source_bandit import N_FEATURES, SourceBandit, extract_context_features
 
+from utils.async_helpers import safe_gather_dropin
 
 class TestSprint43A_Tracing:
     """Tests for Distributed Tracing."""
@@ -212,7 +213,7 @@ class TestSprint43C_Stress:
                 pytest.fail(f"Exception at iteration {i}: {e}")
 
         # All should complete (or raise, but not deadlock)
-        results = await asyncio.gather(*tasks, return_exceptions=True)
+        results = await safe_gather_dropin(*tasks, label="test_sprint43:215")
         failed = [r for r in results if isinstance(r, Exception)]
         assert len(failed) == 0, f"{len(failed)} deadlocks: {failed}"
 

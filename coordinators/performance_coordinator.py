@@ -180,7 +180,7 @@ class AgentPool:
                     created_new = True
                 except Exception as e:
                     logger.error(f"Failed to create agent {agent_name}: {e}")
-                    raise AgentExecutionError(f"Agent creation failed: {e}")
+                    raise AgentExecutionError(f"Agent creation failed: {e}") from e
 
         # Update metrics
         if agent_name not in self._metrics:

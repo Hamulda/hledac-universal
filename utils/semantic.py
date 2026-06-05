@@ -394,7 +394,7 @@ class SemanticFilter:
                 self._embedding_type = "simple"
             else:
                 logger.error("[EMBED] ModernBERT initialization failed and fallback disabled")
-                raise RuntimeError(f"ModernBERT initialization failed: {e}")
+                raise RuntimeError(f"ModernBERT initialization failed: {e}") from e
 
     def compute_similarity(
         self,

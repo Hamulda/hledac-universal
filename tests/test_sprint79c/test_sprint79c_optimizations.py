@@ -7,6 +7,7 @@ from collections import OrderedDict, deque
 
 import pytest
 
+from utils.async_helpers import safe_gather_fire_and_forget
 
 class TestLazyImports:
     """Tests for _LazyModule with async loading."""
@@ -42,7 +43,7 @@ class TestLazyImports:
 
         async def test():
             modules = [_LazyModule("os"), _LazyModule("json"), _LazyModule("re")]
-            await asyncio.gather(*(m.ensure_loaded() for m in modules))
+            await safe_gather_fire_and_forget(*(m.ensure_loaded() for m in modules), label="test_sprint79c_optimizations:45")
             return all(m._module is not None for m in modules)
 
         result = asyncio.run(test())

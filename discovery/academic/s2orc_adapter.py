@@ -24,6 +24,7 @@ import orjson
 
 from hledac.universal.knowledge.duckdb_store import CanonicalFinding
 
+from utils.async_helpers import safe_gather_dropin
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -265,7 +266,7 @@ class S2ORCAdapter:
             else:
                 tasks.append(asyncio.sleep(0, p))  # Already has TLDR
 
-        results = await asyncio.gather(*tasks, return_exceptions=True)
+        results = await safe_gather_dropin(*tasks, label="s2orc_adapter:268")
         enriched = []
         for r in results:
             if isinstance(r, S2Paper):

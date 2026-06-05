@@ -43,6 +43,7 @@ import dns.resolver
 
 from ..utils.async_helpers import _check_gathered, safe_gather
 
+from utils.async_helpers import safe_gather_dropin
 logger = logging.getLogger(__name__)
 
 
@@ -742,7 +743,7 @@ class NetworkReconnaissance:
         # Execute probes concurrently
         try:
             async with asyncio.timeout(self._WILDCARD_PROBE_TOTAL_S):
-                results = await asyncio.gather(*[probe_hostname(p) for p in probes], return_exceptions=True)
+                results = await safe_gather_dropin(*[probe_hostname(p) for p in probes], label="network_reconnaissance:745")
         except TimeoutError:
             # Conservative: if overall timeout, assume not wildcard
             self._confirmed_non_wildcard.add(domain)

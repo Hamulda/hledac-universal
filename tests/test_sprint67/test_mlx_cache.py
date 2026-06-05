@@ -7,6 +7,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from utils.async_helpers import safe_gather_fire_and_forget
 
 class TestMLXCache:
     """Tests for MLX cache and semaphore."""
@@ -152,7 +153,7 @@ class TestMLXSemaphore:
                 results.append(f"end-{id}")
 
         # Run 3 tasks concurrently
-        await asyncio.gather(*[task(i) for i in range(3)])
+        await safe_gather_fire_and_forget(*[task(i) for i in range(3)], label="test_mlx_cache:155")
 
         # Check serialization happened
         assert len(results) == 6

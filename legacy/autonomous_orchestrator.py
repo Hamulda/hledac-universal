@@ -1849,6 +1849,7 @@ from .tools.temporal import (
 )
 from .utils.mlx_memory import clear_mlx_cache  # Sprint 8AY: MLX memory hygiene
 
+from utils.async_helpers import safe_gather_dropin, safe_gather_fire_and_forget
 logger = logging.getLogger(__name__)
 
 # Sprint 72: Dynamic Metal limit with sysctl fallback
@@ -11524,7 +11525,7 @@ class FullyAutonomousOrchestrator:
 
         # Load light modules in parallel
         if light_modules:
-            await asyncio.gather(*(m.ensure_loaded() for m in light_modules), return_exceptions=True)
+            await safe_gather_fire_and_forget(*(m.ensure_loaded() for m in light_modules), label="autonomous_orchestrator:11527")
 
         # Load heavy modules sequentially (Metal shader compilation is CPU-intensive)
         for m in heavy_modules:
@@ -11934,7 +11935,7 @@ class FullyAutonomousOrchestrator:
                     try:
                         # Sprint 8H: Wait for ALL tasks in parallel, max 3s total
                         await asyncio.wait_for(
-                            asyncio.gather(*tasks_to_cancel, return_exceptions=True),
+                            safe_gather_fire_and_forget(*tasks_to_cancel, label="autonomous_orchestrator:11937"),
                             timeout=3.0
                         )
                     except (TimeoutError, asyncio.CancelledError):
@@ -15763,7 +15764,7 @@ class FullyAutonomousOrchestrator:
         # Execute tools in parallel
         if tool_tasks:
             try:
-                results = await asyncio.gather(*tool_tasks, return_exceptions=True)
+                results = await safe_gather_dropin(*tool_tasks, label="autonomous_orchestrator:15766")
 
                 # M1 8GB: Merge results do top-K heaps
                 findings_added = 0
@@ -20579,7 +20580,7 @@ class _ToolRegistryManager:
             self.execute(name, **common_kwargs)
             for name in tool_names
         ]
-        return await asyncio.gather(*tasks, return_exceptions=True)
+        return await safe_gather_dropin(*tasks, label="autonomous_orchestrator:20582")
 
     def list_tools(self) -> list[str]:
         """List all available tool names."""
