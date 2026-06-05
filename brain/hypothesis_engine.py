@@ -1199,10 +1199,21 @@ Formát (pouze seznam, žádný další text):
                 system_msg="Jsi OSINT research assistant. Navrhuj konkrétní a proveditelné hypotézy."
             )
 
-            # DSPy integration: use compiled program if enabled and available
+            # DSPy integration: use compiled program if enabled and available.
+            # Sprint F264: prefer the canonical project-local compiled/ location
+            # (``brain/compiled/hypothesis_generator.json`` produced by
+            # ``scripts/compile_dspy_programs.py``); fall back to the legacy
+            # ``dspy_programs.get_program`` loader if the new path is empty.
             if DSPY_AVAILABLE and os.environ.get("HLEDAC_ENABLE_DSPY") == "1":
-                from brain.dspy_programs import get_program
-                program = get_program("hypothesis_generator")
+                from brain.dspy_optimizer import load_compiled_program
+                program = load_compiled_program("hypothesis_generator")
+                if program is None:
+                    # Back-compat: legacy cache (``~/.hledac/dspy/*.json``)
+                    try:
+                        from brain.dspy_programs import get_program
+                        program = get_program("hypothesis_generator")
+                    except Exception:
+                        program = None
                 if program is not None:
                     rag_context_str = context.get("rag_context_str", rag_context[:2000])
                     pred = program.forward(
@@ -3271,10 +3282,19 @@ Zajimave patterny k hledani:
                     system_msg="Jsi OSINT dark surface research assistant.",
                 )
 
-                # DSPy integration: use compiled program if enabled and available
+                # DSPy integration: use compiled program if enabled and available.
+                # Sprint F264: prefer canonical ``brain/compiled/`` location
+                # over the legacy ``~/.hledac/dspy/`` cache.
                 if DSPY_AVAILABLE and os.environ.get("HLEDAC_ENABLE_DSPY") == "1":
-                    from brain.dspy_programs import get_program
-                    program = get_program("dark_query")
+                    from brain.dspy_optimizer import load_compiled_program
+                    program = load_compiled_program("dark_query")
+                    if program is None:
+                        # Back-compat: legacy cache
+                        try:
+                            from brain.dspy_programs import get_program
+                            program = get_program("dark_query")
+                        except Exception:
+                            program = None
                     if program is not None:
                         pred = program.forward(
                             ioc_brief=ioc_brief,

@@ -71,6 +71,121 @@ from hledac.universal.utils.encoding import decode_response_bytes, parse_charset
 logger = logging.getLogger(__name__)
 
 
+# ---------------------------------------------------------------------------
+# F260+: HTTP/3 (QUIC) opportunistic upgrade — disabled by default.
+#
+# curl_cffi 0.7+ supports Alt-Svc-driven HTTP/3 negotiation via the
+# `http_version` kwarg on Session.request. We detect library availability
+# once at import time, then on every successful 2xx response we inspect the
+# Alt-Svc header for an `h3` token and remember the host. Subsequent fetches
+# to known-h3 hosts pass `http_version=HttpVersion.v3` to the wrapper.
+#
+# Fail-soft throughout: any error / missing module / parse ambiguity leaves
+# the cache untouched and degrades to the prior HTTP/1.1 path. The wrapper
+# in transport/curl_cffi_fetch.py accepts http_version=None and simply
+# omits the kwarg when not set.
+# ---------------------------------------------------------------------------
+_HTTP3_AVAILABLE: bool = False
+_HTTP3_HTTPVERSION_V3: Any = None  # curl_cffi.requests.HttpVersion.v3 (lazy)
+try:
+    import curl_cffi as _cc_for_h3
+    _v = tuple(int(x) for x in _cc_for_h3.__version__.split(".")[:2])
+    _HTTP3_AVAILABLE = _v >= (0, 7)
+    if _HTTP3_AVAILABLE:
+        from curl_cffi.requests import HttpVersion as _HttpVersion
+        _HTTP3_HTTPVERSION_V3 = _HttpVersion.v3
+except Exception:
+    # Lazy import invariant: never raise on import.
+    pass
+_HTTP3_ENABLED: bool = _HTTP3_AVAILABLE and os.environ.get("HLEDAC_HTTP3", "0") == "1"
+_ALTSVC_CACHE_MAX: Final[int] = 1000
+_altsvc_cache: dict[str, bool] = {}  # host -> True if Alt-Svc advertised h3
+
+
+def _altsvc_advertises_h3(headers: Any) -> bool:
+    """Return True if the response headers advertise HTTP/3 via Alt-Svc (RFC 7838).
+
+    Accepts dict, multidict, or any object exposing .get(); never raises.
+    Token match is a bounded substring check on the lowercased value:
+    `h3=`, `h3 "`, or `h3="` (header may be quoted-string or bare token).
+    """
+    if headers is None:
+        return False
+    try:
+        # curl_cffi result dict exposes plain dict[str, str] with lowercased keys.
+        if hasattr(headers, "get"):
+            v = headers.get("alt-svc")
+            if v is None and hasattr(headers, "get"):
+                v = headers.get("Alt-Svc")
+        else:
+            v = None
+    except Exception:
+        return False
+    if not v:
+        return False
+    s = str(v).lower()
+    return "h3=" in s or 'h3 "' in s or 'h3="' in s
+
+
+def _altsvc_cache_put(host: str, supports: bool) -> None:
+    """Bounded FIFO insert into _altsvc_cache; trims oldest entries on overflow.
+
+    Python 3.7+ dicts preserve insertion order — first key in iteration is
+    the oldest entry, so slicing the first N keys is a deterministic FIFO.
+    """
+    if not host:
+        return
+    _altsvc_cache[host] = supports
+    if len(_altsvc_cache) > _ALTSVC_CACHE_MAX:
+        overflow = len(_altsvc_cache) - _ALTSVC_CACHE_MAX
+        try:
+            for k in list(_altsvc_cache.keys())[:overflow]:
+                _altsvc_cache.pop(k, None)
+        except Exception:
+            # Cache trim is best-effort; never fail the hot path.
+            pass
+
+
+def _altsvc_http_version_for(host: str) -> Any:
+    """Return HttpVersion.v3 for known-h3 host when feature enabled, else None."""
+    if not _HTTP3_ENABLED:
+        return None
+    if not _HTTP3_AVAILABLE or _HTTP3_HTTPVERSION_V3 is None:
+        return None
+    if not host:
+        return None
+    if not _altsvc_cache.get(host):
+        return None
+    return _HTTP3_HTTPVERSION_V3
+
+
+def _altsvc_extract_host(url: str) -> str:
+    """Return lowercased hostname from URL, or empty string on parse failure."""
+    try:
+        return (urllib.parse.urlparse(url).hostname or "").lower()
+    except Exception:
+        return ""
+
+
+def _altsvc_record_from_result(url: str, headers: Any) -> None:
+    """Inspect response headers for Alt-Svc h3 advertisement and update cache.
+
+    Logs at debug level on a positive observation. Never raises — cache
+    updates are best-effort telemetry for the opportunistic upgrade path.
+    """
+    host = _altsvc_extract_host(url)
+    if not host:
+        return
+    try:
+        if _altsvc_advertises_h3(headers):
+            _altsvc_cache_put(host, True)
+            logger.debug("HTTP/3 available for %s", host)
+    except Exception:
+        # Cache update is best-effort; never fail the hot path.
+        pass
+
+
+
 # --- F261: bounded helper — try decode_response_bytes, fall back to _try_decode ---
 def _try_decode_with_charset(
     body: bytes,
@@ -2236,13 +2351,19 @@ async def async_fetch_public_text(
         # F229: Randomized headers for curl_cffi stealth lane — eliminates UA/language tracking
         _stealth_headers = build_randomized_headers()
         try:
+            # F260+: opportunistic HTTP/3 (QUIC) upgrade via Alt-Svc cache.
+            # None when host has no h3 advertisement or feature disabled.
+            _curl_http_version = _altsvc_http_version_for(_altsvc_extract_host(url))
             _curl_result = await fetch_via_curl_cffi(
                 url=url,
                 headers=_stealth_headers,
                 timeout_s=timeout_s,
                 max_bytes=max_bytes,
                 profile="chrome110",
+                http_version=_curl_http_version,
             )
+            # Record Alt-Svc h3 advertisement for future fetches to this host.
+            _altsvc_record_from_result(url, _curl_result.get("headers"))
             # Build FetchResult from curl_cffi dict — mirrors httpx_h2 success path
             _curl_text: str | None
             _curl_bytes = _curl_result.get("content", b"")
@@ -2477,13 +2598,18 @@ async def async_fetch_public_text(
                                 )
                                 if _esc_use_curl:
                                     try:
+                                        # F260+: opportunistic HTTP/3 (QUIC) upgrade via Alt-Svc cache.
+                                        _esc_http_version = _altsvc_http_version_for(_altsvc_extract_host(url))
                                         _esc_result = await fetch_via_curl_cffi(
                                             url=url,
                                             headers=None,
                                             timeout_s=timeout_s,
                                             max_bytes=max_bytes,
                                             profile="chrome110",
+                                            http_version=_esc_http_version,
                                         )
+                                        # Record Alt-Svc h3 advertisement for future fetches to this host.
+                                        _altsvc_record_from_result(url, _esc_result.get("headers"))
                                         if _esc_result.get("status_code", 0) // 100 == 2:
                                             # curl succeeded with 2xx → return immediately
                                             _escalated_to_curl = True

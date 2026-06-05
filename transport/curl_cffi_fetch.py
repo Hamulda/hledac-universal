@@ -147,6 +147,7 @@ async def fetch_via_curl_cffi(
     max_bytes: int = DEFAULT_MAX_BYTES,
     profile: str = "chrome110",
     proxies: dict[str, str] | None = None,
+    http_version: Any = None,
 ) -> dict[str, Any]:
     """
     Fetch URL via curl_cffi stealth lane.
@@ -205,6 +206,12 @@ async def fetch_via_curl_cffi(
         kwargs = {"headers": headers, "timeout": timeout_s}
         if proxies:
             kwargs["proxies"] = proxies
+        if http_version is not None:
+            # F260+: opportunistic HTTP/3 (QUIC) upgrade.
+            # Caller passes HttpVersion.v3 from curl_cffi.requests when server
+            # advertised h3 via Alt-Svc. Fail-soft: any error propagates as
+            # normal fetch error and caller falls back to HTTP/1.1/HTTP/2.
+            kwargs["http_version"] = http_version
         response = await session.get(url, **kwargs)
 
         # Read body with hard cap at max_bytes

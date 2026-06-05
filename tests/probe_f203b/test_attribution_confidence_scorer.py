@@ -6,6 +6,8 @@ and integration with IdentityCandidate post-processing.
 """
 
 import pytest
+pytest.importorskip("rapidfuzz")
+
 from unittest.mock import MagicMock, AsyncMock, patch
 import sys
 import os

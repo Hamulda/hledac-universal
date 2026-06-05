@@ -43,6 +43,16 @@ except ImportError:  # pragma: no cover
 # Sprint F264: msgspec facade replaces orjson/json for cache serialization.
 from hledac.universal.utils.msgspec_json import decode, encode
 
+# Sprint F264: defensive guard for msgspec core (utils.msgspec_json already
+# imports it at top-level, but keep this module self-contained against
+# environments where msgspec is missing or the facade is not importable).
+try:
+    import msgspec as _msgspec_lib  # noqa: F401
+    _MSGSPEC_AVAILABLE = True
+except ImportError:  # pragma: no cover
+    _msgspec_lib = None  # type: ignore[assignment]
+    _MSGSPEC_AVAILABLE = False
+
 try:
     import numpy as _np
     NUMPY_AVAILABLE = True
@@ -108,21 +118,40 @@ def _list_to_ndarray(obj: Any, target_type: Any = None) -> Any:
 
 
 def _serialize_cache(data: dict[str, CacheEntry]) -> bytes:
-    """Serialize cache data to bytes using msgspec facade, compressed with zstd."""
-    serializable = {}
+    """Serialize cache data to bytes using msgspec.CacheEntry struct wire format + zstd.
+
+    Sprint F264: each internal ``CacheEntry`` is wrapped as a typed
+    ``utils.msgspec_json.CacheEntry(key, value, ttl=3600)`` struct; the
+    full internal payload is JSON-encoded into the ``value`` field so
+    no field (embeddings, enums, metadata) is lost in the wire format.
+    Falls back to the untyped facade if msgspec is unavailable.
+    """
+    # Lazy import per project invariant (no top-level msgspec_struct).
+    from utils.msgspec_json import CacheEntry as _MsgspecCacheEntry
+
+    if not _MSGSPEC_AVAILABLE or _msgspec_lib is None:
+        # Defensive fallback: msgspec missing → legacy untyped dict encode.
+        return _serialize_cache_untyped(data)
+
+    serializable: dict[str, _MsgspecCacheEntry] = {}
     for k, v in data.items():
-        entry_dict = {
-            'cache_id': v.cache_id,
-            'content': v.content,
-            'embedding': v.embedding.tolist() if v.embedding is not None else None,
-            'access_count': v.access_count,
-            'last_accessed': v.last_accessed,
-            'created_at': v.created_at,
-            'size_bytes': v.size_bytes,
-            'cache_type': v.cache_type.value if isinstance(v.cache_type, Enum) else v.cache_type,
-            'metadata': v.metadata,
-        }
-        serializable[k] = entry_dict
+        entry_dict = _entry_to_dict(v)
+        serializable[k] = _MsgspecCacheEntry(
+            key=v.cache_id,
+            value=_msgspec_lib.json.encode(entry_dict).decode("utf-8"),
+            ttl=3600,  # Sprint F264 default for context cache
+        )
+    payload = _msgspec_lib.json.encode(serializable)
+    if ZSTD_AVAILABLE and _zstd is not None:
+        return _zstd.compress(payload)
+    return payload
+
+
+def _serialize_cache_untyped(data: dict[str, CacheEntry]) -> bytes:
+    """Legacy untyped serializer — used only when msgspec is unavailable."""
+    serializable: dict[str, dict[str, Any]] = {}
+    for k, v in data.items():
+        serializable[k] = _entry_to_dict(v)
     payload = encode(serializable)
     if ZSTD_AVAILABLE and _zstd is not None:
         return _zstd.compress(payload)
@@ -130,31 +159,105 @@ def _serialize_cache(data: dict[str, CacheEntry]) -> bytes:
 
 
 def _deserialize_cache(data: bytes) -> dict[str, CacheEntry]:
-    """Deserialize cache data from bytes; zstd-compressed or raw JSON (msgspec facade)."""
-    raw: Any
+    """Deserialize cache data from bytes via msgspec.CacheEntry typed fast path.
+
+    Sprint F264: tries ``decode_typed(raw, dict[str, CacheEntry])`` first
+    (zero-alloc typed decode). On ``msgspec.ValidationError`` (unknown
+    fields, missing optionals, type drift) or any decode error, falls
+    back to the untyped dict parser so on-disk legacy payloads keep
+    working (schema-drift tolerance).
+    """
+    # Lazy import per project invariant.
+    from utils.msgspec_json import CacheEntry as _MsgspecCacheEntry, decode_typed
+
     if ZSTD_AVAILABLE:
         try:
-            raw = decode(_zstd.decompress(data))
+            payload: bytes = _zstd.decompress(data)
         except Exception:
-            # Backward compat: try raw JSON (old .json files)
-            raw = decode(data)
+            # Backward compat: raw JSON (old .json files, no zstd header)
+            payload = data
     else:
-        raw = decode(data)
+        payload = data
 
+    # Typed fast path (Sprint F264).
+    if _MSGSPEC_AVAILABLE and _msgspec_lib is not None:
+        try:
+            struct_map = decode_typed(payload, dict[str, _MsgspecCacheEntry])
+            if isinstance(struct_map, dict):
+                result: dict[str, CacheEntry] = {}
+                for k, struct_entry in struct_map.items():
+                    # isinstance gate per task pattern: typed fast path
+                    # vs. dict fallback for schema drift.
+                    if not isinstance(struct_entry, _MsgspecCacheEntry):
+                        # Mixed shape (some typed, some dict) — fall through
+                        # to full legacy path.
+                        raise _msgspec_lib.ValidationError(
+                            "struct_map contains non-CacheEntry value"
+                        )
+                    try:
+                        inner = _msgspec_lib.json.decode(
+                            struct_entry.value.encode("utf-8")
+                        )
+                    except Exception:
+                        continue
+                    if not isinstance(inner, dict):
+                        continue
+                    result[k] = _dict_to_entry(inner, fallback_key=k)
+                return result
+        except (_msgspec_lib.ValidationError, _msgspec_lib.DecodeError, Exception):
+            # Schema drift or typed decode unavailable → legacy path.
+            pass
+
+    # Legacy untyped fallback.
+    try:
+        raw = decode(payload)
+    except Exception:
+        return {}
+    if not isinstance(raw, dict):
+        return {}
     result = {}
     for k, v in raw.items():
-        result[k] = CacheEntry(
-            cache_id=v['cache_id'],
-            content=v['content'],
-            embedding=np.array(v['embedding']) if v['embedding'] is not None else None,
-            access_count=v['access_count'],
-            last_accessed=v['last_accessed'],
-            created_at=v['created_at'],
-            size_bytes=v['size_bytes'],
-            cache_type=CacheType(v['cache_type']) if isinstance(v['cache_type'], str) else v['cache_type'],
-            metadata=v['metadata'],
-        )
+        if not isinstance(v, dict) or "cache_id" not in v:
+            continue  # skip unknown shape (schema drift tolerance)
+        try:
+            result[k] = _dict_to_entry(v, fallback_key=k)
+        except Exception:
+            continue  # skip malformed entry
     return result
+
+
+def _entry_to_dict(v: CacheEntry) -> dict[str, Any]:
+    """Convert internal ``CacheEntry`` dataclass to a JSON-serializable dict."""
+    return {
+        'cache_id': v.cache_id,
+        'content': v.content,
+        'embedding': v.embedding.tolist() if v.embedding is not None else None,
+        'access_count': v.access_count,
+        'last_accessed': v.last_accessed,
+        'created_at': v.created_at,
+        'size_bytes': v.size_bytes,
+        'cache_type': v.cache_type.value if isinstance(v.cache_type, Enum) else v.cache_type,
+        'metadata': v.metadata,
+    }
+
+
+def _dict_to_entry(v: dict[str, Any], fallback_key: str = "") -> CacheEntry:
+    """Reconstruct internal ``CacheEntry`` dataclass from a deserialized dict."""
+    embedding_raw = v.get("embedding")
+    cache_type_raw = v.get("cache_type")
+    return CacheEntry(
+        cache_id=v.get("cache_id", fallback_key),
+        content=v.get("content"),
+        embedding=np.array(embedding_raw) if embedding_raw is not None else None,
+        access_count=v.get("access_count", 0),
+        last_accessed=v.get("last_accessed", 0.0),
+        created_at=v.get("created_at", 0.0),
+        size_bytes=v.get("size_bytes", 0),
+        cache_type=(
+            CacheType(cache_type_raw) if isinstance(cache_type_raw, str) else cache_type_raw
+        ),
+        metadata=v.get("metadata") or {},
+    )
 
 
 class CacheType(Enum):

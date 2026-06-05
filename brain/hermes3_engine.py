@@ -25,7 +25,7 @@ import os
 import time
 from pathlib import Path
 from collections import OrderedDict
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable, Iterator
 from dataclasses import dataclass
 from typing import Any, TypeVar
 
@@ -1471,6 +1471,160 @@ class Hermes3Engine:
                     self._model_breaker.record_failure("runtime_error")
             logger.error(f"Generation failed: {e}")
             return f"Error: {str(e)}"
+
+    # =========================================================================
+    # Sprint F264: Async token streaming variant
+    # =========================================================================
+
+    async def generate_stream(
+        self,
+        prompt: str,
+        max_tokens: int = 512,
+        system_msg: str | None = None,
+        temperature: float | None = None,
+    ) -> AsyncIterator[str]:
+        """
+        Async token stream for progressive output.
+
+        Uses mlx_lm.stream_generate() with kv_bits=4 + max_kv_size=8192 per
+        M1 8GB UMA invariant (CLAUDE.md, F219B). Runs the sync generator in
+        asyncio.to_thread so the event loop is never blocked by MLX dispatch.
+
+        Fallback chain:
+          1) mlx_lm.stream_generate unavailable → emit blocking generate() as a
+             single chunk (preserves contract, still progressive from caller POV).
+          2) Model not loaded or MLX unavailable → yield nothing (fail-soft).
+          3) Any exception during streaming → log + return (no propagation —
+             caller already has partial output via yielded tokens).
+
+        Concurrency: serialised through self._inference_semaphore so a parallel
+        blocking generate() does not corrupt the MLX model state. Per-token
+        kv_bits=4 + max_kv_size=8192 — NEVER in load() per CLAUDE.md invariant.
+        """
+        # --- Pre-flight gates (fail-soft, never raise) ---
+        if self._model is None:
+            logger.debug("[STREAM] model not initialised — yielding nothing")
+            return
+
+        if not _MLX_AVAILABLE_GLOBAL:
+            logger.debug("[STREAM] MLX unavailable — yielding nothing")
+            return
+
+        # --- Fallback: blocking generate() as one chunk ---
+        if not self._supports_stream_generate:
+            try:
+                full = await self.generate(
+                    prompt,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    system_msg=system_msg,
+                )
+                if full:
+                    yield full
+            except Exception as e:  # generate() already records failures
+                logger.warning("[STREAM] fallback generate() failed: %s", e)
+            return
+
+        # --- Resolve parameters + format prompt (mirrors generate() pre-inference) ---
+        try:
+            temp = temperature if temperature is not None else self.config.temperature
+            max_tok = max_tokens
+            system = system_msg or "You are a helpful research assistant."
+            sanitized_prompt = prompt[:MAX_LLM_PROMPT_CHARS]
+            formatted_prompt = self._format_chatml(system, sanitized_prompt)[
+                :MAX_LLM_PROMPT_CHARS
+            ]
+        except Exception as e:
+            logger.warning("[STREAM] prompt formatting failed: %s", e)
+            return
+
+        # --- Stream tokens under semaphore + to_thread (M1-safe) ---
+        async with self._inference_semaphore:
+            try:
+                async for token in asyncio.to_thread(
+                    self._stream_tokens,
+                    formatted_prompt,
+                    max_tok,
+                    temp,
+                ):
+                    if token:
+                        yield token
+            except asyncio.CancelledError:
+                # Structured cancellation — propagate, do not record as failure
+                raise
+            except Exception as e:
+                logger.warning("[STREAM] generate_stream failed: %s", e)
+                return
+
+        # --- Post-stream barrier: mx.eval([]) → clear_cache (F219B canonical order) ---
+        try:
+            _safe_mlx_eval_and_clear_cache("generate_stream_post")
+        except Exception:
+            # Helper is already fail-soft; this is belt-and-suspenders
+            pass
+
+    def _stream_tokens(
+        self,
+        formatted_prompt: str,
+        max_tok: int,
+        temp: float,
+    ) -> Iterator[str]:
+        """
+        Sync token generator — runs in asyncio.to_thread, safe for M1.
+
+        Honours the CLAUDE.md invariant: kv_bits=4 + max_kv_size=8192 are passed
+        to mlx_lm.stream_generate() (NOT to make_prompt_cache/load()). The
+        generation call owns the cache lifecycle; we only pre-create it to attach
+        4-bit quantisation when the runtime supports it.
+
+        Yielded values:
+          - str token (decoded text fragment) for the caller
+          - Robust to both MLX API shapes: chunk.text (object) and (token, _)
+            (tuple). Newer mlx-lm returns GenerationToken with .text, older
+            versions yielded raw (token_id_or_str, info) tuples.
+        """
+        from mlx_lm import stream_generate
+        from mlx_lm.models.cache import make_prompt_cache
+
+        # Always create a fresh cache (mirrors _run_inference thread-safety)
+        kv_cache = make_prompt_cache(self._model, max_kv_size=max_tok)
+
+        # Sprint 75: KV quantisation (capability-gated, fail-soft)
+        if self._supports_kv_quant:
+            for layer in kv_cache:
+                if hasattr(layer, "quantize"):
+                    try:
+                        layer.quantize(group_size=64, bits=4)
+                    except Exception:
+                        # Per-layer failure is non-fatal — proceed without
+                        pass
+
+        # CLAUDE.md invariant #2: kv_bits=4 + max_kv_size=8192 in generate, NOT load
+        stream_kwargs = {
+            "max_tokens": max_tok,
+            "temp": temp,
+            "kv_bits": 4,
+            "max_kv_size": 8192,
+            "prompt_cache": kv_cache,
+            "verbose": False,
+        }
+
+        for chunk in stream_generate(
+            self._model,
+            self._tokenizer,
+            prompt=formatted_prompt,
+            **stream_kwargs,
+        ):
+            # Robust token extraction — both MLX shapes (object + tuple)
+            if hasattr(chunk, "text"):
+                tok = chunk.text
+            elif isinstance(chunk, tuple) and len(chunk) >= 1:
+                tok = chunk[0]
+            else:
+                tok = str(chunk)
+
+            if tok:
+                yield tok
 
     async def decide_next_action(self, context: dict[str, Any]) -> dict[str, Any]:
         """

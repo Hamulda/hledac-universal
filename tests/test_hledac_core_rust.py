@@ -28,10 +28,10 @@ try:
         url_normalize,
     )
     from hledac_rust_extensions import (
-        content_hash_64,
-        content_hash_hex,
-        batch_content_hash,
-        batch_content_hash_hex,
+        content_hash_64 as _rust_content_hash_64,
+        content_hash_hex as _rust_content_hash_hex,
+        batch_content_hash as _rust_batch_content_hash,
+        batch_content_hash_hex as _rust_batch_content_hash_hex,
     )
     from hledac_rust_extensions import (
         fingerprint as _rust_fingerprint,
@@ -48,16 +48,16 @@ except ImportError:
     _rust_normalize = None
     _rust_fingerprint = None
     _rust_strip_tracking_params = None
+    _rust_content_hash_64 = None
+    _rust_content_hash_hex = None
+    _rust_batch_content_hash = None
+    _rust_batch_content_hash_hex = None
     RollingHashEngine = None
     FastHasher = None
     BloomFilter = None
     fast_ioc_extract = None
     url_normalize = None
     batch_dedup_urls = None
-    content_hash_64 = None
-    content_hash_hex = None
-    batch_content_hash = None
-    batch_content_hash_hex = None
 
 
 # --- Pure-Python ref implementations (fallbacks when Rust unavailable) ---
@@ -125,6 +125,8 @@ def extract_iocs(text: str) -> list[tuple[str, str]]:
 
 
 def normalize(url: str) -> str:
+    if not url:
+        return ""
     if _RUST_AVAILABLE and _rust_normalize is not None:
         return _rust_normalize(url)
     return _python_normalize(url)
@@ -140,6 +142,48 @@ def fingerprint(url: str) -> str:
     if _RUST_AVAILABLE and _rust_fingerprint is not None:
         return _rust_fingerprint(url)
     return _python_fingerprint(url)
+
+
+# --- Content hash family wrappers (str/bytes convenience over Rust &[u8]) ---
+# Rust signatures:
+#   fn content_hash_64(data: &[u8]) -> u64            — single takes bytes
+#   fn content_hash_hex(data: &[u8]) -> String        — single takes bytes
+#   fn batch_content_hash(items: Vec<String>) -> ...  — batch takes STRINGS
+#   fn batch_content_hash_hex(items: Vec<String>) ->  — batch takes STRINGS
+# So single-item wrappers must str.encode(); batch wrappers pass strings through.
+# Falls back to hashlib.sha256 (truncated) if the extension is hidden.
+def content_hash_64(data):
+    """xxHash3-64 with str/bytes convenience."""
+    if isinstance(data, str):
+        data = data.encode()
+    if _RUST_AVAILABLE and _rust_content_hash_64 is not None:
+        return _rust_content_hash_64(data)
+    import hashlib
+    return int.from_bytes(hashlib.sha256(data).digest()[:8], "big")
+
+
+def content_hash_hex(data):
+    """xxHash3-64 hex with str/bytes convenience (16-char hex)."""
+    if isinstance(data, str):
+        data = data.encode()
+    if _RUST_AVAILABLE and _rust_content_hash_hex is not None:
+        return _rust_content_hash_hex(data)
+    import hashlib
+    return hashlib.sha256(data).hexdigest()[:16]
+
+
+def batch_content_hash(items):
+    """Batch xxHash3-64 (Rust expects Vec<String>, so pass-through)."""
+    if _RUST_AVAILABLE and _rust_batch_content_hash is not None:
+        return _rust_batch_content_hash(list(items))
+    return [content_hash_64(x) for x in items]
+
+
+def batch_content_hash_hex(items):
+    """Batch xxHash3-64 hex (Rust expects Vec<String>, so pass-through)."""
+    if _RUST_AVAILABLE and _rust_batch_content_hash_hex is not None:
+        return _rust_batch_content_hash_hex(list(items))
+    return [content_hash_hex(x) for x in items]
 
 
 # =============================================================================
@@ -239,7 +283,7 @@ class TestNormalize:
         assert "/api/v1/resource" in result
 
     def test_strip_utm_params(self):
-        result = normalize("https://example.com/page?utm_source=google&fbclid=abc")
+        result = strip_tracking_params("https://example.com/page?utm_source=google&fbclid=abc")
         assert "utm_source" not in result
         assert "fbclid" not in result
 

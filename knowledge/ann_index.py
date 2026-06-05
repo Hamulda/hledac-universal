@@ -25,6 +25,7 @@ INDEX BOUND: MAX_ANN_ENTRIES=50_000 — bounded table, oldest entries evicted on
 from __future__ import annotations
 
 import logging
+import os
 import threading
 from pathlib import Path
 
@@ -66,6 +67,11 @@ class _ANNIndex:
         "_insert_count_since_compact",
         "_last_compact_ts",
         "_compact_in_flight",
+        # Sprint F264D: IVF-PQ vector quantization (opt-in)
+        "_ivfpq_enabled",
+        "_ivfpq_num_partitions",
+        "_ivfpq_num_sub_vectors",
+        "_ivfpq_trained",
     )
 
     def __init__(self, db_path: Path) -> None:
@@ -80,6 +86,18 @@ class _ANNIndex:
         self._insert_count_since_compact: int = 0
         self._last_compact_ts: float = 0.0
         self._compact_in_flight: bool = False
+        # Sprint F264D: IVF-PQ vector quantization (opt-in, M1 8GB friendly).
+        # Lazy: index trained on first search, requires >= 256 rows. Fail-soft.
+        self._ivfpq_enabled: bool = (
+            os.environ.get("HLEDAC_LANCEDB_QUANTIZE", "0") == "1"
+        )
+        self._ivfpq_num_partitions: int = max(
+            8, min(256, int(os.environ.get("HLEDAC_LANCEDB_IVFPQ_NUM_PARTITIONS", "64")))
+        )
+        self._ivfpq_num_sub_vectors: int = max(
+            4, min(64, int(os.environ.get("HLEDAC_LANCEDB_IVFPQ_NUM_SUB_VECTORS", "16")))
+        )
+        self._ivfpq_trained: bool = False
         # SAFETY: SAFE_SYNC_BOUNDARY — _lock guards LanceDB table.search() and table.add()
         # operations in ann_search() and upsert(). Both are called from the embedding_pipeline
         # sync context (not async). The lock prevents concurrent LanceDB operations across threads
@@ -135,6 +153,8 @@ class _ANNIndex:
             self._initialized = True
             self._boot_error = None
             logger.info("[ANN] ANN index initialized successfully")
+            # Sprint F264D: lancedb.table_opened event with size_mb
+            self._log_table_opened()
             return True
 
         except Exception as e:
@@ -142,6 +162,71 @@ class _ANNIndex:
             self._initialized = True
             logger.warning(f"[ANN] ANN init failed: {e}")
             return False
+
+    def _log_table_opened(self) -> None:
+        """Sprint F264D: Log 'lancedb.table_opened' event with size_mb.
+
+        M1 observability — measures table footprint for IVF-PQ benefit verification.
+        Estimated: rows × embedding_dim × 4 bytes (float32) + PyArrow overhead.
+        """
+        try:
+            if self._table is None:
+                return
+            row_count = self._table.count_rows()
+            size_bytes = row_count * self._embed_dim * 4 + 8192
+            size_mb = size_bytes / (1024 * 1024)
+            logger.info(
+                f"[ANN] lancedb.table_opened table=semantic_dedup_v1 "
+                f"rows={row_count} size_mb={size_mb:.2f} path={self._db_path}"
+            )
+        except Exception as e:
+            logger.debug(f"[ANN] lancedb.table_opened log failed: {e}")
+
+    def _ensure_ivf_pq_index(self) -> None:
+        """Sprint F264D: Lazy IVF-PQ training (M1 8GB friendly, fail-soft, sync).
+
+        Called from ann_search on first invocation. Gated by
+        HLEDAC_LANCEDB_QUANTIZE=1. Skipped if table has < 256 rows. Double-checked
+        under self._lock prevents concurrent training. Errors are logged + ignored
+        → falls back to brute-force cosine.
+
+        NOTE: Uses ``getattr`` for flags so the helper is safe under ``__new__``
+        test-mock paths that bypass ``__init__``.
+        """
+        if not getattr(self, "_ivfpq_enabled", False):
+            return
+        if self._table is None or getattr(self, "_ivfpq_trained", False):
+            return
+        with self._lock:
+            if self._ivfpq_trained:  # double-checked
+                return
+            try:
+                row_count = self._table.count_rows()
+                if row_count < 256:
+                    logger.debug(
+                        f"[ANN] IVF-PQ skipped: only {row_count} rows "
+                        f"(need >= 256 for meaningful PQ training)"
+                    )
+                    self._ivfpq_trained = True  # mark as attempted
+                    return
+                # LanceDB Python API: tbl.create_index(metric, index_type, num_partitions, num_sub_vectors)
+                self._table.create_index(
+                    metric="cosine",
+                    index_type="IVF_PQ",
+                    num_partitions=getattr(self, "_ivfpq_num_partitions", 64),
+                    num_sub_vectors=getattr(self, "_ivfpq_num_sub_vectors", 16),
+                )
+                self._ivfpq_trained = True
+                logger.info(
+                    f"[ANN] IVF-PQ trained: table=semantic_dedup_v1 rows={row_count} "
+                    f"num_partitions={getattr(self, '_ivfpq_num_partitions', 64)} "
+                    f"num_sub_vectors={getattr(self, '_ivfpq_num_sub_vectors', 16)}"
+                )
+            except Exception as e:
+                self._ivfpq_trained = True  # don't retry on every call
+                logger.warning(
+                    f"[ANN] IVF-PQ training failed (fallback brute-force): {e}"
+                )
 
     def ann_search(self, embedding: np.ndarray, top_k: int = 5) -> list[dict]:
         """
@@ -154,6 +239,10 @@ class _ANNIndex:
             return []
         if self._table is None:
             return []
+
+        # Sprint F264D: lazy IVF-PQ training (after first search, off event loop)
+        if self._ivfpq_enabled:
+            self._ensure_ivf_pq_index()
 
         try:
             # Normalize embedding

@@ -1,4 +1,7 @@
 """Sprint 8RB — STIX export: CVE IOC → Vulnerability with external_id."""
+import pytest
+pytest.importorskip("kuzu")
+
 import asyncio
 import tempfile
 import time

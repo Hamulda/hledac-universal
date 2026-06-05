@@ -114,6 +114,9 @@ CLI / __main__.py
 | HLEDAC_ENABLE_TI_FEEDS | 0 | Threat intelligence feeds |
 | HLEDAC_ENABLE_TOR | 0 | Tor transport |
 | HLEDAC_ENABLE_ZERO_ATTRIBUTION | 0 | Zero-attribution mode |
+| HLEDAC_LANCEDB_QUANTIZE | 0 | IVF-PQ vector quantization (LanceDB entities + semantic_dedup_v1, M1 8GB friendly, opt-in) |
+| HLEDAC_LANCEDB_IVFPQ_NUM_PARTITIONS | 64 | IVF-PQ num_partitions (LanceDB IVF_PQ index, M1 8GB bounded) |
+| HLEDAC_LANCEDB_IVFPQ_NUM_SUB_VECTORS | 16 | IVF-PQ num_sub_vectors (16d sub-vectors; 256d/16=16 sub-vectors, 384d/16=24) |
 | HLEDAC_ENABLE_ZKP | 0 | Zero-knowledge proofs |
 
 ---

@@ -1,4 +1,7 @@
 """Sprint 8RB — STIX export: IP IOC → indicator with ipv4-addr pattern."""
+import pytest
+pytest.importorskip("kuzu")
+
 import asyncio
 import tempfile
 import time

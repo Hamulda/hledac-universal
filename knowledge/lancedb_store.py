@@ -21,6 +21,7 @@ import asyncio
 import contextlib
 import hashlib
 import logging
+import os
 import time
 from collections import OrderedDict, defaultdict, deque
 from datetime import UTC, datetime
@@ -257,6 +258,21 @@ class LanceDBIdentityStore:
         }
         # F214OPT-C: telemetry flags
         self._large_override_enabled = _resolve_lancedb_cache_size() > (_HLEDAC_HARD_MAX_CACHE_MB * 1024 * 1024)
+
+        # Sprint F264D: IVF-PQ vector quantization (opt-in, M1 8GB friendly).
+        # Lazy: index is trained only on first search/add when >= 256 rows.
+        # Fail-soft: any training error → log warning + fallback to brute-force cosine.
+        self._ivfpq_enabled: bool = (
+            os.environ.get("HLEDAC_LANCEDB_QUANTIZE", "0") == "1"
+        )
+        self._ivfpq_num_partitions: int = max(
+            8, min(256, int(os.environ.get("HLEDAC_LANCEDB_IVFPQ_NUM_PARTITIONS", "64")))
+        )
+        self._ivfpq_num_sub_vectors: int = max(
+            4, min(64, int(os.environ.get("HLEDAC_LANCEDB_IVFPQ_NUM_SUB_VECTORS", "16")))
+        )
+        self._ivfpq_trained: bool = False
+        self._ivfpq_lock: asyncio.Lock = asyncio.Lock()
 
         self._initialize()
 
@@ -1121,6 +1137,8 @@ class LanceDBIdentityStore:
                 logger.debug("[LANCEDB:H] FTS index not available: %s", e)
 
             logger.info(f"LanceDB identity store initialized at {self.uri}")
+            # Sprint F264D: lancedb.table_opened event with size_mb
+            self._log_table_opened()
 
         except ImportError:
             logger.warning("LanceDB not available, identity store disabled")
@@ -1128,6 +1146,82 @@ class LanceDBIdentityStore:
         except Exception as e:
             logger.warning(f"Failed to initialize LanceDB: {e}")
             self.db = None
+
+    def _log_table_opened(self) -> None:
+        """Sprint F264D: Log 'lancedb.table_opened' event with size_mb.
+
+        M1 observability — measures table footprint for IVF-PQ benefit verification.
+        Estimated: rows × embedding_dim × 4 bytes (float32) + PyArrow overhead.
+        """
+        try:
+            if self._table is None:
+                return
+            row_count = self._table.count_rows()
+            size_bytes = row_count * self._embedding_dim * 4 + 8192
+            size_mb = size_bytes / (1024 * 1024)
+            logger.info(
+                f"[LANCEDB] lancedb.table_opened table=entities "
+                f"rows={row_count} size_mb={size_mb:.2f} uri={self.uri}"
+            )
+        except Exception as e:
+            logger.debug(f"[LANCEDB] lancedb.table_opened log failed: {e}")
+
+    async def _ensure_ivf_pq_index_async(self) -> None:
+        """Sprint F264D: Lazy IVF-PQ training (M1 8GB friendly, fail-soft).
+
+        Called from add_entity/search_similar on first invocation. Gated by
+        HLEDAC_LANCEDB_QUANTIZE=1. Skipped if table has < 256 rows (insufficient
+        training data — IVF-PQ on small data degrades recall). Errors are logged
+        + ignored → falls back to brute-force cosine. Double-checked locking
+        prevents concurrent training on first parallel query burst.
+
+        NOTE: Uses ``getattr`` for flags so the helper is safe under ``__new__``
+        test-mock paths that bypass ``__init__``.
+        """
+        if not getattr(self, "_ivfpq_enabled", False):
+            return
+        if self._table is None or getattr(self, "_ivfpq_trained", False):
+            return
+        # Lazy attr init for test-mock paths (LanceDBIdentityStore.__new__)
+        if not hasattr(self, "_ivfpq_lock"):
+            self._ivfpq_lock = asyncio.Lock()
+        async with self._ivfpq_lock:
+            if self._ivfpq_trained:  # double-checked
+                return
+            try:
+                row_count = self._table.count_rows()
+                if row_count < 256:
+                    logger.debug(
+                        f"[LANCEDB] IVF-PQ skipped: only {row_count} rows "
+                        f"(need >= 256 for meaningful PQ training)"
+                    )
+                    self._ivfpq_trained = True  # mark as attempted; don't retry
+                    return
+                loop = asyncio.get_running_loop()
+                num_partitions = getattr(self, "_ivfpq_num_partitions", 64)
+                num_sub_vectors = getattr(self, "_ivfpq_num_sub_vectors", 16)
+
+                def _train() -> None:
+                    # LanceDB Python API: tbl.create_index(metric, index_type, num_partitions, num_sub_vectors)
+                    self._table.create_index(
+                        metric="cosine",
+                        index_type="IVF_PQ",
+                        num_partitions=num_partitions,
+                        num_sub_vectors=num_sub_vectors,
+                    )
+
+                await loop.run_in_executor(None, _train)
+                self._ivfpq_trained = True
+                logger.info(
+                    f"[LANCEDB] IVF-PQ trained: table=entities rows={row_count} "
+                    f"num_partitions={num_partitions} "
+                    f"num_sub_vectors={num_sub_vectors}"
+                )
+            except Exception as e:
+                self._ivfpq_trained = True  # don't retry on every call
+                logger.warning(
+                    f"[LANCEDB] IVF-PQ training failed (fallback brute-force): {e}"
+                )
 
     async def add_entity(
         self,
@@ -1148,6 +1242,9 @@ class LanceDBIdentityStore:
         """
         if self._table is None:
             return False
+
+        # Sprint F264D: lazy IVF-PQ training (after first row, before write)
+        await self._ensure_ivf_pq_index_async()
 
         try:
 
@@ -1268,6 +1365,9 @@ class LanceDBIdentityStore:
         if self._table is None:
             return []
 
+        # Sprint F264D: lazy IVF-PQ training (after first query, off event loop)
+        await self._ensure_ivf_pq_index_async()
+
         try:
             # Polars native ARM64, zero-copy Arrow → 5-20× faster than pandas.
             # Lazy import: polars is in graph-storage extra.
@@ -1382,15 +1482,11 @@ class LanceDBIdentityStore:
     async def reembed_all(self) -> dict:
         """One-shot re-embed admin operation. NOT a per-sprint hot path.
 
-        NOTE: still uses .to_pandas() + .iterrows() — pandas. Marked as
-        POLARS-MIGRATION candidate: cold-path admin op, runs on explicit
-        call only. Migrate when convenient (polars .slice() + .iter_rows()
-        would give 5-10× speedup on the batch loop below).
+        F265X: migrated to polars native path. Uses self._table.to_polars()
+        to skip the intermediate Arrow allocation that pl.from_arrow(.to_arrow())
+        required. Falls back to .to_pandas() on polars ImportError or if
+        .to_polars() itself fails. Polars 1.x + LanceDB ≥0.9.
         """
-        # TODO(POLARS-MIGRATION): cold-path — replace .to_pandas() with
-        # pl.from_arrow(self._table.to_arrow()) and .iterrows() with
-        # df.iter_rows(named=True). Not urgent — this is a one-shot
-        # admin op, not a per-sprint hot path.
         """
         Re-embed all stored entities at new MRL dimension (256d).
 
@@ -1400,6 +1496,15 @@ class LanceDBIdentityStore:
         Returns:
             dict with 'reembedded' count, 'failed' count, 'skipped' count.
         """
+        # Lazy polars import (graph-storage extra). Fall back to pandas if absent
+        # or if .to_polars() fails on this LanceDB version. Both paths converge
+        # on a unified list[dict] row format below to keep the batch loop simple.
+        try:
+            import polars as pl  # lazy: graph-storage extra
+            use_polars = True
+        except ImportError:
+            use_polars = False
+
         logger.info("[REEMBED] Starting re-embedding at 256d dimension")
         stats = {"reembedded": 0, "failed": 0, "skipped": 0}
 
@@ -1408,27 +1513,51 @@ class LanceDBIdentityStore:
             return stats
 
         try:
-            # Read all existing entities
-            all_data = self._table.to_pandas()
-            if all_data.empty:
-                logger.info("[REEMBED] No entities to re-embed")
-                return stats
+            # Prefer LanceDB native .to_polars() (F265+) — skips the intermediate
+            # Arrow table allocation that pl.from_arrow(.to_arrow()) required.
+            # Cold-path admin op, so the perf win is real but not critical.
+            if use_polars:
+                try:
+                    all_data = self._table.to_polars()
+                    total = all_data.height
+                    if total == 0:
+                        logger.info("[REEMBED] No entities to re-embed")
+                        return stats
+                except Exception:
+                    use_polars = False
 
-            total = len(all_data)
+            if not use_polars:
+                all_data = self._table.to_pandas()
+                total = len(all_data)
+                if all_data.empty:
+                    logger.info("[REEMBED] No entities to re-embed")
+                    return stats
+
             logger.info(f"[REEMBED] Found {total} entities to re-embed")
 
-            # Re-embed in batches
+            # Re-embed in batches. polars: .slice() + .iter_rows(named=True).
+            # pandas: .iloc + .iterrows() with .to_dict() so both branches yield
+            # the same list[dict] shape — no per-branch divergence in the loop.
             batch_size = 16
             for i in range(0, total, batch_size):
-                batch = all_data.iloc[i:i + batch_size]
-                texts = [row.get("text", "") or row.get("content", "") or str(row.get("id", ""))
-                         for _, row in batch.iterrows()]
+                if use_polars:
+                    batch = all_data.slice(i, batch_size)
+                    rows = list(batch.iter_rows(named=True))  # list[dict]
+                else:
+                    batch = all_data.iloc[i:i + batch_size]
+                    rows = [row.to_dict() for _, row in batch.iterrows()]  # list[dict]
+                batch_len = len(rows)
+
+                texts = [
+                    r.get("text") or r.get("content") or str(r.get("id", ""))
+                    for r in rows
+                ]
 
                 try:
                     embeddings = await self._embed_batch(texts, batch_size=batch_size)
                     # Update embeddings in table
-                    for idx, (_, row) in enumerate(batch.iterrows()):
-                        entity_id = row["id"]
+                    for idx, r in enumerate(rows):
+                        entity_id = r["id"]
                         if idx < len(embeddings) and embeddings[idx]:
                             self._table.merge_insert("id").on("id").execute([{
                                 "id": entity_id,
@@ -1439,7 +1568,7 @@ class LanceDBIdentityStore:
                             stats["skipped"] += 1
                 except Exception as e:
                     logger.warning(f"[REEMBED] Batch failed: {e}")
-                    stats["failed"] += len(batch)
+                    stats["failed"] += batch_len
 
             logger.info(f"[REEMBED] Complete: {stats}")
         except Exception as e:

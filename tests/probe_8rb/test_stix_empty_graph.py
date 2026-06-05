@@ -1,4 +1,7 @@
 """Sprint 8RB — STIX empty graph: no IOCs → export_stix_bundle() → []."""
+import pytest
+pytest.importorskip("kuzu")
+
 import asyncio
 import tempfile
 from pathlib import Path

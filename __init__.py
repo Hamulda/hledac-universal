@@ -12,6 +12,19 @@ Active parts (all lazy-loaded via __getattr__):
 - resource/concurrency: lazy
 """
 
+# ── Namespace bootstrap (defensive) ──────────────────────────────────────────
+# The parent `hledac/__init__.py` already calls `ensure_namespace_paths()`,
+# but invoking it here too is a cheap idempotent guard for callers that
+# import `hledac.universal` directly without first touching `hledac` (e.g.
+# `python -m hledac.universal` or test harnesses that bypass the parent
+# package). The function is fail-safe and never raises.
+try:
+    from hledac._namespace_bootstrap import ensure_namespace_paths
+    ensure_namespace_paths()
+except Exception:
+    pass  # fail-soft: do not block package import on bootstrap
+# ─────────────────────────────────────────────────────────────────────────────
+
 from importlib import import_module
 
 # Lazy export map — defers all heavy module imports to first-use
@@ -108,6 +121,11 @@ _LAZY_EXPORTS = {
     "MAX_BYTES_HARD": "hledac.universal.fetching.public_fetcher",
     "MAX_RETRIES": "hledac.universal.fetching.public_fetcher",
     "FetchResult": "hledac.universal.fetching.public_fetcher",
+    # P7-C Evidence network analyzer (advanced_web)
+    "EvidenceNetworkAnalyzer": "hledac.universal.advanced_web.evidence_network_analyzer",
+    "EvidenceGraphNode": "hledac.universal.advanced_web.evidence_network_analyzer",
+    "EvidenceGraphEdge": "hledac.universal.advanced_web.evidence_network_analyzer",
+    "EvidenceGraph": "hledac.universal.advanced_web.evidence_network_analyzer",
 }
 
 
@@ -165,6 +183,11 @@ __all__ = [
     "MAX_BYTES_HARD",
     "MAX_RETRIES",
     "FetchResult",
+    # P7-C Evidence network analyzer
+    "EvidenceNetworkAnalyzer",
+    "EvidenceGraphNode",
+    "EvidenceGraphEdge",
+    "EvidenceGraph",
     # Pattern matcher
     "PatternHit",
     "ExtractedEntity",

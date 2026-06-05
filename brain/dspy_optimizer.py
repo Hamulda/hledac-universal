@@ -2,12 +2,14 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import sys
 import time
 from collections import defaultdict
 from pathlib import Path
+from typing import Any, Dict
 
 import psutil
 
@@ -593,4 +595,178 @@ def load_optimized_prompts() -> dict:
         return {k: v for k, v in prompts.items() if v and isinstance(v, str)}
     except Exception:
         return {}
+
+
+# ---------------------------------------------------------------------------
+# Sprint F264: load_compiled_program — project-local compiled-program loader
+# ---------------------------------------------------------------------------
+# Canonical location: ``brain/compiled/{name}.json`` (alongside the source
+# tree — auditable & diffable in PRs, unlike the legacy ``~/.hledac/dspy/``
+# cache). Loader tries the new location first, then the legacy
+# ``~/.hledac/dspy/{name}.json``, then falls back to the uncompiled
+# program (``HypothesisGeneratorProgram()`` etc.) so callers always
+# receive a usable object or ``None``.
+
+# Project-relative canonical compiled-program directory
+_COMPILED_DIR = Path(__file__).resolve().parent / "compiled"
+_LEGACY_COMPILED_DIR = Path.home() / ".hledac" / "dspy"
+
+# Program class registry — names match the entries in
+# ``brain.dspy_programs._PROGRAMS`` and the file produced by
+# ``scripts/compile_dspy_programs.py``.
+_PROGRAM_CLASSES: dict[str, str] = {
+    "dark_query": "DarkQueryProgram",
+    "hypothesis_generator": "HypothesisGeneratorProgram",
+    "hypothesis_ranker": "HypothesisRankProgram",
+}
+
+
+def _dspy_available() -> bool:
+    """Return True if ``dspy`` is importable. Lazy probe (no top-level import)."""
+    try:
+        import importlib.util  # noqa: F401
+        return importlib.util.find_spec("dspy") is not None
+    except Exception:
+        return False
+
+
+def _read_compiled_state(path: Path) -> dict | None:
+    """Read a compiled-program JSON file. Returns the parsed dict, or ``None``."""
+    try:
+        if not path.exists():
+            return None
+        text = path.read_text(encoding="utf-8")
+        if not text.strip():
+            return None
+        return json.loads(text)  # noqa: F401 — stdlib json is always available
+    except Exception as e:
+        logger.warning("Failed to read compiled program at %s: %s", path, e)
+        return None
+
+
+def _import_program_class(name: str) -> Any | None:
+    """Import a program class by short name (e.g. ``HypothesisGeneratorProgram``).
+
+    Lazy: import is performed on first call only. Returns ``None`` on
+    any failure (fail-soft). The module is force-reloaded so the
+    module-level ``HLEDAC_ENABLE_DSPY`` flag re-evaluates against the
+    current environment on every call (otherwise a process that started
+    with the gate disabled cannot recover when the gate is flipped on
+    mid-run, which matters for test fixtures and for the legacy-cache
+    fallback path).
+    """
+    try:
+        import importlib
+        mod = importlib.import_module("hledac.universal.brain.dspy_programs")
+        importlib.reload(mod)  # force re-read of HLEDAC_ENABLE_DSPY
+        cls = getattr(mod, name, None)
+        return cls
+    except Exception as e:
+        logger.warning("Failed to import program class %s: %s", name, e)
+        return None
+
+
+def _instantiate_uncompiled(name: str) -> Any | None:
+    """Build a fresh uncompiled program instance by name (fail-soft)."""
+    class_name = _PROGRAM_CLASSES.get(name)
+    if class_name is None:
+        logger.debug("Unknown DSPy program name: %s", name)
+        return None
+    cls = _import_program_class(class_name)
+    if cls is None:
+        return None
+    try:
+        return cls()
+    except Exception as e:
+        logger.warning("Failed to instantiate %s: %s", class_name, e)
+        return None
+
+
+def _inject_demos(program: Any, demos: list[dict]) -> Any:
+    """Attach a list of demo dicts to ``program.program.demos`` (DSPy convention).
+
+    DSPy's ``BootstrapFewShot`` compiled modules store their tuned
+    few-shot demonstrations on ``module.demos`` (a list of
+    ``dspy.Example``). When the program is reloaded from JSON we
+    reconstruct the demos and re-bind them.
+
+    Returns the program unchanged on any failure (fail-soft).
+    """
+    if not demos:
+        return program
+    try:
+        import dspy  # type: ignore  # lazy import — dspy is optional
+        examples = []
+        for demo in demos:
+            try:
+                if not isinstance(demo, dict):
+                    continue
+                ex = dspy.Example(**demo)
+                # Tag known input fields so DSPy treats them as inputs
+                input_fields = (
+                    "research_query", "rag_context", "graph_summary",
+                    "reward_context", "existing_hypotheses",
+                    "ioc_brief", "available_transports", "max_queries",
+                    "hypotheses", "sprint_context",
+                )
+                present = [k for k in input_fields if k in demo]
+                if present:
+                    ex = ex.with_inputs(*present)
+                examples.append(ex)
+            except Exception:
+                continue
+        # Inject into the underlying DSPy module (program.program for our wrappers)
+        target = getattr(program, "program", program)
+        try:
+            target.demos = examples
+        except Exception:
+            pass
+        return program
+    except Exception as e:
+        logger.debug("Failed to inject demos: %s", e)
+        return program
+
+
+def load_compiled_program(name: str) -> Any | None:
+    """Load a compiled DSPy program by short name.
+
+    Resolution order (fail-soft at every step):
+
+    1. ``brain/compiled/{name}.json`` (project-local, canonical new path)
+    2. ``~/.hledac/dspy/{name}.json`` (legacy cache, kept for back-compat)
+    3. Fresh uncompiled program instance (``HypothesisGeneratorProgram()``,
+       ``DarkQueryProgram()``, …) — always returns a usable object when
+       the name is known and DSPy is installed
+    4. ``None`` — only when DSPy is unavailable or the name is unknown
+
+    The returned program is always ready to call ``.forward(**kwargs)``
+    on — either with compiled demonstrations baked in, or in the
+    default zero-shot configuration.
+
+    M1 invariant: no top-level MLX / DSPy / Hermes3 import — every
+    dependency is probed lazily inside this function.
+    """
+    if not _dspy_available():
+        return None
+
+    # Step 1 + 2: try to load a compiled state file
+    state = _read_compiled_state(_COMPILED_DIR / f"{name}.json")
+    if state is None:
+        state = _read_compiled_state(_LEGACY_COMPILED_DIR / f"{name}.json")
+
+    if state is not None:
+        # Compiled file found — instantiate matching program and inject demos
+        program = _instantiate_uncompiled(name)
+        if program is not None:
+            demos = state.get("demos") or []
+            program = _inject_demos(program, demos)
+            logger.info(
+                "Loaded compiled DSPy program '%s' (%d demos)",
+                name, len(demos) if isinstance(demos, list) else 0,
+            )
+            return program
+        # Program class import failed — fall through to uncompiled fallback
+
+    # Step 3: no compiled file (or class import failed) — return uncompiled
+    return _instantiate_uncompiled(name)
 

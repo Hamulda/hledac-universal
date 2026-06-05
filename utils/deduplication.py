@@ -30,7 +30,16 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
-import numpy as np
+# numpy je lazy-guarded (F265+ cold-start: -120ms M1 penalty for C-ext init).
+# Dedup je core path → při chybějícím numpy raisneme RuntimeError (NE silent skip,
+# jinak by se mohla poslat ne-deduplikovaná URL a narušit invariant RotatingBloomFilteru).
+# Vzor: core/resource_governor.py:33-41.
+try:
+    import numpy as np
+    _NUMPY_AVAILABLE = True
+except ImportError:
+    np = None  # type: ignore[assignment]
+    _NUMPY_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
 
@@ -396,6 +405,11 @@ class SemanticDeduplicator(BaseDeduplicator):
 
     def _fallback_embedding(self, content: str) -> np.ndarray:
         """Generate fallback embedding using hash-based approach."""
+        if not _NUMPY_AVAILABLE:
+            raise RuntimeError(
+                "numpy is required for deduplication. "
+                "Install: uv pip install numpy"
+            )
         words = content.split()[:100]
         embedding = np.zeros(self.config.embedding_dim, dtype=np.float32)
 
@@ -422,6 +436,11 @@ class SemanticDeduplicator(BaseDeduplicator):
 
     def _compute_cosine_similarity(self, emb1: np.ndarray, emb2: np.ndarray) -> float:
         """Compute cosine similarity between two embeddings."""
+        if not _NUMPY_AVAILABLE:
+            raise RuntimeError(
+                "numpy is required for deduplication. "
+                "Install: uv pip install numpy"
+            )
         dot_product = np.dot(emb1, emb2)
         norm1 = np.linalg.norm(emb1)
         norm2 = np.linalg.norm(emb2)
@@ -1388,6 +1407,11 @@ class SimHash:
         MLX-accelerated SimHash for embedding matrix (batch, dim).
         Lazy import MLX, fallback to numpy.
         """
+        if not _NUMPY_AVAILABLE:
+            raise RuntimeError(
+                "numpy is required for deduplication. "
+                "Install: uv pip install numpy"
+            )
         try:
             import mlx.core as mx
 

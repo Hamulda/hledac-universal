@@ -46,11 +46,17 @@ Fail-safe (always-on):
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
-from typing import Any
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any
 
 logger = logging.getLogger(__name__)
+
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from hledac.universal.knowledge.duckdb_store import CanonicalFinding
+    from hledac.universal.graph.quantum_pathfinder import DuckPGQGraph
 
 
 # ── Boundedness constants (always-on, no env flag) ────────────────────────────
@@ -65,6 +71,22 @@ MAX_TOKEN_LEN: int = 200
 MAX_VALUE_LEN: int = 2048
 DEFAULT_SIMILARITY_THRESHOLD: float = 0.35
 DEFAULT_CONTRADICTION_THRESHOLD: float = 0.5
+
+# P7-C: EvidenceGraph bounds (M1 8GB UMA, always-on)
+MAX_GRAPH_NODES: int = 500
+MAX_GRAPH_EDGES: int = 2000
+MAX_GRAPH_HOPS: int = 2
+MAX_GRAPH_BATCH_VALUES: int = 128
+MAX_GRAPH_PAYLOAD_SCAN: int = 8 * 1024  # 8 KiB cap on payload_text scan per finding
+
+# Lightweight IOC patterns for P7-C analyze() — pure regex, no MLX / no networkx.
+# Conservative, M1-safe: only flag clear-shape IOCs, not free-form text.
+_RE_GRAPH_IPV4 = re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b")
+_RE_GRAPH_SHA256 = re.compile(r"\b[a-f0-9]{64}\b")
+_RE_GRAPH_SHA1 = re.compile(r"\b[a-f0-9]{40}\b")
+_RE_GRAPH_MD5 = re.compile(r"\b[a-f0-9]{32}\b")
+_RE_GRAPH_CVE = re.compile(r"\bCVE-\d{4}-\d{4,7}\b", re.IGNORECASE)
+_RE_GRAPH_DOMAIN = re.compile(r"\b(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}\b", re.IGNORECASE)
 
 # Negation / contradiction cues (pure lexical, no model)
 _NEGATION_CUES: frozenset[str] = frozenset(
@@ -390,6 +412,29 @@ def _centrality_impl(networkx_mod: Any, network: Any) -> dict[str, float]:
     return out
 
 
+def _dedupe_edges(edges: list[EvidenceGraphEdge]) -> list[EvidenceGraphEdge]:
+    """Dedupe EvidenceGraphEdge list by (src, dst, rel_type), summing evidence_count.
+
+    Preserves order of first occurrence. Bounded by MAX_GRAPH_EDGES on output.
+    Pure Python, no numpy/pandas.
+    """
+    seen: dict[tuple[str, str, str], EvidenceGraphEdge] = {}
+    for e in edges:
+        key = (e.src, e.dst, e.rel_type)
+        if key in seen:
+            prev = seen[key]
+            seen[key] = EvidenceGraphEdge(
+                src=prev.src,
+                dst=prev.dst,
+                rel_type=prev.rel_type,
+                weight=max(prev.weight, e.weight),
+                evidence_count=prev.evidence_count + e.evidence_count,
+            )
+        else:
+            seen[key] = e
+    return list(seen.values())
+
+
 def _lazy_nx() -> Any:
     """Lazy import of networkx — keeps module-level import surface clean."""
     try:
@@ -412,14 +457,24 @@ class EvidenceNetworkAnalyzer:
     _TODO_REF: str = "IMPLEMENTATION_ROADMAP.md T1 (implemented)"
 
     def __init__(self, *_args: Any, **_kwargs: Any) -> None:
-        """Initialize analyzer. Args are accepted for backward compatibility."""
+        """Initialize analyzer. Args are accepted for backward compatibility.
+
+        Optional keyword-only:
+            graph: DuckPGQGraph | None — if provided, analyze() will query
+                  the cross-sprint graph via find_connected_batch (READ-ONLY).
+                  If None (default), analyze() uses intra-finding IOC mining
+                  only — no DuckDB writes, no graph lookups.
+        """
         self._initialized: bool = True
         self._call_count: int = 0
         self._last_args_count: int = len(_args) + len(_kwargs)
         self._last_graph_size: int = 0
+        # P7-C: optional injected graph for cross-sprint read-side enrichment
+        self._graph: Any = _kwargs.get("graph", None)
         logger.debug(
-            "EvidenceNetworkAnalyzer: initialized (impl, %d args)",
+            "EvidenceNetworkAnalyzer: initialized (impl, %d args, graph=%s)",
             self._last_args_count,
+            "yes" if self._graph is not None else "no",
         )
 
     # ── public surface ────────────────────────────────────────────────────────
@@ -662,6 +717,239 @@ class EvidenceNetworkAnalyzer:
                 "call_count": self._call_count,
             }
 
+    # ── P7-C: Canonical analyze() — findings → EvidenceGraph ─────────────────
+
+    async def analyze(
+        self,
+        findings: list[Any],
+        max_hops: int = MAX_GRAPH_HOPS,
+    ) -> EvidenceGraph:
+        """
+        Convert a batch of CanonicalFinding objects into a bounded
+        read-only EvidenceGraph.
+
+        Pipeline (fail-soft, never raises):
+            1. Bound input at MAX_GRAPH_NODES finding-derived signals.
+            2. Extract IOCs from each finding's payload_text using pure-regex
+               patterns (M1-safe, no MLX / no networkx).
+            3. Build EvidenceGraphNode list (deduped by (ioc_type, value)).
+            4. Build local edges (intra-finding IOC co-occurrence + shared
+               source_type grouping).
+            5. If a DuckPGQGraph is injected at __init__, query it via
+               find_connected_batch() in asyncio.to_thread (sync → async
+               bridge, M1-safe). Connected nodes are surfaced as additional
+               EvidenceGraphEdge entries with rel_type="graph_connected".
+            6. Bound to MAX_GRAPH_NODES / MAX_GRAPH_EDGES, return
+               EvidenceGraph with aggregate confidence.
+
+        Invariants (post-P7-C):
+            - Never writes to DuckDB. EvidenceGraph is a READ-ONLY projection.
+            - Failures return an empty-but-valid EvidenceGraph.
+            - All collections bounded; no unbounded growth between calls.
+        """
+        self._call_count += 1
+        finding_count = len(findings) if isinstance(findings, (list, tuple)) else 0
+        try:
+            if not findings:
+                return self._empty_graph(0)
+
+            # 1) Bound input
+            bounded_findings = list(findings)[:MAX_GRAPH_NODES]
+
+            # 2) Extract IOCs per finding
+            finding_iocs: list[list[tuple[str, str, str]]] = []  # [(ioc_type, value, source_type), ...]
+            for f in bounded_findings:
+                iocs = self._extract_iocs_from_finding(f)
+                if iocs:
+                    finding_iocs.append(iocs)
+
+            if not finding_iocs:
+                return self._empty_graph(finding_count)
+
+            # 3) Build nodes (deduped by (ioc_type, value))
+            node_map: dict[tuple[str, str], EvidenceGraphNode] = {}
+            for iocs in finding_iocs:
+                src = iocs[0][2] if iocs else ""
+                for ioc_type, value, src in iocs:
+                    key = (ioc_type, value)
+                    if key in node_map:
+                        # augment sources
+                        existing = node_map[key]
+                        new_sources = tuple(dict.fromkeys(
+                            list(existing.sources) + ([src] if src else [])
+                        ))[:8]
+                        node_map[key] = EvidenceGraphNode(
+                            node_id=f"{ioc_type}:{value}",
+                            ioc_type=ioc_type,
+                            value=value,
+                            confidence=existing.confidence,
+                            sources=new_sources,
+                        )
+                    else:
+                        node_map[key] = EvidenceGraphNode(
+                            node_id=f"{ioc_type}:{value}",
+                            ioc_type=ioc_type,
+                            value=value,
+                            confidence=0.5,
+                            sources=(src,) if src else (),
+                        )
+            nodes = list(node_map.values())[:MAX_GRAPH_NODES]
+
+            # 4) Build local edges: intra-finding co-occurrence + cross-finding
+            # same-type edges (bounded O(n²) over the small per-finding IOC sets).
+            edges: list[EvidenceGraphEdge] = []
+            for iocs in finding_iocs:
+                # intra-finding: pair every IOC with the first IOC of the finding
+                if len(iocs) >= 2:
+                    anchor = iocs[0]
+                    for other in iocs[1:]:
+                        if anchor[0] == other[0] and anchor[1] == other[1]:
+                            continue
+                        edges.append(EvidenceGraphEdge(
+                            src=f"{anchor[0]}:{anchor[1]}",
+                            dst=f"{other[0]}:{other[1]}",
+                            rel_type="co_occurrence",
+                            weight=0.6,
+                            evidence_count=1,
+                        ))
+                        if len(edges) >= MAX_GRAPH_EDGES:
+                            break
+                if len(edges) >= MAX_GRAPH_EDGES:
+                    break
+
+            # 5) Optional cross-sprint enrichment via DuckPGQGraph (READ-ONLY)
+            if self._graph is not None and nodes:
+                connected_edges = await self._query_connected_async(nodes, max_hops)
+                if connected_edges:
+                    edges.extend(connected_edges)
+
+            # 6) Bound + dedupe + return
+            edges = _dedupe_edges(edges)[:MAX_GRAPH_EDGES]
+            nodes = nodes[:MAX_GRAPH_NODES]
+            confidence = (
+                sum(e.weight for e in edges) / len(edges) if edges else 0.0
+            )
+            self._last_graph_size = len(nodes) + len(edges)
+            return EvidenceGraph(
+                nodes=tuple(nodes),
+                edges=tuple(edges),
+                confidence=round(float(confidence), 4),
+                finding_count=finding_count,
+            )
+        except Exception as e:
+            logger.warning(f"EvidenceNetworkAnalyzer.analyze failed: {e}")
+            return self._empty_graph(finding_count)
+
+    async def _query_connected_async(
+        self,
+        nodes: list[EvidenceGraphNode],
+        max_hops: int,
+    ) -> list[EvidenceGraphEdge]:
+        """
+        Run DuckPGQGraph.find_connected_batch in asyncio.to_thread.
+
+        DuckPGQGraph.find_connected_batch is synchronous (it issues a DuckDB
+        CTE). We bridge sync→async via to_thread so the event loop stays
+        responsive on M1 8GB UMA. If the graph is unhealthy (PGQ unavailable,
+        schema drift, I/O error) we return [] — the local edge set is still
+        useful.
+        """
+        try:
+            values = [n.value for n in nodes][:MAX_GRAPH_BATCH_VALUES]
+            if not values:
+                return []
+            # find_connected_batch is sync — bridge to async via to_thread.
+            connected_map = await asyncio.to_thread(
+                self._graph.find_connected_batch, values, max_hops,
+            )
+        except Exception as e:
+            logger.debug(f"EvidenceNetworkAnalyzer: graph lookup failed: {e}")
+            return []
+
+        edges: list[EvidenceGraphEdge] = []
+        if not isinstance(connected_map, dict):
+            return edges
+        for src_value, conn_list in connected_map.items():
+            if not isinstance(conn_list, list):
+                continue
+            for c in conn_list:
+                if not isinstance(c, dict):
+                    continue
+                # c may have keys: 'value', 'ioc_type', 'depth', 'weight' depending
+                # on the underlying SQL schema. We coerce to EvidenceGraphEdge.
+                dst_value = _safe_value(c.get("value")) if hasattr(_safe_value, "__call__") else str(c.get("value", ""))
+                if not dst_value or dst_value == src_value:
+                    continue
+                ioc_type = str(c.get("ioc_type", "unknown"))[:32]
+                weight = float(c.get("weight", 0.5) or 0.5)
+                weight = max(0.0, min(1.0, weight))
+                edges.append(EvidenceGraphEdge(
+                    src=f"unknown:{src_value[:MAX_VALUE_LEN]}",
+                    dst=f"{ioc_type}:{dst_value[:MAX_VALUE_LEN]}",
+                    rel_type="graph_connected",
+                    weight=round(weight, 4),
+                    evidence_count=1,
+                ))
+                if len(edges) >= MAX_GRAPH_EDGES:
+                    return edges
+        return edges
+
+    def _extract_iocs_from_finding(self, f: Any) -> list[tuple[str, str, str]]:
+        """
+        Extract (ioc_type, value, source_type) tuples from a CanonicalFinding.
+
+        Sources (in priority order):
+            - f.payload_text (if set) — scanned with bounded regex patterns
+            - f.query — scanned for IOC substrings as a fallback
+        All scans are bounded by MAX_GRAPH_PAYLOAD_SCAN.
+        """
+        out: list[tuple[str, str, str]] = []
+        try:
+            source_type = _safe_value(getattr(f, "source_type", "") or "")
+            if not source_type:
+                source_type = "unknown"
+            # Cap each scan to MAX_GRAPH_PAYLOAD_SCAN chars
+            payload = _safe_value(getattr(f, "payload_text", "") or "")[:MAX_GRAPH_PAYLOAD_SCAN]
+            query = _safe_value(getattr(f, "query", "") or "")[:MAX_GRAPH_PAYLOAD_SCAN]
+            text = payload or query
+            if not text:
+                return out
+            seen_in_finding: set[tuple[str, str]] = set()
+            for ioc_type, pattern in (
+                ("cve", _RE_GRAPH_CVE),
+                ("hash_sha256", _RE_GRAPH_SHA256),
+                ("hash_sha1", _RE_GRAPH_SHA1),
+                ("hash_md5", _RE_GRAPH_MD5),
+                ("ip", _RE_GRAPH_IPV4),
+                ("domain", _RE_GRAPH_DOMAIN),
+            ):
+                for m in pattern.finditer(text):
+                    val = m.group(0).lower()
+                    if ioc_type == "ip":
+                        # Reject obvious non-IPv4 (octets > 255)
+                        octets = val.split(".")
+                        if any(int(o) > 255 for o in octets if o.isdigit()):
+                            continue
+                    key = (ioc_type, val)
+                    if key in seen_in_finding:
+                        continue
+                    seen_in_finding.add(key)
+                    out.append((ioc_type, val, source_type))
+                    if len(out) >= 32:  # per-finding hard cap
+                        return out
+        except Exception as e:
+            logger.debug(f"EvidenceNetworkAnalyzer: _extract_iocs_from_finding failed: {e}")
+        return out
+
+    def _empty_graph(self, finding_count: int) -> EvidenceGraph:
+        """Bounded empty result — same shape as analyze()'s success path."""
+        return EvidenceGraph(
+            nodes=(),
+            edges=(),
+            confidence=0.0,
+            finding_count=finding_count,
+        )
+
     async def cleanup(self) -> None:
         """Release internal state. Idempotent."""
         self._initialized = False
@@ -717,4 +1005,53 @@ class EvidenceNetworkAnalyzer:
         }
 
 
-__all__ = ["EvidenceNetworkAnalyzer"]
+__all__ = ["EvidenceNetworkAnalyzer", "EvidenceGraphNode", "EvidenceGraphEdge", "EvidenceGraph"]
+
+
+# ── P7-C: EvidenceGraph DTOs (frozen, msgspec-style immutability) ────────────
+
+@dataclass(frozen=True)
+class EvidenceGraphNode:
+    """Single entity node in the evidence network.
+
+    node_id convention: f"{ioc_type}:{value}" (lowercased, deduped).
+    sources is a bounded tuple of source_type strings that surfaced the IOC.
+    """
+    node_id: str
+    ioc_type: str
+    value: str
+    confidence: float
+    sources: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class EvidenceGraphEdge:
+    """Directed relationship between two EvidenceGraphNodes.
+
+    weight is bounded [0.0, 1.0]; evidence_count records how many findings
+    contributed to this edge (de-dupes intra-finding repetition).
+    """
+    src: str
+    dst: str
+    rel_type: str
+    weight: float
+    evidence_count: int = 1
+
+
+@dataclass(frozen=True)
+class EvidenceGraph:
+    """Read-only evidence network assembled from a batch of findings.
+
+    Invariants:
+      - nodes ≤ MAX_NODES
+      - edges ≤ MAX_EDGES
+      - finding_count == len(input findings) at the time of analysis
+      - not_implemented == False (post-P7-C T1)
+      - never raised on failure: returns an empty-but-valid instance
+    """
+    nodes: tuple[EvidenceGraphNode, ...]
+    edges: tuple[EvidenceGraphEdge, ...]
+    confidence: float
+    finding_count: int
+    not_implemented: bool = False
+    todo_ref: str = "IMPLEMENTATION_ROADMAP.md T1 (implemented)"

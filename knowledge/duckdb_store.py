@@ -1303,7 +1303,7 @@ class DuckDBShadowStore:
         - Arrow→dict conversion helpers are shared
         """
 
-        __slots__ = ("_store",)
+        __slots__ = ("_store", "_stmt_insert_finding", "_stmt_insert_finding_conn_id")
 
         # ── SQL Templates ──────────────────────────────────────────────────
 
@@ -1334,6 +1334,11 @@ class DuckDBShadowStore:
 
         def __init__(self, store: DuckDBShadowStore) -> None:
             object.__setattr__(self, "_store", store)
+            # Sprint F264: prepared-statement cache for the hot INSERT loop.
+            # DuckDB PreparedStatement is connection-bound; we key the cache
+            # by id(conn) so a reconnect transparently re-prepares.
+            object.__setattr__(self, "_stmt_insert_finding", None)
+            object.__setattr__(self, "_stmt_insert_finding_conn_id", None)
 
         # ── Connection routing ─────────────────────────────────────────────
 
@@ -1344,6 +1349,55 @@ class DuckDBShadowStore:
                 s._prewarm_file_conn()
                 return s._file_conn
             return s._persistent_conn
+
+        # ── Prepared statement cache (Sprint F264) ─────────────────────────
+
+        def _get_insert_stmt(self, conn: Any) -> Any:
+            """
+            Sprint F264: Lazy-init prepared INSERT statement for shadow_findings.
+
+            Returns the cached prepared statement for `_SQL_INSERT_SHADOW_FINDING`
+            if the underlying connection is unchanged. On reconnect the conn
+            identity differs and the statement is transparently re-prepared.
+
+            Fail-safe: if conn.prepare() raises, returns None and emits a
+            one-shot warning. The caller MUST fall back to
+            `conn.execute(self._SQL_INSERT_SHADOW_FINDING, params)` on None
+            so the canonical write path stays alive (CLAUDE.md invariant #5).
+
+            MUST be called on the worker thread (DuckDB conn is thread-affine).
+            """
+            conn_id = id(conn)
+            cached = self._stmt_insert_finding
+            if cached is not None and self._stmt_insert_finding_conn_id == conn_id:
+                return cached
+            try:
+                stmt = conn.prepare(self._SQL_INSERT_SHADOW_FINDING)
+                object.__setattr__(self, "_stmt_insert_finding", stmt)
+                object.__setattr__(self, "_stmt_insert_finding_conn_id", conn_id)
+                return stmt
+            except Exception as e:
+                # Fail-safe: prepared statement not available, caller falls back
+                try:
+                    logger.debug(f"[DUCKDB] prepare() failed, falling back to execute(): {e}")
+                except Exception:
+                    pass
+                object.__setattr__(self, "_stmt_insert_finding", None)
+                object.__setattr__(self, "_stmt_insert_finding_conn_id", None)
+                return None
+
+        def _invalidate_insert_stmt(self) -> None:
+            """
+            Sprint F264: Drop cached prepared statement. Call on close / reconnect.
+
+            Safe to call from any thread; sets the cache to None so the next
+            `_get_insert_stmt(conn)` re-prepares on the (possibly new) conn.
+            """
+            try:
+                object.__setattr__(self, "_stmt_insert_finding", None)
+                object.__setattr__(self, "_stmt_insert_finding_conn_id", None)
+            except Exception:
+                pass
 
         # ── Transaction framing ─────────────────────────────────────────────
 
@@ -1394,7 +1448,14 @@ class DuckDBShadowStore:
                 return False
             params = [finding_id, query, source_type, confidence, ts, provenance_json]
             try:
-                self._with_transaction(conn, lambda c: c.execute(self._SQL_INSERT_SHADOW_FINDING, params))
+                # Sprint F264: prepared statement hot path; execute() fallback on prepare() failure
+                stmt = self._get_insert_stmt(conn)
+                def _do(c: Any) -> None:
+                    if stmt is not None:
+                        stmt.execute(params)
+                    else:
+                        c.execute(self._SQL_INSERT_SHADOW_FINDING, params)
+                self._with_transaction(conn, _do)
                 return True
             except Exception:
                 return False
@@ -1415,8 +1476,14 @@ class DuckDBShadowStore:
             if conn is None:
                 return 0
             try:
-                def _do(conn):
-                    conn.executemany(self._SQL_INSERT_SHADOW_FINDING, rows)
+                # Sprint F264: prepared statement hot path (loop); executemany() fallback
+                stmt = self._get_insert_stmt(conn)
+                def _do(c: Any) -> None:
+                    if stmt is not None:
+                        for row in rows:
+                            stmt.execute(row)
+                    else:
+                        c.executemany(self._SQL_INSERT_SHADOW_FINDING, rows)
                 self._with_transaction(conn, _do)
                 return len(rows)
             except Exception:
@@ -1434,8 +1501,14 @@ class DuckDBShadowStore:
             if conn is None:
                 return 0
             try:
-                def _do(conn):
-                    conn.executemany(self._SQL_INSERT_SHADOW_FINDING, rows)
+                # Sprint F264: prepared statement hot path (loop); executemany() fallback
+                stmt = self._get_insert_stmt(conn)
+                def _do(c: Any) -> None:
+                    if stmt is not None:
+                        for row in rows:
+                            stmt.execute(row)
+                    else:
+                        c.executemany(self._SQL_INSERT_SHADOW_FINDING, rows)
                 self._with_transaction(conn, _do)
                 return len(rows)
             except Exception:
@@ -1983,6 +2056,16 @@ class DuckDBShadowStore:
 
     def _sync_close_on_worker(self) -> None:
         """Close all connections — MUST be called on the worker thread."""
+        # Sprint F264: invalidate prepared statement cache before closing conns.
+        # DuckDB PreparedStatement is connection-bound; closing the conn makes
+        # the cached statement unusable. Drop it so the next _qe() rebuilds.
+        try:
+            if hasattr(self, "_query_executor"):
+                qe = self._qe()
+                if qe is not None:
+                    qe._invalidate_insert_stmt()
+        except Exception:
+            pass
         # Close persistent :memory: connection
         if self._persistent_conn is not None:
             try:
