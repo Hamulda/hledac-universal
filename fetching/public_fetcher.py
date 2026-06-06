@@ -38,6 +38,62 @@ def _get_psutil():
         _psutil = None
     return _psutil
 
+
+# F271: Rust url_ops lazy import — opt-in speedup for urlparse hot path.
+# Never imported at top level: preserves M1 lazy-load invariant.
+# _RUST_URL_OPS_CACHE holds the rust functions on success, None on failure.
+_RUST_URL_OPS_CACHE: object | None = None  # not yet resolved
+_RUST_URL_OPS_AVAILABLE: bool | None = None  # not yet resolved
+
+def _get_rust_url_ops() -> tuple | None:
+    """Lazy-load Rust url_ops. Returns (classify_url,) on success, None on failure.
+
+    Cached after first call — the import is a one-time cost.
+    Bound to the canonical module name in Cargo.toml: hledac_rust_extensions.
+    """
+    global _RUST_URL_OPS_CACHE, _RUST_URL_OPS_AVAILABLE
+    if _RUST_URL_OPS_AVAILABLE is True:
+        return _RUST_URL_OPS_CACHE
+    if _RUST_URL_OPS_AVAILABLE is False:
+        return None
+    try:
+        from hledac_rust_extensions import classify_url as _rust_classify_url
+        _RUST_URL_OPS_CACHE = (_rust_classify_url,)
+        _RUST_URL_OPS_AVAILABLE = True
+    except ImportError:
+        _RUST_URL_OPS_CACHE = None
+        _RUST_URL_OPS_AVAILABLE = False
+    return _RUST_URL_OPS_CACHE
+
+
+def _classify_url_cached(url: str) -> tuple[str, str]:
+    """Drop-in: returns (kind_str, lowercase_host) using Rust when available.
+
+    Rust path is opt-in (lazy-loaded, fail-soft). Python fallback uses
+    urllib.parse.urlparse — same correctness, ~3x slower.
+    """
+    rust = _get_rust_url_ops()
+    if rust is not None:
+        try:
+            return rust[0](url)
+        except Exception:
+            pass  # fail-soft → fall through to Python
+    # Python fallback — never raises (caller already wraps with try/except)
+    try:
+        parsed = urllib.parse.urlparse(url)
+        host = (parsed.hostname or "").lower()
+        if not host:
+            return ("malformed", "")
+        if host.endswith(".onion"):
+            return ("onion", host)
+        if host.endswith(".i2p"):
+            return ("i2p", host)
+        if host.endswith(".freenet") or "freenet" in host or "hyphanet" in host:
+            return ("freenet", host)
+        return ("clearnet", host)
+    except Exception:
+        return ("malformed", "")
+
 # Sprint F206AL: Import canonical M1 8GB threshold from uma_budget.
 import aiohttp
 import msgspec
@@ -69,6 +125,79 @@ from hledac.universal.utils.uma_budget import M1_FETCH_SOFT_CEILING_GB
 from hledac.universal.utils.encoding import decode_response_bytes, parse_charset_from_content_type
 
 logger = logging.getLogger(__name__)
+
+
+# Sprint ContentHasher: lazy Rust import for TLS cert + body hashing.
+# Mirrors the `_get_rust_url_ops` pattern above. On ImportError the
+# helpers fall back to `hashlib` and the sprint continues unchanged.
+#
+# NEON-enabled on aarch64 (Apple Silicon M1+), scalar fallback on x86_64
+# (Linux CI). Body hashes are NOT canonical — they live in a bounded
+# module-level dict and are intended for cross-URL dedup metadata only.
+_ContentHasher: object | None = None  # not yet resolved
+_RUST_CONTENT_HASHER: bool = False  # default: hashlib fallback
+
+MAX_BODY_HASHES: Final[int] = 10000  # bounded — invariant: každá kolekce má explicitní max
+_body_hashes: dict[str, str] = {}  # url → blake3-64 hex; FIFO evict on overflow
+
+
+def _get_content_hasher() -> object | None:
+    """Lazy-load Rust `ContentHasher`. Returns the class on success, None on failure.
+
+    Cached after first call — the import is a one-time cost.
+    """
+    global _ContentHasher, _RUST_CONTENT_HASHER
+    if _RUST_CONTENT_HASHER:
+        return _ContentHasher
+    try:
+        from hledac_rust_extensions import ContentHasher as _CH
+        _ContentHasher = _CH
+        _RUST_CONTENT_HASHER = True
+    except ImportError:
+        _RUST_CONTENT_HASHER = False
+        _ContentHasher = None
+    return _ContentHasher
+
+
+def _compute_body_hash(body: bytes) -> str:
+    """Return 16-char hex fingerprint of a response body.
+
+    Rust path (BLAKE3-64, NEON-accelerated on M1) is preferred; hashlib
+    SHA-256 truncated to 16 hex chars is the fail-soft fallback. Returns
+    empty string for empty/None body. Never raises.
+    """
+    if not body:
+        return ""
+    ch = _get_content_hasher()
+    if ch is not None:
+        try:
+            return ch.blake3_64(body)
+        except Exception:
+            pass  # fall through to hashlib
+    try:
+        import hashlib
+        return hashlib.sha256(body).hexdigest()[:16]
+    except Exception:
+        return ""
+
+
+def _store_body_hash(url: str, hash_hex: str) -> None:
+    """Persist `url → hash_hex` in the bounded module-level dict.
+
+    Body hash is POUZE metadata — it is never written to the DuckDB
+    canonical store. FIFO eviction keeps the dict bounded (MAX_BODY_HASHES).
+    Never raises.
+    """
+    if not url or not hash_hex:
+        return
+    try:
+        _body_hashes[url] = hash_hex
+        if len(_body_hashes) > MAX_BODY_HASHES:
+            # FIFO eviction: dict preserves insertion order; drop oldest
+            oldest = next(iter(_body_hashes))
+            del _body_hashes[oldest]
+    except Exception:
+        pass  # fail-soft — body hash metadata is non-critical
 
 
 # ---------------------------------------------------------------------------
@@ -582,7 +711,7 @@ def _validate_url(url: str) -> str | None:
 # Retry constants — bounded, M1-safe
 # ---------------------------------------------------------------------------
 
-MAX_RETRIES: Final[int] = 1  # exactly one retry; no infinite loops
+MAX_RETRIES: Final[int] = 2  # two retries for 429/5xx; bounded, no infinite loops
 _RETRYABLE_STATUS_CODES: Final[frozenset[int]] = frozenset({429, 502, 503, 504, 520})
 
 
@@ -601,15 +730,32 @@ def _extract_retry_after(headers) -> float | None:
         return None
 
 
-def _compute_backoff_seconds(retry_after: float | None, attempt: int) -> float:
+def _compute_backoff_seconds(
+    retry_after: float | None,
+    attempt: int,
+    *,
+    jitter: bool = True,
+    _prev_sleep: float = 0.0,
+) -> float:
     """Return bounded backoff in seconds.
 
     Uses Retry-After if available, otherwise exponential backoff capped at 8 s.
     Attempt 0 = no backoff (first failure already counted).
+
+    When ``jitter`` is True (default), applies decorrelated jitter (AWS
+    Architecture Blog "Exponential Backoff and Jitter"): samples
+    ``Uniform(0, max(base, _prev_sleep) * 3)`` and caps at 8 s. The optional
+    ``_prev_sleep`` carries state across consecutive retries so successive
+    sleep durations are de-correlated (callers may pass it as a kwarg).
     """
     if retry_after is not None and retry_after > 0:
-        return min(retry_after, 60.0)  # cap at 60 s to bound pause
-    return min(2.0 ** (attempt + 1), 8.0)  # 4 s, capped at 8 s
+        base = min(retry_after, 60.0)  # cap at 60 s to bound pause
+    else:
+        base = min(2.0 ** (attempt + 1), 8.0)  # 2, 4, 8, capped at 8 s
+    if jitter:
+        # Decorrelated jitter (AWS architecture blog)
+        return min(8.0, random.uniform(0.0, max(base, _prev_sleep) * 3.0))
+    return base
 
 
 def _build_retry_error(status_code: int, retry_after: float | None) -> str:
@@ -694,12 +840,18 @@ def _extract_tls_metadata_from_response(resp) -> dict:
                             break
 
                     # SHA-256 fingerprint
+                    # Sprint ContentHasher: Rust SHA-256 (sha2 crate) preferred
+                    # over hashlib for ~3-5x speedup. Lazy-loaded; on ImportError
+                    # we transparently fall back to hashlib. Never raises.
                     try:
-                        import hashlib
-                        # Derive PEM from der for consistent fingerprinting
                         der = ssl_obj.getpeercert(binary_form=True)
                         if der:
-                            result["tls_cert_sha256"] = hashlib.sha256(der).hexdigest()[:64]
+                            _ch = _get_content_hasher()
+                            if _ch is not None:
+                                result["tls_cert_sha256"] = _ch.sha256_hex(der)
+                            else:
+                                import hashlib
+                                result["tls_cert_sha256"] = hashlib.sha256(der).hexdigest()[:64]
                     except Exception:
                         pass
             except Exception:
@@ -974,36 +1126,41 @@ def _try_decode(body: bytes) -> tuple[str, bool, int]:
 
 
 def _is_onion_url(url: str) -> bool:
-    """Detect if URL targets a .onion darknet address."""
+    """Detect if URL targets a .onion darknet address.
+
+    F271: Delegates to _classify_url_cached (Rust fast path + Python fallback).
+    Single shared parse — cheaper than 3 separate urlparse calls.
+    """
     try:
-        parsed = urllib.parse.urlparse(url)
-        return parsed.hostname.lower().endswith(".onion") if parsed.hostname else False
-    except (ValueError, AttributeError) as e:
+        kind, _ = _classify_url_cached(url)
+        return kind == "onion"
+    except Exception as e:  # pragma: no cover — defensive
         logger.warning("URL parse error in _is_onion_url for %s: %s", url, e)
         return False
 
 
 def _is_i2p_url(url: str) -> bool:
-    """
-    P10: Detect if URL targets an I2P address (.i2p or .b32.i2p).
+    """P10: Detect if URL targets an I2P address (.i2p or .b32.i2p).
+
+    F271: Delegates to _classify_url_cached.
     """
     try:
-        parsed = urllib.parse.urlparse(url)
-        hostname = parsed.hostname.lower() if parsed.hostname else ""
-        return hostname.endswith(".i2p") or hostname.endswith(".b32.i2p")
-    except (ValueError, AttributeError) as e:
+        kind, _ = _classify_url_cached(url)
+        return kind == "i2p"
+    except Exception as e:  # pragma: no cover — defensive
         logger.warning("URL parse error in _is_i2p_url for %s: %s", url, e)
         return False
 
 
 def _is_freenet_url(url: str) -> bool:
-    """
-    P10: Detect if URL targets a Freenet address (.freenet).
+    """P10: Detect if URL targets a Freenet address (.freenet or Hyphanet).
+
+    F271: Delegates to _classify_url_cached.
     """
     try:
-        parsed = urllib.parse.urlparse(url)
-        return parsed.hostname.lower().endswith(".freenet") if parsed.hostname else False
-    except (ValueError, AttributeError) as e:
+        kind, _ = _classify_url_cached(url)
+        return kind == "freenet"
+    except Exception as e:  # pragma: no cover — defensive
         logger.warning("URL parse error in _is_freenet_url for %s: %s", url, e)
         return False
 
@@ -2131,6 +2288,8 @@ async def async_fetch_public_text(
                 _meta_sources.append("og_tags")
             if js_meta.get("comments"):
                 _meta_sources.append("html_comments")
+            if js_text:
+                _store_body_hash(url, _compute_body_hash(js_text.encode("utf-8", errors="replace")))
             return FetchResult(
                 url=url,
                 final_url=url,
@@ -2257,6 +2416,8 @@ async def async_fetch_public_text(
             elapsed_ms = (time.monotonic() - t0) * 1000
             redirected, redirect_target = _derive_redirect_fields(url, _httpx_final_url)
             _tc.httpx_h2_count += 1
+            if _text:
+                _store_body_hash(url, _compute_body_hash(_text.encode("utf-8", errors="replace")))
             return FetchResult(
                 url=url,
                 final_url=_httpx_final_url,
@@ -2437,6 +2598,8 @@ async def async_fetch_public_text(
                 _tor_curl_text = None
             elapsed_ms = (time.monotonic() - t0) * 1000
             _tc.curl_cffi_tor_count += 1
+            if _tor_curl_text and not _tor_curl_error:
+                _store_body_hash(url, _compute_body_hash(_tor_curl_text.encode("utf-8", errors="replace")))
             return FetchResult(
                 url=url,
                 final_url=_tor_curl_result.get("final_url", url),
@@ -3035,6 +3198,8 @@ async def async_fetch_public_text(
                             _tc.i2p_aiohttp_socks_count += 1
                         else:
                             _tc.aiohttp_count += 1
+                        if text:
+                            _store_body_hash(url, _compute_body_hash(text.encode("utf-8", errors="replace")))
                         return FetchResult(
                             url=url,
                             final_url=final_url,

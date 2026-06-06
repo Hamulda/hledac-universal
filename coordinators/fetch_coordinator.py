@@ -18,6 +18,7 @@ import ipaddress
 import json
 import logging
 import os
+import random
 import socket
 import time
 from collections import deque
@@ -342,6 +343,18 @@ class FetchCoordinator(UniversalCoordinator):
             except Exception as e:
                 logger.warning(f"GopherTransport init failed: {e}")
                 self._gopher_transport_enabled = False
+
+        # F-HTTP-CACHE: hishel HTTP response cache, opt-out via HLEDAC_HTTP_CACHE=0.
+        # Wraps httpx-compatible transports; aiohttp paths bypass it (hishel is
+        # httpx-only). Built lazily in _do_initialize (build_cache_transport is
+        # async); __init__ only declares state + the env-gate decision.
+        # Fail-soft: missing hishel → transport stays None and httpx paths
+        # operate uncached. URL canonicalisation is the caller's job
+        # (use tools/url_dedup.normalize_url before lookup).
+        self._http_cache_transport: Any = None
+        self._http_cache_enabled: bool = (
+            os.environ.get("HLEDAC_HTTP_CACHE", "1") != "0"
+        )
 
         # Sprint P3: CAPTCHA pre-filter (gated, PIL-only heuristics)
         self._captcha_detector: Any | None = None
@@ -1007,6 +1020,31 @@ class FetchCoordinator(UniversalCoordinator):
     async def _do_initialize(self) -> bool:
         """Initialize coordinator."""
         logger.info("FetchCoordinator initialized")
+
+        # F-HTTP-CACHE: lazy build the hishel cache transport (opt-out).
+        # Fail-soft on every failure mode: env disabled, hishel missing, build
+        # error → self._http_cache_transport stays None and httpx fetch paths
+        # operate uncached.
+        if self._http_cache_enabled and self._http_cache_transport is None:
+            try:
+                from ..transport.http_cache import build_cache_transport
+                self._http_cache_transport = await build_cache_transport(None)
+                if self._http_cache_transport is not None:
+                    logger.info(
+                        "FetchCoordinator HTTP cache active "
+                        "(opt-out via HLEDAC_HTTP_CACHE=0)"
+                    )
+                else:
+                    logger.info(
+                        "FetchCoordinator HTTP cache requested but unavailable "
+                        "(install: 'uv pip install \".[osint-cache]\"')"
+                    )
+            except Exception as exc:  # noqa: BLE001 — fail-soft
+                logger.warning("HTTP cache init failed: %s", exc)
+                self._http_cache_transport = None
+        elif not self._http_cache_enabled:
+            logger.info("FetchCoordinator HTTP cache disabled via HLEDAC_HTTP_CACHE=0")
+
         return True
 
     async def _do_start(self, ctx: dict[str, Any]) -> None:
@@ -1406,7 +1444,14 @@ class FetchCoordinator(UniversalCoordinator):
                 # Check if we should retry
                 if result is None or result.get('error') == 'timeout' or result.get('status_code', 200) >= 500:
                     if attempt < max_retries:
-                        delay = base_delay * (2 ** attempt)  # Exponential backoff
+                        # Decorrelated jitter (AWS architecture blog):
+                        # sample Uniform(0, max(prev_base, prev_sleep) * 3),
+                        # cap at 30 s so a single failure burst cannot stall
+                        # the whole coordinator for > ~one block.
+                        prev_sleep = getattr(self, '_last_retry_delay', 0.0)
+                        prev_base = base_delay * (2 ** attempt)
+                        delay = min(30.0, random.uniform(0.0, max(prev_base, prev_sleep) * 3.0))
+                        self._last_retry_delay = delay
                         logger.debug(f"[RETRY] Attempt {attempt + 1}/{max_retries} for {url} after {delay:.1f}s")
                         trace_fetch_end(url, "none", "retry", 0.0, {"attempt": attempt, "delay": delay})
                         await asyncio.sleep(delay)
@@ -1723,7 +1768,7 @@ class FetchCoordinator(UniversalCoordinator):
                     import curl_cffi.requests as _cffi
 
                     async with _cffi.AsyncSession(
-                        impersonate="chrome120"
+                        impersonate="chrome131"
                     ) as session:
                         await session.get(url, timeout=10.0)
                 except Exception:

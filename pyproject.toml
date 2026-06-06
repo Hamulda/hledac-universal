@@ -267,6 +267,16 @@ transport = [
     "httpx-socks>=0.10.0",     # SOCKS proxy support for httpx (stealth_crawler Tor fallback)
 ]
 
+# --- osint-cache: opt-out HTTP response cache for FetchCoordinator ---
+# Wraps httpx-compatible transports via hishel.AsyncCacheTransport backed by
+# AsyncSQLiteStorage (~/.cache/hledac/hishel.db, 256MB cap, 7d TTL, WAL mode).
+# Gated by env HLEDAC_HTTP_CACHE (default "1" = ON, "0" = opt-out).
+# Fail-soft: missing hishel → transport passes through unchanged.
+osint-cache = [
+    "hishel>=0.0.31",          # httpx response cache (RFC 7234 + heuristic freshness)
+    "aiosqlite>=0.20",          # async SQLite for WAL/PRAGMA setup
+]
+
 # --- kuzu-graph: optional kuzu backend for IOCGraph (no cp314 arm64 wheel — opt-in) ---
 # All callers are fail-soft (try/except ImportError); canonical path stays DuckPGQGraph.
 kuzu-graph = [

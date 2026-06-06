@@ -8,16 +8,20 @@
 //! - IOC deduplication (cross-sprint persistence)
 //! - xxHash3-64 for non-cryptographic hashing
 //! - SimHash for near-duplicate document detection
+//! - URL classification by transport class (onion/i2p/freenet/clearnet)
+//! - SHA-256 + BLAKE3 content hashing (TLS cert fingerprint, body dedup)
 
 use pyo3::prelude::*;
 
 pub mod aho_corasick;
 pub mod bloom;
+pub mod content_hasher;
 pub mod ioc_dedup;
 pub mod ioc_extract;
 pub mod rolling_hash;
 pub mod simhash_ext;
 pub mod url_engine;
+pub mod url_ops;
 pub mod url_set;
 pub mod xxhash_ext;
 
@@ -34,6 +38,7 @@ fn hledac_rust_extensions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // IOC extraction + URL normalization
     ioc_extract::register_functions(m)?;
     url_engine::register_functions(m)?;
+    url_ops::register_functions(m)?;
 
     // IOC deduplication store (cross-sprint persistence)
     ioc_dedup::register_class(m)?;
@@ -47,6 +52,10 @@ fn hledac_rust_extensions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(xxhash_ext::batch_content_hash, m)?)?;
     m.add_function(wrap_pyfunction!(xxhash_ext::batch_content_hash_hex, m)?)?;
     m.add_class::<xxhash_ext::StreamHasher64>()?;
+
+    // SHA-256 + BLAKE3 content hashing (TLS cert fingerprint, body dedup).
+    // NEON-enabled on aarch64 (Apple Silicon), scalar fallback elsewhere.
+    m.add_class::<content_hasher::ContentHasher>()?;
 
     Ok(())
 }

@@ -34,6 +34,7 @@ _curl_cffi_profiles_order: deque[str] = deque()  # track access order for LRU vi
 # Targets: academia (Safari 17 Apple Silicon), government (Firefox 133+), mobile/android (Chrome Android 99+)
 _PROFILE_FALLBACK_ORDER = [
     "chrome136",
+    "chrome131",
     "chrome124",
     "chrome120",
     "chrome110",

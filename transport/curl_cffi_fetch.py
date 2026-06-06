@@ -67,7 +67,7 @@ async def fetch_via_tor_curl_cffi(
     headers: dict[str, str] | None = None,
     timeout_s: float = DEFAULT_TIMEOUT_S,
     max_bytes: int = DEFAULT_MAX_BYTES,
-    profile: str = "chrome110",
+    profile: str = "chrome124",
     tor_manager: Any = None,
     circuit_rotation_count: int = 50,
 ) -> dict[str, Any]:
@@ -112,7 +112,7 @@ async def fetch_via_i2p_curl_cffi(
     headers: dict[str, str] | None = None,
     timeout_s: float = DEFAULT_TIMEOUT_S,
     max_bytes: int = DEFAULT_MAX_BYTES,
-    profile: str = "chrome110",
+    profile: str = "chrome124",
 ) -> dict[str, Any]:
     """
     Fetch URL via curl_cffi through I2P SOCKS5H proxy.
@@ -145,7 +145,7 @@ async def fetch_via_curl_cffi(
     headers: dict[str, str] | None = None,
     timeout_s: float = DEFAULT_TIMEOUT_S,
     max_bytes: int = DEFAULT_MAX_BYTES,
-    profile: str = "chrome110",
+    profile: str = "chrome124",
     proxies: dict[str, str] | None = None,
     http_version: Any = None,
 ) -> dict[str, Any]:
