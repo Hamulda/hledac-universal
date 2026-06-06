@@ -1,16 +1,16 @@
-# Graph Report - universal  (2026-06-05)
+# Graph Report - universal  (2026-06-06)
 
 ## Corpus Check
-- 1833 files · ~2,588,066 words
+- 1843 files · ~2,600,323 words
 - Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
-- 70170 nodes · 152931 edges · 4003 communities (2927 shown, 1076 thin omitted)
+- 70414 nodes · 153256 edges · 3935 communities (2939 shown, 996 thin omitted)
 - Extraction: 64% EXTRACTED · 36% INFERRED · 0% AMBIGUOUS · INFERRED: 55569 edges (avg confidence: 0.52)
 - Token cost: 0 input · 0 output
 
 ## Graph Freshness
-- Built from commit: `15a82ccb`
+- Built from commit: `ef5f9837`
 - Run `git rev-parse HEAD` and compare to check if the graph is stale.
 - Run `graphify update .` after code changes (no API cost).
 
@@ -3752,10 +3752,6 @@
 - [[_COMMUNITY_Community 3772|Community 3772]]
 - [[_COMMUNITY_Community 3773|Community 3773]]
 - [[_COMMUNITY_Community 3774|Community 3774]]
-- [[_COMMUNITY_Community 3775|Community 3775]]
-- [[_COMMUNITY_Community 3776|Community 3776]]
-- [[_COMMUNITY_Community 3777|Community 3777]]
-- [[_COMMUNITY_Community 3778|Community 3778]]
 - [[_COMMUNITY_Community 3779|Community 3779]]
 - [[_COMMUNITY_Community 3780|Community 3780]]
 - [[_COMMUNITY_Community 3781|Community 3781]]
@@ -3765,14 +3761,9 @@
 - [[_COMMUNITY_Community 3785|Community 3785]]
 - [[_COMMUNITY_Community 3786|Community 3786]]
 - [[_COMMUNITY_Community 3787|Community 3787]]
-- [[_COMMUNITY_Community 3788|Community 3788]]
-- [[_COMMUNITY_Community 3789|Community 3789]]
-- [[_COMMUNITY_Community 3790|Community 3790]]
-- [[_COMMUNITY_Community 3791|Community 3791]]
 - [[_COMMUNITY_Community 3792|Community 3792]]
 - [[_COMMUNITY_Community 3793|Community 3793]]
 - [[_COMMUNITY_Community 3794|Community 3794]]
-- [[_COMMUNITY_Community 3795|Community 3795]]
 - [[_COMMUNITY_Community 3796|Community 3796]]
 - [[_COMMUNITY_Community 3797|Community 3797]]
 - [[_COMMUNITY_Community 3798|Community 3798]]
@@ -3817,7 +3808,6 @@
 - [[_COMMUNITY_Community 3837|Community 3837]]
 - [[_COMMUNITY_Community 3838|Community 3838]]
 - [[_COMMUNITY_Community 3839|Community 3839]]
-- [[_COMMUNITY_Community 3840|Community 3840]]
 - [[_COMMUNITY_Community 3841|Community 3841]]
 - [[_COMMUNITY_Community 3842|Community 3842]]
 - [[_COMMUNITY_Community 3843|Community 3843]]
@@ -3898,82 +3888,24 @@
 - [[_COMMUNITY_Community 3918|Community 3918]]
 - [[_COMMUNITY_Community 3919|Community 3919]]
 - [[_COMMUNITY_Community 3920|Community 3920]]
-- [[_COMMUNITY_Community 3921|Community 3921]]
 - [[_COMMUNITY_Community 3922|Community 3922]]
-- [[_COMMUNITY_Community 3923|Community 3923]]
-- [[_COMMUNITY_Community 3924|Community 3924]]
-- [[_COMMUNITY_Community 3925|Community 3925]]
 - [[_COMMUNITY_Community 3926|Community 3926]]
 - [[_COMMUNITY_Community 3927|Community 3927]]
 - [[_COMMUNITY_Community 3928|Community 3928]]
-- [[_COMMUNITY_Community 3929|Community 3929]]
-- [[_COMMUNITY_Community 3930|Community 3930]]
-- [[_COMMUNITY_Community 3931|Community 3931]]
-- [[_COMMUNITY_Community 3932|Community 3932]]
-- [[_COMMUNITY_Community 3933|Community 3933]]
 - [[_COMMUNITY_Community 3934|Community 3934]]
 - [[_COMMUNITY_Community 3935|Community 3935]]
-- [[_COMMUNITY_Community 3936|Community 3936]]
-- [[_COMMUNITY_Community 3937|Community 3937]]
 - [[_COMMUNITY_Community 3938|Community 3938]]
-- [[_COMMUNITY_Community 3939|Community 3939]]
 - [[_COMMUNITY_Community 3940|Community 3940]]
 - [[_COMMUNITY_Community 3941|Community 3941]]
-- [[_COMMUNITY_Community 3942|Community 3942]]
-- [[_COMMUNITY_Community 3943|Community 3943]]
 - [[_COMMUNITY_Community 3944|Community 3944]]
-- [[_COMMUNITY_Community 3945|Community 3945]]
-- [[_COMMUNITY_Community 3946|Community 3946]]
-- [[_COMMUNITY_Community 3947|Community 3947]]
-- [[_COMMUNITY_Community 3948|Community 3948]]
-- [[_COMMUNITY_Community 3949|Community 3949]]
-- [[_COMMUNITY_Community 3950|Community 3950]]
-- [[_COMMUNITY_Community 3951|Community 3951]]
-- [[_COMMUNITY_Community 3952|Community 3952]]
-- [[_COMMUNITY_Community 3953|Community 3953]]
-- [[_COMMUNITY_Community 3954|Community 3954]]
 - [[_COMMUNITY_Community 3955|Community 3955]]
-- [[_COMMUNITY_Community 3956|Community 3956]]
 - [[_COMMUNITY_Community 3957|Community 3957]]
-- [[_COMMUNITY_Community 3958|Community 3958]]
 - [[_COMMUNITY_Community 3959|Community 3959]]
-- [[_COMMUNITY_Community 3960|Community 3960]]
-- [[_COMMUNITY_Community 3961|Community 3961]]
-- [[_COMMUNITY_Community 3962|Community 3962]]
 - [[_COMMUNITY_Community 3963|Community 3963]]
-- [[_COMMUNITY_Community 3964|Community 3964]]
-- [[_COMMUNITY_Community 3965|Community 3965]]
 - [[_COMMUNITY_Community 3966|Community 3966]]
 - [[_COMMUNITY_Community 3967|Community 3967]]
-- [[_COMMUNITY_Community 3968|Community 3968]]
 - [[_COMMUNITY_Community 3969|Community 3969]]
-- [[_COMMUNITY_Community 3970|Community 3970]]
-- [[_COMMUNITY_Community 3971|Community 3971]]
-- [[_COMMUNITY_Community 3972|Community 3972]]
-- [[_COMMUNITY_Community 3973|Community 3973]]
-- [[_COMMUNITY_Community 3974|Community 3974]]
-- [[_COMMUNITY_Community 3975|Community 3975]]
-- [[_COMMUNITY_Community 3976|Community 3976]]
-- [[_COMMUNITY_Community 3977|Community 3977]]
-- [[_COMMUNITY_Community 3978|Community 3978]]
-- [[_COMMUNITY_Community 3979|Community 3979]]
-- [[_COMMUNITY_Community 3980|Community 3980]]
-- [[_COMMUNITY_Community 3981|Community 3981]]
-- [[_COMMUNITY_Community 3982|Community 3982]]
-- [[_COMMUNITY_Community 3983|Community 3983]]
-- [[_COMMUNITY_Community 3984|Community 3984]]
-- [[_COMMUNITY_Community 3985|Community 3985]]
-- [[_COMMUNITY_Community 3986|Community 3986]]
-- [[_COMMUNITY_Community 3987|Community 3987]]
-- [[_COMMUNITY_Community 3988|Community 3988]]
 - [[_COMMUNITY_Community 3989|Community 3989]]
-- [[_COMMUNITY_Community 3990|Community 3990]]
-- [[_COMMUNITY_Community 3991|Community 3991]]
-- [[_COMMUNITY_Community 3992|Community 3992]]
-- [[_COMMUNITY_Community 3993|Community 3993]]
-- [[_COMMUNITY_Community 3994|Community 3994]]
-- [[_COMMUNITY_Community 3995|Community 3995]]
-- [[_COMMUNITY_Community 3996|Community 3996]]
 
 ## God Nodes (most connected - your core abstractions)
 1. `FullyAutonomousOrchestrator` - 665 edges
@@ -4136,59 +4068,59 @@
 - **Sprint lifecycle subsystem (ContextVar + manager + LMDB recovery)** — utils_sprint_context_sprintcontext, utils_sprint_context_sprint_scope, utils_sprint_lifecycle_sprintlifecyclemanager, utils_sprint_lifecycle_sprintlifecyclestate, utils_sprint_lifecycle_maybe_resume [INFERRED 0.85]
 - **Rate limiting subsystem (SSOT + deprecated shim)** — utils_rate_limiter_mod, utils_rate_limiters_tokenbucket, utils_rate_limiters_with_rate_limit, utils_rate_limiters_ratelimitconfig, utils_rate_limiters_ratelimitexceeded [EXTRACTED 0.95]
 
-## Communities (4003 total, 1076 thin omitted)
+## Communities (3935 total, 996 thin omitted)
 
 ### Community 0 - "Autonomous Orchestrator Core"
-Cohesion: 0.03
-Nodes (50): Sprint 3A: AO Canary Test Layer ================================ Fast, determini, Tests for checkpoint probe/save seam., Verify checkpoint probing method exists., Verify checkpoint save works with mocked state., Tests for background task tracking seam., Verify background task tracking attributes exist., Verify collector task can be started/stopped., Tests for shutdown unification seam. (+42 more)
+Cohesion: 0.00
+Nodes (245): FullyAutonomousOrchestrator, Initialize spine pattern coordinators for fetch/claims/graph/archive delegation., Security-related property coordinator., Metadata extractor for forensic analysis., Base encoding detector for text analysis., Hash identifier for cryptographic analysis., Fetch coordinator for URL fetching delegation., Claims coordinator for claim extraction delegation. (+237 more)
 
 ### Community 1 - "Memory Layer + Project Types"
-Cohesion: 0.05
-Nodes (48): EvidenceEvent, Any, datetime, float, int, str, EvidenceLog — CANONICAL EVIDENCE LEDGER =======================================, Vytvoří decision event pro Decision Ledger.          Decision events zaznamenáva (+40 more)
+Cohesion: 0.02
+Nodes (96): EvidenceEvent, EvidenceLog, Any, bool, datetime, float, int, Path (+88 more)
 
 ### Community 2 - "Hypothesis Engine + Causal Reasoning"
 Cohesion: 0.02
-Nodes (119): AnomalySignal, AnomalySignal, Any, bool, CausalEntity, CausalHypothesis, float, int (+111 more)
+Nodes (63): Any, str, Assess the credibility of an evidence source.          Args:             source:, Generate a devil's advocate argument against a hypothesis.          Args:, Generate hypotheses from observations using abductive reasoning.          Args:, Create a hypothesis from an inference engine explanation., Generate hypotheses by analyzing observation patterns., Check co-occurrence rate between two evidence groups. (+55 more)
 
 ### Community 3 - "Sprint Scheduler Lifecycle"
 Cohesion: 0.03
-Nodes (128): ClientSession, _all_js_renderers_unavailable(), _altsvc_advertises_h3(), _altsvc_cache_put(), _altsvc_extract_host(), _altsvc_http_version_for(), _altsvc_record_from_result(), async_fetch_public_text() (+120 more)
+Nodes (140): bytes, ClientSession, _all_js_renderers_unavailable(), _altsvc_advertises_h3(), _altsvc_cache_put(), _altsvc_extract_host(), _altsvc_http_version_for(), _altsvc_record_from_result() (+132 more)
 
 ### Community 4 - "Layer Manager (Ghost/Content)"
 Cohesion: 0.02
-Nodes (103): _get_mlx(), _MemoryStateManager, ProcessMessage, Any, bool, bytes, float, int (+95 more)
+Nodes (116): EntropyMaskingManager, _get_mlx(), MemoryLayer, _MemoryStateManager, ProcessMessage, Any, bool, bytes (+108 more)
 
 ### Community 5 - "Sprint Acquisition Strategy"
-Cohesion: 0.02
-Nodes (380): ContradictionResolverProgram, EpistemicGapProgram, DSPy program for identifying epistemic gaps in OSINT findings.      Inputs:, DSPy program for resolving contradictory OSINT findings.      Uses DS conflict_m, DempsterShafer, Dempster-Shafer theory implementation for hypothesis management., get_model_manager(), Vrátí globální instanci ModelManager. (+372 more)
+Cohesion: 0.01
+Nodes (421): ContradictionResolverProgram, EpistemicGapProgram, DSPy program for identifying epistemic gaps in OSINT findings.      Inputs:, DSPy program for resolving contradictory OSINT findings.      Uses DS conflict_m, DempsterShafer, Dempster-Shafer theory implementation for hypothesis management., QuantizationSelector, F203J: Selects quantization and inference budget based on UMA snapshot.      Alw (+413 more)
 
 ### Community 6 - "Semantic Workflow Engine"
 Cohesion: 0.02
-Nodes (178): Verify XOR fallback is removed - should raise error., Verify AES-256-GCM encryption path works correctly., BloomFilterStats, create_content_fingerprint(), create_url_deduplicator(), Bloom Filter - Memory-Efficient Existence Checking =============================, Get current statistics., Scalable Bloom Filter that grows as elements are added.      Automatically creat (+170 more)
+Nodes (170): Executor.map buffersize backpressure, F214H Executor Backpressure Audit, F214I Python 3.14 Import-Time, F214M-B Execution Optimizer Backpressure, execution_optimizer P95 tasks=8 << 32 threshold NO_PATCH, tools/content_miner.py, BloomFilterStats, Get current statistics. (+162 more)
 
 ### Community 7 - "Atomic Storage + Quantum Paths"
-Cohesion: 0.02
-Nodes (120): FindingEnvelope, FindingQualityDecision, DedupManager, Dedup Manager — Sprint F216G refactor ====================================  ROLE, Owns dedup storage lifecycle for DuckDBShadowStore.      Responsible for:, ActivationResult, _check_graph_capability(), FindingQualityDecision (+112 more)
+Cohesion: 0.04
+Nodes (56): FindingQualityDecision, _check_graph_capability(), FindingQualityDecision, _json_loads_flexible(), _ORJSON_DECODER(), DuckDB Shadow Analytics Sidecar — CANONICAL SPRINT FACTS STORE =================, Sprint F26X: Single-shot JSON decode that handles str | bytes | None | empty., Sprint 8W: Quality decision contract for CanonicalFinding ingest.      Fields: (+48 more)
 
 ### Community 8 - "Acquisition Lanes (Shodan/GreyNoise)"
 Cohesion: 0.01
-Nodes (263): AcquisitionContext, TokenBucket rate limiting (1 req/sec TI APIs), probe_ct_loss_stage — F232: CT loss-stage telemetry validation tests.  NO live n, When CT was missing at prelude but ct_scheduled=True later, flag is set., When CT was attempted but accepted_count=0, terminal_state is ATTEMPTED_NO_RESUL, When error='timeout' but timeout=False, _derive_terminal returns ATTEMPTED_TIMEO, When ct_log_client is None, ct_terminal_stage='skipped' and ct_scheduled=True., When error is a non-timeout value and timeout=False, terminal_state is ATTEMPTED (+255 more)
+Nodes (315): AcquisitionContext, callable, TokenBucket rate limiting (1 req/sec TI APIs), probe_ct_loss_stage — F232: CT loss-stage telemetry validation tests.  NO live n, When CT was missing at prelude but ct_scheduled=True later, flag is set., When CT was attempted but accepted_count=0, terminal_state is ATTEMPTED_NO_RESUL, When error='timeout' but timeout=False, _derive_terminal returns ATTEMPTED_TIMEO, When ct_log_client is None, ct_terminal_stage='skipped' and ct_scheduled=True. (+307 more)
 
 ### Community 9 - "Stealth Crawler"
 Cohesion: 0.02
-Nodes (146): ArchiveResult, ArchiveResurrector, ArchiveTodayClient, CDXSnapshot, CommonCrawlSnapshot, ContentSource, ContentType, discover_from_wayback() (+138 more)
+Nodes (107): float, ArchiveDiscovery, ArchiveResult, ArchiveResurrector, ArchiveTodayClient, CDXSnapshot, CommonCrawlSnapshot, ContentType (+99 more)
 
 ### Community 10 - "Embedding Pipeline + Model Manager"
 Cohesion: 0.04
-Nodes (85): available(), _check_memory_before_load(), _check_memory_guard(), CoreMLEmbedder, embed_document(), embed_query(), embed_query_async(), embed_texts_canonical() (+77 more)
+Nodes (92): ANEEmbedder, Embedder, který se pokusí použít ANE (přes CoreML) a pokud není k dispozici,, ModelType, Typy podporovaných modelů., available(), _check_memory_before_load(), _check_memory_guard(), CoreMLEmbedder (+84 more)
 
 ### Community 11 - "Orchestrator Integration Layer"
-Cohesion: 0.04
-Nodes (84): _configure_gc_for_sprint(), _derive_top_source(), dry_run_sprint(), _get_live_feed_urls(), _install_signal_handler_for_loop(), _is_meaningful_run(), main(), _make_sprint_id() (+76 more)
+Cohesion: 0.01
+Nodes (148): _load_shard_packet_safe(), Any, Path, str, Analyzuje dotaz pomocí AI., Analyze query complexity for ToT suitability.          Args:             query:, Synthesize execution results into final report., Single entry point for comprehensive autonomous analysis.          Automatically (+140 more)
 
 ### Community 12 - "Kademlia DHT + Local Graph"
-Cohesion: 0.05
-Nodes (53): bdecode(), _bdecode_fixed(), bencode(), crawl_dht_for_keyword(), _DHTBootstrapProtocol, is_dht_production_ready(), KademliaNode, lookup_info_hash_metadata() (+45 more)
+Cohesion: 0.02
+Nodes (136): DatagramTransport, bdecode(), _bdecode_fixed(), bencode(), BEP5UDPProtocol, crawl_dht_for_keyword(), _DHTBootstrapProtocol, is_dht_production_ready() (+128 more)
 
 ### Community 13 - "Tor/I2P Transport Stack"
 Cohesion: 0.01
@@ -4196,31 +4128,31 @@ Nodes (219): bool, bytes, int, ndarray, str, Any, bytes, str (+211 more)
 
 ### Community 14 - "DuckDB Shadow Store"
 Cohesion: 0.01
-Nodes (151): DuckDBShadowStore, bool, float, int, str, Sprint F202K: Ensure target_profiles table exists in DuckDB.         Safe to cal, Sprint F204D: Ensure target_memory table exists in DuckDB.         Safe to call, Sprint F224A: Ingest DHT metadata from torrent discovery.          Args: (+143 more)
+Nodes (179): FindingEnvelope, DedupManager, Owns dedup storage lifecycle for DuckDBShadowStore.      Responsible for:, ActivationResult, DuckDBShadowStore, _get_duckdb(), _json_dumps_str(), Any (+171 more)
 
 ### Community 15 - "Temporal Archaeologist"
 Cohesion: 0.02
-Nodes (122): get_data_leak_hunter(), Get or create global DataLeakHunter instance, Universal Intelligence Module — CAPABILITY FOREST, NOT PRODUCTION OWNER ========, create_stealth_crawler(), get_stealth_web_scraper(), Factory function for StealthCrawler., Get or create global StealthWebScraper instance, create_temporal_archaeologist_adapter() (+114 more)
+Nodes (120): Universal Intelligence Module — CAPABILITY FOREST, NOT PRODUCTION OWNER ========, create_stealth_crawler(), get_stealth_web_scraper(), Factory function for StealthCrawler., Get or create global StealthWebScraper instance, create_temporal_archaeologist_adapter(), Any, int (+112 more)
 
 ### Community 16 - "Hermes3 Inference Engine"
 Cohesion: 0.02
-Nodes (90): create_inference_engine(), Evidence, InferenceStep, MultiHopPath, MultiHopReasoner, Any, bool, float (+82 more)
+Nodes (98): confidence(), create_inference_engine(), create_inference_tool(), Evidence, final_score(), Hypothesis, InferenceStep, MultiHopPath (+90 more)
 
 ### Community 17 - "Autonomous Orchestrator (Research)"
-Cohesion: 0.07
-Nodes (15): Testy pro Sprint 82F: Deep Acquisition., PRF expansion vrací relevantní termíny bez stop slov., PRF vrací prázdný seznam pro dotaz pouze se stop slovy., PRF expansion je omezena na max počet termínů., Validace rozpozná platný archivní obsah., Validace odmítne CAPTCHA/challenge obsah., Validace odmítne prázdný obsah., Tor availability cache funguje. (+7 more)
+Cohesion: 0.02
+Nodes (93): autonomous_orchestrator Facade Module, FullyAutonomousOrchestrator (re-export), _check_tor_available_cached(), _commoncrawl_cdx_stream(), _extract_source_family(), _fetch_archive_today(), _get_coreml_executor(), _get_dynamic_metal_limit() (+85 more)
 
 ### Community 18 - "Enhanced Research Profiles"
-Cohesion: 0.03
-Nodes (68): enhanced_research(), EnhancedResearchOrchestrator, Any, ResearchResult, str, Perform temporal and content analysis on findings.          Args:             qu, Synthesize findings using RRF fusion and knowledge extraction.          Args:, Cross-reference findings with archive sources.          Args:             query: (+60 more)
+Cohesion: 0.04
+Nodes (56): Any, str, Perform temporal and content analysis on findings.          Args:             qu, Synthesize findings using RRF fusion and knowledge extraction.          Args:, Cross-reference findings with archive sources.          Args:             query:, Check for data leaks related to query.          Args:             query: Researc, Phase 1.5: Advanced RAG grounding via advanced_rag.RAGOrchestrator.          Bou, Phase 2.5: Stealth browser enrichment via advanced_web.StealthBrowser. (+48 more)
 
 ### Community 19 - "Sidecar Bus + E2E Benchmark"
-Cohesion: 0.02
-Nodes (135): get_rss_mb(), _light_runner(), main(), _make_light_runner(), _make_synthetic_finding(), MockDuckDBStore, MockDuckDBStore, MockTargetMemory (+127 more)
+Cohesion: 0.03
+Nodes (120): get_rss_mb(), _light_runner(), main(), _make_light_runner(), _make_synthetic_finding(), MockDuckDBStore, MockDuckDBStore, MockTargetMemory (+112 more)
 
 ### Community 20 - "Archive Discovery"
 Cohesion: 0.03
-Nodes (85): _compute_research_depth(), Sprint F192H: research_depth_metric — derived from canonical surfaces only., _derive_level_from_score(), _full_source_counts(), _mock_handoff(), _mock_handoff_with_runtime_truth(), float, MagicMock (+77 more)
+Nodes (74): _compute_research_depth(), Sprint F192H: research_depth_metric — derived from canonical surfaces only., _derive_level_from_score(), _full_source_counts(), _mock_handoff(), _mock_handoff_with_runtime_truth(), float, str (+66 more)
 
 ### Community 21 - "Execution Optimizer"
 Cohesion: 0.03
@@ -4228,39 +4160,39 @@ Nodes (73): auto_optimize(), CacheEntry, IntelligentResourceAllocator, LoadBalan
 
 ### Community 22 - "Academic Search + Query Expansion"
 Cohesion: 0.02
-Nodes (150): ABC, callable, Expansion Strategy pattern, PathPatternBase, Abstract base class for path patterns., AcademicSearchEngine, AcademicSearchResult, AcademicSource (+142 more)
+Nodes (135): ABC, Expansion Strategy pattern, AcademicSearchResult, AcademicSource, ArxivAdapter, BaseSourceAdapter, CrossrefAdapter, Any (+127 more)
 
 ### Community 23 - "Hermes3 + DSPy Signatures"
-Cohesion: 0.03
-Nodes (74): AnalysisSignature, DarkQuerySignature, EpistemicGapDetector, ExtractionSignature, HypothesisSignature, is_dspy_available(), bool, DSPy Signatures for OSINT hypothesis generation.  Minimal DSPy integration — fai (+66 more)
+Cohesion: 0.05
+Nodes (37): fallback_sanitize(), Any, float, int, str, Initialize persistent system-prompt cache (Sprint 75)., Try to load cache from disk., Formátovat zprávu do ChatML formátu.          Args:             system_msg: Syst (+29 more)
 
 ### Community 24 - "Public Fetcher (HTTP/curl_cffi)"
-Cohesion: 0.03
-Nodes (46): DatagramTransport, BEP5UDPProtocol, Exception, F214: Real BEP-5 asyncio.DatagramProtocol with future-based pending map.      Bo, Tests for DHT Real UDP Implementation (BEP-5)  Test invariants:   invariant_1 |, DHT findings include peer info in provenance tuple., Test fail-soft error handling in DHT., invariant_6: _scan_dht returns [] on LocalGraphStore error. (+38 more)
+Cohesion: 0.01
+Nodes (148): ActionResult, _ct_quick_discover(), _is_archive_mirror(), _l1_prefetch_echo(), _map_exception_to_result_type(), bool, int, Sprint 82B: Winner-only expensive path + Sprint 3C: IO-only pressure guard. (+140 more)
 
 ### Community 25 - "CLI Main + Resource Governor"
-Cohesion: 0.02
-Nodes (168): AbstractEventLoop, ArgumentParser, IOCScorer, Skóruje IOC záznamy podle zdroje a koroborace.     Výsledné skóre vždy v [0.0, 1, create_owned_store(), Sprint 8AM C.3.a: Create an owned DuckDBShadowStore instance.      Uses paths.py, BootGuardError, Raised when boot guard detects an unsafe stale-lock state.      An UNSAFE state (+160 more)
+Cohesion: 0.01
+Nodes (301): AbstractEventLoop, ArgumentParser, IOCScorer, Skóruje IOC záznamy podle zdroje a koroborace.     Výsledné skóre vždy v [0.0, 1, Sprint phase state machine BOOT→WARMUP→ACTIVE→WINDUP→EXPORT→TEARDOWN, Hard invariant: T-3min wind-down boundary in lifecycle manager, _configure_gc_for_sprint(), _derive_top_source() (+293 more)
 
 ### Community 26 - "Research Coordinator + RAG"
 Cohesion: 0.03
-Nodes (89): advanced_rag __init__ bridge, Bridge: research_coordinator → hledac.advanced_rag.rag_orchestrator.  research_c, Any, float, int, str, RAGOrchestrator, RAGOrchestrator — bounded hybrid RAG over canonical LanceDBIdentityStore.  ROLE: (+81 more)
+Nodes (75): advanced_rag __init__ bridge, Bridge: research_coordinator → hledac.advanced_rag.rag_orchestrator.  research_c, Any, float, int, str, RAGOrchestrator, RAGOrchestrator — bounded hybrid RAG over canonical LanceDBIdentityStore.  ROLE: (+67 more)
 
 ### Community 27 - "Insight Engine"
 Cohesion: 0.06
-Nodes (48): CausalRelationship, Contradiction, create_insight_engine(), Gap, Hypothesis, Insight, InsightEngine, Any (+40 more)
+Nodes (50): Anomaly, Contradiction, create_insight_engine(), Gap, Hypothesis, Insight, InsightAnalysisResult, InsightEngine (+42 more)
 
 ### Community 28 - "Deduplication Subsystem"
-Cohesion: 0.03
-Nodes (73): Return the internal executor (for test introspection)., ThreadPoolExecutor, BaseDeduplicator, DeduplicationMatch, DomainStats, DomainStatsManager, MetadataDeduplicator, Any (+65 more)
+Cohesion: 0.02
+Nodes (65): Test SimHash near-duplicate detection functions., TestSimhash, BaseDeduplicator, DomainStats, DomainStatsManager, MetadataDeduplicator, Any, bool (+57 more)
 
 ### Community 29 - "Security Coordinator"
-Cohesion: 0.06
-Nodes (42): _dedupe_edges(), EvidenceGraph, EvidenceGraphEdge, EvidenceGraphNode, int, Single entity node in the evidence network.      node_id convention: f"{ioc_type, Directed relationship between two EvidenceGraphNodes.      weight is bounded [0., Read-only evidence network assembled from a batch of findings.      Invariants: (+34 more)
+Cohesion: 0.04
+Nodes (85): _build_nx_graph(), _centrality_impl(), _coerce_entity(), _compute_relationships(), _dedupe_edges(), _dedupe_key(), _detect_contradiction_impl(), _domain_of() (+77 more)
 
 ### Community 30 - "Graph RAG + Graph Layer"
-Cohesion: 0.04
-Nodes (59): Any, bool, int, Queue, str, Analyze key paths between two nodes.          From evidence_network_analyzer.py, Analyze key paths between two nodes.          From evidence_network_analyzer.py, Get node content by ID. (+51 more)
+Cohesion: 0.02
+Nodes (101): CentralityScores, Community, GraphContradiction, Any, bool, float, int, Queue (+93 more)
 
 ### Community 31 - "Live Run Data (2026-05-12)"
 Cohesion: 0.01
@@ -4288,7 +4220,7 @@ Nodes (132): feed, live_kpi, accepted_findings, acquisition_prelude_checked, acq
 
 ### Community 37 - "Filtering Pipeline"
 Cohesion: 0.03
-Nodes (67): URL Filter & Frontier: Binary Fuse Filter + Quotient Filter, BinaryFuseFilter, EfficientFrontier, FastFilter, get_fast_filter(), get_frontier(), PersistentFrontier, Any (+59 more)
+Nodes (69): URL Filter & Frontier: Binary Fuse Filter + Quotient Filter, BinaryFuseFilter, EfficientFrontier, FastFilter, FilterStats, get_fast_filter(), get_frontier(), PersistentFrontier (+61 more)
 
 ### Community 38 - "Graph JSON Artifacts"
 Cohesion: 0.02
@@ -4296,11 +4228,11 @@ Nodes (125): clusters, 0, 1, 10, 100, 101, 102, 103 (+117 more)
 
 ### Community 39 - "Live Public Pipeline + CommonCrawl"
 Cohesion: 0.04
-Nodes (100): CommonCrawlAdapter, Fetch archived URLs from CommonCrawl CDX index.      Transport: aiohttp (mirrors, Return adapter statistics., Close any held resources. Safe to call even with session-less architecture., P17: Result of a single RL research iteration.      Attributes:         findings, ResearchResult, _add_pattern_hits_to_graph(), async_run_live_public_pipeline() (+92 more)
+Nodes (104): Any, ModernBertEngine, M1 memory: clear model and Metal cache., Extractive summarization via ModernBERT embeddings.      Replaces generate_repor, DiscoveryHit, CommonCrawlAdapter, Fetch archived URLs from CommonCrawl CDX index.      Transport: aiohttp (mirrors, Return adapter statistics. (+96 more)
 
 ### Community 40 - "CT/Passive DNS Adapters"
-Cohesion: 0.05
-Nodes (84): bool, int, async_search_crtsh(), _build_hits_from_raw(), call_crtsh(), _check_cooldown(), _clear_cooldown(), CTOutcome (+76 more)
+Cohesion: 0.04
+Nodes (109): async_search_circl_pdns(), call_circl_pdns(), _check_cooldown(), _clear_cooldown(), Provider cooldown pattern, _enter_cooldown(), _normalize_domain(), _parse_pdns_line() (+101 more)
 
 ### Community 41 - "Cryptographic Intelligence"
 Cohesion: 0.04
@@ -4308,11 +4240,11 @@ Nodes (72): CertificateAnalyzer, CertificateInfo, CipherType, ClassicalCryptanal
 
 ### Community 42 - "Threat Intel Feed Adapter"
 Cohesion: 0.03
-Nodes (108): BeautifulSoup, certstream_monitor(), CisaKevAdapter, enrich_ip_internetdb(), fetch_feodo_c2(), fetch_gopher(), fetch_i2p_eepsite(), fetch_ipfs_cid() (+100 more)
+Nodes (105): BeautifulSoup, certstream_monitor(), CisaKevAdapter, enrich_ip_internetdb(), fetch_feodo_c2(), fetch_gopher(), fetch_i2p_eepsite(), fetch_ipfs_cid() (+97 more)
 
 ### Community 43 - "Persistent Layer + Context Cache"
-Cohesion: 0.03
-Nodes (76): is_js_gated_page(), KnowledgeEdge, KnowledgeNode, parse_link_format_body(), parse_link_header(), Any, bool, float (+68 more)
+Cohesion: 0.02
+Nodes (98): Pattern, is_js_gated_page(), KnowledgeEdge, KnowledgeNode, parse_link_format_body(), parse_link_header(), Any, bool (+90 more)
 
 ### Community 44 - "Relationship Discovery"
 Cohesion: 0.03
@@ -4320,27 +4252,27 @@ Nodes (87): AffinityMatrix, Communication, Community, ConnectionPath, create_rel
 
 ### Community 45 - "Security Layer + Profiles"
 Cohesion: 0.04
-Nodes (75): DestructionResult, AuditEntry, MissionAudit, Any, bool, bytes, float, int (+67 more)
+Nodes (74): DestructionResult, AuditEntry, MissionAudit, Any, bool, bytes, float, int (+66 more)
 
 ### Community 46 - "RSS/Atom Feed Adapter"
 Cohesion: 0.04
-Nodes (93): async_discover_feed_urls(), async_fetch_feed_entries(), base_href(), _child_by_name(), _compute_freshness(), _compute_quality(), discover_feed_urls_from_html(), _entry_dedup_key() (+85 more)
+Nodes (99): async_discover_feed_urls(), async_fetch_feed_entries(), base_href(), _child_by_name(), _compute_freshness(), _compute_quality(), discover_feed_urls_from_html(), _entry_dedup_key() (+91 more)
 
 ### Community 47 - "RAG Engine + Secure Enclave"
-Cohesion: 0.04
-Nodes (69): Validate source configuration, HNSWVectorIndex, Any, bool, float, int, ndarray, str (+61 more)
+Cohesion: 0.03
+Nodes (81): BM25Index, Document, HNSWVectorIndex, Any, bool, float, int, ndarray (+73 more)
 
 ### Community 48 - "Identity Stitching"
-Cohesion: 0.04
-Nodes (65): create_identity_stitching_engine(), example_usage(), _extract_email_domain(), _extract_words(), _get_nx(), IdentityMatch, IdentityStitchingEngine, _normalize_email() (+57 more)
+Cohesion: 0.03
+Nodes (88): AttributionConfidenceScorer, IdentityProfile, enrich_candidate_with_attribution(), Post-process an IdentityCandidate to add attribution signals and evidence., create_identity_stitching_adapter(), IdentityCandidate, IdentityStitchingAdapter, Any (+80 more)
 
 ### Community 49 - "Sprint Policy + QMIX"
-Cohesion: 0.04
-Nodes (74): Konstanty pro akce agentů – sdílené napříč komponentami., rl/__init__.py Public API, Reinforcement Learning module for Hledac OSINT Orchestrator., QMIXAgent, QMixer, QMIXJointTrainer, QNetwork, QMIX: Value Decomposition Networks for Multi-Agent Reinforcement Learning. Imple (+66 more)
+Cohesion: 0.05
+Nodes (40): action_counts(), cumulative_train_steps(), _deserialize_weights(), enabled(), epsilon(), is_training_enabled(), last_action(), last_loss() (+32 more)
 
 ### Community 50 - "FindingEnvelope"
 Cohesion: 0.06
-Nodes (31): _check_mps_available(), DeepForensicsAnalyzer, bytes, float, Advanced forensics for images - EXIF, ELA, steganography detection., Initialize DeepForensicsAnalyzer.          Args:             orch: Optional orch, Compile and install stegdetect if missing., Parse GPS data from EXIF. (+23 more)
+Nodes (31): _check_mps_available(), DeepForensicsAnalyzer, array, bytes, float, Advanced forensics for images - EXIF, ELA, steganography detection., Initialize DeepForensicsAnalyzer.          Args:             orch: Optional orch, Compile and install stegdetect if missing. (+23 more)
 
 ### Community 51 - "live_run_20260512_145403.json"
 Cohesion: 0.02
@@ -4348,19 +4280,19 @@ Nodes (101): accepted_findings, acquisition_prelude_checked, acquisition_prelude
 
 ### Community 52 - "dspy_programs.py"
 Cohesion: 0.04
-Nodes (74): _compute_conflict_from_evidence(), _compute_eig_bonus(), ContradictionResolverSignature, DarkQueryProgram, DarkQuerySignature, EpistemicGapSignature, get_multi_hop_chain(), HypothesisGeneratorProgram (+66 more)
+Nodes (59): _compute_conflict_from_evidence(), _compute_eig_bonus(), ContradictionResolverSignature, DarkQueryProgram, DarkQuerySignature, EpistemicGapSignature, HypothesisGeneratorProgram, HypothesisGeneratorSignature (+51 more)
 
 ### Community 53 - "Coordinator pipeline composition"
 Cohesion: 0.05
-Nodes (66): str, Universal Coordinators =======================  Consolidated coordinators for Hl, AnonymizedRequest, AuditRecord, PrivacyConfig, PrivacyEnhancedResearch, private_research(), private_research (convenience fn) (+58 more)
+Nodes (68): str, Universal Coordinators =======================  Consolidated coordinators for Hl, AnonymizedRequest, AuditRecord, DataRetention, PrivacyConfig, PrivacyEnhancedResearch, private_research() (+60 more)
 
 ### Community 54 - "monitoring_coordinator.py"
 Cohesion: 0.04
-Nodes (58): Update current memory pressure level.          Args:             level: New memo, AlertThreshold, MetricType, MonitoringResult, Any, bool, DecisionResponse, float (+50 more)
+Nodes (57): Update current memory pressure level.          Args:             level: New memo, AlertThreshold, MetricType, MonitoringResult, Any, bool, DecisionResponse, float (+49 more)
 
 ### Community 55 - "HermesInferenceOutput"
-Cohesion: 0.05
-Nodes (82): HermesInferenceOutput, get_penalty_multiplier, HypothesisFeedbackSummary, Aggregated feedback summary per (target_id, pivot_type, ioc_type).      Fields:, apply_scoring_metadata(), _cheap_score_finding(), _deserialize_envelope(), estimate_pivot_cost() (+74 more)
+Cohesion: 0.04
+Nodes (89): HermesInferenceOutput, from_dict(), HermesInferenceOutput, Any, str, F256: HermesInferenceOutput contract — cross-sprint data transfer object.  Canon, Hermes3Engine structured inference output for pivot planning., get_penalty_multiplier (+81 more)
 
 ### Community 56 - "live_run_150s.json"
 Cohesion: 0.02
@@ -4383,16 +4315,16 @@ Cohesion: 0.02
 Nodes (96): accepted_findings, acquisition_prelude_checked, acquisition_prelude_duration_s, acquisition_prelude_errors, acquisition_prelude_missing_lanes, acquisition_prelude_ran, acquisition_prelude_reason, acquisition_prelude_required_lanes (+88 more)
 
 ### Community 61 - "AIMD Adaptive Concurrency"
-Cohesion: 0.04
-Nodes (55): _create_dedup_strategy(), FetchCoordinatorConfig, Any, bool, float, int, str, Initialize coordinator. (+47 more)
+Cohesion: 0.03
+Nodes (57): FetchCoordinatorConfig, Any, bool, float, int, str, Return supported operation types., Handle a decision request (required by UniversalCoordinator base).          For (+49 more)
 
 ### Community 62 - "ner_engine.py"
-Cohesion: 0.05
-Nodes (63): _build_cooccurrence_pivots(), build_entity_cooccurrence_map(), build_entity_summary(), _corroborated_findings(), _dominant_type(), _extract_cooccurrence_hints_from_text(), extract_entities_from_findings(), extract_entities_from_texts() (+55 more)
+Cohesion: 0.04
+Nodes (72): _build_cooccurrence_pivots(), build_entity_cooccurrence_map(), build_entity_summary(), _corroborated_findings(), _dominant_type(), _extract_cooccurrence_hints_from_text(), extract_entities_from_findings(), extract_entities_from_texts() (+64 more)
 
 ### Community 63 - "_lazy.py"
 Cohesion: 0.05
-Nodes (41): ANEEmbedder, ANE_MLX_Mutex, ANEStatus, ANEStatusResult, _coreml_embed(), get_ane_status(), get_ane_telemetry(), _get_flashrank_reranker() (+33 more)
+Nodes (44): ANEEmbedder, ANE_MLX_Mutex, ANEStatus, ANEStatusResult, _coreml_embed(), get_ane_mlx_mutex(), get_ane_status(), get_ane_telemetry() (+36 more)
 
 ### Community 64 - "CacheEntry"
 Cohesion: 0.04
@@ -4400,75 +4332,75 @@ Nodes (67): CacheEntry, cache_decorator(), cached_context(), CacheEntry, CacheLo
 
 ### Community 65 - "ExportEncryptionEnvelope"
 Cohesion: 0.05
-Nodes (73): ExportEncryptionEnvelope, HPKEStatus, compute_aad_hash(), create_export_backend(), decrypt_export_bundle(), Decryptability, encrypt_export_bundle(), ExportEncryptionEnvelope (+65 more)
+Nodes (71): ExportEncryptionEnvelope, HPKEStatus, compute_aad_hash(), create_export_backend(), decrypt_export_bundle(), Decryptability, encrypt_export_bundle(), ExportEncryptionEnvelope (+63 more)
 
 ### Community 66 - ".analyze_image"
-Cohesion: 0.04
-Nodes (75): BinaryIO, Document, UniversalMetadataExtractor (re-export), Universal metadata extractor for OSINT analysis.      Extracts comprehensive met, Initialize extractor and cache., UniversalMetadataExtractor, CrossDocumentLink, DocumentAnalysis (+67 more)
+Cohesion: 0.03
+Nodes (84): BinaryIO, Document, CrossDocumentLink, DocumentAnalysis, DocumentMetadata, DocumentType, EmbeddedObject, EntityMention (+76 more)
 
 ### Community 67 - "archive_coordinator.py"
 Cohesion: 0.03
-Nodes (81): Any, bool, DecisionResponse, float, int, OperationResult, OperationType, str (+73 more)
+Nodes (80): Any, bool, DecisionResponse, float, int, OperationResult, str, Universal Security Coordinator ==============================  Integrated securi (+72 more)
 
 ### Community 68 - "Lazy MLX optional"
 Cohesion: 0.05
 Nodes (40): _ARC, CacheEntry, _get_mlx(), MemoryOptimizedURLSet, Any, bool, float, int (+32 more)
 
 ### Community 69 - "deep_probe.py"
-Cohesion: 0.04
-Nodes (60): DatePathPattern, DeepProbeScanner, DiscoveredEndpoint, DorkingEngine, FilePathPattern, generate_ipfs_dorks(), generate_s3_dorks(), MemoryOptimizedURLSet (+52 more)
+Cohesion: 0.02
+Nodes (93): ComprehensiveResearchResult, DiscoveryDepth, autonomous_research(), AutonomousStrategy, ComprehensiveResearchResult, deep_research(), DiscoveryDepth, Sprint 82D: Vypršené entry z backlogu. (+85 more)
 
 ### Community 70 - ".flags_baseline.json"
 Cohesion: 0.02
 Nodes (86): autonomous_orchestrator.py, autonomy/agent_meta_optimizer.py, autonomy/__init__.py, brain/ane_embedder.py, brain/distillation_engine.py, brain/dynamic_model_manager.py, brain/gnn_predictor.py, brain/hermes3_engine.py (+78 more)
 
 ### Community 71 - "text_analyzer_facade.py"
-Cohesion: 0.06
-Nodes (36): BidiFinding, create_and_initialize_unicode_analyzer(), create_unicode_analyzer(), HomoglyphFinding, NormalizationFinding, Any, bool, float (+28 more)
+Cohesion: 0.07
+Nodes (30): BidiFinding, HomoglyphFinding, NormalizationFinding, Any, bool, float, int, Path (+22 more)
 
 ### Community 72 - "flow_trace.py"
 Cohesion: 0.06
-Nodes (87): _ensure_file_open(), flush(), _flush_atexit(), get_summary(), _get_trace_paths(), _get_trace_root(), is_enabled(), _merge_metadata() (+79 more)
+Nodes (85): _ensure_file_open(), flush(), _flush_atexit(), get_summary(), _get_trace_paths(), _get_trace_root(), _merge_metadata(), Any (+77 more)
 
 ### Community 73 - "exposure_correlator.py"
-Cohesion: 0.05
-Nodes (71): Asset, AssetSignal, _async_candidate_gen(), _check_takeover_provider(), _classify_jarm_hosting(), correlate_exposure_signals(), _correlate_signals(), create_exposure_correlator_adapter() (+63 more)
+Cohesion: 0.04
+Nodes (87): Asset, AssetSignal, _async_candidate_gen(), _check_bucket_head(), _check_takeover_provider(), _classify_jarm_hosting(), correlate_exposure_signals(), _correlate_signals() (+79 more)
 
 ### Community 74 - "analyzer.py"
 Cohesion: 0.03
-Nodes (65): _build_document_envelope(), DocumentExtractor, DocumentResult, _extract_file_path_from_payload(), _file_has_multimodal_support(), _lazy_load_modules(), Any, bool (+57 more)
+Nodes (79): _build_document_envelope(), DocumentResult, _extract_file_path_from_payload(), _file_has_multimodal_support(), _lazy_load_modules(), Any, bool, bytes (+71 more)
 
 ### Community 75 - "dspy_optimizer.py"
 Cohesion: 0.04
-Nodes (66): distil(), Předprocesuje findings přes DistillationEngine před synthesis.      Výstup: komp, load_optimized_prompts(), Lazy load DSPy optimalizované prompty z cache.      Vrací:         dict: {task_k, _build_osint_json_schema(), _distill_findings(), export_report(), _extract_text_iocs_from_finding() (+58 more)
+Nodes (63): load_optimized_prompts(), Lazy load DSPy optimalizované prompty z cache.      Vrací:         dict: {task_k, _build_osint_json_schema(), _distill_findings(), export_report(), _extract_text_iocs_from_finding(), _get_cached_grammar(), _get_dspy_optimizer() (+55 more)
 
 ### Community 76 - "stix_exporter.py"
 Cohesion: 0.07
-Nodes (88): _bound_forensic_object_content(), _build_attack_pattern_object(), _build_attribution_note(), _build_campaign_object(), _build_cti_report(), _build_diagnostic_identity(), _build_diagnostic_note(), _build_diagnostic_uma_note() (+80 more)
+Nodes (89): _bound_forensic_object_content(), _build_attack_pattern_object(), _build_attribution_note(), _build_campaign_object(), _build_cti_report(), _build_diagnostic_identity(), _build_diagnostic_note(), _build_diagnostic_uma_note() (+81 more)
 
 ### Community 77 - "Canonical authority: ToolRegistry.execute_with_limits"
-Cohesion: 0.05
-Nodes (56): Reset budget manager to initial state, Canonical authority: ToolRegistry.execute_with_limits(), Ghost Bridge typed seam, STUB_METADATA truthful distinguishability, action_has_canonical_tool(), _ACTION_TO_CANONICAL_TOOL mapping, ActionResult, ActionType (+48 more)
+Cohesion: 0.06
+Nodes (52): Canonical authority: ToolRegistry.execute_with_limits(), Ghost Bridge typed seam, STUB_METADATA truthful distinguishability, action_has_canonical_tool(), _ACTION_TO_CANONICAL_TOOL mapping, ActionResult, ActionType, get_action_canonical_tool_mapping() (+44 more)
 
 ### Community 78 - "dark_web_intelligence.py"
-Cohesion: 0.02
-Nodes (82): CanonicalFinding to_dict pattern (rationale), CryptocurrencyAnalyzer, darkweb_content_to_canonical(), DarkWebContent, DarkWebSource, dht_content_to_canonical(), HiddenService, OnionType (+74 more)
+Cohesion: 0.03
+Nodes (79): CryptocurrencyAnalyzer, darkweb_content_to_canonical(), DarkWebContent, DarkWebSource, dht_content_to_canonical(), HiddenService, OnionType, PGPKeyInfo (+71 more)
 
 ### Community 79 - "AdversarialReport"
 Cohesion: 0.04
-Nodes (96): AdversarialReport, Any, bool, float, Hypothesis, int, str, Hypothesis (+88 more)
+Nodes (94): AdversarialReport, Any, bool, float, Hypothesis, int, str, Hypothesis (+86 more)
 
 ### Community 80 - "gopher_crawler.py"
 Cohesion: 0.10
 Nodes (22): GopherResponse, float, int, str, Fetch a gopher:// URL.          Args:             url: gopher://host[:port]/sele, Perform the actual Gopher request., Parse gopher:// URL into (host, port, selector)., Parse gopher:// URL into (host, port, selector). (+14 more)
 
 ### Community 81 - "metadata_extractor.py"
-Cohesion: 0.07
-Nodes (8): Konstanty pro propagation jsou definovány., Propagation hints storage je implementován., Propagation depth je inicializován., Analyze state vrací propagation hints., Identity stitching handler vrací propagation hints v metadata., Score boost z propagation hints je aplikován., Low-value domény jsou filtrovány., Action diversity guard je implementován.
+Cohesion: 0.11
+Nodes (10): Sprint: Identity Propagation via Scoring Injection, Konstanty pro propagation jsou definovány., Propagation hints storage je implementován., Propagation depth je inicializován., Analyze state vrací propagation hints., Identity stitching handler vrací propagation hints v metadata., Score boost z propagation hints je aplikován., Low-value domény jsou filtrovány. (+2 more)
 
 ### Community 82 - "UniversalMetadataExtractor (re-export)"
 Cohesion: 0.03
-Nodes (86): ArchiveMetadata, AttributionData, AudioMetadata, CADMetadata, create_metadata_extractor(), DocxMetadata, _exif_to_float(), _extract_macro_urls() (+78 more)
+Nodes (103): _load_digital_ghost_detector(), _load_metadata_extractor(), _load_steganography_detector(), Universal Forensics Module ==========================  Digital forensics and met, Lazy load steganography detector module.      NOTE: forensics/steganography_dete, Lazy load digital ghost detector module.      NOTE: forensics/digital_ghost_dete, Lazy load metadata extractor module., UniversalMetadataExtractor (re-export) (+95 more)
 
 ### Community 83 - ".insert_run"
 Cohesion: 0.02
@@ -4479,8 +4411,8 @@ Cohesion: 0.05
 Nodes (45): DefenseAction, main(), Initialize threat intelligence sources, Initialize machine learning models for threat analysis, Start continuous threat intelligence gathering, Gather threat intelligence from all configured sources, Gather malware domain intelligence, Gather file reputation intelligence (+37 more)
 
 ### Community 85 - "F234: Enable context"
-Cohesion: 0.04
-Nodes (44): CompressedContext, CompressedContext, DecompressionResult, _deserialize_compressed(), _list_to_ndarray(), _ndarray_to_list(), Any, bytes (+36 more)
+Cohesion: 0.05
+Nodes (47): F234: Enable context compression when prompt exceeds token_threshold.          A, CompressedContext, CompressedContext, ContextCompressor, DecompressionResult, _deserialize_compressed(), _list_to_ndarray(), _ndarray_to_list() (+39 more)
 
 ### Community 86 - "DatePathPattern"
 Cohesion: 0.11
@@ -4488,27 +4420,27 @@ Nodes (15): BatchScheduler, BatchScheduler — Pure asyncio continuous batch sch
 
 ### Community 87 - "Non-feed adapter to"
 Cohesion: 0.09
-Nodes (52): Non-feed adapter to CanonicalFinding bridge (F207K-A), RejectionReason, academic_results_to_findings(), _canonical_finding(), _dataclass_to_dict(), doh_results_to_findings(), _make_blake2b_hex(), _make_ct_conversion_summary() (+44 more)
+Nodes (54): Non-feed adapter to CanonicalFinding bridge (F207K-A), RejectionReason, academic_results_to_findings(), _canonical_finding(), _dataclass_to_dict(), doh_results_to_findings(), _make_blake2b_hex(), _make_ct_conversion_summary() (+46 more)
 
 ### Community 88 - "Adaptive coordination cycle"
-Cohesion: 0.03
-Nodes (60): Adaptive coordination cycle pattern, AdaptiveStrategy, ConsensusProposal, Any, bool, float, int, str (+52 more)
-
-### Community 89 - "_derive_continue_reason"
-Cohesion: 0.03
-Nodes (49): EvidenceLog, bool, Path, Exportuje log do JSONL souboru pro replay mode.          M1 8GB: Pokud je již pe, Zmrazí log - přepne do read-only režimu, Writes a manifest JSON file next to the persist path.          The manifest cont, Async cleanup: shutdown flush worker, close SQLite, close persist file., Close persist file with idempotency guard (runs in thread). (+41 more)
+Cohesion: 0.05
+Nodes (44): Adaptive coordination cycle pattern, AdaptiveStrategy, Any, bool, float, int, str, Update node reputation based on task result. (+36 more)
 
 ### Community 90 - "init.py"
 Cohesion: 0.06
 Nodes (34): DSPyOptimizer, int, F234: Generate synthetic (query, answer) training pairs from packet data., Load training examples from evidence JSONL files.          Reads from EVIDENCE_R, Load training data from evidence log and run DSPy., Filter examples by quality heuristics., Check if system is idle enough (CPU < 15%, RAM > 4GB, not on battery unless >80%, ModelLifecycle (+26 more)
+
+### Community 91 - "capabilities.py"
+Cohesion: 0.02
+Nodes (61): _is_malformed_url(), float, Sprint 82B: Check if action is expensive (GPU/MLX heavy)., Sprint 82B: Get the winner lane ID (highest priority).          Returns lane_id, Sprint 82B: Filter out expensive actions for non-winner lanes.          Returns, Sprint 82D: Admissibility gate - rozhoduje zda kandidát smí do užšího výběru., Sprint 82E: Rozšířená inference content typu z URL (bez network call)., Sprint 82D: Plynulá penalizace/bonus pro source-family coverage.         Spojité (+53 more)
 
 ### Community 92 - "communication_layer.py"
 Cohesion: 0.15
 Nodes (8): Any, str, Register an agent with the communication system., Broadcast message to multiple agents.          Args:             message: Messag, Encode message using vocabulary compression.          Args:             message:, Decode vocabulary-compressed message., Create A2A protocol task., Get communication layer statistics.
 
 ### Community 93 - "ConnectedCoordinationSystem"
-Cohesion: 0.04
-Nodes (71): ConnectedCoordinationSystem, ConnectedCoordinationSystem, CoordinationTask, demo_connected_coordination(), Any, float, str, Setup all coordination layers with their specialized nodes (+63 more)
+Cohesion: 0.03
+Nodes (77): ConnectedCoordinationSystem, ConnectedCoordinationSystem, CoordinationTask, demo_connected_coordination(), Any, float, str, Connected Coordination System - Hive Mind Integration Layer ==================== (+69 more)
 
 ### Community 94 - "UniversalCoordinator template method"
 Cohesion: 0.03
@@ -4516,35 +4448,35 @@ Nodes (48): CoordinatorCapabilities, _do_initialize(), Any, bool, float, int, st
 
 ### Community 95 - "ContrastiveLearning"
 Cohesion: 0.03
-Nodes (109): ArchiveCoordinatorConfig, int, ArchiveCoordinator - Delegates archive escalation to coordinator ===============, Configuration for ArchiveCoordinator., DecisionResponse, get_supported_operations(), handle_request(), OperationResult (+101 more)
+Nodes (118): DecisionResponse, get_supported_operations(), handle_request(), OperationResult, OperationType, Universal Coordinator Base ==========================  Consolidated base class i, Universal operation types supported by coordinators., Record operation result for metrics. (+110 more)
 
 ### Community 96 - "research_context.py"
 Cohesion: 0.04
-Nodes (50): api_calls_remaining(), BudgetState, confirmed_count(), ContextHandoffMetadata, Entity, EntityType, ErrorRecord, ErrorSeverity (+42 more)
+Nodes (48): api_calls_remaining(), confirmed_count(), ContextHandoffMetadata, Entity, EntityType, ErrorRecord, ErrorSeverity, evidence_balance() (+40 more)
 
 ### Community 97 - "FlowTrace trace_event"
-Cohesion: 0.05
-Nodes (42): FlowTrace trace_event, FlowTraceSnapshotEmitter, MemoryPressure, PerformanceMetrics, PerformanceMonitor, Any, bool, float (+34 more)
+Cohesion: 0.04
+Nodes (44): FlowTrace trace_event, is_enabled(), Check if tracing is enabled., FlowTraceSnapshotEmitter, MemoryPressure, PerformanceMetrics, PerformanceMonitor, Any (+36 more)
 
 ### Community 98 - "init.py"
-Cohesion: 0.06
-Nodes (45): ActionType, GhostConfig, GhostLayer, ProcessInfo, ActionResult, Any, bool, str (+37 more)
+Cohesion: 0.05
+Nodes (51): ActionType, GhostConfig, GhostLayer, ProcessInfo, ProcessType, ActionResult, Any, bool (+43 more)
 
 ### Community 99 - "._dht_bootstrap_fallback"
-Cohesion: 0.10
-Nodes (51): _accepted_findings(), _acquisition_report(), _acquisition_schema_version(), _callback_executed_count(), _ct_accepted(), _ct_provider_status(), _ct_quarantine_count(), _discovery_not_wired_providers() (+43 more)
+Cohesion: 0.07
+Nodes (73): Sprint F235D: Source Family Canonicalization — Standalone Unit Tests  Run via: p, Assertion 15: live_artifact_triage reads canonical family field case-insensitive, _has_feed must read 'family' key (F235D canonical), not legacy 'source_family'., _has_feed must also handle legacy 'source_family' key for backward compat., TestLiveArtifactTriageDownstream, _accepted_findings(), _acquisition_report(), _acquisition_schema_version() (+65 more)
 
 ### Community 100 - "passive_fingerprint.py"
-Cohesion: 0.02
-Nodes (181): MITRE ATT&CK Kill Chain, _handle_shodan_enrich(), DiscoveryHit, _build_findings(), _get_credentials(), CanonicalFinding, float, int (+173 more)
+Cohesion: 0.10
+Nodes (26): MITRE ATT&CK Kill Chain, _add_pattern(), _compile(), create_kill_chain_tagger(), _extract_text(), _get_finding_id(), ioc_to_technique_ids(), KillChainTag (+18 more)
 
 ### Community 101 - "get_model_lifecycle_status"
-Cohesion: 0.07
-Nodes (31): ParallelResearchScheduler, PrioritizedTask, Any, bool, float, Future, int, str (+23 more)
+Cohesion: 0.06
+Nodes (70): CanonicalGroundingHints, _BudgetHints, _build_source_plan(), deep_research(), deep_research_provider_seam(), DeepResearchGroundingShim, DeepResearchRequest, DeepResearchResponse (+62 more)
 
 ### Community 102 - "init.py"
 Cohesion: 0.08
-Nodes (36): create_config(), create_config, for_mode(), from_env(), get_preset(), load_config_from_file(), load_config_from_file, M1Presets (+28 more)
+Nodes (34): DeepResearchConfig, ExplorationNode, ExplorationStrategy, GhostMission, Any, bool, int, str (+26 more)
 
 ### Community 103 - "Assign"
 Cohesion: 0.16
@@ -4555,28 +4487,28 @@ Cohesion: 0.12
 Nodes (15): cache_size(), Any, float, int, str, target_memory.py — Sprint F204D TargetMemoryService: bounded cross-sprint target, Compute bounded key-level delta between existing and new facets.          Return, Sprint F206H: Compute deterministic, bounded list of drift reason strings. (+7 more)
 
 ### Community 105 - "advanced_image_osint.py"
-Cohesion: 0.13
-Nodes (16): AdvancedImageOSINT, ImageAnalysis, ImageSearchEngine, OCREngine, OCRResult, PerceptualHashGenerator, Advanced Image OSINT Module ===========================  Comprehensive image int, Generate perceptual hashes for image similarity detection.      Useful for: (+8 more)
+Cohesion: 0.06
+Nodes (44): AdvancedImageOSINT, AdvancedSteganalysis, hamming_distance(), ImageAnalysis, ImageHash, ImageSearchEngine, OCREngine, OCRResult (+36 more)
 
 ### Community 106 - "PQIndex"
-Cohesion: 0.07
-Nodes (34): ParallelResearchScheduler, PrefetchOracle, bool, float, int, ndarray, PQIndex, RelationshipDiscoveryEngine (+26 more)
+Cohesion: 0.03
+Nodes (85): PQIndex, array, bool, float, int, str, Encode vectors to PQ codes.          Args:             vectors: MLX array of sha, Add a single vector to the index.          Args:             node_id: Unique ide (+77 more)
 
 ### Community 107 - "run_sprint82j_benchmark.py"
 Cohesion: 0.01
-Nodes (214): BenchmarkAcquisitionMetrics, BenchmarkConfig, BenchmarkEvidenceSummary, BenchmarkGatingMetrics, BenchmarkLaneMetrics, BenchmarkMemoryMetrics, BenchmarkMetricsSummary, BenchmarkPhaseMetrics (+206 more)
+Nodes (189): BenchmarkAcquisitionMetrics, BenchmarkConfig, BenchmarkEvidenceSummary, BenchmarkGatingMetrics, BenchmarkLaneMetrics, BenchmarkMemoryMetrics, BenchmarkMetricsSummary, BenchmarkPhaseMetrics (+181 more)
 
 ### Community 108 - "No --disable-gpu on"
-Cohesion: 0.12
-Nodes (12): Update MLX linear regression model from history., Release resources and record actual usage for learning., Resource budget for a request., Predictive resource allocator with:     - MAX_CONCURRENT: Maximum concurrent req, ResourceAllocator, ResourceBudget, Testy pro prediktivní resource allocator., Ověří inicializaci allocatoru. (+4 more)
+Cohesion: 0.10
+Nodes (18): Any, Extract feature vector for RAM prediction., Predict RAM usage for a context using MLX linear regression., Check if a new request can be accepted., Acquire resources for a new request., Get current allocator statistics., Resource budget for a request., Raised when resources cannot be allocated. (+10 more)
 
 ### Community 109 - "execution_coordinator.py"
 Cohesion: 0.06
 Nodes (39): ExecutionResult, ExecutionTask, Any, DecisionResponse, float, int, str, Universal Execution Coordinator ===============================  Integrated exec (+31 more)
 
 ### Community 110 - "exposure_clients.py"
-Cohesion: 0.08
-Nodes (31): CVIntelligenceClient, _default_deserializer(), _default_serializer(), Any, bool, bytes, ClientSession, float (+23 more)
+Cohesion: 0.16
+Nodes (15): _default_deserializer(), _default_serializer(), Any, bool, bytes, str, Synchroní LMDB get. Vrací cached data nebo None.         Kontroluje TTL., Synchroní LMDB set. Vrací True při úspěchu.         Single-writer přes DB_EXECUT (+7 more)
 
 ### Community 111 - "dedup_determinism_benchmark.py"
 Cohesion: 0.03
@@ -4584,27 +4516,27 @@ Nodes (67): _compute_simhash_fingerprint(), _cosine_similarity(), find_near_dupl
 
 ### Community 112 - "gnn_predictor.py"
 Cohesion: 0.06
-Nodes (35): _ensure_mlx_gnn(), get_anomaly_scores(), GraphSAGE, _infer_rel_type(), _most_common_rel(), neighbor_sampling(), predict_from_edge_list(), Any (+27 more)
+Nodes (45): _ensure_mlx_gnn(), get_anomaly_scores(), GNNPredictor, GraphSAGE, _infer_rel_type(), _most_common_rel(), neighbor_sampling(), predict_from_edge_list() (+37 more)
 
 ### Community 113 - "core package facade"
 Cohesion: 0.03
-Nodes (77): core package facade, apply_task_prefix(), assert_embedding_dimension(), compute_similarity(), EmbeddingDimensionError, EmbeddingTask, encode_texts(), get_embedding_info() (+69 more)
+Nodes (76): core package facade, apply_task_prefix(), assert_embedding_dimension(), compute_similarity(), EmbeddingDimensionError, EmbeddingTask, encode_texts(), get_embedding_info() (+68 more)
 
 ### Community 114 - "performance_coordinator.py"
-Cohesion: 0.20
-Nodes (6): Test 7: Text report includes new timing fields., Report shows 'Research loop: Xs'., Report shows 'Teardown: Xs'., Report shows echo rejection rate., Report has ## LOOP YIELD COUNTERS section., TestSynthesizedReportFields
+Cohesion: 0.04
+Nodes (28): Sprint 8B: Throughput Recovery + Duration Truth  Tests for: - Truthful timing br, Rate is 0 when no echo rejects., Rate is 0 when both admits and rejects are 0., Test 5: Per-action latency stats in summary., action_latency_stats has count/total_ms/max_ms per action., Mean latency = total_ms / count., Test 7: Text report includes new timing fields., Report shows 'Research loop: Xs'. (+20 more)
 
 ### Community 115 - "open_source_collectors.py"
 Cohesion: 0.06
-Nodes (55): _ParseMode, Parse-mode observability labels for internal/tracking use., FetchResult, Frozen msgspec result — no mutations after construction.      Backward-compatibl, FetchResult, AcademicPaper, ChatMessage, _check_gathered() (+47 more)
+Nodes (49): FetchResult, Frozen msgspec result — no mutations after construction.      Backward-compatibl, AcademicPaper, ChatMessage, _check_gathered(), CourtCase, EdgarFiling, _extract_secrets() (+41 more)
 
 ### Community 116 - "quantum_safe.py"
 Cohesion: 0.04
-Nodes (59): EntropyPool, from_dict(), NeuromorphicCryptoEngine, Any, bool, bytes, int, ndarray (+51 more)
+Nodes (51): EntropyPool, NeuromorphicCryptoEngine, Any, bool, bytes, int, ndarray, str (+43 more)
 
 ### Community 117 - "dedup.py"
 Cohesion: 0.05
-Nodes (37): _load_dedup_hot_cache_max(), Any, bool, bytearray, bytes, float, int, str (+29 more)
+Nodes (38): _load_dedup_hot_cache_max(), Any, bool, bytearray, bytes, float, int, str (+30 more)
 
 ### Community 118 - ".aclose"
 Cohesion: 0.06
@@ -4623,36 +4555,36 @@ Cohesion: 0.07
 Nodes (35): FakeAcquisitionLaneOutcome, FakeCanonicalFinding, FakeCTHit, FakeDuckDBStore, FakePipelineRunResult, Sprint R5X: Nonfeed Integration Truth Guard ====================================, Fake AcquisitionLaneOutcome for testing., Fake DuckDB store that captures ingested candidates. (+27 more)
 
 ### Community 122 - "AnalystAnswer"
-Cohesion: 0.07
-Nodes (33): Any, float, str, Extract key findings as strings from the findings list.          Uses extractive, Extract key findings as strings from the findings list.          Uses extractive, Derive next actions from high-confidence findings.          Uses source_type and, Derive next actions from high-confidence findings.          Uses source_type and, Derive open questions from gaps in findings and graph.          Checks for commo (+25 more)
+Cohesion: 0.06
+Nodes (38): Any, float, int, str, Extract key findings as strings from the findings list.          Uses extractive, Extract key findings as strings from the findings list.          Uses extractive, Derive next actions from high-confidence findings.          Uses source_type and, Derive next actions from high-confidence findings.          Uses source_type and (+30 more)
 
 ### Community 123 - "htn_planner.py"
-Cohesion: 0.02
-Nodes (178): AdaptiveCostModel, F200A Prefetch Oracle Advisory, Lazy Import Stack Pattern, Sprint 8N Typed Planner→Runtime Bridge, Priority, Hlídá zdroje a rozhoduje, zda je možné provést náročnou operaci., Nastaví cost model pro predikci rizika překročení budgetu., Vrací async context manager pro rezervaci zdrojů. Samotná metoda je synchronní. (+170 more)
+Cohesion: 0.01
+Nodes (217): AdaptiveCostModel, F200A Prefetch Oracle Advisory, Lazy Import Stack Pattern, Sprint 8N Typed Planner→Runtime Bridge, _is_meaningful_run function, main CLI dispatcher, run_sprint canonical entrypoint, _runtime_truth function (+209 more)
 
 ### Community 124 - "run_comprehensive_tests.py"
-Cohesion: 0.09
-Nodes (36): blue(), bold(), color(), cyan(), dim(), green(), main(), MemorySnapshot (+28 more)
+Cohesion: 0.07
+Nodes (42): blue(), bold(), color(), cyan(), dim(), green(), main(), MemoryMonitor (+34 more)
 
 ### Community 125 - "f234_validate_nonfeed_live_report.py"
 Cohesion: 0.07
 Nodes (62): _all_source_family_outcomes(), _branch_counts(), _branch_mix(), _check_acquisition_fallback(), _check_acquisition_profile(), _check_acquisition_terminality(), _check_advisory_telemetry(), _check_ct_planned() (+54 more)
 
 ### Community 126 - "m1_mlx_stream_uma_probe.py"
-Cohesion: 0.11
-Nodes (27): get_memory_snapshot(), get_metal_mb(), get_rss_mb(), main(), print_snapshot(), float, str, BudgetBenchmarkResult (+19 more)
+Cohesion: 0.07
+Nodes (41): BudgetBenchmarkResult, _format_summary(), get_rss_gib(), main(), MISSION_PEAK_RSS_GIB (constant: M1 8GB peak threshold), _MockFinding (test stub: synthetic finding for budget sim), Any, bool (+33 more)
 
 ### Community 127 - "ANEEmbedder"
-Cohesion: 0.06
-Nodes (34): create_distillation_engine(), CriticMLP, _CriticMLPBase, DistillationExample, _findings_to_text(), Any, bool, float (+26 more)
+Cohesion: 0.05
+Nodes (46): array, create_distillation_engine(), CriticMLP, _CriticMLPBase, distil(), DistillationEngine, _findings_to_text(), _load_distillation() (+38 more)
 
 ### Community 128 - "ContextCache (from context_optimization/context_cache.py)"
-Cohesion: 0.08
-Nodes (18): _get_np(), _get_sparse(), MemoryPattern, Lazy scipy.sparse loader - defers ~227ms import cost until first use., Return numpy module. Defined at module level for type compatibility., A memory pattern stored in neuromorphic memory.      Attributes:         pattern, Apply exponential decay to memory strength., Reinforce memory strength (capped at 1.0). (+10 more)
+Cohesion: 0.33
+Nodes (4): MemoryPattern, A memory pattern stored in neuromorphic memory.      Attributes:         pattern, Apply exponential decay to memory strength., Apply decay to all memory strengths.
 
 ### Community 129 - "formatters.py"
-Cohesion: 0.04
-Nodes (136): _derive_branch_seeds(), _derive_focus_expand(), _derive_trend_seeds(), _get_correlation_from_handoff(), _get_runtime_truth(), Sprint F232A: Extract runtime_truth from ExportHandoff.      Truth order (fail-s, _compute_runtime_diagnosis(), _extract_runtime_timing() (+128 more)
+Cohesion: 0.06
+Nodes (86): ExportFormatter, JSONFormatter, Any, bool, str, Format sprint export as JSON artifact.          This method contains the current, Abstract base class for export formatters.      Each formatter encapsulates its, Sprint F232A: Render compact Investigation Packet markdown section.      Determi (+78 more)
 
 ### Community 130 - "input_detector.py"
 Cohesion: 0.07
@@ -4660,7 +4592,7 @@ Nodes (41): analyze_input(), ComplexityScore, create_input_detector(), detect_fi
 
 ### Community 131 - "benchmark_url_set.py"
 Cohesion: 0.05
-Nodes (40): benchmark_python_set(), benchmark_rust_url_set(), int, str, run_benchmark(), Test xxhash integration., Test fast_hash can be imported., Test fast_hash is deterministic. (+32 more)
+Nodes (43): benchmark_python_set(), benchmark_rust_url_set(), int, str, run_benchmark(), _create_dedup_strategy(), Create the dedup strategy used by FetchCoordinator.      Sprint F214AD: Factory, Test fast_hash can be imported. (+35 more)
 
 ### Community 132 - "research_loop.py"
 Cohesion: 0.04
@@ -4668,59 +4600,59 @@ Nodes (58): from_dict(), _json_dumps(), _json_loads(), Any, bytes, float, int, s
 
 ### Community 133 - "SecureSession"
 Cohesion: 0.08
-Nodes (45): SecureSession, AuditConfig, AuditEventType, AuditLevel, AuditLogger, Audit Forensics - Audit Trail pro Ultra Deep Research  Pro: - Auditování výzkumn, Logger pro auditování s integrity protection.      Ukládá audit trail pro:     -, Inicializovat databázi (+37 more)
+Nodes (51): Lazy initialization of SecureDestructor, SecureSession, AuditConfig, AuditEventType, AuditLevel, AuditLogger, Audit Forensics - Audit Trail pro Ultra Deep Research  Pro: - Auditování výzkumn, Logger pro auditování s integrity protection.      Ukládá audit trail pro:     - (+43 more)
 
 ### Community 134 - "file_cache.py"
 Cohesion: 0.05
-Nodes (37): apply_fcntl_nocache(), int, File caching utilities for large download optimization.  Extracted from coordina, Apply F_NOCACHE flag to file descriptor for large downloads.      This tells Dar, Universal Tools - Lightweight and Memory-Efficient  Tools optimized for M1 8GB R, LightpandaPool — pool of Lightpanda instances for concurrent JS rendering.  Extr, create_reranker(), Any (+29 more)
+Nodes (40): create_rust_miner(), Factory function to create a RustMiner.      Args:         prefer_rust: Prefer R, apply_fcntl_nocache(), int, File caching utilities for large download optimization.  Extracted from coordina, Apply F_NOCACHE flag to file descriptor for large downloads.      This tells Dar, Universal Tools - Lightweight and Memory-Efficient  Tools optimized for M1 8GB R, LightpandaManager — headless browser management for JS-heavy page rendering.  Ex (+32 more)
 
 ### Community 135 - "sprint_lifecycle.py"
 Cohesion: 0.05
-Nodes (42): Set emergency unload flag. Called by UmaWatchdog EMERGENCY callback.      This i, request_emergency_unload(), checkpoint_seam_ready(), get_instance(), _get_sprint_duration_seconds(), _get_windup_lead_seconds(), is_active(), is_winding_down() (+34 more)
+Nodes (39): checkpoint_seam_ready(), get_instance(), _get_sprint_duration_seconds(), _get_windup_lead_seconds(), is_active(), is_winding_down(), maybe_resume(), _on_task_done() (+31 more)
 
 ### Community 136 - "duckduckgo_search -> ddgs"
 Cohesion: 0.05
 Nodes (69): duckduckgo_search -> ddgs package rename, active_learning_step(), _ASYNC_DISCOVERY_SEARCH(), Any, int, str, FÁZE P14: Active Learning Loop for OSINT Discovery  This module implements an ac, Internal async discovery search wrapper.      Used by active_learning_step to ru (+61 more)
 
 ### Community 137 - "research_quality_score.py"
-Cohesion: 0.08
-Nodes (58): _build_parser(), _coerce_feed_dominance_score(), _compute_evidence_depth(), compute_research_quality_score(), _ct_evidence_score(), _detect_format(), EvidenceDepth, _extract_evidence_depth_inputs() (+50 more)
+Cohesion: 0.06
+Nodes (65): GuardState, StrEnum, NextAction, Verdict, RootCause, SprintFamily, OneButtonVerdict, _build_parser() (+57 more)
 
 ### Community 138 - "ranking_dedup_hotspot_benchmark.py"
 Cohesion: 0.08
 Nodes (46): analyze_complexity(), benchmark_remove_duplicates(), BenchmarkResult, build_synthetic_dataset(), format_markdown(), main(), make_duplicate_cluster(), make_result() (+38 more)
 
 ### Community 139 - "data_leak_hunter.py"
-Cohesion: 0.22
-Nodes (18): _build_operator_brief(), _build_sprint_summary(), _derive_best_first_move(), _derive_branch_truth(), _derive_confidence_band(), _derive_follow_ups(), _derive_high_value_findings(), _derive_next_step() (+10 more)
+Cohesion: 0.09
+Nodes (39): _build_operator_brief(), _build_sprint_summary(), _derive_best_first_move(), _derive_branch_truth(), _derive_confidence_band(), _derive_follow_ups(), _derive_high_value_findings(), _derive_next_step() (+31 more)
 
 ### Community 140 - "temporal_analysis.py"
 Cohesion: 0.07
 Nodes (41): CausalEvent, create_temporal_analyzer(), PatternType, datetime, float, int, str, Temporal Analysis Engine =========================  From deep_research/temporal_ (+33 more)
 
 ### Community 141 - "temporal_signal_layer.py"
-Cohesion: 0.02
-Nodes (192): CommunicationLayer, ContentCleaner, clean_html_tags(), clean_search_result_url(), CleaningResult, ContentCleaner, extract_url_from_duckduckgo_redirect(), extract_url_from_google_redirect() (+184 more)
+Cohesion: 0.04
+Nodes (62): agent_coordination(), cache(), communication(), content(), coordination(), create_capabilities_manager(), create_layer_manager(), execution() (+54 more)
 
 ### Community 142 - "dns_tunnel_detector.py"
-Cohesion: 0.06
-Nodes (34): F214HELP Lazy CLI Help, LSTMTunnelClassifier, NGramScore, Any, array, bool, bytes, float (+26 more)
+Cohesion: 0.05
+Nodes (40): F214HELP Lazy CLI Help, create_dns_tunnel_detector(), DNSTunnelConfig, LSTMTunnelClassifier, NGramScore, Any, array, bool (+32 more)
 
 ### Community 143 - "CanonicalFinding"
-Cohesion: 0.03
-Nodes (89): ClientConnector, ClientTimeout, close_ipfs_session_pool(), extract_cids_from_text(), fetch_directory_recursive(), fetch_findings_from_cids(), fetch_ipfs(), find_via_ipfs_search() (+81 more)
+Cohesion: 0.04
+Nodes (71): ClientConnector, ClientTimeout, close_ipfs_session_pool(), fetch_directory_recursive(), fetch_findings_from_cids(), fetch_ipfs(), find_via_ipfs_search(), get_ipfs_pool_status() (+63 more)
 
 ### Community 144 - "BrowserType"
-Cohesion: 0.01
-Nodes (339): Cleanup browser resources. Defensive: _session may be None or have         no as, StealthBrowser, AnonymizationLevel, AutoResearchProfile, from_dict(), Autonomous Analyzer for Hledac Universal Orchestrator ==========================, Autonomous research configuration profile.      Generated by AutonomousAnalyzer, DecisionType (+331 more)
+Cohesion: 0.02
+Nodes (202): Cleanup browser resources. Defensive: _session may be None or have         no as, StealthBrowser, BrowserType, CaptchaSolution, CaptchaType, Chameleon, CommunicationLayer, ContentCleaner (+194 more)
 
 ### Community 145 - "sprint_lifecycle.py"
-Cohesion: 0.06
-Nodes (41): build_temporal_priority_hints(), _clamp_hint(), close_temporal_signal_store(), get_temporal_signal_layer(), get_temporal_signal_store(), get_temporal_signal_summary(), is_temporal_store_enabled(), load_temporal_signal_snapshot() (+33 more)
+Cohesion: 0.04
+Nodes (61): _clamp(), _compute_autocorr_lag1(), _compute_cv(), event_from_finding_like(), from_snapshot(), _KeyState, Any, bool (+53 more)
 
 ### Community 146 - "pq_crypto.py"
-Cohesion: 0.03
-Nodes (85): LocalGraphStore, _evict_oldest_graph_node(), LRU eviction policy for graph nodes, LocalGraphStore, Any, array, int, str (+77 more)
+Cohesion: 0.19
+Nodes (15): BoundedLiveGateHarness, _get_sprint_state_value(), Sprint 8AP: Bounded Live-Run Gate + Telemetry Truth ============================, Safely get a value from orchestrator._sprint_state., Bounded live-run gate harness.     Runs a real orchestrator for a controlled dur, Independent monitor task.         Waits for midpoint, captures CP3, then exits., Execute the bounded live-run., Compute the GO / SOFT NO-GO / HARD NO-GO / OPSEC FAIL decision.          Sprint (+7 more)
 
 ### Community 147 - "banner_grabber.py"
 Cohesion: 0.12
@@ -4728,27 +4660,27 @@ Nodes (22): banner_grab_to_canonical(), BannerGrabber, BannerResult, grab_batch_
 
 ### Community 148 - "stego_detector.py"
 Cohesion: 0.06
-Nodes (37): _check_mps_available(), ChiSquareResult, create_stego_detector(), DCTResult, Any, bool, bytes, int (+29 more)
+Nodes (35): _check_mps_available(), ChiSquareResult, DCTResult, Any, bool, bytes, int, ndarray (+27 more)
 
 ### Community 149 - "model_lifecycle.py"
 Cohesion: 0.06
-Nodes (40): clear_emergency_unload_request(), ensure_mlx_runtime_initialized(), _get_current_model_unsafe(), get_emergency_callback(), _get_mlx_safe(), get_selected_quantization(), is_safe_to_clear_emergency(), load_model() (+32 more)
+Nodes (44): clear_emergency_unload_request(), ensure_mlx_runtime_initialized(), _get_current_model_unsafe(), get_emergency_callback(), _get_mlx_safe(), get_selected_quantization(), is_safe_to_clear_emergency(), load_model() (+36 more)
 
 ### Community 150 - "BudgetManager"
-Cohesion: 0.07
-Nodes (26): create_budget_manager(), create_deep_budget(), create_quick_budget(), Any, bool, float, int, str (+18 more)
+Cohesion: 0.08
+Nodes (20): Any, bool, float, int, str, Check if workflow should stop based on budget constraints.          Checks in or, Check hard resource limits, Check if confidence threshold is met (+12 more)
 
 ### Community 151 - "main.py"
-Cohesion: 0.04
-Nodes (44): _FakeConsole, _FakeLive, _FakeResult, _FakeTable, _FakeText, _patch_rich(), Tests for monitoring/sprint_dashboard.py.  Sprint F195C: Rich terminal dashboard, Dashboard table rendering with various sprint states. (+36 more)
+Cohesion: 0.14
+Nodes (14): _FakeResult, Dashboard table rendering with various sprint states., Renders cleanly before any cycle runs., Renders correctly with a populated result., Shows public findings when present., Shows CT log findings when present., Shows branch timeout status correctly., Shows abort reason when sprint is aborted. (+6 more)
 
 ### Community 152 - "rir_correlator.py"
 Cohesion: 0.07
 Nodes (46): _cache_clear(), _cache_get(), _cache_set(), correlate_rir_signals(), create_rir_correlator_adapter(), extract_domains_from_findings(), extract_ips_from_findings(), get_rir_stats() (+38 more)
 
 ### Community 153 - "Response"
-Cohesion: 0.05
-Nodes (51): Response, async_get_httpx_client(), _check_httpx_h2_capability(), close_httpx_client_async(), get_httpx_capability_reason(), HttpxClient, is_httpx_h2_enabled(), AsyncClient (+43 more)
+Cohesion: 0.06
+Nodes (45): Response, async_get_httpx_client(), _check_httpx_h2_capability(), close_httpx_client_async(), get_httpx_capability_reason(), HttpxClient, is_httpx_h2_enabled(), AsyncClient (+37 more)
 
 ### Community 154 - "coreml_embedder.py"
 Cohesion: 0.07
@@ -4756,39 +4688,39 @@ Nodes (33): ANE_AVAILABLE(), _BGETokenizer, CoreMLEmbedder, embed_dim(), get_cor
 
 ### Community 155 - "Capability vs Feed"
 Cohesion: 0.08
-Nodes (48): Capability vs Feed Baseline Split (F233F/F234P), _build_parser(), _check_all_f221_artifacts(), _check_all_f223_artifacts(), _check_cross_sprint_artifacts(), _check_cwd_guard(), _check_f221_artifact(), _check_f223_artifact() (+40 more)
+Nodes (50): Capability vs Feed Baseline Split (F233F/F234P), Hermetic Preflight Principle (no live, no network, no MLX), OSINTFrameworkRunner, _build_parser(), _check_all_f221_artifacts(), _check_all_f223_artifacts(), _check_cross_sprint_artifacts(), _check_cwd_guard() (+42 more)
 
 ### Community 156 - "Hermetic Preflight Principle"
-Cohesion: 0.12
-Nodes (46): _build_nonfeed_block_reason(), _build_parser(), _check_ct_cooldown(), _check_f224_artifacts(), _check_f224_confidence_policy(), _check_f231_artifacts(), _check_hermes_metal_finalizer(), _check_nonfeed_candidate_ledger() (+38 more)
+Cohesion: 0.11
+Nodes (48): get_swap_policy_tier(), F220F: Determine swap policy tier and reason from swap usage.      Returns (tier, _build_nonfeed_block_reason(), _build_parser(), _check_ct_cooldown(), _check_f224_artifacts(), _check_f224_confidence_policy(), _check_f231_artifacts() (+40 more)
 
 ### Community 157 - "ConnectedCoordinationSystem"
 Cohesion: 0.06
-Nodes (30): APICache, CertificateInfo, CertificateTransparency, ContainerAPIExplorer, ExposureType, GraphQLIntrospector, ClientSession, Exposed Service Hunter ======================  Discovers exposed services and mi (+22 more)
+Nodes (50): AnonymizationLevel, create_privacy_layer(), PrivacyContext, PrivacyLayer, Any, bool, int, Path (+42 more)
 
 ### Community 158 - "IOCGraph"
 Cohesion: 0.07
 Nodes (29): IOCGraph, _make_ioc_id(), Any, float, int, str, Kuzu-backed IOC entity graph with async-safe operations.      GRAPH TRUTH STORE, Add IOC to in-memory buffer — ZERO Kuzu I/O in ACTIVE phase.         Flush autom (+21 more)
 
 ### Community 159 - "evidence_triage.py"
-Cohesion: 0.05
-Nodes (36): EmailMetadata, GenericMetadata, PPTXMetadata, Presentation metadata (PPTX/ODP) - FOCA-style forensics., Email header forensics - FOCA-style infrastructure analysis., Generic file metadata from filesystem., Evidence Triage Coordinator — Sprint F202I.  Extracts bounded triage facets from, Bounded triage facets extracted from a document/image artifact.      Facets: (+28 more)
+Cohesion: 0.03
+Nodes (66): EmailMetadata, GenericMetadata, PPTXMetadata, Presentation metadata (PPTX/ODP) - FOCA-style forensics., Email header forensics - FOCA-style infrastructure analysis., Generic file metadata from filesystem., EvidenceTriageCoordinator, extract_triage_facets() (+58 more)
 
 ### Community 160 - "validation.py"
 Cohesion: 0.08
 Nodes (39): calculate_confidence(), calculate_similarity(), calculate_weighted_confidence(), create_sample_schema(), DataValidator, demonstrate_validator(), extract_keywords(), generate_uuid() (+31 more)
 
 ### Community 161 - "prompt_bandit.py"
-Cohesion: 0.07
-Nodes (30): Random, RL Action Constants (CONTINUE/FETCH_MORE/etc), MARLCoordinator Shim (raises ImportError, F196A), Attach scheduler reference for state extraction in get_action()., Opt-in RL policy advisor for sprint exec.      Integration: called by SprintSche, Activate QMIX training. Idempotent — safe to call multiple times.          Once, Deactivate QMIX training. Idempotent.          The Q-network remains loaded for, Inject SprintPolicyManager ref (opt-in RL layer). (+22 more)
+Cohesion: 0.06
+Nodes (36): Random, RL Action Constants (CONTINUE/FETCH_MORE/etc), MARLCoordinator Shim (raises ImportError, F196A), Attach scheduler reference for state extraction in get_action()., Reset internal state and delete persisted file. Does nothing when disabled., Opt-in RL policy advisor for sprint exec.      Integration: called by SprintSche, Activate QMIX training. Idempotent — safe to call multiple times.          Once, Deactivate QMIX training. Idempotent.          The Q-network remains loaded for (+28 more)
 
 ### Community 162 - "Path"
 Cohesion: 0.05
-Nodes (89): bool, float, int, Path, PostQuantumBackend, PQStatus, Sprint F202F: Render analyst answer evidence as JSON-LD.      Formats an analyst, Render analyst evidence as a deterministic JSON string.      Returns:         st (+81 more)
+Nodes (83): _get_pq_backend_async(), Path, PostQuantumBackend, PQStatus, Get PQ backend — always use create_post_quantum_backend (async factory)., CTIExportInputs, _get_pq_backend_async(), Path (+75 more)
 
 ### Community 163 - "_build_investigation_packet"
 Cohesion: 0.08
-Nodes (47): build_planner_state_from_report(), _count_independent_sources(), _ct_has_findings(), _ct_timed_out(), _doh_is_terminal(), _extract_domains_from_seed(), _extract_ips_from_seed(), _extract_urls_from_seed() (+39 more)
+Nodes (49): _build_investigation_packet(), Sprint F232A: Build investigation_packet from a live/export report dict.      Ca, build_planner_state_from_report(), _count_independent_sources(), _ct_has_findings(), _ct_timed_out(), _doh_is_terminal(), _extract_domains_from_seed() (+41 more)
 
 ### Community 164 - "AgentProtocol"
 Cohesion: 0.07
@@ -4799,12 +4731,12 @@ Cohesion: 0.06
 Nodes (75): _as_mapping(), _derive_discovery_not_wired_providers(), _derive_discovery_provider_status_debug(), _derive_discovery_selected_providers(), _derive_discovery_skipped_providers(), _derive_discovery_stub_providers(), _derive_live_kpi(), _derive_live_kpi_from_input() (+67 more)
 
 ### Community 166 - "ComplexityAnalysis"
-Cohesion: 0.09
-Nodes (30): create_tot_integration(), _load_tot_components(), Any, bool, float, str, Unified Tree of Thoughts integration layer for Hledac.      Provides intelligent, Initialize ToT integration layer.          Args:             config: ToT configu (+22 more)
+Cohesion: 0.07
+Nodes (41): ComplexityAnalysis, ComplexityAnalysis, Complexity analysis result for ToT decision making, create_tot_integration(), _load_tot_components(), Any, bool, float (+33 more)
 
 ### Community 167 - "IdentityCandidate"
 Cohesion: 0.08
-Nodes (34): IdentityCandidate, AttributionConfidenceScorer, AttributionFactor, AttributionScore, comparison_count(), create_attribution_scorer(), enrich_candidate_with_attribution(), _levenshtein_distance() (+26 more)
+Nodes (32): IdentityCandidate, AttributionConfidenceScorer, AttributionFactor, AttributionScore, comparison_count(), create_attribution_scorer(), _levenshtein_distance(), _normalized_levenshtein() (+24 more)
 
 ### Community 168 - "document_intelligence.py"
 Cohesion: 0.07
@@ -4815,12 +4747,12 @@ Cohesion: 0.04
 Nodes (44): Audit Recommendations vs Actual Reality, Behavioral verification, Behavioral verification, Behavioral verification, Behavioral verification, Behavioral verification, Executive Summary, File-by-File Change Log (+36 more)
 
 ### Community 170 - "wayback_diff_miner.py"
-Cohesion: 0.07
-Nodes (30): _build_payload(), CDXDiffEvent, _extract_archive_domain(), Any, bool, ClientResponse, ClientSession, float (+22 more)
+Cohesion: 0.06
+Nodes (30): FederatedBridge, _is_hybrid_env_enabled(), _pathlib_path(), Any, bool, float, int, str (+22 more)
 
 ### Community 171 - ".init"
-Cohesion: 0.07
-Nodes (19): OrderedDict, Test edge addition detects duplicates., Test edge limit triggers eviction., Tests for bounded containers in autonomous_orchestrator., Test novelty tracker is deque with maxlen., Test spill index is deque with maxlen., Test alias map is bounded OrderedDict., Tests for GNN protective fixes. (+11 more)
+Cohesion: 0.03
+Nodes (43): Called when T-3min wind-down triggers. Stops new frontier expansion., Save checkpoint during wind-up. Fail-open if checkpointing fails.          Colle, Priority frontier for deep URL excavation.      M1 8GB: Only stores ID+score in, Spill lowest priority entry to disk., Export frontier to list for checkpointing., Export the head of microplan queue for checkpointing.         Supports both 4-tu, UrlFrontier, Tests for Sprint 79c - Lazy imports, bounded containers, GNN fixes. (+35 more)
 
 ### Community 172 - "init.py"
 Cohesion: 0.08
@@ -4832,15 +4764,15 @@ Nodes (43): loaded_by, role, routes_to_canonical, status, canonical_owner, backe
 
 ### Community 174 - "encoding_detector.py"
 Cohesion: 0.09
-Nodes (33): BaseEncodingDetector, create_encoding_detector(), detect_encodings(), EncodingChain, EncodingConfig, EncodingFinding, bool, bytes (+25 more)
+Nodes (32): BaseEncodingDetector, create_encoding_detector(), detect_encodings(), EncodingChain, EncodingConfig, EncodingFinding, bool, bytes (+24 more)
 
 ### Community 175 - "rolling_hash_engine.py"
 Cohesion: 0.10
 Nodes (16): Any, bytes, int, Compute hash of initial window., Roll hash forward by one byte., Compute hashes for all windows.          The Rust backend bakes `window_size` at, Return (and cache) a Rust engine configured for `window_size`., Split data into fixed-size chunks.          For repetitive text, content-defined (+8 more)
 
 ### Community 176 - "source_bandit.py"
-Cohesion: 0.06
-Nodes (33): Language flags (CZ/RU/DE) should work on Unicode., N_FEATURES should be 14., Old 8-dim LMDB model should load and pad to 14 dim., Geo features should be different for different contexts., Tests for Geo + Language Context Features., Geo features (EU/US/RU) should be correctly detected from query., TestSprint43B_GeoLang, _extract_base_features() (+25 more)
+Cohesion: 0.14
+Nodes (16): _extract_base_features(), extract_context_features(), Any, float, str, Načte statistiky z LMDB., Uloží statistiku pro jeden zdroj do LMDB., UCB1 selection – vrací top-n zdrojů.         Pokud některý zdroj nemá pulls, má (+8 more)
 
 ### Community 177 - "Connection"
 Cohesion: 0.05
@@ -4848,7 +4780,7 @@ Nodes (46): Connection, _ensure_cache_dir(), fingerprint_async, _init_cache_db()
 
 ### Community 178 - "ClaimsCoordinator"
 Cohesion: 0.07
-Nodes (26): Any, bool, float, str, Handle a decision request (required by UniversalCoordinator base).          For, Initialize coordinator., Start coordinator with context from orchestrator.          Expected ctx keys:, Execute one claims processing step.          Process up to max_evidence_per_step (+18 more)
+Nodes (27): Any, bool, float, int, str, Handle a decision request (required by UniversalCoordinator base).          For, Initialize coordinator., Start coordinator with context from orchestrator.          Expected ctx keys: (+19 more)
 
 ### Community 179 - "discovery_planner.py"
 Cohesion: 0.10
@@ -4859,16 +4791,16 @@ Cohesion: 0.08
 Nodes (29): avg_latency_ms(), from_dict(), get_provider_stats_registry(), is_healthy(), is_production_provider(), is_stub_provider(), ProviderStats, ProviderStatsRegistry (+21 more)
 
 ### Community 181 - "EvidenceChain"
-Cohesion: 0.08
-Nodes (33): AnalystBrief, Sprint F204E: Analyst brief produced at sprint teardown.     F225B: Added source, Sprint F204E: Analyst brief produced at sprint teardown.     F225B: Added source, _chain_to_dict(), ChainStep, corroboration_level(), deserialize_chain(), _dict_to_chain() (+25 more)
+Cohesion: 0.07
+Nodes (39): EvidenceChain, AnalystBrief, get_evidence_chain(), Sprint F204E: Analyst brief produced at sprint teardown.     F225B: Added source, Sprint F204E: Analyst brief produced at sprint teardown.     F225B: Added source, F203D: Retrieve the evidence chain for a given finding_id.      Chains are accum, F203D: Retrieve the evidence chain for a given finding_id.      Chains are accum, F203D: Retrieve the evidence chain for a given finding_id.          Chains are a (+31 more)
 
 ### Community 182 - "pattern_mining.py"
-Cohesion: 0.02
-Nodes (139): Action, Action, Anomaly, AnomalyType, BehavioralPattern, create_pattern_mining_adapter(), PatternCandidate, PatternMiningAdapter (+131 more)
+Cohesion: 0.12
+Nodes (28): Action, Action, create_pattern_mining_adapter(), PatternCandidate, PatternMiningAdapter, PatternMiningResult, Any, bool (+20 more)
 
 ### Community 183 - "pii_gate.py"
-Cohesion: 0.05
-Nodes (34): Sprint F218C: NER/PII Ownership Verification Tests =============================, Verify canonical PII/privacy owner is documented and unchanged., TestCanonicalPIIOwner, create_security_gate(), fallback_sanitize(), get_pii_backend(), is_fallback_available(), PIIMatch (+26 more)
+Cohesion: 0.04
+Nodes (44): get_extraction_status(), get_ner_backend(), Return the active NER/RE backend name.      Returns:         "gliner-relex" when, Return diagnostic snapshot of extraction subsystem health.      Returns:, Sprint F218C: NER/PII Ownership Verification Tests =============================, Verify canonical NER/RE owner is documented and unchanged., GLiNER-Relex remains the current NER/RE default., CoreML NER path is not activated by this sprint. (+36 more)
 
 ### Community 184 - "live_multisource_validator.py"
 Cohesion: 0.09
@@ -4876,35 +4808,35 @@ Nodes (46): _check_public_acceptance_kpi(), _check_public_fetch_telemetry(), _de
 
 ### Community 185 - "BloomFilter"
 Cohesion: 0.06
-Nodes (26): is_rust(), load(), Any, bool, float, int, Path, str (+18 more)
+Nodes (31): create_content_fingerprint(), create_url_deduplicator(), is_rust(), load(), Any, bool, float, int (+23 more)
 
 ### Community 186 - ".get_all_shard_ids"
-Cohesion: 0.24
-Nodes (6): PatternStats, Pattern statistics for frontier URL pattern learning.      Tracks which URL patt, Convert to dictionary for JSON serialization., Add pattern to RAM cache with LRU eviction., Persist pattern stats to disk., Flush all RAM cache to disk.
+Cohesion: 0.04
+Nodes (27): AutonomousWorkflowEngine, Self-directed research workflow engine.      Instead of following a fixed sequen, Shutdown all coordinators gracefully., Round-robin selection of a policy for the next scoring operation., Update policy score using exponential moving average., Replace lowest-scoring policy with a fresh instance of the best policy's class., Push a micro-plan onto the priority queue. Enforce hard cap by keeping highest-p, Pop the highest-priority micro-plan. (+19 more)
 
 ### Community 187 - "domain_concurrency.py"
 Cohesion: 0.07
 Nodes (39): consecutive_429(), current_limit(), DomainConcurrencyBandit, bool, float, int, Domain Concurrency Bandit — Gradient Bandit for Per-Domain Adaptive Concurrency, Compute reward from a single outcome observation.          Args:             lat (+31 more)
 
 ### Community 188 - "extract_high_precision_entities"
-Cohesion: 0.13
-Nodes (40): HashConfig, Configuration for hash identification.      Attributes:         min_confidence:, format_json(), format_text(), generate_hash_test_file(), generate_pattern_payload(), get_memory_mib(), _hash_detection_async() (+32 more)
+Cohesion: 0.11
+Nodes (44): extract_high_precision_entities(), match_text(), Extract high-precision structured entities via regex.      Covers: CVE, GHSA, on, Find all pattern occurrences in *text* using the active registry.      Args:, HashConfig, Configuration for hash identification.      Attributes:         min_confidence:, format_json(), format_text() (+36 more)
 
 ### Community 189 - "live_result_sanity.py"
 Cohesion: 0.12
 Nodes (44): BenchmarkSurface, _check_benchmark_fail_validator_pass(), _check_benchmark_missing_source_family_outcomes(), _check_ct_loss_stage_present(), _check_feed_only_accepted_nonfeed_attempted(), _check_hardware_constrained_comparable(), _check_nonfeed_evidence_missing(), _check_public_surface_present() (+36 more)
 
 ### Community 190 - "agent_coordination_engine.py"
-Cohesion: 0.08
-Nodes (30): AgentCapability, AgentCoordinationEngine, AgentPerformance, AgentType, coordinated_search(), CoordinationStrategy, Any, float (+22 more)
+Cohesion: 0.09
+Nodes (29): AgentCapability, AgentCoordinationEngine, AgentPerformance, AgentType, coordinated_search(), CoordinationStrategy, Any, float (+21 more)
 
 ### Community 191 - "_is_meaningful_run function"
 Cohesion: 0.04
-Nodes (64): _is_meaningful_run function, main CLI dispatcher, run_sprint canonical entrypoint, _runtime_truth function, write_sprint_delta function, _compute_io_only_latch(), evaluate_uma_state(), _get_cached_process() (+56 more)
+Nodes (25): _hex16(), str, Tests for `hledac_rust_extensions.ContentHasher` (Sprint ContentHasher).  Covers, BLAKE3("") = af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262, Smoke test: 100 distinct 8-byte inputs → 100 distinct fingerprints., `ContentHasher.batch_blake3_64` — parallel BLAKE3-64 via rayon., Batch output equals per-item single-call output (determinism parity)., Rayon `par_iter` keeps input order in output (collect preserves). (+17 more)
 
 ### Community 192 - "alternative_protocol_fetcher.py"
-Cohesion: 0.09
-Nodes (45): fetch_all_alt_protocols(), fetch_fediverse_only(), _fetch_from_fediverse(), _fetch_from_gemini(), _fetch_from_gopher(), _fetch_from_i2p(), _fetch_from_ipfs(), _fetch_from_matrix() (+37 more)
+Cohesion: 0.10
+Nodes (43): AltProtocolResult, fetch_all_alt_protocols(), fetch_fediverse_only(), _fetch_from_fediverse(), _fetch_from_gemini(), _fetch_from_gopher(), _fetch_from_i2p(), _fetch_from_ipfs() (+35 more)
 
 ### Community 193 - "IocDedupStore"
 Cohesion: 0.09
@@ -4912,7 +4844,7 @@ Nodes (24): IocDedupStore, get_global_manager(), IocDedupManager, bool, float, i
 
 ### Community 194 - "async_query"
 Cohesion: 0.09
-Nodes (18): _DoHCache, _is_ipv6(), PassiveDNSResolver, bool, ClientSession, float, int, str (+10 more)
+Nodes (16): _DoHCache, _is_ipv6(), bool, ClientSession, float, int, str, Query one resolver, return results or [] on error. (+8 more)
 
 ### Community 195 - "description.json"
 Cohesion: 0.04
@@ -4923,16 +4855,16 @@ Cohesion: 0.04
 Nodes (45): builtTestProducts, executable, fileList, importPath, inputs, isLibrary, moduleName, moduleOutputPath (+37 more)
 
 ### Community 197 - "async_utils.py"
-Cohesion: 0.03
-Nodes (70): Tests for Sprint 81 - Core Stability & Memory Safety Fáze 1: mlx_utils, Emergenc, Test UnifiedMemoryMonitor can be created., Test monitor.snapshot() returns valid data., Test get_pressure_level returns valid string., Test should_emergency_brake logic., Test get_summary returns string., Test get_unified_snapshot convenience function., Tests for EmergencyBrake integration in orchestrator (+62 more)
+Cohesion: 0.05
+Nodes (42): Tests for Sprint 81 - Core Stability & Memory Safety Fáze 1: mlx_utils, Emergenc, Test UnifiedMemoryMonitor can be created., Tests for mlx_utils.py, Test monitor.snapshot() returns valid data., Test get_pressure_level returns valid string., Test should_emergency_brake logic., Test mlx_utils module can be imported., Test get_summary returns string. (+34 more)
 
 ### Community 198 - "Protocol-Based Sidecar Registry"
-Cohesion: 0.04
-Nodes (96): BaseSidecarAdapter, Protocol-Based Sidecar Registry (F350M-R), Protocol-based type checking replaces hardcoded DEFAULT_SIDECAR_RUNNERS, FediverseAdapter, bool, ClientSession, Check if Fediverse adapter is enabled., Search public Mastodon/Fediverse for OSINT signals.      Strategy: Use multiple (+88 more)
+Cohesion: 0.05
+Nodes (87): BaseSidecarAdapter, Protocol-Based Sidecar Registry (F350M-R), Protocol-based type checking replaces hardcoded DEFAULT_SIDECAR_RUNNERS, LeakSentinelAdapter, Canonical adapter for leak/secret detection in the sprint pipeline.      Bounded, BannerGrabSidecarAdapter, BGPEnrichmentSidecarAdapter, bind_scheduler() (+79 more)
 
 ### Community 199 - "social_identity_miner.py"
 Cohesion: 0.08
-Nodes (29): create_social_identity_miner_adapter(), _is_url(), Any, bool, float, int, str, intelligence/social_identity_miner.py — F204I: Social Identity Surface Miner === (+21 more)
+Nodes (28): create_social_identity_miner_adapter(), _is_url(), Any, bool, float, int, str, A single social identity profile extracted from findings. (+20 more)
 
 ### Community 200 - ".init"
 Cohesion: 0.09
@@ -4960,7 +4892,7 @@ Nodes (15): str, _python_extract_iocs(), _python_fingerprint(), _python_normaliz
 
 ### Community 206 - "enrichment_service.py"
 Cohesion: 0.05
-Nodes (56): _bound_enrichment_for_payload(), _build_forensic_facet(), _extract_domain_from_url(), _extract_file_path_from_payload(), _file_has_forensics_support(), ForensicsResult, _lazy_load_modules(), make_canonical_finding_from_enrichment() (+48 more)
+Nodes (58): DigitalGhostResult, Result of digital ghost analysis., _bound_enrichment_for_payload(), _build_forensic_facet(), _extract_domain_from_url(), _extract_file_path_from_payload(), _file_has_forensics_support(), ForensicsResult (+50 more)
 
 ### Community 207 - "relationship_discovery.py"
 Cohesion: 0.06
@@ -4975,16 +4907,16 @@ Cohesion: 0.09
 Nodes (25): LogRecord, JsonFormatter, float, str, runtime/telemetry.py — Minimal runtime telemetry seam ==========================, Fail-soft structured logging wrapper over stdlib logging.      Guarantees:, Add JsonFormatter handler if none exists on this logger., Record a sprint phase transition. (+17 more)
 
 ### Community 210 - "GuardState"
-Cohesion: 0.10
-Nodes (35): capability_delta_to_dict(), CapabilityDelta, CapabilityDeltaVerdict, compare_capability_artifacts(), compare_capability_artifacts, compute_delta(), delta_to_dict(), EvidenceDelta (+27 more)
+Cohesion: 0.06
+Nodes (46): Assertion 14: evidence_delta_memory sees ct attempted=True via lowercase check., TestEvidenceDeltaMemoryDownstream, capability_delta_to_dict(), CapabilityDelta, CapabilityDeltaVerdict, compare_capability_artifacts(), compare_capability_artifacts, compute_delta() (+38 more)
 
 ### Community 211 - "FindingQualityDecision"
 Cohesion: 0.04
 Nodes (44): AiohttpBodyOutcome, _get_js_renderer_semaphore(), F226A: Lazily-initialized, per-event-loop JS renderer Semaphore(1)., F226B: aiohttp body read outcome with peek + size cap., F226B: Read an aiohttp chunked body stream with hard byte cap.      Replaces inl, _read_aiohttp_body_with_peek(), Semaphore, Sprint F226 — Body-cap dedup, JS-renderer semaphore, UMA adaptive cap.  Verifies (+36 more)
 
 ### Community 212 - "ModuleType"
-Cohesion: 0.05
-Nodes (49): hledac — root namespace package.  This file makes `hledac` a real (non-namespace, _bootstrap_advanced_rag(), _bootstrap_advanced_web(), _bootstrap_coordinator_aliases(), _bootstrap_core(), _bootstrap_security(), _ensure_hledac_root(), ensure_namespace_paths() (+41 more)
+Cohesion: 0.06
+Nodes (42): hledac — root namespace package.  This file makes `hledac` a real (non-namespace, _bootstrap_advanced_rag(), _bootstrap_advanced_web(), _bootstrap_coordinator_aliases(), _bootstrap_core(), _bootstrap_security(), _ensure_hledac_root(), ensure_namespace_paths() (+34 more)
 
 ### Community 213 - "Namespace"
 Cohesion: 0.17
@@ -4996,7 +4928,7 @@ Nodes (32): asyncio.run in ThreadPoolExecutor M1 crash vector, M1 OOM Kill, Bran
 
 ### Community 215 - "content_miner.py"
 Cohesion: 0.07
-Nodes (25): current_phase(), InvalidPhaseTransitionError, is_active(), is_winding_down(), _now(), float, str, SprintLifecycleManager — canonical sprint state machine.  Phases: BOOT → WARMUP (+17 more)
+Nodes (38): EIG (Expected Information Gain), Expected Information Gain (EIG), Heuristic Pivot-Based Hypothesis, HypothesisGenerator, Generates research hypotheses from sprint findings.      Args:         findings:, DSPy Integration Concept, HypothesisGenerator (Spec), HypothesisGenerator Invariants (+30 more)
 
 ### Community 216 - "thread_pools.py"
 Cohesion: 0.06
@@ -5007,36 +4939,36 @@ Cohesion: 0.18
 Nodes (20): CorroborationScore, build_recommended_pivots(), build_top_indicators(), build_weak_unverified(), CorroborationScore, Any, bool, int (+12 more)
 
 ### Community 218 - "Fail-Soft Layer Pattern"
-Cohesion: 0.08
-Nodes (37): Fail-Soft Layer Pattern (return None on any error), ContentCleaner (HTML→Markdown/JSON), DuckDuckGo/Google HTML Search Result Parsers, GhostLayer (Anti-Loop, Vault, Anti-VM), M1 Neural Memory Guard (force_neural_cleanup), SystemContext (VM Detection, M1 Neural Memory Guard), ConnectedCoordinationSystem (DEPRECATED), HiveCoordinationLayer (Collective Intelligence) (+29 more)
+Cohesion: 0.09
+Nodes (34): Fail-Soft Layer Pattern (return None on any error), ContentCleaner (HTML→Markdown/JSON), DuckDuckGo/Google HTML Search Result Parsers, GhostLayer (Anti-Loop, Vault, Anti-VM), M1 Neural Memory Guard (force_neural_cleanup), SystemContext (VM Detection, M1 Neural Memory Guard), ConnectedCoordinationSystem (DEPRECATED), HiveCoordinationLayer (Collective Intelligence) (+26 more)
 
 ### Community 219 - "academic_discovery.py"
 Cohesion: 0.04
-Nodes (71): Sprint F234: Intelligence Migration Tests ======================================, Phase 4.4: pastebin_monitor fail-soft behavior., PasteFinding.masked_secrets() masks actual secrets., Phase 4.5: Verify no parent intelligence/ imports in canonical runtime., live_public_pipeline does not import from parent intelligence/., runtime/sprint_scheduler does not import from parent intelligence/., Phase 4.1: Import availability smoke tests., AcademicPaper dataclass from academic_discovery. (+63 more)
+Nodes (73): Sprint F234: Intelligence Migration Tests ======================================, Phase 4.4: pastebin_monitor fail-soft behavior., PasteFinding.masked_secrets() masks actual secrets., Phase 4.5: Verify no parent intelligence/ imports in canonical runtime., live_public_pipeline does not import from parent intelligence/., runtime/sprint_scheduler does not import from parent intelligence/., Phase 4.1: Import availability smoke tests., AcademicPaper dataclass from academic_discovery. (+65 more)
 
 ### Community 220 - "DNSEnumerator"
 Cohesion: 0.04
 Nodes (70): ASNInfo, ASNInfo, CNAMERecord, CTRawCertificate, DHTProbe, DNSEnumerator, graph_add_domain_ip_relations(), graph_add_ip_asn_relations() (+62 more)
 
 ### Community 221 - ".clear_noise_blocks"
-Cohesion: 0.08
-Nodes (30): EvidenceTriageCoordinator, extract_triage_facets(), _extract_urls_and_domains(), Any, bool, Path, str, Serialize to dict for evidence envelope. (+22 more)
+Cohesion: 0.07
+Nodes (34): Tests for Sprint 81 - Fáze 2: Bounded Concurrency ==============================, Test map_as_completed function., Test TaskResult dataclass., Test bounded_gather function., Test successful task result., Test failed task result., Test bounded_map function., test_bounded_gather_basic() (+26 more)
 
 ### Community 222 - "AsyncSession"
-Cohesion: 0.08
-Nodes (38): CHUNKS_BUDGET constant, decode_curl_cffi_result(), fetch_via_curl_cffi(), fetch_via_i2p_curl_cffi(), fetch_via_tor_curl_cffi(), _make_error_result(), Any, float (+30 more)
+Cohesion: 0.06
+Nodes (52): AsyncSession, memoryview, CHUNKS_BUDGET constant, decode_curl_cffi_result(), fetch_via_curl_cffi(), fetch_via_i2p_curl_cffi(), fetch_via_tor_curl_cffi(), _make_error_result() (+44 more)
 
 ### Community 223 - "AutonomousAnalyzer"
-Cohesion: 0.09
-Nodes (25): AutonomousAnalyzer, create_autonomous_analyzer(), Any, bool, float, int, str, Autonomous query analyzer for intelligent research configuration.      Analyzes (+17 more)
+Cohesion: 0.03
+Nodes (115): AutonomousAnalyzer, AutonomousAnalyzer (query analyzer), AutoResearchProfile, create_autonomous_analyzer(), create_autonomous_analyzer() factory, from_dict(), Any, bool (+107 more)
 
 ### Community 224 - "Post-quantum bundle signing"
-Cohesion: 0.15
-Nodes (36): build_forensic_analysis_jsonld(), _build_per_source_health(), _build_pq_extension_jsonld(), _build_root_cause(), _build_run_metadata(), _build_runtime_truth(), _build_signal_funnel(), _build_store_rejection_trace() (+28 more)
+Cohesion: 0.13
+Nodes (41): build_forensic_analysis_jsonld(), _build_per_source_health(), _build_pq_extension_jsonld(), _build_root_cause(), _build_run_metadata(), _build_runtime_truth(), _build_signal_funnel(), _build_store_rejection_trace() (+33 more)
 
 ### Community 225 - ".aget_stats"
 Cohesion: 0.07
-Nodes (18): Any, Get storage statistics., Convert to dictionary for JSON serialization., Get shard from cache, updating LRU order., Add stance for evidence (bounded).          Args:             evidence_id: Evide, Get stance metrics for this cluster.          Returns:             Dict with con, Get index statistics., Get pattern stats manager statistics. (+10 more)
+Nodes (20): Any, Vrati metadata snapshotu (bez obsahu)., Get storage statistics., Convert to dictionary for JSON serialization., Get shard from cache, updating LRU order., Add stance for evidence (bounded).          Args:             evidence_id: Evide, Get stance metrics for this cluster.          Returns:             Dict with con, Return count of independent sources from supporting evidence. (+12 more)
 
 ### Community 226 - "ipv6_recon.py"
 Cohesion: 0.11
@@ -5044,35 +4976,35 @@ Nodes (19): IPv6Recon, IPv6Result, _is_ip(), Any, bool, ClientSession, str, IPv6
 
 ### Community 227 - "CacheEntry"
 Cohesion: 0.03
-Nodes (70): MemoryPressureLevel, MemoryStatistics, MemoryZone, Any, bool, float, int, str (+62 more)
+Nodes (76): CacheEntry, CacheType, ContextItem, ContextOptimizationManager, _get_np(), _get_sparse(), _ndarray_to_list(), Any (+68 more)
 
 ### Community 228 - "AtomicJSONKnowledgeGraph"
-Cohesion: 0.11
-Nodes (14): Add shard to cache, evicting oldest if necessary., Get shard ID from entry ID (first 2 characters)., Get path to shard file., Migrate legacy entries.json to sharded format if needed., Load a shard from disk (with caching)., Save a shard to disk atomically., Clear cache and run GC if aggressive memory mode is enabled., Add a knowledge entry to the graph. (+6 more)
+Cohesion: 0.07
+Nodes (22): int, Add shard to cache, evicting oldest if necessary., Initialize the knowledge graph storage.          Args:             storage_dir:, Convert to dictionary for JSON serialization., Initialize total entries counter with a fail-safe scan., Get shard ID from entry ID (first 2 characters)., Get path to shard file., Migrate existing JSON shards into LMDB. (+14 more)
 
 ### Community 229 - "metrics_registry.py"
 Cohesion: 0.06
 Nodes (27): create_metrics_registry(), MetricsRegistry main class, Bounded metric name registry, MetricSnapshot, Any, bool, float, int (+19 more)
 
 ### Community 230 - ".to_capability_signal"
-Cohesion: 0.04
-Nodes (41): CentralityScores, Community, GraphContradiction, float, Find contradictions between nodes in the graph.          From evidence_network_a, Find contradictions between nodes in the graph.          From evidence_network_a, Calculate comprehensive network metrics.          From evidence_network_analyzer, Calculate comprehensive network metrics.          From evidence_network_analyzer (+33 more)
+Cohesion: 0.05
+Nodes (9): Sprint F271 — url_ops Rust extension tests.  Verifies the Rust-backed URL classi, Drop-in for urllib.parse.urlparse(url).hostname.lower()., Pure-string feed-URL heuristic — no regex., Per-URL classification — kind + lowercase host., Batch hot path — must beat Python urlparse., TestBatchClassify, TestClassifyUrl, TestExtractHost (+1 more)
 
 ### Community 231 - "text/init.py"
 Cohesion: 0.09
-Nodes (26): text/__init__.py, create_hash_identifier(), HashFinding, HashIdentifier, HashMatch, identify_hash(), int, str (+18 more)
+Nodes (27): text/__init__.py, create_hash_identifier(), HashFinding, HashIdentifier, HashMatch, identify_hash(), int, str (+19 more)
 
 ### Community 232 - "model_inference_guard.py"
-Cohesion: 0.09
-Nodes (29): check_model_allowed(), classify_failure_kind(), clear_model_guards(), FailureKind, get_all_model_guard_snapshots(), get_guard(), get_model_guard_snapshot(), GuardState (+21 more)
+Cohesion: 0.10
+Nodes (28): check_model_allowed(), classify_failure_kind(), clear_model_guards(), FailureKind, get_all_model_guard_snapshots(), get_guard(), get_model_guard_snapshot(), _ModelBreaker (+20 more)
 
 ### Community 233 - "LMDB writemap=False +"
-Cohesion: 0.04
-Nodes (64): LMDB Stale-Lock Liveness Guard, LMDB writemap=False + sync=False (M1 UMA), RAMDISK Root Selection (OPSEC fallback), cleanup_stale_lmdb_lock(), _is_lock_stale(), _is_process_alive(), open_lmdb_with_guard(), Any (+56 more)
+Cohesion: 0.03
+Nodes (94): Canonical Sprint Owner (core.__main__.run_sprint), Canonical Write Seam (DuckDBShadowStore.async_ingest_findings_batch), LMDB Stale-Lock Liveness Guard, LMDB writemap=False + sync=False (M1 UMA), RAMDISK Root Selection (OPSEC fallback), Runtime A — Active Production Path, Runtime B — Legacy/Deprecated, cleanup_stale_lmdb_lock() (+86 more)
 
 ### Community 234 - "export_manager.py"
-Cohesion: 0.08
-Nodes (43): Package-relative import from .utils.X, ExportManager, _filter_sensitive(), get_export_manager(), _is_sensitive(), _iso_ts(), Any, bool (+35 more)
+Cohesion: 0.13
+Nodes (30): ExportManager, _filter_sensitive(), get_export_manager(), _is_sensitive(), _iso_ts(), Any, bool, float (+22 more)
 
 ### Community 235 - "live_measurement_extraction_guard.py"
 Cohesion: 0.15
@@ -5091,8 +5023,8 @@ Cohesion: 0.06
 Nodes (26): Any, bool, float, Future, int, str, Start the batch worker (lazy start)., Bounded shutdown — max 3.0s, fail-pending-futures.          Post-conditions: (+18 more)
 
 ### Community 239 - "Swap Tiered Policy"
-Cohesion: 0.08
-Nodes (41): Swap Tiered Policy (F220F), StrEnum, NextAction, Verdict, RootCause, SprintFamily, analyze_artifact_pack(), build_parser() (+33 more)
+Cohesion: 0.10
+Nodes (35): Swap Tiered Policy (F220F), analyze_artifact_pack(), build_parser(), _canonical_base(), check_provider_surface(), CockpitResult, extract_uma(), _get_cwd_guard_state() (+27 more)
 
 ### Community 240 - "memory_coordinator.py"
 Cohesion: 0.05
@@ -5107,8 +5039,8 @@ Cohesion: 0.09
 Nodes (25): CleaningResult, OutputFormat, Any, bool, int, str, Universal Validation Coordinator ================================  Integrated va, Initialize validation subsystems. (+17 more)
 
 ### Community 243 - "Record python3 interpreter"
-Cohesion: 0.25
-Nodes (5): _PatternMatcherState, int, Holds the singleton PatternMatcher instance and its lifecycle state., Return number of configured patterns. O(1)., Return current matcher status. O(1), side-effect free.
+Cohesion: 0.05
+Nodes (42): Record python3 interpreter truth at module load time., _record_runtime_truth(), benchmark_build(), benchmark_match(), Bootstrap OSINT Pattern Pack, _build_automaton(), configure_patterns(), extract_structured_entities() (+34 more)
 
 ### Community 244 - "Digital ghost /"
 Cohesion: 0.10
@@ -5123,28 +5055,28 @@ Cohesion: 0.11
 Nodes (15): bool, float, int, str, LRU eviction: remove oldest entries if cache is full., Check if cached entry is still valid (not expired)., Fetch and parse robots.txt file with caching.          Args:             base_ur, Parse robots.txt content into structured format. (+7 more)
 
 ### Community 247 - "m1_embedding_batch_benchmark.py"
-Cohesion: 0.18
-Nodes (19): benchmark_batch_dry_run(), benchmark_batch_live(), format_markdown(), get_rss_mb(), get_swap_used_mb(), main(), bool, float (+11 more)
+Cohesion: 0.10
+Nodes (35): benchmark_batch_dry_run(), benchmark_batch_live(), format_markdown(), get_rss_mb(), get_swap_used_mb(), main(), bool, float (+27 more)
 
 ### Community 248 - "Any"
-Cohesion: 0.10
-Nodes (25): Any, bool, float, int, str, confidence_note(), HypothesisPack, operator_shortlist() (+17 more)
+Cohesion: 0.09
+Nodes (23): Any, bool, float, int, str, confidence_note(), operator_shortlist(), Hypothesis Engine — Pack DTOs (C4 Tier-4) ====================================== (+15 more)
 
 ### Community 249 - "graph_viz_writer.py"
 Cohesion: 0.06
 Nodes (53): GraphVizSection, Result of graph rendering — keeps node/edge counts for telemetry., Stream graph visualization as a Mermaid flowchart section.      Yields sections:, stream_graph_viz_section(), Stream IOC table as markdown.      Yields sections:       1. Section header, stream_ioc_table_section(), _build_batched_stix_bundle(), _build_indicator_from_ioc() (+45 more)
 
 ### Community 250 - "bgp_lane.py"
-Cohesion: 0.10
-Nodes (27): asn_to_prefixes(), BGPFinding, BGPResult, _check_gathered(), ip_bulk_to_asn(), ip_to_asn(), org_bulk_to_asns_with_prefixes(), org_to_asns() (+19 more)
+Cohesion: 0.11
+Nodes (26): asn_to_prefixes(), BGPFinding, BGPResult, _check_gathered(), ip_bulk_to_asn(), ip_to_asn(), org_bulk_to_asns_with_prefixes(), org_to_asns() (+18 more)
 
 ### Community 251 - "graph_service.py"
-Cohesion: 0.05
-Nodes (39): Analytics Donor Backend (DuckPGQGraph), Graph Truth Store (authoritative IOC backend), checkpoint(), _estimate_community_count(), find_entity_history(), _get_graph(), graph_analytics_summary(), _ModuleSeenIOCs (+31 more)
+Cohesion: 0.07
+Nodes (30): checkpoint(), _estimate_community_count(), find_entity_history(), _get_graph(), graph_analytics_summary(), _ModuleSeenIOCs, _ModuleSeenRels, bool (+22 more)
 
 ### Community 252 - "passive_fingerprint.py"
-Cohesion: 0.10
-Nodes (20): _FPCache, _get_rate_limiter(), _is_ip(), PassiveFingerprint, PassiveFingerprintAdapter, bool, ClientSession, Semaphore (+12 more)
+Cohesion: 0.05
+Nodes (39): Network Analysis Module =======================  Network-based OSINT and threat, async_query, _is_ip(), MAX_NETWORKINTEL_TARGETS, NetworkIntelAdapter, NetworkIntelResult, _PassiveDNSAdapter, _PassiveFingerprintAdapter (+31 more)
 
 ### Community 253 - "capability_export_f228d.json"
 Cohesion: 0.05
@@ -5171,24 +5103,24 @@ Cohesion: 0.08
 Nodes (28): DrainResult, lifecycle(), ModelLifecycleProtocol, ModelSwapManager, Any, bool, float, int (+20 more)
 
 ### Community 259 - "Circuit breaker pattern"
-Cohesion: 0.06
-Nodes (60): Circuit breaker pattern (pastebin 5-fail→60s), HTMLParser, _build_evidence_envelope(), _build_pivots(), create_leak_sentinel_adapter(), _dict_to_canonical(), _fetch_breach_findings(), _fetch_github_secret_findings() (+52 more)
+Cohesion: 0.11
+Nodes (32): Circuit breaker pattern (pastebin 5-fail→60s), HTMLParser, _CircuitState (dataclass), _CircuitState, _extract_secrets(), _make_snippet(), _mask_secret(), PasteFinding (+24 more)
 
 ### Community 260 - "metadata_fetcher.py"
-Cohesion: 0.02
-Nodes (80): Shared bencode/bdecode serialization, Any, bytes, float, int, str, BEP-9: Extension protocol for fetching torrent metadata without downloading torr, Attempt to fetch metadata from a single peer. (+72 more)
+Cohesion: 0.04
+Nodes (51): Shared bencode/bdecode serialization, Any, bytes, float, int, str, BEP-9: Extension protocol for fetching torrent metadata without downloading torr, Attempt to fetch metadata from a single peer. (+43 more)
 
 ### Community 261 - "sprint_markdown_reporter.py"
-Cohesion: 0.10
-Nodes (35): Any, bool, float, int, str, Build Source Leaderboard markdown table, sorted by count descending., Build Phase Timings markdown table with relative offsets., Render sprint report + scorecard as a deterministic markdown string.      Pure f (+27 more)
+Cohesion: 0.07
+Nodes (48): Package-relative import from .utils.X, Any, bool, float, int, str, Build Source Leaderboard markdown table, sorted by count descending., Build Phase Timings markdown table with relative offsets. (+40 more)
 
 ### Community 262 - "BreachAPIConfig"
 Cohesion: 0.05
 Nodes (36): A.1 Module Map (53 files), A.2 Per-Transport Status, A.3 Decorator-based cross-cutting: NONE, B.1 Semaphore Inventory, B.2 AdaptiveSemaphore, B.3 Fetch functions NOT gated by a Semaphore, B.4 Connection lifecycle — what is shared vs per-call, B.5 Per-call session churn — concrete fix candidates (+28 more)
 
 ### Community 263 - "enrichment_services.py"
-Cohesion: 0.07
-Nodes (30): Tests for mlx_utils.py, Test mlx_utils module can be imported., Test mlx_managed decorator exists., Test metal cache clearing doesn't crash., Test mlx_cleanup_after decorator exists., Test get_mlx_memory_stats returns dict., Test reset_metal_peak doesn't crash., Test mlx_managed works on sync functions. (+22 more)
+Cohesion: 0.09
+Nodes (24): Test metal cache clearing doesn't crash., Test get_mlx_memory_stats returns dict., Test reset_metal_peak doesn't crash., test_maybe_eval_throttle(), _clear_metal_cache_async(), _clear_metal_cache_sync(), get_mlx_memory_stats(), _get_mlx_safe() (+16 more)
 
 ### Community 264 - "codehealth_guard.py"
 Cohesion: 0.12
@@ -5203,8 +5135,8 @@ Cohesion: 0.12
 Nodes (21): Prediction, PredictionMetrics, PredictivePlanner, Any, float, int, str, PredictivePlanner - Prediktivní plánování z PredictiveOrchestrator  Funkce: - Sp (+13 more)
 
 ### Community 267 - "sketches.py"
-Cohesion: 0.05
-Nodes (33): Get current KV cache size in MB using tree flatten., Apply CommVQ 2-bit quantization to KV cache (87.5% savings)., Test that hybrid sketch estimates are within 3% error for frequent items., Test that SpaceSaving maintains exact counts for top-K items., Test LMDB offload for rare items., Test fallback to exact counters when MLX and LMDB unavailable., Test basic sketch interface., Invariant 1 & 5: KV cache RAM usage < 20% baseline for context > 1024 tokens. (+25 more)
+Cohesion: 0.06
+Nodes (31): Test that hybrid sketch estimates are within 3% error for frequent items., Test that SpaceSaving maintains exact counts for top-K items., Test LMDB offload for rare items., Test fallback to exact counters when MLX and LMDB unavailable., Test basic sketch interface., Invariant 1 & 5: KV cache RAM usage < 20% baseline for context > 1024 tokens., Invariant 4 & 6: Fallback to original cache when MLX fails., Invariant 7: GPU memory used after compression. (+23 more)
 
 ### Community 268 - "Action"
 Cohesion: 0.04
@@ -5215,20 +5147,20 @@ Cohesion: 0.10
 Nodes (16): PromptBandit, Any, float, int, str, Contextual bandit (LinUCB) for prompt selection., Evict least-pulled arms if we exceed MAX_BANDIT_ARMS.         LRU signal: arm wi, 9‑dimenzionální kontextový vektor. (+8 more)
 
 ### Community 270 - "watchdog.py"
-Cohesion: 0.09
-Nodes (22): bool, float, int, Adapter: UmaWatchdog → Watchdog interface. Bridges monitoring_coordinator.py to, Adapter wrapping hledac.universal.utils.uma_budget.UmaWatchdog     to expose the, Watchdog, bool, float (+14 more)
+Cohesion: 0.08
+Nodes (23): bool, float, int, Adapter: UmaWatchdog → Watchdog interface. Bridges monitoring_coordinator.py to, Adapter wrapping hledac.universal.utils.uma_budget.UmaWatchdog     to expose the, Watchdog, bool, float (+15 more)
 
 ### Community 271 - "digital_ghost_detector.py"
 Cohesion: 0.04
 Nodes (55): action_latency_stats, action_selection_counts, action_selection_hhi, bottlenecks, data_mode, echo_rejection_rate, final_synthesis_duration_seconds, findings_count (+47 more)
 
 ### Community 272 - "_get_mlx"
-Cohesion: 0.13
-Nodes (14): _get_numpy(), _get_scipy_sparse(), Any, Perform quantum random walk steps using MLX.          Implements a quantum walk, Perform a single quantum walk step.          Args:             state: Current qu, Apply quantum coin operator to create superposition.          Uses Hadamard-like, Apply Hadamard-like coin operator.          Creates equal superposition of movin, Apply Grover coin operator.          Creates biased superposition favoring high- (+6 more)
+Cohesion: 0.10
+Nodes (19): _get_mlx(), _get_numpy(), Any, Initialize the quantum-inspired pathfinder.          Args:             config: C, Create quantum superposition state from start nodes.          Creates an equal s, Perform quantum random walk steps using MLX.          Implements a quantum walk, Perform a single quantum walk step.          Args:             state: Current qu, Apply quantum coin operator to create superposition.          Uses Hadamard-like (+11 more)
 
 ### Community 273 - "selectolax-first HTML extraction"
-Cohesion: 0.18
-Nodes (12): MiningResult, str, Extract clean text from HTML with minimal memory usage.          Args:, Mine using trafilex (Rust-based, minimal memory).          trafilex is a Rust wr, Mine using traflatura in minimal mode.          Memory optimization:         - d, Ultimate fallback using regex-based extraction.          No dependencies - pure, Basic HTML cleaning — delegates to canonical html_text_fast when available., Extract title using regex (fallback) (+4 more)
+Cohesion: 0.04
+Nodes (61): Extract __NEXT_DATA__ script from Next.js pages., Extract generic application/json scripts., Extracted text should be limited to max_total_chars., build_structure_map(), _compute_fingerprint(), extract_embedded_json(), _extract_imports_ast(), _extract_imports_regex() (+53 more)
 
 ### Community 274 - "wasm_sandbox.py"
 Cohesion: 0.11
@@ -5239,28 +5171,28 @@ Cohesion: 0.09
 Nodes (20): create_language_detector(), LanguageDetector, any, bool, int, str, Fallback detection using simple character analysis., Check if language code is supported.          Args:             lang_code: Langu (+12 more)
 
 ### Community 276 - "mlx_cache.py"
-Cohesion: 0.08
-Nodes (33): Test that mlx cleanup functions don't crash., clear_mlx_cache(), _detect_mlx_available(), _ensure_metal_memory_limits(), _format_limit_mib(), _get_cache_lock(), get_cache_stats(), get_mlx_model() (+25 more)
+Cohesion: 0.07
+Nodes (35): Test that mlx cleanup functions don't crash., clear_mlx_cache(), _detect_mlx_available(), _ensure_metal_memory_limits(), _format_limit_mib(), _get_cache_lock(), get_cache_stats(), get_metal_limits_status() (+27 more)
 
 ### Community 277 - "shadow_dtos.py"
 Cohesion: 0.08
 Nodes (46): Sprint 8AQ: Shadow-Only msgspec Pilot Tests  SHADOW-ONLY — these tests verify th, shadow msgspec Struct → dict must match dataclass baseline → dict., shadow_dtos.py must NOT add any significant import overhead         to the hleda, msgspec.Struct construction and serialization must be faster         than datacl, Benchmark must return all expected fields., TestAdmissionResultShadow, TestBacklogCandidateShadow, TestBenchmarkSanity (+38 more)
 
 ### Community 278 - "uma_budget.py"
-Cohesion: 0.10
-Nodes (34): Sprint F214Q: Dynamické KV cache řízení dle RAM tier (M1 8GB).          Returns:, Sprint 3B: Kanonický pressure snapshot - jednotný read-only pohled na všechny se, format_uma_budget_report(), _get_mlx_core(), get_mlx_memory_mb(), _get_psutil(), get_system_memory_mb(), get_uma_pressure_level() (+26 more)
+Cohesion: 0.07
+Nodes (51): Sprint F214Q: Dynamické KV cache řízení dle RAM tier (M1 8GB).          Returns:, build_arg_parser(), _derive_verdict(), format_json(), format_markdown(), get_uma_snapshot(), main(), _operator_action_for_verdict() (+43 more)
 
 ### Community 279 - "BudgetLimits"
-Cohesion: 0.07
-Nodes (22): BudgetLimits, CostSummary, Any, bool, int, str, Convert to compact hint for Hermes LLM., Generate tool card for Hermes LLM consumption. (+14 more)
+Cohesion: 0.09
+Nodes (19): BudgetLimits, CostSummary, Any, bool, str, Convert to compact hint for Hermes LLM., Generate tool card for Hermes LLM consumption., Unregister a tool.          Args:             name: Tool name to unregister (+11 more)
 
 ### Community 280 - "modernbert_embedder.py"
 Cohesion: 0.10
-Nodes (23): is_loaded(), load(), ModernBERTConfig, ModernBERTEmbedder, _ModernBERTMLXLoader, _NoOpContext, bool, int (+15 more)
+Nodes (20): is_loaded(), load(), ModernBERTConfig, _ModernBERTMLXLoader, _NoOpContext, bool, int, ndarray (+12 more)
 
 ### Community 281 - "init.py"
-Cohesion: 0.08
-Nodes (25): create_dns_tunnel_detector(), DNSTunnelConfig, int, Initialize detector with configuration.          Args:             config: Detec, Configuration for DNS tunneling detector.      Attributes:         entropy_thres, Factory function for creating DNS tunnel detector instances.      Creates a conf, Network Analysis Module =======================  Network-based OSINT and threat, async_query (+17 more)
+Cohesion: 0.10
+Nodes (25): get(), _get_available_mb(), _get_registry(), LazyModel, loaded(), _make_lazy_registry(), _mlx_clear(), Any (+17 more)
 
 ### Community 282 - "passivedns_lane_closure.json"
 Cohesion: 0.06
@@ -5272,7 +5204,7 @@ Nodes (33): bounded_url_samples, public_rejected_url_samples, public_skipped_url
 
 ### Community 284 - ".init"
 Cohesion: 0.03
-Nodes (60): AsyncSession, Any, bool, bytes, ClientSession, float, int, Semaphore (+52 more)
+Nodes (61): Any, bool, bytes, ClientSession, float, int, str, Request new Tor circuit via STEM controller.         Called every 10 requests wh (+53 more)
 
 ### Community 285 - "openalex_adapter.py"
 Cohesion: 0.12
@@ -5287,20 +5219,20 @@ Cohesion: 0.06
 Nodes (33): make_finding(), make_scheduler(), MockLifecycle, test_sprint_scheduler_core.py — SprintScheduler Core Probe Tests ===============, Verify _accumulate_findings_to_graph is called with findings., _accumulate_findings_to_graph() returns int (count of upserted)., Empty findings list → returns 0, no crash., Verify run() reads governor decision for memory pressure. (+25 more)
 
 ### Community 288 - "bgp_passive_dns_adapter.py"
-Cohesion: 0.07
-Nodes (39): BGPAdapter, BGPFinding, bgptools_prefix_history(), bgptools_sibling_prefixes(), hackertarget_pdns(), hackertarget_reverse_dns(), _is_private_ip(), PDNSRecord (+31 more)
+Cohesion: 0.12
+Nodes (28): BGPAdapter, BGPFinding, bgptools_prefix_history(), bgptools_sibling_prefixes(), hackertarget_reverse_dns(), _is_private_ip(), bool, ClientSession (+20 more)
 
 ### Community 289 - "active_posture"
-Cohesion: 0.04
-Nodes (55): create_unified_intelligence(), example_usage(), IntelligenceOperationType, IntelligenceResult, IntelligenceTarget, OperationStatus, Any, float (+47 more)
+Cohesion: 0.03
+Nodes (58): create_unified_intelligence(), example_usage(), IntelligenceOperationType, IntelligenceResult, IntelligenceTarget, OperationStatus, Any, float (+50 more)
 
 ### Community 290 - "JavaScriptEvasion"
 Cohesion: 0.04
 Nodes (53): action_selection_hhi, bottlenecks, data_mode, echo_rejection_rate, final_synthesis_duration_seconds, findings_count, hh_index, idle_sleep_count (+45 more)
 
 ### Community 291 - "._get_shard_path"
-Cohesion: 0.07
-Nodes (15): from_dict(), Path, Get path for cluster file (sharded by claim_id prefix)., Load cluster from disk., Get top clusters by evidence count.          Returns:             List of (claim, Get path for packet file (sharded by evidence_id prefix)., Uloží packet na disk (sharded JSON).         Disk-only, žádný RAM index navíc., Load packet from disk. (+7 more)
+Cohesion: 0.12
+Nodes (10): from_dict(), Get cluster from RAM or disk, create if not exists., Load cluster from disk., Get top clusters by evidence count.          Returns:             List of (claim, Get path for packet file (sharded by evidence_id prefix)., Uloží packet na disk (sharded JSON).         Disk-only, žádný RAM index navíc., Load packet from disk., Check if packet exists on disk. (+2 more)
 
 ### Community 292 - "sidecar_orchestrator.py"
 Cohesion: 0.05
@@ -5324,7 +5256,7 @@ Nodes (53): action_selection_hhi, bottlenecks, data_mode, echo_rejection_rate, f
 
 ### Community 297 - "DomainCandidate"
 Cohesion: 0.03
-Nodes (73): DomainCandidate, Result of a WaybackDiffMiner.mine() call., WaybackDiffResult, compute_lane_eligibility(), DomainCandidate, extract_domain_candidates_from_finding(), extract_domain_candidates_from_text(), _extract_hostname() (+65 more)
+Nodes (54): _build_payload(), CDXDiffEvent, _extract_archive_domain(), Any, bool, ClientResponse, ClientSession, float (+46 more)
 
 ### Community 298 - "graph_manager.py"
 Cohesion: 0.09
@@ -5335,8 +5267,8 @@ Cohesion: 0.08
 Nodes (27): _get_recorder(), _is_shadow_enabled(), Any, bool, float, int, str, Shadow Analytics Hook — CANONICAL FINDING → FACTS PIPELINE ===================== (+19 more)
 
 ### Community 300 - "nonfeed_seed_extractor.py"
-Cohesion: 0.08
-Nodes (43): DuckDB NonfeedSeed extraction (F222H), classify_seed_quality(), compute_lane_unlocks(), extract_nonfeed_seeds_from_findings(), extract_nonfeed_seeds_from_text(), _is_publisher_domain(), bool, int (+35 more)
+Cohesion: 0.11
+Nodes (30): classify_seed_quality(), compute_lane_unlocks(), extract_nonfeed_seeds_from_findings(), extract_nonfeed_seeds_from_text(), _is_publisher_domain(), bool, int, NonfeedSeed (+22 more)
 
 ### Community 301 - "BurstDetector"
 Cohesion: 0.09
@@ -5387,24 +5319,24 @@ Cohesion: 0.12
 Nodes (24): COREAdapter, COREPageResult, COREResult, COREWork, _get_api_key(), has_api_key(), lookup_core_doi(), discovery/academic/core_adapter.py — CORE.ac.uk Full Text Search Adapter  Sprint (+16 more)
 
 ### Community 313 - "Environment"
-Cohesion: 0.08
-Nodes (19): Initialize session manager with LMDB persistence (idempotent)., Environment, Session should be injected into requests., Should rotate credentials on 401/403., S49-B: Všechny LMDB operace async přes executor, _derive_encryption_key(), bytes, str (+11 more)
+Cohesion: 0.11
+Nodes (15): Environment, _derive_encryption_key(), bytes, str, Session Manager – ukládá cookies a credentials, automaticky je injectuje do fetc, Manages HTTP sessions with cookies/credentials persistence in LMDB.      AUTHORI, F206L: Load existing encryption key from LMDB or derive a new one (P25)., F206L: Encrypt data using Fernet (P25). (+7 more)
 
 ### Community 314 - "_cosine_sim_batch"
 Cohesion: 0.07
 Nodes (27): 10. NEXT STEPS, 1. EXECUTIVE SUMMARY, 2.1.1 5 FETCH leaf metod (extrahované + 1 deferred), 2.1.2 16 ANALYSIS leaf metod (deferred do F-EXTRACT-3, mimo scope), 2.1 Tabulka 22 leaf metod (GOD_OBJECT_ANALYSIS §6.1 vs skutečnost), 2. LIST OF EXTRACTED METHODS, 3.1 Provider-based DI (volba designu), 3.2 Constructor signature (+19 more)
 
 ### Community 315 - "_get_uma_budget"
-Cohesion: 0.08
-Nodes (22): array, _cosine_sim_batch(), float, int, Lazy load FlashRank for retrieval path.          Canonical owner: tools/reranker, Run lancedb optimize/compact_files in calling thread. Fail-soft.          LanceD, Compute cosine similarity between two embeddings.          Args:             emb, Hybrid search with adaptive reranking and MMR (Sprint 76).          Args: (+14 more)
+Cohesion: 0.03
+Nodes (75): maximal_marginal_relevance(), float, int, ndarray, str, MMR - Maximal Marginal Relevance for diversity in search results.  ROLE: Context, Rerank candidates using MMR and return with relevance scores.      Args:, Select top-k diverse candidates using Maximal Marginal Relevance.      MMR formu (+67 more)
 
 ### Community 316 - "live_feed_pipeline.py"
 Cohesion: 0.04
 Nodes (53): action_selection_hhi, bottlenecks, data_mode, echo_rejection_rate, final_synthesis_duration_seconds, findings_count, hh_index, idle_sleep_count (+45 more)
 
 ### Community 317 - "branch_manager.py"
-Cohesion: 0.05
-Nodes (46): BranchManager, Any, float, Path, str, BranchManager – rozhodování o odbočkách s ANE a spiking prioritou. Rozhoduje o v, Predikce pomocí ANE CoreML modelu., Fallback pravidlo pro rozhodnutí o větvi. (+38 more)
+Cohesion: 0.03
+Nodes (77): BranchManager, Any, float, Path, str, BranchManager – rozhodování o odbočkách s ANE a spiking prioritou. Rozhoduje o v, Predikce pomocí ANE CoreML modelu., Fallback pravidlo pro rozhodnutí o větvi. (+69 more)
 
 ### Community 318 - ".exit"
 Cohesion: 0.04
@@ -5419,8 +5351,8 @@ Cohesion: 0.08
 Nodes (30): acquire_renderer_slot(), _check_gathered(), ConcurrencyHint, get_circuit_state_hint(), get_concurrency_hint(), get_renderer_active_count(), get_renderer_policy(), get_stealth_capability_flags() (+22 more)
 
 ### Community 321 - "vault_manager.py"
-Cohesion: 0.04
-Nodes (63): Any, int, str, Any, bool, str, bool, Any (+55 more)
+Cohesion: 0.06
+Nodes (48): int, Any, bool, str, bool, Any, str, F350M-FED-P: Federated Transports — public surface.  Sprint: F350M-FED-P / P2P T (+40 more)
 
 ### Community 322 - "bench_m1_runtime_gates.py"
 Cohesion: 0.15
@@ -5440,7 +5372,7 @@ Nodes (53): action_selection_hhi, bottlenecks, data_mode, echo_rejection_rate, f
 
 ### Community 326 - "dspy_service.py"
 Cohesion: 0.09
-Nodes (28): check_health(), configure_dspy_with_hermes(), expand_query(), _get_dspy_lm(), get_hermes_dspy_lm(), Hermes3DSPyLM, _load_programs(), bool (+20 more)
+Nodes (27): check_health(), configure_dspy_with_hermes(), expand_query(), _get_dspy_lm(), get_hermes_dspy_lm(), Hermes3DSPyLM, _load_programs(), bool (+19 more)
 
 ### Community 327 - "bytes"
 Cohesion: 0.13
@@ -5448,23 +5380,23 @@ Nodes (20): bytes, int, object, str, Load the CoreML model if not already loaded
 
 ### Community 328 - "init.py"
 Cohesion: 0.13
-Nodes (35): Diagnostics Plane (pure, stateless), aggregate_forensic_findings(), _esc(), _linkify(), normalize_report_input(), _parse_forensic_payload(), Any, int (+27 more)
+Nodes (34): aggregate_forensic_findings(), _esc(), _linkify(), normalize_report_input(), _parse_forensic_payload(), Any, int, object (+26 more)
 
 ### Community 329 - "hypothesisgenerator.py"
-Cohesion: 0.03
-Nodes (136): get_program(), Get (or lazy-load) a compiled DSPy program., EIG (Expected Information Gain), Expected Information Gain (EIG), _dspy_generate(), _extract_domains(), _extract_emails(), _extract_hashes() (+128 more)
+Cohesion: 0.04
+Nodes (96): _dspy_generate(), _extract_domains(), _extract_emails(), _extract_hashes(), _extract_ips(), _heuristic_generate(), _load_dspy_program(), Any (+88 more)
 
 ### Community 330 - "Anomaly"
-Cohesion: 0.03
-Nodes (102): AdversarialVerifier, AdversarialReport, Contradiction, create_hypothesis_engine(), DarkQuery, DarkQueryType, FalsificationResult, HypothesisStatus (+94 more)
+Cohesion: 0.04
+Nodes (130): AdversarialVerifier, AnomalySignal, DistillationExample, Dataclass pro training example pro distillation.      Attributes:         query:, AnomalySignal, Any, bool, CausalEntity (+122 more)
 
 ### Community 331 - "_check_graph_capability"
 Cohesion: 0.04
 Nodes (53): action_selection_hhi, bottlenecks, data_mode, echo_rejection_rate, final_synthesis_duration_seconds, findings_count, hh_index, idle_sleep_count (+45 more)
 
 ### Community 332 - ".close"
-Cohesion: 0.13
-Nodes (9): _get_rrf_reranker(), Any, Close database connection and cache., Close database connection., Flush writeback buffer to LMDB — single batch transaction., Background cache maintenance task., Check embedding store health., F214OPT-C: Telemetry accessor for LanceDB cache bounds and stats. (+1 more)
+Cohesion: 0.06
+Nodes (31): 1.1 Tři odlišné vrstvy flag systému, 1.2 L1 flagy (HLEDAC_ENABLE_*) — kompletní seznam z kódu, 1. Aktuální stav — inventář, 2.1 Návrh skupin, 2.2 Implementační model, 2.3 Discovery helper, 2. Hierarchická flag taxonomie (5 skupin), 3.1 Implication rules (A requires B) (+23 more)
 
 ### Community 333 - "search_index.py"
 Cohesion: 0.06
@@ -5472,7 +5404,7 @@ Nodes (34): 10. Test Verification (2026-06-04), 11. Summary — Wiring Plan (PRI
 
 ### Community 334 - ".generate"
 Cohesion: 0.08
-Nodes (20): lmdb(), Any, bool, float, int, str, Write a finding to the WAL LMDB (sync, no await).          LMDB key:   finding:{, Get a WAL truth record by finding_id. (+12 more)
+Nodes (21): lmdb(), Any, bool, float, int, str, WAL Manager — Sprint F216G refactor ===================================  ROLE: O, Write a finding to the WAL LMDB (sync, no await).          LMDB key:   finding:{ (+13 more)
 
 ### Community 335 - "cost_model.py"
 Cohesion: 0.04
@@ -5503,8 +5435,8 @@ Cohesion: 0.14
 Nodes (24): _afm_capability_probe(), _AFM_MIN_MACOS_VERSION (constant: minimum macOS for AFM), AFMProbeResult, apple_fm_probe(), _check_apple_intelligence_enabled(), _check_macos_version(), _get_macos_version(), get_nl_entities() (+16 more)
 
 ### Community 342 - ".check_auto_rollback"
-Cohesion: 0.03
-Nodes (82): fetch(), __getattr__(), name(), bool, str, Transport Layer — Canonical Protocol Definitions ===============================, Abstract base class for node-transport overlays.      All node transports (InMem, Check if the transport is operational. (+74 more)
+Cohesion: 0.02
+Nodes (160): DatePathPattern, DatePathPattern, DeepProbeScanner, DiscoveredEndpoint, DorkingEngine, FilePathPattern, generate_ipfs_dorks(), generate_s3_dorks() (+152 more)
 
 ### Community 343 - "SimHash near-duplicate document"
 Cohesion: 0.14
@@ -5571,8 +5503,8 @@ Cohesion: 0.07
 Nodes (34): Test MPS Graph - Sprint 71, Test MPSGraph availability check., Test batch dot product fallback., Test Metal memory info retrieval., Test ANE availability check., Test MPSGraph utilities., TestMPSGraph, batch_dot_product() (+26 more)
 
 ### Community 359 - "shared_tensor.py"
-Cohesion: 0.07
-Nodes (20): Test #12: SharedTensor – reference na MLX array., Test: Reference counting., create_shared(), from_array(), from_numpy(), bool, int, SharedTensor – obálka nad mlx.core.array, umožňuje předávání referencí. Skutečný (+12 more)
+Cohesion: 0.11
+Nodes (28): _build_evidence_envelope(), _build_pivots(), create_leak_sentinel_adapter(), _dict_to_canonical(), _fetch_breach_findings(), _fetch_github_secret_findings(), _fetch_paste_findings(), LeakSentinelStats (+20 more)
 
 ### Community 360 - "prompt_cache.py"
 Cohesion: 0.03
@@ -5592,7 +5524,7 @@ Nodes (27): advisory_clue_depth, advisory_clues_present, claims_depth, claims_ex
 
 ### Community 364 - "FeedPipelineEntryResult"
 Cohesion: 0.04
-Nodes (108): EntryQualitySignal, _assemble_clean_feed_text(), async_run_default_feed_batch(), async_run_feed_source_batch(), async_run_live_feed_pipeline(), _async_scan_feed_text(), _check_uma_emergency(), _check_wayback_cdx() (+100 more)
+Nodes (106): EntryQualitySignal, _assemble_clean_feed_text(), async_run_default_feed_batch(), async_run_feed_source_batch(), async_run_live_feed_pipeline(), _async_scan_feed_text(), _check_uma_emergency(), _check_wayback_cdx() (+98 more)
 
 ### Community 365 - "advisory_clue_depth"
 Cohesion: 0.07
@@ -5615,8 +5547,8 @@ Cohesion: 0.07
 Nodes (27): advisory_clue_depth, advisory_clues_present, claims_depth, claims_extracted, ct_clue_depth, ct_clues_present, nonfeed_clues_without_acceptance, public_candidate_depth (+19 more)
 
 ### Community 370 - "paged_attention_cache.py"
-Cohesion: 0.07
-Nodes (23): _get_mlx_core(), PagedAttentionCache, Any, bool, float, int, Paged Attention Cache – ukládá top‑K tokenů po stránkách. Samostatně testovateln, Vrátí všechny uložené pages jako concatenated keys a values.          Returns: (+15 more)
+Cohesion: 0.04
+Nodes (40): _get_mlx_core(), PagedAttentionCache, Any, bool, float, int, Paged Attention Cache – ukládá top‑K tokenů po stránkách. Samostatně testovateln, Vrátí všechny uložené pages jako concatenated keys a values.          Returns: (+32 more)
 
 ### Community 371 - "Client"
 Cohesion: 0.14
@@ -5631,8 +5563,8 @@ Cohesion: 0.67
 Nodes (3): ProviderStats, ProviderStatsRegistry, SourceEntry
 
 ### Community 374 - "fediverse_adapter.py"
-Cohesion: 0.22
-Nodes (9): int, str, Search a single instance., Search hashtag timeline.          Args:             hashtag: Hashtag to search (, Fetch hashtag timeline from a single instance., Resolve account cross-instance and fetch recent public posts.          Args:, Fetch account posts from a single instance., Enforce rate limiting per instance.          F259: Made async with asyncio.sleep (+1 more)
+Cohesion: 0.09
+Nodes (20): FediverseAdapter, bool, ClientSession, int, str, Search a single instance., Search hashtag timeline.          Args:             hashtag: Hashtag to search (, Fetch hashtag timeline from a single instance. (+12 more)
 
 ### Community 375 - "matrix_adapter.py"
 Cohesion: 0.10
@@ -5648,23 +5580,23 @@ Nodes (26): _ANNIndex, check_ann_duplicate(), get_ann_index(), bool, float, int,
 
 ### Community 378 - "ClaimCluster"
 Cohesion: 0.09
-Nodes (14): bool, float, Update veracity prior. Returns True if changed materially (>0.15).          Args, Check if claim is contested (multiple object variants or polarity conflict)., Compute uncertainty score 0..1 based on:         - contested (+0.5)         - dr, Add evidence to BetaBinomial tracker., Return belief mean from BetaBinomial., Return uncertainty (std) from BetaBinomial. (+6 more)
+Nodes (14): get_atomic_storage(), bool, float, Update veracity prior. Returns True if changed materially (>0.15).          Args, Check if claim is contested (multiple object variants or polarity conflict)., Compute uncertainty score 0..1 based on:         - contested (+0.5)         - dr, Add evidence to BetaBinomial tracker., Return belief mean from BetaBinomial. (+6 more)
 
 ### Community 379 - "C2PAAnalyzer"
-Cohesion: 0.03
-Nodes (76): ANEEmbedder, Embedder, který se pokusí použít ANE (přes CoreML) a pokud není k dispozici,, GNNPredictor, ndarray, Prediktor, který obaluje GNN model a umožňuje trénink na pozadí., Nastaví scheduler pro background training., Periodické čištění osiřelých uzlů (bez feature a bez hran)., G2: Add node feature with bounded LRU eviction.         Uses array('f') for memo (+68 more)
+Cohesion: 0.05
+Nodes (38): Entity, EntityType, GNNPredictorWrapper, Types of entities in the relationship graph., Represents an entity in the relationship graph., Wrapper for GNN predictor with training and prediction., Initialize GNN predictor., Prepare training data for GNN. (+30 more)
 
 ### Community 380 - "LightpandaManager"
-Cohesion: 0.10
-Nodes (15): LightpandaManager, LightpandaManager, bytes, str, LightpandaManager — headless browser management for JS-heavy page rendering.  Ex, Validate a JavaScript expression is safe for tab.evaluate()., Fetch URL with JS rendering using nodriver., Terminate the Lightpanda process. (+7 more)
+Cohesion: 0.11
+Nodes (14): LightpandaManager, LightpandaManager, bytes, str, Validate a JavaScript expression is safe for tab.evaluate()., Fetch URL with JS rendering using nodriver., Terminate the Lightpanda process., Manages Lightpanda headless browser for JS-heavy page rendering. (+6 more)
 
 ### Community 381 - "sprint_lifecycle_runner.py"
 Cohesion: 0.10
 Nodes (16): abort_reason(), abort_requested(), current_phase(), Any, bool, float, str, SprintLifecycleRunner — mechanical lifecycle boundary extracted from SprintSched (+8 more)
 
 ### Community 382 - ".initialize"
-Cohesion: 0.18
-Nodes (9): Any, int, str, Maskovat citlivý dotaz.          Args:             query: Původní dotaz, Generalizovat specifické termíny, Generovat falešné dotazy pro zamaskování skutečného výzkumu.          Args:, Generovat související chaff na základě původního dotazu, Vykonat dotaz s chaff provozem.          Args:             real_query: Skutečný (+1 more)
+Cohesion: 0.13
+Nodes (14): Plausible deniability / chaff traffic, Any, float, int, str, Maskovat citlivý dotaz.          Args:             query: Původní dotaz, Generalizovat specifické termíny, Generovat falešné dotazy pro zamaskování skutečného výzkumu.          Args: (+6 more)
 
 ### Community 383 - "check_dependency_profiles.py"
 Cohesion: 0.16
@@ -5703,8 +5635,8 @@ Cohesion: 0.21
 Nodes (22): async_search_providerless(), _async_search_sequential(), _is_providerless_enabled(), bool, DiscoveryBatchResult, float, int, str (+14 more)
 
 ### Community 392 - ".close"
-Cohesion: 0.07
-Nodes (34): check_s3_bucket(), ExposedService, bool, int, str, quick_hunt(), Check if a Kubernetes API is exposed., Enumerate S3 buckets for a target.          Args:             target: Target dom (+26 more)
+Cohesion: 0.03
+Nodes (74): APICache, CertificateInfo, CertificateTransparency, check_s3_bucket(), ContainerAPIExplorer, DatabasePortScanner, ExposedService, ExposedServiceHunter (+66 more)
 
 ### Community 393 - "BehavioralPattern"
 Cohesion: 0.04
@@ -5743,16 +5675,16 @@ Cohesion: 0.14
 Nodes (25): branch_mix, ct_findings, feed, feed_findings, public_findings, query, requested_duration_s, branch_mix (+17 more)
 
 ### Community 402 - "arxiv_adapter.py"
-Cohesion: 0.15
-Nodes (18): ArxivAdapter, ArxivPaper, ArxivResult, _parse_oai_response(), discovery/academic/arxiv_adapter.py — arXiv Bulk Access via OAI-PMH  Sprint F259, arXiv OAI-PMH bulk access adapter., Harvest papers from arXiv OAI-PMH.          Args:             query: Optional se, Use arXiv API for search queries (not OAI-PMH). (+10 more)
+Cohesion: 0.13
+Nodes (21): ArxivAdapter, ArxivPaper, ArxivResult, _parse_oai_response(), discovery/academic/arxiv_adapter.py — arXiv Bulk Access via OAI-PMH  Sprint F259, arXiv OAI-PMH bulk access adapter., Harvest papers from arXiv OAI-PMH.          Args:             query: Optional se, Use arXiv API for search queries (not OAI-PMH). (+13 more)
 
 ### Community 403 - "fetch_coordinator.py"
 Cohesion: 0.04
 Nodes (53): action_selection_hhi, bottlenecks, data_mode, echo_rejection_rate, final_synthesis_duration_seconds, findings_count, hh_index, idle_sleep_count (+45 more)
 
 ### Community 404 - "CompressedContext"
-Cohesion: 0.12
-Nodes (15): CompressedContext, ContextItem, ContextOptimizationManager, Individual context item with metadata for three-tier storage., Compressed context container., Context optimization with three-tier storage and compression.      Integrated fr, Initialize FastEmbed embedder (optional)., Retrieve context item with automatic promotion.          Args:             item_ (+7 more)
+Cohesion: 0.50
+Nodes (3): CompressedContext, Compressed context container., Decompress context at specified detail level.          Args:             compres
 
 ### Community 405 - "commoncrawl_adapter.py"
 Cohesion: 0.06
@@ -5775,28 +5707,28 @@ Cohesion: 0.04
 Nodes (53): action_selection_hhi, bottlenecks, data_mode, echo_rejection_rate, final_synthesis_duration_seconds, findings_count, hh_index, idle_sleep_count (+45 more)
 
 ### Community 410 - "corroboration_score.py"
-Cohesion: 0.15
-Nodes (21): LaneCorroborationScore, LaneTerminalCoverage, _nonfeed_has_terminal_coverage(), _nonfeed_terminal(), bool, int, object, str (+13 more)
+Cohesion: 0.07
+Nodes (50): _build_enrichment_value_delta(), _build_product_value_summary(), _compute_provider_yield_signals(), _corroborating_families(), _corroboration_penalties_list(), _corroboration_reason_str(), _corroboration_score_value(), _get_corrob_outcomes() (+42 more)
 
 ### Community 411 - "bytes"
 Cohesion: 0.06
-Nodes (49): fake_ct_finding(), _fake_finding(), FakeBatchResult, FakeCTOutcome, make_ct_outcome(), Sprint R1B: CT Lane Closure — probe tests Tests the full CT raw → bridge → store, Verify the CT lane path in run_enabled_acquisition_lanes calls ct_results_to_fin, CT hits from bridge produce CanonicalFinding-like dict candidates. (+41 more)
+Nodes (45): fake_ct_finding(), _fake_finding(), FakeBatchResult, FakeCTOutcome, Sprint R1B: CT Lane Closure — probe tests Tests the full CT raw → bridge → store, Verify the CT lane path in run_enabled_acquisition_lanes calls ct_results_to_fin, CT hits from bridge produce CanonicalFinding-like dict candidates., CanonicalFinding candidates from CT lane are passed to async_ingest_findings_bat (+37 more)
 
 ### Community 412 - "serialization.py"
-Cohesion: 0.07
-Nodes (34): Hash chain compatibility tests for Sprint 79a. Verifies that serialize_canonical, Verify storage serialization produces readable JSON., Test storage works with orjson or fallback., Test that EvidenceEvent hash is computed correctly., Test hash chain remains compatible after serialization changes., Basic test: canonical serialization matches legacy approach., Test edge cases that could break hash compatibility., Verify sort_keys=True produces deterministic ordering. (+26 more)
+Cohesion: 0.13
+Nodes (24): Verify storage serialization produces readable JSON., _decode_numpy(), deserialize_storage(), _encode_numpy(), estimate_size_reduction(), pack(), Any, bytes (+16 more)
 
 ### Community 413 - "BrowserProfile"
 Cohesion: 0.02
-Nodes (127): Alert, AlertRule, BypassMethod, Change, ChangeType, _crawler_domain_allowed(), FingerprintProfile, get_stealth_crawler_transport_telemetry() (+119 more)
+Nodes (150): ContentSource, ClientResponse, Structured Wayback Machine snapshot result., Sources of archived content (from stealth_osint integration), WaybackSnapshot, Any, bool, callable (+142 more)
 
 ### Community 414 - "pivot_builder.py"
-Cohesion: 0.03
-Nodes (82): FederatedBridge, _is_hybrid_env_enabled(), _pathlib_path(), Any, bool, float, int, str (+74 more)
+Cohesion: 0.06
+Nodes (46): QTableProtocol, F350M-FED-P3: Federated Bridge — lazy Protocol facade for Q-table persistence ==, Structural Protocol for the Q-table contract.      Satisfied by both `FederatedQ, FederatedResearchCoordinator, FederatedResult, is_federated_enabled(), _LocalNodeTransport, NodeLane (+38 more)
 
 ### Community 415 - "Sampler/Governor/Allocator 3-layer Authority"
-Cohesion: 0.25
-Nodes (7): Sampler/Governor/Allocator 3-layer Authority, 3-Tier: ResearchContext (carrier) → EvidenceLog → DuckDBShadowStore, Unreachable File (in_degree=0), Repowise Dead-Code Report, research_context.py — Canonical Context Carrier, resource_allocator.py — Request-Level Budgeting, TestSuiteRunner
+Cohesion: 0.20
+Nodes (9): Sampler/Governor/Allocator 3-layer Authority, 3-Tier: ResearchContext (carrier) → EvidenceLog → DuckDBShadowStore, Unreachable File (in_degree=0), Repowise Dead-Code Report, BudgetState, research_context.py — Canonical Context Carrier, Stav rozpočtu pro výzkum, resource_allocator.py — Request-Level Budgeting (+1 more)
 
 ### Community 416 - "DempsterShafer"
 Cohesion: 0.04
@@ -5807,12 +5739,12 @@ Cohesion: 0.19
 Nodes (20): _derive_next_seeds_from_planner_actions(), _derive_operator_summary(), _derive_projected_acquisition_impact(), _is_genuine_ioc(), main(), Any, bool, int (+12 more)
 
 ### Community 418 - "._init_ocr_pipeline"
-Cohesion: 0.15
-Nodes (10): Any, float, int, str, T, Return the currently loaded model identifier.          Returns:             Mode, Synthesize an OSINT report from findings/hypotheses.          Optional — engines, General-purpose synthesis from structured context.          Optional — general-p (+2 more)
+Cohesion: 0.11
+Nodes (16): ModelEngine, Any, bool, float, int, str, T, ModelEngine Protocol — Sprint F222 ==================================  Canonical (+8 more)
 
 ### Community 419 - ".belief"
-Cohesion: 0.11
-Nodes (22): AttributionConfidenceScorer, IdentityProfile, create_identity_stitching_adapter(), IdentityCandidate, IdentityStitchingAdapter, Any, float, int (+14 more)
+Cohesion: 0.10
+Nodes (18): Any, datetime, int, Detect daily/weekly seasonality patterns., Detect periodicity using MLX FFT (public API).          Args:             timest, Match patterns against data in batches (M1 memory optimized).          Args:, Check if item matches pattern (simplified)., Temporal pattern with time-based characteristics. (+10 more)
 
 ### Community 420 - "gemini_transport.py"
 Cohesion: 0.16
@@ -5839,16 +5771,16 @@ Cohesion: 0.10
 Nodes (18): bool, float, int, str, Record a successful operation, Record a failed operation, Check if operation can be executed, Adapter that makes self_healing.CircuitBreaker delegate to the     canonical tra (+10 more)
 
 ### Community 426 - "float"
-Cohesion: 0.04
-Nodes (44): float, int, str, Simulate stealth activation using StealthSession primitives.          Returns di, stealth/__init__.py, is_closed(), bool, float (+36 more)
+Cohesion: 0.03
+Nodes (52): bool, float, int, str, Adapter: StealthSession → StealthEngine interface. Bridges security_coordinator., Adapter wrapping hledac.universal.stealth.stealth_session.StealthSession     to, No-op: StealthSession has no init requirement., Simulate stealth activation using StealthSession primitives.          Returns di (+44 more)
 
 ### Community 427 - "darknet.py"
 Cohesion: 0.09
-Nodes (18): liboqs should fallback gracefully if not installed., fetch_onion should only work for .onion URLs., fetch_i2p should only work for .i2p URLs., Should handle missing darknet tools gracefully., DarknetConnector, Any, bool, bytes (+10 more)
+Nodes (17): get_model_manager(), Vrátí globální instanci ModelManager., _load_supreme_components(), Execute research with State Machine and Context Swap.          Supreme architect, Přejde do nového stavu., Přechod do BRAIN fáze: Načíst Hermes-3 pro plánování., Přechod do TOOLS fáze: Uvolnit BRAIN, načíst nástroje., Přechod do SYNTHESIS fáze: Uvolnit TOOLS, načíst Hermes-3. (+9 more)
 
 ### Community 428 - "tech_detection.py"
-Cohesion: 0.06
-Nodes (31): Any, bytes, int, str, _NoiseXXSession, _NonceCache, _normalize_peer_finding(), PeerNodeTransport (+23 more)
+Cohesion: 0.10
+Nodes (18): Any, int, str, _NonceCache, _normalize_peer_finding(), PeerNodeTransport, Bounded LRU nonce cache for anti-replay.      Uses a deque + set for O(1) add/ch, Check if the nonce was seen recently. Side-effect: marks it as seen. (+10 more)
 
 ### Community 429 - "AltProtocol Fetch Surfaces"
 Cohesion: 0.14
@@ -5871,12 +5803,12 @@ Cohesion: 0.04
 Nodes (33): NeuromorphicMemoryZone, Memory zones for neuromorphic memory system., Sprint 8M: Memory Coordinator Import Diet + Package Cascade Fix  Tests verify: 1, MemoryCoordinator should track memory usage., MemoryCoordinator should support zone operations., MemoryCoordinator should perform aggressive cleanup., Verify autonomous_orchestrator.py was not edited in Sprint 8M., Verify from __future__ import annotations prevents NameError. (+25 more)
 
 ### Community 434 - "M1 8GB practical"
-Cohesion: 0.10
-Nodes (26): _get_torch(), Lazy torch accessor - imports torch only when first needed., Uvolní model z paměti.          Po volání unload() se model znovu načte při příš, Resetuje singleton instanci (uvolní model z paměti)., reset_ner_engine(), M1 8GB practical model stack (LLM, embeddings, NER, reranker, PII, OCR), check_embeddings(), check_llm() (+18 more)
+Cohesion: 0.15
+Nodes (19): M1 8GB practical model stack (LLM, embeddings, NER, reranker, PII, OCR), check_embeddings(), check_llm(), check_ocr(), check_pii(), check_reranker(), main(), print_download_commands() (+11 more)
 
 ### Community 435 - "MemoryPattern"
-Cohesion: 0.04
-Nodes (51): MemoryPressurePoller, Throttled memory pressure monitoring., Get current memory pressure level (0.0 - 1.0)., Stealth komponenty pro UniversalResearchOrchestrator.  Obsahuje: - StealthManage, BoundedHostState, HostTelemetry, StealthManager - Complete Stealth System for Universal  Integrates all stealth c, Close session and cleanup. (+43 more)
+Cohesion: 0.05
+Nodes (41): MemoryPressurePoller, Throttled memory pressure monitoring., Gracefully stop the poller., Get current memory pressure level (0.0 - 1.0)., BoundedHostState, HostTelemetry, Semaphore, LRU bounded dictionary s maxlen. (+33 more)
 
 ### Community 436 - "blockchain_analyzer.py"
 Cohesion: 0.03
@@ -5887,8 +5819,8 @@ Cohesion: 0.04
 Nodes (32): Sprint F193B: Hypothesis → Finding Bounded Feedback Loop =======================, Depth > max_hypothesis_depth → pivot dropped (returns False)., Query count >= max_hypothesis_queries → pivot dropped., Within bounds → pivot enqueued successfully., Verify hypothesis IOC type maps to search task types., ioc_type='hypothesis' maps to multi_engine_search, rdap_lookup., Verify pipeline accepts and uses enqueue_hypothesis_pivot callback., async_run_live_public_pipeline has enqueue_hypothesis_pivot parameter. (+24 more)
 
 ### Community 438 - ".close"
-Cohesion: 0.22
-Nodes (6): bytes, Write WARCinfo record (metadata about this WARC file).          Args:, Write request/response pair as WARC records.          Implements revisit dedupli, Write a WARC revisit record pointing to original payload.          Returns:, Write WARC metadata record (for rendered content signals).          Args:, Write a single WARC record to file.
+Cohesion: 0.09
+Nodes (19): BehavioralPattern, CorrelationMatrix, Pattern, ndarray, str, Mine behavioral patterns from user actions.          Args:             actions:, Extract common action sequences using sequential pattern mining., Extract temporal preferences (preferred hours of activity). (+11 more)
 
 ### Community 439 - "accepted_count"
 Cohesion: 0.09
@@ -5939,8 +5871,8 @@ Cohesion: 0.16
 Nodes (14): apply_delta(), make_delta(), bool, bytes, int, str, Delta Compressor - Text delta using unified_diff + zlib compression.  Implements, Encode delta with header. (+6 more)
 
 ### Community 451 - "document_metadata_extractor.py"
-Cohesion: 0.10
-Nodes (12): Sprint 52: Lazily load Document Metadata Extractor., Invariant 0: PDF metadata extraction, Invariant 1: DOCX internal paths detection, Invariant 2: XLSX has_macros detection, Invariant 3: Fail-safe - corrupt file returns valid structure, Invariant 4: Timeout - max 10s, _DocumentMetadataExtractor, Extract from Outlook MSG files. (+4 more)
+Cohesion: 0.09
+Nodes (14): Invariant 0: PDF metadata extraction, Invariant 1: DOCX internal paths detection, Invariant 2: XLSX has_macros detection, Invariant 3: Fail-safe - corrupt file returns valid structure, Invariant 4: Timeout - max 10s, _DocumentMetadataExtractor, _exif_to_float(), Document Metadata Extractor - FOCA-style forensic metadata extraction ========== (+6 more)
 
 ### Community 452 - "aho_extractor.py"
 Cohesion: 0.04
@@ -5959,8 +5891,8 @@ Cohesion: 0.13
 Nodes (16): ArxivAdapter, ArxivPaper, ArxivResult, COREAdapter, COREPageResult, COREResult, COREWork, InstitutionNetwork (+8 more)
 
 ### Community 456 - "annotationlib.get_annotations Python 3.14"
-Cohesion: 0.07
-Nodes (42): annotationlib.get_annotations Python 3.14, compression.zstd (Python 3.14 stdlib), DELTA v1 binary format, Python 3.13.5 generational GC, Python 3.14.4 incremental GC, asyncio.get_event_loop() deprecation, asyncio.get_running_loop() replacement, InterpreterPoolExecutor Python 3.14 (+34 more)
+Cohesion: 0.08
+Nodes (38): annotationlib.get_annotations Python 3.14, compression.zstd (Python 3.14 stdlib), DELTA v1 binary format, Python 3.13.5 generational GC, Python 3.14.4 incremental GC, asyncio.get_event_loop() deprecation, asyncio.get_running_loop() replacement, InterpreterPoolExecutor Python 3.14 (+30 more)
 
 ### Community 457 - "M1 8GB UMA"
 Cohesion: 0.04
@@ -5971,24 +5903,24 @@ Cohesion: 0.15
 Nodes (12): bool, int, Semaphore, str, Create route handler for blocking assets., Render URL with Playwright WebKit., Get or create semaphore for render serialization., Detect if rendered page contains CAPTCHA.          Args:             html: HTML (+4 more)
 
 ### Community 459 - "._compute_fft_periodicity"
-Cohesion: 0.22
-Nodes (5): Integration tests for benchmark scenarios., Scenario A: Normal bounded flow works., Archive rescue has bounded timeout., Observability fields are present., TestSprint82IIntegration
+Cohesion: 0.04
+Nodes (32): Sprint 82I: 10-Minute Validation Benchmark  Runtime validation for: - Bounded fi, Challenge page with CAPTCHA is rejected., Content under 1000 bytes is rejected., Test C: Tor unavailable graceful fallback., Onion candidates skip cleanly when Tor unavailable., Test D: Unresolved contradiction preservation., Contradictions are preserved in final output., Test A: Verify bounded final context respects 12K char limit. (+24 more)
 
 ### Community 460 - "AcademicPaper"
 Cohesion: 0.08
 Nodes (23): 1. Souhrn, 2. Fáze 4A — TESTS_DEFER Rewrite (7/7 hotovo), 3. Fáze 4B — HIGH_PRIORITY_DEFER Review (3/3 hotovo), 4.1 False positives (4 sites), 4.2 Variant B — 3-handler pattern preservation (2 sites), 4.3 Stale inventory (1 site), 4. Fáze 4C — COMPLEX_DEFER Audit (7/7 hotovo), 5. Kumulativní statistiky (Fáze 1 → 4) (+15 more)
 
 ### Community 461 - "research_memory.py"
-Cohesion: 0.10
-Nodes (17): check_email_breaches(), LeakAlert, str, Add a target to monitor.          Args:             value: Target value (email,, Remove a monitoring target, Start continuous monitoring loop, Perform single check for a target.          Args:             value: Target valu, Check breach APIs for target (+9 more)
+Cohesion: 0.05
+Nodes (38): AlertSeverity, BreachAPIConfig, check_email_breaches(), get_data_leak_hunter(), LeakAlert, LeakSource, load_api_keys_from_keymanager(), MonitoringTarget (+30 more)
 
 ### Community 462 - "target_memory.py"
 Cohesion: 0.14
 Nodes (14): _import_scheduler(), _instantiate_scheduler(), Create scheduler instance with minimal mocking., L5233: sprint_id getattr exception handler.     verify: getattr(lifecycle, "spri, L5469: Hermes prewarm exception handler.     verify: prewarm failure → _hermes_e, L5529: governor.evaluate() exception handler.     verify: evaluate failure → no, Verify: after multiple fail-soft handlers, scheduler is still usable.     This i, F259: No findings → synthesis skipped.     verify: _result fields updated, no cr (+6 more)
 
 ### Community 463 - "Lazy initialization of"
-Cohesion: 0.18
-Nodes (12): Any, bool, bytearray, Path, str, Bezpečně zničit soubor.          Args:             path: Cesta k souboru, Ověřit, že soubor je skutečně přepsaný, Bezpečně zničit adresář.          Args:             path: Cesta k adresáři (+4 more)
+Cohesion: 0.27
+Nodes (8): Any, bool, Path, str, Bezpečně zničit soubor.          Args:             path: Cesta k souboru, Ověřit, že soubor je skutečně přepsaný, Bezpečně zničit adresář.          Args:             path: Cesta k adresáři, Získat statistiky destrukce
 
 ### Community 464 - ".get_statistics"
 Cohesion: 0.07
@@ -6011,8 +5943,8 @@ Cohesion: 0.04
 Nodes (47): 10. M1 8GB Specific, 11. Summary: Safe Experiments vs Forbidden Optimizations, 12. Benchmark Commands, 13. Codebase Hotspots (High Risk for PY314 Changes), 14. GHOST_INVARIANTS Compliance, 1. Free-Threaded Python (PEP 703), 2. CPython JIT (PEP 744), 3. Subinterpreters / InterpreterPool (PEP 684) (+39 more)
 
 ### Community 469 - "EntropyPool"
-Cohesion: 0.06
-Nodes (18): Sprint 48+49 Tests - Monitor MLX + Cleanup Race + ToT Dedup + LMDB Async + ELA G, S48-P8: Použití orjson pro rychlejší serializaci v LMDB, Sprint 49 tests - LMDB Async, ELA Graph, Paywall Pool, URL Mapping, Sprint 48 tests - MLX Monitor, Cleanup Race, ToT Dedup, Adaptive Interval, Holt, S49-E: relationship_discovery udržuje url_to_node mapu, S49-C: Snížení credibility při vysokém ELA skóre, S48-P1: Žádný numpy import v autonomy_monitor_step, Integration tests for Sprint 48 features (+10 more)
+Cohesion: 0.04
+Nodes (34): Archive.is should return content., 12ft.io should return content., Should return None for normal content., Sprint 48+49 Tests - Monitor MLX + Cleanup Race + ToT Dedup + LMDB Async + ELA G, S48-P8: Použití orjson pro rychlejší serializaci v LMDB, Sprint 49 tests - LMDB Async, ELA Graph, Paywall Pool, URL Mapping, S49-B: Všechny LMDB operace async přes executor, S49-D: PaywallBypass._session reused mezi voláními (+26 more)
 
 ### Community 470 - "Any"
 Cohesion: 0.06
@@ -6023,8 +5955,8 @@ Cohesion: 0.04
 Nodes (46): A.1 Runtime (`pyproject.toml` `dependencies`), A.2 `requirements.txt` (legacy pin file — `pyproject.toml` is canonical since F207N-B), A.3 `requirements-optional.txt` (legacy optional file), B.1 Native aarch64 wheel status (the hard gate on Python 3.14), B.2 ⚠️ sdist-only packages — what *actually* breaks, B.3 ❌ Packages with NO cp314 wheel, B.4 Numpy / MLX / Apple Accelerate, B.5 kuzu — the most concerning entry (+38 more)
 
 ### Community 472 - "concurrency.py"
-Cohesion: 0.14
-Nodes (19): adjust_clearnet_workers(), adjust_fetch_workers(), _FetchSemaphoreProxy, get_adaptive_limit(), get_clearnet_semaphore(), get_fetch_semaphore(), get_tor_semaphore(), int (+11 more)
+Cohesion: 0.13
+Nodes (20): Ensure Hermes-3 model is downloaded. If not present, downloads it.         Durin, adjust_clearnet_workers(), adjust_fetch_workers(), _FetchSemaphoreProxy, get_adaptive_limit(), get_clearnet_semaphore(), get_fetch_semaphore(), get_tor_semaphore() (+12 more)
 
 ### Community 473 - "AdaptiveCostModel"
 Cohesion: 0.10
@@ -6032,7 +5964,7 @@ Nodes (14): AsyncLMDBKVStore, bool, int, Path, str, LMDB Zero-Copy KV Store ====
 
 ### Community 474 - "BeautifulSoup"
 Cohesion: 0.06
-Nodes (39): Synchronous CPU-bound HTML parsing + pattern matching + metadata extraction., _sync_process_html(), malformed_html(), minimal_html(), str, Characterization tests for HTML parser outputs.  These tests document the CURREN, Characterize RustMiner._extract_links_selectolax behavior.      Uses selectolax, selectolax CSS selector 'a' extracts hrefs correctly. (+31 more)
+Nodes (37): malformed_html(), minimal_html(), str, Characterization tests for HTML parser outputs.  These tests document the CURREN, Characterize RustMiner._extract_links_selectolax behavior.      Uses selectolax, selectolax CSS selector 'a' extracts hrefs correctly., Links starting with javascript: are skipped., max_links cap is enforced. (+29 more)
 
 ### Community 475 - "quantization_selector.py"
 Cohesion: 0.14
@@ -6047,16 +5979,16 @@ Cohesion: 0.17
 Nodes (16): URL canonicalization (tracking-strip, lowercase host, drop default port), batch_fingerprint(), canonicalize_batch(), canonicalize_url_internal(), filter_valid_urls(), fingerprint(), is_valid_url(), normalize() (+8 more)
 
 ### Community 478 - "hypothesis_builder.py"
-Cohesion: 0.12
-Nodes (20): engine(), HypothesisBuilder, HypothesisResult, Any, bool, str, HypothesisBuilder — Hypothesis Generation and Causal Reasoning Export ==========, Run hypothesis generation on findings using brain/hypothesis_engine.py. (+12 more)
+Cohesion: 0.22
+Nodes (7): engine(), Any, bool, str, Run hypothesis generation on findings using brain/hypothesis_engine.py., Convert hypotheses to STIX 2.1 relationship bundle., Check if RAM usage is below threshold.
 
 ### Community 479 - ".add_ioc"
 Cohesion: 0.04
 Nodes (46): 10. Final Recommendation, 1.1 Active Runtime Models (verified from code), 1.2 Model Registry (ModelManager — runtime-wide plane), 1.3 Model Sizes (from `brain/model_manager.py:35`), 1.4 Redundant / Overlapping Systems, 1.5 Model Config Drift (code vs docs), 1. Current Model Architecture Map, 2.1 primary_reasoner (+38 more)
 
 ### Community 480 - "test_retrieval_boundaries.py"
-Cohesion: 0.04
-Nodes (28): Retrieval Plane Boundary Tests =============================  Probe testy pro uz, PQIndex MUSÍ mít search() — ale jen na trained index, ne na kolekci., PQIndex.search() vrací similarity (1/(1+L2)), ne distance., GraphRAGOrchestrator je consumer/orchestrator — NENÍ backend owner., GraphRAGOrchestrator MUSÍ mít multi_hop_search., GraphRAGOrchestrator.__init__ MUSÍ mít knowledge_layer parametr., GraphRAGOrchestrator NESMÍ mít create_node — to je backend operation., GraphRAGOrchestrator NESMÍ mít delete_node — to je backend operation. (+20 more)
+Cohesion: 0.03
+Nodes (36): Retrieval Plane Boundary Tests =============================  Probe testy pro uz, PQIndex MUSÍ mít search() — ale jen na trained index, ne na kolekci., PQIndex.search() vrací similarity (1/(1+L2)), ne distance., GraphRAGOrchestrator je consumer/orchestrator — NENÍ backend owner., GraphRAGOrchestrator MUSÍ mít multi_hop_search., GraphRAGOrchestrator.__init__ MUSÍ mít knowledge_layer parametr., GraphRAGOrchestrator NESMÍ mít create_node — to je backend operation., GraphRAGOrchestrator NESMÍ mít delete_node — to je backend operation. (+28 more)
 
 ### Community 481 - "acquisition_strategy"
 Cohesion: 0.10
@@ -6103,8 +6035,8 @@ Cohesion: 0.10
 Nodes (20): budget_consumed_pct, pre_boot_s, scheduler_elapsed_s, total_wallclock_s, timing_truth, active_runtime_occurred, active_window_budget_s, canonical_runtime_budget_view (+12 more)
 
 ### Community 492 - "next_seeds_consumption.py"
-Cohesion: 0.06
-Nodes (12): Sprint F195C: Multimodal Enrichment Tests ======================================, Tests that SprintScheduler correctly delegates multimodal to EnrichmentServices, SprintSchedulerResult has multimodal_enriched_findings field., SprintScheduler has _enrichment_services (F350M delegation)., Unit tests for MultimodalEnricher., _get_multimodal_lmdb_path() returns a Path ending in multimodal_enrichment.lmdb., _extract_file_path_from_payload handles direct absolute paths., _extract_file_path_from_payload handles file:// URLs. (+4 more)
+Cohesion: 0.09
+Nodes (6): Sprint F195C: Multimodal Enrichment Tests ======================================, Tests that SprintScheduler correctly delegates multimodal to EnrichmentServices, SprintSchedulerResult has multimodal_enriched_findings field., SprintScheduler has _enrichment_services (F350M delegation)., _get_multimodal_lmdb_path() returns a Path ending in multimodal_enrichment.lmdb., TestMultimodalSchedulerIntegration
 
 ### Community 493 - "captcha_detector.py"
 Cohesion: 0.11
@@ -6115,20 +6047,20 @@ Cohesion: 0.04
 Nodes (30): crawler(), Sprint 8V: Orchestrator Content Enrichment Integration + Real Evidence Yield A/B, Test that generic service emails (info@, support@, admin@, etc.) ARE filtered., Test evidence provenance tracking., Test that provenance tracking distinguishes REAL_FETCHED_PAGE vs MOCK_FALLBACK., Test that real fetched page has meaningful text content., Test that OFFLINE_REPLAY still works after changes., Test deep_read equivalence analysis. (+22 more)
 
 ### Community 496 - "policies.py"
-Cohesion: 0.08
-Nodes (19): Verify no module-level mutable state in owned policy files., Verify _HANDLE_PLATFORMS is frozenset in AO., Sprint 8BA Phase 0 verification tests., Verify cold import delta <= 0.1s after changes., Verify self_healing.py is classified as LIVE_EAGER., Verify core/stealth_request.py is DEAD_CONFIRMED_DELETED., Verify BasePolicy.score_url is @abc.abstractmethod., Verify threading.Lock in owned files is CONFIRMED_SYNC_SAFE. (+11 more)
+Cohesion: 0.05
+Nodes (10): Verify no module-level mutable state in owned policy files., Verify _HANDLE_PLATFORMS is frozenset in AO., Verify cold import delta <= 0.1s after changes., Verify self_healing.py is classified as LIVE_EAGER., Verify core/stealth_request.py is DEAD_CONFIRMED_DELETED., Verify BasePolicy.score_url is @abc.abstractmethod., Verify threading.Lock in owned files is CONFIRMED_SYNC_SAFE., Verify scipy/networkx are not eagerly imported in owned files. (+2 more)
 
 ### Community 497 - "decompression.py"
 Cohesion: 0.13
 Nodes (19): build_accept_encoding_header(), _decode_one_layer(), decode_response_body(), get_brotli_import_error(), is_brotli_available(), _peek_mod(), Any, bool (+11 more)
 
 ### Community 498 - "capability_prober.py"
-Cohesion: 0.10
-Nodes (16): Tests for _LazyModule with async loading., Test that module is not loaded until ensure_loaded is called., Test that sync access raises RuntimeError before loading., Test async loading works., Test parallel loading of multiple modules., TestLazyImports, _LazyModule, probe_call() (+8 more)
+Cohesion: 0.07
+Nodes (22): Test that module is not loaded until ensure_loaded is called., Test that sync access raises RuntimeError before loading., Test async loading works., clear_cache(), has_ane(), has_metal(), _LazyModule, probe_call() (+14 more)
 
 ### Community 499 - "Analytics Donor Backend"
-Cohesion: 0.11
-Nodes (16): CoreML/ANE Embedding (preferred backend), DuckDBShadowStore (downstream owner), Shannon Entropy Quality Gate, Hash Fallback Embedder (zero-RAM), Persistent LMDB Dedup Cache, Bounded Quality Rejection Ledger, Semantic Dedup via Embedding Similarity, URL-First Dedup Fingerprint (+8 more)
+Cohesion: 0.06
+Nodes (32): Analytics Donor Backend (DuckPGQGraph), ACTIVE-phase Buffered Truth-Write, CoreML/ANE Embedding (preferred backend), DuckDBShadowStore (downstream owner), Shannon Entropy Quality Gate, Fail-Open Graph Read Seams, Graph Truth Store (authoritative IOC backend), Hash Fallback Embedder (zero-RAM) (+24 more)
 
 ### Community 500 - "Async Loop Safety"
 Cohesion: 0.13
@@ -6139,16 +6071,16 @@ Cohesion: 0.07
 Nodes (30): LazyImportManager, Module, get_lazy_import_manager(), lazy_import(), lazy_import_decorator(), LazyImportManager, LazyLoader, LazyLoadStats (+22 more)
 
 ### Community 502 - "F184F Bandit Arm"
-Cohesion: 0.14
-Nodes (11): F184F Bandit Arm Bound (FIFO eviction), BudgetTracker, bool, float, BudgetTracker – sleduje spotřebu network, CPU, storage (jednoduchý klouzavý okna, BudgetTracker, PrefetchOracle – rozhoduje, které URL se mají načítat na pozadí.  PROMOTION GATE, PrefetchOracle (+3 more)
+Cohesion: 0.08
+Nodes (19): F184F Bandit Arm Bound (FIFO eviction), BudgetTracker, bool, float, BudgetTracker – sleduje spotřebu network, CPU, storage (jednoduchý klouzavý okna, BudgetTracker, PrefetchOracle – rozhoduje, které URL se mají načítat na pozadí.  PROMOTION GATE, PrefetchOracle (+11 more)
 
 ### Community 503 - "LMDB Stale-Lock Liveness"
 Cohesion: 0.06
 Nodes (24): Sprint 8AY: MLX Memory Hygiene Helper + Surgical Replacements  Tests: 1. test_ml, Test MB conversion from bytes., _mb functions must use integer division by 1024*1024., Test memory pressure levels on M1 8GB UMA., Pressure levels: NORMAL<80%, WARNING>=80%, CRITICAL>=90%., Verify AO replacements are exactly 1-line surgical substitutions., Both AO sites replaced with clear_mlx_cache() calls., Test clear_mlx_cache() includes mx.eval([]) before metal.clear_cache. (+16 more)
 
 ### Community 504 - "Resource anomaly detection"
-Cohesion: 0.05
-Nodes (48): active_task_count(), Resource anomaly detection pattern, Auto-scaling resource governor concept, IntelligentResourceAllocator, M1 Metal cache optimization pattern, main(), prediction_model(), Priority (+40 more)
+Cohesion: 0.04
+Nodes (58): active_task_count(), Resource anomaly detection pattern, Auto-scaling resource governor concept, CapacitySnapshot, IntelligentResourceAllocator, M1 Metal cache optimization pattern, main(), prediction_model() (+50 more)
 
 ### Community 505 - "call_sites"
 Cohesion: 0.11
@@ -6171,12 +6103,12 @@ Cohesion: 0.04
 Nodes (25): Tests for Sprint 77 - Embedding optimization., Test index build with RAM thresholds., Test float16 embedding storage., Test query type detection., Test that float16 storage works correctly., Test Reciprocal Rank Fusion., Test basic RRF fusion., Test writeback buffer operations. (+17 more)
 
 ### Community 510 - "AdvancedCaptchaSolver"
-Cohesion: 0.09
-Nodes (31): analyze_directory_ghosts(), analyze_file_ghosts(), _calculate_entropy(), _detect_byte_pattern_anomalies(), _detect_duplicate_patterns(), _detect_string_fragments(), _detect_zlib_ghosts(), DigitalGhostDetector (+23 more)
+Cohesion: 0.14
+Nodes (22): analyze_directory_ghosts(), analyze_file_ghosts(), _calculate_entropy(), _detect_byte_pattern_anomalies(), _detect_duplicate_patterns(), _detect_string_fragments(), _detect_zlib_ghosts(), DigitalGhostDetector (+14 more)
 
 ### Community 511 - "Stealth layer for"
 Cohesion: 0.07
-Nodes (853): DecisionEngine, Engine pro rozhodování o dalších krocích výzkumu.      Podporuje více strategií:, Hermes3Engine, HermesConfig, Konfigurace pro Hermes-3, Engine pro Hermes-3 s ChatML formátováním.      ChatML Format:         <|im_star, Evidence, HypothesisEngine (+845 more)
+Nodes (739): DecisionEngine, Engine pro rozhodování o dalších krocích výzkumu.      Podporuje více strategií:, Hermes3Engine, HermesConfig, Konfigurace pro Hermes-3, Engine pro Hermes-3 s ChatML formátováním.      ChatML Format:         <|im_star, Evidence, HypothesisEngine (+731 more)
 
 ### Community 512 - "acquisition_terminality_report"
 Cohesion: 0.19
@@ -6207,16 +6139,16 @@ Cohesion: 0.13
 Nodes (14): get_zkp_engine(), Zero-Knowledge Proof Research Engine — STUB.  ZKP requires complex cryptographic, Raised when ZKP operations are attempted., Zero-Knowledge Proof research engine — NOT IMPLEMENTED.      To implement ZKP fo, ZKP is never available from this stub., Stub — raises ZKPError., Stub — always returns False., Get the ZKP engine instance. (+6 more)
 
 ### Community 519 - "f234_nonfeed_diagnostic_preflight.py"
-Cohesion: 0.09
-Nodes (30): canned_ct_adapter(), canned_feed_adapter(), canned_pattern_matcher(), canned_public_adapter(), _make_canned_ct_result(), _make_canned_entry(), _make_canned_public_entry(), Path (+22 more)
+Cohesion: 0.07
+Nodes (14): Initialize LayerManager and all 9 layers.          This method:         - Uses l, Inicializuje všechny komponenty., Log with trace_id and elapsed time., Sprint 38: Jedna iterace monitoru – testovatelná bez smyčky.         Sprint 42:, Initialize thread pools for bounded execution on M1., Initialize long-lived httpx.AsyncClient for API/non-stealth paths., Spustit thermal monitor pokud je dostupný memory_mgr., Background monitor – deleguje na _autonomy_monitor_step.         Sprint 48: Uses (+6 more)
 
 ### Community 520 - "osint_frameworks.py"
-Cohesion: 0.10
-Nodes (11): Priority queue should handle equal VoI scores with tie-breaker., Higher VoI should be processed first., Adaptive batch size should adjust based on queue., Cache hit should skip tokenization., LRU eviction should work when cache is full., No request should wait more than 10 seconds., Communication layer should import itertools for counter., Tests for Sprint 47 - Performance + Entity Resolution. (+3 more)
+Cohesion: 0.08
+Nodes (13): Priority queue should handle equal VoI scores with tie-breaker., Higher VoI should be processed first., Adaptive batch size should adjust based on queue., Cache hit should skip tokenization., LRU eviction should work when cache is full., No request should wait more than 10 seconds., Communication layer should import itertools for counter., Tests for Sprint 47 - Performance + Entity Resolution. (+5 more)
 
 ### Community 521 - "paywall.py"
-Cohesion: 0.04
-Nodes (44): Hermetic Preflight Principle (no live, no network, no MLX), Sprint 46 tests – Access to Unreachable Data (Sessions + Paywall + OSINT + Darkn, Archive.is should return content., 12ft.io should return content., theHarvester should handle missing tool gracefully., Should parse theHarvester JSON output., Should parse Sherlock output., Sherlock should handle missing tool gracefully. (+36 more)
+Cohesion: 0.03
+Nodes (46): Sprint 46 tests – Access to Unreachable Data (Sessions + Paywall + OSINT + Darkn, theHarvester should handle missing tool gracefully., Should parse theHarvester JSON output., Should parse Sherlock output., Sherlock should handle missing tool gracefully., OSINT findings should have proper structure., Tor proxy connector should work., I2P socket should be configurable. (+38 more)
 
 ### Community 522 - "rl_health_report.py"
 Cohesion: 0.23
@@ -6238,13 +6170,9 @@ Nodes (21): bench_aho_corasick(), bench_bloom_filter(), bench_rolling_hash(), bu
 Cohesion: 0.15
 Nodes (17): ComputeUnit, BGE embeddings to CoreML export (M1 ANE acceleration), _check_ram_before_export(), export_bge_to_coreml(), _find_local_onnx(), _find_onnx_model(), _get_hf_cache_path(), main() (+9 more)
 
-### Community 527 - "CoreML/ANE Embedding (preferred"
-Cohesion: 0.08
-Nodes (8): oracle(), Testy pro Sprint 59 – prediktivní prefetch s contextual banditem a dvoustupňovým, Test forward pass SSM rerankeru., Test benchmark rozhodování o depthwise., Test LinUCB - inicializace, UCB výpočet, update., Test LinUCB cold-start - nové rameno dostává exploraci., Testy pro prediktivní prefetch systém., TestSprint59Prefetch
-
 ### Community 528 - "M1 RAM-Bounded LanceDB"
-Cohesion: 0.14
-Nodes (13): AcademicPaper, LanceDBAcademicStore, Academic paper with metadata for LanceDB storage., Convert to dict for LanceDB storage., Semantic search over academic papers discovered during research.      Sprint F25, Initialize table and embedder., Initialize embedder via MLX-first cascade.          Invariant: random vector fal, Embed texts via the initialized embedder backend.          ``self._embedder`` is (+5 more)
+Cohesion: 0.12
+Nodes (18): cdx_deep_search(), cdx_deep_search_batch(), CDXDeepSearchResult, CDXSearchResult, _parse_cdx_response(), CanonicalFinding, ClientSession, float (+10 more)
 
 ### Community 529 - "steganography_detector.py"
 Cohesion: 0.04
@@ -6255,12 +6183,12 @@ Cohesion: 0.04
 Nodes (31): crawler(), Sprint 8X: True Live Content Enrichment Integration + Async Provider Path Fix  T, Test evidence provenance tracking., Test that provenance tracking distinguishes REAL_FETCHED_PAGE vs MOCK_FALLBACK., Test that real fetched page has meaningful text content., Test that OFFLINE_REPLAY still works after changes., Test deep_read equivalence analysis., Test that deep_read() exists in _ResearchManager. (+23 more)
 
 ### Community 531 - "analyze_blockchain_address"
-Cohesion: 0.15
-Nodes (20): Result of S2ORC search., S2Result, NamedTuple, _compile_directory(), _compile_file(), CompileResult, GateReport, ImportResult (+12 more)
+Cohesion: 0.18
+Nodes (17): _compile_directory(), _compile_file(), CompileResult, GateReport, ImportResult, main(), bool, Path (+9 more)
 
 ### Community 532 - "._cached_request"
-Cohesion: 0.05
-Nodes (40): create_moe_router(), Any, array, bool, float, int, ndarray, str (+32 more)
+Cohesion: 0.04
+Nodes (50): get_ane_embedder(), Lazy init CoreML MiniLM-L6-v2 embedder, s MLX ModernBERT pokud CoreML není., Semantic deduplication of findings.     ANE path: CoreML MiniLM batch inference, semantic_dedup_findings(), create_moe_router(), Any, array, bool (+42 more)
 
 ### Community 533 - "._detect_layering"
 Cohesion: 0.04
@@ -6271,8 +6199,8 @@ Cohesion: 0.22
 Nodes (9): cdx_deep_search, CDXDeepSearchResult, CDXSearchResult, WaybackCDXDeepSearch, CDXDiffEvent, Circuit Breaker Pattern, _WaybackCircuitBreaker, WaybackDiffMiner (+1 more)
 
 ### Community 535 - "EntityCandidate"
-Cohesion: 0.04
-Nodes (60): _ensure_utc_aware(), EntityCandidate, get_linker(), link_entities(), LinkedEntity, Any, bool, datetime (+52 more)
+Cohesion: 0.13
+Nodes (12): Any, str, Convert to dictionary for serialization., Convert to dictionary for serialization., Create from dictionary., Get cache statistics., Get or create aiohttp session., Query Wikidata for entity candidates.          Args:             entity_text: En (+4 more)
 
 ### Community 536 - "._build_sparql_query"
 Cohesion: 0.05
@@ -6283,8 +6211,8 @@ Cohesion: 0.11
 Nodes (17): baseline, memory_gb_approx, model_id, model_key, note, quantization, role, created (+9 more)
 
 ### Community 538 - "bgp_monitor.py"
-Cohesion: 0.14
-Nodes (15): create_quantum_pathfinder(), Graph algorithms and quantum-inspired pathfinding for knowledge graphs.  This mo, Factory function returning None when not available., create_quantum_pathfinder(), _ensure_duckpgq(), _get_mlx(), _get_MLX_AVAILABLE(), _get_SCIPY_AVAILABLE() (+7 more)
+Cohesion: 0.11
+Nodes (19): create_quantum_pathfinder(), Graph algorithms and quantum-inspired pathfinding for knowledge graphs.  This mo, Factory function returning None when not available., create_quantum_pathfinder(), _ensure_duckpgq(), _get_MLX_AVAILABLE(), _get_SCIPY_AVAILABLE(), _get_scipy_sparse() (+11 more)
 
 ### Community 539 - "macos_webkit_renderer.py"
 Cohesion: 0.16
@@ -6307,24 +6235,24 @@ Cohesion: 0.16
 Nodes (17): admission_summary(), DeepResearchProviderMirror, get_task_handler(), get_task_tool_preview_mapping(), __getattr__(), list_registered_tasks(), provider_side_truth(), callable (+9 more)
 
 ### Community 545 - "ExtractedMetadata"
-Cohesion: 0.06
-Nodes (34): array, bytes, int, ndarray, str, Secure aggregation s dvěma režimy: - MASKING: rychlé párové masky (algebraické z, Modulární inverze vzhledem k P (Fermatův teorém)., Kvantizace update, rozdělení na threshold shareů v mod p.         Vrací {peer_id (+26 more)
+Cohesion: 0.13
+Nodes (14): array, bytes, int, ndarray, str, Modulární inverze vzhledem k P (Fermatův teorém)., Kvantizace update, rozdělení na threshold shareů v mod p.         Vrací {peer_id, Agregace shareů, Lagrange interpolace v bodě 0 pomocí modulární aritmetiky. (+6 more)
 
 ### Community 546 - "._analyze_macros_olevba"
-Cohesion: 0.29
-Nodes (4): Any, Extract email headers with forensics analysis., Analyze Received headers to build infrastructure chain., Extract extended properties from DOCX ZIP.
+Cohesion: 0.14
+Nodes (8): Any, Extract email headers with forensics analysis., Analyze Received headers to build infrastructure chain., Extract from DOCX with FOCA-style revision history and fonts., Extract extended properties from DOCX ZIP., Extract embedded fonts from DOCX document., Extract revision history from DOCX (track changes)., Extract extended properties from XLSX ZIP.
 
 ### Community 547 - "._cache"
-Cohesion: 0.17
-Nodes (9): bytes, int, Generate cache key from first 1024 bytes., Cache extraction result., Extract from PDF using PyMuPDF with FOCA-style deep analysis., Fallback PDF extraction without PyMuPDF., Extract revision count from PDF., Extract template path from PDF metadata. (+1 more)
+Cohesion: 0.13
+Nodes (12): bool, bytes, int, Generate cache key from first 1024 bytes., Check if cache entry is still valid (within TTL)., Get cached extraction result., Cache extraction result., Extract from PDF using PyMuPDF with FOCA-style deep analysis. (+4 more)
 
 ### Community 548 - "live_measurement_responsibility_index.py"
 Cohesion: 0.19
 Nodes (16): _build_index(), detect_symbol(), get_index(), get_target_modules(), has_runtime_imports(), Any, bool, str (+8 more)
 
 ### Community 549 - "vlm_analyzer.py"
-Cohesion: 0.18
-Nodes (14): analyze_image_vlm(), _ensure_loaded(), _get_lock(), _get_model_id(), bool, bytes, Lock, str (+6 more)
+Cohesion: 0.22
+Nodes (12): analyze_image_vlm(), _ensure_loaded(), _get_lock(), _get_model_id(), bool, bytes, Lock, str (+4 more)
 
 ### Community 550 - "optimize_imports.py"
 Cohesion: 0.20
@@ -6336,7 +6264,7 @@ Nodes (18): Testy pro differential privacy., Test #15: DPNoise – inicializace.
 
 ### Community 552 - "init.py"
 Cohesion: 0.03
-Nodes (76): enrich_with_free_pdfs(), get_all_adapters(), __getattr__(), _lazy_import(), discovery/academic/__init__.py — Academic Intelligence Layer  Sprint F259: Acade, Lazy attribute access for all adapters., Get all available academic adapters.      Returns:         Dict mapping adapter, Search all academic sources concurrently.      Args:         query: Search query (+68 more)
+Nodes (95): enrich_with_free_pdfs(), get_all_adapters(), __getattr__(), _lazy_import(), discovery/academic/__init__.py — Academic Intelligence Layer  Sprint F259: Acade, Lazy attribute access for all adapters., Get all available academic adapters.      Returns:         Dict mapping adapter, Search all academic sources concurrently.      Args:         query: Search query (+87 more)
 
 ### Community 553 - "model_phase_facts.py"
 Cohesion: 0.19
@@ -6355,16 +6283,16 @@ Cohesion: 0.05
 Nodes (25): Smoke tests for rust_extensions Phase 1: RollingHashEngine and BloomFilter. SKIP, hashes() must return a list of hashes for windows., update() then digest() must match a fresh hash of the full window., Test BloomFilter add/check API compatibility., add() must return True when item is NEW (not previously added)., Verify rust_extensions package imports and exposes correct symbols., add() must return False when item was already added (duplicate)., contains() must return True for an item that was added. (+17 more)
 
 ### Community 557 - ".extract_facts"
-Cohesion: 0.15
-Nodes (10): Any, Pattern, str, Generate a consistent ID from content., Lazy import of legacy types to avoid import-time coupling., Process content and store extracted facts in the knowledge graph.          Args:, Process a document and store its facts.          Convenience method for processi, Initialize the builder with regex patterns. (+2 more)
+Cohesion: 0.16
+Nodes (9): Any, str, Generate a consistent ID from content., Lazy import of legacy types to avoid import-time coupling., Process content and store extracted facts in the knowledge graph.          Args:, Process a document and store its facts.          Convenience method for processi, Initialize the builder with regex patterns., Initialize regex patterns for fact extraction.          Returns:             Dic (+1 more)
 
 ### Community 558 - "sprint_dashboard.py"
 Cohesion: 0.07
 Nodes (29): 10. Diagram datového toku, 11.1 Horká místa pro IVF-PQ, 11.2 Lazy loading patterny k reuse, 11.3 Bezpečnostní invarianty pro IVF-PQ implementaci, 11.4 Nové env flags k přidání, 11. Před-implementační poznámky pro IVF-PQ + lazy loading, 12. Appendix — souborový index, 1. Shrnutí (TL;DR) (+21 more)
 
 ### Community 559 - "ct_log_scanner.py"
-Cohesion: 0.11
-Nodes (14): Sprint 46: Lazily load CTLogScanner., _CTLogScanner, bool, ClientSession, int, str, Certificate Transparency log scanner (crt.sh) with local cache., Return cached subdomains if fresh enough. (+6 more)
+Cohesion: 0.13
+Nodes (13): _CTLogScanner, bool, ClientSession, int, str, Certificate Transparency log scanner (crt.sh) with local cache., Return cached subdomains if fresh enough., Store subdomains in cache. (+5 more)
 
 ### Community 560 - "acquisition_telemetry_reconcile.py"
 Cohesion: 0.05
@@ -6404,19 +6332,19 @@ Nodes (17): calculate_statistics(), get_rss_mb(), main(), Any, float, int, Path,
 
 ### Community 569 - "benchmark_sprint_probe.py"
 Cohesion: 0.22
-Nodes (17): get_rss_mb(), main(), _make_canned_entry(), _patch_feeds_and_patterns(), Any, float, int, Path (+9 more)
+Nodes (15): get_rss_mb(), main(), _make_canned_entry(), _patch_feeds_and_patterns(), Any, float, int, Path (+7 more)
 
 ### Community 570 - ".add_evidence"
 Cohesion: 0.14
 Nodes (9): bool, float, str, Add a new hypothesis to the frame., Add evidence for a hypothesis with source weight.          Args:             hyp, Return belief for hypothesis or total belief if None., Return plausibility of hypothesis (1 - sum of masses of other hypotheses)., Return conflict mass (higher = more contradictory evidence). (+1 more)
 
 ### Community 571 - "DynamicContextManager"
-Cohesion: 0.16
-Nodes (9): DynamicContextManager, Three-tier context manager with FastEmbed (ONNX) backend.      Model: BAAI/bge-s, Ensure faiss is imported before use., Load cnew storage from disk if available., Save cnew storage to disk., Add item to cnew storage., Check and perform eviction if tiers are over capacity., Find items to evict based on priority and access time. (+1 more)
+Cohesion: 0.10
+Nodes (18): int, Factory pro ModernBertModelAdapter (bridges ModernBertEngine → ModelEngine)., Estimate context length from KV cache structure., ModernBertModelAdapter, bool, float, int, str (+10 more)
 
 ### Community 572 - ".add_item"
-Cohesion: 0.19
-Nodes (10): Any, float, ndarray, str, Get embeddings for texts (uses query task for retrieval)., Generate unique ID for content item., Estimate token count (rough approximation: 1 token ≈ 4 characters)., Add an item to the context.          Args:             content: Text content to (+2 more)
+Cohesion: 0.09
+Nodes (22): _ewma_drift(), forecast_mamba2(), _get_mamba_model(), EWMA-based drift detection., Detect change points in time series using wavelet + Mamba2 (with fallbacks)., Get or load Mamba2 model (lazy)., Forecast using Mamba2 model with best-effort timeout and circuit breaker.      A, Test pattern_mining - Sprint 67 Tests for wavelet change detection and forecasti (+14 more)
 
 ### Community 573 - "render_coordinator.py"
 Cohesion: 0.21
@@ -6455,8 +6383,8 @@ Cohesion: 0.06
 Nodes (30): int, str, Sprint 8AX — DuckDB Shadow Ingest Wiring Tests =================================, With GHOST_DUCKDB_SHADOW=1, evidence_packet events are shadow-recorded., The shadow hook must NOT be added to autonomous_orchestrator.py.         It must, When RAMDISK is inactive and DB_ROOT is available,         the DuckDB store shou, In :memory: mode, repeated async writes should all go to the same         persis, In :memory: mode, the duckdb_worker thread name should be stable         across (+22 more)
 
 ### Community 582 - "atomic_storage.py"
-Cohesion: 0.10
-Nodes (11): clear_storage_cache(), LRU cache for shard files with configurable max size., Clear all cached shards., Get cache statistics., Flush all RAM cache to disk., Initialize the knowledge graph storage.          Args:             storage_dir:, Initialize total entries counter with a fail-safe scan., Migrate existing JSON shards into LMDB. (+3 more)
+Cohesion: 0.09
+Nodes (20): UnifiedCapabilitiesManager (Single Entry Point), clear_storage_cache(), Legacy Package Init (Deprecation Marker), Atomic JSON Storage - RAM-efficient knowledge graph for M1 Macs.  Replaces vecto, LRU cache for shard files with configurable max size., # TODO: Use Hermes for extraction (requires integration), Clear all cached shards., Get cache statistics. (+12 more)
 
 ### Community 583 - "._compute_behavior_jitter"
 Cohesion: 0.05
@@ -6467,8 +6395,8 @@ Cohesion: 0.05
 Nodes (42): 10. Next Steps (out of F261 scope), 1. Reward Formula, 2. Q-Network Weight Persistence Schema, 3. Expected Learning Curve (50 sprints post-activation), 4.1 `mx.eval([])` BEFORE `mx.metal.clear_cache()` (GHOST_INVARIANT I11), 4.2 `mx.savez` vs `np.savez` vs `pickle`, 4.3 Lazy MLX imports (module-level protection), 4.4 `mx.metal.clear_cache` deprecation warning (+34 more)
 
 ### Community 585 - "run_baseline.py"
-Cohesion: 0.12
-Nodes (25): Canonical Sprint Owner (core.__main__.run_sprint), Canonical Write Seam (DuckDBShadowStore.async_ingest_findings_batch), Runtime A — Active Production Path, Runtime B — Legacy/Deprecated, I6: CancelledError Must Propagate, PassiveDNS Lane Closure (R2), requirements.txt (required deps), BaselineResult (+17 more)
+Cohesion: 0.25
+Nodes (15): BaselineResult, collect_inventory(), main(), _make_result(), bool, float, int, str (+7 more)
 
 ### Community 586 - "shadow_pre_decision.py"
 Cohesion: 0.06
@@ -6503,20 +6431,20 @@ Cohesion: 0.05
 Nodes (41): 1. Missing Classes Summary, 2.1 Import Location, 2.2 Usage Pattern, 2.3 Fallback Behavior, 2.4 Browser Automation Context, 2.5 Functionality Blocked Estimate, 2. AutomationOrchestrator Analysis (`intelligence/web_intelligence.py`), 3.1 Import Location (+33 more)
 
 ### Community 595 - "Compat seam (deprecation"
-Cohesion: 0.05
-Nodes (38): Compat seam (deprecation strategy), ExportHandoff typed handoff, Ledger Entry #3 inline render dupe (resolved), Ledger Entry #6 ghost_global direct graph spelunking (resolved), Sprint Markdown Renderer Plane, Co je PLYŠE clean dnes, Další krok po této fázi, Export Plane Compat Debt Ledger (+30 more)
+Cohesion: 0.06
+Nodes (33): Compat seam (deprecation strategy), Diagnostics Plane (pure, stateless), Ledger Entry #3 inline render dupe (resolved), Ledger Entry #6 ghost_global direct graph spelunking (resolved), Sprint Markdown Renderer Plane, Co je PLYŠE clean dnes, Další krok po této fázi, Export Plane Compat Debt Ledger (+25 more)
 
 ### Community 596 - "Sprint Seeds LMDB"
 Cohesion: 0.21
 Nodes (14): Sprint Seeds LMDB (cross-sprint path persistence), async_load_sprint_seeds(), async_save_sprint_seeds(), _make_key(), bytes, str, Sprint F214Q: sprint_seeds.lmdb — cross-sprint quantum pathfinder seed persisten, Synchronous persistence for sprint seeds (used during export phase).     Writes (+6 more)
 
 ### Community 597 - "dynamic_context_manager.py"
-Cohesion: 0.15
-Nodes (14): _deserialize_cnew(), _deserialize_context_item(), _ndarray_to_list(), Priority, bytes, Dynamic Context Manager with FastEmbed (ONNX) ==================================, Serialize cnew storage to bytes using orjson., Deserialize cnew storage from bytes using orjson. (+6 more)
+Cohesion: 0.05
+Nodes (52): ContextItem, ContextStats, _deserialize_cnew(), _deserialize_context_item(), DynamicContextManager, _ndarray_to_list(), Priority, Any (+44 more)
 
 ### Community 598 - "evidence_log.py"
-Cohesion: 0.09
-Nodes (19): Any, float, int, str, FederationEvidenceEvent, FederationEvidenceLog, Evidence log pro federated learning (downgrade a security events)., Evidence event pro federated learning. (+11 more)
+Cohesion: 0.14
+Nodes (13): Any, float, int, str, FederationEvidenceEvent, FederationEvidenceLog, Evidence log pro federated learning (downgrade a security events)., Evidence event pro federated learning. (+5 more)
 
 ### Community 599 - "PluginManager (re-export)"
 Cohesion: 0.13
@@ -6535,8 +6463,8 @@ Cohesion: 0.18
 Nodes (16): No --disable-gpu on M1 UMA, Windup-Local Model Plane (Qwen/SmolLM), Model Inventory (13 models), ms-marco-MiniLM-L-12-v2 (FlashRank), gliner-relex-large-v0.5, GLiNER Name Conflict (config vs runtime), DeepHermes-3-Llama-3-3B-Preview-4bit, answerdotai-ModernBERT-base-6bit (+8 more)
 
 ### Community 603 - "web_intelligence.py"
-Cohesion: 0.10
-Nodes (14): _DuckDBQueryExecutor, Private SQL construction and execution engine for DuckDBShadowStore.          NO, Return the active write connection (MODE A file or MODE B persistent)., Sprint F264: Lazy-init prepared INSERT statement for shadow_findings., Sprint F264: Drop cached prepared statement. Call on close / reconnect., Run fn(conn) inside an explicit transaction.             Commits on success, rol, Insert a single shadow finding. Returns True on success., Bulk insert shadow findings. Returns number of successfully inserted records. (+6 more)
+Cohesion: 0.11
+Nodes (13): _DuckDBQueryExecutor, Private SQL construction and execution engine for DuckDBShadowStore.          NO, Return the active write connection (MODE A file or MODE B persistent)., Sprint F264: Lazy-init prepared INSERT statement for shadow_findings., Sprint F264: Drop cached prepared statement. Call on close / reconnect., Run fn(conn) inside an explicit transaction.             Commits on success, rol, Insert a single shadow finding. Returns True on success., Bulk insert shadow findings. Returns number of successfully inserted records. (+5 more)
 
 ### Community 604 - "int"
 Cohesion: 0.05
@@ -6563,16 +6491,16 @@ Cohesion: 0.05
 Nodes (40): aborted, aborted_reasons, advisory_result_shape, attempted, elapsed_ms, indexed_count, query, skipped_reason (+32 more)
 
 ### Community 610 - "temporal.py"
-Cohesion: 0.13
-Nodes (10): Sprint 49: Lazily load JS Source Map Extractor., extract_from_bundle, _JSSourceMapExtractor, str, Extracts source paths from JavaScript source maps., Download source map and return extracted source paths., Guess the source map URL from the bundle URL., Test: JS Source Maps are extracted from bundle_urls. (+2 more)
+Cohesion: 0.15
+Nodes (9): extract_from_bundle, _JSSourceMapExtractor, str, Extracts source paths from JavaScript source maps., Download source map and return extracted source paths., Guess the source map URL from the bundle URL., Test: JS Source Maps are extracted from bundle_urls., Test: All components are fail-safe. (+1 more)
 
 ### Community 611 - "html_text_fast.py"
-Cohesion: 0.08
-Nodes (18): _check_graph_capability(), Any, float, int, str, NON-AUTHORITATIVE DIAGNOSTIC: returns the class name of the attached graph., Sprint 8VQ: Inject truth-store STIX graph for synthesis consumption.          TR, Sprint 8VQ: Get injected STIX graph for synthesis consumers.          Returns th (+10 more)
+Cohesion: 0.07
+Nodes (24): _check_graph_capability(), GraphAttachmentStore, Any, bool, float, int, str, NON-AUTHORITATIVE DIAGNOSTIC: returns the class name of the attached graph. (+16 more)
 
 ### Community 612 - "automation_orchestrator.py"
-Cohesion: 0.15
-Nodes (8): AutomationOrchestrator, Any, str, Minimal automation orchestrator stub.      web_intelligence.py expects:, Cleanup all active tasks and resources.          Called from web_intelligence.py, Initialize all intelligence components., Lazy initialization — spustí komponenty a aging task pouze jednou při první oper, Age queued operations to improve priority over time.          HARD EXIT: waits o
+Cohesion: 0.17
+Nodes (24): PyAny, Bound, PyModule, PyResult, String, Vec, Self, blake3_hash() (+16 more)
 
 ### Community 613 - "BannerGrabber"
 Cohesion: 0.22
@@ -6651,16 +6579,16 @@ Cohesion: 0.06
 Nodes (25): _load_module(), _parse_module(), Any, Module, Sprint F261 — arrow_fetch_batch bounded-memory DuckDB reader.  Replaces 27 `.fet, Each yielded value must be a list of tuples (matches fetchall() shape)., The function must be a generator (contains `yield`)., conn=None must yield nothing (no raise). (+17 more)
 
 ### Community 633 - "._extract_dxf"
-Cohesion: 0.12
-Nodes (11): str, Analyze macros using olevba for C2 URLs and suspicious API calls.         Return, Extract VBA code from Office documents., Extract value from XML tag., Blocking extraction - runs in executor., Extract embedded fonts for geographic indication., Extract company name from PDF producer string., Extract from PPTX with speaker notes and hidden slides. (+3 more)
+Cohesion: 0.20
+Nodes (5): Extract value from XML tag., Extract from PPTX with speaker notes and hidden slides., Extract speaker notes from PPTX., Extract hidden slides from PPTX., Extract from ODT (OpenDocument Text).
 
 ### Community 634 - "f231_artifact_inventory.py"
 Cohesion: 0.31
 Nodes (12): _apply_gate_artifact_stale(), ArtifactResult, _build_arg_parser(), inspect_artifact(), main(), PackInventory, ArgumentParser, int (+4 more)
 
 ### Community 635 - "zstd_compressor.py"
-Cohesion: 0.11
-Nodes (16): jaccard_from_lists(), Any, float, LocalGraphStore, ResourceGovernor, str, Task, Stable digest for cross-node similarity. (+8 more)
+Cohesion: 0.12
+Nodes (23): Bound, PyModule, PyResult, String, Vec, batch_classify(), classify_host(), classify_url() (+15 more)
 
 ### Community 636 - "_compute_hydration_score"
 Cohesion: 0.22
@@ -6691,8 +6619,8 @@ Cohesion: 0.06
 Nodes (41): HypothesisPack, SourceHint, build_entity_cooccurrence_map, build_entity_summary, extract_entities_from_findings, extract_entities_from_texts, extract_iocs_from_text, feedback_compact (+33 more)
 
 ### Community 643 - "IOC deduplication across"
-Cohesion: 0.22
-Nodes (10): IOC deduplication across sprints (xxh3-64 keyed), xxHash3-64 non-cryptographic content hashing, hledac_rust_extensions(), batch_content_hash(), content_hash_64(), content_hash_hex(), StreamHasher64, test_batch_hash() (+2 more)
+Cohesion: 0.17
+Nodes (13): IOC deduplication across sprints (xxh3-64 keyed), xxHash3-64 non-cryptographic content hashing, Bound, PyModule, PyResult, hledac_rust_extensions(), batch_content_hash(), content_hash_64() (+5 more)
 
 ### Community 644 - "._allocate_resources"
 Cohesion: 0.05
@@ -6707,8 +6635,8 @@ Cohesion: 0.05
 Nodes (36): A.1 Module Map (53 files), A.2 Per-Transport Status, A.3 Decorator-based cross-cutting: NONE, B.1 Semaphore Inventory, B.2 AdaptiveSemaphore, B.3 Fetch functions NOT gated by a Semaphore, B.4 Connection lifecycle — what is shared vs per-call, B.5 Per-call session churn — concrete fix candidates (+28 more)
 
 ### Community 647 - "ct_log_client.py"
-Cohesion: 0.05
-Nodes (36): Testy pro Sprint 68 - Plně autonomní orchestrátor Action Registry, Decision Logi, Test vytvoření ActionResult., Test defaultních hodnot ActionResult., Test ActionResult s chybou., Test synchronní evikce MLX cache., Test MLX cache statistics., Test že Sprint 68 atributy existují v __init__., Test bounded kolekce pro Sprint 68. (+28 more)
+Cohesion: 0.10
+Nodes (19): Testy pro Sprint 68 - Plně autonomní orchestrátor Action Registry, Decision Logi, Test vytvoření ActionResult., Test defaultních hodnot ActionResult., Test ActionResult s chybou., Test synchronní evikce MLX cache., Test MLX cache statistics., Test že Sprint 68 atributy existují v __init__., Test bounded kolekce pro Sprint 68. (+11 more)
 
 ### Community 648 - ".reset_session"
 Cohesion: 0.05
@@ -6727,8 +6655,8 @@ Cohesion: 0.15
 Nodes (13): fallback_model, ready_for_F217C, required_follow_up, rollback_plan, why, fallback_model, ready_for_F217C, required_follow_up (+5 more)
 
 ### Community 652 - "memoryview"
-Cohesion: 0.20
-Nodes (14): memoryview, decode_response_bytes(), parse_charset_from_content_type(), bytearray, bytes, int, str, STORAGE-FIX-4: Bounded encoding fallback for OSINT HTTP responses.  OSINT data c (+6 more)
+Cohesion: 0.15
+Nodes (23): correlate_passive_fingerprints(), _cve_lookup_background(), _extract_tech_stack_findings(), get_fingerprint_stats(), Any, CanonicalFinding, int, str (+15 more)
 
 ### Community 653 - "canonical_report_snapshot"
 Cohesion: 0.15
@@ -6752,7 +6680,7 @@ Nodes (13): canonical_report_snapshot, accepted_findings, actual_duration_s, che
 
 ### Community 658 - "ram_vault.py"
 Cohesion: 0.08
-Nodes (13): Async context manager exit — cleans up the store.         Idempotent: safe to ca, Async idempotent shutdown — canonical async cleanup path.          Cleanup order, Lazy-init GraphAttachmentStore., DEPRECATED (Sprint F222): Delegates to GraphAttachmentStore.inject_graph()., DEPRECATED (Sprint F222): Delegates to GraphAttachmentStore.get_graph_attachment, DEPRECATED (Sprint F222): Delegates to GraphAttachmentStore.inject_stix_graph()., DEPRECATED (Sprint F222): Delegates to GraphAttachmentStore.get_stix_graph()., DEPRECATED (Sprint F222): Delegates to GraphAttachmentStore.inject_truth_write_g (+5 more)
+Nodes (14): Async context manager exit — cleans up the store.         Idempotent: safe to ca, Async idempotent shutdown — canonical async cleanup path.          Cleanup order, Lazy-init GraphAttachmentStore., DEPRECATED (Sprint F222): Delegates to GraphAttachmentStore.inject_graph()., DEPRECATED (Sprint F222): Delegates to GraphAttachmentStore.get_graph_attachment, DEPRECATED (Sprint F222): Delegates to GraphAttachmentStore.graph_supports_buffe, DEPRECATED (Sprint F222): Delegates to GraphAttachmentStore.inject_stix_graph()., DEPRECATED (Sprint F222): Delegates to GraphAttachmentStore.get_stix_graph(). (+6 more)
 
 ### Community 659 - "CIComponent"
 Cohesion: 0.07
@@ -6763,12 +6691,12 @@ Cohesion: 0.17
 Nodes (13): Commands.deleteKey, Commands.ensureSigningKey, Commands.publicKey, Commands.signDigest, Commands.toPEM, Data Hex Extension (init(hexString:), hexString), EnclaveSigner.deleteSigningKey, EnclaveSigner.extractPublicKey (+5 more)
 
 ### Community 661 - "._check_docx_macros"
-Cohesion: 0.15
-Nodes (7): Extract metadata from SVG files., Extract metadata from DXF files (CAD drawings)., Find internal file paths in text., Extract from DOCX with FOCA-style revision history and fonts., Fallback DOCX extraction without python-docx., Extract embedded fonts from DOCX document., Extract revision history from DOCX (track changes).
+Cohesion: 0.16
+Nodes (7): Extract metadata from SVG files., Extract metadata from DXF files (CAD drawings)., Check if DOCX/XLSX/PPTX contains VBA macros., Find internal file paths in text., Fallback DOCX extraction without python-docx., Extract from XLSX with embedded fonts., Fallback XLSX extraction without openpyxl.
 
 ### Community 662 - "reputation.py"
-Cohesion: 0.14
-Nodes (21): test_temporal_archive_bounded(), test_temporal_drift_triggers_archive(), test_temporal_logs_drift(), detect_drift(), _evict_oldest(), increment_archive_fallback(), is_high_value_url(), Any (+13 more)
+Cohesion: 0.01
+Nodes (94): _load_federated_engine(), Uklidí všechny zdroje., Gracefully shut down all components holding resources.          This is the unif, Shromáždí statistiky., Manages research execution across all sources - M1 8GB RAM optimized., Gracefully shut down all components holding resources.          Called by FullyA, Zkontroluje využití RAM a vrátí stav.          Returns:             Tuple (GB po, Agresivní garbage collection pro M1 8GB. (+86 more)
 
 ### Community 663 - "scoring.py"
 Cohesion: 0.15
@@ -6803,24 +6731,24 @@ Cohesion: 0.18
 Nodes (9): _get_vn_core_ml_model(), _get_vn_request(), has_apple_intelligence(), bool, Vision Captcha Solver - Apple Vision/CoreML based CAPTCHA solving ==============, Initialize VisionCaptchaSolver.          Args:             model_path: Path to Y, Check if Apple Intelligence (CoreML >= 6.0) is available.      Returns:, Get VNCoreMLModel with lazy import. (+1 more)
 
 ### Community 672 - "HNSW ANN Search"
-Cohesion: 0.10
-Nodes (18): Retrieval Authority Boundary Pattern, HNSW ANN Search, Hybrid Retrieval (Dense + Sparse BM25), Product Quantization (12x compression), RAPTOR Hierarchical Retrieval, Reciprocal Rank Fusion (RRF), get_academic_store(), LanceDB Identity Store - Hybrid vector + FTS search for entity resolution.  ROLE (+10 more)
+Cohesion: 0.12
+Nodes (15): Retrieval Authority Boundary Pattern, HNSW ANN Search, Hybrid Retrieval (Dense + Sparse BM25), Product Quantization (12x compression), RAPTOR Hierarchical Retrieval, Reciprocal Rank Fusion (RRF), LocalSearchSeam, MetadataStore (+7 more)
 
 ### Community 673 - "torrc path validator"
 Cohesion: 0.26
 Nodes (11): torrc path validator (SOCKS/HiddenServicePort gate), check_hidden_service_statistics(), check_isolate_socks_auth(), find_torrc(), main(), bool, int, str (+3 more)
 
 ### Community 674 - "ContextItem"
-Cohesion: 0.24
-Nodes (7): ContextItem, Individual context item with metadata., Add item to appropriate tier based on priority., Add item to hot context., Add item to warm context., Get an item from context.          Args:             item_id: ID of the item to, Rebalance context based on current research phase.
+Cohesion: 0.10
+Nodes (16): Communication, CommunicationPattern, FlowPattern, bool, Mine communication patterns.          Args:             communications: List of, Analyze communication pattern between a specific pair., Analyze overall network structure., Analyze transaction flows for patterns.          Args:             transactions: (+8 more)
 
 ### Community 675 - "coreml_ane_integration_matrix.json"
 Cohesion: 0.17
 Nodes (11): metadata, date, plan_doc, purpose, runtime, sprint, paths, recommendations (+3 more)
 
 ### Community 676 - "ti_aspirational.py"
-Cohesion: 0.05
-Nodes (29): PQIndex, array, bool, float, int, str, Encode vectors to PQ codes.          Args:             vectors: MLX array of sha, Add a single vector to the index.          Args:             node_id: Unique ide (+21 more)
+Cohesion: 0.08
+Nodes (13): Initialize internal coordinators after class definitions are loaded., Initialize bandit directories and load existing stats., Get path for bandit stats file., Load bandit stats from disk., Save bandit stats to disk., Build context key from components (max 80 chars)., UCB1 action selection., Select bandit actions for current context.         Returns: (list of action name (+5 more)
 
 ### Community 677 - "DispatchOutcome"
 Cohesion: 0.14
@@ -6995,8 +6923,8 @@ Cohesion: 0.07
 Nodes (25): 1. EXECUTIVE SUMMARY, 2.1 Tabulka extrahovaných metod, 2.2 Interní callery `enqueue_pivot` v `SprintScheduler` (4 sites), 2.3 Externí callery, 2. LIST OF EXTRACTED METHODS, 3.1 Provider matrix (9 nových providerů), 3.2 Klíčový edge case: `enqueue_pivot_provider` callback, 3.3 State ownership pattern (+17 more)
 
 ### Community 720 - "HealingAction"
-Cohesion: 0.14
-Nodes (8): Sprint 7F: Replay-safe offline guards tests, TEST 1: OFFLINE_REPLAY is NOT blocked by module-level _HLEDAC_OFFLINE, TEST 2: Live path (non-replay) IS blocked by _HLEDAC_OFFLINE, TEST 3: offline_replay parameter in research() sets _data_mode, TEST 4: OFFLINE_REPLAY benchmark command does NOT set HLEDAC_OFFLINE=1, TEST 5: All 16 handlers have replay-safe guard pattern, TEST 6: _data_mode is set BEFORE _initialize_actions() is called, TestSprint7FReplaySafeGuards
+Cohesion: 0.04
+Nodes (31): Sprint 7E Tests: Local Truth Harness + Revision-Safe State Cache + Complete Offl, TEST 4 & 5: Offline guards for network handlers and local-only handlers, Verify _HLEDAC_OFFLINE constant is defined, Verify _HLEDAC_OFFLINE reads HLEDAC_OFFLINE env var, TEST 6 & 7: Silent benchmark harness writes files and no zombie tasks, TEST 1: Assert benchmark_fps = iterations / elapsed_s, findings_fps = findings_t, Verify FPS calculation formula: benchmark_fps = iterations / elapsed_s, Verify revision counters are properly initialized (+23 more)
 
 ### Community 721 - "_check_module_imports_runtime"
 Cohesion: 0.20
@@ -7027,8 +6955,8 @@ Cohesion: 0.09
 Nodes (12): Testy pro Sprint 82G: Winner Synthesis, Bounded Final Output., Konstanty pro bounded synthesis jsou definovány., SynthesisCompression dataclass lze vytvořit a použít., SynthesisCompression má observability поля., Orchestrator má compression state atribut., Orchestrator má metodu pro uvolnění paměti před syntézou., Orchestrator má metodu pro gap-check., Orchestrator má metodu pro build compression state. (+4 more)
 
 ### Community 728 - "Centrality Metrics (pagerank/betweenness/closeness/eigenvector)"
-Cohesion: 0.16
-Nodes (10): KnowledgeGraphLayer, Any, bool, int, str, Query knowledge graph.          Args:             query: Dotaz             max_r, Zavřít knowledge graph, Knowledge graph vrstva — COMPOSER/ORCHESTRATOR role.      NENÍ truth store — pou (+2 more)
+Cohesion: 0.09
+Nodes (18): Centrality Metrics (pagerank/betweenness/closeness/eigenvector), Label Propagation Community Detection, Graph Contradiction Detection, KnowledgeGraphBuilder - Memory-Safe Graph Builder for M1 Silicon ===============, KnowledgeGraphLayer, Any, bool, int (+10 more)
 
 ### Community 729 - "M1 8GB UMA"
 Cohesion: 0.07
@@ -7039,8 +6967,8 @@ Cohesion: 0.08
 Nodes (24): Selectolax HTML Parser Opportunity, Transport Router Key Invariants, coordinators/fetch_coordinator.py, transport/httpx_transport.py, transport/i2p_transport.py, transport/tor_transport.py, Rationale: selectolax replaces BeautifulSoup only on CPU/parse-bound paths; markdownify internals are the hot path, F214 Transport/Browser Layer Deep Audit (+16 more)
 
 ### Community 731 - "Thermal state levels"
-Cohesion: 0.05
-Nodes (31): Thermal state levels for M1 optimization (Sprint 72/73)., Získat tepelný stav přes NSProcessInfo (PyObjC).         Fallback na None., Fallback – odhad podle zátěže CPU a memory pressure., Aktualizuje cached thermal state., ThermalState, IntEnum, Chaos engineering tests - orchestrator survival under failures., Test graceful degradation under failures. (+23 more)
+Cohesion: 0.09
+Nodes (14): Chaos engineering tests - orchestrator survival under failures., Test graceful degradation under failures., Test metrics registry with invalid metric names., Test Hermes engine unload is safe., Test Hermes engine unload works., Test memory coordinator safety., Test memory coordinator can be initialized., Test ThermalState enum exists. (+6 more)
 
 ### Community 732 - "active_task_count"
 Cohesion: 0.09
@@ -7055,8 +6983,8 @@ Cohesion: 0.67
 Nodes (3): ContradictionResolverProgram, EpistemicGapProgram, DempsterShafer
 
 ### Community 735 - ".aclose"
-Cohesion: 0.08
-Nodes (27): PlaywrightWebKitRenderer, Close browser and playwright., Fallback - Playwright with WebKit., Ensure browser is available, create if needed or if count exceeded., Test Playwright renderer - Sprint 67 Tests for PlaywrightWebKitRenderer backend., Tests for Playwright WebKit renderer., Test browser recreation after max renders., test_full_mode_allows_stylesheet() (+19 more)
+Cohesion: 0.07
+Nodes (31): PlaywrightWebKitRenderer, Close browser and playwright., Fallback - Playwright with WebKit., Ensure browser is available, create if needed or if count exceeded., Test Playwright renderer - Sprint 67 Tests for PlaywrightWebKitRenderer backend., Test cache key includes mode., Tests for Playwright WebKit renderer., Test browser recreation after max renders. (+23 more)
 
 ### Community 736 - "Infer seniority distribution"
 Cohesion: 0.06
@@ -7067,8 +6995,8 @@ Cohesion: 0.67
 Nodes (3): atomic_storage Deprecation, Lazy Facade Init, _LegacyCompatModule
 
 ### Community 738 - ".compute_context_similarity"
-Cohesion: 0.12
-Nodes (13): _BlockImport, no_pyahocorasick(), no_rust(), str, add_word + make_automaton + iter produce (end_idx, value) pairs., Pattern 'he' and 'she' share the 'he' suffix of 'she' — both must match., Same word added twice is a no-op (first value wins)., Meta-path finder that raises ImportError for a given set of names.      Used to (+5 more)
+Cohesion: 0.11
+Nodes (14): _BlockImport, no_pyahocorasick(), no_rust(), str, Sprint CP314: pyahocorasick / pyzipper / lmdb fallback tests.  These tests verif, add_word + make_automaton + iter produce (end_idx, value) pairs., Pattern 'he' and 'she' share the 'he' suffix of 'she' — both must match., Same word added twice is a no-op (first value wins). (+6 more)
 
 ### Community 739 - "._init_coreml_embedder"
 Cohesion: 0.07
@@ -7123,8 +7051,8 @@ Cohesion: 0.20
 Nodes (10): public_candidate_ledger_summary, built, discovered, fetch_attempted, fetch_success, parse_success, pattern_matched, rejected (+2 more)
 
 ### Community 752 - "ndarray"
-Cohesion: 0.29
-Nodes (6): ndarray, SprintSchedulerResult, Alias for extract — next state = current observation in batch setting., Původní dict-based rozhraní — zachováno pro zpětnou kompatibilitu.          Pref, Alias for extract — accepts SprintSchedulerResult for QMIX inference., Extract 12-dim observation from SprintSchedulerResult fields.          Fails sof
+Cohesion: 0.16
+Nodes (11): int, ndarray, SprintSchedulerResult, Extrækce stavu pro MARL agenty. Stav obsahuje globální informace (z grafu, sched, Alias for extract — next state = current observation in batch setting., Původní dict-based rozhraní — zachováno pro zpětnou kompatibilitu.          Pref, Alias for extract — accepts SprintSchedulerResult for QMIX inference., Builder 12-dim observation vector from sprint state.      Feature vector layout (+3 more)
 
 ### Community 753 - "runtime_authority_manifest.py"
 Cohesion: 0.27
@@ -7136,7 +7064,7 @@ Nodes (34): 1.1 OSINT Report Flow, 1.2 Where Each GAP Fits, 1.3 Key Classes, cod
 
 ### Community 755 - "ARIMA Projection Method"
 Cohesion: 0.10
-Nodes (19): Any, float, GopherTransport, GopherFinding, GopherItem, GopherTransport, is_directory(), is_file() (+11 more)
+Nodes (22): Any, float, GopherTransport, get_gopher_transport(), GopherFinding, GopherItem, GopherTransport, is_directory() (+14 more)
 
 ### Community 756 - "deprecated decorator"
 Cohesion: 0.06
@@ -7208,7 +7136,7 @@ Nodes (8): args, command, cwd, hooks, AfterTool, SessionStart, mcpServers, code-
 
 ### Community 773 - ".init"
 Cohesion: 0.08
-Nodes (15): Sprint F26X — CommunicationLayer wiring tests.  Verifies the 4-seam integration, SprintScheduler.inject_communication_layer(None) does not raise., Without --no-coordination, _communication_layer is NOT None after default init., With --no-coordination=True, the injection block in __main__.py is skipped., Forcing CommunicationLayer() to raise → get_communication_layer() returns None., _run_privacy_gate SHOULD try the CommunicationLayer path when injected., LMDB ingest with CommunicationLayer uses bounded writer concurrency.          Th, get_communication_layer() init + accessor is < 50 ms (M1 overhead budget). (+7 more)
+Nodes (17): get_communication_layer(), Lazy singleton CommunicationLayer accessor (F26X-3).      Returns None if Commun, Sprint F26X — CommunicationLayer wiring tests.  Verifies the 4-seam integration, SprintScheduler.inject_communication_layer(None) does not raise., Without --no-coordination, _communication_layer is NOT None after default init., With --no-coordination=True, the injection block in __main__.py is skipped., Forcing CommunicationLayer() to raise → get_communication_layer() returns None., _run_privacy_gate SHOULD try the CommunicationLayer path when injected. (+9 more)
 
 ### Community 774 - "GNNPredictorWrapper"
 Cohesion: 0.08
@@ -7291,12 +7219,12 @@ Cohesion: 0.06
 Nodes (33): Appendices, Architecture Overview, Common Issues and Resolutions, Community Resources and Support Channels, Conclusion, Core Components, Database Corruption Runbook, Decision Gate Command Suggestions (+25 more)
 
 ### Community 794 - ".send_message"
-Cohesion: 0.10
-Nodes (16): DispatchOutcome, DispatchOutcome, runtime/sidecar_dispatcher.py — F205F: Extracted Sidecar Dispatch Bookkeeping ==, Result of a sidecar dispatch call.      sidecars_skipped: names of heavy sidecar, _get_sprint_advisory_runner(), _PluginSidecarContext, Any, float (+8 more)
+Cohesion: 0.06
+Nodes (17): _get_sprint_advisory_runner(), F206D: Run all teardown advisory steps via SprintAdvisoryRunner.          Canoni, R5: CT -> PassiveDNS one-hop pivot advisory.          Delegates to SprintSchedul, F234: BGP advisory sidecar for ASN/path analysis. Fail-soft., F234: Deep Wayback CDX analysis for URL history. Fail-soft., F229: IPFS discovery — fetch unindexed content from IPFS network. Fail-soft., F251: Dark web .onion discovery via Tor. Fail-soft., F2P: I2P .i2p discovery via I2P transport. Fail-soft. (+9 more)
 
 ### Community 795 - "find_files.py"
-Cohesion: 0.33
-Nodes (8): find_files(), find_files_by_extension(), bool, int, Path, str, Find files matching a pattern in a directory tree.      Args:         directory:, Find files by extension(s).      Args:         directory: The root directory to
+Cohesion: 0.14
+Nodes (13): Context manager pro fázové workflow.          Automaticky vybere správný model p, Validate source configuration, Save HNSW index to disk.          Args:             path: Path to save index. Us, Save index to disk.          Args:             path: Path to save index. Uses in, find_files(), find_files_by_extension(), bool, int (+5 more)
 
 ### Community 796 - "queue_policy.py"
 Cohesion: 0.31
@@ -7327,16 +7255,16 @@ Cohesion: 0.06
 Nodes (33): A) HOT RUNTIME INTROSPECTION, B) TOOL/PLUGIN/MCP REGISTRY INTROSPECTION, Benchmark (1000 iterations, Python 3.13.5), BENCHMARK RESULTS, C) TEST / DOC GENERATION INTROSPECTION, CONCLUSION, D) PYDANTIC/MSGSPEC NO_TOUCH ZONES, E) LEGACY/DEAD CODE (+25 more)
 
 ### Community 804 - "create_workflow_orchestrator"
-Cohesion: 0.10
-Nodes (20): _find_paths_between_iocs_sync(), float, int, str, Get statistics about a quantum state.          Args:             state: Quantum, Deterministický 63-bit node ID.     NEPOUŽÍVEJ hash() — není deterministický mez, Importuje IOC data z Arrow/Parquet souborů do DuckDB grafu.         Volat na zač, Exportuje hrany grafu jako list tuplů pro GNN inference.         Formát: [(src_v (+12 more)
+Cohesion: 0.12
+Nodes (16): _find_paths_between_iocs_sync(), float, int, str, Get statistics about a quantum state.          Args:             state: Quantum, Deterministický 63-bit node ID.     NEPOUŽÍVEJ hash() — není deterministický mez, Importuje IOC data z Arrow/Parquet souborů do DuckDB grafu.         Volat na zač, Exportuje hrany grafu jako list tuplů pro GNN inference.         Formát: [(src_v (+8 more)
 
 ### Community 805 - ".init"
 Cohesion: 0.09
 Nodes (13): Verify controller blocks when memory is low., Verify controller adjusts limit based on memory., _ConcurrencyController, Start the background memory monitor., Stop the background memory monitor., Acquire a concurrency slot. Blocks if limit reached., Release a concurrency slot., Background loop that adjusts concurrency limit based on memory. (+5 more)
 
 ### Community 806 - "Any"
-Cohesion: 0.06
-Nodes (36): Bounded semantic buffering for CanonicalFinding list.      Inject via ``inject(s, SemanticStoreBuffer, MockFinding, float, str, Tests for SemanticStoreBuffer (Sprint F222).  Verifies: - fail-open no-op withou, Mixed tuple/dict pattern_matches are all processed., Same IOC type appearing twice is deduplicated via set(). (+28 more)
+Cohesion: 0.05
+Nodes (39): Any, Bounded semantic buffering for CanonicalFinding list.      Inject via ``inject(s, Sprint 8SB: Inject SemanticStore instance for semantic buffering of findings., Sprint 8SB: Buffer findings into SemanticStore for batch embedding.          Fai, SemanticStoreBuffer, MockFinding, float, str (+31 more)
 
 ### Community 807 - "public_stage_counters"
 Cohesion: 0.25
@@ -7415,20 +7343,20 @@ Cohesion: 0.32
 Nodes (7): _env_truthy(), is_deep_research_enabled(), bool, str, F11: Canonical feature flag resolvers.  Single source of truth for env-var-based, Return True iff env var ``name`` is set to a truthy token.      Truthy tokens (c, Resolve the F11 deep-research gate.      Resolution order (first match wins):
 
 ### Community 827 - "DefaultUmaWatchdogCallbacks"
-Cohesion: 0.17
-Nodes (11): Image, int, str, Compute all perceptual hashes for an image., Compute average hash (aHash)., Compute perceptual hash using DCT (pHash)., Compute difference hash (dHash)., Compute wavelet hash (wHash). (+3 more)
+Cohesion: 0.15
+Nodes (13): bytes, _NoiseXXSession, Minimal Noise XX handshake + transport.      The XX pattern is:         → e, Args:             is_initiator: True if this side starts the handshake., Return the local long-term public key (identity)., Initiator → responder: e (ephemeral public key)., Responder → initiator: e, ee, s, es.          We:           1. ECDH(ephemeral_pr, Initiator → responder: s, se (after processing msg2).          msg2 is: responde (+5 more)
 
 ### Community 828 - "ComprehensiveReport"
-Cohesion: 0.05
-Nodes (24): _get_dynamic_metal_limit(), Získej doporučený Metal limit od OS (macOS 15+)., Tests for M1-specific branches and hardware features., Test memory pressure handling., Test _memory_pressure_ok returns bool., Test _cached_available_mb is initialized., Test MLX metrics collection., Test _get_mlx_metrics returns dict. (+16 more)
+Cohesion: 0.06
+Nodes (21): Tests for M1-specific branches and hardware features., Test memory pressure handling., Test _memory_pressure_ok returns bool., Test _cached_available_mb is initialized., Test MLX metrics collection., Test _get_mlx_metrics returns dict., Test MLX version guards in metrics., Test M1-specific code branches. (+13 more)
 
 ### Community 829 - "float"
-Cohesion: 0.10
-Nodes (18): float, int, str, explain_with_mlx(), Generate textual explanation using MLX-LM.      Args:         hypothesis: The hy, Explain path importance using node ablation.          Args:             path: Li, Test hypothesis explainer - Sprint 67 Tests for SimpleNodeAblationExplainer and, Tests for node ablation explainer. (+10 more)
+Cohesion: 0.09
+Nodes (19): float, int, str, explain_with_mlx(), Hypothesis Engine — Simple Node Ablation Explainer (C4 Sprint Refactoring) =====, Generate textual explanation using MLX-LM.      Args:         hypothesis: The hy, Explain path importance using node ablation.          Args:             path: Li, Test hypothesis explainer - Sprint 67 Tests for SimpleNodeAblationExplainer and (+11 more)
 
 ### Community 830 - "HypothesisPack"
-Cohesion: 0.17
-Nodes (14): GopherCrawler, GopherCrawlResult, int, str, Mark selector visited. Returns True if already visited., Crawl a Gopher server recursively.          Args:             host: Gopher serve, Crawl multiple directories concurrently with bounded concurrency., Convert GopherItem to GopherCrawlItem with inline text extraction for files. (+6 more)
+Cohesion: 0.16
+Nodes (15): GopherCrawler, GopherCrawlResult, int, str, GopherCrawler — recursive Gopher directory crawler + text extractor ============, Mark selector visited. Returns True if already visited., Crawl a Gopher server recursively.          Args:             host: Gopher serve, Crawl multiple directories concurrently with bounded concurrency. (+7 more)
 
 ### Community 831 - "prompt_injection_validator.py"
 Cohesion: 0.11
@@ -7527,8 +7455,8 @@ Cohesion: 0.33
 Nodes (7): DepCategory, DepStatus, DoctorReport, format_markdown, OutputFormat, probe_import, run_diagnostics
 
 ### Community 855 - "search_fusion.py"
-Cohesion: 0.12
-Nodes (23): apply_fcntl_nocache(), FetchCoordinator - Delegates fetch/crawl pipeline to coordinator ===============, Wrapper for backward compatibility — delegates to tools/file_cache.py., _normalize_news_item(), _normalize_text_item(), int, str, search_news_sync() (+15 more)
+Cohesion: 0.13
+Nodes (22): apply_fcntl_nocache(), FetchCoordinator - Delegates fetch/crawl pipeline to coordinator ===============, Wrapper for backward compatibility — delegates to tools/file_cache.py., _normalize_news_item(), _normalize_text_item(), int, str, search_news_sync() (+14 more)
 
 ### Community 856 - "format_platform_summary"
 Cohesion: 0.18
@@ -7551,16 +7479,16 @@ Cohesion: 0.40
 Nodes (6): Bootstrap Runs Before Discovery Provider, _PUBLIC_FINDING_CONFIDENCE=0.55 (content-only), PUBLIC Evidence Acceptance Uplift (F226B), Deterministic PUBLIC Bootstrap First (F230B), PUBLIC Yield Taxonomy (F208G-A), terminal_reason Categories
 
 ### Community 861 - "ContextStats"
-Cohesion: 0.14
-Nodes (8): get_ane_mlx_mutex(), Thread-safe singleton accessor., Save system prompt cache to disk (best-effort)., Clear the prefix cache (e.g., on model change)., Sprint 7K: Unload model with FULL lifecycle closure.          NEW ORDER (Sprint, Sprint F259: Reset session-local MLX KV cache between sprints.          Unlike u, Load specified model by path identifier., Sprint 7K: Bounded batch worker shutdown — max 3.0s, fail-pending-futures.
+Cohesion: 0.20
+Nodes (5): Save system prompt cache to disk (best-effort)., Clear the prefix cache (e.g., on model change)., Sprint 7K: Unload model with FULL lifecycle closure.          NEW ORDER (Sprint, Sprint F259: Reset session-local MLX KV cache between sprints.          Unlike u, Sprint 7K: Bounded batch worker shutdown — max 3.0s, fail-pending-futures.
 
 ### Community 862 - "AgentBenchmarker"
 Cohesion: 0.33
 Nodes (6): AgentBenchmarker, AgentBenchmarkResult, BenchmarkConfig, BenchmarkReport, MemoryProfiler, _warn_once shim function
 
 ### Community 863 - "Get memory usage"
-Cohesion: 0.13
-Nodes (21): analyze_text(), get_text_analyzer_facade(), has_findings(), bool, str, TextAnalyzerFacade — bounded hook for existing text analyzers.  Scope: Sprint F2, Analyze text with all available analyzers.          Fail-soft: any analyzer erro, Return the singleton TextAnalyzerFacade instance. (+13 more)
+Cohesion: 0.09
+Nodes (27): analyze_text(), get_text_analyzer_facade(), has_findings(), bool, str, TextAnalyzerFacade — bounded hook for existing text analyzers.  Scope: Sprint F2, Analyze text with all available analyzers.          Fail-soft: any analyzer erro, Return the singleton TextAnalyzerFacade instance. (+19 more)
 
 ### Community 864 - "ner_gliner_vs_ner_ane"
 Cohesion: 0.13
@@ -7572,7 +7500,7 @@ Nodes (5): _F, _fallback_deprecated(), str, Deprecated-decorator shim — Python
 
 ### Community 866 - "init.py"
 Cohesion: 0.04
-Nodes (58): Reset internal state and delete persisted file. Does nothing when disabled., Serialized policy state persisted to disk., SprintPolicyState, disabled_manager(), enabled_manager(), _make_result(), Any, bool (+50 more)
+Nodes (57): Serialized policy state persisted to disk., SprintPolicyState, disabled_manager(), enabled_manager(), _make_result(), Any, bool, int (+49 more)
 
 ### Community 867 - "init.py"
 Cohesion: 0.09
@@ -7647,8 +7575,8 @@ Cohesion: 0.06
 Nodes (31): 1. File Reality Check, 2. Production Caller Map, 3. Responsibility Clusters, 4. Dependency Analysis, 5. Test Coverage, 6. Key Findings, 7. Recommendations, 8. Verification (+23 more)
 
 ### Community 885 - "ArchivedVersion"
-Cohesion: 0.03
-Nodes (76): DatePathPattern, PathPatternAnalyzer, bool, Analyzes path patterns to predict new paths., Analyze paths and extract patterns., Extract date-based patterns from paths., Extract sequential number patterns., Extract file type patterns. (+68 more)
+Cohesion: 0.04
+Nodes (64): get_metrics_registry(), Get or create the module-level singleton MetricsRegistry.      For use by circui, Circuit breaker metrics integration tests.  Verifies: 1. 3 failures → OPEN state, In HALF_OPEN, probe failure → returns to OPEN., per_domain_stats() returns well-formed dict for debug dashboard., Metric increment failure must not affect CB state or logic., SelfHealingCircuitBreakerAdapter delegates to canonical CB via get_snapshot., FSM state transition tests: CLOSED→OPEN→HALF_OPEN→CLOSED with transition counter (+56 more)
 
 ### Community 886 - "Mempalace Room: brain"
 Cohesion: 0.33
@@ -7671,8 +7599,8 @@ Cohesion: 0.08
 Nodes (14): Tests for prompt bandit - LinUCB, persistence, context vector, cold-start, A/B t, Test bandit initializes with defaults., Test context vector generation., Test context vector has 9 dimensions., Test LinUCB algorithm., Test bandit initialization., Test A/B testing methods., Test starting A/B test. (+6 more)
 
 ### Community 891 - "IntelligenceOperationType"
-Cohesion: 0.17
-Nodes (22): BenchmarkResult, _canned_match_text(), count_cves_in_text(), _format_summary(), get_rss_mb(), get_uma_snapshot(), main(), _make_canned_entries() (+14 more)
+Cohesion: 0.11
+Nodes (31): BenchmarkResult, _canned_match_text(), count_cves_in_text(), _format_summary(), get_rss_mb(), get_uma_snapshot(), main(), _make_canned_entries() (+23 more)
 
 ### Community 893 - "llm_candidate_registry.py"
 Cohesion: 0.40
@@ -7807,16 +7735,16 @@ Cohesion: 0.40
 Nodes (5): zoom-out, computedHash, skillPath, source, sourceType
 
 ### Community 926 - "Close log and"
-Cohesion: 0.25
-Nodes (4): runtime: request_abort(reason)., Sprint 8RA: Request immediate abort (called from UMA EMERGENCY callback)., Mark teardown on lifecycle., Fallback for direct calls to _final_phase (e.g. tests).
+Cohesion: 0.12
+Nodes (14): Any, str, InMemoryPeerNodeTransport, _normalize_inmem_finding(), Set sprint id for traceability., Pre-load deterministic findings per lane. Bounded by         INMEMORY_PEER_MAX_S, Pair this transport with another in-process peer (bidirectional).         Bounde, Remove a paired peer (one-directional removal). (+6 more)
 
 ### Community 927 - "._convert_gps"
 Cohesion: 0.06
 Nodes (30): All Shims Compile ✓, Clearnet Curl_cffi — ✓ LRU Cache (JA3 Fingerprint Reuse), code:python (from .transport_resolver import TransportResolver, Transport), code:python (from hledac.universal.transport import TransportContext), code:python (@dataclass), code:python (spec = importlib.util.spec_from_file_location("hledac.core.r), code:block5 (Results: 2630/2630 files OK), code:python (from transport import TransportContext) (+22 more)
 
 ### Community 928 - "int"
-Cohesion: 0.13
-Nodes (13): OfficeDocumentAnalyzer, Any, ZipFile, Analyzer for Microsoft Office and OpenDocument files., Close FOCA extractor and release resources (fail-safe)., Lazily initialize FOCA metadata extractor (M1-safe async)., Analyze Office document (sync)., Analyze OOXML with FOCA metadata enrichment. (+5 more)
+Cohesion: 0.11
+Nodes (16): _extract_tech_stack(), R11: Extract tech stack signals from HTTP response data.      Detects:       - C, Tests for network/passive_fingerprint.py and intelligence/passive_fingerprint.py, CMS detection via ahocorasick when available and regex fallback when not., When ahocorasick import fails, regex fallback detects CMS., Cloudflare identification via cf-ray and cf-cache-status headers., When ahocorasick is available, it detects CMS in HTML., Headers with cf-ray and cf-cache-status produce cloud_provider='Cloudflare'. (+8 more)
 
 ### Community 929 - "Semaphore"
 Cohesion: 0.09
@@ -7887,8 +7815,8 @@ Cohesion: 0.50
 Nodes (4): Bencode encoder/decoder, BEP-5 DHT Protocol, dht/kademlia_node.py, Sprint F214Q
 
 ### Community 946 - "CountMinSketch"
-Cohesion: 0.17
-Nodes (18): _add_outcome_if_missing(), complete_source_family_outcomes_from_lane_details(), complete_source_family_outcomes_from_prelude(), _family_exists(), _normalize_terminal_state(), _prelude_to_sfo(), bool, int (+10 more)
+Cohesion: 0.20
+Nodes (16): _add_outcome_if_missing(), complete_source_family_outcomes_from_lane_details(), complete_source_family_outcomes_from_prelude(), _family_exists(), _normalize_terminal_state(), _prelude_to_sfo(), bool, int (+8 more)
 
 ### Community 947 - "get_anomaly_scores"
 Cohesion: 0.50
@@ -8055,8 +7983,8 @@ Cohesion: 0.50
 Nodes (4): /Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/deep_probe.py, details, file, status
 
 ### Community 988 - "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/embedding_pipeline.py"
-Cohesion: 0.29
-Nodes (4): ndarray, Extract paths from probability distribution.          Uses the final quantum sta, Reconstruct a path to target using greedy backtracking.          Args:, Get predecessor nodes for a given node.          Args:             node_idx: Nod
+Cohesion: 0.19
+Nodes (7): ndarray, Initialize the pathfinder with a knowledge graph.          Args:             gra, Initialize from NetworkX graph.          Args:             graph: NetworkX graph, Initialize from adjacency list dictionary.          Args:             graph: Dic, Initialize from adjacency matrix.          Args:             matrix: Adjacency m, Build sparse matrix from COO data.          Args:             rows: Row indices., Reconstruct a path to target using greedy backtracking.          Args:
 
 ### Community 989 - "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/enhanced_research.py"
 Cohesion: 0.50
@@ -8475,8 +8403,8 @@ Cohesion: 0.50
 Nodes (4): run_benchmark (GC 3.14), run_benchmark (M1 runtime gates), PYTHONMALLOCSTATS=1 env probe, run_benchmark (py314 JIT)
 
 ### Community 1093 - "._extract_email_field"
-Cohesion: 0.22
-Nodes (5): bool, Check if cache entry is still valid (within TTL)., Get cached extraction result., Get file extension from URL., Extract FOCA-style forensic metadata from document.          Args:             c
+Cohesion: 0.15
+Nodes (8): str, Extract from Outlook MSG files., Extract field from email content., Get file extension from URL., Extract FOCA-style forensic metadata from document.          Args:             c, Blocking extraction - runs in executor., Extract embedded fonts for geographic indication., Extract company name from PDF producer string.
 
 ### Community 1094 - ".init"
 Cohesion: 0.06
@@ -8635,8 +8563,8 @@ Cohesion: 0.67
 Nodes (3): REGRESSION_FIX_REPORT.md (F261 follow-up — bloom_filter, rolling_hash), tools/rolling_hash_engine.py (F261 — per-window Rust engine cache), RotatingBloomFilter (utils/bloom_filter.py, F261 — Rust delegation w/ fallback)
 
 ### Community 1139 - "Any"
-Cohesion: 0.09
-Nodes (17): canonicalize_source_family_outcomes(), Deduplicate and merge source family outcomes that normalize to the same family., Sprint F235D: Source Family Canonicalization — Standalone Unit Tests  Run via: p, Assertion 8: attempted=True wins over False., Assertion 9: timeout=True wins over generic error., Assertion 10: public DISCOVERY_ERROR outcome preserved., Assertion 11: feed accepted outcome preserved., CT-specific required result from sprint spec. (+9 more)
+Cohesion: 0.08
+Nodes (18): canonicalize_source_family_outcomes(), normalize_source_family_name(), Normalize a source family name to its canonical lowercase form.      Maps mixed-, Deduplicate and merge source family outcomes that normalize to the same family., Assertion 8: attempted=True wins over False., Assertion 9: timeout=True wins over generic error., Assertion 10: public DISCOVERY_ERROR outcome preserved., Assertion 11: feed accepted outcome preserved. (+10 more)
 
 ### Community 1140 - "lean-ctx MCP workflow"
 Cohesion: 0.20
@@ -8659,8 +8587,8 @@ Cohesion: 0.06
 Nodes (30): 1. `ioc_dedup` (MISSING), 2. `simhash_ext` (MISSING), 3. `url_engine` (MISSING), 4. `url_set` (MISSING), 5. `xxhash_ext` (MISSING), Build Error Output, Cargo.toml dependencies, code:rust (// lib.rs declares these modules:) (+22 more)
 
 ### Community 1162 - "CriticMLP"
-Cohesion: 0.14
-Nodes (4): Test WarcWriter creates warc and idx files., Test warcinfo record is written correctly., Test request/response pair is written correctly., Test WarcWriter as context manager.
+Cohesion: 0.17
+Nodes (7): Tests for WARC archival writer., Test WarcWriter creates warc and idx files., Test warcinfo record is written correctly., Test request/response pair is written correctly., Test close returns expected stats., Test WarcWriter as context manager., TestWarcWriter
 
 ### Community 1164 - "DSPy Optimizer Circuit"
 Cohesion: 0.09
@@ -8695,8 +8623,8 @@ Cohesion: 0.07
 Nodes (29): acquisition_report, acquisition_profile, acquisition_report_fallback_used, return_guard, scheduler_exit, schema_version, source_family_outcomes, terminality (+21 more)
 
 ### Community 1174 - "Shutdown the module-level"
-Cohesion: 0.10
-Nodes (12): CensysClient, ExposureCache, GreyNoiseClient, Path, Sprint F300E: Mixed Exposure Intelligence Clients  Dva transport modely v jednom, Shodan API client s LMDB cache.      Cache key: shodan:{ip}     TTL: 7 dní, Censys API client s LMDB cache.      Cache key: censys:{query_hash}     TTL: 7 d, Shutdown the module-level DB executor at process exit. (+4 more)
+Cohesion: 0.14
+Nodes (12): CensysClient, ExposureCache, GreyNoiseClient, ClientSession, Sprint F300E: Mixed Exposure Intelligence Clients  Dva transport modely v jednom, Shodan API client s LMDB cache.      Cache key: shodan:{ip}     TTL: 7 dní, Censys API client s LMDB cache.      Cache key: censys:{query_hash}     TTL: 7 d, Shutdown the module-level DB executor at process exit. (+4 more)
 
 ### Community 1175 - "onion_seed_manager.py"
 Cohesion: 0.07
@@ -8715,16 +8643,16 @@ Cohesion: 0.09
 Nodes (21): Category 10: File not found (4 errors), Category 11: Missing httpx_transport (1 error), Category 12: Other (2 errors), Category 1: Module "is not a package" (19 errors), Category 2: Missing stub modules (14 errors), Category 3: Missing functions in live_sprint_measurement.py (4 errors), Category 4: Missing acquisition_strategy exports (12 errors), Category 5: Missing sprint_scheduler exports (6 errors) (+13 more)
 
 ### Community 1179 - "Check for available"
-Cohesion: 0.00
-Nodes (1169): ActionResult, AgentCoordinationEngine, AgentMetaOptimizer, ArchiveCoordinator, BaseEncodingDetector, BasePolicy, _BrainCoordinator, ClaimsCoordinator (+1161 more)
+Cohesion: 0.03
+Nodes (299): AgentCoordinationEngine, AgentMetaOptimizer, ArchiveCoordinator, BaseEncodingDetector, BasePolicy, _BrainCoordinator, ClaimsCoordinator, ComprehensiveReport (+291 more)
 
 ### Community 1180 - ".aenter"
 Cohesion: 0.07
 Nodes (29): 10. Checkpoint Bounded Serialization (GOOD), 11. LightpandaManager Uses atexit Cleanup (GOOD), 12. HTTPX Client Lazy Loading (GOOD), 13. No XXE Found - XML Parsing Safe, 14. Session Manager Cookie Storage (MEDIUM), 15. Missing Security Headers, 16. OPSEC - DNS Leak Potential, 17. httpx Client Verify=True (GOOD) (+21 more)
 
 ### Community 1181 - ".register_relationship_callback"
-Cohesion: 0.14
-Nodes (12): MobileCLIPFusion, bytes, Optional MobileCLIP wrapper.     CI-safe: pokud mobileclip není, ImportError při, Lazy-load VisionEncoder singleton (P0 canonical)., Encode image via VisionEncoder (1024d) — replaces random stub., F5.2: MobileCLIP opt-in env gate., Verify HLEDAC_ENABLE_MOBILECLIP env gate is respected., test_mobileclip_gate_accepts_truthy_strings() (+4 more)
+Cohesion: 0.09
+Nodes (19): AnomalyType, detect_change_points_wavelet(), _get_pywt(), PatternType, Pattern Mining Engine =====================  Advanced pattern detection and anal, Detect change points using wavelet decomposition.      Args:         series: Tim, Types of patterns that can be detected., Types of seasonality patterns. (+11 more)
 
 ### Community 1183 - ".post_init"
 Cohesion: 0.08
@@ -8735,16 +8663,16 @@ Cohesion: 0.07
 Nodes (16): Sprint 51+52 tests – GLiNER async offload, FlashRank, HTTP/3 default., Měření rychlosti – musí být ≤ 50 ms na dotaz (s ohledem na fallback)., Testy pro HTTP/3 automatickou detekci a cache., Cache musí mít 24h TTL., Při selhání HTTP/3 se použije aiohttp., Detekce musí mít rychlý timeout (≤ 2 s)., Testy pro GLiNER s async offloadem., Ověří, že extract běží v thread poolu (neblokuje). (+8 more)
 
 ### Community 1185 - ".record_network_call"
-Cohesion: 0.12
-Nodes (10): Sprint 57 tests – PQ Index, DynamicModelManager, PagedAttentionCache., Testy pro DynamicModelManager., Test #7: Dynamické uvolňování – model se uvolní po timeoutu., Test #8: Dynamické uvolňování – znovunačtení., Test #9: Dynamické uvolňování – thrashing protection., Test #10: Dynamické uvolňování – LRU cache limit., Test #15: PQ + HNSW přepínání., Test #16: Kombinace komponent. (+2 more)
+Cohesion: 0.13
+Nodes (12): ConsensusProposal, Consensus mechanism for swarm decisions.      From p2p_research_swarm.py comment, Characterization tests for ConsensusProposal behavior methods. No behavior chang, ConsensusProposal.get_result — pure unit, no deps., 3 yes / 2 no = 60% yes_weight > 50% → accepted., 2 yes / 3 no = 40% yes_weight < 50% → rejected., High-rep node (weight 3) voting no tilts the vote., Exactly 50% yes = 0.5 acceptance_rate > 0.5 → accepted (barely). (+4 more)
 
 ### Community 1186 - ".record_novelty_failure"
-Cohesion: 0.12
-Nodes (9): Test #4: Work stealing – experimentální (placeholder)., Test #18: Timeout – I/O úloha timeoutne a je zaznamenána chyba., Test #20: Ukončení – po dokončení všech úloh se plánovač vyprázdní., Testy pro ParallelResearchScheduler., Ověří inicializaci scheduleru., Test #1: Plánovač spouští max I/O úloh podle allocatoru., Test #2: Plánovač spouští max CPU úloh podle allocatoru., Test #3: Priority queue – vyšší priorita se spustí dříve. (+1 more)
+Cohesion: 0.13
+Nodes (15): HypothesisFeedbackAdapter, bool, float, int, object, str, Sprint F203G: Hypothesis Feedback Loop & Dead-End Pruning  Provides feedback on, F203G: Converts raw HypothesisFeedbackRecords into scoring multipliers     that (+7 more)
 
 ### Community 1187 - ".record_snapshot_write"
-Cohesion: 0.02
-Nodes (102): BM25Index, LocalSearchSeam, MetadataStore, Any, float, int, str, Local BM25 search index with metadata store for OSINT findings. (+94 more)
+Cohesion: 0.03
+Nodes (76): BM25Index, LocalSearchSeam, MetadataStore, Any, float, int, str, Local BM25 search index with metadata store for OSINT findings. (+68 more)
 
 ### Community 1188 - ".set_rng_seed"
 Cohesion: 0.07
@@ -8878,9 +8806,13 @@ Nodes (14): generate_guesses, MAX_GUESSES_PER_DOMAIN, _OpenStorageScanner, Any, 
 Cohesion: 0.10
 Nodes (20): 1. Výsledky (souhrn), 2.1. `_classify_gathered()` (sdílené jádro), 2.2. `safe_gather` (struct mode) — F26X zpětná kompatibilita, 2.3. `safe_gather_dropin` (F261 nový) — návratový typ `list[T]`, 2.4. `safe_gather_fire_and_forget` (F261 nový) — pro 41+ fire-and-forget sites, 2.5. `_BoundedExceptionLog` (F261 nový), 2.6. `_wrap_awaitable()` (F261 helper), 2. Nové API v `utils/async_helpers.py` (+12 more)
 
+### Community 1256 - "HypothesisStatus"
+Cohesion: 0.12
+Nodes (9): Sprint 37: Predictive KV Pruning + Frequency Tracker + Phase-Aware Monitor., Ověří, že prune se spustí pouze pokud context > 1024 tokenů., Ověří, že prune snižuje offset na 80 % délky., Ověří fallback na kompresi při chybě., Ověří, že _frequency_tracker je ≤ 256 KB (width=2**15)., Ověří, že Count-Min Sketch nikdy nepodhodnocuje skutečný počet., Ověří, že relativní chyba ≤ 10 % pro dominantní položky., Ověří lineární extrapolaci pro predikci dalšího kroku. (+1 more)
+
 ### Community 1257 - "TestDesign"
-Cohesion: 0.13
-Nodes (11): JointModel, array, bool, float, int, str, Vrátí seznam agent sítí., batch obsahuje: 'states', 'actions', 'rewards', 'next_states', 'dones' (+3 more)
+Cohesion: 0.06
+Nodes (41): Konstanty pro akce agentů – sdílené napříč komponentami., rl/__init__.py Public API, Reinforcement Learning module for Hledac OSINT Orchestrator., JointModel, array, bool, float, int (+33 more)
 
 ### Community 1258 - "TestResult"
 Cohesion: 0.17
@@ -8903,8 +8835,8 @@ Cohesion: 0.07
 Nodes (29): acquisition, commoncrawl_attempts, commoncrawl_early_stop, commoncrawl_latency_avg_ms, commoncrawl_lines, ct_attempts, ct_candidates, ct_failures (+21 more)
 
 ### Community 1263 - "Create hypothesis from"
-Cohesion: 0.13
-Nodes (18): get_ane_embedder(), Lazy init CoreML MiniLM-L6-v2 embedder, s MLX ModernBERT pokud CoreML není., Semantic deduplication of findings.     ANE path: CoreML MiniLM batch inference, semantic_dedup_findings(), Dormant WINDUP engine — donor/alternate path (Sprint 8VI), float, SprintScheduler, str (+10 more)
+Cohesion: 0.33
+Nodes (5): Sprint 8VI §E: E2E dry-run test — celá pipeline bez reálných HTTP requestů. 30s, P0 guard: soubor 'None' nesmí existovat., Spustí WARMUP → mock ACTIVE → WINDUP → EXPORT., test_e2e_pipeline_completes(), test_none_file_absent_after_run()
 
 ### Community 1264 - "Property: True if"
 Cohesion: 0.07
@@ -8915,20 +8847,20 @@ Cohesion: 0.67
 Nodes (3): HypothesisGeneratorProgram, MultiHopDeepResearchChain, DeepResearchHopSignature
 
 ### Community 1268 - "Context manager for"
-Cohesion: 0.11
-Nodes (10): get_extraction_status(), get_ner_backend(), Return the active NER/RE backend name.      Returns:         "gliner-relex" when, Return diagnostic snapshot of extraction subsystem health.      Returns:, Verify canonical NER/RE owner is documented and unchanged., GLiNER-Relex remains the current NER/RE default., CoreML NER path is not activated by this sprint., Verify extraction status diagnostic works. (+2 more)
+Cohesion: 0.13
+Nodes (15): detect_tech_stack(), Any, float, str, Technology Stack Detection - Framework & CMS Identification ====================, Detect technology stack from URL and content.          Args:             url: UR, Detect framework version from content., Detect additional technologies. (+7 more)
 
 ### Community 1269 - "Context manager that"
-Cohesion: 0.03
-Nodes (53): F203J: Set the selected quantization (internal, called by QuantizationSelector)., set_selected_quantization(), _check_rss_before_load(), _get_current_rss_gb(), _get_mlx_safe(), get_sync_wrapper(), _load_unload_timeout(), model_lifecycle() (+45 more)
+Cohesion: 0.04
+Nodes (47): _check_rss_before_load(), _get_current_rss_gb(), _get_mlx_safe(), get_sync_wrapper(), _load_unload_timeout(), model_lifecycle(), Any, bool (+39 more)
 
 ### Community 1270 - "Expose lifecycle object"
 Cohesion: 0.07
 Nodes (29): acquisition, commoncrawl_attempts, commoncrawl_early_stop, commoncrawl_latency_avg_ms, commoncrawl_lines, ct_attempts, ct_candidates, ct_failures (+21 more)
 
 ### Community 1281 - "All three conditions"
-Cohesion: 0.11
-Nodes (22): AnalyzerResult, CapabilityStatus, CapabilityTruthStatus, create_default_registry(), get_capability_truth_matrix(), _get_tool_capability_declarations(), __getattr__(), probe_capability_truth() (+14 more)
+Cohesion: 0.09
+Nodes (30): AnalyzerResult, CapabilityStatus, CapabilityTruthLayer, CapabilityTruthStatus, create_default_registry(), get_capability_truth_matrix(), _get_tool_capability_declarations(), __getattr__() (+22 more)
 
 ### Community 1282 - "Determine required capabilities"
 Cohesion: 0.07
@@ -8948,15 +8880,15 @@ Nodes (19): After, After, Analysis, Before, Before, Fix Pattern Applied, legacy/
 
 ### Community 1294 - "Get an agent"
 Cohesion: 0.04
-Nodes (63): AgentExecutionError, AgentMetrics, AgentPerformanceOptimizer, AgentPool, AsyncExecutionOptimizer, CircuitBreakerOpen, get_memory_usage_mb(), get_system_memory() (+55 more)
+Nodes (62): AgentExecutionError, AgentMetrics, AgentPerformanceOptimizer, AgentPool, AsyncExecutionOptimizer, CircuitBreakerOpen, get_memory_usage_mb(), get_system_memory() (+54 more)
 
 ### Community 1295 - "Execute agent with"
 Cohesion: 0.07
 Nodes (29): acquisition, commoncrawl_attempts, commoncrawl_early_stop, commoncrawl_latency_avg_ms, commoncrawl_lines, ct_attempts, ct_candidates, ct_failures (+21 more)
 
 ### Community 1296 - "Execute an agent"
-Cohesion: 0.33
-Nodes (3): Start adaptive inference profile manager (Sprint 75)., Manage adaptive inference profile based on memory and thermal state., Apply the current inference profile.
+Cohesion: 0.14
+Nodes (7): Hermes3Engine, _load_distillation(), Initialize AI brains with lazy loading., Start adaptive inference profile manager (Sprint 75)., Manage adaptive inference profile based on memory and thermal state., Apply the current inference profile., Pre-allocate MLX memory pool to reduce fragmentation (Sprint 78).
 
 ### Community 1307 - "Generate path predictions."
 Cohesion: 0.07
@@ -8967,24 +8899,24 @@ Cohesion: 0.07
 Nodes (29): acquisition, commoncrawl_attempts, commoncrawl_early_stop, commoncrawl_latency_avg_ms, commoncrawl_lines, ct_attempts, ct_candidates, ct_failures (+21 more)
 
 ### Community 1309 - "Extract DOIs from"
-Cohesion: 0.20
-Nodes (9): AdvancedSteganalysis, ndarray, Advanced steganography detection and analysis.      Detects hidden data in image, Perform comprehensive steganalysis on image., Analyze entropy of LSB plane., Perform chi-square test for LSB steganography.          Returns p-value (close t, Perform Error Level Analysis (ELA).          Re-saves image at known quality and, Steganography analysis result. (+1 more)
+Cohesion: 0.11
+Nodes (17): Initialize coordinator., Initialize session manager with LMDB persistence (idempotent)., object, Path, Smoke tests for transport/http_cache.py ========================================, Invariant guard: max size 256 MB, 7-day TTL, expected cacheable codes.     Preve, build_cache_transport() returns either a wrapped hishel transport     (when hish, With hishel masked as ImportError, build_cache_transport() must return     the b (+9 more)
 
 ### Community 1310 - "Extract dataset identifiers"
 Cohesion: 0.10
 Nodes (19): constraints, date, files_modified, goal, key_constants, _PAYLOAD_TEXT_MAX, _PUBLIC_FINDING_CONFIDENCE, _PUBLIC_SOURCE_TYPE (+11 more)
 
 ### Community 1311 - "Extract email addresses"
-Cohesion: 0.17
-Nodes (17): any_active(), consume_next_sprint_seeds(), consume_planner_actions(), extract_ioc_values_from_seeds(), get_seed_summary(), _is_valid_seed_entry(), load_next_sprint_seeds(), Any (+9 more)
+Cohesion: 0.11
+Nodes (14): DomainCandidate, filter_source_host_only(), int, rank_candidates(), F214: Extract domain candidates from text and record as FEED candidates., F214: Compute lane eligibility from domain candidates.          Facade for compu, F214: Filter, rank, and record candidates in one call.          Combines filter_, Count records with given stage. (+6 more)
 
 ### Community 1312 - "Extract phone numbers"
 Cohesion: 0.10
 Nodes (12): Test get_mlx_model handles failure gracefully., Tests for MLX cache and semaphore., Test initial cache stats., Test semaphore is created lazily., Test cache lock is created lazily., Test get_mlx_model with mocked mlx_lm., Test LRU eviction when cache exceeds max., Test cache hit moves item to end (LRU). (+4 more)
 
 ### Community 1313 - "Extract social media"
-Cohesion: 0.14
-Nodes (8): RAGEngine je grounding authority — NENÍ identity/entity store., RAGEngine MUSÍ mít hybrid_retrieve — to je jeho primary API., RAGEngine MUSÍ mít HNSW vector index build., RAGEngine může mít RAPTOR hierarchical retrieval., RAGEngine NESMÍ mít add_entity — to patří do LanceDBIdentityStore., RAGEngine NESMÍ mít search_similar — to patří do LanceDBIdentityStore., RAGEngine NESMÍ mít entity schema z LanceDB., TestRAGEngineBoundaries
+Cohesion: 0.17
+Nodes (15): compute_lane_eligibility(), _hash_candidate(), bool, float, str, F214: Compute lane eligibility from domain candidates.      Returns dict:, Add CT quarantine event. quarantine=True, accepted=False, family=CT., Add PUBLIC stage machine event. (+7 more)
 
 ### Community 1314 - "Extract tables from"
 Cohesion: 0.18
@@ -8996,19 +8928,19 @@ Nodes (8): Basic initialization and startup tests., B.S1: BatchScheduler has zer
 
 ### Community 1316 - "Normalize text for"
 Cohesion: 0.12
-Nodes (4): Test SimHash near-duplicate detection functions., TestSimhash, Compute Hamming distance between two hashes., Check if two hashes are near-duplicates (Hamming <= threshold).
+Nodes (12): Typed result contract for pending-sync replay operations (Sprint 8H).      Field, Sprint 8L: Time-boxed startup replay integrated into async_initialize., Lazily initialize the replay lock on the current event loop., Sprint 8H: Replay a single pending marker by finding_id.          Recovery seman, Sprint 8H: Replay all pending markers with chunking and event-loop yields., Return the configured memory limit string., Sprint 8L: Return the number of pending_duckdb_sync:* markers in WAL LMDB., Sprint 8F: Efficient prefix scan for all pending_duckdb_sync markers.          R (+4 more)
 
 ### Community 1317 - "Minimal bencode decoder"
 Cohesion: 0.07
 Nodes (29): acquisition, commoncrawl_attempts, commoncrawl_early_stop, commoncrawl_latency_avg_ms, commoncrawl_lines, ct_attempts, ct_candidates, ct_failures (+21 more)
 
 ### Community 1318 - "Convert GopherCrawlResult items"
-Cohesion: 0.20
-Nodes (3): Clear all hypotheses and evidence (memory management)., Test that HypothesisEngine evidence is capped and evicted deterministically., Test that HypothesisEngine source credibility is capped.
+Cohesion: 0.14
+Nodes (8): Test bounded storage with deterministic LRU eviction., Test that HypothesisEngine evidence is capped and evicted deterministically., Test that HypothesisEngine source credibility is capped., Test that InferenceEngine graph node cap constants are set correctly., Test that BFS queue and depth are bounded., Test that parallel groups are pruned by cap and TTL., Test that SemanticDeduplicator embedding cache enforces hard cap., TestBoundedStorage
 
 ### Community 1319 - "ProviderStatusDebug"
-Cohesion: 0.14
-Nodes (8): Test 4: network_recon tracks precondition met vs selected., Test 7: network_recon deduplicates against scanned domains., Test 11: network_recon has brute_force disabled by default., Test suite for Sprint 83A Network Reconnaissance integration., Test 1: network_recon action is registered in the action registry., Test 2: network_recon requires a domain signal from state., Test 3: network_recon uses per-domain tracking, not global boolean., TestSprint83ANetworkRecon
+Cohesion: 0.08
+Nodes (15): is_offline_mode(), Check if offline mode is enabled via HLEDAC_OFFLINE environment variable., Verify offline mode can be detected via environment variable., Verify offline mode is True when HLEDAC_OFFLINE=1., Test 4: network_recon tracks precondition met vs selected., Test 7: network_recon deduplicates against scanned domains., Test 8: network_recon respects offline mode fast-fail., Test 11: network_recon has brute_force disabled by default. (+7 more)
 
 ### Community 1322 - "Return the unique"
 Cohesion: 0.07
@@ -9047,12 +8979,12 @@ Cohesion: 0.07
 Nodes (29): acquisition, commoncrawl_attempts, commoncrawl_early_stop, commoncrawl_latency_avg_ms, commoncrawl_lines, ct_attempts, ct_candidates, ct_failures (+21 more)
 
 ### Community 1332 - "Create from UnifiedResearchResult."
-Cohesion: 0.14
-Nodes (15): Multiply confidence by domain reputation.         Mutates only the 'confidence', Invariant 4: Reputační skóre se počítá z confirmed/refuted., Invariant 5: Skóre je v rozsahu 0..1, neznámá doména = 0.5., _enforce_reputation_cap(), get_reputation_score(), bool, float, str (+7 more)
+Cohesion: 0.15
+Nodes (15): Invariant 4: Reputační skóre se počítá z confirmed/refuted., Invariant 5: Skóre je v rozsahu 0..1, neznámá doména = 0.5., test_reputation_applies_to_confidence(), _enforce_reputation_cap(), get_reputation_score(), bool, float, str (+7 more)
 
 ### Community 1333 - "Human-readable admission status."
-Cohesion: 0.15
-Nodes (7): Test #1: PQ index – inicializace., Test #2: PQ index – malý trénink., Test #3: PQ index – přidání jednoho vektoru., Test #4: PQ index – vy., Test #5: PQ index – odhad paměti., Test #6: PQ index – kompresní poměr., TestPQIndex
+Cohesion: 0.17
+Nodes (7): EntityHistory, EntityObservation, Any, str, research_memory.py — Cross-Sprint Research Session Memory ======================, TemporalAnomaly, UnexploredAngle
 
 ### Community 1334 - "Human-readable consumer declaration."
 Cohesion: 0.11
@@ -9063,8 +8995,8 @@ Cohesion: 0.17
 Nodes (12): Combined test verdict (all phases), Files touched (Phase 3), Future work (follow-up sprint, NOT in this scope), M1 8GB safety invariants, Mode resolution, Modern cutting-edge techniques used, New module: `federated/bridge.py`, Phase 3 — Lazy Bridge: FederatedQTable ↔ loops.ResearchLoop (F350M-FED-P3) (+4 more)
 
 ### Community 1337 - "Derive one-line continue"
-Cohesion: 0.21
-Nodes (8): hamming_distance(), ImageHash, float, Calculate similarity score between two image hashes (0-1)., Search for similar images.          Args:             query_image: Image to sear, Perceptual hash for image similarity., Find duplicate/near-duplicate images in index.          Returns:             Lis, Search for similar images in index.
+Cohesion: 0.13
+Nodes (16): BatchManifest, build_batch_manifest(), create_secure_enclave_backend(), name(), NullSecureEnclaveBackend, bool, str, Secure Enclave abstraction — hardware-backed key/signing backend.  Apple Secure (+8 more)
 
 ### Community 1338 - "Derive trust level"
 Cohesion: 0.11
@@ -9079,16 +9011,16 @@ Cohesion: 0.11
 Nodes (17): 1. PyPI hypothesis now accessible, 2. Local hledac_hypothesis re-exports work, 3. Direct dual-import sanity check, 4. Previously-blocked probe now PASSES, 5. Hypothesis unit tests now PASS, 6. Collection error delta, Code imports (11 sites), Conclusion (+9 more)
 
 ### Community 1341 - "Počet událostí v"
-Cohesion: 0.20
-Nodes (3): Verify JSONBackend.touch_node() uses deque for rings., Verify FetchCoordinator._frontier is deque and uses popleft()., Verify FetchCoordinator._evidence_ids is deque with maxlen=500.
+Cohesion: 0.15
+Nodes (15): get_multi_hop_chain(), get_program(), load_compiled_program(), MultiHopDeepResearchChain, Any, int, Load a compiled DSPy program from ~/.hledac/dspy/{name}.json.      Returns None, F260: DSPy-powered multi-hop deep research chain.      Unifies InferenceEngine.M (+7 more)
 
 ### Community 1342 - "Cesta k persistovanému"
-Cohesion: 0.11
-Nodes (5): FIX 1: DeepWebHintsExtractor.extract() is called after successful fetch., FIX 2: API candidates are added to frontier with priority >= 0.85., FIX 3: apply_text_delta() correctly reconstructs multi-hunk diffs., FIX 4: Delta roundtrip is bounded to MAX_OUTPUT_CHARS., FIX 5: DeltaCompressor is wired in SnapshotStorage.
+Cohesion: 0.16
+Nodes (10): Anomaly, float, Detect anomalies relative to an established pattern.          Args:, Detect anomalies in temporal pattern., Detect anomalies in behavioral pattern., Detect anomalies in flow pattern., Detected anomaly in data., Streaming mean and variance calculation (Welford's algorithm). (+2 more)
 
 ### Community 1343 - "Zda je log"
-Cohesion: 0.08
-Nodes (13): Testy pro Autonomy Monitor a Bloom filtry., Test že monitor běží jako background task., Test že kontrola paměti používá adaptivní interval., Test že akce se provádějí jen v heavy fázích., Test že při RSS > 70 % se MAX_HYPOTHESES sníží na 30., Test že při RSS > 80 % se povolí KVP., Test že po poklesu RSS pod 60 % se limity vrátí., Test že task končí s shutdown_all. (+5 more)
+Cohesion: 0.17
+Nodes (7): Testy pro Autonomy Monitor a Bloom filtry., Test že kontrola paměti používá adaptivní interval., Test že _entities_seen a _simhash_fingerprints jsou RotatingBloomFilter., Test že paměťová stopa každého filtru ≤ 1 MB., Test že falešná pozitivita ≤ 1e-6., Test že původní API zůstává stejné., TestSprint32_33
 
 ### Community 1357 - "Format and write"
 Cohesion: 0.11
@@ -9103,16 +9035,16 @@ Cohesion: 0.11
 Nodes (17): Aplikované opravy (9 prioritních souborů, 145 site), CI check — prevence regrese, Critical-path enrichment (kategorie H), Doporučení pro další sprinty, Executive Summary, Iterace 2 — kompletní pokrytí, Kontextová klasifikace (149 site v prioritních 4 složkách), Logger namespace refaktor — ROZHODNUTÍ: neprovádět (+9 more)
 
 ### Community 1365 - "HermesConfig"
-Cohesion: 0.10
-Nodes (11): Test mandatory PII masking with fallback., Test that sanitize_for_logs masks email and phone., Test that fallback is used when PII gate is unavailable., Test that tool output always goes through sanitize_for_logs., Test that fallback sanitizer covers required PII categories., Test that IBAN and EU VAT numbers are masked when format is clear., Test that E.164 international phone numbers are masked., Test that Czech/Slovak rodné číslo is masked when format is obvious. (+3 more)
+Cohesion: 0.17
+Nodes (7): Test mandatory PII masking with fallback., Test that fallback sanitizer covers required PII categories., Test that IBAN and EU VAT numbers are masked when format is clear., Test that E.164 international phone numbers are masked., Test that Czech/Slovak rodné číslo is masked when format is obvious., Negative test: ensure random numbers/strings are not over-masked., TestPIIGateMandatory
 
 ### Community 1380 - "Calculate overall source"
-Cohesion: 0.09
-Nodes (13): Sprint 41 - Parallelism Optimizations Tests ====================================, Tests for zstd compression feature., Test response > 10 KB is compressed (smaller)., Test decompressed content equals original., Test compression runs in asyncio.to_thread (non-blocking)., Test JSON content uses level=1, text uses level=3., Test passive dictionary is built after 100 responses., Tests for Shared Prefix Cache feature. (+5 more)
+Cohesion: 0.13
+Nodes (18): extract_cids_from_text(), Extract all IPFS CIDs from raw text content.      Scans content for Qm (v0) and, bafy CID variant is extracted correctly., Krátké hash strings nejsou detekovány jako CID., Qm hash len < 44 not matched., Multiple CIDs in content are all extracted., Prázdný CID list vrací [] bez I/O., Duplicitní CID se fetchne pouze jednou. (+10 more)
 
 ### Community 1381 - "Search the source"
-Cohesion: 0.15
-Nodes (14): clear_mlx_cache_if_needed(), get_mlx_memory_mb(), Any, bool, float, Extract feature vector for RAM prediction., Predict RAM usage for a context using MLX linear regression., Check if a new request can be accepted. (+6 more)
+Cohesion: 0.20
+Nodes (8): clear_mlx_cache_if_needed(), get_mlx_memory_mb(), bool, float, Update MLX linear regression model from history., Release resources and record actual usage for learning., Vrátí aktuální MLX cache usage v MB.     Funguje pouze na macOS/Darwin s MLX., Uvolni MLX cache pokud přesahuje threshold.     Vrací True pokud byl cache vyčiš
 
 ### Community 1383 - "Get Wayback Machine"
 Cohesion: 0.07
@@ -9123,8 +9055,8 @@ Cohesion: 0.07
 Nodes (29): acquisition, commoncrawl_attempts, commoncrawl_early_stop, commoncrawl_latency_avg_ms, commoncrawl_lines, ct_attempts, ct_candidates, ct_failures (+21 more)
 
 ### Community 1393 - "Check if IP"
-Cohesion: 0.13
-Nodes (13): Extract __NEXT_DATA__ script from Next.js pages., Extract generic application/json scripts., Extracted text should be limited to max_total_chars., extract_embedded_json(), _extract_strings_from_json(), Any, int, Read first n bytes using mmap with fail-safe. (+5 more)
+Cohesion: 0.19
+Nodes (13): String, Vec, batch_blake3_64(), blake3_64(), blake3_hex(), ContentHasher, sha256_hex(), test_batch_blake3_64() (+5 more)
 
 ### Community 1394 - "create_stealth_web_scraper"
 Cohesion: 0.16
@@ -9259,16 +9191,16 @@ Cohesion: 0.27
 Nodes (10): find_revertable_calls(), main(), bool, Call, int, str, Remove `from utils.async_helpers import safe_gather_*, ...` lines, keeping     o, Revert safe_gather_*() calls back to asyncio.gather() in `path`. (+2 more)
 
 ### Community 1466 - "Metadata extractor for"
-Cohesion: 0.20
-Nodes (16): benchmark_streaming_rss(), benchmark_sync_rss(), get_rss_mb(), main(), bool, float, int, str (+8 more)
+Cohesion: 0.15
+Nodes (11): Secure aggregation s dvěma režimy: - MASKING: rychlé párové masky (algebraické z, Secure aggregation s masking a Shamir režimy., SecureAggregator, Test #8: SecureAggregator – Shamir aggregation., Test #9: SecureAggregator – modulární inverze., Test #10: SecureAggregator – Lagrangeovy koeficienty modulo p., Testy pro secure aggregation., Test #5: SecureAggregator – inicializace. (+3 more)
 
 ### Community 1467 - "Base encoding detector"
-Cohesion: 0.14
-Nodes (9): bool, All three conditions must be true for effective status.          A capability is, Returns True when capability is declared/available but NOT effective.          S, Load a capability on demand., Mark capability as unloaded., Enforce model loading for specific phase.          Phases:         - BRAIN: Herm, Release a specific model., F650H: Release all capability tracking and force GC.          MLX cache cleanup (+1 more)
+Cohesion: 0.17
+Nodes (17): DomainCandidate, extract_domain_candidates_from_finding(), extract_domain_candidates_from_text(), _extract_hostname(), _is_ip_literal(), _is_valid_domain_candidate(), _normalize_defanged_text(), Any (+9 more)
 
 ### Community 1468 - "Hash identifier for"
-Cohesion: 0.13
-Nodes (14): ACTIVE-phase Buffered Truth-Write, Fail-Open Graph Read Seams, STIX 2.1 Export Capability, 3-slot Graph Injection Pattern (IOC/STIX/TruthWrite), GraphAttachmentStore — Sprint F222 extraction ==================================, extract_iocs_from_text(), GraphBackendUnavailable, Path (+6 more)
+Cohesion: 0.11
+Nodes (17): Testy pro Sprint 68 - Memory Pressure handling, Test hard limit na počet iterací., Test detekce paměťového tlaku., Test bounded contradiction queue., Test bounded kolekce a jejich paměťové limity., Test OrderedDict s limitem., Test psutil memory check (mock)., Test garbage collection při paměťovém tlaku. (+9 more)
 
 ### Community 1469 - "Fetch coordinator for"
 Cohesion: 0.12
@@ -9283,8 +9215,8 @@ Cohesion: 0.20
 Nodes (6): Assertions 12-15: No legacy/deep_probe/dht/stealth paths., Assertion 12: No legacy autonomous orchestrator in ACTIVE_RUNTIME_FILES., Assertion 13: No deep_probe import in sprint_scheduler., Assertion 14: No dht import in sprint_scheduler., Assertion 15: STEALTH lane is disabled by default., TestImportPathGuards
 
 ### Community 1472 - "Archive coordinator for"
-Cohesion: 0.31
-Nodes (4): normalize_source_family_name(), Normalize a source family name to its canonical lowercase form.      Maps mixed-, Assertion 1-4: normalize_source_family_name correctness., TestNormalizeSourceFamilyName
+Cohesion: 0.14
+Nodes (8): _make_image_bytes(), Corrupt bytes raise (caller catches) but do not crash module., Verify deterministic pHash fallback when CoreML/torch unavailable., pHash fallback produces LanceDB-compatible 1024d float32 vector., Same bytes → same vector (no randomness in fallback path)., pHash values are in {-1.0, +1.0} (binary tiling centered)., Visually distinct images have higher Hamming distance than similar ones., TestF21PhashFallback
 
 ### Community 1473 - "Intelligence manager for"
 Cohesion: 0.12
@@ -9299,8 +9231,8 @@ Cohesion: 0.20
 Nodes (6): Test 3-tier adaptive flush interval policy., depth=0 returns default_flush_interval., depth > 64 returns 1.0s., depth > 192 returns 0.5s., B.S8: flush_interval >= 0.5s always., TestAdaptiveFlushInterval
 
 ### Community 1476 - "Workflow orchestrator for"
-Cohesion: 0.12
-Nodes (7): Sprint F193A — CT log canonical pipeline integration tests., Sprint F194A — CT log findings closure in canonical sprint truth., _run_ct_log_discovery_in_cycle sets ct_log_accepted_findings = ct_log_stored., SprintSchedulerResult has all required F194A fields., CT findings are additive to feed/public counts.         The combined total (feed, TestSprintF193A, TestSprintF194A
+Cohesion: 0.20
+Nodes (16): _classify_fd(), _count_fds_by_category(), _count_non_timewait_fds(), _get_8aj_telemetry(), _get_connections(), _get_open_files(), Any, str (+8 more)
 
 ### Community 1477 - "Research-related property coordinator."
 Cohesion: 0.12
@@ -9311,12 +9243,12 @@ Cohesion: 0.18
 Nodes (5): passive_dns_results_to_findings(), Convert PassiveDNS IP list + PassiveDNSOutcome to finding candidates.      Each, Q5: Verify source_finding_bridge exposes CT/Wayback/PassiveDNS converters., Sprint F229: trigger_confidence propagates to PDNS finding confidence., TestSourceFindingBridge
 
 ### Community 1479 - "Access quantum pathfinder"
-Cohesion: 0.15
-Nodes (10): CapacitySnapshot, float, Get Metal availability with long TTL caching., Immutable snapshot of resource capacity with TTL tracking., Async-owned resource capacity sampler with TTL caching.      Offloads blocking p, Blocking CPU/memory read via psutil.         MUST be called via asyncio.to_threa, Graceful shutdown - wait for tasks to complete, Blocking system_profiler call for Metal availability.         MUST be called via (+2 more)
+Cohesion: 0.13
+Nodes (11): MagicMock, export_sprint() must include research_depth_metric in its return dict., The export_sprint return dict must contain research_depth_metric key., F193B: CommonCrawl and academic findings surface in canonical export., product_value_summary includes commoncrawl_archive_augmented when CC is active., product_value_summary includes academic_discovery_contribution when academic is, Both fields default to 0 when canonical_run_summary is absent., academic_discovery is classified as tier-1 (structured TI). (+3 more)
 
 ### Community 1480 - "Access distillation engine"
-Cohesion: 0.23
-Nodes (15): discover_eepsites(), fetch_eepsite(), fetch_eepsite_socks5(), get_i2p_router_info(), i2p_to_findings(), is_i2p_available(), bool, int (+7 more)
+Cohesion: 0.20
+Nodes (14): CtSignals, extract_ct_signals(), extract_html_signals(), extract_http_signals(), extract_tls_signals(), HtmlSignals, HttpSignals, Passive Service Fingerprinting — F204G: Deterministic passive fingerprinting eng (+6 more)
 
 ### Community 1481 - "Access agent meta-optimizer"
 Cohesion: 0.12
@@ -9327,20 +9259,20 @@ Cohesion: 0.12
 Nodes (16): vision_captcha_solver, call_sites, fallback_chain_complete, file, issues, lines, m1_8gb_safe, model_bundled (+8 more)
 
 ### Community 1483 - "Access statistical steganography"
-Cohesion: 0.05
-Nodes (33): CacheEntry, CacheLocation, CacheType, ContextPriority, _deserialize_from_json(), MemoryAllocation, _ndarray_to_list(), bytes (+25 more)
+Cohesion: 0.04
+Nodes (50): ContextPriority, MemoryAllocation, MemoryPressureLevel, MemoryStatistics, MemoryZone, bool, Universal Memory Coordinator ============================  Memory management com, Initialize neuromorphic memory manager.          Args:             n_neurons: Nu (+42 more)
 
 ### Community 1484 - "Access DNS tunneling"
 Cohesion: 0.29
 Nodes (4): bool, Subscribe agent to a topic channel., Unsubscribe agent from a topic channel., Check communication layer health.
 
 ### Community 1485 - "Access Unicode attack"
-Cohesion: 0.20
-Nodes (6): int, Add evidence with hard limits (ring buffer)., Return count of independent sources from supporting evidence., Query entries by metadata filters.          Args:             filter_dict: Dicti, Async version of query., Async version of search_recent.
+Cohesion: 0.15
+Nodes (7): Store embedding for evidence preview disk-first., Load embedding from disk or cache., Compute 64-bit signature from embedding (sign bits of first 64 dims)., Compute Hamming distance between two hex signatures., Store embedding with signature for v2 retrieval., Stage 0: Fast signature prefiltering.         Returns top candidates by Hamming, Update centroid for cluster with new evidence embedding.
 
 ### Community 1486 - "Done-callback: log exception"
-Cohesion: 0.12
-Nodes (22): _build_ct_payload(), _build_ct_provenance(), _classify_domain_shape(), ct_results_to_findings(), _extract_domain_from_ct_hit(), _extract_domains_from_ct_name_value(), _is_ip_like(), _is_private_hostname() (+14 more)
+Cohesion: 0.13
+Nodes (20): _build_ct_payload(), _build_ct_provenance(), _classify_domain_shape(), ct_results_to_findings(), _extract_domain_from_ct_hit(), _extract_domains_from_ct_name_value(), _is_ip_like(), _is_private_hostname() (+12 more)
 
 ### Community 1487 - "Get metadata extractor"
 Cohesion: 0.39
@@ -9372,19 +9304,27 @@ Nodes (16): vlm_analyzer, call_sites, fallback_chain_complete, file, issues, lin
 
 ### Community 1494 - "Compute Hamming distance"
 Cohesion: 0.20
-Nodes (3): Test that tool exec log has hash chain fields and events are linked., Test that tool exec log records contain no raw tool outputs., Test that ToolExecLog is wired into tool dispatch.          GAP-1 wiring test:
+Nodes (3): Test that tool exec log has hash chain fields and events are linked., Test that verify detects tampering in the chain., Test that tool exec log records contain no raw tool outputs.
+
+### Community 1495 - "Lazy load a"
+Cohesion: 0.20
+Nodes (6): Tests for DomainStats persistence and yield tracking., Test DomainStats initialization., Test recording requests and yield calculation., Test yield-based penalty calculation., Test persisting and loading DomainStats., TestDomainStats
 
 ### Community 1496 - "Check if a"
-Cohesion: 0.09
-Nodes (6): Ověří, že KVP heuristika má vyšší hit rate než čisté ARC., Invariant B1: Utility score používá mx.exp místo polynomiální aproximace., Invariant B2: mx.exp dává stejné hodnoty jako np.exp v rozsahu recency_score 0–3, Invariant B3: 100 evikcí na 1k cache trvá < 2 s (výkon zachován)., Invariant C1: Při nárůstu frekvence > 50 % se zaloguje varování., Invariant C2: Při nárůstu ≤ 50 % se varování neloguje.
+Cohesion: 0.17
+Nodes (7): Sprint 39: Monitor Debounce + mx.exp() Upgrade + CMS Drift Alert, Invariant B1: Utility score používá mx.exp místo polynomiální aproximace., Invariant B2: mx.exp dává stejné hodnoty jako np.exp v rozsahu recency_score 0–3, Invariant B3: 100 evikcí na 1k cache trvá < 2 s (výkon zachován)., Invariant C1: Při nárůstu frekvence > 50 % se zaloguje varování., Invariant C2: Při nárůstu ≤ 50 % se varování neloguje., TestSprint39
 
 ### Community 1497 - "Create with title_snippet"
 Cohesion: 0.12
 Nodes (15): 10. Probe Tests, 11. Files Modified, 12. Known Limitations / Future Work, 13. Verification, 1. Summary, 2. Integration Seam (file, line range), 3. Gate Conditions (all four enforced), 4. DeepResearchRequest Field Mapping (per prompt) (+7 more)
 
+### Community 1498 - "Create with title_snippet"
+Cohesion: 0.26
+Nodes (7): _check_cryptokit(), bool, int, Path, M1-native encryption using CryptoKit AES-GCM via Swift helper.          Hardware, Create encrypted ZIP archive of vault contents and shred original.          Encr, Check if CryptoKit AES-GCM is available via Swift helper.
+
 ### Community 1499 - "Resolve hostname to"
-Cohesion: 0.14
-Nodes (4): Test that MultiLevelContextCache accepts similarity_threshold parameter., Test that MultiLevelContextCache still accepts legacy similarity_threshnew., Test that similarity_threshold wins when both parameters are provided., Test that threshold values are clamped to [0.0, 1.0].
+Cohesion: 0.06
+Nodes (12): Test that runs directory can be created., Test JSONL log format., Tests for MultiLevelContextCache backward compatibility., Test that MultiLevelContextCache accepts similarity_threshold parameter., Test that MultiLevelContextCache still accepts legacy similarity_threshnew., Test that similarity_threshold wins when both parameters are provided., Test that threshold values are clamped to [0.0, 1.0]., Test delta compression and decompression. (+4 more)
 
 ### Community 1500 - "Check if IP"
 Cohesion: 0.25
@@ -9399,8 +9339,8 @@ Cohesion: 0.07
 Nodes (29): acquisition, commoncrawl_attempts, commoncrawl_early_stop, commoncrawl_latency_avg_ms, commoncrawl_lines, ct_attempts, ct_candidates, ct_failures (+21 more)
 
 ### Community 1531 - "Create from dictionary"
-Cohesion: 0.05
-Nodes (29): is_offline_mode(), ProviderResult, Any, bool, int, str, Encrypted container using SNN-based cryptography, Convert to dictionary for serialization (+21 more)
+Cohesion: 0.07
+Nodes (18): Any, bool, str, Convert to dictionary for serialization, Create from dictionary, Return new instance with provider_id set., Return new instance with action_id set., Serialize to dict for ledger injection. (+10 more)
 
 ### Community 1532 - "Create ExportHandoff from"
 Cohesion: 0.07
@@ -9416,7 +9356,7 @@ Nodes (29): acquisition, commoncrawl_attempts, commoncrawl_early_stop, commoncra
 
 ### Community 1535 - "Create AnalyzerResult from"
 Cohesion: 0.03
-Nodes (151): get_model_lifecycle_status(), Sprint 8Y: Return current lifecycle state as a dict.      This is the canonical, BranchDecision, ACTIVE diagnostic only — shadow parity NEVER calls canonical write path, ACTIVE diagnostic only — pre-decision NEVER calls canonical write path, Shadow parity diagnostic layer (read-only fact comparison), Pre-decision consumer layer — read-only summary composer, GraphSummaryBundle (+143 more)
+Nodes (142): get_model_lifecycle_status(), Sprint 8Y: Return current lifecycle state as a dict.      This is the canonical, BranchDecision, ACTIVE diagnostic only — shadow parity NEVER calls canonical write path, ACTIVE diagnostic only — pre-decision NEVER calls canonical write path, Shadow parity diagnostic layer (read-only fact comparison), Pre-decision consumer layer — read-only summary composer, GraphSummaryBundle (+134 more)
 
 ### Community 1536 - "F214BLOCKERS Pre-Sprint Blocker"
 Cohesion: 0.22
@@ -9439,12 +9379,12 @@ Cohesion: 0.17
 Nodes (9): bool, ndarray, str, Extractive summarization of context items via embedding similarity.          Sel, Batch embed texts to embedding matrix.          Args:             texts: List of, True if a backend is loaded., Select top-k centroid items and concatenate as summary.          Uses cosine sim, Synchronous embed — dispatches to correct backend. (+1 more)
 
 ### Community 1554 - "Map lane family"
-Cohesion: 0.29
-Nodes (6): EvidenceChain, get_evidence_chain(), F203D: Retrieve the evidence chain for a given finding_id.      Chains are accum, F203D: Retrieve the evidence chain for a given finding_id.      Chains are accum, F203D: Retrieve the evidence chain for a given finding_id.          Chains are a, F203D: Retrieve the evidence chain for a given finding_id.          Chains are a
+Cohesion: 0.13
+Nodes (9): Hash chain compatibility tests for Sprint 79a. Verifies that serialize_canonical, Test storage works with orjson or fallback., Test that EvidenceEvent hash is computed correctly., Test hash chain remains compatible after serialization changes., Basic test: canonical serialization matches legacy approach., Test edge cases that could break hash compatibility., Verify sort_keys=True produces deterministic ordering., test_hash_chain_integration() (+1 more)
 
 ### Community 1555 - "Get the outcome"
-Cohesion: 0.15
-Nodes (8): find_path, find_best_path(), Clean up resources and free memory.          This method should be called when t, FÁZE P14: Find best path between two entities using quantum-inspired pathfinding, Create quantum superposition state from start nodes.          Creates an equal s, Apply Grover-style amplitude amplification to target nodes.          Amplifies t, Apply Grover diffusion operator.          The diffusion operator reflects the st, Find paths from start nodes to target nodes using quantum walk.          This is
+Cohesion: 0.40
+Nodes (4): find_path, find_best_path(), Clean up resources and free memory.          This method should be called when t, FÁZE P14: Find best path between two entities using quantum-inspired pathfinding
 
 ### Community 1556 - "Evaluate the mission"
 Cohesion: 0.13
@@ -9484,7 +9424,7 @@ Nodes (29): acquisition, commoncrawl_attempts, commoncrawl_early_stop, commoncra
 
 ### Community 1681 - "_UnifiedMemoryMonitor"
 Cohesion: 0.17
-Nodes (14): build_structure_map(), _compute_fingerprint(), _extract_imports_ast(), _extract_imports_regex(), _path_to_module(), AST, RustMiner - Lightweight Data Mining for M1 Optimization ========================, Build structure map: scan Python project, extract imports, build dependency grap (+6 more)
+Nodes (6): _FakeLive, start() calls Live.start() on the instance it creates., update() before start() is a no-op (no Live instance)., update() after finish() is a no-op., Dashboard renders when aborted AND has timeouts., Dashboard renders when feed_zero_yield detected in early windup.
 
 ### Community 1687 - "Generate content hash."
 Cohesion: 0.07
@@ -9583,8 +9523,8 @@ Cohesion: 0.07
 Nodes (26): Argparse flags (after `--no-communication`, line 2509+), Attribute (line 4590+, after `self._communication_layer`), code:python (def get_ghost_layer() -> "GhostLayer | None":), code:python (# Sprint F260: StealthLayer (advisory, default-OFF, fail-sof), code:python (def inject_stealth_layer(self, layer: Any) -> None:), code:python (# Sprint F260: StealthLayer injection (advisory, default-ON,), code:block6 ($ uv run pytest tests/test_sprint_f260.py -v), code:block7 ($ uv run pytest tests/test_sprint_f26x.py tests/probe_f26x1_) (+18 more)
 
 ### Community 1738 - "Community 1738"
-Cohesion: 0.10
-Nodes (14): _get_uma_budget(), str, One-shot re-embed admin operation. NOT a per-sprint hot path.          F265X: mi, Args:             db_path: Path to LanceDB database. If None, uses default., Synchronous LMDB put operation - zero-copy via orjson., Delete embedding from cache., Initialize embedder: MLX/GPU → CoreML/ANE → Numpy fallback., Embed single text via current embedder (for indexing - uses embed_document). (+6 more)
+Cohesion: 0.16
+Nodes (9): from_dict(), LinUCBArm, int, ndarray, SourceBandit – UCB1 bandit pro adaptivní výběr zdrojů. Perzistentní v LMDB, učí, Save LinUCB arms to LMDB if available., Linear UCB arm with online update., Compute UCB score for this arm given context. (+1 more)
 
 ### Community 1739 - "Community 1739"
 Cohesion: 0.04
@@ -9623,8 +9563,8 @@ Cohesion: 0.07
 Nodes (27): Adapter Feature Matrix, Adapter → Pipeline Wiring Map, code:block1 (Location: fetching/public_fetcher.py), code:block2 (File: network/tor_manager.py), code:block3 (Status: NOT FOUND in transport/ or network/), code:python (class SourceEntry:), code:python (class ProviderCapabilityState(Enum):), curl_cffi / JA3 Impersonation (+19 more)
 
 ### Community 1748 - "Community 1748"
-Cohesion: 0.07
-Nodes (27): code:python ({), code:block13 (add_or_use_provider_replay_fixture, continue_pivot_expansion), code:block9 (async_ingest_findings_batch()), _compute_runtime_diagnosis() — input/output, Dedup Algorithm, Distributed embedding components, DuckDB Safety, DuckDB Schema (+19 more)
+Cohesion: 0.09
+Nodes (22): code:python ({), code:block13 (add_or_use_provider_replay_fixture, continue_pivot_expansion), code:block9 (async_ingest_findings_batch()), _compute_runtime_diagnosis() — input/output, Dedup Algorithm, Distributed embedding components, DuckDB Safety, DuckDB Schema (+14 more)
 
 ### Community 1749 - "Community 1749"
 Cohesion: 0.07
@@ -9675,8 +9615,8 @@ Cohesion: 0.07
 Nodes (27): duration_seconds, measurement_runs, mode, num_runs, prefer_offline_replay, query, repeatability_summary, completed_runs (+19 more)
 
 ### Community 1761 - "Community 1761"
-Cohesion: 0.07
-Nodes (18): End-to-end testy pro autonomní loop - bez ReAct závislostí., Test budget manager integration., Test budget manager can be created., Test BudgetConfig accepts iteration and time params., Test research mode configuration., Test autonomous mode config can be created., Verify no ReAct references in the code., Test config has research settings. (+10 more)
+Cohesion: 0.09
+Nodes (14): End-to-end testy pro autonomní loop - bez ReAct závislostí., Test budget manager integration., Test budget manager can be created., Test BudgetConfig accepts iteration and time params., Test research mode configuration., Test autonomous mode config can be created., Verify no ReAct references in the code., Test config has research settings. (+6 more)
 
 ### Community 1762 - "Community 1762"
 Cohesion: 0.05
@@ -9751,8 +9691,8 @@ Cohesion: 0.07
 Nodes (26): 3.14.5 final benchmark rerun, Availability check (do NOT install until this shows 3.14.5), Comparison: 3.14.4 vs 3.13.5, F214G-1 — Python 3.14.4 (Current Runtime, incremental GC), F214G-2 — Python 3.13.5 Generational GC Baseline, F214G-3 — 3.14.5 final rerun protocol, F214G: Python 3.14.4 vs 3.14.5+ GC Reality Benchmark, GC Sites Audit (applies to both versions) (+18 more)
 
 ### Community 1780 - "Community 1780"
-Cohesion: 0.19
-Nodes (9): ExtractedMetadata, _hash_bytes(), bytes, Metadata extracted from non-HTML documents., Extract metadata based on content-type., Extract metadata from PDF., Extract metadata from images (EXIF)., Extract metadata from DOCX (placeholder - would need python-docx). (+1 more)
+Cohesion: 0.27
+Nodes (13): DuckDB NonfeedSeed extraction (F222H), Sprint F223B: Quality gate decision for a NonfeedSeed.      Fields:         deci, SeedQuality, _build_findings_from_duckdb(), _kinds_distribution(), main(), int, NonfeedSeed (+5 more)
 
 ### Community 1781 - "Community 1781"
 Cohesion: 0.07
@@ -9803,8 +9743,8 @@ Cohesion: 0.08
 Nodes (25): A. Semantic Queries and SPARQL Integration, Analyst Evidence Exporter, Appendices, Architecture Overview, B. Knowledge Graph Visualization, C. Data Validation and Quality Gates, Conclusion, Core Components (+17 more)
 
 ### Community 1793 - "Community 1793"
-Cohesion: 0.14
-Nodes (9): get_alt_protocols_status(), Get status of all alternative protocols.      Returns:         Dict with protoco, Tests for alternative_protocol_fetcher.py social protocol wiring., Test fetch_fediverse_only function exists., Test fetch_matrix_only function exists., Test get_alt_protocols_status includes social protocols., Test FEDIVERSE_TIMEOUT constant., Test MATRIX_TIMEOUT constant. (+1 more)
+Cohesion: 0.05
+Nodes (20): get_alt_protocols_status(), Get status of all alternative protocols.      Returns:         Dict with protoco, Tests for network/i2p_client.py, Test known eepsites list structure., Tests for network/ipfs_client.py, Test CID pattern extraction from text., Test CIDv1 (bafy) extraction., Test CID extraction with no CIDs. (+12 more)
 
 ### Community 1794 - "Community 1794"
 Cohesion: 0.08
@@ -9827,8 +9767,8 @@ Cohesion: 0.08
 Nodes (25): 1. Verifikační grep — výsledky, 2. Rozhodovací matice, 3. Uživatelská rozhodnutí (2026-06-02), 4. Implementované změny, 5. Pro budoucí sprinty, 6. Reference, code:block1 (rg "audit_log|audit_chain|merkle|hmac" core/ knowledge/ util), code:block2 (rg "HLEDAC_ENABLE_SECURITY|HLEDAC_ENABLE_AUDIT|HLEDAC_ENABLE) (+17 more)
 
 ### Community 1799 - "Community 1799"
-Cohesion: 0.06
-Nodes (37): bool, int, str, RamDiskVault, _check_cryptokit(), _get_tempdir(), LootManager, bool (+29 more)
+Cohesion: 0.13
+Nodes (16): LootManager, Encrypted vault export manager.      Canonical name: VaultManager (alias below)., str, P1-6: Vault Manager Test Coverage ==================================  ZERO test, P1-6-4: pyzipper encrypt/decrypt round-trip., P1-6-4b: Verify pyzipper encrypts file contents, not just headers.          Note, P1-6-5: Invalid password returns None on decrypt., Secure export should return None for nonexistent vault. (+8 more)
 
 ### Community 1800 - "Community 1800"
 Cohesion: 0.08
@@ -9900,7 +9840,7 @@ Nodes (24): Adding a Dependency, Check for drift, Clean drift, Core Rules, Depen
 
 ### Community 1817 - "Community 1817"
 Cohesion: 0.09
-Nodes (19): AnalystAnswer, _keyword_score(), bool, Complete analyst answer with evidence.      Fields:         question: The origin, Complete analyst answer with evidence.      Fields:         question: The origin, Score text by keyword overlap.      Returns score in [0.0, 1.0] based on keyword, Score text by keyword overlap.      Returns score in [0.0, 1.0] based on keyword, Query recent findings using keyword/BM25 search.          Args:             quer (+11 more)
+Nodes (20): AnalystAnswer, _keyword_score(), bool, Complete analyst answer with evidence.      Fields:         question: The origin, Complete analyst answer with evidence.      Fields:         question: The origin, Truncate text to max_bytes UTF-8.      Returns (truncated_text, actual_bytes)., Truncate text to max_bytes UTF-8.      Returns (truncated_text, actual_bytes)., Score text by keyword overlap.      Returns score in [0.0, 1.0] based on keyword (+12 more)
 
 ### Community 1818 - "Community 1818"
 Cohesion: 0.08
@@ -9924,7 +9864,7 @@ Nodes (23): All Gates Behind try/except ✅, code:python (def get_timing_jitter(
 
 ### Community 1823 - "Community 1823"
 Cohesion: 0.09
-Nodes (14): MockCanonicalFinding, Tests for Hypothesis Engine (Sprint F259) ======================================, Tests for HypothesisBuilder export integration., Tests for boundary conditions and limits., Test that graph respects MAX_NODES limit., Test that causal engine respects MAX_ENTITIES limit., Mock CanonicalFinding for testing., Create sample findings for testing. (+6 more)
+Nodes (16): HypothesisBuilder, HypothesisResult, HypothesisBuilder — Hypothesis Generation and Causal Reasoning Export ==========, Result of hypothesis generation run., Hypothesis generation and causal reasoning for sprint exports.      Uses brain/h, HypothesisBuilder.run_hypothesis_generation, HypothesisBuilder._to_stix_bundle, Tests for Hypothesis Engine (Sprint F259) ====================================== (+8 more)
 
 ### Community 1824 - "Community 1824"
 Cohesion: 0.08
@@ -9975,8 +9915,8 @@ Cohesion: 0.08
 Nodes (22): 1. Before/After LOC, 2.1 `SourceHint` (5 LOC), 2.2 `HypothesisPack` (706 LOC), 2.3 NOT extracted (per prompt scope), 2. Extraction Targets, 3.1 Why plain `@dataclass` (not `@dataclass(slots=True, frozen=True)`), 3.2 Why zero engine coupling, 3.3 Backward-compat shim pattern (+14 more)
 
 ### Community 1836 - "Community 1836"
-Cohesion: 0.15
-Nodes (8): DatabasePortScanner, Any, float, Get hunter statistics., Scanner for exposed database ports.      Checks common database ports for open a, Test MongoDB for authentication requirements., Test Redis for authentication requirements., Perform full introspection on a GraphQL endpoint.
+Cohesion: 0.14
+Nodes (13): 1. Hash místa (audit), 2. Normalizace (audit), 3. Dedup logika (audit), 4. Serializace/deserializace (audit), 5.1 API kontrakt (pyi), 5.2 Normalizační pravidla (shodná s projektem), 5.3 Hash strategie, 5.4 Dedup přes RotatingBloomFilter (+5 more)
 
 ### Community 1837 - "Community 1837"
 Cohesion: 0.08
@@ -10022,6 +9962,10 @@ Nodes (13): Sprint 69: Structure Map Scheduling Tests, Test basic should_run log
 Cohesion: 0.08
 Nodes (15): Tests for Sprint 73 Thermal Penalty integration., Test resuming guard to prevent recursion., Resuming flag should prevent recursive calls., Test thermal penalty integration in autonomous orchestrator., Thermal penalty dict should be initialized in __init__., Adaptive penalty should reduce when action heats up., Adaptive penalty should increase when action cools down., Adaptive penalty should stay same for neutral impact. (+7 more)
 
+### Community 1848 - "Community 1848"
+Cohesion: 0.20
+Nodes (14): extract_fingerprints(), _match_ct_metadata(), _match_html_content(), _match_http_headers(), _match_server_header(), _match_tls_cert(), A single passive service fingerprint derived from finding data., Match a Server header value against known patterns. (+6 more)
+
 ### Community 1849 - "Community 1849"
 Cohesion: 0.08
 Nodes (23): Adding New Test Suites and Maintaining Consistency, Appendices, Architecture Overview, Conclusion, conftest Setup and Environment, Core Components, Dependency Analysis, Detailed Component Analysis (+15 more)
@@ -10035,16 +9979,16 @@ Cohesion: 0.14
 Nodes (15): bool, MonkeyPatch, tests/test_bgp_env_gate.py ========================== Smoke tests for BGP sideca, Mirrors the env gate logic from sprint_scheduler.py:_run_bgp_enrichment_sidecar., Test BGP sidecar env var gating., When HLEDAC_ENABLE_BGP is not set, sidecar should not run., When HLEDAC_ENABLE_BGP=0, sidecar should not run., When HLEDAC_ENABLE_BGP=false, sidecar should not run. (+7 more)
 
 ### Community 1852 - "Community 1852"
-Cohesion: 0.10
-Nodes (11): End‑to‑End integration test for the full OSINT pipeline. Completely mocked – no, Invariant 1: pipeline finishes without exception., Invariant 2: report contains at least 3 findings., Invariant 3: all confidence scores are in [0,1]., Invariant 4: absolute RSS after pipeline < 6.5 GB., Invariant 5: no fake success – hermes was called., Invariant 6: burst load completes under 30 seconds., End‑to‑end test of the whole research pipeline. (+3 more)
+Cohesion: 0.11
+Nodes (14): ComprehensiveResearchResult, str, End‑to‑End integration test for the full OSINT pipeline. Completely mocked – no, Invariant 1: pipeline finishes without exception., Invariant 2: report contains at least 3 findings., Invariant 3: all confidence scores are in [0,1]., Invariant 4: absolute RSS after pipeline < 6.5 GB., Invariant 5: no fake success – hermes was called. (+6 more)
 
 ### Community 1853 - "Community 1853"
 Cohesion: 0.07
 Nodes (12): Sprint F195C: Forensics Enrichment Tests =======================================, Tests that SprintScheduler correctly delegates forensics to EnrichmentServices (, SprintSchedulerResult has forensics_enriched_ct_findings field., SprintScheduler has _enrichment_services (F350M delegation)., _get_forensics_lmdb_path() returns a Path ending in forensics_enrichment.lmdb., Unit tests for ForensicsEnricher., _extract_file_path_from_payload handles direct absolute paths., _extract_file_path_from_payload handles file:// URLs. (+4 more)
 
 ### Community 1854 - "Community 1854"
-Cohesion: 0.25
-Nodes (5): Test empty queue causes sleep (no busy loop)., Tests for Dynamic Batching feature., Test max_batch = 8 if free RAM > 4 GB else 4., Test one failed prompt in batch does not fail others., TestSprint41A_DynamicBatching
+Cohesion: 0.16
+Nodes (11): deserialize_envelope(), envelope_size_guard(), bool, float, str, Sprint F202A: Evidence Envelope and Signal Schema  Bounded audit layer for Canon, Returns True if envelope JSON representation fits within MAX_ENVELOPE_SIZE., Serialize FindingEnvelope to JSON string for storage in payload_text.      Retur (+3 more)
 
 ### Community 1855 - "Community 1855"
 Cohesion: 0.08
@@ -10091,8 +10035,8 @@ Cohesion: 0.09
 Nodes (22): Appendices, Architecture Overview, Conclusion, Configuration Options, Core Components, Dependency Analysis, Detailed Component Analysis, Encrypted Communication Coordination and Vault Management (+14 more)
 
 ### Community 1866 - "Community 1866"
-Cohesion: 0.14
-Nodes (4): Test that sampling produces identical results across runs., Test that WaczPacker generates sorted CDXJ., Test that external WACZ check is optional (skipped if deps missing)., Test that revisit records include WARC-Refers-To-Target-URI and WARC-Refers-To-D
+Cohesion: 0.31
+Nodes (6): _get_tempdir(), bytes, str, Return tempfile.gettempdir() - reads current value at call time., Decrypt data encrypted with CryptoKit AES-GCM via Swift helper., _safe_extractall()
 
 ### Community 1867 - "Community 1867"
 Cohesion: 0.09
@@ -10115,16 +10059,16 @@ Cohesion: 0.09
 Nodes (22): 1. hledac_rust_extensions not built (~1 error), 2. FileNotFound errors (~varies), 3. AssertionError / ImportError (~varies), Category 1: Module is not a package, Category 2: Missing stub modules, Category 3: Missing functions in live_sprint_measurement.py, code:bash (uv add kuzu), code:block2 (16222 tests collected, 106 errors in 43.33s) (+14 more)
 
 ### Community 1872 - "Community 1872"
-Cohesion: 0.10
-Nodes (18): _check_bucket_head(), ClientSession, Perform HEAD check on a single bucket URL.      Returns dict with bucket info if, _make_async_cm(), Tests for intelligence/exposure_correlator.py  Tests:   - test_s3_open_bucket: H, CNAME to non-takeover target returns None., Bucket candidate generation is memory-efficient (generator, not list)., _generate_bucket_candidates returns a Generator, not a materialized list. (+10 more)
+Cohesion: 0.33
+Nodes (4): Bucket candidate generation is memory-efficient (generator, not list)., _generate_bucket_candidates returns a Generator, not a materialized list., Generator yields without pre-materializing all candidates., TestBucketGenerator
 
 ### Community 1873 - "Community 1873"
 Cohesion: 0.09
 Nodes (22): Advanced Image OSINT, AdvancedImageOSINT, AdvancedSteganalysis, Appendices, Architecture Overview, Conclusion, Configuration Options, Core Components (+14 more)
 
 ### Community 1874 - "Community 1874"
-Cohesion: 0.20
-Nodes (3): Test ArchiveValidator passes on valid minimal WACZ., Test ArchiveValidator detects invalid CDXJ offset/length., Test that datapackage fixity is validated and corruption is detected.
+Cohesion: 0.14
+Nodes (11): Tests for energy and thermal-aware inference (Sprint 75)., Test thermal-aware inference., Test ThermalState can be imported., Test energy-aware inference., Test _on_battery_power method exists., Test profile manager thermal awareness., test_profile_manager_checks_thermal(), test_profile_short_context_on_hot() (+3 more)
 
 ### Community 1875 - "Community 1875"
 Cohesion: 0.09
@@ -10243,8 +10187,8 @@ Cohesion: 0.09
 Nodes (20): 1. Before/After LOC, 2.1 `AdversarialVerifier` (837 LOC), 2.2 `SimpleNodeAblationExplainer` (78 LOC), 2.3 NOT extracted (per prompt scope), 2. Extraction Targets, 3.1 Circular dependency: `HypothesisEngine` in `AdversarialVerifier.__init__`, 3.2 Byte-for-byte equivalence, 3.3 `__init__.py` export inventory (+12 more)
 
 ### Community 1904 - "Community 1904"
-Cohesion: 0.19
-Nodes (10): _make_async_cm(), Tests for intelligence/exposure_clients.py  Tests:   - test_osv_batch_streaming:, Wrap a mock in async context manager protocol., Tests for CVIntelligenceClient (OSV + NVD + EPSS)., _BATCH_SIZE = 20 is enforced by the client., _MAX_CVES = 200 is enforced by the client., test_cve_epss_enrichment(), test_nvd_fallback() (+2 more)
+Cohesion: 0.13
+Nodes (15): CVIntelligenceClient, Extract severity from OSV format., Extract affected packages from OSV format., CVE/Vulnerability Intelligence via OSV.dev + NVD API 2.0 + EPSS.      OSV.dev Ba, Convert OSV vulnerability format to our CVE dict., _make_async_cm(), Tests for intelligence/exposure_clients.py  Tests:   - test_osv_batch_streaming:, Wrap a mock in async context manager protocol. (+7 more)
 
 ### Community 1905 - "Community 1905"
 Cohesion: 0.20
@@ -10476,11 +10420,11 @@ Nodes (20): 1.1 Complete Inventory (sorted by size), 1.2 Duplicate Check Results
 
 ### Community 1962 - "Community 1962"
 Cohesion: 0.14
-Nodes (15): Assertion 15: live_artifact_triage reads canonical family field case-insensitive, _has_feed must read 'family' key (F235D canonical), not legacy 'source_family'., _has_feed must also handle legacy 'source_family' key for backward compat., TestLiveArtifactTriageDownstream, _ct_all_rejected_by_bridge(), _ct_attempted(), _has_ct(), _has_feed() (+7 more)
+Nodes (8): Test GopherItem is_file property., Test protocol constants., Test gopher bootstrap servers are configured., Test Veronica-2 search is configured., Tests for transport/gopher_transport.py, Test GopherItem structure., Test GopherFinding structure., TestGopherTransport
 
 ### Community 1963 - "Community 1963"
-Cohesion: 0.10
-Nodes (11): Test that PermissionError doesn't abort the build., Test relative import resolution., Test that parallel scan is only used above threshold., Testy pro build_structure_map engine., Test incremental mode - only changed modules., Vytvoření dočasného projektu pro testy., Test that LRU cache is bounded to 512., Vytvoř testovací projekt. (+3 more)
+Cohesion: 0.07
+Nodes (16): Sprint 69: Structure Map Engine Tests, Test that PermissionError doesn't abort the build., Test relative import resolution., Test that parallel scan is only used above threshold., Testy pro build_structure_map engine., Test incremental mode - only changed modules., Vytvoření dočasného projektu pro testy., Test that LRU cache is bounded to 512. (+8 more)
 
 ### Community 1964 - "Community 1964"
 Cohesion: 0.10
@@ -10619,20 +10563,20 @@ Cohesion: 0.10
 Nodes (11): Tests for Sprint 8: F_NOCACHE for large downloads and VisionOCR wrapper., Invariant 1: F_NOCACHE applied only when content_length > 50MB., Invariant 3: No fcntl call for content_length <= 50MB., Invariant 2: fcntl failure must not abort write., Verify F_NOCACHE = 48 and threshold = 50MB., Invariant 6: File > 20MB returns [] with no exception., Invariant 4: ImportError returns [] with no exception., Invariant 5: Runtime error returns [] with no exception. (+3 more)
 
 ### Community 1998 - "Community 1998"
-Cohesion: 0.10
-Nodes (11): Testy pro hardened identity_stitching capability., Generic email prefixes jsou odfiltrovány., Domain normalizace funguje správně., URL handle extraction funguje., Domain-level dedup omezuje počet emailů na doménu., Evidence-weighted scorer počítá skóre správně., Bounded constants jsou definovány., Timeout guard je implementován. (+3 more)
+Cohesion: 0.02
+Nodes (80): Capability, CapabilityRegistry, ModelLifecycleManager, Registry tracking which capabilities are available and why., Check if capability is available.          NOTE: This conflates two distinct tru, Get reason for unavailability., Load a capability on demand., Mark capability as unloaded. (+72 more)
 
 ### Community 1999 - "Community 1999"
-Cohesion: 0.14
-Nodes (4): Test obvious debunk text -> refute with high confidence., Test obvious support text -> support with high confidence., Test anchor snippets are bounded., Test contradiction rate computed correctly from mixed stances.
+Cohesion: 0.10
+Nodes (11): Tests for stance scorer., Test obvious debunk text -> refute with high confidence., Test obvious support text -> support with high confidence., Test anchor snippets are bounded., Test Hermes is NOT triggered for high confidence., Test Hermes IS triggered for uncertain clusters., Test contradiction rate computed correctly from mixed stances., Test stance tracking in ClaimCluster. (+3 more)
 
 ### Community 2000 - "Community 2000"
 Cohesion: 0.10
 Nodes (12): Sprint F259 — Embedding Dimensions Smoke Test ==================================, MLXEmbeddingManager should truncate to 256d., EmbeddingPipeline should use _EMBEDDING_DIM = 256., Smoke tests for embedding dimension consistency across backends., MLXEmbeddingManager.EMBEDDING_DIM must be 256 (MRL canonical)., MLXEmbeddingManager.MRL_DIM must equal EMBEDDING_DIM (both 256)., LanceDBIdentityStore._current_mrl_dim must be 256 (MRL canonical)., EmbeddingPipeline _EMBEDDING_DIM must be 256 (MRL canonical). (+4 more)
 
 ### Community 2001 - "Community 2001"
-Cohesion: 0.04
-Nodes (35): detect_sprint_tier(), Detect sprint tier from duration in seconds., F253: Sprint tier system — defines minimum viable sprint lengths and Hermes budg, 300s sprint (windup=90s, active=210s) → hermes_budget=73s (35%, floor=30s)., 600s sprint (windup=180s, active=420s) → hermes_budget=147s (35%)., 900s sprint (windup=180s, active=720s) → hermes_budget=252s (35%, cap=180 on win, hermes_budget_s returns float/int for arithmetic compatibility., Large sprint active window produces hermes_budget well above 30s floor. (+27 more)
+Cohesion: 0.03
+Nodes (33): F253: Sprint tier system — defines minimum viable sprint lengths and Hermes budg, 300s sprint (windup=90s, active=210s) → hermes_budget=73s (35%, floor=30s)., 600s sprint (windup=180s, active=420s) → hermes_budget=147s (35%)., 900s sprint (windup=180s, active=720s) → hermes_budget=252s (35%, cap=180 on win, hermes_budget_s returns float/int for arithmetic compatibility., Large sprint active window produces hermes_budget well above 30s floor., Verify 600s sprint (old default) behaves identically to pre-F253 behavior., Verify sprint tier detection and SPRINT_TIERS definitions. (+25 more)
 
 ### Community 2002 - "Community 2002"
 Cohesion: 0.16
@@ -10640,7 +10584,7 @@ Nodes (13): bool, MonkeyPatch, tests/test_ipfs_env_gate.py =====================
 
 ### Community 2003 - "Community 2003"
 Cohesion: 0.10
-Nodes (19): Sprint 8L Targeted Tests ========================  Tests for: 1. test_live_runbo, Verify LiveHandlerLatency captures all required latency fields., Verify 5 MiB payload cap is still enforced in archive_discovery.py., Verify handlers use shared session path, not per-handler instantiation., Regression: OFFLINE_REPLAY benchmark should still produce nonzero iterations., Verify HHI is computed correctly., Verify seed domains are defined for live run., Verify timeout budgets match autonomous_orchestrator.py constants. (+11 more)
+Nodes (19): Sprint 8L Targeted Tests ========================  Tests for: 1. test_live_runbo, Verify 5 MiB payload cap is still enforced in archive_discovery.py., Verify handlers use shared session path, not per-handler instantiation., Regression: OFFLINE_REPLAY benchmark should still produce nonzero iterations., Verify RSS monitor computes slope correctly., Verify HHI is computed correctly., Verify seed domains are defined for live run., Verify timeout budgets match autonomous_orchestrator.py constants. (+11 more)
 
 ### Community 2004 - "Community 2004"
 Cohesion: 0.10
@@ -10760,7 +10704,7 @@ Nodes (18): Architecture Overview, Benchmarking and Resource Utilization, Bottle
 
 ### Community 2033 - "Community 2033"
 Cohesion: 0.11
-Nodes (19): enabled, findings_delta, hints_generated_delta, latency_overhead_ms, sources_delta, module_contributions, identity_stitching, network_recon (+11 more)
+Nodes (19): module_contributions, network_recon, osint_framework, surface_search, enabled, findings_delta, hints_generated_delta, latency_overhead_ms (+11 more)
 
 ### Community 2034 - "Community 2034"
 Cohesion: 0.11
@@ -10791,8 +10735,8 @@ Cohesion: 0.11
 Nodes (18): Architecture Overview, Conclusion, Core Components, Dependency Analysis, Detailed Component Analysis, Integration with Fetch Coordinator, Introduction, Performance Considerations (+10 more)
 
 ### Community 2041 - "Community 2041"
-Cohesion: 0.11
-Nodes (15): clear_cache(), get_cache_stats(), has_ane(), has_metal(), bool, int, Capability Prober - Runtime dependency detection without boolean flags.  This mo, Detects ANE (Apple Neural Engine) availability - lazy, cached. (+7 more)
+Cohesion: 0.29
+Nodes (6): get_cache_stats(), int, Returns copy of statistics (no modification, no blocking operations)., Returns copy of statistics (no modification, no blocking operations)., Get cache statistics. DEPRECATED: Use prober.stats()., Get cache statistics. DEPRECATED: Use prober.stats().
 
 ### Community 2042 - "Community 2042"
 Cohesion: 0.11
@@ -10803,8 +10747,8 @@ Cohesion: 0.11
 Nodes (18): Architecture Overview, Compliance Modes, Caching Strategies, and Data Source Attribution, Conclusion, Confidence Scoring Mechanisms, Configuration Options, Core Components, Dependency Analysis, Detailed Component Analysis (+10 more)
 
 ### Community 2044 - "Community 2044"
-Cohesion: 0.09
-Nodes (40): _build_nx_graph(), _centrality_impl(), _coerce_entity(), _compute_relationships(), _dedupe_key(), _detect_contradiction_impl(), _domain_of(), _extract_etype() (+32 more)
+Cohesion: 0.14
+Nodes (8): Testy pro Sprint 82F: Deep Acquisition., Všechny konstanty jsou definovány., Sprint state obsahuje Sprint 82F metriky., Instance proměnné pro Sprint 82F jsou inicializovány., Phase gating konstanty jsou definovány., Archive mirrors nejsou považovány za nezávislé zdroje., Stop words obsahují běžná anglická slova., TestSprint82FDeepAcquisition
 
 ### Community 2045 - "Community 2045"
 Cohesion: 0.11
@@ -10839,8 +10783,8 @@ Cohesion: 0.11
 Nodes (17): Architecture Overview, Component Interactions, Conclusion, Core Components, Core Orchestrator (Canonical Owner), Dependency Analysis, Detailed Component Analysis, Entry Point and Boot Hygiene (+9 more)
 
 ### Community 2053 - "Community 2053"
-Cohesion: 0.06
-Nodes (50): async_search_circl_pdns(), call_circl_pdns(), _check_cooldown(), _clear_cooldown(), Provider cooldown pattern, _enter_cooldown(), _normalize_domain(), _parse_pdns_line() (+42 more)
+Cohesion: 0.11
+Nodes (19): get_pivot_task_types(), get_pivot_type(), get_source_adapter(), list_registered_source_types(), bool, int, str, Get the appropriate pivot type for an IOC type.      Args:         ioc_type: The (+11 more)
 
 ### Community 2054 - "Community 2054"
 Cohesion: 0.11
@@ -10871,8 +10815,8 @@ Cohesion: 0.11
 Nodes (17): 1. InterpreterPoolExecutor Unavailable, 2. ThreadPoolExecutor = GIL Prison, 3. ProcessPoolExecutor = Partial Escape, 4. Serialization Overhead Dominates Small Items, 5. Unpickleable Closures Block Many Candidates, 6. Most Candidates Too Fast, Candidate Benchmark Matrix, Executive Summary (+9 more)
 
 ### Community 2061 - "Community 2061"
-Cohesion: 0.17
-Nodes (11): _load_circuit_breaker(), _load_destruction(), _load_digital_ghost_detector(), _load_encoding_detector(), _load_hash_identifier(), _load_metadata_extractor(), _load_pii_gate(), _load_stego_detector() (+3 more)
+Cohesion: 0.14
+Nodes (9): Sprint 58B tests – Federated Learning with Post‑Quantum Crypto, Sketches, DP., Testy pro OSINT sketches., Test #11: Count-Min sketch – přidání a odhad., Test #12: Count-Min sketch – serializace., Test #13: MinHash sketch – Jaccard odhad., Test #14: SimHash sketch – Hamming distance., test_inmemory_transport(), TestSketches (+1 more)
 
 ### Community 2062 - "Community 2062"
 Cohesion: 0.11
@@ -10915,12 +10859,12 @@ Cohesion: 0.11
 Nodes (10): Tests for network/gemini_transport.py, Test GeminiResponse structure., Test GeminiFinding structure., Test Gemini URL parsing., Test Gemini URL parsing with custom port., Test Gemini URL parsing with just host., Test gemtext link extraction., Test gemtext link extraction with no links. (+2 more)
 
 ### Community 2072 - "Community 2072"
-Cohesion: 0.07
-Nodes (15): Tests for spine pattern coordinators (FetchCoordinator, ClaimsCoordinator)., Test that FetchCoordinator can be initialized., Test that ClaimsCoordinator can be initialized., Test FetchCoordinator start/step/shutdown interface., Test ClaimsCoordinator start/step/shutdown interface., Test that orchestrator exposes coordinator properties., Test that orchestrator delegates fetch to FetchCoordinator via step., Test that orchestrator delegates claims to ClaimsCoordinator via step. (+7 more)
+Cohesion: 0.03
+Nodes (58): create_config(), create_config, for_mode(), from_env(), get_preset(), load_config_from_file(), load_config_from_file, M1Presets (+50 more)
 
 ### Community 2073 - "Community 2073"
-Cohesion: 0.07
-Nodes (8): TTL bylo zvýšeno z 5 na 20 iterací., _propagation_hints_expired counter existuje., _consecutive_hint_driven_count pro burst guard existuje., _hint_lag_sum/_hint_lag_count pro lag tracking existují., Expired hints jsou počítány ve scoreru., Accounting equation: generated = consumed + expired + evicted + pending., Bounded deque evicts with accounting., Cumulative generated counter exists.
+Cohesion: 0.11
+Nodes (10): Testy pro Sprint 4A: OFFLINE REPLAY REALISM + HINT CONVERSION TUNING., TTL bylo zvýšeno z 5 na 20 iterací., _propagation_hints_expired counter existuje., _consecutive_hint_driven_count pro burst guard existuje., _hint_lag_sum/_hint_lag_count pro lag tracking existují., Expired hints jsou počítány ve scoreru., Accounting equation: generated = consumed + expired + evicted + pending., Bounded deque evicts with accounting. (+2 more)
 
 ### Community 2074 - "Community 2074"
 Cohesion: 0.11
@@ -11011,8 +10955,8 @@ Cohesion: 0.12
 Nodes (16): #16 & #21 - SprintScheduler Dependencies, #17 - DuckDB/LanceDB/Kuzu 4-System Complexity, Appendix: Files Created, CLARIFICATIONS (Post-Analysis), Clarified (Not Bugs — Architectural/Design Decisions), Comprehensive Code Review Report, Critical Issues (P0 — Must Fix Immediately), Deferred (Requires Significant Effort) (+8 more)
 
 ### Community 2096 - "Community 2096"
-Cohesion: 0.21
-Nodes (8): array, bool, int, x: (batch, seq_len, feature_dim)             returns: (batch, seq_len), Stub when MLX unavailable., Jeden SSM blok s volitelnou depthwise conv., Změří, zda je depthwise konvoluce rychlejší než normální, pro různé délky., SSMBlock
+Cohesion: 0.24
+Nodes (9): AuthorityPolicy, BasePolicy, DiscoursePolicy, Any, float, str, URL scoring policies. No action generation, just scoring. Each policy has a stab, score_url() (+1 more)
 
 ### Community 2097 - "Community 2097"
 Cohesion: 0.12
@@ -11071,12 +11015,12 @@ Cohesion: 0.12
 Nodes (14): 1. Current File Overview, 2. Usage Matrix, 3. Domain Decomposition, 4. Proposed Extraction Path (Future Sprint), 5. Characterization Tests (Needed — Currently Zero), 6. This Commit Scope (Audit Only — No Split), 7. Invariants to Preserve in Future Split, 8. Decision Record (2026-05-18) (+6 more)
 
 ### Community 2112 - "Community 2112"
-Cohesion: 0.29
-Nodes (9): maximal_marginal_relevance(), float, int, ndarray, str, MMR - Maximal Marginal Relevance for diversity in search results.  ROLE: Context, Rerank candidates using MMR and return with relevance scores.      Args:, Select top-k diverse candidates using Maximal Marginal Relevance.      MMR formu (+1 more)
+Cohesion: 0.18
+Nodes (10): hackertarget_pdns(), PDNSRecord, Any, Convert to CanonicalFinding for DuckDB ingestion., Convert to CanonicalFinding for DuckDB ingestion., HackerTarget API: passive DNS lookup for domain.     Returns list of PDNSRecord., HackerTarget API: passive DNS lookup for domain., CanonicalFinding to_dict pattern (rationale) (+2 more)
 
 ### Community 2113 - "Community 2113"
 Cohesion: 0.15
-Nodes (13): action, active, roles, stub, verdict, duplication_matrix, captcha_2captcha_vs_coreml, vision_ocr_vs_vision_encoder (+5 more)
+Nodes (13): duplication_matrix, ner_gliner_vs_ner_ane, vision_ocr_vs_vision_encoder, action, active, roles, stub, verdict (+5 more)
 
 ### Community 2114 - "Community 2114"
 Cohesion: 0.12
@@ -11095,16 +11039,16 @@ Cohesion: 0.12
 Nodes (15): Architecture Overview, Conclusion, Core Components, Dependency Analysis, Detailed Component Analysis, Embedding Pipeline, Introduction, Memory Management and Metal Limits (+7 more)
 
 ### Community 2118 - "Community 2118"
-Cohesion: 0.12
-Nodes (14): _extract_snippet(), int, Related entity from graph traversal.      Fields:         entity_value: The enti, Related entity from graph traversal.      Fields:         entity_value: The enti, Truncate text to max_bytes UTF-8.      Returns (truncated_text, actual_bytes)., Truncate text to max_bytes UTF-8.      Returns (truncated_text, actual_bytes)., Extract relevant snippet from payload_text using keyword proximity.      Fail-so, Extract relevant snippet from payload_text using keyword proximity.      Fail-so (+6 more)
+Cohesion: 0.33
+Nodes (5): Related entity from graph traversal.      Fields:         entity_value: The enti, Related entity from graph traversal.      Fields:         entity_value: The enti, Query entity history from DuckPGQGraph.          Args:             entity_value:, Query entity history from DuckPGQGraph.          Args:             entity_value:, RelatedEntity
 
 ### Community 2119 - "Community 2119"
 Cohesion: 0.12
 Nodes (15): Architecture Overview, Conclusion, Core Components, Dependency Analysis, Detailed Component Analysis, DuckDBShadowStore (Canonical Facts Store), Graph Builder Core, GraphRAGOrchestrator (+7 more)
 
 ### Community 2120 - "Community 2120"
-Cohesion: 0.07
-Nodes (18): create_from_text(), _extract_svo_heuristic(), str, Add edge_id to graph_refs with hard limit (ring-like eviction)., Add node_id to graph_refs with hard limit (ring-like eviction)., Get list of claim IDs from this packet., Get most common object variant., Set source fingerprint for evidence (disk-only). (+10 more)
+Cohesion: 0.06
+Nodes (23): create_from_text(), _extract_svo_heuristic(), str, Add edge_id to graph_refs with hard limit (ring-like eviction)., Add node_id to graph_refs with hard limit (ring-like eviction)., Get list of claim IDs from this packet., Add evidence with hard limits (ring buffer)., Get most common object variant. (+15 more)
 
 ### Community 2121 - "Community 2121"
 Cohesion: 0.12
@@ -11179,16 +11123,16 @@ Cohesion: 0.12
 Nodes (16): 10. Final Verdict, 11. Future Extensions (Deferred), 1. Architecture Summary (Post-Sprint 6A), 2. Sprint 6A Pre-flight Results, 3. Step 1: prf_expand Fix, 4. Step 2: TS Calibration Implementation, 5. Step 5: Unit Tests, 6. 10s Smoke Test Results (+8 more)
 
 ### Community 2139 - "Community 2139"
-Cohesion: 0.11
-Nodes (5): Invariant 4: Verify moe_router._generate_with_expert() passes prompt_cache., Verify put_many method exists with batching., Invariant 8: Read path uses buffers=True (zero-copy)., Invariant 9: RSS logging exists in _force_memory_cleanup., Verify psutil import is fail-safe.
+Cohesion: 0.12
+Nodes (9): Tests for Sprint 9: Prompt cache wiring + LMDB batching + Memory cleanup log., Invariant 1-3: Verify hermes3_engine.generate() passes prompt_cache., Invariant 4: Verify moe_router._generate_with_expert() passes prompt_cache., Invariant 6: LMDB_WRITE_BATCH_SIZE == 500., Verify put_many method exists with batching., Invariant 8: Read path uses buffers=True (zero-copy)., Invariant 9: RSS logging exists in _force_memory_cleanup., Verify psutil import is fail-safe. (+1 more)
 
 ### Community 2140 - "Community 2140"
-Cohesion: 0.08
-Nodes (7): _selected_hint instance variable existuje., selected_hint je vracen v analyze_state., Reset propagation state na začátku research()., TTL expiration cleanup v loopu., winning_hint_for_action sleduje který hint vyhrál., _selected_hint je nastaven po výběru akce., Hint je cleared po jedné iteraci.
+Cohesion: 0.12
+Nodes (9): Testy pro hard execution context contract., _selected_hint instance variable existuje., selected_hint je vracen v analyze_state., Reset propagation state na začátku research()., TTL expiration cleanup v loopu., winning_hint_for_action sleduje který hint vyhrál., _selected_hint je nastaven po výběru akce., Hint je cleared po jedné iteraci. (+1 more)
 
 ### Community 2141 - "Community 2141"
-Cohesion: 0.08
-Nodes (7): Benchmark can run in OFFLINE_REPLAY mode without errors., Scorecard contains all required baseline metrics., Benchmark reports can include repeatability data., HHI > 0.70 triggers ACTION_DIVERSITY_WARNING., Memory leak warning uses RSS delta per iteration., Benchmark prefers OFFLINE_REPLAY when self-seeded data available., Benchmark inter-run reset clears findings, sources, and propagation hints.
+Cohesion: 0.12
+Nodes (9): Sprint 5A: First Honest 60s Baseline - Regression Tests, Benchmark can run in OFFLINE_REPLAY mode without errors., Scorecard contains all required baseline metrics., Benchmark reports can include repeatability data., HHI > 0.70 triggers ACTION_DIVERSITY_WARNING., Memory leak warning uses RSS delta per iteration., Benchmark prefers OFFLINE_REPLAY when self-seeded data available., Benchmark inter-run reset clears findings, sources, and propagation hints. (+1 more)
 
 ### Community 2142 - "Community 2142"
 Cohesion: 0.12
@@ -11715,8 +11659,8 @@ Cohesion: 0.14
 Nodes (13): Conclusion, Data Integrity Checklist, Fix 1 — WAL Pending Marker Eviction, Fix 2 — LanceDB KV Writeback, Fix 3 — ANN Rebuild RAM Guard, Fix Applied, Fix Applied, Fix Applied (+5 more)
 
 ### Community 2273 - "Community 2273"
-Cohesion: 0.11
-Nodes (5): Test that NEREngine reports MEMORY_STRICT limits., Test that strict mode constants are defined., Test that predict_strict method exists and has correct signature., Test that strict mode truncates long texts., Test that strict mode limits number of labels.
+Cohesion: 0.13
+Nodes (8): Explicitní inicializace - načte model do paměti.  n        Pokud je model již na, Tests for NER MEMORY_STRICT mode with subprocess isolation., Test that NEREngine reports MEMORY_STRICT limits., Test that strict mode constants are defined., Test that predict_strict method exists and has correct signature., Test that strict mode truncates long texts., Test that strict mode limits number of labels., TestNERMemoryStrict
 
 ### Community 2274 - "Community 2274"
 Cohesion: 0.50
@@ -11823,24 +11767,24 @@ Cohesion: 0.15
 Nodes (12): 13 jednoduchých `from e` insertů, 2 raise sites, které již měly `from exc` (ponechány, neupravovány), 376 raise sites mimo except — proč zůstaly, 3 dvojité edity (`except X:` → `except X as e:` + `raise Y(...)` → `raise Y(...) from e`), Ověření, pytest (relevantní test soubory), RAISE_CHAIN_FIX — Exception Chaining Audit (PY314-Q1), Rozdíl oproti auditu (379 → 16 opravených) (+4 more)
 
 ### Community 2300 - "Community 2300"
-Cohesion: 0.14
-Nodes (4): Test that Hermes3Engine accepts sanitize_for_llm callback parameter., Test that injected callback is used instead of fallback_sanitize.         Verifi, Test that fallback_sanitize is used when no callback injected., Test that injected callback is used instead of fallback_sanitize.
+Cohesion: 0.21
+Nodes (11): _ensure_utc_aware(), EntityCandidate, get_linker(), datetime, EntityLinker - Wikidata-based Entity Linking and Disambiguation ================, Normalize datetime to UTC-aware (required for TTL comparisons in Python 3.14+)., Disambiguate entity candidates using context.          Args:             entity_, Get singleton EntityLinker instance. (+3 more)
 
 ### Community 2301 - "Community 2301"
-Cohesion: 0.11
-Nodes (5): Anchor text should be limited to 120 chars., Context snippet should be limited to 200 chars., Cross-domain links should get +0.2 score boost., PDF/JSON/XML links should get +0.3 score boost., Nofollow/sponsored links should get -0.2 penalty.
+Cohesion: 0.04
+Nodes (33): Test that lxml is used for link extraction when available., Test basic link extraction., Test that max_links limit is respected., Test that duplicate links are removed., Test selectolax-based link extraction with max_links limit., Test fallback to regex when selectolax unavailable., Test JSON-LD extraction from HTML., Test Sprint 50: GraphRAG Fingerprint Consumption and Frontier Priority Boost (+25 more)
 
 ### Community 2302 - "Community 2302"
-Cohesion: 0.02
-Nodes (57): engine_with_mocks(), _gliner_available(), mock_config(), Tests for FullyAutonomousOrchestrator with M1 8GB optimization.  Tests: - Smoke, Check if gliner is available without skipping the module., Sprint 38: Monitor Refactor – _autonomy_monitor_step() je samostatná testovateln, Invariant 1: _autonomy_monitor_step() existuje jako samostatná async metoda., Invariant 3: _monitor_step ukládá RSS do self._rss_history (max 10 hodnot). (+49 more)
+Cohesion: 0.03
+Nodes (46): _gliner_available(), mock_config(), Tests for FullyAutonomousOrchestrator with M1 8GB optimization.  Tests: - Smoke, Wiring verification tests - verify that modules are actually wired into runtime., Test that MetricsRegistry is wired into orchestrator lifecycle.          Priorit, Test that ToolExecLog is wired into tool dispatch.          GAP-1 wiring test:, Test that no direct tool calls bypass security pipeline.          GAP-2 enforcem, Test that orchestrator delegates to coordinators.          Priority 19 delegatio (+38 more)
 
 ### Community 2303 - "Community 2303"
 Cohesion: 0.15
 Nodes (12): 1. Executive Summary, 2.1 `rust_extensions/src/rolling_hash.rs` — FastHasher fix, 2.2 Files read during the audit (all unchanged, all healthy), 2. STEP 1 — Source-of-Truth State (post-fix), 3. STEP 2 — maturin build verification, 4. STEP 3 — Python fallback guards (all 5 verified), 5. STEP 4 — `benchmarks/bench_rust_vs_python.py` (8.21 s total), 6. STEP 5 — `.github/workflows/rust_extensions.yml` (+4 more)
 
 ### Community 2304 - "Community 2304"
-Cohesion: 0.09
-Nodes (6): Verify consumed hints are skipped in scorer boost path., Verify _process_result marks original hint as consumed., Verify fallback path also checks consumed flag., Verify consumed flag is always accessed as dict key, not attribute., Verify HHI is computed and logged in benchmark., Verify synthetic mock mode is still functional.
+Cohesion: 0.14
+Nodes (8): Testy pro Zombie Hint Eradication - strict consumption accounting., Verify consumed hints are skipped in scorer boost path., Verify _process_result marks original hint as consumed., Verify fallback path also checks consumed flag., Verify consumed flag is always accessed as dict key, not attribute., Verify HHI is computed and logged in benchmark., Verify synthetic mock mode is still functional., TestSprint4IZombieHintEradication
 
 ### Community 2305 - "Community 2305"
 Cohesion: 0.50
@@ -11859,8 +11803,8 @@ Cohesion: 0.50
 Nodes (3): Assertion 16: Tests run hermetic with no live network, MLX, or browser., Assertion 16: All test objects use fakes/mocks, no real network, MLX, or browser, TestHermeticGuarantee
 
 ### Community 2309 - "Community 2309"
-Cohesion: 0.50
-Nodes (4): 1.1 UNBOUNDED COLLECTIONS (HIGH RISK), 1.2 ASYNC RESOURCE LEAKS, 1.3 LMDB CURSOR HANDLING, PHASE 1: MEMORY LEAK SCAN
+Cohesion: 0.18
+Nodes (7): int, Initialize cache.          Args:             max_size: Maximum number of entries, Lazy load GLiNER model., Extract entities using regex patterns (fallback when GLiNER unavailable)., Extract entities using GLiNER.          Returns:             List of (entity_tex, Build SPARQL query for entity search.          Args:             entity_text: Te, Link entities in text to Wikidata.          Args:             text: Input text t
 
 ### Community 2310 - "Community 2310"
 Cohesion: 0.25
@@ -12383,8 +12327,8 @@ Cohesion: 0.15
 Nodes (12): Action Diversity, Executive Summary, Healthy Signs, Interpretation, Key Metrics, Data Mode, Memory, Next Steps (+4 more)
 
 ### Community 2440 - "Community 2440"
-Cohesion: 0.38
-Nodes (4): bytes, Initialize encryption with optional key.          Args:             key: 32-byte, Get encryption key from environment variable, Generate a new 32-byte encryption key
+Cohesion: 0.21
+Nodes (8): Verify XOR fallback is removed - should raise error., Verify AES-256-GCM encryption path works correctly., DataEncryption, bytes, AES-256-GCM encryption for sensitive data storage.      Uses environment variabl, Initialize encryption with optional key.          Args:             key: 32-byte, Get encryption key from environment variable, Generate a new 32-byte encryption key
 
 ### Community 2441 - "Community 2441"
 Cohesion: 0.17
@@ -12396,7 +12340,7 @@ Nodes (12): A. Findings Heap Preflight, B. Scipy Lazy-Load Reduction, C. GraphRA
 
 ### Community 2443 - "Community 2443"
 Cohesion: 0.17
-Nodes (12): files, /Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/coordinators/claims_coordinator.py, /Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/evidence_log.py, /Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tools/probe_f214int_interpreter_pool.py, details, file, status, details (+4 more)
+Nodes (12): files, /Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/coordinators/claims_coordinator.py, /Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/__init__.py, /Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tools/probe_f214int_interpreter_pool.py, details, file, status, details (+4 more)
 
 ### Community 2444 - "Community 2444"
 Cohesion: 0.17
@@ -12720,7 +12664,7 @@ Nodes (11): Analysis, Benchmark Tool, F214I-2 — Python 3.14 Experimental JIT B
 
 ### Community 2524 - "Community 2524"
 Cohesion: 0.17
-Nodes (12): 2.1 MLX METAL MEMORY MANAGEMENT, 2.2 PROCESSPOOL EXECUTOR ON M1 (FALSE PARALLELISM), 2.3 SWAP TRIGGERS, FILES NOT AUDITED (PER INSTRUCTIONS), Hledac Universal — Memory Audit Report, M1 UMA COMPATIBILITY SCORE, PEAK RSS ESTIMATES, PHASE 2: M1 UMA ARCHITECTURE COMPATIBILITY (+4 more)
+Nodes (12): 1.1 UNBOUNDED COLLECTIONS (HIGH RISK), 1.2 ASYNC RESOURCE LEAKS, 1.3 LMDB CURSOR HANDLING, FILES NOT AUDITED (PER INSTRUCTIONS), Hledac Universal — Memory Audit Report, M1 UMA COMPATIBILITY SCORE, PEAK RSS ESTIMATES, PHASE 1: MEMORY LEAK SCAN (+4 more)
 
 ### Community 2525 - "Community 2525"
 Cohesion: 0.17
@@ -12758,33 +12702,41 @@ Nodes (7): Tests for structured output generation with retry (Sprint 75)., Test 
 Cohesion: 0.17
 Nodes (11): Action Diversity, Data Mode, Executive Summary, Implementation Changes (Sprint 5A-R2), Key Metrics (per run), Memory, Next Steps, Propagation Metrics (+3 more)
 
+### Community 2535 - "Community 2535"
+Cohesion: 0.17
+Nodes (7): Sprint 7: Memory stabilization tests for MLX KV cache, prompt cache, LMDB zero-c, Invariant 1: Verify hermes3_engine.generate() code includes max_kv_size=8192 and, Invariant 2: Verify prompt cache is initialized in hermes3_engine., Invariant 3: Verify lmdb_kv.get() uses buffers=True., Invariant 4: Verify _force_memory_cleanup calls malloc_zone_pressure_relief., Invariant 5: Verify _force_memory_cleanup has fail-safe (try/except around mallo, TestSprint7MemoryStabilization
+
 ### Community 2536 - "Community 2536"
-Cohesion: 0.09
-Nodes (6): FIX 0: Locks prevent double-load - asyncio.gather two concurrent acquire calls., FIX 1: Outlines generator cached - verify _outlines_generators dict exists., FIX 2: RotatingBloomFilter bounded - add items, assert isinstance., FIX 4: Finally unload on exception - raise RuntimeError, assert unload called., FIX 6: shutdown_all calls all close() - mock 3 components, call shutdown_all., FIX 7: RRF ranks correctly - merge result_lists, assert B is top-1.
+Cohesion: 0.14
+Nodes (8): Test Sprint 35: Consolidation & Hardening fixes., FIX 0: Locks prevent double-load - asyncio.gather two concurrent acquire calls., FIX 1: Outlines generator cached - verify _outlines_generators dict exists., FIX 2: RotatingBloomFilter bounded - add items, assert isinstance., FIX 4: Finally unload on exception - raise RuntimeError, assert unload called., FIX 6: shutdown_all calls all close() - mock 3 components, call shutdown_all., FIX 7: RRF ranks correctly - merge result_lists, assert B is top-1., TestSprint35Hardening
+
+### Community 2538 - "Community 2538"
+Cohesion: 0.17
+Nodes (7): Sprint 38: RAPTOR Hierarchical Summarization in RAGEngine, FIX 0: _build_raptor_tree returns level-0 nodes for each input doc., FIX 1: _build_raptor_tree bounded: max 50 docs., FIX 2: _build_raptor_tree returns only level-0 when PCA raises., FIX 3: _rrf_merge returns correct order (item in both lists ranked highest)., FIX 4: _raptor_retrieve returns nodes sorted by cosine similarity., TestSprint38RAPTOR
 
 ### Community 2540 - "Community 2540"
-Cohesion: 0.11
-Nodes (5): Invariant 0: ct_subdomains → ct_subdomain_of edges, Invariant 1: open_storage → open_storage_bucket edges, Invariant 3: Fail-safe - graph error doesn't stop flow, Invariant 4: Bounded - max 20 edges per call, Verify idempotency - calling twice doesn't duplicate edges
+Cohesion: 0.23
+Nodes (4): bool, int, str, RamDiskVault
 
 ### Community 2541 - "Community 2541"
-Cohesion: 0.20
-Nodes (3): Ověří, že UCB1 vybírá top-3 zdroje., Ověří, že update je rychlý a nepoužívá mnoho RAM., Ověří fallback při selhání LMDB.
+Cohesion: 0.19
+Nodes (7): BoundedOrderedDict, int, Hard rule #12: BoundedOrderedDict wrapper with FIFO eviction., Hard rule #13: FIFO eviction test., Test that duplicate keys don't increase size., Test clear resets properly., TestBoundedOrderedDict
 
 ### Community 2542 - "Community 2542"
-Cohesion: 0.05
-Nodes (21): Sprint 71: Deep Apple Silicon Optimizations (M1/8GB), Invariant A1: _mlx_main_semaphore a _mlx_bg_semaphore existují v __init__., Invariant A2: Pouze jedna hlavní MLX operace běží najednou., Invariant B1: CoreML classifier je lazy loaded., Invariant B2: _load_coreml_classifier metoda existuje., Invariant C1: _task_is_alive a _start_background_task existují., Invariant D1: Blacklist atributy existují v __init__., Invariant D2: _PRIVATE_NETS je definováno. (+13 more)
+Cohesion: 0.26
+Nodes (8): FederatedSidecarAdapter, Any, str, Fail-soft wrapper. Subclasses/base would call self.run_async(ctx).          We i, Pick the transport name for this sidecar run.          Selection ladder (F350M-F, Execute federated research on the current sprint context.          Args:, Convert federated merged findings into CanonicalFinding objects.          Tolera, Sidecar adapter that wires FederatedResearchCoordinator into the     sprint advi
 
 ### Community 2543 - "Community 2543"
-Cohesion: 0.11
-Nodes (5): Verify consumed_via_true_target_match counter exists and is tracked., Verify consumed_via_relaxed_fallback counter exists and is tracked., Verify hint metadata contains match_type and identity_source., Verify propagation_precision_score formula uses true_target., Verify action names are consistent between hint and _process_result.
+Cohesion: 0.17
+Nodes (7): Sprint 4G: Precision tracking for true-target vs relaxed fallback., Verify consumed_via_true_target_match counter exists and is tracked., Verify consumed_via_relaxed_fallback counter exists and is tracked., Verify hint metadata contains match_type and identity_source., Verify propagation_precision_score formula uses true_target., Verify action names are consistent between hint and _process_result., TestSprint4GPrecisionTracking
 
 ### Community 2544 - "Community 2544"
-Cohesion: 0.11
-Nodes (5): Orchestrator has capability radar attributes., Capability radar methods are defined., Federated activation no longer requires config flag., Circuit breaker for transports is defined., Federated task tracking attribute exists.
+Cohesion: 0.17
+Nodes (7): Sprint 5C: Autonomous Capability Sensing & Self-Activation, Orchestrator has capability radar attributes., Capability radar methods are defined., Federated activation no longer requires config flag., Circuit breaker for transports is defined., Federated task tracking attribute exists., TestSprint5CCapabilityRadar
 
 ### Community 2545 - "Community 2545"
-Cohesion: 0.10
-Nodes (11): Sprint 5E: Research depth and breadth metrics tests., source_category_entropy returns 0.0 when no sources., source_category_entropy normalizes to [0,1] range., Action EMA attributes exist in orchestrator., Action EMA updates with correct formula: alpha=0.2, init=0.5., EMA bias only applies after 5 runs., EMA bias never exceeds ±0.075., research_depth_proxy is bounded to MAX_DEPTH=5. (+3 more)
+Cohesion: 0.17
+Nodes (7): Sprint 5E: Research depth and breadth metrics tests., source_category_entropy returns 0.0 when no sources., source_category_entropy normalizes to [0,1] range., EMA bias never exceeds ±0.075., entity_discovery_rate uses proxy formula., relationship_discovery_rate uses hints consumed proxy., TestSprint5EResearchDepthMetrics
 
 ### Community 2547 - "Community 2547"
 Cohesion: 0.17
@@ -12799,8 +12751,8 @@ Cohesion: 0.17
 Nodes (11): 1. Gather context, 2. Explore the codebase (optional), 3. Draft vertical slices, 4. Quiz the user, 5. Publish the issues to the issue tracker, Acceptance criteria, Blocked by, Parent (+3 more)
 
 ### Community 2550 - "Community 2550"
-Cohesion: 0.23
-Nodes (8): Any, bool, bytes, str, Check if WASM runtime is available., Run WASM module asynchronously with timeout and fuel limits.          Args:, Synchronous WASM execution with fuel tracking.          This runs in a thread po, Get sandbox statistics.
+Cohesion: 0.17
+Nodes (10): Any, bool, bytes, Path, str, Check if WASM runtime is available., Run WASM module asynchronously with timeout and fuel limits.          Args:, Synchronous WASM execution with fuel tracking.          This runs in a thread po (+2 more)
 
 ### Community 2551 - "Community 2551"
 Cohesion: 0.17
@@ -13174,6 +13126,10 @@ Nodes (11): memory, cleanup_requests, forced_throttles, memory_delta_synthesis_m
 Cohesion: 0.06
 Nodes (32): Analysis & Debug (70-90% savings), Brain Layer (MLX/Hermes3), Build & Compile (80-90% savings), CLAUDE.md — Hledac Universal OSINT Orchestrator, CRITICAL INVARIANTS (Top 10), CURRENT ARCHITECTURE (Po F260), DO NOT (Anti-patterns pro agenty), FEATURE FLAGS (Kompletní seznam) (+24 more)
 
+### Community 2644 - "Community 2644"
+Cohesion: 0.17
+Nodes (7): Sprint 82E: Offline tldextract pro source-family extrakci.      Používá bundlova, Sprint 82B: Extract source family from URL for independence checking.          P, Sprint 82B: Check if new source is independent from existing.          Rules:, Sprint 82B: Add contradiction with source-family independence check.          Re, Sprint 82B: Redistribute killed lane budget to survivors., Sprint 82B: Transfer falsified hypothesis to global contradiction state., _tldextract_source_family()
+
 ### Community 2645 - "Community 2645"
 Cohesion: 0.18
 Nodes (10): Class Mapping, code:block1 (hledac/security/), code:bash ($ uv run python -c "from hledac.security import StealthEngin), Constraints Followed, FIX_REPORT_P2 — Security Namespace T0 Redirects, Import Fixes (9 total), Root Cause, Shim Package Created (+2 more)
@@ -13251,16 +13207,16 @@ Cohesion: 0.20
 Nodes (7): _parse_getattr_scheduler_callbacks(), str, All permitted callbacks must be documented in the module docstring., Seal test: only the 3 named callbacks may cross the scheduler facade., Exactly the permitted callbacks cross the scheduler facade via getattr., Self-contained advisories (adapters) must NOT use getattr on scheduler., TestAdvisoryCallbackSeal
 
 ### Community 2664 - "Community 2664"
-Cohesion: 0.15
-Nodes (7): LiveHandlerLatency, LiveLatencyCollector, bool, Wraps orchestrator to capture per-handler latency., Per-handler latency statistics., Verify latency table contains all required fields., Verify LiveLatencyCollector captures required fields.
+Cohesion: 0.18
+Nodes (6): LiveLatencyCollector, bool, Wraps orchestrator to capture per-handler latency., Regression tests for Sprint 8N changes., Verify dark_web is at correct path in orchestrator., TestSprint8NRegression
 
 ### Community 2665 - "Community 2665"
-Cohesion: 0.27
-Nodes (8): compute_similarity(), bytes, float, str, Decide whether to store delta or full text.          Conditions for delta storag, Compress full text for size comparison., Convenience function to compute near-dup similarity.      Args:         a: First, Compute near-duplicate similarity score.          Uses Jaccard similarity of sup
+Cohesion: 0.17
+Nodes (7): Sprint 42: CoreML ANE embedder conversion tests., Test that conversion is skipped when no documents available., Test that CoreML embedder is used when available., Test fallback to MLX when CoreML fails., Test that conversion runs only once if .mlpackage already exists., Test that _get_random_chunks returns at most n chunks., TestSprint42CoreML
 
 ### Community 2666 - "Community 2666"
-Cohesion: 0.18
-Nodes (7): float, int, Path, Start background epoch ticker thread., Load WASM module from file.          Args:             wasm_path: Path to .wasm, Initialize WASM sandbox.          Args:             fuel_limit: Maximum fuel uni, Initialize WASM engine with fuel and epoch settings.
+Cohesion: 0.25
+Nodes (5): float, int, Start background epoch ticker thread., Initialize WASM sandbox.          Args:             fuel_limit: Maximum fuel uni, Initialize WASM engine with fuel and epoch settings.
 
 ### Community 2667 - "Community 2667"
 Cohesion: 0.20
@@ -13294,6 +13250,10 @@ Nodes (9): 1. Syntax Compile (`uv run python -m compileall -q .`), 2. Import Smo
 Cohesion: 0.20
 Nodes (8): DOPORUČENÍ, EFFORT ESTIMATION, EXECUTIVE SUMMARY, KLASIFIKAČNÍ SCHÉMA, KLÍČOVÝ NÁLEZ: ŽÁDNÁ MIGRATE-DUPLICITA, PŘÍLOHA A: KOMPLETNÍ MATICE (extrahovaná do /tmp/wait_for_final.txt), PŘÍLOHA C: ODKAZY, RIZIKA A MITIGACE
 
+### Community 2675 - "Community 2675"
+Cohesion: 0.17
+Nodes (7): Unit tests for _compute_backoff_seconds (public_fetcher.py)., 100 jittered calls must stay within the 8 s hard cap., Decorrelated jitter must produce non-trivial spread (stddev > 0.5).          Det, With jitter=False, retry_after is taken as the base value (capped at 60 s)., _prev_sleep kwarg expands the sample upper bound (decorrelated pattern)., jitter=False must produce a deterministic value (no random spread)., TestComputeBackoffJitter
+
 ### Community 2676 - "Community 2676"
 Cohesion: 0.20
 Nodes (9): M1 PyO3 hot-path acceleration (Aho-Corasick, BloomFilter, RollingHash), macOS dynamic_lookup link-arg avoids Python.framework link dependency, build.rs — dynamic Python version detection via pyo3-build-config, Crates, Dependencies, Fallback, Files, Quick Start (+1 more)
@@ -13305,6 +13265,10 @@ Nodes (9): Any Annotations in sprint_scheduler.py (77 total), Baseline Status, C
 ### Community 2678 - "Community 2678"
 Cohesion: 0.20
 Nodes (6): Verify no new NER/PII models were introduced., GLiNER2-PII is not activated., UniversalNER is not activated., Instructor-NER is not activated., NLTagger ANE path is documented but not forced active., TestNoNewModels
+
+### Community 2679 - "Community 2679"
+Cohesion: 0.17
+Nodes (7): Language flags (CZ/RU/DE) should work on Unicode., N_FEATURES should be 14., Old 8-dim LMDB model should load and pad to 14 dim., Geo features should be different for different contexts., Tests for Geo + Language Context Features., Geo features (EU/US/RU) should be correctly detected from query., TestSprint43B_GeoLang
 
 ### Community 2680 - "Community 2680"
 Cohesion: 0.20
@@ -13331,8 +13295,8 @@ Cohesion: 0.20
 Nodes (10): Fix Applied, Issue: Nested `run_until_complete` on Running Loop, Location, Notes, P0 ASYNC SCHEDULER REALITY CHECK, Problem, Related Files, Status: ISSUE FOUND AND FIXED ✅ (+2 more)
 
 ### Community 2686 - "Community 2686"
-Cohesion: 0.17
-Nodes (7): Sprint 7E Tests: Local Truth Harness + Revision-Safe State Cache + Complete Offl, TEST 6 & 7: Silent benchmark harness writes files and no zombie tasks, TEST 2 & 3: Snapshot cache correctness - revision-based invalidation, test_snapshot_cache_invalidates_after_mutation(), test_snapshot_cache_without_mutation(), TestSprint7EBenchmarkHarness, TestSprint7ESnapshotCache
+Cohesion: 0.18
+Nodes (9): MockCanonicalFinding, Tests for boundary conditions and limits., Test that graph respects MAX_NODES limit., Test that causal engine respects MAX_ENTITIES limit., Mock CanonicalFinding for testing., Create sample findings for testing., sample_findings(), test_max_hypotheses_cap() (+1 more)
 
 ### Community 2687 - "Community 2687"
 Cohesion: 0.67
@@ -13391,16 +13355,24 @@ Cohesion: 0.20
 Nodes (10): 1. What 8B Changed, 2. Root Causes Diagnosed, 3. Fixes Applied, 4. 30s Smoke Test Results (Post-Fix), 5. Per-Action Latency (30s smoke), 6. Unit Tests (19/19 PASSED), 7. Permanent Telemetry Fields Added, 8. Deferred Items (Sprint 8C Scope) (+2 more)
 
 ### Community 2701 - "Community 2701"
-Cohesion: 0.25
-Nodes (5): Persist full routing table snapshot to LMDB.          Args:             nodes: l, decrypt_aes_gcm(), encrypt_aes_gcm(), bytes, hledac.security — Shim package re-exporting from hledac.universal.security  REDI
+Cohesion: 0.18
+Nodes (6): Test #20: Handshake flow – kompletní., Test #21: Kompletní secure aggregation round., Test #22: TOFU trust flow., Test #24: Shamir – tolerance k výpadkům., Test #25: Sketch – per-session salting., TestFederatedIntegration
+
+### Community 2702 - "Community 2702"
+Cohesion: 0.22
+Nodes (9): _classify_artifact(), _classify_open_files(), Path, Classify an open file path relative to the declared runtime root.      Categorie, Classify all open files into artifact categories.     Returns dict of category -, Regression subset: run a targeted subset of 8AJ/8AL/8AN tests., 8AJ telemetry fields must exist in legacy/autonomous_orchestrator.py source., Classifier must distinguish APP_OWNED_LEAK from TEST_TEMP_NOISE/OS_NOISE. (+1 more)
 
 ### Community 2703 - "Community 2703"
-Cohesion: 0.14
-Nodes (4): Verify OFFLINE_REPLAY overlay format is compatible with regex extractors., Verify OFFLINE_REPLAY overlay uses clustered identity assignment., Verify signal scoring uses bounded buckets and is deterministic., Verify synthetic mock fallback still works after changes.
+Cohesion: 0.18
+Nodes (4): _FakeConsole, _FakeTable, _FakeText, Tests for monitoring/sprint_dashboard.py.  Sprint F195C: Rich terminal dashboard
+
+### Community 2704 - "Community 2704"
+Cohesion: 0.20
+Nodes (6): Tests for structured data extraction (JSON-LD, OpenGraph)., Test JSON-LD extraction from HTML., Test that JSON-LD extraction respects hard limits., Test OpenGraph meta tag extraction., Test Twitter card meta tag extraction., TestStructuredDataHarvest
 
 ### Community 2705 - "Community 2705"
-Cohesion: 0.24
-Nodes (5): float, RSSMonitor, Verify RSS monitor computes slope correctly., test_rss_monitor_slope_calculation(), Verify RSSMonitor computes slope correctly.
+Cohesion: 0.31
+Nodes (3): float, RSSMonitor, Verify RSSMonitor computes slope correctly.
 
 ### Community 2707 - "Community 2707"
 Cohesion: 0.67
@@ -13491,8 +13463,8 @@ Cohesion: 0.22
 Nodes (5): Any, Inject IOCGraph instance from 8QA for STIX context injection., Sprint 8VQ: Inject dedicated truth-store STIX graph.          TRUTH-STORE ONLY:, SPRINT 8VL: Inject runtime lifecycle adapter for windup gate.          windup_en, F214: Inject HypothesisEngine for optional post-synthesis         hypothesis ext
 
 ### Community 2729 - "Community 2729"
-Cohesion: 0.25
-Nodes (5): int, Initialize dynamic context manager.          Args:             max_hot_tokens: M, Initialize FastEmbed embedder with minimal memory usage., Get formatted context string for LLM.          Args:             max_tokens: Max, total_items()
+Cohesion: 0.24
+Nodes (7): _cusum_change(), CUSUM change detection., Tests for CUSUM change detection., Test short series returns False., Test stable series returns False., Test CUSUM detects change., TestCUSUMChange
 
 ### Community 2730 - "Community 2730"
 Cohesion: 0.22
@@ -13511,8 +13483,8 @@ Cohesion: 0.22
 Nodes (8): 1. In-process, 2. Local-substitutable, 3. Remote but owned (Ports & Adapters), 4. True external (Mock), Deepening, Dependency categories, Seam discipline, Testing strategy: replace, don't layer
 
 ### Community 2734 - "Community 2734"
-Cohesion: 0.25
-Nodes (8): _build_evidence_pointer(), EvidencePointer, Evidence pointer for an analyst answer.      Fields:         finding_id: Unique, Evidence pointer for an analyst answer.      Fields:         finding_id: Unique, Build EvidencePointer from a finding dict., Build EvidencePointer from a finding dict., Build evidence pointers from findings.          Caps at MAX_EVIDENCE_PTRS, order, Build evidence pointers from findings.          Caps at MAX_EVIDENCE_PTRS, order
+Cohesion: 0.18
+Nodes (11): _build_evidence_pointer(), EvidencePointer, _extract_snippet(), Evidence pointer for an analyst answer.      Fields:         finding_id: Unique, Evidence pointer for an analyst answer.      Fields:         finding_id: Unique, Extract relevant snippet from payload_text using keyword proximity.      Fail-so, Extract relevant snippet from payload_text using keyword proximity.      Fail-so, Build EvidencePointer from a finding dict. (+3 more)
 
 ### Community 2735 - "Community 2735"
 Cohesion: 0.22
@@ -13523,8 +13495,8 @@ Cohesion: 0.22
 Nodes (9): B3: Combined UMA guard (Metal + RSS) pre-batch, B4: `mx.stream()` for batch scope, C2: Bounded `asyncio.Queue` for producer/consumer pipelines, C4: `asyncio.timeout()` instead of `asyncio.wait_for()`, E2: `tracemalloc` snapshot diff — opt-in only, E4: `gc.callbacks` for sprint-level GC telemetry, F1: `PYTHONMALLOC=mimalloc` — Sprint 0 (system-level, no code change), F2: `PYTHONMALLOCSTATS=1` for allocator diagnostics (+1 more)
 
 ### Community 2737 - "Community 2737"
-Cohesion: 0.18
-Nodes (10): AlienVaultOTXAdapterNotImplemented, IBMXForceAdapterNotImplemented, MispAdapterNotImplemented, MITREATTACKAdapterNotImplemented, PulseDiveAdapterNotImplemented, MISP adapter is aspirational — not yet implemented., AlienVault OTX adapter is aspirational — not yet implemented., MITRE ATT&CK adapter is aspirational — not yet implemented. (+2 more)
+Cohesion: 0.19
+Nodes (13): AlienVaultOTXAdapterNotImplemented, IBMXForceAdapterNotImplemented, MispAdapterNotImplemented, MITREATTACKAdapterNotImplemented, PulseDiveAdapterNotImplemented, MISP adapter is aspirational — not yet implemented., AlienVault OTX adapter is aspirational — not yet implemented., MITRE ATT&CK adapter is aspirational — not yet implemented. (+5 more)
 
 ### Community 2739 - "Community 2739"
 Cohesion: 0.36
@@ -13551,8 +13523,8 @@ Cohesion: 0.22
 Nodes (9): A. DigitalGhostDetector activation, B. SteganographyDetector activation, code:python (# capabilities.py — already has STEGO = "stego" ✓), code:python (# capabilities.py — add), G. Pattern_mining.py activation (2032L), H. Kill_chain_tagger.py activation (946L), IMMEDIATE (1 sprint), KROK 7 — Doporučené Akce (+1 more)
 
 ### Community 2745 - "Community 2745"
-Cohesion: 0.17
-Nodes (12): 2. HypothesisGraph (`graph/hypothesis_graph.py`), 3. STIX 2.1 Export, Anomalous Cluster Detection, code:block10 (1. Compute betweenness centrality for all nodes), code:block11 (1. Get connected components (undirected)), code:json ({), code:block8 (Entity Node:), code:block9 (HypothesisEdge:) (+4 more)
+Cohesion: 0.22
+Nodes (9): 2. HypothesisGraph (`graph/hypothesis_graph.py`), Anomalous Cluster Detection, code:block10 (1. Compute betweenness centrality for all nodes), code:block11 (1. Get connected components (undirected)), code:block8 (Entity Node:), code:block9 (HypothesisEdge:), Edge Structure, Hidden Bridge Detection (+1 more)
 
 ### Community 2746 - "Community 2746"
 Cohesion: 0.22
@@ -13619,8 +13591,8 @@ Cohesion: 0.18
 Nodes (9): 1. Module map (`forensics/`), 2. Active capabilities → evidence chain, 3. Flow diagram, 4. Wiring touchpoints (F261), 5. Bounded invariants (always-on, no toggles), 6. Fail-safe guarantees, 7. STIX 2.1 export shape, 8. Known gaps / future work (+1 more)
 
 ### Community 2766 - "Community 2766"
-Cohesion: 0.17
-Nodes (7): Initialize database and table., Resolve LMDB map_size from env with M1-safe defaults., Sprint F264D: Log 'lancedb.table_opened' event with size_mb.          M1 observa, Non-blocking compaction trigger; actual work in executor., Initialize LanceDB identity store.          Args:             uri: Path to Lance, Initialize LMDB cache for embeddings with float16 quantization., _resolve_lancedb_cache_size()
+Cohesion: 0.24
+Nodes (6): Create from dictionary., Simple in-memory cache with TTL for Wikidata responses.     M1 8GB optimized - l, Generate cache key from query., Get cached value if not expired., Cache value with timestamp., SimpleCache
 
 ### Community 2767 - "Community 2767"
 Cohesion: 0.18
@@ -13683,8 +13655,12 @@ Cohesion: 0.25
 Nodes (8): Action Scope, Expected Success Signals, G. LIVE TIER-1 RUNBOOK, NER Fallback, Payload Cap, Phase Promotion Note, Seed Domains, Timeout Budgets
 
 ### Community 2784 - "Community 2784"
-Cohesion: 0.20
-Nodes (3): Test that fsync is batched - not called on every event.         Monkeypatch os.f, Test that finalize() forces fsync even if counter < N.         Ensures crash-saf, Test that number of JSONL lines equals number of log calls.
+Cohesion: 0.14
+Nodes (4): Test that ToolExecLog is called through the real tool dispatch path.          Th, Test that fsync is batched - not called on every event.         Monkeypatch os.f, Test that finalize() forces fsync even if counter < N.         Ensures crash-saf, Test that number of JSONL lines equals number of log calls.
+
+### Community 2785 - "Community 2785"
+Cohesion: 0.14
+Nodes (4): Test that cache respects max size with LRU eviction., Test that expired cache entries are invalidated., Async context manager entry - create shared session., Async context manager exit - cleanup session.
 
 ### Community 2786 - "Community 2786"
 Cohesion: 0.18
@@ -13696,7 +13672,7 @@ Nodes (11): canonical_reranker, backend, callers, class, exports, factory_functi
 
 ### Community 2788 - "Community 2788"
 Cohesion: 0.20
-Nodes (8): Centrality Metrics (pagerank/betweenness/closeness/eigenvector), Label Propagation Community Detection, Graph Contradiction Detection, KnowledgeGraphBuilder - Memory-Safe Graph Builder for M1 Silicon ===============, KnowledgeGraphLayer - COMPOSER/ORCHESTRATOR role ===============================, CentralityScores (dataclass), GraphContradiction (dataclass), GraphRAGOrchestrator
+Nodes (6): Tests for fetching/alternative_protocol_fetcher.py, Test alt protocols disabled by default., Test alt protocols enabled with env var., Test AltProtocolResult structure., Test status reporting., TestAlternativeProtocolFetcher
 
 ### Community 2789 - "Community 2789"
 Cohesion: 0.25
@@ -13792,15 +13768,15 @@ Nodes (6): 1. Explore, 2. Present candidates, 3. Grilling loop, Glossary, Improv
 
 ### Community 2813 - "Community 2813"
 Cohesion: 0.20
-Nodes (6): MetadataCache, SQLite cache for extracted metadata., Initialize database tables (idempotent: safe to call multiple times)., Clear all cached entries., Close database connection., Close extractor and cleanup resources.
+Nodes (6): Verify keys.lmdb and local_graph.lmdb now use paths authority., KeyManager must default to KEYS_ROOT, not Path.home()/.hledac., LocalGraphStore must default to LMDB_ROOT., Both keys.lmdb and local_graph.lmdb must resolve under declared root., Classifier must not mark keys.lmdb/local_graph.lmdb as APP_OWNED_LEAK., TestSprint8ATLeakClosure
 
 ### Community 2814 - "Community 2814"
-Cohesion: 0.22
-Nodes (6): get_sprint_parquet_dir(), Return sprint Parquet directory, created if needed., Flush Arrow batch to Parquet when N or S threshold is hit.            F214OPT-D:, Buffer a finding into the Arrow batch., Buffer an IOC into the Arrow batch.            Sprint 8VI §D: IOCScorer final_sc, Polars LazyFrame streaming dedup — M1 8GB RAM safe.          Uses Polars 1.x .co
+Cohesion: 0.20
+Nodes (6): _patch_rich(), Phase style maps correctly., Phase emoji maps correctly., Dashboard initialization., Dashboard initializes with sprint metadata., TestSprintDashboardInit
 
 ### Community 2815 - "Community 2815"
-Cohesion: 0.22
-Nodes (5): bool, Sprint F264D: Lazy IVF-PQ training (M1 8GB friendly, fail-soft).          Called, Add entity to identity store.          Args:             entity_id: Unique entit, Search for similar entities.          Args:             embedding: Query embeddi, Create index with respect to available RAM and thermal state.
+Cohesion: 0.27
+Nodes (6): Dashboard start/update/finish lifecycle., Return (dashboard, fake_live_instance) for asserting calls., update() calls Live.update()., finish() calls Live.update() then Live.stop()., Elapsed time is reflected in the progress percentage., TestSprintDashboardLifecycle
 
 ### Community 2816 - "Community 2816"
 Cohesion: 0.29
@@ -14103,8 +14079,8 @@ Cohesion: 0.40
 Nodes (5): CommunicationLayer, CoordinationLayer, get_communication_layer() factory, --no-communication CLI flag, Sprint F26X-3
 
 ### Community 2896 - "Community 2896"
-Cohesion: 0.33
-Nodes (4): ContextStats, Context management statistics., Get comprehensive context management statistics., String representation of context manager state.
+Cohesion: 0.27
+Nodes (9): deprecated decorator, int, str, Warning hygiene helpers — warn-once for optional dependencies.  Provides warn_on, Emit a warning exactly once per key across the entire process lifetime.      Arg, Log a warning exactly once per key across the entire process lifetime.      Args, warn_once(), warn_once_log() (+1 more)
 
 ### Community 2897 - "Community 2897"
 Cohesion: 0.20
@@ -14114,6 +14090,10 @@ Nodes (9): 10. Conclusion, 1. Executive Summary, 3. Hard Bounds (M1 8GB Safety),
 Cohesion: 0.20
 Nodes (10): nanbeige4, avg_decode_tokens_per_sec, avg_total_latency_ms, error_count, fact_match_rate, guard_blocked_count, json_valid_rate, missing_count (+2 more)
 
+### Community 2899 - "Community 2899"
+Cohesion: 0.22
+Nodes (5): Clear all cached entries., Clear the query cache., Close HTTP session and cleanup resources., Async context manager exit., test()
+
 ### Community 2900 - "Community 2900"
 Cohesion: 0.33
 Nodes (6): BGP sidecar — skip tier, Dark surface pivot — skip tier, IPFS sidecar — skip tier, M1ResourceGovernor.sidecar_admission() (Sprint F214K / F234), Sidecar Memory Gates (F234), Všechny sidecary — hard timeout
@@ -14121,6 +14101,10 @@ Nodes (6): BGP sidecar — skip tier, Dark surface pivot — skip tier, IPFS sid
 ### Community 2901 - "Community 2901"
 Cohesion: 0.33
 Nodes (6): `maybe_resume()` reads LMDB keys, `PersistentActorExecutor` uses `call_soon_threadsafe`, Sprint 7A: Runtime Primitives & Lifecycle Seams, `SprintContext` uses `msgspec.structs.replace()`, Teardown order is LIFO, `TokenBucket` supports Gaussian jitter
+
+### Community 2902 - "Community 2902"
+Cohesion: 0.22
+Nodes (7): Close session and cleanup., Close session and cleanup., Execute coroutine with stealth protection.      Args:         coro: Coroutine to, Execute coroutine with stealth protection.      Args:         coro: Coroutine to, Create stealth session context.          Yields:             StealthSession obje, session(), with_stealth()
 
 ### Community 2903 - "Community 2903"
 Cohesion: 0.33
@@ -14239,32 +14223,52 @@ Cohesion: 0.33
 Nodes (6): identity_signal_score_buckets, 0-20, 21-40, 41-60, 61-80, 81-100
 
 ### Community 2936 - "Community 2936"
-Cohesion: 0.33
-Nodes (6): osint_framework, enabled, findings_delta, hints_generated_delta, latency_overhead_ms, sources_delta
+Cohesion: 0.22
+Nodes (6): LiveHandlerLatency, Per-handler latency statistics., Verify LiveHandlerLatency captures all required latency fields., test_latency_table_contains_min_mean_p95_max(), Verify latency table contains all required fields., Verify LiveLatencyCollector captures required fields.
 
 ### Community 2937 - "Community 2937"
 Cohesion: 0.40
 Nodes (5): _ensure_r0_artifacts(), bool, _r0_artifacts_stale(), Return True if R0 probe artifacts are missing or older than the runner., Run R0 probe runner if artifacts are stale (env-gated).
 
+### Community 2938 - "Community 2938"
+Cohesion: 0.20
+Nodes (3): Test that capability registry can be created., Test capability routing for basic research., Test that unavailable capabilities log reason but don't crash.
+
 ### Community 2939 - "Community 2939"
 Cohesion: 0.20
 Nodes (3): Test EvidenceLog manifest schema has required keys., Test ToolExecLog has required schema keys., Test MetricsRegistry flush has required schema keys.
 
+### Community 2940 - "Community 2940"
+Cohesion: 0.20
+Nodes (3): Verify _prompt_cache_by_expert is Dict[str, Any] keyed by expert_name., Verify _load_expert sets and _unload_expert clears only target expert cache., Verify _generate_with_expert uses _prompt_cache_by_expert.get(expert_name).
+
+### Community 2941 - "Community 2941"
+Cohesion: 0.14
+Nodes (4): Generate ID if not provided., Verify _total_entries attribute exists and is int., Verify add_entry increments _total_entries., Verify delete_entry decrements only on actual deletion.
+
+### Community 2942 - "Community 2942"
+Cohesion: 0.46
+Nodes (7): get_memory_snapshot(), get_metal_mb(), get_rss_mb(), main(), print_snapshot(), float, str
+
 ### Community 2943 - "Community 2943"
-Cohesion: 0.11
-Nodes (5): Test that lxml is used for link extraction when available., Test basic link extraction., Test that duplicate links are removed., Test fallback to regex when selectolax unavailable., Test JSON-LD extraction from HTML.
+Cohesion: 0.25
+Nodes (4): Map package name/tech stack entry to (ecosystem, package_name).         Returns, Fetch CVEs via OSV.dev batch API.         Yields dicts with CVE data. Falls back, NVD API 2.0 fallback - rate limited with semaphore + sliding window., Convert NVD vulnerability format to our CVE dict.
+
+### Community 2944 - "Community 2944"
+Cohesion: 0.20
+Nodes (3): FIX 1: Speculative fail-safe - if draft load raises, _speculative_enabled=False., FIX 2: KV-cache - make_prompt_cache called only once for same system prompt., FIX 3: execution_optimizer - no Ray/Dask attributes after cleanup.
+
+### Community 2945 - "Community 2945"
+Cohesion: 0.20
+Nodes (3): Test: deep_web_hints.py adds .onion_links field from page content., Test: deep_web_hints.py extracts .js bundle URLs from HTML., Test: All components are fail-safe and bounded.
 
 ### Community 2946 - "Community 2946"
-Cohesion: 0.20
-Nodes (3): Ověří, že RAMDiskManager nemá metodu __del__., Ověří, že shutdown() volá nuke()., Zkontroluje, že všechny fallbacky vrací success=False.
+Cohesion: 0.17
+Nodes (7): Sprint 35: Finish Core Gaps - RAMDisk cleanup, Fake-success, InferenceEngine wir, Ověří, že RAMDiskManager nemá metodu __del__., Ověří, že shutdown() volá nuke()., Zkontroluje, že všechny fallbacky vrací success=False., Ověří auto‑wiring pouze při dostatku RAM., Ověří, že cleanup volá unload/cleanup na všech motorech., TestSprint35Gaps
 
 ### Community 2947 - "Community 2947"
 Cohesion: 0.20
 Nodes (3): Test HTML content routing (RustMiner path)., Test PDF content routing (placeholder)., Test that MetadataExtractor uses lazy loading.
-
-### Community 2948 - "Community 2948"
-Cohesion: 0.20
-Nodes (3): JSON-LD Article type should detect article page., High link density should detect listing page., URL patterns should detect profile pages.
 
 ### Community 2949 - "Community 2949"
 Cohesion: 0.20
@@ -14273,6 +14277,10 @@ Nodes (3): Test that search_sync raises RuntimeError when called from event loop
 ### Community 2950 - "Community 2950"
 Cohesion: 0.20
 Nodes (3): Test reputation score is bounded 0-1., Test reputation formula with known values., Test that to_dict includes all required fields.
+
+### Community 2951 - "Community 2951"
+Cohesion: 0.20
+Nodes (3): Test feature extractor returns bounded dict., Test score is higher for better signals., Test features hash is stable for same features.
 
 ### Community 2952 - "Community 2952"
 Cohesion: 0.20
@@ -14291,8 +14299,8 @@ Cohesion: 0.20
 Nodes (10): qwen3_1b7, avg_decode_tokens_per_sec, avg_total_latency_ms, error_count, fact_match_rate, guard_blocked_count, json_valid_rate, missing_count (+2 more)
 
 ### Community 2958 - "Community 2958"
-Cohesion: 0.40
-Nodes (6): _feed_dominance_score(), _feed_share(), float, Fraction of findings from feed source., Extract post-sprint swap in GiB., _swap_gib()
+Cohesion: 0.25
+Nodes (5): bool, float, Initialize EntityLinker.          Args:             wikidata_endpoint: SPARQL en, Initialize regex patterns for fallback NER., Compute semantic similarity between entity description and context.          Use
 
 ### Community 2959 - "Community 2959"
 Cohesion: 0.33
@@ -14506,6 +14514,10 @@ Nodes (5): code:block14 (_run_export()), code:block15 (HLEDAC_ENABLE_HYPOTHESIS=
 Cohesion: 0.40
 Nodes (4): Key Tools, MCP Tools: code-review-graph, When to use graph tools FIRST, Workflow
 
+### Community 3015 - "Community 3015"
+Cohesion: 0.25
+Nodes (5): Sprint 8AR: Artifact classifier tests., CACHE_ROOT must be under RAMDISK_ROOT/FALLBACK_ROOT., SourceBandit must use LMDB_ROOT from paths.py (lazy import)., CP5 FD residuals must be explainable via classifier., TestSprint8ARArtifactClassifier
+
 ### Community 3016 - "Community 3016"
 Cohesion: 0.20
 Nodes (10): raw_benchmark_summary, model_count, model_summaries, prompt_count, status_counts, task_types, error, guard_blocked (+2 more)
@@ -14602,6 +14614,10 @@ Nodes (4): action_selection_counts, ct_discovery, scan_ct, surface_search
 Cohesion: 0.50
 Nodes (4): action_selection_counts, ct_discovery, scan_ct, surface_search
 
+### Community 3040 - "Community 3040"
+Cohesion: 0.32
+Nodes (7): Any, str, Discovery replay / cassette system for HTTP interaction recording.  Sprint F239A, Read a cassette JSON file. Returns None if file missing or invalid., Write a cassette JSON file. No-op when replay_enabled=False., read_cassette(), write_cassette()
+
 ### Community 3041 - "Community 3041"
 Cohesion: 0.50
 Nodes (3): BrowserProfile, Get current browser fingerprint profile, Get current browser fingerprint profile
@@ -14615,8 +14631,8 @@ Cohesion: 0.50
 Nodes (3): MLX .tolist() Roundtrip Elimination, context_optimization/context_compressor.py, context_optimization/mmr.py
 
 ### Community 3046 - "Community 3046"
-Cohesion: 0.50
-Nodes (3): Research phases for context prioritization., Set current research phase., ResearchPhase
+Cohesion: 0.29
+Nodes (3): Search GitHub code for CVE PoC samples.          Returns [{repo, url, path, star, Query MalwareBazaar for file hash intelligence.          Returns raw MB response, Vrátí {"ip", "classification", "name", "link", "noise", "riot"}
 
 ### Community 3047 - "Community 3047"
 Cohesion: 0.50
@@ -14627,12 +14643,16 @@ Cohesion: 0.50
 Nodes (4): AIMD concurrency uses `AIMD_*` constants, `_resolve_host_ips` is synchronous, Sprint 8VC: Fetch Coordinator Contracts, Timeout matrix is consumed by name
 
 ### Community 3050 - "Community 3050"
-Cohesion: 0.22
-Nodes (6): MemoryMonitor, float, Monitor memory usage during test execution., Start memory monitoring in background thread., Stop monitoring and return peak memory in MB., Monitor memory usage.
+Cohesion: 0.29
+Nodes (4): create_passive_tech_stack_adapter(), PassiveTechStackAdapter, R11: Bounded passive tech-stack extraction adapter., Factory for PassiveTechStackAdapter.
 
 ### Community 3052 - "Community 3052"
 Cohesion: 0.27
 Nodes (10): _compute_score(), _extract_ids(), _normalize_source_type(), float, str, Score one (value, kind) group of findings., Compute corroboration score and reasons., Normalize source type to a family. (+2 more)
+
+### Community 3053 - "Community 3053"
+Cohesion: 0.20
+Nodes (3): TorManager – lightweight Tor controller wrapper with circuit isolation., Close Tor controller., Test: TorManager respects max 5 circuits.
 
 ### Community 3054 - "Community 3054"
 Cohesion: 0.50
@@ -14651,8 +14671,12 @@ Cohesion: 0.50
 Nodes (4): 5. Experiment-Only Candidates, EXPERIMENT-1: Free-threaded Python `.venv-py314t`, EXPERIMENT-2: `annotationlib.get_annotations()` for runtime introspection, EXPERIMENT-3: `t"..."` template string literals for report rendering
 
 ### Community 3058 - "Community 3058"
-Cohesion: 0.20
-Nodes (7): Tests for Sprint 81 - Fáze 3: Apple-Native Acceleration & MEDIUM Wins ==========, Test embedding service availability., Test LanceDB store has embed methods., Test NER engine features., Test NER engine has NaturalLanguage support., TestEmbeddingService, TestNEREngine
+Cohesion: 0.12
+Nodes (12): Tests for Sprint 81 - Fáze 3: Apple-Native Acceleration & MEDIUM Wins ==========, Test xxhash integration., Test embedding service availability., Test LanceDB store has embed methods., Test Vision OCR availability., Test VisionOCR can be imported., Test NER engine features., Test NER engine has NaturalLanguage support. (+4 more)
+
+### Community 3059 - "Community 3059"
+Cohesion: 0.29
+Nodes (3): Invariant 3: _monitor_step ukládá RSS do self._rss_history (max 10 hodnot)., Invariant 4: Predikce > 80 % → MAX_HYPOTHESES = 20., Invariant 5: Méně než 3 hodnoty → reaktivní prahy (žádná predikce).
 
 ### Community 3060 - "Community 3060"
 Cohesion: 0.83
@@ -14706,17 +14730,41 @@ Nodes (3): pytest_configure(), Sprint 3A: Phase Gate Manifests =================
 Cohesion: 0.20
 Nodes (6): Regression test for pre-existing UnboundLocalError: asyncio bug.  Bug: `import a, Call the function with DI seams. Must NOT raise UnboundLocalError: asyncio., Lock down asyncio-shadowing regression for live_public_pipeline., AST scan: zero local `import asyncio` inside the function body.          Why: an, AST scan: zero local `import asyncio` in any other pipeline fn.          The fix, TestSprintFAsyncioShadowing
 
-### Community 3107 - "Community 3107"
-Cohesion: 0.27
-Nodes (4): Test that get_preview truncates response to max_bytes using Range header., Měření celkové doby běhu jednoduchého research dotazu (mocked)., Spustí mocked research a změří čas (≤ 30 s)., TestOverallLatency
+### Community 3088 - "Community 3088"
+Cohesion: 0.29
+Nodes (4): Invariant: dashboard survives branch timeout / early windup.      Branch timeout, Dashboard renders when only public branch times out., Dashboard renders when only CT branch times out., TestSprintDashboardSurvivesBranchTimeout
+
+### Community 3090 - "Community 3090"
+Cohesion: 0.33
+Nodes (4): ArchiveCoordinatorConfig, int, ArchiveCoordinator - Delegates archive escalation to coordinator ===============, Configuration for ArchiveCoordinator.
+
+### Community 3095 - "Community 3095"
+Cohesion: 0.33
+Nodes (4): CacheLocation, Cache location levels., Rebuild FAISS semantic index from existing entries., Clear cache entries.          Args:             location: Specific location to c
+
+### Community 3101 - "Community 3101"
+Cohesion: 0.40
+Nodes (5): link_entities(), LinkedEntity, Represents a successfully linked entity.      Attributes:         original_text:, Link entities in multiple texts (batch processing).          Args:             t, Link entities in text (convenience function).      Args:         text: Input tex
+
+### Community 3102 - "Community 3102"
+Cohesion: 0.17
+Nodes (7): Sprint 36: Gap 10 (Conditional MLX Cache) + Adversarial Verification., Ověří, že cache se inicializuje jen když KV_CACHE_AVAILABLE., Ověří, že generate() funguje i bez cache (CPU fallback)., Ověří, že se spouští jen pro findings s confidence < 0.9 a max 1 counter., Ověří správný výpočet nové confidence., Ověří fail-safe – při selhání Hermes pokračuje dál., TestSprint36Gaps
+
+### Community 3104 - "Community 3104"
+Cohesion: 0.33
+Nodes (6): action, active, roles, stub, verdict, captcha_2captcha_vs_coreml
+
+### Community 3115 - "Community 3115"
+Cohesion: 0.33
+Nodes (6): enabled, findings_delta, hints_generated_delta, latency_overhead_ms, sources_delta, identity_stitching
 
 ### Community 3120 - "Community 3120"
 Cohesion: 0.14
 Nodes (11): batch_content_hash(), batch_content_hash_hex(), content_hash_64(), content_hash_hex(), xxHash3-64 with str/bytes convenience., xxHash3-64 hex with str/bytes convenience (16-char hex)., Batch xxHash3-64 (Rust expects Vec<String>, so pass-through)., Batch xxHash3-64 hex (Rust expects Vec<String>, so pass-through). (+3 more)
 
 ### Community 3122 - "Community 3122"
-Cohesion: 0.20
-Nodes (7): Sprint 8N: Live Throughput Shaping + Provider Fix + Intra-Action Parallelism  Ta, Regression tests for Sprint 8N changes., Verify dark_web is at correct path in orchestrator., test_offline_replay_benchmark_still_passes(), test_provider_fix_does_not_break_research(), test_research_manager_uses_orch_dark_web(), TestSprint8NRegression
+Cohesion: 0.33
+Nodes (5): _artifacts_outside_declared_root(), _get_process_fds(), int, Count files that exist outside the declared runtime root., Get count of open file descriptors for current process.
 
 ### Community 3123 - "Community 3123"
 Cohesion: 0.50
@@ -14737,6 +14785,10 @@ Nodes (4): Automated Defense Configuration, Configuration Options, Monitoring Co
 ### Community 3127 - "Community 3127"
 Cohesion: 0.50
 Nodes (4): Concurrency Control, Memory Management, Performance Considerations, Resource Optimization
+
+### Community 3128 - "Community 3128"
+Cohesion: 0.33
+Nodes (6): _get_rss_mb(), measure_import_baseline(), float, Measure cold import time 3x using exact subprocess method., Get current RSS in MB., setUpClass()
 
 ### Community 3129 - "Community 3129"
 Cohesion: 0.67
@@ -14786,13 +14838,33 @@ Nodes (3): action_selection_counts, scan_ct, surface_search
 Cohesion: 0.67
 Nodes (3): action_selection_counts, scan_ct, surface_search
 
+### Community 3144 - "Community 3144"
+Cohesion: 0.33
+Nodes (4): Tests for Sprint 8AP bounded live-run gate., Import baseline must not regress > 0.1s from 1.268s median., 8AJ telemetry fields must be visible in orchestrator after init., TestSprint8APBoundedLiveGate
+
+### Community 3145 - "Community 3145"
+Cohesion: 0.20
+Nodes (3): Async context manager entry., Factory pro NEREngine s gliner-relex (NER + relation extraction)., Vrátí funkci pro embeddování, která se rozhodne podle dostupnosti ANE a zátěže.
+
 ### Community 3151 - "Community 3151"
 Cohesion: 0.67
 Nodes (3): `asyncio.run()` in ThreadPoolExecutor is a crash vector on M1, `mx.eval([])` before `mx.metal.clear_cache()`, Sprint F206L: M1 Async Crash Vectors
 
+### Community 3154 - "Community 3154"
+Cohesion: 0.20
+Nodes (6): Test compaction and backpressure for long-running operations., Test ClaimClusterIndex has compact_clusters method., Test compaction respects per-cluster limits., Test backpressure threshold conditions., Test adaptive TTL returns appropriate values., TestCompactionAndBackpressure
+
+### Community 3155 - "Community 3155"
+Cohesion: 0.33
+Nodes (4): Dashboard shows enrichment layer fields when present., Shows multimodal_enriched_findings when > 0., Shows forensics_enriched_ct_findings when > 0., TestSprintDashboardEnrichmentFields
+
+### Community 3156 - "Community 3156"
+Cohesion: 0.33
+Nodes (4): P1-6-1: LootManager instantiation fails without crypto deps., VaultManager should instantiate when crypto is available., VaultManager alias should be LootManager., TestVaultManagerInstantiation
+
 ### Community 3157 - "Community 3157"
-Cohesion: 0.24
-Nodes (6): create_rust_miner(), bool, Check if trafilex (Rust-based) is available, Check if traflatura is available, Factory function to create a RustMiner.      Args:         prefer_rust: Prefer R, Initialize RustMiner.          Args:             prefer_rust: Prefer Rust-based
+Cohesion: 0.40
+Nodes (5): LanceDB Configuration, lancedb_store.py — Identity/Entity Store (identity stitching), semantic_store_buffer.py — Semantic buffering seam, semantic_store.py — FastEmbed + LanceDB semantic IOC search, vector_store.py — Primary vector storage (text + image indices)
 
 ### Community 3162 - "Community 3162"
 Cohesion: 0.67
@@ -14834,17 +14906,37 @@ Nodes (3): Personal Threat Detection, Security Indicator Analysis, Web Security 
 Cohesion: 0.67
 Nodes (3): Severity Mapping, Threat Level Calculation Methodology, Threat Score Calculation
 
+### Community 3197 - "Community 3197"
+Cohesion: 0.40
+Nodes (4): _deserialize_from_json(), bytes, Deserialize from zstd-compressed or raw JSON bytes., Load L2 cache from disk. Prefer zstd-compressed .json.zst, fallback to .json.
+
 ### Community 3214 - "Community 3214"
-Cohesion: 0.20
-Nodes (6): FeedDiscoveryResult, Result of feed discovery., Discover RSS/Atom feeds in HTML content.          Args:             html_content, Extract feed URLs from <link rel="alternate"> tags., Heuristic feed discovery based on common paths., Resolve relative URL to absolute.
+Cohesion: 0.40
+Nodes (3): int, Return adapter statistics., Return adapter statistics.
+
+### Community 3215 - "Community 3215"
+Cohesion: 0.40
+Nodes (3): float, Fetch CVE intelligence for a tech stack.          1. OSV.dev Batch API (priority, Fetch EPSS score for a CVE.         Returns {"epss_score": float, "percentile":
 
 ### Community 3217 - "Community 3217"
 Cohesion: 0.24
 Nodes (7): bytes, Analyze content to determine type and parse directory if applicable., Analyze content to determine type and parse directory if applicable., Parse Gopher directory listing., Parse Gopher directory listing., Detect binary content by null bytes and control characters., Detect binary content by null bytes and control characters.
 
+### Community 3220 - "Community 3220"
+Cohesion: 0.40
+Nodes (3): int, Get tools with high memory requirements., Get current call count for a tool.
+
+### Community 3231 - "Community 3231"
+Cohesion: 0.40
+Nodes (4): bool, Sdílené executory pro celý hledac.universal. Single source of truth — importovat, Shutdown both shared executors. Called automatically via atexit., shutdown_all_executors()
+
+### Community 3234 - "Community 3234"
+Cohesion: 0.50
+Nodes (3): Reset fingerprinting stats., Reset all stats to zero (for probe test isolation)., reset_fingerprint_stats()
+
 ### Community 3239 - "Community 3239"
-Cohesion: 0.33
-Nodes (9): _make_serializable(), int, str, Serialization utilities for dataclasses with dict|None fields.  This module prov, Serialize a dataclass to JSON string safely.      Replaces the common pattern: j, Recursively walk a nested dict/list structure and replace cycles     with '<circ, Safe replacement for dataclasses.asdict() for dataclasses that contain     dict, _safe_dataclass_to_dict() (+1 more)
+Cohesion: 0.50
+Nodes (4): /Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/evidence_log.py, details, file, status
 
 ### Community 3241 - "Community 3241"
 Cohesion: 0.22
@@ -14854,13 +14946,17 @@ Nodes (8): Collection Errors (105 errors during collection), FINAL_STATUS.md —
 Cohesion: 0.22
 Nodes (8): Files Modified, Final Verification, FIX1: Transport — ADDED to `__init__.py`, FIX 2: GraphRAGOrchestrator — ADDED to `__init__.py`, FIX 3: adjust_fetch_workers — VERIFIED OK, FIX 4: FullyAutonomousOrchestrator — ADDED to `__init__.py`, FIX_REPORT_P1.md — Universal Namespace Redirects, Summary
 
+### Community 3252 - "Community 3252"
+Cohesion: 0.50
+Nodes (4): 2.1 MLX METAL MEMORY MANAGEMENT, 2.2 PROCESSPOOL EXECUTOR ON M1 (FALSE PARALLELISM), 2.3 SWAP TRIGGERS, PHASE 2: M1 UMA ARCHITECTURE COMPATIBILITY
+
 ### Community 3254 - "Community 3254"
-Cohesion: 0.20
-Nodes (3): Test that SemanticDeduplicator embedding cache enforces hard cap., F196B: Non-blocking close of all thread pools., F196B: Non-blocking close of thread pool.
+Cohesion: 0.11
+Nodes (5): Test that LSH clustering is used for deduplication., Verify deduplication behavior is stable using canonical dedup., F196B: Non-blocking close of all thread pools., F196B: Non-blocking close of thread pool., F196B: Non-blocking close of thread pool.
 
 ### Community 3258 - "Community 3258"
-Cohesion: 0.11
-Nodes (5): Test budget blocks API fetch when network budget exceeded., Test budget forces preview_only when snapshot budget exceeded., Test budget logs fallback decisions., Verify exhausted budget causes immediate stop within 1 iteration., Verify budget stop creates a decision ledger style event.
+Cohesion: 0.15
+Nodes (8): Tests for budget enforcement., Test budget blocks API fetch when network budget exceeded., Test budget forces preview_only when snapshot budget exceeded., Test budget logs fallback decisions., Tests for budget enforcement - ensuring deterministic stop., Verify exhausted budget causes immediate stop within 1 iteration., Verify budget stop creates a decision ledger style event., TestBudgetEnforcement
 
 ### Community 3271 - "Community 3271"
 Cohesion: 0.22
@@ -14882,25 +14978,17 @@ Nodes (8): conflicts, metadata, created, project, schema_version, total_models, 
 Cohesion: 0.22
 Nodes (9): verification, bge_jina_memreranker_deferred, canonical_reranker_owner_identified, current_default_preserved, no_coreml_change, no_llm_config_change, no_new_required_dependencies, no_new_reranker_model_added (+1 more)
 
-### Community 3280 - "Community 3280"
-Cohesion: 0.22
-Nodes (5): bool, True when the manager has reached TEARDOWN or has aborted and completed., True when manager is in the given phase.          Convenience helper — equivalen, True when the given phase has ever been entered (including current).          DI, Allow TEARDOWN from any phase (abort path).
-
 ### Community 3281 - "Community 3281"
 Cohesion: 0.31
 Nodes (8): _check_annotationlib(), _check_interpreter_pool(), _check_uuid7(), main(), int, Guard: annotationlib (new in 3.14)., Guard: uuid.uuid7 (new in 3.14)., Guard: concurrent.futures.InterpreterPoolExecutor (new in 3.14).
 
-### Community 3282 - "Community 3282"
-Cohesion: 0.25
-Nodes (9): compute_delta, validate_report, _get, RootCause, SprintFamily, _swap_gib, triage_live_artifact, TriageResult (+1 more)
-
 ### Community 3283 - "Community 3283"
-Cohesion: 0.25
-Nodes (4): Add to RAM cache with LRU eviction., Save cluster to disk., Add evidence to cluster and persist., Compact clusters: reduce per-cluster data to hard limits.          Hard limits a
+Cohesion: 0.11
+Nodes (8): Path, Get path for cluster file (sharded by claim_id prefix)., Add to RAM cache with LRU eviction., Save cluster to disk., Compact clusters: reduce per-cluster data to hard limits.          Hard limits a, Verify integrity of packet pointers (test-only helper).         Returns dict wit, Initialize encryption cipher., Load index from disk.
 
 ### Community 3284 - "Community 3284"
-Cohesion: 0.25
-Nodes (4): bytes, Generate path for snapshot file (CAS - keyed by content_hash)., Ulozi snapshot na disk (CAS - content-addressable)., Nacte snapshot z disku (on-demand, ne cache).
+Cohesion: 0.15
+Nodes (9): PatternStats, bytes, Pattern statistics for frontier URL pattern learning.      Tracks which URL patt, Compute yield score: new_docs / requests., Update EMA of average score., Update pattern stats in streaming style.          Args:             domain: Doma, Generate path for snapshot file (CAS - keyed by content_hash)., Ulozi snapshot na disk (CAS - content-addressable). (+1 more)
 
 ### Community 3285 - "Community 3285"
 Cohesion: 0.29
@@ -14914,29 +15002,17 @@ Nodes (8): metadata, hermetic, mlx_lm_available, mock, model_count, prompt_count
 Cohesion: 0.25
 Nodes (5): Test shutdown behavior., B.S5: shutdown fails all pending futures., Calling shutdown() twice is safe., B.S4: queue is None after shutdown., TestShutdown
 
-### Community 3288 - "Community 3288"
-Cohesion: 0.25
-Nodes (5): Sprint 69: Structure Map Engine Tests, Testy pro scheduling v orchestrátoru., Test ru_maxrss conversion on Darwin., Test cooldown computation based on churn., TestStructureMapScheduling
-
 ### Community 3289 - "Community 3289"
-Cohesion: 0.14
-Nodes (4): Test that probe returns expected dict structure., Test the value estimate threshold logic (0.7 triggers deep parse)., Test that preview chunks are split correctly., Test semantic fallback when MLX unavailable.
+Cohesion: 0.17
+Nodes (7): Test Sprint 29: Progressive document parsing with optional semantic scoring., Test that heuristic score is computed correctly based on content., Test that probe returns expected dict structure., Test the value estimate threshold logic (0.7 triggers deep parse)., Test that preview chunks are split correctly., Test semantic fallback when MLX unavailable., TestSprint29Progressive
 
 ### Community 3290 - "Community 3290"
 Cohesion: 0.32
 Nodes (5): fingerprint(), Test URL fingerprinting., Test Rust fast path when Rust extension is available., test_rust_path_when_available(), TestFingerprint
 
 ### Community 3291 - "Community 3291"
-Cohesion: 0.25
-Nodes (5): Challenge page with CAPTCHA is rejected., Content under 1000 bytes is rejected., Test B: Archive poison pill - challenge page rejection., Challenge page with Cloudflare is rejected., TestSprint82IArchiveChallenge
-
-### Community 3292 - "Community 3292"
-Cohesion: 0.25
-Nodes (5): _exif_to_float(), Document Metadata Extractor - FOCA-style forensic metadata extraction ==========, Handle EXIF rational (num, denom) tuples and plain numeric values., Extract GPS coordinates from embedded images., Parse GPS from EXIF data.
-
-### Community 3293 - "Community 3293"
-Cohesion: 0.29
-Nodes (4): Check if DOCX/XLSX/PPTX contains VBA macros., Extract from XLSX with embedded fonts., Extract extended properties from XLSX ZIP., Fallback XLSX extraction without openpyxl.
+Cohesion: 0.67
+Nodes (3): 3. STIX 2.1 Export, code:json ({), Components
 
 ### Community 3296 - "Community 3296"
 Cohesion: 0.25
@@ -14947,8 +15023,8 @@ Cohesion: 0.25
 Nodes (5): DefaultUmaWatchdogCallbacks, Default auto-action callbacks for memory pressure responses.      P2-12: Built-i, Log warning on WARN state., Trigger MLX cache cleanup on CRITICAL state., Trigger aggressive cleanup on EMERGENCY state.
 
 ### Community 3298 - "Community 3298"
-Cohesion: 0.33
-Nodes (6): PromptInjectionValidationResult, int, str, P1G-A: Prompt Injection Validator v1 ====================================  Light, Scan and sanitize prompt injection patterns from scraped content.      Fail-open, sanitize_prompt_injection_patterns()
+Cohesion: 0.05
+Nodes (39): AnalysisSignature, DarkQuerySignature, EpistemicGapDetector, ExtractionSignature, HypothesisSignature, is_dspy_available(), bool, DSPy Signatures for OSINT hypothesis generation.  Minimal DSPy integration — fai (+31 more)
 
 ### Community 3299 - "Community 3299"
 Cohesion: 0.29
@@ -14986,25 +15062,13 @@ Nodes (7): metadata, canonical_reranker_owner, created, default_backend, purpose
 Cohesion: 0.38
 Nodes (4): Score seeds (from DuckDB nonfeed seed extraction) by corroboration.      Seed di, score_seeds_by_corroboration(), _seed_source_to_family(), TestScoreSeedsByCorroboration
 
-### Community 3357 - "Community 3357"
-Cohesion: 0.29
-Nodes (4): 100 parallel _queue_query should complete without deadlock., RSS growth should be < 1 MB/iteration over 100 runs., No exception should be raised during 100 research runs., TestSprint43C_Stress
-
 ### Community 3358 - "Community 3358"
 Cohesion: 0.60
 Nodes (5): analyze(), categorize_item(), load_broken_imports(), load_pyproject(), load_shims()
 
-### Community 3462 - "Community 3462"
-Cohesion: 0.33
-Nodes (3): Get all available capabilities with module paths., Get all unavailable capabilities with reasons., Log current capability status.
-
-### Community 3463 - "Community 3463"
-Cohesion: 0.40
-Nodes (6): Executor.map buffersize backpressure, F214H Executor Backpressure Audit, F214I Python 3.14 Import-Time, F214M-B Execution Optimizer Backpressure, execution_optimizer P95 tasks=8 << 32 threshold NO_PATCH, tools/content_miner.py
-
 ### Community 3464 - "Community 3464"
-Cohesion: 0.53
-Nodes (6): M1 8GB UMA memory budget, macOS spawn start method overhead, F214CLEAN Dead ProcessPool Cleanup, F214P ProcessPool M1 Audit, layers/memory_layer.py ProcessPoolExecutor dead import, utils/worker_pool.py dead code, no callers since F214P
+Cohesion: 0.36
+Nodes (7): M1 8GB UMA memory budget, macOS spawn start method overhead, F214CLEAN Dead ProcessPool Cleanup, F214P ProcessPool M1 Audit, layers/memory_layer.py ProcessPoolExecutor dead import, utils/worker_pool.py dead code, no callers since F214P, ParallelResearchScheduler – spravuje frontu úloh s prioritami. Používá asyncio p
 
 ### Community 3465 - "Community 3465"
 Cohesion: 0.33
@@ -15017,10 +15081,6 @@ Nodes (3): GopherCrawlItem, bool, Structured item extracted from Gopher crawl.
 ### Community 3467 - "Community 3467"
 Cohesion: 0.33
 Nodes (4): CacheEntry, Process a batch of queries (Sprint 26)., Cache entry for model responses., Add response to cache.
-
-### Community 3654 - "Community 3654"
-Cohesion: 0.33
-Nodes (6): ner_gliner_vs_ner_ane, action, active, roles, stub, verdict
 
 ### Community 3655 - "Community 3655"
 Cohesion: 0.33
@@ -15045,58 +15105,6 @@ Nodes (6): primary_llm, default, fallback, notes, owner, status
 ### Community 3765 - "Community 3765"
 Cohesion: 0.33
 Nodes (6): vlm, default, future_small_vlm, local_vlm_auto_load, notes, status
-
-### Community 3766 - "Community 3766"
-Cohesion: 0.40
-Nodes (4): from_dict(), Any, str, F256: HermesInferenceOutput contract — cross-sprint data transfer object.  Canon
-
-### Community 3767 - "Community 3767"
-Cohesion: 0.33
-Nodes (4): Test cache key includes mode., Tests for RenderCoordinator., Test coordinator initializes correctly., TestRenderCoordinator
-
-### Community 3768 - "Community 3768"
-Cohesion: 0.33
-Nodes (4): Tests for shared utilities., Test utils module is importable., Test get_memory_pressure returns string., TestUtils
-
-### Community 3769 - "Community 3769"
-Cohesion: 0.33
-Nodes (4): TEST 4 & 5: Offline guards for network handlers and local-only handlers, Verify _HLEDAC_OFFLINE constant is defined, Verify _HLEDAC_OFFLINE reads HLEDAC_OFFLINE env var, TestSprint7EOfflineGuards
-
-### Community 3770 - "Community 3770"
-Cohesion: 0.33
-Nodes (4): TEST 1: Assert benchmark_fps = iterations / elapsed_s, findings_fps = findings_t, Verify FPS calculation formula: benchmark_fps = iterations / elapsed_s, Verify FPS is 0 when elapsed_s is 0, TestSprint7EMetricTruth
-
-### Community 3771 - "Community 3771"
-Cohesion: 0.33
-Nodes (4): Verify revision counters are properly initialized, Verify _findings_revision, _domains_revision, _posteriors_revision exist, Verify snapshot cache fields are revision-based (not length-based), TestSprint7ERevisionCounters
-
-### Community 3772 - "Community 3772"
-Cohesion: 0.33
-Nodes (4): Verify sprint constants are properly defined, Verify HANDLERS_REQUIRE_ONLINE and HANDLERS_LOCAL_ONLY are correct, Verify offline guards are present in all required handlers, TestSprint7EConstants
-
-### Community 3773 - "Community 3773"
-Cohesion: 0.33
-Nodes (4): Sprint 82I: 10-Minute Validation Benchmark  Runtime validation for: - Bounded fi, Test C: Tor unavailable graceful fallback., Onion candidates skip cleanly when Tor unavailable., TestSprint82IOnionUnavailable
-
-### Community 3774 - "Community 3774"
-Cohesion: 0.33
-Nodes (4): Test D: Unresolved contradiction preservation., Contradictions are preserved in final output., Structured fallback includes contested claims., TestSprint82IContradictionPreservation
-
-### Community 3775 - "Community 3775"
-Cohesion: 0.33
-Nodes (4): Test A: Verify bounded final context respects 12K char limit., Bounded final context respects 12K char limit., Bounded context does NOT chop items - whole items only., TestSprint82IBoundedContext
-
-### Community 3776 - "Community 3776"
-Cohesion: 0.33
-Nodes (4): Test F: Final phase blocks new acquisition., Verify phase gating in synthesis method., Verify phase constants are defined., TestSprint82IFinalPhaseNoAcquisition
-
-### Community 3777 - "Community 3777"
-Cohesion: 0.33
-Nodes (4): Test G: Benchmark metrics collection., All key constants are bounded., Memory release method has proper cleanup steps., TestSprint82IBenchmarkMetrics
-
-### Community 3778 - "Community 3778"
-Cohesion: 0.40
-Nodes (3): Any, Sprint 8SB: Inject SemanticStore instance for semantic buffering of findings., Sprint 8SB: Buffer findings into SemanticStore for batch embedding.          Fai
 
 ### Community 3779 - "Community 3779"
 Cohesion: 0.40
@@ -15133,18 +15141,6 @@ Nodes (4): Key Tools, MCP Tools: code-review-graph, When to use graph tools FIRS
 ### Community 3787 - "Community 3787"
 Cohesion: 0.40
 Nodes (5): policy, benchmark_before_activation, default_reranker, no_heavy_reranker_with_heavy_llm, no_multiple_rerankers_by_default
-
-### Community 3788 - "Community 3788"
-Cohesion: 0.40
-Nodes (3): float, Convert EXIF GPS coordinates to decimal., Calculate link score (0-1).
-
-### Community 3789 - "Community 3789"
-Cohesion: 0.50
-Nodes (4): AutonomousAnalyzer (query analyzer), create_autonomous_analyzer() factory, autonomous_orchestrator Facade Module, FullyAutonomousOrchestrator (re-export)
-
-### Community 3791 - "Community 3791"
-Cohesion: 0.50
-Nodes (3): _graph_stats(), Return node/edge counts from DuckDB., Module-level stats helper (called by DuckPGQGraph.stats wrapper).
 
 ### Community 3792 - "Community 3792"
 Cohesion: 0.50
@@ -15329,10 +15325,6 @@ Nodes (4): /Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/embeddin
 ### Community 3839 - "Community 3839"
 Cohesion: 0.50
 Nodes (4): /Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/enhanced_research.py, details, file, status
-
-### Community 3840 - "Community 3840"
-Cohesion: 0.50
-Nodes (4): /Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/__init__.py, details, file, status
 
 ### Community 3841 - "Community 3841"
 Cohesion: 0.50
@@ -15654,21 +15646,9 @@ Nodes (4): 3.1 SLOTSLESS DATACLASSES (HIGH-VOLUME DTOs), 3.2 NO WEAKVALUE DICTIO
 Cohesion: 0.50
 Nodes (3): future_candidates, reranker_instances, scoring_paths
 
-### Community 3921 - "Community 3921"
-Cohesion: 0.50
-Nodes (3): Test Vision OCR availability., Test VisionOCR can be imported., TestVisionOCR
-
-### Community 3929 - "Community 3929"
-Cohesion: 0.50
-Nodes (3): Test E: Winner-only synthesis filtering., Synthesis uses only confirmed claims, not all candidates., TestSprint82IWinnerOnlySynthesis
-
-### Community 3930 - "Community 3930"
-Cohesion: 0.67
-Nodes (3): get_session_relationship_engine(), RelationshipDiscoveryEngine, Get or create the module-level session RelationshipDiscoveryEngine singleton.
-
-### Community 3932 - "Community 3932"
-Cohesion: 0.67
-Nodes (3): Secondary Orchestrator Facade, ResearchManager, SecurityManager
+### Community 3938 - "Community 3938"
+Cohesion: 0.17
+Nodes (9): create_budget_manager(), create_deep_budget(), create_quick_budget(), Budget Manager - Resource Control for Autonomous Workflow ======================, Initialize BudgetManager with configuration.          Args:             config:, Reset budget manager to initial state, Create BudgetManager with specified parameters.      Args:         max_iteration, Create BudgetManager for quick research (minimal resources) (+1 more)
 
 ## Ambiguous Edges - Review These
 - `Priority` → `Priority`  [AMBIGUOUS]
@@ -15685,9 +15665,9 @@ Nodes (3): Secondary Orchestrator Facade, ResearchManager, SecurityManager
   tools/osint_frameworks.py · relation: semantically_similar_to
 
 ## Knowledge Gaps
-- **24185 isolated node(s):** `PROJECT OVERVIEW`, `CRITICAL INVARIANTS (Top 10)`, `Sprint Pipeline Flow`, `Storage Trinity`, `Brain Layer (MLX/Hermes3)` (+24180 more)
+- **24230 isolated node(s):** `Persistence`, `Examples`, `Auto-Clarity Exception`, `1. Hash místa (audit)`, `2. Normalizace (audit)` (+24225 more)
   These have ≤1 connection - possible missing edges or undocumented components.
-- **1076 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
+- **996 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
 
 ## Suggested Questions
 _Questions this graph is uniquely positioned to answer:_
@@ -15704,5 +15684,5 @@ _Questions this graph is uniquely positioned to answer:_
   _Edge tagged AMBIGUOUS (relation: conceptually_related_to) - confidence is low._
 - **What is the exact relationship between `OSINTFrameworkRunner` and `Hermetic Preflight Principle (no live, no network, no MLX)`?**
   _Edge tagged AMBIGUOUS (relation: semantically_similar_to) - confidence is low._
-- **Why does `CanonicalFinding` connect `passive_fingerprint.py` to `Circuit breaker pattern`, `Sprint Acquisition Strategy`, `Atomic Storage + Quantum Paths`, `Community 2312`, `Acquisition Lanes (Shodan/GreyNoise)`, `f234_nonfeed_diagnostic_preflight.py`, `Orchestrator Integration Layer`, `Kademlia DHT + Local Graph`, `DuckDB Shadow Store`, `CanonicalFinding`, `Temporal Archaeologist`, `Community 3217`, `arxiv_adapter.py`, `analyze_blockchain_address`, `Sidecar Bus + E2E Benchmark`, `ram_vault.py`, `Academic Search + Query Expansion`, `banner_grabber.py`, `rir_correlator.py`, `Public Fetcher (HTTP/curl_cffi)`, `Research Coordinator + RAG`, `Community 1810`, `Security Coordinator`, `pivot_builder.py`, `openalex_adapter.py`, `s2orc_adapter.py`, `bgp_passive_dns_adapter.py`, `.belief`, `gemini_transport.py`, `Live Public Pipeline + CommonCrawl`, `init.py`, `DomainCandidate`, `Threat Intel Feed Adapter`, `wayback_diff_miner.py`, `pattern_mining.py`, `AgentPerformanceOptimizer`, `.test_mongodb_auth`, `alternative_protocol_fetcher.py`, `deep_probe.py`, `Protocol-Based Sidecar Registry`, `social_identity_miner.py`, `Access distillation engine`, `exposure_correlator.py`, `analyzer.py`, `enrichment_service.py`, `dark_web_intelligence.py`, `Community 1872`, `Done-callback: log exception`, `gopher_crawler.py`, `Non-feed adapter to`, `unpaywall_adapter.py`, `ner_gliner_vs_ner_ane`, `FeedPipelineEntryResult`, `core package facade`, `ARIMA Projection Method`, `ArchivedVersion`, `bgp_lane.py`, `Community 2044`, `Stealth layer for`?**
-  _High betweenness centrality (0.030) - this node is a cross-community bridge._
+- **Why does `CanonicalFinding` connect `Acquisition Lanes (Shodan/GreyNoise)` to `Sprint Acquisition Strategy`, `Atomic Storage + Quantum Paths`, `Community 2312`, `Stealth Crawler`, `memoryview`, `Kademlia DHT + Local Graph`, `Community 3214`, `CanonicalFinding`, `Temporal Archaeologist`, `M1 RAM-Bounded LanceDB`, `arxiv_adapter.py`, `Sidecar Bus + E2E Benchmark`, `DuckDB Shadow Store`, `ram_vault.py`, `banner_grabber.py`, `Community 1810`, `rir_correlator.py`, `CLI Main + Resource Governor`, `Community 3217`, `Security Coordinator`, `pivot_builder.py`, `openalex_adapter.py`, `s2orc_adapter.py`, `bgp_passive_dns_adapter.py`, `gemini_transport.py`, `Live Public Pipeline + CommonCrawl`, `init.py`, `DomainCandidate`, `Threat Intel Feed Adapter`, `Identity Stitching`, `pattern_mining.py`, `AgentPerformanceOptimizer`, `Community 1848`, `.test_mongodb_auth`, `alternative_protocol_fetcher.py`, `Community 2112`, `Protocol-Based Sidecar Registry`, `social_identity_miner.py`, `Access distillation engine`, `exposure_correlator.py`, `analyzer.py`, `enrichment_service.py`, `dark_web_intelligence.py`, `Done-callback: log exception`, `gopher_crawler.py`, `.check_auto_rollback`, `Non-feed adapter to`, `unpaywall_adapter.py`, `ner_gliner_vs_ner_ane`, `html_text_fast.py`, `passive_fingerprint.py`, `shared_tensor.py`, `Community 3050`, `FeedPipelineEntryResult`, `Community 2542`, `core package facade`, `ARIMA Projection Method`, `bgp_lane.py`, `m1_mlx_stream_uma_probe.py`, `Stealth layer for`?**
+  _High betweenness centrality (0.037) - this node is a cross-community bridge._

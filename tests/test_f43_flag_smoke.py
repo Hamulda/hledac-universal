@@ -23,7 +23,8 @@ class TestF43FlagSmoke:
         """--help exits 0 with usage info."""
         result = subprocess.run(
             [sys.executable, str(RUNNER), "--help"],
-            capture_output=True, text=True, timeout=30
+            capture_output=True, text=True, timeout=30,
+            cwd=str(PROJECT_ROOT),
         )
         assert result.returncode == 0
         assert "usage" in result.stdout.lower() or "options" in result.stdout.lower()
@@ -32,7 +33,8 @@ class TestF43FlagSmoke:
         """At least 30 HLEDAC_ENABLE_* flags must be discoverable."""
         result = subprocess.run(
             [sys.executable, str(RUNNER), "--json"],
-            capture_output=True, text=True, timeout=180
+            capture_output=True, text=True, timeout=180,
+            cwd=str(PROJECT_ROOT),
         )
         assert result.returncode == 0
         import json
@@ -43,9 +45,13 @@ class TestF43FlagSmoke:
         """HLEDAC_ENABLE_DSPY must PASS — heavily referenced in 14 files."""
         result = subprocess.run(
             [sys.executable, str(RUNNER), "--only", "HLEDAC_ENABLE_DSPY"],
-            capture_output=True, text=True, timeout=60
+            capture_output=True, text=True, timeout=60,
+            cwd=str(PROJECT_ROOT),
         )
-        assert "PASS" in result.stdout
+        assert "PASS" in result.stdout, (
+            f"expected PASS, got rc={result.returncode}; "
+            f"stdout={result.stdout!r}; stderr={result.stderr!r}"
+        )
         assert "HLEDAC_ENABLE_DSPY" in result.stdout
 
     def test_runner_rejects_nonexistent_flag(self):
@@ -56,7 +62,8 @@ class TestF43FlagSmoke:
         flag_name = f"HLEDAC_ENABLE_{unique_token}"
         result = subprocess.run(
             [sys.executable, str(RUNNER), "--only", flag_name],
-            capture_output=True, text=True, timeout=10
+            capture_output=True, text=True, timeout=10,
+            cwd=str(PROJECT_ROOT),
         )
         assert result.returncode == 2
         assert "not found" in result.stderr.lower()
@@ -80,7 +87,8 @@ class TestF43FlagSmoke:
         env_before = {k: v for k, v in os.environ.items() if k.startswith("HLEDAC_ENABLE_")}
         subprocess.run(
             [sys.executable, str(RUNNER), "--only", "HLEDAC_ENABLE_DSPY"],
-            capture_output=True, text=True, timeout=60
+            capture_output=True, text=True, timeout=60,
+            cwd=str(PROJECT_ROOT),
         )
         env_after = {k: v for k, v in os.environ.items() if k.startswith("HLEDAC_ENABLE_")}
         assert env_before == env_after, "runner leaked HLEDAC_ENABLE_* into environment"

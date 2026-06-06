@@ -1121,6 +1121,7 @@ dependencies = [
     { name = "duckdb" },
     { name = "fast-langdetect" },
     { name = "httpx" },
+    { name = "hypothesis" },
     { name = "lmdb" },
     { name = "mlx" },
     { name = "mlx-lm" },
@@ -1160,7 +1161,6 @@ all = [
     { name = "flashrank" },
     { name = "h2" },
     { name = "httpx-socks" },
-    { name = "hypothesis" },
     { name = "iniconfig" },
     { name = "kuzu" },
     { name = "lancedb" },
@@ -1183,7 +1183,6 @@ all = [
     { name = "pytest" },
     { name = "pytest-asyncio" },
     { name = "pytest-cov" },
-    { name = "pytest-hypothesis" },
     { name = "pytest-xdist" },
     { name = "rapidfuzz" },
     { name = "ruff" },
@@ -1232,11 +1231,9 @@ flashrank-rerank = [
 ]
 graph-storage = [
     { name = "duckdb" },
-    { name = "hypothesis" },
     { name = "lancedb" },
     { name = "polars" },
     { name = "pyarrow" },
-    { name = "pytest-hypothesis" },
 ]
 kuzu-graph = [
     { name = "kuzu" },
@@ -1255,14 +1252,12 @@ m1-local = [
     { name = "flashrank" },
     { name = "h2" },
     { name = "httpx-socks" },
-    { name = "hypothesis" },
     { name = "lancedb" },
     { name = "mlx", marker = "platform_machine == 'arm64' and sys_platform == 'darwin'" },
     { name = "mlx-embeddings" },
     { name = "outlines" },
     { name = "polars" },
     { name = "pyarrow" },
-    { name = "pytest-hypothesis" },
     { name = "rapidfuzz" },
     { name = "selectolax" },
     { name = "transformers" },
@@ -1362,7 +1357,7 @@ requires-dist = [
     { name = "hledac-universal", extras = ["light", "apple-accel", "osint-html", "graph-storage", "dev", "acceleration", "nlp", "rerank", "browser", "webkit", "security", "transport", "ocr", "coreml", "coreml-export", "search", "tor", "legacy-html", "transformers-stack", "flashrank-rerank", "kuzu-graph", "dspy", "m1-local"], marker = "extra == 'all'" },
     { name = "httpx", specifier = ">=0.27.0" },
     { name = "httpx-socks", marker = "extra == 'transport'", specifier = ">=0.10.0" },
-    { name = "hypothesis", marker = "extra == 'graph-storage'", specifier = ">=6.155.0" },
+    { name = "hypothesis", specifier = "<6.50" },
     { name = "iniconfig", marker = "extra == 'dev'", specifier = ">=2.0.0" },
     { name = "kuzu", marker = "extra == 'kuzu-graph'", specifier = ">=0.11.3" },
     { name = "lancedb", marker = "extra == 'graph-storage'", specifier = ">=0.2.5" },
@@ -1400,7 +1395,6 @@ requires-dist = [
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0.0" },
     { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=1.3.0" },
     { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=4.1.0" },
-    { name = "pytest-hypothesis", marker = "extra == 'graph-storage'", specifier = ">=10.0.3" },
     { name = "pytest-xdist", marker = "extra == 'dev'", specifier = ">=3.5.0" },
     { name = "pyyaml", specifier = ">=6.0,<7.0" },
     { name = "pyzipper", specifier = ">=0.3.6" },
@@ -1505,14 +1499,15 @@ wheels = [
 
 [[package]]
 name = "hypothesis"
-version = "6.155.0"
+version = "6.49.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
+    { name = "attrs" },
     { name = "sortedcontainers" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/86/7d/9569717766867495510712eba388f7ca0633549f9ff4d3c34398b919e5b4/hypothesis-6.155.0.tar.gz", hash = "sha256:cf09ac913b60b49750585a53152704468de666f35c9c29f8e61d82a01f64bbb5", size = 476704, upload-time = "2026-05-28T15:43:24.193Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/da/f6/53077bf0a5745fc45e32dc86882b945d16d26f994c884fe86d793f5e4d7f/hypothesis-6.49.1.tar.gz", hash = "sha256:0310d446fb87415e31798e8267288acc22f0be4a0530128a3a694190fcc43e5b", size = 326876, upload-time = "2022-07-05T05:13:29.474Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/53/f8/31a6a6646c5b76b9746454318989340cea0290ba34e0f3ccd0668ce67868/hypothesis-6.155.0-py3-none-any.whl", hash = "sha256:d6ffa3062afabaf908491be707c60843f6671f7c3e9f2ed249d5827207ebbf33", size = 543120, upload-time = "2026-05-28T15:43:21.855Z" },
+    { url = "https://files.pythonhosted.org/packages/d0/64/32f89f8151b0ae2d7b67cec1a4bd5ec45059bfb87a1c8ca0c9a596e12c0b/hypothesis-6.49.1-py3-none-any.whl", hash = "sha256:a28a74e700960065f9fc972983c56f7c0821989c6c06a6fbcc42abe3a47e9986", size = 387663, upload-time = "2022-07-05T05:13:25.893Z" },
 ]
 
 [[package]]
@@ -3210,15 +3205,6 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/b1/51/a849f96e117386044471c8ec2bd6cfebacda285da9525c9106aeb28da671/pytest_cov-7.1.0.tar.gz", hash = "sha256:30674f2b5f6351aa09702a9c8c364f6a01c27aae0c1366ae8016160d1efc56b2", size = 55592, upload-time = "2026-03-21T20:11:16.284Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/9d/7a/d968e294073affff457b041c2be9868a40c1c71f4a35fcc1e45e5493067b/pytest_cov-7.1.0-py3-none-any.whl", hash = "sha256:a0461110b7865f9a271aa1b51e516c9a95de9d696734a2f71e3e78f46e1d4678", size = 22876, upload-time = "2026-03-21T20:11:14.438Z" },
-]
-
-[[package]]
-name = "pytest-hypothesis"
-version = "10.0.3"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/68/2c/0fa87f84bc05e0f70fe87f70a83bc56a62c230a113b243904bcebd677be4/pytest_hypothesis-10.0.3.tar.gz", hash = "sha256:419dbe4298f8eb37b00a217fb9c29bfb054fe2e61eb10815048d555ed7bc88c1", size = 2104, upload-time = "2026-02-09T19:50:00.758Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/5a/aa/a2178d1ddc6097f8a22febd111db877ac4cb47c816ab6d8daaf565c4af60/pytest_hypothesis-10.0.3-py3-none-any.whl", hash = "sha256:df82413da27c0e4ef1e7a8a63998bb3ba57144ea37ebffbdc2ff882c93852681", size = 2457, upload-time = "2026-02-09T19:49:59.03Z" },
 ]
 
 [[package]]

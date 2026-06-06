@@ -259,6 +259,23 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Dry-run mode: validate config, check Hermes/UMA/sources, show timing plan. No real discovery.",
     )
+    # Phase 3: flag preset selectors. ``--list-presets`` is handled in
+    # main() and exits 0 before any sprint/boot logic runs.
+    parser.add_argument(
+        "--preset",
+        type=str,
+        default=None,
+        choices=["minimal", "osint", "recon", "research", "full"],
+        help=(
+            "Phase 3: Apply a flag preset before validation. "
+            "Existing HLEDAC_ENABLE_* env vars are NOT overwritten."
+        ),
+    )
+    parser.add_argument(
+        "--list-presets",
+        action="store_true",
+        help="Phase 3: Print preset table (name, flag count, RAM est.) and exit 0.",
+    )
     # Python 3.14 argparse settings
     try:
         parser.suggest_on_error = True
@@ -3170,6 +3187,47 @@ def main() -> None:
 
     # Sprint 8PC: CLI parsing — after help check
     args = parser.parse_args()
+
+    # Phase 3: --list-presets short-circuit (exit 0 before any heavy work).
+    if getattr(args, "list_presets", False):
+        try:
+            from utils.flag_presets import list_presets_table
+            print(list_presets_table())
+        except Exception as exc:
+            # Fail-soft: still exit 0 with a diagnostic on stderr.
+            print(f"flag_presets unavailable: {exc!r}", file=sys.stderr)
+        sys.exit(0)
+
+    # Phase 3: apply --preset to os.environ (no overwrite of explicit env).
+    preset_name = getattr(args, "preset", None)
+    if preset_name:
+        try:
+            from utils.flag_presets import apply_preset
+            applied = apply_preset(preset_name, overwrite=False)
+            logger.info(
+                "[FLAG_PRESET] applied %r: %d flags set (existing env preserved)",
+                preset_name,
+                len(applied),
+            )
+        except Exception as exc:
+            logger.error("[FLAG_PRESET] failed to apply %r: %r", preset_name, exc)
+            sys.exit(2)
+
+    # Phase 3: fail-fast combo validation. Runs after --preset application
+    # so preset-driven flag combinations are also caught.
+    try:
+        from utils.flag_registry import validate_flag_combo
+        errors, warnings = validate_flag_combo()
+        for w in warnings:
+            logger.warning("FLAG_VALIDATION: %s", w)
+        if errors:
+            for e in errors:
+                logger.error("FLAG_CONFLICT: %s", e)
+            sys.exit(2)
+    except Exception as exc:
+        # Validation must never crash main(); log and continue.
+        logger.warning("[FLAG_VALIDATION] internal error (continuing): %r", exc)
+
     sprint_target = args.sprint
     sprint_duration = args.duration
     sprint_ui_mode = args.ui

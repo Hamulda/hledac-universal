@@ -66,6 +66,25 @@ def _get_rust_url_ops() -> tuple | None:
     return _RUST_URL_OPS_CACHE
 
 
+def _get_url_ops() -> object | None:
+    """Lazy-load Rust hledac_rust_extensions module. Returns the module on success, None on failure.
+
+    Mirrors the F271 import pattern: never imported at top level to preserve
+    M1 lazy-load invariant. Callers must always check `if _uops is not None`
+    and provide a `urllib.parse` fallback.
+
+    The Rust submodule `url_ops` is not re-exported as a Python submodule
+    (lib.rs registers its functions directly on the parent module). We
+    therefore return the parent module — its surface includes
+    `extract_host`, `looks_like_feed_url`, and `classify_url`.
+    """
+    try:
+        import hledac_rust_extensions as _uops
+        return _uops
+    except ImportError:
+        return None
+
+
 def _classify_url_cached(url: str) -> tuple[str, str]:
     """Drop-in: returns (kind_str, lowercase_host) using Rust when available.
 
@@ -289,8 +308,14 @@ def _altsvc_http_version_for(host: str) -> Any:
 
 
 def _altsvc_extract_host(url: str) -> str:
-    """Return lowercased hostname from URL, or empty string on parse failure."""
+    """Return lowercased hostname from URL, or empty string on parse failure.
+
+    F271: Rust url_ops.extract_host fast path with urllib.parse fallback.
+    """
     try:
+        _uops = _get_url_ops()
+        if _uops is not None:
+            return _uops.extract_host(url)
         return (urllib.parse.urlparse(url).hostname or "").lower()
     except Exception:
         return ""
@@ -686,12 +711,43 @@ def _validate_url(url: str) -> str | None:
     """
     Validate URL is http/https and well-formed.
     Returns None on success, error string on failure.
+
+    F271: Rust url_ops.classify_url fast path with urllib.parse fallback.
+    classify_url returns (kind, host) where kind ∈
+    {"clearnet","onion","i2p","freenet","empty","malformed"}.
+    Rust path is used when the module loads; ImportError or runtime
+    failure falls through to the unchanged Python branch below.
     """
     if not url or not isinstance(url, str):
         return "url_empty"
     url = url.strip()
     if not url:
         return "url_empty"
+    _uops = _get_url_ops()
+    if _uops is not None:
+        try:
+            kind, host = _uops.classify_url(url)
+            if kind == "empty":
+                return "url_empty"
+            if kind == "malformed":
+                return "url_malformed"
+            if not host:
+                return "url_no_netloc"
+            # Rust confirmed parse succeeded — derive scheme from URL prefix
+            # (cheaper than a second urlparse call; also keeps the http(s)
+            # gate without depending on parse correctness of unsupported
+            # schemes like ftp/gopher, which the Rust extension still
+            # parses and returns as "clearnet" with the bare host).
+            scheme_idx = url.find("://")
+            if scheme_idx == -1:
+                return "url_malformed"
+            scheme = url[:scheme_idx].lower()
+            if scheme not in ("http", "https"):
+                return f"url_unsupported_scheme:{scheme}"
+            return None
+        except Exception:
+            # Rust path raised — fall through to Python fallback.
+            pass
     try:
         parsed = urllib.parse.urlparse(url)
     except (ValueError, AttributeError) as e:
@@ -1819,10 +1875,22 @@ def refresh_js_renderer_capability() -> dict[str, str | None]:
 
 
 def _looks_like_feed_url(url: str) -> bool:
-    """Return True if URL path strongly suggests an RSS/XML/Atom/Sitemap feed."""
-    parsed = urllib.parse.urlparse(url)
-    path = parsed.path.rstrip("/")
-    return bool(_FEED_URL_RE.search(path))
+    """Return True if URL path strongly suggests an RSS/XML/Atom/Sitemap feed.
+
+    F271: Rust url_ops.looks_like_feed_url fast path with urllib.parse fallback.
+    The Rust function is a direct drop-in for the regex check on
+    urlparse(url).path.rstrip("/"). ImportError or runtime failure
+    falls through to the unchanged Python branch.
+    """
+    try:
+        _uops = _get_url_ops()
+        if _uops is not None:
+            return _uops.looks_like_feed_url(url)
+        parsed = urllib.parse.urlparse(url)
+        path = parsed.path.rstrip("/")
+        return bool(_FEED_URL_RE.search(path))
+    except Exception:
+        return False
 
 
 def _needs_js_fetch(text: str) -> bool:
@@ -2476,8 +2544,12 @@ async def async_fetch_public_text(
     if use_doh:
         try:
             from hledac.universal.security.passive_dns import get_random_doh_provider, resolve_doh
-            parsed_url = urllib.parse.urlparse(url)
-            hostname = parsed_url.hostname or ""
+            _uops = _get_url_ops()
+            if _uops is not None:
+                hostname = _uops.extract_host(url)
+            else:
+                parsed_url = urllib.parse.urlparse(url)
+                hostname = parsed_url.hostname or ""
             if hostname:
                 # F229: Randomize DoH provider per request — eliminates provider-level tracking
                 _doh_provider = get_random_doh_provider()

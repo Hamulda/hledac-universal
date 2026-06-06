@@ -76,8 +76,48 @@ def is_deep_research_enabled(config_flag: bool = False) -> bool:
     return False
 
 
+# ---------------------------------------------------------------------------
+# Generic resolver — Phase 2 (Declarative FlagSpec registry)
+# ---------------------------------------------------------------------------
+
+#: Tokens that disable a flag when present as the env-var value.
+#: ``is_enabled`` returns ``False`` for these; any other non-empty
+#: value (including ``"true"``, ``"yes"``, ``"on"``) returns ``True``.
+_FALSEY_TOKENS: Final[frozenset[str]] = frozenset({"0", "false", ""})
+
+
+def is_enabled(flag_name: str, default: str = "0") -> bool:
+    """Resolve an arbitrary HLEDAC_* env var to a boolean.
+
+    Generic companion to :func:`is_deep_research_enabled` for callers
+    that need to read a feature flag without hardcoding the resolution
+    semantics at every call site. The companion declarative metadata
+    lives in :mod:`utils.flag_registry`.
+
+    Resolution:
+
+    * Read ``os.environ[flag_name]`` (falling back to ``default``).
+    * If the raw value (after strip+lower) is in :data:`_FALSEY_TOKENS`
+      (``"0"``, ``"false"``, ``""``) return ``False``.
+    * Otherwise return ``True``.
+
+    ``default`` defaults to ``"0"`` (fail-safe off). Callers that ship
+    a flag ON by default may pass ``default="1"``. Never raises —
+    environment access is guarded by ``try/except``.
+    """
+    try:
+        raw = os.environ.get(flag_name, default)
+    except (AttributeError, TypeError):
+        return False
+    try:
+        return raw.strip().lower() not in _FALSEY_TOKENS
+    except (AttributeError, TypeError):
+        return False
+
+
 __all__ = [
     "HLEDAC_ENABLE_DEEP_RESEARCH",
     "HLEDAC_DEEP_RESEARCH_LEGACY",
     "is_deep_research_enabled",
+    "is_enabled",
 ]

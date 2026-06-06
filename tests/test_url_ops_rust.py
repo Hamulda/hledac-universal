@@ -175,3 +175,254 @@ class TestLooksLikeFeedUrl:
     def test_case_insensitive(self):
         assert _rust.looks_like_feed_url("/FEED.RSS") is True
         assert _rust.looks_like_feed_url("/Feed.Atom") is True
+
+
+# ---------------------------------------------------------------------------
+# F271: regression tests — ensure url_ops migration in public_fetcher.py
+# returns identical results to the urllib.parse fallback path.
+# ---------------------------------------------------------------------------
+
+import urllib.parse
+
+
+class TestPublicFetcherMigration:
+    """F271: url_ops migration parity with urllib.parse fallback."""
+
+    def test_url_ops_lazy_import_returns_module_with_required_symbols(self):
+        """_get_url_ops() returns a module exposing extract_host/looks_like_feed_url/classify_url."""
+        from hledac.universal.fetching import public_fetcher as pf
+
+        uops = pf._get_url_ops()
+        assert uops is not None, "Rust url_ops module not built"
+        for sym in ("extract_host", "looks_like_feed_url", "classify_url"):
+            assert hasattr(uops, sym), f"url_ops missing required symbol: {sym}"
+            assert callable(getattr(uops, sym))
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "https://example.com/path",
+            "http://ABC.onion/article",
+            "https://example.com:8080/page",
+            "https://freenetproject.org",
+            "http://example.i2p/page",
+            "https://Example.COM/Path",
+            "",
+        ],
+    )
+    def test_altsvc_extract_host_matches_urlparse_fallback(self, url):
+        """_altsvc_extract_host() Rust path must equal urllib.parse fallback.
+
+        This is the F271 migration parity test for the swapped call site at
+        public_fetcher.py::_altsvc_extract_host. If extract_host() ever
+        diverges from (urlparse(url).hostname or '').lower() for valid
+        inputs, the assertion fires.
+        """
+        from hledac.universal.fetching import public_fetcher as pf
+
+        actual = pf._altsvc_extract_host(url)
+        expected = (urllib.parse.urlparse(url).hostname or "").lower()
+        assert actual == expected, (
+            f"_altsvc_extract_host({url!r}) = {actual!r}, "
+            f"urlparse fallback = {expected!r}"
+        )
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "https://example.com/path",
+            "http://abc.onion/",
+            "https://example.com:8443/api",
+            "https://FREENETproject.org/",
+            "HTTPS://Example.COM",
+            "",
+        ],
+    )
+    def test_doh_host_extraction_pattern_matches_urlparse(self, url):
+        """DoH hostname extraction (Rust fast path or urllib fallback) equals urlparse.
+
+        The DoH block in public_fetcher.py is inline (not a named helper), so
+        we replicate the exact branch logic here to verify both paths agree.
+        If a future edit changes the pattern, this test exposes the drift.
+        """
+        from hledac.universal.fetching import public_fetcher as pf
+
+        # Replicate the exact branch from public_fetcher.py around line 2479:
+        #   _uops = _get_url_ops()
+        #   if _uops is not None:
+        #       hostname = _uops.extract_host(url)
+        #   else:
+        #       parsed_url = urllib.parse.urlparse(url)
+        #       hostname = parsed_url.hostname or ""
+        uops = pf._get_url_ops()
+        if uops is not None:
+            rust_host = uops.extract_host(url)
+        else:
+            rust_host = (urllib.parse.urlparse(url).hostname or "")
+
+        py_fallback = (urllib.parse.urlparse(url).hostname or "")
+        assert rust_host == py_fallback, (
+            f"host extraction diverged for {url!r}: rust={rust_host!r}, "
+            f"urllib={py_fallback!r}"
+        )
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "https://example.com/feed/rss",
+            "https://example.com/news.atom",
+            "https://example.com/api/articles.xml",
+            "https://example.com/sitemap.xml",
+            "https://example.com/search.opensearch",
+            "https://example.com/news/article",
+            "https://example.com/feed.rss?count=10",
+            "",
+            "https://example.com",
+        ],
+    )
+    def test_looks_like_feed_url_matches_urllib_fallback(self, url):
+        """_looks_like_feed_url() Rust path equals the urllib.parse fallback.
+
+        F271 parity test for the swap at public_fetcher.py::_looks_like_feed_url.
+        The Rust looks_like_feed_url is a direct drop-in for
+        bool(_FEED_URL_RE.search(urlparse(url).path.rstrip("/"))) — assert
+        the contract holds across positive, negative, query-bearing, and
+        empty inputs.
+
+        NOTE: The pre-existing Python regex fallback has a known false
+        positive on substring "feedback" (the bare "feed" prefix matches).
+        The Rust extension avoids that trap. We deliberately keep that
+        case out of the parity matrix; it is pinned by
+        test_looks_like_feed_url_avoids_feedback_substring below.
+        """
+        from hledac.universal.fetching import public_fetcher as pf
+
+        actual = pf._looks_like_feed_url(url)
+        parsed = urllib.parse.urlparse(url)
+        path = parsed.path.rstrip("/")
+        expected = bool(pf._FEED_URL_RE.search(path))
+        assert actual == expected, (
+            f"_looks_like_feed_url({url!r}) = {actual!r}, "
+            f"urllib fallback = {expected!r}"
+        )
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "https://example.com/api/feedback",
+            "https://example.com/feedback",
+            "https://example.com/users/feedburner/profile",
+        ],
+    )
+    def test_looks_like_feed_url_avoids_feedback_substring(self, url):
+        """_looks_like_feed_url() (Rust path) must not match the 'feedback' substring.
+
+        F271: the Rust looks_like_feed_url guards against the substring
+        trap that the legacy _FEED_URL_RE regex has. When the Rust path
+        is active, _looks_like_feed_url must return False for these
+        inputs. If the wrapper ever falls through to the Python fallback
+        (e.g. on ImportError), this test would fail in environments
+        without the Rust build — which is acceptable, because parity is
+        only required when the Rust path is the active one.
+        """
+        from hledac.universal.fetching import public_fetcher as pf
+
+        uops = pf._get_url_ops()
+        if uops is None:
+            pytest.skip("Rust url_ops not built; parity cannot be asserted")
+
+        assert pf._looks_like_feed_url(url) is False, (
+            f"_looks_like_feed_url({url!r}) should reject 'feedback' "
+            f"substring via the Rust path; got True."
+        )
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "",
+            "   ",
+            "https://example.com/path",
+            "http://abc.onion/article",
+            "https://example.com:8443/api",
+            "http://example.i2p/page",
+            "https://freenetproject.org",
+            "ftp://example.com/file",
+            "gopher://example.com",
+            "not_a_url",
+            "???://@@@",
+        ],
+    )
+    def test_validate_url_rust_path_matches_python_fallback(self, url):
+        """_validate_url() result is identical to the inline urllib fallback.
+
+        F271 parity test for the swap at public_fetcher.py::_validate_url.
+        The function now uses classify_url as the fast path with a Python
+        fallback. The expected behaviour — error code or None — must be
+        identical regardless of which path served the request, so we
+        inline the Python logic here as the oracle and assert equality.
+        """
+        from hledac.universal.fetching import public_fetcher as pf
+
+        actual = pf._validate_url(url)
+
+        # Inline Python oracle — mirrors the fallback branch in _validate_url.
+        if not url or not isinstance(url, str):
+            expected = "url_empty"
+        else:
+            s = url.strip()
+            if not s:
+                expected = "url_empty"
+            else:
+                try:
+                    parsed = urllib.parse.urlparse(s)
+                    scheme = parsed.scheme.lower()
+                    if not scheme:
+                        expected = "url_malformed"
+                    elif scheme not in ("http", "https"):
+                        expected = f"url_unsupported_scheme:{scheme}"
+                    elif not parsed.netloc:
+                        expected = "url_no_netloc"
+                    else:
+                        expected = None
+                except (ValueError, AttributeError):
+                    expected = "url_malformed"
+
+        assert actual == expected, (
+            f"_validate_url({url!r}) = {actual!r}, expected (python oracle) = {expected!r}"
+        )
+
+    def test_validate_url_unsupported_scheme_returns_scheme_error(self):
+        """Explicit guard: ftp/gopher etc. must surface as url_unsupported_scheme:xxx.
+
+        The Rust classify_url treats unknown schemes as 'clearnet' with
+        the bare host, so _validate_url must run a second pass to gate
+        non-http(s) schemes. This test pins that gate down with explicit
+        scheme values that urllib.parse accepts but the fetcher must
+        reject.
+        """
+        from hledac.universal.fetching import public_fetcher as pf
+
+        for scheme in ("ftp", "gopher", "file", "javascript"):
+            url = f"{scheme}://example.com/path"
+            result = pf._validate_url(url)
+            assert result == f"url_unsupported_scheme:{scheme}", (
+                f"_validate_url({url!r}) = {result!r}, "
+                f"expected url_unsupported_scheme:{scheme}"
+            )
+
+    def test_validate_url_empty_inputs_are_url_empty(self):
+        """Empty / whitespace / non-string inputs must short-circuit to url_empty."""
+        from hledac.universal.fetching import public_fetcher as pf
+
+        for url in ("", "   ", "\n\t", None, 0, []):
+            result = pf._validate_url(url)  # type: ignore[arg-type]
+            assert result == "url_empty", (
+                f"_validate_url({url!r}) = {result!r}, expected url_empty"
+            )
+
+    def test_looks_like_feed_url_empty_returns_false(self):
+        """Empty URL must not raise and must return False (matches Rust contract)."""
+        from hledac.universal.fetching import public_fetcher as pf
+
+        assert pf._looks_like_feed_url("") is False
+        assert pf._looks_like_feed_url(None) is False  # type: ignore[arg-type]

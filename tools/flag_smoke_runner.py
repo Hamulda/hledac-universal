@@ -14,6 +14,11 @@ existing tests in tests/).
 M1-safe: no MLX model load, no browser launch, no network I/O. Each flag test
 takes <1s and <50MB RAM.
 
+Phase 3: the probe target is the lightweight ``utils.flag_registry``
+(stdlib-only) rather than the heavy ``coordinators.catalog`` chain
+(DuckDB/MLX). This keeps the M1-safe invariant true AND aligns with the
+canonical flag resolver established by F-FLAG-1/2.
+
 Usage:
     uv run --project . python tools/flag_smoke_runner.py
     uv run --project . python tools/flag_smoke_runner.py --only HLEDAC_ENABLE_DSPY
@@ -33,8 +38,23 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
 
-# Stable project root (Hledac/hledac/universal/)
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
+# ---------------------------------------------------------------------------
+# sys.path bootstrap — must run BEFORE any hledac.* / utils.* import.
+# Idempotent: safe to run when the path is already configured by the caller.
+# ---------------------------------------------------------------------------
+_THIS = Path(__file__).resolve()
+# ~/PycharmProjects/Hledac/ — parent of hledac/, needed for `hledac.*` imports.
+_REPO_ROOT = _THIS.parent.parent.parent
+# ~/PycharmProjects/Hledac/hledac/universal/ — needed for `utils.*` imports.
+_UNIVERSAL_ROOT = _THIS.parent.parent
+
+for _p in (str(_REPO_ROOT), str(_UNIVERSAL_ROOT)):
+    if _p and _p not in sys.path:
+        sys.path.insert(0, _p)
+
+# Stable project root (Hledac/hledac/universal/) — computed AFTER bootstrap
+# so relative paths inside the runner resolve correctly.
+PROJECT_ROOT = _UNIVERSAL_ROOT
 SRC_ROOT = PROJECT_ROOT
 
 # Heuristic: any flag of form HLEDAC_ENABLE_<NAME>. We use findall on the
@@ -61,9 +81,13 @@ _SKIP_PATH_FRAGMENTS = (
 )
 
 
-@dataclass
+@dataclass(slots=True)
 class FlagReport:
-    """Per-flag result."""
+    """Per-flag result.
+
+    ``slots=True`` keeps the report footprint bounded — each instance
+    occupies a fixed C-level layout on M1 UMA (no per-instance ``__dict__``).
+    """
 
     name: str
     status: str  # PASS | SILENT_NOOP | DEAD_FLAG | IMPORT_FAIL
@@ -141,21 +165,31 @@ def _check_flag(flag: str) -> FlagReport:
         report.duration_s = time.monotonic() - started
         return report
 
-    # Cheap probe: import the entry point with the flag set, ensure no crash.
-    # We do NOT actually run a sprint — too heavy. We just verify the flag
-    # is observable through whatever module first reads it.
+    # Cheap probe: use the canonical flag resolver (utils.flag_registry)
+    # to confirm the env var is observable. This is stdlib-only, M1-safe
+    # (no MLX, no DuckDB, no coordinator import chain) and aligns with
+    # the resolver used by F-FLAG-1/2 elsewhere in the codebase.
     os.environ[flag] = "1"
     try:
-        # Probe via catalog (cheap, no heavy coordinator load).
-        from hledac.universal.coordinators import catalog  # noqa: F401
-        # And a second probe: re-read the env var to confirm Python sees it.
-        observed = os.environ.get(flag)
-        if observed != "1":
+        # Phase 3: lightweight probe — registry import is ~5ms, no
+        # transitive coordinator load.
+        from utils.flag_registry import is_flag_active, get_spec  # noqa: F401
+
+        spec = get_spec(flag)
+        observed = is_flag_active(flag)
+        if not observed:
             report.status = "SILENT_NOOP"
-            report.detail = f"set but Python sees {observed!r}"
+            report.detail = (
+                f"set in env ({os.environ.get(flag)!r}) but "
+                f"is_flag_active returned False"
+            )
         else:
+            in_registry = " (in FLAG_REGISTRY)" if spec is not None else " (no spec)"
             report.status = "PASS"
-            report.detail = f"flag visible in {len(report.referenced_in)} files"
+            report.detail = (
+                f"flag visible in {len(report.referenced_in)} files"
+                f"{in_registry}"
+            )
     except Exception as exc:  # pragma: no cover — defensive
         report.status = "IMPORT_FAIL"
         report.detail = f"{type(exc).__name__}: {exc}"

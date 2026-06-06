@@ -107,6 +107,7 @@ dependencies = [
     "dspy>=3.2.1",
     # llmlingua removed: 0 importers, no cp314 wheel, fail-soft if re-added
     "selectolax>=0.4.10",
+    "hypothesis<6.50",
 ]
 
 # ------------------------------------------------------------------ optionals
@@ -156,8 +157,6 @@ graph-storage = [
     "duckdb>=1.2.0",
     "lancedb>=0.2.5",
     "pyarrow>=16.0.0",
-    "pytest-hypothesis>=10.0.3",
-    "hypothesis>=6.155.0",
     "polars>=1.0.0",
 ]
 

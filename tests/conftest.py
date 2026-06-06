@@ -1,4 +1,4 @@
-# Ensure hledac.universal resolves as a package and utils.uuid7 is importable
+# Ensure hledac namespace resolves for all sibling subpackages.
 import os
 import subprocess
 import sys
@@ -6,8 +6,24 @@ from pathlib import Path
 
 REPO_ROOT = Path("/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal")
 
-sys.path.insert(0, '/Users/vojtechhamada/PycharmProjects/Hledac')
-sys.path.insert(0, str(REPO_ROOT))
+# Prepend the paths needed for `hledac` to be importable. The canonical
+# bootstrap below will then extend sys.path with every spec sibling.
+# Idempotent — duplicates are silently dropped by `set` membership.
+#
+# Order matters: REPO_ROOT must end up at sys.path[0] (Python walks the
+# path list in order; if the parent of the project is at index 0, Python
+# discovers `hledac` as an *implicit namespace package* there and the
+# real `hledac/_namespace_bootstrap.py` under REPO_ROOT becomes invisible).
+# Tuple order is the iteration order, but `insert(0, …)` reverses it, so
+# we list the parent FIRST and REPO_ROOT SECOND to land the desired
+# final ordering of [REPO_ROOT, parent, …].
+for _p in ('/Users/vojtechhamada/PycharmProjects/Hledac', str(REPO_ROOT)):
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
+
+# Canonical namespace bootstrap (idempotent, fail-safe).
+from hledac._namespace_bootstrap import ensure_namespace_paths
+ensure_namespace_paths()
 
 
 # ── R0 autoprobe (Sprint F26X) ──────────────────────────────────────────────

@@ -33,13 +33,17 @@ import sys
 import types
 from typing import List, Optional
 
-# Resolve the project root: three levels up from this file.
+# Resolve the project root: two levels up from this file.
 #   /…/hledac/universal/hledac/_namespace_bootstrap.py
 #   dirname(file)                       -> /…/hledac/universal/hledac
-#   dirname(dirname(file))              -> /…/hledac/universal
-#   dirname(dirname(dirname(file)))     -> /…/hledac
-_HLEDAC_ROOT = os.path.dirname(
-    os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+#   dirname(dirname(file))              -> /…/hledac/universal  ← ROOT
+#
+# All sibling top-level packages (security/, core/, brain/, fetching/,
+# transport/, coordinators/, knowledge/, runtime/, utils/, advanced_web/,
+# advanced_rag/, advanced_reasoning/, research/, discovery/) live as
+# direct subdirectories of the project root.
+_HLEDAC_ROOT: str = os.path.dirname(
+    os.path.dirname(os.path.abspath(__file__))
 )
 
 
@@ -47,11 +51,19 @@ _HLEDAC_ROOT = os.path.dirname(
 # joined onto _HLEDAC_ROOT. Only directories that actually exist on disk
 # are appended to `hledac.__path__`.
 _SIBLING_PACKAGE_DIRS: tuple[str, ...] = (
-    "universal/hledac",          # namespace package marker
+    # ── Core spec paths (must be reachable as hledac.X imports) ─────
     "security",
     "advanced_web",
-    "advanced_rag",
     "core",
+    "fetching",
+    "transport",
+    "coordinators",
+    "brain",
+    "knowledge",
+    "runtime",
+    "utils",
+    # ── Additional siblings registered by the legacy bootstrap ────
+    "advanced_rag",
     "advanced_reasoning",
     "research",
     "discovery",
@@ -130,6 +142,109 @@ def _ensure_hledac_root() -> types.ModuleType:
     root.__package__ = "hledac"  # type: ignore[attr-defined]
     sys.modules["hledac"] = root
     return root
+
+
+# ---------------------------------------------------------------------------
+# Spec-mandated namespace extensions
+# ---------------------------------------------------------------------------
+
+
+def _inject_sys_path() -> None:
+    """
+    Idempotently inject `_HLEDAC_ROOT` and every spec sibling into
+    `sys.path` so the canonical Python import machinery can resolve
+    `import security`, `import hledac.security`, `import hledac.universal`,
+    etc. without confusion.
+
+    Project layout (real, not assumed):
+        /…/hledac/universal/                  ← _HLEDAC_ROOT, project root
+        /…/hledac/universal/hledac/           ← namespace root (this file)
+        /…/hledac/universal/hledac/__init__.py
+        /…/hledac/universal/{security,core,advanced_web,fetching,transport,
+                              coordinators,brain,knowledge,runtime,utils}
+
+    Each sibling directory is prepended to `sys.path` **only if it exists
+    on disk** and is **not already present** (idempotent: 3× calls produce
+    a single entry per dir).
+    """
+    targets: tuple[str, ...] = (_HLEDAC_ROOT,) + tuple(
+        os.path.join(_HLEDAC_ROOT, sub) for sub in _SIBLING_PACKAGE_DIRS
+    )
+    for path in targets:
+        if os.path.isdir(path) and path not in sys.path:
+            sys.path.insert(0, path)
+
+
+def _bootstrap_universal() -> None:
+    """
+    Create the virtual `hledac.universal` package — points to the project
+    root, allowing `import hledac.universal` and downstream imports
+    (`hledac.universal.brain`, `hledac.universal.coordinators`, …) to
+    resolve.
+
+    Without this, Python cannot find `hledac.universal` because the
+    `universal/` directory is the project root itself, not a sub-package
+    of `hledac/`.
+
+    Idempotent: if `hledac.universal` is already in `sys.modules`, this is
+    a no-op. Re-registration is allowed (e.g. after `importlib.reload` of
+    the namespace root) but will not duplicate `__path__` entries.
+    """
+    if not os.path.isdir(_HLEDAC_ROOT):
+        return
+
+    root_init = os.path.join(_HLEDAC_ROOT, "__init__.py")
+    if "hledac.universal" in sys.modules:
+        mod = sys.modules["hledac.universal"]
+        if _HLEDAC_ROOT not in getattr(mod, "__path__", []):
+            mod.__path__ = [_HLEDAC_ROOT]  # type: ignore[attr-defined]
+        if not getattr(mod, "__file__", None) and os.path.isfile(root_init):
+            mod.__file__ = root_init  # type: ignore[attr-defined]
+        return
+
+    mod = types.ModuleType("hledac.universal")
+    mod.__path__ = [_HLEDAC_ROOT]  # type: ignore[attr-defined]
+    mod.__file__ = root_init if os.path.isfile(root_init) else None  # type: ignore[attr-defined]
+    mod.__package__ = "hledac.universal"  # type: ignore[attr-defined]
+    sys.modules["hledac.universal"] = mod
+
+
+def _bootstrap_extended_siblings() -> None:
+    """
+    Belt-and-suspenders wiring for the spec sibling packages. Two
+    mechanisms are applied per directory:
+
+    1. Append the directory to `hledac.__path__` (so sub-package search
+       can reach it via the standard namespace path machinery).
+    2. Register an explicit stub in `sys.modules` as `hledac.<sub>`.
+       This is REQUIRED when the parent `hledac` is a regular package
+       (has its own ``__init__.py``), because regular packages cannot
+       host implicit namespace sub-portions in their ``__path__`` — the
+       standard import machinery would fail to find even regular
+       sub-packages whose physical location sits outside the parent's
+       own directory.
+
+    Idempotent: `_extend_path` deduplicates on `not in plist`,
+    `_make_pkg_stub` short-circuits if the name is already in
+    `sys.modules`. Both are no-ops on repeated invocations.
+
+    Fail-safe: each per-directory step is wrapped in try/except so a
+    single broken sibling cannot abort the rest of the bootstrap.
+    """
+    hledac_mod = sys.modules.get("hledac")
+    for sub in _SIBLING_PACKAGE_DIRS:
+        full = os.path.join(_HLEDAC_ROOT, sub)
+        if not os.path.isdir(full):
+            continue
+        try:
+            if hledac_mod is not None and hasattr(hledac_mod, "__path__"):
+                _extend_path(hledac_mod, full)
+        except Exception:
+            pass  # fail-soft
+        try:
+            _make_pkg_stub(f"hledac.{sub}", full)
+        except Exception:
+            pass  # fail-soft
 
 
 # ---------------------------------------------------------------------------
@@ -315,6 +430,9 @@ def ensure_namespace_paths() -> bool:
         return False
 
     _ensure_hledac_root()
+    _inject_sys_path()
+    _bootstrap_universal()
+    _bootstrap_extended_siblings()
     _bootstrap_security()
     _bootstrap_core()
     _bootstrap_advanced_web()

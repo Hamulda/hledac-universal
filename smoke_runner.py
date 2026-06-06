@@ -34,6 +34,10 @@ Použití:
 """
 from __future__ import annotations
 
+# Namespace bootstrap — must run before any hledac.* import
+from hledac._namespace_bootstrap import ensure_namespace_paths
+ensure_namespace_paths()
+
 import argparse
 import asyncio
 import cProfile
