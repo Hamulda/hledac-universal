@@ -21,9 +21,140 @@ for _p in ('/Users/vojtechhamada/PycharmProjects/Hledac', str(REPO_ROOT)):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
+# CRITICAL: load the real hledac.universal package via importlib so its
+# `__init__.py` actually runs (populating `_LAZY_EXPORTS` and the
+# `__getattr__` lazy-export machinery).  The normal `import hledac.universal`
+# does NOT work reliably in this layout because Python's namespace
+# package mechanism returns a stub from sys.modules before the real
+# `__init__.py` gets a chance to execute.  Loading via importlib.util
+# forces the source to be read and executed.
+import importlib.util as _importlib_util
+
+_HLEDAC_UNIVERSAL_INIT = (
+    "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/__init__.py"
+)
+if os.path.isfile(_HLEDAC_UNIVERSAL_INIT):
+    try:
+        _spec = _importlib_util.spec_from_file_location(
+            "hledac.universal", _HLEDAC_UNIVERSAL_INIT
+        )
+        if _spec is not None and _spec.loader is not None:
+            _hub_mod = _importlib_util.module_from_spec(_spec)
+            sys.modules["hledac.universal"] = _hub_mod
+            _spec.loader.exec_module(_hub_mod)
+            # Bind the freshly-loaded module as an attribute on the
+            # `hledac` package so `hledac.universal.X` access works too.
+            _hledac_pkg = sys.modules.get("hledac")
+            if _hledac_pkg is not None:
+                setattr(_hledac_pkg, "universal", _hub_mod)
+    except Exception:
+        pass  # fail-soft — tests that need it will fail loudly enough
+
+# Now safe to run the namespace bootstrap.
+
 # Canonical namespace bootstrap (idempotent, fail-safe).
 from hledac._namespace_bootstrap import ensure_namespace_paths
 ensure_namespace_paths()
+
+# Force-import all key submodules of hledac.universal so the namespace
+# bootstrap does NOT create empty stubs for them.  The bootstrap's
+# `_bootstrap_universal()` synthesises a ModuleType for `hledac.universal`
+# before the real `__init__.py` runs; when sibling subpackages
+# (`hledac.universal.runtime`, `hledac.universal.brain`, etc.) are
+# later asked to import, Python's finder only sees those stubs because
+# the real `hledac.universal.runtime.acquisition_strategy` etc. never
+# had a chance to populate `sys.modules`.  We eagerly touch every common
+# subpackage here so the real modules win.
+_HUB_DIR = "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal"
+
+def _force_load(modname: str) -> None:
+    """Force-load `modname` from <HUB_DIR> by absolute path, replacing any
+    stub already in sys.modules.  Idempotent and fail-safe.
+    """
+    parts = modname.split(".")
+    rel = "/".join(parts) + ".py"
+    init = "/".join(parts) + "/__init__.py"
+    for candidate in (os.path.join(_HUB_DIR, rel), os.path.join(_HUB_DIR, init)):
+        if os.path.isfile(candidate):
+            # Drop the stub (and any cached submodule entries) so the
+            # real import wins.
+            for k in list(sys.modules.keys()):
+                if k == modname or k.startswith(modname + "."):
+                    del sys.modules[k]
+            try:
+                _spec = _importlib_util.spec_from_file_location(modname, candidate)
+                if _spec is None or _spec.loader is None:
+                    return
+                _m = _importlib_util.module_from_spec(_spec)
+                sys.modules[modname] = _m
+                _spec.loader.exec_module(_m)
+                # F270 fix: detect partial package init. If candidate was an
+                # __init__.py (package), the resulting module MUST have __path__.
+                # When a sub-import inside __init__.py fails (e.g. heavy optional
+                # deps or cross-test contamination), exec_module leaves the
+                # module in sys.modules without __path__ — a "stub". Subsequent
+                # `from hledac.universal.utils.X import Y` then errors with
+                # `'hledac.universal.utils' is not a package`. Drop the stub
+                # so the normal import path can re-attempt from scratch.
+                if init.endswith("__init__.py") and not hasattr(_m, "__path__"):
+                    sys.modules.pop(modname, None)
+                return
+            except Exception:
+                # exec_module raised — drop the partial stub so it does not
+                # poison sys.modules for the rest of the collection run.
+                sys.modules.pop(modname, None)
+                return
+
+for _sub in (
+    "hledac.universal",
+    "hledac.universal.runtime",
+    "hledac.universal.runtime.acquisition_strategy",
+    "hledac.universal.runtime.sprint_scheduler",
+    "hledac.universal.runtime.pivot_planner",
+    "hledac.universal.brain",
+    "hledac.universal.brain.ane_embedder",
+    "hledac.universal.coordinators",
+    "hledac.universal.coordinators.fetch_coordinator",
+    "hledac.universal.knowledge",
+    "hledac.universal.knowledge.duckdb_store",
+    "hledac.universal.utils",
+    "hledac.universal.utils.concurrency",
+    "hledac.universal.utils.sprint_lifecycle",
+    "hledac.universal.utils.async_helpers",
+    "hledac.universal.discovery",
+    "hledac.universal.discovery.circl_pdns_adapter",
+    "hledac.universal.discovery.duckduckgo_adapter",
+    "hledac.universal.discovery.rss_atom_adapter",
+    "hledac.universal.patterns",
+    "hledac.universal.patterns.pattern_matcher",
+    "hledac.universal.fetching",
+    "hledac.universal.fetching.public_fetcher",
+    "hledac.universal.transport",
+    "hledac.universal.core",
+    "hledac.universal.core.resource_governor",
+    "hledac.universal.pipeline",
+    "hledac.universal.pipeline.live_public_pipeline",
+    "hledac.universal.layers",
+    "hledac.universal.resource_allocator",
+):
+    _force_load(_sub)
+
+# Ensure `hledac.universal` is fully loaded and bound as an attribute on
+# the `hledac` package, so that `hledac.universal.X` access (used in
+# many test modules) resolves the same way as `from hledac.universal
+# import X`.  The stub at hledac/universal/hledac/__init__.py only
+# provides a finder-level path, not an attribute bind, so we do it
+# explicitly here.
+try:
+    import hledac as _hledac_pkg
+    if not hasattr(_hledac_pkg, "universal"):
+        import importlib as _importlib
+        _mod = _importlib.import_module("hledac.universal")
+        # Manually bind as attribute — Python's namespace-package
+        # mechanism does NOT set this automatically for sub-modules.
+        setattr(_hledac_pkg, "universal", _mod)
+except Exception:
+    pass  # fail-soft — tests that don't need it will still work
 
 
 # ── R0 autoprobe (Sprint F26X) ──────────────────────────────────────────────

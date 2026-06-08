@@ -23,6 +23,7 @@ Invariants enforced:
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
 import sys
 import time
@@ -39,18 +40,91 @@ __all__ = [
     "safe_gather_dropin",
     "safe_gather_fire_and_forget",
     "safe_gather_strict",
+    "safe_create_task",
     "SafeGatherResult",
     "_BoundedExceptionLog",
 ]
 
 logger = logging.getLogger(__name__)
 
-# Eager task creation: Python 3.12+ supports `eager_start=True` on
+# Eager task creation: Python 3.12+ stdlib accepts `eager_start=True` on
 # loop.create_task(), running the coroutine synchronously up to its
 # first await. With uvloop on M1, this eliminates ~15-30μs scheduling
 # overhead per task in scatter/gather patterns. Degrades gracefully on
 # <3.12 (no eager_start kwarg passed).
-_EAGER_START_SUPPORTED = sys.version_info >= (3, 12)
+#
+# IMPORTANT: uvloop 0.22.x (current) does NOT implement eager_start in its
+# C-level create_task — signature is (coro, *, name=None, context=None).
+# A naive `sys.version_info >= (3, 12)` check passes on Python 3.14+uvloop
+# but breaks every safe_gather_dropin / safe_gather_strict call. Detect
+# at import-time by probing a fresh event loop's create_task signature.
+def _detect_eager_start_support() -> bool:
+    """True only if Python 3.12+ AND the loop's create_task accepts eager_start.
+
+    uvloop and any custom loop implementation must opt-in via signature
+    inspection. Defensive: a probing loop avoids breaking on platforms where
+    creating an event loop in a non-main thread or inside an import-time
+    call would be problematic.
+    """
+    if sys.version_info < (3, 12):
+        return False
+    probe_loop = None
+    try:
+        probe_loop = asyncio.new_event_loop()
+        sig = inspect.signature(probe_loop.create_task)
+        return "eager_start" in sig.parameters
+    except (OSError, ValueError, TypeError):
+        return False
+    finally:
+        if probe_loop is not None:
+            try:
+                probe_loop.close()
+            except Exception:
+                pass
+
+
+_EAGER_START_SUPPORTED = _detect_eager_start_support()
+
+
+def safe_create_task(
+    coro: Any,
+    *,
+    name: str | None = None,
+    eager_start: bool = False,
+) -> asyncio.Task[Any]:
+    """
+    Sprint F228G: Defensive create_task wrapper that probes the running loop's
+    create_task signature and only passes `eager_start` if the loop supports
+    it.
+
+    Why this exists:
+      - Some event loop implementations (uvloop 0.22.x on M1) do NOT implement
+        the `eager_start` kwarg that Python 3.12+ stdlib asyncio accepts.
+      - A naive `sys.version_info >= (3, 12)` check is insufficient because
+        uvloop overrides create_task and drops the kwarg.
+      - Calling `loop.create_task(coro, eager_start=True)` on uvloop raises
+        `TypeError: create_task() got an unexpected keyword argument 'eager_start'`.
+
+    The probe:
+      - Run ONCE at module import time (cached in _EAGER_START_SUPPORTED).
+      - Only passes eager_start=True when the loop actually accepts it.
+
+    Returns:
+      asyncio.Task wrapping the coroutine. Never raises TypeError from
+      signature mismatch — falls back to standard create_task.
+
+    Invariant: bounded, fail-safe. If the import-time probe failed (e.g. no
+    event loop available), _EAGER_START_SUPPORTED is False and we always use
+    the safe path.
+    """
+    if eager_start and _EAGER_START_SUPPORTED:
+        try:
+            return asyncio.create_task(coro, name=name, eager_start=True)  # type: ignore[call-arg]
+        except TypeError:
+            # Defensive: even if the probe passed, the actual loop may not
+            # accept the kwarg. Fall back to standard call.
+            pass
+    return asyncio.create_task(coro, name=name)
 
 
 def _check_gathered(
@@ -434,14 +508,24 @@ async def safe_gather_dropin(
     # Pre-create tasks with eager_start (Python 3.12+) for ~15-30μs scheduling
     # win per task. asyncio.gather() consumes pre-existing Task instances
     # directly (no re-wrap), preserving gather(return_exceptions=True) semantics.
+    # Sprint F271F fix: If a caller already passed a finished Task (e.g. acquisition
+    # lanes pre-wrap with asyncio.create_task at runtime/acquisition_strategy.py:4209),
+    # we must NOT call loop.create_task(Task) -- that raises
+    # "TypeError: a coroutine was expected, got Task" and aborts the lane gather.
     loop = asyncio.get_running_loop()
-    tasks = [
-        loop.create_task(
-            _wrap_awaitable(c),
-            **({"eager_start": True} if _EAGER_START_SUPPORTED else {}),
-        )
-        for c in coros
-    ]
+    tasks: list[Any] = []
+    for c in coros:
+        if isinstance(c, (asyncio.Task, asyncio.Future)):
+            # Already a Task/Future: pass through unchanged. asyncio.gather handles them.
+            tasks.append(c)
+            continue
+        # Coroutine / awaitable-with-__await__ / plain value → wrap + create.
+        # eager_start kwarg is Python 3.12+ only; guarded by _EAGER_START_SUPPORTED
+        # to keep py3.10/3.11 import-time + runtime compatibility.
+        if _EAGER_START_SUPPORTED:
+            tasks.append(loop.create_task(_wrap_awaitable(c), eager_start=True))
+        else:
+            tasks.append(loop.create_task(_wrap_awaitable(c)))
     raw = await asyncio.gather(*tasks, return_exceptions=True)
     ok, errors, re_raise = _classify_gathered(raw, label, _log)
 

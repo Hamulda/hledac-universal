@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import time
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
@@ -26,8 +27,8 @@ try:
     from numpy.typing import NDArray
     HAS_NUMPY = True
 except ImportError:
-    np = None
-    NDArray = "NDArray"  # type: ignore[misc]
+    np = None  # type: ignore[ty:invalid-assignment]  # None sentinel: numpy unavailable at runtime, callers must check HAS_NUMPY
+    NDArray = "NDArray"  # type: ignore[misc,ty:invalid-assignment]  # string sentinel — keeps `from numpy.typing import NDArray` valid downstream via type-checker
     HAS_NUMPY = False
 
 from .base import DecisionResponse, OperationResult, OperationType, UniversalCoordinator
@@ -39,8 +40,8 @@ try:
     MLX_AVAILABLE = True
 except ImportError:
     MLX_AVAILABLE = False
-    mx = None
-    nn = None
+    mx = None  # type: ignore[ty:invalid-assignment]  # None sentinel: mlx.core unavailable at runtime, callers must check MLX_AVAILABLE
+    nn = None  # type: ignore[ty:invalid-assignment]  # None sentinel: mlx.nn unavailable at runtime, callers must check MLX_AVAILABLE
 
 logger = logging.getLogger(__name__)
 
@@ -301,7 +302,7 @@ class ContrastiveLearning:
         if MLX_AVAILABLE:
             # MLX projection
             weight = mx.random.normal((self.embedding_dim, self.embedding_dim)) * 0.02
-            return lambda x: mx.matmul(x, weight)
+            return lambda x: mx.matmul(x, weight)  # type: ignore[ty:invalid-argument-type]  # stale type: mlx.core is None sentinel, ty loses union narrowing inside MLX_AVAILABLE branch
         else:
             # Numpy projection
             weight = np.random.randn(self.embedding_dim, self.embedding_dim) * 0.02
@@ -484,10 +485,10 @@ class UniversalMultimodalCoordinator(UniversalCoordinator):
 
             return OperationResult(
                 operation_id=self.generate_operation_id(),
-                status="completed" if result.get('success') else "failed",
-                result_summary=result.get('summary', 'Multimodal processing completed'),
+                status="completed" if result.get('success') else "failed",  # type: ignore[ty:invalid-argument-type]  # stale type: result is Any from upstream await
+                result_summary=result.get('summary', 'Multimodal processing completed'),  # type: ignore[ty:invalid-argument-type]  # same: result.get() on Any
                 execution_time=time.time() - start_time,
-                success=result.get('success', False),
+                success=result.get('success', False),  # type: ignore[ty:invalid-argument-type]  # same
                 metadata=result
             )
         except Exception as e:

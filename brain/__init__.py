@@ -42,6 +42,24 @@ class DecisionType(Enum):
 
 from .hermes3_engine import Hermes3Engine
 
+# Sprint P0-2: Continuous batching executor (F226H wiring).
+# Always-on routing layer for Hermes3 inference requests.
+try:
+    from .mlx_batched_executor import MLXBatchedExecutor
+    MLX_BATCHED_EXECUTOR_AVAILABLE = True
+except Exception:  # pragma: no cover — defensive lazy import
+    MLXBatchedExecutor = None  # type: ignore[assignment,misc]
+    MLX_BATCHED_EXECUTOR_AVAILABLE = False
+
+# Sprint P0-3: Dedicated MLX worker thread with persistent event loop.
+# M1 8GB safe: single thread, single Metal context, single model state.
+try:
+    from .mlx_worker_thread import MLXWorkerThread
+    MLX_WORKER_THREAD_AVAILABLE = True
+except Exception:  # pragma: no cover — defensive lazy import
+    MLXWorkerThread = None  # type: ignore[assignment,misc]
+    MLX_WORKER_THREAD_AVAILABLE = False
+
 try:
     from .insight_engine import (
         Anomaly,
@@ -84,7 +102,7 @@ except ImportError:
 
 # Hypothesis Engine (automated hypothesis generation and testing)
 try:
-    from .hypothesis_engine import (
+    from .research_hypothesis_engine import (
         AdversarialReport,
         # Adversarial Verification
         AdversarialVerifier,
@@ -100,7 +118,7 @@ try:
         TestType,
         create_hypothesis_engine,
     )
-    from .hypothesis_engine import (
+    from .research_hypothesis_engine import (
         Evidence as HypothesisEvidence,
     )
     HYPOTHESIS_AVAILABLE = True
@@ -231,6 +249,12 @@ def get_available_brain_engines() -> dict[str, bool]:
 
 __all__ = [
     "Hermes3Engine",
+    # Sprint P0-2: Continuous batching executor
+    "MLXBatchedExecutor",
+    "MLX_BATCHED_EXECUTOR_AVAILABLE",
+    # Sprint P0-3: Dedicated MLX worker thread
+    "MLXWorkerThread",
+    "MLX_WORKER_THREAD_AVAILABLE",
     "DecisionType",
     # Insight
     "InsightEngine",

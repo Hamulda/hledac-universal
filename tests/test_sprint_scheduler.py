@@ -734,3 +734,84 @@ def test_sprint_scheduler_result_synthesis_fields_exist():
     assert r.synthesis_engine == "unknown"
     assert r.synthesis_findings_count == 0
     assert r.synthesis_text == ""
+
+
+# ── Sprint F259B: Synthesis early-exit on 0 accepted findings ─────────────────
+
+
+@pytest.mark.asyncio
+async def test_synthesis_sidecar_skipped_when_zero_accepted_findings(minimal_config):
+    """
+    F259B CRITICAL #3: Synthesis sidecar MUST early-exit when this sprint
+    produced 0 accepted findings, BEFORE touching duckdb_store I/O.
+
+    Regression for 1780830658: 120s windup wasted on 0-finding sprints.
+    Verifies the guard fires at the in-memory `self._result.accepted_findings`
+    check, not at the post-query `if not findings` check.
+    """
+    SprintScheduler = _import_scheduler()
+    sched = SprintScheduler(minimal_config, ct_log_client=None)
+    sched._duckdb_store = AsyncMock()
+
+    # Duckdb WOULD return findings (proves the guard fires BEFORE the I/O)
+    sched._duckdb_store.get_top_findings = AsyncMock(return_value=[
+        {"ioc": "1.2.3.4", "text": "would-be finding"}
+    ])
+
+    # Default: accepted_findings = 0 (fresh SprintSchedulerResult)
+    assert sched._result.accepted_findings == 0
+
+    # Mock SynthesisRunner — must NOT be instantiated
+    mock_runner_cls = MagicMock()
+
+    with patch.dict(os.environ, {"HLEDAC_ENABLE_SYNTHESIS": "1"}):
+        with patch("hledac.universal.brain.synthesis_runner.SynthesisRunner", mock_runner_cls):
+            await sched._run_synthesis_sidecar("test query", sched._duckdb_store, None)
+
+    # The early-exit guard must have fired: SynthesisRunner never constructed
+    assert mock_runner_cls.call_count == 0, (
+        f"SynthesisRunner instantiated {mock_runner_cls.call_count}x — early-exit guard failed"
+    )
+    # duckdb_store I/O must NOT have been called either
+    assert sched._duckdb_store.get_top_findings.call_count == 0, (
+        "duckdb_store.get_top_findings was called — early-exit should fire before I/O"
+    )
+    # _result fields remain at defaults
+    assert sched._result.synthesis_success is False
+    assert sched._result.synthesis_findings_count == 0
+    assert sched._result.synthesis_engine in ("unknown", "uma_guard", "import_failed", "error")
+
+
+@pytest.mark.asyncio
+async def test_synthesis_sidecar_runs_when_accepted_findings_present(minimal_config):
+    """
+    F259B: When accepted_findings > 0, synthesis must proceed normally
+    (regression guard for the early-exit — must not block the happy path).
+    """
+    SprintScheduler = _import_scheduler()
+    sched = SprintScheduler(minimal_config, ct_log_client=None)
+    sched._duckdb_store = AsyncMock()
+    sched._duckdb_store.get_top_findings = AsyncMock(return_value=[
+        {"ioc": "1.2.3.4", "text": "real finding"}
+    ])
+
+    # Sprint has accepted findings → synthesis should proceed
+    sched._result.accepted_findings = 5
+
+    # Mock SynthesisRunner that succeeds
+    mock_runner = MagicMock()
+    mock_runner.synthesize_findings = AsyncMock(return_value=MagicMock(
+        ioc_entities=[], threat_actors=[], threat_summary="", confidence=0.0,
+        sources_count=0, timestamp=0.0,
+    ))
+    mock_runner.inject_lifecycle_adapter = MagicMock()
+    mock_runner.inject_stix_graph = MagicMock()
+    mock_runner.close = AsyncMock()
+
+    with patch.dict(os.environ, {"HLEDAC_ENABLE_SYNTHESIS": "1"}):
+        with patch("hledac.universal.brain.synthesis_runner.SynthesisRunner", return_value=mock_runner):
+            await sched._run_synthesis_sidecar("test query", sched._duckdb_store, None)
+
+    # Synthesis DID run (because accepted_findings > 0)
+    assert mock_runner.synthesize_findings.call_count == 1
+    assert sched._result.synthesis_findings_count == 1

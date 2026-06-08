@@ -108,7 +108,7 @@ class UniversalCoordinator(ABC):
         # Operation tracking (from OperationTrackingMixin)
         self._active_operations: dict[str, dict[str, Any]] = {}
         self._operation_counter = 0
-        self._operation_history: Ordereddict[str, dict[str, Any]] = OrderedDict()
+        self._operation_history: OrderedDict[str, dict[str, Any]] = OrderedDict()
         self._max_history = 100
 
         # State

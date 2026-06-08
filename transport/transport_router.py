@@ -42,6 +42,7 @@ INVARIANTS:
 from __future__ import annotations
 
 import os
+import re
 import urllib.parse
 from dataclasses import dataclass
 from typing import Any, Literal
@@ -53,6 +54,7 @@ from typing import Any, Literal
 Lane = Literal[
     "aiohttp_default",
     "httpx_h2",
+    "httpx_h3",
     "curl_cffi_stealth",
     "tor_socks",
     "i2p_socks",
@@ -260,6 +262,22 @@ class TransportRouter:
                 concurrency_class=suggested_concurrency or "high",
             )
 
+        # 6.5 HTTPX H3 — env-gated, API-like, host already advertised h3 via Alt-Svc.
+        # The host must have been observed advertising ``h3`` in a previous
+        # response (recorded in the http3_lane LRU cache). The H3 handshake
+        # itself happens inside curl_cffi via http_version=HttpVersion.v3;
+        # here we merely promote the routing decision so telemetry reflects
+        # the intended lane and the call site can pick the right profile.
+        if self._is_httpx_h3_candidate(url):
+            return TransportDecision(
+                lane="httpx_h3",
+                reason="api_like_httpx_h3",
+                cache_allowed=cache_safe,
+                max_bytes=suggested_max_bytes or 0,
+                timeout_s=suggested_timeout_s or 0.0,
+                concurrency_class=suggested_concurrency or "high",
+            )
+
         # 7. Default → aiohttp_default
         return TransportDecision(
             lane="aiohttp_default",
@@ -317,12 +335,74 @@ class TransportRouter:
             parsed = urllib.parse.urlparse(url)
             path = parsed.path
             for pattern in self._API_PATH_PATTERNS:
-                import re
                 if re.match(pattern, f"{parsed.scheme}://{hostname}{path}"):
                     return True
         except Exception:
             pass
 
+        return False
+
+    def _is_httpx_h3_candidate(self, url: str) -> bool:
+        """
+        Return True if URL is a candidate for the HTTP/3 (QUIC) lane.
+
+        P1-2: complements ``_is_httpx_h2_candidate``. H3 has TWO extra
+        preconditions on top of H2:
+
+          1. ``HLEDAC_ENABLE_HTTPX_H3=1`` env gate (parallels
+             ``HLEDAC_ENABLE_HTTPX_H2``). Default off; the lane is
+             opt-in because real QUIC carries operational cost and
+             a small memory footprint (aioquic + cryptography).
+          2. The host must have already advertised ``h3`` via Alt-Svc
+             in a prior response. We read the shared LRU in
+             ``http3_lane`` (bounded 512, 24h TTL) instead of probing
+             on every call: H3 negotiation is opportunistic, and a
+             router that ran a HEAD per URL would double the latency
+             of the lane it's trying to promote.
+
+        URL pattern is the same API-like set as H2. The actual H3
+        handshake still happens inside the curl_cffi wrapper via
+        ``http_version=HttpVersion.v3``; the router merely records
+        the lane choice so telemetry reflects the intended transport.
+        """
+        # Env gate (also accepts the legacy F260 alias HLEDAC_HTTP3=1)
+        env_h3 = os.environ.get("HLEDAC_ENABLE_HTTPX_H3", "").strip().lower()
+        env_legacy = os.environ.get("HLEDAC_HTTP3", "").strip().lower()
+        gate = env_h3 or env_legacy
+        if not gate or gate in ("0", "false", "no", "off"):
+            return False
+
+        hostname = self._extract_host(url)
+        if not hostname:
+            return False
+
+        # Host must already be in the H3 LRU as advertising ``h3``.
+        # ``_cache_get`` is private to http3_lane; we import it lazily
+        # so a missing http3_lane does not break the router.
+        try:
+            from hledac.universal.transport.http3_lane import (  # type: ignore[import-not-found]
+                _cache_get as _h3_cache_get,
+            )
+
+            if _h3_cache_get(hostname) is not True:
+                return False
+        except Exception:
+            # Fail-soft: if the lane is unavailable, never select H3.
+            return False
+
+        # Reuse H2's API-like pattern set.
+        for suffix in self._API_HOST_SUFFIXES:
+            if hostname.endswith(suffix):
+                return True
+        if hostname.startswith(self._API_HOST_PREFIXES):
+            return True
+        try:
+            parsed = urllib.parse.urlparse(url)
+            for pattern in self._API_PATH_PATTERNS:
+                if re.match(pattern, f"{parsed.scheme}://{hostname}{parsed.path}"):
+                    return True
+        except Exception:
+            pass
         return False
 
 

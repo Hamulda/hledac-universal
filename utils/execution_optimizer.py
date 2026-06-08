@@ -24,7 +24,7 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 import psutil
 
-from utils.async_helpers import safe_gather_dropin
+from .async_helpers import safe_gather_dropin
 if TYPE_CHECKING:
     pass
 
@@ -156,12 +156,12 @@ class ParallelExecutionOptimizer:
     MAX_WORKER_METRICS = 16
     PARALLEL_GROUP_TTL_SECS = 3600  # 1 hour
 
-    def __init__(self, config_path: str = None):
+    def __init__(self, config_path: str | None = None):
         self.config = self._load_config(config_path)
         self.task_history = deque(maxlen=1000)
         # Bounded storage with timestamps for TTL eviction
-        self.worker_metrics: Ordereddict[str, dict] = OrderedDict()
-        self.parallel_groups: Ordereddict[str, dict] = OrderedDict()
+        self.worker_metrics: OrderedDict[str, dict] = OrderedDict()
+        self.parallel_groups: OrderedDict[str, dict] = OrderedDict()
         # Sprint 8G: DEFERRED - sklearn eager loads 1478 modules at import time
         self._execution_predictor = None
         self.load_balancer = LoadBalancer()
@@ -373,8 +373,8 @@ class ParallelExecutionOptimizer:
 
     async def execute_parallel(self,
                             tasks: list[Any],
-                            strategy: ExecutionStrategy = None,
-                            max_workers: int = None,
+                            strategy: ExecutionStrategy | None = None,
+                            max_workers: int | None = None,
                             task_type: TaskType = TaskType.MIXED) -> list[Any]:
         """Execute tasks in parallel with optimal strategy"""
         if not strategy:
@@ -1546,7 +1546,7 @@ class PredictiveCacheManager:
 
             return entry.value
 
-    def put(self, key: str, value: Any, size_bytes: int = None) -> bool:
+    def put(self, key: str, value: Any, size_bytes: int | None = None):
         """Put value into cache with predictive eviction."""
         if size_bytes is None:
             size_bytes = len(str(value).encode())

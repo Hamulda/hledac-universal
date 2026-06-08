@@ -29,19 +29,19 @@ try:
     PSUTIL_AVAILABLE = True
 except ImportError:
     PSUTIL_AVAILABLE = False
-    psutil = None
+    psutil = None  # type: ignore[ty:invalid-assignment]  # None sentinel: psutil unavailable at runtime, callers must check PSUTIL_AVAILABLE
 
 # Snapshot history bound for MemoryProfiler - prevents unbounded memory growth
 MAX_SNAPSHOT_HISTORY: int = 1000
 
 # Optional imports
 try:
-    from hledac.models import SearchResult
+    from hledac.models import SearchResult  # type: ignore[ty:unresolved-import]  # pre-existing absolute import — module not in project (historical namespace)
 except ImportError:
     SearchResult = None
 
 try:
-    from hledac.runtime.unified_orchestrator import AgentProtocol
+    from hledac.runtime.unified_orchestrator import AgentProtocol  # type: ignore[ty:unresolved-import]  # pre-existing absolute import — module not in project (historical namespace)
 except ImportError:
     AgentProtocol = Any
 

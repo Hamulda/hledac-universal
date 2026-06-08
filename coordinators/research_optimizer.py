@@ -447,7 +447,7 @@ async def optimized_research(
 
 def create_optimized_pipeline(
     strategy: OptimizationStrategy = OptimizationStrategy.BALANCED
-) -> tuple[ResearchOptimizer, PrivacyEnhancedResearch]:
+) -> tuple[ResearchOptimizer, PrivacyEnhancedResearch]:  # type: ignore[ty:unresolved-reference]  # PrivacyEnhancedResearch is lazy-imported below (line 457) to avoid module-level import cost
     """
     Create optimized privacy-enhanced research pipeline.
 

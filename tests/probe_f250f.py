@@ -29,7 +29,7 @@ def test_privacy_layer_gate_respected():
 # Test 3: Research layer hunt integration in hypothesis_engine
 def test_research_layer_hunt_integration():
     """Verify research_layer hunt() is called before LLM in generate_dark_surface_queries."""
-    with open(f'{BASE}/brain/hypothesis_engine.py') as f:
+    with open(f'{BASE}/brain/research_hypothesis_engine.py') as f:
         content = f.read()
 
     assert 'HLEDAC_ENABLE_RESEARCH_LAYER' in content, "Gate env var not found"
@@ -57,7 +57,7 @@ def test_separate_gates():
     """Verify PRIVACY_LAYER and RESEARCH_LAYER are separate gates."""
     with open(f'{BASE}/runtime/sprint_scheduler.py') as f:
         sched = f.read()
-    with open(f'{BASE}/brain/hypothesis_engine.py') as f:
+    with open(f'{BASE}/brain/research_hypothesis_engine.py') as f:
         hyp = f.read()
 
     assert 'HLEDAC_ENABLE_PRIVACY_LAYER' in sched, "PRIVACY_LAYER gate missing in scheduler"
@@ -68,7 +68,7 @@ def test_separate_gates():
 # Test 6: max_depth=2 for M1 safety in hunt()
 def test_hunt_max_depth():
     """Verify hunt() is called with max_depth=2 for M1 safety."""
-    with open(f'{BASE}/brain/hypothesis_engine.py') as f:
+    with open(f'{BASE}/brain/research_hypothesis_engine.py') as f:
         content = f.read()
 
     # Look for the hunt call with max_depth

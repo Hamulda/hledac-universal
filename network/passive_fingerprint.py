@@ -121,9 +121,9 @@ class PassiveFingerprint:
         async with sem:
             # Circuit breaker
             try:
-                from hledac.universal.fetching.fetch_coordinator import circuit_breaker
+                from hledac.universal.transport.circuit_breaker import get_breaker
                 domain = url.split("/")[2] if "//" in url else url
-                circuit_breaker.domain_breaker_check(domain)
+                if not get_breaker(domain).check_circuit().allowed: raise RuntimeError(f"circuit_open: {domain}")
             except Exception as e:
                 logger.debug(f"[FP] Circuit breaker blocked {source}: {e}")
                 return {}

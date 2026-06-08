@@ -1,5 +1,6 @@
 """Test preflight check returns valid dict."""
 import asyncio
+import os
 import pathlib
 import sys
 
@@ -10,19 +11,19 @@ sys.path.insert(0, str(_universal))
 import importlib
 import hledac.universal.__main__ as main_mod
 
-os = sys.modules.get("os")
-if os:
-    import os as os_mod
-    os_mod.chdir(_universal)
-
 
 def test_preflight_dict():
     """_preflight_check returns dict with required keys."""
-    result = asyncio.run(main_mod._preflight_check())
-    assert isinstance(result, dict)
-    assert "metal" in result
-    assert "free_ram_mb" in result
-    assert "memory_pct" in result
+    _prev_cwd = os.getcwd()
+    try:
+        os.chdir(_universal)
+        result = asyncio.run(main_mod._preflight_check())
+        assert isinstance(result, dict)
+        assert "metal" in result
+        assert "free_ram_mb" in result
+        assert "memory_pct" in result
+    finally:
+        os.chdir(_prev_cwd)
 
 
 if __name__ == "__main__":

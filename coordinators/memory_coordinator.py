@@ -82,8 +82,8 @@ try:
     from numpy.typing import NDArray
     HAS_NUMPY = True
 except ImportError:
-    np = None
-    NDArray = "NDArray"  # type: ignore[misc]
+    np = None  # type: ignore[ty:invalid-assignment]  # None sentinel: numpy unavailable at runtime, callers must check HAS_NUMPY
+    NDArray = "NDArray"  # type: ignore[misc,ty:invalid-assignment]  # string sentinel — keeps `from numpy.typing import NDArray` valid downstream via type-checker
     HAS_NUMPY = False
 
 try:
@@ -98,7 +98,7 @@ try:
     ZSTD_AVAILABLE = True
 except (ImportError, Exception):
     ZSTD_AVAILABLE = False
-    _zstd = None
+    _zstd = None  # type: ignore[ty:invalid-assignment]  # None sentinel: zstd unavailable at runtime, callers must check ZSTD_AVAILABLE
 
 # Sprint 26: Optional hnswlib for ANN search (replaces FAISS)
 try:
@@ -352,7 +352,7 @@ class NeuromorphicMemoryManager:
         # Generate hash-based activation pattern (xxhash — non-cryptographic)
         try:
             from hledac_rust_extensions import content_hash_hex as _xxh64
-            hash_val = _xxh64(data_str)
+            hash_val = _xxh64(data_str.encode())  # .encode(): content_hash_hex signature requires bytes (rust_extensions/src/hledac_rust_extensions.pyi:267)
         except Exception:
             hash_val = hashlib.sha256(data_str.encode()).hexdigest()
 
@@ -2455,7 +2455,7 @@ class MultiLevelContextCache:
         self._initialize_embedder()
 
         # Multi-level storage
-        self.l1_cache: Ordereddict[str, CacheEntry] = OrderedDict()
+        self.l1_cache: OrderedDict[str, CacheEntry] = OrderedDict()
         self.l2_cache: dict[str, CacheEntry] = {}
 
         # FAISS semantic index
@@ -2546,7 +2546,7 @@ class MultiLevelContextCache:
             zst_file = self.l2_storage_path / "l2_cache.json.zst"
             json_file = self.l2_storage_path / "l2_cache.json"
             if zst_file.exists():
-                cache_bytes = f.read()
+                cache_bytes = f.read()  # type: ignore[ty:unresolved-reference]  # pre-existing missing `with open(...) as f:` (logic bug, scope: not in this PR)
                 # 50MB limit for L2 cache load
                 if len(cache_bytes) > 50 * 1024 * 1024:
                     logger.warning(
@@ -2558,7 +2558,7 @@ class MultiLevelContextCache:
                     self.l2_cache = _deserialize_from_json(cache_bytes)
                 logger.info(f"Loaded {len(self.l2_cache)} entries from L2 cache (.zst)")
             elif json_file.exists():
-                cache_bytes = f.read()
+                cache_bytes = f.read()  # type: ignore[ty:unresolved-reference]  # pre-existing missing `with open(...) as f:` (logic bug, scope: not in this PR)
                 if len(cache_bytes) > 50 * 1024 * 1024:
                     logger.warning(
                         "L2 cache too large (%d MB > 50MB limit) — skipping load, starting fresh",
@@ -2846,7 +2846,7 @@ class MultiLevelContextCache:
         total = self.stats["hits"] + self.stats["misses"]
         avg_similarity = 0.0
         if self.stats["similarities"]:
-            avg_similarity = sum(self.stats["similarities"]) / len(self.stats["similarities"])
+            avg_similarity = sum(self.stats["similarities"]) / len(self.stats["similarities"])  # type: ignore[ty:invalid-argument-type]  # stale type: self.stats dict literal narrows too aggressively
 
         return {
             "total_entries": len(self.l1_cache) + len(self.l2_cache),

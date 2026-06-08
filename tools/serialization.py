@@ -142,7 +142,7 @@ def _encode_numpy(obj: Any) -> Any:
     raise TypeError(f"Object of type {type(obj)} not serializable")
 
 
-def _decode_numpy(obj: Dict) -> Any:
+def _decode_numpy(obj: dict) -> Any:
     """Decode numpy arrays from MessagePack format."""
     if '__numpy__' in obj:
         data = bytes.fromhex(obj['data'])

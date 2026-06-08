@@ -49,7 +49,7 @@ class ModelEngine:
         Idempotent: calling load() when already loaded returns True immediately.
         Fail-soft: returns False if no backend is available, never raises.
         """
-        ...  # type: ignore
+        return False
 
     async def unload(self) -> None:
         """
@@ -58,7 +58,7 @@ class ModelEngine:
         Must clear Metal cache via mx.eval([]) + mx.metal.clear_cache().
         Idempotent: calling unload() when not loaded is a no-op.
         """
-        ...  # type: ignore
+        return None
 
     # ── Core generation ────────────────────────────────────────────────────────
 
@@ -84,7 +84,7 @@ class ModelEngine:
         Raises:
             RuntimeError: if model not initialized before generate() call.
         """
-        ...  # type: ignore
+        return ""
 
     async def generate_structured(
         self,
@@ -111,7 +111,7 @@ class ModelEngine:
         Returns:
             Instance of response_model.
         """
-        ...  # type: ignore
+        raise NotImplementedError  # type: ignore[empty-body]
 
     # ── Identity ───────────────────────────────────────────────────────────────
 
@@ -122,7 +122,7 @@ class ModelEngine:
         Returns:
             Model name string, or None if no model is loaded.
         """
-        ...  # type: ignore
+        return None
 
     # ── Optional: synthesis / report ──────────────────────────────────────────
 
@@ -144,7 +144,7 @@ class ModelEngine:
         Returns:
             Markdown report string, or "" if synthesis not supported.
         """
-        ...  # type: ignore
+        return ""
 
     async def synthesize(
         self,
@@ -162,4 +162,4 @@ class ModelEngine:
         Returns:
             Synthesized text string, or "" if not supported.
         """
-        ...  # type: ignore
+        return ""

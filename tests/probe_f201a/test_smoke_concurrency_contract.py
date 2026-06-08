@@ -21,7 +21,15 @@ from __future__ import annotations
 import asyncio
 import pytest
 
-from hledac.universal import FETCH_SEMAPHORE, AdaptiveSemaphore, adjust_fetch_workers
+# Direct import path avoids the hledac.universal lazy-export mechanism
+# which can be shadowed by the namespace-package bootstrap.  All three
+# symbols live in hledac.universal.utils.concurrency (or its parent
+# hledac.universal package for AdaptiveSemaphore).
+from hledac.universal.utils.concurrency import (
+    FETCH_SEMAPHORE,
+    adjust_fetch_workers,
+)
+from hledac.universal.resource_allocator import AdaptiveSemaphore
 
 
 class TestF201AAdaptiveSemaphoreContract:

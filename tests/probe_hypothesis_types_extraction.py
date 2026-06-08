@@ -25,7 +25,7 @@ class TestBackwardCompat:
         # Note: ``Hypothesis`` is intentionally only at this path (carries
         # extra methods). All other DTOs are re-exported from
         # :mod:`brain.hypothesis`.
-        from brain.hypothesis_engine import (  # noqa: F401
+        from brain.research_hypothesis_engine import (  # noqa: F401
             AdversarialReport,
             AnomalySignal,
             CausalEntity,
@@ -77,7 +77,7 @@ class TestBackwardCompat:
         imports the simple DTOs from :mod:`brain.hypothesis._types`; the
         full ``Hypothesis`` class still lives at the legacy path. Verify
         that the legacy class is still importable and constructs."""
-        from brain.hypothesis_engine import Hypothesis as OldHypothesis
+        from brain.research_hypothesis_engine import Hypothesis as OldHypothesis
 
         # Hypothesis must still construct successfully at the legacy path
         h = OldHypothesis(
@@ -102,7 +102,7 @@ class TestBackwardCompat:
 class TestHypothesisBehaviour:
     def test_bayesian_update_still_works(self) -> None:
         from brain.hypothesis import Evidence
-        from brain.hypothesis_engine import Hypothesis
+        from brain.research_hypothesis_engine import Hypothesis
 
         h = Hypothesis(
             id="h1",
@@ -208,7 +208,7 @@ class TestBoundsPreservation:
 class TestModuleRefactoring:
     def test_hypothesis_engine_still_imports(self) -> None:
         # The original module must still be importable (backward compat)
-        import brain.hypothesis_engine as eng
+        import brain.research_hypothesis_engine as eng
 
         assert hasattr(eng, "Hypothesis")
         assert hasattr(eng, "Evidence")

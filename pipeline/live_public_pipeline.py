@@ -1033,11 +1033,14 @@ class PipelineRunResult(msgspec.Struct, frozen=True, gc=False):
     # F231A: Canonical terminal stage — where PUBLIC evidence stream terminated
     public_terminal_stage: str = ""  # discovery_empty | fetch_zero | parse_zero | match_zero | build_zero | store_zero | accepted
     # F232: Provider surface telemetry — discovery provider selection and outcome truth
-    public_provider_selected: list[str] = field(default_factory=list)  # providers with selected=True
-    public_provider_skipped: list[dict] = field(default_factory=list)  # [{provider, reason}] with selected=False
-    public_provider_stub: list[str] = field(default_factory=list)  # providers in ADVISORY_STUB state
-    public_provider_errors: list[dict] = field(default_factory=list)  # [{provider, error, error_type}] provider-level errors
-    public_query_variants: list[str] = field(default_factory=list)  # query variants emitted to providers
+    # NOTE: msgspec.Struct does NOT support dataclasses.field(default_factory=...);
+    # using mutable default=[] is safe here because PipelineRunResult is frozen=True,
+    # so mutation is blocked at the struct level.
+    public_provider_selected: list[str] = []  # providers with selected=True
+    public_provider_skipped: list[dict] = []  # [{provider, reason}] with selected=False
+    public_provider_stub: list[str] = []  # providers in ADVISORY_STUB state
+    public_provider_errors: list[dict] = []  # [{provider, error, error_type}] provider-level errors
+    public_query_variants: list[str] = []  # query variants emitted to providers
     public_provider_timeout_count: int = 0  # providers that timed out
     public_provider_import_error_count: int = 0  # providers that failed to import/initialize
     # F232: Refined discovery_empty subtypes — explicit reason when discovery returns zero
@@ -3367,7 +3370,19 @@ async def async_run_live_public_pipeline(
             try:
                 _discovery_start = time.monotonic()
                 discovery_attempted = True
-                discovery_result = await _ASYNC_DISCOVERY_SEARCH(self.query, self.max_results)
+                # Sprint F271B: bound the discovery coroutine with asyncio.wait_for so
+                # any internal sub-coroutines spawned by _ASYNC_DISCOVERY_SEARCH
+                # (e.g. _run_wayback_cdx / _run_historical_frontier / _run_ddg
+                #  inside the cascade provider) are cancelled at timeout. Without
+                # this guard, slow discovery paths produce
+                # `RuntimeWarning: coroutine ... was never awaited` when the
+                # outer `await` returns and the coroutine reference is GC'd
+                # mid-flight. Timeout 35.0 matches the existing
+                # `classify_discovery_error(..., timeout_s=35.0)` contract.
+                discovery_result = await asyncio.wait_for(
+                    _ASYNC_DISCOVERY_SEARCH(self.query, self.max_results),
+                    timeout=35.0,
+                )
                 discovery_elapsed_s = time.monotonic() - _discovery_start
 
                 cache_hit = getattr(discovery_result, "cache_hit", False) if hasattr(discovery_result, "cache_hit") else False
@@ -4735,7 +4750,7 @@ async def async_run_live_public_pipeline(
     tot_solution_count = 0
     if store is not None and hermes_engine is not None and total_stored > 0:
         try:
-            from hledac.universal.brain.hypothesis_engine import HypothesisEngine
+            from hledac.universal.brain.research_hypothesis_engine import HypothesisEngine
             from hledac.universal.tot_integration import TotIntegrationLayer
 
             hypo_engine = HypothesisEngine()

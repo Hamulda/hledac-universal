@@ -468,4 +468,4 @@ def run_shadow_parity(
 # =============================================================================
 
 if TYPE_CHECKING:
-    from ..types import BranchDecision, RunCorrelation
+    from ..project_types import BranchDecision, RunCorrelation

@@ -679,7 +679,7 @@ class RAGEngine:
     - HNSW Vector Search for fast approximate nearest neighbor search
     """
 
-    def __init__(self, config: RAGConfig = None):
+    def __init__(self, config: RAGConfig | None = None):
         self.config = config or RAGConfig()
 
         # Lazy-loaded komponenty
@@ -797,7 +797,7 @@ class RAGEngine:
         self,
         query: str,
         context_chunks: list[str],
-        use_compression: bool = None,
+        use_compression: bool | None = None,
         secure: bool = False
     ) -> dict[str, Any]:
         """

@@ -39,6 +39,7 @@ from typing import TYPE_CHECKING
 
 __all__ = [
     "get_uma_snapshot",
+    "get_uma_budget",  # F265A back-compat alias
     "get_uma_usage_mb",
     "get_uma_pressure_level",
     "is_uma_critical",
@@ -285,6 +286,28 @@ def get_uma_snapshot() -> dict:
     }
 
 
+def get_uma_budget() -> dict:
+    """Back-compat alias for `get_uma_snapshot()`.
+
+    Several callers (e.g. `rl/sprint_policy_manager.py`,
+    `tests/probe_f261_qmix_activation.py`, and the historical sprint-260
+    era mocks) reference `get_uma_budget` by name. The canonical contract
+    is `get_uma_snapshot` — this alias is a thin pass-through so any
+    future refactor of the snapshot shape only needs to update a single
+    source of truth.
+
+    Returns:
+        The same dict as `get_uma_snapshot()` — see that function for
+        the full key list (`uma_total_mb`, `warn_threshold_mb`,
+        `critical_threshold_mb`, `emergency_threshold_mb`,
+        `system_total_mb`, `system_used_mb`, `system_available_mb`,
+        `mlx_active_mb`, `mlx_peak_mb`, `mlx_cache_mb`, `uma_used_mb`,
+        `uma_usage_pct`, `uma_pressure_level`, `is_warn`, `is_critical`,
+        `is_emergency`, `platform`).
+    """
+    return get_uma_snapshot()
+
+
 def format_uma_budget_report() -> str:
     """
     Format a human-readable UMA budget report.
@@ -324,13 +347,13 @@ class UmaWatchdogCallbacks:
     All methods are optional — unactioned callbacks are no-ops.
     """
 
-    def on_warn(self, _snapshot: dict) -> None:
+    def on_warn(self, snapshot: dict) -> None:
         """Called when UMA enters WARN state (>= 6.0 GB)."""
 
-    def on_critical(self, _snapshot: dict) -> None:
+    def on_critical(self, snapshot: dict) -> None:
         """Called when UMA enters CRITICAL state (>= 6.5 GB)."""
 
-    def on_emergency(self, _snapshot: dict) -> None:
+    def on_emergency(self, snapshot: dict) -> None:
         """Called when UMA enters EMERGENCY state (>= 7.0 GB)."""
 
 

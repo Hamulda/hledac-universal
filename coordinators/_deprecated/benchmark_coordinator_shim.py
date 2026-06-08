@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import warnings
 
-from hledac.universal.coordinators._deprecated import benchmark_coordinator as _real_module
+from hledac.universal.coordinators._deprecated import benchmark_coordinator as _real_module  # type: ignore[ty:unresolved-import]  # pre-existing absolute import — circular-ish self-ref under deprecated shim (historical namespace)
 
 __all__ = [
     "AgentBenchmarker",

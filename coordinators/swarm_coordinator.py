@@ -29,8 +29,8 @@ try:
     from numpy.typing import NDArray
     HAS_NUMPY = True
 except ImportError:
-    np = None
-    NDArray = "NDArray"  # type: ignore[misc]
+    np = None  # type: ignore[ty:invalid-assignment]  # None sentinel: numpy unavailable at runtime, callers must check HAS_NUMPY
+    NDArray = "NDArray"  # type: ignore[misc,ty:invalid-assignment]  # string sentinel — keeps `from numpy.typing import NDArray` valid downstream via type-checker
     HAS_NUMPY = False
 
 from .base import DecisionResponse, OperationResult, OperationType, UniversalCoordinator
@@ -625,7 +625,7 @@ class UniversalSwarmCoordinator(UniversalCoordinator):
     # =============================================================================
 
     def register_node(self, node_id: str, endpoint: str,
-                     capabilities: list[str] = None) -> SwarmNode:
+                     capabilities: list[str] | None = None):
         """
         Register a new P2P node to the swarm.
 
@@ -831,7 +831,7 @@ class UniversalSwarmCoordinator(UniversalCoordinator):
 
         return accepted, confidence
 
-    async def run_heartbeat_monitor(self, interval: float = None):
+    async def run_heartbeat_monitor(self, interval: float | None = None):
         """
         Run continuous heartbeat monitoring.
 

@@ -26,7 +26,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 if TYPE_CHECKING:
     # Hypothesis lives in brain.hypothesis_engine (carries engine-specific
     # methods). Imported only for the Protocol type signatures below.
-    from brain.hypothesis_engine import Hypothesis
+    from brain.research_hypothesis_engine import Hypothesis
 
 
 # ============================================================================
@@ -321,7 +321,7 @@ class AdversarialReport:
 # but is commented out to avoid import-time drift if the engine changes
 # the class shape.
 #
-# from brain.hypothesis_engine import Hypothesis  # noqa: F401
+# from brain.research_hypothesis_engine import Hypothesis  # noqa: F401
 
 
 # ============================================================================

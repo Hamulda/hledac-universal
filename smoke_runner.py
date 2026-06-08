@@ -76,9 +76,16 @@ async def run_smoke_test() -> int:
     # 1. Test root package imports
     log.info("[1/6] Testing root package imports...")
     try:
-        from utils.concurrency import FETCH_SEMAPHORE
-        from resource_allocator import AdaptiveSemaphore
-        from utils.concurrency import adjust_fetch_workers
+        # Sprint F259C: Use canonical hledac.universal lazy exports.
+        # The previous `from resource_allocator import AdaptiveSemaphore` was
+        # fragile: cwd/sys.path dependent and tripped over coordinators/__init__.py
+        # import chain (security_coordinator relative-import bug). The lazy
+        # exports in hledac/universal/__init__.py are the canonical seam.
+        from hledac.universal import (
+            AdaptiveSemaphore,
+            FETCH_SEMAPHORE,
+            adjust_fetch_workers,
+        )
         log.info("  ✓ Root package and FETCH_SEMAPHORE imports OK")
     except Exception as e:
         errors.append(f"Root package import failed: {e}")

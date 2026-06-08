@@ -22,15 +22,15 @@ sys.path.insert(0, "hledac/universal")
 
 class TestBackwardCompat:
     def test_legacy_source_hint_import_works(self) -> None:
-        """`from brain.hypothesis_engine import SourceHint` must work."""
-        from brain.hypothesis_engine import SourceHint  # noqa: F401
+        """`from brain.research_hypothesis_engine import SourceHint` must work."""
+        from brain.research_hypothesis_engine import SourceHint  # noqa: F401
 
         assert SourceHint is not None
         assert SourceHint.__name__ == "SourceHint"
 
     def test_legacy_hypothesis_pack_import_works(self) -> None:
-        """`from brain.hypothesis_engine import HypothesisPack` must work."""
-        from brain.hypothesis_engine import HypothesisPack  # noqa: F401
+        """`from brain.research_hypothesis_engine import HypothesisPack` must work."""
+        from brain.research_hypothesis_engine import HypothesisPack  # noqa: F401
 
         assert HypothesisPack is not None
         assert HypothesisPack.__name__ == "HypothesisPack"
@@ -38,7 +38,7 @@ class TestBackwardCompat:
     def test_legacy_source_hint_is_same_object(self) -> None:
         """Legacy and new import paths return the SAME class object."""
         from brain.hypothesis.packs import SourceHint as New
-        from brain.hypothesis_engine import SourceHint as Old
+        from brain.research_hypothesis_engine import SourceHint as Old
 
         assert New is Old, "Legacy and new SourceHint must resolve to same class"
         assert New.__module__ == "brain.hypothesis.packs"
@@ -46,7 +46,7 @@ class TestBackwardCompat:
     def test_legacy_hypothesis_pack_is_same_object(self) -> None:
         """Legacy and new import paths return the SAME class object."""
         from brain.hypothesis.packs import HypothesisPack as New
-        from brain.hypothesis_engine import HypothesisPack as Old
+        from brain.research_hypothesis_engine import HypothesisPack as Old
 
         assert New is Old, "Legacy and new HypothesisPack must resolve to same class"
         assert New.__module__ == "brain.hypothesis.packs"

@@ -1184,7 +1184,7 @@ class SharedMemoryManager:
         logger.info("SharedMemoryManager initialized for M1 architecture")
 
     def create_shared_block(self, data: bytes, data_type: str,
-                           metadata: dict[str, Any] = None) -> str:
+                           metadata: dict[str, Any] | None = None):
         """
         Create a shared memory block with zero-copy data sharing.
 
@@ -1416,7 +1416,7 @@ That makes calamity of so long life.
         # Return exactly the requested byte size
         return repeated_content.encode()[:self.noise_size_bytes]
 
-    def inject_entropy_noise(self, block_id: str = None) -> str:
+    def inject_entropy_noise(self, block_id: str | None = None):
         """
         Inject entropy noise into memory to reduce overall Shannon entropy.
 

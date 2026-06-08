@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import random
 import time
 from collections import deque
 from dataclasses import dataclass, field
@@ -164,10 +165,10 @@ class UniversalMetaReasoningCoordinator(UniversalCoordinator):
 
             return OperationResult(
                 operation_id=self.generate_operation_id(),
-                status="completed" if result.get('success') else "failed",
-                result_summary=result.get('summary', 'Meta-reasoning completed'),
+                status="completed" if result.get('success') else "failed",  # type: ignore[ty:invalid-argument-type]  # stale type: result reassigned in try/except branch above, ty loses precision
+                result_summary=result.get('summary', 'Meta-reasoning completed'),  # type: ignore[ty:invalid-argument-type]  # same: result is Any from upstream reassignment
                 execution_time=time.time() - start_time,
-                success=result.get('success', False),
+                success=result.get('success', False),  # type: ignore[ty:invalid-argument-type]  # same
                 metadata=result
             )
         except Exception as e:

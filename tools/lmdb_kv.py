@@ -352,7 +352,7 @@ class AsyncLMDBKVStore:
         if self._env:
             if self._use_async:
                 try:
-                    await self._env.close()
+                    self._env.close()
                 except Exception:
                     pass
             else:

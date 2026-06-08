@@ -29,7 +29,7 @@ class PromptBandit:
     MAX_BANDIT_ARMS: int = 256
 
     def __init__(self, brain_manager=None, alpha: float = 1.0, lambda_reg: float = 0.01,
-                 context_dim: int = 9, persist_path: str = None):
+                 context_dim: int = 9, persist_path: str | None = None):
         self._brain = brain_manager
         self._alpha = alpha
         self._lambda = lambda_reg
@@ -145,7 +145,7 @@ class PromptBandit:
         except Exception as e:
             logger.warning(f"Bandit arm cap eviction failed: {e}")
 
-    def _get_context_vector(self, context: dict = None) -> list:
+    def _get_context_vector(self, context: dict | None = None):
         """9‑dimenzionální kontextový vektor."""
         context = context or {}
 
@@ -201,7 +201,7 @@ class PromptBandit:
     def set_variants(self, variants: list):
         self._n_variants = len(variants)
 
-    async def select(self, variants: list, context: dict = None) -> int:
+    async def select(self, variants: list, context: dict | None = None):
         """Vrátí index vybrané varianty pomocí LinUCB s cold‑start randomizací."""
         if not variants:
             return -1
@@ -249,7 +249,7 @@ class PromptBandit:
             ]
             return max(range(self._n_variants), key=lambda i: ucb[i])
 
-    async def update(self, idx: int, reward: float, context: dict = None):
+    async def update(self, idx: int, reward: float, context: dict | None = None):
         """Aktualizuje parametry banditu."""
         if idx < 0:
             return

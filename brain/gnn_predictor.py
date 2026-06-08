@@ -12,6 +12,7 @@ from collections import OrderedDict
 from typing import Any
 
 import numpy as np
+logger = logging.getLogger(__name__)
 
 # Sprint 79a: GNN protective fixes
 try:

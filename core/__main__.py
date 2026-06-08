@@ -44,8 +44,10 @@ import os
 import signal
 import sys
 import time
+import traceback
 import uuid
 from pathlib import Path
+from dataclasses import dataclass
 from typing import Any
 
 import aiohttp
@@ -77,6 +79,44 @@ from hledac.universal.transport.tor_transport import TorTransport
 from hledac.universal.utils import mlx_cache
 
 logger = logging.getLogger(__name__)
+
+
+# F221-ABORT: Minimum useful acquisition window below which the sprint produces
+# no real evidence artifacts. Replicated from SprintSchedulerConfig.effective_windup_lead_s
+# (F250: 30% of duration, clamp [30, 180]) so the guard rejects only what the
+# scheduler would treat as zero-active-budget.
+MIN_ACTIVE_WINDOW_S: int = 30
+
+
+@dataclass(frozen=True, slots=True)
+class SprintFlags:
+    """
+    F221-ABORT + F26X-3 + F260: Bounded, immutable view of the CLI flags
+    that gate pre-flight guards and layer-injection opt-outs. Mirrors the
+    args Namespace fields required by run_sprint() and gives downstream
+    seams (e.g. future advisory hooks) a typed contract instead of
+    getattr-style probing.
+
+    M1 memory friendly: frozen=True + slots=True removes __dict__ and
+    disables attribute writes (smaller per-instance footprint, no boxing).
+
+    Sprint F26X-3/F260 fix: this dataclass is now the SOLE carrier of
+    layer-injection flags (no_communication/no_stealth/no_ghost) into
+    run_sprint(). Replaces the previous getattr(args, "no_*", False)
+    pattern that leaked the `args` namespace from main() — `args` is a
+    local of argparse, never passed to run_sprint(), causing NameError.
+
+    Keep this dataclass minimal: only flags that affect pre-flight
+    decisions or that callers consume as a coherent bundle belong here.
+    Per-flag args stay in argparse.
+    """
+
+    force: bool = False  # F221-ABORT: override zero-active-budget guard
+    no_communication: bool = False  # F26X-3: skip CommunicationLayer injection
+    no_stealth: bool = False  # F260: skip StealthLayer injection
+    no_ghost: bool = False  # F260: skip GhostLayer injection
+    no_coordination: bool = False  # F26X-2: skip CoordinationLayer (canonical contract)
+    production: bool = False  # F272B: abort on fetch=NA in pre-flight (exit 2)
 
 
 def _make_sprint_id() -> str:
@@ -1322,6 +1362,8 @@ async def run_sprint(
     windup_lead_s: float | None = None,
     acquisition_profile: str | None = None,  # F223A: explicit profile override
     rl_train_mode: bool = False,  # RL F257: QMIX training vs inference-only
+    force: bool = False,  # F221-ABORT: override zero-active-budget pre-flight guard
+    flags: SprintFlags | None = None,  # F26X-3/F260 fix: layer-injection flag bundle
 ) -> None:
     """
     Run a full sprint lifecycle with UMA monitoring and delta reporting.
@@ -1341,6 +1383,61 @@ async def run_sprint(
 
     # Pre-sprint checks
     run_pre_sprint_checks()
+
+    # F221-ABORT: Pre-flight guard — enforce minimum active-window budget.
+    # MUST run BEFORE LMDB init (DuckDBShadowStore below) to avoid orphaned
+    # lock files when the config is rejected up front. Replicates F250 logic
+    # from SprintSchedulerConfig.effective_windup_lead_s (30% of duration,
+    # clamp [30, 180]) so the guard rejects only what the scheduler would
+    # actually treat as zero-active-budget. sys.exit(2) = config error,
+    # distinguishable from exit(1) runtime failure.
+    #
+    # Sprint F271C: Named constants (F250 clamp bounds extracted) and
+    # invariant assert make the F221 guarantee observable. Without the assert
+    # a stale hardcoded `windup_lead_s=180` (post-F260 regression) silently
+    # produced `active_window_budget_s=-90.0` and skipped the guard.
+    _F250_WINDUP_CLAMP_MIN_S: float = 30.0
+    _F250_WINDUP_CLAMP_MAX_S: float = 180.0
+    _F250_WINDUP_LEAD_FRAC: float = 0.30
+    _raw_windup = float(duration_s) * _F250_WINDUP_LEAD_FRAC
+    _effective_windup_s = float(
+        max(_F250_WINDUP_CLAMP_MIN_S, min(_F250_WINDUP_CLAMP_MAX_S, _raw_windup))
+    )
+    _active_window_s = float(duration_s) - _effective_windup_s
+    # Sprint F271C: fail-loud invariant — if we somehow compute a negative
+    # active window, the guard is broken; surface it as a config error
+    # (exit 2) instead of proceeding with a bogus budget that hides bugs.
+    if _active_window_s < 0.0:
+        logger.error(
+            "[F271C-INVARIANT] computed negative active_window_s=%s "
+            "(duration_s=%s, effective_windup_s=%s). F221 guard is broken.",
+            _active_window_s,
+            duration_s,
+            _effective_windup_s,
+        )
+        sys.exit(2)
+    if _active_window_s < float(MIN_ACTIVE_WINDOW_S):
+        _required_duration_s = int(_effective_windup_s + float(MIN_ACTIVE_WINDOW_S))
+        if (flags.force if flags else False):
+            logger.warning(
+                "[F221-FORCED] duration=%ds gives only %ds active window "
+                "(windup_lead_effective=%ds). Proceeding due to --force.",
+                int(duration_s),
+                max(0, int(_active_window_s)),
+                int(_effective_windup_s),
+            )
+        else:
+            logger.error(
+                "[F221-ABORT] Sprint duration %ds gives only %ds active window "
+                "(windup_lead_effective=%ds). "
+                "Minimum recommended: --duration %d. "
+                "Use --force to override.",
+                int(duration_s),
+                max(0, int(_active_window_s)),
+                int(_effective_windup_s),
+                _required_duration_s,
+            )
+            sys.exit(2)  # exit(2) = config error, distinguishable from exit(1) runtime
 
     # F214Q: Remote debug OPSEC guard — strict exit if HLEDAC_REQUIRE_REMOTE_DEBUG_DISABLED=1
     # and PYTHON_DISABLE_REMOTE_DEBUG is not set. Python 3.14 activates safe-external-debugger by default.
@@ -1374,8 +1471,18 @@ async def run_sprint(
     await store.async_initialize()
 
     # Scheduler config
-    # F221: windup_lead_s param (default 180s) + active-budget guard for 'default' profile
-    _windup_lead_s = windup_lead_s if windup_lead_s is not None else 180.0
+    # F221: windup_lead_s param + active-budget guard for 'default' profile
+    # F228G: when windup_lead_s is not provided, compute the effective value
+    # (30% of duration, clamped [30, 180]) — same formula as
+    # SprintSchedulerConfig.effective_windup_lead_s. The previous default of
+    # 180s for short sprints (60-90s) was LARGER than the entire sprint,
+    # causing recommended_tool_mode() to return "prune" from cycle 1 and
+    # triggering the empty-cycle guard immediately.
+    if windup_lead_s is not None:
+        _windup_lead_s = float(windup_lead_s)
+    else:
+        _raw_windup = float(duration_s) * 0.30
+        _windup_lead_s = float(max(30.0, min(180.0, _raw_windup)))
     # F228A: Defensive normalization — benchmark profile aliases must not reach
     # acquisition_strategy as raw values. Record all three phases for telemetry.
     _acq_input = acquisition_profile
@@ -1394,16 +1501,11 @@ async def run_sprint(
             )
         _acq_effective = "default"
         _acq_normalized = True
-    # Guard: smoke180 profile uses windup_lead=180s — warn when active_budget <= 0
-    # _acq_effective is "default" when input is None (normalized at line above)
-    # nonfeed_diagnostic has windup_lead=0 so it always has an active window
-    _active_budget = duration_s - _windup_lead_s
-    if _active_budget <= 0 and _acq_effective == "default":
-        logger.warning(
-            "[F221] Sprint duration %.0fs <= windup_lead %.0fs → zero active budget. "
-            "Use --duration %.0f+ or --profile nonfeed_diagnostic for an active window.",
-            duration_s, _windup_lead_s, _windup_lead_s + 60,
-        )
+    # Guard: smoke180 profile uses windup_lead=180s — replaced by F221-ABORT
+    # pre-flight guard at the top of run_sprint(). The hard guard (MIN_ACTIVE_WINDOW_S)
+    # runs before LMDB init and exits with code 2 unless --force is passed.
+    # The soft warning that used to live here was redundant with the new guard
+    # and is removed in F221-ABORT.
     # Propagate normalized value to scheduler and env for downstream seams
     if "HLEDAC_ACQUISITION_PROFILE" not in os.environ:
         os.environ["HLEDAC_ACQUISITION_PROFILE"] = _acq_effective or "default"
@@ -1441,7 +1543,7 @@ async def run_sprint(
     # Sprint F26X-3: CommunicationLayer injection (advisory, default-ON, --no-communication opt-out)
     # Mirrors the F26X-2 --no-coordination contract. CommunicationLayer enables batched/bounded
     # model queries for hot-spot consumers (privacy gate, LMDB ingest, forensic fan-out).
-    if not getattr(args, "no_communication", False):
+    if not (flags.no_communication if flags else False):
         try:
             from hledac.universal.layers import get_communication_layer
             _comm_layer = get_communication_layer()
@@ -1453,7 +1555,7 @@ async def run_sprint(
     # Sprint F260: StealthLayer injection (advisory, default-ON, --no-stealth opt-out)
     # Mirrors --no-coordination/--no-communication contract. StealthLayer exposes
     # circuit-breaker / JA3 fingerprint rotation surfaces for advisory call sites.
-    if not getattr(args, "no_stealth", False):
+    if not (flags.no_stealth if flags else False):
         try:
             from hledac.universal.layers import get_stealth_layer
             _stealth_layer = get_stealth_layer()
@@ -1466,7 +1568,7 @@ async def run_sprint(
     # Mirrors --no-coordination/--no-communication contract. GhostLayer exposes
     # is_vm_environment() / force_neural_cleanup() for stealth-mode-activation pre-fetch
     # and anti-VM / neural-cleanup advisory call sites.
-    if not getattr(args, "no_ghost", False):
+    if not (flags.no_ghost if flags else False):
         try:
             from hledac.universal.layers import get_ghost_layer
             _ghost_layer = get_ghost_layer()
@@ -1495,6 +1597,22 @@ async def run_sprint(
         # Fail-soft: log and continue — sprint will handle degraded mode gracefully
     elif health is not None:
         logger.debug(f"[F228F] health_check: {health.summary()} - real URLs from typed seed surface")
+
+    # Sprint F272B: --production pre-flight guard.
+    # In production mode, fetch_coordinator_ok=False is a hard blocker (we cannot
+    # make HTTP requests, so the sprint will produce no useful findings and will
+    # burn the full duration). Exit code 2 = config/preflight error per
+    # docs/architecture/EXIT_CODE_CONVENTION. Default (--production absent) keeps
+    # the existing fail-soft advisory-degraded behavior.
+    if (flags.production if flags else False) and health is not None and not health.fetch_coordinator_ok:
+        logger.error(
+            f"[F272B] --production pre-flight ABORT: fetch coordinator not_initialized. "
+            f"health_summary={health.summary()}. Use --no-production or fix fetch "
+            f"session initialization (check TOR/I2P env vars, public_fetcher imports)."
+        )
+        # Exit 2 = preflight/config error (matches F221-ABORT convention).
+        sys.exit(2)
+
     live_feed_urls = _get_live_feed_urls()
 
     # Sprint F193A: Instantiate CT log client for canonical pipeline
@@ -2472,7 +2590,46 @@ def _install_signal_handler_for_loop(
     return _restore
 
 
+def _fatal(exc: BaseException, code: int = 1) -> None:
+    """
+    Structured fatal-error handler. Logs _MAIN_FATAL with full traceback,
+    then exits with a structured exit code.
+
+    Exit code convention (Sprint F350M-R Exit Codes):
+        0   = clean success
+        1   = runtime error (unexpected)
+        2   = config/validation error (e.g. windup_lead guard)
+        3   = programmer error / regression (NameError, ImportError, AttributeError)
+        130 = SIGINT (KeyboardInterrupt)
+    """
+    logger.critical(
+        "_MAIN_FATAL [exit=%d]: %s\n%s",
+        code, exc, traceback.format_exc()
+    )
+    sys.exit(code)
+
+
 def main() -> None:
+    """
+    Synchronous entry point with structured exit-code handling.
+
+    Thin wrapper around _main_dispatch(). All sprint execution paths flow
+    through _main_dispatch(); main() owns the catch-all envelope and exit codes.
+    """
+    try:
+        _main_dispatch()
+    except (NameError, AttributeError, ImportError) as e:
+        _fatal(e, code=3)   # programmer error / regression
+    except KeyboardInterrupt:
+        logger.info("[MAIN] Interrupted by user")
+        sys.exit(130)       # standard SIGINT convention
+    except SystemExit:
+        raise               # never swallow sys.exit() calls
+    except Exception as e:
+        _fatal(e, code=1)   # runtime error
+
+
+def _main_dispatch() -> None:
     parser = argparse.ArgumentParser(description="Hledac Sprint 8RA Runner")
     parser.add_argument("--sprint", action="store_true", help="Run in sprint mode")
     parser.add_argument("--query", type=str, default="OSINT default query")
@@ -2526,6 +2683,14 @@ def main() -> None:
         help="F11: Enable EXHAUSTIVE depth for deep research (implies --deep-research)",
     )
     parser.add_argument(
+        "--force",
+        action="store_true",
+        help="F221-ABORT: Override the pre-flight guard that aborts sprints whose "
+             "active-window budget would be below MIN_ACTIVE_WINDOW_S=30s. "
+             "Emits a [F221-FORCED] warning instead of exiting with code 2. "
+             "Use only for explicit dry-runs / smoke tests where zero evidence is acceptable.",
+    )
+    parser.add_argument(
         "--acquisition-profile",
         type=str,
         default="default",
@@ -2574,6 +2739,16 @@ def main() -> None:
         default=None,
         choices=["surface", "dark", "archive", "p2p", "academic"],
         help="F270: Filter --list-sources output by source tier.",
+    )
+    parser.add_argument(
+        "--production",
+        action="store_true",
+        help=(
+            "F272B: Production mode. Sprint aborts with exit code 2 if the pre-run "
+            "health check finds fetch_coordinator_ok=False (not_initialized). "
+            "Default OFF: advisory-degraded mode continues and only logs the warning. "
+            "Use for CI / orchestration where a degraded run is worse than no run."
+        ),
     )
     args = args_with_rl_resolution = parser.parse_args()
     # F261QMIX: --rl-no-train overrides --rl-train (explicit disable wins)
@@ -2624,13 +2799,32 @@ def main() -> None:
         asyncio.run(run_ct_pivot(args.ct_pivot))
     elif args.sprint:
         import contextlib
+        # F26X-3/F260 fix: construct SprintFlags bundle from CLI args so the
+        # `args` namespace never leaks into run_sprint() (was causing NameError).
+        # SprintFlags is frozen+slots; safe to pass by value.
+        sprint_flags = SprintFlags(
+            force=args.force,
+            no_communication=getattr(args, "no_communication", False),
+            no_stealth=getattr(args, "no_stealth", False),
+            no_ghost=getattr(args, "no_ghost", False),
+            no_coordination=getattr(args, "no_coordination", False),
+            production=getattr(args, "production", False),
+        )
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         shutdown_event = asyncio.Event()
         restore_signals = _install_signal_handler_for_loop(loop, shutdown_event)
+        # F221-ABORT: pre-initialize `done`/`pending` so the `finally` block
+        # below is safe when asyncio.wait() raises SystemExit (sys.exit(N))
+        # before the `done, pending = ...` unpack completes. Without these
+        # defaults the `for task in pending:` cleanup raises UnboundLocalError
+        # and the original exit code (e.g. 2 from F221-ABORT) is swallowed
+        # by the `_MAIN_FATAL [exit=3]` branch in main().
+        done: set = set()
+        pending: set = set()
         try:
             sprint_task = loop.create_task(
-                run_sprint(args.query, float(args.duration), args.export_dir, args.aggressive, args.deep_probe, deep_research=args.deep_research, extreme_mode=args.extreme, acquisition_profile=args.acquisition_profile, rl_train_mode=args.rl_train, no_communication=args.no_communication)
+                run_sprint(args.query, float(args.duration), args.export_dir, args.aggressive, args.deep_probe, deep_research=args.deep_research, extreme_mode=args.extreme, acquisition_profile=args.acquisition_profile, rl_train_mode=args.rl_train, flags=sprint_flags)
             )
             sig_task = loop.create_task(shutdown_event.wait())
             done, pending = loop.run_until_complete(
@@ -2643,6 +2837,20 @@ def main() -> None:
                 sprint_task.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
                     loop.run_until_complete(sprint_task)
+        except (NameError, TypeError) as _prog_err:
+            # Programmer error (e.g. undefined symbol, wrong kwarg). MUST NOT
+            # be silently swallowed — log with full traceback and exit 1.
+            logger.exception(
+                "[MAIN] Fatal programmer error in core/__main__.py --sprint: %s",
+                _prog_err,
+            )
+            sys.exit(1)
+        except SystemExit:
+            # F221-ABORT: never swallow sys.exit(N) — preserve the original
+            # exit code (e.g. 2 from F221-ABORT config-error path) so callers
+            # can distinguish abort (2) from runtime failure (1) from programmer
+            # error (1 via the branch above).
+            raise
         finally:
             restore_signals()
             for task in pending:

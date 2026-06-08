@@ -1,3 +1,4 @@
+
 """
 ClaimsCoordinator - Delegates claims pipeline to coordinator
 ==========================================================
@@ -19,7 +20,7 @@ from collections import deque
 from dataclasses import dataclass
 from typing import Any
 
-from ..intelligence.confidence_policy import (
+from hledac.universal.intelligence.confidence_policy import (  # type: ignore[ty:unresolved-import]  # pre-existing absolute import — module not in project (historical namespace)
     compute_confidence,
 )
 from .base import UniversalCoordinator

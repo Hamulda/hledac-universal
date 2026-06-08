@@ -5,7 +5,7 @@
 
 use ahash::AHashMap;
 use pyo3::prelude::*;
-use pyo3::types::PyBytes;
+use pyo3::types::{PyBytes, PyDict};
 use xxhash_rust::xxh3::xxh3_64;
 
 /// IOC types matching ioc_extract.rs classification
@@ -169,6 +169,44 @@ impl IocDedupStore {
     /// Returns (total_seen, total_deduped, unique_count).
     pub fn stats(&self) -> (u64, u64, u64) {
         (self.total_seen, self.total_deduped, self.entries.len() as u64)
+    }
+
+    /// Sprint P1-5: SoA-style stats dict. Drop-in for callers that want to
+    /// merge IOC dedup counters into a cross-sprint SoA snapshot
+    /// (e.g. `IntCounterLayout` accumulator for the evidence chain).
+    ///
+    /// Returns a fresh dict with i64 counters matching the `stats()` tuple
+    /// plus a derived `hit_rate` (float, 0.0–1.0). Keys are stable across
+    /// releases — `evidence_rs.chain_hash_snapshot` consumes this dict.
+    ///
+    /// # Example
+    /// ```python
+    /// snap = store.stats_dict()
+    /// # {"total_seen": 1000, "total_deduped": 750, "unique_count": 250,
+    /// #  "hit_rate": 0.75, "current_sprint": 42}
+    /// blake3, sha256 = evidence_rs.chain_hash_snapshot(snap, prev, "evt_1")
+    /// ```
+    pub fn stats_dict<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
+        let dict = PyDict::new(py);
+        dict.set_item("total_seen", self.total_seen as i64)?;
+        dict.set_item("total_deduped", self.total_deduped as i64)?;
+        dict.set_item("unique_count", self.entries.len() as i64)?;
+        dict.set_item("current_sprint", self.current_sprint as i64)?;
+        // hit_rate = deduped / total (0.0 if no IOCs seen). Float as i64
+        // numerator+denominator for chain-hash determinism — caller can
+        // compute the ratio downstream if needed.
+        let total = self.total_seen as f64;
+        let hit_rate = if total > 0.0 {
+            (self.total_deduped as f64) / total
+        } else {
+            0.0
+        };
+        // We store hit_rate as basis-points * 100 (i64) for dict consistency
+        // (all dict values are i64 — no mixed types in SoA snapshots).
+        // 0.75 → 7500; caller can divide by 10000.0 to get 0.75.
+        let hit_rate_bp = (hit_rate * 10_000.0).round() as i64;
+        dict.set_item("hit_rate_bp", hit_rate_bp)?;
+        Ok(dict)
     }
 
     /// Get all IOC values of specified type.

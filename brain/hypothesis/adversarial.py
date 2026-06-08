@@ -44,11 +44,11 @@ from ._types import (
 # Hypothesis lives in brain.hypothesis_engine (carries engine-specific
 # methods like add_test_result, _ds_engine). Imported at runtime here
 # because the type is used in method signatures on this class.
-from brain.hypothesis_engine import Hypothesis  # noqa: E402
+from brain.research_hypothesis_engine import Hypothesis  # noqa: E402
 
 from utils.async_helpers import safe_gather_dropin
 if TYPE_CHECKING:
-    from brain.hypothesis_engine import HypothesisEngine  # noqa: F401
+    from brain.research_hypothesis_engine import HypothesisEngine  # noqa: F401
 
 logger = logging.getLogger(__name__)
 
@@ -214,7 +214,7 @@ class AdversarialVerifier:
                     from brain.hypothesis.explainer import SimpleNodeAblationExplainer
                     explainer = SimpleNodeAblationExplainer(graph_rag)
                     importances = await explainer.explain_path(path, claim, max_nodes=5)
-                    from brain.hypothesis_engine import explain_with_mlx
+                    from brain.research_hypothesis_engine import explain_with_mlx
                     explanation, prompt_hash = await explain_with_mlx(claim, path)
 
                     metadata['edge_importances'] = importances

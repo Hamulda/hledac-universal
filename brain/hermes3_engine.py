@@ -249,7 +249,7 @@ class Hermes3Engine:
 
     def __init__(
         self,
-        model_path: str = None,
+        model_path: str | None = None,
         sanitize_for_llm: Callable[[str], str] | None = None
     ):
         """
@@ -320,6 +320,18 @@ class Hermes3Engine:
         # Single-thread executor for MLX inference (M1 8GB safe)
         self._inference_executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
         self._inference_semaphore = asyncio.Semaphore(1)
+
+        # Sprint P0-2: MLX continuous batching executor (F226H wiring).
+        # Lazy init via _ensure_mlx_batcher() — NOT instantiated at __init__
+        # so import cost is paid once, at first generate() call. M1 8GB safe.
+        # Always-on: routing layer decides per-call whether to batch.
+        self._mlx_batcher: Any = None  # MLXBatchedExecutor | None (lazy)
+
+        # Sprint P0-3: Dedicated worker thread with persistent event loop.
+        # Single MLX context, single model state — non-blocking main loop.
+        # Lazy init via _ensure_mlx_worker_thread() — M1 8GB safe (M.T2).
+        # Always-on: routing layer in _submit_inference() picks thread vs executor.
+        self._mlx_worker_thread: Any = None  # MLXWorkerThread | None (lazy)
 
         # Sprint 71/7E: Continuous batching — schema-aware PriorityQueue
         self._batch_queue: asyncio.PriorityQueue = None
@@ -452,7 +464,7 @@ class Hermes3Engine:
         priority: float = 1.0,
         temperature: float = 0.1,
         max_tokens: int = 1024,
-        system_msg: str = None
+        system_msg: str | None = None
     ) -> Any:
         """
         Sprint 7E: Submit a structured output request to the batch queue.
@@ -1087,7 +1099,7 @@ class Hermes3Engine:
         self,
         system_msg: str,
         user_msg: str,
-        history: list[dict[str, str]] = None
+        history: list[dict[str, str]] | None = None
     ) -> str:
         """
         Formátovat zprávu do ChatML formátu.
@@ -1241,12 +1253,108 @@ class Hermes3Engine:
 
         return response.strip()
 
+    # ─── Sprint P0-2: Continuous batching routing ────────────────────────
+    async def _ensure_mlx_batcher(self) -> Any:
+        """
+        Lazy initialization of MLXBatchedExecutor.
+
+        Idempotent — safe to call multiple times. Returns None on any
+        initialization failure so caller can fall through to direct path.
+        Invariant B.M2: NEVER instantiated at __init__ time, ALWAYS on
+        first use. M1 8GB safe: import is lazy inside MLXBatchedExecutor.
+        """
+        if self._mlx_batcher is not None:
+            return self._mlx_batcher
+        try:
+            from hledac.universal.brain.mlx_batched_executor import MLXBatchedExecutor
+            # P0-3 integration: hand the worker thread to the batcher so
+            # MLX inference runs on the persistent loop, not ThreadPoolExecutor.
+            worker = self._ensure_mlx_worker_thread()
+            self._mlx_batcher = MLXBatchedExecutor(
+                engine=self, worker_thread=worker
+            )
+        except Exception as _e:
+            logger.debug("[P0-2] MLXBatchedExecutor init skipped: %s", _e)
+            self._mlx_batcher = None
+        return self._mlx_batcher
+
+    # ─── Sprint P0-3: Dedicated MLX worker thread ──────────────────────
+    def _ensure_mlx_worker_thread(self) -> Any:
+        """
+        Lazy initialization of MLXWorkerThread (M.T2).
+
+        Idempotent. Returns the worker thread instance or None on failure.
+        M1 8GB safe: import is lazy; thread is daemon and bounded.
+        Always-on: routing layer in _submit_inference() decides per-call.
+        """
+        if self._mlx_worker_thread is not None:
+            return self._mlx_worker_thread
+        try:
+            from hledac.universal.brain.mlx_worker_thread import MLXWorkerThread
+            self._mlx_worker_thread = MLXWorkerThread()
+            self._mlx_worker_thread.start()
+        except Exception as _e:
+            logger.debug("[P0-3] MLXWorkerThread init skipped: %s", _e)
+            self._mlx_worker_thread = None
+        return self._mlx_worker_thread
+
+    async def _run_inference_async(self, fn, *args, **kwargs):
+        """
+        Run a sync inference function from the worker thread context.
+
+        This coroutine is scheduled on the worker thread's event loop
+        (M.T1: single MLX context). It synchronously calls fn(*args, **kwargs)
+        and returns the result. No thread switching happens — the call
+        happens in the same thread that owns the MLX model state.
+        """
+        return fn(*args, **kwargs)
+
+    async def _submit_inference(
+        self,
+        timeout: float,
+        fn,
+        *args,
+        **kwargs,
+    ):
+        """
+        Submit an MLX inference call, routing through the dedicated worker
+        thread if available, falling back to the ThreadPoolExecutor path.
+
+        M.T3 fail-soft: any worker thread error (start failure, thread death,
+        submit exception) silently falls back to the legacy executor path.
+        Hlavní asyncio loop is never blocked longer than `timeout` seconds
+        regardless of path taken.
+        """
+        worker = self._ensure_mlx_worker_thread()
+        if worker is not None and worker.is_active():
+            async with self._inference_semaphore:
+                try:
+                    coro = self._run_inference_async(fn, *args, **kwargs)
+                    return await worker.submit(coro, timeout=timeout)
+                except RuntimeError as _e:
+                    # Worker thread died or unavailable mid-flight (M.T3)
+                    logger.debug(
+                        "[P0-3] worker submit failed, falling back to executor: %s",
+                        _e,
+                    )
+                except (asyncio.TimeoutError, TimeoutError):
+                    raise
+
+        # Fallback: legacy ThreadPoolExecutor + wait_for path
+        async with self._inference_semaphore:
+            loop = asyncio.get_running_loop()
+            inference_future = loop.run_in_executor(
+                self._inference_executor,
+                lambda: fn(*args, **kwargs),
+            )
+            return await asyncio.wait_for(inference_future, timeout=timeout)
+
     async def generate(
         self,
         prompt: str,
-        temperature: float = None,
-        max_tokens: int = None,
-        system_msg: str = None
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+        system_msg: str | None = None
     ) -> str:
         """
         Generovat text pomocí Hermes-3.
@@ -1262,6 +1370,29 @@ class Hermes3Engine:
         """
         if self._model is None:
             raise RuntimeError("Model not initialized")
+
+        # Sprint P0-2: Optional continuous batching routing (always-on layer).
+        # is_batch_safe() decides per-call whether to route through the
+        # BatchScheduler. Urgent / oversized / under-memory-pressure requests
+        # fall through unchanged. B.M3 fail-soft: any batching error is
+        # silently absorbed here so the direct path is preserved.
+        try:
+            batcher = await self._ensure_mlx_batcher()
+            if batcher is not None and batcher.is_batch_safe(
+                prompt=prompt, system_msg=system_msg, priority=1.0
+            ):
+                return await batcher.execute(
+                    prompt=prompt,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    system_msg=system_msg,
+                    priority=1.0,
+                )
+        except Exception as _batching_err:
+            logger.debug(
+                "[P0-2] batching routing failed, falling back to direct: %s",
+                _batching_err,
+            )
 
         # P1A: Model-level inference guard — block if hermes is circuit-broken
         if check_model_allowed is not None:
@@ -1407,18 +1538,15 @@ class Hermes3Engine:
             # P1F-A: Global timeout on inference
             timeout_s = _get_hermes_timeout_s()
 
-            # Use semaphore for serialization + executor for thread offload
-            async with self._inference_semaphore:
-                loop = asyncio.get_running_loop()
-                inference_future = loop.run_in_executor(
-                    self._inference_executor,
-                    lambda: self._run_inference(formatted_prompt, temp, max_tok, prefix_cache)
-                )
-                response = await asyncio.wait_for(inference_future, timeout=timeout_s)
-                # NOTE: kept as wait_for here — inference_future is a concurrent.futures.Future
-                # which is not an awaitable in the asyncio.timeout ctx sense; the runtime
-                # `.result()` call inside the future is a sync block, so structured
-                # cancellation via asyncio.timeout is not applicable.
+            # Use semaphore for serialization + executor for thread offload.
+            # Sprint P0-3: routes through MLXWorkerThread (persistent loop) when
+            # available, otherwise falls back to ThreadPoolExecutor. The main
+            # asyncio loop is never blocked longer than `timeout_s`.
+            response = await self._submit_inference(
+                timeout_s,
+                self._run_inference,
+                formatted_prompt, temp, max_tok, prefix_cache,
+            )
 
             # P1A: Record successful inference
             if record_model_success is not None:
@@ -2048,9 +2176,9 @@ Synthesize a comprehensive research report answering the query."""
         self,
         prompt: str,
         response_model: type[T],
-        temperature: float = None,
-        max_tokens: int = None,
-        system_msg: str = None,
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+        system_msg: str | None = None,
         max_retries: int = 2,
         priority: float = 1.0
     ) -> T:
@@ -2367,10 +2495,28 @@ Do not include any other text. Output valid JSON only."""
         # Shutdown inference executor
         self._inference_executor.shutdown(wait=True)
 
+        # Sprint P0-2/P0-3: Shutdown batched executor (releases BatchScheduler
+        # worker) and MLX worker thread (releases persistent event loop +
+        # Metal context). Order matters: stop accepting new requests first
+        # (batcher), then drain worker loop (worker thread), then collect.
+        if self._mlx_batcher is not None:
+            try:
+                await self._mlx_batcher.shutdown()
+            except Exception as _e:
+                logger.debug("[P0-2] batcher shutdown skipped: %s", _e)
+        if self._mlx_worker_thread is not None:
+            try:
+                self._mlx_worker_thread.shutdown(timeout=5.0)
+            except Exception as _e:
+                logger.debug("[P0-3] worker thread shutdown skipped: %s", _e)
+
         # Step 5: Null model and tokenizer
         self._model = None
         self._tokenizer = None
         self._outlines_model = None
+        # P0-2/P0-3: drop lazy references so re-init produces fresh state
+        self._mlx_batcher = None
+        self._mlx_worker_thread = None
 
         # Step 6: gc.collect()
         import gc
@@ -2432,10 +2578,11 @@ Do not include any other text. Output valid JSON only."""
 
     async def cancel_pending_model_tasks(self) -> None:
         """Cancel any in-flight generation tasks."""
-        if hasattr(self, '_generation_task') and self._generation_task is not None:
-            self._generation_task.cancel()
+        task: asyncio.Task[None] | None = getattr(self, '_generation_task', None)
+        if task is not None:
+            task.cancel()
             try:
-                await self._generation_task
+                await task
             except asyncio.CancelledError:
                 pass
             except Exception:
@@ -2663,7 +2810,7 @@ Do not include any other text. Output valid JSON only."""
     async def warmup_prefix_cache(
         self,
         system_prompt: str = "You are a helpful research assistant.",
-        few_shot_examples: list = None
+        few_shot_examples: list | None = None
     ) -> bool:
         """
         Prefix-cache warmup: prefill KV cache s system prompt + few-shot examples.
@@ -2772,7 +2919,7 @@ Do not include any other text. Output valid JSON only."""
         response_model: type,
         temperature: float = 0.1,
         max_tokens: int = 1024,
-        system_msg: str = None
+        system_msg: str | None = None
     ) -> Any:
         """
         Sprint 7B: Structured output with guaranteed fallback chain.

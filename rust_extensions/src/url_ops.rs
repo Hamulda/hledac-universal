@@ -10,7 +10,20 @@ use url::Url;
 
 /// Threshold for parallel batch processing (rayon).
 /// Below this, sequential is faster than parallel (work overhead).
+///
+/// Calibrated for the bounded `crate::bulk_pool()` (2 workers, 2 MiB stacks).
+/// For URL classification (string parse + suffix match, ~1-2 µs per URL),
+/// 2 workers × 100 items = 50 items/worker = ~50-100 µs of work. The
+/// rayon dispatch + chunk overhead is ~5-10 µs/chunk, so the parallel
+/// branch starts paying off above ~100 items. Below the threshold, the
+/// sequential path is faster (no chunking, no worker wake-up).
 const BATCH_PARALLEL_THRESHOLD: usize = 100;
+
+/// Minimum chunk size for the parallel branch. With 2 workers, a 1000-item
+/// batch gets 2 workers × ~16 chunks of 64 items = ~8 chunks/worker. This
+/// reduces rayon channel-dispatch overhead by ~16× compared to 1-item chunks
+/// while keeping the work distribution fine-grained enough for short bursts.
+const BATCH_PARALLEL_MIN_CHUNK: usize = 64;
 
 /// URL kind — the network class a URL belongs to.
 ///
@@ -109,16 +122,23 @@ pub fn classify_host(host: &str) -> UrlKind {
 
 /// Batch classify a vector of URLs. Returns Vec<(kind_str, host)>.
 ///
-/// For >BATCH_PARALLEL_THRESHOLD inputs, uses rayon to parallelize across cores.
+/// For >BATCH_PARALLEL_THRESHOLD inputs, parallelizes via the bounded
+/// `crate::bulk_pool()` (2 workers, 2 MiB stacks — M1 8GB safe).
 /// Below threshold, sequential is faster (rayon dispatch overhead).
+///
+/// Chunked via `with_min_len(BATCH_PARALLEL_MIN_CHUNK)` to amortize
+/// rayon channel-dispatch cost across 64-item work units.
 ///
 /// Never panics — malformed entries get ("malformed", "") entries.
 #[pyfunction]
 pub fn batch_classify(urls: Vec<String>) -> Vec<(String, String)> {
     if urls.len() > BATCH_PARALLEL_THRESHOLD {
-        urls.par_iter()
-            .map(|u| classify_url(u))
-            .collect()
+        crate::bulk_pool().install(|| {
+            urls.par_iter()
+                .map(|u| classify_url(u))
+                .with_min_len(BATCH_PARALLEL_MIN_CHUNK)
+                .collect()
+        })
     } else {
         urls.iter().map(|u| classify_url(u)).collect()
     }

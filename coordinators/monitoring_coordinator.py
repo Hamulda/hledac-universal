@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import time
 from collections import deque
 from dataclasses import dataclass
@@ -448,7 +449,7 @@ class UniversalMonitoringCoordinator(UniversalCoordinator):
         benchmark_type = decision.metadata.get('benchmark_type', 'general')
         duration = min(decision.estimated_duration, 60)  # Max 60 seconds
 
-        result = await self._run_performance_benchmark(benchmark_type, duration)
+        result = await self._run_performance_benchmark(benchmark_type, int(duration))  # int cast: signature requires int (line 467), min(float, 60) is float
 
         execution_time = time.time() - start_time
 
@@ -955,7 +956,7 @@ class UniversalMonitoringCoordinator(UniversalCoordinator):
     # Hermes3 Integration - Operation Tracking with Statistics
     # ========================================================================
 
-    async def track_operation(
+    def track_operation_metrics(
         self,
         operation_type: str,
         success: bool,
@@ -994,7 +995,12 @@ class UniversalMonitoringCoordinator(UniversalCoordinator):
         stats['last_executed'] = time.time()
 
         # Also collect system metrics
-        await self.collect_system_metrics()
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                loop.create_task(self.collect_system_metrics())
+        except RuntimeError:
+            pass
 
     def get_operation_stats(
         self,

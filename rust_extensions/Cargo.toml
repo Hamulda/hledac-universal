@@ -21,14 +21,18 @@ ahash = "0.8"
 # Default (non-aarch64) is scalar fallback; aarch64 override below enables NEON SIMD
 # intrinsics for ~3-5x throughput on Apple Silicon.
 blake3 = "1"
+# Sprint P1-5 QualityGate: BLAKE2b-128 for OSINT finding dedup fingerprints.
+# Must match Python hashlib.blake2b(digest_size=16).hexdigest() bit-for-bit for
+# backward compatibility with existing LMDB-persisted fingerprints. Tiny crate
+# (~30KB compiled), zero deps, NEON-vectorized on aarch64.
+blake2 = "0.10"
 
 [profile.release]
 opt-level = 3
 lto = "fat"
 codegen-units = 1
-
-[target.armv7-unknown-linux-gnueabihf]
-rustflags = ["-C", "target-cpu=generic+neon"]
+strip = "symbols"
+panic = "abort"
 
 # aarch64 (Apple Silicon incl. M1) — enable ARM NEON SIMD for BLAKE3.
 # Other targets get the scalar fallback from the [dependencies] block above.
@@ -38,5 +42,11 @@ blake3 = { version = "1", features = ["neon"] }
 [build-dependencies]
 pyo3-build-config = "0.28"
 
-[build]
-rustflags = ["-C", "target-feature=+neon"]
+# Modern (cargo 1.74+) centralized lint policy. Surfaces dead code and
+# unused items at build time. Set to "warn" (not "deny") so we don't break
+# the build on new dead code — we want visibility, not CI breakages.
+# Promote to "deny" once the codebase is warning-free.
+[lints.rust]
+unused = "warn"
+dead_code = "warn"
+unused_imports = "warn"

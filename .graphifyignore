@@ -1,0 +1,58 @@
+# === Výstupní data (ne zdrojový kód) ===
+reports/
+benchmark_results/
+archive/
+tests/probe_*/
+probe_*/
+
+# === Obrovské JSON artefakty ===
+**/boundary_audit.json
+**/import_usage.json
+**/import_graph.json
+**/model_data_hits.json
+**/hledac_universal-export-*.json
+
+# === Graphify self-reference ===
+graphify-out/
+.code-review-graph/
+evaluate/
+.omc/
+.qoder/
+.agents/
+.pi/
+
+# === Build/vendor ===
+.venv/
+.venv-test/
+rust_extensions/target/
+node_modules/
+__pycache__/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.pyc
+*.pyo
+*.so
+*.egg-info/
+dist/
+build/
+
+# === Lockfiles / CI ===
+uv.lock
+Cargo.lock
+package-lock.json
+.github/
+
+# === IDE / OS ===
+.idea/
+.vscode/
+*.swp
+.DS_Store
+
+# === Citlivé / logy ===
+.env
+.env.local
+*.log
+*.bak
+*.tmp
+*.pid

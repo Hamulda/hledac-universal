@@ -4,7 +4,7 @@ HypothesisBuilder — Hypothesis Generation and Causal Reasoning Export
 
 Hledac Universal OSINT platform - Causal hypothesis reasoning export layer.
 
-Sprint F259: Uses brain/hypothesis_engine.py (canonical) for:
+Sprint F259: Uses brain/research_hypothesis_engine.py (canonical) for:
 - Co-occurrence matrix analysis (numpy float16)
 - Temporal sequence detection
 - Anomaly detection
@@ -63,7 +63,7 @@ class HypothesisBuilder:
     """
     Hypothesis generation and causal reasoning for sprint exports.
 
-    Uses brain/hypothesis_engine.py (canonical) for all causal reasoning.
+    Uses brain/research_hypothesis_engine.py (canonical) for all causal reasoning.
 
     Integration:
     - Wired into sprint_scheduler post-STIX-export
@@ -83,7 +83,7 @@ class HypothesisBuilder:
     def engine(self) -> Any:
         """Lazy load HypothesisEngine from brain."""
         if self._engine is None:
-            from brain.hypothesis_engine import HypothesisEngine
+            from brain.research_hypothesis_engine import HypothesisEngine
 
             self._engine = HypothesisEngine(
                 max_hypotheses=200,
@@ -108,7 +108,7 @@ class HypothesisBuilder:
         output_dir: str | None = None,
     ) -> HypothesisResult:
         """
-        Run hypothesis generation on findings using brain/hypothesis_engine.py.
+        Run hypothesis generation on findings using brain/research_hypothesis_engine.py.
 
         Args:
             findings: List of CanonicalFinding objects
@@ -145,7 +145,7 @@ class HypothesisBuilder:
         try:
             logger.info(f"HypothesisBuilder: starting for sprint {sprint_id} with {len(findings)} findings")
 
-            # Generate causal hypotheses using brain/hypothesis_engine.py
+            # Generate causal hypotheses using brain/research_hypothesis_engine.py
             hypotheses = await self.engine.generate_causal_hypotheses(findings)
 
             # Detect anomalies

@@ -43,8 +43,8 @@ class RawFinding:
     source: str
     url: str
     confidence: float = 0.5
-    entities: list[str] = None
-    metadata: dict = None
+    entities: list[str] | None = None
+    metadata: dict | None = None
 
     def __post_init__(self):
         if self.entities is None:

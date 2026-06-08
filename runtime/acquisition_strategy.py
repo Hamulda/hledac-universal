@@ -1023,6 +1023,9 @@ def required_terminal_lanes(
         )
 
     # CT — required for domain queries unless emergency or non-domain
+    # FIX: CT (crt.sh) requires a domain-like token. Even with nonfeed_diagnostic profile,
+    # CT cannot produce results for non-domain queries like "LockBit ransomware infrastructure".
+    # Mark CT as not-required (advisory) for non-domain queries regardless of profile.
     if is_emergency:
         lanes.append(
             MandatoryLaneTerminality(
@@ -1033,8 +1036,9 @@ def required_terminal_lanes(
                 max_attempts=0,
             )
         )
-    # F233D-FIX-06c: nonfeed_diagnostic profile requires CT even for non-domain queries
-    elif not has_domain and not _is_nonfeed_diagnostic:
+    elif not has_domain:
+        # CT requires a domain — non-domain queries cannot use crt.sh.
+        # nonfeed_diagnostic still attempts CT but it's not a blocking requirement.
         lanes.append(
             MandatoryLaneTerminality(
                 lane=AcquisitionLane.CT,

@@ -71,7 +71,7 @@ class SearxngClient:
         self,
         query: str,
         max_results: int = 20,
-        categories: list[str] = None
+        categories: list[str] | None = None
     ) -> list[dict[str, Any]]:
         """
         Perform search and return results.

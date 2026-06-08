@@ -171,7 +171,7 @@ class BranchManager:
             # Boost CPU queue
             await self._boost_queue(self.scheduler.cpu_queue, entity)
 
-    async def _boost_queue(self, queue: List, entity: str):
+    async def _boost_queue(self, queue: list, entity: str):
         """Zvýší prioritu úloh v dané frontě."""
         if not queue:
             return

@@ -46,11 +46,11 @@ def _load_sprint_scheduler():
 
 def _load_hypothesis_engine():
     spec = importlib.util.spec_from_file_location(
-        "brain.hypothesis_engine",
-        "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/brain/hypothesis_engine.py",
+        "brain.research_hypothesis_engine",
+        "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/brain/research_hypothesis_engine.py",
     )
     mod = importlib.util.module_from_spec(spec)
-    sys.modules["brain.hypothesis_engine"] = mod
+    sys.modules["brain.research_hypothesis_engine"] = mod
     spec.loader.exec_module(mod)
     return mod
 

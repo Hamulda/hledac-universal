@@ -7,7 +7,7 @@ class TestHypothesisGenerate:
 
     def test_generate_returns_list(self):
         """generate_sprint_hypotheses returns a list."""
-        from hledac.universal.brain.hypothesis_engine import HypothesisEngine
+        from hledac.universal.brain.research_hypothesis_engine import HypothesisEngine
 
         engine = HypothesisEngine.__new__(HypothesisEngine)
         engine._hypotheses = {}
@@ -19,7 +19,7 @@ class TestHypothesisGenerate:
 
     def test_max_3_hypotheses(self):
         """generate_sprint_hypotheses returns max 3 hypotheses."""
-        from hledac.universal.brain.hypothesis_engine import HypothesisEngine
+        from hledac.universal.brain.research_hypothesis_engine import HypothesisEngine
 
         engine = HypothesisEngine.__new__(HypothesisEngine)
         engine._hypotheses = {}
@@ -32,7 +32,7 @@ class TestHypothesisGenerate:
 
     def test_hypothesis_format(self):
         """Each hypothesis contains IF or confidence substring."""
-        from hledac.universal.brain.hypothesis_engine import HypothesisEngine
+        from hledac.universal.brain.research_hypothesis_engine import HypothesisEngine
 
         engine = HypothesisEngine.__new__(HypothesisEngine)
         engine._hypotheses = {}
@@ -46,7 +46,7 @@ class TestHypothesisGenerate:
 
     def test_empty_findings_returns_empty(self):
         """Empty findings list returns empty list (no exception)."""
-        from hledac.universal.brain.hypothesis_engine import HypothesisEngine
+        from hledac.universal.brain.research_hypothesis_engine import HypothesisEngine
 
         engine = HypothesisEngine.__new__(HypothesisEngine)
         engine._hypotheses = {}

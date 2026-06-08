@@ -68,7 +68,7 @@ def _safe_payload_json(obj: Any) -> str:
 
 logger = logging.getLogger(__name__)
 # Shared logger for _check_gathered — preserves hardcoded "sidecar_bus" identity
-_sidecar_logger = logging.getLogger("sidecar_bus")
+_sidecarlogger = logging.getLogger("sidecar_bus")
 
 # ── Bounds ────────────────────────────────────────────────────────────────────
 MAX_SIDECAR_FINDINGS: int = 500
@@ -405,9 +405,9 @@ class FindingSidecarBus:
         for item in gathered:
             if isinstance(item, BaseException) and not isinstance(item, SidecarRunResult):
                 # Unexpected exception — log but don't crash (fail-soft)
-                # NOTE: module-level `_sidecar_logger` is defined at line 64 — reusing it here
+                # NOTE: module-level `_sidecarlogger` is defined at line 64 — reusing it here
                 # instead of creating a new logger instance per exception.
-                _sidecar_logger.warning(
+                _sidecarlogger.warning(
                     "Unexpected exception in gather: %s: %s",
                     type(item).__name__,
                     item,
@@ -1401,7 +1401,7 @@ async def _gopher_crawl_runner(
         stored = sum(1 for r in results if isinstance(r, dict) and r.get("accepted"))
         return stored
     except Exception:
-        _logger.warning(f"gopher_crawl runner failed: {e}")
+        logger.warning(f"gopher_crawl runner failed: {e}")
         return 0
 
 

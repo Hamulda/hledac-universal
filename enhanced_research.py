@@ -63,6 +63,7 @@ import hashlib
 import logging
 import random
 import time
+import warnings
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -1993,7 +1994,7 @@ class EnhancedResearchOrchestrator(UniversalResearchOrchestrator):
         score normalization, producing a single unified ranking.
 
         Args:
-            source_results: Dict mapping source name to list of results.
+            source_results: dict mapping source name to list of results.
                 Each result should have: title, content, url, score
 
         Returns:
@@ -2466,7 +2467,7 @@ class EnhancedResearchOrchestrator(UniversalResearchOrchestrator):
         )
 
     # Task implementace
-    async def _task_search(self, query: str, context: Dict) -> Dict:
+    async def _task_search(self, query: str, context: dict) -> dict:
         """Task: Initial Search using query expansion and RAG"""
         logger.info(f"Task: Search for '{query}'")
 
@@ -2506,7 +2507,7 @@ class EnhancedResearchOrchestrator(UniversalResearchOrchestrator):
             "results": results[:10],  # Top 10 results
         }
 
-    async def _task_osint(self, query: str, context: Dict) -> Dict:
+    async def _task_osint(self, query: str, context: dict) -> dict:
         """Task: OSINT Discovery using web intelligence"""
         logger.info(f"Task: OSINT for '{query}'")
 
@@ -2547,7 +2548,7 @@ class EnhancedResearchOrchestrator(UniversalResearchOrchestrator):
             "sources": sources,
         }
 
-    async def _task_academic(self, query: str, context: Dict) -> Dict:
+    async def _task_academic(self, query: str, context: dict) -> dict:
         """Task: Academic Search using academic search engine"""
         logger.info(f"Task: Academic search for '{query}'")
 
@@ -2594,7 +2595,7 @@ class EnhancedResearchOrchestrator(UniversalResearchOrchestrator):
             "count": len(papers),
         }
 
-    async def _task_deep_read(self, urls: list[str], context: Dict) -> Dict:
+    async def _task_deep_read(self, urls: list[str], context: dict) -> dict:
         """Task: Deep Read using RAG and content extraction"""
         logger.info(f"Task: Deep read {len(urls)} URLs")
 
@@ -2634,7 +2635,7 @@ class EnhancedResearchOrchestrator(UniversalResearchOrchestrator):
             "count": len(contents),
         }
 
-    async def _task_fact_check(self, context: Dict) -> Dict:
+    async def _task_fact_check(self, context: dict) -> dict:
         """Task: Fact Check using cross-referencing"""
         logger.info("Task: Fact check")
 
@@ -2687,7 +2688,7 @@ class EnhancedResearchOrchestrator(UniversalResearchOrchestrator):
             "status": "completed",
         }
 
-    async def _task_synthesis(self, query: str, context: Dict) -> str:
+    async def _task_synthesis(self, query: str, context: dict) -> str:
         """Task: Synthesis using RAG and result fusion"""
         logger.info(f"Task: Synthesis for '{query}'")
 
@@ -2854,6 +2855,7 @@ def create_unified_research_engine(
 ) -> UnifiedResearchEngine:
     """
     NON-CANONICAL factory function — backward-compat only.
+    Will be removed in v2.0. Use UnifiedResearchEngine(config=UnifiedResearchConfig(...)) directly.
 
     Creates UnifiedResearchEngine instance. For new code, prefer
     direct instantiation with UnifiedResearchConfig after F11 activation.
@@ -2870,6 +2872,12 @@ def create_unified_research_engine(
         >>> result = await engine.deep_research("target query")
         >>> await engine.cleanup()
     """
+    warnings.warn(
+        "create_unified_research_engine() is deprecated. "
+        "Use UnifiedResearchEngine(config=UnifiedResearchConfig(...)) directly.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     config = UnifiedResearchConfig(depth=depth, **kwargs)
     return UnifiedResearchEngine(config=config)
 
@@ -3076,7 +3084,7 @@ class DeepResearchRequest:
     AŽ PO napojení na triádu a session seams.
 
     Migration direction:
-        DeepResearchRequest.grounding_hints (raw Dict)
+        DeepResearchRequest.grounding_hints (raw dict)
             → CanonicalGroundingHints (types.py:1702)
         via CanonicalGroundingHints.from_shim() classmethod.
         Currently discarded in to_engine_kwargs(); activation would
@@ -3101,7 +3109,7 @@ class DeepResearchRequest:
         }
         # GROUNDING SEAM TRUTH: grounding_hints flow to engine.
         # Migration direction (additive-only, non-activating):
-        # raw grounding_hints Dict should become CanonicalGroundingHints
+        # raw grounding_hints dict should become CanonicalGroundingHints
         # after F11 activation. Currently stored in kwargs for seam
         # propagation — engine receives but does not yet apply it (TBD).
         if self.grounding_hints:
@@ -3550,7 +3558,7 @@ __all__ = [
     # For new code, use deep_research_provider_seam() after F11 activation.
     'enhanced_research',
     'deep_research',
-    'create_unified_research_engine',
+    'create_unified_research_engine',  # deprecated, removal: v2.0
 
     # ========================================================================
     # ENUMS AND DATA CLASSES

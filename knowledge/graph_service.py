@@ -217,6 +217,15 @@ class GraphService:
         try:
             graph.add_relation(src, dst, rel_type, weight, evidence)
             self._seen_rels.add(src, dst, rel_type)
+            # Sprint P1-3: hot-edges counter hook — best-effort, fail-soft
+            try:
+                from hledac.universal.knowledge import hot_edges_cache
+                src_id = hot_edges_cache.get_node_id_by_value(src)
+                dst_id = hot_edges_cache.get_node_id_by_value(dst)
+                if src_id is not None and dst_id is not None:
+                    hot_edges_cache.record_edge(src_id, dst_id)
+            except Exception:
+                pass
             # Fire relationship callbacks (NetworkX bridge for cross-sprint persistence)
             for cb in self._relationship_callbacks:
                 try:
@@ -265,10 +274,38 @@ class GraphService:
         Returns:
             List of connected entity records (value, ioc_type, confidence, source),
             or empty list on error / if graph unavailable.
+
+        Sprint P1-3: When HLEDAC_HOT_EDGES=1 and the value is present in the
+        hot-edges LMDB cache, returns top-N hot neighbors first (O(1) lookup)
+        and falls back to DuckPGQ recursive CTE only on cache miss. This
+        avoids the O(V+E) CTE scan on dense graphs for high-degree nodes.
         """
         graph = _get_graph()
         if graph is None:
             return []
+        # Sprint P1-3: try hot-edges cache first
+        try:
+            from hledac.universal.knowledge import hot_edges_cache
+            src_id = hot_edges_cache.get_node_id_by_value(value)
+            if src_id is not None and hot_edges_cache.has_hot_edges(src_id):
+                neighbors = hot_edges_cache.get_hot_neighbors(src_id, top_n=50)
+                if neighbors:
+                    dst_ids = [nid for nid, _cnt in neighbors]
+                    records = hot_edges_cache.lookup_ioc_values_by_ids(dst_ids)
+                    hot_result: list[dict] = []
+                    for nid, _cnt in neighbors:
+                        rec = records.get(nid)
+                        if rec:
+                            hot_result.append({
+                                "value": rec.get("value", ""),
+                                "ioc_type": rec.get("ioc_type", "unknown"),
+                                "confidence": rec.get("confidence", 0.0),
+                                "source": rec.get("source", ""),
+                            })
+                    if hot_result:
+                        return hot_result
+        except Exception:
+            pass  # fall through to DuckPGQ
         try:
             return graph.find_connected(value, max_hops)
         except Exception as e:

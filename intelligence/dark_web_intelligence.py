@@ -51,7 +51,7 @@ try:
 except ImportError:
     SELECTOLAX_AVAILABLE = False
 
-from ..types import RiskLevel
+from ..project_types import RiskLevel
 
 logger = logging.getLogger(__name__)
 

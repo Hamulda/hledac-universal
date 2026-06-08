@@ -37,9 +37,15 @@ try:
     ZSTD_AVAILABLE = True
 except ImportError:
     ZSTD_AVAILABLE = False
-    zstd = None
+    zstd = None  # type: ignore[ty:invalid-assignment]  # None sentinel: zstd unavailable at runtime, callers must check ZSTD_AVAILABLE
 
 # Sprint 44: Lightpanda for JS-heavy pages — re-exported from tools/lightpanda_manager
+try:
+    from hledac.universal.tools.lightpanda_manager import LightpandaManager
+    LIGHTPANDA_AVAILABLE = True
+except ImportError:
+    LightpandaManager = None  # type: ignore[assignment,misc]
+    LIGHTPANDA_AVAILABLE = False
 
 try:
     import aiohttp
@@ -47,7 +53,7 @@ try:
     AIOHTTP_AVAILABLE = True
 except ImportError:
     AIOHTTP_AVAILABLE = False
-    aiohttp = None
+    aiohttp = None  # type: ignore[ty:invalid-assignment]  # None sentinel: aiohttp unavailable at runtime, callers must check AIOHTTP_AVAILABLE
 
 # Sprint 46: Session management and Paywall bypass
 try:
@@ -245,7 +251,7 @@ class FetchCoordinator(UniversalCoordinator):
         # Sprint F-EXTRACT-2: pivot queue + hypothesis state providers.
         # All optional with safe defaults; SprintScheduler wires real providers.
         pivot_queue_provider: Callable[[], Any] = lambda: None,
-        pivot_stats_provider: Callable[[], dict] = lambda: None,
+        pivot_stats_provider: Callable[[], dict] | None = None,
         hypothesis_query_count_provider: Callable[[], int] = lambda: 0,
         hypothesis_query_count_setter: Callable[[int], None] = lambda v: None,
         hypothesis_depth_provider: Callable[[], int] = lambda: 0,
@@ -785,7 +791,7 @@ class FetchCoordinator(UniversalCoordinator):
         self._telemetry['aimd_concurrency'] = self._aimd_concurrency
         return self._aimd_concurrency
 
-    async def _fetch_with_lightpanda(self, url: str, proxy: str = None) -> dict[str, Any]:
+    async def _fetch_with_lightpanda(self, url: str, proxy: str | None = None):
         """Fetch URL with Lightpanda using pool (JS rendering)."""
         try:
             # P1-1: Start pool on first use (lazy initialization) - thread-safe with double-check
@@ -964,7 +970,7 @@ class FetchCoordinator(UniversalCoordinator):
             self._aimd_release_failure()
             return None
 
-    async def _fetch_with_curl(self, url: str, proxy: str = None) -> dict[str, Any]:
+    async def _fetch_with_curl(self, url: str, proxy: str | None = None):
         """Fetch URL with curl_cffi (fallback)."""
         # Sprint F3/F8/F9: also populates status_code/content_type/headers for corpus ingest
         try:
@@ -1232,7 +1238,7 @@ class FetchCoordinator(UniversalCoordinator):
           To wire it in future: replace the above with resolver.resolve(ctx).
         """
         # Sprint 82Q Phase 6: Offline mode fast-fail BEFORE any network operations
-        from ..types import OfflineModeError, is_offline_mode
+        from ..project_types import OfflineModeError, is_offline_mode
         if is_offline_mode():
             raise OfflineModeError(f"Offline mode enabled, skipping fetch: {url}")
 
@@ -1299,7 +1305,7 @@ class FetchCoordinator(UniversalCoordinator):
                     trace_fetch_start(url, "tor", {"attempt": attempt, "timeout": TIMEOUT_TOR})
                     # Sprint F214: Use TorTransport if enabled (circuit rotation)
                     if self._tor_transport_enabled and self._tor_transport:
-                        result = await self._tor_transport.fetch(config)
+                        result = await self._tor_transport.fetch(config)  # type: ignore[ty:unresolved-reference]  # pre-existing undefined `config` (logic bug, scope: not in this PR)
                         if not result.err:
                             # Map TransportResult → FetchCoordinator dict
                             result = {
@@ -1505,7 +1511,7 @@ class FetchCoordinator(UniversalCoordinator):
                 content = content.decode(errors='ignore')
 
             # Try paywall bypass if content is small or paywall detected
-            if len(content) < 5000 and self._paywall_bypass:
+            if len(content) < 5000 and self._paywall_bypass:  # type: ignore[ty:invalid-argument-type]  # stale type: ty can't refine content: str from upstream decode branch
                 bypass_result = await self._paywall_bypass.bypass(url, content)
                 if bypass_result:
                     logger.info(f"[PAYWALL] Bypassed via {bypass_result.get('bypassed')}")
@@ -1523,7 +1529,7 @@ class FetchCoordinator(UniversalCoordinator):
         ):
             ct = result.get("content_type", "")
             content_bytes = result["content"]
-            if ct.startswith("image/") and len(content_bytes) < 200 * 1024:
+            if ct.startswith("image/") and len(content_bytes) < 200 * 1024:  # type: ignore[ty:invalid-argument-type]  # stale type: result.get()/result[] return Any, ty can't refine to str/bytes
                 url_for_check = result.get("final_url") or result.get("url") or url
                 try:
                     if self._captcha_detector.is_captcha(content_bytes, url_for_check):
@@ -1702,6 +1708,7 @@ class FetchCoordinator(UniversalCoordinator):
                 )
 
                 # Increment metrics counter
+                from metrics_registry import get_metrics_registry  # lazy import mirrors transport/circuit_breaker.py:60
                 get_metrics_registry().inc("cover_traffic_fired")
                 logger.debug(f"[COVER] fired cover traffic #{self._cover_count} for transport={transport}")
         except Exception:

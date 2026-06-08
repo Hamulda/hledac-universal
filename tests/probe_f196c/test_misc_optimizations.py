@@ -6,7 +6,7 @@ Verifies micro-optimizations from F196C sprint.
 import inspect
 import pytest
 
-from hledac.universal.brain.hypothesis_engine import HypothesisEngine
+from hledac.universal.brain.research_hypothesis_engine import HypothesisEngine
 from hledac.universal.graph import quantum_pathfinder
 from hledac.universal.network.jarm_fingerprinter import _JARMFingerprinter
 

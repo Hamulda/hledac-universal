@@ -29,6 +29,7 @@ import json
 import sys
 from dataclasses import dataclass
 from enum import Enum
+from typing import Any
 
 from hledac.universal.utils.serialization import _safe_dataclass_to_dict  # noqa: F401
 
@@ -315,7 +316,7 @@ def format_markdown(report: DoctorReport, verbose: bool = False) -> str:
 
 def format_json(report: DoctorReport, verbose: bool = False) -> str:
     """Format report as JSON."""
-    payload = {
+    payload: dict[str, Any] = {
         "python_version": report.python_version,
         "platform": report.platform,
         "missing_by_extra": report.missing_by_extra,

@@ -15,14 +15,9 @@
     "semantic_hash": "224fe2a186fc0f57365a74639aad8c87"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/enhanced_research.py": {
-    "mtime": 1780666030.714506,
-    "ast_hash": "77f1c8b9ce819df21ef8e24cf6ad7ec2",
-    "semantic_hash": ""
-  },
-  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/autonomous_orchestrator.py": {
-    "mtime": 1780488427.9779878,
-    "ast_hash": "8283fc6f98b80e3d5bbbf97f166c8fbe",
-    "semantic_hash": "8283fc6f98b80e3d5bbbf97f166c8fbe"
+    "mtime": 1780750759.9060826,
+    "ast_hash": "77b766a5f8a19ec370408dac9898abb3",
+    "semantic_hash": "77b766a5f8a19ec370408dac9898abb3"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/resource_allocator.py": {
     "mtime": 1780488428.0778215,
@@ -55,9 +50,9 @@
     "semantic_hash": "23d48a05fdbe93d75ffcdfcfd7fab71f"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/semantic_deduplicator.py": {
-    "mtime": 1780488428.0925696,
-    "ast_hash": "0f6c83bdb4ba4468260d1919ec428923",
-    "semantic_hash": "0f6c83bdb4ba4468260d1919ec428923"
+    "mtime": 1780831761.1871073,
+    "ast_hash": "2fb637e0cec4530eb97ba9a352b98562",
+    "semantic_hash": ""
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/run_comprehensive_tests.py": {
     "mtime": 1780488428.0790873,
@@ -77,11 +72,11 @@
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/deep_probe.py": {
     "mtime": 1780609044.3185804,
     "ast_hash": "eff4ea96e49227470544eaad3fc86b29",
-    "semantic_hash": ""
+    "semantic_hash": "eff4ea96e49227470544eaad3fc86b29"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/__init__.py": {
-    "mtime": 1780686756.0794737,
-    "ast_hash": "77ed03147e24e94f858c501e9c90dfa5",
+    "mtime": 1780834219.923344,
+    "ast_hash": "62fcefb71c9a0583b8840abcdaf42ddf",
     "semantic_hash": ""
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/metrics_registry.py": {
@@ -92,7 +87,7 @@
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/evidence_log.py": {
     "mtime": 1780588500.1104515,
     "ast_hash": "250a82fbca0b9779346d90125ffb3109",
-    "semantic_hash": ""
+    "semantic_hash": "250a82fbca0b9779346d90125ffb3109"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/benchmark_url_set.py": {
     "mtime": 1779827111.016945,
@@ -112,17 +107,17 @@
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/capabilities.py": {
     "mtime": 1780588776.9015577,
     "ast_hash": "69a727c358dddb6a65ff07101cd0bf82",
-    "semantic_hash": ""
+    "semantic_hash": "69a727c358dddb6a65ff07101cd0bf82"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tot_integration.py": {
     "mtime": 1780506163.9685686,
     "ast_hash": "a07b3d7c6c877d57e9af7520d7f2804b",
-    "semantic_hash": ""
+    "semantic_hash": "a07b3d7c6c877d57e9af7520d7f2804b"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/project_types.py": {
     "mtime": 1780593102.6558957,
     "ast_hash": "41f238c9f2c3c9a78a7f6576ab5d3a60",
-    "semantic_hash": ""
+    "semantic_hash": "41f238c9f2c3c9a78a7f6576ab5d3a60"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tool_exec_log.py": {
     "mtime": 1780072503.4929433,
@@ -145,8 +140,8 @@
     "semantic_hash": "be5ba424d6f533071f1457204780a30e"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/__main__.py": {
-    "mtime": 1780663911.9204648,
-    "ast_hash": "fdd0cf487609cd8a721e906becda815e",
+    "mtime": 1780835949.3264453,
+    "ast_hash": "3c0d200e636248f9d78baa9abe499734",
     "semantic_hash": ""
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/mcp.json": {
@@ -155,9 +150,9 @@
     "semantic_hash": "517f4f7a4e78e347c92f30bfd448f624"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/smoke_runner.py": {
-    "mtime": 1780492782.8258748,
-    "ast_hash": "34760abc1bb0a54426862d2679965e33",
-    "semantic_hash": "34760abc1bb0a54426862d2679965e33"
+    "mtime": 1780717572.138425,
+    "ast_hash": "b9e61f0ca96480884ec7acd353913a20",
+    "semantic_hash": "b9e61f0ca96480884ec7acd353913a20"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/research/spike_priority.py": {
     "mtime": 1780072501.4702647,
@@ -172,12 +167,12 @@
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/research/parallel_scheduler.py": {
     "mtime": 1780507550.1175163,
     "ast_hash": "acdee76ce50ff3828a5996da030ffd8b",
-    "semantic_hash": ""
+    "semantic_hash": "acdee76ce50ff3828a5996da030ffd8b"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/research/branch_manager.py": {
     "mtime": 1780507550.1170597,
     "ast_hash": "8546a683675d8551a1f235b1da87c61f",
-    "semantic_hash": ""
+    "semantic_hash": "8546a683675d8551a1f235b1da87c61f"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/.full-review-2026-04-23/state.json": {
     "mtime": 1779507657.6601577,
@@ -622,11 +617,11 @@
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/pipeline/live_feed_pipeline.py": {
     "mtime": 1780609048.2664661,
     "ast_hash": "b7ea340f88eddc4f4a391d613b72f41d",
-    "semantic_hash": ""
+    "semantic_hash": "b7ea340f88eddc4f4a391d613b72f41d"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/pipeline/live_public_pipeline.py": {
-    "mtime": 1780591607.3445487,
-    "ast_hash": "f427c8e7e089fa06a2b3f4aee99ba18c",
+    "mtime": 1780833438.5164678,
+    "ast_hash": "2fd60b16855bd8f0308f5ecfb2462f7d",
     "semantic_hash": ""
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/pipeline/scoring.py": {
@@ -645,14 +640,14 @@
     "semantic_hash": "993085fa3d9531a196b7352efa8c7f61"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/coordinators/claims_coordinator.py": {
-    "mtime": 1780072500.937198,
-    "ast_hash": "eff4928991e94e2985168f8673a7ea41",
-    "semantic_hash": "eff4928991e94e2985168f8673a7ea41"
+    "mtime": 1780750759.892989,
+    "ast_hash": "731e3ae5444432dbb6d86046dc61ce00",
+    "semantic_hash": "731e3ae5444432dbb6d86046dc61ce00"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/coordinators/memory_coordinator.py": {
     "mtime": 1780588987.3089266,
     "ast_hash": "1b778272499270540934f2cce03008de",
-    "semantic_hash": ""
+    "semantic_hash": "1b778272499270540934f2cce03008de"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/coordinators/_catalog.py": {
     "mtime": 1780492782.697575,
@@ -672,12 +667,12 @@
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/coordinators/research_optimizer.py": {
     "mtime": 1780609044.209943,
     "ast_hash": "2884459b16a6934742d08b67d1494753",
-    "semantic_hash": ""
+    "semantic_hash": "2884459b16a6934742d08b67d1494753"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/coordinators/security_coordinator.py": {
     "mtime": 1780609044.241731,
     "ast_hash": "058fd7fe55c65fdf26e4112315d58977",
-    "semantic_hash": ""
+    "semantic_hash": "058fd7fe55c65fdf26e4112315d58977"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/coordinators/privacy_enhanced_research.py": {
     "mtime": 1780072500.974702,
@@ -690,9 +685,9 @@
     "semantic_hash": "1b2ab35495f44b265b2b0b636c6f5ef1"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/coordinators/fetch_coordinator.py": {
-    "mtime": 1780712650.8985353,
-    "ast_hash": "2099862d855640118c318d25a9a77641",
-    "semantic_hash": ""
+    "mtime": 1780750759.9017713,
+    "ast_hash": "769e32a3b458a7a2d4a93c93634be20e",
+    "semantic_hash": "769e32a3b458a7a2d4a93c93634be20e"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/coordinators/validation_coordinator.py": {
     "mtime": 1780072500.9862208,
@@ -707,17 +702,17 @@
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/coordinators/performance_coordinator.py": {
     "mtime": 1780590336.6833837,
     "ast_hash": "2d59362eb7ac008253cd9d25a0e5d3ed",
-    "semantic_hash": ""
+    "semantic_hash": "2d59362eb7ac008253cd9d25a0e5d3ed"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/coordinators/render_coordinator.py": {
     "mtime": 1780507583.6154675,
     "ast_hash": "10840f65cea4465d30f5ced4c28bd49c",
-    "semantic_hash": ""
+    "semantic_hash": "10840f65cea4465d30f5ced4c28bd49c"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/coordinators/research_coordinator.py": {
     "mtime": 1780666210.462237,
     "ast_hash": "42106b36aa2fb3600758471210a6975c",
-    "semantic_hash": ""
+    "semantic_hash": "42106b36aa2fb3600758471210a6975c"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/coordinators/multimodal_coordinator.py": {
     "mtime": 1780072500.9707685,
@@ -732,7 +727,7 @@
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/coordinators/agent_coordination_engine.py": {
     "mtime": 1780609044.044571,
     "ast_hash": "c2d4cde52fbcde156510d18b1a42156b",
-    "semantic_hash": ""
+    "semantic_hash": "c2d4cde52fbcde156510d18b1a42156b"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/coordinators/swarm_coordinator.py": {
     "mtime": 1780072500.9849632,
@@ -742,7 +737,7 @@
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/coordinators/meta_reasoning_coordinator.py": {
     "mtime": 1780609044.1448662,
     "ast_hash": "16dbea9952a63f27dc00fa86a1f353aa",
-    "semantic_hash": ""
+    "semantic_hash": "16dbea9952a63f27dc00fa86a1f353aa"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/coordinators/archive_coordinator.py": {
     "mtime": 1780072500.9309347,
@@ -777,7 +772,7 @@
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/context_optimization/context_compressor.py": {
     "mtime": 1780609044.0178595,
     "ast_hash": "62e7dcae800faed501e4883fe3bf6d10",
-    "semantic_hash": ""
+    "semantic_hash": "62e7dcae800faed501e4883fe3bf6d10"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/context_optimization/mmr.py": {
     "mtime": 1780072500.9159112,
@@ -787,7 +782,7 @@
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/context_optimization/context_cache.py": {
     "mtime": 1780686756.0842586,
     "ast_hash": "f2267298381bd9d4ab15890fc9d63574",
-    "semantic_hash": ""
+    "semantic_hash": "f2267298381bd9d4ab15890fc9d63574"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/context_optimization/dynamic_context_manager.py": {
     "mtime": 1780072500.9147332,
@@ -795,17 +790,17 @@
     "semantic_hash": "2e33b91a1209c6b63099a78e04f9c93e"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/.gemini/settings.json": {
-    "mtime": 1780498156.2173655,
+    "mtime": 1780826471.6379607,
     "ast_hash": "fba92fedb75aa7b3f1f7c271fdf199c0",
     "semantic_hash": "fba92fedb75aa7b3f1f7c271fdf199c0"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/.gemini/hooks/crg-update.sh": {
-    "mtime": 1780498156.2168736,
+    "mtime": 1780826471.6377192,
     "ast_hash": "acd48c76787dfc74059f19d7ad6c8b52",
     "semantic_hash": "acd48c76787dfc74059f19d7ad6c8b52"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/.gemini/hooks/crg-session-start.sh": {
-    "mtime": 1780498156.2166643,
+    "mtime": 1780826471.6374965,
     "ast_hash": "04725eb7177189e6db88282d590d3460",
     "semantic_hash": "04725eb7177189e6db88282d590d3460"
   },
@@ -842,7 +837,7 @@
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tools/lightpanda_manager.py": {
     "mtime": 1780520607.0296612,
     "ast_hash": "dc16b39d4acfed8b40d54239045ae89a",
-    "semantic_hash": ""
+    "semantic_hash": "dc16b39d4acfed8b40d54239045ae89a"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tools/live_artifact_triage.py": {
     "mtime": 1780072504.5652997,
@@ -887,7 +882,7 @@
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tools/lmdb_kv.py": {
     "mtime": 1780661432.0562232,
     "ast_hash": "7a17741da35ddded529908c56a4b2ef3",
-    "semantic_hash": ""
+    "semantic_hash": "7a17741da35ddded529908c56a4b2ef3"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tools/document_metadata_extractor.py": {
     "mtime": 1780492782.8277726,
@@ -907,7 +902,7 @@
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tools/reranker.py": {
     "mtime": 1780609054.7367327,
     "ast_hash": "9d9bae0f695f7c2a5b85720854b18d84",
-    "semantic_hash": ""
+    "semantic_hash": "9d9bae0f695f7c2a5b85720854b18d84"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tools/paywall.py": {
     "mtime": 1780072504.6380274,
@@ -1007,7 +1002,7 @@
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tools/bench_f214_python314_runtime.py": {
     "mtime": 1780609054.3901582,
     "ast_hash": "30a0b638f4311b3297ef8b5d7e7f36d8",
-    "semantic_hash": ""
+    "semantic_hash": "30a0b638f4311b3297ef8b5d7e7f36d8"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tools/session_manager.py": {
     "mtime": 1780488428.103916,
@@ -1205,9 +1200,9 @@
     "semantic_hash": "7f2e9a12dbbbf80a72ffbee5a0541819"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tools/discovery_replay.py": {
-    "mtime": 1780488428.0965033,
-    "ast_hash": "f9fff177cf610f465ddf9b31e387f32d",
-    "semantic_hash": "f9fff177cf610f465ddf9b31e387f32d"
+    "mtime": 1780750760.6208663,
+    "ast_hash": "d4a2048829132becf380f533ffec66cc",
+    "semantic_hash": "d4a2048829132becf380f533ffec66cc"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tools/serialization.py": {
     "mtime": 1780449466.245733,
@@ -1292,12 +1287,12 @@
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/transport/gopher_transport.py": {
     "mtime": 1780506135.252853,
     "ast_hash": "d240f738908d2c37c82e8c71e84c31ff",
-    "semantic_hash": ""
+    "semantic_hash": "d240f738908d2c37c82e8c71e84c31ff"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/transport/curl_cffi_runtime.py": {
     "mtime": 1780710372.9197202,
     "ast_hash": "8e26cc2092bcbdbdb99257c56227a41f",
-    "semantic_hash": ""
+    "semantic_hash": "8e26cc2092bcbdbdb99257c56227a41f"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/transport/body_limiter.py": {
     "mtime": 1780483102.447483,
@@ -1307,12 +1302,12 @@
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/transport/httpx_transport.py": {
     "mtime": 1780590336.7583528,
     "ast_hash": "dfccc31970148a32abd1012f61de1eaf",
-    "semantic_hash": ""
+    "semantic_hash": "dfccc31970148a32abd1012f61de1eaf"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/transport/inmemory_transport.py": {
     "mtime": 1780506163.9475517,
     "ast_hash": "fc5e390c726afe6d0996db2e03146493",
-    "semantic_hash": ""
+    "semantic_hash": "fc5e390c726afe6d0996db2e03146493"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/transport/__init__.py": {
     "mtime": 1780072504.788162,
@@ -1322,7 +1317,7 @@
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/transport/tor_transport.py": {
     "mtime": 1780506163.9500923,
     "ast_hash": "317f99e9832f42cfde220450b0315291",
-    "semantic_hash": ""
+    "semantic_hash": "317f99e9832f42cfde220450b0315291"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/transport/transport_router.py": {
     "mtime": 1780488428.1092515,
@@ -1337,7 +1332,7 @@
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/transport/nym_transport.py": {
     "mtime": 1780506163.9489408,
     "ast_hash": "0794767fb4cc5e571fec12cd444d0142",
-    "semantic_hash": ""
+    "semantic_hash": "0794767fb4cc5e571fec12cd444d0142"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/transport/circuit_breaker.py": {
     "mtime": 1780571012.6216938,
@@ -1357,12 +1352,12 @@
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/transport/i2p_transport.py": {
     "mtime": 1780590336.8330662,
     "ast_hash": "b9792475727e4e49c05432e173423431",
-    "semantic_hash": ""
+    "semantic_hash": "b9792475727e4e49c05432e173423431"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/transport/curl_cffi_fetch.py": {
     "mtime": 1780710370.4174159,
     "ast_hash": "a7da5d200894e1414d4833a29954c0a8",
-    "semantic_hash": ""
+    "semantic_hash": "a7da5d200894e1414d4833a29954c0a8"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/transport/base.py": {
     "mtime": 1780321563.9099102,
@@ -1372,27 +1367,27 @@
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/core/resource_governor.py": {
     "mtime": 1780666152.0158744,
     "ast_hash": "1f0937d8c29f2efdedb205428e7070f1",
-    "semantic_hash": ""
+    "semantic_hash": "1f0937d8c29f2efdedb205428e7070f1"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/core/__init__.py": {
     "mtime": 1780666245.8966866,
     "ast_hash": "557419b87f91c043730022aab8580579",
-    "semantic_hash": ""
+    "semantic_hash": "557419b87f91c043730022aab8580579"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/core/mlx_embeddings.py": {
     "mtime": 1780670447.675919,
     "ast_hash": "6e15d65e5d7e5580b5635c102a5923cb",
-    "semantic_hash": ""
+    "semantic_hash": "6e15d65e5d7e5580b5635c102a5923cb"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/core/__main__.py": {
-    "mtime": 1780666102.963738,
-    "ast_hash": "ae1edcfa5e442607eba3c2c2d86ec540",
+    "mtime": 1780833133.9569187,
+    "ast_hash": "8e6572b406e8ded6715a82a44679b112",
     "semantic_hash": ""
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/.qoder/settings.json": {
-    "mtime": 1780498156.2140024,
+    "mtime": 1780741457.623096,
     "ast_hash": "eabacf84dccc9d68af080cb779c38845",
-    "semantic_hash": ""
+    "semantic_hash": "eabacf84dccc9d68af080cb779c38845"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/.qoder/mcp.json": {
     "mtime": 1779539875.4344063,
@@ -1417,7 +1412,7 @@
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/memory/shared_memory_manager.py": {
     "mtime": 1780662041.9032834,
     "ast_hash": "30674c7f6fc949bc2b208baad9cd9c83",
-    "semantic_hash": ""
+    "semantic_hash": "30674c7f6fc949bc2b208baad9cd9c83"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/layers/hive_coordination.py": {
     "mtime": 1780321563.7843482,
@@ -1457,12 +1452,12 @@
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/layers/communication_layer.py": {
     "mtime": 1780609045.909075,
     "ast_hash": "3df1a3b680b6bface8da37211b85ebcd",
-    "semantic_hash": ""
+    "semantic_hash": "3df1a3b680b6bface8da37211b85ebcd"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/layers/stealth_layer.py": {
     "mtime": 1780588953.9402628,
     "ast_hash": "20e27ba313b9dfe093f49ac8959f6245",
-    "semantic_hash": ""
+    "semantic_hash": "20e27ba313b9dfe093f49ac8959f6245"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/layers/privacy_layer.py": {
     "mtime": 1780100870.818024,
@@ -1702,7 +1697,7 @@
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/intelligence/pattern_mining.py": {
     "mtime": 1780608918.6168575,
     "ast_hash": "bd0201bc97067f9198e9504807d78d49",
-    "semantic_hash": ""
+    "semantic_hash": "bd0201bc97067f9198e9504807d78d49"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/intelligence/greynoise_lane.py": {
     "mtime": 1780072501.2058372,
@@ -1722,7 +1717,7 @@
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/intelligence/exposure_correlator.py": {
     "mtime": 1780609045.2529862,
     "ast_hash": "fa27d3f7f607650c92eab7b25800ca63",
-    "semantic_hash": ""
+    "semantic_hash": "fa27d3f7f607650c92eab7b25800ca63"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/intelligence/cryptographic_intelligence.py": {
     "mtime": 1780488428.0403802,
@@ -1732,7 +1727,7 @@
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/intelligence/workflow_orchestrator.py": {
     "mtime": 1780609045.626571,
     "ast_hash": "f98e9e833df27683b8a3da9581aa5e89",
-    "semantic_hash": ""
+    "semantic_hash": "f98e9e833df27683b8a3da9581aa5e89"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/intelligence/temporal_archaeologist_adapter.py": {
     "mtime": 1780072501.235251,
@@ -1757,7 +1752,7 @@
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/intelligence/wayback_cdx.py": {
     "mtime": 1780662156.8798795,
     "ast_hash": "6eab89d3a37e8698273105e91132ce90",
-    "semantic_hash": ""
+    "semantic_hash": "6eab89d3a37e8698273105e91132ce90"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/intelligence/advanced_image_osint.py": {
     "mtime": 1780072501.180295,
@@ -1767,7 +1762,7 @@
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/intelligence/ct_log_client.py": {
     "mtime": 1780661661.7967048,
     "ast_hash": "d89262ec82ac464e5d5dd0ee3aa40ad2",
-    "semantic_hash": ""
+    "semantic_hash": "d89262ec82ac464e5d5dd0ee3aa40ad2"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/intelligence/network_intelligence.py": {
     "mtime": 1780072501.2126434,
@@ -1792,17 +1787,17 @@
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/intelligence/document_intelligence.py": {
     "mtime": 1780608918.5548937,
     "ast_hash": "e6bb767b76b45e1780ae9ab490abedd7",
-    "semantic_hash": ""
+    "semantic_hash": "e6bb767b76b45e1780ae9ab490abedd7"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/intelligence/leak_sentinel.py": {
     "mtime": 1780609045.2934358,
     "ast_hash": "bba0dc42c00819358e1edf5a0439d9a5",
-    "semantic_hash": ""
+    "semantic_hash": "bba0dc42c00819358e1edf5a0439d9a5"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/intelligence/academic_discovery.py": {
     "mtime": 1780662080.3049989,
     "ast_hash": "5e7bbd98b28a35c19950b5f11f5eeeff",
-    "semantic_hash": ""
+    "semantic_hash": "5e7bbd98b28a35c19950b5f11f5eeeff"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/intelligence/onion_seed_manager.py": {
     "mtime": 1780072501.2146297,
@@ -1832,7 +1827,7 @@
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/intelligence/network_reconnaissance.py": {
     "mtime": 1780662192.3907344,
     "ast_hash": "c6f317293912535dba035a2703e1b4fe",
-    "semantic_hash": ""
+    "semantic_hash": "c6f317293912535dba035a2703e1b4fe"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/intelligence/temporal_analysis.py": {
     "mtime": 1780492782.7973971,
@@ -1852,12 +1847,12 @@
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/intelligence/rir_correlator.py": {
     "mtime": 1780609045.4195728,
     "ast_hash": "2ceaccc0ad1f4811f6cafd52a62bad02",
-    "semantic_hash": ""
+    "semantic_hash": "2ceaccc0ad1f4811f6cafd52a62bad02"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/intelligence/doh_lane.py": {
     "mtime": 1780662183.0837793,
     "ast_hash": "fa9807d1e8a42b6933a7ec06ea486176",
-    "semantic_hash": ""
+    "semantic_hash": "fa9807d1e8a42b6933a7ec06ea486176"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/intelligence/shodan_lane.py": {
     "mtime": 1780072501.2262125,
@@ -1872,17 +1867,17 @@
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/intelligence/archive_discovery.py": {
     "mtime": 1780609045.0703325,
     "ast_hash": "bf60b911b33f58606a3391316202c3af",
-    "semantic_hash": ""
+    "semantic_hash": "bf60b911b33f58606a3391316202c3af"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/intelligence/academic_search.py": {
     "mtime": 1780661942.1454709,
     "ast_hash": "e40c49c51b1fe0f1357b91ded1834547",
-    "semantic_hash": ""
+    "semantic_hash": "e40c49c51b1fe0f1357b91ded1834547"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/intelligence/exposed_service_hunter.py": {
     "mtime": 1780609045.2204716,
     "ast_hash": "e8cdce4be15f31e5bb73c13592a32441",
-    "semantic_hash": ""
+    "semantic_hash": "e8cdce4be15f31e5bb73c13592a32441"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/intelligence/pattern_mining_canonical.py": {
     "mtime": 1780488428.0456588,
@@ -1892,7 +1887,7 @@
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/intelligence/exposure_clients.py": {
     "mtime": 1780661802.1551638,
     "ast_hash": "f42bbc791c34cee557181ce1820c5a08",
-    "semantic_hash": ""
+    "semantic_hash": "f42bbc791c34cee557181ce1820c5a08"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/intelligence/bgp_lane.py": {
     "mtime": 1780492782.7905562,
@@ -1912,7 +1907,7 @@
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/intelligence/web_intelligence.py": {
     "mtime": 1780661737.43544,
     "ast_hash": "dd061b5d338cb3b269fa829d0b0fe47f",
-    "semantic_hash": ""
+    "semantic_hash": "dd061b5d338cb3b269fa829d0b0fe47f"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/intelligence/pastebin_monitor.py": {
     "mtime": 1780072501.218616,
@@ -1922,7 +1917,7 @@
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/intelligence/dark_web_intelligence.py": {
     "mtime": 1780520565.6535583,
     "ast_hash": "9c7bb277652e9937923352298dee9364",
-    "semantic_hash": ""
+    "semantic_hash": "9c7bb277652e9937923352298dee9364"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/intelligence/ct_lane.py": {
     "mtime": 1780072501.191534,
@@ -1937,17 +1932,17 @@
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/intelligence/stealth_crawler.py": {
     "mtime": 1780609045.4911354,
     "ast_hash": "000ed80b483be12ce47ff644903aea16",
-    "semantic_hash": ""
+    "semantic_hash": "000ed80b483be12ce47ff644903aea16"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/intelligence/temporal_archaeologist.py": {
     "mtime": 1780609045.52441,
     "ast_hash": "d63d867f8f8122266e6397ca2e900530",
-    "semantic_hash": ""
+    "semantic_hash": "d63d867f8f8122266e6397ca2e900530"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/intelligence/social_identity_miner.py": {
     "mtime": 1780609045.4351306,
     "ast_hash": "24cd3d4013d1ac300b373105b7dac236",
-    "semantic_hash": ""
+    "semantic_hash": "24cd3d4013d1ac300b373105b7dac236"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/intelligence/streaming_embedder.py": {
     "mtime": 1780072501.2314048,
@@ -1957,7 +1952,7 @@
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/intelligence/relationship_discovery.py": {
     "mtime": 1780608918.6272552,
     "ast_hash": "fd05892b663f11408b25415ff013c256",
-    "semantic_hash": ""
+    "semantic_hash": "fd05892b663f11408b25415ff013c256"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/security/key_manager.py": {
     "mtime": 1780267172.1262212,
@@ -2082,12 +2077,12 @@
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/dht/metadata_fetcher.py": {
     "mtime": 1780520472.5535932,
     "ast_hash": "28043799e99258ea312c2fe37d2fe3f0",
-    "semantic_hash": ""
+    "semantic_hash": "28043799e99258ea312c2fe37d2fe3f0"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/dht/local_graph.py": {
     "mtime": 1780661529.5400636,
     "ast_hash": "4b7944bdf549dfa478efaac883bbd54e",
-    "semantic_hash": ""
+    "semantic_hash": "4b7944bdf549dfa478efaac883bbd54e"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/dht/__init__.py": {
     "mtime": 1779507657.7448115,
@@ -2097,22 +2092,22 @@
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/dht/kademlia_node.py": {
     "mtime": 1780661230.1906183,
     "ast_hash": "39f9935a70abf6abf9cd0ca91f74815c",
-    "semantic_hash": ""
+    "semantic_hash": "39f9935a70abf6abf9cd0ca91f74815c"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/dht/sketch_exchange.py": {
     "mtime": 1780609044.4352283,
     "ast_hash": "d640d675804eae5812d77e542f8dec7c",
-    "semantic_hash": ""
+    "semantic_hash": "d640d675804eae5812d77e542f8dec7c"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/network/passive_fingerprint.py": {
     "mtime": 1780609048.2132437,
     "ast_hash": "e9a7ffc600b13bf02f81ebe1cf2679c5",
-    "semantic_hash": ""
+    "semantic_hash": "e9a7ffc600b13bf02f81ebe1cf2679c5"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/network/ipv6_recon.py": {
     "mtime": 1780609048.1873014,
     "ast_hash": "b8166c501e94b44e09f74b24f16618f5",
-    "semantic_hash": ""
+    "semantic_hash": "b8166c501e94b44e09f74b24f16618f5"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/network/gemini_transport.py": {
     "mtime": 1780109516.2274823,
@@ -2127,7 +2122,7 @@
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/network/bgp_monitor.py": {
     "mtime": 1780506163.9528291,
     "ast_hash": "905b8fa9ae22dbcc90fedfb92ee7bb48",
-    "semantic_hash": ""
+    "semantic_hash": "905b8fa9ae22dbcc90fedfb92ee7bb48"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/network/domain_concurrency.py": {
     "mtime": 1780072501.36571,
@@ -2137,7 +2132,7 @@
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/network/network_intelligence.py": {
     "mtime": 1780520505.1513004,
     "ast_hash": "3e9e4e28e5a1684e5a7ec862898d1baf",
-    "semantic_hash": ""
+    "semantic_hash": "3e9e4e28e5a1684e5a7ec862898d1baf"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/network/dns_tunnel_detector.py": {
     "mtime": 1780488428.0691445,
@@ -2152,12 +2147,12 @@
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/network/i2p_client.py": {
     "mtime": 1780609048.1636202,
     "ast_hash": "49b4448bf77f6328f95fda825011b679",
-    "semantic_hash": ""
+    "semantic_hash": "49b4448bf77f6328f95fda825011b679"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/network/jarm_fingerprinter.py": {
     "mtime": 1780506163.9555044,
     "ast_hash": "64a73cc2ce36dcbd4a3b716d94a278c9",
-    "semantic_hash": ""
+    "semantic_hash": "64a73cc2ce36dcbd4a3b716d94a278c9"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/network/js_source_map_extractor.py": {
     "mtime": 1780072501.3796568,
@@ -2167,7 +2162,7 @@
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/network/passive_dns.py": {
     "mtime": 1780609048.205491,
     "ast_hash": "51d64a74d62565b8c3e1c1ebbde7c326",
-    "semantic_hash": ""
+    "semantic_hash": "51d64a74d62565b8c3e1c1ebbde7c326"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/network/tor_manager.py": {
     "mtime": 1780072501.395616,
@@ -2187,7 +2182,7 @@
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/network/banner_grabber.py": {
     "mtime": 1780609048.140675,
     "ast_hash": "f4faaa759580e4273862530fab89c0b9",
-    "semantic_hash": ""
+    "semantic_hash": "f4faaa759580e4273862530fab89c0b9"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/network/ct_log_scanner.py": {
     "mtime": 1780072501.3623755,
@@ -2197,7 +2192,7 @@
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/network/ipfs_client.py": {
     "mtime": 1780609048.178144,
     "ast_hash": "f414e5b9104ee544869491777e7f3306",
-    "semantic_hash": ""
+    "semantic_hash": "f414e5b9104ee544869491777e7f3306"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/network/session_runtime.py": {
     "mtime": 1780488428.071751,
@@ -2207,7 +2202,7 @@
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/graph/__init__.py": {
     "mtime": 1780666024.949985,
     "ast_hash": "8794fe5c67ea3ee50399de733b2971cb",
-    "semantic_hash": ""
+    "semantic_hash": "8794fe5c67ea3ee50399de733b2971cb"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/graph/graph_manager.py": {
     "mtime": 1780072501.0890512,
@@ -2215,8 +2210,8 @@
     "semantic_hash": "79b3748f3356a0001c5e94283cfd2de3"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/graph/quantum_pathfinder.py": {
-    "mtime": 1780665983.378439,
-    "ast_hash": "dc6b15e004f6c59c1a9a86c768e3ed9f",
+    "mtime": 1780831859.8329682,
+    "ast_hash": "17430057e53cadd51013733ac710bc49",
     "semantic_hash": ""
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/runtime/investigation_planner.py": {
@@ -2225,9 +2220,9 @@
     "semantic_hash": "64c6bdcce7b658d7870c7ff21bc5c904"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/runtime/windup_engine.py": {
-    "mtime": 1780488428.088158,
-    "ast_hash": "68b96c08291f89f00b867831c5211190",
-    "semantic_hash": "68b96c08291f89f00b867831c5211190"
+    "mtime": 1780831889.7204542,
+    "ast_hash": "0c065d14b4fbf24785d5183205dfb0a0",
+    "semantic_hash": ""
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/runtime/corroboration_score.py": {
     "mtime": 1780072501.495478,
@@ -2235,8 +2230,8 @@
     "semantic_hash": "480a00d934dfb61c9eb8400f3937115f"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/runtime/sprint_scheduler.py": {
-    "mtime": 1780663918.5222867,
-    "ast_hash": "25dffd28ce328907f41aa460017213e4",
+    "mtime": 1780833391.7486103,
+    "ast_hash": "3336bf58cfe0adf20d93fef343e9eafd",
     "semantic_hash": ""
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/runtime/source_finding_bridge.py": {
@@ -2257,12 +2252,12 @@
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/runtime/enrichment_services.py": {
     "mtime": 1780591500.135219,
     "ast_hash": "d252c096ed134720e9bd5d208fc0b7b3",
-    "semantic_hash": ""
+    "semantic_hash": "d252c096ed134720e9bd5d208fc0b7b3"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/runtime/sprint_advisory_runner.py": {
     "mtime": 1780593533.2315335,
     "ast_hash": "464f484d3430e980806cc47265a49128",
-    "semantic_hash": ""
+    "semantic_hash": "464f484d3430e980806cc47265a49128"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/runtime/shadow_pre_decision.py": {
     "mtime": 1780099722.8142624,
@@ -2287,7 +2282,7 @@
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/runtime/sidecar_protocol_adapters.py": {
     "mtime": 1780590064.1474502,
     "ast_hash": "e1d893aea9902ec177a34cf6487714af",
-    "semantic_hash": ""
+    "semantic_hash": "e1d893aea9902ec177a34cf6487714af"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/runtime/acquisition_telemetry_reconcile.py": {
     "mtime": 1780072501.4938846,
@@ -2320,9 +2315,9 @@
     "semantic_hash": "ccb40ba17d984cff6c2309398da69bde"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/runtime/acquisition_strategy.py": {
-    "mtime": 1780609048.5609047,
-    "ast_hash": "2630a5f262ef13190f74cdaad2838525",
-    "semantic_hash": ""
+    "mtime": 1780756747.1930156,
+    "ast_hash": "801bce62d8eba3153a7cccf0f30db1be",
+    "semantic_hash": "801bce62d8eba3153a7cccf0f30db1be"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/runtime/evidence_corroboration.py": {
     "mtime": 1780321563.7919683,
@@ -2342,7 +2337,7 @@
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/runtime/sidecar_orchestrator.py": {
     "mtime": 1780590467.206816,
     "ast_hash": "f345e08eac1c71cb43f80ae1d17eb279",
-    "semantic_hash": ""
+    "semantic_hash": "f345e08eac1c71cb43f80ae1d17eb279"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/runtime/nonfeed_seed_runtime.py": {
     "mtime": 1780072501.5200918,
@@ -2397,7 +2392,7 @@
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/runtime/sidecar_bus.py": {
     "mtime": 1780609048.6841886,
     "ast_hash": "f51f91ddb0260940bf4e4364a0a5633b",
-    "semantic_hash": ""
+    "semantic_hash": "f51f91ddb0260940bf4e4364a0a5633b"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/discovery/fusion_ranker.py": {
     "mtime": 1780072501.016843,
@@ -2422,7 +2417,7 @@
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/discovery/duckduckgo_adapter.py": {
     "mtime": 1780662289.798923,
     "ast_hash": "6230ce98482a8760a8e9a17974fdbbd0",
-    "semantic_hash": ""
+    "semantic_hash": "6230ce98482a8760a8e9a17974fdbbd0"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/discovery/ti_aspirational.py": {
     "mtime": 1779827110.9579668,
@@ -2437,7 +2432,7 @@
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/discovery/gopher_crawler.py": {
     "mtime": 1780609044.5366533,
     "ast_hash": "a1afdd84705ac1b268b453932890a1ab",
-    "semantic_hash": ""
+    "semantic_hash": "a1afdd84705ac1b268b453932890a1ab"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/discovery/provider_stats.py": {
     "mtime": 1780488428.0054612,
@@ -2447,7 +2442,7 @@
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/discovery/fediverse_adapter.py": {
     "mtime": 1780609044.5264335,
     "ast_hash": "ff35d511c0fe6057f0401cc45568974c",
-    "semantic_hash": ""
+    "semantic_hash": "ff35d511c0fe6057f0401cc45568974c"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/discovery/historical_frontier.py": {
     "mtime": 1780072501.0192301,
@@ -2457,7 +2452,7 @@
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/discovery/dht_adapter.py": {
     "mtime": 1780507461.5754087,
     "ast_hash": "1ec9385dbca0b57030f0d7338450dd20",
-    "semantic_hash": ""
+    "semantic_hash": "1ec9385dbca0b57030f0d7338450dd20"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/discovery/matrix_adapter.py": {
     "mtime": 1780488428.0051236,
@@ -2467,12 +2462,12 @@
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/discovery/discovery_planner.py": {
     "mtime": 1780609044.4944694,
     "ast_hash": "863953a49b5beef01e0da1d239da2242",
-    "semantic_hash": ""
+    "semantic_hash": "863953a49b5beef01e0da1d239da2242"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/discovery/ti_feed_adapter.py": {
     "mtime": 1780662272.6899524,
     "ast_hash": "7703890182fd5d2d1dfc2c23b17464bc",
-    "semantic_hash": ""
+    "semantic_hash": "7703890182fd5d2d1dfc2c23b17464bc"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/discovery/source_registry.py": {
     "mtime": 1780488428.0063486,
@@ -2482,12 +2477,12 @@
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/discovery/cascade.py": {
     "mtime": 1780609044.468156,
     "ast_hash": "65944673a4bf9f48ee571fc62c60212d",
-    "semantic_hash": ""
+    "semantic_hash": "65944673a4bf9f48ee571fc62c60212d"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/discovery/academic/s2orc_adapter.py": {
     "mtime": 1780609044.458957,
     "ast_hash": "6ea7a4175220778f8c18873f6aea9b71",
-    "semantic_hash": ""
+    "semantic_hash": "6ea7a4175220778f8c18873f6aea9b71"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/discovery/academic/openalex_adapter.py": {
     "mtime": 1780109564.9588075,
@@ -2507,32 +2502,22 @@
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/discovery/academic/unpaywall_adapter.py": {
     "mtime": 1780662283.3821092,
     "ast_hash": "7fa61377f29b125cef003e7a97a7b04b",
-    "semantic_hash": ""
+    "semantic_hash": "7fa61377f29b125cef003e7a97a7b04b"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/discovery/academic/__init__.py": {
     "mtime": 1780609044.4393353,
     "ast_hash": "bc8b54d46c7fb999e513441d8413fca8",
-    "semantic_hash": ""
+    "semantic_hash": "bc8b54d46c7fb999e513441d8413fca8"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_sidecar_orchestrator.py": {
     "mtime": 1780072502.242736,
     "ast_hash": "8371a4ab8de125c52fefbdd9951587db",
     "semantic_hash": "8371a4ab8de125c52fefbdd9951587db"
   },
-  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/sprint6c_300s.py": {
-    "mtime": 1780072502.0657303,
-    "ast_hash": "54ca8a5e00a12301e73ef87dbda00f47",
-    "semantic_hash": "54ca8a5e00a12301e73ef87dbda00f47"
-  },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_sprint59.py": {
     "mtime": 1780072502.50659,
     "ast_hash": "c2bf3efc966a1bc8147998f91779d578",
     "semantic_hash": "c2bf3efc966a1bc8147998f91779d578"
-  },
-  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/sprint5r_shadow_baseline.py": {
-    "mtime": 1780571012.6180277,
-    "ast_hash": "ded9644f07dcc67149d8f26964814535",
-    "semantic_hash": "ded9644f07dcc67149d8f26964814535"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_e2e_dry_run.py": {
     "mtime": 1780072502.160956,
@@ -2545,9 +2530,9 @@
     "semantic_hash": "d7a8127a0593a891e3a0ff2b1da2ff4f"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_ds_integration.py": {
-    "mtime": 1780072502.1555161,
-    "ast_hash": "256b817972a18592b0a51a974ee7b8d6",
-    "semantic_hash": "256b817972a18592b0a51a974ee7b8d6"
+    "mtime": 1780750760.6158407,
+    "ast_hash": "51fa8ad90a3e294bef1581118bb3ff75",
+    "semantic_hash": "51fa8ad90a3e294bef1581118bb3ff75"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_html_parser_characterization.py": {
     "mtime": 1780072502.1997428,
@@ -2563,11 +2548,6 @@
     "mtime": 1780072502.1700287,
     "ast_hash": "2db94d0348f268dd883c4d20fc020a63",
     "semantic_hash": "2db94d0348f268dd883c4d20fc020a63"
-  },
-  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/sprint4c_before_benchmark.py": {
-    "mtime": 1780072502.0393245,
-    "ast_hash": "c29780ff14ec5154214b43d4c0b24578",
-    "semantic_hash": "c29780ff14ec5154214b43d4c0b24578"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_sprint65e_no_available_flags_in_orchestrator.py": {
     "mtime": 1780072502.5501795,
@@ -2589,15 +2569,10 @@
     "ast_hash": "eb54ff067948185591c11dc093528051",
     "semantic_hash": "eb54ff067948185591c11dc093528051"
   },
-  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_sprint8aj_paths.py": {
-    "mtime": 1780072502.8247683,
-    "ast_hash": "e7c8d20d4352c4ab77112fffda0bf48b",
-    "semantic_hash": "e7c8d20d4352c4ab77112fffda0bf48b"
-  },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/conftest.py": {
-    "mtime": 1780321777.202357,
-    "ast_hash": "12f1f0cf23b987fa18d53c5ffd603dd2",
-    "semantic_hash": "12f1f0cf23b987fa18d53c5ffd603dd2"
+    "mtime": 1780751828.2109504,
+    "ast_hash": "dcf2257beb8ee182f3f81163c5c0cdae",
+    "semantic_hash": "dcf2257beb8ee182f3f81163c5c0cdae"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_enrichment_services.py": {
     "mtime": 1780072502.168542,
@@ -2607,27 +2582,12 @@
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_hypothesis_dspy_fallback.py": {
     "mtime": 1780664383.6212616,
     "ast_hash": "9a6b8c652eaf79ad2b8a17dff11e7cd1",
-    "semantic_hash": ""
-  },
-  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/sprint5r_ts_active.py": {
-    "mtime": 1780072502.0525854,
-    "ast_hash": "204a4adbf9462407e387348fb69cc951",
-    "semantic_hash": "204a4adbf9462407e387348fb69cc951"
+    "semantic_hash": "9a6b8c652eaf79ad2b8a17dff11e7cd1"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/benchmark_scorecard_5A_r2.json": {
     "mtime": 1779507657.8702946,
     "ast_hash": "c2c8dea4aade95cce8a3f058a6cdffdc",
     "semantic_hash": "c2c8dea4aade95cce8a3f058a6cdffdc"
-  },
-  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_sprint8v_content_enrichment.py": {
-    "mtime": 1780072503.161952,
-    "ast_hash": "6b9bebd5e1d125e3660b90d9316611e7",
-    "semantic_hash": "6b9bebd5e1d125e3660b90d9316611e7"
-  },
-  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_sprint85_security_audit.py": {
-    "mtime": 1780072502.798547,
-    "ast_hash": "96719fc45a2f17cc6c0b2bee309afe1e",
-    "semantic_hash": "96719fc45a2f17cc6c0b2bee309afe1e"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_sprint8aw_aho_integration.py": {
     "mtime": 1780072503.040451,
@@ -2643,11 +2603,6 @@
     "mtime": 1780072502.1635363,
     "ast_hash": "3172d0ea8d378c8d36b3c5a8947cd958",
     "semantic_hash": "3172d0ea8d378c8d36b3c5a8947cd958"
-  },
-  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/run_sprint_5d_benchmark.py": {
-    "mtime": 1780072502.0326526,
-    "ast_hash": "f9856489c5b3cdb8d04d190eeddf29cf",
-    "semantic_hash": "f9856489c5b3cdb8d04d190eeddf29cf"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_sprint8ac_lazy_scipy.py": {
     "mtime": 1780072502.8089046,
@@ -2709,20 +2664,10 @@
     "ast_hash": "28c6d9d513d4ac2eb914be3ddbcc943d",
     "semantic_hash": "28c6d9d513d4ac2eb914be3ddbcc943d"
   },
-  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_sprint82i_benchmark.py": {
-    "mtime": 1780072502.7903714,
-    "ast_hash": "7bbbc6e75001d57ce9e3a06476557e80",
-    "semantic_hash": "7bbbc6e75001d57ce9e3a06476557e80"
-  },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_sprint8au_aho_shadow.py": {
     "mtime": 1780072503.0384307,
     "ast_hash": "62f3679babe5a3b3998092c9940e552d",
     "semantic_hash": "62f3679babe5a3b3998092c9940e552d"
-  },
-  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/e2e_autonomous_loop.py": {
-    "mtime": 1780072501.8596616,
-    "ast_hash": "e4abc1b9edab4550c9be12441f82e2a1",
-    "semantic_hash": "e4abc1b9edab4550c9be12441f82e2a1"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_f227k_acquisition_lane_parity.py": {
     "mtime": 1780099722.8757603,
@@ -2752,7 +2697,7 @@
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_sprint8ay_mlx_memory.py": {
     "mtime": 1780671404.7126923,
     "ast_hash": "ae39ba80c275c62331af0afc85cced9e",
-    "semantic_hash": ""
+    "semantic_hash": "ae39ba80c275c62331af0afc85cced9e"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_resource_governor_authority_seal.py": {
     "mtime": 1780072502.2319076,
@@ -2764,30 +2709,10 @@
     "ast_hash": "09c10c1f611db1671f3a79a06b46f923",
     "semantic_hash": "09c10c1f611db1671f3a79a06b46f923"
   },
-  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_ao_canary.py": {
-    "mtime": 1780072502.1286929,
-    "ast_hash": "e8c6933e4472020db7880423fbb9ea76",
-    "semantic_hash": "e8c6933e4472020db7880423fbb9ea76"
-  },
-  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_sprint43.py": {
-    "mtime": 1780609054.0162292,
-    "ast_hash": "e0e9f2d93dddada1d1f28a4932a8ce83",
-    "semantic_hash": ""
-  },
-  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_sprint8x_live_enrichment.py": {
-    "mtime": 1780072503.163343,
-    "ast_hash": "aca170e4d17fb2a1c6791ad8c6c88936",
-    "semantic_hash": "aca170e4d17fb2a1c6791ad8c6c88936"
-  },
-  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_sprint8ab_background_task_tracking.py": {
-    "mtime": 1780072502.8045502,
-    "ast_hash": "8afd95887af05100dd3e0efec4599e50",
-    "semantic_hash": "8afd95887af05100dd3e0efec4599e50"
-  },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_embedding_dimensions.py": {
     "mtime": 1780670575.4632642,
     "ast_hash": "0b5be1850f02a2853174ac796e7c6d09",
-    "semantic_hash": ""
+    "semantic_hash": "0b5be1850f02a2853174ac796e7c6d09"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_banner_grab_env_gate.py": {
     "mtime": 1779914032.2535954,
@@ -2799,60 +2724,20 @@
     "ast_hash": "105785bfacb5adc67c7229bd22f6b143",
     "semantic_hash": "105785bfacb5adc67c7229bd22f6b143"
   },
-  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_sprint57.py": {
-    "mtime": 1780072502.4922564,
-    "ast_hash": "9f60d7b8f91e3cbb7da62537899a48c0",
-    "semantic_hash": "9f60d7b8f91e3cbb7da62537899a48c0"
-  },
-  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/sprint5u_30s_test.py": {
-    "mtime": 1780571012.6184893,
-    "ast_hash": "5723b11b4418d8c2429cf9d8157539c2",
-    "semantic_hash": "5723b11b4418d8c2429cf9d8157539c2"
-  },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_passive_fingerprint.py": {
     "mtime": 1780072502.2118697,
     "ast_hash": "ec9e9a3d99dd649a94a5d91eace91098",
     "semantic_hash": "ec9e9a3d99dd649a94a5d91eace91098"
-  },
-  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/sprint4c_after_benchmark.py": {
-    "mtime": 1780072502.0382786,
-    "ast_hash": "43a8f68cd08235fe8488858aaebe9e83",
-    "semantic_hash": "43a8f68cd08235fe8488858aaebe9e83"
-  },
-  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_sprint86_economics.py": {
-    "mtime": 1780072502.8009949,
-    "ast_hash": "44548ad44749c208f92a5d67f8094bb7",
-    "semantic_hash": "44548ad44749c208f92a5d67f8094bb7"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_live_public_pipeline_di_seal.py": {
     "mtime": 1780072502.2075582,
     "ast_hash": "fcfc31760590e276831cf075f3a7017a",
     "semantic_hash": "fcfc31760590e276831cf075f3a7017a"
   },
-  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_sprint6d.py": {
-    "mtime": 1780072502.6432996,
-    "ast_hash": "143d50a4398a27c29cd074f3f145affb",
-    "semantic_hash": "143d50a4398a27c29cd074f3f145affb"
-  },
-  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_sprint8an_hygiene.py": {
-    "mtime": 1780072503.0241036,
-    "ast_hash": "ce9ed049484f89bf786866da8f81c508",
-    "semantic_hash": "ce9ed049484f89bf786866da8f81c508"
-  },
-  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_sprint8ah.py": {
-    "mtime": 1780072502.8193479,
-    "ast_hash": "6dbe6591f4c5782e9dd4f496f744c8cd",
-    "semantic_hash": "6dbe6591f4c5782e9dd4f496f744c8cd"
-  },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_sprint47.py": {
     "mtime": 1780609054.0294209,
     "ast_hash": "048fd2c5daae595c35dcfd81b46d72bd",
-    "semantic_hash": ""
-  },
-  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/sprint6c_preflight.py": {
-    "mtime": 1780072502.0669081,
-    "ast_hash": "5a875fac52002444fb53e82aadc7962a",
-    "semantic_hash": "5a875fac52002444fb53e82aadc7962a"
+    "semantic_hash": "048fd2c5daae595c35dcfd81b46d72bd"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/tool_schema_validation.py": {
     "mtime": 1780072503.1835604,
@@ -2864,40 +2749,10 @@
     "ast_hash": "384bedc5acf3966e6df0ea4b5e3509af",
     "semantic_hash": "384bedc5acf3966e6df0ea4b5e3509af"
   },
-  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/sprint5v_30min_validation.py": {
-    "mtime": 1780072502.060245,
-    "ast_hash": "0932627f5f5ae9fac2488182268652eb",
-    "semantic_hash": "0932627f5f5ae9fac2488182268652eb"
-  },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_sprint56.py": {
     "mtime": 1780072502.4828665,
     "ast_hash": "52fd01a1903461e62c672ebf76718725",
     "semantic_hash": "52fd01a1903461e62c672ebf76718725"
-  },
-  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/sprint6a_10s_smoke.py": {
-    "mtime": 1780072502.06177,
-    "ast_hash": "9397528e97e57f81e24cfd6e6c037c17",
-    "semantic_hash": "9397528e97e57f81e24cfd6e6c037c17"
-  },
-  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/sprint4d_truth_audit.py": {
-    "mtime": 1780072502.040633,
-    "ast_hash": "ae430a8fe9774fc545204bfdfebee3c4",
-    "semantic_hash": "ae430a8fe9774fc545204bfdfebee3c4"
-  },
-  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_sprint_f193a_legacy_boundary.py": {
-    "mtime": 1780072503.1703093,
-    "ast_hash": "75ebd98fb7618b9d20275828abac3180",
-    "semantic_hash": "75ebd98fb7618b9d20275828abac3180"
-  },
-  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_sprint7e.py": {
-    "mtime": 1780072502.7776966,
-    "ast_hash": "1e6e992fe915257eb8ebfd925dba6f11",
-    "semantic_hash": "1e6e992fe915257eb8ebfd925dba6f11"
-  },
-  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_sprint6e.py": {
-    "mtime": 1780072502.6454809,
-    "ast_hash": "cbd6085f3407bd9c038e7042bf744c65",
-    "semantic_hash": "cbd6085f3407bd9c038e7042bf744c65"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_sprint8ao_duckdb_sidecar.py": {
     "mtime": 1780072503.025971,
@@ -2914,11 +2769,6 @@
     "ast_hash": "e4085c99a84042e981e52f6de5bc3328",
     "semantic_hash": "e4085c99a84042e981e52f6de5bc3328"
   },
-  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_sprint8j_phase_repair.py": {
-    "mtime": 1780072503.0548387,
-    "ast_hash": "af223cfb1dd8315f2c1eac5c141f3b83",
-    "semantic_hash": "af223cfb1dd8315f2c1eac5c141f3b83"
-  },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_correlation_propagation.py": {
     "mtime": 1780072502.15011,
     "ast_hash": "be599eb35c286adba0d06f075f33b785",
@@ -2929,21 +2779,6 @@
     "ast_hash": "cab3b370908d68ed27d3c7057d3b2b78",
     "semantic_hash": "cab3b370908d68ed27d3c7057d3b2b78"
   },
-  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_sprint8k_phase_promotion_diagnosis.py": {
-    "mtime": 1780072503.0561674,
-    "ast_hash": "1ba42cbea578620f720500cd6e3d16ec",
-    "semantic_hash": "1ba42cbea578620f720500cd6e3d16ec"
-  },
-  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_sprint83d_wildcard_truth.py": {
-    "mtime": 1780072502.796539,
-    "ast_hash": "818c72d0336e8da686a82e73b3caab0b",
-    "semantic_hash": "818c72d0336e8da686a82e73b3caab0b"
-  },
-  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_sprint7a.py": {
-    "mtime": 1780072502.7767274,
-    "ast_hash": "25c8dc24a296b6e6659a68e304a4f998",
-    "semantic_hash": "25c8dc24a296b6e6659a68e304a4f998"
-  },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_sprint8b_timing.py": {
     "mtime": 1780072503.052411,
     "ast_hash": "60e53031746cbcc71d932d52365ece81",
@@ -2953,21 +2788,6 @@
     "mtime": 1780072502.802355,
     "ast_hash": "7e755e6ed5f31cf5da992349a535ea5e",
     "semantic_hash": "7e755e6ed5f31cf5da992349a535ea5e"
-  },
-  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_sprint6a.py": {
-    "mtime": 1780072502.6403573,
-    "ast_hash": "d07c31f47ddf014dbd04ee977c040d3a",
-    "semantic_hash": "d07c31f47ddf014dbd04ee977c040d3a"
-  },
-  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/sprint5v_300s_test.py": {
-    "mtime": 1780072502.0589252,
-    "ast_hash": "273cf4239de13ab216669983b6f0fe83",
-    "semantic_hash": "273cf4239de13ab216669983b6f0fe83"
-  },
-  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_autonomous_orchestrator.py": {
-    "mtime": 1780321563.87916,
-    "ast_hash": "7e560ce6d6e52943eefebcf8dd7ec164",
-    "semantic_hash": "7e560ce6d6e52943eefebcf8dd7ec164"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_sprint8l_targeted.py": {
     "mtime": 1780072503.060344,
@@ -2984,15 +2804,10 @@
     "ast_hash": "83273e10f102f57ea2121722d17034b6",
     "semantic_hash": "83273e10f102f57ea2121722d17034b6"
   },
-  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_sprint8aa_heap_scipy.py": {
-    "mtime": 1780072502.8034134,
-    "ast_hash": "1b0faa8db3610e36309443b1e5db337c",
-    "semantic_hash": "1b0faa8db3610e36309443b1e5db337c"
-  },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_sprint55.py": {
     "mtime": 1780609054.047654,
     "ast_hash": "d5f9f2b8948b1933a9c1572267c9ed15",
-    "semantic_hash": ""
+    "semantic_hash": "d5f9f2b8948b1933a9c1572267c9ed15"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_i2p_transport.py": {
     "mtime": 1780485744.7514396,
@@ -3002,37 +2817,17 @@
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_hledac_core_rust.py": {
     "mtime": 1780686756.0965497,
     "ast_hash": "6e99b56d782fa3e9dfd7e861515e2f2b",
-    "semantic_hash": ""
+    "semantic_hash": "6e99b56d782fa3e9dfd7e861515e2f2b"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_sprint65_model_store_regression.py": {
     "mtime": 1780072502.5328395,
     "ast_hash": "33930dc0d0a2fc02ae4521f4fa7e9ccf",
     "semantic_hash": "33930dc0d0a2fc02ae4521f4fa7e9ccf"
   },
-  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_sprint6f.py": {
-    "mtime": 1780072502.6480753,
-    "ast_hash": "e8933356a5f78976aed1ed8da20c0abc",
-    "semantic_hash": "e8933356a5f78976aed1ed8da20c0abc"
-  },
-  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_sprint51_52.py": {
-    "mtime": 1780072502.461504,
-    "ast_hash": "6a249c1139dccee4724d98b080275d42",
-    "semantic_hash": "6a249c1139dccee4724d98b080275d42"
-  },
-  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/sprint6d_diagnostics.py": {
-    "mtime": 1780072502.070355,
-    "ast_hash": "7a3b41afa67043c9ce219a825ac32112",
-    "semantic_hash": "7a3b41afa67043c9ce219a825ac32112"
-  },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_sprint45.py": {
     "mtime": 1780072502.261401,
     "ast_hash": "8086667946ed8a5e74c24333ae315b60",
     "semantic_hash": "8086667946ed8a5e74c24333ae315b60"
-  },
-  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_sprint8af_direct_harvest.py": {
-    "mtime": 1780072502.816337,
-    "ast_hash": "c746b940eec9a9253f5b7822295acf13",
-    "semantic_hash": "c746b940eec9a9253f5b7822295acf13"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_foca_integration.py": {
     "mtime": 1780072502.1801429,
@@ -3044,11 +2839,6 @@
     "ast_hash": "f183dc7dd5b8fa0661287a176f358995",
     "semantic_hash": "f183dc7dd5b8fa0661287a176f358995"
   },
-  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_sprint8ad_live_yield.py": {
-    "mtime": 1780072502.8108294,
-    "ast_hash": "ed9fc2f2d2ce7348213deebb55e26131",
-    "semantic_hash": "ed9fc2f2d2ce7348213deebb55e26131"
-  },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_sprint_dashboard.py": {
     "mtime": 1780072503.1652205,
     "ast_hash": "f1e17f0bba74cbcac96688eb3443f8ab",
@@ -3059,35 +2849,15 @@
     "ast_hash": "e3967e8be8ba83d408b7b37f230c52b5",
     "semantic_hash": "e3967e8be8ba83d408b7b37f230c52b5"
   },
-  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_persistent_layer_arch_seal.py": {
-    "mtime": 1780072502.216306,
-    "ast_hash": "e8d2ec1e2af1ddbcc3f7e2928d5e0512",
-    "semantic_hash": "e8d2ec1e2af1ddbcc3f7e2928d5e0512"
-  },
-  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_sprint83c_wildcard_detection.py": {
-    "mtime": 1780072502.7954092,
-    "ast_hash": "cf26e9fe4bb5b1725e69a8bb898cc481",
-    "semantic_hash": "cf26e9fe4bb5b1725e69a8bb898cc481"
-  },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_sprint41.py": {
     "mtime": 1780072502.2446423,
     "ast_hash": "fa6586ac6c1e815ceb85068acf2ada4b",
     "semantic_hash": "fa6586ac6c1e815ceb85068acf2ada4b"
   },
-  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/sprint5v_60s_smoke.py": {
-    "mtime": 1780072502.061031,
-    "ast_hash": "b6870e0cc065dd28c2befdc7f55767aa",
-    "semantic_hash": "b6870e0cc065dd28c2befdc7f55767aa"
-  },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_global_scheduler_spawn_registry.py": {
     "mtime": 1780072502.1893988,
     "ast_hash": "30092ffee2c350aaa4d44927c51a5312",
     "semantic_hash": "30092ffee2c350aaa4d44927c51a5312"
-  },
-  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_sprint50.py": {
-    "mtime": 1780072502.4562035,
-    "ast_hash": "e62bd1fd72ec1516c3481c2570644057",
-    "semantic_hash": "e62bd1fd72ec1516c3481c2570644057"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_e2e_pipeline_smoke.py": {
     "mtime": 1780072502.1662712,
@@ -3097,37 +2867,22 @@
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_hypothesis_engine.py": {
     "mtime": 1780665065.1204312,
     "ast_hash": "c5810900a60f7ef607ef869dac913659",
-    "semantic_hash": ""
+    "semantic_hash": "c5810900a60f7ef607ef869dac913659"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/PHASE_GATES.py": {
     "mtime": 1779507657.8694673,
     "ast_hash": "e051b608042197351b7fd8af2431dd62",
     "semantic_hash": "e051b608042197351b7fd8af2431dd62"
   },
-  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_sprint8ai_time_depth_controller.py": {
-    "mtime": 1780072502.8225856,
-    "ast_hash": "a630080dce6e6844214293dc77067cc0",
-    "semantic_hash": "a630080dce6e6844214293dc77067cc0"
-  },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_semantic_store_buffer.py": {
     "mtime": 1780072502.2409723,
     "ast_hash": "5a2d3113dc7753d6021abbb7cf001c94",
     "semantic_hash": "5a2d3113dc7753d6021abbb7cf001c94"
   },
-  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_e2e_pipeline.py": {
-    "mtime": 1780072502.165415,
-    "ast_hash": "b15be0730760ddb04007a43d6b1e20dc",
-    "semantic_hash": "b15be0730760ddb04007a43d6b1e20dc"
-  },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_acquisition_fallback.py": {
     "mtime": 1780072502.1246579,
     "ast_hash": "e8baecdd4bde28c1be240240a9b4059d",
     "semantic_hash": "e8baecdd4bde28c1be240240a9b4059d"
-  },
-  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_sprint6c.py": {
-    "mtime": 1780072502.6418986,
-    "ast_hash": "e32f575513c1344a13122f373587a86d",
-    "semantic_hash": "e32f575513c1344a13122f373587a86d"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/benchmark_scorecard_5A.json": {
     "mtime": 1779507657.869774,
@@ -3135,9 +2890,9 @@
     "semantic_hash": "f78199606ba5bd55bf708bffd13c1908"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_rust_extensions.py": {
-    "mtime": 1779827111.1314564,
-    "ast_hash": "efd360effa577ce9cae2ea0cc84224ab",
-    "semantic_hash": "efd360effa577ce9cae2ea0cc84224ab"
+    "mtime": 1780750760.617468,
+    "ast_hash": "aa01d87d2c3e3300aa3da7304a14579a",
+    "semantic_hash": "aa01d87d2c3e3300aa3da7304a14579a"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_forensics_enrichment.py": {
     "mtime": 1780072502.1821861,
@@ -3154,25 +2909,10 @@
     "ast_hash": "24727d66ff4591c30999e81b280cad14",
     "semantic_hash": "24727d66ff4591c30999e81b280cad14"
   },
-  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/sprint6e_300s.py": {
-    "mtime": 1780072502.0779912,
-    "ast_hash": "f8884a30d75bda874bae93b2374a0183",
-    "semantic_hash": "f8884a30d75bda874bae93b2374a0183"
-  },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_sprint60.py": {
     "mtime": 1780664948.6356504,
     "ast_hash": "489de4f02bc9732c4d371d810f2fed82",
-    "semantic_hash": ""
-  },
-  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_sprint54.py": {
-    "mtime": 1780072502.475898,
-    "ast_hash": "e093389a429e2a937e6c109c0abb3dca",
-    "semantic_hash": "e093389a429e2a937e6c109c0abb3dca"
-  },
-  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/diagnose_p95_offline.py": {
-    "mtime": 1780571012.6174922,
-    "ast_hash": "1a48c871a92e0f219021fe1e7cf98054",
-    "semantic_hash": "1a48c871a92e0f219021fe1e7cf98054"
+    "semantic_hash": "489de4f02bc9732c4d371d810f2fed82"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_coordinator_routing_authority_seal.py": {
     "mtime": 1780072502.1480849,
@@ -3180,54 +2920,24 @@
     "semantic_hash": "df27e9e5e0be81f7f0c20c38dc8ba0ef"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_sprint7g.py": {
-    "mtime": 1780276592.465594,
-    "ast_hash": "5c137cc9a3e64c0272cb3e3f1002b67b",
-    "semantic_hash": "5c137cc9a3e64c0272cb3e3f1002b67b"
+    "mtime": 1780750760.619594,
+    "ast_hash": "a5382887d73b3283da71fc7bc32a9213",
+    "semantic_hash": "a5382887d73b3283da71fc7bc32a9213"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_sprint_policy_manager.py": {
     "mtime": 1780397868.3090386,
     "ast_hash": "206c2370eb88c77f7c836c1d931f97e6",
     "semantic_hash": "206c2370eb88c77f7c836c1d931f97e6"
   },
-  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_sprint8n_targeted.py": {
-    "mtime": 1780072503.15054,
-    "ast_hash": "0c25da75874d9b509a254910ef5b5556",
-    "semantic_hash": "0c25da75874d9b509a254910ef5b5556"
-  },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_vault_manager.py": {
     "mtime": 1780155978.020277,
     "ast_hash": "a1d7a2e683b9c9c13d6f1123ee50efde",
     "semantic_hash": "a1d7a2e683b9c9c13d6f1123ee50efde"
   },
-  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/sprint6d_smoke.py": {
-    "mtime": 1780072502.0761552,
-    "ast_hash": "190aa0e487441ff10f8e89fb2f13e969",
-    "semantic_hash": "190aa0e487441ff10f8e89fb2f13e969"
-  },
-  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_sprint8c_solutions.py": {
-    "mtime": 1780072503.0537462,
-    "ast_hash": "78f30c5e204d7d1a3730390327efca9b",
-    "semantic_hash": "78f30c5e204d7d1a3730390327efca9b"
-  },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_f221f_acquisition_plan_semantics.py": {
     "mtime": 1780072502.1729288,
     "ast_hash": "0f61a4c8360b62206014ee0b11af22ab",
     "semantic_hash": "0f61a4c8360b62206014ee0b11af22ab"
-  },
-  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_sprint8al_scheduler.py": {
-    "mtime": 1780072503.0201268,
-    "ast_hash": "bece9708d4ad6c7c40a2432c633b80a4",
-    "semantic_hash": "bece9708d4ad6c7c40a2432c633b80a4"
-  },
-  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_sprint44.py": {
-    "mtime": 1780661247.554174,
-    "ast_hash": "c93b6cd2e95886d02d9a415a7589a754",
-    "semantic_hash": ""
-  },
-  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/sprint5r_20s.py": {
-    "mtime": 1780072502.0423048,
-    "ast_hash": "bf886af8ce77d60bbbf2207d8cd35ae5",
-    "semantic_hash": "bf886af8ce77d60bbbf2207d8cd35ae5"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/benchmark_scorecard_5F.json": {
     "mtime": 1779507657.8706274,
@@ -3239,16 +2949,6 @@
     "ast_hash": "86e9dde1bf7b089acb8d6a3b9e2aedcf",
     "semantic_hash": "86e9dde1bf7b089acb8d6a3b9e2aedcf"
   },
-  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/run_sprint_5a_r3_benchmark.py": {
-    "mtime": 1780072502.0316546,
-    "ast_hash": "ca66d17456b56a09820694981789d2e6",
-    "semantic_hash": "ca66d17456b56a09820694981789d2e6"
-  },
-  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/run_3x60s_series.py": {
-    "mtime": 1780072502.0302792,
-    "ast_hash": "a5a1ed1de4be03dd2670e0d0bfb77faf",
-    "semantic_hash": "a5a1ed1de4be03dd2670e0d0bfb77faf"
-  },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_f253_sprint_tiers.py": {
     "mtime": 1779889792.495643,
     "ast_hash": "650d906378aa6e798ce66456ee0a9e81",
@@ -3259,30 +2959,10 @@
     "ast_hash": "fc90eba0dd74b9ec6723d223fbdf78e3",
     "semantic_hash": "fc90eba0dd74b9ec6723d223fbdf78e3"
   },
-  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_sprint8ap_bounded_live_gate.py": {
-    "mtime": 1780571012.6197286,
-    "ast_hash": "c88c8a236c4a5120bf17e0c9a647b726",
-    "semantic_hash": "c88c8a236c4a5120bf17e0c9a647b726"
-  },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_bgp_ripe_live.py": {
     "mtime": 1780099722.87549,
     "ast_hash": "819e2185ce11fa5b00b9a822cf6ede40",
     "semantic_hash": "819e2185ce11fa5b00b9a822cf6ede40"
-  },
-  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/diagnose_p95_latency.py": {
-    "mtime": 1780571012.6172404,
-    "ast_hash": "cdb99e8b98fb158338fae94657064e47",
-    "semantic_hash": "cdb99e8b98fb158338fae94657064e47"
-  },
-  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/sprint5u_300s_preview.py": {
-    "mtime": 1780072502.054217,
-    "ast_hash": "0344b34eee404d42e0c986769d28cad2",
-    "semantic_hash": "0344b34eee404d42e0c986769d28cad2"
-  },
-  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_sprint83a_network_recon.py": {
-    "mtime": 1780072502.7936797,
-    "ast_hash": "6c8818363416b47c488969364005c3f5",
-    "semantic_hash": "6c8818363416b47c488969364005c3f5"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_sprint58b.py": {
     "mtime": 1780072502.5045207,
@@ -3299,16 +2979,6 @@
     "ast_hash": "730961cc0f15cbd83c08665d8118781d",
     "semantic_hash": "730961cc0f15cbd83c08665d8118781d"
   },
-  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_sprint8ae_mlx_dedup.py": {
-    "mtime": 1780072502.812514,
-    "ast_hash": "7ec868f7be73f693d2033740a82e35e0",
-    "semantic_hash": "7ec868f7be73f693d2033740a82e35e0"
-  },
-  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_sprint5t_ts_exploration.py": {
-    "mtime": 1780072502.5104685,
-    "ast_hash": "710c43a9948c831169eba3a6534c2d55",
-    "semantic_hash": "710c43a9948c831169eba3a6534c2d55"
-  },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_sprint_f193b_hypothesis_feedback.py": {
     "mtime": 1780072503.1720657,
     "ast_hash": "5619d69829f0d9855bb3798895d2029c",
@@ -3317,7 +2987,7 @@
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_hypothesis_generator_bounds.py": {
     "mtime": 1780664389.4333107,
     "ast_hash": "fd4dc602ae73f3874bae8838292050ca",
-    "semantic_hash": ""
+    "semantic_hash": "fd4dc602ae73f3874bae8838292050ca"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_ct_log_pipeline.py": {
     "mtime": 1780072502.1521814,
@@ -3328,11 +2998,6 @@
     "mtime": 1779907287.7262404,
     "ast_hash": "9ddcfb54d0176b55505af038dea1f0b6",
     "semantic_hash": "9ddcfb54d0176b55505af038dea1f0b6"
-  },
-  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_sprint83b_network_recon_validation.py": {
-    "mtime": 1780072502.7945964,
-    "ast_hash": "2af4c313e45cbd98c86d63af82ec9cf3",
-    "semantic_hash": "2af4c313e45cbd98c86d63af82ec9cf3"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_circuit_breaker_metrics.py": {
     "mtime": 1780072502.1456153,
@@ -3349,11 +3014,6 @@
     "ast_hash": "15dd610986893e87dae9369d65bb34bb",
     "semantic_hash": "15dd610986893e87dae9369d65bb34bb"
   },
-  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/sprint6a_300s_calibration.py": {
-    "mtime": 1780072502.0637102,
-    "ast_hash": "70a1c862db9b80f3e342379f7b6f3ffb",
-    "semantic_hash": "70a1c862db9b80f3e342379f7b6f3ffb"
-  },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_sprint8aq_shadow.py": {
     "mtime": 1780072503.033268,
     "ast_hash": "dfa6a7b2e31100649dc6e1f0a0652c9a",
@@ -3363,21 +3023,6 @@
     "mtime": 1779915491.7406015,
     "ast_hash": "a7f10057dc1006ee8dea80dce6ce2601",
     "semantic_hash": "a7f10057dc1006ee8dea80dce6ce2601"
-  },
-  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_sprint8l_live.py": {
-    "mtime": 1780571012.620396,
-    "ast_hash": "926815589e12539f04fcb5d0479be91f",
-    "semantic_hash": "926815589e12539f04fcb5d0479be91f"
-  },
-  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_sprint82j_benchmark.py": {
-    "mtime": 1780072502.7916493,
-    "ast_hash": "c3b054ceceb6ea5dc7bf7e901b7d9daa",
-    "semantic_hash": "c3b054ceceb6ea5dc7bf7e901b7d9daa"
-  },
-  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/sprint6c_profile.py": {
-    "mtime": 1780072502.068329,
-    "ast_hash": "828b838c2de43edd33b2ce1c690d0b5b",
-    "semantic_hash": "828b838c2de43edd33b2ce1c690d0b5b"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_alt_protocols.py": {
     "mtime": 1780142252.7742796,
@@ -3389,16 +3034,6 @@
     "ast_hash": "fdf490111113f8dfc3215e802ac49684",
     "semantic_hash": "fdf490111113f8dfc3215e802ac49684"
   },
-  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_sprint48_49.py": {
-    "mtime": 1780072502.3720863,
-    "ast_hash": "57bfa7da7364e2aaa2594e7887e741f9",
-    "semantic_hash": "57bfa7da7364e2aaa2594e7887e741f9"
-  },
-  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/sprint5r_quick_diag.py": {
-    "mtime": 1780072502.0466044,
-    "ast_hash": "b7670912e1b5ea1f437f99adddc1cda0",
-    "semantic_hash": "b7670912e1b5ea1f437f99adddc1cda0"
-  },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/live_8be/test_live_searxng_8be.py": {
     "mtime": 1780072501.87409,
     "ast_hash": "ded0ec9d4a58c4111fa751a7629880b4",
@@ -3407,7 +3042,7 @@
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_embedding_prefix_discipline/test_embedding_task.py": {
     "mtime": 1780670471.9282587,
     "ast_hash": "251f5039ac4e752ff5cafe7cbbd32f69",
-    "semantic_hash": ""
+    "semantic_hash": "251f5039ac4e752ff5cafe7cbbd32f69"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_sprint79a/test_hash_chain_compatibility.py": {
     "mtime": 1780072502.7690275,
@@ -3423,11 +3058,6 @@
     "mtime": 1780072501.8719628,
     "ast_hash": "220be84394ea94d2aee724062b8d764f",
     "semantic_hash": "220be84394ea94d2aee724062b8d764f"
-  },
-  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_sprint70a/test_actions.py": {
-    "mtime": 1780072502.6502566,
-    "ast_hash": "0d92cb0e6bcf24912033405e0314f901",
-    "semantic_hash": "0d92cb0e6bcf24912033405e0314f901"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_sprint70a/__init__.py": {
     "mtime": 1779507657.9127388,
@@ -3463,11 +3093,6 @@
     "mtime": 1780072502.66251,
     "ast_hash": "1d0ee6051fd776e5de154825c517c572",
     "semantic_hash": "1d0ee6051fd776e5de154825c517c572"
-  },
-  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_sprint71/test_kernel_optimizations.py": {
-    "mtime": 1780072502.6718662,
-    "ast_hash": "270e3492e968f230e152e90d926bae15",
-    "semantic_hash": "270e3492e968f230e152e90d926bae15"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_sprint71/test_ane_pipelines.py": {
     "mtime": 1780072502.6577377,
@@ -3554,25 +3179,10 @@
     "ast_hash": "b56c9a55617239853558a71c9cfb17b6",
     "semantic_hash": "b56c9a55617239853558a71c9cfb17b6"
   },
-  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_sprint76/test_thermal_parallelism.py": {
-    "mtime": 1780072502.7551517,
-    "ast_hash": "8adf4a2f6b619280b00bdaf9285693df",
-    "semantic_hash": "8adf4a2f6b619280b00bdaf9285693df"
-  },
-  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_sprint78/test_metrics.py": {
-    "mtime": 1780072502.7638385,
-    "ast_hash": "6d3221d018f247a3d0d62668bc59ef4b",
-    "semantic_hash": "6d3221d018f247a3d0d62668bc59ef4b"
-  },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_sprint78/test_prompt_cache.py": {
     "mtime": 1780072502.766691,
     "ast_hash": "1a2ebef6f65c88a9990081dcb6d28cdb",
     "semantic_hash": "1a2ebef6f65c88a9990081dcb6d28cdb"
-  },
-  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_sprint78/test_integration.py": {
-    "mtime": 1780072502.7628317,
-    "ast_hash": "2bef5a2078efe332346259d83f3c2a97",
-    "semantic_hash": "2bef5a2078efe332346259d83f3c2a97"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_sprint78/test_signpost.py": {
     "mtime": 1780072502.7680051,
@@ -3619,30 +3229,10 @@
     "ast_hash": "a9927d96e478b88952dacfb8d01683f3",
     "semantic_hash": "a9927d96e478b88952dacfb8d01683f3"
   },
-  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_sprint69/test_structure_map_scheduling.py": {
-    "mtime": 1780072502.6375175,
-    "ast_hash": "4c9542c93e9416bcb6e04ffff60f3b6d",
-    "semantic_hash": "4c9542c93e9416bcb6e04ffff60f3b6d"
-  },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_sprint69/__init__.py": {
     "mtime": 1779507657.9105875,
     "ast_hash": "2f66ad2370286cbf4824dc9173380280",
     "semantic_hash": "2f66ad2370286cbf4824dc9173380280"
-  },
-  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_sprint69/test_non_blocking_scorer.py": {
-    "mtime": 1780072502.6302326,
-    "ast_hash": "b1247287af9c34ed039d69dc688fdd60",
-    "semantic_hash": "b1247287af9c34ed039d69dc688fdd60"
-  },
-  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_sprint69/test_structure_map_engine.py": {
-    "mtime": 1780072502.6352236,
-    "ast_hash": "ffefe12c54b6fff3e5ec6047236786cb",
-    "semantic_hash": "ffefe12c54b6fff3e5ec6047236786cb"
-  },
-  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_sprint69/test_autonomous_wiring_structure_map.py": {
-    "mtime": 1780072502.6284938,
-    "ast_hash": "9e84f0a2f64aa0f40cfd160c53b5d6b7",
-    "semantic_hash": "9e84f0a2f64aa0f40cfd160c53b5d6b7"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_sprint67/test_renderer_concurrency.py": {
     "mtime": 1780072502.5736637,
@@ -3652,7 +3242,7 @@
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_sprint67/test_mlx_cache.py": {
     "mtime": 1780609054.0914385,
     "ast_hash": "443b173062c26c58934ff25f1204db03",
-    "semantic_hash": ""
+    "semantic_hash": "443b173062c26c58934ff25f1204db03"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_sprint67/test_renderer_playwright.py": {
     "mtime": 1780072502.5752606,
@@ -3675,9 +3265,9 @@
     "semantic_hash": "bb14d599e9f3adea43f0fb5e66628051"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_sprint67/test_hypothesis_explainer.py": {
-    "mtime": 1780072502.5659811,
-    "ast_hash": "fa5a4b3b6a351adf3ddbb232cbe2887b",
-    "semantic_hash": "fa5a4b3b6a351adf3ddbb232cbe2887b"
+    "mtime": 1780750760.6183853,
+    "ast_hash": "1e8b39fa458e8c0923f44c4cb30811af",
+    "semantic_hash": "1e8b39fa458e8c0923f44c4cb30811af"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_sprint67/test_pattern_mining.py": {
     "mtime": 1780072502.5693827,
@@ -3734,16 +3324,6 @@
     "ast_hash": "6cbb5ea82e5a67864f08b7e4b30a9788",
     "semantic_hash": "6cbb5ea82e5a67864f08b7e4b30a9788"
   },
-  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_sprint68/test_autonomous_loop_smoke.py": {
-    "mtime": 1780072502.6072116,
-    "ast_hash": "a1eb839a1d7a24f54de1cea984aad7bb",
-    "semantic_hash": "a1eb839a1d7a24f54de1cea984aad7bb"
-  },
-  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_sprint68/test_decision_logic.py": {
-    "mtime": 1780072502.6126103,
-    "ast_hash": "15dd30f7624dcc857bdcf3f49781e160",
-    "semantic_hash": "15dd30f7624dcc857bdcf3f49781e160"
-  },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_sprint68/test_memory_pressure.py": {
     "mtime": 1780072502.62132,
     "ast_hash": "5bf427998fec42a8e81cdda63d8c66d4",
@@ -3753,11 +3333,6 @@
     "mtime": 1779507657.9097757,
     "ast_hash": "494ea24f7ecf9db258771df14ccca4a9",
     "semantic_hash": "494ea24f7ecf9db258771df14ccca4a9"
-  },
-  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_sprint68/test_action_registry.py": {
-    "mtime": 1780072502.6028059,
-    "ast_hash": "512f98a4715aba4e157e36eb8e142f92",
-    "semantic_hash": "512f98a4715aba4e157e36eb8e142f92"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_batch_scheduler/test_batch_scheduler.py": {
     "mtime": 1780072502.144498,
@@ -3779,20 +3354,10 @@
     "ast_hash": "387d4701e8ad48d5f0f9a1ac12c84d28",
     "semantic_hash": "387d4701e8ad48d5f0f9a1ac12c84d28"
   },
-  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_sprint79c/test_sprint79c_optimizations.py": {
-    "mtime": 1780609054.1648204,
-    "ast_hash": "4f1512a92c3d9d703382a313da072c1d",
-    "semantic_hash": ""
-  },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_sprint70b/__init__.py": {
     "mtime": 1779507657.9130833,
     "ast_hash": "93b97b705a5d675a86f5db23d0c6adf7",
     "semantic_hash": "93b97b705a5d675a86f5db23d0c6adf7"
-  },
-  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_sprint70b/test_integration.py": {
-    "mtime": 1780072502.6518767,
-    "ast_hash": "97bc52ad7096883ae1b335043e463759",
-    "semantic_hash": "97bc52ad7096883ae1b335043e463759"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/fixtures/f234_valid_nonfeed.json": {
     "mtime": 1779507657.8732946,
@@ -3834,20 +3399,10 @@
     "ast_hash": "fa0ee1684d39ebc70bfec486a162006b",
     "semantic_hash": "fa0ee1684d39ebc70bfec486a162006b"
   },
-  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_sprint75/test_adaptive_profile.py": {
-    "mtime": 1780072502.7351766,
-    "ast_hash": "67a1671c4b67e3148b0fbd98fb55f32f",
-    "semantic_hash": "67a1671c4b67e3148b0fbd98fb55f32f"
-  },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_sprint75/test_speculative_decoding.py": {
     "mtime": 1780072502.743196,
     "ast_hash": "e94eeec44b9bb0721e61680d0deccb1d",
     "semantic_hash": "e94eeec44b9bb0721e61680d0deccb1d"
-  },
-  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_sprint75/test_energy_thermal.py": {
-    "mtime": 1780072502.738917,
-    "ast_hash": "ce4e022c0c6bed9449278d109e77e3b6",
-    "semantic_hash": "ce4e022c0c6bed9449278d109e77e3b6"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_sprint75/__init__.py": {
     "mtime": 1779507657.9162736,
@@ -3877,7 +3432,7 @@
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_sprint81/test_phase4.py": {
     "mtime": 1780671218.7774882,
     "ast_hash": "035d997014ccd94db770f04d3890a662",
-    "semantic_hash": ""
+    "semantic_hash": "035d997014ccd94db770f04d3890a662"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_sprint81/test_phase1.py": {
     "mtime": 1780072502.7820997,
@@ -3887,7 +3442,7 @@
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_sprint8as_duckdb_async/test_duckdb_async_safety.py": {
     "mtime": 1780609054.2394335,
     "ast_hash": "8b6b577e3b581f803babde6f32f7d938",
-    "semantic_hash": ""
+    "semantic_hash": "8b6b577e3b581f803babde6f32f7d938"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/probe/test_acquisition_context_m1.py": {
     "mtime": 1780099722.8169289,
@@ -3914,16 +3469,6 @@
     "ast_hash": "d8f2cf77e0554f176a0976d1cccd95ff",
     "semantic_hash": "d8f2cf77e0554f176a0976d1cccd95ff"
   },
-  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_sprint80/test_sprint80_optimizations.py": {
-    "mtime": 1780072502.7806363,
-    "ast_hash": "fbb9ba8fc91d087ddff12a689533e641",
-    "semantic_hash": "fbb9ba8fc91d087ddff12a689533e641"
-  },
-  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_sprint74/test_m1_branches.py": {
-    "mtime": 1780072502.7129927,
-    "ast_hash": "0e7b50a72f7bacc6e4d5b3f73ff4cf95",
-    "semantic_hash": "0e7b50a72f7bacc6e4d5b3f73ff4cf95"
-  },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_sprint74/test_mlx_cache.py": {
     "mtime": 1780072502.719245,
     "ast_hash": "b5db73f1795352304ed8f6136bf881bd",
@@ -3939,16 +3484,6 @@
     "ast_hash": "caa23e280a32ee4f0a6042c8d774686a",
     "semantic_hash": "caa23e280a32ee4f0a6042c8d774686a"
   },
-  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_sprint74/test_async_leaks.py": {
-    "mtime": 1780072502.7053306,
-    "ast_hash": "04e34d07e5d93b85c16d080ce04558e6",
-    "semantic_hash": "04e34d07e5d93b85c16d080ce04558e6"
-  },
-  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_sprint74/test_chaos.py": {
-    "mtime": 1780072502.7076674,
-    "ast_hash": "e2ce614807391375a98b04dc5d97068e",
-    "semantic_hash": "e2ce614807391375a98b04dc5d97068e"
-  },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/.agents/skills/diagnose/scripts/hitl-loop.template.sh": {
     "mtime": 1779507657.6477406,
     "ast_hash": "46a2a00761be2785e59661f0e3c11471",
@@ -3962,12 +3497,12 @@
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/planning/slm_decomposer.py": {
     "mtime": 1780609048.334274,
     "ast_hash": "0c94cf214b4e61c612def7a8d9ce3fdc",
-    "semantic_hash": ""
+    "semantic_hash": "0c94cf214b4e61c612def7a8d9ce3fdc"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/planning/htn_planner.py": {
     "mtime": 1780662443.7012255,
     "ast_hash": "91f022f6cebc92ffe84013256761f128",
-    "semantic_hash": ""
+    "semantic_hash": "91f022f6cebc92ffe84013256761f128"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/planning/__init__.py": {
     "mtime": 1780072501.4162288,
@@ -3984,44 +3519,9 @@
     "ast_hash": "87a9c745b08122826c273891bdaf6302",
     "semantic_hash": "87a9c745b08122826c273891bdaf6302"
   },
-  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/legacy/autonomous_orchestrator.py": {
-    "mtime": 1780662321.9678938,
-    "ast_hash": "b9fc12cbf9f7d3717b88274cae60279c",
-    "semantic_hash": ""
-  },
-  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/legacy/atomic_storage.py": {
-    "mtime": 1780072501.3187792,
-    "ast_hash": "b9b74d44a1034f935f15b83e44dcad1e",
-    "semantic_hash": "b9b74d44a1034f935f15b83e44dcad1e"
-  },
-  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/legacy/__init__.py": {
-    "mtime": 1780072501.3149111,
-    "ast_hash": "102decd94ebdc9af71a526fb38ceb1e4",
-    "semantic_hash": "102decd94ebdc9af71a526fb38ceb1e4"
-  },
-  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/legacy/persistent_layer.py": {
-    "mtime": 1780072501.332901,
-    "ast_hash": "bb31ad135650999b5c698263b1fc7ce4",
-    "semantic_hash": "bb31ad135650999b5c698263b1fc7ce4"
-  },
-  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/legacy/orchestrator_integration.py": {
-    "mtime": 1780609048.0440125,
-    "ast_hash": "3d51e52ca6a9c14aadb3b8fa8cf84c5f",
-    "semantic_hash": ""
-  },
-  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/legacy/archived/ARCHIVE_MANIFEST.py": {
-    "mtime": 1780072501.3158934,
-    "ast_hash": "1e09c0395088ded91ece1b815428d0c7",
-    "semantic_hash": "1e09c0395088ded91ece1b815428d0c7"
-  },
-  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/legacy/archived/behavior_simulator.py": {
-    "mtime": 1780072501.3167841,
-    "ast_hash": "2a6a84ff3e1ad9cdf338245ec15ddf77",
-    "semantic_hash": "2a6a84ff3e1ad9cdf338245ec15ddf77"
-  },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/utils/async_helpers.py": {
-    "mtime": 1780667676.5227778,
-    "ast_hash": "b6f88a41f504043aa3e711797fcdb18a",
+    "mtime": 1780835791.0211294,
+    "ast_hash": "ccfa58a33b860ea1f5c4cc9a6568b96d",
     "semantic_hash": ""
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/utils/optimize_imports.py": {
@@ -4077,7 +3577,7 @@
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/utils/semantic.py": {
     "mtime": 1780590336.908128,
     "ast_hash": "bdc375d16cfc2c34af982ce6c2cff6b4",
-    "semantic_hash": ""
+    "semantic_hash": "bdc375d16cfc2c34af982ce6c2cff6b4"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/utils/config.py": {
     "mtime": 1780276592.4666684,
@@ -4107,22 +3607,22 @@
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/utils/deduplication.py": {
     "mtime": 1780686756.0989687,
     "ast_hash": "d481261d05c67e4fb0d5aad4900bd10a",
-    "semantic_hash": ""
+    "semantic_hash": "d481261d05c67e4fb0d5aad4900bd10a"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/utils/workflow_engine.py": {
-    "mtime": 1780609055.103826,
-    "ast_hash": "c85b665a5272623cf4ddd3f21a234045",
-    "semantic_hash": ""
+    "mtime": 1780750760.6299891,
+    "ast_hash": "8e0eb7d3fdd796bbf5afa038c11ee534",
+    "semantic_hash": "8e0eb7d3fdd796bbf5afa038c11ee534"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/utils/async_utils.py": {
-    "mtime": 1780663334.9133782,
-    "ast_hash": "a74e7e8ae90a7bfbd53982c79ada9142",
-    "semantic_hash": ""
+    "mtime": 1780750760.623245,
+    "ast_hash": "7e206ca26176baa40af14d4968a9fd54",
+    "semantic_hash": "7e206ca26176baa40af14d4968a9fd54"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/utils/intelligent_cache.py": {
-    "mtime": 1780609055.0096927,
-    "ast_hash": "d556f1e2d8237cd6cc64e24d0690da4b",
-    "semantic_hash": ""
+    "mtime": 1780750760.628964,
+    "ast_hash": "f77ce2fc4bbd5682519be1af5932d3db",
+    "semantic_hash": "f77ce2fc4bbd5682519be1af5932d3db"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/utils/robots_parser.py": {
     "mtime": 1780488428.1141605,
@@ -4137,7 +3637,7 @@
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/utils/capability_prober.py": {
     "mtime": 1780506163.9712827,
     "ast_hash": "6cb31094eae21da904ca4afc2cb782c6",
-    "semantic_hash": ""
+    "semantic_hash": "6cb31094eae21da904ca4afc2cb782c6"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/utils/thread_pools.py": {
     "mtime": 1780488428.1151922,
@@ -4185,9 +3685,9 @@
     "semantic_hash": "cb42de5210aefb80f2cba2651fd9c13c"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/utils/__init__.py": {
-    "mtime": 1780321563.9117992,
-    "ast_hash": "4985a076c44b7e4b1ce776f23644ad00",
-    "semantic_hash": "4985a076c44b7e4b1ce776f23644ad00"
+    "mtime": 1780750760.6221344,
+    "ast_hash": "af1b0f7a68264c4f51451fb92b974036",
+    "semantic_hash": "af1b0f7a68264c4f51451fb92b974036"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/utils/_warnings.py": {
     "mtime": 1780072504.8468733,
@@ -4217,7 +3717,7 @@
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/utils/mlx_memory.py": {
     "mtime": 1780671078.9280665,
     "ast_hash": "4b2fa9df6ab16302b87539b4f56d40d1",
-    "semantic_hash": ""
+    "semantic_hash": "4b2fa9df6ab16302b87539b4f56d40d1"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/utils/tech_detection.py": {
     "mtime": 1780072505.1626878,
@@ -4320,9 +3820,9 @@
     "semantic_hash": "d1dca38fc8e16676e6bb2f62b414a6d0"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/utils/execution_optimizer.py": {
-    "mtime": 1780609054.9664,
-    "ast_hash": "837653a5d1318cc9f409d03ee62baf60",
-    "semantic_hash": ""
+    "mtime": 1780750760.6249585,
+    "ast_hash": "4ac248960751508ca8a59095eb3a1ba7",
+    "semantic_hash": "4ac248960751508ca8a59095eb3a1ba7"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/utils/memory_dashboard.py": {
     "mtime": 1780488428.1124024,
@@ -4337,7 +3837,7 @@
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/forensics/ioc_extractor.py": {
     "mtime": 1780591358.901207,
     "ast_hash": "263d1e139e1761a2696ae6c42537ef9e",
-    "semantic_hash": ""
+    "semantic_hash": "263d1e139e1761a2696ae6c42537ef9e"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/forensics/digital_ghost_detector.py": {
     "mtime": 1780488428.0131314,
@@ -4352,12 +3852,12 @@
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/forensics/metadata_extractor.py": {
     "mtime": 1780609044.9661958,
     "ast_hash": "82aab603933c5f7feb92b74751f222b9",
-    "semantic_hash": ""
+    "semantic_hash": "82aab603933c5f7feb92b74751f222b9"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/forensics/enrichment_service.py": {
     "mtime": 1780609044.912355,
     "ast_hash": "cde214f68cb1eded9610c8d39169398b",
-    "semantic_hash": ""
+    "semantic_hash": "cde214f68cb1eded9610c8d39169398b"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/forensics/steganography_detector.py": {
     "mtime": 1780488428.0142825,
@@ -4367,7 +3867,7 @@
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/multimodal/analyzer.py": {
     "mtime": 1780609048.1115248,
     "ast_hash": "5d65786e53ac2a94c7423a3194716a86",
-    "semantic_hash": ""
+    "semantic_hash": "5d65786e53ac2a94c7423a3194716a86"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/multimodal/__init__.py": {
     "mtime": 1780072501.347704,
@@ -4382,7 +3882,7 @@
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/multimodal/evidence_triage.py": {
     "mtime": 1780662429.3556607,
     "ast_hash": "79bf1d4e2271389383dd4a028531a2a1",
-    "semantic_hash": ""
+    "semantic_hash": "79bf1d4e2271389383dd4a028531a2a1"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/multimodal/fusion.py": {
     "mtime": 1780483104.3788812,
@@ -4392,17 +3892,17 @@
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/knowledge/sprint_diff_engine.py": {
     "mtime": 1780506161.0609984,
     "ast_hash": "042d4205aec066c019b97309efed7c14",
-    "semantic_hash": ""
+    "semantic_hash": "042d4205aec066c019b97309efed7c14"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/knowledge/sprint_seeds_store.py": {
     "mtime": 1780661560.5680315,
     "ast_hash": "a32045b24bf437f2d9d7fa7f275d3b95",
-    "semantic_hash": ""
+    "semantic_hash": "a32045b24bf437f2d9d7fa7f275d3b95"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/knowledge/ann_index.py": {
     "mtime": 1780693950.9742332,
     "ast_hash": "ba690f1cb167e5418b2d9bc6f1067bb7",
-    "semantic_hash": ""
+    "semantic_hash": "ba690f1cb167e5418b2d9bc6f1067bb7"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/knowledge/research_memory.py": {
     "mtime": 1780143014.065008,
@@ -4412,12 +3912,12 @@
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/knowledge/lancedb_store.py": {
     "mtime": 1780693939.054793,
     "ast_hash": "61b968b87dc908823c84051a804b007a",
-    "semantic_hash": ""
+    "semantic_hash": "61b968b87dc908823c84051a804b007a"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/knowledge/vector_store.py": {
     "mtime": 1780666178.649609,
     "ast_hash": "368e205d64d7d9d643128b20c4f25011",
-    "semantic_hash": ""
+    "semantic_hash": "368e205d64d7d9d643128b20c4f25011"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/knowledge/test_retrieval_boundaries.py": {
     "mtime": 1780072501.2849133,
@@ -4427,7 +3927,7 @@
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/knowledge/analytics_hook.py": {
     "mtime": 1780591579.6556118,
     "ast_hash": "0786869196ec3796a6cb5c707022c02c",
-    "semantic_hash": ""
+    "semantic_hash": "0786869196ec3796a6cb5c707022c02c"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/knowledge/search_index.py": {
     "mtime": 1780072501.276045,
@@ -4490,9 +3990,9 @@
     "semantic_hash": "d07582eaf6e97dfd37a55720f4b08682"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/knowledge/quality_assessment.py": {
-    "mtime": 1780488428.0573094,
-    "ast_hash": "37b612947126029ae9cdd45da8b86434",
-    "semantic_hash": "37b612947126029ae9cdd45da8b86434"
+    "mtime": 1780831766.5101624,
+    "ast_hash": "0dcf878e82dc92293dbe2480df52e33a",
+    "semantic_hash": ""
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/knowledge/context_graph.py": {
     "mtime": 1780072501.2507594,
@@ -4507,12 +4007,12 @@
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/knowledge/graph_rag.py": {
     "mtime": 1780506216.4470024,
     "ast_hash": "d3efff87b720fa54669729e64a59aee9",
-    "semantic_hash": ""
+    "semantic_hash": "d3efff87b720fa54669729e64a59aee9"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/knowledge/entity_linker.py": {
     "mtime": 1780609045.7786493,
     "ast_hash": "1255091735dac1cbbeece00803435451",
-    "semantic_hash": ""
+    "semantic_hash": "1255091735dac1cbbeece00803435451"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/knowledge/finding_envelope.py": {
     "mtime": 1780072501.2626748,
@@ -4527,12 +4027,12 @@
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/knowledge/target_memory.py": {
     "mtime": 1780506140.5784643,
     "ast_hash": "e1556d4407b880029ca0634fe7446717",
-    "semantic_hash": ""
+    "semantic_hash": "e1556d4407b880029ca0634fe7446717"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/knowledge/analyst_workbench.py": {
     "mtime": 1780506239.337775,
     "ast_hash": "ed7a01fb386b73d18359e99bdad39d99",
-    "semantic_hash": ""
+    "semantic_hash": "ed7a01fb386b73d18359e99bdad39d99"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/knowledge/rag_engine.py": {
     "mtime": 1780492782.8101723,
@@ -4540,9 +4040,9 @@
     "semantic_hash": "d2d13f4f2444a32005faf0b3cfa3bbfd"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/knowledge/graph_builder.py": {
-    "mtime": 1780321563.7826614,
-    "ast_hash": "7fe230fbd30b560e42cdd0f37f13f975",
-    "semantic_hash": "7fe230fbd30b560e42cdd0f37f13f975"
+    "mtime": 1780836567.4157054,
+    "ast_hash": "87289e99e73fe2c8603ab607847d3655",
+    "semantic_hash": ""
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/knowledge/semantic_store.py": {
     "mtime": 1780488428.0580466,
@@ -4550,8 +4050,8 @@
     "semantic_hash": "2d658017f03ecd0fad284e10a95f803c"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/knowledge/duckdb_store.py": {
-    "mtime": 1780686756.0894902,
-    "ast_hash": "e643d4ce9ac7c3b3f73814bc17426ec9",
+    "mtime": 1780831784.7124612,
+    "ast_hash": "d485955f184bbad051c9b2e10bbe55ed",
     "semantic_hash": ""
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/knowledge/graph_attachment.py": {
@@ -4562,17 +4062,17 @@
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/knowledge/explainer/__init__.py": {
     "mtime": 1780666284.8112934,
     "ast_hash": "efac288c8e3bef084396694bb953c708",
-    "semantic_hash": ""
+    "semantic_hash": "efac288c8e3bef084396694bb953c708"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/knowledge/explainer/fast.py": {
     "mtime": 1780609045.7877793,
     "ast_hash": "e5a8e6e02a9828d513561e5bfa3b924b",
-    "semantic_hash": ""
+    "semantic_hash": "e5a8e6e02a9828d513561e5bfa3b924b"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/knowledge/explainer/deep.py": {
     "mtime": 1780665385.969879,
     "ast_hash": "37daeff038f07f493dc5edc7364bd4dd",
-    "semantic_hash": ""
+    "semantic_hash": "37daeff038f07f493dc5edc7364bd4dd"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/shims/security/zkp_research_engine.py": {
     "mtime": 1780152040.4639933,
@@ -4612,7 +4112,7 @@
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/prefetch/prefetch_cache.py": {
     "mtime": 1780609048.341411,
     "ast_hash": "8b63a61e07d9e87858c8ad7f7d764e4c",
-    "semantic_hash": ""
+    "semantic_hash": "8b63a61e07d9e87858c8ad7f7d764e4c"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/prefetch/ssm_reranker.py": {
     "mtime": 1779507657.8233707,
@@ -4652,7 +4152,7 @@
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/benchmarks/m1_sustained_sprint.py": {
     "mtime": 1780663977.534162,
     "ast_hash": "66932db2c2dcda18e11671484b9bd0e1",
-    "semantic_hash": ""
+    "semantic_hash": "66932db2c2dcda18e11671484b9bd0e1"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/benchmarks/e2e_signal_fixture_compare.py": {
     "mtime": 1780072500.7789516,
@@ -4682,7 +4182,7 @@
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/benchmarks/benchmark_pipeline.py": {
     "mtime": 1780507550.12268,
     "ast_hash": "a6b895f9642f69ab53844a1f6c215bd2",
-    "semantic_hash": ""
+    "semantic_hash": "a6b895f9642f69ab53844a1f6c215bd2"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/benchmarks/live_measurement_next_action.py": {
     "mtime": 1780321563.6924305,
@@ -4715,9 +4215,9 @@
     "semantic_hash": "a09e85f219f4a1c93efd7b970cc8f66d"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/benchmarks/live_measurement_quality.py": {
-    "mtime": 1780072500.7879825,
-    "ast_hash": "da2af3690d4f25da5ecc9f16594f2154",
-    "semantic_hash": "da2af3690d4f25da5ecc9f16594f2154"
+    "mtime": 1780750759.8589652,
+    "ast_hash": "cf18dc8a3d5ee1d086e916219ee850d4",
+    "semantic_hash": "cf18dc8a3d5ee1d086e916219ee850d4"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/benchmarks/static_hydration_impact.py": {
     "mtime": 1780072500.8053079,
@@ -4730,9 +4230,9 @@
     "semantic_hash": "79db52d2524fb0982cfc3f89dc8aae80"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/benchmarks/live_sprint_measurement.py": {
-    "mtime": 1780488427.9807758,
-    "ast_hash": "9932ed37d50a9bbb24a42b8aba3b5cd2",
-    "semantic_hash": "9932ed37d50a9bbb24a42b8aba3b5cd2"
+    "mtime": 1780750759.8616173,
+    "ast_hash": "d9f9cf9dc726c6999e3697767c9a4c94",
+    "semantic_hash": "d9f9cf9dc726c6999e3697767c9a4c94"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/benchmarks/live_measurement_terminality.py": {
     "mtime": 1780072500.7902095,
@@ -4758,11 +4258,6 @@
     "mtime": 1780072500.7825427,
     "ast_hash": "6b7b27aecd79e5412cff3b596e40892e",
     "semantic_hash": "6b7b27aecd79e5412cff3b596e40892e"
-  },
-  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/benchmarks/run_sprint82j_benchmark.py": {
-    "mtime": 1780507550.121899,
-    "ast_hash": "adba36aca3db5f48ab132cfd5dfaf699",
-    "semantic_hash": ""
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/benchmarks/bench_8c0/common_stats.py": {
     "mtime": 1780488427.9782424,
@@ -4852,7 +4347,7 @@
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/brain/dspy_service.py": {
     "mtime": 1780507505.589841,
     "ast_hash": "bfeababf98c30204ece88d70f1ca2bd3",
-    "semantic_hash": ""
+    "semantic_hash": "bfeababf98c30204ece88d70f1ca2bd3"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/brain/insight_engine.py": {
     "mtime": 1780099722.7982965,
@@ -4877,12 +4372,7 @@
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/brain/hermes3_engine.py": {
     "mtime": 1780686756.0823233,
     "ast_hash": "b6772f9cf621d0639ec0715a81bb6098",
-    "semantic_hash": ""
-  },
-  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/brain/hypothesis_engine.py": {
-    "mtime": 1780686756.0832727,
-    "ast_hash": "6285ee136bf91922486a65155adc6845",
-    "semantic_hash": ""
+    "semantic_hash": "b6772f9cf621d0639ec0715a81bb6098"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/brain/_lazy.py": {
     "mtime": 1780488427.9831543,
@@ -4892,7 +4382,7 @@
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/brain/dspy_optimizer.py": {
     "mtime": 1780686756.0812163,
     "ast_hash": "c5f750f4230ced85817f8e832dd44a52",
-    "semantic_hash": ""
+    "semantic_hash": "c5f750f4230ced85817f8e832dd44a52"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/brain/model_lifecycle.py": {
     "mtime": 1780488427.9893837,
@@ -4900,9 +4390,9 @@
     "semantic_hash": "3f79fb22431599b56da71c34f8b49bbb"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/brain/ane_embedder.py": {
-    "mtime": 1780488427.983629,
-    "ast_hash": "8a1a1c3394ab6db3288d4d87fca9b4e7",
-    "semantic_hash": "8a1a1c3394ab6db3288d4d87fca9b4e7"
+    "mtime": 1780750759.8683279,
+    "ast_hash": "89df236972a88c1e2ad492fc353a82ba",
+    "semantic_hash": "89df236972a88c1e2ad492fc353a82ba"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/brain/model_phase_facts.py": {
     "mtime": 1779507657.7285697,
@@ -4917,12 +4407,12 @@
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/brain/model_swap_manager.py": {
     "mtime": 1780507505.5930295,
     "ast_hash": "f7a21644ae76d6fe4909509ea1a3f5c4",
-    "semantic_hash": ""
+    "semantic_hash": "f7a21644ae76d6fe4909509ea1a3f5c4"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/brain/ner_engine.py": {
-    "mtime": 1780492782.6959517,
-    "ast_hash": "50b5714d4c85aa00317f681dbc676de6",
-    "semantic_hash": "50b5714d4c85aa00317f681dbc676de6"
+    "mtime": 1780750759.887722,
+    "ast_hash": "75d5db81b7727b2d9b7eb0f37740c871",
+    "semantic_hash": "75d5db81b7727b2d9b7eb0f37740c871"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/brain/coreml_embedder.py": {
     "mtime": 1780072500.8242073,
@@ -4940,9 +4430,9 @@
     "semantic_hash": "53419a5fa13fc30cf896832547ca17c2"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/brain/__init__.py": {
-    "mtime": 1780072500.8098261,
-    "ast_hash": "a01b05c8e33ce54a2aab48d46963159f",
-    "semantic_hash": "a01b05c8e33ce54a2aab48d46963159f"
+    "mtime": 1780750759.865085,
+    "ast_hash": "fcd864e251bcac82641bb01a477230f8",
+    "semantic_hash": "fcd864e251bcac82641bb01a477230f8"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/brain/decision_engine.py": {
     "mtime": 1780072500.8256133,
@@ -4957,7 +4447,7 @@
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/brain/model_manager.py": {
     "mtime": 1780590531.095444,
     "ast_hash": "aed97a32dbfaeabfbbc0261588419787",
-    "semantic_hash": ""
+    "semantic_hash": "aed97a32dbfaeabfbbc0261588419787"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/brain/model_inference_guard.py": {
     "mtime": 1780321563.7003284,
@@ -4990,19 +4480,19 @@
     "semantic_hash": "dddea789584480b810912051449005a9"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/brain/evidence_fusion.py": {
-    "mtime": 1780072500.8447056,
-    "ast_hash": "e7fb10ef68715df5c0a6d00b5f7d227f",
-    "semantic_hash": "e7fb10ef68715df5c0a6d00b5f7d227f"
+    "mtime": 1780750759.8725777,
+    "ast_hash": "6bd26d3ad1100b649091ffb959262b83",
+    "semantic_hash": "6bd26d3ad1100b649091ffb959262b83"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/brain/batch_scheduler.py": {
     "mtime": 1780507505.591955,
     "ast_hash": "d83d96ffe4d72d4a34fc4cef6ad27b6b",
-    "semantic_hash": ""
+    "semantic_hash": "d83d96ffe4d72d4a34fc4cef6ad27b6b"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/brain/distillation_engine.py": {
     "mtime": 1780609043.728358,
     "ast_hash": "0172f4c458bcf194bd2a7ee8c031c8cb",
-    "semantic_hash": ""
+    "semantic_hash": "0172f4c458bcf194bd2a7ee8c031c8cb"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/brain/prompt_bandit.py": {
     "mtime": 1780488427.9911115,
@@ -5052,7 +4542,7 @@
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/rendering/macos_webkit_renderer.py": {
     "mtime": 1780507461.5773418,
     "ast_hash": "f4c8359d6fa6383c0ec4320ba8dba958",
-    "semantic_hash": ""
+    "semantic_hash": "f4c8359d6fa6383c0ec4320ba8dba958"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/stealth/__init__.py": {
     "mtime": 1780072501.8292785,
@@ -5067,7 +4557,7 @@
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/stealth/stealth_manager.py": {
     "mtime": 1780520602.910569,
     "ast_hash": "80a99486e4e2c6110da2f9d91924d679",
-    "semantic_hash": ""
+    "semantic_hash": "80a99486e4e2c6110da2f9d91924d679"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/.kiro/settings/mcp.json": {
     "mtime": 1779616004.0580866,
@@ -5147,7 +4637,7 @@
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/text/unicode_analyzer.py": {
     "mtime": 1780588894.8617973,
     "ast_hash": "68e6b6b3fbaa9c7d821cee77d1188f45",
-    "semantic_hash": ""
+    "semantic_hash": "68e6b6b3fbaa9c7d821cee77d1188f45"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/text/encoding_detector.py": {
     "mtime": 1780488428.0932846,
@@ -5167,7 +4657,7 @@
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/deep_research/utils.py": {
     "mtime": 1780609044.3376327,
     "ast_hash": "dd3fa40ee3eb488b1dcfcedd5ee4620e",
-    "semantic_hash": ""
+    "semantic_hash": "dd3fa40ee3eb488b1dcfcedd5ee4620e"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/deep_research/path_discovery.py": {
     "mtime": 1780072501.0018604,
@@ -5177,7 +4667,7 @@
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/export/formatters.py": {
     "mtime": 1780593652.9470851,
     "ast_hash": "2276cee42616b86dd83eced81be2dfed",
-    "semantic_hash": ""
+    "semantic_hash": "2276cee42616b86dd83eced81be2dfed"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/export/__init__.py": {
     "mtime": 1780072501.0475936,
@@ -5192,7 +4682,7 @@
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/export/jsonld_exporter.py": {
     "mtime": 1780593760.6895492,
     "ast_hash": "34971e8ff73975f366ec3cd24a9d352c",
-    "semantic_hash": ""
+    "semantic_hash": "34971e8ff73975f366ec3cd24a9d352c"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/export/COMPAT_HANDOFF.py": {
     "mtime": 1780072501.043823,
@@ -5200,9 +4690,9 @@
     "semantic_hash": "efc40a7650351a2b4eabe46056869b35"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/export/hypothesis_builder.py": {
-    "mtime": 1780114811.3115318,
-    "ast_hash": "316107d2d499192739274d6ae037744d",
-    "semantic_hash": "316107d2d499192739274d6ae037744d"
+    "mtime": 1780750759.9076865,
+    "ast_hash": "185d919103d06c2bb7e5de9d4422e7b0",
+    "semantic_hash": "185d919103d06c2bb7e5de9d4422e7b0"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/export/sprint_markdown_reporter.py": {
     "mtime": 1780488428.011345,
@@ -5212,7 +4702,7 @@
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/export/stix_exporter.py": {
     "mtime": 1780589499.0474677,
     "ast_hash": "0daf7ad7b3eb5747253f364f423b5876",
-    "semantic_hash": ""
+    "semantic_hash": "0daf7ad7b3eb5747253f364f423b5876"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/export/sprint_exporter.py": {
     "mtime": 1780488428.0104797,
@@ -5222,7 +4712,7 @@
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/export/markdown_reporter.py": {
     "mtime": 1780593753.6237884,
     "ast_hash": "d89c0ac9414fcf794dd377b429e441e2",
-    "semantic_hash": ""
+    "semantic_hash": "d89c0ac9414fcf794dd377b429e441e2"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/export/components/streaming_exporter.py": {
     "mtime": 1780488428.0089395,
@@ -5235,9 +4725,9 @@
     "semantic_hash": "94b2b36e6d871d0dbe71f246a493fa01"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/export/components/signal_builder.py": {
-    "mtime": 1779827110.9515364,
-    "ast_hash": "2cddf5682e8d625546960a2cb7554f22",
-    "semantic_hash": "2cddf5682e8d625546960a2cb7554f22"
+    "mtime": 1780833095.6523778,
+    "ast_hash": "453e3325d52be81606ca49dd36e8b06f",
+    "semantic_hash": ""
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/export/components/ioc_table_writer.py": {
     "mtime": 1779827110.9471607,
@@ -5310,9 +4800,9 @@
     "semantic_hash": "6a4a48719a7a7a5631f4b4a847d8ab15"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/rl/__init__.py": {
-    "mtime": 1780072501.4806592,
-    "ast_hash": "76010caea3db108aba8b6f609484eb32",
-    "semantic_hash": "76010caea3db108aba8b6f609484eb32"
+    "mtime": 1780750760.5812106,
+    "ast_hash": "f7ced150340b67ca8d03737bc88954e6",
+    "semantic_hash": "f7ced150340b67ca8d03737bc88954e6"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/rl/replay_buffer.py": {
     "mtime": 1780148986.285361,
@@ -5328,21 +4818,6 @@
     "mtime": 1780072501.482109,
     "ast_hash": "3ea0c06653f1943b38255346472ffd31",
     "semantic_hash": "3ea0c06653f1943b38255346472ffd31"
-  },
-  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/orchestrator/__init__.py": {
-    "mtime": 1780412609.2317193,
-    "ast_hash": "fd783c68c874d29ce2aa72cc31669099",
-    "semantic_hash": "fd783c68c874d29ce2aa72cc31669099"
-  },
-  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/orchestrator/security_manager.py": {
-    "mtime": 1779507657.8172998,
-    "ast_hash": "e884cff32961f72ee4cf8124c35ec045",
-    "semantic_hash": "e884cff32961f72ee4cf8124c35ec045"
-  },
-  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/orchestrator/research_manager.py": {
-    "mtime": 1779507657.8171508,
-    "ast_hash": "3d012ca37340eee40592d451347a617c",
-    "semantic_hash": "3d012ca37340eee40592d451347a617c"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/policy/__init__.py": {
     "mtime": 1779507657.8219347,
@@ -5362,12 +4837,12 @@
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/rust_extensions/src/rolling_hash.rs": {
     "mtime": 1780666403.167185,
     "ast_hash": "cc45aeb00f64873a0483db45b4593d5e",
-    "semantic_hash": ""
+    "semantic_hash": "cc45aeb00f64873a0483db45b4593d5e"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/rust_extensions/src/lib.rs": {
     "mtime": 1780712824.956749,
     "ast_hash": "02d7daddd5dc1b3ae803152ca1034904",
-    "semantic_hash": ""
+    "semantic_hash": "02d7daddd5dc1b3ae803152ca1034904"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/rust_extensions/src/ioc_extract.rs": {
     "mtime": 1780269220.8229334,
@@ -5447,12 +4922,12 @@
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/fetching/alternative_protocol_fetcher.py": {
     "mtime": 1780609044.8694394,
     "ast_hash": "184cd6dc8c43f585ff116799f1e49b54",
-    "semantic_hash": ""
+    "semantic_hash": "184cd6dc8c43f585ff116799f1e49b54"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/fetching/public_fetcher.py": {
-    "mtime": 1780713109.4776757,
-    "ast_hash": "064be0e9b237e50b668b88834b843f5f",
-    "semantic_hash": ""
+    "mtime": 1780733705.9101405,
+    "ast_hash": "0e46c0e6e10151de3b7efdc2c2892d89",
+    "semantic_hash": "0e46c0e6e10151de3b7efdc2c2892d89"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/LEAN-CTX.md": {
     "mtime": 1779507657.7059314,
@@ -5462,7 +4937,7 @@
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/requirements.txt": {
     "mtime": 1780661115.0587847,
     "ast_hash": "6dbce582d6236eeab19a68be44c1e571",
-    "semantic_hash": ""
+    "semantic_hash": "6dbce582d6236eeab19a68be44c1e571"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/GHOST_INVARIANTS.md": {
     "mtime": 1780099722.7959487,
@@ -5495,14 +4970,14 @@
     "semantic_hash": "0c9a5967d24d269b41695f962b71787c"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/ONBOARDING.md": {
-    "mtime": 1779507657.7088008,
-    "ast_hash": "da4abd1fa07a60be0fcb2808e423f60b",
-    "semantic_hash": "da4abd1fa07a60be0fcb2808e423f60b"
+    "mtime": 1780762444.6375577,
+    "ast_hash": "b2914806791aaba6342ac91256aac9bb",
+    "semantic_hash": "b2914806791aaba6342ac91256aac9bb"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/CLAUDE.md": {
-    "mtime": 1780692896.038752,
-    "ast_hash": "6c1ecf242c5a46ce85327de428a79432",
-    "semantic_hash": ""
+    "mtime": 1780762422.9483383,
+    "ast_hash": "b49e236c5d023dcb50843433797c981e",
+    "semantic_hash": "b49e236c5d023dcb50843433797c981e"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/.full-review-2026-04-23/02B-performance-findings.md": {
     "mtime": 1779507657.6580696,
@@ -6000,22 +5475,22 @@
     "semantic_hash": "9e17188177f8294e30b3834c32c54d7f"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/.gemini/skills/debug-issue/SKILL.md": {
-    "mtime": 1780498152.8222919,
+    "mtime": 1780826471.6328928,
     "ast_hash": "e56dde77c5960334afb8de48e9f3c167",
     "semantic_hash": "e56dde77c5960334afb8de48e9f3c167"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/.gemini/skills/refactor-safely/SKILL.md": {
-    "mtime": 1780498152.822428,
+    "mtime": 1780826471.6330183,
     "ast_hash": "5189a9e0e2260536b4d3519a77e09e66",
     "semantic_hash": "5189a9e0e2260536b4d3519a77e09e66"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/.gemini/skills/explore-codebase/SKILL.md": {
-    "mtime": 1780498152.8219972,
+    "mtime": 1780826471.6325963,
     "ast_hash": "76e306667ef1c1a4f9e6b7ae4d9bc551",
     "semantic_hash": "76e306667ef1c1a4f9e6b7ae4d9bc551"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/.gemini/skills/review-changes/SKILL.md": {
-    "mtime": 1780498152.8221526,
+    "mtime": 1780826471.6327467,
     "ast_hash": "da6827b650c4af68611e7cd7e138c08f",
     "semantic_hash": "da6827b650c4af68611e7cd7e138c08f"
   },
@@ -7042,7 +6517,7 @@
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/.agents/skills/zoom-out/SKILL.md": {
     "mtime": 1780699852.7170477,
     "ast_hash": "ce0b30e4f68692caec855452feb8be97",
-    "semantic_hash": ""
+    "semantic_hash": "ce0b30e4f68692caec855452feb8be97"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/.agents/skills/write-a-skill/SKILL.md": {
     "mtime": 1779507657.6548257,
@@ -7067,7 +6542,7 @@
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/.agents/skills/caveman/SKILL.md": {
     "mtime": 1780699839.6207397,
     "ast_hash": "c4b0c5e0fcf55df5792d0bc50178d73f",
-    "semantic_hash": ""
+    "semantic_hash": "c4b0c5e0fcf55df5792d0bc50178d73f"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/.agents/skills/tdd/mocking.md": {
     "mtime": 1779507657.6527421,
@@ -8402,27 +7877,27 @@
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/smoke_test.py": {
     "mtime": 1780686756.095586,
     "ast_hash": "fb6b9592c71c5c11dd351695b001dec4",
-    "semantic_hash": ""
+    "semantic_hash": "fb6b9592c71c5c11dd351695b001dec4"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/advanced_web/__init__.py": {
     "mtime": 1780590642.2484186,
     "ast_hash": "fb717e3f348a8cf061fc3b1ccc6cf9c0",
-    "semantic_hash": ""
+    "semantic_hash": "fb717e3f348a8cf061fc3b1ccc6cf9c0"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/advanced_web/stealth_browser.py": {
     "mtime": 1780609043.5066414,
     "ast_hash": "4248820bd9cd29f1bf1024bf62aea2dd",
-    "semantic_hash": ""
+    "semantic_hash": "4248820bd9cd29f1bf1024bf62aea2dd"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/advanced_web/automation_orchestrator.py": {
     "mtime": 1780609043.4888916,
     "ast_hash": "5e33bfe3c60e348516062e6b5eda9e39",
-    "semantic_hash": ""
+    "semantic_hash": "5e33bfe3c60e348516062e6b5eda9e39"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/advanced_web/evidence_network_analyzer.py": {
     "mtime": 1780686756.080253,
     "ast_hash": "df067f127db6ce2fb7e8d9708117aec4",
-    "semantic_hash": ""
+    "semantic_hash": "df067f127db6ce2fb7e8d9708117aec4"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tools/ioc_dedup.py": {
     "mtime": 1780449434.033835,
@@ -8442,7 +7917,7 @@
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/advanced_rag/rag_orchestrator.py": {
     "mtime": 1780589709.1148944,
     "ast_hash": "94f91f563bb1e992597f0d14ddb5f189",
-    "semantic_hash": ""
+    "semantic_hash": "94f91f563bb1e992597f0d14ddb5f189"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/security/zkp_research_engine.py": {
     "mtime": 1780241123.9432747,
@@ -8479,15 +7954,10 @@
     "ast_hash": "e5df9584373afe70f237dcb4224b9a1a",
     "semantic_hash": "e5df9584373afe70f237dcb4224b9a1a"
   },
-  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/hledac/simhash_integration.py": {
-    "mtime": 1780271891.6620586,
-    "ast_hash": "e9c90806c9295447700a56bb2c806141",
-    "semantic_hash": "e9c90806c9295447700a56bb2c806141"
-  },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/federated/sketches.py": {
     "mtime": 1780588747.9262137,
     "ast_hash": "73e29406ee1f65005338312d242790f8",
-    "semantic_hash": ""
+    "semantic_hash": "73e29406ee1f65005338312d242790f8"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/rust_extensions/benchmarks/bench_new_modules.py": {
     "mtime": 1780273480.3840735,
@@ -8552,7 +8022,7 @@
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/.atomcode/setup-state.json": {
     "mtime": 1780310702.4219081,
     "ast_hash": "50d4155d90541358be6b400368475a17",
-    "semantic_hash": ""
+    "semantic_hash": "50d4155d90541358be6b400368475a17"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tools/rl_health_report.py": {
     "mtime": 1780412609.2357419,
@@ -8580,14 +8050,14 @@
     "semantic_hash": "2da86d6fcc72e6d72657a421a1a46ea3"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/utils/feature_flags.py": {
-    "mtime": 1780318485.7030435,
-    "ast_hash": "25c130d50995fa2f22aeded9dcba2a13",
-    "semantic_hash": "25c130d50995fa2f22aeded9dcba2a13"
+    "mtime": 1780716931.7939727,
+    "ast_hash": "d4e82ce7f6d8a3b76af8f6414396eb8a",
+    "semantic_hash": "d4e82ce7f6d8a3b76af8f6414396eb8a"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/utils/source_types.py": {
     "mtime": 1780592938.9544876,
     "ast_hash": "96a7114aba64f8ea2ef6ff6426947e15",
-    "semantic_hash": ""
+    "semantic_hash": "96a7114aba64f8ea2ef6ff6426947e15"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/benchmarks/rust_vs_python_benchmark.py": {
     "mtime": 1780488427.9828794,
@@ -8595,14 +8065,14 @@
     "semantic_hash": "d30fe79f35a55ef1c4605f5a08c182c9"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/brain/hypothesis/_types.py": {
-    "mtime": 1780588953.9189386,
-    "ast_hash": "402e6acc77089f2d925ad8e0606bb2db",
-    "semantic_hash": ""
+    "mtime": 1780750759.8783426,
+    "ast_hash": "02485257620449d940239a72a3520ee7",
+    "semantic_hash": "02485257620449d940239a72a3520ee7"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/brain/hypothesis/__init__.py": {
-    "mtime": 1780412609.210171,
-    "ast_hash": "e53f16590db32814c3a4b88ac23fa2ba",
-    "semantic_hash": "e53f16590db32814c3a4b88ac23fa2ba"
+    "mtime": 1780750759.8752527,
+    "ast_hash": "08d1e6e5c2585d628c5afe6a008da934",
+    "semantic_hash": "08d1e6e5c2585d628c5afe6a008da934"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/rust_extensions/verify_build.py": {
     "mtime": 1780310179.7457533,
@@ -8612,7 +8082,7 @@
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/.atomcode.md": {
     "mtime": 1780316317.0049877,
     "ast_hash": "6835e55051ab70777a97c9a170359ffd",
-    "semantic_hash": ""
+    "semantic_hash": "6835e55051ab70777a97c9a170359ffd"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/docs/DHT_REAL_UDP_IMPLEMENTATION.md": {
     "mtime": 1780311123.33913,
@@ -8680,14 +8150,14 @@
     "semantic_hash": "949aa8e2d4544afbe00ba54e3d7e98f5"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/brain/hypothesis/adversarial.py": {
-    "mtime": 1780609043.8174956,
-    "ast_hash": "2bee786c3f2c72f7459ceb2dddb22c8d",
-    "semantic_hash": ""
+    "mtime": 1780750759.8819861,
+    "ast_hash": "c9a74b9bb7de2b71cec465b10ee31e07",
+    "semantic_hash": "c9a74b9bb7de2b71cec465b10ee31e07"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/brain/hypothesis/packs.py": {
-    "mtime": 1780402014.2874157,
-    "ast_hash": "fba6b7cc97533215a14e762da094862c",
-    "semantic_hash": "fba6b7cc97533215a14e762da094862c"
+    "mtime": 1780750759.8852885,
+    "ast_hash": "78c2923dbe9d6d5f835cf8d351955753",
+    "semantic_hash": "78c2923dbe9d6d5f835cf8d351955753"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/coordinators/_deprecated/benchmark_coordinator_shim.py": {
     "mtime": 1780451020.7533736,
@@ -8965,9 +8435,9 @@
     "semantic_hash": "53efc24c3264950b058172908a6e09f2"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tools/flag_smoke_runner.py": {
-    "mtime": 1780459953.8944585,
-    "ast_hash": "2fce941dc4e9c3fae1045b1418a8a54a",
-    "semantic_hash": "2fce941dc4e9c3fae1045b1418a8a54a"
+    "mtime": 1780717843.3990536,
+    "ast_hash": "6683855e45052e300a5537f2a549fa95",
+    "semantic_hash": "6683855e45052e300a5537f2a549fa95"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/transport/decompression.py": {
     "mtime": 1780459971.153992,
@@ -8977,7 +8447,7 @@
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_py314_fallback.py": {
     "mtime": 1780492782.881865,
     "ast_hash": "05013ac59b5a61f8e6b32fca5096d7fb",
-    "semantic_hash": ""
+    "semantic_hash": "05013ac59b5a61f8e6b32fca5096d7fb"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_sprint_f226.py": {
     "mtime": 1780484011.8331826,
@@ -8990,9 +8460,9 @@
     "semantic_hash": "98fe4ec99f01269b02789213f6288963"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_f43_flag_smoke.py": {
-    "mtime": 1780459958.3818238,
-    "ast_hash": "32e64cc9230b6c566b02a26e7d344633",
-    "semantic_hash": "32e64cc9230b6c566b02a26e7d344633"
+    "mtime": 1780717894.2388494,
+    "ast_hash": "acc5380726b22843cb09ecf3d65df606",
+    "semantic_hash": "acc5380726b22843cb09ecf3d65df606"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_f261_arrow_fetch_batch.py": {
     "mtime": 1780459922.5923433,
@@ -9002,7 +8472,7 @@
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/utils/encoding.py": {
     "mtime": 1780506593.1492066,
     "ast_hash": "5cc5ffc8d7b30da87a8c570a22901ef5",
-    "semantic_hash": ""
+    "semantic_hash": "5cc5ffc8d7b30da87a8c570a22901ef5"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/scripts/check_silent_excepts.py": {
     "mtime": 1780492782.881067,
@@ -9017,7 +8487,7 @@
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/docs/audits/TIMEOUT_MIGRATION_PLAN.md": {
     "mtime": 1780571012.182654,
     "ast_hash": "3084aad24f73af7c2495de56df02752d",
-    "semantic_hash": ""
+    "semantic_hash": "3084aad24f73af7c2495de56df02752d"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tools/secure_enclave_helper/.build/release/plugin-tools-description.json": {
     "mtime": 1780155170.8661246,
@@ -9160,9 +8630,9 @@
     "semantic_hash": "a26ffd48dbf2d0ad29f65369b7dda42e"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/.qoder/skills/zoom-out/SKILL.md": {
-    "mtime": 1779507657.6551867,
-    "ast_hash": "204f114b01386f4a0a8e6c7784266369",
-    "semantic_hash": "204f114b01386f4a0a8e6c7784266369"
+    "mtime": 1780699852.7170477,
+    "ast_hash": "ce0b30e4f68692caec855452feb8be97",
+    "semantic_hash": "ce0b30e4f68692caec855452feb8be97"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/.qoder/skills/write-a-skill/SKILL.md": {
     "mtime": 1779507657.6548257,
@@ -9185,9 +8655,9 @@
     "semantic_hash": "bb327bab674f400796f64b6e2ef5850c"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/.qoder/skills/caveman/SKILL.md": {
-    "mtime": 1779507657.6472092,
-    "ast_hash": "d675bd2128851ccb38a88a15fd941986",
-    "semantic_hash": "d675bd2128851ccb38a88a15fd941986"
+    "mtime": 1780699839.6207397,
+    "ast_hash": "c4b0c5e0fcf55df5792d0bc50178d73f",
+    "semantic_hash": "c4b0c5e0fcf55df5792d0bc50178d73f"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/.qoder/skills/tdd/mocking.md": {
     "mtime": 1779507657.6527421,
@@ -9325,9 +8795,9 @@
     "semantic_hash": "a26ffd48dbf2d0ad29f65369b7dda42e"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/.pi/skills/zoom-out/SKILL.md": {
-    "mtime": 1779507657.6551867,
-    "ast_hash": "204f114b01386f4a0a8e6c7784266369",
-    "semantic_hash": "204f114b01386f4a0a8e6c7784266369"
+    "mtime": 1780699852.7170477,
+    "ast_hash": "ce0b30e4f68692caec855452feb8be97",
+    "semantic_hash": "ce0b30e4f68692caec855452feb8be97"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/.pi/skills/write-a-skill/SKILL.md": {
     "mtime": 1779507657.6548257,
@@ -9350,9 +8820,9 @@
     "semantic_hash": "bb327bab674f400796f64b6e2ef5850c"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/.pi/skills/caveman/SKILL.md": {
-    "mtime": 1779507657.6472092,
-    "ast_hash": "d675bd2128851ccb38a88a15fd941986",
-    "semantic_hash": "d675bd2128851ccb38a88a15fd941986"
+    "mtime": 1780699839.6207397,
+    "ast_hash": "c4b0c5e0fcf55df5792d0bc50178d73f",
+    "semantic_hash": "c4b0c5e0fcf55df5792d0bc50178d73f"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/.pi/skills/tdd/mocking.md": {
     "mtime": 1779507657.6527421,
@@ -9397,701 +8867,1126 @@
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/.cursor/mcp.json": {
     "mtime": 1780498152.8117602,
     "ast_hash": "f4bc99da02f08a279d3d3da70bd6969a",
-    "semantic_hash": ""
+    "semantic_hash": "f4bc99da02f08a279d3d3da70bd6969a"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/runtime/sidecar_legacy_adapters.py": {
     "mtime": 1780570689.796314,
     "ast_hash": "82c49e761aa3b2d23ffbcd3a434af349",
-    "semantic_hash": ""
+    "semantic_hash": "82c49e761aa3b2d23ffbcd3a434af349"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_f265a_transport_audit.py": {
     "mtime": 1780569982.1386924,
     "ast_hash": "a88737330e791c7aa8c454bc5a14bfe9",
-    "semantic_hash": ""
+    "semantic_hash": "a88737330e791c7aa8c454bc5a14bfe9"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_f_git_stash_guard.py": {
     "mtime": 1780507610.4877946,
     "ast_hash": "44f63ddd40a228f36263c6ae14da1eea",
-    "semantic_hash": ""
+    "semantic_hash": "44f63ddd40a228f36263c6ae14da1eea"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_f_pipeline_asyncio_shadowing.py": {
     "mtime": 1780572577.348715,
     "ast_hash": "a0f85c38f3b93eb19654798ac1eaaedf",
-    "semantic_hash": ""
+    "semantic_hash": "a0f85c38f3b93eb19654798ac1eaaedf"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_temporal_signal_smoke.py": {
     "mtime": 1780566778.9120162,
     "ast_hash": "ca857a1b604149a615663b9706989d5a",
-    "semantic_hash": ""
+    "semantic_hash": "ca857a1b604149a615663b9706989d5a"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tools/migrate_waitfor_phase2.py": {
     "mtime": 1780588407.1580434,
     "ast_hash": "f9a137516b5c2bb681b026978c084101",
-    "semantic_hash": ""
+    "semantic_hash": "f9a137516b5c2bb681b026978c084101"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/GOD_OBJECT_ANALYSIS.md": {
     "mtime": 1780520380.6873004,
     "ast_hash": "39c3da44ab50bc8a4f4cc8823fafe064",
-    "semantic_hash": ""
+    "semantic_hash": "39c3da44ab50bc8a4f4cc8823fafe064"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/docs/ENCODING_WIRING.md": {
     "mtime": 1780507041.7040544,
     "ast_hash": "379e017e0051a7e9486738c37e77d1ba",
-    "semantic_hash": ""
+    "semantic_hash": "379e017e0051a7e9486738c37e77d1ba"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/docs/audits/TIMEOUT_PHASE2_TIGHT.txt": {
     "mtime": 1780505840.8524172,
     "ast_hash": "587b360fdc8d947ba682c05ae04a13be",
-    "semantic_hash": ""
+    "semantic_hash": "587b360fdc8d947ba682c05ae04a13be"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/advanced_web/structured_extractor.py": {
     "mtime": 1780661109.6717167,
     "ast_hash": "efc5556961b2c8e4adb27ea8cd0f83b6",
-    "semantic_hash": ""
+    "semantic_hash": "efc5556961b2c8e4adb27ea8cd0f83b6"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/federated/__init__.py": {
     "mtime": 1780608433.3654428,
     "ast_hash": "b16d4277d5e446187faf9f96bb53baa8",
-    "semantic_hash": ""
+    "semantic_hash": "b16d4277d5e446187faf9f96bb53baa8"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/federated/bridge.py": {
     "mtime": 1780591982.3920789,
     "ast_hash": "6a58e891883906c41aaa36c8d673eb03",
-    "semantic_hash": ""
+    "semantic_hash": "6a58e891883906c41aaa36c8d673eb03"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/federated/coordinator.py": {
     "mtime": 1780609044.8454888,
     "ast_hash": "1ef13aa16b4904703363dbdb444764d6",
-    "semantic_hash": ""
+    "semantic_hash": "1ef13aa16b4904703363dbdb444764d6"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/federated/qtable.py": {
     "mtime": 1780588636.4999225,
     "ast_hash": "e874d442d53ab9d1d77b25e1d8fc0a5a",
-    "semantic_hash": ""
+    "semantic_hash": "e874d442d53ab9d1d77b25e1d8fc0a5a"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/federated/sidecar_adapter.py": {
     "mtime": 1780608583.2024717,
     "ast_hash": "2dd0530e97d25b4db840d48705047c37",
-    "semantic_hash": ""
+    "semantic_hash": "2dd0530e97d25b4db840d48705047c37"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tools/_py314_apply_slots.py": {
     "mtime": 1780588637.0934606,
     "ast_hash": "860f9500bccbd743777ce720e23cbef8",
-    "semantic_hash": ""
+    "semantic_hash": "860f9500bccbd743777ce720e23cbef8"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tools/_py314_raise_from_e.py": {
     "mtime": 1780590331.1243227,
     "ast_hash": "dfc5c3859c92c22209283277a2b5539e",
-    "semantic_hash": ""
+    "semantic_hash": "dfc5c3859c92c22209283277a2b5539e"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/utils/silent_except_helper.py": {
     "mtime": 1780592586.0475805,
     "ast_hash": "2a78838f1dc109c48cad0d978abbe232",
-    "semantic_hash": ""
+    "semantic_hash": "2a78838f1dc109c48cad0d978abbe232"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/federated/transports/__init__.py": {
     "mtime": 1780608355.8378253,
     "ast_hash": "0f65200094e9968b3b9cd2dbc7795dd2",
-    "semantic_hash": ""
+    "semantic_hash": "0f65200094e9968b3b9cd2dbc7795dd2"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/federated/transports/inmemory_peer.py": {
     "mtime": 1780608239.9709918,
     "ast_hash": "50733801f7e725b72c8f77091c152337",
-    "semantic_hash": ""
+    "semantic_hash": "50733801f7e725b72c8f77091c152337"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/federated/transports/lane_dispatch.py": {
     "mtime": 1780608997.4881072,
     "ast_hash": "a36bfcf59fc04d4ff0a5a0d4bc5888b2",
-    "semantic_hash": ""
+    "semantic_hash": "a36bfcf59fc04d4ff0a5a0d4bc5888b2"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/federated/transports/peer_node.py": {
     "mtime": 1780609027.694532,
     "ast_hash": "fb1308243c54c1b3551220d0e9e0d9a3",
-    "semantic_hash": ""
+    "semantic_hash": "fb1308243c54c1b3551220d0e9e0d9a3"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/federated/transports/protocol.py": {
     "mtime": 1780594445.8991163,
     "ast_hash": "df6e114bfeb160d0dce0b58c2885ec88",
-    "semantic_hash": ""
+    "semantic_hash": "df6e114bfeb160d0dce0b58c2885ec88"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tools/fix_broken_codemod.py": {
     "mtime": 1780608827.8751438,
     "ast_hash": "85431cd264e308cd626c1b68c481bafb",
-    "semantic_hash": ""
+    "semantic_hash": "85431cd264e308cd626c1b68c481bafb"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tools/migrate_gather_to_safe_gather.py": {
     "mtime": 1780609253.3814836,
     "ast_hash": "ca7402d1903a86395c59c649c957f610",
-    "semantic_hash": ""
+    "semantic_hash": "ca7402d1903a86395c59c649c957f610"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tools/revert_gather_migration.py": {
     "mtime": 1780608582.083647,
     "ast_hash": "b2e180be4ce204423a68ad83620193ef",
-    "semantic_hash": ""
+    "semantic_hash": "b2e180be4ce204423a68ad83620193ef"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tools/revert_gather_migration_text.py": {
     "mtime": 1780608631.7976148,
     "ast_hash": "4472cd74c72cdeaa45dd61aebb491a13",
-    "semantic_hash": ""
+    "semantic_hash": "4472cd74c72cdeaa45dd61aebb491a13"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/docs/GATHER_FIX_v3.md": {
     "mtime": 1780655183.2871368,
     "ast_hash": "f9868eab6112ee708528115b9d4e6c0d",
-    "semantic_hash": ""
+    "semantic_hash": "f9868eab6112ee708528115b9d4e6c0d"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/archive/analyze_imports.py": {
     "mtime": 1780072500.7549262,
     "ast_hash": "51acd0dddaa66bf40c77639e2ad91e10",
-    "semantic_hash": ""
+    "semantic_hash": "51acd0dddaa66bf40c77639e2ad91e10"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/archive/debug_import.py": {
     "mtime": 1780072500.9972322,
     "ast_hash": "429277f94916c0a1fdfae0e81a53785d",
-    "semantic_hash": ""
+    "semantic_hash": "429277f94916c0a1fdfae0e81a53785d"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/archive/reports/IMPORT_HEALTH_REPORT.json": {
     "mtime": 1779707659.8504148,
     "ast_hash": "31039043bbd1a419c69f3b2fe7ebfb7e",
-    "semantic_hash": ""
+    "semantic_hash": "31039043bbd1a419c69f3b2fe7ebfb7e"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/archive/reports/coreml_ane_integration_matrix.json": {
     "mtime": 1779507657.743068,
     "ast_hash": "b1095716931411e0b75ddedb33c13891",
-    "semantic_hash": ""
+    "semantic_hash": "b1095716931411e0b75ddedb33c13891"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/archive/reports/embedding_ownership_matrix.json": {
     "mtime": 1779507657.7657845,
     "ast_hash": "11efc24f8e97d09c2ef233230a6216c4",
-    "semantic_hash": ""
+    "semantic_hash": "11efc24f8e97d09c2ef233230a6216c4"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/archive/reports/entities.json": {
     "mtime": 1779507657.7669458,
     "ast_hash": "47078ae27b3cd3221b8a7a0db448e92c",
-    "semantic_hash": ""
+    "semantic_hash": "47078ae27b3cd3221b8a7a0db448e92c"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/archive/reports/import_categorization.json": {
     "mtime": 1779707659.9722514,
     "ast_hash": "e95445ce662a3156a3cfed83a7dc96f1",
-    "semantic_hash": ""
+    "semantic_hash": "e95445ce662a3156a3cfed83a7dc96f1"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/archive/reports/llm_reasoner_benchmark_matrix.json": {
     "mtime": 1780072501.3345618,
     "ast_hash": "db9348a68968611ef194c41f2183e29e",
-    "semantic_hash": ""
+    "semantic_hash": "db9348a68968611ef194c41f2183e29e"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/archive/reports/llm_reasoner_benchmark_results.json": {
     "mtime": 1780072501.3366613,
     "ast_hash": "87e398ad24c455ae08a32db640422caa",
-    "semantic_hash": ""
+    "semantic_hash": "87e398ad24c455ae08a32db640422caa"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/archive/reports/model_integration_matrix.json": {
     "mtime": 1779507657.8109002,
     "ast_hash": "890e56092bf1787386bfecf7ae4e6189",
-    "semantic_hash": ""
+    "semantic_hash": "890e56092bf1787386bfecf7ae4e6189"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/archive/reports/model_inventory.json": {
     "mtime": 1779507657.8111384,
     "ast_hash": "2a9662a685701f4b7550e63cf33e4794",
-    "semantic_hash": ""
+    "semantic_hash": "2a9662a685701f4b7550e63cf33e4794"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/archive/reports/model_runtime_map.json": {
     "mtime": 1779507657.8113322,
     "ast_hash": "008b9e5398fd306d2cbacfe3c59af993",
-    "semantic_hash": ""
+    "semantic_hash": "008b9e5398fd306d2cbacfe3c59af993"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/archive/reports/ner_pii_ownership_matrix.json": {
     "mtime": 1779507657.8129504,
     "ast_hash": "c3257a297d40755485a838b79fa76ac2",
-    "semantic_hash": ""
+    "semantic_hash": "c3257a297d40755485a838b79fa76ac2"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/archive/reports/passivedns_lane_closure.json": {
     "mtime": 1779507657.8176389,
     "ast_hash": "7ca5d6be55346beb3ada8b7bc85e8263",
-    "semantic_hash": ""
+    "semantic_hash": "7ca5d6be55346beb3ada8b7bc85e8263"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/archive/reports/public_acceptance.json": {
     "mtime": 1778270827.8057497,
     "ast_hash": "47aa0649c288feac473ee6f1d27f0475",
-    "semantic_hash": ""
+    "semantic_hash": "47aa0649c288feac473ee6f1d27f0475"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/archive/reports/public_bootstrap_first.json": {
     "mtime": 1779507657.8239717,
     "ast_hash": "0cf682d5513fdd7856a4da52172ddd3d",
-    "semantic_hash": ""
+    "semantic_hash": "0cf682d5513fdd7856a4da52172ddd3d"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/archive/reports/public_yield_taxonomy.json": {
     "mtime": 1777976837.2387068,
     "ast_hash": "1ed66745f4946c464c3ab988053ae873",
-    "semantic_hash": ""
+    "semantic_hash": "1ed66745f4946c464c3ab988053ae873"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/archive/reports/repowise_dead_code.json": {
     "mtime": 1777046818.2208717,
     "ast_hash": "88e0b3b26406562529136c38574f5384",
-    "semantic_hash": ""
+    "semantic_hash": "88e0b3b26406562529136c38574f5384"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/archive/reports/reranker_ownership_matrix.json": {
     "mtime": 1779507657.8415644,
     "ast_hash": "32c54cf82c84f13d7eb81db857baf59c",
-    "semantic_hash": ""
+    "semantic_hash": "32c54cf82c84f13d7eb81db857baf59c"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/archive/reports/validation_after_f209b.json": {
     "mtime": 1779507658.3530507,
     "ast_hash": "1d51880dbff8d4f0c9b4c5e434969580",
-    "semantic_hash": ""
+    "semantic_hash": "1d51880dbff8d4f0c9b4c5e434969580"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/archive/reports/vision_vlm_cleanup_matrix.json": {
     "mtime": 1779507658.3532755,
     "ast_hash": "84916c158a4dbe155e10a45db0eed57b",
-    "semantic_hash": ""
+    "semantic_hash": "84916c158a4dbe155e10a45db0eed57b"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/archive/reports/wayback_lane_closure.json": {
     "mtime": 1779507658.3534412,
     "ast_hash": "163c897599d1104208fb2d1d84a8011c",
-    "semantic_hash": ""
+    "semantic_hash": "163c897599d1104208fb2d1d84a8011c"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/benchmarks/bench_rust_vs_python.py": {
     "mtime": 1780666566.901167,
     "ast_hash": "240958d729001da920fbdca645bfba53",
-    "semantic_hash": ""
+    "semantic_hash": "240958d729001da920fbdca645bfba53"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/discovery/deep_source_registry.py": {
     "mtime": 1780668499.4008017,
     "ast_hash": "edd262de35e656fcb6b899f66c7a9163",
-    "semantic_hash": ""
-  },
-  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/hledac/__init__.py": {
-    "mtime": 1780686521.7006538,
-    "ast_hash": "384b96964c342ba8f047554c0789b4f2",
-    "semantic_hash": ""
-  },
-  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/hledac/_namespace_bootstrap.py": {
-    "mtime": 1780686571.1142724,
-    "ast_hash": "ef5b2ce0fedc1ae89e7e5fac1064e644",
-    "semantic_hash": ""
+    "semantic_hash": "edd262de35e656fcb6b899f66c7a9163"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/hledac_hypothesis/__init__.py": {
-    "mtime": 1780664378.1411424,
-    "ast_hash": "fe54054ed3861ab24bc1e34b5e0ab1d2",
-    "semantic_hash": ""
+    "mtime": 1780750760.5693104,
+    "ast_hash": "ebb6e98fc816b23cc6d3e6fb8fd2e379",
+    "semantic_hash": "ebb6e98fc816b23cc6d3e6fb8fd2e379"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/hledac_hypothesis/dempster_shafer.py": {
     "mtime": 1780664976.8785436,
     "ast_hash": "fdf500df7ebc51d2eef93677f5aab199",
-    "semantic_hash": ""
+    "semantic_hash": "fdf500df7ebc51d2eef93677f5aab199"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/hledac_hypothesis/eig.py": {
     "mtime": 1780665070.3761044,
     "ast_hash": "244fbe42169f6235b2447ac994862056",
-    "semantic_hash": ""
+    "semantic_hash": "244fbe42169f6235b2447ac994862056"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/hledac_hypothesis/hypothesisgenerator.py": {
     "mtime": 1780664971.2916162,
     "ast_hash": "aaa240ce15791dba8703360855fc9cf7",
-    "semantic_hash": ""
+    "semantic_hash": "aaa240ce15791dba8703360855fc9cf7"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/scripts/compile_dspy_programs.py": {
     "mtime": 1780686617.026733,
     "ast_hash": "fb7566521ffdfc2f4357132c427826fb",
-    "semantic_hash": ""
+    "semantic_hash": "fb7566521ffdfc2f4357132c427826fb"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_evidence_network.py": {
     "mtime": 1780685618.2954824,
     "ast_hash": "2174c178822051b76dd31fa25d8f0a0c",
-    "semantic_hash": ""
+    "semantic_hash": "2174c178822051b76dd31fa25d8f0a0c"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/utils/msgspec_json.py": {
     "mtime": 1780666933.1051204,
     "ast_hash": "a865249076e64efcd5c85431f0f5d51a",
-    "semantic_hash": ""
+    "semantic_hash": "a865249076e64efcd5c85431f0f5d51a"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/.github/workflows/rust_extensions.yml": {
     "mtime": 1780666949.3007495,
     "ast_hash": "2c6bb3342f3822108fb255823cc02eba",
-    "semantic_hash": ""
+    "semantic_hash": "2c6bb3342f3822108fb255823cc02eba"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/archive/reports/ADVANCED_MODULES_AUDIT.md": {
     "mtime": 1780592737.9342995,
     "ast_hash": "9e3afe1de91692c8f498b31a4dc356a7",
-    "semantic_hash": ""
+    "semantic_hash": "9e3afe1de91692c8f498b31a4dc356a7"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/archive/reports/ANALYSIS_A1_UNIVERSAL_NAMESPACE.md": {
     "mtime": 1780157382.49957,
     "ast_hash": "5f49d5d3f6abebd729742ad489428562",
-    "semantic_hash": ""
+    "semantic_hash": "5f49d5d3f6abebd729742ad489428562"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/archive/reports/ANALYSIS_A3_SECURITY_NAMESPACE.md": {
     "mtime": 1780157422.4966466,
     "ast_hash": "3d5e4df99ede215158791d390969ec41",
-    "semantic_hash": ""
+    "semantic_hash": "3d5e4df99ede215158791d390969ec41"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/archive/reports/ANALYSIS_A4_WEB_AND_RAG.md": {
     "mtime": 1780157422.8617964,
     "ast_hash": "deaf3af61c7a0d0d8786f3023e98dd96",
-    "semantic_hash": ""
+    "semantic_hash": "deaf3af61c7a0d0d8786f3023e98dd96"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/archive/reports/BRAIN_HYPOTHESIS_AUDIT.md": {
     "mtime": 1780566959.8763545,
     "ast_hash": "8b3568bf82f94bc6cc6834d651ecba63",
-    "semantic_hash": ""
+    "semantic_hash": "8b3568bf82f94bc6cc6834d651ecba63"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/archive/reports/COMMUNICATION_LAYER_WIRING_DONE.md": {
     "mtime": 1780399926.7512972,
     "ast_hash": "ad2a5c37634ad26108be38bd159bba00",
-    "semantic_hash": ""
+    "semantic_hash": "ad2a5c37634ad26108be38bd159bba00"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/archive/reports/DEEP_SOURCE_REGISTRY.md": {
     "mtime": 1780668830.6520154,
     "ast_hash": "53e13bd5506fb1a2aa8a2eb45689ea15",
-    "semantic_hash": ""
+    "semantic_hash": "53e13bd5506fb1a2aa8a2eb45689ea15"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/archive/reports/DHT_REAL_UDP_REPORT.md": {
     "mtime": 1780275873.7438245,
     "ast_hash": "653db1d21bc7d867c1f974789e8abb1e",
-    "semantic_hash": ""
+    "semantic_hash": "653db1d21bc7d867c1f974789e8abb1e"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/archive/reports/ENHANCED_RESEARCH_WIRING.md": {
     "mtime": 1780276736.9699671,
     "ast_hash": "5d6e852987813db8e242f0f03029fad0",
-    "semantic_hash": ""
+    "semantic_hash": "5d6e852987813db8e242f0f03029fad0"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/archive/reports/FEDERATED_ACTIVATION_REPORT.md": {
     "mtime": 1780608567.600352,
     "ast_hash": "ed6cf59a4cc7bfb6e3e6cc94a85168b7",
-    "semantic_hash": ""
+    "semantic_hash": "ed6cf59a4cc7bfb6e3e6cc94a85168b7"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/archive/reports/FETCHING_STACK_AUDIT.md": {
     "mtime": 1780458423.270396,
     "ast_hash": "9ec4967d02cad79f0e68c447444652e9",
-    "semantic_hash": ""
+    "semantic_hash": "9ec4967d02cad79f0e68c447444652e9"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/archive/reports/FETCH_COORDINATOR_EXTRACTION.md": {
     "mtime": 1780570003.610882,
     "ast_hash": "526862b0306400866a8aecf638894c9f",
-    "semantic_hash": ""
+    "semantic_hash": "526862b0306400866a8aecf638894c9f"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/archive/reports/FETCH_COORDINATOR_QUEUE_EXTRACTION.md": {
     "mtime": 1780572385.211551,
     "ast_hash": "bb7585c95645f8b53fe8ed12cfe3b639",
-    "semantic_hash": ""
+    "semantic_hash": "bb7585c95645f8b53fe8ed12cfe3b639"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/archive/reports/FINAL_STATUS.md": {
     "mtime": 1780273841.9935882,
     "ast_hash": "cd20a15e365c37aa34b590d330d39a44",
-    "semantic_hash": ""
+    "semantic_hash": "cd20a15e365c37aa34b590d330d39a44"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/archive/reports/FIX_REPORT_P1.md": {
     "mtime": 1780240985.28223,
     "ast_hash": "dca63fc634b14fa4cd273599b4f6f65f",
-    "semantic_hash": ""
+    "semantic_hash": "dca63fc634b14fa4cd273599b4f6f65f"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/archive/reports/FIX_REPORT_P2.md": {
     "mtime": 1780241317.8626413,
     "ast_hash": "e0cd0cd6f4fffa73b5c6ee11ce41679e",
-    "semantic_hash": ""
+    "semantic_hash": "e0cd0cd6f4fffa73b5c6ee11ce41679e"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/archive/reports/FIX_REPORT_P3.md": {
     "mtime": 1780267583.3892498,
     "ast_hash": "6193d174f469869a3717c235be3c88af",
-    "semantic_hash": ""
+    "semantic_hash": "6193d174f469869a3717c235be3c88af"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/archive/reports/FIX_REPORT_P4.md": {
     "mtime": 1780241191.417872,
     "ast_hash": "275758bc9019ed2c166f0df4d2f8efc8",
-    "semantic_hash": ""
+    "semantic_hash": "275758bc9019ed2c166f0df4d2f8efc8"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/archive/reports/FIX_REPORT_P5.md": {
     "mtime": 1780241172.7129204,
     "ast_hash": "9a4147a464f988f44a2169c3c06c4b52",
-    "semantic_hash": ""
+    "semantic_hash": "9a4147a464f988f44a2169c3c06c4b52"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/archive/reports/FIX_REPORT_P6.md": {
     "mtime": 1780241430.7118907,
     "ast_hash": "b0c0350eee1dafe2641a60cc8c5b495e",
-    "semantic_hash": ""
+    "semantic_hash": "b0c0350eee1dafe2641a60cc8c5b495e"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/archive/reports/FIX_REPORT_P7A.md": {
     "mtime": 1780268519.115175,
     "ast_hash": "6212eed5253c8af527d20f4a7cf4a7c2",
-    "semantic_hash": ""
+    "semantic_hash": "6212eed5253c8af527d20f4a7cf4a7c2"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/archive/reports/FIX_REPORT_P7B.md": {
     "mtime": 1780273552.2269104,
     "ast_hash": "afebe8ad2df464c4b397259676f35f35",
-    "semantic_hash": ""
+    "semantic_hash": "afebe8ad2df464c4b397259676f35f35"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/archive/reports/FORENSICS_INTEGRATION_MAP.md": {
     "mtime": 1780590497.8979633,
     "ast_hash": "20c53ed574d129a71b674109bf04dd67",
-    "semantic_hash": ""
+    "semantic_hash": "20c53ed574d129a71b674109bf04dd67"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/archive/reports/GATHER_FIX.md": {
     "mtime": 1780492782.8769765,
     "ast_hash": "1e95b048cfa013824c5c301289a8347d",
-    "semantic_hash": ""
+    "semantic_hash": "1e95b048cfa013824c5c301289a8347d"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/archive/reports/GATHER_FIX_v2.md": {
     "mtime": 1780492782.8774347,
     "ast_hash": "bf62db8f8aa010d7e1d77acef6b5450e",
-    "semantic_hash": ""
+    "semantic_hash": "bf62db8f8aa010d7e1d77acef6b5450e"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/archive/reports/GEMINI.md": {
     "mtime": 1779707659.841981,
     "ast_hash": "f958ec4c7420f4a7ac9aea5567a46ef1",
-    "semantic_hash": ""
+    "semantic_hash": "f958ec4c7420f4a7ac9aea5567a46ef1"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/archive/reports/GHOST_STEALTH_LAYER_WIRING_DONE.md": {
     "mtime": 1780412216.5537243,
     "ast_hash": "67bd36b7f2065e7c4d1171c7d2fdcaa5",
-    "semantic_hash": ""
+    "semantic_hash": "67bd36b7f2065e7c4d1171c7d2fdcaa5"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/archive/reports/GRAPH_PATHFINDER_ACTIVATION.md": {
     "mtime": 1780667332.541257,
     "ast_hash": "2ea1f692820c2aff57d03177ba9c315c",
-    "semantic_hash": ""
+    "semantic_hash": "2ea1f692820c2aff57d03177ba9c315c"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/archive/reports/HYPOTHESIS_RENAME_REPORT.md": {
     "mtime": 1780665170.1843722,
     "ast_hash": "bbd685cc746a4e832078b7a79127439b",
-    "semantic_hash": ""
+    "semantic_hash": "bbd685cc746a4e832078b7a79127439b"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/archive/reports/HYPOTHESIS_TIER3_EXTRACTION.md": {
     "mtime": 1780400618.2527802,
     "ast_hash": "3561100ca6d5b9d54f0d4595f8c474c3",
-    "semantic_hash": ""
+    "semantic_hash": "3561100ca6d5b9d54f0d4595f8c474c3"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/archive/reports/HYPOTHESIS_TIER4_EXTRACTION.md": {
     "mtime": 1780410550.4767983,
     "ast_hash": "d1f03d6953433871b5e6b67767ba1865",
-    "semantic_hash": ""
+    "semantic_hash": "d1f03d6953433871b5e6b67767ba1865"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/archive/reports/HYPOTHESIS_TIER5_EXTRACTION.md": {
     "mtime": 1780412779.4980874,
     "ast_hash": "681d2194038a843a66ec61b8b48036af",
-    "semantic_hash": ""
+    "semantic_hash": "681d2194038a843a66ec61b8b48036af"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/archive/reports/IMPLEMENTATION_ROADMAP.md": {
     "mtime": 1780236759.628684,
     "ast_hash": "e9cabbe7821b661d52d80e3a08993f41",
-    "semantic_hash": ""
+    "semantic_hash": "e9cabbe7821b661d52d80e3a08993f41"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/archive/reports/IMPORT_FIX_REPORT.md": {
     "mtime": 1780276261.9904156,
     "ast_hash": "5fc2f0419481187ca09cdc2a3146a5a4",
-    "semantic_hash": ""
+    "semantic_hash": "5fc2f0419481187ca09cdc2a3146a5a4"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/archive/reports/LAYERS_ACTIVATION_REPORT.md": {
     "mtime": 1780566891.343231,
     "ast_hash": "dddb43cc582661933ccb8205fd9990ae",
-    "semantic_hash": ""
+    "semantic_hash": "dddb43cc582661933ccb8205fd9990ae"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/archive/reports/LEGACY_ORCHESTRATOR_DETACH_AUDIT.md": {
     "mtime": 1780412609.2091918,
     "ast_hash": "d143d3849143d0d4876ae14f093ad920",
-    "semantic_hash": ""
+    "semantic_hash": "d143d3849143d0d4876ae14f093ad920"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/archive/reports/LOGGER_REFACTOR.md": {
     "mtime": 1780506434.2230155,
     "ast_hash": "ff9c6a035520eec48a9707617bd2a76d",
-    "semantic_hash": ""
+    "semantic_hash": "ff9c6a035520eec48a9707617bd2a76d"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/archive/reports/M1_CRASH_FIXES.md": {
     "mtime": 1780275417.0861874,
     "ast_hash": "bbce6b19bf8ee28255de9ee68b43117b",
-    "semantic_hash": ""
+    "semantic_hash": "bbce6b19bf8ee28255de9ee68b43117b"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/archive/reports/PRIVACY_GATE_AUDIT.md": {
     "mtime": 1780410847.689627,
     "ast_hash": "654b88cf05550d849736796f18cc2739",
-    "semantic_hash": ""
+    "semantic_hash": "654b88cf05550d849736796f18cc2739"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/archive/reports/PYTHON314_APPLIED.md": {
     "mtime": 1780589400.9727793,
     "ast_hash": "40d5c2b4660f3f6fcce1705dfee7ac9f",
-    "semantic_hash": ""
+    "semantic_hash": "40d5c2b4660f3f6fcce1705dfee7ac9f"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/archive/reports/PYTHON314_MODERNIZATION_AUDIT.md": {
     "mtime": 1780432403.7002892,
     "ast_hash": "0099a819a55fe6e47cdb709a2a9463c1",
-    "semantic_hash": ""
+    "semantic_hash": "0099a819a55fe6e47cdb709a2a9463c1"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/archive/reports/PYTHON314_PHASE2_APPLIED.md": {
     "mtime": 1780593232.5771618,
     "ast_hash": "9f47d36483906f0fb0d90ac9826adcff",
-    "semantic_hash": ""
+    "semantic_hash": "9f47d36483906f0fb0d90ac9826adcff"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/archive/reports/QODER.md": {
     "mtime": 1779707659.8643577,
     "ast_hash": "f958ec4c7420f4a7ac9aea5567a46ef1",
-    "semantic_hash": ""
+    "semantic_hash": "f958ec4c7420f4a7ac9aea5567a46ef1"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/archive/reports/RAISE_CHAIN_FIX.md": {
     "mtime": 1780492782.878431,
     "ast_hash": "98b8a6a60ac4af76ab2822a8634962f2",
-    "semantic_hash": ""
+    "semantic_hash": "98b8a6a60ac4af76ab2822a8634962f2"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/archive/reports/REGRESSION_FIX_REPORT.md": {
     "mtime": 1780310583.015528,
     "ast_hash": "3eac141da8591717328364b7c0f4be9d",
-    "semantic_hash": ""
+    "semantic_hash": "3eac141da8591717328364b7c0f4be9d"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/archive/reports/RL_ACTIVATION_REPORT.md": {
     "mtime": 1780278428.908258,
     "ast_hash": "b92629deb911f53c8c9a0d9286a2b19f",
-    "semantic_hash": ""
+    "semantic_hash": "b92629deb911f53c8c9a0d9286a2b19f"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/archive/reports/RL_CONVERGENCE_BASELINE.md": {
     "mtime": 1780412132.3312542,
     "ast_hash": "492f4e7982ceafa3fb08753855a7a853",
-    "semantic_hash": ""
+    "semantic_hash": "492f4e7982ceafa3fb08753855a7a853"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/archive/reports/RL_HEALTH_OBSERVABILITY.md": {
     "mtime": 1780329653.5475008,
     "ast_hash": "9719ffd1fd312426b7b12998d8454271",
-    "semantic_hash": ""
+    "semantic_hash": "9719ffd1fd312426b7b12998d8454271"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/archive/reports/RL_TRAINING_ACTIVATION.md": {
     "mtime": 1780399130.511253,
     "ast_hash": "430ae15692190f7f8599f4d94e0df0eb",
-    "semantic_hash": ""
+    "semantic_hash": "430ae15692190f7f8599f4d94e0df0eb"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/archive/reports/RUST_CI_VERIFIED.md": {
     "mtime": 1780667144.1355367,
     "ast_hash": "7faf5a6f7488c468d6dbdba0e2198e76",
-    "semantic_hash": ""
+    "semantic_hash": "7faf5a6f7488c468d6dbdba0e2198e76"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/archive/reports/RUST_EXTENSIONS_BUILD_ANALYSIS.md": {
     "mtime": 1780268723.438599,
     "ast_hash": "ad2a8f06bed8ccfea3705136d97f56d7",
-    "semantic_hash": ""
+    "semantic_hash": "ad2a8f06bed8ccfea3705136d97f56d7"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/archive/reports/RUST_EXTENSIONS_COMPLETE.md": {
     "mtime": 1780273629.1566505,
     "ast_hash": "9418eb4f7f1b24be41bf4581e2e1d764",
-    "semantic_hash": ""
+    "semantic_hash": "9418eb4f7f1b24be41bf4581e2e1d764"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/archive/reports/SECURITY_MEMORY_LAYER_AUDIT.md": {
     "mtime": 1780401417.713322,
     "ast_hash": "d384639eee8ff3935a1e128c7fd2ed79",
-    "semantic_hash": ""
+    "semantic_hash": "d384639eee8ff3935a1e128c7fd2ed79"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/archive/reports/SECURITY_TRIAGE_REPORT.md": {
     "mtime": 1780156025.5011742,
     "ast_hash": "2a4cf811883e2a8c854edef71e674ec2",
-    "semantic_hash": ""
+    "semantic_hash": "2a4cf811883e2a8c854edef71e674ec2"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/archive/reports/SILENT_EXCEPT_REPORT.md": {
     "mtime": 1780492782.8789968,
     "ast_hash": "e4ceea115f49f53d918fd46caaa10010",
-    "semantic_hash": ""
+    "semantic_hash": "e4ceea115f49f53d918fd46caaa10010"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/archive/reports/SLOTS_FIX.md": {
     "mtime": 1780492782.8795245,
     "ast_hash": "49692de0c4bcd2e33132b7c9a829fc94",
-    "semantic_hash": ""
+    "semantic_hash": "49692de0c4bcd2e33132b7c9a829fc94"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/archive/reports/SOURCE_TYPE_ADOPTION_SWEEP.md": {
     "mtime": 1780416653.6058,
     "ast_hash": "a681656725ceef69f5f2b240d399a329",
-    "semantic_hash": ""
+    "semantic_hash": "a681656725ceef69f5f2b240d399a329"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/archive/reports/SPM_PROPERTY_DELEGATION.md": {
     "mtime": 1780398096.8258865,
     "ast_hash": "7a5dfa3c3d2b3a64f8d8cf446b3b4758",
-    "semantic_hash": ""
+    "semantic_hash": "7a5dfa3c3d2b3a64f8d8cf446b3b4758"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/archive/reports/STORAGE_PIPELINE_AUDIT.md": {
     "mtime": 1780458425.3380632,
     "ast_hash": "e573c1d6eff205c757ef9862d7e52f5e",
-    "semantic_hash": ""
+    "semantic_hash": "e573c1d6eff205c757ef9862d7e52f5e"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/archive/reports/TEST_COLLECTION_ERRORS_ANALYSIS.md": {
     "mtime": 1780156054.0108397,
     "ast_hash": "3b6916907b6ccc66a81518f09a426c4f",
-    "semantic_hash": ""
+    "semantic_hash": "3b6916907b6ccc66a81518f09a426c4f"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/archive/reports/TIMEOUT_LOOSE_REPORT.md": {
     "mtime": 1780520842.738495,
     "ast_hash": "f32836e001371024bc382ba40dc38650",
-    "semantic_hash": ""
+    "semantic_hash": "f32836e001371024bc382ba40dc38650"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/archive/reports/TIMEOUT_PHASE4_REPORT.md": {
     "mtime": 1780567121.7172015,
     "ast_hash": "23cec8d0424eda36178a2372adb2d40c",
-    "semantic_hash": ""
+    "semantic_hash": "23cec8d0424eda36178a2372adb2d40c"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/archive/reports/TRANSPORT_SECURITY_AUDIT.md": {
     "mtime": 1780570261.7705488,
     "ast_hash": "4aca43db13e99d37d326a697af0256be",
-    "semantic_hash": ""
+    "semantic_hash": "4aca43db13e99d37d326a697af0256be"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/archive/reports/claude-ukol.md": {
     "mtime": 1779507657.73303,
     "ast_hash": "4087c0fc11cbc2b821a539a8484fe49e",
-    "semantic_hash": ""
+    "semantic_hash": "4087c0fc11cbc2b821a539a8484fe49e"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/docs/LANCEDB_ZOOM_OUT.md": {
     "mtime": 1780692509.8530095,
     "ast_hash": "82525e9b0604346f100110cdb333ea8c",
-    "semantic_hash": ""
+    "semantic_hash": "82525e9b0604346f100110cdb333ea8c"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/docs/MSGSPEC_MIGRATION.md": {
     "mtime": 1780662555.5461907,
     "ast_hash": "bbe5ff8565ffc7394326d1dda81d6a01",
-    "semantic_hash": ""
+    "semantic_hash": "bbe5ff8565ffc7394326d1dda81d6a01"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/hledac_hypothesis/HYPOTHESIS_GENERATOR_SPEC.md": {
     "mtime": 1779742498.7779584,
     "ast_hash": "163ceba1d434cb44a206d19adc680b01",
-    "semantic_hash": ""
+    "semantic_hash": "163ceba1d434cb44a206d19adc680b01"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/rust_extensions/src/content_hasher.rs": {
     "mtime": 1780713445.389714,
     "ast_hash": "5e9716e752082d1cb9843d659cba6d18",
-    "semantic_hash": ""
+    "semantic_hash": "5e9716e752082d1cb9843d659cba6d18"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/rust_extensions/src/evidence_rs.rs": {
     "mtime": 1780707719.8664787,
     "ast_hash": "689d993bbf91d5abe250f7f8ca02b3f5",
-    "semantic_hash": ""
+    "semantic_hash": "689d993bbf91d5abe250f7f8ca02b3f5"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/rust_extensions/src/url_ops.rs": {
     "mtime": 1780714222.8610206,
     "ast_hash": "885caaa88db6b167c717ab277d05ec32",
-    "semantic_hash": ""
+    "semantic_hash": "885caaa88db6b167c717ab277d05ec32"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_content_hasher.py": {
     "mtime": 1780713895.9376009,
     "ast_hash": "d42582cb1e16802ad7301533e14d5c4e",
-    "semantic_hash": ""
+    "semantic_hash": "d42582cb1e16802ad7301533e14d5c4e"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_http_cache.py": {
     "mtime": 1780712730.926863,
     "ast_hash": "c6d5fb2128655ba858bc268ca5a1b1f1",
-    "semantic_hash": ""
+    "semantic_hash": "c6d5fb2128655ba858bc268ca5a1b1f1"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_retry_jitter.py": {
     "mtime": 1780712619.5037189,
     "ast_hash": "e5ac9b7b49faf8b078163d819a1c2b52",
-    "semantic_hash": ""
+    "semantic_hash": "e5ac9b7b49faf8b078163d819a1c2b52"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_url_ops_rust.py": {
-    "mtime": 1780712892.456626,
-    "ast_hash": "4e1904e776c1b37b16072af9d2698442",
-    "semantic_hash": ""
+    "mtime": 1780733882.4158497,
+    "ast_hash": "d801d030967158534f747c066bfe5b96",
+    "semantic_hash": "d801d030967158534f747c066bfe5b96"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/transport/http_cache.py": {
     "mtime": 1780712518.5372274,
     "ast_hash": "46e9da32a94fadd9befe6f0b1795f7a4",
-    "semantic_hash": ""
+    "semantic_hash": "46e9da32a94fadd9befe6f0b1795f7a4"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/docs/EVIDENCE_RUST_DESIGN.md": {
     "mtime": 1780707655.0556571,
     "ast_hash": "cb53252a98ab0631714eab4217cc3db7",
-    "semantic_hash": ""
+    "semantic_hash": "cb53252a98ab0631714eab4217cc3db7"
   },
   "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/docs/flag_analysis/FLAGS_TAXONOMY_AND_VALIDATION.md": {
     "mtime": 1780713246.7508128,
     "ast_hash": "fcad9398581f3dd005dcf713c3e7ab30",
+    "semantic_hash": "fcad9398581f3dd005dcf713c3e7ab30"
+  },
+  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_flag_registry.py": {
+    "mtime": 1780716993.4750068,
+    "ast_hash": "f285c0ed1e438cb40f11a64e353e593c",
+    "semantic_hash": "f285c0ed1e438cb40f11a64e353e593c"
+  },
+  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_flag_validation.py": {
+    "mtime": 1780717192.4662898,
+    "ast_hash": "993454e9c26b3e1d3f5c6ec1ec5e16f5",
+    "semantic_hash": "993454e9c26b3e1d3f5c6ec1ec5e16f5"
+  },
+  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/utils/flag_presets.py": {
+    "mtime": 1780750760.6260881,
+    "ast_hash": "7e2de71d88d8f9d15a260c46fc70020e",
+    "semantic_hash": "7e2de71d88d8f9d15a260c46fc70020e"
+  },
+  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/utils/flag_registry.py": {
+    "mtime": 1780750760.6274812,
+    "ast_hash": "9589b28c13db2f27ba8117bdef02c9b7",
+    "semantic_hash": "9589b28c13db2f27ba8117bdef02c9b7"
+  },
+  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/.claude/f228e_apply.py": {
+    "mtime": 1778361448.09521,
+    "ast_hash": "9b7925a90ed4fa6ba7a84984ee6c7d63",
+    "semantic_hash": "9b7925a90ed4fa6ba7a84984ee6c7d63"
+  },
+  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/.claude/f228e_refactor.py": {
+    "mtime": 1778361084.3860555,
+    "ast_hash": "07916e189b5cb052cc7b86309d6351f0",
+    "semantic_hash": "07916e189b5cb052cc7b86309d6351f0"
+  },
+  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/.claude/hooks/git-stash-guard.sh": {
+    "mtime": 1780507464.7594783,
+    "ast_hash": "c556e3177c86c83ccc290d0c1a4bb99c",
+    "semantic_hash": "c556e3177c86c83ccc290d0c1a4bb99c"
+  },
+  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/.claude/settings.json": {
+    "mtime": 1780826471.6352804,
+    "ast_hash": "685c82f9fbe36a47f266a70b6d287130",
+    "semantic_hash": "685c82f9fbe36a47f266a70b6d287130"
+  },
+  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/.claude/settings.local.json": {
+    "mtime": 1780064553.075389,
+    "ast_hash": "c056403104649fde02006a61bd000ade",
+    "semantic_hash": "c056403104649fde02006a61bd000ade"
+  },
+  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/.claude/skills/diagnose/scripts/hitl-loop.template.sh": {
+    "mtime": 1779507657.6477406,
+    "ast_hash": "46a2a00761be2785e59661f0e3c11471",
+    "semantic_hash": "46a2a00761be2785e59661f0e3c11471"
+  },
+  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/.claude/skills/run-hledac-universal/driver.py": {
+    "mtime": 1780761277.8015547,
+    "ast_hash": "4b3c296f5212bf53707284c1e073c6dd",
+    "semantic_hash": "4b3c296f5212bf53707284c1e073c6dd"
+  },
+  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/.mcp.json": {
+    "mtime": 1780503680.4008722,
+    "ast_hash": "030daaa4ac06baf12fb0972d0c59262c",
+    "semantic_hash": "030daaa4ac06baf12fb0972d0c59262c"
+  },
+  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/_analyze_deep.py": {
+    "mtime": 1780756447.2335505,
+    "ast_hash": "4e73889e0028996a6a4568e5633706df",
+    "semantic_hash": "4e73889e0028996a6a4568e5633706df"
+  },
+  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/benchmarks/llm_reasoner_benchmark.py": {
+    "mtime": 1780741948.9123833,
+    "ast_hash": "3a05853a9ca36c0ed5381b70fbd53f1e",
+    "semantic_hash": "3a05853a9ca36c0ed5381b70fbd53f1e"
+  },
+  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/brain/causal_engine.py": {
+    "mtime": 1780741760.360266,
+    "ast_hash": "819575ff2a70d16bed1d382a5422f035",
+    "semantic_hash": "819575ff2a70d16bed1d382a5422f035"
+  },
+  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/brain/research_hypothesis_engine.py": {
+    "mtime": 1780686756.0832727,
+    "ast_hash": "6285ee136bf91922486a65155adc6845",
+    "semantic_hash": "6285ee136bf91922486a65155adc6845"
+  },
+  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/cache_storage/embeddings/models--nomic-ai--nomic-embed-text-v1.5/files_metadata.json": {
+    "mtime": 1778610711.587647,
+    "ast_hash": "980ccae4ea208d1cf38bdbf71b6cb90d",
+    "semantic_hash": "980ccae4ea208d1cf38bdbf71b6cb90d"
+  },
+  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/cache_storage/l2_cache.json": {
+    "mtime": 1778294600.250532,
+    "ast_hash": "99914b932bd37a50b983c5e7c90ae93b",
+    "semantic_hash": "99914b932bd37a50b983c5e7c90ae93b"
+  },
+  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/graph/hypothesis_graph.py": {
+    "mtime": 1780741840.618702,
+    "ast_hash": "3d8fba7b7af06c2dd8c5f9e40ebc2de4",
+    "semantic_hash": "3d8fba7b7af06c2dd8c5f9e40ebc2de4"
+  },
+  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/rl/.sprint_policy_state.json": {
+    "mtime": 1780836274.1661422,
+    "ast_hash": "f21e1ca2876d0617841da31e3840da4a",
+    "semantic_hash": ""
+  },
+  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/fixtures/provider_replay/public/empty.json": {
+    "mtime": 1780748993.4704683,
+    "ast_hash": "d7e5ca10eb7b62be80a9221c729b2bd3",
+    "semantic_hash": "d7e5ca10eb7b62be80a9221c729b2bd3"
+  },
+  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_exit_codes.py": {
+    "mtime": 1780762301.863162,
+    "ast_hash": "5b3345e463f80ebbf3dc79758c5aef8d",
+    "semantic_hash": "5b3345e463f80ebbf3dc79758c5aef8d"
+  },
+  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/.claude/CLAUDE.md": {
+    "mtime": 1780507661.2843785,
+    "ast_hash": "927d87510881d603a20e11e8cf0b58b9",
+    "semantic_hash": "927d87510881d603a20e11e8cf0b58b9"
+  },
+  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/.claude/commands/checkpoint/create.md": {
+    "mtime": 1778339154.7256355,
+    "ast_hash": "edc514a3d477f4314c40a97f30c23408",
+    "semantic_hash": "edc514a3d477f4314c40a97f30c23408"
+  },
+  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/.claude/commands/checkpoint/list.md": {
+    "mtime": 1778339154.7273586,
+    "ast_hash": "70de4fe2ea023b7ca30ca0e0d9214a6a",
+    "semantic_hash": "70de4fe2ea023b7ca30ca0e0d9214a6a"
+  },
+  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/.claude/commands/checkpoint/restore.md": {
+    "mtime": 1778339154.7283707,
+    "ast_hash": "120a66bb0bcabdc2de961250420b6c9d",
+    "semantic_hash": "120a66bb0bcabdc2de961250420b6c9d"
+  },
+  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/.claude/commands/code-review.md": {
+    "mtime": 1778339154.7306662,
+    "ast_hash": "dc4b45b031e541ff7fd3ac5005c78f2c",
+    "semantic_hash": "dc4b45b031e541ff7fd3ac5005c78f2c"
+  },
+  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/.claude/commands/dev/cleanup.md": {
+    "mtime": 1778339154.7335823,
+    "ast_hash": "5cdc1a714d905a522f9fc8feb023922c",
+    "semantic_hash": "5cdc1a714d905a522f9fc8feb023922c"
+  },
+  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/.claude/commands/gh/repo-init.md": {
+    "mtime": 1778339154.7326431,
+    "ast_hash": "c8358c5cb54c25b7df5693587126746f",
+    "semantic_hash": "c8358c5cb54c25b7df5693587126746f"
+  },
+  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/.claude/commands/git/checkout.md": {
+    "mtime": 1778339154.7239964,
+    "ast_hash": "a7bb6d13b971e858aac12443b51609ce",
+    "semantic_hash": "a7bb6d13b971e858aac12443b51609ce"
+  },
+  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/.claude/commands/git/commit.md": {
+    "mtime": 1778339154.7209494,
+    "ast_hash": "b8b0e7de39f9686003b9f2e9ebf756e5",
+    "semantic_hash": "b8b0e7de39f9686003b9f2e9ebf756e5"
+  },
+  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/.claude/commands/git/ignore-init.md": {
+    "mtime": 1778339154.7248368,
+    "ast_hash": "03499e208f4036f79be8f99795e6c3b9",
+    "semantic_hash": "03499e208f4036f79be8f99795e6c3b9"
+  },
+  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/.claude/commands/git/push.md": {
+    "mtime": 1778339154.7230108,
+    "ast_hash": "b2a26f5faafd20e66b8120369079c09e",
+    "semantic_hash": "b2a26f5faafd20e66b8120369079c09e"
+  },
+  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/.claude/commands/git/status.md": {
+    "mtime": 1778339154.7221825,
+    "ast_hash": "dd39059576f0d7dcd20bf1068c98dfda",
+    "semantic_hash": "dd39059576f0d7dcd20bf1068c98dfda"
+  },
+  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/.claude/commands/research.md": {
+    "mtime": 1778339154.731803,
+    "ast_hash": "f014c4dee961846d71af0eec34d7daca",
+    "semantic_hash": "f014c4dee961846d71af0eec34d7daca"
+  },
+  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/.claude/commands/validate-and-fix.md": {
+    "mtime": 1778339154.7297797,
+    "ast_hash": "86d3825964c2bc627c2937518761d32f",
+    "semantic_hash": "86d3825964c2bc627c2937518761d32f"
+  },
+  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/.claude/rules/lean-ctx.md": {
+    "mtime": 1780046934.1107783,
+    "ast_hash": "3cf5dc73bf2d89af22b4124043a8a32e",
+    "semantic_hash": "3cf5dc73bf2d89af22b4124043a8a32e"
+  },
+  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/.claude/skills/blame/SKILL.md": {
+    "mtime": 1780233950.0951753,
+    "ast_hash": "a40afcf09afb0913cfe3ff3b4c415937",
+    "semantic_hash": "a40afcf09afb0913cfe3ff3b4c415937"
+  },
+  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/.claude/skills/caveman/SKILL.md": {
+    "mtime": 1780699839.6207397,
+    "ast_hash": "c4b0c5e0fcf55df5792d0bc50178d73f",
+    "semantic_hash": "c4b0c5e0fcf55df5792d0bc50178d73f"
+  },
+  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/.claude/skills/debug-issue/skill.md": {
+    "mtime": 1780826471.6321316,
+    "ast_hash": "f6ca42b7fce135a9dbe1b01f651e35a4",
+    "semantic_hash": "f6ca42b7fce135a9dbe1b01f651e35a4"
+  },
+  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/.claude/skills/diagnose/SKILL.md": {
+    "mtime": 1779507657.6475096,
+    "ast_hash": "70cd92c9a5219eb8db60629b1bf59949",
+    "semantic_hash": "70cd92c9a5219eb8db60629b1bf59949"
+  },
+  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/.claude/skills/explore-codebase/skill.md": {
+    "mtime": 1780826471.6316147,
+    "ast_hash": "72bcdd4382c8389e22970964cbdf73e3",
+    "semantic_hash": "72bcdd4382c8389e22970964cbdf73e3"
+  },
+  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/.claude/skills/grill-me/SKILL.md": {
+    "mtime": 1779507657.6481166,
+    "ast_hash": "8cb45c74133150e6a00f18b2059aae8c",
+    "semantic_hash": "8cb45c74133150e6a00f18b2059aae8c"
+  },
+  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/.claude/skills/grill-with-docs/ADR-FORMAT.md": {
+    "mtime": 1779507657.648335,
+    "ast_hash": "bb327bab674f400796f64b6e2ef5850c",
+    "semantic_hash": "bb327bab674f400796f64b6e2ef5850c"
+  },
+  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/.claude/skills/grill-with-docs/CONTEXT-FORMAT.md": {
+    "mtime": 1779507657.648476,
+    "ast_hash": "57e7e26a1a46884f8f952c67fb233af2",
+    "semantic_hash": "57e7e26a1a46884f8f952c67fb233af2"
+  },
+  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/.claude/skills/grill-with-docs/SKILL.md": {
+    "mtime": 1779507657.6486006,
+    "ast_hash": "8bf29044d7890561fe964b884498ff9e",
+    "semantic_hash": "8bf29044d7890561fe964b884498ff9e"
+  },
+  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/.claude/skills/handoff/SKILL.md": {
+    "mtime": 1779507657.6488233,
+    "ast_hash": "a75221c11f7c7361d9005b3f2feed178",
+    "semantic_hash": "a75221c11f7c7361d9005b3f2feed178"
+  },
+  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/.claude/skills/improve-codebase-architecture/DEEPENING.md": {
+    "mtime": 1779507657.64905,
+    "ast_hash": "ebdd48f7e3b0afeb8085d797df543e1a",
+    "semantic_hash": "ebdd48f7e3b0afeb8085d797df543e1a"
+  },
+  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/.claude/skills/improve-codebase-architecture/INTERFACE-DESIGN.md": {
+    "mtime": 1779507657.6492908,
+    "ast_hash": "aee2c0695396f8c6432ba5bfe547f195",
+    "semantic_hash": "aee2c0695396f8c6432ba5bfe547f195"
+  },
+  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/.claude/skills/improve-codebase-architecture/LANGUAGE.md": {
+    "mtime": 1779507657.6495752,
+    "ast_hash": "680627d828b489f96b92d4a2d7fa3bb6",
+    "semantic_hash": "680627d828b489f96b92d4a2d7fa3bb6"
+  },
+  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/.claude/skills/improve-codebase-architecture/SKILL.md": {
+    "mtime": 1779507657.6500542,
+    "ast_hash": "38f2089311c7cb0fa42d2dc4a3e1340e",
+    "semantic_hash": "38f2089311c7cb0fa42d2dc4a3e1340e"
+  },
+  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/.claude/skills/log/SKILL.md": {
+    "mtime": 1780233950.0944843,
+    "ast_hash": "c30a84951275043fda71542f816b5bac",
+    "semantic_hash": "c30a84951275043fda71542f816b5bac"
+  },
+  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/.claude/skills/prototype/LOGIC.md": {
+    "mtime": 1779507657.6503341,
+    "ast_hash": "d57721452aacaa04caacd0bc7c5c2f49",
+    "semantic_hash": "d57721452aacaa04caacd0bc7c5c2f49"
+  },
+  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/.claude/skills/prototype/SKILL.md": {
+    "mtime": 1779507657.6504734,
+    "ast_hash": "cff567de82e277cfd0e3b9e12b67cd2c",
+    "semantic_hash": "cff567de82e277cfd0e3b9e12b67cd2c"
+  },
+  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/.claude/skills/prototype/UI.md": {
+    "mtime": 1779507657.6506498,
+    "ast_hash": "c1eaad6437c90d5660b2ffc9ff91ffb4",
+    "semantic_hash": "c1eaad6437c90d5660b2ffc9ff91ffb4"
+  },
+  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/.claude/skills/refactor-safely/skill.md": {
+    "mtime": 1780826471.632424,
+    "ast_hash": "48b6d7fd4e9a3dcef923e9e32f8a75d0",
+    "semantic_hash": "48b6d7fd4e9a3dcef923e9e32f8a75d0"
+  },
+  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/.claude/skills/review-changes/skill.md": {
+    "mtime": 1780826471.6318226,
+    "ast_hash": "255133a497797178b42746808b2fadc9",
+    "semantic_hash": "255133a497797178b42746808b2fadc9"
+  },
+  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/.claude/skills/run-hledac-universal/SKILL.md": {
+    "mtime": 1780699844.5378213,
+    "ast_hash": "95dc73bd7dabda3303c84228cb8214be",
+    "semantic_hash": "95dc73bd7dabda3303c84228cb8214be"
+  },
+  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/.claude/skills/setup-matt-pocock-skills/SKILL.md": {
+    "mtime": 1779507657.6509314,
+    "ast_hash": "a9e22edd638f1b2bd5b3e2934eb209c3",
+    "semantic_hash": "a9e22edd638f1b2bd5b3e2934eb209c3"
+  },
+  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/.claude/skills/setup-matt-pocock-skills/domain.md": {
+    "mtime": 1779507657.651066,
+    "ast_hash": "477d9959972912279da5677825ef61c3",
+    "semantic_hash": "477d9959972912279da5677825ef61c3"
+  },
+  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/.claude/skills/setup-matt-pocock-skills/issue-tracker-github.md": {
+    "mtime": 1779507657.651202,
+    "ast_hash": "b3268117bb0bb6b731632d35d6a1369a",
+    "semantic_hash": "b3268117bb0bb6b731632d35d6a1369a"
+  },
+  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/.claude/skills/setup-matt-pocock-skills/issue-tracker-gitlab.md": {
+    "mtime": 1779507657.6515684,
+    "ast_hash": "e91b1122d99f423b5375142a14b68f76",
+    "semantic_hash": "e91b1122d99f423b5375142a14b68f76"
+  },
+  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/.claude/skills/setup-matt-pocock-skills/issue-tracker-local.md": {
+    "mtime": 1779507657.6518936,
+    "ast_hash": "0f479992c0a4fd62a0d1be807f31e132",
+    "semantic_hash": "0f479992c0a4fd62a0d1be807f31e132"
+  },
+  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/.claude/skills/setup-matt-pocock-skills/triage-labels.md": {
+    "mtime": 1779507657.6520324,
+    "ast_hash": "22add54cb98451c55b20e6b7992d4a85",
+    "semantic_hash": "22add54cb98451c55b20e6b7992d4a85"
+  },
+  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/.claude/skills/show/SKILL.md": {
+    "mtime": 1780233950.0956595,
+    "ast_hash": "64879f8564b336c3fd423420a57795eb",
+    "semantic_hash": "64879f8564b336c3fd423420a57795eb"
+  },
+  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/.claude/skills/tdd/SKILL.md": {
+    "mtime": 1779507657.652301,
+    "ast_hash": "7ca080c0a0b0986e031fe6a47771d57e",
+    "semantic_hash": "7ca080c0a0b0986e031fe6a47771d57e"
+  },
+  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/.claude/skills/tdd/deep-modules.md": {
+    "mtime": 1779507657.6524694,
+    "ast_hash": "fee2c44ab025f43e10ed717bb42cc9c2",
+    "semantic_hash": "fee2c44ab025f43e10ed717bb42cc9c2"
+  },
+  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/.claude/skills/tdd/interface-design.md": {
+    "mtime": 1779507657.6526098,
+    "ast_hash": "fc309d957e5735a1ac3d27023842fa1b",
+    "semantic_hash": "fc309d957e5735a1ac3d27023842fa1b"
+  },
+  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/.claude/skills/tdd/mocking.md": {
+    "mtime": 1779507657.6527421,
+    "ast_hash": "c5505e8da8f516c7dacebd01c58a4c2c",
+    "semantic_hash": "c5505e8da8f516c7dacebd01c58a4c2c"
+  },
+  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/.claude/skills/tdd/refactoring.md": {
+    "mtime": 1779507657.6531398,
+    "ast_hash": "ecbf516d99a591169adce39a8a933f2e",
+    "semantic_hash": "ecbf516d99a591169adce39a8a933f2e"
+  },
+  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/.claude/skills/tdd/tests.md": {
+    "mtime": 1779507657.6532822,
+    "ast_hash": "253c991bba867959c0146c72b93a6f6f",
+    "semantic_hash": "253c991bba867959c0146c72b93a6f6f"
+  },
+  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/.claude/skills/to-issues/SKILL.md": {
+    "mtime": 1779507657.6536174,
+    "ast_hash": "a26ffd48dbf2d0ad29f65369b7dda42e",
+    "semantic_hash": "a26ffd48dbf2d0ad29f65369b7dda42e"
+  },
+  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/.claude/skills/to-prd/SKILL.md": {
+    "mtime": 1779507657.6539652,
+    "ast_hash": "6b2fd61841ec7c51e148f8483f378a65",
+    "semantic_hash": "6b2fd61841ec7c51e148f8483f378a65"
+  },
+  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/.claude/skills/triage/AGENT-BRIEF.md": {
+    "mtime": 1779507657.6542296,
+    "ast_hash": "7f815fa62b523f97710dde414f98e70b",
+    "semantic_hash": "7f815fa62b523f97710dde414f98e70b"
+  },
+  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/.claude/skills/triage/OUT-OF-SCOPE.md": {
+    "mtime": 1779507657.6544147,
+    "ast_hash": "d3fcb04f7f250f2d07ce4ccbc3a26c7d",
+    "semantic_hash": "d3fcb04f7f250f2d07ce4ccbc3a26c7d"
+  },
+  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/.claude/skills/triage/SKILL.md": {
+    "mtime": 1779507657.6545975,
+    "ast_hash": "dafdaa928b34a5c317fd190591c89a65",
+    "semantic_hash": "dafdaa928b34a5c317fd190591c89a65"
+  },
+  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/.claude/skills/write-a-skill/SKILL.md": {
+    "mtime": 1779507657.6548257,
+    "ast_hash": "492ef034b4fc9e497cc69b8fed78a742",
+    "semantic_hash": "492ef034b4fc9e497cc69b8fed78a742"
+  },
+  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/.claude/skills/zoom-out/SKILL.md": {
+    "mtime": 1780699852.7170477,
+    "ast_hash": "ce0b30e4f68692caec855452feb8be97",
+    "semantic_hash": "ce0b30e4f68692caec855452feb8be97"
+  },
+  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/.scratch/README.md": {
+    "mtime": 1780746469.650547,
+    "ast_hash": "84548f7a2cbd020e29837ee0890160d6",
+    "semantic_hash": "84548f7a2cbd020e29837ee0890160d6"
+  },
+  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/.sprint-runs/2026-06-06-validation/end.txt": {
+    "mtime": 1780760582.5177362,
+    "ast_hash": "802a1dfff35ff50e02a91ebfea89651c",
+    "semantic_hash": "802a1dfff35ff50e02a91ebfea89651c"
+  },
+  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/.sprint-runs/2026-06-06-validation/start.txt": {
+    "mtime": 1780760472.5884833,
+    "ast_hash": "323e4c44ee6206317ea1fba99c7596c2",
+    "semantic_hash": "323e4c44ee6206317ea1fba99c7596c2"
+  },
+  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/CONTEXT.md": {
+    "mtime": 1780746435.9830794,
+    "ast_hash": "d669c98aa1434666352f1c6972a9df75",
+    "semantic_hash": "d669c98aa1434666352f1c6972a9df75"
+  },
+  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/GEMINI.md": {
+    "mtime": 1780741387.5787609,
+    "ast_hash": "f958ec4c7420f4a7ac9aea5567a46ef1",
+    "semantic_hash": "f958ec4c7420f4a7ac9aea5567a46ef1"
+  },
+  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/QODER.md": {
+    "mtime": 1780741387.5793478,
+    "ast_hash": "f958ec4c7420f4a7ac9aea5567a46ef1",
+    "semantic_hash": "f958ec4c7420f4a7ac9aea5567a46ef1"
+  },
+  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/docs/LOCAL_M1_SMOKE_RUNBOOK.md": {
+    "mtime": 1780741970.1274822,
+    "ast_hash": "cc18e489212465247ac9285c80fb24fb",
+    "semantic_hash": "cc18e489212465247ac9285c80fb24fb"
+  },
+  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/docs/adr/0001-record-architecture-decisions.md": {
+    "mtime": 1780746332.5054526,
+    "ast_hash": "0c5571e209b62308628d5a32d440046c",
+    "semantic_hash": "0c5571e209b62308628d5a32d440046c"
+  },
+  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/test_sprint_f271.py": {
+    "mtime": 1780836123.1198866,
+    "ast_hash": "64d38c2e406070a764cbc7559b84c22f",
     "semantic_hash": ""
   }
 }

@@ -81,6 +81,24 @@ I2P_PROXY_URL=socks5://127.0.0.1:7654
 Hledac automatically routes .i2p and .b32.i2p URLs through this proxy.
 
 
+## Sprint Duration Constraints
+
+The CLI enforces a hard pre-flight guard (F221-ABORT) on `--duration`:
+
+- **Minimum useful sprint** = `windup_lead_effective + 30s` of active acquisition
+  window.
+- **F250 windup floor = 30s** (clamp `[30, 180]s`) → use `--duration 60+` to
+  pass the guard. `--duration 60` gives exactly `MIN_ACTIVE_WINDOW_S=30s` of
+  active window (passes: 30 is not `< 30`).
+- **Durations < 60s** exit with `exit(2)` (config error) and log
+  `[F221-ABORT] Sprint duration Ns gives only Ms active window (...)`.
+- **Override** with `--force` for explicit dry-runs (emits `[F221-FORCED]`
+  warning, sprint continues, may produce no real evidence).
+
+Override example: `python -m hledac.universal.core --sprint --duration 50 --force`
+
+Windup itself is dynamic (F250): 30% of duration, clamped to [30, 180]s.
+
 ## Team Tips
 
 _TODO_

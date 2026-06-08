@@ -841,7 +841,7 @@ class QuantumSafeVault:
     async def encrypt(
         self,
         plaintext: bytes,
-        associated_data: bytes = None
+        associated_data: bytes | None = None
     ) -> EncryptedContainer:
         """
         Zašifrovat data pomocí ML-KEM.
@@ -884,7 +884,7 @@ class QuantumSafeVault:
     async def decrypt(
         self,
         container: EncryptedContainer,
-        associated_data: bytes = None
+        associated_data: bytes | None = None
     ) -> bytes:
         """
         Dešifrovat data.
@@ -1060,7 +1060,7 @@ class StealthCommunicator:
         self,
         message: bytes,
         cover_image: bytes,
-        password: str = None
+        password: str | None = None
     ) -> bytes:
         """
         Schovat zprávu v obrázku.
@@ -1097,7 +1097,7 @@ class StealthCommunicator:
     async def extract_message(
         self,
         stego_image: bytes,
-        password: str = None
+        password: str | None = None
     ) -> bytes:
         """
         Extrahovat zprávu z obrázku.

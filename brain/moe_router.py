@@ -144,7 +144,7 @@ class MoERouter:
 
     def __init__(
         self,
-        config: MoERouterConfig = None,
+        config: MoERouterConfig | None = None,
         sanitize_for_llm: Callable[[str], str] | None = None
     ):
         """
@@ -508,8 +508,8 @@ class MoERouter:
     async def generate(
         self,
         query: str,
-        context: dict[str, Any] = None,
-        system_prompt: str = None
+        context: dict[str, Any] | None = None,
+        system_prompt: str | None = None
     ) -> str:
         """
         Hlavní metoda pro generování pomocí MoE.
@@ -587,7 +587,7 @@ class MoERouter:
         expert_name: str,
         query: str,
         context: dict[str, Any],
-        system_prompt: str = None
+        system_prompt: str | None = None
     ) -> str:
         """
         Generovat pomocí konkrétního experta.
@@ -647,7 +647,7 @@ class MoERouter:
         expert_name: str,
         query: str,
         context: dict[str, Any],
-        system_prompt: str = None
+        system_prompt: str | None = None
     ) -> str:
         """
         Formátovat prompt pro konkrétního experta.
@@ -690,7 +690,7 @@ class MoERouter:
         query: str,
         expert_outputs: list[dict[str, Any]],
         context: dict[str, Any],
-        system_prompt: str = None
+        system_prompt: str | None = None
     ) -> str:
         """
         Sloučit výstupy expertů do finální odpovědi.

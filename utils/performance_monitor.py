@@ -151,7 +151,7 @@ class QualityValidator:
     def check_output_quality(
         self,
         output: str,
-        reference: str = None
+        reference: str | None = None
     ) -> dict[str, Any]:
         """
         Zkontrolovat kvalitu výstupu.

@@ -8,6 +8,13 @@ from pathlib import Path
 
 import pytest
 
+# Skip the entire module when the optional Rust extension isn't built.
+# `rust_extensions/` ships with a Cargo project; building it requires
+# `maturin` / `cargo` and the `hledac_rust_extensions` Python wheel to
+# be installed.  When missing, all tests below should be reported as
+# `skipped` rather than failing collection.
+pytest.importorskip("hledac_rust_extensions", reason="hledac_rust_extensions not built")
+
 
 class TestRustExtensionsImport:
     """Verify rust_extensions package imports and exposes correct symbols."""

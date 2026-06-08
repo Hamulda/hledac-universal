@@ -228,7 +228,7 @@ def _arg_to_source(node: ast.AST) -> str:
         return "<unparseable>"
 
 
-def _kwargs_to_source(kwargs: list[ast.keyword], drop: set[str] = frozenset()) -> str:
+def _kwargs_to_source(kwargs: list[ast.keyword], drop: set[str] | frozenset[str] = frozenset()) -> str:
     """Serialize kwargs, optionally dropping some by name."""
     parts: list[str] = []
     for kw in kwargs:

@@ -939,11 +939,11 @@ class BannerGrabber:
 
 
 
-            from hledac.universal.fetching.fetch_coordinator import circuit_breaker
+            from hledac.universal.transport.circuit_breaker import get_breaker
 
 
 
-            circuit_breaker.domain_breaker_check(ip)
+            if not get_breaker(ip).check_circuit().allowed: raise RuntimeError(f"circuit_open: {ip}")
 
 
 

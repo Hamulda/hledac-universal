@@ -2,6 +2,12 @@
 Reinforcement Learning module for Hledac OSINT Orchestrator.
 """
 
+# Phase 0 alias: register `rl` as a top-level module so absolute
+# `from rl.X` imports resolve regardless of how the package is launched.
+# See __main__.py Phase 0 hook for original symptom; canonical fix.
+import sys as _sys
+_sys.modules.setdefault('rl', _sys.modules[__name__])
+
 from rl.actions import (
     ACTION_CONTINUE,
     ACTION_DIM,

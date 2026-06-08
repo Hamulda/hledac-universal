@@ -344,7 +344,7 @@ class ModelManager:
                     self,
                     text: str,
                     labels: list[str],
-                    relations: list[dict] = None,
+                    relations: list[dict] | None = None,
                     threshold: float = 0.5
                 ) -> dict[str, Any]:
                     """Extract entities and optionally relations."""
@@ -1086,8 +1086,8 @@ class ModelManager:
         self,
         graph_summary: str,
         hypotheses: list[str],
-        findings: list[Any] = None,
-        output_path: str = None
+        findings: list[Any] | None = None,
+        output_path: str | None = None
     ) -> str:
         """
         P12: Generate final OSINT report from graph summary and hypotheses.

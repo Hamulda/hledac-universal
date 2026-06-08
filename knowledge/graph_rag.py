@@ -46,12 +46,6 @@ except ImportError:
     NUMPY_AVAILABLE = False
     np = None
 
-# TYPE_CHECKING block prevents import-time coupling for canonical sprint consumers.
-# At runtime, graph_rag receives KnowledgeNode instances from knowledge_layer
-# (which owns the backend) — it never constructs them directly.
-if TYPE_CHECKING:
-    from hledac.universal.legacy.persistent_layer import KnowledgeNode
-
 logger = logging.getLogger(__name__)
 
 
@@ -1471,8 +1465,8 @@ class GraphRAGOrchestrator:
 
     def _analyze_contradiction(
         self,
-        node_a: KnowledgeNode,
-        node_b: KnowledgeNode
+        node_a: Any,
+        node_b: Any
     ) -> GraphContradiction | None:
         """Analyze if two nodes contradict each other."""
         content_a = node_a.content.lower()
@@ -1571,7 +1565,7 @@ class GraphRAGOrchestrator:
     # PATH EVIDENCE AND NOVELTY FILTER METHODS
     # =============================================================================
 
-    def _extract_entities_from_node(self, node: KnowledgeNode) -> set[str]:
+    def _extract_entities_from_node(self, node: Any) -> set[str]:
         """
         Extract entity mentions from a node for novelty detection.
 
@@ -1945,7 +1939,7 @@ class GraphRAGOrchestrator:
         facts: list[dict[str, Any]],
         query: str,
         contested: bool = False,
-        counter_paths: list[dict[str, Any]] = None
+        counter_paths: list[dict[str, Any]] | None = None
     ) -> str:
         """
         Generate human-readable summary of graph paths.

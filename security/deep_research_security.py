@@ -91,7 +91,7 @@ class DeepResearchSecurity:
         ...     # Auto-cleanup po skončení session
     """
 
-    def __init__(self, config: DeepSecurityConfig = None):
+    def __init__(self, config: DeepSecurityConfig | None = None):
         self.config = config or DeepSecurityConfig()
 
         # Inicializace komponent
@@ -294,7 +294,7 @@ class SecureSession:
     async def encrypt_sensitive(
         self,
         data: bytes,
-        metadata: dict[str, Any] = None
+        metadata: dict[str, Any] | None = None
     ) -> bytes:
         """
         Zašifrovat citlivá data.
@@ -349,7 +349,7 @@ class SecureSession:
         self,
         data: bytes,
         cover_image: bytes,
-        password: str = None
+        password: str | None = None
     ) -> bytes:
         """
         Schovat data v obrázku pomocí steganografie.
@@ -372,7 +372,7 @@ class SecureSession:
     async def extract_from_image(
         self,
         stego_image: bytes,
-        password: str = None
+        password: str | None = None
     ) -> bytes:
         """Extrahovat data z obrázku"""
         if not self.security.communicator:
@@ -405,7 +405,7 @@ class SecureSession:
         self,
         real_query: str,
         execute_func,
-        chaff_count: int = None
+        chaff_count: int | None = None
     ) -> Any:
         """
         Vykonat dotaz s chaff provozem.

@@ -124,7 +124,7 @@ class ResearchObfuscator:
         'steal': ['acquire', 'obtain', 'access', 'extract', 'copy'],
     }
 
-    def __init__(self, config: ObfuscationConfig = None):
+    def __init__(self, config: ObfuscationConfig | None = None):
         self.config = config or ObfuscationConfig()
         self._query_history = []
         self._chaff_queries_generated = 0
@@ -246,7 +246,7 @@ class ResearchObfuscator:
         self,
         real_query: str,
         execute_func,
-        chaff_count: int = None
+        chaff_count: int | None = None
     ) -> Any:
         """
         Vykonat dotaz s chaff provozem.

@@ -2,10 +2,10 @@
 Hypothesis Engine — Package Entry Point (C4 Sprint Refactoring)
 =================================================================
 
-Splits the 5 373 LOC monolith ``brain/hypothesis_engine.py`` into focused
+Splits the 5 373 LOC monolith ``brain/research_hypothesis_engine.py`` into focused
 submodules. The ``brain.hypothesis_engine`` module re-exports every public
 symbol from here for **backward compatibility** — existing imports
-(``from brain.hypothesis_engine import Hypothesis, …``) keep working.
+(``from brain.research_hypothesis_engine import Hypothesis, …``) keep working.
 
 Module layout (planned, incremental):
 - ``_types``     — enums + dataclass DTOs + Protocol (C4 Tier-1+2, extracted)

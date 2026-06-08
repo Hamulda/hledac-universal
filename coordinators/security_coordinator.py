@@ -30,6 +30,9 @@ from .base import DecisionResponse, OperationResult, OperationType, UniversalCoo
 from utils.async_helpers import safe_gather_dropin
 logger = logging.getLogger(__name__)
 
+# Re-exported for use in cryptographic operations
+from ..security.pq_crypto import PQAvailability  # noqa: F401  (re-exported for type usage)
+
 
 class SecurityLevel(Enum):
     """Security levels for operations (1-4 scale)."""
@@ -1610,14 +1613,14 @@ class UniversalSecurityCoordinator(UniversalCoordinator):
             try:
                 from curl_cffi import requests
 
-                session = requests.Session(impersonate=impersonate)
+                session = requests.Session(impersonate=impersonate)  # type: ignore[ty:invalid-argument-type]  # curl_cffi expects BrowserType literal, not generic str (third-party API)
 
                 if method.upper() == "GET":
                     resp = session.get(url, headers=headers, **kwargs)
                 elif method.upper() == "POST":
                     resp = session.post(url, headers=headers, **kwargs)
                 else:
-                    resp = session.request(method, url, headers=headers, **kwargs)
+                    resp = session.request(method, url, headers=headers, **kwargs)  # type: ignore[ty:invalid-argument-type]  # method is str, curl_cffi method param is overloaded (third-party API)
 
                 elapsed = time.time() - start_time
 

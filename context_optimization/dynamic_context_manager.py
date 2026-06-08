@@ -373,7 +373,7 @@ class DynamicContextManager:
     async def add_item(
         self,
         content: str,
-        metadata: dict[str, Any] = None
+        metadata: dict[str, Any] | None = None
     ) -> str:
         """
         Add an item to the context.

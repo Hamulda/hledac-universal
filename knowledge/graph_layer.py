@@ -33,7 +33,7 @@ class KnowledgeGraphLayer:
     Pro analytics použij: DuckPGQGraph (DuckDB)
     """
 
-    def __init__(self, db_path: str = None):
+    def __init__(self, db_path: str | None = None):
         self.db_path = Path(db_path) if db_path else Path("storage/knowledge_graph")
         self._kg = None
         self._graph_rag = None
@@ -42,14 +42,6 @@ class KnowledgeGraphLayer:
     async def initialize(self) -> None:
         """Inicializovat knowledge graph"""
         logger.info("Initializing KnowledgeGraphLayer...")
-
-        try:
-            from hledac.universal.legacy.persistent_layer import PersistentKnowledgeLayer
-            self._kg = PersistentKnowledgeLayer(db_path=self.db_path)
-            self._kg.initialize()
-            logger.info("✓ Knowledge Graph initialized")
-        except Exception as e:
-            logger.warning(f"Knowledge Graph initialization failed: {e}")
 
         try:
             from hledac.universal.knowledge.graph_rag import GraphRAGOrchestrator
@@ -64,8 +56,8 @@ class KnowledgeGraphLayer:
         url: str,
         content: str,
         title: str = "",
-        keywords: list[str] = None,
-        metadata: dict[str, Any] = None
+        keywords: list[str] | None = None,
+        metadata: dict[str, Any] | None = None
     ) -> bool:
         """
         Přidat záznam do knowledge graph.

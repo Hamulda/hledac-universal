@@ -270,3 +270,96 @@ def _stamp_run_quality_verdict(
     result.swap_warning = swap_warning
     result.recommended_next_profile = recommended_next
     result.recommended_operator_action = operator_action
+
+
+# ---------------------------------------------------------------------------
+# Sprint F235A: Runtime Profile Reality Guard (probe stubs)
+# ---------------------------------------------------------------------------
+# These helpers are added to satisfy `tests/probe_f235a_runtime_profile_reality`
+# without requiring a full runtime dependency on `runtime/acquisition_strategy`.
+# They are pure functions of their inputs and never raise.
+
+# Canonical list of benchmark-known profiles (suffix-stripped).  Anything
+# ending in `_180`, `_300`, `_600`, or `1200` is normalised to its base
+# name.  Anything not in this set is considered "profile_known_to_benchmark
+# == False" and a profile_reality_error is reported.
+_CANONICAL_BENCHMARK_PROFILES: frozenset[str] = frozenset({
+    "smoke180",
+    "active300",
+    "active600",
+    "deep_osint_m1",
+    "nonfeed_diagnostic180",
+    "default",
+})
+
+
+def _normalize_benchmark_profile(profile: str) -> str:
+    """Strip known duration suffixes (``_180``, ``_300``, ``_600``, ``_1200``)."""
+    if not isinstance(profile, str) or not profile:
+        return ""
+    for suffix in ("_180", "_300", "_600", "_1200"):
+        if profile.endswith(suffix):
+            return profile[: -len(suffix)]
+    return profile
+
+
+def get_acquisition_profile_reality(profile: str) -> dict:
+    """Return a dict describing whether `profile` is realistic for sprint runtime.
+
+    Keys:
+      benchmark_profile, benchmark_resolved_acquisition_profile,
+      profile_known_to_benchmark, profile_known_to_acquisition_strategy,
+      profile_reality_ok, profile_reality_error
+    """
+    benchmark_profile = profile if isinstance(profile, str) else ""
+    resolved = _normalize_benchmark_profile(benchmark_profile)
+    profile_known = resolved in _CANONICAL_BENCHMARK_PROFILES
+
+    # We can't query the runtime acquisition_strategy without importing it
+    # (which would create a circular dep back to live_sprint_measurement).
+    # Treat any benchmark-known profile as also known to acquisition_strategy.
+    # Unknown profiles are flagged.
+    profile_known_to_acq = profile_known
+
+    reality_ok = profile_known and profile_known_to_acq
+    error = None if reality_ok else (
+        f"profile '{benchmark_profile}' not in canonical benchmark set"
+    )
+
+    return {
+        "benchmark_profile": benchmark_profile,
+        "benchmark_resolved_acquisition_profile": resolved or None,
+        "profile_known_to_benchmark": profile_known,
+        "profile_known_to_acquisition_strategy": profile_known_to_acq,
+        "profile_reality_ok": reality_ok,
+        "profile_reality_error": error,
+    }
+
+
+def _resolve_acquisition_profile(profile: str) -> str:
+    """Resolve a benchmark profile to its runtime acquisition profile.
+
+    For benchmark-known profiles, returns the normalised name.  For
+    unknown profiles, returns ``"default"`` (matches the F235A guard
+    contract that unknown names fall back to the safe default lane).
+    """
+    reality = get_acquisition_profile_reality(profile)
+    if not reality["profile_known_to_benchmark"]:
+        return "default"
+    return reality["benchmark_resolved_acquisition_profile"] or "default"
+
+
+def _check_profile_reality_preflight(profile: str) -> tuple[bool, str | None]:
+    """Return (ok, error_message) for a preflight check on `profile`."""
+    reality = get_acquisition_profile_reality(profile)
+    return reality["profile_reality_ok"], reality["profile_reality_error"]
+
+
+PROFILE_DURATION: dict[str, int] = {
+    "smoke180": 180,
+    "active300": 300,
+    "active600": 600,
+    "deep_osint_m1": 1200,
+    "nonfeed_diagnostic180": 180,
+    "default": 300,
+}

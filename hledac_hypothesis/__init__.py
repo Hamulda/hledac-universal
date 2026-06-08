@@ -37,7 +37,7 @@ def __getattr__(name: str) -> Any:
         "HypothesisGenerator",
     ):
         try:
-            from brain.hypothesis_engine import (
+            from brain.research_hypothesis_engine import (
                 FalsificationResult,
                 HypothesisEngine,
                 HypothesisPack,
@@ -58,31 +58,31 @@ def __getattr__(name: str) -> Any:
             }
             # DarkQuery/DarkQueryType not in hypothesis_engine — map it
             if name == "DarkQuery":
-                from brain.hypothesis_engine import DarkQuery
+                from brain.research_hypothesis_engine import DarkQuery
 
                 exports["DarkQuery"] = DarkQuery
             elif name == "DarkQueryType":
-                from brain.hypothesis_engine import DarkQueryType
+                from brain.research_hypothesis_engine import DarkQueryType
 
                 exports["DarkQueryType"] = DarkQueryType
             elif name == "Hypothesis":
-                from brain.hypothesis_engine import Hypothesis
+                from brain.research_hypothesis_engine import Hypothesis
 
                 exports["Hypothesis"] = Hypothesis
             elif name == "HypothesisType":
-                from brain.hypothesis_engine import HypothesisType
+                from brain.research_hypothesis_engine import HypothesisType
 
                 exports["HypothesisType"] = HypothesisType
             elif name == "Evidence":
-                from brain.hypothesis_engine import Evidence
+                from brain.research_hypothesis_engine import Evidence
 
                 exports["Evidence"] = Evidence
             elif name == "TestResult":
-                from brain.hypothesis_engine import TestResult
+                from brain.research_hypothesis_engine import TestResult
 
                 exports["TestResult"] = TestResult
             elif name == "TestDesign":
-                from brain.hypothesis_engine import TestDesign
+                from brain.research_hypothesis_engine import TestDesign
 
                 exports["TestDesign"] = TestDesign
 
@@ -96,7 +96,7 @@ def __getattr__(name: str) -> Any:
 
 
 if TYPE_CHECKING:
-    from brain.hypothesis_engine import (
+    from brain.research_hypothesis_engine import (
         DarkQuery,
         DarkQueryType,
         Evidence,

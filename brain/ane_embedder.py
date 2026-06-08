@@ -718,3 +718,74 @@ def rerank_findings_crossencoder(
     except Exception as e:
         logger.warning("[RERANK:A] CrossEncoder failed (%s) — cosine fallback", e)
         return rerank_findings_cosine(findings, query, top_k)
+
+
+# ---------------------------------------------------------------------------
+# Sprint 8VF: IOC extraction — regex patterns (deterministic, M1-safe)
+# ---------------------------------------------------------------------------
+import re as _re
+
+_IOC_PATTERNS: list[tuple[str, str]] = [
+    ("ipv4", r"\b(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)(?:\.(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)){3}\b"),
+    ("ipv6", r"\b(?:[0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}\b"),
+    ("cve", r"\bCVE-\d{4}-\d{4,7}\b"),
+    ("sha256", r"\b[a-fA-F0-9]{64}\b"),
+    ("sha1", r"\b[a-fA-F0-9]{40}\b"),
+    ("md5", r"\b[a-fA-F0-9]{32}\b"),
+    ("url", r"\bhttps?://[^\s<>\"']+"),
+    ("email", r"\b[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}\b"),
+    ("domain", r"\b(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}\b"),
+]
+
+# TLDs that look like file extensions — must NOT be classified as "domain".
+# The domain regex matches any 2+ letter final label, so e.g. "payload.exe"
+# would otherwise be reported as a domain IOC. This frozenset is the
+# post-filter denylist applied inside extract_iocs_from_text.
+_DOMAIN_TLD_DENYLIST: frozenset[str] = frozenset({
+    # binaries / native
+    "exe", "dll", "bin", "so", "dylib", "lib", "o", "a", "obj",
+    # packages
+    "deb", "rpm", "dmg", "pkg", "apk", "ipa", "jar", "war", "ear", "class",
+    "cab", "msi", "lnk",
+    # archives / images
+    "tar", "gz", "zip", "rar", "7z", "iso", "img",
+    # temp / state
+    "dat", "tmp", "bak", "log", "conf", "cfg", "ini", "env",
+    # source / docs
+    "py", "js", "ts", "html", "htm", "json", "xml", "yaml", "yml", "toml",
+    "md", "txt", "csv", "sh", "bat", "ps1",
+    "pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx",
+})
+
+
+def extract_iocs_from_text(text: object) -> list[dict[str, str]]:
+    """Extract Indicators of Compromise from text using regex patterns.
+
+    Always-on, fail-safe, no external deps. Returns list of dicts with keys
+    ``ioc_type`` and ``value``. Never raises; returns ``[]`` on bad input.
+    """
+    if not isinstance(text, str) or not text:
+        return []
+    try:
+        out: list[dict[str, str]] = []
+        seen: set[tuple[str, str]] = set()
+        for ioc_type, pattern in _IOC_PATTERNS:
+            for m in _re.finditer(pattern, text):
+                value = m.group(0)
+                if ioc_type == "domain":
+                    # Reject file-extension false positives (e.g. "payload.exe")
+                    tld = value.rsplit(".", 1)[-1].lower()
+                    if tld in _DOMAIN_TLD_DENYLIST:
+                        continue
+                elif ioc_type == "url":
+                    # Strip sentence punctuation the URL regex over-greedy
+                    # captures from prose (trailing "." "," ")" etc.).
+                    value = value.rstrip('.,;:!?)')
+                key = (ioc_type, value.lower() if ioc_type in {"url", "email", "domain"} else value)
+                if key in seen:
+                    continue
+                seen.add(key)
+                out.append({"ioc_type": ioc_type, "value": value})
+        return out
+    except Exception:
+        return []

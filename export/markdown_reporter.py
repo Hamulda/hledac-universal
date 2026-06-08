@@ -16,6 +16,8 @@ from pathlib import Path
 from typing import Any
 
 from ..utils.safe_render import safe_markdown_link
+import logging
+logger = logging.getLogger(__name__)
 
 __all__ = [
     "render_diagnostic_markdown",

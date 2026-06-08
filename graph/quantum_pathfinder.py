@@ -1202,10 +1202,14 @@ class DuckPGQGraph:
         Vrátí počet importovaných záznamů.
         """
         try:
+            # Sprint 1780830658 fix: DuckDB rejects `&` (bitwise AND) on BIGINT
+            # in many extension builds (Parser Error at `&`). Use DuckDB's
+            # native hash() builtin which returns UBIGINT (already 64-bit) —
+            # equivalent masking without operator dependence.
             result = self.con.execute(f"""
                 INSERT OR IGNORE INTO ioc_nodes (id, value, ioc_type, confidence, source)
                 SELECT
-                    {hex(0x7FFFFFFFFFFFFFFF)} & CAST(sha1(ioc) AS BIGINT),
+                    hash(ioc),
                     ioc,
                     ioc_type,
                     MAX(confidence),

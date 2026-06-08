@@ -68,7 +68,7 @@ class FixtureHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(FIXTURE_HTML.encode("utf-8"))
 
-    def log_message(self, *args):  # noqa: N802
+    def log_message(self, format: str, *args):  # noqa: N802
         pass  # silent
 
 

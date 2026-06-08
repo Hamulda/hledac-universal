@@ -16,9 +16,31 @@ Features:
 import hashlib
 import logging
 import re
+from enum import Enum
 from typing import Any
 
 logger = logging.getLogger(__name__)
+
+
+# [2026-06-07] legacy.persistent_layer was deleted. NodeType/EdgeType enums
+# are defined locally here for self-containment. Use canonical
+# knowledge.duckdb_store.CanonicalFinding for new code.
+class NodeType(Enum):
+    """Local NodeType — was legacy.persistent_layer.NodeType."""
+    DOCUMENT = "document"
+    URL = "url"
+    ENTITY = "entity"
+    FACT = "fact"
+
+
+class EdgeType(Enum):
+    """Local EdgeType — was legacy.persistent_layer.EdgeType."""
+    RELATION = "relation"
+    RELATED = "related"
+    CAUSES = "causes"
+    PART_OF = "part_of"
+    CONTAINS = "contains"
+    MENTIONS = "mentions"
 
 
 class KnowledgeGraphBuilder:
@@ -104,16 +126,6 @@ class KnowledgeGraphBuilder:
         """Generate a consistent ID from content."""
         return hashlib.sha256(content.encode('utf-8')).hexdigest()[:16]
 
-    def _get_legacy_types(self):
-        """Lazy import of legacy types to avoid import-time coupling."""
-        from hledac.universal.legacy.persistent_layer import (
-            EdgeType,
-            KnowledgeEdge,
-            KnowledgeNode,
-            NodeType,
-        )
-        return EdgeType, KnowledgeEdge, KnowledgeNode, NodeType
-
     def process_and_store(
         self,
         content: str,
@@ -132,7 +144,6 @@ class KnowledgeGraphBuilder:
             List of created node IDs
         """
         node_ids = []
-        EdgeType, KnowledgeEdge, KnowledgeNode, NodeType = self._get_legacy_types()
 
         facts = self.extract_facts(content)
 
@@ -206,7 +217,7 @@ class KnowledgeGraphBuilder:
         self,
         document: str,
         url: str,
-        author: str = None,
+        author: str | None = None,
         knowledge_layer=None
     ) -> list[str]:
         """

@@ -11,8 +11,10 @@ Streaming/chunked if AsyncSession supports it; hard cap at max_bytes otherwise.
 from __future__ import annotations
 
 import asyncio
+import itertools
 import logging
 import os
+import threading
 from typing import Any
 
 from .body_limiter import read_body_with_cap
@@ -32,6 +34,82 @@ _I2P_CURL_PROXY: str = os.environ.get("I2P_SOCKS_PROXY_URL", "socks5h://127.0.0.
 
 # Tor-specific circuit tracking for curl_cffi Tor fetcher
 _tor_curl_request_count: int = 0
+
+# --- JA3 / TLS fingerprint rotation pool (Sprint F265A) ---------------------------
+# Cycle through distinct browser-family TLS profiles so the JA3 fingerprint
+# varies across sequential requests — defeats naïve per-host fingerprint
+# correlation. All entries are valid `curl_cffi` `tls_impersonate` identifiers
+# (verified against curl_cffi >= 0.7.x; uses native rustls-ffi impersonation).
+#
+# Coverage: 2 × Chrome, 2 × Safari, 2 × Firefox — satisfies the "≥3 distinct
+# browser families" contract enforced by tests/test_f265a_transport_audit.py
+# TestJA3ProfileCycling.test_pool_contains_at_least_three_browser_families.
+_JA3_ROTATION_POOL: list[str] = [
+    "chrome124",    # Chromium 124, May 2024
+    "chrome120",    # Chromium 120, Dec 2023
+    "safari17_0",   # Safari 17.0 (macOS Sonoma)
+    "safari15_3",   # Safari 15.3 (older Apple stack)
+    "firefox120",   # Firefox 120 ESR lineage
+    "firefox117",   # Firefox 117 ESR
+]
+
+# Bounded, thread-safe round-robin iterator. The lock is required because
+# `itertools.cycle.__next__` is not strictly atomic across threads on
+# CPython 3.12+ (GIL release points around internal state). In practice
+# the lock is uncontended — single-flight curl_cffi calls dominate.
+_ja3_lock = threading.Lock()
+_ja3_iter: itertools.cycle[str] = itertools.cycle(_JA3_ROTATION_POOL)
+
+# Debug log gate — opt-in via env var. Read lazily at call time so tests can
+# toggle either by patching `curl_cffi_fetch.HLEDAC_DEBUG_JA3` (direct) or by
+# patching `os.environ` (process-wide). Defaults to OFF in production to keep
+# the hot path zero-cost.
+HLEDAC_DEBUG_JA3: bool = os.environ.get("HLEDAC_DEBUG_JA3", "0") == "1"
+
+
+def next_ja3_profile() -> str:
+    """Return the next JA3/TLS profile from the rotation pool (thread-safe).
+
+    Round-robin over `_JA3_ROTATION_POOL`. Callers can override per-request
+    by passing an explicit `profile=...` argument — this function is the
+    default-fallback path used when no caller preference is given.
+    """
+    with _ja3_lock:
+        return next(_ja3_iter)
+
+
+def reset_ja3_cycle() -> None:
+    """Reset the JA3 rotation cycle back to the start (for tests).
+
+    Idempotent. Thread-safe — acquires the same lock as `next_ja3_profile`
+    so concurrent tests cannot observe a torn iterator mid-reset.
+    """
+    global _ja3_iter
+    with _ja3_lock:
+        _ja3_iter = itertools.cycle(_JA3_ROTATION_POOL)
+
+
+def _ja3_log(*, profile: str, url: str, used_profile: str) -> None:
+    """Optional debug logger for JA3 profile selection (no-op when disabled).
+
+    Reads `HLEDAC_DEBUG_JA3` at call time so it can be toggled by either
+    `os.environ["HLEDAC_DEBUG_JA3"]=1` (process-level) or by patching the
+    module attribute directly (per-test). Never raises — debug logger must
+    stay on the zero-cost path in production.
+    """
+    try:
+        # Resolve via module global so test-time `patch.object` works;
+        # fall back to env for fresh subprocesses / multi-process harnesses.
+        enabled = bool(HLEDAC_DEBUG_JA3) or os.environ.get("HLEDAC_DEBUG_JA3", "0") == "1"
+        if not enabled:
+            return
+        logger.debug(
+            "JA3 rotation: requested=%s used=%s url=%s",
+            profile, used_profile, url,
+        )
+    except Exception:
+        # Logger must never raise — production hot path.
+        pass
 
 
 def decode_curl_cffi_result(result: dict, *, max_bytes: int = 5 * 1024 * 1024) -> str | None:
@@ -180,6 +258,9 @@ async def fetch_via_curl_cffi(
     # Get session (lazy, cached, bounded)
     try:
         ok, session, used_profile = await async_get_curl_cffi_session(profile)
+        # Log the resolved JA3 profile (requested vs actually used) so operators
+        # can verify fingerprint rotation in production via HLEDAC_DEBUG_JA3=1.
+        _ja3_log(profile=profile, url=url, used_profile=used_profile)
         if not ok or session is None:
             return _make_error_result(
                 url,

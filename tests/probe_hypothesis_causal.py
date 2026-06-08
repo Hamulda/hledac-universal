@@ -2,7 +2,7 @@
 Sprint Tier-5: CausalReasoner extraction probe
 ==============================================
 
-Validates that the CausalReasoner extracted from brain.hypothesis_engine
+Validates that the CausalReasoner extracted from brain.research_hypothesis_engine
 (C4 Tier-5 refactoring) is:
 
 1. Importable from new canonical path brain.hypothesis.causal
@@ -80,14 +80,14 @@ class TestCausalReasonerImports:
         assert CausalReasoner is not None
 
     def test_import_from_engine_module(self):
-        """`from brain.hypothesis_engine import CausalReasoner` must work (back-compat)."""
-        from brain.hypothesis_engine import CausalReasoner  # noqa: F401
+        """`from brain.research_hypothesis_engine import CausalReasoner` must work (back-compat)."""
+        from brain.research_hypothesis_engine import CausalReasoner  # noqa: F401
         assert CausalReasoner is not None
 
     def test_no_circular_import(self):
         """brain.hypothesis.causal and brain.hypothesis_engine coexist without cycles."""
         import brain.hypothesis.causal  # noqa: F401
-        import brain.hypothesis_engine  # noqa: F401
+        import brain.research_hypothesis_engine  # noqa: F401
         # If we get here, no circular import was triggered.
 
 
@@ -174,7 +174,7 @@ class TestHypothesisEngineCausalFacade:
     """HypothesisEngine.causal methods delegate to CausalReasoner and refresh aliases."""
 
     def test_engine_has_causal_reasoner_instance(self):
-        from brain.hypothesis_engine import HypothesisEngine
+        from brain.research_hypothesis_engine import HypothesisEngine
         from brain.hypothesis.causal import CausalReasoner
 
         engine = HypothesisEngine()
@@ -182,7 +182,7 @@ class TestHypothesisEngineCausalFacade:
         assert isinstance(engine._causal_reasoner, CausalReasoner)
 
     def test_engine_extract_causal_entities_delegates(self):
-        from brain.hypothesis_engine import HypothesisEngine
+        from brain.research_hypothesis_engine import HypothesisEngine
         from brain.hypothesis._types import CausalEntity
 
         engine = HypothesisEngine()
@@ -196,7 +196,7 @@ class TestHypothesisEngineCausalFacade:
         assert engine._source_types is engine._causal_reasoner._source_types
 
     def test_engine_build_temporal_sequences_delegates(self):
-        from brain.hypothesis_engine import HypothesisEngine
+        from brain.research_hypothesis_engine import HypothesisEngine
 
         engine = HypothesisEngine()
         engine.extract_causal_entities(_make_findings())
@@ -206,7 +206,7 @@ class TestHypothesisEngineCausalFacade:
         assert engine._temporal_sequences is engine._causal_reasoner._temporal_sequences
 
     def test_engine_compute_co_occurrence_matrix_delegates(self):
-        from brain.hypothesis_engine import HypothesisEngine
+        from brain.research_hypothesis_engine import HypothesisEngine
 
         engine = HypothesisEngine()
         engine.extract_causal_entities(_make_findings())
@@ -217,7 +217,7 @@ class TestHypothesisEngineCausalFacade:
         assert engine._idx_to_entity_id is engine._causal_reasoner._idx_to_entity_id
 
     def test_engine_detect_causal_anomalies_delegates(self):
-        from brain.hypothesis_engine import HypothesisEngine
+        from brain.research_hypothesis_engine import HypothesisEngine
         from brain.hypothesis._types import AnomalySignal
 
         engine = HypothesisEngine()
@@ -230,7 +230,7 @@ class TestHypothesisEngineCausalFacade:
             assert isinstance(a, AnomalySignal)
 
     def test_engine_get_co_occurrence_delegates(self):
-        from brain.hypothesis_engine import HypothesisEngine
+        from brain.research_hypothesis_engine import HypothesisEngine
 
         engine = HypothesisEngine()
         engine.extract_causal_entities(_make_findings())
@@ -241,7 +241,7 @@ class TestHypothesisEngineCausalFacade:
         assert score >= 0.0
 
     def test_engine_generate_causal_hypotheses_async_delegates(self):
-        from brain.hypothesis_engine import HypothesisEngine
+        from brain.research_hypothesis_engine import HypothesisEngine
 
         engine = HypothesisEngine()
         findings = _make_findings()
@@ -327,7 +327,7 @@ class TestCausalIsolation:
         assert cr1._causal_entities is not cr2._causal_entities
 
     def test_hypothesis_engine_causal_state_isolated_per_instance(self):
-        from brain.hypothesis_engine import HypothesisEngine
+        from brain.research_hypothesis_engine import HypothesisEngine
 
         e1 = HypothesisEngine()
         e2 = HypothesisEngine()
@@ -352,8 +352,8 @@ class TestExplainWithMLXExtraction:
         assert inspect.iscoroutinefunction(explain_with_mlx)
 
     def test_explain_with_mlx_backward_compat(self):
-        """`from brain.hypothesis_engine import explain_with_mlx` (back-compat)."""
-        from brain.hypothesis_engine import explain_with_mlx as old
+        """`from brain.research_hypothesis_engine import explain_with_mlx` (back-compat)."""
+        from brain.research_hypothesis_engine import explain_with_mlx as old
         from brain.hypothesis.explainer import explain_with_mlx as new
         # Both resolve to the same function object
         assert old is new

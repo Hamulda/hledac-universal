@@ -11,21 +11,55 @@ import asyncio
 import hashlib
 import os
 import re
+from typing import Any
 
 import aiohttp
-
-try:
-    import nodriver
-
-    NODRIVER_AVAILABLE = True
-except ImportError:
-    NODRIVER_AVAILABLE = False
 
 import logging
 
 from hledac.universal.paths import DB_ROOT
 
 logger = logging.getLogger(__name__)
+
+
+# Sprint F259C: Lazy nodriver import.
+# nodriver >= 0.50 has a non-UTF-8 byte in cdp/network.py:1345 that triggers
+# SyntaxError on Python 3.14 (strict UTF-8 enforcement). Importing nodriver
+# at module level pulls in the broken cdp/network.py via nodriver/__init__.py
+# → nodriver/cdp/__init__.py chain, which then breaks ANY module that imports
+# tools.lightpanda_manager (e.g. runtime/sprint_scheduler.py via the
+# intelligence → knowledge → tools import chain).
+#
+# Fix: defer the import to first use, catch both ImportError AND SyntaxError,
+# expose a lazy `get_nodriver_available()` for callers to gate on.
+_NODRIVER_AVAILABLE: bool | None = None
+
+
+def get_nodriver_available() -> bool:
+    """Lazy check for nodriver availability.
+
+    Catches ImportError (package not installed) AND SyntaxError
+    (nodriver/cdp/network.py has UTF-8 issue on Py 3.14). Result is
+    memoized for the process lifetime — cheap repeated checks.
+    """
+    global _NODRIVER_AVAILABLE
+    if _NODRIVER_AVAILABLE is None:
+        try:
+            import nodriver  # noqa: F401
+            _NODRIVER_AVAILABLE = True
+        except (ImportError, SyntaxError):
+            _NODRIVER_AVAILABLE = False
+    return _NODRIVER_AVAILABLE
+
+
+# Backwards-compat alias — some callers may import this name directly.
+# Resolved lazily on first attribute access; if they import at module
+# level they get the unresolved sentinel, which is fine because they
+# should be using get_nodriver_available() instead.
+def __getattr__(name: str) -> bool:
+    if name == "NODRIVER_AVAILABLE":
+        return get_nodriver_available()
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 AIOHTTP_AVAILABLE = aiohttp is not None
 
@@ -114,7 +148,7 @@ class LightpandaManager:
 
     async def fetch_js(self, url: str, proxy: str | None = None) -> bytes:
         """Fetch URL with JS rendering using nodriver."""
-        if not NODRIVER_AVAILABLE:
+        if not get_nodriver_available():
             logger.warning("[LIGHTPANDA] nodriver not installed, falling back")
             raise ImportError("nodriver not available")
 
@@ -122,7 +156,12 @@ class LightpandaManager:
 
         from nodriver import Config, start
 
-        config = Config(browserWSEndpoint=self._endpoint)
+        # `browserWSEndpoint` is a Playwright/Puppeteer convention; nodriver's
+        # Config forwards arbitrary **kwargs to add_argument() which expects
+        # `bool | None`. The endpoint value is a string by design — silence
+        # the static type check (runtime semantics unchanged).
+        _endpoint_dict: dict[str, Any] = {"browserWSEndpoint": self._endpoint}
+        config = Config(**_endpoint_dict)
         browser = await start(config)
 
         try:

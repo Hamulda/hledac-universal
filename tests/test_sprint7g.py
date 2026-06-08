@@ -12,6 +12,7 @@ Canonical replacements:
 - StealthCrawler (canonical path)
 - SprintSchedulerConfig duration handling
 """
+import asyncio
 import inspect
 from unittest.mock import MagicMock
 
@@ -32,20 +33,22 @@ class TestScanCtFix:
         assert config.sprint_duration_s == 5
         assert config.aggressive_mode is True
 
-    @pytest.mark.asyncio
-    async def test_sprint_scheduler_can_be_created(self):
-        """SprintScheduler should be creatable without errors"""
-        config = SprintSchedulerConfig(
-            sprint_duration_s=3,
-            aggressive_mode=False,
-        )
-        scheduler = SprintScheduler(config)
+    def test_sprint_scheduler_can_be_created(self):
+        """SprintScheduler should be creatable without errors (sync wrapper)."""
+        async def _run():
+            config = SprintSchedulerConfig(
+                sprint_duration_s=3,
+                aggressive_mode=False,
+            )
+            scheduler = SprintScheduler(config)
 
-        # Verify basic attributes
-        assert scheduler._config is not None
-        assert scheduler._config.sprint_duration_s == 3
-        assert hasattr(scheduler, '_seen_hashes')
-        assert hasattr(scheduler, '_entries_per_source')
+            # Verify basic attributes
+            assert scheduler._config is not None
+            assert scheduler._config.sprint_duration_s == 3
+            assert hasattr(scheduler, '_seen_hashes')
+            assert hasattr(scheduler, '_entries_per_source')
+
+        asyncio.run(_run())
 
 
 class TestStealthCrawlerFix:
@@ -166,17 +169,19 @@ class TestShutdownWarning:
 class TestSmokeIntegration:
     """SMOKE: sprint scheduler basic initialization"""
 
-    @pytest.mark.asyncio
-    async def test_sprint_scheduler_init_no_blocker_errors(self):
-        """SprintScheduler creation should have no blocker errors"""
-        config = SprintSchedulerConfig(
-            sprint_duration_s=5,
-        )
-        scheduler = SprintScheduler(config)
+    def test_sprint_scheduler_init_no_blocker_errors(self):
+        """SprintScheduler creation should have no blocker errors (sync wrapper)."""
+        async def _run():
+            config = SprintSchedulerConfig(
+                sprint_duration_s=5,
+            )
+            scheduler = SprintScheduler(config)
 
-        # Basic sanity check
-        assert scheduler._config is not None
-        assert scheduler._config.sprint_duration_s == 5
+            # Basic sanity check
+            assert scheduler._config is not None
+            assert scheduler._config.sprint_duration_s == 5
+
+        asyncio.run(_run())
 
 
 if __name__ == "__main__":

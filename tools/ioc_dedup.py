@@ -15,18 +15,17 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
-# Type hints only - actual import is conditional
-if TYPE_CHECKING:
-    from hledac_rust_extensions import IocDedupStore  # type: ignore[import]
-
-# Lazy import - Rust extension may not available (runtime detection)
+# Lazy import - Rust extension may not available (runtime detection).
+# Use `Any` for the bound names so the `= None` sentinel branch type-checks
+# (same pattern as tools/url_dedup.py: runtime ImportError guarantees the
+# None branch never reaches a real call site).
 _RUST_AVAILABLE = False
-_IocDedupStore: type | None = None
-_ioc_dedup_from_bytes: type | None = None
+_IocDedupStore: Any = None
+_ioc_dedup_from_bytes: Any = None
 
 try:
     import hledac_rust_extensions as _rust  # type: ignore[import]
@@ -55,9 +54,13 @@ class IocDedupManager:
     ):
         self.persist_path = Path(persist_path) if persist_path else None
         self._sprint_id = sprint_id
-        self._store = self._load_or_create()
+        # Unified store handle — `Any` so the wrapper API (add/contains/etc.)
+        # works for both the Rust IocDedupStore and the _PythonIocDedupStore
+        # fallback. Method-override surface intentionally broader than
+        # the typed IocDedupStore stub.
+        self._store: Any = self._load_or_create()
 
-    def _load_or_create(self) -> IocDedupStore:
+    def _load_or_create(self) -> Any:
         """Load from persistence or create new store."""
         if _RUST_AVAILABLE and self.persist_path and self.persist_path.exists():
             try:

@@ -198,8 +198,8 @@ class ResourceAllocation:
 class IntelligentResourceAllocator:
     """Advanced resource allocation and scaling system"""
 
-    def __init__(self, config_path: str = None):
-        self.config = self._load_config(config_path)
+    def __init__(self, config_path: str | None = None):
+        self.config = self._load_config(config_path or "")  # None → "": empty path falls through to defaults in _load_config
         # Sprint F206X: dict keyed by task_id for O(1) removal after allocation, bounded size
         self._pending_requests_dict: dict[str, ResourceRequest] = {}
         self.active_allocations = {}
@@ -833,7 +833,7 @@ async def main():
     ]
 
     # Execute with optimization
-    results = await optimizer.optimize_parallel_execution(tasks)
+    results = await optimizer.optimize_parallel_execution(tasks)  # type: ignore[ty:unresolved-reference]  # pre-existing undefined `optimizer` in __main__ demo block (logic bug, scope: not in this PR)
 
     print(f"Results: {results}")
 

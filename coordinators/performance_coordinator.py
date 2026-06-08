@@ -30,7 +30,7 @@ try:
     PSUTIL_AVAILABLE = True
 except ImportError:
     PSUTIL_AVAILABLE = False
-    psutil = None
+    psutil = None  # type: ignore[ty:invalid-assignment]  # None sentinel: psutil unavailable at runtime, callers must check PSUTIL_AVAILABLE
 
 try:
     from _shims.core_resilience import AgentExecutionError, CircuitBreakerOpen

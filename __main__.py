@@ -27,6 +27,7 @@ import pathlib
 import signal
 import sys
 import time
+import traceback
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
@@ -246,6 +247,13 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--ui", action="store_true",
         help="Enable terminal dashboard during sprint",
+    )
+    parser.add_argument(
+        "--force", action="store_true",
+        help="F221-ABORT: Override the pre-flight guard that aborts sprints whose "
+             "active-window budget would be below MIN_ACTIVE_WINDOW_S=30s. "
+             "Emits a [F221-FORCED] warning instead of exiting with code 2. "
+             "Use only for explicit dry-runs / smoke tests where zero evidence is acceptable.",
     )
     parser.add_argument(
         "--acquisition-profile",
@@ -664,7 +672,7 @@ async def _run_public_passive_once(
             try:
                 # Obtain shared session — this is a Lazy singleton
                 # We "own" it by registering its async close
-                from .network.session_runtime import (
+                from hledac.universal.network.session_runtime import (
                     async_get_aiohttp_session,
                     close_aiohttp_session_async,
                 )
@@ -682,7 +690,7 @@ async def _run_public_passive_once(
         # Sprint 8AM C.3: Store ownership
         if owned_store and exit_stack is not None:
             try:
-                from .knowledge.duckdb_store import create_owned_store
+                from hledac.universal.knowledge.duckdb_store import create_owned_store
                 # Create owned store (uses paths.py RAMDisk SSOT)
                 store_instance = create_owned_store()
                 # Async init
@@ -706,9 +714,9 @@ async def _run_public_passive_once(
         # Sprint 8AM C.9: Delegation to existing pipelines
         # Import here to avoid module-level side effects
         # Sprint 8SA: Configure bootstrap patterns before pipeline runs
-        from .patterns.pattern_matcher import configure_default_bootstrap_patterns_if_empty
-        from .pipeline.live_feed_pipeline import async_run_default_feed_batch
-        from .pipeline.live_public_pipeline import async_run_live_public_pipeline
+        from hledac.universal.patterns.pattern_matcher import configure_default_bootstrap_patterns_if_empty
+        from hledac.universal.pipeline.live_feed_pipeline import async_run_default_feed_batch
+        from hledac.universal.pipeline.live_public_pipeline import async_run_live_public_pipeline
         configure_default_bootstrap_patterns_if_empty()
 
         # Use the SAME store instance for both pipelines
@@ -836,7 +844,7 @@ class _UmaSampler:
 
     async def _sample_loop(self) -> None:
         """Background sampling loop. Self-terminates when _running=False."""
-        from .core.resource_governor import sample_uma_status
+        from hledac.universal.core.resource_governor import sample_uma_status
 
         try:
             while self._running:
@@ -948,7 +956,7 @@ def _record_runtime_truth() -> None:
 
     # Bootstrap pack truth
     try:
-        from .patterns.pattern_matcher import get_default_bootstrap_patterns
+        from hledac.universal.patterns.pattern_matcher import get_default_bootstrap_patterns
         _default_bootstrap_count = len(get_default_bootstrap_patterns())
         _bootstrap_pack_version = 2  # Sprint 8AZ bootstrap pack v2
     except Exception:
@@ -1512,7 +1520,7 @@ def classify_feed_health(per_source: tuple[dict, ...]) -> dict:
 def _get_pattern_count() -> int:
     """Get current pattern count from PatternMatcher. Returns 0 if unavailable."""
     try:
-        from .patterns.pattern_matcher import get_pattern_matcher
+        from hledac.universal.patterns.pattern_matcher import get_pattern_matcher
         pm = get_pattern_matcher()
         if hasattr(pm, "pattern_count"):
             return pm.pattern_count()
@@ -1530,7 +1538,7 @@ def _get_pattern_status() -> tuple[int, bool]:
         Falls back to (0, False) if PatternMatcher unavailable.
     """
     try:
-        from .patterns.pattern_matcher import get_pattern_matcher
+        from hledac.universal.patterns.pattern_matcher import get_pattern_matcher
         pm = get_pattern_matcher()
         if hasattr(pm, "pattern_count"):
             count = pm.pattern_count()
@@ -1552,7 +1560,7 @@ def _ensure_runtime_patterns_configured_for_live_validation() -> tuple[int, bool
         Tuple of (patterns_configured, bootstrap_applied) after ensure.
     """
     try:
-        from .patterns.pattern_matcher import (
+        from hledac.universal.patterns.pattern_matcher import (
             configure_default_bootstrap_patterns_if_empty,
             get_pattern_matcher,
         )
@@ -1647,10 +1655,10 @@ async def _run_observed_default_feed_batch_once(
 
     # C.1 + C.2: Acquire owned resources first
     try:
-        from .discovery.rss_atom_adapter import get_default_feed_seeds
-        from .knowledge.duckdb_store import create_owned_store
-        from .network.session_runtime import async_get_aiohttp_session
-        from .pipeline.live_feed_pipeline import async_run_live_feed_pipeline
+        from hledac.universal.discovery.rss_atom_adapter import get_default_feed_seeds
+        from hledac.universal.knowledge.duckdb_store import create_owned_store
+        from hledac.universal.network.session_runtime import async_get_aiohttp_session
+        from hledac.universal.pipeline.live_feed_pipeline import async_run_live_feed_pipeline
 
         store_instance = create_owned_store()
         await store_instance.async_initialize()
@@ -1876,7 +1884,7 @@ async def _run_observed_default_feed_batch_once(
     _combined_accepted_feed_names = tuple(sorted(_accepted_feed_names_set))
 
     try:
-        from .pipeline.live_feed_pipeline import FeedSourceRunResult
+        from hledac.universal.pipeline.live_feed_pipeline import FeedSourceRunResult
         completed = sum(1 for r in per_source_results if r.get("error") is None)
         len(per_source_results) - completed
         total = len(seed_sources)
@@ -2307,7 +2315,7 @@ async def _run_benchmark_probe() -> dict[str, Any]:
     Returns:
         Dict with benchmark results including pass/fail counts.
     """
-    from .utils.flow_trace import get_summary, is_enabled
+    from hledac.universal.utils.flow_trace import get_summary, is_enabled
 
     results = {
         "probe": "sprint_0b_runtime",
@@ -2680,7 +2688,7 @@ async def _print_scorecard_report(
     try:
         from export.sprint_exporter import export_sprint as _export_sprint
 
-        from .project_types import ExportHandoff
+        from hledac.universal.project_types import ExportHandoff
 
         # Sprint 8VZ §B: Construct typed handoff directly — canonical producer truth
         # top_nodes from store seam (DuckPGQGraph-backed store.get_top_seed_nodes)
@@ -2739,13 +2747,13 @@ async def _run_sprint_mode(
         install_signal_handlers: If True, install SIGINT/SIGTERM handlers
             inside this coroutine (uses the real event loop from asyncio.run())
     """
-    from .core.resource_governor import (
+    from hledac.universal.core.resource_governor import (
         UMA_STATE_CRITICAL,
         UMA_STATE_EMERGENCY,
         UMAAlarmDispatcher,
     )
-    from .runtime.sprint_lifecycle import SprintLifecycleManager, SprintPhase
-    from .runtime.sprint_scheduler import SprintScheduler, SprintSchedulerConfig
+    from hledac.universal.runtime.sprint_lifecycle import SprintLifecycleManager, SprintPhase
+    from hledac.universal.runtime.sprint_scheduler import SprintScheduler, SprintSchedulerConfig
 
     global _sprint_frontier_stopped, _active_pipeline_iterations
     _sprint_frontier_stopped = False
@@ -2815,9 +2823,9 @@ async def _run_sprint_mode(
         _mark_phase("ACTIVE")
 
         # ---- ACTIVE: pipeline runs every 60s while remaining > 3min ----
-        from .knowledge.duckdb_store import create_owned_store
-        from .pipeline.live_feed_pipeline import async_run_default_feed_batch
-        from .pipeline.live_public_pipeline import async_run_live_public_pipeline
+        from hledac.universal.knowledge.duckdb_store import create_owned_store
+        from hledac.universal.pipeline.live_feed_pipeline import async_run_default_feed_batch
+        from hledac.universal.pipeline.live_public_pipeline import async_run_live_public_pipeline
 
         store_instance = None
         try:
@@ -2830,7 +2838,7 @@ async def _run_sprint_mode(
         last_pipeline_time = 0.0
 
         # Sprint 8SA: Configure bootstrap patterns ONCE before first pipeline run
-        from .patterns.pattern_matcher import configure_default_bootstrap_patterns_if_empty
+        from hledac.universal.patterns.pattern_matcher import configure_default_bootstrap_patterns_if_empty
         configure_default_bootstrap_patterns_if_empty()
 
         # Sprint 8WL: Wire truth-write graph BEFORE active loop so buffered IOC writes
@@ -2839,7 +2847,7 @@ async def _run_sprint_mode(
         # never fires. WINDUP block keeps inject_stix_graph for synthesis.
         if store_instance is not None:
             try:
-                from .knowledge.ioc_graph import IOCGraph
+                from hledac.universal.knowledge.ioc_graph import IOCGraph
                 ioc_graph = IOCGraph()
                 await ioc_graph.initialize()
                 store_instance.inject_truth_write_graph(ioc_graph)
@@ -2912,7 +2920,7 @@ async def _run_sprint_mode(
         # buffered IOC writes are not silent no-op during ACTIVE phase.
         if store_instance is not None:
             try:
-                from .knowledge.ioc_graph import IOCGraph
+                from hledac.universal.knowledge.ioc_graph import IOCGraph
                 ioc_graph = IOCGraph()
                 await ioc_graph.initialize()
                 # Sprint 8VQ: Dedicated STIX-only slot — independent of analytics graph
@@ -3040,8 +3048,8 @@ async def _windup_synthesis(
     5. Exports report to ~/.hledac/reports/{ts}_{slug}_report.json
     6. Closes runner
     """
-    from .brain.model_lifecycle import ModelLifecycle
-    from .brain.synthesis_runner import SynthesisRunner, export_report
+    from hledac.universal.brain.model_lifecycle import ModelLifecycle
+    from hledac.universal.brain.synthesis_runner import SynthesisRunner, export_report
 
     runner = SynthesisRunner(ModelLifecycle())
 
@@ -3093,7 +3101,7 @@ async def _windup_synthesis(
     # Sprint 8VA D: HypothesisEngine closed loop — generate hypotheses from findings
     if findings and len(findings) > 0:
         try:
-            from hledac.universal.brain.hypothesis_engine import HypothesisEngine
+            from hledac.universal.brain.research_hypothesis_engine import HypothesisEngine
             _hyp_engine = HypothesisEngine()
             finding_texts = [f.get("text", "")[:200] for f in findings[:10]]
             hypotheses = await _hyp_engine.generate_sprint_hypotheses(
@@ -3127,6 +3135,26 @@ async def _windup_synthesis(
 # =============================================================================
 # Main entry point
 # =============================================================================
+
+
+def _fatal(exc: BaseException, code: int = 1) -> None:
+    """
+    Structured fatal-error handler. Logs _MAIN_FATAL with full traceback,
+    then exits with a structured exit code.
+
+    Exit code convention (Sprint F350M-R Exit Codes):
+        0   = clean success
+        1   = runtime error (unexpected)
+        2   = config/validation error (e.g. windup_lead guard)
+        3   = programmer error / regression (NameError, ImportError, AttributeError)
+        130 = SIGINT (KeyboardInterrupt)
+    """
+    logger.critical(
+        "_MAIN_FATAL [exit=%d]: %s\n%s",
+        code, exc, traceback.format_exc()
+    )
+    sys.exit(code)
+
 
 def main() -> None:
     """
@@ -3191,7 +3219,7 @@ def main() -> None:
     # Phase 3: --list-presets short-circuit (exit 0 before any heavy work).
     if getattr(args, "list_presets", False):
         try:
-            from utils.flag_presets import list_presets_table
+            from hledac.universal.utils.flag_presets import list_presets_table
             print(list_presets_table())
         except Exception as exc:
             # Fail-soft: still exit 0 with a diagnostic on stderr.
@@ -3202,7 +3230,7 @@ def main() -> None:
     preset_name = getattr(args, "preset", None)
     if preset_name:
         try:
-            from utils.flag_presets import apply_preset
+            from hledac.universal.utils.flag_presets import apply_preset
             applied = apply_preset(preset_name, overwrite=False)
             logger.info(
                 "[FLAG_PRESET] applied %r: %d flags set (existing env preserved)",
@@ -3216,7 +3244,7 @@ def main() -> None:
     # Phase 3: fail-fast combo validation. Runs after --preset application
     # so preset-driven flag combinations are also caught.
     try:
-        from utils.flag_registry import validate_flag_combo
+        from hledac.universal.utils.flag_registry import validate_flag_combo
         errors, warnings = validate_flag_combo()
         for w in warnings:
             logger.warning("FLAG_VALIDATION: %s", w)
@@ -3254,7 +3282,7 @@ def main() -> None:
     try:
         if sprint_dry_run and sprint_target is not None:
             # Dry-run path: diagnostic only, no real discovery
-            from .core.__main__ import dry_run_sprint as _dry_run_sprint
+            from hledac.universal.core.__main__ import dry_run_sprint as _dry_run_sprint
             os.environ["HLEDAC_ACQUISITION_PROFILE"] = args.acquisition_profile
             asyncio.run(_dry_run_sprint(
                 query=sprint_target,
@@ -3263,25 +3291,44 @@ def main() -> None:
             sys.exit(0)
         elif sprint_target is not None:
             # Sprint F150R: Delegate to canonical sprint owner in core/__main__.py
-            from .core.__main__ import run_sprint as _core_run_sprint
+            from hledac.universal.core.__main__ import SprintFlags, run_sprint as _core_run_sprint
             os.environ["HLEDAC_ACQUISITION_PROFILE"] = args.acquisition_profile
+            # F26X-3/F260 fix: pass SprintFlags bundle so `args` namespace
+            # never leaks into run_sprint(). Root parser does not expose
+            # --no-communication/--no-stealth/--no-ghost/--no-coordination,
+            # so all flags default to False (all layers enabled). Users
+            # who need layer opt-outs must use `python -m hledac.universal.core --sprint`.
+            root_sprint_flags = SprintFlags(force=getattr(args, "force", False))
+            # P1-fix 2026-06-07: forward --export-dir to core run_sprint.
+            # Previously the root dispatcher dropped this arg, so reports always
+            # landed in ~/.hledac/reports regardless of --export-dir. The
+            # alternate entrypoint `python -m hledac.universal.core` already
+            # passes export_dir correctly.
+            _export_dir = getattr(args, "export_dir", None) or str(
+                pathlib.Path.home() / ".hledac" / "reports"
+            )
             asyncio.run(_core_run_sprint(
                 query=sprint_target,
                 duration_s=float(sprint_duration),
+                export_dir=_export_dir,
                 ui_mode=sprint_ui_mode,
                 aggressive_mode=args.aggressive,
                 deep_probe_enabled=args.deep_probe,
                 acquisition_profile=args.acquisition_profile,
+                flags=root_sprint_flags,
             ))
         else:
             # Sprint 8AM C.1: Async runtime with owned resources via _run_public_passive_once
             asyncio.run(_run_public_passive_once(_get_and_clear_signal_flag))
+    except (NameError, AttributeError, ImportError) as e:
+        _fatal(e, code=3)   # programmer error / regression
     except KeyboardInterrupt:
         logger.info("[MAIN] Interrupted by user")
-        sys.exit(0)
+        sys.exit(130)       # standard SIGINT convention
+    except SystemExit:
+        raise               # never swallow sys.exit() calls
     except Exception as e:
-        logger.error(f"[MAIN] Fatal error: {e}", exc_info=True)
-        sys.exit(1)
+        _fatal(e, code=1)   # runtime error
 
 
 if __name__ == "__main__":
@@ -3295,11 +3342,11 @@ if __name__ == "__main__":
 # =============================================================================
 
 import logging
-from utils.async_helpers import safe_gather_dropin, safe_gather_fire_and_forget, safe_gather_strict
+from hledac.universal.utils.async_helpers import safe_gather_dropin, safe_gather_fire_and_forget, safe_gather_strict
 TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from .sprint_scheduler import SprintScheduler
+    from hledac.universal.runtime.sprint_scheduler import SprintScheduler
 
 _logger = logging.getLogger(__name__)
 
@@ -3383,7 +3430,7 @@ async def run_warmup(
     # 7. ANE embedder warmup (pouze v sprint hot-path, kde je potřeba)
     if do_ane_warmup:
         try:
-            from .brain.ane_embedder import ANEEmbedder
+            from hledac.universal.brain.ane_embedder import ANEEmbedder
             ane = ANEEmbedder()
             await ane.warmup()
         except Exception as e:

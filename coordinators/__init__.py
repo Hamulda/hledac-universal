@@ -28,7 +28,7 @@ See LEGACY_MIGRATION.md for details.
 
 # Base classes and types
 # Privacy enhanced research
-from hledac.universal.project_types import PrivacyLevel
+from hledac.universal.project_types import PrivacyLevel  # type: ignore[ty:unresolved-import]  # pre-existing absolute import — module not in project (historical namespace)
 
 # Coordinator catalog for domain-grouped lazy access
 from ._catalog import catalog

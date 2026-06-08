@@ -108,7 +108,7 @@ class NEREngine:
         except Exception as e:
             logger.debug(f"CoreML NER load failed: {e}")
 
-    def _nl_process_sync(self, text: str) -> list[Dict]:
+    def _nl_process_sync(self, text: str) -> list[dict]:
         """Synchronní volání NaturalLanguage.framework přes PyObjC."""
         if not self._nl_available:
             return []
@@ -228,7 +228,7 @@ n        Pokud je model již načten, nic nedělá.
             threshold: Minimální confidence score (0.0 - 1.0)
 
         Returns:
-            list[Dict]: Seznam nalezených entit s klíči:
+            list[dict]: Seznam nalezených entit s klíči:
                 - entity: text entity
                 - label: typ entity
                 - span: (start, end) pozice v textu
@@ -283,7 +283,7 @@ n        Pokud je model již načten, nic nedělá.
             logger.debug(f"MLX outlines load failed: {e}")
             NEREngine._MLX_AVAILABLE = False
 
-    async def _extract_with_mlx(self, text: str) -> list[Dict]:
+    async def _extract_with_mlx(self, text: str) -> list[dict]:
         """Extract entities using MLX outlines structured generation."""
         if not NEREngine._MLX_AVAILABLE:
             await self._load_mlx_extractor()
@@ -322,7 +322,7 @@ n        Pokud je model již načten, nic nedělá.
             threshold: Minimální confidence score
 
         Returns:
-            list[Dict]: Seznam nalezených entit
+            list[dict]: Seznam nalezených entit
         """
         # Sprint 76: ANE-first via NaturalLanguage framework
         if self._nl_available:
@@ -351,7 +351,7 @@ n        Pokud je model již načten, nic nedělá.
         self,
         text: str,
         labels: list[str],
-        relations: list[dict[str, Any]] = None,
+        relations: list[dict[str, Any]] | None = None,
         threshold: float = 0.5
     ) -> dict[str, Any]:
         """
@@ -365,7 +365,7 @@ n        Pokud je model již načten, nic nedělá.
             threshold: Minimální confidence score
 
         Returns:
-            Dict s klíči "entities" a "relations"
+            dict s klíči "entities" a "relations"
         """
         self._ensure_loaded()
 
@@ -415,7 +415,7 @@ n        Pokud je model již načten, nic nedělá.
             batch_size: Velikost batch (pro budoucí optimalizaci)
 
         Returns:
-            list[list[Dict]]: Seznam výsledků pro každý text
+            list[list[dict]]: Seznam výsledků pro každý text
         """
         self._ensure_loaded()
 
@@ -454,7 +454,7 @@ n        Pokud je model již načten, nic nedělá.
             batch_size: Velikost batch
 
         Returns:
-            list[list[Dict]]: Seznam výsledků pro každý text
+            list[list[dict]]: Seznam výsledků pro každý text
         """
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(
@@ -505,7 +505,7 @@ n        Pokud je model již načten, nic nedělá.
             timeout: Timeout v sekundách
 
         Returns:
-            list[Dict]: Seznam nalezených entit
+            list[dict]: Seznam nalezených entit
         """
         # Hard limity
         if len(text) > MAX_STRICT_TEXT_LENGTH:
@@ -545,7 +545,7 @@ n        Pokud je model již načten, nic nedělá.
             timeout: Timeout v sekundách
 
         Returns:
-            list[list[Dict]]: Seznam výsledků pro každý text
+            list[list[dict]]: Seznam výsledků pro každý text
         """
         # Hard limity
         if len(texts) > MAX_STRICT_TEXTS:
@@ -1233,7 +1233,7 @@ def build_entity_cooccurrence_map(
         max_findings: Cap on how many findings to process (default 50).
 
     Returns:
-        Dict with entity co-occurrence hints:
+        dict with entity co-occurrence hints:
             {
                 "domain_org": [(domain, org, count), ...],
                 "domain_ip": [(domain, ip, count), ...],
@@ -1615,7 +1615,7 @@ def feedback_compact(
     # Extract texts from findings (hypothesis_engine expects list[str])
     finding_texts = [f.get("text", "") if isinstance(f, dict) else str(f) for f in findings]
 
-    from hledac.universal.brain.hypothesis_engine import HypothesisEngine
+    from hledac.universal.brain.research_hypothesis_engine import HypothesisEngine
     # Sprint F185F: Proper instantiation (not bare __new__)
     engine = HypothesisEngine()
     engine._hypotheses = {}

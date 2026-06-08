@@ -130,7 +130,7 @@ class PlaywrightWebKitRenderer(RenderBackend):
         self,
         url: str,
         deadline_ms: int,
-        mode: Literal["full", "text"] = "text"
+        mode: str = "text"
     ) -> RenderResult:
         """Render URL with Playwright WebKit."""
         await self._ensure_browser()

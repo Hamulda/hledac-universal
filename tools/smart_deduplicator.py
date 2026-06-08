@@ -119,7 +119,7 @@ class SmartDeduplicator:
         base_text: str,
         new_text: str,
         store_cb: Callable[[str, str, bytes], str]
-    ) -> Dict:
+    ) -> dict:
         """
         Decide whether to store delta or full text.
 
@@ -136,7 +136,7 @@ class SmartDeduplicator:
             store_cb: Callback to actually store (signature: store_cb(run_id, url, data) -> artifact_id)
 
         Returns:
-            Dict with:
+            dict with:
             - stored_as: "delta" or "full"
             - near_dup_score: similarity score
             - bytes_saved_est: estimated bytes saved

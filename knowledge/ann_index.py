@@ -72,6 +72,8 @@ class _ANNIndex:
         "_ivfpq_num_partitions",
         "_ivfpq_num_sub_vectors",
         "_ivfpq_trained",
+        # Sprint F264E: adaptive auto-tuner
+        "_autotune",
     )
 
     def __init__(self, db_path: Path) -> None:
@@ -98,6 +100,21 @@ class _ANNIndex:
             4, min(64, int(os.environ.get("HLEDAC_LANCEDB_IVFPQ_NUM_SUB_VECTORS", "16")))
         )
         self._ivfpq_trained: bool = False
+        # Sprint F264E: adaptive auto-tuner (opt-in, M1 8GB friendly). Single
+        # source of truth shared with LanceDBIdentityStore. State persisted as
+        # JSON in db_path for cross-session continuity.
+        try:
+            from knowledge.lancedb_auto_tuner import make_default_tuner
+            self._autotune = make_default_tuner(
+                table_name="semantic_dedup_v1",
+                state_dir=db_path,
+                num_sub_vectors=self._ivfpq_num_sub_vectors,
+                vector_column="vector",
+                key_column="finding_key",
+            )
+        except Exception:
+            # Fail-soft — tuner is optional, never blocks __init__.
+            self._autotune = None
         # SAFETY: SAFE_SYNC_BOUNDARY — _lock guards LanceDB table.search() and table.add()
         # operations in ann_search() and upsert(). Both are called from the embedding_pipeline
         # sync context (not async). The lock prevents concurrent LanceDB operations across threads
@@ -310,6 +327,26 @@ class _ANNIndex:
             # STORAGE-FIX-2: schedule compaction on fragment growth
             self._insert_count_since_compact += 1
             self._maybe_compact_blocking()
+
+            # Sprint F264E: adaptive auto-tune (sync, under lock for thread safety).
+            # The tuner decides internally whether cooldown + insert-threshold are met.
+            if self._ivfpq_enabled and self._autotune is not None:
+                try:
+                    result = self._autotune.tune_if_due(
+                        self._table,  # type: ignore[arg-type]
+                        current_num_partitions=self._ivfpq_num_partitions,
+                        inserts_delta=1,
+                    )
+                    if result.changed():
+                        self._ivfpq_num_partitions = result.new_partitions
+                        logger.info(
+                            f"[ANN] auto-tune adjusted num_partitions="
+                            f"{result.old_partitions}->{result.new_partitions} "
+                            f"recall@K={result.recall:.3f} avg_ms={result.avg_search_ms:.2f}"
+                        )
+                except Exception:
+                    # Fail-soft: any tuner error must not break upsert.
+                    pass
 
             return True
 

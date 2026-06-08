@@ -234,7 +234,7 @@ class SemanticDedupCache:
     # Core dedup API
     # -------------------------------------------------------------------------
 
-    def check_and_cache(self, text: str, threshold: float = 0.90) -> bool:
+    def check_and_cache(self, text: str, threshold: float = 0.85) -> bool:
         """
         Check if text is a semantic duplicate of any cached text.
 
@@ -245,7 +245,7 @@ class SemanticDedupCache:
 
         Args:
             text: Text to check for duplicates
-            threshold: Cosine similarity threshold (default 0.90)
+            threshold: Cosine similarity threshold (default 0.95)
 
         Returns:
             True if duplicate detected, False otherwise.
@@ -302,7 +302,7 @@ class SemanticDedupCache:
             logger.debug(f"[SEMDEDUP] check_and_cache failed: {e}")
             return False
 
-    def check_batch(self, texts: list[str], threshold: float = 0.90) -> list[set[int]]:
+    def check_batch(self, texts: list[str], threshold: float = 0.95) -> list[set[int]]:
         """
         Batch semantic dedup — find groups of duplicate texts.
 

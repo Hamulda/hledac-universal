@@ -107,7 +107,7 @@ class IncrementalHNSW:
         """Uloží index na disk."""
         self.index.save_index(path)
 
-    def load(self, path: str, max_elements: int = None):
+    def load(self, path: str, max_elements: int | None = None):
         """Načte index z disku."""
         if max_elements is None:
             max_elements = self.max_elements

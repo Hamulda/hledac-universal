@@ -36,7 +36,7 @@ module and be re-imported by any caller.
 GHOST_INVARIANTS:
 - Field names, defaults, and ordering preserved byte-for-byte.
 - All 17 method bodies preserved verbatim — no refactor, no rename.
-- Backward compat shim lives in ``brain/hypothesis_engine.py``:
+- Backward compat shim lives in ``brain/research_hypothesis_engine.py``:
   ``from brain.hypothesis.packs import SourceHint, HypothesisPack``
 - New code should prefer the forward import:
   ``from brain.hypothesis.packs import SourceHint, HypothesisPack``

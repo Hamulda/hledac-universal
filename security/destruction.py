@@ -80,7 +80,7 @@ class SecureDestructor:
         b'\xff', b'\x92', b'\x49', b'\x24', b'\x00',
     ]
 
-    def __init__(self, config: DestructionConfig = None):
+    def __init__(self, config: DestructionConfig | None = None):
         self.config = config or DestructionConfig()
 
         # Nastavit vzory podle standardu
@@ -103,7 +103,7 @@ class SecureDestructor:
     async def destroy_file(
         self,
         path: str | Path,
-        verify: bool = None
+        verify: bool | None = None
     ) -> dict[str, Any]:
         """
         Bezpečně zničit soubor.

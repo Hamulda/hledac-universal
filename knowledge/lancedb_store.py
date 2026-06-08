@@ -274,6 +274,22 @@ class LanceDBIdentityStore:
         self._ivfpq_trained: bool = False
         self._ivfpq_lock: asyncio.Lock = asyncio.Lock()
 
+        # Sprint F264E: IVF-PQ adaptive auto-tuner (opt-in, M1 8GB friendly).
+        # Single source of truth shared with knowledge/_ANNIndex. State persisted
+        # as JSON next to the LanceDB URI for cross-session continuity.
+        try:
+            from knowledge.lancedb_auto_tuner import make_default_tuner
+            self._autotune = make_default_tuner(
+                table_name="entities",
+                state_dir=Path(uri).parent,
+                num_sub_vectors=self._ivfpq_num_sub_vectors,
+                vector_column="embedding",
+                key_column="id",
+            )
+        except Exception:
+            # Fail-soft — tuner is optional, never blocks __init__.
+            self._autotune = None
+
         self._initialize()
 
     # =============================================================================
@@ -1265,6 +1281,27 @@ class LanceDBIdentityStore:
                 None,
                 lambda: self._table.add(data)
             )
+
+            # Sprint F264E: trigger adaptive auto-tune (off-thread, fire-and-forget).
+            # The tuner decides internally whether cooldown + insert-threshold are met.
+            tuner = getattr(self, "_autotune", None)
+            if tuner is not None and getattr(self, "_ivfpq_enabled", False):
+                try:
+                    result = await tuner.tune_if_due_async(
+                        self._table,
+                        current_num_partitions=self._ivfpq_num_partitions,
+                        inserts_delta=1,
+                    )
+                    if result.changed():
+                        self._ivfpq_num_partitions = result.new_partitions
+                        logger.info(
+                            f"[LANCEDB] auto-tune adjusted num_partitions="
+                            f"{result.old_partitions}->{result.new_partitions} "
+                            f"recall@K={result.recall:.3f} avg_ms={result.avg_search_ms:.2f}"
+                        )
+                except Exception:
+                    # Fail-soft: any tuner error must not break add_entity.
+                    pass
 
             return True
 

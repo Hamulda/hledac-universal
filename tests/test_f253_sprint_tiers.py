@@ -91,35 +91,40 @@ class TestF253SprintTiers(unittest.TestCase):
 
 
 class TestF253HermesBudget(unittest.TestCase):
-    """Verify adaptive Hermes synthesis budget: 35% of active window, min 30s."""
+    """Verify adaptive Hermes synthesis budget: 35% of active window, min 30s.
+
+    Sprint F272A: active window is larger under the new windup contract, so
+    hermes_budget is also larger. The 35% ratio and 30s floor are unchanged.
+    """
 
     def test_hermes_budget_quick_sprint_30s_floor(self):
-        """60s quick sprint (windup=30s, active=30s) → hermes_budget=30s (floor)."""
+        """60s quick sprint (F272A: windup=15s, active=45s) -> hermes_budget=30s (floor)."""
         cfg = SprintSchedulerConfig(sprint_duration_s=60)
         self.assertEqual(cfg.hermes_budget_s, 30)
 
     def test_hermes_budget_300s_sprint(self):
-        """300s sprint (windup=90s, active=210s) → hermes_budget=73s (35%, floor=30s)."""
+        """300s sprint (F272A: windup=30s, active=270s) -> hermes_budget=94s (35%)."""
         cfg = SprintSchedulerConfig(sprint_duration_s=300)
         active = cfg.sprint_duration_s - cfg.effective_windup_lead_s
         expected = max(30, int(active * 0.35))
         self.assertEqual(cfg.hermes_budget_s, expected)
-        self.assertEqual(cfg.hermes_budget_s, 73)
+        self.assertEqual(cfg.hermes_budget_s, 94)
 
     def test_hermes_budget_600s_sprint(self):
-        """600s sprint (windup=180s, active=420s) → hermes_budget=147s (35%)."""
+        """600s sprint (F272A: windup=60s, active=540s) -> hermes_budget=189s (35%)."""
         cfg = SprintSchedulerConfig(sprint_duration_s=600)
         active = cfg.sprint_duration_s - cfg.effective_windup_lead_s
         expected = max(30, int(active * 0.35))
         self.assertEqual(cfg.hermes_budget_s, expected)
-        self.assertEqual(cfg.hermes_budget_s, 147)
+        self.assertEqual(cfg.hermes_budget_s, 189)
 
     def test_hermes_budget_900s_sprint(self):
-        """900s sprint (windup=180s, active=720s) → hermes_budget=252s (35%, cap=180 on windup)."""
+        """900s sprint (F272A: windup=60s, active=840s) -> hermes_budget=294s (35%)."""
         cfg = SprintSchedulerConfig(sprint_duration_s=900)
         active = cfg.sprint_duration_s - cfg.effective_windup_lead_s
         expected = max(30, int(active * 0.35))
         self.assertEqual(cfg.hermes_budget_s, expected)
+        self.assertEqual(cfg.hermes_budget_s, 294)
 
     def test_hermes_budget_returns_float(self):
         """hermes_budget_s returns float/int for arithmetic compatibility."""
@@ -134,27 +139,40 @@ class TestF253HermesBudget(unittest.TestCase):
 
 
 class TestF253BackwardCompatibility(unittest.TestCase):
-    """Verify 600s sprint (old default) behaves identically to pre-F253 behavior."""
+    """Verify 600s sprint behaves consistently with F272A windup contract.
+
+    Sprint F272A amendment: the 600s windup shifted from 180s (F250) to 60s
+    (F272A), giving 540s of active instead of 420s. This is the INTENT of
+    F272A -- NOT a regression. The original F253 contract tested
+    "behavior preserved for 600s", but F272A explicitly changes that.
+    Tests here assert the F272A contract.
+    """
 
     def test_600s_sprint_still_thorough_tier(self):
-        """600s sprint → thorough tier (backward compat)."""
+        """600s sprint -> thorough tier (backward compat)."""
         self.assertEqual(detect_sprint_tier(600), "thorough")
 
-    def test_600s_sprint_windup_unchanged(self):
-        """600s sprint → windup=180s (original fixed value, pre-F253)."""
+    def test_600s_sprint_windup_under_f272a(self):
+        """600s sprint -> F272A: windup=60s (was 180s under F250)."""
         cfg = SprintSchedulerConfig(sprint_duration_s=600)
-        self.assertEqual(cfg.effective_windup_lead_s, 180)
+        self.assertEqual(cfg.effective_windup_lead_s, 60)
 
-    def test_600s_sprint_active_budget_unchanged(self):
-        """600s sprint → active=420s (original behavior preserved)."""
+    def test_600s_sprint_active_budget_under_f272a(self):
+        """600s sprint -> F272A: active=540s (was 420s under F250)."""
         cfg = SprintSchedulerConfig(sprint_duration_s=600)
-        self.assertEqual(cfg.sprint_duration_s - cfg.effective_windup_lead_s, 420)
+        self.assertEqual(cfg.sprint_duration_s - cfg.effective_windup_lead_s, 540)
 
-    def test_600s_sprint_default_config_unchanged(self):
-        """SprintSchedulerConfig() defaults are unchanged."""
+    def test_1800s_sprint_default_config_unchanged(self):
+        """SprintSchedulerConfig() defaults are unchanged (only effective_windup shifts)."""
         cfg = SprintSchedulerConfig()
         self.assertEqual(cfg.sprint_duration_s, 1800.0)
-        self.assertEqual(cfg.windup_lead_s, 180.0)
+        self.assertEqual(cfg.windup_lead_s, 180.0)  # original property, not F272A's effective
+
+    def test_1800s_sprint_windup_under_f272a(self):
+        """1800s default -> F272A: windup=60s, active=1740s."""
+        cfg = SprintSchedulerConfig(sprint_duration_s=1800)
+        self.assertEqual(cfg.effective_windup_lead_s, 60)
+        self.assertEqual(cfg.sprint_duration_s - cfg.effective_windup_lead_s, 1740)
 
 
 if __name__ == "__main__":

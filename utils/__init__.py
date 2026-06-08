@@ -1,3 +1,10 @@
+# Phase 0 alias: register `utils` as a top-level module so absolute
+# `from utils.X` imports resolve regardless of how the package is launched
+# (python -m hledac.universal, IDE, or direct script). See __main__.py
+# Phase 0 hook for the original symptom; this is the canonical fix.
+import sys as _sys
+_sys.modules.setdefault('utils', _sys.modules[__name__])
+
 """
 Utility funkce pro UniversalResearchOrchestrator.
 

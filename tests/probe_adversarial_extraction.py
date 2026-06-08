@@ -22,8 +22,8 @@ sys.path.insert(0, "hledac/universal")
 
 class TestBackwardCompat:
     def test_legacy_import_still_works(self) -> None:
-        """`from brain.hypothesis_engine import AdversarialVerifier` must work."""
-        from brain.hypothesis_engine import AdversarialVerifier  # noqa: F401
+        """`from brain.research_hypothesis_engine import AdversarialVerifier` must work."""
+        from brain.research_hypothesis_engine import AdversarialVerifier  # noqa: F401
 
         assert AdversarialVerifier is not None
         assert AdversarialVerifier.__name__ == "AdversarialVerifier"
@@ -31,7 +31,7 @@ class TestBackwardCompat:
     def test_legacy_class_is_same_object(self) -> None:
         """The legacy import and the new import return the SAME class object."""
         from brain.hypothesis.adversarial import AdversarialVerifier as New
-        from brain.hypothesis_engine import AdversarialVerifier as Old
+        from brain.research_hypothesis_engine import AdversarialVerifier as Old
 
         # Identity check — same class, not a copy
         assert New is Old, "Legacy and new import paths must resolve to the same class"

@@ -49,8 +49,8 @@ class WorkloadResult:
         memory_delta: float = 0.0,
         main_bottleneck: str = "",
         findings: int = 0,
-        samples_ms: list = None,
-        cprofile_top: list = None,
+        samples_ms: list | None = None,
+        cprofile_top: list | None = None,
     ):
         self.name = name
         self.status = status

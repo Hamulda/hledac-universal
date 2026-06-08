@@ -93,6 +93,7 @@ CLI / __main__.py
 | HLEDAC_ENABLE_HEAVY_BROWSER | 0 | Playwright (M1 RAM intensive) |
 | HLEDAC_ENABLE_HERMES_SYNTHESIS | 0 | Hermes3 synthesis lane |
 | HLEDAC_ENABLE_HTTPX_H2 | 0 | HTTPX HTTP/2 support |
+| HLEDAC_ENABLE_HTTPX_H3 | 0 | HTTP/3 (QUIC) opportunistic upgrade (curl_cffi `HttpVersion.v3`) + aioquic real-QUIC lane when `[http3]` extra installed. Legacy alias: `HLEDAC_HTTP3=1` |
 | HLEDAC_ENABLE_HYPOTHESIS | 0 | Hypothesis-driven pivot planner |
 | HLEDAC_ENABLE_I2P | 0 | I2P transport |
 | HLEDAC_ENABLE_IMAGE_OSINT | 0 | Image forensics |
@@ -142,6 +143,58 @@ CLI / __main__.py
 
 ---
 
+## PRE-FLIGHT GUARDS (F221-ABORT)
+
+Hard pre-flight guard in `core/__main__.py::run_sprint` rejects sprints whose
+active-window budget would be below `MIN_ACTIVE_WINDOW_S = 30s`. Runs **before**
+LMDB / DuckDB init to avoid orphaned lock files on bad config.
+
+- Effective windup replicates F250 (`SprintSchedulerConfig.effective_windup_lead_s`):
+  `30% of duration, clamp [30, 180]s`.
+- Abort → `sys.exit(2)` = config error, distinguishable from `exit(1)` runtime.
+- Override → `--force` flag → `[F221-FORCED]` warning, sprint continues.
+- `SprintFlags` frozen dataclass in `core/__main__.py` is the typed contract
+  for pre-flight flag bundles; keep it minimal (only flags affecting guards).
+
+**Minimum sprint duration = windup_lead_effective + 30s.**
+F250 windup floor = 30s (clamp `[30, 180]`) → use `--duration 60+` to pass the
+guard with exactly `MIN_ACTIVE_WINDOW_S=30s` of active window. `--duration 60`
+passes (active=30s=MIN, not <). Durations <60s abort with `[F221-ABORT]`
+exit code 2 unless `--force` is set. Override with `--force` for explicit
+dry-runs where zero evidence is acceptable (emits `[F221-FORCED]` warning).
+
+---
+
+## EXIT CODE CONVENTION (F350M-R)
+
+Top-level `main()` in both `__main__.py` and `core/__main__.py` enforces a
+structured exit-code contract. CI/CD pipelines, monitoring, and operator
+scripts MUST branch on these values — never treat "exit 0" as the only
+green signal.
+
+| Code | Meaning | Trigger |
+|------|---------|---------|
+| `0`  | Clean success | Sprint completed, artifacts written |
+| `1`  | Runtime error (unexpected) | `except Exception` in catch-all envelope |
+| `2`  | Config / validation error | F221-ABORT windup guard, `argparse` parse error, flag-conflict |
+| `3`  | Programmer error / regression | `NameError`, `AttributeError`, `ImportError` raised deep |
+| `130` | `SIGINT` (operator interrupt) | `KeyboardInterrupt` |
+
+**Invariant:** `sys.exit(N)` raised anywhere deep propagates verbatim — the
+envelope has `except SystemExit: raise` so deliberate exits are never turned
+into generic `exit(1)`.
+
+**Logging:** every fatal exit logs with the `_MAIN_FATAL [exit=N]` prefix via
+`_fatal(exc, code)`. Log parsers MUST match this prefix to detect
+operator-visible failures.
+
+**Tests:** `tests/test_exit_codes.py` is the regression suite — NameError,
+ImportError, KeyboardInterrupt, SystemExit, F221-ABORT guard, and
+`--help` clean path are all covered as subprocess tests so the actual
+`sys.exit()` code is observable (pytest traps would mask it).
+
+---
+
 ## DO NOT (Anti-patterns pro agenty)
 
 - **Nepřidávej top-level MLX importy** — MLX se importuje lazy, early import crashuje M1
@@ -180,6 +233,31 @@ smoke_runner.py --smoke
 - **KV cache:** `kv_bits=4`, `max_kv_size=8192` v `mlx_lm.generate()`, NE v `load()`
 - **Soft ceiling:** 5.5 GiB → hard cap fetch concurrency
 - **SWAP warning:** `relaxed=False` v MLX je feature, ne bug
+
+---
+
+## HTTP/3 (QUIC) — P1-2 Sprint 2026-06-08
+
+Centralized HTTP/3 lane in `transport/http3_lane.py` (new). Two strategies behind one bounded layer:
+
+| Strategy | Mechanism | Cost | Use case |
+|----------|-----------|------|----------|
+| `curl_cffi_opportunistic` (default) | `curl_cffi >= 0.7` `HttpVersion.v3` kwarg, gated on Alt-Svc h3 advertisement | 0 extra deps | All clearnet fetches that benefit from Alt-Svc-driven H3 upgrade |
+| `aioquic_stealth` (opt-in via `[http3]` extra) | Real QUIC handshake + H3 via `aioquic` | ~50-80 MB resident (cryptography + OpenSSL) | Stealth / DA+ profile lane when real QUIC is required |
+
+**Env gate:** `HLEDAC_ENABLE_HTTPX_H3=1` enables both strategies; default off. Legacy alias `HLEDAC_HTTP3=1` (F260) is honored for back-compat.
+
+**M1 8GB bounds** (`transport/http3_lane.py`):
+- `_H3_CACHE_MAX = 512` — bounded LRU (host → `True`), FIFO eviction
+- `_H3_CONCURRENCY_MAX = 3` — semaphore caps concurrent aioquic handshakes
+- `_H3_TIMEOUT_S = 8.0` — per-request `asyncio.wait_for` hard cap
+- `_H3_CACHE_TTL_S = 86_400` — 24h, same as stealth_manager F194
+- `_H3_RSS_BLOCK_GIB = 5.5` — psutil probe blocks the lane at mission budget
+- `aioquic` lives in `[http3]` extra ONLY (NOT in `m1-local`)
+
+**Fail-soft invariants:** every error path returns `None` and lets the caller continue on HTTP/1.1 / HTTP/2. No bare `except:`; every cache write is best-effort; cooperative `CancelledError` is re-raised.
+
+**Probe tests:** `tests/probe_p12_http3_lane/test_p12_http3_lane.py` — 30+ hermetic tests covering: lazy import without aioquic, env gate resolution (incl. legacy alias), Alt-Svc parser, bounded LRU + TTL + LRU touch, per-request timeout, semaphore saturation, memory guard, record helpers, F260 compat shims, transport router H3 candidate, `pyproject.toml` `[http3]` extra presence + `m1-local` exclusion.
 
 ---
 
@@ -384,3 +462,17 @@ rtk init --global       # Add RTK to ~/.claude/CLAUDE.md
 
 Overall average: **60-90% token reduction** on common development operations.
 <!-- /rtk-instructions -->
+
+## Agent skills
+
+### Issue tracker
+
+Local Markdown — issues žijí jako soubory v `.scratch/<feature>/issues/<NN>-<slug>.md`, PRD je `.scratch/<feature>/PRD.md`, stav na řádku `Status:` v hlavičce issue. Viz `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Kanonie 1:1 — `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`. Viz `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context — `CONTEXT.md` + `docs/adr/` v rootu, produkované lazy přes `/grill-with-docs`. Viz `docs/agents/domain.md`.

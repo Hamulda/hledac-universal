@@ -375,7 +375,7 @@ class I2PTransport(Transport):
         # No valid session
         raise I2PUnavailableError(f"No I2P session available (mode: {self.transport_mode})")
 
-    def is_running(self) -> bool:
+    async def is_running(self) -> bool:
         """Check if I2P transport is operational."""
         return self.available and self.transport_mode != "none"
 

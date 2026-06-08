@@ -13,7 +13,7 @@ class TestSimpleNodeAblationExplainer:
     @pytest.mark.asyncio
     async def test_explain_path_short(self):
         """Test explain with short path returns empty."""
-        from hledac.universal.brain.hypothesis_engine import SimpleNodeAblationExplainer
+        from hledac.universal.brain.research_hypothesis_engine import SimpleNodeAblationExplainer
 
         mock_graph_rag = MagicMock()
         explainer = SimpleNodeAblationExplainer(mock_graph_rag)
@@ -25,7 +25,7 @@ class TestSimpleNodeAblationExplainer:
     @pytest.mark.asyncio
     async def test_explain_path_no_embedder(self):
         """Test explain when embedder unavailable."""
-        from hledac.universal.brain.hypothesis_engine import SimpleNodeAblationExplainer
+        from hledac.universal.brain.research_hypothesis_engine import SimpleNodeAblationExplainer
 
         mock_graph_rag = MagicMock()
         mock_graph_rag._get_embedder = AsyncMock(return_value=None)
@@ -43,7 +43,7 @@ class TestExplainWithMLX:
     @pytest.mark.asyncio
     async def test_explain_with_mlx_no_model(self):
         """Test explain when model unavailable."""
-        from hledac.universal.brain.hypothesis_engine import explain_with_mlx
+        from hledac.universal.brain.research_hypothesis_engine import explain_with_mlx
 
         with patch("hledac.universal.utils.mlx_cache.get_mlx_model", return_value=(None, None)):
             explanation, prompt_hash = await explain_with_mlx("hypothesis", ["node1", "node2"])
@@ -54,7 +54,7 @@ class TestExplainWithMLX:
     @pytest.mark.asyncio
     async def test_explain_with_mlx_generates_hash(self):
         """Test explanation generates prompt hash."""
-        from hledac.universal.brain.hypothesis_engine import explain_with_mlx
+        from hledac.universal.brain.research_hypothesis_engine import explain_with_mlx
 
         mock_model = MagicMock()
         mock_tokenizer = MagicMock()

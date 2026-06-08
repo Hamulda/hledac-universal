@@ -128,7 +128,7 @@ class UnicodeAttackAnalyzer:
     """
 
     # Pre-computed frozensets for O(1) lookup
-    ZERO_WIDTH_CHARS: Frozenset[int] = frozenset({
+    ZERO_WIDTH_CHARS: frozenset[int] = frozenset({
         0x200B,  # ZERO WIDTH SPACE
         0x200C,  # ZERO WIDTH NON-JOINER
         0x200D,  # ZERO WIDTH JOINER
@@ -150,14 +150,14 @@ class UnicodeAttackAnalyzer:
         0x2069: ("PDI", "Pop Directional Isolate"),
     }
 
-    HIGH_RISK_BIDI: Frozenset[int] = frozenset({0x202E, 0x202D, 0x202C})
-    BIDI_OPENING: Frozenset[int] = frozenset({0x202A, 0x202B, 0x202D, 0x202E, 0x2066, 0x2067, 0x2068})
-    BIDI_CLOSING: Frozenset[int] = frozenset({0x202C, 0x2069})
+    HIGH_RISK_BIDI: frozenset[int] = frozenset({0x202E, 0x202D, 0x202C})
+    BIDI_OPENING: frozenset[int] = frozenset({0x202A, 0x202B, 0x202D, 0x202E, 0x2066, 0x2067, 0x2068})
+    BIDI_CLOSING: frozenset[int] = frozenset({0x202C, 0x2069})
 
     def __init__(self, config: UnicodeConfig | None = None):
         """Initialize the Unicode attack analyzer."""
         self.config = config or UnicodeConfig()
-        self._confusable_set: Frozenset[str] = frozenset()
+        self._confusable_set: frozenset[str] = frozenset()
         self._canonical_map: dict[str, str] = {}
         self._confusable_map: dict[str, list[str]] = {}
         self._initialized: bool = False

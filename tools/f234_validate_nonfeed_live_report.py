@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import json
 import sys
-from typing import Any
+from typing import Any, cast
 
 __all__ = ["validate_report", "main"]
 
@@ -467,7 +467,10 @@ def _check_source_family_outcomes(data: dict) -> tuple[bool, str]:
             if fam:
                 outcomes_set.add(fam)
     elif isinstance(source_families, dict):
-        outcomes_set = set(source_families.keys())
+        # `dict.keys()` is typed as `dict_keys[Unknown]`; runtime invariant:
+        # family names are always strings when sourced from runtime_truth.
+        # cast() preserves the set[str] contract for downstream lookups.
+        outcomes_set = cast(set[str], set(source_families.keys()))
 
     # Check public terminal stage -> PUBLIC outcome
     public_terminal = _get(data, "runtime_truth", "public_terminal_stage", default="")

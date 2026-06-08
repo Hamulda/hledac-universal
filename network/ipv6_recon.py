@@ -136,10 +136,10 @@ class IPv6Recon:
 
         # Circuit breaker
         try:
-            from hledac.universal.fetching.fetch_coordinator import circuit_breaker
-            circuit_breaker.domain_breaker_check("rdap.arin.net")
-            circuit_breaker.domain_breaker_check("rdap.ripe.net")
-            circuit_breaker.domain_breaker_check("rdap.apnic.net")
+            from hledac.universal.transport.circuit_breaker import get_breaker
+            if not get_breaker("rdap.arin.net").check_circuit().allowed: raise RuntimeError(f"circuit_open: {"rdap.arin.net"}")
+            if not get_breaker("rdap.ripe.net").check_circuit().allowed: raise RuntimeError(f"circuit_open: {"rdap.ripe.net"}")
+            if not get_breaker("rdap.apnic.net").check_circuit().allowed: raise RuntimeError(f"circuit_open: {"rdap.apnic.net"}")
         except Exception as e:
             logger.debug(f"[IPv6] RDAP circuit breaker: {e}")
 
@@ -290,8 +290,8 @@ class IPv6Recon:
         """Get BGP peer info from bgpkit.com/v4/peer/{ip}."""
         # Check circuit breaker
         try:
-            from hledac.universal.fetching.fetch_coordinator import circuit_breaker
-            circuit_breaker.domain_breaker_check("bgpkit.com")
+            from hledac.universal.transport.circuit_breaker import get_breaker
+            if not get_breaker("bgpkit.com").check_circuit().allowed: raise RuntimeError(f"circuit_open: {"bgpkit.com"}")
         except Exception:
             return {}
 

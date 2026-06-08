@@ -20,7 +20,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
-from utils.async_helpers import safe_gather_dropin
+from .async_helpers import safe_gather_dropin
 # Sprint 8U: Lazy networkx import to avoid loading 285 modules at cold-start
 _nx = None
 

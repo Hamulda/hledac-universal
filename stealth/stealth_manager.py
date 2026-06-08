@@ -19,7 +19,7 @@ import logging
 import random
 import time
 from collections import OrderedDict
-from collections.abc import Callable
+from collections.abc import Callable, Coroutine
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from typing import Any
@@ -42,6 +42,16 @@ _IMPERSONATE_PROFILES = ["chrome120", "safari17_0"]
 from ..intelligence.stealth_crawler import HeaderConfig, HeaderSpoofer
 from ..layers.stealth_layer import BrowserProfile, FingerprintConfig, FingerprintRandomizer
 from ..utils.rate_limiter import RateLimitConfig, RateLimiter, RateLimitExceeded
+
+# P1-2: bounded HTTP/3 lane (LRU 512, sem 3, timeout 8s, RSS guard 5.5 GiB).
+# Absolute import path matches the project convention
+# (``from hledac.universal.transport.X import Y``); relative imports
+# would be reported as ``reportMissingImports`` by Pyright.
+from hledac.universal.transport.http3_lane import (  # type: ignore[import-not-found]  # noqa: E402
+    _cache_get as _h3_cache_get,
+    fetch_http3_aioquic,
+    record_h3_support,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -221,7 +231,7 @@ class StealthManager:
 
     async def execute(
         self,
-        coro: Callable,
+        coro: Coroutine[Any, Any, Any],
         domain: str = 'default',
         timeout: float | None = None
     ) -> Any:
@@ -518,71 +528,58 @@ class StealthSession:
         self._cookies: dict[str, str] = {}
         self._session: aiohttp.ClientSession | None = None
         self._closed = False
-        # HTTP/3 autodetection cache: domain -> (timestamp, supported)
-        self._http3_cache: dict[str, tuple[float, bool]] = {}
+        # P1-2: HTTP/3 autodetection cache now lives in transport/http3_lane
+        # (bounded LRU 512, 24h TTL, single source of truth across all H3
+        # callers — public_fetcher, stealth_manager, future lanes).
         # P7: Request counter for Tor identity rotation (every 10 requests)
         self._request_count = 0
 
     async def _supports_http3(self, url: str) -> bool:
-        """Check if server supports HTTP/3 by looking for Alt-Svc header. Cache 24h."""
+        """Check if server supports HTTP/3 by looking for Alt-Svc header.
+
+        P1-2 refactor: cache writes now flow through ``http3_lane.record_h3_support``
+        so the same LRU is shared with ``fetching/public_fetcher.py``. A host
+        observed as h3-capable by the public lane is automatically eligible
+        here, and vice versa. Fail-soft: any probe error returns False and
+        records the negative result so we do not hammer the same host.
+        """
         domain = urlparse(url).netloc
-        now = time.time()
-        HTTP3_CACHE_TTL = 86400  # 24 hours
 
-        # Check cache with TTL
-        if domain in self._http3_cache:
-            cached_time, supported = self._http3_cache[domain]
-            if now - cached_time < HTTP3_CACHE_TTL:
-                return supported
+        # Read-through the shared LRU first.
+        cached = _h3_cache_get(domain)
+        if cached is not None:
+            return cached
 
-        # Detect HTTP/3 support
+        # Detect HTTP/3 support via HEAD probe (cheap, 2s timeout).
         try:
             async with aiohttp.ClientSession() as session:
-                async with session.head(url, allow_redirects=True, timeout=aiohttp.ClientTimeout(total=2.0)) as resp:
+                async with session.head(
+                    url, allow_redirects=True, timeout=aiohttp.ClientTimeout(total=2.0)
+                ) as resp:
                     alt_svc = resp.headers.get("Alt-Svc", "")
                     supports_http3 = "h3" in alt_svc.lower()
-                    self._http3_cache[domain] = (now, supports_http3)
+                    record_h3_support(url, supports_http3)
                     if supports_http3:
                         logger.debug(f"HTTP/3 supported for {domain}")
                     return supports_http3
         except Exception as e:
             logger.debug(f"HTTP/3 detection failed for {domain}: {e}")
-            self._http3_cache[domain] = (now, False)
+            record_h3_support(url, False)
             return False
 
     async def _http3_request(self, method: str, url: str, headers: dict | None = None) -> bytes | None:
-        """Make HTTP/3 request using aioquic (if available)."""
-        try:
-            from aioquic.asyncio import connect
-            from aioquic.h3.connection import H3Connection
-            from aioquic.quic.configuration import QuicConfiguration
+        """Make HTTP/3 request via the shared ``http3_lane``.
 
-            parsed = urlparse(url)
-            host = parsed.netloc.split(':')[0]
-            port = parsed.port or 443
-
-            configuration = QuicConfiguration(is_client=True)
-            async with connect(host, port, configuration=configuration, create_protocol=H3Connection) as protocol:
-                # Simple request - just get the response body
-                request_headers = [(b":method", method.upper().encode()),
-                                  (b":path", parsed.path or b"/"),
-                                  (b":authority", host.encode())]
-                if headers:
-                    for k, v in headers.items():
-                        request_headers.append((k.encode(), v.encode()))
-
-                stream_id = protocol.make_request(request_headers)
-                # Čekat na response
-                await protocol.wait_for_response(stream_id)
-                # Získat data
-                data = await protocol.receive_data(stream_id)
-                return data
-        except ImportError:
-            logger.debug("aioquic not available for HTTP/3")
-            return None
-        except Exception as e:
-            logger.debug(f"HTTP/3 request failed: {e}")
-            return None
+        P1-2 refactor: delegates to ``fetch_http3_aioquic`` which owns
+        the bounded LRU cache, the 3-connection semaphore (M1 8GB),
+        the 8s per-request ``asyncio.wait_for`` timeout, and the psutil
+        RSS memory guard at 5.5 GiB. This wrapper is a thin shim kept
+        for the existing call site in ``self.request()``.
+        """
+        # We only need GET semantics here (request() only calls this on
+        # method == "GET"); the lane always issues a GET. HEAD is treated
+        # the same way since stealth only ever uses the result body.
+        return await fetch_http3_aioquic(url=url, headers=headers)
 
     async def _get_session(self) -> aiohttp.ClientSession:
         """Lazy initialization of shared ClientSession with TCP tuning."""

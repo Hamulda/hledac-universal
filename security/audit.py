@@ -132,7 +132,7 @@ class AuditLogger:
         ... )
     """
 
-    def __init__(self, config: AuditConfig = None):
+    def __init__(self, config: AuditConfig | None = None):
         self.config = config or AuditConfig()
         self._db: sqlite3.Connection | None = None
         self._initialized = False
@@ -176,10 +176,10 @@ class AuditLogger:
         event_type: AuditEventType,
         action: str,
         resource: str,
-        details: dict[str, Any] = None,
+        details: dict[str, Any] | None = None,
         level: AuditLevel = AuditLevel.INFO,
-        user_id: str = None,
-        session_id: str = None,
+        user_id: str | None = None,
+        session_id: str | None = None,
     ) -> bool:
         """
         Zalogovat audit událost.
@@ -246,10 +246,10 @@ class AuditLogger:
 
     async def query(
         self,
-        event_type: AuditEventType = None,
-        resource: str = None,
-        start_time: datetime = None,
-        end_time: datetime = None,
+        event_type: AuditEventType | None = None,
+        resource: str | None = None,
+        start_time: datetime | None = None,
+        end_time: datetime | None = None,
         limit: int = 100
     ) -> list[AuditEvent]:
         """
@@ -311,8 +311,8 @@ class AuditLogger:
 
     async def get_report(
         self,
-        start_time: datetime = None,
-        end_time: datetime = None
+        start_time: datetime | None = None,
+        end_time: datetime | None = None
     ) -> dict[str, Any]:
         """
         Vygenerovat audit report.

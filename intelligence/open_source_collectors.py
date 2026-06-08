@@ -39,8 +39,9 @@ import asyncio
 import logging
 import re
 import time
+from collections import OrderedDict
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol
 
 if TYPE_CHECKING:
     pass
@@ -308,59 +309,302 @@ async def _scrape_rentry(raw_path: str) -> str | None:
         return None
 
 
-async def _scrape_privatebin(paste_id: str) -> str | None:
-    for version in ["v2", "v1"]:
-        url = f"https://privatebin.net/api/v{version}/paste/{paste_id}?format=json"
+# =============================================================================
+# Paste Site Adapter Pattern (F-265)
+# =============================================================================
+#
+# Strategy: each paste site is a small adapter that knows how to build URL(s)
+# for a paste_id and parse the response body. The base function
+# `_scrape_paste_site(adapter, paste_id)` centralizes:
+#   - bounded LRU+TTL in-process cache (M1-safe, no LMDB per project invariant)
+#   - in-flight dedup (no duplicate concurrent fetches for the same paste_id)
+#   - per-host asyncio.Semaphore(_PASTE_HOST_SEMAPHORE) for M1 soft cap
+#   - fetch via async_fetch_public_text (curl_cffi + JA3, F260 H3 opportunistic)
+#   - fail-soft + CancelledError re-raise (GHOST_INVARIANT)
+#
+# Adding a new paste site = one adapter instance + one module-level singleton.
+# The triple (_scrape_privatebin / _scrape_ghostbin / _scrape_0bin) collapses
+# to thin wrappers below.
+
+
+class PasteSiteAdapter(Protocol):
+    """Contract every paste-site adapter must satisfy (duck-typed).
+
+    Concrete adapters are frozen dataclasses that expose:
+        site_id: str        — registry key, used for cache/inflight dedup
+        host:   str         — used for per-host Semaphore
+        timeout_s: float    — async_fetch_public_text timeout
+        max_bytes: int      — async_fetch_public_text max response size
+        build_url(paste_id) -> str | list[str]
+        parse(body, paste_id) -> str | None
+    """
+    site_id: str
+    host: str
+    timeout_s: float
+    max_bytes: int
+
+    def build_url(self, paste_id: str) -> str | list[str]:
+        """Return one URL or an ordered list of fallback URLs to try."""
+        ...
+
+    def parse(self, body: str, paste_id: str) -> str | None:
+        """Parse the response body. Return None on parse error or empty body."""
+        ...
+
+
+@dataclass(slots=True, frozen=True)
+class _RawPasteAdapter:
+    """Trivial adapter: response body IS the paste text (ghostbin, rentry, pastebin_raw)."""
+    site_id: str
+    host: str
+    url_template: str
+    timeout_s: float = 10.0
+    max_bytes: int = 2 * 1024 * 1024
+
+    def build_url(self, paste_id: str) -> str:
+        return self.url_template.format(paste_id=paste_id)
+
+    def parse(self, body: str, paste_id: str) -> str | None:
+        return body or None
+
+
+@dataclass(slots=True, frozen=True)
+class _PrivateBinAdapter:
+    """PrivateBin v2 → v1 fallback + encrypted-paste marker detection.
+
+    Behavior preserved bit-for-bit from the original _scrape_privatebin:
+    - try v2 endpoint first, then v1
+    - if response has both 'ct' and 'adata' → encrypted marker
+    - if response has 'content' → return its value
+    - on any exception in the parse of v2 → fall through to v1
+    """
+    site_id: str = "privatebin"
+    host: str = "privatebin.net"
+    timeout_s: float = 10.0
+    max_bytes: int = 2 * 1024 * 1024
+
+    def build_url(self, paste_id: str) -> list[str]:
+        return [
+            f"https://privatebin.net/api/v2/paste/{paste_id}?format=json",
+            f"https://privatebin.net/api/v1/paste/{paste_id}?format=json",
+        ]
+
+    def parse(self, body: str, paste_id: str) -> str | None:
+        import json
         try:
-            result: FetchResult = await async_fetch_public_text(url, timeout_s=10.0, max_bytes=2 * 1024 * 1024)
-            if result.status_code == 404 or result.error or result.text is None:
-                continue
-            import json
-            data = json.loads(result.text)
-            if "ct" in data and "adata" in data:
-                return f"[PrivateBin encrypted - id:{paste_id}]"
-            elif "content" in data:
-                return data.get("content", "")
+            data = json.loads(body)
+        except (json.JSONDecodeError, ValueError):
+            return None
+        if "ct" in data and "adata" in data:
+            return f"[PrivateBin encrypted - id:{paste_id}]"
+        if "content" in data:
+            return data.get("content") or None
+        return None
+
+
+@dataclass(slots=True, frozen=True)
+class _ZeroBinAdapter:
+    """0bin HTML page → extract <pre class='paste-content'> with len > 10."""
+    site_id: str = "0bin"
+    host: str = "0bin.net"
+    timeout_s: float = 10.0
+    max_bytes: int = 2 * 1024 * 1024
+
+    def build_url(self, paste_id: str) -> str:
+        return f"https://0bin.net/p/{paste_id}"
+
+    def parse(self, body: str, paste_id: str) -> str | None:
+        try:
+            from selectolax.parser import HTMLParser
+        except ImportError:
+            return None
+        tree = HTMLParser(body)
+        for elem in tree.css("pre.paste-content, textarea.paste-content, .paste-content"):
+            text = elem.text()
+            if text and len(text) > 10:
+                return text.strip()
+        return None
+
+
+# Module-level adapter singletons (frozen dataclasses, cheap to share)
+PRIVATEBIN_ADAPTER: _PrivateBinAdapter = _PrivateBinAdapter()
+GHOSTBIN_ADAPTER: _RawPasteAdapter = _RawPasteAdapter(
+    site_id="ghostbin",
+    host="ghostbin.com",
+    url_template="https://ghostbin.com/paste/{paste_id}/raw",
+)
+ZEROBIN_ADAPTER: _ZeroBinAdapter = _ZeroBinAdapter()
+
+
+# -----------------------------------------------------------------------------
+# Bounded cache + in-flight dedup + per-host concurrency (M1 8GB safe)
+# -----------------------------------------------------------------------------
+
+_PASTE_CACHE_MAX: int = 2000
+_PASTE_CACHE_TTL_S: float = 3600.0  # 1 hour
+_PASTE_CACHE_EVICT_FRAC: float = 0.10  # evict oldest 10% on overflow
+_PASTE_HOST_SEMAPHORE: int = 3  # M1 soft cap per host
+
+# OrderedDict preserves insertion order → FIFO eviction (oldest first).
+_paste_cache: "OrderedDict[tuple[str, str], tuple[float, str | None]]" = OrderedDict()
+# In-flight dedup: paste_key → Future. The first caller becomes leader and
+# creates the Future; concurrent followers await the same Future.
+_paste_inflight: dict[tuple[str, str], asyncio.Future[str | None]] = {}
+# Per-host semaphore registry (lazy creation)
+_paste_host_sems: dict[str, asyncio.Semaphore] = {}
+
+
+def _paste_cache_get(site_id: str, paste_id: str) -> tuple[bool, str | None]:
+    """Returns (hit, body). Body is meaningful only when hit=True.
+
+    TTL-expired entries are evicted lazily on read.
+    """
+    key = (site_id, paste_id)
+    entry = _paste_cache.get(key)
+    if entry is None:
+        return (False, None)
+    ts, body = entry
+    if time.monotonic() - ts > _PASTE_CACHE_TTL_S:
+        _paste_cache.pop(key, None)
+        return (False, None)
+    return (True, body)
+
+
+def _paste_cache_put(site_id: str, paste_id: str, body: str | None) -> None:
+    """Bounded insert. On overflow, evicts oldest 10% (FIFO)."""
+    if len(_paste_cache) >= _PASTE_CACHE_MAX:
+        evict_count = max(1, int(_PASTE_CACHE_MAX * _PASTE_CACHE_EVICT_FRAC))
+        for _ in range(evict_count):
+            if not _paste_cache:
+                break
+            _paste_cache.popitem(last=False)  # oldest first
+    _paste_cache[(site_id, paste_id)] = (time.monotonic(), body)
+
+
+def _host_semaphore(host: str) -> asyncio.Semaphore:
+    """Lazy per-host Semaphore creation (M1 soft cap 3 concurrent fetches/host)."""
+    sem = _paste_host_sems.get(host)
+    if sem is None:
+        sem = asyncio.Semaphore(_PASTE_HOST_SEMAPHORE)
+        _paste_host_sems[host] = sem
+    return sem
+
+
+async def _scrape_paste_site(
+    adapter: _RawPasteAdapter | _PrivateBinAdapter | _ZeroBinAdapter,
+    paste_id: str,
+) -> str | None:
+    """Canonical base for paste-site scrapers.
+
+    Pipeline (M1 8GB friendly):
+        1. LRU+TTL cache check → return on hit (bounded by _PASTE_CACHE_MAX)
+        2. Atomic claim leadership via dict.setdefault (race-free under
+           concurrent gather — N callers → exactly 1 leader, N-1 followers)
+        3. Run fetch under per-host semaphore (M1 soft cap)
+        4. Build URL(s) via adapter → fetch with timeout/byte cap
+        5. adapter.parse() → return parsed text; None falls through to next URL
+        6. Cache write (positive and negative results)
+        7. Fail-soft: any Exception → None; CancelledError → re-raise (invariant)
+
+    Concurrent callers for the same (site, paste_id) await the same Future
+    and receive the same text-or-None result. No duplicate network requests.
+    """
+    site_id: str = adapter.site_id
+    key: tuple[str, str] = (site_id, paste_id)
+
+    # 1. Cache short-circuit
+    hit, cached = _paste_cache_get(site_id, paste_id)
+    if hit:
+        return cached
+
+    # 2. Atomic claim: whoever setdefault's the future first is the leader.
+    #    dict.setdefault is atomic in CPython (single bytecode op), so this
+    #    is race-free even under concurrent gather.
+    loop = asyncio.get_running_loop()
+    new_future: asyncio.Future[str | None] = loop.create_future()
+    existing_future = _paste_inflight.setdefault(key, new_future)
+    if existing_future is not new_future:
+        # We are a follower: await the leader's result.
+        try:
+            return await existing_future
         except asyncio.CancelledError:
             raise
-        except Exception:
-            continue
-    return None
+        # Leader's contract is text-or-None; non-cancellation exceptions
+        # are surfaced as None (fail-soft invariant preserved).
+
+    # 3. We are the leader: run the fetch pipeline.
+    try:
+        sem = _host_semaphore(adapter.host)
+        async with sem:
+            urls = adapter.build_url(paste_id)
+            url_list: list[str] = urls if isinstance(urls, list) else [urls]
+
+            # 4-5. Try each URL in order (privatebin uses v2 → v1 fallback chain)
+            final: str | None = None
+            for url in url_list:
+                try:
+                    result: FetchResult = await async_fetch_public_text(
+                        url,
+                        timeout_s=adapter.timeout_s,
+                        max_bytes=adapter.max_bytes,
+                    )
+                except asyncio.CancelledError:
+                    raise
+                except Exception as e:
+                    logger.debug(f"{site_id} fetch paste_id={paste_id} url={url} failed: {e}")
+                    continue
+                if result.status_code == 404 or result.error or result.text is None:
+                    continue
+                # Got a body — try to parse. Parse failure → try next URL.
+                try:
+                    parsed = adapter.parse(result.text, paste_id)
+                except asyncio.CancelledError:
+                    raise
+                except Exception as e:
+                    logger.debug(f"{site_id} parse paste_id={paste_id} url={url} failed: {e}")
+                    continue
+                if parsed is not None:
+                    final = parsed
+                    break
+                # parsed is None → next URL (e.g. privatebin v2 invalid → try v1)
+
+            # 6. Cache + return
+            _paste_cache_put(site_id, paste_id, final)
+            # Resolve followers' Future with the same result, then return it.
+            if not new_future.done():
+                new_future.set_result(final)
+            return final
+    except asyncio.CancelledError:
+        if not new_future.done():
+            new_future.cancel()
+        raise
+    except Exception as e:
+        # Leader caught a non-cancellation exception: surface None to followers
+        logger.debug(f"{site_id} leader paste_id={paste_id} failed: {e}")
+        if not new_future.done():
+            new_future.set_result(None)
+        return None
+    finally:
+        _paste_inflight.pop(key, None)
+        # Belt-and-braces: ensure the Future always settles so followers don't hang
+        if not new_future.done() and not new_future.cancelled():
+            new_future.set_result(None)
+
+
+# -----------------------------------------------------------------------------
+# Thin wrappers preserving original function signatures (backward-compatible)
+# -----------------------------------------------------------------------------
+
+async def _scrape_privatebin(paste_id: str) -> str | None:
+    return await _scrape_paste_site(PRIVATEBIN_ADAPTER, paste_id)
 
 
 async def _scrape_ghostbin(paste_id: str) -> str | None:
-    url = f"https://ghostbin.com/paste/{paste_id}/raw"
-    try:
-        result: FetchResult = await async_fetch_public_text(url, timeout_s=10.0, max_bytes=2 * 1024 * 1024)
-        if result.status_code == 404 or result.error or result.text is None:
-            return None
-        return result.text
-    except asyncio.CancelledError:
-        raise
-    except Exception:
-        return None
+    return await _scrape_paste_site(GHOSTBIN_ADAPTER, paste_id)
 
 
 async def _scrape_0bin(paste_id: str) -> str | None:
-    url = f"https://0bin.net/p/{paste_id}"
-    try:
-        result: FetchResult = await async_fetch_public_text(url, timeout_s=10.0, max_bytes=2 * 1024 * 1024)
-        if result.status_code == 404 or result.error or result.text is None:
-            return None
-        try:
-            from selectolax.parser import HTMLParser
-            tree = HTMLParser(result.text)
-            for elem in tree.css("pre.paste-content, textarea.paste-content, .paste-content"):
-                text = elem.text()
-                if text and len(text) > 10:
-                    return text.strip()
-        except ImportError:
-            pass
-        return None
-    except asyncio.CancelledError:
-        raise
-    except Exception:
-        return None
+    return await _scrape_paste_site(ZEROBIN_ADAPTER, paste_id)
 
 
 async def search_paste_sites(query: str, max_results: int = MAX_PASTE_RESULTS) -> list[PasteFinding]:

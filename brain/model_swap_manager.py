@@ -70,7 +70,7 @@ class ModelLifecycleProtocol(msgspec.Struct, frozen=True, gc=False):
         Returns:
             Number of tasks that were cancelled.
         """
-        ...
+        return 0
 
     async def unload_current_model(self) -> None:
         """Unload the currently active model."""
@@ -83,7 +83,7 @@ class ModelLifecycleProtocol(msgspec.Struct, frozen=True, gc=False):
         Returns:
             True if load succeeded, False otherwise.
         """
-        ...
+        return False
 
 
 # =============================================================================

@@ -10,20 +10,33 @@ Sprint F214AD: DeduplicationStrategy protocol extracted to break concrete coupli
 from __future__ import annotations
 
 import hashlib
-from typing import Any, Protocol, runtime_checkable
+from collections.abc import Callable
+from typing import Any, Protocol, cast, runtime_checkable
 
-# Probables library import (RotatingBloomFilter from probables)
+# ---------------------------------------------------------------------------
+# Conditional imports — every symbol below has an explicit type annotation
+# BEFORE the try-block so type checkers (ty/mypy/pyright) can resolve
+# `Symbol | None` across the import-success / ImportError split. Without
+# the up-front annotation, ty infers the success-path type only and
+# rejects the sentinel `= None` assignment.
+# ---------------------------------------------------------------------------
+
+# Probables library — runtime contract varies between probables and
+# pyprobables; the factory raises ImportError when both are missing,
+# so the `object` sentinel never reaches a real call site. Cast at the
+# call site preserves the DeduplicationStrategy return type for callers.
 try:
-    from probables import RotatingBloomFilter
+    from probables import RotatingBloomFilter  # type: ignore[import-not-found]
 
     PROBABLES_AVAILABLE = True
 except ImportError:
     try:
-        from pyprobables import RotatingBloomFilter
+        from pyprobables import RotatingBloomFilter  # type: ignore[import-not-found,no-redef]
 
         PROBABLES_AVAILABLE = True
     except ImportError:
-        RotatingBloomFilter = object  # sentinel — functions raise ImportError before use
+        # Sentinel — functions raise ImportError before use.
+        RotatingBloomFilter = object  # type: ignore[assignment,misc]  # ty: ignore[conflicting-declarations]  # noqa: F811
         PROBABLES_AVAILABLE = False
 
 # xxhash for fast non-crypto hashing (10x faster than blake2b)
@@ -34,12 +47,13 @@ try:
 except ImportError:
     xxhash_available = False
 
-# Rust extension import guard
+# Rust extension import guard — BloomFilter exposed as
+# RustRotatingBloomFilter for API compatibility with probables.
 _RUST_BLOOM_AVAILABLE = False
+RustRotatingBloomFilter: Any = None
 try:
     import hledac_rust_extensions
 
-    # Expose Rust BloomFilter as RustRotatingBloomFilter for API compatibility
     RustRotatingBloomFilter = hledac_rust_extensions.BloomFilter
     _RUST_BLOOM_AVAILABLE = True
 except ImportError:
@@ -47,17 +61,25 @@ except ImportError:
 
 # Rust UrlSet — FNV-1a hash dedup (highest ROI, HOTPATH_RUST_ANALYSIS.md)
 _RUST_URL_DEDUP_AVAILABLE = False
+RustUrlSet: Any = None
 try:
-    from hledac_rust_extensions import UrlSet as RustUrlSet
+    from hledac_rust_extensions import UrlSet as RustUrlSet  # noqa: F811
 
     _RUST_URL_DEDUP_AVAILABLE = True
 except ImportError:
-    RustUrlSet = None  # type: ignore[assignment,sentinel]
+    pass
 
-# Rust URL engine — normalization and fingerprinting
+# Rust URL engine — normalization and fingerprinting. Annotate every
+# bound name explicitly so the sentinel `= None` branch type-checks.
 _RUST_URL_ENGINE_AVAILABLE = False
+rust_normalize: Callable[[str], str] | None = None
+rust_fingerprint: Callable[[str], int] | None = None
+rust_strip_tracking: Callable[[str], str] | None = None
+rust_is_valid_url: Callable[[str], bool] | None = None
+rust_filter_valid: Callable[[list[str]], list[str]] | None = None
+rust_extract_domain: Callable[[str], str | None] | None = None
 try:
-    from hledac_rust_extensions import (
+    from hledac_rust_extensions import (  # noqa: F811
         normalize as rust_normalize,
         fingerprint as rust_fingerprint,
         strip_tracking_params as rust_strip_tracking,
@@ -68,24 +90,30 @@ try:
 
     _RUST_URL_ENGINE_AVAILABLE = True
 except ImportError:
-    rust_normalize = None
-    rust_fingerprint = None
-    rust_strip_tracking = None
-    rust_is_valid_url = None
-    rust_filter_valid = None
-    rust_extract_domain = None
+    pass
 
 
 @runtime_checkable
 class DeduplicationStrategy(Protocol):
-    """Protocol for URL deduplication strategies."""
+    """Protocol for URL deduplication strategies.
 
-    def add(self, item: str) -> None:
+    `add()` return type is intentionally `Any` to accept both:
+      - probables.RotatingBloomFilter.add(...) -> None
+      - hledac_rust_extensions.BloomFilter.add(...) -> bool
+    Callers MUST NOT depend on the return value.
+    """
+
+    def add(self, item: str) -> Any:
         """Add an item to the deduplication set."""
         ...
 
     def __contains__(self, item: str) -> bool:
-        """Check if an item might have been seen before."""
+        """Check if an item might have been seen before.
+
+        Specialised on `str` because every concrete implementation
+        (RustUrlSetAdapter, RotatingBloomFilterAdapter, BloomFilter)
+        keys exclusively on URLs.
+        """
         ...
 
 
@@ -207,18 +235,30 @@ def create_rotating_bloom_filter(
     # P1-15: Enforce upper bound to prevent unbounded memory growth
     est_elements = min(est_elements, MAX_URL_ESTIMATE)
 
-    # Prefer Rust BloomFilter when available — 10-100x faster than pyprobables
+    # Prefer Rust BloomFilter when available — 10-100x faster than pyprobables.
+    # cast() bypasses Protocol return-type check: RustBloomFilter.add() returns
+    # `bool` (kept for runtime), DeduplicationStrategy.add() returns Any.
     if _RUST_BLOOM_AVAILABLE:
-        return RustRotatingBloomFilter(est_elements, false_positive_rate)
+        return cast(
+            DeduplicationStrategy,
+            RustRotatingBloomFilter(est_elements, false_positive_rate),
+        )
 
     if not PROBABLES_AVAILABLE:
         raise ImportError(
             "Neither Rust BloomFilter (hledac-rust-extensions) nor "
             "probables library available. Install probables: pip install probables"
         )
-    return RotatingBloomFilter(
-        est_elements=est_elements,
-        false_positive_rate=false_positive_rate,
+    # cast() collapses the `RotatingBloomFilter | object` union — the `object`
+    # variant is dead code (raise ImportError above blocks it). Pyright cannot
+    # see through the runtime PROBABLES_AVAILABLE guard, so suppress the
+    # per-kwarg reportCallIssue on the sentinel `object` branch.
+    return cast(
+        DeduplicationStrategy,
+        RotatingBloomFilter(
+            est_elements=est_elements,  # ty: ignore[unknown-argument]  # pyright: ignore[reportCallIssue]
+            false_positive_rate=false_positive_rate,  # ty: ignore[unknown-argument]  # pyright: ignore[reportCallIssue]
+        ),
     )
 
 

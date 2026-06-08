@@ -1,0 +1,9 @@
+{
+  "hits": [],
+  "error": null,
+  "provider_name": "duckduckgo",
+  "provider_chain": ["duckduckgo"],
+  "source_family": "search",
+  "elapsed_s": 0.0,
+  "provider_status_debug": []
+}

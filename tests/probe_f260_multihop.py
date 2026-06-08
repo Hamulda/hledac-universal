@@ -156,7 +156,7 @@ class TestF260HypothesisEngine:
         """HypothesisEngine imports MultiHop components."""
         # Check imports are defined (fail-soft)
         try:
-            from brain.hypothesis_engine import (
+            from brain.research_hypothesis_engine import (
                 MULTIHOP_AVAILABLE,
                 HLEDAC_ENABLE_LLM,
             )
@@ -167,7 +167,7 @@ class TestF260HypothesisEngine:
 
     def test_hypothesis_engine_has_os_import(self):
         """HypothesisEngine has os import for env vars."""
-        from brain import hypothesis_engine
+        from brain import research_hypothesis_engine
 
         # Check os is in the module
         assert hasattr(hypothesis_engine, "__file__")  # Module exists

@@ -419,7 +419,7 @@ class TorTransport(Transport):
     def register_handler(self, msg_type: str, handler: Callable):
         self.handlers[msg_type] = handler
 
-    async def send_message(self, target: str, msg_type: str, payload: dict, signature: str, msg_id: str = None):
+    async def send_message(self, target: str, msg_type: str, payload: dict, signature: str, msg_id: str | None = None):
         if target.startswith('localhost:'):
             url = f"http://{target}/message"
             session = self._session_direct

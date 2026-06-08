@@ -277,7 +277,7 @@ class VisionCaptchaSolver:
         logger.info("CAPTCHA solver cache cleared")
 
     @classmethod
-    def get_cache_stats(cls) -> Dict:
+    def get_cache_stats(cls) -> dict:
         """Get cache statistics."""
         return {
             'size': len(cls._result_cache),

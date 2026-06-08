@@ -59,6 +59,42 @@ async def run_windup(
 
     Nikdy nevyhodí výjimku.
     """
+    # Sprint 1780830658 fix: early-exit on empty finding set.
+    # Previous behavior: WINDUP ran full GNN/synth/hypothesis pipeline
+    # even when accepted=0, wasting ~120s on cold paths. With 0 findings,
+    # GNN/ANE/synthesis have no signal to operate on — skip straight
+    # to scorecard with empty/zero defaults.
+    pre_finding_count = int(getattr(scheduler, "_finding_count", 0) or 0)
+    if pre_finding_count == 0 and not getattr(scheduler, "_all_findings", []):
+        logger.info("[WINDUP] early-exit: 0 findings, skipping GNN/ANE/synthesis")
+        try:
+            rss = _resource.getrusage(_resource.RUSAGE_SELF).ru_maxrss
+            t_windup_dur = round(time.monotonic() - t_active_end, 2) if t_active_end else 0.0
+            return {
+                "peak_rss_mb": round(rss / 1024 / 1024, 1),
+                "accepted_findings_count": 0,
+                "deduped_findings_count": 0,
+                "synthesis_engine_used": "skipped_zero_findings",
+                "dspy_prompt_version": 0,
+                "bandit_arm_used": None,
+                "bandit_arm_rewards": {},
+                "gnn_predicted_links": 0,
+                "gnn_anomalies": 0,
+                "ioc_graph": {"nodes": 0, "edges": 0, "pgq_active": False},
+                "top_graph_nodes": [],
+                "phase_duration_seconds": {
+                    "warmup": 0.0,
+                    "active": round(t_active_end - t_warmup_end, 2)
+                        if t_warmup_end and t_active_end else 0.0,
+                    "windup": t_windup_dur,
+                },
+                "cb_open_domains": _safe_get_breaker_states(),
+                "ranked_parquet": None,
+            }
+        except Exception as e:
+            logger.warning(f"[WINDUP] early-exit scorecard failed: {e}")
+            # Fall through to full path if early-exit itself errors
+
     # 1. Parquet dedup + ranking
     ranked_path: str | None = None
     try:
@@ -174,7 +210,7 @@ async def run_windup(
 
     # 6. Hypothesis enqueue (top-3)
     try:
-        from brain.hypothesis_engine import HypothesisEngine
+        from brain.research_hypothesis_engine import HypothesisEngine
 
         # Extract finding strings from deduped findings
         finding_strings = []

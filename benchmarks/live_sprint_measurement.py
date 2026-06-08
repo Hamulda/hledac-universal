@@ -872,6 +872,7 @@ except ImportError:
 try:
     from benchmarks.live_measurement_quality import (
         get_acquisition_profile_reality,
+        _check_profile_reality_preflight,
     )
 except ImportError:
     pass

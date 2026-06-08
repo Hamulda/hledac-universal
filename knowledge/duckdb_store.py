@@ -233,6 +233,7 @@ from .quality_assessment import (
 from .wal import WALManager
 
 from utils.async_helpers import safe_gather_fire_and_forget
+logger = logging.getLogger(__name__)
 # Sprint F222: Semantic buffering (extracted from this file)
 
 
@@ -399,6 +400,15 @@ def _get_duckdb() -> Any:
 
 _DUCKDB_MEMORY_LIMIT: str = os.environ.get("GHOST_DUCKDB_MEMORY", "400MB")
 _DUCKDB_MAX_TEMP: str = os.environ.get("GHOST_DUCKDB_MAX_TEMP", "1GB")
+
+# Sprint P0-4: Arrow zero-copy ingest opt-in. Default off (executemany proven, fail-safe).
+# Off → async_record_canonical_findings_batch_arrow silently falls back to legacy executemany.
+# On  → Arrow path for batches >= ARROW_MIN_BATCH (below threshold still falls back to executemany
+#       because per-row executemany call overhead is lower than Arrow table build for tiny N).
+_ARROW_INGEST_ENABLED: bool = os.environ.get("HLEDAC_ARROW_INGEST") == "1"
+# Sprint P0-4: Arrow path break-even vs executemany is roughly N=64-128 on M1 8GB.
+# Below this, executemany wins on per-call overhead; above, Arrow register+INSERT dominates.
+_ARROW_MIN_BATCH: int = int(os.environ.get("HLEDAC_ARROW_MIN_BATCH", "100"))
 
 
 # ---------------------------------------------------------------------------
@@ -1465,6 +1475,10 @@ class DuckDBShadowStore:
             Bulk insert shadow findings. Returns number of successfully inserted records.
             MUST be called on the worker thread.
             """
+            import logging as _logging
+
+            _logger = _logging.getLogger(__name__)
+
             if not findings:
                 return 0
             rows = [
@@ -1486,7 +1500,8 @@ class DuckDBShadowStore:
                         c.executemany(self._SQL_INSERT_SHADOW_FINDING, rows)
                 self._with_transaction(conn, _do)
                 return len(rows)
-            except Exception:
+            except Exception as e:
+                _logger.error(f"[D7] DuckDB bulk insert failed: {type(e).__name__}: {e}")
                 return 0
 
         def insert_findings_bulk_as_tuples(self, rows: list[list]) -> int:
@@ -1495,6 +1510,10 @@ class DuckDBShadowStore:
             MUST be called on the worker thread.
             Returns number of successfully inserted records.
             """
+            import logging as _logging
+
+            _logger = _logging.getLogger(__name__)
+
             if not rows:
                 return 0
             conn = self._conn()
@@ -1511,7 +1530,71 @@ class DuckDBShadowStore:
                         c.executemany(self._SQL_INSERT_SHADOW_FINDING, rows)
                 self._with_transaction(conn, _do)
                 return len(rows)
+            except Exception as e:
+                _logger.error(f"[D7] DuckDB bulk-as-tuples insert failed: {type(e).__name__}: {e}")
+                return 0
+
+        def insert_findings_bulk_arrow(self, table: Any) -> int:
+            """
+            Sprint P0-4: Zero-copy Arrow bulk insert via DuckDB register() + INSERT...SELECT.
+
+            MUST be called on the worker thread (thread-affine connection).
+            Returns the input table row count on success, 0 on any failure (fail-soft).
+
+            Why: executemany with N prepared stmt.execute() Python calls has ~3-5x the
+            per-row Python overhead of one Arrow register() + one INSERT...SELECT.
+            Provenance is already serialized in `table` (caller builds pa.array of JSON strs),
+            so this method does no Python-level encoding.
+
+            ON CONFLICT (id) DO NOTHING handles primary-key collisions silently.
+            The secondary UNIQUE(query, source_type) constraint is NOT protected here;
+            caller is expected to pre-dedupe or accept the failure (logged + return 0).
+            """
+            import logging as _logging
+
+            _logger = _logging.getLogger(__name__)
+
+            if table is None:
+                return 0
+            try:
+                n_rows = int(table.num_rows)
             except Exception:
+                return 0
+            if n_rows == 0:
+                return 0
+            conn = self._conn()
+            if conn is None:
+                return 0
+            # register() + INSERT...SELECT is the canonical zero-copy path.
+            # DuckDB reads Arrow buffers via C++ Arrow C Data Interface — no Python copies.
+            try:
+                # Use a per-call unique name to avoid collisions if two threads raced
+                # (single-worker executor makes that impossible, but defensive anyway).
+                import uuid as _uuid
+                reg_name = f"finding_arrow_batch_{_uuid.uuid4().hex[:12]}"
+                conn.register(reg_name, table)
+                try:
+                    conn.execute(
+                        "INSERT INTO shadow_findings "
+                        "(id, query, source_type, confidence, ts, provenance_json) "
+                        f"SELECT id, query, source_type, confidence, ts, provenance_json "
+                        f"FROM {reg_name} "
+                        "ON CONFLICT (id) DO NOTHING"
+                    )
+                finally:
+                    # Always unregister — Arrow buffer ref-counted by DuckDB until then.
+                    # Fail-soft unregister: leak is bounded by next register() overwriting
+                    # the entry in DuckDB's catalog.
+                    try:
+                        conn.unregister(reg_name)
+                    except Exception:
+                        pass
+                return n_rows
+            except Exception as e:
+                _logger.error(
+                    f"[P0-4 Arrow] DuckDB Arrow bulk insert failed: "
+                    f"{type(e).__name__}: {e}"
+                )
                 return 0
 
         def insert_run(
@@ -3294,6 +3377,9 @@ class DuckDBShadowStore:
     def _sync_upsert_target_memory(self, memory: TargetMemory) -> bool:
         """Sync upsert target memory — MUST be called on worker thread."""
         import orjson
+        import logging as _logging
+
+        _logger = _logging.getLogger(__name__)
 
         try:
             conn = self._file_conn if self._db_path else self._persistent_conn
@@ -4637,6 +4723,101 @@ class DuckDBShadowStore:
                 for f in findings
             ]
 
+    async def async_record_canonical_findings_batch_arrow(
+        self,
+        findings: list[CanonicalFinding],
+    ) -> list[ActivationResult]:
+        """
+        Sprint P0-4: Arrow zero-copy batch ingest for CanonicalFinding DTO list.
+
+        3-stupňový fallback na legacy `async_record_canonical_findings_batch`:
+          1. pyarrow chybí (try/except import) → legacy
+          2. `HLEDAC_ARROW_INGEST != "1"` (env gate, default off) → legacy
+          3. `len(findings) < _ARROW_MIN_BATCH` (default 100) → legacy
+          4. sync helper vrátí 0 (jakýkoliv error v Table build / register / INSERT) → legacy
+
+        Při úspěchu: WAL first (LMDB put_many) + DuckDB Arrow register+INSERT (one roundtrip).
+        Zero-copy: pa.array() drží C++ buffery, DuckDB čte přes Arrow C Data Interface.
+
+        Invarianty (shodné s legacy):
+          - 1:1 result mapping (len(results) == len(findings))
+          - `self._quality_state._accepted_count` += count of lmdb_success
+          - graph + semantic buffer triggered for accepted findings
+          - thread-affine execution on `self._executor`
+          - LMDB WAL precedes DuckDB (recovery invariant)
+
+        Returns list[ActivationResult]. Empty list for empty findings input.
+        """
+        if not findings:
+            return []
+
+        # Fallback gate 1: env opt-in
+        if not _ARROW_INGEST_ENABLED:
+            return await self.async_record_canonical_findings_batch(findings)
+
+        # Fallback gate 2: batch size — executemany is faster for small N
+        if len(findings) < _ARROW_MIN_BATCH:
+            return await self.async_record_canonical_findings_batch(findings)
+
+        # Fallback gate 3: pyarrow availability (lazy import)
+        try:
+            import pyarrow  # noqa: F401
+        except ImportError:
+            return await self.async_record_canonical_findings_batch(findings)
+
+        # Init / closed guards — mirror legacy semantics (mark all as failed)
+        if not self._initialized or self._closed:
+            return await self.async_record_canonical_findings_batch(findings)
+
+        # Boot barrier — same as legacy (30s timeout, fail-soft)
+        if not self._startup_ready.is_set():
+            try:
+                async with asyncio.timeout(30.0):
+                    await self._startup_ready.wait()
+            except TimeoutError:
+                return await self.async_record_canonical_findings_batch(findings)
+
+        loop = asyncio.get_running_loop()
+        try:
+            results = await loop.run_in_executor(
+                self._executor,
+                self._sync_record_canonical_findings_batch_arrow_full,
+                findings,
+            )
+        except Exception:
+            # Any executor-side failure (pyarrow missing at worker import, etc.)
+            # → fall back to proven executemany path. This is the 4th fallback gate.
+            return await self.async_record_canonical_findings_batch(findings)
+
+        # Fallback gate 4: empty results from sync helper = failure (table build
+        # error, register error, INSERT error). Empty list = legacy returns
+        # [] only for empty input, which we already filtered above.
+        if not results:
+            return await self.async_record_canonical_findings_batch(findings)
+
+        # Post-processing — identical to async_record_canonical_findings_batch
+        # (graph trigger, semantic buffer, _accepted_count, ActivationResult build).
+        if results and any(r.get("lmdb_success") for r in results):
+            if self.truth_write_graph_supports_buffered_writes():
+                self._graph_ingest_findings(findings)
+            self._semantic_buffer_findings(findings)
+
+        accepted_total = sum(1 for r in results if r.get("lmdb_success"))
+        self._quality_state._accepted_count += accepted_total
+
+        return [
+            ActivationResult(
+                finding_id=str(r.get("finding_id", "")),
+                lmdb_success=bool(r.get("lmdb_success")),
+                duckdb_success=r.get("duckdb_success"),
+                lmdb_key=f"finding:{r.get('finding_id', '')}",
+                desync=bool(r.get("lmdb_success") and r.get("duckdb_success") is False),
+                error=r.get("error"),
+                accepted=bool(r.get("lmdb_success")),
+            )
+            for r in results
+        ]
+
     # ------------------------------------------------------------------
     # Sprint F800A: Controller-facing async seam — thin adapters
     # ------------------------------------------------------------------
@@ -5766,6 +5947,171 @@ class DuckDBShadowStore:
         """
         return self._qe().insert_findings_bulk_as_tuples(rows)
 
+    def _sync_record_canonical_findings_batch_arrow(
+        self,
+        findings: list[CanonicalFinding],
+    ) -> int:
+        """
+        Sprint P0-4: Arrow zero-copy bulk insert for CanonicalFinding list.
+
+        MUST be called on the worker thread (thread-affine connection).
+        Returns number of successfully inserted DuckDB rows (0 on any failure).
+
+        Distinct from the legacy `_canonical_findings_batch_to_activation_results`
+        in three ways:
+          1. Builds a single pyarrow.Table with columnar zero-copy arrays.
+          2. Calls QueryExecutor.insert_findings_bulk_arrow (register + INSERT...SELECT).
+          3. Does NOT touch LMDB WAL — caller is responsible for that half (or falls
+             back to the legacy path which does both). This split keeps the Arrow
+             path optional and side-effect-free at the WAL layer.
+
+        Fail-soft: any error returns 0 and the async wrapper falls back to legacy.
+        """
+        if not findings:
+            return 0
+        try:
+            import pyarrow as _pa
+        except ImportError:
+            return 0  # pyarrow not installed — caller falls back to executemany
+
+        n = len(findings)
+        try:
+            # Build columnar arrays — zero-copy for str/float, single alloc per column.
+            # msgspec.encode returns bytes; we decode once per row, but the result is
+            # a single pa.string() array (one contiguous buffer, no Python list of lists).
+            provenance_arr = _pa.array(
+                [
+                    _CANONICAL_ENCODER.encode(f.provenance).decode("utf-8")
+                    for f in findings
+                ],
+                type=_pa.string(),
+            )
+            id_arr = _pa.array(
+                [f.finding_id for f in findings], type=_pa.string()
+            )
+            query_arr = _pa.array(
+                [f.query for f in findings], type=_pa.string()
+            )
+            src_arr = _pa.array(
+                [f.source_type for f in findings], type=_pa.string()
+            )
+            conf_arr = _pa.array(
+                [f.confidence for f in findings], type=_pa.float64()
+            )
+            ts_arr = _pa.array(
+                [f.ts for f in findings], type=_pa.float64()
+            )
+            table = _pa.Table.from_arrays(
+                [id_arr, query_arr, src_arr, conf_arr, ts_arr, provenance_arr],
+                names=[
+                    "id", "query", "source_type", "confidence", "ts", "provenance_json",
+                ],
+            )
+        except Exception as e:
+            # Build failure (e.g. exotic provenance type) — caller falls back.
+            import logging as _logging
+            _logging.getLogger(__name__).error(
+                f"[P0-4 Arrow] Table build failed: {type(e).__name__}: {e}"
+            )
+            return 0
+
+        # Delegate to QueryExecutor — keeps SQL + register/unregister in one place.
+        return self._qe().insert_findings_bulk_arrow(table)
+
+    def _sync_record_canonical_findings_batch_arrow_full(
+        self,
+        findings: list[CanonicalFinding],
+    ) -> list[dict]:
+        """
+        Sprint P0-4: Full Arrow batch — LMDB WAL first, then Arrow DuckDB.
+
+        Same shape as `_canonical_findings_batch_to_activation_results` but the
+        DuckDB step is the Arrow path. Returns list[dict] with 1:1 mapping.
+
+        MUST be called on the worker thread.
+        """
+        import logging as _logging
+
+        _logger = _logging.getLogger(__name__)
+        if not findings:
+            return []
+
+        ret: list[dict] = []
+
+        # Step 1: LMDB WAL first (mirror legacy path) — msgspec + per-finding key.
+        # Reuses the same fallback logic as _canonical_findings_batch_to_activation_results.
+        lmdb_ok = False
+        try:
+            if not hasattr(self, "_wal_manager") or self._wal_manager is None:
+                _wal_root = self._db_path.parent if self._db_path else None
+                if _wal_root is None:
+                    for _ in findings:
+                        ret.append({
+                            "lmdb_success": False,
+                            "duckdb_success": None,
+                            "error": "no wal root",
+                        })
+                    return ret
+                self._wal_manager = WALManager(wal_path=str(_wal_root / "shadow_wal.lmdb"))
+                self._wal_manager.initialize()
+
+            items = []
+            for f in findings:
+                key = f"finding:{f.finding_id}"
+                wal_payload = {
+                    "id": f.finding_id,
+                    "query": f.query,
+                    "source_type": f.source_type,
+                    "confidence": f.confidence,
+                    "ts": f.ts,
+                    "provenance": f.provenance,
+                    "payload_text": f.payload_text,
+                }
+                items.append((key, wal_payload))
+
+            if items:
+                lmdb_ok = self._wal_manager.wal_put_many(items) if hasattr(
+                    self._wal_manager, "wal_put_many"
+                ) else False
+                if not lmdb_ok:
+                    _logger.warning(
+                        f"[P0-4 Arrow] Batch WAL failed for {len(items)} items"
+                    )
+                    for _ in findings:
+                        ret.append({
+                            "lmdb_success": False,
+                            "duckdb_success": None,
+                            "error": "lmdb batch failed",
+                        })
+                    return ret
+        except Exception as e:
+            _logger.error(f"[P0-4 Arrow] Batch WAL exception: {e}")
+            for _ in findings:
+                ret.append({
+                    "lmdb_success": False,
+                    "duckdb_success": None,
+                    "error": str(e),
+                })
+            return ret
+
+        # Step 2: DuckDB Arrow bulk — returns count, 0 on any failure (fail-soft).
+        duckdb_count = self._sync_record_canonical_findings_batch_arrow(findings)
+        duckdb_all_ok = duckdb_count >= len(findings)
+        if not duckdb_all_ok:
+            _logger.error(
+                f"[P0-4 Arrow] Partial DuckDB batch: {duckdb_count}/{len(findings)}"
+            )
+
+        # Step 3: Build per-finding results (1:1, mirrors legacy).
+        for f in findings:
+            ret.append({
+                "finding_id": f.finding_id,
+                "lmdb_success": lmdb_ok,
+                "duckdb_success": duckdb_all_ok,
+                "error": None,
+            })
+        return ret
+
 
     # ------------------------------------------------------------------
     # Async shutdown (new in 8AS)
@@ -6586,6 +6932,10 @@ class DuckDBShadowStore:
         Removes (total_count - keep_count) oldest markers by timestamp.
         Returns number of markers evicted.
         """
+        import logging as _logging
+
+        _logger = _logging.getLogger(__name__)
+
         try:
             if not hasattr(self, "_wal_lmdb") or self._wal_lmdb is None:
                 return 0

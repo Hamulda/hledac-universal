@@ -90,17 +90,35 @@ class FediverseSidecarAdapter(BaseSidecarAdapter):
                 terms.append(ioc_value)
         return terms[:10]
 
-    def _make_finding(self, post: dict, ctx: SidecarContext) -> dict | None:
-        """Construct a CanonicalFinding-compatible dict from Fediverse post."""
+    def _make_finding(self, post: object, ctx: SidecarContext) -> dict | None:
+        """Construct a CanonicalFinding-compatible dict from a Fediverse post.
+
+        Accepts a `FediversePost` dataclass (the new contract from
+        `discovery/fediverse_adapter.search_multiple_instances`) or a raw
+        dict (legacy path) — both shapes are normalized via
+        `FediversePost.to_dict()` for downstream `post.get(...)` access.
+        Fail-soft: any conversion error returns `None` and the sidecar
+        logs nothing for the dropped post.
+        """
         try:
+            # Normalize: dataclass → dict, dict stays, anything else → None.
+            if hasattr(post, "to_dict") and callable(post.to_dict):
+                post_dict = post.to_dict()
+            elif isinstance(post, dict):
+                post_dict = post
+            else:
+                return None
             return {
                 "source_type": "fediverse",
                 "query": ctx.query,
                 "sprint_id": ctx.sprint_id,
                 "ioc_type": "social_media_post",
-                "ioc_value": post.get("url", post.get("id", "")),
+                "ioc_value": post_dict.get("url", post_dict.get("id", "")),
                 "confidence": 0.6,
-                "payload_text": f"{post.get('content', '')} | @{post.get('account', {}).get('username', 'unknown')}",
+                "payload_text": (
+                    f"{post_dict.get('content', '')} | "
+                    f"@{post_dict.get('account', {}).get('username', 'unknown')}"
+                ),
             }
         except Exception:
             return None

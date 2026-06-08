@@ -62,7 +62,8 @@ _LAZY_EXPORTS = {
     "AdaptiveSemaphore": "hledac.universal.resource_allocator",
 
     # Orchestrator
-    "FullyAutonomousOrchestrator": "hledac.universal.autonomous_orchestrator",
+    # [2026-06-07] FullyAutonomousOrchestrator lazy export REMOVED — legacy facade
+    # deleted. Canonical orchestrator is runtime.sprint_scheduler.SprintScheduler.
 
     # Concurrency utilities
     "FETCH_SEMAPHORE": "hledac.universal.utils.concurrency",

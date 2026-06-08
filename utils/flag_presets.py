@@ -91,7 +91,7 @@ RESEARCH: Final[dict[str, str]] = {
 def _build_full() -> dict[str, str]:
     # Local import to avoid hard dependency on registry import order
     # (utils.flag_presets is independent of utils.flag_registry).
-    from utils.flag_registry import FLAG_REGISTRY  # type: ignore
+    from .flag_registry import FLAG_REGISTRY  # type: ignore
     return {name: "1" for name in FLAG_REGISTRY}
 
 
@@ -158,7 +158,7 @@ def estimate_preset_ram_mb(name: str) -> int:
     if name not in PRESETS:
         return 0
     try:
-        from utils.flag_registry import FLAG_REGISTRY  # type: ignore
+        from .flag_registry import FLAG_REGISTRY  # type: ignore
     except ImportError:
         return 0
     total = 0
@@ -174,7 +174,7 @@ def list_presets_table() -> str:
 
     Used by ``--list-presets`` CLI handler.
     """
-    from utils.flag_registry import _RAM_FATAL_MB, _RAM_WARN_MB  # type: ignore
+    from .flag_registry import _RAM_FATAL_MB, _RAM_WARN_MB  # type: ignore
 
     rows: list[tuple[str, str, str, str]] = []
     for name in ("minimal", "osint", "recon", "research", "full"):

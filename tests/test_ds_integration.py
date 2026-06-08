@@ -8,7 +8,7 @@ Tests DS second-opinion channel:
 4. DS conflict mass: conflict_mass() is float 0.0-1.0 after mixed evidence
 """
 
-from brain.hypothesis_engine import Hypothesis, HypothesisEngine
+from brain.research_hypothesis_engine import Hypothesis, HypothesisEngine
 
 
 class TestDempsterShaferIntegration:

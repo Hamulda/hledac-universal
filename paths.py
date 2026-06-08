@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 __all__ = [
     # RAMdisk / fallback roots
     "RAMDISK_ROOT",
@@ -24,6 +26,8 @@ __all__ = [
     "SOCKETS_ROOT",
     "SPRINT_STORE_ROOT",
     "IOC_DB_PATH",
+    # F265A: Back-compat path bundle (single import object)
+    "PATHS",
     # Sprint artifact helpers
     "get_sprint_parquet_dir",
     "get_ioc_db_path",
@@ -321,6 +325,56 @@ IOC_DB_PATH: Path = (
     SPRINT_STORE_ROOT.parent / "ioc_graph.duckdb"
 )
 IOC_DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+
+
+# --- F265A: Back-compat path bundle (`from hledac.universal.paths import PATHS`) ----
+# Legacy callers (e.g. `knowledge/ann_index.py`) import a single `PATHS` object and
+# access attributes like `PATHS.hledac_home`. The canonical contract is the
+# module-level constants above — this frozen dataclass is a thin facade and
+# must NOT drift from those values.
+#
+# Why a frozen dataclass (not SimpleNamespace / dict):
+#   - Static type-checkers (`ty`, `mypy`) infer attribute types precisely.
+#   - `frozen=True` prevents accidental mutation at runtime — a `Path` swap
+#     on the bundle would silently misdirect every downstream consumer.
+#   - `slots`-like behaviour (CPython 3.10+ `__slots__` generation) keeps
+#     the M1 8GB heap footprint minimal — one allocation, no per-attr dict.
+@dataclass(frozen=True)
+class _Paths:
+    """Immutable bundle of canonical runtime paths.
+
+    `hledac_home` is the XDG-style user-data root (`~/.hledac`); the other
+    fields mirror the module-level constants of the same name.
+    """
+    hledac_home: Path
+    ramdisk_root: Path
+    fallback_root: Path
+    cache_root: Path
+    db_root: Path
+    lmdb_root: Path
+    sprint_lmdb_root: Path
+    evidence_root: Path
+    keys_root: Path
+    sprint_store_root: Path
+    ioc_db_path: Path
+
+
+# Single canonical instance. Built at import time from the module-level
+# constants — order matters: this must be after IOC_DB_PATH is assigned
+# (line ~320) so the dataclass sees fully-resolved paths.
+PATHS: _Paths = _Paths(
+    hledac_home=Path.home() / ".hledac",
+    ramdisk_root=RAMDISK_ROOT,
+    fallback_root=FALLBACK_ROOT,
+    cache_root=CACHE_ROOT,
+    db_root=DB_ROOT,
+    lmdb_root=LMDB_ROOT,
+    sprint_lmdb_root=SPRINT_LMDB_ROOT,
+    evidence_root=EVIDENCE_ROOT,
+    keys_root=KEYS_ROOT,
+    sprint_store_root=SPRINT_STORE_ROOT,
+    ioc_db_path=IOC_DB_PATH,
+)
 
 
 def get_ioc_db_path() -> pathlib.Path:

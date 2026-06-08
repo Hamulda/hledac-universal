@@ -8,7 +8,7 @@ import pytest
 
 FIXED_SCOPE = [
     "hledac/universal/benchmarks/run_sprint82j_benchmark.py",
-    "hledac/universal/brain/hypothesis_engine.py",
+    "hledac/universal/brain/research_hypothesis_engine.py",
     "hledac/universal/brain/distillation_engine.py",
     "hledac/universal/brain/hermes3_engine.py",
     "hledac/universal/stealth_crawler.py",
@@ -241,7 +241,7 @@ class TestHypothesisEngineLoopUsageSafe:
 
     def test_hypothesis_engine_async_run_safety(self):
         """hypothesis_engine generate_hypotheses must not nest asyncio.run when called from async."""
-        path = Path("hledac/universal/brain/hypothesis_engine.py")
+        path = Path("hledac/universal/brain/research_hypothesis_engine.py")
         if not path.exists():
             pytest.skip("hypothesis_engine.py not found")
 

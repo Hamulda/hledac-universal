@@ -241,7 +241,7 @@ class SessionManager:
             pass
         return None
 
-    async def save_session(self, domain: str, cookies: dict, headers: dict = None):
+    async def save_session(self, domain: str, cookies: dict, headers: dict | None = None):
         """Uloží session pro domain. F300K: no-op after close."""
         # F300K: Guard — mutate operations blocked after close
         if self._closed:

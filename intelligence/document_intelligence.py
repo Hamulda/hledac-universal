@@ -1107,7 +1107,7 @@ class DeepForensicsAnalyzer:
             pass
         return None
 
-    async def analyze_image(self, content: bytes, url: str = None) -> dict[str, Any]:
+    async def analyze_image(self, content: bytes, url: str | None = None):
         """Analyze image for forensic artifacts.
 
         Args:

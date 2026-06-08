@@ -1,4 +1,15 @@
-import pyarrow as pa, pyarrow.parquet as pq, pathlib, tempfile
+import pytest
+
+# Skip the entire module when the optional `pyarrow` dependency is not
+# installed.  `pyarrow` is intentionally a non-default dependency
+# (it adds ~40 MB to the install footprint) and is only needed for
+# the parquet ingestion probe.
+pytest.importorskip("pyarrow", reason="pyarrow optional dep not installed")
+
+import pyarrow as pa
+import pyarrow.parquet as pq
+import pathlib
+import tempfile
 from graph.quantum_pathfinder import DuckPGQGraph
 
 def test_merge_from_parquet():

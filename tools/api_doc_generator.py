@@ -178,7 +178,7 @@ class APIDocGenerator:
         )
 
     def parse_function(self, node: ast.FunctionDef | ast.AsyncFunctionDef,
-                      module_name: str, class_name: str = None) -> APIMethod:
+                      module_name: str, class_name: str | None = None):
         """Parse a function or method definition."""
         docstring = ast.get_docstring(node) or ""
         signature = self.get_function_signature(node)

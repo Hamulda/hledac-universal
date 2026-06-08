@@ -397,6 +397,197 @@ _register_symmetric_conflict(
 )
 
 
+# ── system — Phase 4 / cross-cutting controls (tier 1) ─────────────────
+register(FlagSpec(
+    name="HLEDAC_BENCHMARK",
+    group="system",
+    min_ram_mb=0,
+    description="Benchmark mode (short-circuit sprint loop for measurement).",
+))
+register(FlagSpec(
+    name="HLEDAC_OFFLINE",
+    group="system",
+    min_ram_mb=0,
+    description="Offline mode (skip all network egress).",
+))
+register(FlagSpec(
+    name="HLEDAC_RL_SKIP_RAM_GATE",
+    group="system",
+    min_ram_mb=0,
+    description="Bypass RL policy RAM gate (advisory only, do not crash on low RAM).",
+))
+register(FlagSpec(
+    name="HLEDAC_DISABLE_GC_FREEZE",
+    group="system",
+    min_ram_mb=0,
+    description="Disable gc.freeze() / gc.unfreeze() cycles (M1 latency tests).",
+))
+register(FlagSpec(
+    name="HLEDAC_DISABLE_RL",
+    group="system",
+    min_ram_mb=0,
+    description="Disable RL/SprintPolicyManager even when the module is importable.",
+))
+register(FlagSpec(
+    name="HLEDAC_TRACEMALLOC",
+    group="system",
+    min_ram_mb=50,
+    description="Enable tracemalloc (debug allocator; ~50MB overhead).",
+))
+
+# ── network — Phase 4 / tier 1 ─────────────────────────────────────────
+register(FlagSpec(
+    name="HLEDAC_ENABLE_BANNER_GRAB",
+    group="network",
+    min_ram_mb=0,
+    description="TCP banner grab (enum sidecar; SYN/ACK probe).",
+))
+register(FlagSpec(
+    name="HLEDAC_ENABLE_COMMONCRAWL",
+    group="network",
+    min_ram_mb=50,
+    description="CommonCrawl index search (CDX + WARC sampling).",
+))
+register(FlagSpec(
+    name="HLEDAC_ENABLE_GOPHER",
+    group="network",
+    min_ram_mb=0,
+    description="Gopher protocol fetcher (RFC 1436; fallback for alt-protocol lane).",
+))
+register(FlagSpec(
+    name="HLEDAC_ENABLE_PROVIDERLESS_DISCOVERY",
+    group="network",
+    min_ram_mb=0,
+    description="Providerless discovery cascade (DDG → Historical → Wayback).",
+))
+register(FlagSpec(
+    name="HLEDAC_HTTP3",
+    group="network",
+    min_ram_mb=0,
+    description="HTTP/3 (QUIC) experimental transport.",
+))
+register(FlagSpec(
+    name="HLEDAC_IPFS_CLEARNET",
+    group="network",
+    min_ram_mb=0,
+    description="IPFS clearnet gateway (public pinning/CDN, no local daemon).",
+))
+
+# ── brain — Phase 4 / tier 1 ───────────────────────────────────────────
+register(FlagSpec(
+    name="HLEDAC_DEEP_RESEARCH",
+    group="brain",
+    implies=("HLEDAC_ENABLE_LLM",),
+    min_ram_mb=500,
+    description="Deep research lane (multi-step LLM planning, requires LLM).",
+))
+register(FlagSpec(
+    name="HLEDAC_ENABLE_CONTENT_LAYER",
+    group="brain",
+    min_ram_mb=200,
+    description="Content analysis layer (entity/relation extraction, not LLM).",
+))
+register(FlagSpec(
+    name="HLEDAC_ENABLE_LAYERS",
+    group="brain",
+    min_ram_mb=0,
+    description="Security layer manager (composable validation pipeline).",
+))
+register(FlagSpec(
+    name="HLEDAC_ENABLE_RESEARCH_LAYER",
+    group="brain",
+    min_ram_mb=200,
+    description="Research analysis layer (corpus aggregation + ranking).",
+))
+
+# ── storage — Phase 4 / tier 1 ─────────────────────────────────────────
+register(FlagSpec(
+    name="HLEDAC_ENABLE_TEMPORAL_STORE",
+    group="storage",
+    min_ram_mb=100,
+    description="Temporal data store (time-series findings, versioned CT logs).",
+))
+register(FlagSpec(
+    name="HLEDAC_LANCEDB_QUANTIZE",
+    group="storage",
+    min_ram_mb=0,
+    description="LanceDB IVF-PQ vector quantization (M1 8GB RAM friendly, opt-in).",
+))
+register(FlagSpec(
+    name="HLEDAC_LANCEDB_AUTO_TUNE",
+    group="storage",
+    implies=("HLEDAC_LANCEDB_QUANTIZE",),
+    min_ram_mb=0,
+    description="Adaptive IVF-PQ auto-tuning — measure recall@K, grow/shrink num_partitions (M1 8GB friendly, opt-in, sprint F264E).",
+))
+register(FlagSpec(
+    name="HLEDAC_LANCEDB_AUTO_TUNE_THRESHOLD",
+    group="storage",
+    min_ram_mb=0,
+    description="Insert count threshold for auto-tune evaluation (default 5000, sprint F264E).",
+))
+register(FlagSpec(
+    name="HLEDAC_LANCEDB_AUTO_TUNE_COOLDOWN_S",
+    group="storage",
+    min_ram_mb=0,
+    description="Cooldown in seconds between consecutive IVF-PQ auto-tune attempts (default 3600, sprint F264E).",
+))
+
+# ── intelligence_apis — Phase 4 / tier 1 ───────────────────────────────
+register(FlagSpec(
+    name="HLEDAC_ENABLE_CENSYS",
+    group="intelligence_apis",
+    min_ram_mb=0,
+    description="Censys intelligence API (cert/host enrichment; needs API key).",
+))
+register(FlagSpec(
+    name="HLEDAC_ENABLE_SHODAN",
+    group="intelligence_apis",
+    min_ram_mb=0,
+    description="Shodan intelligence API (host/port enrichment; needs API key).",
+))
+register(FlagSpec(
+    name="HLEDAC_ENABLE_TI_FEEDS",
+    group="intelligence_apis",
+    min_ram_mb=50,
+    description="Threat intelligence feeds aggregator (RSS/TAXII/JSON).",
+))
+
+# ── stealth — Phase 4 / tier 1 ─────────────────────────────────────────
+register(FlagSpec(
+    name="HLEDAC_ENABLE_DIGITAL_GHOST",
+    group="stealth",
+    min_ram_mb=0,
+    description="Digital forensics ghost mode (anti-attribution transport).",
+))
+register(FlagSpec(
+    name="HLEDAC_ENABLE_PRIVACY_LAYER",
+    group="stealth",
+    min_ram_mb=0,
+    description="Privacy policy enforcement (PII redaction, OP-leakage guard).",
+))
+register(FlagSpec(
+    name="HLEDAC_ENABLE_ZKP",
+    group="stealth",
+    min_ram_mb=0,
+    description="Zero-knowledge proof envelope (claim provenance without content).",
+))
+register(FlagSpec(
+    name="HLEDAC_EXPERIMENTAL_NEURO_CRYPTO",
+    group="stealth",
+    min_ram_mb=0,
+    description="Experimental neuro-cryptographic sidecar (research, not for prod).",
+))
+
+# ── forensics — Phase 4 / tier 1 ───────────────────────────────────────
+register(FlagSpec(
+    name="HLEDAC_ENABLE_STEGANOGRAPHY",
+    group="forensics",
+    min_ram_mb=0,
+    description="Image steganography detection (LSB + transform-domain).",
+))
+
+
 # ---------------------------------------------------------------------------
 # Resolver — thin wrapper around os.environ
 # ---------------------------------------------------------------------------
