@@ -120,14 +120,14 @@ def _resolve_lancedb_cache_size() -> int:
         try:
             mb = int(raw)
             if mb <= 0:
-                logger.warning(f"[LANCEDB_CACHE] Invalid {_HLEDAC_CACHE_MB_VAR}={raw}, using default {_HLEDAC_DEFAULT_CACHE_MB}MB")
+                logger.warning(f"[LANCEDB_CACHE] Invalid {_HLEDAC_CACHE_MB_VAR}={raw}, using default {_HLEDAC_DEFAULT_CACHE_MB}MB")  # noqa: E501
                 mb = _HLEDAC_DEFAULT_CACHE_MB
             elif not override_enabled and mb > _HLEDAC_HARD_MAX_CACHE_MB:
-                logger.warning(f"[LANCEDB_CACHE] {mb}MB exceeds hard max {_HLEDAC_HARD_MAX_CACHE_MB}MB without {_HLEDAC_LARGE_OVERRIDE_VAR}=1, capping")
+                logger.warning(f"[LANCEDB_CACHE] {mb}MB exceeds hard max {_HLEDAC_HARD_MAX_CACHE_MB}MB without {_HLEDAC_LARGE_OVERRIDE_VAR}=1, capping")  # noqa: E501
                 mb = _HLEDAC_HARD_MAX_CACHE_MB
             return mb * 1024 * 1024
         except ValueError:
-            logger.warning(f"[LANCEDB_CACHE] Non-integer {_HLEDAC_CACHE_MB_VAR}={raw}, using default {_HLEDAC_DEFAULT_CACHE_MB}MB")
+            logger.warning(f"[LANCEDB_CACHE] Non-integer {_HLEDAC_CACHE_MB_VAR}={raw}, using default {_HLEDAC_DEFAULT_CACHE_MB}MB")  # noqa: E501
             return _HLEDAC_DEFAULT_CACHE_MB * 1024 * 1024
     if override_enabled:
         # Large override: allow up to 1GB (backward compat with prior default)
@@ -348,7 +348,7 @@ class LanceDBIdentityStore:
             self._mlx_embed_manager = get_embedding_manager()
             self._embedder = self._mlx_embed_manager
             self._embedder_type = 'mlx_gpu'
-            logger.info(f"[EMBEDDER] Using shared MLXEmbeddingManager: {self._mlx_embed_manager.model_path}, dim={self._mlx_embed_manager.EMBEDDING_DIM}")
+            logger.info(f"[EMBEDDER] Using shared MLXEmbeddingManager: {self._mlx_embed_manager.model_path}, dim={self._mlx_embed_manager.EMBEDDING_DIM}")  # noqa: E501
             return True
         except ImportError:
             logger.debug("[EMBEDDER] mlx_embeddings not available, trying MLX direct")
@@ -899,7 +899,7 @@ class LanceDBIdentityStore:
 
             xor_result = q_padded ^ self._binary_embeddings[cand_indices]
             scores = []
-            for i, idx in enumerate(cand_indices):
+            for i, idx in enumerate(cand_indices):  # noqa: B007
                 xored = np.unpackbits(np.array(xor_result[i], dtype=np.uint8))
                 score = np.sum(xored)
                 scores.append((score, i))
@@ -910,7 +910,7 @@ class LanceDBIdentityStore:
             logger.debug(f"Binary prefilter failed: {e}")
             return candidates
 
-    def _mmr(self, candidates: list[dict], query_emb: list[float], lambda_param: float = 0.5, top_k: int = 30) -> list[dict]:
+    def _mmr(self, candidates: list[dict], query_emb: list[float], lambda_param: float = 0.5, top_k: int = 30) -> list[dict]:  # noqa: E501
         """Maximal Marginal Relevance - reduce duplicates in results."""
         if len(candidates) <= top_k:
             return candidates
@@ -923,12 +923,12 @@ class LanceDBIdentityStore:
             mmr_scores = []
             for doc in remaining:
                 doc_emb = np.array(doc.get('_embedding', [0] * len(query_emb)))
-                sim_to_query = np.dot(query_emb_np, doc_emb) / (np.linalg.norm(query_emb_np) * np.linalg.norm(doc_emb) + 1e-8)
+                sim_to_query = np.dot(query_emb_np, doc_emb) / (np.linalg.norm(query_emb_np) * np.linalg.norm(doc_emb) + 1e-8)  # noqa: E501
 
                 max_sim_to_selected = 0
                 if selected:
                     selected_embs = np.array([s.get('_embedding', [0] * len(query_emb)) for s in selected])
-                    sims = np.dot(selected_embs, doc_emb) / (np.linalg.norm(selected_embs, axis=1) * np.linalg.norm(doc_emb) + 1e-8)
+                    sims = np.dot(selected_embs, doc_emb) / (np.linalg.norm(selected_embs, axis=1) * np.linalg.norm(doc_emb) + 1e-8)  # noqa: E501
                     max_sim_to_selected = np.max(sims) if sims.size > 0 else 0
 
                 mmr = lambda_param * sim_to_query - (1 - lambda_param) * max_sim_to_selected
@@ -1446,7 +1446,7 @@ class LanceDBIdentityStore:
                     return self._table.search(_txt, query_type="fts").limit(_lim).to_polars()
                 elif _txt and not self._lancedb_has_fts:
                     # AREA H: FTS not available locally — pure vector only
-                    logger.debug("[LANCEDB:H] text_hint=%r ignored — FTS not supported in local LanceDB", str(_txt)[:50])
+                    logger.debug("[LANCEDB:H] text_hint=%r ignored — FTS not supported in local LanceDB", str(_txt)[:50])  # noqa: E501
                     return self._table.search(_emb, vector_column_name="embedding").limit(_lim).to_polars()
                 else:
                     # Pure vector (existing path) — covers no text, vector explicit, hybrid w/o FTS
@@ -1537,7 +1537,7 @@ class LanceDBIdentityStore:
         # or if .to_polars() fails on this LanceDB version. Both paths converge
         # on a unified list[dict] row format below to keep the batch loop simple.
         try:
-            import polars as pl  # lazy: graph-storage extra
+            import polars as pl  # lazy: graph-storage extra  # noqa: F401  # polars
             use_polars = True
         except ImportError:
             use_polars = False
@@ -1887,6 +1887,7 @@ class LanceDBAcademicStore:
             dim: Embedding dimension (default 384 for FastEmbed BAAI).
         """
         import lancedb
+
         from hledac.universal.paths import LMDB_ROOT
 
         self._dim = dim
@@ -1968,6 +1969,7 @@ class LanceDBAcademicStore:
         # 1) MLX path — preferred on M1 (ANE/GPU, zero-copy UMA)
         try:
             import mlx.core  # noqa: F401
+
             from core.mlx_embeddings import MLXEmbeddingManager
             # MLXEmbeddingManager constructor uses ``model_path`` (not ``model``)
             self._embedder = MLXEmbeddingManager(model_path=self._embed_model)

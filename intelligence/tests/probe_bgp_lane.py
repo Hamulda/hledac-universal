@@ -15,11 +15,11 @@ _root = Path(__file__).resolve().parents[2]
 if str(_root) not in sys.path:
     sys.path.insert(0, str(_root))
 
-import asyncio
+import asyncio  # noqa: E402
 
-import aiohttp
+import aiohttp  # noqa: E402
 
-from intelligence.bgp_lane import (
+from intelligence.bgp_lane import (  # noqa: E402
     BGPVIEW_API,
     MAX_ASN_RESULTS,
     RATE_LIMIT_S,

@@ -548,7 +548,7 @@ def _check_kpi_module_boundary(
     if missing_imports:
         violations.append({
             "name": "runner_imports_kpi",
-            "reason": f"live_sprint_measurement.py does not import from live_measurement_kpi: {sorted(missing_imports)}",
+            "reason": f"live_sprint_measurement.py does not import from live_measurement_kpi: {sorted(missing_imports)}",  # noqa: E501
         })
 
     # 4. Runner must NOT locally define LiveKpiInput
@@ -556,7 +556,7 @@ def _check_kpi_module_boundary(
         if isinstance(node, ast.ClassDef) and node.name == "LiveKpiInput":
             violations.append({
                 "name": "LiveKpiInput_local",
-                "reason": "LiveKpiInput must not be defined locally in live_sprint_measurement.py — import from live_measurement_kpi",
+                "reason": "LiveKpiInput must not be defined locally in live_sprint_measurement.py — import from live_measurement_kpi",  # noqa: E501
             })
             break
 
@@ -565,7 +565,7 @@ def _check_kpi_module_boundary(
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == "_derive_live_kpi_from_input":
             violations.append({
                 "name": "_derive_live_kpi_from_input_local",
-                "reason": "_derive_live_kpi_from_input must not be defined locally in live_sprint_measurement.py — import from live_measurement_kpi",
+                "reason": "_derive_live_kpi_from_input must not be defined locally in live_sprint_measurement.py — import from live_measurement_kpi",  # noqa: E501
             })
             break
 
@@ -722,7 +722,7 @@ def run_guard(repo_root: Path) -> dict:
     })
     if has_kpi_boundary_violations:
         # Distinguish drift vs runtime import
-        has_runtime = any("runtime_import" in v.get("name", "") or "runtime" in v.get("reason", "") for v in kpi_boundary_violations)
+        has_runtime = any("runtime_import" in v.get("name", "") or "runtime" in v.get("reason", "") for v in kpi_boundary_violations)  # noqa: E501
         verdict = Verdict.FAIL_KPI_RUNTIME_IMPORT if has_runtime else Verdict.FAIL_KPI_DRIFT
 
     return {
@@ -751,7 +751,7 @@ def format_markdown(result: dict) -> str:
     has_quality_check = any(c["check"] == "quality_helpers_not_shadowed" for c in result["checks"])
     has_kpi_check = any(c["check"] == "live_kpi_input_wiring" for c in result["checks"])
 
-    title = "F227D/F228G Live Measurement Extraction Guard" if (has_quality_check or has_kpi_check) else "F227D Live Measurement Extraction Guard"
+    title = "F227D/F228G Live Measurement Extraction Guard" if (has_quality_check or has_kpi_check) else "F227D Live Measurement Extraction Guard"  # noqa: E501
 
     lines = [
         f"# {title}",

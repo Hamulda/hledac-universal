@@ -160,8 +160,8 @@ class _QueryBuilder(Protocol):
     Supports method chaining: ``table.search(q).metric("cosine").limit(K).to_list()``.
     """
 
-    def metric(self, name: str) -> "_QueryBuilder": ...
-    def limit(self, n: int) -> "_QueryBuilder": ...
+    def metric(self, name: str) -> _QueryBuilder: ...
+    def limit(self, n: int) -> _QueryBuilder: ...
     def to_list(self) -> list[dict[str, Any]]: ...
     def to_pandas(self) -> Any: ...
 
@@ -339,7 +339,7 @@ class IVFPQAutoTuner:
 
     # ── Recall measurement (bounded, sample-based) ────────────────
 
-    def _extract_vectors_and_keys(self, table: _TableLike) -> tuple["np.ndarray", list[str]]:
+    def _extract_vectors_and_keys(self, table: _TableLike) -> tuple[np.ndarray, list[str]]:
         """Extract the vector column and a key column from the table as numpy.
 
         Returns ``(vectors_normalized, key_list)``. Vectors are L2-normalized

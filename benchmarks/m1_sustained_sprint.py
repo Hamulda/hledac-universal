@@ -35,8 +35,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from hledac.universal.utils.serialization import _safe_dataclass_to_dict
 from hledac.universal.utils.async_helpers import safe_gather_strict
+from hledac.universal.utils.serialization import _safe_dataclass_to_dict
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -256,7 +256,7 @@ async def run_hermetic_sprint(duration_s: float = DEFAULT_DURATION_S) -> Benchma
         renderer_denied_count=snap.renderer_denied_count,
         fetch_limit_at_end=fetch_limit,
         findings_per_minute=findings_per_min,
-        timestamp=datetime.now().isoformat(),
+        timestamp=datetime.now().isoformat(),  # noqa: DTZ005
     )
 
 
@@ -314,7 +314,7 @@ def main() -> int:
 
     # Memory ceiling check
     if result.rss_peak_mb > M1_8GB_CEILING_MB:
-        print(f"\n[FAIL] Memory ceiling exceeded: {result.rss_peak_mb:.0f} MB > {M1_8GB_CEILING_MB:.0f} MB", file=sys.stderr)
+        print(f"\n[FAIL] Memory ceiling exceeded: {result.rss_peak_mb:.0f} MB > {M1_8GB_CEILING_MB:.0f} MB", file=sys.stderr)  # noqa: E501
         return 1
 
     print("\n[PASS] Hermetic benchmark complete", file=sys.stderr)

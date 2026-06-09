@@ -284,7 +284,7 @@ def check_q9_ledger() -> list[CheckResult]:
                 "Q9",
                 "ledger_family_constants",
                 families_ok,
-                f"PUBLIC/CT/WAYBACK/PASSIVE_DNS/PIVOT defined",
+                "PUBLIC/CT/WAYBACK/PASSIVE_DNS/PIVOT defined",
             )
         )
 
@@ -301,7 +301,7 @@ def check_q9_ledger() -> list[CheckResult]:
                 "Q9",
                 "ledger_stage_constants",
                 stages_ok,
-                f"6 stages defined",
+                "6 stages defined",
             )
         )
 

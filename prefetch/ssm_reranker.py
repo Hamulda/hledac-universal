@@ -89,7 +89,7 @@ if MLX_AVAILABLE:
                     mx.eval(out)
                     norm_time = time.perf_counter() - start
 
-                    logger.debug(f"Benchmark seq_len={sl}: depthwise={depth_time*1000:.3f} ms, normal={norm_time*1000:.3f} ms")
+                    logger.debug(f"Benchmark seq_len={sl}: depthwise={depth_time*1000:.3f} ms, normal={norm_time*1000:.3f} ms")  # noqa: E501
                     if depth_time < norm_time:
                         depth_wins += 1
                 except Exception as e:

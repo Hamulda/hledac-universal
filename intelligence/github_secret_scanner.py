@@ -19,6 +19,7 @@ from collections.abc import AsyncGenerator
 from dataclasses import dataclass
 
 import aiohttp
+
 from hledac.universal.transport.circuit_breaker import (
     checked_aiohttp_get,
 )
@@ -57,9 +58,9 @@ _API_PATTERNS: list[tuple[str, re.Pattern]] = [
     ("google_api_key", re.compile(r"\bAIza[0-9A-Za-z\-_]{35}\b")),
     ("stripe_secret_key", re.compile(r"\bsk_live_[0-9a-zA-Z]{24}\b")),
     ("slack_token", re.compile(r"\bxox[baprs]-[0-9]{10,13}-[0-9]{10,13}-[A-Za-z0-9]{24,32}\b")),
-    ("aws_secret_key", re.compile(r"\b(?:aws)?_?secret_?access?_?key\s*[=:]\s*['\"]?([A-Za-z0-9/+=]{40})['\"]?", re.IGNORECASE)),
+    ("aws_secret_key", re.compile(r"\b(?:aws)?_?secret_?access?_?key\s*[=:]\s*['\"]?([A-Za-z0-9/+=]{40})['\"]?", re.IGNORECASE)),  # noqa: E501
     ("private_key", re.compile(r"-----BEGIN (?:RSA |EC |DSA |OPENSSH )?PRIVATE KEY-----", re.IGNORECASE)),
-    ("generic_api_key", re.compile(r"\b(?:api[_-]?key|apikey|api_secret)\s*[=:]\s*['\"]?([A-Za-z0-9_\-]{20,64})['\"]?", re.IGNORECASE)),
+    ("generic_api_key", re.compile(r"\b(?:api[_-]?key|apikey|api_secret)\s*[=:]\s*['\"]?([A-Za-z0-9_\-]{20,64})['\"]?", re.IGNORECASE)),  # noqa: E501
     # 2026 high-value patterns
     ("anthropic_api_key", re.compile(r"\bsk-ant-[a-zA-Z0-9\-_]{95}\b")),
     ("openai_api_key_2024", re.compile(r"\bsk-proj-[a-zA-Z0-9\-_]{100}\b")),

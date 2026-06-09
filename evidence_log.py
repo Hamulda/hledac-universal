@@ -424,7 +424,7 @@ class EvidenceLog:
     async def _flush_worker(self) -> None:
         """Background worker that flushes events in batches."""
         batch = []
-        last_flush = datetime.now()
+        last_flush = datetime.now()  # noqa: DTZ005
 
         while True:
             try:
@@ -440,7 +440,7 @@ class EvidenceLog:
 
                 # Flush if batch full or timeout reached
                 if len(batch) >= self._SQLITE_BATCH_SIZE or \
-                   (batch and (datetime.now() - last_flush).total_seconds() >= self._SQLITE_FLUSH_INTERVAL):
+                   (batch and (datetime.now() - last_flush).total_seconds() >= self._SQLITE_FLUSH_INTERVAL):  # noqa: DTZ005
                     flush_start = time.perf_counter()
                     # Run directly — _db was created in the event loop thread,
                     # and _flush_batch is an async I/O call.
@@ -448,7 +448,7 @@ class EvidenceLog:
                     flush_latency_ms = (time.perf_counter() - flush_start) * 1000
                     trace_evidence_flush(len(batch), flush_latency_ms, "ok", len(batch))
                     batch = []
-                    last_flush = datetime.now()
+                    last_flush = datetime.now()  # noqa: DTZ005
 
             except asyncio.CancelledError:
                 break
@@ -471,7 +471,7 @@ class EvidenceLog:
 
         records = []
         for event_data in batch:
-            timestamp = event_data.get('timestamp', datetime.now().timestamp())
+            timestamp = event_data.get('timestamp', datetime.now().timestamp())  # noqa: DTZ005
             event_type = event_data.get('event_type', 'unknown')
             data = json.dumps(event_data)
             content_hash = event_data.get('content_hash', '')
@@ -1524,7 +1524,7 @@ class EvidenceLog:
         # H2: _frozen comes AFTER close (final state transition)
         self.freeze()
 
-        logger.info(f"[EVIDENCE] Log finalized: run_id={self._run_id}, events={self._total_count}, chain_head={self._chain_head[:16]}...")
+        logger.info(f"[EVIDENCE] Log finalized: run_id={self._run_id}, events={self._total_count}, chain_head={self._chain_head[:16]}...")  # noqa: E501
 
     def verify_all(self) -> dict[str, Any]:
         """
@@ -2068,9 +2068,9 @@ class EvidenceLog:
         elif health_status == "warning":
             operator_takeaway = f"sprint has warnings: {biggest_weakness[:60] if biggest_weakness else 'see breakdown'}"
         elif health_status == "degraded":
-            operator_takeaway = f"sprint degraded: {biggest_weakness[:60] if biggest_weakness else 'errors above threshold'}"
+            operator_takeaway = f"sprint degraded: {biggest_weakness[:60] if biggest_weakness else 'errors above threshold'}"  # noqa: E501
         elif health_status == "noisy":
-            operator_takeaway = f"sprint noisy: {biggest_weakness[:60] if biggest_weakness else 'too many errors to trust'}"
+            operator_takeaway = f"sprint noisy: {biggest_weakness[:60] if biggest_weakness else 'too many errors to trust'}"  # noqa: E501
         else:
             operator_takeaway = f"sprint status={health_status}, verdict={verdict[:80]}"
 
@@ -2134,8 +2134,8 @@ class EvidenceLog:
             "health_confidence_note": health_confidence_note,
             # Compact operator retrospective delta (Sprint F150H)
             "operator_retro_brief": operator_takeaway,  # canonical one-liner
-            "continue_reason": self._derive_continue_reason(continue_or_pivot, health_status, decision_count, biggest_weakness),
-            "trust_level": self._derive_trust_level(total, health_status, health.get("low_conf_pressure", "none"), error_rate),
+            "continue_reason": self._derive_continue_reason(continue_or_pivot, health_status, decision_count, biggest_weakness),  # noqa: E501
+            "trust_level": self._derive_trust_level(total, health_status, health.get("low_conf_pressure", "none"), error_rate),  # noqa: E501
             "biggest_win": what_worked[0] if what_worked else "",
             "retro_priority": top_retro_actions[0] if top_retro_actions else "",
             # Underlying signals (for deep dive)

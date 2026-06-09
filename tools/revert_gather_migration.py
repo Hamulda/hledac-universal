@@ -13,14 +13,13 @@ from __future__ import annotations
 import ast
 import re
 import sys
-from pathlib import Path
 
 REVERT_FUNCS = {"safe_gather", "safe_gather_dropin", "safe_gather_fire_and_forget", "safe_gather_strict"}
 
 
 def find_revertable_calls(path: str) -> list[ast.Call]:
     try:
-        with open(path, "r", encoding="utf-8") as f:
+        with open(path, encoding="utf-8") as f:
             source = f.read()
     except OSError:
         return []
@@ -44,7 +43,7 @@ def find_revertable_calls(path: str) -> list[ast.Call]:
 def revert_file(path: str) -> tuple[bool, str]:
     """Revert safe_gather_*() calls back to asyncio.gather() in `path`."""
     try:
-        with open(path, "r", encoding="utf-8") as f:
+        with open(path, encoding="utf-8") as f:
             source = f.read()
     except OSError:
         return False, "cannot read"

@@ -65,9 +65,15 @@ except ImportError:
 # ---------------------------------------------------------------------------
 try:
     from hledac_rust_extensions import (
-        normalize_quality_text as _rust_normalize_quality_text,
         compute_entropy as _rust_compute_entropy,
+    )
+    from hledac_rust_extensions import (
         dedup_fingerprint as _rust_dedup_fingerprint,
+    )
+    from hledac_rust_extensions import (
+        normalize_quality_text as _rust_normalize_quality_text,
+    )
+    from hledac_rust_extensions import (
         url_fingerprint as _rust_url_fingerprint_b2b,
     )
 
@@ -193,7 +199,7 @@ def _normalize_osint_url(url: str) -> str:
     fragment = ""
     path = parsed.path.rstrip("/") if len(parsed.path) > 1 else parsed.path
 
-    TRACKING_QUERY_PARAMS = frozenset({
+    TRACKING_QUERY_PARAMS = frozenset({  # noqa: N806
         "utm_source", "utm_medium", "utm_campaign",
         "utm_content", "utm_term",
         "fbclid",

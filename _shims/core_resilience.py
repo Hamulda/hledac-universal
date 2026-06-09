@@ -34,7 +34,7 @@ AgentExecutionError = module.AgentExecutionError
 # CircuitBreakerOpen may not exist in the actual file
 CircuitBreakerOpen = getattr(module, "CircuitBreakerOpen", None)
 if CircuitBreakerOpen is None:
-    class CircuitBreakerOpen(Exception):
+    class CircuitBreakerOpen(Exception):  # noqa: N818
         """Raised when circuit breaker is open."""
         pass
 

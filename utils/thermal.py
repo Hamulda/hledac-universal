@@ -83,7 +83,7 @@ def _get_pdl_handle():
         iokit_lib.IOObjectRelease.restype = ctypes.c_int
 
         # IOServiceOpen
-        iokit_lib.IOServiceOpen.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_uint32, ctypes.POINTER(ctypes.c_int)]
+        iokit_lib.IOServiceOpen.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_uint32, ctypes.POINTER(ctypes.c_int)]  # noqa: E501
         iokit_lib.IOServiceOpen.restype = ctypes.c_int
 
         # Create matching dict for AppleSMC

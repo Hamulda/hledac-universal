@@ -76,7 +76,7 @@ def _get_vn_request():
 
 # Check Vision framework
 try:
-    from Vision import VNCoreMLModel, VNCoreMLRequest, VNImageRequestHandler
+    from Vision import VNCoreMLModel, VNCoreMLRequest, VNImageRequestHandler  # noqa: F401  # Vision.VNCoreMLRequest
     _VN_AVAILABLE = True
 except ImportError:
     _VN_AVAILABLE = False

@@ -28,12 +28,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
-
-from utils.async_helpers import safe_gather_dropin
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+
+from utils.async_helpers import safe_gather_dropin
 
 logger = logging.getLogger(__name__)
 
@@ -104,6 +104,7 @@ async def search_openalex(query: str, max_results: int = 20) -> list[AcademicPap
     """Search OpenAlex for academic papers."""
     try:
         import orjson
+
         from hledac.universal.fetching.public_fetcher import async_fetch_public_text
         url = f"{OPENALEX_BASE}/works?search={query}&per-page={max_results}&mailto=research@hledac.ai"
         result = await async_fetch_public_text(url, timeout_s=30.0, use_stealth=True)
@@ -113,7 +114,7 @@ async def search_openalex(query: str, max_results: int = 20) -> list[AcademicPap
         papers = []
         for work in data.get("results", [])[:max_results]:
             authors = [au.get("display_name", "") for au in work.get("authorships", [])]
-            affiliations = [au.get("institution", {}).get("display_name", "") for au in work.get("authorships", []) if au.get("institution")]
+            affiliations = [au.get("institution", {}).get("display_name", "") for au in work.get("authorships", []) if au.get("institution")]  # noqa: E501
             papers.append(AcademicPaper(
                 title=work.get("title", ""),
                 authors=authors,
@@ -135,6 +136,7 @@ async def search_ia_scholar(query: str, max_results: int = 20) -> list[AcademicP
     """Search Internet Archive Scholar for academic papers."""
     try:
         import orjson
+
         from hledac.universal.fetching.public_fetcher import async_fetch_public_text
         url = f"{IARCHIVE_SCHOLAR}/search?q={query}&limit={max_results}"
         result = await async_fetch_public_text(url, timeout_s=30.0, use_stealth=True)
@@ -161,6 +163,7 @@ async def search_core(query: str, max_results: int = 20) -> list[AcademicPaper]:
     """Search CORE.ac.uk for academic papers."""
     try:
         import orjson
+
         from hledac.universal.fetching.public_fetcher import async_fetch_public_text
         url = f"{CORE_API}/v3/search/works/{query}?limit={max_results}"
         result = await async_fetch_public_text(url, timeout_s=30.0, use_stealth=True)
@@ -188,6 +191,7 @@ async def search_biorxiv(query: str, max_results: int = 20) -> list[AcademicPape
     """Search bioRxiv preprints."""
     try:
         import orjson
+
         from hledac.universal.fetching.public_fetcher import async_fetch_public_text
         url = f"{BIORXIV_API}/v2/server/search?query={query}&count={max_results}&format=json"
         result = await async_fetch_public_text(url, timeout_s=30.0, use_stealth=True)
@@ -215,6 +219,7 @@ async def search_medrxiv(query: str, max_results: int = 20) -> list[AcademicPape
     """Search medRxiv preprints."""
     try:
         import orjson
+
         from hledac.universal.fetching.public_fetcher import async_fetch_public_text
         url = f"{MEDRXIV_API}/v2/server/search?query={query}&count={max_results}&format=json"
         result = await async_fetch_public_text(url, timeout_s=30.0, use_stealth=True)
@@ -297,7 +302,7 @@ async def traverse_citation_graph(
                     try:
                         citations = await ss_client.get_citations(paper_id, limit=3)
                         for cit in citations:
-                            pid = f"doi:{cit.get('doi', '')}" if cit.get('doi') else f"title:{cit.get('title', '')[:16]}"
+                            pid = f"doi:{cit.get('doi', '')}" if cit.get('doi') else f"title:{cit.get('title', '')[:16]}"  # noqa: E501
                             if pid not in visited and cit.get("title"):
                                 visited.add(pid)
                                 hop2_papers.append(AcademicPaper(
@@ -410,7 +415,7 @@ async def search_arxiv(query: str, max_results: int = 10) -> list[dict[str, Any]
         List of dicts with keys: title, authors, year, link
     """
     try:
-        AcademicSearchEngine = _get_academic_search_engine()
+        AcademicSearchEngine = _get_academic_search_engine()  # noqa: N806
         engine = AcademicSearchEngine(enable_expansion=False, enable_deduplication=True)
         result = await engine.search(
             query,
@@ -461,7 +466,7 @@ async def search_crossref(query: str, max_results: int = 10) -> list[dict[str, A
         List of dicts with keys: title, authors, year, link
     """
     try:
-        AcademicSearchEngine = _get_academic_search_engine()
+        AcademicSearchEngine = _get_academic_search_engine()  # noqa: N806
         engine = AcademicSearchEngine(enable_expansion=False, enable_deduplication=True)
         result = await engine.search(
             query,
@@ -512,7 +517,7 @@ async def search_semantic_scholar(query: str, max_results: int = 10) -> list[dic
         List of dicts with keys: title, authors, year, link
     """
     try:
-        AcademicSearchEngine = _get_academic_search_engine()
+        AcademicSearchEngine = _get_academic_search_engine()  # noqa: N806
         engine = AcademicSearchEngine(enable_expansion=False, enable_deduplication=True)
         result = await engine.search(
             query,

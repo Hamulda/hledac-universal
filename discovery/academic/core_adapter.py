@@ -22,8 +22,6 @@ import time
 from dataclasses import dataclass
 from typing import NamedTuple
 
-import orjson
-
 from hledac.universal.knowledge.duckdb_store import CanonicalFinding
 
 logger = logging.getLogger(__name__)
@@ -109,7 +107,6 @@ class COREAdapter:
         """Fetch from CORE API."""
         async with self._semaphore:
             try:
-                from hledac.universal.fetching.public_fetcher import async_fetch_public_text
 
                 url = f"{CORE_API_BASE}{endpoint}"
                 headers = self._auth_headers()
@@ -134,7 +131,7 @@ class COREAdapter:
                                     return None
                                 return await resp.json()
 
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 logger.warning("CORE API timeout")
                 return None
             except Exception as e:

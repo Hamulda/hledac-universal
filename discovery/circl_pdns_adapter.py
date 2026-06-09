@@ -23,6 +23,7 @@ from dataclasses import dataclass
 from enum import Enum
 
 import aiohttp
+
 from hledac.universal.network.session_runtime import async_get_aiohttp_session
 from hledac.universal.security.passive_dns import parse_circl_pdns_text
 from hledac.universal.tools.discovery_replay import (

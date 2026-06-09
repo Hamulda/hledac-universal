@@ -70,6 +70,8 @@ from datetime import datetime
 from enum import Enum, auto
 from typing import Any
 
+from utils.async_helpers import safe_gather_dropin
+
 from .knowledge.rag_engine import Document
 from .layers.stealth_layer import BehaviorPattern, BehaviorSimulator, SimulationConfig
 from .project_types import (
@@ -88,7 +90,6 @@ from .utils.ranking import RankedResult as SearchResult
 # Extended imports for research enhancements (from universal)
 from .utils.ranking import ReciprocalRankFusion, RRFConfig
 
-from utils.async_helpers import safe_gather_dropin
 # Intelligence tools (lazy loaded)
 try:
     from .intelligence import (
@@ -100,9 +101,9 @@ try:
         StealthWebScraper,
         TemporalAnalyzer,
         UnifiedWebIntelligence,
-        quick_scrape,
-        search_academic,
-        search_archives,
+        quick_scrape,  # noqa: F401  # .intelligence.quick_scrape
+        search_academic,  # noqa: F401  # .intelligence.search_academic
+        search_archives,  # noqa: F401  # .intelligence.search_archives
     )
     INTELLIGENCE_AVAILABLE = True
 except ImportError:
@@ -445,7 +446,7 @@ class UnifiedResearchEngine:
         # Sentinel: distinguish "user passed a config object" from "use
         # defaults + env-var activation". This is the only way to honor the
         # invariant "explicit config overrides env vars".
-        _SENTINEL = object()
+        _SENTINEL = object()  # noqa: N806
         cfg_from_caller = config
         self.config = config or UnifiedResearchConfig()
         # Apply capability flags from env ONLY if the user did not pass a
@@ -1013,7 +1014,7 @@ class UnifiedResearchEngine:
                         url=r.url,
                         source='academic_search',
                         source_type='academic',
-                        timestamp=datetime.now(),
+                        timestamp=datetime.now(),  # noqa: DTZ005
                         relevance_score=r.relevance_score,
                         credibility_score=0.8 if r.source in ['arxiv', 'crossref'] else 0.6,
                         metadata={
@@ -1040,7 +1041,7 @@ class UnifiedResearchEngine:
                         url=r.url,
                         source='stealth_crawler',
                         source_type='web',
-                        timestamp=datetime.now(),
+                        timestamp=datetime.now(),  # noqa: DTZ005
                         relevance_score=0.5,  # Will be re-ranked
                         credibility_score=0.5,
                         metadata={'rank': r.rank}
@@ -1152,7 +1153,7 @@ class UnifiedResearchEngine:
             else:
                 # Simple flatten if fusion disabled
                 fused = []
-                for source, results in source_results.items():
+                for source, results in source_results.items():  # noqa: B007
                     fused.extend(results)
                 fused.sort(key=lambda x: x.score, reverse=True)
 
@@ -1345,7 +1346,7 @@ class UnifiedResearchEngine:
                     url=None,
                     source='advanced_rag',
                     source_type='rag',
-                    timestamp=datetime.now(),
+                    timestamp=datetime.now(),  # noqa: DTZ005
                     relevance_score=sim,
                     credibility_score=0.7,
                     metadata={
@@ -1431,7 +1432,7 @@ class UnifiedResearchEngine:
                     url=url,
                     source='stealth_browser',
                     source_type='web_stealth',
-                    timestamp=datetime.now(),
+                    timestamp=datetime.now(),  # noqa: DTZ005
                     relevance_score=0.6,
                     credibility_score=0.7,
                     metadata={
@@ -1501,7 +1502,6 @@ class UnifiedResearchEngine:
         try:
             from .advanced_web.structured_extractor import (  # type: ignore[import-not-found]
                 StructuredExtractor,
-                entity_to_dict,
             )
             extractor = StructuredExtractor()
         except Exception as e:
@@ -1543,7 +1543,7 @@ class UnifiedResearchEngine:
                         url=ent.url or url,
                         source="structured_extractor",
                         source_type=ent.ioc_kind,
-                        timestamp=datetime.now(),
+                        timestamp=datetime.now(),  # noqa: DTZ005
                         relevance_score=0.6,
                         credibility_score=0.7,
                         metadata={
@@ -1632,7 +1632,7 @@ class UnifiedResearchEngine:
 
         # Add year for recent results
         if 'temporal_analysis' in context:
-            current_year = datetime.now().year
+            current_year = datetime.now().year  # noqa: DTZ005
             enhancements.append(str(current_year))
 
         if enhancements:

@@ -17,18 +17,18 @@ __all__ = ['HTNPlanner', 'AdaptiveCostModel', 'anytime_beam_search', 'SLMDecompo
 
 def __getattr__(name: str):
     if name == 'HTNPlanner':
-        from .htn_planner import HTNPlanner as cls
+        from .htn_planner import HTNPlanner as cls  # noqa: N813
         return cls
     if name == 'AdaptiveCostModel':
-        from .cost_model import AdaptiveCostModel as cls
+        from .cost_model import AdaptiveCostModel as cls  # noqa: N813
         return cls
     if name == 'anytime_beam_search':
         from .search import anytime_beam_search as fn
         return fn
     if name == 'SLMDecomposer':
-        from .slm_decomposer import SLMDecomposer as cls
+        from .slm_decomposer import SLMDecomposer as cls  # noqa: N813
         return cls
     if name == 'TaskCache':
-        from .task_cache import TaskCache as cls
+        from .task_cache import TaskCache as cls  # noqa: N813
         return cls
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

@@ -747,7 +747,7 @@ def _is_valid_domain_candidate(domain: str) -> bool:
     if len(parts) < 2:
         return False
 
-    _WORD_LIKE_TLDS: frozenset[str] = frozenset({
+    _WORD_LIKE_TLDS: frozenset[str] = frozenset({  # noqa: N806
         "bad", "actor", "leak", "lockbit", "example", "link",
         "data", "info", "site", "host",
     })
@@ -929,7 +929,7 @@ def _extract_hostname(url: str) -> str:
                 hostname = hostname[4:]
             return hostname
         # Bare domain-like string — clean it
-        clean = normalized.lstrip("htps:/").lstrip("//")
+        clean = normalized.lstrip("htps:/").lstrip("//")  # noqa: B005
         slash_idx = clean.find("/")
         if slash_idx > 0:
             clean = clean[:slash_idx]

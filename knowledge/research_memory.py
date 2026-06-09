@@ -36,7 +36,7 @@ MAX_EPISODE_ENTITIES = 500
 MAX_UNEXPLORED_ANGLES = 20
 MAX_ENTITY_HISTORY = 50
 MAX_TEMPORAL_ANOMALIES = 100
-_MAYBE_MEMORY: "ResearchSessionMemory | None" = None
+_MAYBE_MEMORY: ResearchSessionMemory | None = None
 
 
 @dataclass(slots=True)
@@ -96,7 +96,7 @@ class ResearchSessionMemory:
         self._episode_count = 0
 
     @classmethod
-    def get_instance(cls) -> "ResearchSessionMemory | None":
+    def get_instance(cls) -> ResearchSessionMemory | None:
         return _MAYBE_MEMORY
 
     def _get_conn(self):
@@ -166,18 +166,18 @@ class ResearchSessionMemory:
 
         await self._record_entity_observations(entities, sprint_id)
 
-        gaps_json = orjson.dumps([{"area": getattr(g, "area", ""), "description": getattr(g, "description", ""), "importance": getattr(g, "importance", 0.5)} for g in (gaps or [])]).decode() if gaps else "[]"
-        entities_json = orjson.dumps([{"value": e["value"], "type": e["type"], "count": e["count"]} for e in entities[:MAX_EPISODE_ENTITIES]]).decode()
-        unexplored_json = orjson.dumps([{"angle": u.angle, "rationale": u.rationale, "sources": u.suggested_sources, "confidence": u.confidence} for u in unexplored]).decode()
+        gaps_json = orjson.dumps([{"area": getattr(g, "area", ""), "description": getattr(g, "description", ""), "importance": getattr(g, "importance", 0.5)} for g in (gaps or [])]).decode() if gaps else "[]"  # noqa: E501
+        entities_json = orjson.dumps([{"value": e["value"], "type": e["type"], "count": e["count"]} for e in entities[:MAX_EPISODE_ENTITIES]]).decode()  # noqa: E501
+        unexplored_json = orjson.dumps([{"angle": u.angle, "rationale": u.rationale, "sources": u.suggested_sources, "confidence": u.confidence} for u in unexplored]).decode()  # noqa: E501
         source_patterns_json = orjson.dumps(source_patterns).decode()
 
         loop = asyncio.get_running_loop()
         def _sync():
             conn = self._get_conn()
             conn.execute("""
-                INSERT INTO research_sessions (session_id, sprint_id, query, ts, findings_count, accepted_count, gaps_json, entities_json, source_patterns_json, unexplored_angles_json)
+                INSERT INTO research_sessions (session_id, sprint_id, query, ts, findings_count, accepted_count, gaps_json, entities_json, source_patterns_json, unexplored_angles_json)  # noqa: E501
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (session_id, sprint_id, query, ts, len(findings), sum(1 for f in findings if getattr(f, "confidence", 0) > 0.5), gaps_json, entities_json, source_patterns_json, unexplored_json))
+            """, (session_id, sprint_id, query, ts, len(findings), sum(1 for f in findings if getattr(f, "confidence", 0) > 0.5), gaps_json, entities_json, source_patterns_json, unexplored_json))  # noqa: E501
             conn.commit()
         await loop.run_in_executor(None, _sync)
         self._episode_count += 1
@@ -216,16 +216,16 @@ class ResearchSessionMemory:
             "avg_confidence": {k: v / source_counts[k] for k, v in source_conf_sum.items()} if source_counts else {},
         }
 
-    def _generate_unexplored_angles(self, query: str, findings: list[Any], gaps: list[Any] | None, source_patterns: dict[str, Any]) -> list[UnexploredAngle]:
+    def _generate_unexplored_angles(self, query: str, findings: list[Any], gaps: list[Any] | None, source_patterns: dict[str, Any]) -> list[UnexploredAngle]:  # noqa: E501
         angles: list[UnexploredAngle] = []
         sources_hit = set(source_patterns.get("sources_hit", []))
         common_sources = ["web", "feed", "document", "academic", "social"]
         for src in common_sources:
             if src not in sources_hit:
-                angles.append(UnexploredAngle(angle=f"Explore {src} sources", rationale=f"Source {src} not explored", suggested_sources=[src], confidence=0.4))
+                angles.append(UnexploredAngle(angle=f"Explore {src} sources", rationale=f"Source {src} not explored", suggested_sources=[src], confidence=0.4))  # noqa: E501
         entities = self._extract_entities_from_findings(findings)
         for e in entities[:5]:
-            angles.append(UnexploredAngle(angle=f"Follow up {e["type"]}: {e["value"]}", rationale=f"Entity appeared {e["count"]} times", suggested_sources=["web", "graph"], confidence=0.3))
+            angles.append(UnexploredAngle(angle=f"Follow up {e["type"]}: {e["value"]}", rationale=f"Entity appeared {e["count"]} times", suggested_sources=["web", "graph"], confidence=0.3))  # noqa: E501
         seen, unique = set(), []
         for a in angles:
             if a.angle not in seen:
@@ -242,7 +242,7 @@ class ResearchSessionMemory:
             conn = self._get_conn()
             for i, e in enumerate(entities[:MAX_EPISODE_ENTITIES]):
                 obs_id = f"obs_{sprint_id}_{int(ts * 1000)}_{i}"
-                conn.execute("INSERT OR REPLACE INTO entity_observations (observation_id, entity_value, entity_type, sprint_id, source_type, confidence, ts, finding_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", (obs_id, e["value"], e["type"], sprint_id, "finding", 0.5, ts, obs_id))
+                conn.execute("INSERT OR REPLACE INTO entity_observations (observation_id, entity_value, entity_type, sprint_id, source_type, confidence, ts, finding_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", (obs_id, e["value"], e["type"], sprint_id, "finding", 0.5, ts, obs_id))  # noqa: E501
             conn.commit()
         await loop.run_in_executor(None, _sync)
 

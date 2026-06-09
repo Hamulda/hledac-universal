@@ -32,9 +32,10 @@ import logging
 import time
 
 import aiohttp
-from hledac.universal.network.session_runtime import async_get_aiohttp_session
 
+from hledac.universal.network.session_runtime import async_get_aiohttp_session
 from utils.async_helpers import safe_gather_dropin
+
 logger = logging.getLogger(__name__)
 
 # ── Bounds ────────────────────────────────────────────────────────────────────
@@ -154,7 +155,7 @@ class PassiveDNSResolver:
         try:
             from hledac.universal.transport.circuit_breaker import get_breaker
             domain = url.split("/")[2] if "//" in url else url
-            if not get_breaker(domain).check_circuit().allowed: raise RuntimeError(f"circuit_open: {domain}")
+            if not get_breaker(domain).check_circuit().allowed: raise RuntimeError(f"circuit_open: {domain}")  # noqa: E701
         except Exception as e:
             logger.debug(f"[DoH] Circuit breaker blocked {resolver}: {e}")
             return []

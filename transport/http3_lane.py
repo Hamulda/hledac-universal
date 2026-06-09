@@ -127,7 +127,7 @@ _ENABLED: bool = _resolve_enabled()
 # Adding a lock here would only protect against a future migration to
 # ``asyncio.to_thread`` callers, which we explicitly forbid in CLAUDE.md
 # (``Nepoužívej asyncio.run() v ThreadPoolExecutor — M1 crash vector``).
-_lru_cache: "OrderedDict[str, tuple[float, bool]]" = OrderedDict()
+_lru_cache: OrderedDict[str, tuple[float, bool]] = OrderedDict()
 _semaphore: asyncio.Semaphore | None = None
 _aioquic_checked: bool = False
 _aioquic_available: bool = False
@@ -443,7 +443,7 @@ async def fetch_http3_aioquic(
         _stats["http3_semaphore_waits"] += 1
         try:
             await asyncio.wait_for(sem.acquire(), timeout=_H3_WAIT_TIMEOUT_S)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             _stats["http3_semaphore_timeouts"] += 1
             logger.debug("http3_lane: semaphore saturated, skipping %s", host)
             return None
@@ -499,7 +499,7 @@ async def fetch_http3_aioquic(
             data = await asyncio.wait_for(_do_quic_request(), timeout=timeout_s)
             _stats["http3_aioquic_success"] += 1
             return data
-        except asyncio.TimeoutError:
+        except TimeoutError:
             _stats["http3_timeouts"] += 1
             logger.debug("http3_lane: aioquic request exceeded %.1fs for %s", timeout_s, host)
             return None

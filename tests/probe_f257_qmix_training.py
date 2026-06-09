@@ -16,9 +16,6 @@ M1 constraints verified:
 
 from __future__ import annotations
 
-import json
-import math
-import os
 import sys
 import tempfile
 from pathlib import Path
@@ -208,7 +205,7 @@ class TestQMIXTraining:
     def test_weight_serialization_roundtrip(self):
         """Weights serialize/deserialize correctly."""
         from rl.qmix import QMIXAgent, QMixer, QMIXJointTrainer
-        from rl.sprint_policy_manager import _serialize_weights, _deserialize_weights
+        from rl.sprint_policy_manager import _deserialize_weights, _serialize_weights
 
         agents = {str(i): QMIXAgent(agent_id=str(i), state_dim=12, hidden_dim=64) for i in range(5)}
         mixer = QMixer(n_agents=5, state_dim=12, embedding_dim=32)
@@ -263,7 +260,7 @@ class TestTrainingLoop:
         losses = []
 
         # Run 5 training steps
-        for step in range(5):
+        for _step in range(5):
             batch = buffer.sample(32)
             result = trainer.update(batch)
             losses.append(result['loss'])
@@ -292,7 +289,7 @@ class TestPolicyManagerIntegration:
     @pytest.mark.skipif(not MLX_AVAILABLE, reason="MLX not available")
     def test_update_with_training_enabled(self):
         """SprintPolicyManager.update() triggers training when rl_train_mode=True."""
-        from rl.sprint_policy_manager import SprintPolicyManager, _MIN_REPLAY_SIZE
+        from rl.sprint_policy_manager import _MIN_REPLAY_SIZE, SprintPolicyManager
 
         with tempfile.TemporaryDirectory() as tmpdir:
             policy_path = Path(tmpdir) / "policy.json"
@@ -321,7 +318,7 @@ class TestPolicyManagerIntegration:
             print(f"\nQMIX stats: {stats}")
 
             # Verify training happened
-            assert stats['qmix_available'] == True
+            assert stats['qmix_available']
             assert stats['replay_size'] >= _MIN_REPLAY_SIZE, f"Buffer should have {_MIN_REPLAY_SIZE}+ samples"
             # Training should have triggered at sprint 70
             assert stats['last_train_sprint'] > 0, "Training should have occurred"

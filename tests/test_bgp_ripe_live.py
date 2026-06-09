@@ -17,9 +17,9 @@ Invariant (F234):
 
 from __future__ import annotations
 
-import pytest
 from unittest.mock import patch
 
+import pytest
 
 # ── Fake aiohttp (bypass AsyncMock parent issues) ─────────────────────────────────
 
@@ -29,7 +29,7 @@ class FakeResponse:
     def __init__(self, payload: dict) -> None:
         self._payload = payload
 
-    async def __aenter__(self) -> "FakeResponse":
+    async def __aenter__(self) -> FakeResponse:
         return self
 
     async def __aexit__(self, *args: object) -> None:  # pragma: no cover
@@ -67,7 +67,7 @@ class FakeAiohttpModule:
         def __init__(self, *, timeout: object = None) -> None:
             self._timeout = timeout
 
-        async def __aenter__(self) -> "FakeAiohttpModule.ClientSession":
+        async def __aenter__(self) -> FakeAiohttpModule.ClientSession:
             return self
 
         async def __aexit__(self, *args: object) -> None:  # pragma: no cover
@@ -165,6 +165,7 @@ class TestEnrichIpAsFindingCanonicalFinding:
             findings = await enrich_ip_as_finding("8.8.8.8")
 
         assert len(findings) == 1
+        assert findings is not None  # type guard for ty
         f = findings[0]
         assert f.source_type == "bgp_ripe_stat"
         assert f.confidence == 0.88
@@ -180,7 +181,7 @@ class TestEnrichIpAsFindingCanonicalFinding:
         """Fail-soft: ClientSession construction error → return []."""
         from hledac.universal.network.bgp_monitor import enrich_ip_as_finding
 
-        fake_module = FakeAiohttpModule()
+        FakeAiohttpModule()
 
         # Make ClientSession raise on construction
         with patch.object(

@@ -24,6 +24,7 @@ import os
 import time
 
 import aiohttp
+
 from hledac.universal.knowledge.duckdb_store import CanonicalFinding
 from hledac.universal.utils.rate_limiters import get_limiter
 

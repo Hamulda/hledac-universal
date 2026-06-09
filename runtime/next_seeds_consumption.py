@@ -348,7 +348,7 @@ def extract_ioc_values_from_seeds(
                 if value not in hashes:
                     hashes.append(value)
 
-    MAX_PER_TYPE = 10
+    MAX_PER_TYPE = 10  # noqa: N806
     return {
         "domains": tuple(domains[:MAX_PER_TYPE]),
         "ips": tuple(ips[:MAX_PER_TYPE]),
@@ -465,7 +465,7 @@ def consume_planner_actions(
             continue
 
     # Enforce caps
-    MAX_PER_TYPE = 10
+    MAX_PER_TYPE = 10  # noqa: N806
     seed_iocs = {
         "domains": tuple(domains[:MAX_PER_TYPE]),
         "ips": tuple(ips[:MAX_PER_TYPE]),

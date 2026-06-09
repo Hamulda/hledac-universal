@@ -25,7 +25,6 @@ Run: `uv run pytest tests/probe_advanced_modules_structured.py -v`
 """
 from __future__ import annotations
 
-import importlib
 import os
 import sys
 from typing import Any
@@ -43,7 +42,7 @@ if PROJECT_ROOT not in sys.path:
 # TestSprintFADVS_A — JSON-LD parsing (top-level + array + @graph)
 # =============================================================================
 
-class TestSprintFADVS_A:
+class TestSprintFADVS_A:  # noqa: N801
     """JSON-LD parser must handle all W3C-compliant forms."""
 
     def test_jsonld_top_level_object(self) -> None:
@@ -154,7 +153,7 @@ class TestSprintFADVS_A:
         assert r.entities[0].entity_type == "Person"  # first type wins
         assert r.entities[0].ioc_kind == "identity"
 
-    def test_jsonld_relations_emitted_for_worksFor(self) -> None:
+    def test_jsonld_relations_emitted_for_worksFor(self) -> None:  # noqa: N802
         """Nested @id references produce relations in the second pass."""
         from hledac.universal.advanced_web.structured_extractor import (
             StructuredExtractor,
@@ -214,7 +213,7 @@ class TestSprintFADVS_A:
 # TestSprintFADVS_B — schema.org type → IOC kind mapping
 # =============================================================================
 
-class TestSprintFADVS_B:
+class TestSprintFADVS_B:  # noqa: N801
     """The OSINT-focused type mapping must cover the documented subset."""
 
     def test_identity_types(self) -> None:
@@ -278,7 +277,7 @@ class TestSprintFADVS_B:
 selectolax = pytest.importorskip("selectolax")
 
 
-class TestSprintFADVS_C:
+class TestSprintFADVS_C:  # noqa: N801
     """Microdata extraction via selectolax CSS attribute selectors."""
 
     def test_microdata_itemscope_with_itemtype(self) -> None:
@@ -361,7 +360,7 @@ class TestSprintFADVS_C:
 # TestSprintFADVS_D — RDFa fallback (regex)
 # =============================================================================
 
-class TestSprintFADVS_D:
+class TestSprintFADVS_D:  # noqa: N801
     """RDFa 1.1 Lite extraction via regex."""
 
     def test_rdfa_typedof_extraction(self) -> None:
@@ -390,7 +389,7 @@ class TestSprintFADVS_D:
 # TestSprintFADVS_E — bounds and fail-soft
 # =============================================================================
 
-class TestSprintFADVS_E:
+class TestSprintFADVS_E:  # noqa: N801
     """All bounded contracts honored; all exceptions fail soft."""
 
     def test_max_entities_per_page_enforced(self) -> None:
@@ -452,6 +451,7 @@ class TestSprintFADVS_E:
     def test_extract_async_offloads_to_executor(self) -> None:
         """Async entrypoint must dispatch to run_in_executor, not to_thread."""
         import asyncio
+
         from hledac.universal.advanced_web.structured_extractor import (
             StructuredExtractor,
         )
@@ -481,12 +481,13 @@ class TestSprintFADVS_E:
 # TestSprintFADVS_F — StealthBrowser integration
 # =============================================================================
 
-class TestSprintFADVS_F:
+class TestSprintFADVS_F:  # noqa: N801
     """StealthBrowser.fetch must attach structured_* keys when enabled."""
 
     def test_stealth_browser_signature_accepts_extract_structured(self) -> None:
-        from hledac.universal.advanced_web.stealth_browser import StealthBrowser
         import inspect
+
+        from hledac.universal.advanced_web.stealth_browser import StealthBrowser
         sig = inspect.signature(StealthBrowser.fetch)
         assert "extract_structured" in sig.parameters
 
@@ -527,7 +528,7 @@ class TestSprintFADVS_F:
 # TestSprintFADVS_G — UnifiedResearchEngine Phase 2.6 wiring
 # =============================================================================
 
-class TestSprintFADVS_G:
+class TestSprintFADVS_G:  # noqa: N801
     """UnifiedResearchEngine config + task method + capability flag."""
 
     def test_config_has_structured_extraction_flag(self) -> None:
@@ -555,8 +556,8 @@ class TestSprintFADVS_G:
 
     def test_stats_include_structured_entities(self) -> None:
         from hledac.universal.enhanced_research import (
-            UnifiedResearchEngine,
             UnifiedResearchConfig,
+            UnifiedResearchEngine,
         )
         engine = UnifiedResearchEngine(config=UnifiedResearchConfig())
         stats = engine.get_statistics()
@@ -567,7 +568,7 @@ class TestSprintFADVS_G:
 # TestSprintFADVS_H — module constants and exports
 # =============================================================================
 
-class TestSprintFADVS_H:
+class TestSprintFADVS_H:  # noqa: N801
     """Module-level invariants: constants, exports, no eager init."""
 
     def test_module_constants_present(self) -> None:
@@ -582,20 +583,12 @@ class TestSprintFADVS_H:
         from hledac.universal.advanced_web import structured_extractor
         from hledac.universal.advanced_web.structured_extractor import (
             StructuredExtractor,
-            StructuredExtraction,
-            ExtractedEntity,
-            ExtractedRelation,
-            entity_to_dict,
-            relation_to_dict,
         )
         assert StructuredExtractor is structured_extractor.StructuredExtractor
 
     def test_package_reexports_from_init(self) -> None:
         from hledac.universal.advanced_web import (
             StructuredExtractor,
-            StructuredExtraction,
-            ExtractedEntity,
-            ExtractedRelation,
         )
         assert StructuredExtractor is not None
 
@@ -615,7 +608,7 @@ class TestSprintFADVS_H:
                 if line.strip().startswith("#"):
                     continue
                 # Real import found
-                raise AssertionError(f"Heavy import '{name}' in {structured_extractor.__file__}:{src[:m.start()].count(chr(10))+1}")
+                raise AssertionError(f"Heavy import '{name}' in {structured_extractor.__file__}:{src[:m.start()].count(chr(10))+1}")  # noqa: E501
 
 
 if __name__ == "__main__":

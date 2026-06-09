@@ -190,7 +190,7 @@ def categorize_item(item, shims, pyproject_content):
     if "test_sprint_f193a_legacy_boundary" in item.get("file", ""):
         return "permanently_shimmed", "legacy boundary test - can be deleted"
     # text module-level availability vars
-    if re.match(r"^hledac\.universal\.text\.(UNICODE_ANALYZER_AVAILABLE|ENCODING_DETECTOR_AVAILABLE|HASH_IDENTIFIER_AVAILABLE)$", missing):
+    if re.match(r"^hledac\.universal\.text\.(UNICODE_ANALYZER_AVAILABLE|ENCODING_DETECTOR_AVAILABLE|HASH_IDENTIFIER_AVAILABLE)$", missing):  # noqa: E501
         return "permanently_shimmed", "module-level bool removed/renamed"
     # orchestrator._ResearchManager, _SecurityManager - removed
     if re.match(r"^hledac\.universal\.orchestrator\._(Research|Security)Manager$", missing):

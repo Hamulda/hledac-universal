@@ -449,7 +449,7 @@ class UniversalMonitoringCoordinator(UniversalCoordinator):
         benchmark_type = decision.metadata.get('benchmark_type', 'general')
         duration = min(decision.estimated_duration, 60)  # Max 60 seconds
 
-        result = await self._run_performance_benchmark(benchmark_type, int(duration))  # int cast: signature requires int (line 467), min(float, 60) is float
+        result = await self._run_performance_benchmark(benchmark_type, int(duration))  # int cast: signature requires int (line 467), min(float, 60) is float  # noqa: E501
 
         execution_time = time.time() - start_time
 
@@ -1090,7 +1090,10 @@ class UniversalMonitoringCoordinator(UniversalCoordinator):
             Diagnostics report with issues and recommendations
         """
         try:
-            from hledac.tools.preserved_logic.monitoring.diagnostics_engine import DiagnosticResult, DiagnosticsEngine
+            from hledac.tools.preserved_logic.monitoring.diagnostics_engine import (  # noqa: F401  # hledac.tools.preserved_logic.monitoring.diagnostics_engine.DiagnosticResult
+                DiagnosticResult,
+                DiagnosticsEngine,
+            )
 
             engine = DiagnosticsEngine(
                 enable_auto_diagnostics=False,  # Manual mode

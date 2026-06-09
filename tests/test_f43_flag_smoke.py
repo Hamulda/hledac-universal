@@ -1,12 +1,9 @@
 """F4.3: Per-flag smoke runner tests."""
 
 import os
-import re
 import subprocess
 import sys
 from pathlib import Path
-
-import pytest
 
 PROJECT_ROOT = Path(__file__).parent.parent
 RUNNER = PROJECT_ROOT / "tools" / "flag_smoke_runner.py"

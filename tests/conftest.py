@@ -28,7 +28,7 @@ for _p in ('/Users/vojtechhamada/PycharmProjects/Hledac', str(REPO_ROOT)):
 # package mechanism returns a stub from sys.modules before the real
 # `__init__.py` gets a chance to execute.  Loading via importlib.util
 # forces the source to be read and executed.
-import importlib.util as _importlib_util
+import importlib.util as _importlib_util  # noqa: E402
 
 _HLEDAC_UNIVERSAL_INIT = (
     "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/__init__.py"
@@ -46,14 +46,15 @@ if os.path.isfile(_HLEDAC_UNIVERSAL_INIT):
             # `hledac` package so `hledac.universal.X` access works too.
             _hledac_pkg = sys.modules.get("hledac")
             if _hledac_pkg is not None:
-                setattr(_hledac_pkg, "universal", _hub_mod)
+                _hledac_pkg.universal = _hub_mod
     except Exception:
         pass  # fail-soft — tests that need it will fail loudly enough
 
 # Now safe to run the namespace bootstrap.
 
 # Canonical namespace bootstrap (idempotent, fail-safe).
-from hledac._namespace_bootstrap import ensure_namespace_paths
+from hledac._namespace_bootstrap import ensure_namespace_paths  # noqa: E402
+
 ensure_namespace_paths()
 
 # Force-import all key submodules of hledac.universal so the namespace
@@ -152,7 +153,7 @@ try:
         _mod = _importlib.import_module("hledac.universal")
         # Manually bind as attribute — Python's namespace-package
         # mechanism does NOT set this automatically for sub-modules.
-        setattr(_hledac_pkg, "universal", _mod)
+        _hledac_pkg.universal = _mod
 except Exception:
     pass  # fail-soft — tests that don't need it will still work
 

@@ -20,13 +20,12 @@ import unittest
 from dataclasses import fields
 
 from hledac.universal.runtime.sprint_scheduler import (
+    _DEFAULT_SOURCE_TIER_MAP,
     HealthReport,
     SourceTier,
+    SourceWork,
     SprintSchedulerConfig,
     SprintSchedulerResult,
-    _DEFAULT_SOURCE_TIER_MAP,
-    _TIER_ORDER,
-    SourceWork,
 )
 
 

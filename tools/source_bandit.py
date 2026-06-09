@@ -46,7 +46,7 @@ class LinUCBArm:
 
     def select(self, context: np.ndarray) -> float:
         """Compute UCB score for this arm given context."""
-        A_inv = np.linalg.inv(self.A)
+        A_inv = np.linalg.inv(self.A)  # noqa: N806
         theta = A_inv @ self.b
         ucb = theta @ context + self.alpha * np.sqrt(context @ A_inv @ context)
         return float(ucb)
@@ -101,8 +101,8 @@ def extract_context_features(analysis: dict[str, Any] | None) -> np.ndarray:
 
     query_lower = analysis.get('query', '').lower()
     # Geo keywords [8-10]
-    geo_eu = 1.0 if any(w in query_lower for w in ['eu', 'euro', 'brusel', 'praha', 'berlin', 'paris', 'london', 'warsaw']) else 0.0
-    geo_us = 1.0 if any(w in query_lower for w in ['usa', 'washington', 'ny', 'california', 'texas', 'new york']) else 0.0
+    geo_eu = 1.0 if any(w in query_lower for w in ['eu', 'euro', 'brusel', 'praha', 'berlin', 'paris', 'london', 'warsaw']) else 0.0  # noqa: E501
+    geo_us = 1.0 if any(w in query_lower for w in ['usa', 'washington', 'ny', 'california', 'texas', 'new york']) else 0.0  # noqa: E501
     geo_ru = 1.0 if any(w in query_lower for w in ['moscow', 'kreml', 'putin', 'россия', 'kremlin']) else 0.0
 
     # Language flags [11-13]
@@ -264,9 +264,9 @@ class SourceBandit:
                         # Sprint 43: Check if stored model has fewer features (migration)
                         if len(d['A'][0]) == 8:
                             # Pad A with identity and b with zeros
-                            oldA = np.array(d['A'])
+                            oldA = np.array(d['A'])  # noqa: N806
                             oldb = np.array(d['b'])
-                            newA = np.eye(N_FEATURES)
+                            newA = np.eye(N_FEATURES)  # noqa: N806
                             newA[:8, :8] = oldA
                             newb = np.zeros(N_FEATURES)
                             newb[:8] = oldb

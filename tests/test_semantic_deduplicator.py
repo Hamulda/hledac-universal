@@ -13,6 +13,7 @@ from unittest.mock import patch
 
 import numpy as np
 import pytest
+
 from hledac.universal.semantic_deduplicator import (
     _EMBEDDING_DIM,
     MAX_CACHE_ITEMS,

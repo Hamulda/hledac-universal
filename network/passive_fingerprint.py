@@ -34,9 +34,10 @@ import time
 from typing import Any
 
 import aiohttp
-from hledac.universal.network.session_runtime import async_get_aiohttp_session
 
+from hledac.universal.network.session_runtime import async_get_aiohttp_session
 from utils.async_helpers import safe_gather_dropin
+
 logger = logging.getLogger(__name__)
 
 # ── Bounds ────────────────────────────────────────────────────────────────────
@@ -111,7 +112,7 @@ class PassiveFingerprint:
     ) -> dict:
         """Generic lookup with cache, rate limit, circuit breaker."""
         # Check cache
-        cache_key = url.split("/")[-1] if params is None else f"{url}/{params.get('query', params.get('ip', params.get('domain', '')))}"
+        cache_key = url.split("/")[-1] if params is None else f"{url}/{params.get('query', params.get('ip', params.get('domain', '')))}"  # noqa: E501
         cached = _fp_cache.get(source, cache_key)
         if cached is not None:
             return cached
@@ -123,7 +124,7 @@ class PassiveFingerprint:
             try:
                 from hledac.universal.transport.circuit_breaker import get_breaker
                 domain = url.split("/")[2] if "//" in url else url
-                if not get_breaker(domain).check_circuit().allowed: raise RuntimeError(f"circuit_open: {domain}")
+                if not get_breaker(domain).check_circuit().allowed: raise RuntimeError(f"circuit_open: {domain}")  # noqa: E701
             except Exception as e:
                 logger.debug(f"[FP] Circuit breaker blocked {source}: {e}")
                 return {}

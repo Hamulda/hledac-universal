@@ -214,7 +214,7 @@ class MLXWorkerThread:
 
     async def submit(
         self,
-        coro: "Coroutine[Any, Any, Any]",
+        coro: Coroutine[Any, Any, Any],
         timeout: float = DEFAULT_SUBMIT_TIMEOUT_S,
     ) -> Any:
         """
@@ -244,7 +244,7 @@ class MLXWorkerThread:
             # Loop was closed between is_active() and run_coroutine_threadsafe
             self._failed = True
             self._failure_reason = f"loop_unavailable: {e}"
-            raise RuntimeError(f"mlx_worker_unavailable: {self._failure_reason}")
+            raise RuntimeError(f"mlx_worker_unavailable: {self._failure_reason}")  # noqa: B904
         # Track request count (M.T5)
         self._request_count += 1
         self._inflight_count += 1
@@ -255,7 +255,7 @@ class MLXWorkerThread:
             # asyncio.wrap_future() does NOT accept a timeout arg — use wait_for().
             bridge = asyncio.wrap_future(cf_future)
             return await asyncio.wait_for(bridge, timeout=timeout)
-        except (asyncio.TimeoutError, TimeoutError):
+        except TimeoutError:
             # Try to cancel the underlying task — may not succeed if MLX is mid-flight
             try:
                 cf_future.cancel()

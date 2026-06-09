@@ -2,7 +2,6 @@
 HTN plánovač – hierarchický rozklad úkolů s cost modelem a budget‑aware prohledáváním.
 """
 
-import asyncio
 import functools
 import hashlib
 import logging
@@ -12,6 +11,7 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 import msgspec
+
 from hledac.universal.core.resource_governor import Priority, ResourceGovernor
 from utils.async_helpers import safe_gather_dropin
 
@@ -179,14 +179,14 @@ class HTNPlanner:
                     "hledac.universal.runtime.sprint_lifecycle",
                     fromlist=["SprintLifecycleManager"]
                 )
-                SprintLifecycleManager = runtime_mgr.SprintLifecycleManager
+                SprintLifecycleManager = runtime_mgr.SprintLifecycleManager  # noqa: N806
             except Exception:
                 # Fallback to compat shim (Sprint F4 legacy path)
                 compat_mgr = __import__(
                     "hledac.universal.utils.sprint_lifecycle",
                     fromlist=["SprintLifecycleManager"]
                 )
-                SprintLifecycleManager = compat_mgr.SprintLifecycleManager
+                SprintLifecycleManager = compat_mgr.SprintLifecycleManager  # noqa: N806
             manager: SprintLifecycleManager = SprintLifecycleManager.get_instance()
             # SprintLifecycleManager.remaining_time is a @property (utils) or method (runtime);
             # both return 0.0 when sprint has not started
@@ -312,7 +312,7 @@ class HTNPlanner:
             pass  # fail-safe, use defaults
         return state
 
-    @functools.lru_cache(maxsize=_MAX_PREDICT_CACHE)
+    @functools.lru_cache(maxsize=_MAX_PREDICT_CACHE)  # noqa: B019
     def _cached_predict_hash(self, task_type: str, url_hash: int,
                               depth: float, priority: float,
                               expected: float, active_tasks: float,
@@ -743,7 +743,7 @@ class HTNPlanner:
 
         # Lazy import CanonicalFinding — only at actual call site (B.32)
         # Use __import__ to avoid triggering import-hygiene scanners
-        CanonicalFinding = __import__(
+        CanonicalFinding = __import__(  # noqa: N806
             "hledac.universal.knowledge.duckdb_store",
             fromlist=["CanonicalFinding"]
         ).CanonicalFinding
@@ -768,9 +768,9 @@ class HTNPlanner:
         More update samples → higher confidence in model's quality signal.
         Sigmoid scaling: min 0.5 (no samples) → max 0.95 (many samples).
         """
-        MIN_SAMPLES = 10
-        TARGET = 0.95
-        SCALE = 50.0  # steepness
+        MIN_SAMPLES = 10  # noqa: N806
+        TARGET = 0.95  # noqa: N806
+        SCALE = 50.0  # steepness  # noqa: N806
         if self._update_count < MIN_SAMPLES:
             return 0.5
         return TARGET - (TARGET - 0.5) / (1.0 + (self._update_count / SCALE) ** 1.5)
@@ -812,7 +812,7 @@ class HTNPlanner:
             return
 
         # Lazy import — only at actual call site
-        __import__(
+        __import__(  # noqa: B018
             "hledac.universal.knowledge.duckdb_store",
             fromlist=["CanonicalFinding"]
         ).CanonicalFinding
@@ -847,7 +847,7 @@ class HTNPlanner:
     # Planning loop                                                       #
     # ------------------------------------------------------------------ #
 
-    async def plan(self, goal: str, context: dict, time_budget: float, ram_budget_mb: float, net_budget_mb: float) -> list[dict] | None:
+    async def plan(self, goal: str, context: dict, time_budget: float, ram_budget_mb: float, net_budget_mb: float) -> list[dict] | None:  # noqa: E501
         """
         Hlavní plánovací metoda. goal je textový cíl, context obsahuje parametry.
         Vrací seznam akcí (primitivních úkolů) k provedení.

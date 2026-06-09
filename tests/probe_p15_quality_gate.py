@@ -23,13 +23,10 @@ from __future__ import annotations
 
 import hashlib
 import math
-import sys
 import time
 from collections import Counter
-from typing import Iterable
 
 import pytest
-
 
 # ---------------------------------------------------------------------------
 # Extension availability
@@ -267,7 +264,7 @@ class TestBatchAPI:
         batched = RUST_BATCH_ENTROPY(sample_texts)
         singles = [RUST_ENTROPY(t) for t in sample_texts]
         assert len(batched) == len(singles)
-        for b, s in zip(batched, singles):
+        for b, s in zip(batched, singles, strict=False):
             assert abs(b - s) < 1e-12, f"batch entropy mismatch: {b} vs {s}"
 
     def test_batch_dedup_matches_single(self, sample_texts):
@@ -323,9 +320,6 @@ class TestPythonWrapper:
         # The wrapper should be importable regardless of Rust availability
         from knowledge.quality_assessment import (
             _QUALITY_GATE_RUST_AVAILABLE,
-            _normalize_for_quality,
-            _compute_entropy,
-            _compute_dedup_fingerprint,
         )
         assert isinstance(_QUALITY_GATE_RUST_AVAILABLE, bool)
 

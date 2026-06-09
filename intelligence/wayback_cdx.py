@@ -32,9 +32,9 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
 
-from utils.async_helpers import safe_gather_dropin
-
 import aiohttp
+
+from utils.async_helpers import safe_gather_dropin
 
 try:
     from hledac.universal.knowledge.duckdb_store import CanonicalFinding
@@ -125,7 +125,7 @@ class CDXSearchResult:
     def _parse_timestamp(self) -> float:
         from datetime import datetime
         try:
-            return datetime.strptime(self.timestamp, "%Y%m%d%H%M%S").timestamp()
+            return datetime.strptime(self.timestamp, "%Y%m%d%H%M%S").timestamp()  # noqa: DTZ007
         except Exception:
             return 0.0
 
@@ -156,7 +156,7 @@ class CDXDeepSearchResult:
     def to_findings(self, query: str, sprint_id: str) -> list:
         if self.error:
             return []
-        return [r.to_canonical_finding(query, sprint_id) for r in self.results if r.to_canonical_finding(query, sprint_id)]
+        return [r.to_canonical_finding(query, sprint_id) for r in self.results if r.to_canonical_finding(query, sprint_id)]  # noqa: E501
 
 
 # ── Core function ─────────────────────────────────────────────────────────────

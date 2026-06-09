@@ -116,11 +116,11 @@ class StreamHasher64:
 
 class UrlKind:
     """URL transport classification (clearnet/onion/i2p/freenet/unknown)."""
-    Clearnet: "UrlKind"
-    Onion: "UrlKind"
-    I2P: "UrlKind"
-    Freenet: "UrlKind"
-    Unknown: "UrlKind"
+    Clearnet: UrlKind
+    Onion: UrlKind
+    I2P: UrlKind
+    Freenet: UrlKind
+    Unknown: UrlKind
     def as_str(self) -> str: ...
     def __str__(self) -> str: ...
     def __hash__(self) -> int: ...

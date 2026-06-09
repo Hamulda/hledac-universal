@@ -10,7 +10,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any  # noqa: F401  # typing.Any
 
 from hledac.universal.project_types import (
     AgentManagerConfig,
@@ -38,15 +38,15 @@ class M1Presets:
 
 
 class ResearchPresets:
-    QUICK = {"max_steps": 5, "max_time_minutes": 5, "max_concurrent_agents": 2, "enable_knowledge_graph": False, "enable_rag": False}
-    STANDARD = {"max_steps": 20, "max_time_minutes": 30, "max_concurrent_agents": 4, "enable_knowledge_graph": False, "enable_rag": True}
-    DEEP = {"max_steps": 50, "max_time_minutes": 120, "max_concurrent_agents": 6, "enable_knowledge_graph": True, "enable_rag": True}
-    EXTREME = {"max_steps": 100, "max_time_minutes": 480, "max_concurrent_agents": 6, "enable_knowledge_graph": True, "enable_rag": True, "enable_fact_checking": True, "save_intermediate": True}
-    AUTONOMOUS = {"max_steps": 200, "max_time_minutes": 1440, "max_concurrent_agents": 6, "enable_knowledge_graph": True, "enable_rag": True, "enable_fact_checking": True, "save_intermediate": True, "auto_archive_fallback": True}
+    QUICK = {"max_steps": 5, "max_time_minutes": 5, "max_concurrent_agents": 2, "enable_knowledge_graph": False, "enable_rag": False}  # noqa: E501
+    STANDARD = {"max_steps": 20, "max_time_minutes": 30, "max_concurrent_agents": 4, "enable_knowledge_graph": False, "enable_rag": True}  # noqa: E501
+    DEEP = {"max_steps": 50, "max_time_minutes": 120, "max_concurrent_agents": 6, "enable_knowledge_graph": True, "enable_rag": True}  # noqa: E501
+    EXTREME = {"max_steps": 100, "max_time_minutes": 480, "max_concurrent_agents": 6, "enable_knowledge_graph": True, "enable_rag": True, "enable_fact_checking": True, "save_intermediate": True}  # noqa: E501
+    AUTONOMOUS = {"max_steps": 200, "max_time_minutes": 1440, "max_concurrent_agents": 6, "enable_knowledge_graph": True, "enable_rag": True, "enable_fact_checking": True, "save_intermediate": True, "auto_archive_fallback": True}  # noqa: E501
 
     @classmethod
     def get_preset(cls, mode):
-        return {ResearchMode.QUICK: cls.QUICK, ResearchMode.STANDARD: cls.STANDARD, ResearchMode.DEEP: cls.DEEP, ResearchMode.EXTREME: cls.EXTREME, ResearchMode.AUTONOMOUS: cls.AUTONOMOUS}.get(mode, cls.STANDARD)
+        return {ResearchMode.QUICK: cls.QUICK, ResearchMode.STANDARD: cls.STANDARD, ResearchMode.DEEP: cls.DEEP, ResearchMode.EXTREME: cls.EXTREME, ResearchMode.AUTONOMOUS: cls.AUTONOMOUS}.get(mode, cls.STANDARD)  # noqa: E501
 
 
 @dataclass
@@ -215,7 +215,7 @@ class UniversalConfig:
         config = cls(
             mode=mode,
             enable_knowledge_layer=mode in [ResearchMode.DEEP, ResearchMode.EXTREME, ResearchMode.AUTONOMOUS],
-            enable_rag_pipeline=mode in [ResearchMode.STANDARD, ResearchMode.DEEP, ResearchMode.EXTREME, ResearchMode.AUTONOMOUS],
+            enable_rag_pipeline=mode in [ResearchMode.STANDARD, ResearchMode.DEEP, ResearchMode.EXTREME, ResearchMode.AUTONOMOUS],  # noqa: E501
             m1_optimized=m1_optimized,
         )
         config.research.mode = mode
@@ -236,7 +236,7 @@ class UniversalConfig:
         self.research.hermes_model = M1Presets.HERMES_MODEL
         self.research.modernbert_model = M1Presets.MODERNBERT_MODEL
         self.research.gliner_model = M1Presets.GLINER_MODEL
-        self.agent_manager.max_concurrent_agents = min(self.agent_manager.max_concurrent_agents, M1Presets.MAX_CONCURRENT_AGENTS)
+        self.agent_manager.max_concurrent_agents = min(self.agent_manager.max_concurrent_agents, M1Presets.MAX_CONCURRENT_AGENTS)  # noqa: E501
         self.agent_manager.agent_timeout_seconds = M1Presets.AGENT_TIMEOUT_SECONDS
         self.agent_manager.circuit_breaker_threshold = M1Presets.CIRCUIT_BREAKER_THRESHOLD
         if self.research.max_concurrent_agents > 4:

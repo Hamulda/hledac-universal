@@ -64,12 +64,12 @@ if _NONE_PATH.exists():
         RuntimeWarning, stacklevel=2
     )
 
-import os
-import pathlib
-import shutil
-import warnings
-from pathlib import Path
-from typing import Any
+import os  # noqa: E402
+import pathlib  # noqa: E402
+import shutil  # noqa: E402
+import warnings  # noqa: E402
+from pathlib import Path  # noqa: E402
+from typing import Any  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # OPSEC Fallback Warning (once-only)

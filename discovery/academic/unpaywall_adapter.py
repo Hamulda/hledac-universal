@@ -23,9 +23,8 @@ from typing import NamedTuple
 
 import orjson
 
-from utils.async_helpers import safe_gather_dropin
-
 from hledac.universal.knowledge.duckdb_store import CanonicalFinding
+from utils.async_helpers import safe_gather_dropin
 
 logger = logging.getLogger(__name__)
 
@@ -85,9 +84,9 @@ class UnpaywallAdapter:
         """Fetch paper data from Unpaywall."""
         async with self._semaphore:
             try:
-                from hledac.universal.fetching.public_fetcher import async_fetch_public_text
-
                 import urllib.parse
+
+                from hledac.universal.fetching.public_fetcher import async_fetch_public_text
                 encoded_doi = urllib.parse.quote(doi, safe="")
                 url = f"{UNPAYWALL_BASE}/{encoded_doi}?email={self._email}"
 

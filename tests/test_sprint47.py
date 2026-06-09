@@ -21,8 +21,8 @@ from hledac.universal.intelligence.document_intelligence import StegdetectServer
 from hledac.universal.layers.communication_layer import CommunicationLayer
 from hledac.universal.project_types import CommunicationConfig
 from hledac.universal.tools.osint_frameworks import OSINTFrameworkRunner
-
 from utils.async_helpers import safe_gather_dropin, safe_gather_fire_and_forget
+
 
 class TestSprint47(unittest.IsolatedAsyncioTestCase):
     """Tests for Sprint 47 - Performance + Entity Resolution."""

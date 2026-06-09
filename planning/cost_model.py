@@ -35,7 +35,7 @@ class OnlineRidge:
 
     def update(self, x: np.ndarray, y: float):
         x = x.reshape(-1, 1)
-        A_inv_x = self.A_inv @ x
+        A_inv_x = self.A_inv @ x  # noqa: N806
         denominator = 1 + (x.T @ A_inv_x).item()
         self.A_inv -= (A_inv_x @ A_inv_x.T) / denominator
         self.b += y * x.flatten()
@@ -184,7 +184,7 @@ class AdaptiveCostModel:
 
         return feat
 
-    def predict(self, task_type: str, params: dict, system_state: dict) -> tuple[float, float, float, float, float | None]:
+    def predict(self, task_type: str, params: dict, system_state: dict) -> tuple[float, float, float, float, float | None]:  # noqa: E501
         x_raw = self._build_features(task_type, params, system_state)
         # Normalizace
         x_norm = self.normalizer.normalize(x_raw)
@@ -243,11 +243,11 @@ class AdaptiveCostModel:
             self.ssm_ready = True
 
             # Sestavíme batch (posledních 100)
-            X = np.array([h[0] for h in list(self._history)[-100:]])
-            Y = np.array([h[1] for h in list(self._history)[-100:]])
+            X = np.array([h[0] for h in list(self._history)[-100:]])  # noqa: N806
+            Y = np.array([h[1] for h in list(self._history)[-100:]])  # noqa: N806
 
-            X_mlx = mx.array(X)
-            Y_mlx = mx.array(Y)
+            X_mlx = mx.array(X)  # noqa: N806
+            Y_mlx = mx.array(Y)  # noqa: N806
 
             def loss_fn(model):
                 pred = model(X_mlx)

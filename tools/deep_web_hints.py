@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 # BeautifulSoup is optional
 try:
-    from bs4 import BeautifulSoup, Tag
+    from bs4 import BeautifulSoup, Tag  # noqa: F401  # bs4.Tag
     BS4_AVAILABLE = True
 except ImportError:
     BS4_AVAILABLE = False
@@ -139,7 +139,7 @@ class DeepWebHintsExtractor:
             hints.js_markers = self._extract_js_markers(html_preview)
 
             # Onion links (for Sprint 47+)
-            ONION_REGEX = re.compile(r'[a-z0-9]{16,56}\.onion', re.IGNORECASE)
+            ONION_REGEX = re.compile(r'[a-z0-9]{16,56}\.onion', re.IGNORECASE)  # noqa: N806
             hints.onion_links = ONION_REGEX.findall(html_preview)[:50]
 
             # JS bundle URLs (external, for later fetching)

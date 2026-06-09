@@ -122,7 +122,7 @@ def _rule_profile_propagation(inp: NextActionInput) -> tuple[str, str | None] | 
     has_rg_telemetry = bool(rg)
     rg_checked: bool = bool(rg.get("checked")) if has_rg_telemetry else False
     rg_satisfied: bool = rg.get("satisfied", False)
-    if has_rg_telemetry and not rg_checked and inp.runtime_truth.get("cycles_started", 0) > 0 and inp.runtime_truth.get("primary_signal_source") and inp.feed_findings > 0 and inp.ct_findings == 0 and inp.public_findings == 0:
+    if has_rg_telemetry and not rg_checked and inp.runtime_truth.get("cycles_started", 0) > 0 and inp.runtime_truth.get("primary_signal_source") and inp.feed_findings > 0 and inp.ct_findings == 0 and inp.public_findings == 0:  # noqa: E501
         return ("fix_scheduler_return_guard_not_called", None)
     if has_rg_telemetry and rg_checked and not rg_satisfied:
         return ("fix_return_guard_terminal_state", None)
@@ -133,14 +133,14 @@ def _rule_profile_propagation(inp: NextActionInput) -> tuple[str, str | None] | 
     se_path = se.get("exit_path") if se is not None else None
     if se is not None and not se_path:
         return ("add_scheduler_exit_tracer", None)
-    if se is not None and se_path and se_path != "run_complete" and not rg_checked and inp.runtime_truth.get("cycles_started", 0) > 0 and inp.runtime_truth.get("primary_signal_source") and inp.feed_findings > 0 and inp.ct_findings == 0 and inp.public_findings == 0:
+    if se is not None and se_path and se_path != "run_complete" and not rg_checked and inp.runtime_truth.get("cycles_started", 0) > 0 and inp.runtime_truth.get("primary_signal_source") and inp.feed_findings > 0 and inp.ct_findings == 0 and inp.public_findings == 0:  # noqa: E501
         return (f"patch_scheduler_exit_path:{se_path}", None)
     return None
 
 
 def _rule_terminality(inp: NextActionInput) -> tuple[str, str | None] | None:
     """Rules 0e, 0f: Acquisition terminality wiring (F208F, F208M)."""
-    if inp.acquisition_terminality_checked is False and inp.runtime_truth.get("cycles_started", 0) > 0 and inp.runtime_truth.get("primary_signal_source") and (inp.ct_findings > 0 or inp.public_findings > 0):
+    if inp.acquisition_terminality_checked is False and inp.runtime_truth.get("cycles_started", 0) > 0 and inp.runtime_truth.get("primary_signal_source") and (inp.ct_findings > 0 or inp.public_findings > 0):  # noqa: E501
         return ("fix_terminality_wiring", None)
     if inp.acquisition_terminality_checked is True and inp.acquisition_terminality_satisfied is False:
         missing = inp.acquisition_terminality_missing_lanes or []
@@ -158,7 +158,7 @@ def _rule_provider_surface(inp: NextActionInput) -> tuple[str, str | None] | Non
         if inp.acquisition_prelude_ran is False:
             return ("fix_acquisition_prelude_not_run", None)
         return ("fix_acquisition_prelude_not_checked", None)
-    if _is_domain and _has_nonfeed and inp.acquisition_prelude_ran is True and inp.acquisition_prelude_checked is not True:
+    if _is_domain and _has_nonfeed and inp.acquisition_prelude_ran is True and inp.acquisition_prelude_checked is not True:  # noqa: E501
         return ("fix_acquisition_prelude_checked_wiring", None)
     return None
 
@@ -176,7 +176,7 @@ def _rule_quality_gate(inp: NextActionInput) -> tuple[str, str | None] | None:
 
 def _rule_default(inp: NextActionInput) -> tuple[str, str | None] | None:
     """Rules 3, 2, 5, 4, 6, 7, default: Feed/public/ct/quality default rules."""
-    if inp.public_fetch_attempted and inp.nonfeed_accepted_findings == 0 and inp.feed_findings == inp.total_findings and not _was_family_attempted(inp.runtime_truth, "ct"):
+    if inp.public_fetch_attempted and inp.nonfeed_accepted_findings == 0 and inp.feed_findings == inp.total_findings and not _was_family_attempted(inp.runtime_truth, "ct"):  # noqa: E501
         return ("inspect_public_reject_reasons", inp.top_public_reject_reason)
     if inp.feed_dominance_score is not None and inp.feed_dominance_score >= 0.7:
         if inp.nonfeed_accepted_findings == 0:
@@ -186,7 +186,7 @@ def _rule_default(inp: NextActionInput) -> tuple[str, str | None] | None:
             return ("improve_nonfeed_lanes", None)
     if inp.ct_findings == 0 and _was_family_attempted(inp.runtime_truth, "ct"):
         return ("inspect_ct_query_domain", None)
-    if inp.total_findings > 0 and inp.feed_findings == inp.total_findings and _was_family_attempted(inp.runtime_truth, "ct") and inp.public_findings > 0:
+    if inp.total_findings > 0 and inp.feed_findings == inp.total_findings and _was_family_attempted(inp.runtime_truth, "ct") and inp.public_findings > 0:  # noqa: E501
         return ("improve_nonfeed_lanes", None)
     if inp.nonfeed_accepted_findings > 0:
         return ("run_active600_or_targeted_query", None)

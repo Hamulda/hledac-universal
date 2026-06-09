@@ -69,7 +69,7 @@ def _get_sprint_advisory_runner():
     global _SPRINT_ADVISORY_RUNNER
     if _SPRINT_ADVISORY_RUNNER is None:
         from hledac.universal.runtime.sprint_advisory_runner import (
-            SprintAdvisoryRunner as _SAR,
+            SprintAdvisoryRunner as _SAR,  # noqa: N814
         )
         _SPRINT_ADVISORY_RUNNER = _SAR
     return _SPRINT_ADVISORY_RUNNER
@@ -238,7 +238,7 @@ class SidecarOrchestrator:
         """
         # Step 1: SprintAdvisoryRunner for 4 core advisories
         if self._scheduler is not None:
-            SAR = _get_sprint_advisory_runner()
+            SAR = _get_sprint_advisory_runner()  # noqa: N806
             runner = SAR(
                 scheduler=self._scheduler,
                 duckdb_store=getattr(self._scheduler, "_duckdb_store", None),
@@ -584,9 +584,9 @@ class SidecarOrchestrator:
         exposure_facets: dict[str, Any] = {}
         pivot_facets: dict[str, Any] = {}
 
-        MAX_MEMORY_ENTITIES = 1000
-        MAX_MEMORY_EXPOSURES = 500
-        MAX_MEMORY_PIVOTS = 200
+        MAX_MEMORY_ENTITIES = 1000  # noqa: N806
+        MAX_MEMORY_EXPOSURES = 500  # noqa: N806
+        MAX_MEMORY_PIVOTS = 200  # noqa: N806
 
         for finding in findings:
             target_id = getattr(finding, "target_id", None) or getattr(finding, "entity_id", None)

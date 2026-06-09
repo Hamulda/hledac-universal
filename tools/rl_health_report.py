@@ -271,7 +271,7 @@ def main(argv: list[str] | None = None) -> int:
 
     data = _load_state(args.state_path)
     if not data:
-        print(f"=== RL Health Report ===")
+        print("=== RL Health Report ===")
         print(f"State file not found or unreadable: {args.state_path}")
         print("Status: NO STATE ❌")
         return 1

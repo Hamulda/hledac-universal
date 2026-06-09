@@ -79,7 +79,7 @@ def _load_programs() -> dict:
 # M1 constraint: lazy load, unload after synthesis, mx.metal.clear_cache() on finish
 
 Hermes3LM_ENABLED = os.getenv("HLEDAC_ENABLE_LLM", "0") == "1"
-_HERMES_LM_INSTANCE: "Hermes3DSPyLM | None" = None
+_HERMES_LM_INSTANCE: Hermes3DSPyLM | None = None
 
 
 class Hermes3DSPyLM:
@@ -104,7 +104,6 @@ class Hermes3DSPyLM:
     def __call__(self, prompt: str, **kwargs) -> str:
         """Synchronous call — runs Hermes3Engine.generate_text() via executor."""
         import asyncio
-        import concurrent.futures
 
         # Lazy load Hermes3Engine on first call
         if not self._loaded:

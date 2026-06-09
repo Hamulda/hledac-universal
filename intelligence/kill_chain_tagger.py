@@ -853,7 +853,7 @@ class KillChainTagger:
         # Collect all matching patterns
         matches: list[tuple[float, str, str, str]] = []  # (confidence, tactic, technique_id, technique_name)
 
-        for (tactic, tech_id, tech_name, phase, confidence, patterns) in _ATTACK_PATTERNS:
+        for (tactic, tech_id, tech_name, phase, confidence, patterns) in _ATTACK_PATTERNS:  # noqa: B007
             for pat in patterns:
                 try:
                     if pat.search(text):
@@ -865,7 +865,7 @@ class KillChainTagger:
         # Also add IOC-based technique hints
         ioc_tech_ids = ioc_to_technique_ids(ioc_type, ioc_value)
         for tech_id in ioc_tech_ids:
-            for (tactic, tid, tech_name, phase, confidence, _) in _ATTACK_PATTERNS:
+            for (tactic, tid, tech_name, phase, confidence, _) in _ATTACK_PATTERNS:  # noqa: B007
                 if tid == tech_id:
                     matches.append((confidence, tactic, tid, tech_name))
                     break
@@ -883,7 +883,7 @@ class KillChainTagger:
 
         # Build KillChainTag list
         result: list[KillChainTag] = []
-        for tech_id, (conf, tactic, tname) in top_items:
+        for tech_id, (conf, tactic, tname) in top_items:  # noqa: B007
             # Find phase for this technique_id
             phase = "reconnaissance"
             for (_, t_id, _, ph, _, _) in _ATTACK_PATTERNS:

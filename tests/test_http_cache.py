@@ -23,7 +23,6 @@ from unittest.mock import patch
 
 import pytest
 
-
 # Ensure the universal package is importable when pytest is invoked from
 # the repo root (matches the project's existing test bootstrap).
 _HERE = __file__.rsplit("/", 2)[0]  # .../universal

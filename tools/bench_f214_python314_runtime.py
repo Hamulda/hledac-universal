@@ -76,9 +76,10 @@ except ImportError:
     _HAS_ZSTD = False
 
 # ── import context ──────────────────────────────────────────────────────────────
-from contextlib import contextmanager
+from contextlib import contextmanager  # noqa: E402
 
-from utils.async_helpers import safe_gather_dropin
+from utils.async_helpers import safe_gather_dropin  # noqa: E402
+
 
 @contextmanager
 def package_import_context():
@@ -188,7 +189,7 @@ def time_many(fn: Callable[[], Any], *, runs: int = 7, warmups: int = 1) -> dict
             t1 = time.perf_counter()
             samples_ms.append((t1 - t0) * 1000.0)
         except Exception as exc:
-            return {"status": "fail", "error": str(exc), "samples_ms": [], "summary": {}, "warmups": warmups, "runs": runs}
+            return {"status": "fail", "error": str(exc), "samples_ms": [], "summary": {}, "warmups": warmups, "runs": runs}  # noqa: E501
 
     return {
         "status": "ok",
@@ -302,13 +303,13 @@ def _root_import_benchmark(*, runs: int = 3, warmups: int = 1, quick: bool = Fal
             "cold_import_ms": import_ms_samples,
             "cold_import_summary": cold_summary,
             "cached_import_summary": cached_summary,
-            "first_access_summary": {attr: summarize_samples(samples) for attr, samples in first_access_samples.items()},
+            "first_access_summary": {attr: summarize_samples(samples) for attr, samples in first_access_samples.items()},  # noqa: E501
             "cached_access_summary": {},  # printed above
         }
 
 
 def _print_import_summary(s: dict[str, float], prefix: str = "    ") -> None:
-    print(f"{prefix}min={s['min_ms']:.3f}ms  median={s['median_ms']:.3f}ms  p95={s['p95_ms']:.3f}ms  max={s['max_ms']:.3f}ms  runs={s['runs']}")
+    print(f"{prefix}min={s['min_ms']:.3f}ms  median={s['median_ms']:.3f}ms  p95={s['p95_ms']:.3f}ms  max={s['max_ms']:.3f}ms  runs={s['runs']}")  # noqa: E501
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -394,7 +395,7 @@ def _config_import_benchmark(*, runs: int = 3, warmups: int = 1, quick: bool = F
     with package_import_context():
         import importlib
 
-        for label, mod_name in [("config", "hledac.universal.config"), ("project_types", "hledac.universal.project_types")]:
+        for label, mod_name in [("config", "hledac.universal.config"), ("project_types", "hledac.universal.project_types")]:  # noqa: E501
             key_ms = f"{label}_ms"
 
             def make_import(m=mod_name):
@@ -613,7 +614,7 @@ def _zstd_benchmark(*, runs: int = 3, warmups: int = 1, quick: bool = False) -> 
     compressed_size = len(compressed)
     orjson_ms = time_many(lambda: orjson.dumps(payload), runs=runs, warmups=warmups)
 
-    print(f"  raw={raw_size / 1024:.1f} KiB  compressed={compressed_size / 1024:.1f} KiB  ratio={_fmt_ratio(raw_size, compressed_size)}")
+    print(f"  raw={raw_size / 1024:.1f} KiB  compressed={compressed_size / 1024:.1f} KiB  ratio={_fmt_ratio(raw_size, compressed_size)}")  # noqa: E501
     print(f"  zstd.compress ({runs} runs):")
     _print_import_summary(compress_result["summary"], "    ")
     print(f"  zstd.decompress ({runs} runs):")
@@ -664,8 +665,8 @@ def _json_benchmark(*, runs: int = 3, warmups: int = 1, quick: bool = False) -> 
     orjson_dumps_result = time_many(lambda: orjson.dumps(payload), runs=runs, warmups=warmups)
     orjson_loads_result = time_many(lambda: orjson.loads(dumps_payload), runs=runs, warmups=warmups)
 
-    speedup_d = json_dumps_result["summary"]["median_ms"] / orjson_dumps_result["summary"]["median_ms"] if orjson_dumps_result["summary"]["median_ms"] > 0 else 0
-    speedup_l = json_loads_result["summary"]["median_ms"] / orjson_loads_result["summary"]["median_ms"] if orjson_loads_result["summary"]["median_ms"] > 0 else 0
+    speedup_d = json_dumps_result["summary"]["median_ms"] / orjson_dumps_result["summary"]["median_ms"] if orjson_dumps_result["summary"]["median_ms"] > 0 else 0  # noqa: E501
+    speedup_l = json_loads_result["summary"]["median_ms"] / orjson_loads_result["summary"]["median_ms"] if orjson_loads_result["summary"]["median_ms"] > 0 else 0  # noqa: E501
 
     print(f"  {n_items:,} items  ({runs} runs each):")
     print("  json.dumps:")
@@ -713,7 +714,7 @@ def _topk_benchmark(*, runs: int = 3, warmups: int = 1, quick: bool = False) -> 
     sorted_result = time_many(sorted_fn, runs=runs, warmups=warmups)
     heapq_result = time_many(heapq_fn, runs=runs, warmups=warmups)
 
-    speedup = sorted_result["summary"]["median_ms"] / heapq_result["summary"]["median_ms"] if heapq_result["summary"]["median_ms"] > 0 else 0
+    speedup = sorted_result["summary"]["median_ms"] / heapq_result["summary"]["median_ms"] if heapq_result["summary"]["median_ms"] > 0 else 0  # noqa: E501
 
     print(f"  {n_items:,} items, k={k}  ({runs} runs each):")
     print("  sorted[:k]:")
@@ -746,11 +747,11 @@ async def _async_semaphore_impl(n_tasks: int, sem_limit: int):
             return await plain_task(idx)
 
     async def plain_gather():
-        return await safe_gather_dropin(*(plain_task(i) for i in range(n_tasks)), label="bench_f214_python314_runtime:748")
+        return await safe_gather_dropin(*(plain_task(i) for i in range(n_tasks)), label="bench_f214_python314_runtime:748")  # noqa: E501
 
     async def semaphore_gather():
         sem = asyncio.Semaphore(sem_limit)
-        return await safe_gather_dropin(*(sem_task(i, sem) for i in range(n_tasks)), label="bench_f214_python314_runtime:752")
+        return await safe_gather_dropin(*(sem_task(i, sem) for i in range(n_tasks)), label="bench_f214_python314_runtime:752")  # noqa: E501
 
     t0 = time.perf_counter()
     plain_result = await plain_gather()
@@ -784,7 +785,7 @@ async def _run_async_semaphore(*, runs: int = 3, warmups: int = 1, quick: bool =
 
     plain_s = summarize_samples(plain_samples)
     sem_s = summarize_samples(sem_samples)
-    overhead_pct = (sem_s["median_ms"] - plain_s["median_ms"]) / plain_s["median_ms"] * 100 if plain_s["median_ms"] > 0 else 0
+    overhead_pct = (sem_s["median_ms"] - plain_s["median_ms"]) / plain_s["median_ms"] * 100 if plain_s["median_ms"] > 0 else 0  # noqa: E501
 
     print(f"  {n_tasks:,} tasks, limit={sem_limit}  ({runs} runs each):")
     print("  plain gather:")

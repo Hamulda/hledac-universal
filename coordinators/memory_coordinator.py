@@ -39,7 +39,7 @@ Class Index
   - ``ResearchPhase`` — Enum: DISCOVERY, ACQUISITION, ANALYSIS, SYNTHESIS, REPORTING
   - ``ContextItem`` — dataclass: priority + metadata for one context entry
   - ``CompressedContext`` — dataclass: compressed representation with ratio
-  - ``ContextOptimizationManager`` — LANCEDB reranking integration; narrow seam ``get_reranking_context()`` for thermal/battery-aware reranking
+  - ``ContextOptimizationManager`` — LANCEDB reranking integration; narrow seam ``get_reranking_context()`` for thermal/battery-aware reranking  # noqa: E501
 
 **Multi-Level Cache** (lines 2337-2820):
   - ``CacheType`` — Enum: L1 (hot), L2 (warm), L3 (cold)
@@ -352,7 +352,7 @@ class NeuromorphicMemoryManager:
         # Generate hash-based activation pattern (xxhash — non-cryptographic)
         try:
             from hledac_rust_extensions import content_hash_hex as _xxh64
-            hash_val = _xxh64(data_str.encode())  # .encode(): content_hash_hex signature requires bytes (rust_extensions/src/hledac_rust_extensions.pyi:267)
+            hash_val = _xxh64(data_str.encode())  # .encode(): content_hash_hex signature requires bytes (rust_extensions/src/hledac_rust_extensions.pyi:267)  # noqa: E501
         except Exception:
             hash_val = hashlib.sha256(data_str.encode()).hexdigest()
 
@@ -2674,7 +2674,7 @@ class MultiLevelContextCache:
         try:
             # Search for similar embeddings
             query_embedding = input_embedding.reshape(1, -1).astype('float32')
-            D, I = self.semantic_index.search(query_embedding, 10)
+            D, I = self.semantic_index.search(query_embedding, 10)  # noqa: N806
 
             # Check if any similarity meets threshold
             for idx, similarity in zip(I[0], D[0], strict=False):

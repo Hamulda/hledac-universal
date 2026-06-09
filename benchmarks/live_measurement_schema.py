@@ -148,7 +148,7 @@ class LiveMeasurementResult:
     # F216B: Acquisition profile telemetry
     acquisition_profile: str | None = None  # "default" | "nonfeed_diagnostic"
     nonfeed_priority_enabled: bool = False  # F223A: from acquisition_report.nonfeed_priority_enabled
-    nonfeed_profile_expected_lanes: tuple[str, ...] = ()  # F223A: from acquisition_report.nonfeed_profile_expected_lanes
+    nonfeed_profile_expected_lanes: tuple[str, ...] = ()  # F223A: from acquisition_report.nonfeed_profile_expected_lanes  # noqa: E501
 
     # Windup guard observation telemetry (F207S)
     windup_guard_observation: dict | None = None
@@ -170,7 +170,7 @@ class LiveMeasurementResult:
     # CLI: invokes `python -m hledac.universal` shell command
     # Noncanonical: manually constructs scheduler/pipeline pieces
     # Dry-run: validates command construction without running sprint
-    runtime_authority_path: str | None = None  # "canonical_core_run_sprint" | "canonical_cli_sprint" | "noncanonical_manual_scheduler" | "dry_run_no_runtime"
+    runtime_authority_path: str | None = None  # "canonical_core_run_sprint" | "canonical_cli_sprint" | "noncanonical_manual_scheduler" | "dry_run_no_runtime"  # noqa: E501
     runtime_authority_module: str | None = None  # e.g. "hledac.universal.core.__main__"
     runtime_authority_function: str | None = None  # e.g. "run_sprint"
     runtime_authority_is_canonical: bool | None = None
@@ -180,7 +180,7 @@ class LiveMeasurementResult:
     core_run_sprint_module_file: str | None = None  # e.g. ".../hledac/universal/core/__main__.py"
     core_run_sprint_function_qualname: str | None = None  # "run_sprint"
     sprint_scheduler_module_file: str | None = None  # e.g. ".../hledac/universal/runtime/sprint_scheduler.py"
-    live_sprint_measurement_module_file: str | None = None  # e.g. ".../hledac/universal/benchmarks/live_sprint_measurement.py"
+    live_sprint_measurement_module_file: str | None = None  # e.g. ".../hledac/universal/benchmarks/live_sprint_measurement.py"  # noqa: E501
     python_executable: str | None = None  # sys.executable
     runtime_cwd: str | None = None  # os.getcwd()
     sys_path_head: str | None = None  # sys.path[0] if not empty
@@ -248,9 +248,9 @@ class LiveMeasurementResult:
             _pub = next((x for x in _sfo if isinstance(x, dict) and x.get("family") == "public"), None)
             _ct = next((x for x in _sfo if isinstance(x, dict) and x.get("family") == "ct"), None)
             if _pub is not None:
-                d["public_terminal_state"] = "COMPLETED" if (_pub.get("attempted") and not _pub.get("skipped")) else "NEVER_ATTEMPTED"
+                d["public_terminal_state"] = "COMPLETED" if (_pub.get("attempted") and not _pub.get("skipped")) else "NEVER_ATTEMPTED"  # noqa: E501
             if _ct is not None:
-                d["ct_terminal_state"] = "COMPLETED" if (_ct.get("attempted") and not _ct.get("skipped")) else "NEVER_ATTEMPTED"
+                d["ct_terminal_state"] = "COMPLETED" if (_ct.get("attempted") and not _ct.get("skipped")) else "NEVER_ATTEMPTED"  # noqa: E501
         elif isinstance(_sfo, dict) and _sfo:
             # Dict form: {"public": {...}, "ct": {...}}
             d["public_terminal_state"] = "COMPLETED" if _sfo.get("public", {}).get("attempted") else "NEVER_ATTEMPTED"

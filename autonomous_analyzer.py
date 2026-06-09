@@ -450,7 +450,7 @@ class AutonomousAnalyzer:
 
         # Step 3: Determine privacy level and Tor usage
         privacy_level, use_tor = self._determine_privacy(query, tools)
-        logger.info(f"🎯 AUTONOMOUS DECISION: Privacy = {privacy_level}, Tor = {use_tor} (reason: sensitivity analysis)")
+        logger.info(f"🎯 AUTONOMOUS DECISION: Privacy = {privacy_level}, Tor = {use_tor} (reason: sensitivity analysis)")  # noqa: E501
 
         # Step 4: Analyze complexity for ToT
         complexity, use_tot = self._analyze_complexity(query)

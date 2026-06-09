@@ -162,9 +162,9 @@ class AuditLogger:
         """))
 
         # Indexy pro rychlé vyhledávání
-        await asyncio.to_thread(lambda: self._db.execute("CREATE INDEX IF NOT EXISTS idx_timestamp ON audit_events(timestamp)"))
-        await asyncio.to_thread(lambda: self._db.execute("CREATE INDEX IF NOT EXISTS idx_event_type ON audit_events(event_type)"))
-        await asyncio.to_thread(lambda: self._db.execute("CREATE INDEX IF NOT EXISTS idx_resource ON audit_events(resource)"))
+        await asyncio.to_thread(lambda: self._db.execute("CREATE INDEX IF NOT EXISTS idx_timestamp ON audit_events(timestamp)"))  # noqa: E501
+        await asyncio.to_thread(lambda: self._db.execute("CREATE INDEX IF NOT EXISTS idx_event_type ON audit_events(event_type)"))  # noqa: E501
+        await asyncio.to_thread(lambda: self._db.execute("CREATE INDEX IF NOT EXISTS idx_resource ON audit_events(resource)"))  # noqa: E501
 
         await asyncio.to_thread(lambda: self._db.commit())
         self._initialized = True
@@ -204,7 +204,7 @@ class AuditLogger:
             return True
 
         event = AuditEvent(
-            timestamp=datetime.now(),
+            timestamp=datetime.now(),  # noqa: DTZ005
             event_type=event_type,
             action=action,
             resource=resource,

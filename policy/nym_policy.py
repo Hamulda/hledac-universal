@@ -4,8 +4,8 @@ import logging
 from enum import Enum
 
 import numpy as np
-from hledac.universal.core.resource_governor import ResourceGovernor
 
+from hledac.universal.core.resource_governor import ResourceGovernor
 from hledac.universal.transport.transport_resolver import Transport
 
 logger = logging.getLogger(__name__)
@@ -51,7 +51,7 @@ class LinUCBArm:
 
     def update(self, x: np.ndarray, reward: float):
         x = x.reshape(-1, 1)
-        A_inv_x = self.A_inv @ x
+        A_inv_x = self.A_inv @ x  # noqa: N806
         denom = 1 + (x.T @ A_inv_x).item()
         self.A_inv -= (A_inv_x @ A_inv_x.T) / denom
         self.b += reward * x.flatten()

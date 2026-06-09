@@ -65,7 +65,7 @@ def skip_if_no_backend(fn):
     return wrapper
 
 # Quiet down noisy library loggers in tests
-import logging
+import logging  # noqa: E402
 
 logging.basicConfig(level=logging.WARNING, format="%(levelname)s %(name)s: %(message)s")
 
@@ -384,6 +384,7 @@ def test_lazy_imports_no_eager_mlx():
     # Re-import the module and check _NP_CACHE, _MLX_CACHE, _SPARSE_CACHE
     # are still None (lazy discipline)
     import importlib
+
     import graph.quantum_pathfinder as qp
 
     importlib.reload(qp)  # fresh module state
@@ -442,8 +443,9 @@ def test_graph_init_stub_returns_empty_on_missing_dep():
     """
     # We can't easily trigger ImportError without re-execing; instead, verify
     # the callables exist and have the right shape.
-    import graph as gpkg
     import inspect
+
+    import graph as gpkg
 
     assert callable(gpkg.create_quantum_pathfinder)
     assert inspect.iscoroutinefunction(gpkg.find_best_path)
@@ -566,7 +568,7 @@ def test_canonical_finding_graph_path_shape():
     # Frozen struct: cannot mutate
     try:
         f.source_type = "mutated"  # type: ignore[misc]
-        assert False, "CanonicalFinding should be frozen"
+        raise AssertionError("CanonicalFinding should be frozen")
     except (AttributeError, Exception):
         pass
     print("  test_canonical_finding_graph_path_shape PASS")
@@ -582,7 +584,7 @@ def test_canonical_finding_required_fields():
 
     try:
         CanonicalFinding()  # type: ignore[call-arg]
-        assert False, "should have raised"
+        raise AssertionError("should have raised")
     except TypeError:
         pass
     print("  test_canonical_finding_required_fields PASS")
@@ -689,6 +691,7 @@ def test_execute_research_plan_accepts_graph_analysis():
     if _skip_if_no_psutil("test_execute_research_plan_accepts_graph_analysis"):
         return
     import inspect
+
     from coordinators.research_coordinator import UniversalResearchCoordinator
 
     sig = inspect.signature(UniversalResearchCoordinator.execute_research_plan)
@@ -740,6 +743,7 @@ def test_max_quantum_edges_env_override():
     try:
         # Re-import the module to pick up the env var
         import importlib
+
         import graph.quantum_pathfinder as qp
         importlib.reload(qp)
         assert qp.MAX_QUANTUM_EDGES == 9999, (
@@ -752,6 +756,7 @@ def test_max_quantum_edges_env_override():
             os.environ["QUANTUM_MAX_EDGES"] = saved
         # Reload to restore default
         import importlib
+
         import graph.quantum_pathfinder as qp
         importlib.reload(qp)
     print("  test_max_quantum_edges_env_override PASS")

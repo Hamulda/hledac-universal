@@ -111,7 +111,7 @@ def get_task_tool_preview_mapping() -> dict[str, str]:
 
 
 # Sprint F6b: Triad-Side Dormant Provider Mirror Seam
-from dataclasses import dataclass
+from dataclasses import dataclass  # noqa: E402
 
 
 @dataclass(frozen=True)
@@ -162,26 +162,26 @@ DEEP_RESEARCH_PROVIDER_MIRROR = DeepResearchProviderMirror()
 
 __all__ = [
     # Core classes
-    "ToolRegistry",
-    "Tool",
-    "CostModel",
-    "RateLimits",
-    "RiskLevel",
+    "ToolRegistry",  # noqa: F822
+    "Tool",  # noqa: F822
+    "CostModel",  # noqa: F822
+    "RateLimits",  # noqa: F822
+    "RiskLevel",  # noqa: F822
     # Schema classes
-    "WebSearchArgs",
-    "WebSearchResult",
-    "EntityExtractionArgs",
-    "EntityExtractionResult",
-    "AcademicSearchArgs",
-    "AcademicSearchResult",
-    "FileReadArgs",
-    "FileReadResult",
-    "FileWriteArgs",
-    "FileWriteResult",
-    "PythonExecuteArgs",
-    "PythonExecuteResult",
+    "WebSearchArgs",  # noqa: F822
+    "WebSearchResult",  # noqa: F822
+    "EntityExtractionArgs",  # noqa: F822
+    "EntityExtractionResult",  # noqa: F822
+    "AcademicSearchArgs",  # noqa: F822
+    "AcademicSearchResult",  # noqa: F822
+    "FileReadArgs",  # noqa: F822
+    "FileReadResult",  # noqa: F822
+    "FileWriteArgs",  # noqa: F822
+    "FileWriteResult",  # noqa: F822
+    "PythonExecuteArgs",  # noqa: F822
+    "PythonExecuteResult",  # noqa: F822
     # Factory
-    "create_default_registry",
+    "create_default_registry",  # noqa: F822
     # Sprint 8VF
     "register_task",
     "get_task_handler",

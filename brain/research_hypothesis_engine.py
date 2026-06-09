@@ -31,9 +31,7 @@ M1 8GB Optimizations:
 from __future__ import annotations
 
 import asyncio
-import functools
 import gc
-import hashlib
 import logging
 import os
 import re
@@ -41,7 +39,7 @@ import uuid
 from collections import OrderedDict
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime
 from enum import Enum
 from typing import Any, Protocol
 
@@ -193,15 +191,15 @@ class _DarkQueryListResponse:
 # unchanged while ensuring Pyright sees a single class identity.
 
 from brain.hypothesis._types import (  # noqa: E402,F401
-    CausalEntity,
-    TemporalSequence,
-    AnomalySignal,
-    CausalHypothesis,
+    CO_OCCURRENCE_FP16,
     MAX_CAUSAL_ENTITIES,
     MAX_CAUSAL_FINDINGS,
     MAX_CAUSAL_HYPOTHESES,
     MAX_CO_OCCURRENCE_MATRIX_SIZE,
-    CO_OCCURRENCE_FP16,
+    AnomalySignal,
+    CausalEntity,
+    CausalHypothesis,
+    TemporalSequence,
 )
 
 # =============================================================================
@@ -236,7 +234,7 @@ class SourceCredibility:
             self.historical_accuracy * 0.7 +
             (1.0 - min(1.0, self.contradiction_count / 10)) * 0.3
         )
-        self.last_updated = datetime.now()
+        self.last_updated = datetime.now()  # noqa: DTZ005
 
 
 @dataclass(slots=True)
@@ -345,13 +343,13 @@ class Hypothesis:
             likelihood_ratio * prior + (1 - prior)
         )
         self.posterior_probability = max(0.0, min(1.0, posterior))
-        self.updated_at = datetime.now()
+        self.updated_at = datetime.now()  # noqa: DTZ005
 
     def add_test_result(self, result: TestResult) -> None:
         """Add a test result and update confidence."""
         self.test_results.append(result)
         self._recalculate_confidence()
-        self.updated_at = datetime.now()
+        self.updated_at = datetime.now()  # noqa: DTZ005
 
     def add_supporting_evidence(self, evidence_id: str, weight: float = 1.0) -> None:
         """Add supporting evidence with optional weight."""
@@ -364,7 +362,7 @@ class Hypothesis:
             ds_engine = getattr(self, '_ds_engine', None)
             if ds_engine is not None:
                 ds_engine.add_evidence('support', mass=min(1.0, weight * 0.5), source_weight=1.0)
-        self.updated_at = datetime.now()
+        self.updated_at = datetime.now()  # noqa: DTZ005
 
     def add_conflicting_evidence(self, evidence_id: str, weight: float = 1.0) -> None:
         """Add conflicting evidence with optional weight."""
@@ -376,7 +374,7 @@ class Hypothesis:
             ds_engine = getattr(self, '_ds_engine', None)
             if ds_engine is not None:
                 ds_engine.add_evidence('conflict', mass=min(1.0, weight * 0.5), source_weight=1.0)
-        self.updated_at = datetime.now()
+        self.updated_at = datetime.now()  # noqa: DTZ005
 
     def _recalculate_confidence(self) -> None:
         """Recalculate confidence based on test results."""
@@ -507,39 +505,36 @@ class InferenceEngineProtocol(Protocol):
 from brain.hypothesis.adversarial import (  # noqa: E402,F401
     AdversarialVerifier,
 )
-# =============================================================================# =============================================================================
-# Sprint 67: Simple Node Ablation Explainer (extracted to brain.hypothesis.explainer — C4 Tier-3)
-# =============================================================================
 
-from brain.hypothesis.explainer import (  # noqa: E402,F401
-    SimpleNodeAblationExplainer,
-)
-
-# =============================================================================
-# SourceHint + HypothesisPack (extracted to brain.hypothesis.packs — C4 Tier-4)
-# =============================================================================
-from brain.hypothesis.packs import (  # noqa: E402,F401
-    SourceHint,
-    HypothesisPack,
-)
 # =============================================================================
 # Sprint F259 CausalReasoner (extracted to brain.hypothesis.causal — C4 Tier-5)
 # =============================================================================
 from brain.hypothesis.causal import (  # noqa: E402,F401
     CausalReasoner,
 )
+
+# =============================================================================# =============================================================================  # noqa: E501
+# Sprint 67: Simple Node Ablation Explainer (extracted to brain.hypothesis.explainer — C4 Tier-3)
+# =============================================================================
 # =============================================================================
 # explain_with_mlx helper (extracted to brain.hypothesis.explainer — C4 Tier-5)
 # =============================================================================
-from brain.hypothesis.explainer import (  # noqa: E402,F401
+from brain.hypothesis.explainer import (  # noqa: E402,F401  # noqa: E402,F401
+    SimpleNodeAblationExplainer,
     explain_with_mlx,
 )
+
+# =============================================================================
+# SourceHint + HypothesisPack (extracted to brain.hypothesis.packs — C4 Tier-4)
+# =============================================================================
+from brain.hypothesis.packs import (  # noqa: E402,F401
+    HypothesisPack,
+    SourceHint,
+)
+
 # =============================================================================
 # explain_with_mlx helper (extracted to brain.hypothesis.explainer — C4 Tier-5)
 # =============================================================================
-from brain.hypothesis.explainer import (  # noqa: E402,F401
-    explain_with_mlx,
-)
 
 
 class HypothesisEngine:
@@ -1104,8 +1099,8 @@ class HypothesisEngine:
         Returns:
             List of hypothesis strings (max 10, bounded)
         """
-        MAX_HYPOTHESES = 10
-        MAX_CONTEXT_CHARS = 4000
+        MAX_HYPOTHESES = 10  # noqa: N806
+        MAX_CONTEXT_CHARS = 4000  # noqa: N806
 
         if hermes_engine is None:
             return []
@@ -1142,7 +1137,7 @@ class HypothesisEngine:
                                     initial_findings=rag_context[:20],
                                 )
                                 # Merge extended evidence into rag_context
-                                existing_evidence = set(str(e)[:100] for e in rag_context)
+                                existing_evidence = {str(e)[:100] for e in rag_context}
                                 for ev in extended_evidence:
                                     ev_key = str(ev)[:100]
                                     if ev_key not in existing_evidence:
@@ -1464,7 +1459,7 @@ Formát (pouze seznam, žádný další text):
 
             # Determine result based on evidence quality
             evidence_quality = sum(
-                self._evidence.get(eid, Evidence("", "", "", datetime.now())).reliability
+                self._evidence.get(eid, Evidence("", "", "", datetime.now())).reliability  # noqa: DTZ005
                 for eid in evidence_ids
             ) / len(evidence_ids) if evidence_ids else 0.5
 
@@ -1766,7 +1761,7 @@ Formát (pouze seznam, žádný další text):
 
         # Evidence diversity score
         unique_sources = len({
-            self._evidence.get(eid, Evidence("", "unknown", "", datetime.now())).source
+            self._evidence.get(eid, Evidence("", "unknown", "", datetime.now())).source  # noqa: DTZ005
             for eid in hypothesis.supporting_evidence
         })
         diversity_score = min(1.0, unique_sources / 3)
@@ -3256,7 +3251,7 @@ Formát (pouze seznam, žádný další text):
             # Inject research hints into prompt if available
             _research_hint_section = ""
             if context_hints:
-                _research_hint_section = "\n\nDOPLNUJICI KONTEXT (research layer):\n" + "\n".join(f"- {h}" for h in context_hints)
+                _research_hint_section = "\n\nDOPLNUJICI KONTEXT (research layer):\n" + "\n".join(f"- {h}" for h in context_hints)  # noqa: E501
             prompt = f"""Z techto IOC z aktualniho sprintu: {ioc_brief}{_research_hint_section}
 
 Navrhuj {self.MAX_DARK_QUERIES_PER_SPRINT} specificke dotazy pro dark surface (neindexovane zdroje).

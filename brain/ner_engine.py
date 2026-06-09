@@ -58,7 +58,7 @@ logger = logging.getLogger(__name__)
 # Sprint 76: ANE detection via NaturalLanguage framework
 _NL_AVAILABLE = False
 try:
-    import NaturalLanguage
+    import NaturalLanguage  # noqa: F401  # NaturalLanguage
     _NL_AVAILABLE = True
 except ImportError:
     pass
@@ -779,8 +779,8 @@ def get_extraction_status() -> dict:
 # Sprint 8VF + 8VG: IOC Extraction — kanonické místo pro NER/IOC
 # ============================================================================
 
-import math as _math
-import re as _re
+import math as _math  # noqa: E402
+import re as _re  # noqa: E402
 
 # ── Regex patterns — PRIMARY for technical IOC ──────────────────────────
 _IOC_PATTERNS: list[tuple[str, _re.Pattern]] = [

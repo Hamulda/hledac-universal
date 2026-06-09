@@ -129,7 +129,7 @@ def test_no_config_toggles_in_transport():
     )
 
     # Filter out comments and test files
-    lines = [l for l in result.stdout.split('\n') if l and 'test' not in l.lower()]
+    lines = [l for l in result.stdout.split('\n') if l and 'test' not in l.lower()]  # noqa: E741
 
     assert len(lines) == 0, f"Found config toggles: {lines}"
 

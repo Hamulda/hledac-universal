@@ -154,7 +154,7 @@ Key classes per file:
 Key classes per file:
   coordinator_registry.py: CoordinatorInfo, CoordinatorRegistry
   claims_coordinator.py: ClaimsCoordinatorConfig, ClaimsCoordinator
-  memory_coordinator.py: NeuromorphicMemoryZone, UniversalMemoryCoordinator, ContextOptimizationManager, MultiLevelContextCache
+  memory_coordinator.py: NeuromorphicMemoryZone, UniversalMemoryCoordinator, ContextOptimizationManager, MultiLevelContextCache  # noqa: E501
   resource_allocator.py: ResourceType, Priority, IntelligentResourceAllocator, ParallelExecutionOptimizer
   research_optimizer.py: OptimizationStrategy, CachePolicy, ResearchOptimizer
   security_coordinator.py: SecurityLevel, SecurityContext, UniversalSecurityCoordinator
@@ -198,13 +198,13 @@ Key classes per file:
   rag_engine.py: RAGConfig, Document, RetrievedChunk, BM25Index, HNSWVectorIndex, RaptorNode, RAGEngine
   graph_builder.py: KnowledgeGraphBuilder
   semantic_store.py: SemanticStore
-  duckdb_store.py: TargetProfileSummary, ActivationResult, ReplayResult, CanonicalFinding, FindingQualityDecision, QualityRejectionRecord, DuckDBShadowStore
+  duckdb_store.py: TargetProfileSummary, ActivationResult, ReplayResult, CanonicalFinding, FindingQualityDecision, QualityRejectionRecord, DuckDBShadowStore  # noqa: E501
 
 ## MODULE: pipeline/ (Sprint Execution Pipelines)
 
 Key classes per file:
-  live_feed_pipeline.py: EntryQualitySignal, FeedPipelineEntryResult, FeedPipelineRunResult, FallbackDecision, _RunDeduper, _EntryDeduper
-  live_public_pipeline.py: FetchPolicy, PipelinePageResult, PipelineRunResult, _HTMLTextExtractor, _CTHit, _MinimalStealth, _CCHit
+  live_feed_pipeline.py: EntryQualitySignal, FeedPipelineEntryResult, FeedPipelineRunResult, FallbackDecision, _RunDeduper, _EntryDeduper  # noqa: E501
+  live_public_pipeline.py: FetchPolicy, PipelinePageResult, PipelineRunResult, _HTMLTextExtractor, _CTHit, _MinimalStealth, _CCHit  # noqa: E501
 
 ## MODULE: fetching/ (HTTP Fetching)
 
@@ -225,8 +225,8 @@ Key classes per file:
   vault_manager.py: LootManager
   passive_dns.py: PassiveDNSOutcome
   stego_detector.py: StegoConfig, ChiSquareResult, RSResult, DCTResult, StegoResult, StatisticalStegoDetector
-  pq_export_encryption.py: HPKEAvailability, ExportPolicy, Decryptability, ExportEncryptionEnvelope, PostQuantumExportBackend
-  quantum_safe.py: SecurityLevel, StegoMethod, EntropyPool, SpikingNeuralNetwork, NeuromorphicCryptoEngine, QuantumSafeVault, StealthCommunicator
+  pq_export_encryption.py: HPKEAvailability, ExportPolicy, Decryptability, ExportEncryptionEnvelope, PostQuantumExportBackend  # noqa: E501
+  quantum_safe.py: SecurityLevel, StegoMethod, EntropyPool, SpikingNeuralNetwork, NeuromorphicCryptoEngine, QuantumSafeVault, StealthCommunicator  # noqa: E501
   self_healing.py: HealingAction, HealthStatus, HealthCheck, CircuitBreaker, SelfHealingCICD
   pii_gate.py: PIICategory, PIIMatch, SanitizationResult, SecurityGate
   deep_research_security.py: DeepSecurityConfig, DeepResearchSecurity, SecureSession
@@ -237,7 +237,7 @@ Key classes per file:
 
 Key classes per file:
   stealth_session.py: StealthResponse, StealthSession
-  stealth_manager.py: StealthManagerConfig, StealthManager, SkipFetch, BoundedHostState, HostTelemetry, TokenBucketController
+  stealth_manager.py: StealthManagerConfig, StealthManager, SkipFetch, BoundedHostState, HostTelemetry, TokenBucketController  # noqa: E501
 
 ## MODULE: hypothesis/
 
@@ -269,7 +269,7 @@ Key classes per file:
 
 Key classes per file:
   digital_ghost_detector.py: GhostArtifact, DigitalGhostResult
-  metadata_extractor.py: GPSCoordinates, TimelineEvent, AttributionData, ImageMetadata, PDFMetadata, DocxMetadata, AudioMetadata, VideoMetadata, UniversalMetadataExtractor
+  metadata_extractor.py: GPSCoordinates, TimelineEvent, AttributionData, ImageMetadata, PDFMetadata, DocxMetadata, AudioMetadata, VideoMetadata, UniversalMetadataExtractor  # noqa: E501
   enrichment_service.py: ForensicsResult, ForensicsEnricher
   steganography_detector.py: SteganalysisResult
 
@@ -292,7 +292,7 @@ Key classes per file:
 
 Key classes per file:
   hash_identifier.py: HashMatch, HashFinding, HashConfig, HashIdentifier
-  unicode_analyzer.py: UnicodeConfig, ZeroWidthFinding, HomoglyphFinding, BidiFinding, NormalizationFinding, UnicodeAttackAnalyzer
+  unicode_analyzer.py: UnicodeConfig, ZeroWidthFinding, HomoglyphFinding, BidiFinding, NormalizationFinding, UnicodeAttackAnalyzer  # noqa: E501
   encoding_detector.py: EncodingChain, EncodingFinding, EncodingConfig, BaseEncodingDetector
   text_analyzer_facade.py: TextAnalyzerHint, TextAnalyzerResult, TextAnalyzerFacade
 
@@ -316,7 +316,7 @@ Key classes per file:
 ## MODULE: runtime/
 
 Key classes per file:
-  sprint_scheduler.py: SprintScheduler, SprintSchedulerConfig, SprintSchedulerResult, _LifecycleAdapter, _PublicStage, SourceTier, CTLossStage
+  sprint_scheduler.py: SprintScheduler, SprintSchedulerConfig, SprintSchedulerResult, _LifecycleAdapter, _PublicStage, SourceTier, CTLossStage  # noqa: E501
 
 ## MODULE: utils/ (80+ files, key classes)
 

@@ -23,11 +23,8 @@ PUBLIC behavior only — no private implementation detail assertions.
 """
 from __future__ import annotations
 
-import asyncio
 import os
-import sys
-import time as _time
-from unittest.mock import AsyncMock, MagicMock, patch, PropertyMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -103,7 +100,7 @@ def _import_scheduler():
 
 async def _instantiate_scheduler(minimal_config, mock_lifecycle, mock_adapter):
     """Create scheduler instance with minimal mocking."""
-    SprintScheduler = _import_scheduler()
+    SprintScheduler = _import_scheduler()  # noqa: N806
     sched = SprintScheduler(minimal_config, ct_log_client=None)
     # Inject minimal dependencies to allow run() to start
     sched._duckdb_store = AsyncMock()
@@ -121,15 +118,14 @@ async def test_record_hypothesis_feedback_failsoft_does_not_crash(
     L4954: record_hypothesis_feedback() exception handler.
     verify: exception in store does NOT propagate (fail-safe pattern).
     """
-    from unittest.mock import PropertyMock
 
-    SprintScheduler = _import_scheduler()
+    SprintScheduler = _import_scheduler()  # noqa: N806
     sched = SprintScheduler(minimal_config, ct_log_client=None)
     # Inject mock store with broken async_record_hypothesis_feedback
     sched._duckdb_store = mock_store
     mock_store.async_record_hypothesis_feedback.side_effect = RuntimeError("DB write failed")
 
-    # Call record_hypothesis_feedback — signature is (pivot_type, ioc_type, produced_count, accepted_count, signal_value)
+    # Call record_hypothesis_feedback — signature is (pivot_type, ioc_type, produced_count, accepted_count, signal_value)  # noqa: E501
     # The exception is caught in the try/except block at L4954
     try:
         await sched.record_hypothesis_feedback(
@@ -159,7 +155,7 @@ async def test_prefetch_oracle_suggest_scores_failsoft_returns_empty(
     L4786: prefetch_oracle.suggest_scores exception handler.
     verify: exception causes fallback to empty dict (default ordering preserved).
     """
-    SprintScheduler = _import_scheduler()
+    SprintScheduler = _import_scheduler()  # noqa: N806
     sched = SprintScheduler(minimal_config, ct_log_client=None)
 
     # Simulate oracle with broken suggest_scores
@@ -173,8 +169,8 @@ async def test_prefetch_oracle_suggest_scores_failsoft_returns_empty(
     # The scheduler's oracle_scores path wraps suggest_scores in try/except
     # Verify the mock raises correctly
     try:
-        scores = broken_oracle.suggest_scores(items, current_cycle)
-        assert False, "Should have raised"
+        broken_oracle.suggest_scores(items, current_cycle)
+        raise AssertionError("Should have raised")
     except RuntimeError:
         pass  # Expected — the scheduler catches this
 
@@ -187,7 +183,7 @@ async def test_prefetch_oracle_suggest_scores_fallback_preserves_ordering(
     L4786: verify fallback produces empty oracle_scores dict.
     When suggest_scores fails, oracle_scores = {} and oracle_mult = 1.0 for all items.
     """
-    SprintScheduler = _import_scheduler()
+    SprintScheduler = _import_scheduler()  # noqa: N806
     sched = SprintScheduler(minimal_config, ct_log_client=None)
 
     broken_oracle = MagicMock()
@@ -217,7 +213,7 @@ async def test_privacy_context_init_failsoft_does_not_crash(
     L5144 & L5199: privacy_context init exception handlers.
     verify: exception in create_privacy_context does NOT crash __init__.
     """
-    SprintScheduler = _import_scheduler()
+    SprintScheduler = _import_scheduler()  # noqa: N806
     sched = SprintScheduler(minimal_config, ct_log_client=None)
 
     # Mock layer_manager with broken privacy
@@ -280,7 +276,7 @@ def test_sprint_id_getattr_failsoft_defaults_to_empty(minimal_config):
     L5233: sprint_id getattr exception handler.
     verify: getattr(lifecycle, "sprint_id", "") raises → sprint_id = "".
     """
-    SprintScheduler = _import_scheduler()
+    SprintScheduler = _import_scheduler()  # noqa: N806
     sched = SprintScheduler(minimal_config, ct_log_client=None)
 
     # Lifecycle without sprint_id attribute
@@ -367,14 +363,14 @@ async def test_evidence_chain_builder_failsoft_continues(
 # ── L5469: Hermes prewarm fail-soft ────────────────────────────────────────────
 
 @pytest.mark.asyncio
-async def test_hermes_prewarm_failsoft_continues_without_ToT(
+async def test_hermes_prewarm_failsoft_continues_without_ToT(  # noqa: N802
     minimal_config, mock_lifecycle, mock_adapter
 ):
     """
     L5469: Hermes prewarm exception handler.
     verify: prewarm failure → _hermes_engine = None (ToT skipped, sprint continues).
     """
-    SprintScheduler = _import_scheduler()
+    SprintScheduler = _import_scheduler()  # noqa: N806
     sched = SprintScheduler(minimal_config, ct_log_client=None)
 
     # Simulate _prewarm_hermes_for_sprint failure
@@ -407,7 +403,7 @@ async def test_governor_evaluate_failsoft_continues(
     L5529: governor.evaluate() exception handler.
     verify: evaluate failure → no concurrency change (advisory only).
     """
-    SprintScheduler = _import_scheduler()
+    SprintScheduler = _import_scheduler()  # noqa: N806
     sched = SprintScheduler(minimal_config, ct_log_client=None)
 
     # Mock broken governor
@@ -435,7 +431,7 @@ def test_privacy_gate_setattr_failsoft_appends_finding(
     L4343 & L4351 & L4356: privacy_gate exception handlers.
     verify: anonymize_text/setattr failure → finding still appended (not lost).
     """
-    SprintScheduler = _import_scheduler()
+    _import_scheduler()
 
     # Simulate privacy_layer with broken anonymize_text
     finding = MagicMock()
@@ -444,7 +440,6 @@ def test_privacy_gate_setattr_failsoft_appends_finding(
     finding.confidence = 0.8
 
     anonymized = []
-    pii_count = 0
 
     try:
         # L4340-4344: anonymize_text or setattr fail
@@ -470,7 +465,6 @@ def test_privacy_gate_setattr_failsoft_appends_finding(
 # Note: pytest-hypothesis conflicts with project's hypothesis/ module.
 # Property-based tests implemented as parameterized pytest tests instead.
 
-import itertools
 
 # ── Property-based tests (parameterized, replaces hypothesis) ─────────────────
 
@@ -508,7 +502,7 @@ def test_budget_allocation_in_bounds(budget):
     Property: budget allocation respects MAX_SPRINT_BUDGET bounds.
     Bounds: 0 < budget <= 10000.0
     """
-    MAX_SPRINT_BUDGET = 10000.0
+    MAX_SPRINT_BUDGET = 10000.0  # noqa: N806
     allocated = min(budget, MAX_SPRINT_BUDGET)
     assert 0 < allocated <= MAX_SPRINT_BUDGET, \
         f"Budget {allocated} outside bounds (0, {MAX_SPRINT_BUDGET}]"
@@ -534,13 +528,13 @@ def test_latency_ema_bounded(latency_samples):
     """
     Property: EMA latency never exceeds clamp bounds [5, 30]s.
     """
-    MIN_TIMEOUT = 5.0
-    MAX_TIMEOUT = 30.0
-    EMA = 0.0
-    ALPHA = 0.3
+    MIN_TIMEOUT = 5.0  # noqa: N806
+    MAX_TIMEOUT = 30.0  # noqa: N806
+    EMA = 0.0  # noqa: N806
+    ALPHA = 0.3  # noqa: N806
 
     for sample in latency_samples[:20]:
-        EMA = ALPHA * sample + (1 - ALPHA) * EMA
+        EMA = ALPHA * sample + (1 - ALPHA) * EMA  # noqa: N806
         clamped = max(MIN_TIMEOUT, min(MAX_TIMEOUT, EMA))
         assert MIN_TIMEOUT <= clamped <= MAX_TIMEOUT
 
@@ -553,7 +547,7 @@ def test_uma_threshold_state_valid(state_values):
     """
     Property: UMA state is one of known values.
     """
-    VALID_STATES = {"warn", "critical", "emergency", "ok", "normal"}
+    VALID_STATES = {"warn", "critical", "emergency", "ok", "normal"}  # noqa: N806
     assert state_values in VALID_STATES
 
 
@@ -568,7 +562,7 @@ async def test_real_async_feedback_recording_does_not_crash(
     L4954: Real async test — verify record_hypothesis_feedback pattern
     (exception in store does not propagate).
     """
-    SprintScheduler = _import_scheduler()
+    SprintScheduler = _import_scheduler()  # noqa: N806
     sched = SprintScheduler(minimal_config, ct_log_client=None)
     sched._duckdb_store = mock_store
 
@@ -597,7 +591,7 @@ async def test_scheduler_healthy_after_multiple_failsoft_paths(
     Verify: after multiple fail-soft handlers, scheduler is still usable.
     This is the PRIMARY behavioral assertion — scheduler must not crash.
     """
-    SprintScheduler = _import_scheduler()
+    SprintScheduler = _import_scheduler()  # noqa: N806
     sched = SprintScheduler(minimal_config, ct_log_client=None)
 
     # Simulate degraded state
@@ -628,7 +622,7 @@ async def test_synthesis_sidecar_skipped_when_env_disabled(minimal_config):
     F259: HLEDAC_ENABLE_SYNTHESIS=0 (default) → synthesis skipped.
     verify: _result fields remain at defaults.
     """
-    SprintScheduler = _import_scheduler()
+    SprintScheduler = _import_scheduler()  # noqa: N806
     sched = SprintScheduler(minimal_config, ct_log_client=None)
     sched._duckdb_store = AsyncMock()
     sched._duckdb_store.get_top_findings = AsyncMock(return_value=[])
@@ -649,7 +643,7 @@ async def test_synthesis_sidecar_skipped_when_no_findings(minimal_config):
     F259: No findings → synthesis skipped.
     verify: _result fields updated, no crash.
     """
-    SprintScheduler = _import_scheduler()
+    SprintScheduler = _import_scheduler()  # noqa: N806
     sched = SprintScheduler(minimal_config, ct_log_client=None)
     sched._duckdb_store = AsyncMock()
     # Return empty list - no findings
@@ -668,7 +662,7 @@ async def test_synthesis_sidecar_skipped_when_uma_emergency(minimal_config):
     F259: UMA emergency → synthesis skipped.
     verify: _result.synthesis_engine = "uma_guard".
     """
-    SprintScheduler = _import_scheduler()
+    SprintScheduler = _import_scheduler()  # noqa: N806
     sched = SprintScheduler(minimal_config, ct_log_client=None)
     sched._duckdb_store = AsyncMock()
     sched._duckdb_store.get_top_findings = AsyncMock(return_value=[
@@ -696,7 +690,7 @@ async def test_synthesis_sidecar_graceful_on_error(minimal_config):
     F259: Exception in synthesis → graceful degradation.
     verify: _result fields updated but no crash.
     """
-    SprintScheduler = _import_scheduler()
+    SprintScheduler = _import_scheduler()  # noqa: N806
     sched = SprintScheduler(minimal_config, ct_log_client=None)
     sched._duckdb_store = AsyncMock()
     sched._duckdb_store.get_top_findings = AsyncMock(return_value=[
@@ -749,7 +743,7 @@ async def test_synthesis_sidecar_skipped_when_zero_accepted_findings(minimal_con
     Verifies the guard fires at the in-memory `self._result.accepted_findings`
     check, not at the post-query `if not findings` check.
     """
-    SprintScheduler = _import_scheduler()
+    SprintScheduler = _import_scheduler()  # noqa: N806
     sched = SprintScheduler(minimal_config, ct_log_client=None)
     sched._duckdb_store = AsyncMock()
 
@@ -788,7 +782,7 @@ async def test_synthesis_sidecar_runs_when_accepted_findings_present(minimal_con
     F259B: When accepted_findings > 0, synthesis must proceed normally
     (regression guard for the early-exit — must not block the happy path).
     """
-    SprintScheduler = _import_scheduler()
+    SprintScheduler = _import_scheduler()  # noqa: N806
     sched = SprintScheduler(minimal_config, ct_log_client=None)
     sched._duckdb_store = AsyncMock()
     sched._duckdb_store.get_top_findings = AsyncMock(return_value=[

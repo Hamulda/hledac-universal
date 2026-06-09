@@ -13,7 +13,6 @@ and minimal memory footprint (~50MB vs ~420MB for PyTorch).
 
 from __future__ import annotations
 
-import asyncio
 import hashlib
 import logging
 import statistics
@@ -28,6 +27,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from utils.async_helpers import safe_gather_dropin
+
 try:
     import compression.zstd as _zstd
     ZSTD_AVAILABLE = True
@@ -78,7 +78,9 @@ except ImportError:
 
 # MLX Embedding Manager (primary path for M1)
 try:
-    from _shims.core_mlx_embeddings import MLXEmbeddingManager
+    from _shims.core_mlx_embeddings import (
+        MLXEmbeddingManager,  # noqa: F401  # _shims.core_mlx_embeddings.MLXEmbeddingManager
+    )
     MLX_EMBED_AVAILABLE = True
 except ImportError:
     MLX_EMBED_AVAILABLE = False
@@ -168,7 +170,8 @@ def _deserialize_cache(data: bytes) -> dict[str, CacheEntry]:
     working (schema-drift tolerance).
     """
     # Lazy import per project invariant.
-    from utils.msgspec_json import CacheEntry as _MsgspecCacheEntry, decode_typed
+    from utils.msgspec_json import CacheEntry as _MsgspecCacheEntry
+    from utils.msgspec_json import decode_typed
 
     if ZSTD_AVAILABLE:
         try:
@@ -361,7 +364,7 @@ class MultiLevelContextCache:
                 self.embedder = self._mlx_manager
                 self.embedding_dim = self._mlx_manager.EMBEDDING_DIM
                 self._embedder_type = 'mlx'
-                logger.info(f"[EMBEDDER] Using shared MLXEmbeddingManager: {self._mlx_manager.model_path}, dim={self.embedding_dim}")
+                logger.info(f"[EMBEDDER] Using shared MLXEmbeddingManager: {self._mlx_manager.model_path}, dim={self.embedding_dim}")  # noqa: E501
             except Exception as e:
                 logger.warning(f"MLXEmbeddingManager init failed: {e}, falling back to FastEmbed")
                 self._mlx_manager = None
@@ -589,7 +592,7 @@ class MultiLevelContextCache:
 
         # Search for similar embeddings
         query_embedding = input_embedding.reshape(1, -1).astype('float32')
-        D, I = self.semantic_index.search(query_embedding, 10)
+        D, I = self.semantic_index.search(query_embedding, 10)  # noqa: E741
 
         # Check if any similarity meets threshnew
         for idx, similarity in zip(I[0], D[0], strict=False):
@@ -740,7 +743,7 @@ class MultiLevelContextCache:
         target_count = max(1, int(len(all_entries) * 0.1))
         evicted = 0
 
-        for cache_id, entry, score in all_entries:
+        for cache_id, entry, score in all_entries:  # noqa: B007
             if evicted >= target_count:
                 break
 

@@ -19,7 +19,7 @@ from hledac.universal.runtime.acquisition_strategy import (
 )
 
 
-class TestF221F_PlanSemanticsSplit:
+class TestF221F_PlanSemanticsSplit:  # noqa: N801
     """F221F: Acquisition plan semantics split probe tests."""
 
     def test_empty_prelude_plan_but_public_required_creates_effective_plan(self):

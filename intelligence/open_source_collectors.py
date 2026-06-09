@@ -224,7 +224,7 @@ _RE_IPV6 = re.compile(r"\b(?:[0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}\b")
 _RE_AWS_KEY = re.compile(r"\bAKIA[0-9A-Z]{16}\b")
 _RE_BEARER = re.compile(r"\bBearer\s+[A-Za-z0-9_\.\-]{20,}\b", re.IGNORECASE)
 _RE_PKEY = re.compile(r"-----BEGIN (?:RSA |EC |DSA |OPENSSH )?PRIVATE KEY-----", re.IGNORECASE)
-_RE_TOKEN = re.compile(r"\b(?:token|key|secret|password|passwd|pwd|auth|credential)['\"]?[:=]?\s*['\"]?([A-Za-z0-9_\-]{16,64})['\"]?\b", re.IGNORECASE)
+_RE_TOKEN = re.compile(r"\b(?:token|key|secret|password|passwd|pwd|auth|credential)['\"]?[:=]?\s*['\"]?([A-Za-z0-9_\-]{16,64})['\"]?\b", re.IGNORECASE)  # noqa: E501
 
 
 def _mask_secret(value: str) -> str:
@@ -446,7 +446,7 @@ _PASTE_CACHE_EVICT_FRAC: float = 0.10  # evict oldest 10% on overflow
 _PASTE_HOST_SEMAPHORE: int = 3  # M1 soft cap per host
 
 # OrderedDict preserves insertion order → FIFO eviction (oldest first).
-_paste_cache: "OrderedDict[tuple[str, str], tuple[float, str | None]]" = OrderedDict()
+_paste_cache: OrderedDict[tuple[str, str], tuple[float, str | None]] = OrderedDict()
 # In-flight dedup: paste_key → Future. The first caller becomes leader and
 # creates the Future; concurrent followers await the same Future.
 _paste_inflight: dict[tuple[str, str], asyncio.Future[str | None]] = {}

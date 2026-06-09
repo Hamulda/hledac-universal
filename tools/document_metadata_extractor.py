@@ -68,7 +68,7 @@ except ImportError:
     pass
 
 try:
-    import olevba
+    import olevba  # noqa: F401  # olevba
     OLEVB_AVAILABLE = True
 except ImportError:
     pass
@@ -698,7 +698,7 @@ class _DocumentMetadataExtractor:
 
                 if 'docProps/custom.xml' in zf.namelist():
                     custom_xml = zf.read('docProps/custom.xml').decode('utf-8', errors='ignore')
-                    company_matches = re.findall(r'<property[^>]*name="[^"]*company[^"]*"[^>]*><value>([^<]*)</value>', custom_xml, re.IGNORECASE)
+                    company_matches = re.findall(r'<property[^>]*name="[^"]*company[^"]*"[^>]*><value>([^<]*)</value>', custom_xml, re.IGNORECASE)  # noqa: E501
                     if company_matches and 'company' not in props:
                         props['company'] = company_matches[0]
 
@@ -731,8 +731,8 @@ class _DocumentMetadataExtractor:
                 if 'word/document.xml' in zf.namelist():
                     doc_xml = zf.read('word/document.xml').decode('utf-8', errors='ignore')
 
-                    ins_pattern = re.compile(r'<w:ins[^>]*w:id="(\d+)"[^>]*w:author="([^"]*)"[^>]*w:date="([^"]*)"', re.IGNORECASE)
-                    del_pattern = re.compile(r'<w:del[^>]*w:id="(\d+)"[^>]*w:author="([^"]*)"[^>]*w:date="([^"]*)"', re.IGNORECASE)
+                    ins_pattern = re.compile(r'<w:ins[^>]*w:id="(\d+)"[^>]*w:author="([^"]*)"[^>]*w:date="([^"]*)"', re.IGNORECASE)  # noqa: E501
+                    del_pattern = re.compile(r'<w:del[^>]*w:id="(\d+)"[^>]*w:author="([^"]*)"[^>]*w:date="([^"]*)"', re.IGNORECASE)  # noqa: E501
 
                     for match in ins_pattern.finditer(doc_xml):
                         revisions.append({
@@ -1057,7 +1057,7 @@ class _DocumentMetadataExtractor:
                 if acadver:
                     result['autocad_version'] = acadver.group(1)
 
-                insbase = re.search(r'\$INSBASE\s*\n\s*10\s*\n([^\s]+)\s*\n\s*20\s*\n([^\s]+)\s*\n\s*30\s*\n([^\s]+)', header)
+                insbase = re.search(r'\$INSBASE\s*\n\s*10\s*\n([^\s]+)\s*\n\s*20\s*\n([^\s]+)\s*\n\s*30\s*\n([^\s]+)', header)  # noqa: E501
                 if insbase:
                     result['insertion_base'] = {
                         'x': float(insbase.group(1)),

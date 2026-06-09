@@ -34,8 +34,10 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from utils.async_helpers import safe_gather_dropin
+
 if TYPE_CHECKING:
     import aiohttp
+
     from hledac.universal.knowledge.duckdb_store import CanonicalFinding
     from hledac.universal.network.passive_dns import PassiveDNSResolver
 
@@ -558,7 +560,6 @@ def scan_open_storage(domains: list[str]) -> list[OpenStorageResult]:
     scanner = _OpenStorageScanner()
 
     async def _scan_all():
-        import asyncio
         tasks = [scanner.scan_domain(d) for d in domains]
         return await safe_gather_dropin(*tasks, label="exposure_correlator:562")
 
@@ -648,7 +649,7 @@ def extract_signals(findings: list[CanonicalFinding]) -> list[AssetSignal]:
             jarm_hash = _extract_jarm_from_payload(payload)
             if jarm_hash:
                 # asset_key is the domain/IP from finding_id
-                asset_key = _normalize_host(fid.replace("jarm_", "")) if fid.startswith("jarm_") else _normalize_host(fid)
+                asset_key = _normalize_host(fid.replace("jarm_", "")) if fid.startswith("jarm_") else _normalize_host(fid)  # noqa: E501
                 signals.append(AssetSignal(
                     signal_type=SIGNAL_TYPE_JARM,
                     asset_key=asset_key,
@@ -731,7 +732,7 @@ def _correlate_signals(signals: list[AssetSignal]) -> list[ExposureFinding]:
 
     # ── Correlate per-asset ───────────────────────────────────────────────────
 
-    for asset_key, asset in asset_map.items():
+    for asset_key, asset in asset_map.items():  # noqa: B007
         if len(findings) >= MAX_FINDINGS:
             break
 

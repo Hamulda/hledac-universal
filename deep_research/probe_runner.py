@@ -1,3 +1,4 @@
+from typing import TYPE_CHECKING
 """
 Deep Research Probe Runner — Bounded Post-Sprint Deep Research
 ==============================================================
@@ -42,6 +43,10 @@ import time
 import uuid
 
 from utils.async_helpers import safe_gather_dropin
+
+if TYPE_CHECKING:
+    from hledac.universal.knowledge.duckdb_store import CanonicalFinding  # noqa: F401
+
 
 logger = logging.getLogger(__name__)
 
@@ -90,7 +95,7 @@ async def run_deep_probe(
         DeepProbeScanner,
         scan_ipfs,
     )
-    from hledac.universal.knowledge.duckdb_store import CanonicalFinding
+
     from hledac.universal.knowledge.search_index import LocalSearchSeam
 
     start_time = time.monotonic()
@@ -303,7 +308,6 @@ def _make_discovery_findings(urls: list[str], query: str) -> list[CanonicalFindi
     NOTE: This is the DHT "hint" layer - actual persistent findings come
     from bucket scans and IPFS searches.
     """
-    from hledac.universal.knowledge.duckdb_store import CanonicalFinding
 
     findings: list[CanonicalFinding] = []
     for url in urls[:100]:  # Cap at 100 discovery URLs
@@ -346,7 +350,6 @@ def _convert_search_results_to_findings(
         List of CanonicalFinding with source_type="deep_probe" and confidence
         scaled from local search score (score * 0.9).
     """
-    from hledac.universal.knowledge.duckdb_store import CanonicalFinding
 
     findings: list[CanonicalFinding] = []
     for doc in documents:

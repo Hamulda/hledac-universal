@@ -817,7 +817,7 @@ class MetadataDeduplicator(BaseDeduplicator):
         metadata.update(item.metadata)
 
         normalized_metadata = {}
-        for field, value in metadata.items():
+        for field, value in metadata.items():  # noqa: F402
             if value is not None:
                 normalized_value = await self._normalize_field_value(field, value)
                 if normalized_value:
@@ -864,7 +864,7 @@ class MetadataDeduplicator(BaseDeduplicator):
         similarities = {}
         all_fields = set(metadata1.keys()) | set(metadata2.keys())
 
-        for field in all_fields:
+        for field in all_fields:  # noqa: F402
             value1 = metadata1.get(field)
             value2 = metadata2.get(field)
 
@@ -918,7 +918,7 @@ class MetadataDeduplicator(BaseDeduplicator):
         weighted_sum = 0.0
         total_weight = 0.0
 
-        for field, similarity in field_similarities.items():
+        for field, similarity in field_similarities.items():  # noqa: F402
             weight = self.field_weights.get(field, 0.1)
             weighted_sum += similarity * weight
             total_weight += weight

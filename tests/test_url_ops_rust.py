@@ -182,7 +182,7 @@ class TestLooksLikeFeedUrl:
 # returns identical results to the urllib.parse fallback path.
 # ---------------------------------------------------------------------------
 
-import urllib.parse
+import urllib.parse  # noqa: E402
 
 
 class TestPublicFetcherMigration:

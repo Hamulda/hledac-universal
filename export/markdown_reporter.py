@@ -9,6 +9,7 @@ ready for future MLX/Outlines synthesis layer.
 from __future__ import annotations
 
 import json
+import logging
 import os
 from collections.abc import Iterable
 from datetime import datetime
@@ -16,7 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from ..utils.safe_render import safe_markdown_link
-import logging
+
 logger = logging.getLogger(__name__)
 
 __all__ = [
@@ -322,7 +323,7 @@ def aggregate_forensic_findings(
 def _render_run_metadata(report: dict[str, Any]) -> str:
     lines = []
     ts = report.get("started_ts") or report.get("finished_ts")
-    generated = datetime.fromtimestamp(ts).isoformat() if ts else "unknown"
+    generated = datetime.fromtimestamp(ts).isoformat() if ts else "unknown"  # noqa: DTZ006
     run_id = report.get("diagnostic_run_id") or report.get("run_id") or "unknown"
     lines.append(f"- **Generated**: {generated}")
     lines.append(f"- **Run ID**: {_esc(str(run_id))}")

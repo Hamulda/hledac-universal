@@ -42,7 +42,7 @@ class DempsterShafer:
             source_weight: Source reliability weight (0..1), defaults to 1.0
         """
         weighted_mass = mass * source_weight
-        K = self.masses.get(hypothesis, 0.0) * weighted_mass
+        K = self.masses.get(hypothesis, 0.0) * weighted_mass  # noqa: N806
         self.conflict += K
         norm = 1 - K + 1e-8
         for h in self.hypotheses:

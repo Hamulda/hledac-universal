@@ -15,10 +15,9 @@ from __future__ import annotations
 import asyncio
 import sys
 import types
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
-
 
 # ---------------------------------------------------------------------------
 # A. BodyReadResult + CHUNKS_BUDGET — transport.body_limiter
@@ -145,7 +144,7 @@ class TestJSRendererSemaphore:
         # a 0.5s ceiling — should be instant.
         try:
             await asyncio.wait_for(sem.acquire(), timeout=0.5)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             pytest.fail("Semaphore did not release after exception")
         else:
             sem.release()
@@ -190,7 +189,7 @@ class TestCamoufoxNodriverSharedSemaphore:
                 )
                 acquired_events.append("nested_acquired")  # BAD — semaphore should be held
                 sem.release()
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 acquired_events.append("nested_blocked")  # GOOD
             return "<html/>"
 
@@ -231,7 +230,7 @@ class TestCamoufoxNodriverSharedSemaphore:
                             )
                             acquired_events.append("nested_acquired")
                             sem.release()
-                        except asyncio.TimeoutError:
+                        except TimeoutError:
                             acquired_events.append("nested_blocked")
                         return "<html/>"
 

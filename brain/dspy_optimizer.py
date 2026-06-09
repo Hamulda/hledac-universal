@@ -9,7 +9,7 @@ import sys
 import time
 from collections import defaultdict
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any
 
 import psutil
 
@@ -29,7 +29,7 @@ class DSPyOptimizer:
         self._task: asyncio.Task | None = None
         self._stop = asyncio.Event()
         self._optimized_prompts = {}
-        self._prompt_versions: dict[str, list[Dict]] = defaultdict(list)
+        self._prompt_versions: dict[str, list[dict]] = defaultdict(list)
         self._current_version: dict[str, int] = defaultdict(int)
         self._performance_history: dict[str, list[float]] = defaultdict(list)
         self._rollback_threshold = 0.2
@@ -77,7 +77,7 @@ class DSPyOptimizer:
             logger.warning(f"Failed to save DSPy cache: {e}")
 
     def _should_optimize(self) -> bool:
-        """Check if system is idle enough (CPU < 15%, RAM > 4GB, not on battery unless >80%, thermal OK, circuit breaker)."""
+        """Check if system is idle enough (CPU < 15%, RAM > 4GB, not on battery unless >80%, thermal OK, circuit breaker)."""  # noqa: E501
         # F234: Gate — optimization must be explicitly enabled
         if os.getenv("HLEDAC_DSPY_OPTIMIZE") != "1":
             return False
@@ -463,7 +463,7 @@ class DSPyOptimizer:
                 except AttributeError:
                     pass
             if instr is None:
-                logger.warning("DSPy optimizer: could not extract instructions from optimized module — using task_key as fallback")
+                logger.warning("DSPy optimizer: could not extract instructions from optimized module — using task_key as fallback")  # noqa: E501
                 instr = f"optimized:{task_key}"
             # Pro zjednodušení ukládáme stejnou instrukci pro všechny complexity
             return {

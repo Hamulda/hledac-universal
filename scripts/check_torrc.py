@@ -101,7 +101,7 @@ def check_hidden_service_statistics(torrc_path: str) -> bool:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Check torrc for anonymity directives", suggest_on_error=True, color=True)
+    parser = argparse.ArgumentParser(description="Check torrc for anonymity directives", suggest_on_error=True, color=True)  # noqa: E501
     parser.add_argument(
         "--torrc",
         dest="torrc_path",

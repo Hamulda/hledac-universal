@@ -292,11 +292,17 @@ def ensure_adapters_registered() -> None:
     _adapters_loaded = True
     try:
         from runtime.sidecar_protocol_adapters import (
-            FediverseSidecarAdapter,
-            DHTSidecarAdapter,
-            AcademicSidecarAdapter,
-            AltProtocolSidecarAdapter,
-            LeakSentinelSidecarAdapter,
+            AcademicSidecarAdapter,  # noqa: F401  # runtime.sidecar_protocol_adapters.AcademicSidecarAdapter
+            AltProtocolSidecarAdapter,  # noqa: F401  # runtime.sidecar_protocol_adapters.AltProtocolSidecarAdapter
+            DHTSidecarAdapter,  # noqa: F401  # runtime.sidecar_protocol_adapters.DHTSidecarAdapter
+            FediverseSidecarAdapter,  # noqa: F401  # runtime.sidecar_protocol_adapters.FediverseSidecarAdapter
+            FederatedResearchSidecarAdapter,  # noqa: F401  # runtime.sidecar_protocol_adapters.FederatedResearchSidecarAdapter
+            IdentityStitchingSidecarAdapter,  # noqa: F401  # runtime.sidecar_protocol_adapters.IdentityStitchingSidecarAdapter
+            LeakSentinelSidecarAdapter,  # noqa: F401  # runtime.sidecar_protocol_adapters.LeakSentinelSidecarAdapter
+            PassiveFingerprintSidecarAdapter,  # noqa: F401  # runtime.sidecar_protocol_adapters.PassiveFingerprintSidecarAdapter
+            PassiveTechStackSidecarAdapter,  # noqa: F401  # runtime.sidecar_protocol_adapters.PassiveTechStackSidecarAdapter
+            SocialIdentityMinerSidecarAdapter,  # noqa: F401  # runtime.sidecar_protocol_adapters.SocialIdentityMinerSidecarAdapter
+            TemporalArchaeologySidecarAdapter,  # noqa: F401  # runtime.sidecar_protocol_adapters.TemporalArchaeologySidecarAdapter
         )
     except ImportError:
         logger.debug("sidecar_protocol_adapters not available")

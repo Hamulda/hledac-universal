@@ -80,7 +80,7 @@ LEFT_INTACT_PATTERNS: dict[str, str] = {
     "intelligence/wayback_diff_miner.py": "explicit gathered_errors.append() collection",
     "export/stix_exporter.py": "1-await + explicit errors=[] check (return bundle on errors)",
     "export/jsonld_exporter.py": "1-await + explicit errors=[] check (return obj on errors)",
-    "coordinators/execution_coordinator.py": "gather result consumed in [r for r in results if not isinstance(r, Exception)]",
+    "coordinators/execution_coordinator.py": "gather result consumed in [r for r in results if not isinstance(r, Exception)]",  # noqa: E501
 }
 
 

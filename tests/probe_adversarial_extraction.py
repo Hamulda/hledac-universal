@@ -72,8 +72,8 @@ class TestForwardImport:
 class TestFunctionalBehavior:
     def test_assess_source_credibility_no_bias(self) -> None:
         """assess_source_credibility returns valid SourceCredibility."""
-        from brain.hypothesis.adversarial import AdversarialVerifier
         from brain.hypothesis._types import SourceCredibility
+        from brain.hypothesis.adversarial import AdversarialVerifier
 
         verifier = AdversarialVerifier(hypothesis_engine=MagicMock())
         result = verifier.assess_source_credibility("https://example.edu/paper")

@@ -652,7 +652,7 @@ def _extract_tech_stack(
 
     # Akamai WAF (X-Sucuri-*)
     if not waf_detected:
-        for hk, hv in headers.items():
+        for hk, hv in headers.items():  # noqa: B007
             if "sucuri" in hk.lower() or "x-sucuri" in hk.lower():
                 waf_detected = "Akamai WAF"
                 waf_confidence = 0.75
@@ -693,7 +693,7 @@ def _extract_tech_stack(
             cms = next(iter(found_cms))
         elif len(found_cms) > 1:
             # Prefer most specific
-            priority = ["typo3", "magento", "prestashop", "drupal", "joomla", "wordpress", "shopify", "ghost cms", "hubspot", "wix", "squarespace"]
+            priority = ["typo3", "magento", "prestashop", "drupal", "joomla", "wordpress", "shopify", "ghost cms", "hubspot", "wix", "squarespace"]  # noqa: E501
             for p in priority:
                 if p in found_cms:
                     cms = p
@@ -1048,7 +1048,7 @@ def extract_fingerprints(finding: CanonicalFinding) -> list[ServiceFingerprint]:
                 facets={"source": "tech_stack_waf", **tech_stack.raw_signals},
             ))
         if tech_stack.cms:
-            cms_product = tech_stack.cms if tech_stack.cms_version is None else f"{tech_stack.cms} {tech_stack.cms_version}"
+            cms_product = tech_stack.cms if tech_stack.cms_version is None else f"{tech_stack.cms} {tech_stack.cms_version}"  # noqa: E501
             fingerprints.append(ServiceFingerprint(
                 finding_id=fid,
                 service_name=tech_stack.cms.lower().replace(" ", "-"),
@@ -1329,7 +1329,7 @@ _TECH_STACK_PATTERNS: list[tuple[str, str, str, re.Pattern]] = [
     # CloudFront
     ("CloudFront", "cdn", "html_marker", re.compile(r"CloudFront|aws-cloudfront|x-amz-cf", re.I)),
     # Google Cloud CDN
-    ("Google Cloud CDN", "cdn", "html_marker", re.compile(r"Google Cloud|Cloud CDN|gstatic\.com|googletagmanager", re.I)),
+    ("Google Cloud CDN", "cdn", "html_marker", re.compile(r"Google Cloud|Cloud CDN|gstatic\.com|googletagmanager", re.I)),  # noqa: E501
     # Azure CDN
     ("Azure CDN", "cdn", "html_marker", re.compile(r"azure|azureedge\.net|msftncsi", re.I)),
     # WordPress — full patterns (complement passive_fingerprint's coverage)
@@ -1373,7 +1373,7 @@ _TECH_STACK_PATTERNS: list[tuple[str, str, str, re.Pattern]] = [
     # PrestaShop
     ("PrestaShop", "ecommerce", "html_marker", re.compile(r"prestashop|_PS_VERSION_|prestashop\.com", re.I)),
     # Google Analytics (analytics/CDN marker)
-    ("Google Analytics", "analytics", "html_marker", re.compile(r"google-analytics\.com|ga\.js|analytics\.js|gtag", re.I)),
+    ("Google Analytics", "analytics", "html_marker", re.compile(r"google-analytics\.com|ga\.js|analytics\.js|gtag", re.I)),  # noqa: E501
     # Google Tag Manager
     ("Google Tag Manager", "analytics", "html_marker", re.compile(r"googletagmanager\.com|GTM-[A-Z0-9]+", re.I)),
     # Facebook Pixel
@@ -1553,7 +1553,7 @@ def _trigger_cve_lookup_tasks(
     Fail-safe: any error is logged and swallowed.
     """
     # Techs with significant CVE history — trigger lookup
-    _CVE_TRIGGER_TECHS = {
+    _CVE_TRIGGER_TECHS = {  # noqa: N806
         "WordPress", "Drupal", "Joomla", "Typo3",
         "nginx", "Apache", "Next.js", "React", "Vue",
         "Angular", "Gatsby", "Laravel", "Django", "Flask",

@@ -39,6 +39,7 @@ from typing import Any
 from urllib.parse import quote, unquote, urlparse
 
 from utils.async_helpers import safe_gather_fire_and_forget
+
 logger = logging.getLogger(__name__)
 
 # =============================================================================
@@ -631,8 +632,8 @@ class HeaderSpoofer:
     USER_AGENTS = {
         'desktop': {
             'chrome': [
-                'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
+                'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',  # noqa: E501
+                'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',  # noqa: E501
                 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Safari/537.36',
             ],
             'firefox': [
@@ -641,24 +642,24 @@ class HeaderSpoofer:
                 'Mozilla/5.0 (X11; Linux x86_64; rv:119.0) Gecko/20100101 Firefox/119.0',
             ],
             'safari': [
-                'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.1 Safari/605.1.15',
-                'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Safari/605.1.15',
+                'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.1 Safari/605.1.15',  # noqa: E501
+                'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Safari/605.1.15',  # noqa: E501
             ],
             'edge': [
-                'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 Edg/120.0.0.0',
+                'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 Edg/120.0.0.0',  # noqa: E501
             ],
         },
         'mobile': {
             'chrome': [
-                'Mozilla/5.0 (iPhone; CPU iPhone OS 17_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) CriOS/120.0.6099.119 Mobile/15E148 Safari/604.1',
-                'Mozilla/5.0 (Linux; Android 14; SM-S918B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36',
+                'Mozilla/5.0 (iPhone; CPU iPhone OS 17_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) CriOS/120.0.6099.119 Mobile/15E148 Safari/604.1',  # noqa: E501
+                'Mozilla/5.0 (Linux; Android 14; SM-S918B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36',  # noqa: E501
             ],
             'safari': [
-                'Mozilla/5.0 (iPhone; CPU iPhone OS 17_1_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.1 Mobile/15E148 Safari/604.1',
-                'Mozilla/5.0 (iPad; CPU OS 17_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.1 Mobile/15E148 Safari/604.1',
+                'Mozilla/5.0 (iPhone; CPU iPhone OS 17_1_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.1 Mobile/15E148 Safari/604.1',  # noqa: E501
+                'Mozilla/5.0 (iPad; CPU OS 17_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.1 Mobile/15E148 Safari/604.1',  # noqa: E501
             ],
             'firefox': [
-                'Mozilla/5.0 (iPhone; CPU iPhone OS 17_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) FxiOS/121.0 Mobile/15E148 Safari/605.1.15',
+                'Mozilla/5.0 (iPhone; CPU iPhone OS 17_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) FxiOS/121.0 Mobile/15E148 Safari/605.1.15',  # noqa: E501
             ],
         }
     }
@@ -918,7 +919,7 @@ class StealthCrawler:
     def _check_dependencies(self) -> None:
         """Check for available HTTP libraries."""
         try:
-            from curl_cffi import requests as curl_requests
+            from curl_cffi import requests as curl_requests  # noqa: F401  # curl_cffi.requests
             self._curl_cffi_available = True
             logger.info("✓ curl_cffi available - using TLS fingerprinting")
         except ImportError:
@@ -927,7 +928,7 @@ class StealthCrawler:
 
         if not self._curl_cffi_available:
             try:
-                import requests
+                import requests  # noqa: F401  # requests
                 self._requests_available = True
                 logger.info("✓ requests available - using fallback")
             except ImportError:
@@ -995,7 +996,7 @@ class StealthCrawler:
                 headers = self._header_spoofer.get_headers(content_type='html')
             else:
                 headers = {
-                    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",  # noqa: E501
                     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
                     "Accept-Language": "en-US,en;q=0.5",
                     "Accept-Encoding": "gzip, deflate, br",
@@ -1024,7 +1025,7 @@ class StealthCrawler:
                 headers = self._header_spoofer.get_headers(content_type='html')
             else:
                 headers = {
-                    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",  # noqa: E501
                     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
                 }
 
@@ -1049,7 +1050,7 @@ class StealthCrawler:
                 headers = self._header_spoofer.get_headers(content_type='html')
             else:
                 headers = {
-                    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",  # noqa: E501
                     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
                     "Accept-Language": "en-US,en;q=0.5",
                     "Accept-Encoding": "gzip, deflate",
@@ -1262,7 +1263,7 @@ class StealthCrawler:
             try:
                 from httpx_socks import SyncProxyTransport
             except ImportError:
-                SyncProxyTransport = None  # type: ignore[assignment]
+                SyncProxyTransport = None  # type: ignore[assignment]  # noqa: N806
 
             # httpx + httpx_socks: native SOCKS5 transport, no thread-local socket patch.
             if TorProxyManager.is_running() and SyncProxyTransport is not None:
@@ -1313,7 +1314,7 @@ class StealthCrawler:
             try:
                 from httpx_socks import SyncProxyTransport
             except ImportError:
-                SyncProxyTransport = None  # type: ignore[assignment]
+                SyncProxyTransport = None  # type: ignore[assignment]  # noqa: N806
 
             try:
                 if TorProxyManager.is_running() and SyncProxyTransport is not None:
@@ -1591,7 +1592,7 @@ class StealthCrawler:
         results = []
 
         # Primary pattern
-        pattern = r'<a[^>]*class="result__a"[^>]*href="([^"]*)"[^>]*>(.*?)</a>.*?<a[^>]*class="result__snippet"[^>]*>(.*?)</a>'
+        pattern = r'<a[^>]*class="result__a"[^>]*href="([^"]*)"[^>]*>(.*?)</a>.*?<a[^>]*class="result__snippet"[^>]*>(.*?)</a>'  # noqa: E501
         matches = re.findall(pattern, html, re.DOTALL)
 
         for i, (url_raw, title, snippet) in enumerate(matches[:num_results]):
@@ -1627,7 +1628,7 @@ class StealthCrawler:
         """Parse Google HTML."""
         results = []
 
-        pattern = r'<div[^>]*class="g"[^>]*>.*?<h3[^>]*>.*?<a[^>]*href="([^"]*)"[^>]*>(.*?)</a>.*?<span[^>]*class="st"[^>]*>(.*?)</span>'
+        pattern = r'<div[^>]*class="g"[^>]*>.*?<h3[^>]*>.*?<a[^>]*href="([^"]*)"[^>]*>(.*?)</a>.*?<span[^>]*class="st"[^>]*>(.*?)</span>'  # noqa: E501
         matches = re.findall(pattern, html, re.DOTALL)
 
         for i, (url_raw, title, snippet) in enumerate(matches[:num_results]):
@@ -1739,11 +1740,11 @@ class StealthWebScraper:
 
     # User agents for rotation
     USER_AGENTS = [
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",  # noqa: E501
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",  # noqa: E501
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0",
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Safari/605.1.15",
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 Edg/120.0.0.0",
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Safari/605.1.15",  # noqa: E501
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 Edg/120.0.0.0",  # noqa: E501
     ]
 
     def __init__(
@@ -1929,7 +1930,7 @@ class StealthWebScraper:
             success_rate = proxy.success_count / total
             time_penalty = 0.0
             if proxy.last_used:
-                seconds_since = (datetime.now() - proxy.last_used).total_seconds()
+                seconds_since = (datetime.now() - proxy.last_used).total_seconds()  # noqa: DTZ005
                 time_penalty = min(seconds_since / 60, 1.0)
             return success_rate - time_penalty * 0.3
 
@@ -2016,7 +2017,7 @@ class StealthWebScraper:
             bypass_method_used=BypassMethod.DIRECT,
             headers={},
             cookies={},
-            timestamp=datetime.now(),
+            timestamp=datetime.now(),  # noqa: DTZ005
             duration=time.time() - start_time,
             error="Max retries exceeded"
         )
@@ -2045,7 +2046,7 @@ class StealthWebScraper:
             if proxy.username and proxy.password:
                 auth = f"{proxy.username}:{proxy.password}@"
             proxy_url = f"http://{auth}{proxy.host}:{proxy.port}"
-            proxy.last_used = datetime.now()
+            proxy.last_used = datetime.now()  # noqa: DTZ005
 
         try:
             # Phase 2 breaker preflight
@@ -2062,7 +2063,7 @@ class StealthWebScraper:
                     bypass_method_used=BypassMethod.DIRECT,
                     headers={},
                     cookies={},
-                    timestamp=datetime.now(),
+                    timestamp=datetime.now(),  # noqa: DTZ005
                     duration=time.time() - start_time,
                     proxy_used=proxy_url,
                     error=f"circuit_breaker_blocked:{reason}"
@@ -2097,7 +2098,7 @@ class StealthWebScraper:
                     bypass_method_used=BypassMethod.DIRECT,
                     headers=dict(resp.headers),
                     cookies={k: v.value for k, v in resp.cookies.items()},
-                    timestamp=datetime.now(),
+                    timestamp=datetime.now(),  # noqa: DTZ005
                     duration=time.time() - start_time,
                     proxy_used=proxy_url
                 )
@@ -2116,7 +2117,7 @@ class StealthWebScraper:
                 bypass_method_used=BypassMethod.DIRECT,
                 headers=headers,
                 cookies={},
-                timestamp=datetime.now(),
+                timestamp=datetime.now(),  # noqa: DTZ005
                 duration=time.time() - start_time,
                 proxy_used=proxy_url,
                 error=str(e)
@@ -2217,7 +2218,7 @@ class StealthWebScraper:
                 bypass_method_used=BypassMethod.CLOUDSCRAPER,
                 headers=dict(response.headers),
                 cookies=dict(response.cookies),
-                timestamp=datetime.now(),
+                timestamp=datetime.now(),  # noqa: DTZ005
                 duration=0.0,
                 proxy_used=proxy.host if proxy else None
             )
@@ -2327,14 +2328,14 @@ class StreamingMonitor:
     def _check_dependencies(self) -> None:
         """Check for optional dependencies"""
         try:
-            import feedparser
+            import feedparser  # noqa: F401  # feedparser
             self._feedparser_available = True
             logger.info("✓ feedparser available for RSS monitoring")
         except ImportError:
             logger.warning("feedparser not available, RSS monitoring disabled")
 
         try:
-            import diff_match_patch
+            import diff_match_patch  # noqa: F401  # diff_match_patch
             self._diff_match_patch_available = True
             logger.info("✓ diff-match-patch available for diff generation")
         except ImportError:
@@ -2372,7 +2373,7 @@ class StreamingMonitor:
             "Accept-Encoding": "gzip, deflate",
             "DNT": "1",
             "Connection": "keep-alive",
-            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",  # noqa: E501
         }
 
     async def add_source(self, source: MonitoredSource) -> bool:
@@ -2433,7 +2434,7 @@ class StreamingMonitor:
             await self.initialize()
 
         self._running = True
-        self._stats['start_time'] = datetime.now()
+        self._stats['start_time'] = datetime.now()  # noqa: DTZ005
         self._monitor_task = asyncio.create_task(self._monitor_loop())
         logger.info("🚀 Streaming monitoring started")
 
@@ -2460,7 +2461,7 @@ class StreamingMonitor:
         while self._running:
             try:
                 # Get sources that need checking
-                now = datetime.now()
+                now = datetime.now()  # noqa: DTZ005
                 sources_to_check = [
                     s for s in self._sources.values()
                     if s.is_active and (
@@ -2516,7 +2517,7 @@ class StreamingMonitor:
         if not self._session:
             return None
 
-        source.last_check = datetime.now()
+        source.last_check = datetime.now()  # noqa: DTZ005
         self._stats['checks_performed'] += 1
 
         try:
@@ -2570,7 +2571,7 @@ class StreamingMonitor:
             event = StreamEvent(
                 event_id=self._generate_id(),
                 source_id=source.source_id,
-                timestamp=datetime.now(),
+                timestamp=datetime.now(),  # noqa: DTZ005
                 content=content[:10000],  # Limit content size (M1 optimization)
                 extracted_entities=entities,
                 matched_keywords=matched_keywords,
@@ -2889,7 +2890,7 @@ class StreamingMonitor:
                     event=event,
                     rule_matched=rule.rule_id,
                     severity=rule.get_severity(event),
-                    timestamp=datetime.now(),
+                    timestamp=datetime.now(),  # noqa: DTZ005
                 )
                 self._alerts.append(alert)
                 self._stats['alerts_generated'] += 1
@@ -2966,7 +2967,7 @@ class StreamingMonitor:
         for alert in self._alerts:
             if alert.alert_id == alert_id:
                 alert.acknowledged = True
-                alert.acknowledged_at = datetime.now()
+                alert.acknowledged_at = datetime.now()  # noqa: DTZ005
                 alert.acknowledged_by = acknowledged_by
                 return True
         return False
@@ -3000,7 +3001,7 @@ class StreamingMonitor:
         """Get monitoring statistics"""
         uptime = timedelta(0)
         if self._stats['start_time']:
-            uptime = datetime.now() - self._stats['start_time']
+            uptime = datetime.now() - self._stats['start_time']  # noqa: DTZ005
 
         return {
             **self._stats,

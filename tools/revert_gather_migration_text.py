@@ -59,7 +59,7 @@ def revert_text(source: str) -> tuple[str, int]:
     matches.reverse()
 
     for m in matches:
-        func_name = m.group(1)
+        m.group(1)
         paren_start = m.end() - 1  # the `(` is at end-1
         paren_end = find_balanced_paren(source, paren_start)
         if paren_end is None:
@@ -118,7 +118,7 @@ def main(argv):
         return 2
     for path in argv:
         try:
-            with open(path, "r", encoding="utf-8") as f:
+            with open(path, encoding="utf-8") as f:
                 source = f.read()
         except OSError as e:
             print(f"✗ {path}: cannot read ({e})")

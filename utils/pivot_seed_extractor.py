@@ -358,7 +358,7 @@ def extract_pivot_seeds_from_texts(
     # Deduplicate by (seed_type, normalised_value)
     seen: set[tuple[str, str]] = set()
     deduped: list[PivotSeed] = []
-    for rank, seed in raw_seeds:
+    for rank, seed in raw_seeds:  # noqa: B007
         key = (seed.seed_type, seed.value)
         if key not in seen:
             seen.add(key)

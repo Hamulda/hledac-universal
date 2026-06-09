@@ -112,7 +112,7 @@ class VectorStore:
 
         except ImportError as e:
             logger.error(f"[VECTOR] LanceDB not available: {e}")
-            raise RuntimeError("LanceDB is required for vector store. Install with: pip install 'lancedb>=0.2.5'") from e
+            raise RuntimeError("LanceDB is required for vector store. Install with: pip install 'lancedb>=0.2.5'") from e  # noqa: E501
         except Exception as e:
             logger.error(f"[VECTOR] Failed to initialize LanceDB: {e}")
             raise
@@ -251,7 +251,6 @@ class VectorStore:
         try:
             # Polars native ARM64, zero-copy Arrow → 5-20× faster than pandas.
             # Lazy import: polars is in graph-storage extra.
-            import polars as pl
 
             # Search using LanceDB's vector search
             # LanceDB returns results with _distance column (cosine distance)

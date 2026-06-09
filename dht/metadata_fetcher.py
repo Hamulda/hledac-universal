@@ -10,10 +10,10 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import logging
 import struct
 from dataclasses import dataclass, field
 from typing import Any
-import logging
 
 logger = logging.getLogger(__name__)
 
@@ -131,10 +131,9 @@ class TorrentMetadataFetcher:
                 return None
 
             peer_reserved = response[5:13]
-            extended_id = peer_reserved[7] if len(peer_reserved) > 7 else 0
+            peer_reserved[7] if len(peer_reserved) > 7 else 0
 
             # Step 3: Send extended handshake
-            import json
             ext_handshake = {
                 b"m": {
                     b"ut_metadata": UT_METADATA_ID
@@ -165,7 +164,7 @@ class TorrentMetadataFetcher:
                         metadata_size, ut_metadata_id = self._parse_extended_handshake(msg_data[1:])
                         if metadata_size and ut_metadata_id:
                             break
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     break
 
             if not metadata_size or not ut_metadata_id:
@@ -207,7 +206,7 @@ class TorrentMetadataFetcher:
                             metadata_pieces[piece_idx] = piece_data
                             remaining -= 1
                             received_count += 1
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     break
 
             # Reassemble and verify

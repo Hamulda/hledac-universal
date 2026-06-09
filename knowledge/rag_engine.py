@@ -32,6 +32,7 @@ if TYPE_CHECKING:
 
 # Secure Enclave abstraction (Sprint F206X)
 import numpy as np
+
 from hledac.universal.security.secure_enclave import (
     EnclaveAvailability,
     EnclaveStatus,
@@ -81,7 +82,7 @@ class RAGConfig:
     use_hnsw: bool = True
     hnsw_dim: int = 384  # Vector dimension (BAAI/bge-small-en-v1.5 produces 384D)
     hnsw_max_elements: int = 100000  # Maximum elements in index
-    hnsw_M: int = 16  # Number of bi-directional links for each node
+    hnsw_M: int = 16  # Number of bi-directional links for each node  # noqa: N815
     hnsw_ef_construction: int = 200  # Size of dynamic candidate list
     hnsw_ef_search: int = 50  # Size of dynamic candidate list for search
     hnsw_index_path: str | None = None  # Path for persistent index storage
@@ -222,7 +223,7 @@ class HNSWVectorIndex:
         self,
         dim: int = 768,
         max_elements: int = 100000,
-        M: int = 16,
+        M: int = 16,  # noqa: N803
         ef_construction: int = 200,
         ef_search: int = 50,
         space: str = "cosine",
@@ -1580,7 +1581,7 @@ class RAGEngine:
             new_embeddings: list[list[float]] = []
 
             for cluster_id in range(n_clusters):
-                cluster_indices = [i for i, l in enumerate(cluster_labels) if l == cluster_id]
+                cluster_indices = [i for i, l in enumerate(cluster_labels) if l == cluster_id]  # noqa: E741
                 if not cluster_indices:
                     continue
 
@@ -1615,7 +1616,7 @@ class RAGEngine:
     async def _summarize_cluster(self, text: str, max_tokens: int = 200) -> str:
         """Summarize cluster text via Hermes3 generate_structured(). Truncates on failure."""
         # Access Hermes via whichever attribute exists
-        hermes = getattr(self, '_model_manager', None) or getattr(self, '_llm', None) or getattr(self, '_hermes_engine', None)
+        hermes = getattr(self, '_model_manager', None) or getattr(self, '_llm', None) or getattr(self, '_hermes_engine', None)  # noqa: E501
         if hermes is None:
             return text[:500]
         try:

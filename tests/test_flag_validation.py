@@ -19,8 +19,8 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+from collections.abc import Iterator
 from pathlib import Path
-from typing import Iterator
 
 import pytest
 
@@ -174,7 +174,7 @@ class TestRamBudget:
 class TestPresetLoading:
     def test_preset_loading_sets_environ(self) -> None:
         """apply_preset('osint', overwrite=True) writes all keys to env."""
-        from utils.flag_presets import apply_preset, OSINT
+        from utils.flag_presets import OSINT, apply_preset
 
         applied = apply_preset("osint", overwrite=True)
         # Every key the OSINT preset declares must be in os.environ.

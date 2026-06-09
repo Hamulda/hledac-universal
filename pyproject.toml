@@ -81,8 +81,8 @@ dependencies = [
     "lmdb>=2.2.0",           # persistent dedup/store backend
     "diskcache>=5.6.0",      # SQLite-backed concurrent cache (cache/budget_manager + HTTPDiskCache)
     # MLX / Apple Silicon (lazy import — fail-soft without torch)
-    "mlx>=0.31.2",
-    "mlx-lm>=0.31.3",
+    "mlx>=0.31.2; sys_platform == 'darwin' and platform_machine == 'arm64'",
+    "mlx-lm>=0.31.3; sys_platform == 'darwin' and platform_machine == 'arm64'",
     # ONNX support (lazy import, fail-soft)
     "onnxscript>=0.7.0",
     "pillow>=12.2.0",         # PIL/Pillow in captcha_solver, metadata_extractor
@@ -101,9 +101,10 @@ dependencies = [
     "datasketch>=1.10.0",     # MinHash for semantic dedup
     # NOTE: coremltools + sentence-transformers moved to coreml-export extra
     # (only needed for mlmodel export scripts, not runtime inference)
-    "curl-cffi>=0.15.0",
-    # kuzu moved to kuzu-graph extra: no cp314 arm64 wheel, optional backend.
+    "curl-cffi>=0.15.0; sys_platform == 'darwin'",
+    # kuzu REMOVED FROM DEFAULT (see kuzu-graph extra): no cp314 arm64 wheel.
     # Canonical graph is DuckPGQGraph (knowledge/graph_service.py) — kuzu is opt-in.
+    # All callers are fail-soft (try/except ImportError).
     "dspy>=3.2.1",
     # llmlingua removed: 0 importers, no cp314 wheel, fail-soft if re-added
     "selectolax>=0.4.10",
@@ -120,27 +121,27 @@ dependencies = [
     "scikit-learn>=1.9.0",
     "xgboost>=3.2.0",
     "lightgbm>=4.6.0",
-    "beautifulsoup4>=4.14.3",
+    "beautifulsoup4>=4.14.3",  # also in legacy-html extra (dedup; primary in default)
     "lxml>=6.1.1",
-    "playwright>=1.60.0",
-    "nodriver>=0.50.3",
     "redis>=8.0.0",
-    "uvloop>=0.22.1",
+    "uvloop>=0.22.1; sys_platform != 'win32'",
     "pyopenssl>=26.2.0",
     "python-multipart>=0.0.32",
+    # torch/torchvision/torchaudio/transformers: kept in default (test consumers in tests/).
+    # Outlines, sentence-transformers, kuzu, camoufox, pytesseract, stem,
+    # duckduckgo-search, coremltools, xgrammar, scapy, stix2, pyvis moved to extras.
     "torch",
     "torchvision",
     "torchaudio",
     "transformers>=5.10.2",
-    "sentence-transformers>=5.5.1",
     "zstandard>=0.25.0",
     "pybloom-live>=4.0.0",
-    "stem>=1.8.2",
-    "wasmtime>=45.0.0",
-    "pyobjc-framework-cocoa>=12.2",
-    "pyobjc-framework-vision>=12.2",
-    "pyobjc-framework-quartz>=12.2",
-    "ocrmac>=1.0.1",
+    # wasmtime: REMOVED — 0 importers in production code, no cp314 wheel guarantee.
+    # Re-add under explicit opt-in if wasmtime-based sandbox is reintroduced.
+    "pyobjc-framework-cocoa>=12.2; sys_platform == 'darwin'",
+    "pyobjc-framework-vision>=12.2; sys_platform == 'darwin'",
+    "pyobjc-framework-quartz>=12.2; sys_platform == 'darwin'",
+    "ocrmac>=1.0.1; sys_platform == 'darwin'",
     "ahocorasick-rs>=1.0.3",
     "zstd>=1.5.7.3",
     "yara-python>=4.5.4",
@@ -155,31 +156,36 @@ dependencies = [
     "resiliparse>=1.0.4",
     "rustworkx>=0.17.1",
     "usearch>=2.25.3",
-    "xgrammar>=0.2.1",
+    "xgrammar>=0.2.1",  # also in transformers-stack extra
     "defusedxml",
     "diff-match-patch",
     "feedparser",
-    "pytesseract",
     "pypdf2",
     "markdownify",
     "piexif",
-    "pywt",
+    "PyWavelets>=1.7.0",   # pywt import name (PyWavelets is the PyPI dist name)
     "setproctitle",
-    "stix2",
     "trafilatura",
-    "coremltools",
-    "mobileclip",
-    "spacy",
-    "duckduckgo-search",
     "zeroconf",
-    "pyvis",
     "python-docx",
-    "scapy",
-    "camoufox",
-    "pyobjc-framework-naturallanguage",
-    "pyobjc-framework-coreml",
+    "camoufox; sys_platform == 'darwin'",  # also in browser extra
+    "pyobjc-framework-naturallanguage; sys_platform == 'darwin'",
+    "pyobjc-framework-coreml; sys_platform == 'darwin'",
     "lz4",
-    "outlines",
+    # REMOVED FROM DEFAULT (moved to extras):
+    # - stem → tor extra
+    # - pytesseract → ocr extra
+    # - duckduckgo-search → search extra
+    # - coremltools → coreml + coreml-export extras
+    # - sentence-transformers → coreml-export extra
+    # - outlines → transformers-stack extra
+    # - kuzu → kuzu-graph extra
+    # - nodriver → browser extra
+    # - stix2 → stix extra (NEW)
+    # - scapy → network extra (NEW)
+    # - pyvis → viz extra (NEW)
+    # - xgrammar → transformers-stack extra
+    # - mobileclip / spacy / wasmtime / fasttext-predict: REMOVED (0 importers)
 ]
 
 # ------------------------------------------------------------------ optionals
@@ -375,6 +381,7 @@ kuzu-graph = [
 transformers-stack = [
     "transformers>=5.8.0",   # HF transformers: TrOCR, AutoModel, AutoTokenizer
     "outlines>=1.3.0",       # deterministic JSON generation (used by brain/)
+    "xgrammar>=0.2.1",       # structured output grammar (brain/hermes3, brain/synthesis_runner)
 ]
 
 # --- flashrank-rerank: optional neural reranker (no cp314 wheel — opt-in) ---
@@ -390,6 +397,21 @@ dspy = [
     "dspy>=2.5.0",
 ]
 
+# --- stix: STIX 2.1 export (lazy import in knowledge/ioc_graph.py, export/stix_exporter.py) ---
+stix = [
+    "stix2>=3.0.1",
+]
+
+# --- network: low-level network operations (lazy import in network/dns_tunnel_detector.py) ---
+network = [
+    "scapy>=2.5.0",
+]
+
+# --- viz: graph visualization (lazy import in export/export_manager.py, graph/graph_manager.py) ---
+viz = [
+    "pyvis>=0.3.2",
+]
+
 # --- m1-local: ergonomic default for MacBook Air M1 8GB (no torch, no browser, no heavy OCR) ---
 # Recommended for routine local use on Apple Silicon:
 #   uv sync --extra m1-local --extra dev
@@ -398,7 +420,7 @@ m1-local = [
 ]
 # --- all: everything except torch (torch is too heavy for routine dev) ---
 all = [
-    "hledac-universal[light,apple-accel,osint-html,graph-storage,dev,acceleration,nlp,rerank,browser,webkit,security,transport,http3,ocr,coreml,coreml-export,search,tor,legacy-html,transformers-stack,flashrank-rerank,kuzu-graph,dspy,m1-local]",
+    "hledac-universal[light,apple-accel,osint-html,graph-storage,dev,acceleration,nlp,rerank,browser,webkit,security,transport,http3,ocr,coreml,coreml-export,search,tor,legacy-html,transformers-stack,flashrank-rerank,kuzu-graph,dspy,stix,network,viz,m1-local]",
 ]
 
 [project.scripts]
@@ -461,6 +483,50 @@ allowed-unresolved-imports = [
     # pattern_matcher.py:17 a utils/aho_extractor.py:122 importují `ahocorasick`
     # s lazy fallbackem na Python Aho-Corasick když není k dispozici.
     "ahocorasick",
+    # === FAIL-SOFT LAZY IMPORTS (deps moved to extras, callers guarded by try/except) ===
+    # Každý z těchto balíků je v default kódu importován VÝHRADNĚ lazy s try/except
+    # ImportError. Při `pip install .` (bez extras) ty hlásí unresolved, ale kód
+    # funguje — fail-soft fallback na alternativní cestu. Povolujeme, aby ty
+    # nehledal zbytečné false positives.
+    "kuzu",                   # kuzu-graph extra; knowledge/ioc_graph.py (try/except)
+    "outlines",               # transformers-stack extra; brain/ (3 files, fail-soft)
+    "xgrammar",               # transformers-stack extra; brain/ (2 files, fail-soft)
+    "coremltools",            # coreml + coreml-export extras; 10 files fail-soft
+    "pytesseract",            # ocr extra; captcha_solver + 2 others
+    "stem",                   # tor extra; transport/tor_transport
+    "duckduckgo_search",      # search extra; discovery/duckduckgo_adapter.py
+    "ddgs",                   # search extra; same adapter (primary path)
+    "camoufox",               # browser extra; fetching/public_fetcher.py
+    "nodriver",               # browser extra; same fetcher (fallback)
+    "stix2",                  # stix extra; knowledge/ioc_graph + export/stix_exporter
+    "scapy",                  # network extra; network/dns_tunnel_detector.py
+    "pyvis",                  # viz extra; export/export_manager + graph/graph_manager
+    "sentence_transformers",  # coreml-export extra; brain/ + scripts/ (lazy)
+    "mobileclip",             # REMOVED (dead dep, 0 importers) — listed for safety
+    "wasmtime",               # REMOVED (dead dep, 0 importers) — listed for safety
+    "flashrank",              # flashrank-rerank extra; tools/reranker + 3 brain files
+    "liboqs",                 # security extra pq-crypto; only `oqs` import path
+    "gliner",                 # ner_engine / model_manager — fail-soft
+    "hnswlib",                # rag_engine + 2 others — fail-soft
+    "usearch",                # lancedb_store — fail-soft
+    "rustworkx",              # brain/gnn_predictor — fail-soft
+    "fastembed",              # context_optimization/* (5 files) — fail-soft
+    "spacy",                  # REMOVED (dead dep, 0 importers) — listed for safety
+    # === Darwin-only / Apple Silicon frameworky (ty nevidí stubs na non-Darwin) ===
+    "mlx",                    # Darwin arm64 only; lazy via try/except
+    "mlx.**",                 # mlx.core, mlx.nn submodules
+    "mlx_embeddings",         # apple-accel extra; core/mlx_embeddings.py
+    "mlx_lm",                 # brain lazy import
+    "ocrmac",                 # Darwin-only; tools/ocr_engine.py lazy
+    "Vision",                 # pyobjc-framework-Vision; only Darwin
+    "Vision.**",
+    "NaturalLanguage",        # pyobjc-framework-NaturalLanguage; only Darwin
+    "NaturalLanguage.**",
+    "Quartz",                 # pyobjc-framework-Quartz; only Darwin
+    "Cocoa",                  # pyobjc-framework-Cocoa; Darwin
+    "CoreML",                 # pyobjc-framework-CoreML; Darwin
+    "AppKit",                 # pyobjc-framework-AppKit; Darwin
+    "Foundation",             # pyobjc-framework-Foundation; Darwin
 ]
 
 [tool.pytest.ini_options]

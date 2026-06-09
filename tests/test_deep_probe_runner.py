@@ -93,7 +93,7 @@ class TestDeepProbeRunnerIntegration:
         call_records = []
 
         async def mock_record_finding(finding_id, query, source_type, confidence):
-            call_records.append({"finding_id": finding_id, "query": query, "source_type": source_type, "confidence": confidence})
+            call_records.append({"finding_id": finding_id, "query": query, "source_type": source_type, "confidence": confidence})  # noqa: E501
             return True
 
         mock_store.async_record_shadow_finding = AsyncMock(side_effect=mock_record_finding)
@@ -110,7 +110,7 @@ class TestDeepProbeRunnerIntegration:
 
                 # All recorded findings should have source_type="deep_probe"
                 for record in call_records:
-                    assert record["source_type"] == "deep_probe", f"Expected 'deep_probe' but got {record['source_type']}"
+                    assert record["source_type"] == "deep_probe", f"Expected 'deep_probe' but got {record['source_type']}"  # noqa: E501
 
     @pytest.mark.asyncio
     async def test_run_deep_probe_is_fail_safe_on_scanner_error(self, mock_store):

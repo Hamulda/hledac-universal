@@ -35,6 +35,7 @@ from typing import Any
 import aiohttp
 
 from utils.async_helpers import safe_gather_dropin
+
 logger = logging.getLogger(__name__)
 
 # ── Bounds ────────────────────────────────────────────────────────────────────
@@ -137,9 +138,9 @@ class IPv6Recon:
         # Circuit breaker
         try:
             from hledac.universal.transport.circuit_breaker import get_breaker
-            if not get_breaker("rdap.arin.net").check_circuit().allowed: raise RuntimeError(f"circuit_open: {"rdap.arin.net"}")
-            if not get_breaker("rdap.ripe.net").check_circuit().allowed: raise RuntimeError(f"circuit_open: {"rdap.ripe.net"}")
-            if not get_breaker("rdap.apnic.net").check_circuit().allowed: raise RuntimeError(f"circuit_open: {"rdap.apnic.net"}")
+            if not get_breaker("rdap.arin.net").check_circuit().allowed: raise RuntimeError(f"circuit_open: {"rdap.arin.net"}")  # noqa: E501
+            if not get_breaker("rdap.ripe.net").check_circuit().allowed: raise RuntimeError(f"circuit_open: {"rdap.ripe.net"}")  # noqa: E701
+            if not get_breaker("rdap.apnic.net").check_circuit().allowed: raise RuntimeError(f"circuit_open: {"rdap.apnic.net"}")  # noqa: E701
         except Exception as e:
             logger.debug(f"[IPv6] RDAP circuit breaker: {e}")
 
@@ -240,7 +241,7 @@ class IPv6Recon:
         try:
             from hledac.universal.network.passive_dns import DOH_RESOLVERS
         except Exception:
-            DOH_RESOLVERS = {
+            DOH_RESOLVERS = {  # noqa: N806
                 "cloudflare": "https://cloudflare-dns.com/dns-query",
                 "google": "https://dns.google/resolve",
             }
@@ -291,7 +292,7 @@ class IPv6Recon:
         # Check circuit breaker
         try:
             from hledac.universal.transport.circuit_breaker import get_breaker
-            if not get_breaker("bgpkit.com").check_circuit().allowed: raise RuntimeError(f"circuit_open: {"bgpkit.com"}")
+            if not get_breaker("bgpkit.com").check_circuit().allowed: raise RuntimeError(f"circuit_open: {"bgpkit.com"}")  # noqa: E701
         except Exception:
             return {}
 
@@ -379,7 +380,7 @@ class IPv6Recon:
             errors.append(f"aaaa:{e}")
 
         # Recon each AAAA
-        bgp_tasks = [asyncio.create_task(self.get_bgp_peer(ip), name=f"ipv6_recon:bgp_peer:{ip}") for ip in aaaa_records[:10]]
+        bgp_tasks = [asyncio.create_task(self.get_bgp_peer(ip), name=f"ipv6_recon:bgp_peer:{ip}") for ip in aaaa_records[:10]]  # noqa: E501
         bgp_results: list[dict] = []
         if bgp_tasks:
             done, pending = await asyncio.wait(bgp_tasks, return_when=asyncio.ALL_COMPLETED)

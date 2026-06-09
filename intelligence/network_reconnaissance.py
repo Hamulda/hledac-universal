@@ -41,9 +41,10 @@ import dns.name
 import dns.rdatatype
 import dns.resolver
 
-from ..utils.async_helpers import _check_gathered, safe_gather
-
 from utils.async_helpers import safe_gather_dropin
+
+from ..utils.async_helpers import safe_gather
+
 logger = logging.getLogger(__name__)
 
 
@@ -463,7 +464,7 @@ class WHOISLookup:
             "name_servers": self._extract_list(raw_whois, "Name Server:"),
             "status": self._extract_list(raw_whois, "Domain Status:"),
             "dnssec": "DNSSEC: signed" in raw_whois.lower(),
-            "registrant_name": self._extract_field(raw_whois, "Registrant Name:") or self._extract_field(raw_whois, "Registrant Organization:"),
+            "registrant_name": self._extract_field(raw_whois, "Registrant Name:") or self._extract_field(raw_whois, "Registrant Organization:"),  # noqa: E501
             "registrant_org": self._extract_field(raw_whois, "Registrant Organization:"),
             "registrant_email": self._extract_email(raw_whois, "Registrant Email:"),
             "admin_name": self._extract_field(raw_whois, "Admin Name:"),
@@ -515,7 +516,7 @@ class WHOISLookup:
 
         for fmt in formats:
             try:
-                return datetime.strptime(date_str, fmt)
+                return datetime.strptime(date_str, fmt)  # noqa: DTZ007
             except ValueError:
                 continue
 
@@ -743,7 +744,7 @@ class NetworkReconnaissance:
         # Execute probes concurrently
         try:
             async with asyncio.timeout(self._WILDCARD_PROBE_TOTAL_S):
-                results = await safe_gather_dropin(*[probe_hostname(p) for p in probes], label="network_reconnaissance:745")
+                results = await safe_gather_dropin(*[probe_hostname(p) for p in probes], label="network_reconnaissance:745")  # noqa: E501
         except TimeoutError:
             # Conservative: if overall timeout, assume not wildcard
             self._confirmed_non_wildcard.add(domain)
@@ -1134,7 +1135,7 @@ class DHTProbe:
         """Dotazovat DHT pro known malware info_hashes z MalwareBazaar.
         Vrátí [(info_hash, status)]."""
         # Known malware-associated info_hashes (public threat intel)
-        KNOWN_HASHES = [
+        KNOWN_HASHES = [  # noqa: N806
             "a" * 40,  # placeholder — nahradit reálnými z ti_feed_adapter
         ]
         results: list[tuple[str, str]] = []

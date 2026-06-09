@@ -24,7 +24,7 @@ class TestCanonicalNEROwner:
     def test_ner_engine_has_relex_model(self):
         from brain.ner_engine import NEREngine
         eng = NEREngine()
-        assert "gliner-relex" in eng.model_name or "relex" in eng.model_name.lower() or "gliner" in eng.model_name.lower()
+        assert "gliner-relex" in eng.model_name or "relex" in eng.model_name.lower() or "gliner" in eng.model_name.lower()  # noqa: E501
 
     def test_ner_engine_is_lazy_loaded(self):
         from brain.ner_engine import NEREngine

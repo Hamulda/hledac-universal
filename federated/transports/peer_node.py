@@ -106,7 +106,7 @@ import time
 from collections import deque
 from typing import Any
 
-from .protocol import NodeTransport, NodeTransportFactory
+from .protocol import NodeTransportFactory
 
 logger = logging.getLogger(__name__)
 
@@ -245,7 +245,6 @@ class _NoiseXXSession:
         """
         from cryptography.hazmat.primitives.asymmetric.x25519 import (
             X25519PrivateKey,
-            X25519PublicKey,
         )
 
         if static_keypair is None:
@@ -287,7 +286,6 @@ class _NoiseXXSession:
           5. Encrypt our static_pub with the cipher.
           6. Return: responder_ephemeral_pub + encrypted(static_pub)
         """
-        from cryptography.hazmat.primitives.ciphers.aead import ChaCha20Poly1305
 
         # Step 1: ee
         from cryptography.hazmat.primitives.asymmetric.x25519 import (
@@ -326,7 +324,6 @@ class _NoiseXXSession:
         We decrypt the static pub and finalize the cipher states.
         Then we encrypt our static_pub and return it.
         """
-        from cryptography.hazmat.primitives.ciphers.aead import ChaCha20Poly1305
         from cryptography.hazmat.primitives.asymmetric.x25519 import (
             X25519PrivateKey,
             X25519PublicKey,
@@ -423,8 +420,8 @@ class _NoiseXXSession:
         two directions.
         """
         from cryptography.hazmat.primitives import hashes
-        from cryptography.hazmat.primitives.kdf.hkdf import HKDF
         from cryptography.hazmat.primitives.ciphers.aead import ChaCha20Poly1305
+        from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 
         # Derive 64 bytes: 32 for each direction's symmetric key.
         okm = HKDF(
@@ -449,8 +446,8 @@ class _NoiseXXSession:
         Same approach as _mix_handshake_state but with a different info.
         """
         from cryptography.hazmat.primitives import hashes
-        from cryptography.hazmat.primitives.kdf.hkdf import HKDF
         from cryptography.hazmat.primitives.ciphers.aead import ChaCha20Poly1305
+        from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 
         okm = HKDF(
             algorithm=hashes.SHA256(),
@@ -573,7 +570,7 @@ class PeerNodeTransport:
                         self._discover_peers(),
                         timeout=PEER_NODE_HANDSHAKE_TIMEOUT_S,
                     )
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     pass
                 except Exception as e:
                     logger.debug("[FED-P2P] mDNS discover failed: %s", e)
@@ -604,7 +601,7 @@ class PeerNodeTransport:
                     self._send_request(session, payload),
                     timeout=PEER_NODE_HANDSHAKE_TIMEOUT_S,
                 )
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 logger.debug("[FED-P2P] peer %s request timeout lane=%r", peer_id, lane)
                 return []
             except Exception as e:
@@ -654,7 +651,7 @@ class PeerNodeTransport:
                 pass
             try:
                 await asyncio.wait_for(self._listener_task, timeout=1.0)
-            except (asyncio.TimeoutError, asyncio.CancelledError, Exception):
+            except (TimeoutError, asyncio.CancelledError, Exception):
                 pass
             self._listener_task = None
         # Close UDP transport
@@ -690,7 +687,7 @@ class PeerNodeTransport:
 
     async def _send_request(
         self,
-        session: "_PeerSession",
+        session: _PeerSession,
         payload: dict[str, Any],
     ) -> dict[str, Any] | None:
         """
@@ -757,7 +754,7 @@ class PeerNodeTransport:
 
         # Simple listener that records addresses it sees.
         class _Listener(ServiceListener):  # type: ignore[misc, valid-type]
-            def __init__(self, outer: "PeerNodeTransport") -> None:
+            def __init__(self, outer: PeerNodeTransport) -> None:
                 self.outer = outer
 
             def update_service(self, *args: Any, **kwargs: Any) -> None:

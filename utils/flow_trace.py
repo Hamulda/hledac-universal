@@ -118,7 +118,7 @@ def _get_trace_root() -> Path:
 def _get_trace_paths() -> tuple[Path, Path]:
     """Get JSONL and summary paths."""
     root = _get_trace_root()
-    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")  # noqa: DTZ005
     pid = os.getpid()
     run_suffix = f"{_run_id or 'unknown'}_{ts}_{pid}"
     jsonl_path = root / f"flow_{run_suffix}.jsonl"
@@ -894,7 +894,7 @@ def _merge_metadata(
 # Module-level flush atexit
 # ============================================================================
 
-import atexit
+import atexit  # noqa: E402
 
 
 def _flush_atexit() -> None:

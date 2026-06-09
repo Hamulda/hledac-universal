@@ -226,8 +226,8 @@ def step6_planner_inputs(ranked):
 
     assert len(targets_in_doh) >= 1, f"At least one target domain must be in doh_planner_input, got {doh_domains}"
     assert len(targets_in_ct) >= 1, f"At least one target domain must be in ct_planner_candidates, got {ct_domains}"
-    assert len(targets_in_wayback) >= 1, f"At least one target domain must be in wayback_candidates, got {wayback_candidates}"
-    assert len(targets_in_pdns) >= 1, f"At least one target domain must be in passive_dns_candidates, got {pdns_candidates}"
+    assert len(targets_in_wayback) >= 1, f"At least one target domain must be in wayback_candidates, got {wayback_candidates}"  # noqa: E501
+    assert len(targets_in_pdns) >= 1, f"At least one target domain must be in passive_dns_candidates, got {pdns_candidates}"  # noqa: E501
 
     return {
         "nonfeed_doh_planner_input": doh_domains,

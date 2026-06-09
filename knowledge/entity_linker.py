@@ -40,6 +40,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from utils.async_helpers import safe_gather_dropin
+
 logger = logging.getLogger(__name__)
 
 def _ensure_utc_aware(value: datetime) -> datetime:
@@ -59,7 +60,7 @@ except ImportError:
 
 rapidfuzz = None
 try:
-    from rapidfuzz import fuzz, process
+    from rapidfuzz import fuzz, process  # noqa: F401  # rapidfuzz.process
     RAPIDFUZZ_AVAILABLE = True
 except ImportError:
     RAPIDFUZZ_AVAILABLE = False

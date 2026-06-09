@@ -155,7 +155,7 @@ ENTRYPOINT_AUTHORITY = {
     # F186A: authority census — summary of who calls what
     "_authority_census": {
         "canonical_sprint_calls": ["main() --sprint → core.__main__.run_sprint()"],
-        "alternate_production_paths": ["_run_sprint_mode (DEPRECATED/UNREACHABLE)", "_run_public_passive_once (active alternate, no lifecycle, no report boundary)"],
+        "alternate_production_paths": ["_run_sprint_mode (DEPRECATED/UNREACHABLE)", "_run_public_passive_once (active alternate, no lifecycle, no report boundary)"],  # noqa: E501
         "residual_helper_paths": ["run_warmup (dormant, only called by dead _run_sprint_mode)"],
         "diagnostic_paths": ["_run_observed_default_feed_batch_once (probe only)"],
         # F191B: dead scaffolding — unreachable from active main() CLI path
@@ -295,7 +295,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 # =============================================================================
 
-import msgspec
+import msgspec  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -452,7 +452,7 @@ def _run_boot_guard(lmdb_root: pathlib.Path | None = None) -> tuple[int, str]:
     if lmdb_root is None:
         # Try to derive from paths if available
         try:
-            from hledac.universal.paths import LMDB_ROOT as _derived_root
+            from hledac.universal.paths import LMDB_ROOT as _derived_root  # noqa: N811
             lmdb_root = _derived_root
         except Exception:
             return 0, "lmdb_root_not_configured"
@@ -949,7 +949,7 @@ def _record_runtime_truth() -> None:
     _interpreter_version = sys.version_info[:2] == (3, 14) and "3.14" or sys.version
 
     try:
-        import ahocorasick as _
+        import ahocorasick as _  # noqa: F401  # ahocorasick
         _ahocorasick_available = True
     except ImportError:
         _ahocorasick_available = False
@@ -1453,7 +1453,7 @@ def diagnose_end_to_end_live_run(
         if total_rejected == 0:
             return "unknown"
         low_frac = low_information_rejected_count_delta / total_rejected
-        dup_frac = (in_memory_duplicate_rejected_count_delta + persistent_duplicate_rejected_count_delta) / total_rejected
+        dup_frac = (in_memory_duplicate_rejected_count_delta + persistent_duplicate_rejected_count_delta) / total_rejected  # noqa: E501
         if low_frac >= dup_frac and low_information_rejected_count_delta > 0:
             return "low_information_rejection_dominant"
         return "duplicate_rejection_dominant"
@@ -1504,7 +1504,7 @@ def classify_feed_health(per_source: tuple[dict, ...]) -> dict:
             breakdown[FeedHealthKind.ENTITY_RECOVERY_RELATED_ERROR] += 1
         elif "parse" in error.lower() or "xml" in error.lower() or "feed" in error.lower() or "html" in error.lower():
             breakdown[FeedHealthKind.PARSE_ERROR] += 1
-        elif "network" in error.lower() or "connection" in error.lower() or "dns" in error.lower() or "resolve" in error.lower() or "http" in error.lower() or "ssl" in error.lower() or "certificate" in error.lower():
+        elif "network" in error.lower() or "connection" in error.lower() or "dns" in error.lower() or "resolve" in error.lower() or "http" in error.lower() or "ssl" in error.lower() or "certificate" in error.lower():  # noqa: E501
             breakdown[FeedHealthKind.NETWORK_ERROR] += 1
         else:
             breakdown[FeedHealthKind.UNKNOWN_ERROR] += 1
@@ -2002,7 +2002,7 @@ async def _run_observed_default_feed_batch_once(
         actual_live_run_executed=True,
         bootstrap_pack_version=_bootstrap_pack_version,
         default_bootstrap_count=_default_bootstrap_count,
-        store_counters_reset_before_run=(_store_counters_reset_before_run if "_store_counters_reset_before_run" in dir() else False),
+        store_counters_reset_before_run=(_store_counters_reset_before_run if "_store_counters_reset_before_run" in dir() else False),  # noqa: E501
         matcher_probe_sample_used=_matcher_probe_sample_used,
         matcher_probe_rss_hits=_matcher_probe_rss_hits,
         # Sprint 8BC bounded sample capture
@@ -2134,7 +2134,7 @@ def format_observed_run_summary(report: dict) -> str:
     # Peak UMA (C.3)
     uma = report.get("uma_snapshot", {})
     lines.append("\n[Peak UMA]")
-    lines.append(f"  Peak used GiB:    {uma.get('peak_used_gib', 'N/A'):.2f}" if isinstance(uma.get('peak_used_gib'), float) else f"  Peak used GiB:    {uma.get('peak_used_gib', 'N/A')}")
+    lines.append(f"  Peak used GiB:    {uma.get('peak_used_gib', 'N/A'):.2f}" if isinstance(uma.get('peak_used_gib'), float) else f"  Peak used GiB:    {uma.get('peak_used_gib', 'N/A')}")  # noqa: E501
     lines.append(f"  Peak state:        {uma.get('peak_state', 'N/A')}")
     lines.append(f"  Start state:       {uma.get('start_state', 'N/A')}")
     lines.append(f"  End state:          {uma.get('end_state', 'N/A')}")
@@ -2188,11 +2188,11 @@ def format_observed_run_summary(report: dict) -> str:
     if baseline:
         lines.append("\n[Sprint 8AS C.0] Delta vs 8AO Baseline")
         lines.append(f"  Status: {baseline.get('status', 'N/A')}")
-        lines.append(f"  Completed sources: {baseline.get('completed_sources', 'N/A')} ({baseline.get('completed_sources_delta', 0):+d})")
+        lines.append(f"  Completed sources: {baseline.get('completed_sources', 'N/A')} ({baseline.get('completed_sources_delta', 0):+d})")  # noqa: E501
         lines.append(f"  Fetched entries: {baseline.get('fetched_entries_delta', 0):+d}")
         lines.append(f"  Accepted findings: {baseline.get('accepted_findings_delta', 0):+d}")
         lines.append(f"  Stored findings: {baseline.get('stored_findings_delta', 0):+d}")
-        lines.append(f"  Failed sources: {baseline.get('failed_source_count', 'N/A')} ({baseline.get('failed_source_count_delta', 0):+d})")
+        lines.append(f"  Failed sources: {baseline.get('failed_source_count', 'N/A')} ({baseline.get('failed_source_count_delta', 0):+d})")  # noqa: E501
         blocker = baseline.get("blocker")
         if blocker:
             lines.append(f"  Blocker: {blocker}")
@@ -2634,7 +2634,7 @@ async def _print_scorecard_report(
             await store.upsert_episode({
                 "sprint_id": sprint_id,
                 "query": target,
-                "summary": sprint_report.threat_summary if sprint_report and hasattr(sprint_report, "threat_summary") else "",
+                "summary": sprint_report.threat_summary if sprint_report and hasattr(sprint_report, "threat_summary") else "",  # noqa: E501
                 "top_findings": top_findings_list,
                 "ioc_clusters": [],
                 "source_yield": scorecard_data.get("source_yield_json", "{}"),
@@ -2687,7 +2687,6 @@ async def _print_scorecard_report(
     # REMOVAL CONDITION: ExportHandoff.top_nodes always populated in all windup paths.
     try:
         from export.sprint_exporter import export_sprint as _export_sprint
-
         from hledac.universal.project_types import ExportHandoff
 
         # Sprint 8VZ §B: Construct typed handoff directly — canonical producer truth
@@ -2901,7 +2900,7 @@ async def _run_sprint_mode(
                         )
                         _boot_record("sprint_mode", "pipeline_run_ok")
                     except* ExceptionGroup as eg:
-                        _boot_record("sprint_mode", "pipeline_run_error", error="; ".join(str(e) for e in eg.exceptions))
+                        _boot_record("sprint_mode", "pipeline_run_error", error="; ".join(str(e) for e in eg.exceptions))  # noqa: E501
                     else:
                         _active_pipeline_iterations += 1
                         last_pipeline_time = now
@@ -2960,7 +2959,7 @@ async def _run_sprint_mode(
                 if _top_iocs:
                     first_ioc = _top_iocs[0].get("ioc") if isinstance(_top_iocs[0], dict) else None
                     if first_ioc:
-                        connected = store_instance.get_connected_iocs(first_ioc, max_hops=2) if hasattr(store_instance, "get_connected_iocs") else []
+                        connected = store_instance.get_connected_iocs(first_ioc, max_hops=2) if hasattr(store_instance, "get_connected_iocs") else []  # noqa: E501
                         if connected:
                             logger.info(f"[GRAPH] {first_ioc} → {len(connected)} connected nodes")
 
@@ -3062,7 +3061,7 @@ async def _windup_synthesis(
         else:
             # Sprint 8VY: Priority 2 — analytics/donor graph via explicit seam
             # Previously: elif hasattr(store, "_ioc_graph") and store._ioc_graph: runner.inject_graph(store._ioc_graph)
-            analytics_graph = store.get_analytics_graph_for_synthesis() if hasattr(store, "get_analytics_graph_for_synthesis") else None
+            analytics_graph = store.get_analytics_graph_for_synthesis() if hasattr(store, "get_analytics_graph_for_synthesis") else None  # noqa: E501
             if analytics_graph is not None:
                 runner.inject_graph(analytics_graph)
     except Exception:
@@ -3181,7 +3180,7 @@ def main() -> None:
 
     # F214E: Python 3.14 asyncio introspection — log PID once at boot
     import os
-    logger.info(f"[BOOT] PID={os.getpid()} — python -m asyncio ps {os.getpid()} | python -m asyncio pstree {os.getpid()}")
+    logger.info(f"[BOOT] PID={os.getpid()} — python -m asyncio ps {os.getpid()} | python -m asyncio pstree {os.getpid()}")  # noqa: E501
 
     # F214Q: Remote debug OPSEC guard — warn if PYTHON_DISABLE_REMOTE_DEBUG not set;
     # strict exit only when HLEDAC_REQUIRE_REMOTE_DEBUG_DISABLED=1 is also set.
@@ -3291,7 +3290,8 @@ def main() -> None:
             sys.exit(0)
         elif sprint_target is not None:
             # Sprint F150R: Delegate to canonical sprint owner in core/__main__.py
-            from hledac.universal.core.__main__ import SprintFlags, run_sprint as _core_run_sprint
+            from hledac.universal.core.__main__ import SprintFlags
+            from hledac.universal.core.__main__ import run_sprint as _core_run_sprint
             os.environ["HLEDAC_ACQUISITION_PROFILE"] = args.acquisition_profile
             # F26X-3/F260 fix: pass SprintFlags bundle so `args` namespace
             # never leaks into run_sprint(). Root parser does not expose
@@ -3341,9 +3341,15 @@ if __name__ == "__main__":
 # Kept at module level (no SprintScheduler dependency in sprint mode).
 # =============================================================================
 
-import logging
-from hledac.universal.utils.async_helpers import safe_gather_dropin, safe_gather_fire_and_forget, safe_gather_strict
-TYPE_CHECKING
+import logging  # noqa: E402
+
+from hledac.universal.utils.async_helpers import (  # noqa: E402
+    safe_gather_dropin,
+    safe_gather_fire_and_forget,
+    safe_gather_strict,
+)
+
+TYPE_CHECKING  # noqa: B018
 
 if TYPE_CHECKING:
     from hledac.universal.runtime.sprint_scheduler import SprintScheduler

@@ -58,6 +58,8 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
+from utils.async_helpers import safe_gather_dropin
+
 # F350M-FED: In-memory QTable — local, not the same as loops.QTable.
 # We deliberately do NOT import loops.ResearchLoop because its __init__
 # requires hypothesis_engine + graph, both of which are heavy and would
@@ -65,7 +67,6 @@ from typing import Any
 # slice that tracks per-node action reward for the federated lanes.
 from .qtable import FederatedQTable
 
-from utils.async_helpers import safe_gather_dropin
 logger = logging.getLogger(__name__)
 
 __all__ = [
@@ -310,7 +311,7 @@ class FederatedResearchCoordinator:
             try:
                 async with asyncio.timeout(DISTRIBUTE_TOTAL_TIMEOUT_S):
                     gathered = await safe_gather_dropin(*node_coros, label="coordinator:311")
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 logger.error(
                     f"[FED] distribute_research total timeout "
                     f"{DISTRIBUTE_TOTAL_TIMEOUT_S}s exceeded"
@@ -319,7 +320,7 @@ class FederatedResearchCoordinator:
                 return result
 
             # Collect per-node results, fail-soft on exceptions
-            for lane, outcome in zip(chosen_lanes, gathered):
+            for lane, outcome in zip(chosen_lanes, gathered, strict=False):
                 if isinstance(outcome, BaseException):
                     result.failed_nodes += 1
                     result.node_results.append(
@@ -433,7 +434,7 @@ class FederatedResearchCoordinator:
                     f"[FED] qtable update lane={lane} skipped: {qe}"
                 )
 
-        except asyncio.TimeoutError:
+        except TimeoutError:
             node.error = f"timeout after {PER_NODE_TIMEOUT_S}s"
             logger.warning(f"[FED] node lane={lane} timed out")
         except Exception as e:
@@ -452,11 +453,11 @@ class FederatedResearchCoordinator:
         """
         if not requested:
             return list(NodeLane.ALL[: self._max_nodes])
-        valid = [l for l in requested if l in NodeLane.ALL]
+        valid = [l for l in requested if l in NodeLane.ALL]  # noqa: E741
         # Deduplicate while preserving order
         seen: set[str] = set()
         unique: list[str] = []
-        for l in valid:
+        for l in valid:  # noqa: E741
             if l not in seen:
                 seen.add(l)
                 unique.append(l)

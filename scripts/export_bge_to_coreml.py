@@ -53,7 +53,7 @@ def _get_hf_cache_path(model_id: str) -> Path:
     return None
 
 
-import psutil
+import psutil  # noqa: E402
 
 
 def _check_ram_before_export() -> None:

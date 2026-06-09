@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import Any
 
 from .async_helpers import safe_gather_dropin, safe_gather_fire_and_forget
+
 # Sprint 5N: Lazy MLX import - MLX is optional, not a hard dependency
 _MLX_AVAILABLE = None
 _MLX_CORE = None

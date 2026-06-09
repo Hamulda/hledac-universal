@@ -25,9 +25,10 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
+from utils.async_helpers import safe_gather_dropin
+
 from .base import DecisionResponse, OperationResult, OperationType, UniversalCoordinator
 
-from utils.async_helpers import safe_gather_dropin
 logger = logging.getLogger(__name__)
 
 # Re-exported for use in cryptographic operations
@@ -162,7 +163,10 @@ class UniversalSecurityCoordinator(UniversalCoordinator):
 
         # Try QuantumResistantCrypto
         try:
-            from hledac.universal.security.pq_crypto import PQAvailability, create_post_quantum_backend
+            from hledac.universal.security.pq_crypto import (  # noqa: F401  # hledac.universal.security.pq_crypto.PQAvailability
+                PQAvailability,
+                create_post_quantum_backend,
+            )
             self._pq_backend, pq_status = await create_post_quantum_backend(enabled=True, key_id="hledac.security.v1")
             self._crypto_available = pq_status.availability.value in ("available", "signed", "fail_soft")
             self._pq_crypto_available = self._crypto_available
@@ -1323,8 +1327,8 @@ class UniversalSecurityCoordinator(UniversalCoordinator):
         """
         try:
             from hledac.privacy_protection.personal_privacy_manager import (
-                PersonalPrivacyManager,
-                PrivacyLevel,
+                PersonalPrivacyManager,  # noqa: F401  # hledac.privacy_protection.personal_privacy_manager.PersonalPrivacyManager
+                PrivacyLevel,  # noqa: F401  # hledac.privacy_protection.personal_privacy_manager.PrivacyLevel
                 VPNConfig,
                 VPNDriver,
             )
@@ -1377,7 +1381,9 @@ class UniversalSecurityCoordinator(UniversalCoordinator):
     async def disconnect_vpn(self) -> dict[str, Any]:
         """Disconnect active VPN connection."""
         try:
-            from hledac.privacy_protection.personal_privacy_manager import VPNDriver
+            from hledac.privacy_protection.personal_privacy_manager import (
+                VPNDriver,  # noqa: F401  # hledac.privacy_protection.personal_privacy_manager.VPNDriver
+            )
 
             # Note: This would need proper tracking of active connections
             # For now, return info that manual disconnect may be needed
@@ -1686,7 +1692,6 @@ class UniversalSecurityCoordinator(UniversalCoordinator):
         Returns:
             List of response results
         """
-        import asyncio
         from asyncio import Semaphore
 
         semaphore = Semaphore(concurrency)

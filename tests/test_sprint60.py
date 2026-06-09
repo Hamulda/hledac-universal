@@ -10,7 +10,7 @@ import pytest
 
 # Testuje se pouze pokud je MLX dostupný
 try:
-    import mlx.core as mx
+    import mlx.core as mx  # noqa: F401  # mlx.core
     MLX_AVAILABLE = True
 except ImportError:
     MLX_AVAILABLE = False
@@ -129,7 +129,7 @@ class TestCostModel:
 
         model = AdaptiveCostModel(None, None, feature_dim=64)
 
-        feat = model._build_features('fetch', {'url': 'http://test.com'}, {'active_tasks': 2, 'rss_gb': 4.0, 'avg_latency': 0.5})
+        feat = model._build_features('fetch', {'url': 'http://test.com'}, {'active_tasks': 2, 'rss_gb': 4.0, 'avg_latency': 0.5})  # noqa: E501
 
         assert feat.shape == (64,)
         assert feat[0] == 1.0  # fetch = 0
@@ -140,7 +140,7 @@ class TestCostModel:
 
         model = AdaptiveCostModel(None, None, feature_dim=16)
 
-        result = model.predict('fetch', {'url': 'http://test.com'}, {'active_tasks': 1, 'rss_gb': 3.0, 'avg_latency': 0.2})
+        result = model.predict('fetch', {'url': 'http://test.com'}, {'active_tasks': 1, 'rss_gb': 3.0, 'avg_latency': 0.2})  # noqa: E501
 
         assert len(result) == 5  # 4 outputs + uncertainty
         assert isinstance(result[0], float)

@@ -1,9 +1,10 @@
-"""F-265 verification driver — runs all 22 hermetic tests outside pytest
+"""F-265 verification driver — runs all 22 hermetic tests outside pytest  # noqa: N999
 (because the project's tests/conftest.py has a pre-existing hypothesis shadowing
 bug that breaks pytest sessionstart globally).
 """
-import sys
 import importlib.util
+import sys
+
 sys.path.insert(0, '/Users/vojtechhamada/PycharmProjects/Hledac')
 sys.path.insert(0, '/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal')
 
@@ -16,10 +17,10 @@ osc = importlib.util.module_from_spec(_spec)
 sys.modules["osc"] = osc
 _spec.loader.exec_module(osc)
 
-from unittest.mock import patch
-import asyncio
-import json
-import inspect
+import asyncio  # noqa: E402
+import inspect  # noqa: E402
+import json  # noqa: E402
+from unittest.mock import patch  # noqa: E402
 
 
 def _ok(text, status=200):
@@ -103,7 +104,7 @@ t("URL builders", t5)
 
 # === Parsers ===
 def t6():
-    assert osc.PRIVATEBIN_ADAPTER.parse(json.dumps({"ct": "a", "adata": [1]}), "pid") == "[PrivateBin encrypted - id:pid]"
+    assert osc.PRIVATEBIN_ADAPTER.parse(json.dumps({"ct": "a", "adata": [1]}), "pid") == "[PrivateBin encrypted - id:pid]"  # noqa: E501
     assert osc.PRIVATEBIN_ADAPTER.parse(json.dumps({"content": "x"}), "pid") == "x"
     assert osc.PRIVATEBIN_ADAPTER.parse("not json", "pid") is None
 t("privatebin parser", t6)

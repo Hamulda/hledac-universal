@@ -22,6 +22,7 @@ import os
 import time
 
 from utils.async_helpers import safe_gather_dropin
+
 logger = logging.getLogger(__name__)
 
 # =============================================================================
@@ -176,7 +177,7 @@ async def fetch_eepsite(
 
                     # Double-check size after decode
                     if len(content.encode("utf-8")) > max_size:
-                        logger.warning(f"I2P response too large after decode")
+                        logger.warning("I2P response too large after decode")
                         return None
 
                     return content
@@ -184,7 +185,7 @@ async def fetch_eepsite(
                     logger.debug(f"I2P fetch failed: status {resp.status} for {url}")
                     return None
 
-    except asyncio.TimeoutError:
+    except TimeoutError:
         logger.debug(f"I2P fetch timeout: {url}")
         return None
     except Exception as e:
@@ -246,7 +247,7 @@ async def fetch_eepsite_socks5(
     except ImportError:
         logger.debug("aiohttp_socks not available for SOCKS5 fetch")
         return None
-    except asyncio.TimeoutError:
+    except TimeoutError:
         logger.debug(f"I2P SOCKS5 fetch timeout: {url}")
         return None
     except Exception as e:
@@ -294,7 +295,6 @@ async def discover_eepsites() -> list[dict]:
                 pass
             return None
 
-    import asyncio
 
     tasks = [fetch_one(e) for e in KNOWN_EEPSITES]
     results = await safe_gather_dropin(*tasks, label="i2p_client:299")
@@ -364,8 +364,9 @@ async def get_i2p_router_info() -> dict | None:
         return None
 
     try:
-        import aiohttp
         import json
+
+        import aiohttp
 
         client_timeout = aiohttp.ClientTimeout(total=10)
         async with aiohttp.ClientSession(timeout=client_timeout) as session:

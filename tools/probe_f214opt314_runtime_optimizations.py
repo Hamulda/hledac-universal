@@ -520,7 +520,7 @@ def run_all():
 
     print()
     b_patch = []
-    for art_name, art_data in artifacts.items():
+    for art_name, art_data in artifacts.items():  # noqa: B007
         results = benchmark_transient_artifact_compression(art_data)
         b_patch.extend(r for r in results.values() if r.verdict == "PATCH_APPLIED")
 

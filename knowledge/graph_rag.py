@@ -31,13 +31,13 @@ Extended from evidence_network_analyzer.py comments:
     - Key path analysis
 """
 
-import asyncio
-import concurrent.futures
-import logging
-import re
-from collections import deque
-from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+import asyncio  # noqa: E402
+import concurrent.futures  # noqa: E402
+import logging  # noqa: E402
+import re  # noqa: E402
+from collections import deque  # noqa: E402
+from dataclasses import dataclass, field  # noqa: E402
+from typing import Any  # noqa: E402
 
 try:
     import numpy as np
@@ -2084,17 +2084,17 @@ class GraphRAGOrchestrator:
                         exc_info=True,
                     )
             # Default to very old date
-            return datetime.min
+            return datetime.min  # noqa: DTZ901
 
         # Find newest timestamp
-        newest = max((get_timestamp(f) for f in facts), default=datetime.min)
-        if newest == datetime.min:
+        newest = max((get_timestamp(f) for f in facts), default=datetime.min)  # noqa: DTZ901
+        if newest == datetime.min:  # noqa: DTZ901
             return facts
 
         boosted = []
         for fact in facts:
             ts = get_timestamp(fact)
-            age_days = (newest - ts).days if ts != datetime.min else 365
+            age_days = (newest - ts).days if ts != datetime.min else 365  # noqa: DTZ901
 
             # Recency boost: newer = higher boost (0-20%)
             # Facts from last 30 days get full boost

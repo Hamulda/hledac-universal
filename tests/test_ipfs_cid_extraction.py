@@ -1,5 +1,6 @@
-import pytest
 from unittest.mock import patch
+
+import pytest
 
 from hledac.universal.network.ipfs_client import extract_cids_from_text
 
@@ -48,6 +49,7 @@ def test_multiple_cids_extracted():
 async def test_fetch_findings_from_cids_empty_input():
     """Prázdný CID list vrací [] bez I/O."""
     import os
+
     from hledac.universal.network.ipfs_client import fetch_findings_from_cids
 
     with patch.dict(os.environ, {"HLEDAC_ENABLE_IPFS": "1"}):
@@ -59,7 +61,7 @@ async def test_fetch_findings_from_cids_empty_input():
 async def test_fetch_findings_from_cids_deduplication():
     """Duplicitní CID se fetchne pouze jednou."""
     import os
-    from unittest.mock import AsyncMock, patch, MagicMock
+    from unittest.mock import AsyncMock, MagicMock, patch
 
     from hledac.universal.network import ipfs_client
 

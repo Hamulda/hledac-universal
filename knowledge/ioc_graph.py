@@ -43,7 +43,7 @@ except ImportError:
     _kuzu = None
 
 
-class GraphBackendUnavailable(Exception):
+class GraphBackendUnavailable(Exception):  # noqa: N818
     """Raised when a required graph backend (kuzu) is not installed."""
     pass
 

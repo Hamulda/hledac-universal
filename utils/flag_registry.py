@@ -26,7 +26,6 @@ import os
 from dataclasses import dataclass, field, replace
 from typing import Literal
 
-
 # ---------------------------------------------------------------------------
 # Types
 # ---------------------------------------------------------------------------
@@ -518,7 +517,7 @@ register(FlagSpec(
     group="storage",
     implies=("HLEDAC_LANCEDB_QUANTIZE",),
     min_ram_mb=0,
-    description="Adaptive IVF-PQ auto-tuning — measure recall@K, grow/shrink num_partitions (M1 8GB friendly, opt-in, sprint F264E).",
+    description="Adaptive IVF-PQ auto-tuning — measure recall@K, grow/shrink num_partitions (M1 8GB friendly, opt-in, sprint F264E).",  # noqa: E501
 ))
 register(FlagSpec(
     name="HLEDAC_LANCEDB_AUTO_TUNE_THRESHOLD",

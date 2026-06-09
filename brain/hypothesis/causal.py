@@ -61,14 +61,14 @@ from collections import defaultdict
 from typing import Any
 
 from brain.hypothesis._types import (
-    AnomalySignal,
-    CausalEntity,
-    CausalHypothesis,
     CO_OCCURRENCE_FP16,
     MAX_CAUSAL_ENTITIES,
     MAX_CAUSAL_FINDINGS,
     MAX_CAUSAL_HYPOTHESES,
     MAX_CO_OCCURRENCE_MATRIX_SIZE,
+    AnomalySignal,
+    CausalEntity,
+    CausalHypothesis,
     TemporalSequence,
 )
 
@@ -327,7 +327,7 @@ class CausalReasoner:
                 for fid in entity.source_findings:
                     finding_to_entities[fid].add(entity.entity_id)
 
-            for fid, entity_ids in finding_to_entities.items():
+            for fid, entity_ids in finding_to_entities.items():  # noqa: B007
                 entity_list = list(entity_ids)
                 for e1 in entity_list:
                     for e2 in entity_list:

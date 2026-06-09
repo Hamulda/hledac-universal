@@ -53,8 +53,8 @@ def __dir__() -> list[str]:
 # mlx_embeddings: optional canonical feature, ne blokuje core.
 try:
     from .mlx_embeddings import (
-        MLXEmbeddingManager,
         EmbeddingTask,
+        MLXEmbeddingManager,
         apply_task_prefix,
         should_normalize,
     )

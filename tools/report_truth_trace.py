@@ -182,7 +182,7 @@ def trace_verdict(
         if not terminality_ok:
             # Check if this is a stale terminality case before marking as unsatisfied
             if stale_lanes:
-                return "TRACE_TERMINALITY_STALE_BEFORE_NONFEED", "internal_report_json (terminality snapshot stale before nonfeed predispatch)", extended
+                return "TRACE_TERMINALITY_STALE_BEFORE_NONFEED", "internal_report_json (terminality snapshot stale before nonfeed predispatch)", extended  # noqa: E501
             # acquisition_report exists in both, but terminality not satisfied → runtime failure
             return "TRACE_TERMINALITY_UNSATISFIED", "internal_report_json (terminality not satisfied)", extended
 
@@ -197,16 +197,16 @@ def trace_verdict(
         if internal is not None:
             int_acq = internal.present.get("acquisition_report")
             if int_acq not in (None, "null", "MISSING"):
-                return "TRACE_DROP_AT_BENCHMARK_PARSE", "benchmark_json (internal report has it, benchmark doesn't)", extended
+                return "TRACE_DROP_AT_BENCHMARK_PARSE", "benchmark_json (internal report has it, benchmark doesn't)", extended  # noqa: E501
             if int_acq in (None, "null", "MISSING"):
-                return "TRACE_DROP_BEFORE_EXPORT", "internal_report_json (scheduler never populated acquisition_report)", extended
+                return "TRACE_DROP_BEFORE_EXPORT", "internal_report_json (scheduler never populated acquisition_report)", extended  # noqa: E501
         return "TRACE_DROP_BEFORE_EXPORT", "scheduler (acquisition_report never written to benchmark)", extended
 
     # Check for validator-only alias pattern
     if validation is not None:
         val_failures = validation.get("failures") or []
         if val_failures and all("acquisition_report" in f.get("field_path", "") for f in val_failures):
-            return "TRACE_VALIDATOR_ALIAS_ONLY", "validation_json (only validator field paths, no real acquisition data)", extended
+            return "TRACE_VALIDATOR_ALIAS_ONLY", "validation_json (only validator field paths, no real acquisition data)", extended  # noqa: E501
 
     return "TRACE_DROP_AT_EXPORT", "export boundary (scorecard fields not persisted)", extended
 
@@ -358,7 +358,7 @@ def trace_boundaries(
                 "status": benchmark.get("status"),
                 "run_quality_verdict": benchmark.get("run_quality_verdict"),
                 "benchmark_has_acquisition_report": benchmark.get("acquisition_report") is not None,
-                "internal_report_has_acquisition_report": internal_raw.get("acquisition_report") is not None if internal_raw else False,
+                "internal_report_has_acquisition_report": internal_raw.get("acquisition_report") is not None if internal_raw else False,  # noqa: E501
                 "validation_verdict": validation_path and (load_json(validation_path) or {}).get("overall_verdict"),
             },
             **extended,
@@ -420,7 +420,7 @@ def trace_boundaries(
             parts.append("_not readable_\n\n")
             continue
         parts.append("| Field | Value |\n|------|-------|\n")
-        for field, val in snap_data.items():
+        for field, val in snap_data.items():  # noqa: F402
             if val is None:
                 parts.append(f"| {field} | `null` |\n")
             elif val == "MISSING":
@@ -472,7 +472,7 @@ def trace_boundaries(
 |------------|-------------|
 """)
         for lane in mismatch:
-            parts.append(f"| {lane} | appears attempted in `source_family_outcomes` but still listed in `missing_lanes` — terminality snapshot was taken before CT/PUBLIC predispatch completed | `source_family_outcomes` vs `acquisition_terminality_missing_lanes` timing gap |\n")
+            parts.append(f"| {lane} | appears attempted in `source_family_outcomes` but still listed in `missing_lanes` — terminality snapshot was taken before CT/PUBLIC predispatch completed | `source_family_outcomes` vs `acquisition_terminality_missing_lanes` timing gap |\n")  # noqa: E501
 
     with open(output_md_path, "w") as fh:
         fh.write("".join(parts))

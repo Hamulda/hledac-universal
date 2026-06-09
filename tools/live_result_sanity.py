@@ -158,7 +158,7 @@ class SanityResult:
         lines += ["", "## Benchmark Surface", "", f"- verdict: `{self.benchmark.run_quality_verdict}`"]
         if self.benchmark.branch_mix:
             lines.append(f"- branch_mix: {self.benchmark.branch_mix}")
-        lines += ["", "## Validator Surface", "", f"- terminality checked: `{self.validator.acquisition_terminality_checked}`"]
+        lines += ["", "## Validator Surface", "", f"- terminality checked: `{self.validator.acquisition_terminality_checked}`"]  # noqa: E501
         if self.validator.acquisition_terminality_satisfied is not None:
             lines.append(f"- terminality satisfied: `{self.validator.acquisition_terminality_satisfied}`")
         if self.validator.source_family_outcomes:
@@ -383,7 +383,7 @@ def _check_benchmark_fail_validator_pass(b: BenchmarkSurface, v: ValidatorSurfac
     )
     if bench_fail and val_pass:
         return False, (
-            f"Benchmark verdict '{b.run_quality_verdict}' but validator terminality_satisfied={v.acquisition_terminality_satisfied}"
+            f"Benchmark verdict '{b.run_quality_verdict}' but validator terminality_satisfied={v.acquisition_terminality_satisfied}"  # noqa: E501
         )
     return True, None
 
@@ -422,7 +422,7 @@ def _check_wallclock_budget(b: BenchmarkSurface) -> tuple[bool, str | None]:
         allowed = max(b.planned_duration_s * 1.10, b.planned_duration_s + 30)
         if b.actual_duration_s > allowed:
             return False, (
-                f"Wallclock budget exceeded: actual={b.actual_duration_s:.1f}s vs allowed={allowed:.1f}s (planned={b.planned_duration_s:.1f}s)"
+                f"Wallclock budget exceeded: actual={b.actual_duration_s:.1f}s vs allowed={allowed:.1f}s (planned={b.planned_duration_s:.1f}s)"  # noqa: E501
             )
     return True, None
 
@@ -457,7 +457,7 @@ def _check_feed_only_accepted_nonfeed_attempted(
         ar = b.acquisition_report
         ct_provider_status = ar.get("ct_provider_status") if ar else None
         ct_terminal_state = ar.get("ct_terminal_state") if ar else None
-        if ct_provider_status in ("provider_failure", "cooldown", "timeout") or ct_terminal_state in ("provider_failure", "cooldown", "timeout"):
+        if ct_provider_status in ("provider_failure", "cooldown", "timeout") or ct_terminal_state in ("provider_failure", "cooldown", "timeout"):  # noqa: E501
             ct_attempted = True
 
     # PUBLIC terminal signals
@@ -694,7 +694,7 @@ def _check_hardware_constrained_comparable(
 
     if hardware_constrained and q.research_quality_comparable is not False:
         return False, (
-            f"hardware_constrained={hardware_constrained} but research_quality_comparable={q.research_quality_comparable} — "
+            f"hardware_constrained={hardware_constrained} but research_quality_comparable={q.research_quality_comparable} — "  # noqa: E501
             "hardware-constrained runs must not be marked comparable"
         )
 
@@ -857,7 +857,7 @@ def sanity_check(
 
     # Determine verdict — priority: RESEARCH_QUALITY > EVIDENCE_SURFACE > WALLCLOCK > STALE > SHAPE > SURFACE
     if result.disagreements:
-        has_quality = any("Research quality gate" in d or "Grade" in d or "quality_gate" in d for d in result.disagreements)
+        has_quality = any("Research quality gate" in d or "Grade" in d or "quality_gate" in d for d in result.disagreements)  # noqa: E501
         has_wallclock = any("actual=" in d for d in result.disagreements)
         has_stale = any("Stale trace verdict" in d for d in result.disagreements)
         has_shape = any("internal trace" in d for d in result.disagreements)
@@ -894,9 +894,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--benchmark-json", type=Path)
     parser.add_argument("--validation-json", type=Path)
     parser.add_argument("--trace-json", type=Path)
-    parser.add_argument("--quality-json", type=Path, help="Path to research quality score JSON from research_quality_score.py")
+    parser.add_argument("--quality-json", type=Path, help="Path to research quality score JSON from research_quality_score.py")  # noqa: E501
     parser.add_argument("--min-quality-grade", type=str, default=None,
-                        help="Minimum acceptable grade (FEED_ONLY, MULTISOURCE_SHALLOW, MULTISOURCE_USEFUL, DEEP_RESEARCH_READY)")
+                        help="Minimum acceptable grade (FEED_ONLY, MULTISOURCE_SHALLOW, MULTISOURCE_USEFUL, DEEP_RESEARCH_READY)")  # noqa: E501
     parser.add_argument("--output-json", type=Path)
     parser.add_argument("--output-md", type=Path)
     parser.add_argument(

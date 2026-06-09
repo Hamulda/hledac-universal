@@ -172,7 +172,7 @@ class TemporalAnalyzer:
 
         result = TemporalAnalysisResult(
             query=query,
-            timestamp=datetime.now()
+            timestamp=datetime.now()  # noqa: DTZ005
         )
 
         if len(timestamps) < self.min_data_points:
@@ -472,7 +472,7 @@ class TemporalAnalyzer:
 
                     points.append(TurningPoint(
                         timestamp=timestamps[i],
-                        significance=min(1.0, abs(before_slope - after_slope) / max(abs(before_slope), abs(after_slope))),
+                        significance=min(1.0, abs(before_slope - after_slope) / max(abs(before_slope), abs(after_slope))),  # noqa: E501
                         direction_change=f"{before_trend.value} to {after_trend.value}",
                         before_trend=before_trend,
                         after_trend=after_trend

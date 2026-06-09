@@ -25,7 +25,6 @@ from __future__ import annotations
 import asyncio
 import inspect
 import logging
-import sys
 import time
 from typing import TYPE_CHECKING, Any
 
@@ -66,8 +65,6 @@ def _detect_eager_start_support() -> bool:
     creating an event loop in a non-main thread or inside an import-time
     call would be problematic.
     """
-    if sys.version_info < (3, 12):
-        return False
     probe_loop = None
     try:
         probe_loop = asyncio.new_event_loop()
@@ -222,8 +219,9 @@ def monotonic_ms() -> float:
 # =============================================================================
 
 
-from dataclasses import dataclass, field
-from typing import Awaitable, Iterable, TypeVar
+from collections.abc import Awaitable  # noqa: E402
+from dataclasses import dataclass, field  # noqa: E402
+from typing import TypeVar  # noqa: E402
 
 T = TypeVar("T")
 
@@ -242,7 +240,7 @@ class SafeGatherResult:
     re_raised: BaseException | None = None
 
 
-async def safe_gather(
+async def safe_gather[T](
     *coros: Awaitable[T] | T,
     label: str = "",
     logger_instance: logging.Logger | None = None,
@@ -411,7 +409,7 @@ def _classify_gathered(
     return ok, errors, re_raise
 
 
-async def safe_gather_fire_and_forget(
+async def safe_gather_fire_and_forget[T](
     *coros: Awaitable[T] | T,
     label: str = "",
     logger_instance: logging.Logger | None = None,
@@ -472,7 +470,7 @@ async def safe_gather_fire_and_forget(
     return _BoundedExceptionLog(sample=tuple(sample), suppressed_count=suppressed)
 
 
-async def safe_gather_dropin(
+async def safe_gather_dropin[T](
     *coros: Awaitable[T] | T,
     label: str = "",
     logger_instance: logging.Logger | None = None,
@@ -572,7 +570,7 @@ async def safe_gather_dropin(
 # =============================================================================
 
 
-async def safe_gather_strict(
+async def safe_gather_strict[T](
     *coros: Awaitable[T] | T,
     label: str = "",
     logger_instance: logging.Logger | None = None,

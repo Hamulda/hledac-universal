@@ -15,11 +15,11 @@ _root = Path(__file__).resolve().parents[2]
 if str(_root) not in sys.path:
     sys.path.insert(0, str(_root))
 
-import asyncio
+import asyncio  # noqa: E402
 
-import aiohttp
+import aiohttp  # noqa: E402
 
-from intelligence.wayback_cdx import (
+from intelligence.wayback_cdx import (  # noqa: E402
     CDX_API,
     MAX_CDX_RESULTS,
     RATE_LIMIT_S,

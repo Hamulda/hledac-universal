@@ -40,7 +40,7 @@ class DecisionType(Enum):
     ERROR = "error"
     COMPLETE = "complete"
 
-from .hermes3_engine import Hermes3Engine
+from .hermes3_engine import Hermes3Engine  # noqa: E402
 
 # Sprint P0-2: Continuous batching executor (F226H wiring).
 # Always-on routing layer for Hermes3 inference requests.

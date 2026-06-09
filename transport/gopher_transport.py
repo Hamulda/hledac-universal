@@ -425,7 +425,7 @@ class GopherTransport:
         Returns:
             List of GopherItem from the floodgap gopher hole directory
         """
-        response = await self._fetch("gopher.floodgap.com", DEFAULT_PORT, "/", timeout_s=15.0, max_bytes=MAX_RESPONSE_BYTES)
+        response = await self._fetch("gopher.floodgap.com", DEFAULT_PORT, "/", timeout_s=15.0, max_bytes=MAX_RESPONSE_BYTES)  # noqa: E501
         return response.items
 
     async def crawl_gopherspace(
@@ -584,7 +584,7 @@ class GopherTransport:
                 if item.item_type in (GTYPE_FILE, GTYPE_DIRECTORY, GTYPE_SEARCH):
                     content = ""
                     if item.item_type == GTYPE_FILE:
-                        content_resp = await self._fetch(item.host, item.port, item.selector, timeout_s=10.0, max_bytes=1_000_000)
+                        content_resp = await self._fetch(item.host, item.port, item.selector, timeout_s=10.0, max_bytes=1_000_000)  # noqa: E501
                         content = content_resp.text[:4096] if content_resp.text else ""
 
                     finding = CanonicalFinding(

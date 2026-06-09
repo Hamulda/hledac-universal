@@ -1,4 +1,4 @@
-# hledac/universal/export/COMPAT_HANDOFF.py
+# hledac/universal/export/COMPAT_HANDOFF.py  # noqa: N999
 # ⚠️  DEPRECATED THIN ADAPTER — DO NOT EXTEND
 # Sprint F186C: Header shrunk; module is a compat seam, not a factory.
 """

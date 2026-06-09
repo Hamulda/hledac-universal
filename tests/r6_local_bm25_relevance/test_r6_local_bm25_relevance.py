@@ -260,7 +260,7 @@ def test_no_browser_or_stealth_import():
 
     forbidden = ["nodriver", "stealth", "chromium", "browser"]
     for term in forbidden:
-        lines = [l.strip() for l in content.split("\n") if term in l.lower() and not l.strip().startswith("#")]
+        lines = [l.strip() for l in content.split("\n") if term in l.lower() and not l.strip().startswith("#")]  # noqa: E741
         assert len(lines) == 0, f"Forbidden import '{term}' found: {lines}"
 
 
@@ -313,7 +313,7 @@ async def test_local_search_advisory_fail_soft():
     runner = SprintAdvisoryRunner(scheduler=mock_scheduler, duckdb_store=mock_scheduler._duckdb_store)
 
     # Patch seam.search to raise
-    with patch("hledac.universal.knowledge.search_index.LocalSearchSeam.search", side_effect=RuntimeError("test error")):
+    with patch("hledac.universal.knowledge.search_index.LocalSearchSeam.search", side_effect=RuntimeError("test error")):  # noqa: E501
         outcome = await runner._run_local_search_advisory(AdvisoryRunOutcome())
 
     # Should fail-soft, not raise

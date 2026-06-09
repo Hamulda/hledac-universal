@@ -3,6 +3,7 @@
 # (python -m hledac.universal, IDE, or direct script). See __main__.py
 # Phase 0 hook for the original symptom; this is the canonical fix.
 import sys as _sys
+
 _sys.modules.setdefault('utils', _sys.modules[__name__])
 
 """
@@ -27,16 +28,16 @@ Obsahuje:
 - IntelligentCache: Chytrý cache s LRU/LFU/ADAPTIVE eviction
 """
 
-from .action_result import ActionResult  # NEW from sprint 68
-from .async_utils import TaskResult, bounded_gather, bounded_map, map_as_completed  # Sprint 81 Fáze 2
-from .bloom_filter import (
+from .action_result import ActionResult  # NEW from sprint 68  # noqa: E402
+from .async_utils import TaskResult, bounded_gather, bounded_map, map_as_completed  # Sprint 81 Fáze 2  # noqa: E402
+from .bloom_filter import (  # noqa: E402
     BloomFilter,
     BloomFilterStats,
     ScalableBloomFilter,
     create_content_fingerprint,
     create_url_deduplicator,
 )  # NEW from utils
-from .deduplication import (
+from .deduplication import (  # noqa: E402
     ContentDeduplicator,
     DeduplicationConfig,
     DeduplicationEngine,
@@ -49,24 +50,24 @@ from .deduplication import (
     SemanticDeduplicator,
     SimilarityScore,
 )
-from .encryption import DataEncryption, DecryptionResult, EncryptionResult  # NEW from utils
-from .entity_extractor import EntityExtractor, ExtractedEntity, PatternType  # NEW from utils
-from .execution_optimizer import (
-    AnomalyDetector,
+from .encryption import DataEncryption, DecryptionResult, EncryptionResult  # NEW from utils  # noqa: E402
+from .entity_extractor import EntityExtractor, ExtractedEntity, PatternType  # NEW from utils  # noqa: E402
+from .execution_optimizer import (  # noqa: E402
+    AnomalyDetector,  # noqa: F401  # .execution_optimizer.AnomalyDetector
     ExecutionStrategy,
-    IntelligentResourceAllocator,
-    OptimizationLevel,
+    IntelligentResourceAllocator,  # noqa: F401  # .execution_optimizer.IntelligentResourceAllocator
+    OptimizationLevel,  # noqa: F401  # .execution_optimizer.OptimizationLevel
     ParallelExecutionOptimizer,
-    PredictiveScaler,
-    ResourceLimits,
-    ResourceMetrics,
-    ResourceType,
+    PredictiveScaler,  # noqa: F401  # .execution_optimizer.PredictiveScaler
+    ResourceLimits,  # noqa: F401  # .execution_optimizer.ResourceLimits
+    ResourceMetrics,  # noqa: F401  # .execution_optimizer.ResourceMetrics
+    ResourceType,  # noqa: F401  # .execution_optimizer.ResourceType
     TaskMetrics,
     TaskType,
     WorkerMetrics,
-    create_m1_resource_allocator,
+    create_m1_resource_allocator,  # noqa: F401  # .execution_optimizer.create_m1_resource_allocator
 )
-from .filtering import (
+from .filtering import (  # noqa: E402
     EfficientFrontier,
     FastFilter,
     FilterStats,
@@ -74,7 +75,7 @@ from .filtering import (
     get_fast_filter,
     get_frontier,
 )
-from .intelligent_cache import (
+from .intelligent_cache import (  # noqa: E402
     CacheConfig,
     CacheEntry,
     CacheStats,
@@ -83,11 +84,11 @@ from .intelligent_cache import (
     MemoryOptimizedURLSet,  # NEW from utils
     get_global_cache,
 )
-from .language import LanguageDetector, create_language_detector
-from .lazy_imports import LazyImportManager, LazyLoader, lazy_import  # NEW from utils
-from .performance_monitor import PerformanceMetrics, PerformanceMonitor, QualityValidator
-from .predictive_planner import Prediction, PredictivePlanner, RollbackManager
-from .query_expansion import (
+from .language import LanguageDetector, create_language_detector  # noqa: E402
+from .lazy_imports import LazyImportManager, LazyLoader, lazy_import  # NEW from utils  # noqa: E402
+from .performance_monitor import PerformanceMetrics, PerformanceMonitor, QualityValidator  # noqa: E402
+from .predictive_planner import Prediction, PredictivePlanner, RollbackManager  # noqa: E402
+from .query_expansion import (  # noqa: E402
     DomainSpecificExpansionStrategy,
     ExpansionConfig,
     # MSQES Expansion Strategies
@@ -99,21 +100,21 @@ from .query_expansion import (
     SyntacticExpansionStrategy,
     expand_query,
 )
-from .ranking import (
+from .ranking import (  # noqa: E402
     RankedResult,
     ReciprocalRankFusion,
     RRFConfig,
     ScoreAggregator,
     fuse_results,
 )
-from .rate_limiter import (
+from .rate_limiter import (  # noqa: E402
     RateLimitConfig,
     RateLimiter,
     RateLimitExceeded,
     with_rate_limit,
 )  # NEW from stealth_toolkit integration
-from .robots_parser import RobotsDocument, RobotsParser, Rule  # NEW from utils
-from .semantic import (
+from .robots_parser import RobotsDocument, RobotsParser, Rule  # NEW from utils  # noqa: E402
+from .semantic import (  # noqa: E402
     FilterResult,
     KeywordFilter,
     LightweightTokenizer,
@@ -121,14 +122,14 @@ from .semantic import (
     SemanticFilter,
     SimpleEmbedding,
 )
-from .tech_detection import TechStackResult, TechStackSignature  # NEW from scanners
-from .validation import (
+from .tech_detection import TechStackResult, TechStackSignature  # NEW from scanners  # noqa: E402
+from .validation import (  # noqa: E402
     DataValidator,
     ValidationError,
     ValidationSeverity,
     create_sample_schema,
 )
-from .workflow_engine import Task, TaskStatus, TaskType, Workflow, WorkflowEngine
+from .workflow_engine import Task, TaskStatus, TaskType, Workflow, WorkflowEngine  # noqa: E402
 
 
 def _uuid7_stdlib() -> bool:

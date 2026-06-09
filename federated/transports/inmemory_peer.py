@@ -54,7 +54,7 @@ import logging
 import time
 from typing import Any
 
-from .protocol import NodeTransport, NodeTransportFactory
+from .protocol import NodeTransportFactory
 
 logger = logging.getLogger(__name__)
 
@@ -103,7 +103,7 @@ class InMemoryPeerNodeTransport:
     def __init__(self, node_id: str = "node-local") -> None:
         self.node_id: str = str(node_id or "node-local")[:64]
         # Paired peers (InMemoryPeerNodeTransport instances).
-        self._peers: dict[str, "InMemoryPeerNodeTransport"] = {}
+        self._peers: dict[str, InMemoryPeerNodeTransport] = {}
         # Per-lane seed findings (deterministic fallback).
         self._seeds: dict[str, list[dict[str, Any]]] = {}
         self._sprint_id: str = ""
@@ -135,7 +135,7 @@ class InMemoryPeerNodeTransport:
                     break
             self._seeds[str(lane)] = bounded
 
-    def add_peer(self, peer: "InMemoryPeerNodeTransport") -> None:
+    def add_peer(self, peer: InMemoryPeerNodeTransport) -> None:
         """
         Pair this transport with another in-process peer (bidirectional).
         Bounded by INMEMORY_PEER_MAX_PEERS.
@@ -200,7 +200,7 @@ class InMemoryPeerNodeTransport:
             try:
                 async with asyncio.timeout(INMEMORY_PEER_MSG_TIMEOUT_S):
                     peer_findings = await peer._serve(lane_key, query)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 logger.debug("[FED-IMM] peer %s serve timeout lane=%r", peer_id, lane)
                 return []
             out2: list[dict[str, Any]] = []

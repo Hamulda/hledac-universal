@@ -139,7 +139,7 @@ async def explain_with_mlx(
         if model is None or tokenizer is None:
             return "MLX model unavailable", ""
 
-        prompt = f"Explain why this path in a knowledge graph is important for the hypothesis: '{hypothesis}'. Path: {' -> '.join(path)}"
+        prompt = f"Explain why this path in a knowledge graph is important for the hypothesis: '{hypothesis}'. Path: {' -> '.join(path)}"  # noqa: E501
 
         from mlx_lm import generate
         loop = asyncio.get_running_loop()

@@ -286,7 +286,7 @@ with tempfile.TemporaryDirectory() as tmpdir:
             text=True,
             cwd=str(UNIVERSAL_ROOT),
         )
-        lines = [l for l in result.stdout.strip().splitlines()
+        lines = [l for l in result.stdout.strip().splitlines()  # noqa: E741
                  if l.startswith("{") and not l.startswith("WARNING")]
         assert len(lines) >= 2, f"unexpected output: {result.stdout!r}"
         data1 = json.loads(lines[0])
@@ -330,7 +330,7 @@ store.close()
             cwd=str(UNIVERSAL_ROOT),
             env={**os.environ, "PYTHONPATH": "/Users/vojtechhamada/PycharmProjects/Hledac"},
         )
-        lines = [l for l in result.stdout.strip().splitlines()
+        lines = [l for l in result.stdout.strip().splitlines()  # noqa: E741
                  if l.startswith("{") and not l.startswith("WARNING")]
         assert len(lines) >= 1, f"unexpected output: {result.stdout!r}"
         data = json.loads(lines[0])

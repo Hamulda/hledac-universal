@@ -94,7 +94,7 @@ class PromptBandit:
         async with self._save_lock:
             try:
                 # Převedeme numpy array na seznamy pro JSON
-                A_json = {str(k): v.tolist() for k, v in self._A.items()}
+                A_json = {str(k): v.tolist() for k, v in self._A.items()}  # noqa: N806
                 b_json = {str(k): v.tolist() for k, v in self._b.items()}
 
                 # Ensure directory exists
@@ -169,7 +169,7 @@ class PromptBandit:
                     mgr = getattr(orch, '_memory_mgr', None)
                     if mgr:
                         thermal = mgr.get_thermal_state()
-                        thermal_state = {'NORMAL': 0.0, 'WARM': 0.33, 'HOT': 0.66, 'CRITICAL': 1.0}.get(thermal.name, 0.0)
+                        thermal_state = {'NORMAL': 0.0, 'WARM': 0.33, 'HOT': 0.66, 'CRITICAL': 1.0}.get(thermal.name, 0.0)  # noqa: E501
                         on_battery = 1.0 if mgr._on_battery_power() else 0.0
 
                         # ANE load estimate from metrics registry
@@ -226,7 +226,7 @@ class PromptBandit:
                     if len(self._A) > self.MAX_BANDIT_ARMS:
                         self._enforce_arm_cap()
 
-                A_i = self._A[i]
+                A_i = self._A[i]  # noqa: N806
                 b_i = self._b[i]
                 try:
                     theta = np.linalg.solve(A_i, b_i)

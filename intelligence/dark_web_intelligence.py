@@ -32,7 +32,7 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from typing import Any
+from typing import Any, TYPE_CHECKING
 from urllib.parse import urljoin, urlparse
 
 import aiohttp
@@ -52,6 +52,10 @@ except ImportError:
     SELECTOLAX_AVAILABLE = False
 
 from ..project_types import RiskLevel
+
+if TYPE_CHECKING:
+    from hledac.universal.knowledge.duckdb_store import CanonicalFinding  # noqa: F401
+
 
 logger = logging.getLogger(__name__)
 
@@ -901,7 +905,6 @@ def darkweb_content_to_canonical(content: DarkWebContent, query: str) -> Canonic
     """
     import hashlib
 
-    from hledac.universal.knowledge.duckdb_store import CanonicalFinding
 
     title = content.title or "onion"
     body = content.text_content or ""
@@ -946,7 +949,6 @@ def dht_content_to_canonical(dht_result: DHTFinding, query: str) -> CanonicalFin
     Bounded: payload_text truncated to 3000 chars, fail-safe.
     INVARIANT: DHT queries NEVER go over Tor — clearnet UDP only.
     """
-    from hledac.universal.knowledge.duckdb_store import CanonicalFinding
 
     name = dht_result.name or "dht_torrent"
     # Build magnet URI from info_hash

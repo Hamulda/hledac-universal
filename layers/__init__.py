@@ -87,7 +87,7 @@ from .temporal_signal_layer import (
     TemporalEvent,
     TemporalScore,
     TemporalSignalLayer,
-    _KeyState,
+    _KeyState,  # noqa: F401  # .temporal_signal_layer._KeyState
     event_from_finding_like,
 )
 from .temporal_signal_runtime import (
@@ -235,7 +235,7 @@ def get_communication_layer() -> CommunicationLayer | None:
     (model_cache_size=100, model_cache_ttl=300, model_batch_size=5, model_batch_timeout=0.05).
     """
     try:
-        from hledac.universal.layers.communication_layer import CommunicationLayer as _CL
+        from hledac.universal.layers.communication_layer import CommunicationLayer as _CL  # noqa: N814
     except Exception:
         return None
     try:
@@ -245,7 +245,7 @@ def get_communication_layer() -> CommunicationLayer | None:
         return None
 
 
-def get_ghost_layer() -> "GhostLayer | None":
+def get_ghost_layer() -> GhostLayer | None:
     """Lazy singleton GhostLayer accessor (F260).
 
     Returns None if GhostLayer import or init fails (fail-soft, M1 invariant).
@@ -259,7 +259,7 @@ def get_ghost_layer() -> "GhostLayer | None":
     (default True) and a non-None SystemContext.
     """
     try:
-        from hledac.universal.layers.ghost_layer import GhostLayer as _GL
+        from hledac.universal.layers.ghost_layer import GhostLayer as _GL  # noqa: N814
     except Exception:
         return None
     try:

@@ -223,15 +223,15 @@ _CURATED_SOURCES: tuple[tuple[str, str, SourceTier, TransportRequired, DataType,
     ("DHT bootstrap (already wired)", "dht://bootstrap/", "p2p", "none", "repo", 0.95),
 
     # --- Dark web — actual .onion (transport=tor required) ---
-    ("Ahmia .onion", "http://juhanurmihxlp77nkq76byazcldy2hlmovfu2epvl5ankdibsot4csyd.onion/", "dark", "tor", "forum", 0.70),
-    ("Dark.fail .onion", "http://darkfailenbsdla5mal2mxn2uz66od5vtzd5q5slngbgx6wvpfzh7umtid.onion/", "dark", "tor", "forum", 0.55),
-    ("ProtonMail .onion", "https://protonmailrmez3lotccipshtkleegetolb73fuirgj7r4o4vfu7ozyd.onion/", "dark", "tor", "paste", 0.85),
-    ("BBC .onion", "https://www.bbcnewsd73hkzno2ini43t4gblxvycyac5aw4gnv7t2rccijh7745uqd.onion/", "dark", "tor", "forum", 0.80),
-    ("NYT .onion", "https://www.nytimesn7cgmftshazwhfgzm37qxb44r64ytbb2dj3x62d2lljsciiyd.onion/", "dark", "tor", "forum", 0.80),
-    ("Facebook .onion", "https://www.facebookwkhpilnemxj7asaniu7vnjjbiltxjqhye3mhbshg7kx5tfyd.onion/", "dark", "tor", "forum", 0.85),
-    ("Dread .onion", "http://dreadytofatroptsdj6c7mkr3q62p5l3qb66pfnhlfnn3gg4g4nh2qd.onion/", "dark", "tor", "forum", 0.65),
+    ("Ahmia .onion", "http://juhanurmihxlp77nkq76byazcldy2hlmovfu2epvl5ankdibsot4csyd.onion/", "dark", "tor", "forum", 0.70),  # noqa: E501
+    ("Dark.fail .onion", "http://darkfailenbsdla5mal2mxn2uz66od5vtzd5q5slngbgx6wvpfzh7umtid.onion/", "dark", "tor", "forum", 0.55),  # noqa: E501
+    ("ProtonMail .onion", "https://protonmailrmez3lotccipshtkleegetolb73fuirgj7r4o4vfu7ozyd.onion/", "dark", "tor", "paste", 0.85),  # noqa: E501
+    ("BBC .onion", "https://www.bbcnewsd73hkzno2ini43t4gblxvycyac5aw4gnv7t2rccijh7745uqd.onion/", "dark", "tor", "forum", 0.80),  # noqa: E501
+    ("NYT .onion", "https://www.nytimesn7cgmftshazwhfgzm37qxb44r64ytbb2dj3x62d2lljsciiyd.onion/", "dark", "tor", "forum", 0.80),  # noqa: E501
+    ("Facebook .onion", "https://www.facebookwkhpilnemxj7asaniu7vnjjbiltxjqhye3mhbshg7kx5tfyd.onion/", "dark", "tor", "forum", 0.85),  # noqa: E501
+    ("Dread .onion", "http://dreadytofatroptsdj6c7mkr3q62p5l3qb66pfnhlfnn3gg4g4nh2qd.onion/", "dark", "tor", "forum", 0.65),  # noqa: E501
     ("Hidden Wiki .onion", "http://zqktlwi4fecvo6ri.onion/wiki/index.php/Main_Page", "dark", "tor", "forum", 0.55),
-    ("Tor Metrics .onion", "http://hctxrmjzvyvmadqzhf7j5wga67vjwfuw7jirzkrom2pgjyt5xv7i5jid.onion/", "dark", "tor", "repo", 0.80),
+    ("Tor Metrics .onion", "http://hctxrmjzvyvmadqzhf7j5wga67vjwfuw7jirzkrom2pgjyt5xv7i5jid.onion/", "dark", "tor", "repo", 0.80),  # noqa: E501
     ("IntelX .onion", "http://intelexioou7w3mp.onion/", "dark", "tor", "leak_db", 0.75),
 
     # --- I2P eepsites (transport=i2p required) ---
@@ -496,7 +496,7 @@ class DeepSourceRegistry:
                     async with session.head(url, allow_redirects=True) as resp:
                         # 2xx, 3xx, 4xx → reachable; 5xx → unreachable
                         return resp.status < 500
-        except asyncio.TimeoutError:
+        except TimeoutError:
             return False
         except asyncio.CancelledError:
             raise

@@ -79,13 +79,23 @@ rust_is_valid_url: Callable[[str], bool] | None = None
 rust_filter_valid: Callable[[list[str]], list[str]] | None = None
 rust_extract_domain: Callable[[str], str | None] | None = None
 try:
+    from hledac_rust_extensions import (
+        extract_domain as rust_extract_domain,
+    )
+    from hledac_rust_extensions import (
+        filter_valid_urls as rust_filter_valid,
+    )
+    from hledac_rust_extensions import (
+        fingerprint as rust_fingerprint,
+    )
+    from hledac_rust_extensions import (
+        is_valid_url as rust_is_valid_url,
+    )
     from hledac_rust_extensions import (  # noqa: F811
         normalize as rust_normalize,
-        fingerprint as rust_fingerprint,
+    )
+    from hledac_rust_extensions import (
         strip_tracking_params as rust_strip_tracking,
-        is_valid_url as rust_is_valid_url,
-        filter_valid_urls as rust_filter_valid,
-        extract_domain as rust_extract_domain,
     )
 
     _RUST_URL_ENGINE_AVAILABLE = True
@@ -304,7 +314,7 @@ def normalize_url(url: str) -> str:
         except Exception:
             pass  # Fall through to Python implementation
     # Python fallback
-    from urllib.parse import urlparse, parse_qsl, urlencode
+    from urllib.parse import parse_qsl, urlencode, urlparse
 
     try:
         parsed = urlparse(url)
@@ -354,7 +364,7 @@ def fingerprint_url(url: str) -> int | None:
             pass
     # Python fallback
     if xxhash_available:
-        from urllib.parse import urlparse, parse_qsl, urlencode
+        from urllib.parse import parse_qsl, urlencode, urlparse
 
         try:
             parsed = urlparse(url)
@@ -390,9 +400,9 @@ def strip_tracking_params(url: str) -> str:
         except Exception:
             pass
     # Python fallback
-    from urllib.parse import urlparse, parse_qsl, urlencode
+    from urllib.parse import parse_qsl, urlencode, urlparse
 
-    TRACKING_PARAMS = {
+    TRACKING_PARAMS = {  # noqa: N806
         "utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content",
         "fbclid", "gclid", "gclsrc", "dclid",
         "msclkid", "twclid",

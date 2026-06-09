@@ -19,7 +19,6 @@ import logging
 import time
 import urllib.parse
 import xml.etree.ElementTree as ET
-from dataclasses import dataclass
 from typing import NamedTuple
 
 from hledac.universal.knowledge.duckdb_store import CanonicalFinding
@@ -238,7 +237,7 @@ class ArxivAdapter:
 
                 return ArxivResult(papers, None, len(papers))
 
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 return ArxivResult([], "timeout")
             except Exception as e:
                 logger.error(f"arXiv harvest error: {e}")
@@ -247,11 +246,10 @@ class ArxivAdapter:
     async def _search_mode(self, query: str, max_results: int) -> ArxivResult:
         """Use arXiv API for search queries (not OAI-PMH)."""
         try:
-            import orjson
             from hledac.universal.fetching.public_fetcher import async_fetch_public_text
 
             # arXiv API search endpoint
-            url = f"http://export.arxiv.org/api/query"
+            url = "http://export.arxiv.org/api/query"
             params = {
                 "search_query": f"all:{query}".replace(" ", "+"),
                 "max_results": max_results,
@@ -270,7 +268,7 @@ class ArxivAdapter:
             papers = []
             for entry in root.findall("atom:entry", ns)[:max_results]:
                 title = entry.find("atom:title", ns)
-                authors = [a.find("atom:name", ns).text or "" for a in entry.findall("atom:author", ns) if a.find("atom:name", ns) is not None]
+                authors = [a.find("atom:name", ns).text or "" for a in entry.findall("atom:author", ns) if a.find("atom:name", ns) is not None]  # noqa: E501
                 summary = entry.find("atom:summary", ns)
                 categories = [c.get("term", "") for c in entry.findall("atom:category", ns)]
 
@@ -288,8 +286,8 @@ class ArxivAdapter:
                 # Dates
                 published_el = entry.find("atom:published", ns)
                 updated_el = entry.find("atom:updated", ns)
-                published = published_el.text[:10] if published_el is not None else ""
-                updated = updated_el.text[:10] if updated_el is not None else ""
+                published = (published_el.text or "")[:10] if published_el is not None else ""
+                updated = (updated_el.text or "")[:10] if updated_el is not None else ""
 
                 # ID from entry
                 entry_id = entry.find("atom:id", ns)

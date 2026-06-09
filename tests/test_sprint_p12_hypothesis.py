@@ -15,7 +15,7 @@ Invariant table:
 | Test | Invariant |
 |------|-----------|
 | test_no_tot_before_fetch | ToT block not present before the fetch batch in source |
-| test_hypothesis_layer_gated_on_store_and_engine | Gate: store is not None AND hermes_engine is not None AND total_stored > 0 |
+| test_hypothesis_layer_gated_on_store_and_engine | Gate: store is not None AND hermes_engine is not None AND total_stored > 0 |  # noqa: E501
 | test_hypothesis_uses_real_findings | Context built from store.async_get_recent_findings(), not rag_context |
 | test_tot_conditional_on_stored_findings | ToT only runs when total_stored > 0 |
 | test_bounded_to_five_hypotheses | Loop: hypotheses[:5] — max 5 ToT evaluations |
@@ -325,7 +325,7 @@ class TestP12DILoadWire:
         # Count occurrences of the gate condition pattern
         # Must be: if store is not None and hermes_engine is not None and total_stored > 0:
         lines = p12_block.split('\n')
-        gate_lines = [l for l in lines if 'if ' in l and 'store' in l and 'hermes_engine' in l and 'total_stored' in l]
+        gate_lines = [l for l in lines if 'if ' in l and 'store' in l and 'hermes_engine' in l and 'total_stored' in l]  # noqa: E741
         assert len(gate_lines) >= 1, "P12 must have a gate line checking store+hermes_engine+total_stored"
 
     def test_no_tot_when_store_none(self):
@@ -665,7 +665,7 @@ class TestP12ParallelHypothesisBurst:
         )
 
     def test_failed_tot_tasks_do_not_block_other_hypotheses(self):
-        """Fail-soft: one failed ToT task does not fail the others — asyncio.as_completed handles results independently."""
+        """Fail-soft: one failed ToT task does not fail the others — asyncio.as_completed handles results independently."""  # noqa: E501
         from hledac.universal.pipeline.live_public_pipeline import async_run_live_public_pipeline
         source = inspect.getsource(async_run_live_public_pipeline)
 
@@ -689,9 +689,9 @@ class TestP12HermesPrewarmPolicy:
     Invariant table:
     | Test | Invariant |
     |------|-----------|
-    | test_aggressive_mode_blocks_until_hermes_prewarm | Aggressive mode calls _prewarm_hermes_for_sprint which blocks until loaded |
+    | test_aggressive_mode_blocks_until_hermes_prewarm | Aggressive mode calls _prewarm_hermes_for_sprint which blocks until loaded |  # noqa: E501
     | test_skip_hermes_prewarm_when_rss_above_4gb | When RSS > 4GB before prewarm, Hermes is skipped (aggressive mode) |
-    | test_teardown_still_releases_hermes_after_prewarm | After prewarm+load, teardown still calls _unload_hermes_at_teardown |
+    | test_teardown_still_releases_hermes_after_prewarm | After prewarm+load, teardown still calls _unload_hermes_at_teardown |  # noqa: E501
     """
 
     @pytest.mark.asyncio

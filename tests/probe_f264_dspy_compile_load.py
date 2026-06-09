@@ -90,8 +90,9 @@ def isolate_env(monkeypatch: pytest.MonkeyPatch) -> None:
     # reflects the new env value (otherwise the program classes raise
     # ``RuntimeError("DSPy not available or not enabled")``).
     try:
-        import hledac.universal.brain.dspy_programs as _dspy_progs  # type: ignore  # noqa: F401
         import importlib
+
+        import hledac.universal.brain.dspy_programs as _dspy_progs  # type: ignore  # noqa: F401
         importlib.reload(_dspy_progs)
     except Exception:
         pass

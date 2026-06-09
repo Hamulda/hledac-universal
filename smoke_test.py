@@ -5,6 +5,7 @@ Validates all P1-P6 import fixes are working.
 Run with: uv run python smoke_test.py
 """
 from __future__ import annotations
+
 import sys
 from typing import NamedTuple
 
@@ -16,7 +17,6 @@ from typing import NamedTuple
 # which is the canonical, idempotent implementation. The first call wires
 # the namespace; subsequent calls are no-ops. The function never raises.
 # ─────────────────────────────────────────────────────────────────────────────
-
 from hledac._namespace_bootstrap import ensure_namespace_paths
 
 ensure_namespace_paths()
@@ -47,16 +47,16 @@ test("adjust_fetch_workers", "from hledac.universal import adjust_fetch_workers"
 test("FullyAutonomousOrchestrator", "from hledac.universal import FullyAutonomousOrchestrator")
 
 print("\n=== SMOKE TESTS: P2 — Security Namespace ===")
-test("hledac.security shim", "from hledac.security import StealthEngine, TemporalAnonymizer, ZeroAttributionEngine, KeyManager")
-test("security_coordinator import", "from hledac.universal.coordinators.security_coordinator import SecurityCoordinator")
+test("hledac.security shim", "from hledac.security import StealthEngine, TemporalAnonymizer, ZeroAttributionEngine, KeyManager")  # noqa: E501
+test("security_coordinator import", "from hledac.universal.coordinators.security_coordinator import SecurityCoordinator")  # noqa: E501
 
 print("\n=== SMOKE TESTS: P3 — research_coordinator bridges ===")
-test("UnifiedAIOrchestrator bridge (import)", "from hledac.universal._shims.core_unified_ai_orchestrator import UnifiedAIOrchestrator")
-test("UnifiedAIOrchestrator instantiation", "from hledac.universal._shims.core_unified_ai_orchestrator import UnifiedAIOrchestrator; u = UnifiedAIOrchestrator()")
+test("UnifiedAIOrchestrator bridge (import)", "from hledac.universal._shims.core_unified_ai_orchestrator import UnifiedAIOrchestrator")  # noqa: E501
+test("UnifiedAIOrchestrator instantiation", "from hledac.universal._shims.core_unified_ai_orchestrator import UnifiedAIOrchestrator; u = UnifiedAIOrchestrator()")  # noqa: E501
 test("RAGOrchestrator import", "from hledac.universal.advanced_rag.rag_orchestrator import RAGOrchestrator")
-test("RAGOrchestrator instantiation", "from hledac.universal.advanced_rag.rag_orchestrator import RAGOrchestrator; r = RAGOrchestrator()")
-test("research_coordinator import", "from hledac.universal.coordinators.research_coordinator import ResearchCoordinator")
-test("ResearchCoordinator instantiation", "from hledac.universal.coordinators.research_coordinator import ResearchCoordinator; rc = ResearchCoordinator()")
+test("RAGOrchestrator instantiation", "from hledac.universal.advanced_rag.rag_orchestrator import RAGOrchestrator; r = RAGOrchestrator()")  # noqa: E501
+test("research_coordinator import", "from hledac.universal.coordinators.research_coordinator import ResearchCoordinator")  # noqa: E501
+test("ResearchCoordinator instantiation", "from hledac.universal.coordinators.research_coordinator import ResearchCoordinator; rc = ResearchCoordinator()")  # noqa: E501
 
 print("\n=== SMOKE TESTS: P4 — Core redirects ===")
 test("mlx_embeddings redirect", "from hledac.core import mlx_embeddings")
@@ -65,7 +65,7 @@ test("Watchdog shim", "from hledac.core import watchdog")
 print("\n=== SMOKE TESTS: P5 — advanced_web ===")
 test("StealthBrowser import", "from hledac.advanced_web.stealth_browser import StealthBrowser")
 test("AutomationOrchestrator import", "from hledac.advanced_web.automation_orchestrator import AutomationOrchestrator")
-test("StealthBrowser instantiation", "from hledac.advanced_web.stealth_browser import StealthBrowser; sb = StealthBrowser()")
+test("StealthBrowser instantiation", "from hledac.advanced_web.stealth_browser import StealthBrowser; sb = StealthBrowser()")  # noqa: E501
 
 print("\n=== SMOKE TESTS: P6 — T3 Strategic stubs ===")
 test("ThreatIntelligence import", "from hledac.security import ThreatIntelligence")

@@ -43,6 +43,7 @@ from pathlib import Path
 from typing import Any
 
 from utils.async_helpers import safe_gather_dropin
+
 log = logging.getLogger(__name__)
 
 # Default timeout for external lookups (seconds)
@@ -491,7 +492,7 @@ class ForensicsEnricher:
             log.debug("Forensics IOC sub-step failed for %s: %s", finding_id, exc)
 
         # Mark enrichment available if any module produced data
-        if any(v is not None for k, v in enrichment.items() if k not in ("finding_id", "file_path", "enrichment_available")):
+        if any(v is not None for k, v in enrichment.items() if k not in ("finding_id", "file_path", "enrichment_available")):  # noqa: E501
             enrichment["enrichment_available"] = True
             forensics_result.enrichment_available = True
 
@@ -926,10 +927,12 @@ def _bound_enrichment_for_payload(enrichment: dict[str, Any]) -> str:
         return ""
     try:
         import orjson
-        _dumps = lambda v: orjson.dumps(v).decode("utf-8", errors="replace")
+        def _dumps(v):
+            return orjson.dumps(v).decode("utf-8", errors="replace")
     except ImportError:
         import json
-        _dumps = lambda v: json.dumps(v, ensure_ascii=False)
+        def _dumps(v):
+            return json.dumps(v, ensure_ascii=False)
 
     bounded: dict[str, Any] = {}
     keys = list(enrichment.keys())

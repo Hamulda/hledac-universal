@@ -68,7 +68,7 @@ def _check_httpx_h2_capability() -> bool:
 
     # httpx available — check h2 (HTTP/2 support)
     try:
-        import h2
+        import h2  # noqa: F401  # h2
     except ImportError:
         _httpx_import_error = "h2 not installed (httpx[http2] required for HTTP/2)"
         logger.debug(f"[HTTPX] {_httpx_import_error}")

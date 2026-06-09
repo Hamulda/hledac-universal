@@ -155,7 +155,7 @@ def score_qoder_reality(artifact: dict[str, Any] | None) -> DomainResult:
         status=status, score=score,
         evidence_artifacts=["probe_qoder_reality/qoder_reality_matrix.json"],
         blockers=blockers,
-        recommended_action="Resolve DEPRECATED capabilities; ensure all active paths documented" if blockers else "Maintain active capability coverage",
+        recommended_action="Resolve DEPRECATED capabilities; ensure all active paths documented" if blockers else "Maintain active capability coverage",  # noqa: E501
         raw=artifact
     )
 
@@ -219,7 +219,7 @@ def score_transport_authority(artifact: dict[str, Any] | None) -> DomainResult:
         status=status, score=min(100, score),
         evidence_artifacts=["probe_transport_authority_f206bc/transport_authority_status_refreshed.json"] + evidence,
         blockers=blockers,
-        recommended_action="Wire remaining critical consumers to circuit breaker" if blockers else "Transport authority fully seamed",
+        recommended_action="Wire remaining critical consumers to circuit breaker" if blockers else "Transport authority fully seamed",  # noqa: E501
         raw=artifact
     )
 
@@ -245,8 +245,8 @@ def score_acquisition_strategy(artifact: dict[str, Any] | None) -> DomainResult:
     failed = tests.get("failed", 0)
     total_tests = passed + failed
 
-    high_risk_lanes = [l for l in lanes if l.get("risk_level") in ("high", "critical")]
-    disabled_lanes = [l for l in lanes if not l.get("enabled_default", True)]
+    high_risk_lanes = [l for l in lanes if l.get("risk_level") in ("high", "critical")]  # noqa: E741
+    disabled_lanes = [l for l in lanes if not l.get("enabled_default", True)]  # noqa: E741
 
     evidence = [
         f"lanes={len(lanes)}, high_risk={len(high_risk_lanes)}, disabled={len(disabled_lanes)}",
@@ -306,7 +306,7 @@ def score_stealth_safety(
         canonical_transport = stealth_crawler.get("canonical_transport_used", False)
         breaker_seam = stealth_crawler.get("breaker_seam", {})
         helper = breaker_seam.get("helper_function", "MISSING")
-        evidence.append(f"stealth_crawler: cb_used={cb_used}, canonical_transport={canonical_transport}, helper={helper}")
+        evidence.append(f"stealth_crawler: cb_used={cb_used}, canonical_transport={canonical_transport}, helper={helper}")  # noqa: E501
 
         if not cb_used:
             blockers.append("stealth_crawler circuit breaker not used")
@@ -329,7 +329,7 @@ def score_stealth_safety(
             "probe_stealth_crawler_f206bf/stealth_crawler_breaker_seam.json",
         ],
         blockers=blockers,
-        recommended_action="Wire stealth breaker seams for both manager and crawler" if blockers else "Stealth safety fully seamed",
+        recommended_action="Wire stealth breaker seams for both manager and crawler" if blockers else "Stealth safety fully seamed",  # noqa: E501
         raw={"stealth_manager": stealth_manager or {}, "stealth_crawler": stealth_crawler or {}}
     )
 
@@ -384,7 +384,7 @@ def score_memory_safety(artifact: dict[str, Any] | None) -> DomainResult:
         status=status, score=score,
         evidence_artifacts=["probe_m1_memory_authority/m1_memory_authority_matrix.json"],
         blockers=blockers,
-        recommended_action="Resolve memory conflicts before aggressive mode" if blockers else "Memory authority healthy",
+        recommended_action="Resolve memory conflicts before aggressive mode" if blockers else "Memory authority healthy",  # noqa: E501
         raw=artifact
     )
 
@@ -444,7 +444,7 @@ def score_graph_authority(artifact: dict[str, Any] | None) -> DomainResult:
         status=status, score=score,
         evidence_artifacts=["probe_graph_authority/graph_authority_matrix.json"] + evidence,
         blockers=blockers,
-        recommended_action="Canonicalize remaining graph authority modules" if blockers else "Graph authority fully canonical",
+        recommended_action="Canonicalize remaining graph authority modules" if blockers else "Graph authority fully canonical",  # noqa: E501
         raw=artifact
     )
 
@@ -556,19 +556,19 @@ def resolve_readiness(
     # 300s_live: needs runtime_authority + graph_authority + acquisition
     r300_required = ["runtime_authority", "graph_authority", "acquisition_strategy"]
     r300_scores = [domains[k].score for k in r300_required if k in domains]
-    r300_green = all(domains[k].status in (DomainStatus.GREEN, DomainStatus.YELLOW) for k in r300_required if k in domains)
+    r300_green = all(domains[k].status in (DomainStatus.GREEN, DomainStatus.YELLOW) for k in r300_required if k in domains)  # noqa: E501
 
     readiness_300s = DomainStatus.GREEN if (r300_green and all(s >= 40 for s in r300_scores)) else DomainStatus.RED
 
     # stealth_live: needs 300s + stealth_safety green
-    stealth_ok = domains.get("stealth_safety", DomainResult(DomainStatus.UNKNOWN, 0, [], [], "")).status == DomainStatus.GREEN
+    stealth_ok = domains.get("stealth_safety", DomainResult(DomainStatus.UNKNOWN, 0, [], [], "")).status == DomainStatus.GREEN  # noqa: E501
     stealth_ok2 = domains.get("stealth_safety", DomainResult(DomainStatus.UNKNOWN, 0, [], [], "")).score >= 70
-    readiness_stealth = DomainStatus.GREEN if (readiness_300s == DomainStatus.GREEN and stealth_ok and stealth_ok2) else DomainStatus.RED
+    readiness_stealth = DomainStatus.GREEN if (readiness_300s == DomainStatus.GREEN and stealth_ok and stealth_ok2) else DomainStatus.RED  # noqa: E501
 
     # aggressive_mode: needs stealth_live + memory safety + live_measurement
-    memory_ok = domains.get("memory_safety", DomainResult(DomainStatus.UNKNOWN, 0, [], [], "")).status == DomainStatus.GREEN
-    live_ok = domains.get("live_measurement", DomainResult(DomainStatus.UNKNOWN, 0, [], [], "")).status == DomainStatus.GREEN
-    readiness_aggressive = DomainStatus.GREEN if (readiness_stealth == DomainStatus.GREEN and memory_ok and live_ok) else DomainStatus.RED
+    memory_ok = domains.get("memory_safety", DomainResult(DomainStatus.UNKNOWN, 0, [], [], "")).status == DomainStatus.GREEN  # noqa: E501
+    live_ok = domains.get("live_measurement", DomainResult(DomainStatus.UNKNOWN, 0, [], [], "")).status == DomainStatus.GREEN  # noqa: E501
+    readiness_aggressive = DomainStatus.GREEN if (readiness_stealth == DomainStatus.GREEN and memory_ok and live_ok) else DomainStatus.RED  # noqa: E501
 
     return readiness_300s, readiness_stealth, readiness_aggressive
 
@@ -580,7 +580,7 @@ def compute_next_big_move(domains: dict[str, DomainResult], readinesses: tuple) 
     # Priority-ordered domain checks
     if r300s != DomainStatus.GREEN:
         critical = [d for d in ["runtime_authority", "graph_authority", "acquisition_strategy"]
-                    if domains.get(d, DomainResult(DomainStatus.UNKNOWN, 0, [], [], "")).status in (DomainStatus.RED, DomainStatus.UNKNOWN)]
+                    if domains.get(d, DomainResult(DomainStatus.UNKNOWN, 0, [], [], "")).status in (DomainStatus.RED, DomainStatus.UNKNOWN)]  # noqa: E501
         if critical:
             return f"Fix {critical[0]} to achieve 300s live readiness"
 
@@ -718,7 +718,7 @@ def render_md(dashboard: DashboardOutput) -> str:
 # ── CLI ───────────────────────────────────────────────────────────────────────
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Capability KPI Dashboard — Sprint F206BL", suggest_on_error=True, color=True)
+    parser = argparse.ArgumentParser(description="Capability KPI Dashboard — Sprint F206BL", suggest_on_error=True, color=True)  # noqa: E501
     parser.add_argument("--output-json", action="store_true", help="Emit JSON to stdout")
     parser.add_argument("--output-md", action="store_true", help="Emit Markdown to stdout")
     args = parser.parse_args()

@@ -38,6 +38,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 import psutil
+
 from hledac.universal.utils.exceptions import MemoryPressureError
 
 if TYPE_CHECKING:
@@ -931,7 +932,7 @@ def embed_document(text: str) -> np.ndarray:
         return np.zeros(_EMBEDDING_DIM, dtype=np.float32)
 
 
-async def generate_embeddings_async(texts: list[str], batch_size: int = _BATCH_SIZE, keep_loaded: bool = False) -> np.ndarray:
+async def generate_embeddings_async(texts: list[str], batch_size: int = _BATCH_SIZE, keep_loaded: bool = False) -> np.ndarray:  # noqa: E501
     """
     Async wrapper for generate_embeddings.
 
@@ -979,7 +980,7 @@ _embed_max_rss_gb: float = 5.5
 # loaded embedding model on M1 Air 8GB. BROKEN check in public_fetcher used
 # semaphore._value which is always <= max, causing the guard to always fire.
 # Increment before model load attempt, decrement after unload — balanced per call.
-import threading
+import threading  # noqa: E402
 
 _embedding_depth: int = 0
 _embedding_depth_lock = threading.Lock()
@@ -991,7 +992,7 @@ _embed_refcount: int = 0
 _embed_refcount_lock = asyncio.Lock()
 
 
-class embedding_session:
+class embedding_session:  # noqa: N801
     """
     Reentrant async context manager for embedding lifecycle with refcounting.
 

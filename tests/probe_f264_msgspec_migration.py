@@ -20,13 +20,11 @@ Sprint F264 — always-on, bounded, fail-soft.
 
 from __future__ import annotations
 
-import asyncio
 import os
 import tempfile
 from pathlib import Path
 
 import pytest
-
 
 # ---------------------------------------------------------------------------
 # Facade roundtrip

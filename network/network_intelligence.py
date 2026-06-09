@@ -185,7 +185,7 @@ class NetworkIntelAdapter:
 class _PassiveDNSAdapter:
     """Wrapper that avoids importing passive_dns at module level."""
     def __init__(self):
-        from network.passive_dns import PassiveDNSAdapter as _cls
+        from network.passive_dns import PassiveDNSAdapter as _cls  # noqa: N813
         self._inner = _cls()
 
     async def query(self, target: str) -> list[dict]:
@@ -198,7 +198,7 @@ class _PassiveDNSAdapter:
 class _PassiveFingerprintAdapter:
     """Wrapper that avoids importing passive_fingerprint at module level."""
     def __init__(self):
-        from network.passive_fingerprint import PassiveFingerprintAdapter as _cls
+        from network.passive_fingerprint import PassiveFingerprintAdapter as _cls  # noqa: N813
         self._inner = _cls()
 
     async def query(self, target: str) -> list[dict]:

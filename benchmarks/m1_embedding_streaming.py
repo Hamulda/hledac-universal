@@ -45,7 +45,7 @@ def get_rss_mb() -> float:
 
 def synthetic_texts(n: int) -> list[str]:
     """Generate synthetic texts for hermetic testing."""
-    return [f"Synthetic test document number {i} with some additional content to increase text size and memory footprint" for i in range(n)]
+    return [f"Synthetic test document number {i} with some additional content to increase text size and memory footprint" for i in range(n)]  # noqa: E501
 
 
 async def benchmark_streaming_rss(texts: list[str], batch_size: int = 16) -> dict:

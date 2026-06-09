@@ -14,7 +14,6 @@ References:
 """
 from __future__ import annotations
 
-import math
 from dataclasses import dataclass, field
 
 
@@ -77,7 +76,7 @@ class DempsterShafer:
                 new_masses[h] *= factor
         else:
             # total conflict → reset to vacuous
-            new_masses = {h: 0.0 for h in self.frame}
+            new_masses = dict.fromkeys(self.frame, 0.0)
 
         self.masses = new_masses
         self.conflict = min(1.0, self.conflict + conflict_mass)

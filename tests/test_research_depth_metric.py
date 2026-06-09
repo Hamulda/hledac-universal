@@ -28,6 +28,7 @@ Derived from canonical surfaces (Sprint F192H §1):
 from unittest.mock import MagicMock
 
 import pytest
+
 from hledac.universal.export.sprint_exporter import (
     _SOURCE_TIER,
     _compute_research_depth,

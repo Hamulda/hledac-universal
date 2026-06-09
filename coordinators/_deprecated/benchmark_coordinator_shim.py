@@ -20,16 +20,18 @@ from __future__ import annotations
 
 import warnings
 
-from hledac.universal.coordinators._deprecated import benchmark_coordinator as _real_module  # type: ignore[ty:unresolved-import]  # pre-existing absolute import — circular-ish self-ref under deprecated shim (historical namespace)
+from hledac.universal.coordinators._deprecated import (
+    benchmark_coordinator as _real_module,  # type: ignore[ty:unresolved-import]  # pre-existing absolute import — circular-ish self-ref under deprecated shim (historical namespace)
+)
 
 __all__ = [
-    "AgentBenchmarker",
-    "AgentBenchmarkResult",
-    "BenchmarkConfig",
-    "BenchmarkReport",
-    "MemoryProfiler",
-    "run_agent_benchmarks",
-    "run_quick_performance_check",
+    "AgentBenchmarker",  # noqa: F822
+    "AgentBenchmarkResult",  # noqa: F822
+    "BenchmarkConfig",  # noqa: F822
+    "BenchmarkReport",  # noqa: F822
+    "MemoryProfiler",  # noqa: F822
+    "run_agent_benchmarks",  # noqa: F822
+    "run_quick_performance_check",  # noqa: F822
 ]
 
 _warned = False

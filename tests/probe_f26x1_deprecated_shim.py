@@ -89,7 +89,6 @@ class TestF26X1DecoratorBehavior:
 
     def test_deprecated_attribute_set(self):
         """Shim sets __deprecated__ for tooling introspection."""
-        import hledac.universal.utils._deprecated as shim
 
         if not HAS_NATIVE_DEPRECATED:
             # Only the fallback path sets __deprecated__

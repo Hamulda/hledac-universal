@@ -36,7 +36,7 @@ import logging
 logger = logging.getLogger(__name__)
 
 # Re-export public API for backward compatibility
-from .sprint_exporter import export_partial_sprint, export_sprint
+from .sprint_exporter import export_partial_sprint, export_sprint  # noqa: E402
 
 __all__ = [
     "ExportFormatter",
@@ -288,7 +288,7 @@ class JSONFormatter(ExportFormatter):
                     pyd=sanitized_obj.get("provider_yield_diagnosis"),
                 )
             elif isinstance(sanitized_obj, list):
-                sanitized_obj = {"_truncated_content": sanitized_obj, "product_value_summary": pvs, "capability_synthesis": capability_synthesis}
+                sanitized_obj = {"_truncated_content": sanitized_obj, "product_value_summary": pvs, "capability_synthesis": capability_synthesis}  # noqa: E501
 
             with open(report_path, "w", encoding="utf-8") as f:
                 json.dump(sanitized_obj, f, indent=2, default=str)
@@ -300,12 +300,13 @@ class JSONFormatter(ExportFormatter):
             try:
                 import os as _os
                 if _os.environ.get("HLEDAC_ENABLE_PQ_EXPORT") == "1":
+                    import base64
+                    import time
+
                     from hledac.universal.security.pq_export_encryption import (
                         ExportPolicy,
                         encrypt_export_bundle,
                     )
-                    import base64
-                    import time
 
                     # Serialize report content to bytes
                     report_bytes = json.dumps(sanitized_obj, indent=2, default=str).encode("utf-8")
@@ -377,10 +378,10 @@ class JSONFormatter(ExportFormatter):
         sprint_verdict = _get_sprint_verdict(eh)
         synthesis_outcome_payload = _get_synthesis_outcome_payload(eh)
 
-        run_truth_note = _derive_run_truth_note(runtime_truth, canonical_run_summary, sprint_verdict, pvs) if pvs else ""
+        run_truth_note = _derive_run_truth_note(runtime_truth, canonical_run_summary, sprint_verdict, pvs) if pvs else ""  # noqa: E501
         branch_truth = _derive_branch_truth(feed_verdict, public_verdict, branch_value)
-        best_first_move = _derive_best_first_move(runtime_truth, signal_path, canonical_run_summary, sprint_verdict, pvs, correlation) if pvs else ""
-        why_this_run_matters = _derive_why_this_run_matters(runtime_truth, signal_path, hypothesis_pack, canonical_run_summary, sprint_verdict, pvs, correlation) if pvs else ""
+        best_first_move = _derive_best_first_move(runtime_truth, signal_path, canonical_run_summary, sprint_verdict, pvs, correlation) if pvs else ""  # noqa: E501
+        why_this_run_matters = _derive_why_this_run_matters(runtime_truth, signal_path, hypothesis_pack, canonical_run_summary, sprint_verdict, pvs, correlation) if pvs else ""  # noqa: E501
 
         operator_brief = _build_operator_brief(
             pvs, branch_value, sprint_trend, source_leaderboard, seeds_count, correlation,
@@ -479,13 +480,13 @@ class JSONFormatter(ExportFormatter):
 
         # Sprint F263: forensic findings — bounded extraction from DuckDB store
         # via the canonical async read seam. Fail-soft: returns [] on any error.
-        _FORENSIC_ST: tuple[str, ...] = (
+        _FORENSIC_ST: tuple[str, ...] = (  # noqa: N806
             "forensic_analysis",
             "steganography_detection",
             "digital_ghost_detection",
             "blockchain_forensics",
         )
-        _FORENSIC_EXPORT_LIMIT: int = 200  # matches _FORENSIC_MAX_RENDER in reporters
+        _FORENSIC_EXPORT_LIMIT: int = 200  # matches _FORENSIC_MAX_RENDER in reporters  # noqa: N806
         forensic_findings: list[dict] = []
         try:
             if hasattr(store, "async_query_recent_findings"):
@@ -530,7 +531,7 @@ class JSONFormatter(ExportFormatter):
             "next_sprint_seeds_generated": True,
             "next_sprint_seeds_count": seeds_count,
             "next_sprint_seeds_path": str(seeds_path) if seeds_path else None,
-            "investigation_packet": sanitized_obj.get("investigation_packet") if isinstance(sanitized_obj, dict) else None,
+            "investigation_packet": sanitized_obj.get("investigation_packet") if isinstance(sanitized_obj, dict) else None,  # noqa: E501
         }
 
 

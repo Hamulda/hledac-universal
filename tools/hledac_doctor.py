@@ -80,69 +80,69 @@ class DoctorReport:
 # Listed in dependency order (most foundational first).
 DEPENDENCY_REGISTRY: list[dict] = [
     # --- baseline ---
-    {"name": "aiosqlite",    "import": "aiosqlite",         "spec": "aiosqlite>=0.19.0",      "extra": None,         "baseline": True},
-    {"name": "aiohttp",       "import": "aiohttp",           "spec": "aiohttp>=3.9.0",          "extra": None,         "baseline": True},
-    {"name": "aiohttp-socks", "import": "aiohttp_socks",     "spec": "aiohttp-socks>=0.8.0",    "extra": None,         "baseline": True},
-    {"name": "httpx",         "import": "httpx",             "spec": "httpx>=0.27.0",          "extra": None,         "baseline": True},
-    {"name": "lancedb",       "import": "lancedb",           "spec": "lancedb>=0.2.5",         "extra": None,         "baseline": True},
-    {"name": "duckdb",        "import": "duckdb",            "spec": "duckdb>=1.2.0",          "extra": None,         "baseline": True},
-    {"name": "msgspec",      "import": "msgspec",           "spec": "msgspec>=0.21.1,<0.22.0",   "extra": None,         "baseline": True},
-    {"name": "orjson",        "import": "orjson",            "spec": "orjson>=3.9.0",           "extra": None,         "baseline": True},
+    {"name": "aiosqlite",    "import": "aiosqlite",         "spec": "aiosqlite>=0.19.0",      "extra": None,         "baseline": True},  # noqa: E501
+    {"name": "aiohttp",       "import": "aiohttp",           "spec": "aiohttp>=3.9.0",          "extra": None,         "baseline": True},  # noqa: E501
+    {"name": "aiohttp-socks", "import": "aiohttp_socks",     "spec": "aiohttp-socks>=0.8.0",    "extra": None,         "baseline": True},  # noqa: E501
+    {"name": "httpx",         "import": "httpx",             "spec": "httpx>=0.27.0",          "extra": None,         "baseline": True},  # noqa: E501
+    {"name": "lancedb",       "import": "lancedb",           "spec": "lancedb>=0.2.5",         "extra": None,         "baseline": True},  # noqa: E501
+    {"name": "duckdb",        "import": "duckdb",            "spec": "duckdb>=1.2.0",          "extra": None,         "baseline": True},  # noqa: E501
+    {"name": "msgspec",      "import": "msgspec",           "spec": "msgspec>=0.21.1,<0.22.0",   "extra": None,         "baseline": True},  # noqa: E501
+    {"name": "orjson",        "import": "orjson",            "spec": "orjson>=3.9.0",           "extra": None,         "baseline": True},  # noqa: E501
     # MOVED_TO_OPTIONAL_BROWSER_BY_CP314_CLEANUP: "camoufox[geoip]",   # see browser extra
     # MOVED_TO_BROWSER_EXTRA_BY_F214AD: nodriver (was baseline=True, extra=None)
-    {"name": "nodriver",      "import": "nodriver",          "spec": "nodriver>=0.1.0",        "extra": "browser",    "baseline": False},
-    {"name": "duckduckgo-search","import": "duckduckgo_search", "spec": "duckduckgo-search>=8.0.0", "extra": None, "baseline": True},
-    {"name": "beautifulsoup4","import": "bs4",               "spec": "beautifulsoup4>=4.12.0", "extra": None,         "baseline": True},
-    {"name": "pytesseract",   "import": "pytesseract",      "spec": "pytesseract>=0.3.10",    "extra": None,         "baseline": True},
-    {"name": "dnspython",     "import": "dns",               "spec": "dnspython>=2.4.0",        "extra": None,         "baseline": True},
-    {"name": "stem",          "import": "stem",              "spec": "stem>=1.8.0",             "extra": None,         "baseline": True},
+    {"name": "nodriver",      "import": "nodriver",          "spec": "nodriver>=0.1.0",        "extra": "browser",    "baseline": False},  # noqa: E501
+    {"name": "duckduckgo-search","import": "duckduckgo_search", "spec": "duckduckgo-search>=8.0.0", "extra": None, "baseline": True},  # noqa: E501
+    {"name": "beautifulsoup4","import": "bs4",               "spec": "beautifulsoup4>=4.12.0", "extra": None,         "baseline": True},  # noqa: E501
+    {"name": "pytesseract",   "import": "pytesseract",      "spec": "pytesseract>=0.3.10",    "extra": None,         "baseline": True},  # noqa: E501
+    {"name": "dnspython",     "import": "dns",               "spec": "dnspython>=2.4.0",        "extra": None,         "baseline": True},  # noqa: E501
+    {"name": "stem",          "import": "stem",              "spec": "stem>=1.8.0",             "extra": None,         "baseline": True},  # noqa: E501
     # DISABLED_BY_CP314_CLEANUP: "aiobtcdht>=0.1.0",  # likely typo/dead package
-    {"name": "pydantic",      "import": "pydantic",          "spec": "pydantic>=2.0.0",        "extra": None,         "baseline": True},
-    {"name": "pyprobables",   "import": "probables",         "spec": "pyprobables>=0.7.0,<0.8.0",      "extra": None,         "baseline": True},
-    {"name": "PyYAML",       "import": "yaml",              "spec": "PyYAML>=6.0,<7.0",        "extra": None,         "baseline": True},
-    {"name": "pyzipper",      "import": "pyzipper",          "spec": "pyzipper>=0.3.6,<0.4.0",        "extra": None,         "baseline": True},
-    {"name": "psutil",        "import": "psutil",            "spec": "psutil>=5.9.0",          "extra": None,         "baseline": True},
-    {"name": "pyahocorasick","import": "ahocorasick",        "spec": "pyahocorasick>=2.3.1,<2.4.0", "extra": None, "baseline": True},
-    {"name": "xxhash",        "import": "xxhash",             "spec": "xxhash>=3.6.0,<4.0.0",          "extra": None,         "baseline": True},
-    {"name": "lmdb",          "import": "lmdb",              "spec": "lmdb>=2.2.0,<3.0.0",            "extra": None,         "baseline": True},
+    {"name": "pydantic",      "import": "pydantic",          "spec": "pydantic>=2.0.0",        "extra": None,         "baseline": True},  # noqa: E501
+    {"name": "pyprobables",   "import": "probables",         "spec": "pyprobables>=0.7.0,<0.8.0",      "extra": None,         "baseline": True},  # noqa: E501
+    {"name": "PyYAML",       "import": "yaml",              "spec": "PyYAML>=6.0,<7.0",        "extra": None,         "baseline": True},  # noqa: E501
+    {"name": "pyzipper",      "import": "pyzipper",          "spec": "pyzipper>=0.3.6,<0.4.0",        "extra": None,         "baseline": True},  # noqa: E501
+    {"name": "psutil",        "import": "psutil",            "spec": "psutil>=5.9.0",          "extra": None,         "baseline": True},  # noqa: E501
+    {"name": "pyahocorasick","import": "ahocorasick",        "spec": "pyahocorasick>=2.3.1,<2.4.0", "extra": None, "baseline": True},  # noqa: E501
+    {"name": "xxhash",        "import": "xxhash",             "spec": "xxhash>=3.6.0,<4.0.0",          "extra": None,         "baseline": True},  # noqa: E501
+    {"name": "lmdb",          "import": "lmdb",              "spec": "lmdb>=2.2.0,<3.0.0",            "extra": None,         "baseline": True},  # noqa: E501
     # --- light ---
-    {"name": "fast-langdetect","import": "fast_langdetect",  "spec": "fast-langdetect>=1.0.0", "extra": "light",      "baseline": False},
-    {"name": "datasketch",     "import": "datasketch",        "spec": "datasketch>=1.6.0",      "extra": "light",      "baseline": False},
+    {"name": "fast-langdetect","import": "fast_langdetect",  "spec": "fast-langdetect>=1.0.0", "extra": "light",      "baseline": False},  # noqa: E501
+    {"name": "datasketch",     "import": "datasketch",        "spec": "datasketch>=1.6.0",      "extra": "light",      "baseline": False},  # noqa: E501
     # --- apple-accel ---
-    {"name": "mlx",           "import": "mlx.core",          "spec": "mlx>=0.16.0",            "extra": "apple-accel", "baseline": False},
-    {"name": "uvloop",        "import": "uvloop",             "spec": "uvloop>=0.21.0",         "extra": "apple-accel", "baseline": False},
+    {"name": "mlx",           "import": "mlx.core",          "spec": "mlx>=0.16.0",            "extra": "apple-accel", "baseline": False},  # noqa: E501
+    {"name": "uvloop",        "import": "uvloop",             "spec": "uvloop>=0.21.0",         "extra": "apple-accel", "baseline": False},  # noqa: E501
     # --- osint-html ---
-    {"name": "selectolax",    "import": "selectolax",        "spec": "selectolax>=0.3.21",     "extra": "osint-html",  "baseline": False},
-    {"name": "xxhash",        "import": "xxhash",             "spec": "xxhash>=3.4.0",          "extra": "osint-html",  "baseline": False},
-    {"name": "curl_cffi",     "import": "curl_cffi",          "spec": "curl_cffi>=0.7.0",       "extra": "osint-html",  "baseline": False},
+    {"name": "selectolax",    "import": "selectolax",        "spec": "selectolax>=0.3.21",     "extra": "osint-html",  "baseline": False},  # noqa: E501
+    {"name": "xxhash",        "import": "xxhash",             "spec": "xxhash>=3.4.0",          "extra": "osint-html",  "baseline": False},  # noqa: E501
+    {"name": "curl_cffi",     "import": "curl_cffi",          "spec": "curl_cffi>=0.7.0",       "extra": "osint-html",  "baseline": False},  # noqa: E501
     # h2 is in 'transport' extra (see below), not osint-html
     # --- graph-storage ---
-    {"name": "pyarrow",      "import": "pyarrow",            "spec": "pyarrow>=16.0.0",        "extra": "graph-storage","baseline": False},
-    {"name": "polars",        "import": "polars",             "spec": "polars>=1.0.0",          "extra": "graph-storage","baseline": False},
+    {"name": "pyarrow",      "import": "pyarrow",            "spec": "pyarrow>=16.0.0",        "extra": "graph-storage","baseline": False},  # noqa: E501
+    {"name": "polars",        "import": "polars",             "spec": "polars>=1.0.0",          "extra": "graph-storage","baseline": False},  # noqa: E501
     # --- torch ---
-    {"name": "torch",         "import": "torch",              "spec": "torch>=2.1.0",          "extra": "torch",       "baseline": False},
-    {"name": "torchvision",   "import": "torchvision",        "spec": "torchvision>=0.16.0",   "extra": "torch",       "baseline": False},
+    {"name": "torch",         "import": "torch",              "spec": "torch>=2.1.0",          "extra": "torch",       "baseline": False},  # noqa: E501
+    {"name": "torchvision",   "import": "torchvision",        "spec": "torchvision>=0.16.0",   "extra": "torch",       "baseline": False},  # noqa: E501
     # --- dev ---
-    {"name": "pytest",        "import": "pytest",             "spec": "pytest>=8.0.0",         "extra": "dev",         "baseline": False},
-    {"name": "pytest-xdist",  "import": "pytest_xdist",        "spec": "pytest-xdist>=3.5.0",   "extra": "dev",         "baseline": False},
-    {"name": "pytest-cov",   "import": "pytest_cov",           "spec": "pytest-cov>=4.1.0",    "extra": "dev",         "baseline": False},
-    {"name": "pluggy",        "import": "pluggy",              "spec": "pluggy>=1.0.0",         "extra": "dev",         "baseline": False},
-    {"name": "iniconfig",     "import": "iniconfig",           "spec": "iniconfig>=2.0.0",      "extra": "dev",         "baseline": False},
-    {"name": "pygments",      "import": "pygments",            "spec": "pygments>=2.15.0",      "extra": "dev",         "baseline": False},
-    {"name": "ruff",          "import": "ruff",               "spec": "ruff>=0.1.0",           "extra": "dev",         "baseline": False},
-    {"name": "mypy",          "import": "mypy",               "spec": "mypy>=1.9.0",           "extra": "dev",         "baseline": False},
+    {"name": "pytest",        "import": "pytest",             "spec": "pytest>=8.0.0",         "extra": "dev",         "baseline": False},  # noqa: E501
+    {"name": "pytest-xdist",  "import": "pytest_xdist",        "spec": "pytest-xdist>=3.5.0",   "extra": "dev",         "baseline": False},  # noqa: E501
+    {"name": "pytest-cov",   "import": "pytest_cov",           "spec": "pytest-cov>=4.1.0",    "extra": "dev",         "baseline": False},  # noqa: E501
+    {"name": "pluggy",        "import": "pluggy",              "spec": "pluggy>=1.0.0",         "extra": "dev",         "baseline": False},  # noqa: E501
+    {"name": "iniconfig",     "import": "iniconfig",           "spec": "iniconfig>=2.0.0",      "extra": "dev",         "baseline": False},  # noqa: E501
+    {"name": "pygments",      "import": "pygments",            "spec": "pygments>=2.15.0",      "extra": "dev",         "baseline": False},  # noqa: E501
+    {"name": "ruff",          "import": "ruff",               "spec": "ruff>=0.1.0",           "extra": "dev",         "baseline": False},  # noqa: E501
+    {"name": "mypy",          "import": "mypy",               "spec": "mypy>=1.9.0",           "extra": "dev",         "baseline": False},  # noqa: E501
     # --- acceleration ---
-    {"name": "rapidfuzz",     "import": "rapidfuzz",           "spec": "rapidfuzz>=3.0.0",      "extra": "acceleration","baseline": False},
+    {"name": "rapidfuzz",     "import": "rapidfuzz",           "spec": "rapidfuzz>=3.0.0",      "extra": "acceleration","baseline": False},  # noqa: E501
     # --- nlp ---
-    {"name": "fast-langdetect-nlp", "import": "fast_langdetect","spec": "fast-langdetect>=1.0.0", "extra": "nlp",        "baseline": False},
+    {"name": "fast-langdetect-nlp", "import": "fast_langdetect","spec": "fast-langdetect>=1.0.0", "extra": "nlp",        "baseline": False},  # noqa: E501
     # --- rerank ---
-    {"name": "flashrank",     "import": "flashrank",           "spec": "flashrank>=0.2.0",      "extra": "rerank",      "baseline": False},
+    {"name": "flashrank",     "import": "flashrank",           "spec": "flashrank>=0.2.0",      "extra": "rerank",      "baseline": False},  # noqa: E501
     # --- browser ---
-    {"name": "camoufox",      "import": "camoufox",            "spec": "camoufox[geoip]>=0.4.0","extra": "browser",     "baseline": False},
+    {"name": "camoufox",      "import": "camoufox",            "spec": "camoufox[geoip]>=0.4.0","extra": "browser",     "baseline": False},  # noqa: E501
     # --- security ---
-    {"name": "cryptography",  "import": "cryptography",        "spec": "cryptography>=48.0.0",  "extra": "security",    "baseline": False},
+    {"name": "cryptography",  "import": "cryptography",        "spec": "cryptography>=48.0.0",  "extra": "security",    "baseline": False},  # noqa: E501
     # --- transport ---
-    {"name": "h2",            "import": "h2",                  "spec": "h2>=4.1.0",             "extra": "transport",   "baseline": False},
+    {"name": "h2",            "import": "h2",                  "spec": "h2>=4.1.0",             "extra": "transport",   "baseline": False},  # noqa: E501
 ]
 
 EXTRA_GROUPS = {
@@ -303,7 +303,7 @@ def format_markdown(report: DoctorReport, verbose: bool = False) -> str:
             avail = "✅" if s.available else "❌"
             version_str = s.version or "—"
             hint_str = s.install_hint or "—"
-            lines.append(f"| `{s.name}` | `{s.import_name}` | {avail} | {s.category} | `{version_str}` | `{hint_str}` |")
+            lines.append(f"| `{s.name}` | `{s.import_name}` | {avail} | {s.category} | `{version_str}` | `{hint_str}` |")  # noqa: E501
     else:
         lines.append("| Package | Available | Category |")
         lines.append("|---------|-----------|----------|")

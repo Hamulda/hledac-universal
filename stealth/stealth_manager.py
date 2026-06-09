@@ -19,7 +19,7 @@ import logging
 import random
 import time
 from collections import OrderedDict
-from collections.abc import Callable, Coroutine
+from collections.abc import Coroutine
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from typing import Any
@@ -39,19 +39,21 @@ except ImportError:
 _IMPERSONATE_PROFILES = ["chrome120", "safari17_0"]
 
 # Import from universal (internal)
-from ..intelligence.stealth_crawler import HeaderConfig, HeaderSpoofer
-from ..layers.stealth_layer import BrowserProfile, FingerprintConfig, FingerprintRandomizer
-from ..utils.rate_limiter import RateLimitConfig, RateLimiter, RateLimitExceeded
-
 # P1-2: bounded HTTP/3 lane (LRU 512, sem 3, timeout 8s, RSS guard 5.5 GiB).
 # Absolute import path matches the project convention
 # (``from hledac.universal.transport.X import Y``); relative imports
 # would be reported as ``reportMissingImports`` by Pyright.
 from hledac.universal.transport.http3_lane import (  # type: ignore[import-not-found]  # noqa: E402
     _cache_get as _h3_cache_get,
+)
+from hledac.universal.transport.http3_lane import (  # noqa: E402
     fetch_http3_aioquic,
     record_h3_support,
 )
+
+from ..intelligence.stealth_crawler import HeaderConfig, HeaderSpoofer  # noqa: E402
+from ..layers.stealth_layer import BrowserProfile, FingerprintConfig, FingerprintRandomizer  # noqa: E402
+from ..utils.rate_limiter import RateLimitConfig, RateLimiter, RateLimitExceeded  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -388,14 +390,14 @@ class StealthManager:
             "cache_entries_max": MAX_ETAG_CACHE_ENTRIES,
             "estimated_cache_bytes": estimated_cache_bytes,
             "m1_memory_risk": m1_memory_risk,
-            "fallback_reason": "stealth_manager has independent session pool; not wired to FetchCoordinator transport seam",
+            "fallback_reason": "stealth_manager has independent session pool; not wired to FetchCoordinator transport seam",  # noqa: E501
             # Constants for verification
             "MAX_STEALTH_PROFILES": MAX_STEALTH_PROFILES,
             "MAX_CLIENTS_PER_PROFILE": MAX_CLIENTS_PER_PROFILE,
             "MAX_SESSION_POOL_SIZE": MAX_SESSION_POOL_SIZE,
             "MAX_ETAG_CACHE_ENTRIES": MAX_ETAG_CACHE_ENTRIES,
             # Sprint F206BE: Circuit breaker telemetry
-            "circuit_breaker_used": self._cb_available is True,
+            "circuit_breaker_used": self._cb_available is True,  # noqa: F601
             "circuit_breaker_blocks": self._cb_blocks,
             "circuit_breaker_fallbacks": self._cb_fallbacks,
             "last_circuit_breaker_reason": self._cb_last_reason,
@@ -473,7 +475,7 @@ class StealthManager:
         logger.info("✓ StealthManager closed")
 
 
-class SkipFetch(Exception):
+class SkipFetch(Exception):  # noqa: N818
     """
     Sprint F206BE: Raised when circuit breaker blocks a fetch.
 
@@ -727,7 +729,7 @@ class StealthSession:
             if headers:
                 stealth_headers.update(headers)
 
-            logger.debug(f"Stealth {method} request to {url} (attempt {attempt + 1}/{MAX_RETRY_ATTEMPTS}, max_bytes={max_bytes})")
+            logger.debug(f"Stealth {method} request to {url} (attempt {attempt + 1}/{MAX_RETRY_ATTEMPTS}, max_bytes={max_bytes})")  # noqa: E501
 
             try:
                 session = await self._get_session()
@@ -745,7 +747,7 @@ class StealthSession:
                     if self._is_transient_error(response.status) and attempt < MAX_RETRY_ATTEMPTS - 1:
                         retry_after = response.headers.get('Retry-After')
                         delay = self._calculate_retry_delay(attempt, retry_after)
-                        logger.warning(f"Transient error {response.status}, retrying in {delay:.2f}s (attempt {attempt + 1}/{MAX_RETRY_ATTEMPTS})")
+                        logger.warning(f"Transient error {response.status}, retrying in {delay:.2f}s (attempt {attempt + 1}/{MAX_RETRY_ATTEMPTS})")  # noqa: E501
                         await asyncio.sleep(delay)
                         continue
 
@@ -799,7 +801,7 @@ class StealthSession:
                 last_exception = e
                 if attempt < MAX_RETRY_ATTEMPTS - 1 and self._is_transient_error(0, e):
                     delay = self._calculate_retry_delay(attempt)
-                    logger.warning(f"Timeout error, retrying in {delay:.2f}s (attempt {attempt + 1}/{MAX_RETRY_ATTEMPTS})")
+                    logger.warning(f"Timeout error, retrying in {delay:.2f}s (attempt {attempt + 1}/{MAX_RETRY_ATTEMPTS})")  # noqa: E501
                     await asyncio.sleep(delay)
                     continue
                 logger.warning(f"Request timeout: {url}")
@@ -810,7 +812,7 @@ class StealthSession:
                 last_exception = e
                 if attempt < MAX_RETRY_ATTEMPTS - 1 and self._is_transient_error(0, e):
                     delay = self._calculate_retry_delay(attempt)
-                    logger.warning(f"Transient error {e}, retrying in {delay:.2f}s (attempt {attempt + 1}/{MAX_RETRY_ATTEMPTS})")
+                    logger.warning(f"Transient error {e}, retrying in {delay:.2f}s (attempt {attempt + 1}/{MAX_RETRY_ATTEMPTS})")  # noqa: E501
                     await asyncio.sleep(delay)
                     continue
                 logger.warning(f"Request failed: {e}")

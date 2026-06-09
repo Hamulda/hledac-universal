@@ -17,6 +17,7 @@ from dataclasses import dataclass, field
 from aiohttp import ClientSession
 
 from utils.async_helpers import safe_gather_dropin
+
 logger = logging.getLogger(__name__)
 
 # Fediverse constants
@@ -477,6 +478,7 @@ class FediverseAdapter:
                     # Circuit-breaker success — best effort, never raises.
                     try:
                         from urllib.parse import urlparse as _urlparse
+
                         from hledac.universal.transport.circuit_breaker import (
                             get_breaker as _get_breaker,
                         )
@@ -488,6 +490,7 @@ class FediverseAdapter:
                     logger.debug(f"Fediverse rate-limited: {instance} (query={query!r})")
                     try:
                         from urllib.parse import urlparse as _urlparse
+
                         from hledac.universal.transport.circuit_breaker import (
                             get_breaker as _get_breaker,
                         )

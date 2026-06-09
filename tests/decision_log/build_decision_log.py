@@ -1,4 +1,4 @@
-"""Stub pro /Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/decision_log/__pycache__/build_decision_log.cpython-312.pyc - generováno z bytecode"""
+"""Stub pro /Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tests/decision_log/__pycache__/build_decision_log.cpython-312.pyc - generováno z bytecode"""  # noqa: E501
 
 
 # import pathlib

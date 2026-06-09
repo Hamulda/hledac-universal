@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+
 from hledac.universal.knowledge.duckdb_store import DuckDBShadowStore
 from hledac.universal.patterns.pattern_matcher import PatternHit
 from hledac.universal.pipeline.live_feed_pipeline import (
@@ -50,8 +51,8 @@ def _make_canned_entry() -> dict[str, Any]:
     return {
         "entry_url": "https://example.com/feed/entry-cve-2026-1234",
         "title": "CVE-2026-1234: Remote Code Execution in ExampleServer",
-        "summary": "Multiple critical CVEs disclosed affecting ExampleServer v1.x through v2.x. Remote attackers can execute arbitrary code via crafted requests.",
-        "rich_content": "Multiple critical CVEs disclosed affecting ExampleServer v1.x through v2.x. Remote attackers can execute arbitrary code via crafted requests. patch is available.",
+        "summary": "Multiple critical CVEs disclosed affecting ExampleServer v1.x through v2.x. Remote attackers can execute arbitrary code via crafted requests.",  # noqa: E501
+        "rich_content": "Multiple critical CVEs disclosed affecting ExampleServer v1.x through v2.x. Remote attackers can execute arbitrary code via crafted requests. patch is available.",  # noqa: E501
         "entry_author": "disclosure-team",
         "published": "2026-04-21T10:00:00Z",
         "feed_url": "https://example.com/feed",
@@ -468,7 +469,7 @@ def _make_canned_public_entry() -> dict[str, Any]:
     return {
         "url": "https://example.com/public/advisory-cve-2026-5678",
         "title": "CVE-2026-5678: SQL Injection in ExampleCorp API",
-        "snippet": "A critical SQL injection vulnerability in ExampleCorp API v3.x allows remote attackers to execute arbitrary SQL commands via crafted JSON payloads.",
+        "snippet": "A critical SQL injection vulnerability in ExampleCorp API v3.x allows remote attackers to execute arbitrary SQL commands via crafted JSON payloads.",  # noqa: E501
         "source": "test_public",
         "published": "2026-04-21T12:00:00Z",
         "fetched_ts": 1705654800.0,
@@ -1155,6 +1156,7 @@ async def test_partial_export_survives_early_windup(
     partial artifact written at windup entry remains on disk.
     """
     import orjson
+
     from hledac.universal.export.sprint_exporter import export_partial_sprint
     from hledac.universal.paths import get_sprint_json_report_path
     from hledac.universal.runtime.sprint_lifecycle import SprintLifecycleManager
@@ -1255,6 +1257,7 @@ async def test_final_export_still_replaces_partial_as_terminal_artifact(
     - partial and canonical are distinct files with distinct content
     """
     import orjson
+
     from hledac.universal.export.sprint_exporter import export_partial_sprint, export_sprint
     from hledac.universal.paths import get_sprint_json_report_path
     from hledac.universal.project_types import ExportHandoff

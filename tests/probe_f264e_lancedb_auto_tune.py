@@ -24,7 +24,6 @@ from __future__ import annotations
 import asyncio
 import importlib
 import json
-import os
 import sys
 import time
 from pathlib import Path
@@ -33,7 +32,6 @@ from unittest.mock import MagicMock
 
 import numpy as np
 import pytest
-
 
 # ─────────────────────────────────────────────────────────────────────
 # Module under test
@@ -81,13 +79,13 @@ def tuner(clean_env, tmp_path):
 def _build_tuner(env, tmp_path: Path, **overrides):
     """Build tuner with optional overrides for keys."""
     from knowledge.lancedb_auto_tuner import IVFPQAutoTuner
-    defaults: dict[str, Any] = dict(
-        table_name="test_table",
-        state_path=tmp_path / "tune_state.json",
-        num_sub_vectors=16,
-        vector_column="vector",
-        key_column="id",
-    )
+    defaults: dict[str, Any] = {
+        "table_name": "test_table",
+        "state_path": tmp_path / "tune_state.json",
+        "num_sub_vectors": 16,
+        "vector_column": "vector",
+        "key_column": "id",
+    }
     defaults.update(overrides)
     return IVFPQAutoTuner(**defaults)
 
@@ -203,7 +201,7 @@ class TestTuneStatePersistence:
         r = TuneResult(success=True, triggered=True, old_partitions=64,
                        new_partitions=96, recall=0.92, avg_search_ms=12.5,
                        rows=1000)
-        with pytest.raises(Exception):  # FrozenInstanceError or AttributeError
+        with pytest.raises(Exception):  # FrozenInstanceError or AttributeError  # noqa: B017
             r.new_partitions = 128  # type: ignore[misc]
 
     def test_tuner_load_state_missing_file(self, clean_env, tmp_path):
@@ -608,7 +606,6 @@ class TestTuneIfDueSync:
 
     def test_first_ever_tune_above_threshold(self, auto_tune_on, tmp_path):
         """First tune: threshold met + never tuned + enough rows → triggered."""
-        from knowledge.lancedb_auto_tuner import TuneState
         t = _build_tuner(auto_tune_on, tmp_path)
         # ANN excludes self → matches brute → recall=1.0 → no growth needed
         table = _make_mock_table(row_count=2000, ann_includes_self=False)
@@ -649,7 +646,6 @@ class TestTuneIfDueSync:
 
     def test_state_persisted_after_tune(self, auto_tune_on, tmp_path):
         """After successful tune, state file reflects new state."""
-        from knowledge.lancedb_auto_tuner import TuneState
         t = _build_tuner(auto_tune_on, tmp_path)
         table = _make_mock_table(row_count=2000)
         r = t.tune_if_due(table, current_num_partitions=64, inserts_delta=5_000)

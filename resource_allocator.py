@@ -46,7 +46,7 @@ def _get_psutil():
 # MAX_RAM_GB mirrors M1_FETCH_SOFT_CEILING_GB — do not change independently.
 # SOFT_PREEMPT_RAM_GIB is intentionally SEPARATE from uma_budget.UMA_EMERGENCY_GIB
 # because it governs request-level preemption (not system-level emergency).
-from hledac.universal.utils.uma_budget import M1_FETCH_SOFT_CEILING_GB
+from hledac.universal.utils.uma_budget import M1_FETCH_SOFT_CEILING_GB  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -76,7 +76,7 @@ class ResourceBudget:
     context: Any = None
 
 
-class ResourceExhausted(Exception):
+class ResourceExhausted(Exception):  # noqa: N818
     """Raised when resources cannot be allocated."""
     pass
 
@@ -131,12 +131,12 @@ class ResourceAllocator:
         try:
             import mlx.core as mx
             # Build feature matrix and target vector
-            X = mx.array([f for f, _ in self.history])
+            X = mx.array([f for f, _ in self.history])  # noqa: N806
             y = mx.array([a for _, a in self.history])
 
             # Add bias term (column of ones)
             ones = mx.ones((X.shape[0], 1))
-            X = mx.concatenate([X, ones], axis=1)
+            X = mx.concatenate([X, ones], axis=1)  # noqa: N806
 
             # Solve least squares: X @ coeffs = y
             self.coeffs, _, _, _ = mx.linalg.lstsq(X, y, rcond=None)
@@ -304,7 +304,7 @@ def get_recommended_concurrency() -> dict[str, int]:
     """
     level = get_memory_pressure_level()
     if level == "critical":
-        import gc; gc.collect()
+        import gc; gc.collect()  # noqa: E702
     return {
         "normal":   {"fetch": 20, "parse_workers": 4, "ml_jobs": 1, "browser": 1},
         "warn":     {"fetch": 8,  "parse_workers": 2, "ml_jobs": 0, "browser": 0},
@@ -314,8 +314,8 @@ def get_recommended_concurrency() -> dict[str, int]:
 
 # ── Sprint 8VG-C: Adaptive Concurrency ─────────────────────────────────────────
 
-import asyncio
-import platform
+import asyncio  # noqa: E402
+import platform  # noqa: E402
 
 _CONCURRENCY_FLOOR = 1
 _CONCURRENCY_CEILING = 3  # M1 8GB hard limit
@@ -446,7 +446,7 @@ def clear_mlx_cache_if_needed(threshold_mb: float = 500.0) -> bool:
 # ── P3: Dynamic Resource Management ─────────────────────────────────────────
 
 # P19: FETCH_SEMAPHORE moved to utils.concurrency to break circular import
-from hledac.universal.utils.concurrency import (
+from hledac.universal.utils.concurrency import (  # noqa: E402
     FETCH_SEMAPHORE,
     adjust_fetch_workers,
 )

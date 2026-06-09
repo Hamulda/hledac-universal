@@ -32,8 +32,6 @@ from __future__ import annotations
 
 from dataclasses import fields
 
-import pytest
-
 
 class TestF26X2SingleClass:
     """F26X2: Only one DeepResearchConfig class exists across the package."""
@@ -57,7 +55,6 @@ class TestF26X2SingleClass:
 
     def test_no_zombie_class_survives(self):
         """config/__init__.py has no local DeepResearchConfig class body."""
-        import hledac.universal.config as cfg_mod
 
         # If the class is defined LOCALLY in config/__init__.py, its
         # __module__ would be 'hledac.universal.config'.

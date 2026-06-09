@@ -10,7 +10,7 @@ _warnings.warn(
     stacklevel=2,
 )
 
-from legacy.atomic_storage import (
+from legacy.atomic_storage import (  # noqa: E402
     ZSTD_AVAILABLE,
     AtomicJSONKnowledgeGraph,
     Claim,

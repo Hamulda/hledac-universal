@@ -608,7 +608,7 @@ async def main() -> int:
     ]
 
     if swap_appeared:
-        notes.append(f"⚠️  Swap delta: {swap_delta_mb:+.1f} MB (baseline={swap_baseline_mb:.1f} MB, peak={swap_peak_mb:.1f} MB)")
+        notes.append(f"⚠️  Swap delta: {swap_delta_mb:+.1f} MB (baseline={swap_baseline_mb:.1f} MB, peak={swap_peak_mb:.1f} MB)")  # noqa: E501
     if sigint_warnings:
         notes.append("⚠️  SIGINT cleanup warnings present — resource leak possible")
 

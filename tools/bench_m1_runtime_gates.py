@@ -258,9 +258,9 @@ def bench_body_limiter_throughput() -> dict[str, Any]:
     """
     from transport.body_limiter import read_body_with_cap
 
-    TOTAL_BYTES = 100 * 1024  # 100 KB
-    CHUNK_SIZE = 1024
-    N_CHUNKS = TOTAL_BYTES // CHUNK_SIZE
+    TOTAL_BYTES = 100 * 1024  # 100 KB  # noqa: N806
+    CHUNK_SIZE = 1024  # noqa: N806
+    N_CHUNKS = TOTAL_BYTES // CHUNK_SIZE  # noqa: N806
 
     async def chunk_stream() -> AsyncIterator[bytes]:
         for _ in range(N_CHUNKS):
@@ -319,7 +319,7 @@ def bench_html_parser_characterization() -> dict[str, Any]:
     characterization can be used for migration validation.
     """
     # Fixed HTML fixture — realistic mixed content
-    HTML_FIXTURE = """<!DOCTYPE html>
+    HTML_FIXTURE = """<!DOCTYPE html>  # noqa: N806
 <html lang="en">
 <head><title>Test Page — Example Domain</title></head>
 <body>
@@ -388,7 +388,7 @@ def bench_msgspec_dto_serialization() -> dict[str, Any]:
         payload_text: str
         timestamp: str
 
-    FIXTURE_DATA = {
+    FIXTURE_DATA = {  # noqa: N806
         "finding_id": "test-finding-00001",
         "source_type": "test_source",
         "query": "example domain investigation",

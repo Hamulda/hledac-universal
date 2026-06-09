@@ -60,7 +60,7 @@ class FakePQBackend:
         return True
 
     def pq_status(self):
-        class _s:
+        class _s:  # noqa: N801
             availability = PQAvailability.AVAILABLE
             backend_name = "test"
             error_message = None
@@ -94,7 +94,7 @@ def test_stix_bundle_pq_signing_path_called():
     with patch("export.stix_exporter._get_pq_backend_async") as mock_get:
         mock_get.return_value = asyncio.get_event_loop().run_until_complete(
             asyncio.gather(
-                asyncio.coroutine(lambda: (FakePQBackend(), type("S", (), {"availability": PQAvailability.AVAILABLE})()))(),
+                asyncio.coroutine(lambda: (FakePQBackend(), type("S", (), {"availability": PQAvailability.AVAILABLE})()))(),  # noqa: E501
                 return_exceptions=True,
             )
         )[0]

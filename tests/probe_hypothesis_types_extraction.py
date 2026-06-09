@@ -26,6 +26,11 @@ class TestBackwardCompat:
         # extra methods). All other DTOs are re-exported from
         # :mod:`brain.hypothesis`.
         from brain.research_hypothesis_engine import (  # noqa: F401
+            CO_OCCURRENCE_FP16,
+            MAX_CAUSAL_ENTITIES,
+            MAX_CAUSAL_FINDINGS,
+            MAX_CAUSAL_HYPOTHESES,
+            MAX_CO_OCCURRENCE_MATRIX_SIZE,
             AdversarialReport,
             AnomalySignal,
             CausalEntity,
@@ -41,11 +46,6 @@ class TestBackwardCompat:
             HypothesisStatus,
             HypothesisType,
             InferenceEngineProtocol,
-            MAX_CAUSAL_ENTITIES,
-            MAX_CAUSAL_FINDINGS,
-            MAX_CAUSAL_HYPOTHESES,
-            MAX_CO_OCCURRENCE_MATRIX_SIZE,
-            CO_OCCURRENCE_FP16,
             SourceCredibility,
             TemporalSequence,
             TestDesign,
@@ -55,9 +55,9 @@ class TestBackwardCompat:
 
     def test_new_package_path_works(self) -> None:
         from brain.hypothesis import (  # noqa: F401
+            MAX_CAUSAL_ENTITIES,
             AdversarialReport,
             Evidence,
-            MAX_CAUSAL_ENTITIES,
         )
 
     def test_internal_types_module_works(self) -> None:
@@ -113,7 +113,7 @@ class TestHypothesisBehaviour:
             evidence_id="e1",
             source="unit",
             content="c",
-            timestamp=datetime.now(),
+            timestamp=datetime.now(),  # noqa: DTZ005
             reliability=0.9,
             relevance=0.8,
         )

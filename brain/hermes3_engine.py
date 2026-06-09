@@ -23,10 +23,10 @@ import json
 import logging
 import os
 import time
-from pathlib import Path
 from collections import OrderedDict
 from collections.abc import AsyncIterator, Callable, Iterator
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, TypeVar
 
 from pydantic import BaseModel, Field
@@ -53,9 +53,10 @@ try:
 except ImportError:
     sanitize_prompt_injection_patterns = None  # type: ignore
 
-import re as _re_pi  # dedikovaný alias pro injection patterns
+import re as _re_pi  # dedikovaný alias pro injection patterns  # noqa: E402
 
-from utils.async_helpers import safe_gather_dropin
+from utils.async_helpers import safe_gather_dropin  # noqa: E402
+
 _INJECTION_PATTERNS: list = [
     _re_pi.compile(r"ignore\s+(?:all\s+)?previous\s+(?:instructions?|commands?)", _re_pi.I),
     _re_pi.compile(r"(?:system|prompt)\s*:\s*you\s+are\s+(?:now\s+)?a", _re_pi.I),
@@ -96,7 +97,7 @@ logger = logging.getLogger(__name__)  # declare early for except block
 try:
     import outlines
     # outlines 1.3.0: Generator class, not generate module
-    _outlines_Generator = outlines.Generator
+    _outlines_Generator = outlines.Generator  # noqa: N816
     OUTLINES_AVAILABLE = True
 except (ImportError, AttributeError):
     OUTLINES_AVAILABLE = False
@@ -191,7 +192,7 @@ def _safe_mlx_eval_and_clear_cache(reason: str) -> dict:
                 _mx.clear_cache()
                 result["cleared"] = True
         except Exception as _e:
-            result["error"] = f"{result['error']};clear_cache_failed:{_e}" if result["error"] else f"clear_cache_failed:{_e}"
+            result["error"] = f"{result['error']};clear_cache_failed:{_e}" if result["error"] else f"clear_cache_failed:{_e}"  # noqa: E501
     except Exception as _e:
         result["error"] = f"import_failed:{_e}"
     return result
@@ -201,7 +202,7 @@ try:
     from ..utils.mlx_cache import MLX_AVAILABLE as _MLX_AVAILABLE_GLOBAL
 except ImportError:
     try:
-        import mlx.core as mx
+        import mlx.core as mx  # noqa: F401  # mlx.core
         _MLX_AVAILABLE_GLOBAL = True
     except ImportError:
         _MLX_AVAILABLE_GLOBAL = False
@@ -1337,7 +1338,7 @@ class Hermes3Engine:
                         "[P0-3] worker submit failed, falling back to executor: %s",
                         _e,
                     )
-                except (asyncio.TimeoutError, TimeoutError):
+                except TimeoutError:
                     raise
 
         # Fallback: legacy ThreadPoolExecutor + wait_for path
@@ -1489,11 +1490,10 @@ class Hermes3Engine:
             # Sprint F259: PromptBandit arm selection in generate() — pick strategy before inference
             bandit = self._get_prompt_bandit()
             arm_used = ""
-            modifier = ""
             if bandit is not None:
                 try:
                     arm_used = bandit.select_arm()
-                    modifier = bandit.get_prompt_modifier(arm_used)
+                    bandit.get_prompt_modifier(arm_used)
                     self._last_bandit_arm = arm_used
                     logger.debug(f"[GENERATE] Bandit arm: {arm_used}")
                 except Exception as e:
@@ -1558,7 +1558,6 @@ class Hermes3Engine:
             # Sprint F259: Update bandit reward after successful generation
             if bandit is not None and arm_used and response:
                 try:
-                    import math
                     # Reward = response_length_normalized × 0.8 (baseline confidence)
                     response_len_norm = min(1.0, len(response) / 4000.0)
                     reward = response_len_norm * 0.8
@@ -1831,7 +1830,7 @@ What should be the next action?"""
     _REPORT_SYSTEM_PROMPT = (
         "Jsi OSINT research agent. Analyzuj poskytnuté podklady a vytvoř strukturovaný report v češtině. "
         "Na konci své odpovědi VŽDY vlož blok <IOC_JSON> s extrahovanými entitami ve formátu JSON. "
-        "Formát: <IOC_JSON>{\"iocs\": [\"ioc1\", \"ioc2\", ...], \"entities\": [\"entity1\", \"entity2\", ...]}</IOC_JSON>"
+        "Formát: <IOC_JSON>{\"iocs\": [\"ioc1\", \"ioc2\", ...], \"entities\": [\"entity1\", \"entity2\", ...]}</IOC_JSON>"  # noqa: E501
     )
 
     async def generate_report(self, query: str, context: list[str]) -> str:
@@ -2139,7 +2138,7 @@ Report piš v češtině, buď konkrétní a stručný.{modifier}"""
         history = context.get("history", [])
         data = context.get("data", [])
 
-        system_msg = """You are a research synthesis expert. Create a comprehensive, well-structured answer based on the collected research data.
+        system_msg = """You are a research synthesis expert. Create a comprehensive, well-structured answer based on the collected research data.  # noqa: E501
 
 Your answer should:
 - Be thorough and detailed
@@ -2363,7 +2362,7 @@ Do not include any other text. Output valid JSON only."""
         class HypothesisResult(GenericResult):
             hypothesis: str = Field(description="Hypothesis text")
 
-        _MODEL_REGISTRY = {
+        _MODEL_REGISTRY = {  # noqa: N806
             'FetchResult': FetchResult,
             'DeepReadResult': DeepReadResult,
             'AnalyseResult': AnalyseResult,
@@ -2633,7 +2632,7 @@ Do not include any other text. Output valid JSON only."""
 
             # Original cache size
             leaves = mx.tree_flatten(self._prompt_cache)
-            total_bytes = sum(l.nbytes if hasattr(l, 'nbytes') else sys.getsizeof(l) for l in leaves)
+            total_bytes = sum(l.nbytes if hasattr(l, 'nbytes') else sys.getsizeof(l) for l in leaves)  # noqa: E741
             return total_bytes / (1024 * 1024)
         except Exception:
             return 0.0

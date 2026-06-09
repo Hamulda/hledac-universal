@@ -284,7 +284,7 @@ class CTLogClient:
         if not san_names:
             return []
 
-        MAX = 50
+        MAX = 50  # noqa: N806
         findings = []
         ts = ct_result.get("last_cert") or time.time()
         issuer = ct_result.get("issuers", [None])[0] if ct_result.get("issuers") else ""

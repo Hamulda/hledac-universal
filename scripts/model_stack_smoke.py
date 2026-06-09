@@ -151,7 +151,7 @@ def check_embeddings() -> dict:
                     elapsed = time.monotonic() - t0
                     _expected_shapes = {(1, 256), (1, 384)}
                     if vec.shape not in _expected_shapes:
-                        notes.append(f"FAIL: unexpected embedding shape {vec.shape} (expected one of {_expected_shapes})")
+                        notes.append(f"FAIL: unexpected embedding shape {vec.shape} (expected one of {_expected_shapes})")  # noqa: E501
                         _smoke_failed = True
                     else:
                         notes.append(f"OK: embedding shape {vec.shape} time={elapsed*1000:.1f}ms")

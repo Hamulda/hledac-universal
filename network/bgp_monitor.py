@@ -1,3 +1,4 @@
+from typing import TYPE_CHECKING
 #!/usr/bin/env python3
 
 """
@@ -30,6 +31,10 @@ import re
 import time
 from collections import deque
 from collections.abc import Callable
+
+if TYPE_CHECKING:
+    from hledac.universal.knowledge.duckdb_store import CanonicalFinding  # noqa: F401
+
 
 logger = logging.getLogger(__name__)
 
@@ -364,7 +369,7 @@ async def monitor_bgp_as_findings(
 
     timeout: int = 30,
 
-) -> list:
+) -> list | None:
 
     """
 
@@ -396,9 +401,6 @@ async def monitor_bgp_as_findings(
 
         return []
 
-
-
-    from hledac.universal.knowledge.duckdb_store import CanonicalFinding
 
 
 
@@ -528,7 +530,7 @@ _RIPE_WHOIS_URL = "https://stat.ripe.net/data/whois/data.json"
 _RIPE_TIMEOUT = 30.0  # seconds per IP
 
 
-async def enrich_ip_as_finding(ip: str) -> list[CanonicalFinding]:
+async def enrich_ip_as_finding(ip: str) -> list[CanonicalFinding] | None:
     """
     F234: Enrich a single IP with live BGP data from RIPE Stat API.
 
@@ -556,8 +558,8 @@ async def enrich_ip_as_finding(ip: str) -> list[CanonicalFinding]:
     # Lazy imports for circuit breaker + IPFS session pool reuse
     from hledac.universal.network.ipfs_client import (
         _get_ipfs_session,
-        _ipfs_checked_get,
         _host_from_url,
+        _ipfs_checked_get,
     )
     from hledac.universal.transport.circuit_breaker import get_breaker
 
@@ -617,9 +619,9 @@ async def enrich_ip_as_finding(ip: str) -> list[CanonicalFinding]:
         except Exception:
             pass  # fail-soft: whois is supplementary
 
-            from hledac.universal.knowledge.duckdb_store import CanonicalFinding
             import hashlib
             import time as _time_module
+
 
             ts = _time_module.monotonic()
 

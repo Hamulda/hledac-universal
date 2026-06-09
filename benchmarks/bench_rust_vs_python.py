@@ -30,7 +30,7 @@ from __future__ import annotations
 import statistics
 import sys
 import time
-from typing import Callable
+from collections.abc import Callable
 
 # ---------------------------------------------------------------------------
 # Constants — bounded inputs, deterministic seed for reproducibility

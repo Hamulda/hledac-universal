@@ -5,8 +5,8 @@ One command to run live validation with absolute paths.
 Default: dry-run only (prints commands without executing).
 
 Usage:
-    python tools/run_live_validation_pack.py --base-dir /path/to/base --tag f209b --query "domain:example.com" --profile active300
-    python tools/run_live_validation_pack.py --base-dir /path/to/base --tag f209b --query "domain:example.com" --profile active300 --execute
+    python tools/run_live_validation_pack.py --base-dir /path/to/base --tag f209b --query "domain:example.com" --profile active300  # noqa: E501
+    python tools/run_live_validation_pack.py --base-dir /path/to/base --tag f209b --query "domain:example.com" --profile active300 --execute  # noqa: E501
 """
 
 import argparse

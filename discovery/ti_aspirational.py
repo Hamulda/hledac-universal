@@ -16,27 +16,27 @@ import logging
 logger = logging.getLogger(__name__)
 
 
-class MispAdapterNotImplemented(Exception):
+class MispAdapterNotImplemented(Exception):  # noqa: N818
     """MISP adapter is aspirational — not yet implemented."""
     pass
 
 
-class AlienVaultOTXAdapterNotImplemented(Exception):
+class AlienVaultOTXAdapterNotImplemented(Exception):  # noqa: N818
     """AlienVault OTX adapter is aspirational — not yet implemented."""
     pass
 
 
-class MITREATTACKAdapterNotImplemented(Exception):
+class MITREATTACKAdapterNotImplemented(Exception):  # noqa: N818
     """MITRE ATT&CK adapter is aspirational — not yet implemented."""
     pass
 
 
-class IBMXForceAdapterNotImplemented(Exception):
+class IBMXForceAdapterNotImplemented(Exception):  # noqa: N818
     """IBM X-Force adapter is aspirational — not yet implemented."""
     pass
 
 
-class PulseDiveAdapterNotImplemented(Exception):
+class PulseDiveAdapterNotImplemented(Exception):  # noqa: N818
     """PulseDive adapter is aspirational — not yet implemented."""
     pass
 

@@ -22,6 +22,7 @@ from __future__ import annotations
 import os
 
 from utils.async_helpers import safe_gather_dropin
+
 # ---------------------------------------------------------------------------
 # Env gate
 # ---------------------------------------------------------------------------
@@ -114,7 +115,7 @@ def __getattr__(name: str):
     elif name.startswith("CORE") or name.startswith("COREResult"):
         mod = _lazy_import("core")
         return getattr(mod, name)
-    elif name.startswith("Unpaywall") or name.startswith("OAPaper") or name == "resolve_doi" or name == "resolve_multiple_dois" or name == "find_free_pdf":
+    elif name.startswith("Unpaywall") or name.startswith("OAPaper") or name == "resolve_doi" or name == "resolve_multiple_dois" or name == "find_free_pdf":  # noqa: E501
         mod = _lazy_import("unpaywall")
         return getattr(mod, name)
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
@@ -159,6 +160,7 @@ async def search_all_academic(
         return {}
 
     import asyncio
+
     from hledac.universal.knowledge.duckdb_store import CanonicalFinding
 
     results: dict[str, list[CanonicalFinding]] = {}
@@ -187,7 +189,7 @@ async def search_all_academic(
     # S2ORC
     try:
         s2orc_mod = _lazy_import("s2orc")
-        tasks.append(run_adapter("s2orc", s2orc_mod.search_s2orc, max_results=max_results_per_source, include_citations=True))
+        tasks.append(run_adapter("s2orc", s2orc_mod.search_s2orc, max_results=max_results_per_source, include_citations=True))  # noqa: E501
     except Exception:
         pass
 

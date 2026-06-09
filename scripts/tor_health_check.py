@@ -18,7 +18,7 @@ CHECK_URL = "https://check.torproject.org"
 
 def main() -> int:
     try:
-        import curl_cffi
+        import curl_cffi  # noqa: F401  # curl_cffi
     except ImportError:
         print("[TOR-HEALTH] FAIL: curl_cffi not installed (pip install curl_cffi)")
         return 2

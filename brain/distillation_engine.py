@@ -34,6 +34,7 @@ from typing import Any
 import numpy as np
 
 from utils.async_helpers import safe_gather_dropin
+
 logger = logging.getLogger(__name__)
 
 # MLX imports
@@ -330,7 +331,7 @@ class DistillationEngine:
 
                 await asyncio.to_thread(
                     lambda: cursor.execute(
-                        "SELECT query, chain, score, metadata, timestamp FROM examples ORDER BY timestamp DESC LIMIT 10000"
+                        "SELECT query, chain, score, metadata, timestamp FROM examples ORDER BY timestamp DESC LIMIT 10000"  # noqa: E501
                     )
                 )
                 rows = await asyncio.to_thread(lambda: cursor.fetchall())
@@ -391,11 +392,11 @@ class DistillationEngine:
                 ]
                 embeddings = await safe_gather_dropin(*embedding_tasks, label="distillation_engine:391")
 
-            X_list = embeddings
+            X_list = embeddings  # noqa: N806
             y_list = [example.score for example in examples]
 
             # Convert to MLX arrays
-            X = mx.array(np.array(X_list))
+            X = mx.array(np.array(X_list))  # noqa: N806
             y = mx.array(np.array(y_list).reshape(-1, 1))
 
             # Simple training loop with SGD

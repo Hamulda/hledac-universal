@@ -70,21 +70,21 @@ def is_dht_production_ready() -> bool:
 # END DHT PROMOTION GATE
 # =============================================================================
 
-import asyncio
-import hashlib
-import logging
-import os
-import random
-import socket
-import time
-import uuid
-from collections import OrderedDict
-from typing import Any
+import asyncio  # noqa: E402
+import hashlib  # noqa: E402
+import logging  # noqa: E402
+import os  # noqa: E402
+import random  # noqa: E402
+import socket  # noqa: E402
+import time  # noqa: E402
+import uuid  # noqa: E402
+from collections import OrderedDict  # noqa: E402
+from typing import Any  # noqa: E402
 
-from hledac.universal.core.resource_governor import ResourceGovernor
-from hledac.universal.dht.local_graph import LocalGraphStore
+from hledac.universal.core.resource_governor import ResourceGovernor  # noqa: E402
+from hledac.universal.dht.local_graph import LocalGraphStore  # noqa: E402
+from utils.async_helpers import safe_gather_dropin, safe_gather_fire_and_forget  # noqa: E402
 
-from utils.async_helpers import safe_gather_dropin, safe_gather_fire_and_forget
 logger = logging.getLogger(__name__)
 
 MAX_ITEM_BYTES = 256 * 1024  # 256KB hard cap
@@ -122,7 +122,7 @@ MAX_PENDING_RPC_TTL_S = 60.0
 #   FIND_NODE_R   {"y":"r","r":{"id":"<20-byte-node-id>","nodes":"<compact-node-info>"}}
 #   GET_PEERS     {"y":"q","q":"get_peers","a":{"id":"<20-byte-node-id>","info_hash":"<20-byte>"}}
 #   GET_PEERS_R   {"y":"r","r":{"id":"<20-byte-node-id>","token":"<str>","nodes":"<compact>","values":[<ip,port>]}}
-#   ANNOUNCE_PEER {"y":"q","q":"announce_peer","a":{"id":"<20-byte-node-id>","info_hash":"<20-byte>","port":6881,"token":"<str>"}}
+#   ANNOUNCE_PEER {"y":"q","q":"announce_peer","a":{"id":"<20-byte-node-id>","info_hash":"<20-byte>","port":6881,"token":"<str>"}}  # noqa: E501
 #
 # Bootstrap nodes: router.bittorrent.com:6881, dht.transmissionbt.com:6881,
 #                  router.utorrent.com:6881, dht.libtorrent.org:25401
@@ -292,7 +292,7 @@ class BEP5UDPProtocol(asyncio.DatagramProtocol):
                 self._transport.sendto(data, addr)
             async with asyncio.timeout(timeout):
                 return await fut
-        except asyncio.TimeoutError:
+        except TimeoutError:
             return None
         finally:
             self._pending.pop(tid, None)
@@ -441,7 +441,7 @@ async def crawl_dht_for_keyword(
     Vrací: [{"info_hash": str, "name": str, "files": list,
              "size_bytes": int, "peers": int, "source": "dht"}]
     """
-    MAX_CONCURRENT_QUERIES = 50
+    MAX_CONCURRENT_QUERIES = 50  # noqa: N806
     results: list[dict] = []
     start_time = time.monotonic()
 
@@ -471,7 +471,7 @@ async def crawl_dht_for_keyword(
                     timeout=2.0,
                 )
                 logger.debug(f"[DHT] Bootstrap peer {host}:{port} reachable")
-            except (OSError, asyncio.TimeoutError) as e:
+            except (TimeoutError, OSError) as e:
                 logger.debug(f"[DHT] Bootstrap peer {host}:{port} unreachable: {e}")
             finally:
                 if sock:
@@ -1022,7 +1022,7 @@ class KademliaNode:
                 fut = asyncio.get_running_loop().create_future()
                 self._pending_rpcs[rpc_id] = fut
                 self._pending_rpcs_created[rpc_id] = time.time()
-                send_tasks.append(asyncio.create_task(self._send_find_value(pid, key, rpc_id), name=f"kademlia:send_find_value:{pid[:8]}"))
+                send_tasks.append(asyncio.create_task(self._send_find_value(pid, key, rpc_id), name=f"kademlia:send_find_value:{pid[:8]}"))  # noqa: E501
 
             if not rpc_ids:
                 break
@@ -1169,7 +1169,7 @@ class KademliaNode:
                 if pid:
                     ok = await self._ping(pid)
                     if not ok:
-                        self.routing_table[bucket_idx] = [p for p in self.routing_table.get(bucket_idx, []) if p.get("id") != pid]
+                        self.routing_table[bucket_idx] = [p for p in self.routing_table.get(bucket_idx, []) if p.get("id") != pid]  # noqa: E501
 
     # -------------------------------------------------------------------------
     # P10: Real BEP-9/10 DHT Implementation

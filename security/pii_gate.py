@@ -542,7 +542,7 @@ def fallback_sanitize(text: str, max_length: int = MAX_FALLBACK_LENGTH) -> str:
     # O(n) approach: collect segments and join once instead of O(n²) string concat
     segments = []
     last_pos = len(result)
-    for start, end, replacement, priority in non_overlapping:
+    for start, end, replacement, priority in non_overlapping:  # noqa: B007
         segments.append(result[end:last_pos])
         segments.append(replacement)
         last_pos = start

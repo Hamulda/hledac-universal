@@ -129,8 +129,8 @@ class LanguageDetector:
                 if start <= ord(char) <= end:
                     return lang
 
-        common_czech_words = {'a', 'se', 'na', 'je', 'to', 'že', 's', 'v', 'o', 'z', 'do', 'ne', 'si', 'jako', 'ale', 'tak', 'jsem'}
-        common_english_words = {'the', 'be', 'to', 'of', 'and', 'a', 'in', 'that', 'have', 'i', 'it', 'for', 'not', 'on', 'with'}
+        common_czech_words = {'a', 'se', 'na', 'je', 'to', 'že', 's', 'v', 'o', 'z', 'do', 'ne', 'si', 'jako', 'ale', 'tak', 'jsem'}  # noqa: E501
+        common_english_words = {'the', 'be', 'to', 'of', 'and', 'a', 'in', 'that', 'have', 'i', 'it', 'for', 'not', 'on', 'with'}  # noqa: E501
 
         words = sample.lower().split()
         if not words:

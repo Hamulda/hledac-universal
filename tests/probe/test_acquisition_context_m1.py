@@ -13,13 +13,11 @@ Run: pytest tests/probe/test_acquisition_context_m1.py -v
 """
 from __future__ import annotations
 
-import pytest
-
 from hledac.universal.runtime.acquisition_strategy import (
     AcquisitionContext,
+    AcquisitionProfile,
     build_acquisition_plan,
     is_deep_osint_m1_profile,
-    AcquisitionProfile,
 )
 
 
@@ -87,7 +85,7 @@ def test_acquisition_context_default_is_false():
 
 def test_acquisition_context_deep_osint_m1_blocks_feed_when_hardware_critical():
     """FEED disabled when hardware_critical=True even with is_deep_osint_m1=True."""
-    ctx = AcquisitionContext(
+    AcquisitionContext(
         query="test.example.com",
         duration_s=180.0,
         aggressive_mode=False,

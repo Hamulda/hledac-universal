@@ -199,7 +199,7 @@ class TestEncryption:
         encrypted = encrypt_aes_gcm(key, plaintext, b"aad1")
 
         # Decrypting with different AAD should fail
-        with pytest.raises(Exception):
+        with pytest.raises(Exception):  # noqa: B017
             decrypt_aes_gcm(key, encrypted, b"aad2")
 
 
@@ -299,6 +299,7 @@ class TestModelStore:
     @pytest.mark.asyncio
     async def test_model_store_save_load(self, temp_dir):
         import mlx.core as mx
+
         from hledac.universal.federated.model_store_v2 import ModelStore
         from hledac.universal.security.key_manager import KeyManager
 

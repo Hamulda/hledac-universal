@@ -414,7 +414,7 @@ class APIDocGenerator:
             "",
             "## Overview",
             "",
-            "This API reference provides comprehensive documentation for all classes, methods, and functions in the Hledac platform.",
+            "This API reference provides comprehensive documentation for all classes, methods, and functions in the Hledac platform.",  # noqa: E501
             "",
             "## Table of Contents",
             ""
@@ -439,7 +439,7 @@ class APIDocGenerator:
             for cls in module.classes:
                 if any(name in cls.name.lower() for name in ["agent", "orchestrator", "manager", "system"]):
                     description = cls.docstring.split('\n')[0] if cls.docstring else "No description"
-                    content.append(f"| [{cls.name}](api/{self.categorize_module(module)}.md#{cls.name.lower()}) | {description[:100]}... | {module.name} |")
+                    content.append(f"| [{cls.name}](api/{self.categorize_module(module)}.md#{cls.name.lower()}) | {description[:100]}... | {module.name} |")  # noqa: E501
 
         api_content = "\n".join(content)
 
@@ -523,7 +523,7 @@ class APIDocGenerator:
             content.append("**Properties**:")
             content.append("")
             for prop in cls.properties:
-                content.append(f"- `{prop.name}`: {prop.type_hint}" + (f" - {prop.docstring}" if prop.docstring else ""))
+                content.append(f"- `{prop.name}`: {prop.type_hint}" + (f" - {prop.docstring}" if prop.docstring else ""))  # noqa: E501
             content.append("")
 
         if cls.methods:
@@ -607,14 +607,14 @@ class APIDocGenerator:
 
         content.append("### Classes")
         content.append("")
-        for name, module_name, cls in all_classes:
-            content.append(f"- [{name}](api/{self.categorize_module(self.modules[module_name])}.md#{name.lower()}) - `{module_name}`")
+        for name, module_name, cls in all_classes:  # noqa: B007
+            content.append(f"- [{name}](api/{self.categorize_module(self.modules[module_name])}.md#{name.lower()}) - `{module_name}`")  # noqa: E501
 
         content.append("")
         content.append("### Functions")
         content.append("")
-        for name, module_name, func in all_functions:
-            content.append(f"- [{name}](api/{self.categorize_module(self.modules[module_name])}.md#{name.lower()}) - `{module_name}`")
+        for name, module_name, func in all_functions:  # noqa: B007
+            content.append(f"- [{name}](api/{self.categorize_module(self.modules[module_name])}.md#{name.lower()}) - `{module_name}`")  # noqa: E501
 
         with open(output_path / "API_CROSS_REFERENCE.md", 'w', encoding='utf-8') as f:
             f.write("\n".join(content))
@@ -682,7 +682,7 @@ def main():
     """Main entry point."""
     import argparse
 
-    parser = argparse.ArgumentParser(description="Generate API documentation for Hledac", suggest_on_error=True, color=True)
+    parser = argparse.ArgumentParser(description="Generate API documentation for Hledac", suggest_on_error=True, color=True)  # noqa: E501
     parser.add_argument("--package-path", default="hledac", help="Path to the Python package to document")
     parser.add_argument("--output-dir", default="docs", help="Output directory for documentation")
 

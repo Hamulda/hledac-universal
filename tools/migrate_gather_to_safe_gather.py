@@ -37,7 +37,6 @@ from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
 
-
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
@@ -173,7 +172,7 @@ def _classify(node: ast.Call, stmt: ast.AST | None) -> tuple[str, str, bool, boo
 def find_gather_sites(path: str) -> list[GatherSite]:
     """Parse `path` and return all gather call sites (sorted by position)."""
     try:
-        with open(path, "r", encoding="utf-8") as f:
+        with open(path, encoding="utf-8") as f:
             source = f.read()
     except OSError:
         return []
@@ -265,7 +264,7 @@ def _build_replacement(site: GatherSite, node: ast.Call) -> str:
 def _find_call_node(path: str, line: int, col: int) -> ast.Call | None:
     """Re-parse and return the ast.Call at the given (line, col)."""
     try:
-        with open(path, "r", encoding="utf-8") as f:
+        with open(path, encoding="utf-8") as f:
             source = f.read()
     except OSError:
         return None
@@ -287,7 +286,7 @@ def _replace_gather_calls(path: str, sites: list[GatherSite]) -> tuple[str, list
     `_asyncio.gather(...)`), and replace that exact span. This handles
     multi-line calls correctly without relying on line/col offsets.
     """
-    with open(path, "r", encoding="utf-8") as f:
+    with open(path, encoding="utf-8") as f:
         source = f.read()
 
     # Collect which safe_gather_* names we need to import
@@ -333,9 +332,9 @@ def _replace_gather_calls(path: str, sites: list[GatherSite]) -> tuple[str, list
         def to_offset(ln: int, co: int) -> int:
             offset = 0
             for i in range(ln - 1):
-                if i >= len(lines):
+                if i >= len(lines):  # noqa: B023
                     break
-                offset += len(lines[i])
+                offset += len(lines[i])  # noqa: B023
             offset += co
             return offset
 
@@ -596,7 +595,7 @@ def main(argv: list[str] | None = None) -> int:
 
     targets = iter_python_files(args.files, all_files=args.all)
     if not targets:
-        print(f"No Python files matched", file=sys.stderr)
+        print("No Python files matched", file=sys.stderr)
         return 0
 
     report = Report()

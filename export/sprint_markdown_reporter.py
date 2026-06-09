@@ -324,7 +324,7 @@ def _render_analyst_brief_section(analyst_brief: dict) -> str:
     # Format timestamp
     try:
         from datetime import datetime
-        ts_str = datetime.utcfromtimestamp(generated_ts).strftime("%Y-%m-%d %H:%M:%S UTC") if generated_ts else "unknown"
+        ts_str = datetime.utcfromtimestamp(generated_ts).strftime("%Y-%m-%d %H:%M:%S UTC") if generated_ts else "unknown"  # noqa: DTZ004
     except Exception:
         ts_str = str(generated_ts) if generated_ts else "unknown"
 
@@ -477,7 +477,7 @@ def _render_envelope_findings(envelope_findings: list) -> str:
                     direction = pivot.get("direction", "")
                     query_hint = pivot.get("query_hint", "")
                     priority = pivot.get("priority", "")
-                    lines.append(f"- [{escape_markdown_text(priority)}] {escape_markdown_text(direction)}: {escape_markdown_text(query_hint)}")
+                    lines.append(f"- [{escape_markdown_text(priority)}] {escape_markdown_text(direction)}: {escape_markdown_text(query_hint)}")  # noqa: E501
                 elif isinstance(pivot, str):
                     lines.append(f"- {escape_markdown_text(pivot)}")
             lines.append("")
@@ -639,8 +639,8 @@ def _render_timeline_section(timeline_findings: list) -> str:
         if oldest_ts and newest_ts:
             try:
                 from datetime import datetime as dt
-                oldest = dt.fromtimestamp(oldest_ts)
-                newest = dt.fromtimestamp(newest_ts)
+                oldest = dt.fromtimestamp(oldest_ts)  # noqa: DTZ006
+                newest = dt.fromtimestamp(newest_ts)  # noqa: DTZ006
                 delta = newest - oldest
                 days = delta.days
                 if days > 365:
@@ -692,7 +692,7 @@ def _render_timeline_section(timeline_findings: list) -> str:
                 if evt_ts:
                     try:
                         from datetime import datetime as dt
-                        ts_dt = dt.fromtimestamp(evt_ts)
+                        ts_dt = dt.fromtimestamp(evt_ts)  # noqa: DTZ006
                         ts_str = ts_dt.strftime("%Y-%m-%d")
                     except Exception:
                         ts_str = str(int(evt_ts))

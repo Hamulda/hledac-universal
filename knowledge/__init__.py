@@ -73,7 +73,7 @@ _LEGACY_NAMES: frozenset[str] = frozenset(
     )
 )
 
-import warnings as _warnings
+import warnings as _warnings  # noqa: E402
 
 # Sprint 8VC: atomic_storage and persistent_layer moved to legacy/
 # Legacy imports are LAZY (deferred) to prevent import-time coupling.
@@ -156,7 +156,7 @@ class _LegacyCompatModule:
         try:
             return self._cache[name]
         except KeyError:
-            raise AttributeError(name)
+            raise AttributeError(name)  # noqa: B904
 
     def __dir__(self):
         self._ensure_loaded()
@@ -192,7 +192,7 @@ def __getattr__(name: str) -> Any:
     if name in _LEGACY_NAMES:
         try:
             return _legacy_compat.__getattr__(name)
-        except (ModuleNotFoundError, ImportError):  # ModuleNotFoundError for bare not-found; ImportError for relative-import failure in local mode
+        except (ModuleNotFoundError, ImportError):  # ModuleNotFoundError for bare not-found; ImportError for relative-import failure in local mode  # noqa: E501
             if name in (
                 "AtomicJSONKnowledgeGraph", "KnowledgeEntry", "get_atomic_storage",
                 "PersistentKnowledgeLayer", "KnowledgeNode", "KnowledgeEdge",

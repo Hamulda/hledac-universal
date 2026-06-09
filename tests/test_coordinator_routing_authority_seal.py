@@ -79,7 +79,7 @@ def _find_violations():
         for forbidden_name in FORBIDDEN:
             # Match "from X import CoordinatorRegistry" or "import CoordinatorRegistry"
             # Require import keyword to avoid matching comments
-            pattern = rf"^[^#\n]*(?:from\s+\S+\s+import\s+[^\n]*\b{forbidden_name}\b|import\s+[^\n]*\b{forbidden_name}\b)"
+            pattern = rf"^[^#\n]*(?:from\s+\S+\s+import\s+[^\n]*\b{forbidden_name}\b|import\s+[^\n]*\b{forbidden_name}\b)"  # noqa: E501
             if re.search(pattern, content, re.MULTILINE):
                 violations.append((str(path.relative_to(base)), forbidden_name))
 
@@ -208,7 +208,7 @@ class TestMixinArchitectureRemoved(unittest.TestCase):
             self.assertTrue(hasattr(UniversalCoordinator, "get_load_factor"))
             self.assertTrue(hasattr(UniversalCoordinator, "check_memory_pressure"))
             # Verify they are not abstract methods
-            self.assertFalse(UniversalCoordinator.track_operation.__isabstractmethod__ if hasattr(UniversalCoordinator.track_operation, "__isabstractmethod__") else False)
+            self.assertFalse(UniversalCoordinator.track_operation.__isabstractmethod__ if hasattr(UniversalCoordinator.track_operation, "__isabstractmethod__") else False)  # noqa: E501
         finally:
             sys.path.pop(0)
 

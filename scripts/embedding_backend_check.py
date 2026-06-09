@@ -128,7 +128,7 @@ def print_report(backend: str, latency: dict, uma: dict) -> None:
     print(f"  Swap used:    {uma['swap_used_mb']:.0f} MB")
 
     if latency.get("success"):
-        print(f"  Latency:      {latency['latency_ms']:.1f} ms/text ({latency['n_texts']} texts in {latency['elapsed_s']:.3f}s)")
+        print(f"  Latency:      {latency['latency_ms']:.1f} ms/text ({latency['n_texts']} texts in {latency['elapsed_s']:.3f}s)")  # noqa: E501
         print(f"  Throughput:   {latency['docs_per_sec']:.0f} docs/s")
         print(f"  Embed dim:    {latency['embedding_dim']}")
     else:

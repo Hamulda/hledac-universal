@@ -152,7 +152,7 @@ class TestNoAvailableFlags:
         # Filter: only report module-level constants (true feature flags)
         # Runtime parameters like use_graph_rag are OK - they're not global toggles
         module_level_issues = [i for i in issues if "Module-level" in i]
-        assert not module_level_issues, "Found module-level feature toggle constants:\n" + "\n".join(module_level_issues)
+        assert not module_level_issues, "Found module-level feature toggle constants:\n" + "\n".join(module_level_issues)  # noqa: E501
 
 
 if __name__ == "__main__":

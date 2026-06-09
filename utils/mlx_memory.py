@@ -250,14 +250,14 @@ def configure_mlx_limits(cache_limit_mb: int = 1536, memory_limit_mb: int | None
 def format_mlx_memory_snapshot() -> dict:
     """Get a complete MLX memory snapshot."""
     if not _ensure_mlx():
-        return {"available": False, "active_mb": None, "peak_mb": None, "cache_mb": None, "pressure_pct": 0, "pressure_level": "UNKNOWN"}
+        return {"available": False, "active_mb": None, "peak_mb": None, "cache_mb": None, "pressure_pct": 0, "pressure_level": "UNKNOWN"}  # noqa: E501
 
     active = get_mlx_active_memory_mb()
     peak = get_mlx_peak_memory_mb()
     cache = get_mlx_cache_memory_mb()
     pressure_pct, pressure_level = get_mlx_memory_pressure()
 
-    return {"available": True, "active_mb": active, "peak_mb": peak, "cache_mb": cache, "pressure_pct": pressure_pct, "pressure_level": pressure_level}
+    return {"available": True, "active_mb": active, "peak_mb": peak, "cache_mb": cache, "pressure_pct": pressure_pct, "pressure_level": pressure_level}  # noqa: E501
 
 
 # -----------------------------------------------------------------------

@@ -40,7 +40,7 @@ class TestImportAvailability:
         from hledac.universal.intelligence.pastebin_monitor import run
         assert callable(run)
 
-    def test_pasteFinding_dataclass(self):
+    def test_pasteFinding_dataclass(self):  # noqa: N802
         """pastebin_monitor exports PasteFinding dataclass."""
         from hledac.universal.intelligence.pastebin_monitor import PasteFinding
         pf = PasteFinding(
@@ -68,7 +68,7 @@ class TestIntelligenceInitExports:
         from hledac.universal.intelligence import PASTEBIN_MONITOR_AVAILABLE
         assert isinstance(PASTEBIN_MONITOR_AVAILABLE, bool)
 
-    def test_pasteFinding_in_exports(self):
+    def test_pasteFinding_in_exports(self):  # noqa: N802
         """PasteFinding is in __all__."""
         from hledac.universal.intelligence import PasteFinding
         assert PasteFinding is not None

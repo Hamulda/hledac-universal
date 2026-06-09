@@ -44,7 +44,7 @@ except ImportError:
 
 
 # === Embedding Task Enum (prefix discipline) ===
-from enum import Enum
+from enum import Enum  # noqa: E402
 
 
 class EmbeddingTask(Enum):
@@ -567,7 +567,7 @@ def assert_embedding_dimension(expected_dim: int, context: str = "") -> None:
     """
     # Canonical dim set: MRL (256/512/768) + legacy MiniLM (384).
     # Use frozenset for O(1) membership check and immutability.
-    _VALID_DIMS = frozenset({256, 384, 512, 768})
+    _VALID_DIMS = frozenset({256, 384, 512, 768})  # noqa: N806
 
     global _default_manager
     if _default_manager is None:

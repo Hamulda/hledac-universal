@@ -68,7 +68,7 @@ MAX_CACHE_SIZE = 1000
 
 # Optional imports for enhanced functionality
 try:
-    from _shims.core_http import fetch_json, safe_fetch
+    from _shims.core_http import fetch_json, safe_fetch  # noqa: F401  # _shims.core_http.safe_fetch
     HTTP_UTILS_AVAILABLE = True
 except ImportError:
     HTTP_UTILS_AVAILABLE = False
@@ -382,7 +382,7 @@ class BlockchainForensics:
         async with self._cache_lock:
             if cache_key in self._cache:
                 cached = self._cache[cache_key]
-                if datetime.now() < cached.expires_at:
+                if datetime.now() < cached.expires_at:  # noqa: DTZ005
                     # F184F: LRU — move to end (most recently used)
                     self._cache.move_to_end(cache_key)
                     logger.debug(f"Cache hit: {cache_key}")
@@ -404,8 +404,8 @@ class BlockchainForensics:
 
             self._cache[cache_key] = APIResponse(
                 data=data,
-                timestamp=datetime.now(),
-                expires_at=datetime.now() + timedelta(seconds=self.cache_ttl),
+                timestamp=datetime.now(),  # noqa: DTZ005
+                expires_at=datetime.now() + timedelta(seconds=self.cache_ttl),  # noqa: DTZ005
             )
             # F184F: LRU — mark as most recently used
             self._cache.move_to_end(cache_key)
@@ -591,10 +591,10 @@ class BlockchainForensics:
                 # First and last seen
                 first_tx = transactions[0]
                 last_tx = transactions[-1]
-                analysis.first_seen = datetime.fromtimestamp(
+                analysis.first_seen = datetime.fromtimestamp(  # noqa: DTZ006
                     int(first_tx.get("timeStamp", 0))
                 )
-                analysis.last_seen = datetime.fromtimestamp(
+                analysis.last_seen = datetime.fromtimestamp(  # noqa: DTZ006
                     int(last_tx.get("timeStamp", 0))
                 )
 
@@ -637,11 +637,11 @@ class BlockchainForensics:
 
             # First and last seen
             if addr_data.get("first_seen_receiving"):
-                analysis.first_seen = datetime.fromtimestamp(
+                analysis.first_seen = datetime.fromtimestamp(  # noqa: DTZ006
                     addr_data["first_seen_receiving"]
                 )
             if addr_data.get("last_seen_spending"):
-                analysis.last_seen = datetime.fromtimestamp(
+                analysis.last_seen = datetime.fromtimestamp(  # noqa: DTZ006
                     addr_data["last_seen_spending"]
                 )
 
@@ -791,7 +791,7 @@ class BlockchainForensics:
     ) -> Transaction:
         """Parse raw transaction data into Transaction object."""
         if chain == "ethereum":
-            timestamp = datetime.fromtimestamp(
+            timestamp = datetime.fromtimestamp(  # noqa: DTZ006
                 int(tx_data.get("timeStamp", 0))
             )
             return Transaction(
@@ -809,7 +809,7 @@ class BlockchainForensics:
                 input_data=tx_data.get("input"),
             )
         elif chain == "bitcoin":
-            timestamp = datetime.fromtimestamp(
+            timestamp = datetime.fromtimestamp(  # noqa: DTZ006
                 tx_data.get("time", 0) or tx_data.get("block_time", 0)
             )
             return Transaction(
@@ -825,7 +825,7 @@ class BlockchainForensics:
         else:
             return Transaction(
                 tx_hash=str(tx_data.get("hash", "")),
-                timestamp=datetime.now(),
+                timestamp=datetime.now(),  # noqa: DTZ005
                 from_address="",
                 to_address="",
                 value=0.0,
@@ -1483,7 +1483,7 @@ class BlockchainForensics:
 
         # Age of wallet (newer = riskier)
         if analysis.first_seen:
-            age_days = (datetime.now() - analysis.first_seen).days
+            age_days = (datetime.now() - analysis.first_seen).days  # noqa: DTZ005
             if age_days < 30:
                 score += 0.2
                 factors.append("new_wallet")

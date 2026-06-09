@@ -56,7 +56,7 @@ def is_curl_cffi_available() -> tuple[bool, str]:
         return _CURL_CFFI_AVAILABLE, _CURL_CFFI_IMPORT_ERROR or "ok"
 
     try:
-        from curl_cffi.requests import AsyncSession
+        from curl_cffi.requests import AsyncSession  # noqa: F401  # curl_cffi.requests.AsyncSession
 
         _CURL_CFFI_AVAILABLE = True
         _CURL_CFFI_IMPORT_ERROR = None

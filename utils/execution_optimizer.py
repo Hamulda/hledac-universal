@@ -25,6 +25,7 @@ import numpy as np
 import psutil
 
 from .async_helpers import safe_gather_dropin
+
 if TYPE_CHECKING:
     pass
 
@@ -365,7 +366,7 @@ class ParallelExecutionOptimizer:
         )
 
         logger.info(
-            f"Initialized execution pools - Threads: {self.thread_pool._max_workers}, Processes: {self.process_pool._max_workers}")
+            f"Initialized execution pools - Threads: {self.thread_pool._max_workers}, Processes: {self.process_pool._max_workers}")  # noqa: E501
 
     async def initialize(self) -> None:
         """Initialize async components like concurrency controller."""
@@ -396,7 +397,7 @@ class ParallelExecutionOptimizer:
                 strategy=strategy,
                 max_workers=max_workers,
                 resource_allocation=await self._calculate_resource_allocation(tasks, max_workers),
-                created_at=datetime.now()
+                created_at=datetime.now()  # noqa: DTZ005
             )
 
             self.add_parallel_group(group_id, {"payload": group, "strategy": strategy})
@@ -766,7 +767,7 @@ class ParallelExecutionOptimizer:
                     return
 
         # Prepare training data
-        X = []
+        X = []  # noqa: N806
         y = []
 
         for metrics in list(self.task_history)[-100:]:  # Use last 100 tasks
@@ -779,7 +780,7 @@ class ParallelExecutionOptimizer:
             y.append(metrics.execution_time)
 
         if len(X) > 0:
-            X = np.array(X)
+            X = np.array(X)  # noqa: N806
             y = np.array(y)
 
             # Train the model
@@ -862,7 +863,7 @@ class ParallelExecutionOptimizer:
 
         return results
 
-    def _adjust_workers_for_resources(self, max_workers: int, resources: dict[str, float]) -> int:
+    def _adjust_workers_for_resources(self, max_workers: int, resources: dict[str, float]) -> int | None:
         """Adjust worker count based on available resources"""
         cpu_threshnew = self.config['threshnews']['cpu_threshnew']
         memory_threshnew = self.config['threshnews']['memory_threshnew']
@@ -880,7 +881,7 @@ class ParallelExecutionOptimizer:
                             current_workers: int,
                             performance_samples: list[dict[str, float]],
                             current_resources: dict[str, float],
-                            initial_resources: dict[str, float]) -> int:
+                            initial_resources: dict[str, float]) -> int | None:
         """Adapt worker count based on performance and resources"""
         if len(performance_samples) < 2:
                     return current_workers
@@ -918,7 +919,7 @@ class ParallelExecutionOptimizer:
 
                 return new_workers
 
-    def _estimate_completion_time(self, tasks: list[Any], max_workers: int) -> float:
+    def _estimate_completion_time(self, tasks: list[Any], max_workers: int) -> float | None:
         """Estimate completion time for task group"""
         if not tasks:
                     return 0.0
@@ -941,7 +942,7 @@ class ParallelExecutionOptimizer:
             group = stored.get("payload", stored)
             # Fallback: if still a dict (legacy path), use stored['ts'] as start_time
             if isinstance(group, dict):
-                _start_time = stored.get("ts", datetime.now())
+                _start_time = stored.get("ts", datetime.now())  # noqa: DTZ005
             else:
                 _start_time = group.created_at
             # Create aggregate metrics
@@ -949,7 +950,7 @@ class ParallelExecutionOptimizer:
                 task_id=group_id,
                 task_type=TaskType.MIXED,
                 start_time=_start_time,
-                end_time=datetime.now(),
+                end_time=datetime.now(),  # noqa: DTZ005
                 cpu_usage=psutil.cpu_percent(),
                 memory_usage=psutil.virtual_memory().percent / 100,
                 execution_time=execution_time,
@@ -992,7 +993,7 @@ class ParallelExecutionOptimizer:
     def export_performance_report(self, filepath: str):
         """Export detailed performance report"""
         report = {
-            'timestamp': datetime.now().isoformat(),
+            'timestamp': datetime.now().isoformat(),  # noqa: DTZ005
             'statistics': self.get_performance_statistics(),
             'parallel_groups': {
                 group_id: {
@@ -1300,7 +1301,7 @@ class IntelligentResourceAllocator:
         self.e_cores = list(range(mid))
         self.p_cores = list(range(mid, cpu_count))
 
-        logger.info(f"Generic topology: {len(self.p_cores)} performance threads, {len(self.e_cores)} efficiency threads")
+        logger.info(f"Generic topology: {len(self.p_cores)} performance threads, {len(self.e_cores)} efficiency threads")  # noqa: E501
 
     def allocate_task(self, task_priority: str = "normal",
                      cpu_intensity: float = 0.5) -> dict[str, Any]:
@@ -1359,7 +1360,7 @@ class IntelligentResourceAllocator:
 
         # Record allocation
         self.allocation_history.append({
-            "timestamp": datetime.now(),
+            "timestamp": datetime.now(),  # noqa: DTZ005
             "priority": task_priority,
             "cpu_intensity": cpu_intensity,
             "allocation": allocation.copy()

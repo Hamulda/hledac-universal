@@ -9,13 +9,12 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import logging
 import os
 import re
 from typing import Any
 
 import aiohttp
-
-import logging
 
 from hledac.universal.paths import DB_ROOT
 

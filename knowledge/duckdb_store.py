@@ -107,15 +107,16 @@ from __future__ import annotations
 
 import asyncio
 import datetime as _dt
+import logging
 import os
 import time as _time
+from collections.abc import AsyncIterator, Iterator
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, AsyncIterator, Iterator, TypedDict
+from typing import Any, TypedDict
 
 # F26X: @deprecated with Python 3.11+ safe fallback (see utils/_deprecated.py)
-from hledac.universal.utils._deprecated import deprecated
 
 # Sprint F262OBS: canonical source_type centralization — guard at ingest seam
 try:
@@ -144,7 +145,7 @@ if _HAS_ORJSON:
 else:
     import json as _stdjson
 
-    def _ORJSON_DECODER(b: Any) -> Any:
+    def _ORJSON_DECODER(b: Any) -> Any:  # noqa: N802
         return _stdjson.loads(b.decode("utf-8") if isinstance(b, (bytes, bytearray)) else b)
 
 
@@ -198,7 +199,10 @@ except ImportError:
 
 # Sprint F204D: TargetMemoryUpdate import
 try:
-    from hledac.universal.knowledge.target_memory import TargetMemory, TargetMemoryUpdate
+    from hledac.universal.knowledge.target_memory import (  # noqa: F401  # hledac.universal.knowledge.target_memory.TargetMemoryUpdate
+        TargetMemory,
+        TargetMemoryUpdate,
+    )
 except ImportError:
     pass
 
@@ -213,11 +217,13 @@ __all__ = [
 ]
 
 # Import QualityRejectionRecord from quality_assessment (moved in Sprint F216G refactor)
-from .dedup import DedupManager
+from utils.async_helpers import safe_gather_fire_and_forget  # noqa: E402
+
+from .dedup import DedupManager  # noqa: E402
 
 # Also import DEDUP_HOT_CACHE_MAX since it's used in get_dedup_runtime_status
-from .quality_assessment import _DEDUP_HOT_CACHE_MAX as _DEDUP_HOT_CACHE_MAX
-from .quality_assessment import (
+from .quality_assessment import _DEDUP_HOT_CACHE_MAX as _DEDUP_HOT_CACHE_MAX  # noqa: E402
+from .quality_assessment import (  # noqa: E402
     _QUALITY_ENTROPY_THRESHOLD,
     _QUALITY_MIN_ENTROPY_LEN,
     QualityAssessmentState,
@@ -230,9 +236,8 @@ from .quality_assessment import (
 )
 
 # Sprint F216G: WAL Manager and Dedup Manager (extracted from this file)
-from .wal import WALManager
+from .wal import WALManager  # noqa: E402
 
-from utils.async_helpers import safe_gather_fire_and_forget
 logger = logging.getLogger(__name__)
 # Sprint F222: Semantic buffering (extracted from this file)
 
@@ -972,6 +977,7 @@ class DuckDBShadowStore:
         async def _run() -> None:
             try:
                 import xxhash
+
                 from hledac.universal.knowledge.ioc_graph import (
                     extract_iocs_from_text,
                 )
@@ -988,7 +994,7 @@ class DuckDBShadowStore:
                                     matches.append((str(item[0]), str(item[1])))
                                 elif isinstance(item, dict):
                                     v = item.get("value") or item.get("pattern") or ""
-                                    l = item.get("label") or ""
+                                    l = item.get("label") or ""  # noqa: E741
                                     matches.append((str(v), str(l)))
 
                     iocs = extract_iocs_from_text(text, matches)
@@ -1231,7 +1237,7 @@ class DuckDBShadowStore:
         if not metadata:
             return 0
 
-        if not self._initialized or self._closed: return 0
+        if not self._initialized or self._closed: return 0  # noqa: E701
 
         loop = asyncio.get_running_loop()
         now = _time.time()
@@ -1338,7 +1344,7 @@ class DuckDBShadowStore:
         _SQL_INSERT_HYPOTHESIS_FEEDBACK = "INSERT INTO hypothesis_feedback"
         _SQL_INSERT_HYPOTHESIS_TRACKING = "INSERT OR REPLACE INTO hypothesis_tracking"
         _SQL_UPSERT_TARGET_PROFILE = "INSERT OR REPLACE INTO target_profiles"
-        _SQL_SELECT_TARGET_PROFILE = "SELECT target_id, first_seen, last_seen, cumulative_finding_count, entity_summary_json"
+        _SQL_SELECT_TARGET_PROFILE = "SELECT target_id, first_seen, last_seen, cumulative_finding_count, entity_summary_json"  # noqa: E501
         _SQL_SELECT_HYPOTHESIS_FEEDBACK = "SELECT id, target_id, pivot_type, ioc_type"
         _SQL_SELECT_SHADOW_FINDINGS = "SELECT id, query, source_type, confidence, ts, provenance_json"
 
@@ -1609,8 +1615,8 @@ class DuckDBShadowStore:
             if conn is None:
                 return False
             # DuckDB accepts ISO timestamp strings via CAST(? AS TIMESTAMP)
-            started_iso = _dt.datetime.fromtimestamp(started_at).isoformat() if started_at is not None else None
-            ended_iso = _dt.datetime.fromtimestamp(ended_at).isoformat() if ended_at is not None else None
+            started_iso = _dt.datetime.fromtimestamp(started_at).isoformat() if started_at is not None else None  # noqa: DTZ006
+            ended_iso = _dt.datetime.fromtimestamp(ended_at).isoformat() if ended_at is not None else None  # noqa: DTZ006
             params = [run_id, started_iso, ended_iso, total_fds, rss_mb]
             cast_sql = (
                 "INSERT INTO shadow_runs (run_id, started_at, ended_at, total_fds, rss_mb) "
@@ -1811,29 +1817,25 @@ class DuckDBShadowStore:
             if conn is None:
                 return []
             if target_id:
-                result = conn.execute(
-                    """
+                sql =                     """
                     SELECT id, target_id, pivot_type, ioc_type,
                            produced_count, accepted_count, signal_value, ts
                     FROM hypothesis_feedback
                     WHERE target_id = ?
                     ORDER BY ts DESC
                     LIMIT ?
-                    """,
-                    [target_id, limit],
-                )
+                    """
+                result = conn.execute(sql, [target_id, limit])
                 result = list(self.arrow_fetch_batch(conn, sql, [target_id, limit]))
             else:
-                result = conn.execute(
-                    """
+                sql =                     """
                     SELECT id, target_id, pivot_type, ioc_type,
                            produced_count, accepted_count, signal_value, ts
                     FROM hypothesis_feedback
                     ORDER BY ts DESC
                     LIMIT ?
-                    """,
-                    [limit],
-                )
+                    """
+                result = conn.execute(sql, [limit])
                 result = list(self.arrow_fetch_batch(conn, sql, [limit]))
             return [
                 {
@@ -1865,29 +1867,25 @@ class DuckDBShadowStore:
             # Try to filter by target_id in payload_text JSON, or fall back to all findings
             # Sprint F202K: canonical_findings may have target_id in payload_text JSON
             if before_sprint_id:
-                result = conn.execute(
-                    """
+                sql =                     """
                     SELECT finding_id, query, source_type, confidence, ts, provenance_json, payload_text
                     FROM canonical_findings
                     WHERE payload_text LIKE ?
                     AND sprint_id < ?
                     ORDER BY ts DESC
                     LIMIT ?
-                    """,
-                    [f'%"{target_id}"%', before_sprint_id, limit],
-                )
+                    """
+                result = conn.execute(sql, [f'%"{target_id}"%', before_sprint_id, limit])
                 result = list(self.arrow_fetch_batch(conn, sql, [f'%"{target_id}"%', before_sprint_id, limit]))
             else:
-                result = conn.execute(
-                    """
+                sql =                     """
                     SELECT finding_id, query, source_type, confidence, ts, provenance_json, payload_text
                     FROM canonical_findings
                     WHERE payload_text LIKE ?
                     ORDER BY ts DESC
                     LIMIT ?
-                    """,
-                    [f'%"{target_id}"%', limit],
-                )
+                    """
+                result = conn.execute(sql, [f'%"{target_id}"%', limit])
                 result = list(self.arrow_fetch_batch(conn, sql, [f'%"{target_id}"%', limit]))
             return [
                 {
@@ -1994,29 +1992,25 @@ class DuckDBShadowStore:
             if self._db_path:
                 # MODE A: Use persistent _file_conn (always initialized before queries)
                 self._prewarm_file_conn()
-                result = self._file_conn.execute(
-                    """
+                sql =                     """
                     SELECT sprint_id, ts, new_findings, ioc_nodes,
                            findings_per_minute, synthesis_success, uma_peak_gib
                     FROM sprint_delta
                     ORDER BY ts DESC
                     LIMIT ?
-                    """,
-                    [last_n],
-                )
+                    """
+                result = self._file_conn.execute(sql, [last_n])
                 result = list(self.arrow_fetch_batch(self._file_conn, sql, [last_n]))
             else:
                 # MODE B: :memory: — use persistent single connection
-                result = self._persistent_conn.execute(
-                    """
+                sql =                     """
                     SELECT sprint_id, ts, new_findings, ioc_nodes,
                            findings_per_minute, synthesis_success, uma_peak_gib
                     FROM sprint_delta
                     ORDER BY ts DESC
                     LIMIT ?
-                    """,
-                    [last_n],
-                )
+                    """
+                result = self._persistent_conn.execute(sql, [last_n])
                 result = list(self.arrow_fetch_batch(self._persistent_conn, sql, [last_n]))
             return [
                 {
@@ -2037,8 +2031,7 @@ class DuckDBShadowStore:
             if self._db_path:
                 # MODE A: Use persistent _file_conn (always initialized before queries)
                 self._prewarm_file_conn()
-                result = self._file_conn.execute(
-                    """
+                sql =                     """
                     SELECT source_type,
                            SUM(findings_count) as total_findings,
                            AVG(hit_rate) as avg_hit_rate,
@@ -2048,14 +2041,12 @@ class DuckDBShadowStore:
                     GROUP BY source_type
                     LIMIT 10000
                     ORDER BY total_findings DESC
-                    """,
-                    [since_ts],
-                )
+                    """
+                result = self._file_conn.execute(sql, [since_ts])
                 result = list(self.arrow_fetch_batch(self._file_conn, sql, [since_ts]))
             else:
                 # MODE B: :memory: — use persistent single connection
-                result = self._persistent_conn.execute(
-                    """
+                sql =                     """
                     SELECT source_type,
                            SUM(findings_count) as total_findings,
                            AVG(hit_rate) as avg_hit_rate,
@@ -2065,9 +2056,8 @@ class DuckDBShadowStore:
                     GROUP BY source_type
                     LIMIT 10000
                     ORDER BY total_findings DESC
-                    """,
-                    [since_ts],
-                )
+                    """
+                result = self._persistent_conn.execute(sql, [since_ts])
                 result = list(self.arrow_fetch_batch(self._persistent_conn, sql, [since_ts]))
             return [
                 {
@@ -2092,29 +2082,25 @@ class DuckDBShadowStore:
             if self._db_path:
                 # MODE A: Use persistent _file_conn (always initialized before queries)
                 self._prewarm_file_conn()
-                result = self._file_conn.execute(
-                    """
+                sql =                     """
                     SELECT source_type, AVG(hit_rate) as avg_hit_rate
                     FROM source_hit_log
                     WHERE ts > ?
                     GROUP BY source_type
                     LIMIT 10000
-                    """,
-                    [cutoff],
-                )
+                    """
+                result = self._file_conn.execute(sql, [cutoff])
                 result = list(self.arrow_fetch_batch(self._file_conn, sql, [cutoff]))
             else:
                 # MODE B: :memory: — use persistent single connection
-                result = self._persistent_conn.execute(
-                    """
+                sql =                     """
                     SELECT source_type, AVG(hit_rate) as avg_hit_rate
                     FROM source_hit_log
                     WHERE ts > ?
                     GROUP BY source_type
                     LIMIT 10000
-                    """,
-                    [cutoff],
-                )
+                    """
+                result = self._persistent_conn.execute(sql, [cutoff])
                 result = list(self.arrow_fetch_batch(self._persistent_conn, sql, [cutoff]))
             return [
                 {"source_type": r[0], "avg_hit_rate": r[1] or 0.0}
@@ -2208,9 +2194,9 @@ class DuckDBShadowStore:
 
         # Sprint F259: Embedding dimension assertion — canonical MRL = 256d
         from hledac.universal.core.mlx_embeddings import MLXEmbeddingManager
-        _EMBEDDING_DIM = getattr(MLXEmbeddingManager, 'EMBEDDING_DIM', 256)
+        _EMBEDDING_DIM = getattr(MLXEmbeddingManager, 'EMBEDDING_DIM', 256)  # noqa: N806
         assert _EMBEDDING_DIM == 256, (
-            f"Embedding dimension mismatch: MLXEmbeddingManager.EMBEDDING_DIM={_EMBEDDING_DIM}, expected 256 (MRL canonical)"
+            f"Embedding dimension mismatch: MLXEmbeddingManager.EMBEDDING_DIM={_EMBEDDING_DIM}, expected 256 (MRL canonical)"  # noqa: E501
         )
 
         # Sprint 8D: Only resolve path if not already injected via __init__
@@ -2570,7 +2556,7 @@ class DuckDBShadowStore:
                 except Exception:
                     cols = [batch.column(c).to_pylist() for c in range(batch.num_columns)]
                     names = batch.schema.names
-                    rows = [dict(zip(names, row)) for row in zip(*cols)]
+                    rows = [dict(zip(names, row, strict=False)) for row in zip(*cols, strict=False)]
                 for row in rows:
                     yield row
         except Exception:
@@ -2607,7 +2593,7 @@ class DuckDBShadowStore:
         def _sync_fetch_batches() -> Iterator[Any]:
             # Lazy import — pyarrow not required for DuckDB basic operations
             try:
-                import pyarrow as _pa
+                import pyarrow as _pa  # noqa: F401  # pyarrow
             except ImportError:
                 return  # pyarrow not available — fallback path below
 
@@ -2914,8 +2900,7 @@ class DuckDBShadowStore:
             if conn is None:
                 return []
             pattern = f"%{like_pattern}%"
-            rows = conn.execute(
-                """
+            sql =                 """
                 SELECT id, query, source_type, title, payload_text, ts
                 FROM shadow_findings
                 WHERE query LIKE ?
@@ -2923,9 +2908,8 @@ class DuckDBShadowStore:
                    OR payload_text LIKE ?
                 ORDER BY ts DESC
                 LIMIT ?
-                """,
-                [pattern, pattern, pattern, limit],
-            )
+                """
+            rows = conn.execute(sql, [pattern, pattern, pattern, limit])
             rows = list(self.arrow_fetch_batch(conn, sql, [pattern, pattern, pattern, limit]))
             if not rows:
                 return []
@@ -2953,17 +2937,15 @@ class DuckDBShadowStore:
             conn = self._file_conn if self._db_path else self._persistent_conn
             if conn is None:
                 return []
-            rows = conn.execute(
-                """
+            sql =                 """
                 SELECT id, query, source_type, confidence, ts
                 FROM shadow_findings
                 WHERE query LIKE ('%' || ? || '%')
                    OR id LIKE ('%' || ? || '%')
                 ORDER BY ts DESC
                 LIMIT ?
-                """,
-                [sprint_id, sprint_id, limit],
-            )
+                """
+            rows = conn.execute(sql, [sprint_id, sprint_id, limit])
             rows = list(self.arrow_fetch_batch(conn, sql, [sprint_id, sprint_id, limit]))
             if not rows:
                 return []
@@ -3018,10 +3000,10 @@ class DuckDBShadowStore:
         """Sync — MUST be called on worker thread."""
         import re
 
-        DOMAIN_RE = re.compile(
+        DOMAIN_RE = re.compile(  # noqa: N806
             r"(?:https?://)?(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}"
         )
-        IP_RE = re.compile(
+        IP_RE = re.compile(  # noqa: N806
             r"\b(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}"
             r"(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\b"
         )
@@ -3030,17 +3012,15 @@ class DuckDBShadowStore:
             conn = self._file_conn if self._db_path else self._persistent_conn
             if conn is None:
                 return []
-            rows = conn.execute(
-                """
+            sql =                 """
                 SELECT id, query, source_type, ts
                 FROM shadow_findings
                 WHERE query LIKE ('%' || ? || '%')
                    OR id LIKE ('%' || ? || '%')
                 ORDER BY ts DESC
                 LIMIT ?
-                """,
-                [sprint_id, sprint_id, limit * 4],
-            )
+                """
+            rows = conn.execute(sql, [sprint_id, sprint_id, limit * 4])
             rows = list(self.arrow_fetch_batch(conn, sql, [sprint_id, sprint_id, limit * 4]))
             if not rows:
                 return []
@@ -3188,8 +3168,7 @@ class DuckDBShadowStore:
             conn = self._file_conn if self._db_path else self._persistent_conn
             if conn is None:
                 return []
-            rows = conn.execute(
-                """
+            sql =                 """
                 SELECT
                     source_type,
                     COUNT(*) as findings_count,
@@ -3200,9 +3179,8 @@ class DuckDBShadowStore:
                 GROUP BY source_type
                 ORDER BY findings_count DESC
                 LIMIT ?
-                """,
-                [sprint_id, sprint_id, limit],
-            )
+                """
+            rows = conn.execute(sql, [sprint_id, sprint_id, limit])
             rows = list(self.arrow_fetch_batch(conn, sql, [sprint_id, sprint_id, limit]))
             return [
                 {
@@ -3294,7 +3272,6 @@ class DuckDBShadowStore:
         """Sprint 8UC B.2: Zapsat sprint epizodu pro budoucí recall."""
         import time as _t
 
-        import orjson
 
         def _sync():
             conn = self._persistent_conn
@@ -3332,13 +3309,11 @@ class DuckDBShadowStore:
             if conn is None:
                 return []
             try:
-                rows = conn.execute(
-                    """SELECT sprint_id, query, summary, top_findings, source_yield, ts
+                sql =                     """SELECT sprint_id, query, summary, top_findings, source_yield, ts
                        FROM research_episodes
                        ORDER BY ts DESC
-                       LIMIT ?""",
-                    [limit],
-                )
+                       LIMIT ?"""
+                rows = conn.execute(sql, [limit])
                 rows = list(self.arrow_fetch_batch(conn, sql, [limit]))
                 if not rows:
                     return []
@@ -3376,7 +3351,6 @@ class DuckDBShadowStore:
 
     def _sync_upsert_target_memory(self, memory: TargetMemory) -> bool:
         """Sync upsert target memory — MUST be called on worker thread."""
-        import orjson
         import logging as _logging
 
         _logger = _logging.getLogger(__name__)
@@ -3422,23 +3396,20 @@ class DuckDBShadowStore:
             return None
 
         def _sync() -> TargetMemory | None:
-            import orjson
 
             try:
                 conn = self._file_conn if self._db_path else self._persistent_conn
                 if conn is None:
                     return None
-                rows = conn.execute(
-                    """
+                sql =                     """
                     SELECT target_id, first_seen_ts, last_seen_ts, sprint_count,
                            cumulative_finding_count, entity_facets_json,
                            exposure_facets_json, pivot_facets_json,
                            confidence_drift_json, updated_by_sprint_id, updated_ts
                     FROM target_memory
                     WHERE target_id = ?
-                    """,
-                    [target_id],
-                )
+                    """
+                rows = conn.execute(sql, [target_id])
                 rows = list(self.arrow_fetch_batch(conn, sql, [target_id]))
                 if not rows:
                     return None
@@ -3671,16 +3642,14 @@ class DuckDBShadowStore:
             conn = self._file_conn if self._db_path else self._persistent_conn
             if conn is None:
                 return []
-            rows = conn.execute(
-                """
+            sql =                 """
                 SELECT sprint_id, ts, findings_per_minute, ioc_density,
                        semantic_novelty, outlines_used, accepted_findings, ioc_nodes
                 FROM sprint_scorecard
                 ORDER BY ts DESC
                 LIMIT ?
-                """,
-                [last_n],
-            )
+                """
+            rows = conn.execute(sql, [last_n])
             rows = list(self.arrow_fetch_batch(conn, sql, [last_n]))
             return [
                 {
@@ -3733,31 +3702,27 @@ class DuckDBShadowStore:
             if conn is None:
                 return {}
 
-            current_rows = conn.execute(
-                """
+            sql =                 """
                 SELECT new_findings, ioc_new_this_sprint, dedup_hits,
                        findings_per_minute, uma_peak_gib, synthesis_confidence
                 FROM sprint_delta
                 WHERE sprint_id = ?
-                """,
-                [current_sprint_id],
-            )
+                """
+            current_rows = conn.execute(sql, [current_sprint_id])
             current_rows = list(self.arrow_fetch_batch(conn, sql, [current_sprint_id]))
 
             if not current_rows:
                 return {}
 
-            prior_rows = conn.execute(
-                """
+            sql =                 """
                 SELECT new_findings, ioc_new_this_sprint, dedup_hits,
                        findings_per_minute, uma_peak_gib, synthesis_confidence
                 FROM sprint_delta
                 WHERE sprint_id != ?
                 ORDER BY ts DESC
                 LIMIT ?
-                """,
-                [current_sprint_id, lookback],
-            )
+                """
+            prior_rows = conn.execute(sql, [current_sprint_id, lookback])
             prior_rows = list(self.arrow_fetch_batch(conn, sql, [current_sprint_id, lookback]))
 
             cur = current_rows[0]
@@ -3815,8 +3780,7 @@ class DuckDBShadowStore:
             conn = self._file_conn if self._db_path else self._persistent_conn
             if conn is None:
                 return []
-            rows = conn.execute(
-                """
+            sql =                 """
                 SELECT source_type, sprint_id,
                        SUM(findings_count) as total_findings,
                        AVG(hit_rate) as avg_hit_rate,
@@ -3826,9 +3790,8 @@ class DuckDBShadowStore:
                 GROUP BY source_type, sprint_id
                 LIMIT 10000
                 ORDER BY sprint_id DESC, total_findings DESC
-                """,
-                [since_ts],
-            )
+                """
+            rows = conn.execute(sql, [since_ts])
             rows = list(self.arrow_fetch_batch(conn, sql, [since_ts]))
             return [
                 {
@@ -3866,16 +3829,14 @@ class DuckDBShadowStore:
             conn = self._file_conn if self._db_path else self._persistent_conn
             if conn is None:
                 return []
-            rows = conn.execute(
-                """
+            sql =                 """
                 SELECT sprint_id, ts, new_findings, duration_s,
                        dedup_hits, ioc_new_this_sprint
                 FROM sprint_delta
                 ORDER BY ts DESC
                 LIMIT ?
-                """,
-                [last_n],
-            )
+                """
+            rows = conn.execute(sql, [last_n])
             rows = list(self.arrow_fetch_batch(conn, sql, [last_n]))
             result = []
             for r in rows:
@@ -3926,8 +3887,7 @@ class DuckDBShadowStore:
             conn = self._file_conn if self._db_path else self._persistent_conn
             if conn is None:
                 return []
-            rows = conn.execute(
-                """
+            sql =                 """
                 SELECT
                     d.sprint_id,
                     d.ts,
@@ -3946,9 +3906,8 @@ class DuckDBShadowStore:
                 LEFT JOIN sprint_scorecard c ON d.sprint_id = c.sprint_id
                 ORDER BY d.ts DESC
                 LIMIT ?
-                """,
-                [last_n],
-            )
+                """
+            rows = conn.execute(sql, [last_n])
             rows = list(self.arrow_fetch_batch(conn, sql, [last_n]))
             return [
                 {
@@ -4000,8 +3959,7 @@ class DuckDBShadowStore:
                 return {}
             # LIMIT 1000: consistency check only needs recent rows.
             # ORDERED BY rowid DESC: get most recent entries.
-            rows = conn.execute(
-                """
+            sql =                 """
                 SELECT
                     c.sprint_id,
                     c.findings_per_minute,
@@ -4013,9 +3971,8 @@ class DuckDBShadowStore:
                 WHERE c.sprint_id = ?
                 ORDER BY rowid DESC
                 LIMIT 1000
-                """,
-                [sprint_id],
-            )
+                """
+            rows = conn.execute(sql, [sprint_id])
             rows = list(self.arrow_fetch_batch(conn, sql, [sprint_id]))
             if not rows:
                 return {}
@@ -4060,8 +4017,7 @@ class DuckDBShadowStore:
             conn = self._file_conn if self._db_path else self._persistent_conn
             if conn is None:
                 return []
-            rows = conn.execute(
-                """
+            sql =                 """
                 SELECT sprint_id, ts, new_findings, duration_s,
                        findings_per_minute, synthesis_confidence,
                        ROUND(new_findings / MAX(duration_s / 60, 0.001), 4)
@@ -4070,9 +4026,8 @@ class DuckDBShadowStore:
                 WHERE new_findings > 0 AND duration_s > 0
                 ORDER BY yield_per_min DESC
                 LIMIT ?
-                """,
-                [last_n],
-            )
+                """
+            rows = conn.execute(sql, [last_n])
             rows = list(self.arrow_fetch_batch(conn, sql, [last_n]))
             return [
                 {
@@ -4115,8 +4070,7 @@ class DuckDBShadowStore:
             conn = self._file_conn if self._db_path else self._persistent_conn
             if conn is None:
                 return []
-            rows = conn.execute(
-                """
+            sql =                 """
                 SELECT sprint_id, ts, new_findings, duration_s,
                        findings_per_minute, synthesis_confidence,
                        ROUND(new_findings / MAX(duration_s / 60, 0.001), 4)
@@ -4125,9 +4079,8 @@ class DuckDBShadowStore:
                 WHERE new_findings > 0 AND duration_s > 0
                 ORDER BY yield_per_min ASC
                 LIMIT ?
-                """,
-                [last_n],
-            )
+                """
+            rows = conn.execute(sql, [last_n])
             rows = list(self.arrow_fetch_batch(conn, sql, [last_n]))
             return [
                 {
@@ -4539,7 +4492,7 @@ class DuckDBShadowStore:
             if not hasattr(self, "_wal_manager") or self._wal_manager is None:
                 _wal_root = self._db_path.parent if self._db_path else None
                 if _wal_root is None:
-                    for f in findings:
+                    for f in findings:  # noqa: B007
                         ret.append({
                             "lmdb_success": False,
                             "duckdb_success": None,
@@ -4569,7 +4522,7 @@ class DuckDBShadowStore:
                 ) else False
                 if not lmdb_ok:
                     _logger.warning(f"[D7] Batch WAL failed for {len(items)} items")
-                    for f in findings:
+                    for f in findings:  # noqa: B007
                         ret.append({
                             "lmdb_success": False,
                             "duckdb_success": None,
@@ -4578,7 +4531,7 @@ class DuckDBShadowStore:
                     return ret
         except Exception as e:
             _logger.error(f"[D7] Batch WAL exception: {e}")
-            for f in findings:
+            for f in findings:  # noqa: B007
                 ret.append({
                     "lmdb_success": False,
                     "duckdb_success": None,
@@ -4606,7 +4559,7 @@ class DuckDBShadowStore:
 
         # Build per-finding results
         accepted_total = 0
-        for f in findings:
+        for f in findings:  # noqa: B007
             lmdb_success = lmdb_ok
             if lmdb_success:
                 accepted_total += 1
@@ -4966,7 +4919,6 @@ class DuckDBShadowStore:
             return None
         loop = asyncio.get_running_loop()
         try:
-            import orjson
             from hledac.universal.knowledge.target_memory import TargetMemory
 
             def _sync_get():
@@ -5714,7 +5666,7 @@ class DuckDBShadowStore:
 
         # F223: Strict chunking to prevent OOM on M1 8GB
         # Process in batches of 500 with event-loop yield between chunks
-        CHUNK_SIZE = 500
+        CHUNK_SIZE = 500  # noqa: N806
         for chunk_start in range(0, n, CHUNK_SIZE):
             chunk_end = min(chunk_start + CHUNK_SIZE, n)
             chunk_findings = findings[chunk_start:chunk_end]
@@ -5941,7 +5893,7 @@ class DuckDBShadowStore:
         rows: list[list],
     ) -> int:
         """
-        Sprint 8R: Bulk insert using list[tuple] with 6 columns (id, query, source_type, confidence, ts, provenance_json).
+        Sprint 8R: Bulk insert using list[tuple] with 6 columns (id, query, source_type, confidence, ts, provenance_json).  # noqa: E501
         MUST be called on the worker thread.
         Returns number of successfully inserted records.
         """
@@ -5974,7 +5926,7 @@ class DuckDBShadowStore:
         except ImportError:
             return 0  # pyarrow not installed — caller falls back to executemany
 
-        n = len(findings)
+        len(findings)
         try:
             # Build columnar arrays — zero-copy for str/float, single alloc per column.
             # msgspec.encode returns bytes; we decode once per row, but the result is
@@ -6179,7 +6131,7 @@ class DuckDBShadowStore:
         # Sprint 8WA: close truth-write graph (IOCGraph with buffer_ioc/flush_buffers)
         # GUARD: flush_buffers is IOCGraph-only. DuckPGQGraph has no flush_buffers.
         # Sprint F222: delegated to GraphAttachmentStore
-        gs = self._graph_store() if hasattr(self, "_DuckDBShadowStore__graph_store") and self.__graph_store is not None else None
+        gs = self._graph_store() if hasattr(self, "_DuckDBShadowStore__graph_store") and self.__graph_store is not None else None  # noqa: E501
         truth_graph = gs.get_truth_write_graph() if gs else None
         if truth_graph is not None:
             try:
@@ -6728,7 +6680,7 @@ class DuckDBShadowStore:
                 cursor = txn.cursor()
                 if cursor.set_range(prefix):
                     for key_bytes, _ in cursor.iternext():
-                        key = key_bytes.decode("utf-8") if isinstance(key_bytes, bytes) else bytes(key_bytes).decode("utf-8")
+                        key = key_bytes.decode("utf-8") if isinstance(key_bytes, bytes) else bytes(key_bytes).decode("utf-8")  # noqa: E501
                         if not key.startswith(self.DEADLETTER_PREFIX):
                             break
                         count += 1
@@ -6951,7 +6903,7 @@ class DuckDBShadowStore:
                 cursor = txn.cursor()
                 if cursor.set_range(prefix.encode("utf-8")):
                     for key_bytes, value_bytes in cursor.iternext():
-                        key = key_bytes.decode("utf-8") if isinstance(key_bytes, bytes) else bytes(key_bytes).decode("utf-8")
+                        key = key_bytes.decode("utf-8") if isinstance(key_bytes, bytes) else bytes(key_bytes).decode("utf-8")  # noqa: E501
                         if not key.startswith(prefix):
                             break
                         try:
@@ -7040,7 +6992,6 @@ class DuckDBShadowStore:
         NOT O(N) full database scan.
         """
         try:
-            import orjson
 
             if not hasattr(self, "_wal_lmdb"):
                 return []
@@ -7054,7 +7005,7 @@ class DuckDBShadowStore:
                 if cursor.set_range(prefix.encode("utf-8")):
                     for key_bytes, value_bytes in cursor.iternext():
                         # buffers=True returns memoryview; convert to bytes for decoding/parsing
-                        key = key_bytes.decode("utf-8") if isinstance(key_bytes, bytes) else bytes(key_bytes).decode("utf-8")
+                        key = key_bytes.decode("utf-8") if isinstance(key_bytes, bytes) else bytes(key_bytes).decode("utf-8")  # noqa: E501
                         if not key.startswith(prefix):
                             break
                         try:
@@ -7178,20 +7129,16 @@ class DuckDBShadowStore:
                 # Note: read_only=False so WAL is flushed and visible
                 conn = duckdb.connect(str(self._db_path))
                 try:
-                    result = conn.execute(
-                        "SELECT 1 FROM shadow_findings WHERE id = ? LIMIT 1",
-                        [finding_id],
-                    )
+                    sql = "SELECT 1 FROM shadow_findings WHERE id = ? LIMIT 1"
+                    result = conn.execute(sql, [finding_id])
                     result = list(self.arrow_fetch_batch(conn, sql, [finding_id]))
                     return len(result) > 0
                 finally:
                     conn.close()
             else:
                 # :memory: mode — use persistent connection
-                result = self._persistent_conn.execute(
-                    "SELECT 1 FROM shadow_findings WHERE id = ? LIMIT 1",
-                    [finding_id],
-                )
+                sql = "SELECT 1 FROM shadow_findings WHERE id = ? LIMIT 1"
+                result = self._persistent_conn.execute(sql, [finding_id])
                 result = list(self.arrow_fetch_batch(self._persistent_conn, sql, [finding_id]))
                 return len(result) > 0
         except Exception:

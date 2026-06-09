@@ -142,7 +142,7 @@ class MetricsRegistry:
         # Merge run_id into correlation if no correlation provided — ensures run_id
         # propagates to persisted JSONL (tiny local patch for F200B drift).
         # Grammar normalization: only shared RunCorrelation keys survive.
-        _GRAMMAR_KEYS = frozenset(["run_id", "branch_id", "provider_id", "action_id"])
+        _GRAMMAR_KEYS = frozenset(["run_id", "branch_id", "provider_id", "action_id"])  # noqa: N806
         if correlation is None:
             self._correlation = {"run_id": run_id}
         else:

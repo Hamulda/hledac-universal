@@ -46,12 +46,13 @@ import sys
 import time
 import traceback
 import uuid
-from pathlib import Path
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 import aiohttp
 import orjson
+
 from hledac.universal.core.resource_governor import sample_uma_status
 from hledac.universal.export.sprint_exporter import export_sprint
 from hledac.universal.intelligence.ct_log_client import CTLogClient
@@ -305,7 +306,7 @@ def _scheduler_result_acquisition_payload(
     if _ct_has_outcome:
         _ct_raw = {
             "family": "CT",
-            "attempted": getattr(result, "ct_request_attempted", False) or getattr(result, "ct_scheduled", False) or getattr(result, "ct_planned", False),
+            "attempted": getattr(result, "ct_request_attempted", False) or getattr(result, "ct_scheduled", False) or getattr(result, "ct_planned", False),  # noqa: E501
             "skipped": False,
             "skip_reason": None,
             "raw_count": getattr(result, "ct_log_discovered", 0),
@@ -498,9 +499,9 @@ def _scheduler_result_acquisition_payload(
             query=query,
             # F216B: Nonfeed diagnostic profile telemetry (from _nd already built above)
             # F222L: Use correct defaults when _nd is None but profile is nonfeed_diagnostic
-            acquisition_profile=_safe_config_get(_nd, "acquisition_profile", "default") if _nd else (_acq_effective or "default"),
+            acquisition_profile=_safe_config_get(_nd, "acquisition_profile", "default") if _nd else (_acq_effective or "default"),  # noqa: E501
             feed_cap_reason=_nd.get("feed_cap_reason") if _nd else None,
-            nonfeed_priority_enabled=_nd.get("nonfeed_priority_enabled", False) if _nd else (_acq_effective == "nonfeed_diagnostic"),
+            nonfeed_priority_enabled=_nd.get("nonfeed_priority_enabled", False) if _nd else (_acq_effective == "nonfeed_diagnostic"),  # noqa: E501
             nonfeed_profile_expected_lanes=_nd.get("nonfeed_profile_expected_lanes", []) if _nd else (
                 ["CT", "WAYBACK", "PASSIVE_DNS", "PIVOT_EXECUTOR", "DOH"]
                 if _acq_effective in ("nonfeed_diagnostic", "deep_osint_m1") else []
@@ -566,7 +567,7 @@ def _scheduler_result_acquisition_payload(
             pivot_seed_urls=tuple(getattr(result, "pivot_seed_urls", ()) or ()),
             pivot_seed_hashes=tuple(getattr(result, "pivot_seed_hashes", ()) or ()),
             pivot_seed_cves=tuple(getattr(result, "pivot_seed_cves", ()) or ()),
-            seed_context_available=bool(getattr(result, "pivot_seed_domains", ()) or getattr(result, "pivot_seed_ips", ()) or getattr(result, "pivot_seed_urls", ()) or getattr(result, "pivot_seed_hashes", ()) or getattr(result, "pivot_seed_cves", ())),
+            seed_context_available=bool(getattr(result, "pivot_seed_domains", ()) or getattr(result, "pivot_seed_ips", ()) or getattr(result, "pivot_seed_urls", ()) or getattr(result, "pivot_seed_hashes", ()) or getattr(result, "pivot_seed_cves", ())),  # noqa: E501
             seed_context_propagated=bool(getattr(result, "seed_context_propagated", False)),
             lanes_unlocked_by_seed_context=list(getattr(result, "lanes_unlocked_by_seed_context", ()) or ()),
             # F225A: Acquisition plan build error surface
@@ -576,7 +577,7 @@ def _scheduler_result_acquisition_payload(
             # Sprint F228E: Acquisition plan prelude fields
             acquisition_plan_present_for_prelude=getattr(result, "acquisition_plan_present_for_prelude", False),
             acquisition_plan_lanes_for_prelude=tuple(getattr(result, "acquisition_plan_lanes_for_prelude", ()) or ()),
-            acquisition_plan_enabled_lanes_for_prelude=tuple(getattr(result, "acquisition_plan_enabled_lanes_for_prelude", ()) or ()),
+            acquisition_plan_enabled_lanes_for_prelude=tuple(getattr(result, "acquisition_plan_enabled_lanes_for_prelude", ()) or ()),  # noqa: E501
             acquisition_plan_profile_for_prelude=getattr(result, "acquisition_plan_profile_for_prelude", ""),
             acquisition_plan_build_error_for_prelude=getattr(result, "acquisition_plan_build_error_for_prelude", ""),
             # Sprint F228E: Nonfeed prelude telemetry
@@ -588,7 +589,7 @@ def _scheduler_result_acquisition_payload(
             nonfeed_prelude_error_by_lane=dict(getattr(result, "nonfeed_prelude_error_by_lane", None) or {}),
             nonfeed_prelude_accepted_by_lane=dict(getattr(result, "nonfeed_prelude_accepted_by_lane", None) or {}),
             nonfeed_prelude_duration_s=float(getattr(result, "nonfeed_prelude_duration_s", 0.0)),
-            nonfeed_prelude_feed_blocked_until_complete=getattr(result, "nonfeed_prelude_feed_blocked_until_complete", False),
+            nonfeed_prelude_feed_blocked_until_complete=getattr(result, "nonfeed_prelude_feed_blocked_until_complete", False),  # noqa: E501
         )
         # F228E: Normalization telemetry — surfaces the three-phase normalization chain
         _acq_report["acquisition_profile_input"] = _acq_input
@@ -615,7 +616,7 @@ def _scheduler_result_acquisition_payload(
         # F222L: Seed context — if pivot seeds exist but seed_context fields are absent,
         # derive explicit skip reason so the report is not silently blank.
         if not _acq_report.get("seed_context_available"):
-            _has_seeds = getattr(result, "pivot_seed_domains", ()) or getattr(result, "pivot_seed_ips", ()) or getattr(result, "pivot_seed_urls", ()) or getattr(result, "pivot_seed_hashes", ()) or getattr(result, "pivot_seed_cves", ())
+            _has_seeds = getattr(result, "pivot_seed_domains", ()) or getattr(result, "pivot_seed_ips", ()) or getattr(result, "pivot_seed_urls", ()) or getattr(result, "pivot_seed_hashes", ()) or getattr(result, "pivot_seed_cves", ())  # noqa: E501
             if _has_seeds:
                 _acq_report["seed_context_available"] = True
                 _acq_report["seed_context_propagated"] = getattr(result, "seed_context_propagated", False)
@@ -674,7 +675,7 @@ def _scheduler_result_acquisition_payload(
                 ),
                 "nonfeed_profile_expected_lanes": _nd.get("nonfeed_profile_expected_lanes", []) if _nd else (
                     list(getattr(result, "nonfeed_profile_expected_lanes", ()) or ()) or
-                    (["CT", "WAYBACK", "PASSIVE_DNS", "PIVOT_EXECUTOR", "DOH"] if _acq_effective == "nonfeed_diagnostic" else [])
+                    (["CT", "WAYBACK", "PASSIVE_DNS", "PIVOT_EXECUTOR", "DOH"] if _acq_effective == "nonfeed_diagnostic" else [])  # noqa: E501
                 ),
                 # F217C: PUBLIC bootstrap telemetry
                 "public_terminal_stage": getattr(result, "public_terminal_stage", ""),
@@ -760,7 +761,7 @@ def _scheduler_result_acquisition_payload(
                 "pivot_seed_urls": list(getattr(result, "pivot_seed_urls", ()) or ()),
                 "pivot_seed_hashes": list(getattr(result, "pivot_seed_hashes", ()) or ()),
                 "pivot_seed_cves": list(getattr(result, "pivot_seed_cves", ()) or ()),
-                "seed_context_available": bool(getattr(result, "pivot_seed_domains", ()) or getattr(result, "pivot_seed_ips", ()) or getattr(result, "pivot_seed_urls", ()) or getattr(result, "pivot_seed_hashes", ()) or getattr(result, "pivot_seed_cves", ())),
+                "seed_context_available": bool(getattr(result, "pivot_seed_domains", ()) or getattr(result, "pivot_seed_ips", ()) or getattr(result, "pivot_seed_urls", ()) or getattr(result, "pivot_seed_hashes", ()) or getattr(result, "pivot_seed_cves", ())),  # noqa: E501
                 "seed_context_propagated": getattr(result, "seed_context_propagated", False),
                 "lanes_unlocked_by_seed_context": list(getattr(result, "lanes_unlocked_by_seed_context", ()) or ()),
                 # NOTE R1: surfaced from scheduler runtime
@@ -772,10 +773,10 @@ def _scheduler_result_acquisition_payload(
                 "acquisition_plan_build_error": getattr(result, "acquisition_plan_build_error", ""),
                 # Sprint F228E: Acquisition plan prelude fields
                 "acquisition_plan_present_for_prelude": getattr(result, "acquisition_plan_present_for_prelude", False),
-                "acquisition_plan_lanes_for_prelude": list(getattr(result, "acquisition_plan_lanes_for_prelude", ()) or ()),
-                "acquisition_plan_enabled_lanes_for_prelude": list(getattr(result, "acquisition_plan_enabled_lanes_for_prelude", ()) or ()),
+                "acquisition_plan_lanes_for_prelude": list(getattr(result, "acquisition_plan_lanes_for_prelude", ()) or ()),  # noqa: E501
+                "acquisition_plan_enabled_lanes_for_prelude": list(getattr(result, "acquisition_plan_enabled_lanes_for_prelude", ()) or ()),  # noqa: E501
                 "acquisition_plan_profile_for_prelude": getattr(result, "acquisition_plan_profile_for_prelude", ""),
-                "acquisition_plan_build_error_for_prelude": getattr(result, "acquisition_plan_build_error_for_prelude", ""),
+                "acquisition_plan_build_error_for_prelude": getattr(result, "acquisition_plan_build_error_for_prelude", ""),  # noqa: E501
                 # Sprint F228E: Nonfeed prelude telemetry
                 "nonfeed_prelude_enabled": getattr(result, "nonfeed_prelude_enabled", False),
                 "nonfeed_prelude_expected_lanes": list(getattr(result, "nonfeed_prelude_expected_lanes", ()) or ()),
@@ -783,16 +784,16 @@ def _scheduler_result_acquisition_payload(
                 "nonfeed_prelude_terminal_lanes": list(getattr(result, "nonfeed_prelude_terminal_lanes", ()) or ()),
                 "nonfeed_prelude_missing_lanes": list(getattr(result, "nonfeed_prelude_missing_lanes", ()) or ()),
                 "nonfeed_prelude_error_by_lane": dict(getattr(result, "nonfeed_prelude_error_by_lane", None) or {}),
-                "nonfeed_prelude_accepted_by_lane": dict(getattr(result, "nonfeed_prelude_accepted_by_lane", None) or {}),
+                "nonfeed_prelude_accepted_by_lane": dict(getattr(result, "nonfeed_prelude_accepted_by_lane", None) or {}),  # noqa: E501
                 "nonfeed_prelude_duration_s": float(getattr(result, "nonfeed_prelude_duration_s", 0.0)),
-                "nonfeed_prelude_feed_blocked_until_complete": getattr(result, "nonfeed_prelude_feed_blocked_until_complete", False),
+                "nonfeed_prelude_feed_blocked_until_complete": getattr(result, "nonfeed_prelude_feed_blocked_until_complete", False),  # noqa: E501
             }
             # F233C: next_sprint_seeds consumption telemetry
             _acq_report["next_seeds_consumed_count"] = getattr(result, "next_seeds_consumed_count", 0)
             _acq_report["next_seeds_seed_source"] = getattr(result, "next_seeds_seed_source", "") or ""
             _acq_report["next_seeds_provider_yield"] = getattr(result, "next_seeds_provider_yield", False)
             _acq_report["next_seeds_pivot_deepening"] = getattr(result, "next_seeds_pivot_deepening", False)
-            _acq_report["next_seeds_query_suggestions"] = list(getattr(result, "next_seeds_query_suggestions", ()) or ())
+            _acq_report["next_seeds_query_suggestions"] = list(getattr(result, "next_seeds_query_suggestions", ()) or ())  # noqa: E501
             _acq_report["next_seeds_skip_reason"] = getattr(result, "next_seeds_skip_reason", "") or ""
             _acq_report["next_seeds_ioc_domains"] = list(getattr(result, "next_seeds_ioc_domains", ()) or ())
             _acq_report["next_seeds_ioc_ips"] = list(getattr(result, "next_seeds_ioc_ips", ()) or ())
@@ -807,7 +808,7 @@ def _scheduler_result_acquisition_payload(
             _acq_report = complete_source_family_outcomes_from_prelude(_acq_report)
             # F222L: Seed context skip reason in fallback path
             if not _acq_report.get("seed_context_available"):
-                _has_seeds = getattr(result, "pivot_seed_domains", ()) or getattr(result, "pivot_seed_ips", ()) or getattr(result, "pivot_seed_urls", ()) or getattr(result, "pivot_seed_hashes", ()) or getattr(result, "pivot_seed_cves", ())
+                _has_seeds = getattr(result, "pivot_seed_domains", ()) or getattr(result, "pivot_seed_ips", ()) or getattr(result, "pivot_seed_urls", ()) or getattr(result, "pivot_seed_hashes", ()) or getattr(result, "pivot_seed_cves", ())  # noqa: E501
                 if _has_seeds:
                     _acq_report["seed_context_available"] = True
                     _acq_report["seed_context_propagated"] = getattr(result, "seed_context_propagated", False)
@@ -925,7 +926,7 @@ def _runtime_truth(
         # F214-ACQ: When feed dominates (>95%) and non-feed is minimal, label as feed
         # not mixed — the signal is overwhelmingly from the feed lane.
         total_nonfeed = public_accepted_findings + ct_findings
-        feed_dominance_ratio = feed_findings / (feed_findings + total_nonfeed) if (feed_findings + total_nonfeed) > 0 else 1.0
+        feed_dominance_ratio = feed_findings / (feed_findings + total_nonfeed) if (feed_findings + total_nonfeed) > 0 else 1.0  # noqa: E501
         if feed_dominance_ratio > 0.95:
             primary = "feed"
         else:
@@ -1050,7 +1051,7 @@ def run_pre_sprint_checks() -> bool:
             def _fmt(v):
                 return f"{v // (1024 * 1024):.0f}MiB" if v else "N/A"
             logger.info(
-                f"[BOOT] MLX buffers: cache={_fmt(status['cache_limit_bytes'])} wired={_fmt(status['wired_limit_bytes'])} configured={status['configured']}"
+                f"[BOOT] MLX buffers: cache={_fmt(status['cache_limit_bytes'])} wired={_fmt(status['wired_limit_bytes'])} configured={status['configured']}"  # noqa: E501
             )
         except Exception as exc:
             logger.warning(f"[BOOT] MLX buffer init failed: {exc}")
@@ -1162,9 +1163,9 @@ async def dry_run_sprint(query: str, duration_s: float = 300.0) -> None:
     verdict = "OK"
 
     # ── 1. Config validation ─────────────────────────────────────────────────
-    _WINDUP_MIN = 30.0
-    _WINDUP_MAX = 180.0
-    _WINDUP_RATIO = 0.30
+    _WINDUP_MIN = 30.0  # noqa: N806
+    _WINDUP_MAX = 180.0  # noqa: N806
+    _WINDUP_RATIO = 0.30  # noqa: N806
     effective_windup = max(_WINDUP_MIN, min(_WINDUP_MAX, duration_s * _WINDUP_RATIO))
     synthesis_budget = 60.0
     active_budget = max(0.0, duration_s - effective_windup - synthesis_budget)
@@ -1324,7 +1325,7 @@ def _print_dry_run_summary(report: dict) -> None:
             t1 = p["t_end"]
             print(f"  [T={t0:5.0f}s–{t1:5.0f}s]  {p['phase']:<10}  {p['description']}")
         print()
-        print(f"  Active budget: {plan.get('active_budget', 0):.0f}s  │  UMA available: {report.get('uma_available_gib', 0):.1f} GiB")
+        print(f"  Active budget: {plan.get('active_budget', 0):.0f}s  │  UMA available: {report.get('uma_available_gib', 0):.1f} GiB")  # noqa: E501
     print()
     print(f"  Hermes3:      {'✓ available' if report.get('hermes_available') else '✗ not loaded'}")
     sources = report.get("sources_online", {})
@@ -1396,9 +1397,9 @@ async def run_sprint(
     # invariant assert make the F221 guarantee observable. Without the assert
     # a stale hardcoded `windup_lead_s=180` (post-F260 regression) silently
     # produced `active_window_budget_s=-90.0` and skipped the guard.
-    _F250_WINDUP_CLAMP_MIN_S: float = 30.0
-    _F250_WINDUP_CLAMP_MAX_S: float = 180.0
-    _F250_WINDUP_LEAD_FRAC: float = 0.30
+    _F250_WINDUP_CLAMP_MIN_S: float = 30.0  # noqa: N806
+    _F250_WINDUP_CLAMP_MAX_S: float = 180.0  # noqa: N806
+    _F250_WINDUP_LEAD_FRAC: float = 0.30  # noqa: N806
     _raw_windup = float(duration_s) * _F250_WINDUP_LEAD_FRAC
     _effective_windup_s = float(
         max(_F250_WINDUP_CLAMP_MIN_S, min(_F250_WINDUP_CLAMP_MAX_S, _raw_windup))
@@ -1807,7 +1808,7 @@ async def run_sprint(
         total_seen = result.unique_entry_hashes_seen + result.duplicate_entry_hashes_skipped
         dup_rate = (result.duplicate_entry_hashes_skipped / total_seen * 100) if total_seen > 0 else 0.0
         feed_fnd = result.accepted_findings - result.public_accepted_findings
-        public_pct = (result.public_accepted_findings / result.accepted_findings * 100) if result.accepted_findings > 0 else 0.0
+        public_pct = (result.public_accepted_findings / result.accepted_findings * 100) if result.accepted_findings > 0 else 0.0  # noqa: E501
 
         # F169F: Use scheduler result fields directly — no local duplication.
         # Scheduler SprintSchedulerResult.public_backend_degraded is pre-computed.
@@ -2540,7 +2541,7 @@ async def run_semantic_pivot(query: str, top_k: int = 10) -> None:
             print(f"  [{score:.3f}] {src:15} | {text}")
             if ts:
                 import datetime
-                print(f"               ts: {datetime.datetime.fromtimestamp(ts):.0f}")
+                print(f"               ts: {datetime.datetime.fromtimestamp(ts):.0f}")  # noqa: DTZ006
         print(f"\nTotal results: {len(results)}")
     finally:
         await store.close()
@@ -2560,7 +2561,7 @@ def _install_signal_handler_for_loop(
     _prev_term: Callable[[int, Any], Any] | None = None
 
     def _handler(signum: int, frame: Any) -> None:
-        sig_name = getattr(signal.Signals, 'SIGINT', None) and signal.Signals(signum).name if hasattr(signal, 'Signals') else str(signum)
+        sig_name = getattr(signal.Signals, 'SIGINT', None) and signal.Signals(signum).name if hasattr(signal, 'Signals') else str(signum)  # noqa: E501
         logging.info(f"[SIGNAL] Received {sig_name} — cooperative shutdown")
         try:
             if loop.is_running() and not loop.is_closed():
@@ -2700,12 +2701,12 @@ def _main_dispatch() -> None:
     parser.add_argument(
         "--rl-train",
         action="store_true",
-        help="RL F257: Enable QMIX training mode (updates Q-network weights every 10 sprints). Default is inference-only after 124 sprint warmup.",
+        help="RL F257: Enable QMIX training mode (updates Q-network weights every 10 sprints). Default is inference-only after 124 sprint warmup.",  # noqa: E501
     )
     parser.add_argument(
         "--rl-no-train",
         action="store_true",
-        help="RL F261QMIX: Force inference-only mode (overrides HLEDAC_ENABLE_RL=1). Use for production runs where Q-network must NOT be updated.",
+        help="RL F261QMIX: Force inference-only mode (overrides HLEDAC_ENABLE_RL=1). Use for production runs where Q-network must NOT be updated.",  # noqa: E501
     )
     parser.add_argument(
         "--rl-train-interval",
@@ -2716,17 +2717,17 @@ def _main_dispatch() -> None:
     parser.add_argument(
         "--no-communication",
         action="store_true",
-        help="F26X-3: Skip CommunicationLayer injection in run_sprint(). Default ON, mirroring --no-coordination opt-out contract from F26X-2.",
+        help="F26X-3: Skip CommunicationLayer injection in run_sprint(). Default ON, mirroring --no-coordination opt-out contract from F26X-2.",  # noqa: E501
     )
     parser.add_argument(
         "--no-ghost",
         action="store_true",
-        help="F260: Skip GhostLayer injection in run_sprint(). Default ON, mirroring --no-coordination/--no-communication opt-out contract.",
+        help="F260: Skip GhostLayer injection in run_sprint(). Default ON, mirroring --no-coordination/--no-communication opt-out contract.",  # noqa: E501
     )
     parser.add_argument(
         "--no-stealth",
         action="store_true",
-        help="F260: Skip StealthLayer injection in run_sprint(). Default ON, mirroring --no-coordination/--no-communication opt-out contract.",
+        help="F260: Skip StealthLayer injection in run_sprint(). Default ON, mirroring --no-coordination/--no-communication opt-out contract.",  # noqa: E501
     )
     parser.add_argument(
         "--list-sources",
@@ -2824,7 +2825,7 @@ def _main_dispatch() -> None:
         pending: set = set()
         try:
             sprint_task = loop.create_task(
-                run_sprint(args.query, float(args.duration), args.export_dir, args.aggressive, args.deep_probe, deep_research=args.deep_research, extreme_mode=args.extreme, acquisition_profile=args.acquisition_profile, rl_train_mode=args.rl_train, flags=sprint_flags)
+                run_sprint(args.query, float(args.duration), args.export_dir, args.aggressive, args.deep_probe, deep_research=args.deep_research, extreme_mode=args.extreme, acquisition_profile=args.acquisition_profile, rl_train_mode=args.rl_train, flags=sprint_flags)  # noqa: E501
             )
             sig_task = loop.create_task(shutdown_event.wait())
             done, pending = loop.run_until_complete(

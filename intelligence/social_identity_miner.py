@@ -28,9 +28,10 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
 
+from utils.async_helpers import safe_gather_dropin
+
 from .confidence_policy import compute_confidence as _compute_confidence
 
-from utils.async_helpers import safe_gather_dropin
 if TYPE_CHECKING:
     from ..project_types import CanonicalFinding
 

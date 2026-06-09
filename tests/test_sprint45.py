@@ -181,7 +181,8 @@ class TestSprint45(unittest.IsolatedAsyncioTestCase):
     def test_msgpack_size(self):
         """MessagePack should be smaller than JSON."""
         try:
-            import numpy as np
+            import numpy as np  # noqa: F401  # numpy
+
             from hledac.universal.tools.serialization import pack
         except ImportError:
             self.skipTest("msgpack/numpy not available")
@@ -202,7 +203,8 @@ class TestSprint45(unittest.IsolatedAsyncioTestCase):
     def test_msgpack_speed(self):
         """MessagePack should be comparable or faster than JSON for larger data."""
         try:
-            import numpy as np
+            import numpy as np  # noqa: F401  # numpy
+
             from hledac.universal.tools.serialization import pack, unpack
         except ImportError:
             self.skipTest("msgpack not available")

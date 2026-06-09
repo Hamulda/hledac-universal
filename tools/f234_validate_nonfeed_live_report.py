@@ -167,7 +167,7 @@ def _check_duplicate_normalized_source_families(data: dict) -> tuple[bool, str]:
     conflicts = []
     if "ct" in normalized and any(f for f in raw_families if f == "CT") and any(f for f in raw_families if f == "ct"):
         conflicts.append("CT and ct both present")
-    if "public" in normalized and any(f for f in raw_families if f == "PUBLIC") and any(f for f in raw_families if f == "public"):
+    if "public" in normalized and any(f for f in raw_families if f == "PUBLIC") and any(f for f in raw_families if f == "public"):  # noqa: E501
         conflicts.append("PUBLIC and public both present")
 
     if conflicts:
@@ -625,7 +625,7 @@ def _check_schema_version(data: dict) -> tuple[bool, str]:
     WARN if absent (pre-F208 report).
     INFO if known but old version.
     """
-    KNOWN_VERSIONS = {"f208.v1", "f209.v1", "f214.v1", "f234.v1", "f208.v1-fallback"}
+    KNOWN_VERSIONS = {"f208.v1", "f209.v1", "f214.v1", "f234.v1", "f208.v1-fallback"}  # noqa: N806
 
     acq = _get(data, "acquisition_report", default=None)
     if acq is None:
@@ -672,7 +672,7 @@ def _check_scheduler_exit(data: dict) -> tuple[bool, str]:
     FAIL if exit_path not in EXPECTED_EXIT_PATHS.
     WARN if elapsed_s > 300 (5min timeout threshold).
     """
-    EXPECTED_EXIT_PATHS = {
+    EXPECTED_EXIT_PATHS = {  # noqa: N806
         "normal_completion", "guard_triggered", "timeout",
         "prewindup_barrier", "return_guard", "windup_guard",
         "post_sleep_windup_break",
@@ -714,7 +714,7 @@ def _check_live_kpi_integrity(data: dict) -> tuple[bool, str]:
     harness). Canonical nonfeed/diagnostic runs go through core.__main__.run_sprint()
     and do NOT produce live_kpi — this is legitimate absence for non-live modes.
     """
-    VALID_VERDICTS = {"GOOD", "ACCEPTABLE", "POOR", "EMPTY", "ERROR", "UNKNOWN"}
+    VALID_VERDICTS = {"GOOD", "ACCEPTABLE", "POOR", "EMPTY", "ERROR", "UNKNOWN"}  # noqa: N806
 
     # Sprint mode gate — live_kpi only present for live-measurement harness runs.
     # Canonical run_sprint() does NOT stamp live_kpi, so absence is legitimate for

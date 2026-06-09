@@ -35,6 +35,7 @@ from pathlib import Path
 
 import numpy as np
 import psutil
+
 from hledac.universal.embedding_pipeline import generate_embeddings
 
 # --- SimHash fallback (Rust native, fast near-duplicate via Hamming distance) ---
@@ -370,7 +371,7 @@ class SemanticDedupCache:
                 j: unique_to_original[j][0] for j in unique_to_original
             }
 
-            for i, t in enumerate(texts):
+            for i, t in enumerate(texts):  # noqa: B007
                 ui = index_map[i]
                 query = norm_embs[ui].reshape(1, -1)
                 sims = (query @ norm_embs.T)[0]
@@ -477,6 +478,8 @@ def find_near_duplicates_in_batch(
     try:
         from hledac_rust_extensions import (
             batch_compute_simhash as _batch_simhash,
+        )
+        from hledac_rust_extensions import (
             find_near_duplicates as _find_near_dup,
         )
 

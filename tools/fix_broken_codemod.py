@@ -68,7 +68,7 @@ def drop_label_arg(args: str) -> str:
 def fix_broken_file(path: str) -> tuple[bool, str]:
     """Try to repair the broken file. Returns (ok, message)."""
     try:
-        with open(path, "r", encoding="utf-8") as f:
+        with open(path, encoding="utf-8") as f:
             source = f.read()
     except OSError as e:
         return False, f"cannot read: {e}"

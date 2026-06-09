@@ -133,7 +133,7 @@ class DigitalGhostDetector:
         file_path = Path(file_path)
         result = DigitalGhostAnalysis(
             target=str(file_path),
-            timestamp=datetime.now()
+            timestamp=datetime.now()  # noqa: DTZ005
         )
 
         try:
@@ -208,7 +208,7 @@ class DigitalGhostDetector:
         """
         result = DigitalGhostAnalysis(
             target=source,
-            timestamp=datetime.now()
+            timestamp=datetime.now()  # noqa: DTZ005
         )
 
         # Detect ghost signals in text
@@ -324,9 +324,9 @@ class DigitalGhostDetector:
             stat = file_path.stat()
 
             # Check for suspicious timestamp patterns
-            created = datetime.fromtimestamp(stat.st_ctime)
-            modified = datetime.fromtimestamp(stat.st_mtime)
-            accessed = datetime.fromtimestamp(stat.st_atime)
+            created = datetime.fromtimestamp(stat.st_ctime)  # noqa: DTZ006
+            modified = datetime.fromtimestamp(stat.st_mtime)  # noqa: DTZ006
+            accessed = datetime.fromtimestamp(stat.st_atime)  # noqa: DTZ006
 
             # If created after modified, possible restore from backup
             if created > modified:

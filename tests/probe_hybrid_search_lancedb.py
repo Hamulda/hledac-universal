@@ -40,7 +40,7 @@ sys.path.insert(0, str(REPO_ROOT))
 
 def test_h1_rrf_reranker_import_succeeds():
     """_get_rrf_reranker returns RRFReranker instance when rerankers module is available."""
-    from hledac.universal.knowledge.lancedb_store import _get_rrf_reranker, _RRF_RERANKER_CACHE
+    from hledac.universal.knowledge.lancedb_store import _RRF_RERANKER_CACHE, _get_rrf_reranker
 
     # Clear cache to force fresh import
     _RRF_RERANKER_CACHE.clear()
@@ -55,7 +55,7 @@ def test_h1_rrf_reranker_import_succeeds():
 
 def test_h1_rrf_reranker_cached():
     """_get_rrf_reranker caches the result — second call returns same instance."""
-    from hledac.universal.knowledge.lancedb_store import _get_rrf_reranker, _RRF_RERANKER_CACHE
+    from hledac.universal.knowledge.lancedb_store import _RRF_RERANKER_CACHE, _get_rrf_reranker
 
     _RRF_RERANKER_CACHE.clear()
     a = _get_rrf_reranker()
@@ -332,7 +332,6 @@ def test_h3_search_similar_no_fts_falls_back_to_vector():
         )
     )
 
-    call_args = table_mock.search.call_args
     # query_type='hybrid' in call is preserved, but the inner branch
     # routes to vector because _lancedb_has_fts=False
     # Verify _lancedb_has_fts=False was used as the gating signal
@@ -466,7 +465,7 @@ def test_h6_academic_store_has_fts_capability_flag():
     __init__ against an in-memory or tmp LanceDB and inspect the resulting flag.
     """
     import tempfile
-    import lancedb
+
     from hledac.universal.knowledge.lancedb_store import LanceDBAcademicStore
 
     with tempfile.TemporaryDirectory() as d:
@@ -483,7 +482,7 @@ def test_h6_academic_store_initialize_creates_fts_indexes():
     fragile because initialize() overwrites self._table via self._db.create_table().
     """
     import tempfile
-    import polars as pl
+
     from hledac.universal.knowledge.lancedb_store import LanceDBAcademicStore
 
     with tempfile.TemporaryDirectory() as d:
@@ -515,6 +514,7 @@ def test_h6_academic_store_fts_failure_is_fail_soft():
     (a real LanceDB on a fresh tmpdir would actually succeed at FTS, not raise).
     """
     import tempfile
+
     from hledac.universal.knowledge.lancedb_store import LanceDBAcademicStore
 
     with tempfile.TemporaryDirectory() as d:

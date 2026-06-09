@@ -18,9 +18,10 @@ import platform
 import statistics
 import sys
 import time
-from datetime import datetime, timezone
+from collections.abc import Callable
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 # ---------------------------------------------------------------------------
 # Add repo root to sys.path so we can `import utils.…` and `import tools.…`
@@ -238,7 +239,7 @@ def render_md(results: list[dict[str, Any]], target_dir: Path) -> Path:
     py_info = platform.python_version()
     target_path = target_dir / "rust_vs_python_results.md"
 
-    now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    now = datetime.now(UTC).strftime("%Y-%m-%d %H:%M UTC")
     lines: list[str] = [
         "# Rust vs Python benchmark — hledac-rust-extensions",
         "",
@@ -265,7 +266,7 @@ def render_md(results: list[dict[str, Any]], target_dir: Path) -> Path:
     for r_ in results:
         lines.append(f"### {r_['name']}")
         lines.append(f"- **Workload**: {r_['workload']}")
-        lines.append(f"- **Python backend**: "
+        lines.append("- **Python backend**: "
                      + ("present" if r_["py_ms"] is not None else "fallback unavailable in this env"))
         lines.append(f"- **Rust backend**: {r_['rust_ms']:.3f} ms (median)")
         if r_["py_ms"] is not None:

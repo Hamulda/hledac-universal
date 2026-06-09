@@ -241,7 +241,6 @@ async def collect_cti_export_inputs(
     - RAM guard: MAX_EXPORT_FINDINGS=300
     - Model lifecycle not used
     """
-    from hledac.universal.utils.async_helpers import _check_gathered
 
     sprint_id = report.get("run_id", "unknown")
 
@@ -496,7 +495,7 @@ def _build_root_cause_object(data: dict[str, Any], created: str) -> dict[str, An
         "created": created,
         "modified": created,
         "created_by_ref": "identity--ghost-prime",
-        "abstract": f"Root cause: {root} ({label}). Recommendation: {rec}. Network variance: {data.get('is_network_variance', False)}",
+        "abstract": f"Root cause: {root} ({label}). Recommendation: {rec}. Network variance: {data.get('is_network_variance', False)}",  # noqa: E501
         "content": json.dumps({
             "diagnostic_root_cause": root,
             "diagnostic_root_cause_label": label,
@@ -1198,7 +1197,7 @@ def render_full_stix_bundle(
 
     # ── ATT&CK attack-pattern objects (unique technique IDs from killchain_tags) ──
     technique_ids_seen: set[str] = set()
-    for fid, tags in killchain_tags.items():
+    for fid, tags in killchain_tags.items():  # noqa: B007
         if isinstance(tags, list):
             for tag in tags:
                 if isinstance(tag, dict):
@@ -1868,7 +1867,7 @@ def _build_stix2_bundle(data: dict[str, Any]) -> dict[str, Any]:
 
     # Root cause note
     rc_note = _stix2_module.Note(
-        abstract=f"Root cause: {root} ({label}). Recommendation: {rec}. Network variance: {data.get('is_network_variance', False)}",
+        abstract=f"Root cause: {root} ({label}). Recommendation: {rec}. Network variance: {data.get('is_network_variance', False)}",  # noqa: E501
         content=json.dumps({
             "diagnostic_root_cause": root,
             "diagnostic_root_cause_label": label,
@@ -2107,7 +2106,7 @@ def render_stix_bundle_to_path(
             filename = f"ghost_diagnostic_{safe}.stix.json"
         else:
             try:
-                ts = normalize_export_input(report).get("started_ts") or normalize_export_input(report).get("finished_ts")
+                ts = normalize_export_input(report).get("started_ts") or normalize_export_input(report).get("finished_ts")  # noqa: E501
             except Exception:
                 ts = None
             if ts:

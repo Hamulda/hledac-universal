@@ -145,7 +145,7 @@ def process_file(path: Path, verbose: bool = True) -> tuple[int, int]:
             eligible[id(cls)] = True
         else:
             # Inherits from another class. Check if parent is being slotted too.
-            parent_classes = {id(c) for c, _, _ in classes}
+            {id(c) for c, _, _ in classes}
             parent_in_file = any(p in {cc.name for cc, _, _ in classes} for p in parents)
             if parent_in_file:
                 # Parent exists in this file - we'll slot it too

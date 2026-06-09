@@ -418,7 +418,7 @@ class ExecutionContext:
     content_hashes: set[str] = field(default_factory=set)
 
     # Statistics
-    start_time: float = field(default_factory=lambda: datetime.now().timestamp())
+    start_time: float = field(default_factory=lambda: datetime.now().timestamp())  # noqa: DTZ005
     tokens_used: int = 0
 
     def add_action(self, action_type: ActionType, details: dict[str, Any]) -> None:
@@ -426,7 +426,7 @@ class ExecutionContext:
         self.action_log.append({
             "step": self.current_step,
             "action": action_type.value,
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": datetime.now().isoformat(),  # noqa: DTZ005
             "details": details,
         })
 
@@ -697,7 +697,7 @@ class CircuitBreakerOpenError(OrchestratorError):
     pass
 
 
-class RateLimitExceeded(OrchestratorError):
+class RateLimitExceeded(OrchestratorError):  # noqa: N818
     """Rate limit exceeded"""
     pass
 
@@ -1151,7 +1151,7 @@ class NeuralEvent:
 
     def __post_init__(self):
         if self.timestamp == 0:
-            object.__setattr__(self, 'timestamp', datetime.now().timestamp())
+            object.__setattr__(self, 'timestamp', datetime.now().timestamp())  # noqa: DTZ005
 
 
 @dataclass(slots=True)
@@ -1223,7 +1223,7 @@ class NeuromorphicEnergyReport:
     computational_efficiency: float
     co2_emissions_kg: float = 0.0
     trees_equivalent: float = 0.0  # CO2 absorbed by trees per year
-    timestamp: float = field(default_factory=lambda: datetime.now().timestamp())
+    timestamp: float = field(default_factory=lambda: datetime.now().timestamp())  # noqa: DTZ005
 
 
 @dataclass(slots=True)
@@ -1766,7 +1766,7 @@ class CanonicalGroundingHints:
     evidence_hint: str | None = None
 
     @classmethod
-    def from_shim(cls, shim: Any = None, topic_hints: tuple[str, ...] = (), domain_tags: tuple[str, ...] = (), correlation: RunCorrelation | None = None) -> CanonicalGroundingHints:
+    def from_shim(cls, shim: Any = None, topic_hints: tuple[str, ...] = (), domain_tags: tuple[str, ...] = (), correlation: RunCorrelation | None = None) -> CanonicalGroundingHints:  # noqa: E501
         """
         Create from local seam Shim for forward-compatibility.
 

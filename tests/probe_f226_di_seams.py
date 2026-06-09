@@ -94,7 +94,7 @@ class TestSprintF226DISeams:
 
         canned_discovery = MagicMock()
         canned_discovery.hits = (
-            MagicMock(url="https://test.example.com/test/page", title="Test Match DI Page", snippet="Test page for match DI testing with substantial snippet content", rank=0, score=0.9, reason="test"),
+            MagicMock(url="https://test.example.com/test/page", title="Test Match DI Page", snippet="Test page for match DI testing with substantial snippet content", rank=0, score=0.9, reason="test"),  # noqa: E501
         )
         canned_discovery.cache_hit = False
 
@@ -145,7 +145,7 @@ class TestSprintF226DISeams:
 
             assert len(match_calls) >= 1, f"match_fn was never called: {match_calls}"
             # _enrich_text_with_metadata prepends title + snippet + "---\n" before extracted content
-            assert len(match_calls[0]) > 100, f"match_fn received short text (enrichment may have failed): {len(match_calls[0])} chars"
+            assert len(match_calls[0]) > 100, f"match_fn received short text (enrichment may have failed): {len(match_calls[0])} chars"  # noqa: E501
 
     @pytest.mark.asyncio
     async def test_discovery_fn_is_used_without_patch(self):

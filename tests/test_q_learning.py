@@ -11,6 +11,7 @@ Anti-patterns covered:
 
 
 import pytest
+
 from hledac.universal.loops.research_loop import QTable, ResearchLoop, ResearchResult, ResearchState
 
 

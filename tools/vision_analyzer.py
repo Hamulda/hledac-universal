@@ -19,8 +19,8 @@ logger = logging.getLogger(__name__)
 # Lazy import guard
 VISION_AVAILABLE = False
 try:
-    import Foundation
-    import Vision
+    import Foundation  # noqa: F401  # Foundation
+    import Vision  # noqa: F401  # Vision
     VISION_AVAILABLE = True
 except ImportError:
     logger.debug("Vision framework not available")

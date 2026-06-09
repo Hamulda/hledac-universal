@@ -168,7 +168,7 @@ class TestDempsterShaferIntegration:
         assert isinstance(result["ds_belief_support"], float)
         assert isinstance(result["ds_contradiction"], bool)
 
-    def test_ds_belief_no_contradiction_when_supportDominates(self):
+    def test_ds_belief_no_contradiction_when_supportDominates(self):  # noqa: N802
         """
         When supporting evidence dominates, has_contradiction should be False.
         """

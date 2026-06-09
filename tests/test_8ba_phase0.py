@@ -130,7 +130,7 @@ class TestSprint8BAPhase0:
                             val_src = ast.get_source_segment(src, node.value) or ""
                             # Check for mutable collections
                             if val_src.strip().startswith(('[', '{')):
-                                if not val_src.strip().startswith(('{[', '{{')):  # Allow dict/set literals for some cases
+                                if not val_src.strip().startswith(('{[', '{{')):  # Allow dict/set literals for some cases  # noqa: E501
                                     pass  # These are typically tuples converted to frozenset or similar
 
     def test_handle_platforms_frozenset_verified_or_fixed(self):
@@ -158,7 +158,7 @@ print(f"{time.perf_counter()-t:.6f}")
         for _ in range(3):
             r = subprocess.run([sys.executable, "-c", code],
                               capture_output=True, text=True, check=True)
-            lines = [l for l in r.stdout.strip().split('\n') if l]
+            lines = [l for l in r.stdout.strip().split('\n') if l]  # noqa: E741
             for line in lines:
                 try:
                     vals.append(float(line.strip()))

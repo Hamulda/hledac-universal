@@ -28,10 +28,16 @@ try:
         url_normalize,
     )
     from hledac_rust_extensions import (
-        content_hash_64 as _rust_content_hash_64,
-        content_hash_hex as _rust_content_hash_hex,
         batch_content_hash as _rust_batch_content_hash,
+    )
+    from hledac_rust_extensions import (
         batch_content_hash_hex as _rust_batch_content_hash_hex,
+    )
+    from hledac_rust_extensions import (
+        content_hash_64 as _rust_content_hash_64,
+    )
+    from hledac_rust_extensions import (
+        content_hash_hex as _rust_content_hash_hex,
     )
     from hledac_rust_extensions import (
         fingerprint as _rust_fingerprint,
@@ -91,7 +97,7 @@ def _python_normalize(url: str) -> str:
         strip_port = (scheme == "http" and port == 80) or (scheme == "https" and port == 443)
         out = f"{scheme}://{host}" + (f":{port}" if port and not strip_port else "")
         params = urllib.parse.parse_qsl(parsed.query)
-        params = [(k, v) for k, v in params if not k.startswith("utm_") and not k.startswith("fb_") and not k.startswith("mc_")]
+        params = [(k, v) for k, v in params if not k.startswith("utm_") and not k.startswith("fb_") and not k.startswith("mc_")]  # noqa: E501
         query = urllib.parse.urlencode(sorted(params)) if params else ""
         fragment = parsed.fragment if parsed.fragment else ""
         return out + (f"?{query}" if query else "") + (f"#{fragment}" if fragment else "")
@@ -103,9 +109,9 @@ def _python_strip_tracking_params(url: str) -> str:
     try:
         parsed = urllib.parse.urlparse(url)
         params = urllib.parse.parse_qsl(parsed.query)
-        params = [(k, v) for k, v in params if not k.startswith("utm_") and not k.startswith("fb_") and not k.startswith("mc_") and not k.startswith("ref")]
+        params = [(k, v) for k, v in params if not k.startswith("utm_") and not k.startswith("fb_") and not k.startswith("mc_") and not k.startswith("ref")]  # noqa: E501
         query = urllib.parse.urlencode(sorted(params)) if params else ""
-        return urllib.parse.urlunparse((parsed.scheme, parsed.netloc, parsed.path, parsed.params, query, parsed.fragment))
+        return urllib.parse.urlunparse((parsed.scheme, parsed.netloc, parsed.path, parsed.params, query, parsed.fragment))  # noqa: E501
     except Exception:
         return url
 
@@ -553,7 +559,7 @@ class TestContentHashXxhash:
     def test_python_fallback_content_hash(self):
         """Python fallback uses hashlib.sha256 (not xxhash, just verifies import works)."""
         import hashlib
-        expected = hashlib.sha256("hello".encode()).hexdigest()[:16]
+        hashlib.sha256(b"hello").hexdigest()[:16]
         if content_hash_hex is not None:
             # Rust path: should give consistent 16-char hex
             result = content_hash_hex("hello")
@@ -566,12 +572,13 @@ class TestContentHashXxhash:
 # =============================================================================
 try:
     from hledac_rust_extensions import (
-        compute_simhash,
-        hamming_distance,
         batch_compute_simhash,
-        is_near_duplicate,
+        compute_simhash,
         find_near_duplicates,
+        hamming_distance,
+        is_near_duplicate,
     )
+
     from hledac.universal.semantic_deduplicator import (
         _compute_simhash_fingerprint,
         find_near_duplicates_in_batch,

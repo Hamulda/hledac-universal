@@ -96,7 +96,7 @@ class SimpleBottleneckProfiler:
             elapsed = time.time() - start_time
             pr.disable()
 
-            return result, elapsed
+            return result, elapsed  # noqa: B012
 
     async def profile_import_performance(self):
         """Profile import performance for bottlenecks."""
@@ -478,7 +478,7 @@ class SimpleBottleneckProfiler:
             "",
             "## Executive Summary",
             "",
-            f"After comprehensive profiling of the Hledac codebase, **{len(self.reports)} bottlenecks** were identified across critical components.",
+            f"After comprehensive profiling of the Hledac codebase, **{len(self.reports)} bottlenecks** were identified across critical components.",  # noqa: E501
             "",
             "### Critical Findings:",
             "",

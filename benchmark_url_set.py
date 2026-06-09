@@ -131,10 +131,10 @@ if __name__ == "__main__":
 
 | Operation | Python set | Rust UrlSet | Speedup |
 |-----------|------------|-------------|---------|
-| add_unique | {result['python']['add_unique']*1000:.3f} ms | {result['rust']['add_unique']*1000:.3f} ms | {result['ratio']['add_unique']:.2f}x |
-| contains_hit | {result['python']['contains_hit']*1000:.3f} ms | {result['rust']['contains_hit']*1000:.3f} ms | {result['ratio']['contains_hit']:.2f}x |
-| contains_miss | {result['python']['contains_miss']*1000:.3f} ms | {result['rust']['contains_miss']*1000:.3f} ms | {result['ratio']['contains_miss']:.2f}x |
-| clear | {result['python']['clear']*1000:.3f} ms | {result['rust']['clear']*1000:.3f} ms | {result['ratio']['clear']:.2f}x |
+| add_unique | {result['python']['add_unique']*1000:.3f} ms | {result['rust']['add_unique']*1000:.3f} ms | {result['ratio']['add_unique']:.2f}x |  # noqa: E501
+| contains_hit | {result['python']['contains_hit']*1000:.3f} ms | {result['rust']['contains_hit']*1000:.3f} ms | {result['ratio']['contains_hit']:.2f}x |  # noqa: E501
+| contains_miss | {result['python']['contains_miss']*1000:.3f} ms | {result['rust']['contains_miss']*1000:.3f} ms | {result['ratio']['contains_miss']:.2f}x |  # noqa: E501
+| clear | {result['python']['clear']*1000:.3f} ms | {result['rust']['clear']*1000:.3f} ms | {result['ratio']['clear']:.2f}x |  # noqa: E501
 
 ## Notes
 

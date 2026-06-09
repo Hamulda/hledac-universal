@@ -184,7 +184,7 @@ def test_model_manager_hermes_factory_unchanged():
 
 def test_brain_init_exports_model_engine():
     """brain/__init__.py exports ModelEngine and ModernBertModelAdapter."""
-    INIT_PATH = os.path.join(BRAIN, '__init__.py')
+    INIT_PATH = os.path.join(BRAIN, '__init__.py')  # noqa: N806
     with open(INIT_PATH) as f:
         content = f.read()
 
@@ -196,7 +196,7 @@ def test_brain_init_exports_model_engine():
 
 def test_brain_init_imports_model_engine():
     """brain/__init__.py imports ModelEngine and ModernBertModelAdapter."""
-    INIT_PATH = os.path.join(BRAIN, '__init__.py')
+    INIT_PATH = os.path.join(BRAIN, '__init__.py')  # noqa: N806
     with open(INIT_PATH) as f:
         content = f.read()
 

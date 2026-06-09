@@ -19,7 +19,6 @@ import sys
 
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # Helpers: block a top-level module import in a single test scope
 # ---------------------------------------------------------------------------
@@ -86,8 +85,8 @@ class TestPyAhoCorasickAutomatonDirect:
 
     def _import_pure_class(self):
         """Import _PyAhoCorasickAutomaton directly from source file."""
-        from pathlib import Path
         import importlib.util
+        from pathlib import Path
         src = Path(__file__).resolve().parent.parent / "patterns" / "pattern_matcher.py"
         # Pre-register a sentinel module for ahocorasick that raises on attribute
         # access, so the top-level `import ahocorasick as _ahocorasick` succeeds
@@ -107,7 +106,7 @@ class TestPyAhoCorasickAutomatonDirect:
 
     def test_api_compat_minimal(self):
         """add_word + make_automaton + iter produce (end_idx, value) pairs."""
-        Aho = self._import_pure_class()
+        Aho = self._import_pure_class()  # noqa: N806
         auto = Aho()
         auto.add_word("foo", "F")
         auto.add_word("bar", "B")
@@ -122,14 +121,14 @@ class TestPyAhoCorasickAutomatonDirect:
             assert end_idx >= 0
 
     def test_no_matches_returns_empty(self):
-        Aho = self._import_pure_class()
+        Aho = self._import_pure_class()  # noqa: N806
         auto = Aho()
         auto.add_word("xyz", "X")
         auto.make_automaton()
         assert list(auto.iter("hello world")) == []
 
     def test_empty_text_returns_empty(self):
-        Aho = self._import_pure_class()
+        Aho = self._import_pure_class()  # noqa: N806
         auto = Aho()
         auto.add_word("foo", "F")
         auto.make_automaton()
@@ -137,7 +136,7 @@ class TestPyAhoCorasickAutomatonDirect:
 
     def test_overlapping_prefixes(self):
         """Pattern 'he' and 'she' share the 'he' suffix of 'she' — both must match."""
-        Aho = self._import_pure_class()
+        Aho = self._import_pure_class()  # noqa: N806
         auto = Aho()
         auto.add_word("he", "HE")
         auto.add_word("she", "SHE")
@@ -150,7 +149,7 @@ class TestPyAhoCorasickAutomatonDirect:
 
     def test_duplicate_add_word_ignored(self):
         """Same word added twice is a no-op (first value wins)."""
-        Aho = self._import_pure_class()
+        Aho = self._import_pure_class()  # noqa: N806
         auto = Aho()
         auto.add_word("foo", "FIRST")
         auto.add_word("foo", "SECOND")
@@ -161,7 +160,7 @@ class TestPyAhoCorasickAutomatonDirect:
         assert val == "FIRST"
 
     def test_make_automaton_idempotent(self):
-        Aho = self._import_pure_class()
+        Aho = self._import_pure_class()  # noqa: N806
         auto = Aho()
         auto.add_word("foo", "F")
         auto.make_automaton()
@@ -170,7 +169,7 @@ class TestPyAhoCorasickAutomatonDirect:
         assert list(auto.iter("foo")) == [(2, "F")]
 
     def test_add_word_after_make_raises(self):
-        Aho = self._import_pure_class()
+        Aho = self._import_pure_class()  # noqa: N806
         auto = Aho()
         auto.add_word("foo", "F")
         auto.make_automaton()
@@ -178,7 +177,7 @@ class TestPyAhoCorasickAutomatonDirect:
             auto.add_word("bar", "B")
 
     def test_iter_before_make_raises(self):
-        Aho = self._import_pure_class()
+        Aho = self._import_pure_class()  # noqa: N806
         auto = Aho()
         auto.add_word("foo", "F")
         with pytest.raises(RuntimeError):
@@ -206,7 +205,7 @@ class TestPatternMatcherFallback:
 
     def test_match_text_works_with_default_backends(self):
         """Regression: with whatever is installed, match_text must produce hits."""
-        from patterns.pattern_matcher import match_text, configure_patterns, reset_pattern_matcher
+        from patterns.pattern_matcher import configure_patterns, match_text, reset_pattern_matcher
         reset_pattern_matcher()
         configure_patterns((("malware", "malware_type"), ("cve-", "cve_id")))
         hits = match_text("cve-2024-1234 mentions malware", boundary_policy="none")
@@ -218,7 +217,7 @@ class TestPatternMatcherFallback:
 
     def test_no_pyahocorasick_uses_python_fallback(self, no_pyahocorasick):
         """When both pyahocorasick and Rust ext are blocked, fallback is used."""
-        from patterns.pattern_matcher import get_backend_info, _PyAhoCorasickAutomaton
+        from patterns.pattern_matcher import _PyAhoCorasickAutomaton, get_backend_info
         info = get_backend_info()
         assert info["backend"] == "python_fallback"
         assert info["pyahocorasick_available"] is False
@@ -229,7 +228,7 @@ class TestPatternMatcherFallback:
 
     def test_no_pyahocorasick_match_text_works(self, no_pyahocorasick):
         """End-to-end: match_text returns correct hits via Python fallback."""
-        from patterns.pattern_matcher import match_text, configure_patterns, reset_pattern_matcher
+        from patterns.pattern_matcher import configure_patterns, match_text, reset_pattern_matcher
         reset_pattern_matcher()
         configure_patterns((
             ("malware", "malware_type"),

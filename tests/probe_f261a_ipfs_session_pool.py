@@ -28,11 +28,10 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-import pytest
+import pytest  # noqa: E402
 
-from hledac.universal.network import ipfs_client
-from hledac.universal.transport import circuit_breaker
-
+from hledac.universal.network import ipfs_client  # noqa: E402
+from hledac.universal.transport import circuit_breaker  # noqa: E402
 
 # =============================================================================
 # Fixtures
@@ -89,9 +88,9 @@ def test_sp2_same_host_returns_same_session():
 
 def test_sp3_tor_connector_separate_key():
     """Tor connector (ProxyConnector) → key host|tor, distinct from clearnet key."""
-    import aiohttp
-
     import asyncio as _aio
+
+    import aiohttp
 
     class _FakeProxyConnector:
         """Minimal stub — same loop as the test's running loop."""
@@ -200,7 +199,7 @@ def test_sp5_fallback_on_session_create_failure(monkeypatch):
     # Therefore: must NOT raise. Either return None or raise.
     # Verify the function is fail-soft: it must not raise to caller.
     try:
-        result = _run(go())
+        _run(go())
         # If we get here, got a value back (None is acceptable)
         assert call_count["n"] >= 1, "patch was not invoked"
     except Exception as e:
@@ -320,7 +319,6 @@ def test_sp10_checked_get_records_breaker_for_4xx_5xx():
 
 def test_sp11_checked_get_empty_domain_fail_soft():
     """Empty domain short-circuits with empty_domain label, no breaker touch."""
-    import aiohttp
 
     class _FakeSession:
         closed = False

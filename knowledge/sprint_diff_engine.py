@@ -317,6 +317,7 @@ class SprintDiffEngine:
         # ANE entity fuzzy merge — consolidate near-identical entity names (cosine >= 0.97)
         try:
             import numpy as np
+
             from hledac.universal.brain.ane_embedder import _coreml_embed, get_ane_embedder
             _embedder = get_ane_embedder()
             # Sprint F228B: ensure model is initialized before first embed() call

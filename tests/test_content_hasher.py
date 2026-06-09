@@ -19,9 +19,7 @@ from __future__ import annotations
 
 import hashlib
 import os
-import sys
 import time
-from pathlib import Path
 
 import pytest
 
@@ -143,7 +141,7 @@ class TestBatchBlake3:
         bodies = [b"alpha", b"beta", b"gamma", b"delta omega"]
         results = ContentHasher.batch_blake3_64(bodies)
         assert len(results) == len(bodies)
-        for body, h in zip(bodies, results):
+        for body, h in zip(bodies, results, strict=False):
             assert h == ContentHasher.blake3_64(body)
 
     def test_batch_preserves_order(self) -> None:

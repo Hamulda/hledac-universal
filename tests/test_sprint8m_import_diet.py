@@ -87,6 +87,7 @@ class TestNeuromorphicMemoryManagerLazyNumpy(unittest.TestCase):
 
         recalled = nm.recall_pattern('p1')
         self.assertIsNotNone(recalled)
+        assert recalled is not None  # type guard for ty
         self.assertEqual(recalled['data'], data)
 
 

@@ -7,9 +7,7 @@ Tests verify each fix in isolation, no M1 model load, no network.
 """
 from __future__ import annotations
 
-import os
 import sys
-import tempfile
 import time
 from pathlib import Path
 from unittest.mock import MagicMock
@@ -43,6 +41,7 @@ def test_fix1_shadow_findings_indexes_apply_at_init():
     Verify indexes are actually CREATED on a fresh DuckDB instance.
     """
     import duckdb
+
     from hledac.universal.knowledge.duckdb_store import _SCHEMA_SQL
 
     conn = duckdb.connect(":memory:")
@@ -179,8 +178,8 @@ def test_fix4_decode_response_bytes_basic():
     assert decode_response_bytes(None) == ""
 
     # UTF-8 valid
-    assert decode_response_bytes("hello".encode("utf-8")) == "hello"
-    assert decode_response_bytes("Příliš žluťoučký kůň".encode("utf-8")) == "Příliš žluťoučký kůň"
+    assert decode_response_bytes(b"hello") == "hello"
+    assert decode_response_bytes("Příliš žluťoučký kůň".encode()) == "Příliš žluťoučký kůň"
 
     # Latin-1 fallback (always succeeds) — uses non-UTF8 bytes
     raw_latin1 = b"\x80\x81\x82 caf\xc3\xa9"  # bytes only, no Python source non-ASCII

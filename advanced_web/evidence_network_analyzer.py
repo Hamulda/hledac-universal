@@ -55,8 +55,7 @@ from typing import TYPE_CHECKING, Any
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
-    from hledac.universal.knowledge.duckdb_store import CanonicalFinding
-    from hledac.universal.graph.quantum_pathfinder import DuckPGQGraph
+    pass
 
 
 # ── Boundedness constants (always-on, no env flag) ────────────────────────────
@@ -268,7 +267,7 @@ def _compute_relationships(
                 weight = max(weight, 0.9)
                 rel_type = "shared_domain"
             # 3) Same IOC type, distinct values (e.g. two IPs in same finding)
-            if types[i] == types[j] and types[i] in {"ip", "cve", "hash_sha256", "hash_md5", "domain", "onion", "i2p", "info_hash", "magnet_uri", "apt", "malware"}:
+            if types[i] == types[j] and types[i] in {"ip", "cve", "hash_sha256", "hash_md5", "domain", "onion", "i2p", "info_hash", "magnet_uri", "apt", "malware"}:  # noqa: E501
                 if weight < 0.4:
                     weight = 0.4
                     rel_type = f"shared_ioc_type:{types[i]}"
@@ -877,7 +876,7 @@ class EvidenceNetworkAnalyzer:
                     continue
                 # c may have keys: 'value', 'ioc_type', 'depth', 'weight' depending
                 # on the underlying SQL schema. We coerce to EvidenceGraphEdge.
-                dst_value = _safe_value(c.get("value")) if hasattr(_safe_value, "__call__") else str(c.get("value", ""))
+                dst_value = _safe_value(c.get("value")) if callable(_safe_value) else str(c.get("value", ""))
                 if not dst_value or dst_value == src_value:
                     continue
                 ioc_type = str(c.get("ioc_type", "unknown"))[:32]

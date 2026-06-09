@@ -40,6 +40,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from utils.async_helpers import safe_gather_dropin, safe_gather_fire_and_forget
+
 if TYPE_CHECKING:
     from hledac.universal.knowledge.duckdb_store import DuckDBShadowStore
 
@@ -539,7 +540,7 @@ class FindingSidecarBus:
             stage_tasks: list[asyncio.Task[SidecarRunResult]] = []
             for name in stage_names:
                 if name in self._runners:
-                    stage_tasks.append(asyncio.create_task(_run_one(name, self._runners[name]), name=f"sidecar_bus:stage_runner:{name}"))
+                    stage_tasks.append(asyncio.create_task(_run_one(name, self._runners[name]), name=f"sidecar_bus:stage_runner:{name}"))  # noqa: E501
                     runners_executed.add(name)
 
             if not stage_tasks:
@@ -578,7 +579,7 @@ class FindingSidecarBus:
         remaining_tasks: list[asyncio.Task[SidecarRunResult]] = []
         for name, runner in self._runners.items():
             if name not in runners_executed:
-                remaining_tasks.append(asyncio.create_task(_run_one(name, runner), name=f"sidecar_bus:remaining_runner:{name}"))
+                remaining_tasks.append(asyncio.create_task(_run_one(name, runner), name=f"sidecar_bus:remaining_runner:{name}"))  # noqa: E501
                 runners_executed.add(name)
 
         if remaining_tasks:
@@ -1230,7 +1231,7 @@ async def _network_intel_runner(
     by the bus before calling this runner. Returns stored count (0 if no findings).
     """
     # Bounds
-    MAX_RECON_TARGETS = 5
+    MAX_RECON_TARGETS = 5  # noqa: N806
 
     if not findings or store is None:
         return None
@@ -1407,21 +1408,20 @@ async def _gopher_crawl_runner(
 
 # ── Default Registry ───────────────────────────────────────────────────────────
 # Ordered list of (name, runner) pairs — bus registers these by default.
+# NOTE (F350M-R, 2026-06-09): leak_sentinel, temporal_archaeology,
+# identity_stitching, passive_fingerprint, passive_tech_stack, and
+# social_identity_surface are now registered via SidecarRegistry
+# (runtime.sidecar_protocol_adapters). Removed from DEFAULT_SIDECAR_RUNNERS
+# to avoid double-execution; canonical dispatch lives in SidecarRegistry.
 DEFAULT_SIDECAR_RUNNERS: list[tuple[str, SidecarRunner]] = [
-    ("leak_sentinel", _leak_sentinel_runner),
     ("exposure_correlator", _exposure_correlator_runner),
-    ("temporal_archaeology", _temporal_archaeology_runner),
     ("evidence_triage", _evidence_triage_runner),
-    ("identity_stitching", _identity_stitching_runner),
     ("pattern_mining", _pattern_mining_runner),
     ("sprint_diff", _sprint_diff_runner),
     ("kill_chain_tagging", _kill_chain_tagging_runner),
     ("wayback_diff", _wayback_diff_runner),
-    ("passive_fingerprint", _passive_fingerprint_runner),
-    ("passive_tech_stack", _passive_tech_stack_runner),
     ("rir_correlator", _rir_correlator_runner),
     ("embedding", _embedding_runner),
-    ("social_identity_surface", _social_identity_surface_runner),
     ("network_intel", _network_intel_runner),
     ("banner_grab", _banner_grab_runner),
     ("ipv6_recon", _ipv6_recon_runner),

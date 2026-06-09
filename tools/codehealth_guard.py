@@ -135,7 +135,7 @@ def _has_input_dataclass(source_text: str) -> bool:
             for decorator in node.decorator_list:
                 if isinstance(decorator, ast.Name) and decorator.id == "dataclass":
                     return True
-                if isinstance(decorator, ast.Call) and isinstance(decorator.func, ast.Name) and decorator.func.id == "dataclass":
+                if isinstance(decorator, ast.Call) and isinstance(decorator.func, ast.Name) and decorator.func.id == "dataclass":  # noqa: E501
                     return True
             return True  # Class exists even without decorator
         if isinstance(node, ast.AnnAssign):
@@ -494,10 +494,10 @@ def _render_markdown(result: GuardResult) -> str:
     lines.append("## Verdict Definition\n")
     verdicts = {
         GuardVerdict.PASS: "Function passes all code-health checks.",
-        GuardVerdict.PASS_COMPAT_WRAPPER: "Function has >8 args but is a thin compatibility wrapper (NextActionInput construction + rule helper delegation).",
-        GuardVerdict.PASS_OWNER_DELEGATED: "Function delegates to the canonical next_action owner (live_measurement_next_action.py). Target file is the compatibility shim, not the implementation.",
-        GuardVerdict.PASS_OWNER_IMPORTED: "Symbol not locally defined because ownership moved to benchmarks.live_measurement_next_action.py.",
-        GuardVerdict.FAIL_TOO_MANY_ARGS: "Function has too many explicit arguments (>8) and is not an acceptable compatibility wrapper.",
+        GuardVerdict.PASS_COMPAT_WRAPPER: "Function has >8 args but is a thin compatibility wrapper (NextActionInput construction + rule helper delegation).",  # noqa: E501
+        GuardVerdict.PASS_OWNER_DELEGATED: "Function delegates to the canonical next_action owner (live_measurement_next_action.py). Target file is the compatibility shim, not the implementation.",  # noqa: E501
+        GuardVerdict.PASS_OWNER_IMPORTED: "Symbol not locally defined because ownership moved to benchmarks.live_measurement_next_action.py.",  # noqa: E501
+        GuardVerdict.FAIL_TOO_MANY_ARGS: "Function has too many explicit arguments (>8) and is not an acceptable compatibility wrapper.",  # noqa: E501
         GuardVerdict.FAIL_TOO_LONG: "Function source exceeds 80 lines and is not a wrapper delegate.",
         GuardVerdict.FAIL_POLICY_CLASS_OVERENGINEERING: "Policy class overengineering detected (.*Rule class names).",
         GuardVerdict.FAIL_MISSING_INPUT_DATACLASS: "NextActionInput dataclass not found in source.",

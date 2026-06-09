@@ -329,8 +329,8 @@ class SecurityLayer:
         try:
             from datetime import datetime, timedelta
             return await self._privacy_audit.generate_compliance_report(
-                start_date=datetime.now() - timedelta(days=days),
-                end_date=datetime.now()
+                start_date=datetime.now() - timedelta(days=days),  # noqa: DTZ005
+                end_date=datetime.now()  # noqa: DTZ005
             )
         except Exception as e:
             logger.warning(f"⚠️ Compliance report generation failed: {e}")
@@ -548,7 +548,7 @@ class SecurityLayer:
                     original_hash=original_hash,
                     obfuscated_data=obfuscated,
                     encoding_chain=stages,
-                    decoy_count=self.config.decoy_count if level in (ObfuscationLevel.HEAVY, ObfuscationLevel.MAXIMUM) else 0,
+                    decoy_count=self.config.decoy_count if level in (ObfuscationLevel.HEAVY, ObfuscationLevel.MAXIMUM) else 0,  # noqa: E501
                     success=True
                 )
             else:
@@ -913,10 +913,9 @@ class SecurityLayer:
 # MISSION AUDIT - Merkle Tree Audit Chain (from kernel/integrity.py)
 # =============================================================================
 
-import json
-import time
-from dataclasses import dataclass, field
-from pathlib import Path
+import json  # noqa: E402
+import time  # noqa: E402
+from dataclasses import dataclass, field  # noqa: E402
 
 
 @dataclass

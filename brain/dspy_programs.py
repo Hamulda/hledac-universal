@@ -365,7 +365,7 @@ class ContradictionResolverProgram:
 # ── F260: MultiHop Deep Research Chain ────────────────────────────────────────
 
 try:
-    from brain.dspy_signatures import DeepResearchHopSignature, DeepResearchChain
+    from brain.dspy_signatures import DeepResearchChain, DeepResearchHopSignature
     _DEEP_RESEARCH_SIGNATURE_AVAILABLE = True
 except ImportError:
     DeepResearchHopSignature = None  # type: ignore
@@ -653,7 +653,7 @@ def _compute_conflict_from_evidence(evidence_list: list[dict]) -> float:
     if not _DS_EIG_AVAILABLE or not evidence_list:
         return 0.0
 
-    hypotheses = set(e.get("hypothesis", "present") for e in evidence_list)
+    hypotheses = {e.get("hypothesis", "present") for e in evidence_list}
     hypotheses.add("absent")
     ds = DempsterShafer(hypotheses=hypotheses)
 

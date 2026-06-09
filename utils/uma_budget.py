@@ -321,7 +321,7 @@ def format_uma_budget_report() -> str:
         f"Warn at:        {snap['warn_threshold_mb']:,} MB",
         f"Critical at:    {snap['critical_threshold_mb']:,} MB",
         "",
-        f"System RAM:     {snap['system_used_mb']:,} / {snap['system_total_mb']:,} MB (avail: {snap['system_available_mb']:,})",
+        f"System RAM:     {snap['system_used_mb']:,} / {snap['system_total_mb']:,} MB (avail: {snap['system_available_mb']:,})",  # noqa: E501
         f"MLX Active:     {snap['mlx_active_mb']:,} MB",
         f"MLX Peak:       {snap['mlx_peak_mb']:,} MB",
         f"MLX Cache:      {snap['mlx_cache_mb']:,} MB",
@@ -462,7 +462,7 @@ class UmaWatchdog:
                         )
                         try:
                             # P2-12 fix: run blocking cleanup in thread to avoid blocking event loop
-                            asyncio.create_task(asyncio.to_thread(self._callbacks.on_emergency, snapshot), name="uma_budget:emergency_callback")
+                            asyncio.create_task(asyncio.to_thread(self._callbacks.on_emergency, snapshot), name="uma_budget:emergency_callback")  # noqa: E501
                         except Exception as e:
                             logger.error(f"[UMA-WATCHDOG] on_emergency callback error: {e}")
 
@@ -474,7 +474,7 @@ class UmaWatchdog:
                         )
                         try:
                             # P2-12 fix: run blocking cleanup in thread to avoid blocking event loop
-                            asyncio.create_task(asyncio.to_thread(self._callbacks.on_critical, snapshot), name="uma_budget:critical_callback")
+                            asyncio.create_task(asyncio.to_thread(self._callbacks.on_critical, snapshot), name="uma_budget:critical_callback")  # noqa: E501
                         except Exception as e:
                             logger.error(f"[UMA-WATCHDOG] on_critical callback error: {e}")
 
@@ -486,7 +486,7 @@ class UmaWatchdog:
                         )
                         try:
                             # P2-12 fix: run blocking cleanup in thread to avoid blocking event loop
-                            asyncio.create_task(asyncio.to_thread(self._callbacks.on_warn, snapshot), name="uma_budget:warn_callback")
+                            asyncio.create_task(asyncio.to_thread(self._callbacks.on_warn, snapshot), name="uma_budget:warn_callback")  # noqa: E501
                         except Exception as e:
                             logger.error(f"[UMA-WATCHDOG] on_warn callback error: {e}")
 

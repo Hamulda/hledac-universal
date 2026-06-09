@@ -79,7 +79,7 @@ async def get_bgp_info(prefix: str) -> dict[str, Any]:
                     if path:
                         asns = path.split()
                         if asns:
-                            result["origin_asn"] = asns[-1] if asns[-1] != "None" else asns[-2] if len(asns) > 1 else None
+                            result["origin_asn"] = asns[-1] if asns[-1] != "None" else asns[-2] if len(asns) > 1 else None  # noqa: E501
                     result["country"] = elem.get("country")
                     break
 

@@ -31,18 +31,18 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-from hledac.universal.discovery.duckduckgo_adapter import (
+from hledac.universal.discovery.duckduckgo_adapter import (  # noqa: E402
     DiscoveryBatchResult,
 )
-from hledac.universal.discovery.provider_stats import (
+from hledac.universal.discovery.provider_stats import (  # noqa: E402
     PROVIDER_CAPABILITIES,
     PROVIDER_COST_ESTIMATE,
     PROVIDER_NAMES,
     ProviderStatsRegistry,
     get_provider_stats_registry,
 )
+from utils.async_helpers import safe_gather_dropin  # noqa: E402
 
-from utils.async_helpers import safe_gather_dropin
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------

@@ -95,7 +95,7 @@ _UNIVERSAL_ROOT = f"{_EXPECTED_REPO_ROOT}/hledac/universal"
 def _get_repo_root_reality() -> dict:
     """Hermetic CWD diagnostic — no live run, no network, no MLX."""
     import os as _os
-    from pathlib import Path as _P
+    from pathlib import Path as _P  # noqa: N814
 
     _cwd = _os.getcwd()
     _resolved = str(_P(_cwd).resolve())
@@ -216,7 +216,7 @@ def _sample_uma() -> dict:
     """Sample current UMA/swap state via core.resource_governor."""
     try:
         from core.resource_governor import sample_uma_status
-        UmaStatus = sample_uma_status()
+        UmaStatus = sample_uma_status()  # noqa: N806
         return {
             "system_used_gib": round(getattr(UmaStatus, "system_used_gib", 0.0), 3),
             "swap_used_gib": round(getattr(UmaStatus, "swap_used_gib", 0.0), 3),
@@ -351,7 +351,7 @@ def _check_f223_artifact(
     return result
 
 
-def _check_all_f223_artifacts(repo_root: Path) -> tuple[list[F223ArtifactResult], list[F223ArtifactResult], list[F223ArtifactResult]]:
+def _check_all_f223_artifacts(repo_root: Path) -> tuple[list[F223ArtifactResult], list[F223ArtifactResult], list[F223ArtifactResult]]:  # noqa: E501
     """
     Check all F223 artifacts using alias resolution. Returns (required_results, required_missing, optional_results).
     Required missing blocks RUN_NOW / RESTART_THEN_RUN.
@@ -733,7 +733,7 @@ def run_one_button_gate(
             "missing_f229_artifacts": "any F229 structural check fails",
             "missing_f223_required_artifacts": "any F223 required artifact missing",
             "fallback_acquisition_schema": "fallback_schema detected in prelive reports",
-            "capability_synthesis_missing_in_exporter_self_test": "capability_synthesis not in _generate_next_sprint_seeds",
+            "capability_synthesis_missing_in_exporter_self_test": "capability_synthesis not in _generate_next_sprint_seeds",  # noqa: E501
             "public_ct_provider_surface_missing": "provider surface not OK",
             "uma_state_critical_or_emergency": "uma_state in (critical, emergency)",
         },
@@ -848,7 +848,7 @@ def run_one_button_gate(
         capability_live_allowed = False
         feed_baseline_allowed = False
         why_nonfeed_capability_blocked = f"swap={swap_gib:.3f}GiB_exceeds_hard_block_threshold"
-        reasons.append(f"Swap {swap_gib:.3f}GiB exceeds hard-block threshold ({DIAGNOSTIC_SWAP_MAX_GIB}GiB) — restart required before any run")
+        reasons.append(f"Swap {swap_gib:.3f}GiB exceeds hard-block threshold ({DIAGNOSTIC_SWAP_MAX_GIB}GiB) — restart required before any run")  # noqa: E501
         warnings.append(f"Hardware constrained: swap={swap_gib:.3f}GiB, tier={swap_policy_tier}")
         swap_policy_tier = "hard_block"
 
@@ -887,7 +887,7 @@ def run_one_button_gate(
         capability_live_allowed = cap_provider_ok and cap_no_fallback and cap_f232g_ok and cap_f233d_ok
 
         if not capability_live_allowed:
-            why_nonfeed_capability_blocked = "; ".join(why_blocked_parts) if why_blocked_parts else "unknown_capability_block"
+            why_nonfeed_capability_blocked = "; ".join(why_blocked_parts) if why_blocked_parts else "unknown_capability_block"  # noqa: E501
 
         # --------------------------------------------------------------------------- #
         # F233F: Determine verdict based on capability vs feed split
@@ -909,7 +909,7 @@ def run_one_button_gate(
             if capability_live_allowed:
                 verdict = OneButtonVerdict.READY_FOR_NONFEED_CAPABILITY_RUN
                 live_allowed = True
-                reasons.append(f"All nonfeed capability checks passed. UMA ok (swap={swap_gib:.3f}GiB, state={uma_state})")
+                reasons.append(f"All nonfeed capability checks passed. UMA ok (swap={swap_gib:.3f}GiB, state={uma_state})")  # noqa: E501
                 if not f232g_research_quality_present and is_nonfeed_profile:
                     warnings.append("F232G research_quality not confirmed — capability run may be degraded")
             else:
@@ -947,7 +947,7 @@ def run_one_button_gate(
         recommended_mode = "dry_plan"
         max_safe_iter = 0
         max_safe_piv = 0
-        investigation_reason = f"swap_diagnostic: swap={swap_gib:.3f}GiB in ({CLEAN_SWAP_MAX_GIB}, {DIAGNOSTIC_SWAP_MAX_GIB}]GiB"
+        investigation_reason = f"swap_diagnostic: swap={swap_gib:.3f}GiB in ({CLEAN_SWAP_MAX_GIB}, {DIAGNOSTIC_SWAP_MAX_GIB}]GiB"  # noqa: E501
     elif swap_policy_tier == "clean" and live_allowed:
         can_run_live = True
         can_run_nonfeed_diag = True
@@ -1441,7 +1441,7 @@ def _run_self_test(repo_root: Path, profile: str, query: str) -> SelfTestResult:
 
     # F229-NONFEED-A: nonfeed_profile_expected_lanes in LiveMeasurementResult
     try:
-        from benchmarks.live_sprint_measurement import LiveMeasurementResult as _LMR
+        from benchmarks.live_sprint_measurement import LiveMeasurementResult as _LMR  # noqa: N814
         _has_lanes = hasattr(_LMR, "nonfeed_profile_expected_lanes")
         _has_acq_report = hasattr(_LMR, "acquisition_report")
         if not _has_lanes:

@@ -15,6 +15,13 @@ from __future__ import annotations
 
 import json
 
+from hledac.universal.export.jsonld_exporter import (  # noqa: E402
+    _FORENSIC_SOURCE_TYPES as _JSONLD_FORENSIC_ST,
+)
+from hledac.universal.export.jsonld_exporter import (
+    build_forensic_analysis_jsonld,
+    render_jsonld,
+)
 from hledac.universal.export.markdown_reporter import (  # noqa: E402
     _FORENSIC_MAX_IOC_SAMPLE,
     _FORENSIC_MAX_RENDER,
@@ -22,11 +29,6 @@ from hledac.universal.export.markdown_reporter import (  # noqa: E402
     aggregate_forensic_findings,
     render_diagnostic_markdown,
     render_forensic_findings_section,
-)
-from hledac.universal.export.jsonld_exporter import (  # noqa: E402
-    _FORENSIC_SOURCE_TYPES as _JSONLD_FORENSIC_ST,
-    build_forensic_analysis_jsonld,
-    render_jsonld,
 )
 
 
@@ -388,6 +390,7 @@ def test_f263_no_llm_or_mlx_imported():
     """The two reporters must not pull in mlx/llmlingua lazily on import."""
     # Re-import to ensure no side-effect at import-time
     import importlib
+
     import hledac.universal.export.markdown_reporter as mdr
     importlib.reload(mdr)
     import hledac.universal.export.jsonld_exporter as jle

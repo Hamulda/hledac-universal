@@ -6,7 +6,6 @@ Run: pytest tests/test_graph_service_smoke.py -v
 from __future__ import annotations
 
 import asyncio
-import pytest
 
 from hledac.universal.graph.quantum_pathfinder import DuckPGQGraph
 

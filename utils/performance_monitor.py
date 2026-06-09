@@ -201,9 +201,9 @@ class QualityValidator:
 # SYSTEM MONITOR (Integrated from hledac/utils/systemcontext.py)
 # =============================================================================
 
-from enum import Enum
+from enum import Enum  # noqa: E402
 
-import psutil
+import psutil  # noqa: E402
 
 
 class ThermalState(Enum):

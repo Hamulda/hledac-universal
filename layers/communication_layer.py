@@ -30,9 +30,10 @@ logger = logging.getLogger(__name__)
 # Sprint 41: Priority batch item for dynamic batching
 # Sprint 42: Added wait_since for aging (anti-starvation)
 # Sprint 47: Added counter for tie-breaking when VoI is equal
-import itertools
+import itertools  # noqa: E402
 
-from utils.async_helpers import safe_gather_dropin
+from utils.async_helpers import safe_gather_dropin  # noqa: E402
+
 _counter = itertools.count()
 
 @dataclass(order=True)
@@ -69,19 +70,40 @@ class CacheEntry:
 # Lazy imports
 HAS_COMM_MODULES = False
 try:
-    from ...communication.agent_messaging import AgentMessagingSystem
-    from ...communication.agent_model_bridge import AgentModelBridge
+    from ...communication.agent_messaging import (
+        AgentMessagingSystem,  # noqa: F401  # ...communication.agent_messaging.AgentMessagingSystem
+    )
+    from ...communication.agent_model_bridge import (
+        AgentModelBridge,  # noqa: F401  # ...communication.agent_model_bridge.AgentModelBridge
+    )
     HAS_COMM_MODULES = True
 except ImportError:
     pass
 
 try:
-    from ...emergent_communication.a2a_protocol_adapter import A2AAgentCard, A2AProtocolAdapter
-    from ...emergent_communication.agent_relevance_scorer import AgentRelevanceScorer
-    from ...emergent_communication.communication_optimizer import CommunicationOptimizer, OptimizationMode
-    from ...emergent_communication.semantic_message_router import IntentType, RoutingDecision, SemanticMessageRouter
-    from ...emergent_communication.topic_channel_organizer import TopicChannelOrganizer
-    from ...emergent_communication.vocabulary_manager import EncodingResult, VocabularyManager
+    from ...emergent_communication.a2a_protocol_adapter import (  # noqa: F401  # ...emergent_communication.a2a_protocol_adapter.A2AAgentCard
+        A2AAgentCard,
+        A2AProtocolAdapter,
+    )
+    from ...emergent_communication.agent_relevance_scorer import (
+        AgentRelevanceScorer,  # noqa: F401  # ...emergent_communication.agent_relevance_scorer.AgentRelevanceScorer
+    )
+    from ...emergent_communication.communication_optimizer import (  # noqa: F401  # ...emergent_communication.communication_optimizer.CommunicationOptimizer
+        CommunicationOptimizer,
+        OptimizationMode,
+    )
+    from ...emergent_communication.semantic_message_router import (  # noqa: F401  # ...emergent_communication.semantic_message_router.SemanticMessageRouter
+        IntentType,
+        RoutingDecision,
+        SemanticMessageRouter,
+    )
+    from ...emergent_communication.topic_channel_organizer import (
+        TopicChannelOrganizer,  # noqa: F401  # ...emergent_communication.topic_channel_organizer.TopicChannelOrganizer
+    )
+    from ...emergent_communication.vocabulary_manager import (  # noqa: F401  # ...emergent_communication.vocabulary_manager.EncodingResult
+        EncodingResult,
+        VocabularyManager,
+    )
     HAS_EMERGENT = True
 except ImportError:
     HAS_EMERGENT = False
@@ -465,7 +487,7 @@ class CommunicationLayer:
         max_tokens: int,
         temperature: float,
         voi_score: float = 0.5
-    ) -> dict[str, Any]:
+    ) -> dict[str, Any] | None:
         """Add query to batch queue with priority based on voi_score."""
         future = asyncio.Future()
 
@@ -513,8 +535,8 @@ class CommunicationLayer:
     async def _batch_processor(self) -> None:
         """Process batched queries using priority heap and dynamic max_batch (Sprint 41).
         Sprint 42: Added aging for anti-starvation."""
-        AGING_RATE = 0.01  # priority boost per second of waiting
-        MAX_PRIORITY_CAP = -0.01  # ensure low-VoI never surpasses high-VoI with VoI=1.0
+        AGING_RATE = 0.01  # priority boost per second of waiting  # noqa: N806
+        MAX_PRIORITY_CAP = -0.01  # ensure low-VoI never surpasses high-VoI with VoI=1.0  # noqa: N806
 
         while True:
             try:

@@ -42,7 +42,7 @@ def _check_vision_framework() -> dict:
         "ane_device_name": None,
     }
     try:
-        from Vision import VNCoreMLModel, VNCoreMLRequest, VNImageRequestHandler
+        from Vision import VNCoreMLModel, VNCoreMLRequest, VNImageRequestHandler  # noqa: F401  # Vision.VNCoreMLRequest
         result["vision_imported"] = True
     except ImportError:
         pass
@@ -68,7 +68,7 @@ def _check_naturallanguage_framework() -> dict:
         "nl_tag_schemes": [],
     }
     try:
-        from NaturalLanguage import NLTagger, NLTagScheme
+        from NaturalLanguage import NLTagger, NLTagScheme  # noqa: F401  # NaturalLanguage.NLTagScheme
         result["nl_available"] = True
         result["nl_tagger_available"] = True
         result["nl_tag_schemes"] = []

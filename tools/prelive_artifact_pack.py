@@ -6,7 +6,7 @@ No live network. No model load. No dependency install.
 Checks expected report artifacts and reports missing/stale ones.
 
 Usage:
-    python tools/prelive_artifact_pack.py --repo-root . --output-json probe_f219i_prelive_artifact_pack/artifact_pack.json --output-md probe_f219i_prelive_artifact_pack/REPORT_PRELIVE_ARTIFACT_PACK.md
+    python tools/prelive_artifact_pack.py --repo-root . --output-json probe_f219i_prelive_artifact_pack/artifact_pack.json --output-md probe_f219i_prelive_artifact_pack/REPORT_PRELIVE_ARTIFACT_PACK.md  # noqa: E501
     python tools/prelive_artifact_pack.py --repo-root . --run-probes
 """
 
@@ -164,7 +164,7 @@ def render_collision_warning(report: SprintCollisionReport) -> list[str]:
         return []
 
     lines = ["", "## ⚠️ Sprint ID Collision Warning", ""]
-    lines.append(f"**{len(report.collisions)} collision(s)** detected across {report.total_probes_scanned} probes scanned.")
+    lines.append(f"**{len(report.collisions)} collision(s)** detected across {report.total_probes_scanned} probes scanned.")  # noqa: E501
     lines.append("")
 
     for coll in report.collisions:
@@ -263,7 +263,7 @@ def check_all_artifacts(repo_root: Path) -> tuple[list[ProbeArtifact], list[Prob
     return required, optional
 
 
-def check_all_artifacts_with_f224(repo_root: Path) -> tuple[list[ProbeArtifact], list[ProbeArtifact], list[ProbeArtifact]]:
+def check_all_artifacts_with_f224(repo_root: Path) -> tuple[list[ProbeArtifact], list[ProbeArtifact], list[ProbeArtifact]]:  # noqa: E501
     """Check all required, optional, and F224 artifact probes. Returns (required, optional, f224)."""
     required, optional = check_all_artifacts(repo_root)
     f224 = []
@@ -342,7 +342,7 @@ def render_markdown(
             lines.append("```")
             lines.append("")
     else:
-        lines.extend(["", "## Regeneration Commands", "", "All required artifacts present. No regeneration needed.", ""])
+        lines.extend(["", "## Regeneration Commands", "", "All required artifacts present. No regeneration needed.", ""])  # noqa: E501
 
     lines.extend([
         "",

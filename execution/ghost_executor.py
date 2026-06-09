@@ -843,7 +843,7 @@ class GhostExecutor:
         Returns truthful stub result with stub=True metadata.
         """
         url = params.get("url", "")
-        logger.warning("stealth_harvest is stub-only — DetectionEvader not available at hledac.advanced_web.detection_evader")
+        logger.warning("stealth_harvest is stub-only — DetectionEvader not available at hledac.advanced_web.detection_evader")  # noqa: E501
         return ActionResult(
             success=True,
             action="stealth_harvest",

@@ -31,9 +31,11 @@ from pathlib import Path
 from typing import Any
 
 import aiohttp
+
 from hledac.universal.network.session_runtime import async_get_aiohttp_session
 from hledac.universal.utils.deduplication import DeduplicationConfig, DeduplicationEngine
 from hledac.universal.utils.deduplication import QueryItem as DedupItem
+from hledac.universal.utils.msgspec_json import decode, encode
 from hledac.universal.utils.query_expansion import (
     DomainSpecificExpansionStrategy,
     ExpansionStrategy,
@@ -42,9 +44,8 @@ from hledac.universal.utils.query_expansion import (
     SemanticExpansionStrategy,
     SyntacticExpansionStrategy,
 )
-
 from utils.async_helpers import safe_gather_dropin
-from hledac.universal.utils.msgspec_json import decode, encode
+
 logger = logging.getLogger(__name__)
 
 
@@ -219,7 +220,7 @@ class SourcePerformance:
         else:
             self.avg_response_time_ms = (self.avg_response_time_ms * 0.8) + (response_time_ms * 0.2)
 
-        self.last_used = datetime.now()
+        self.last_used = datetime.now()  # noqa: DTZ005
 
 
 # =============================================================================
@@ -398,7 +399,7 @@ class ArxivAdapter(BaseSourceAdapter):
                         pdf_url = link.get('href', '')
                         break
 
-                snippet = summary[:300] + "..." if len(summary) > 300 else summary
+                snippet = ((summary or "")[:300] + "...") if summary and len(summary) > 300 else (summary or "")
 
                 result = SearchResult(
                     title=title.strip(),
@@ -746,7 +747,7 @@ class SemanticScholarAdapter(BaseSourceAdapter):
             url = f"{self.base_url}/paper/{paper_id}"
 
             params = {
-                "fields": "title,authors,year,abstract,citationCount,referenceCount,externalIds,url,openAccessPdf,fieldsOfStudy,publicationDate,tldr"
+                "fields": "title,authors,year,abstract,citationCount,referenceCount,externalIds,url,openAccessPdf,fieldsOfStudy,publicationDate,tldr"  # noqa: E501
             }
 
             headers = {"User-Agent": "Hledac-Research/1.0"}
@@ -755,7 +756,7 @@ class SemanticScholarAdapter(BaseSourceAdapter):
                 headers["x-api-key"] = self.config.api_key
 
             async with aiohttp.ClientSession() as session:
-                async with session.get(url, params=params, headers=headers, timeout=aiohttp.ClientTimeout(total=10)) as response:
+                async with session.get(url, params=params, headers=headers, timeout=aiohttp.ClientTimeout(total=10)) as response:  # noqa: E501
                     if response.status == 200:
                         return await response.json()
                     return {}
@@ -778,7 +779,7 @@ class SemanticScholarAdapter(BaseSourceAdapter):
                 headers["x-api-key"] = self.config.api_key
 
             async with aiohttp.ClientSession() as session:
-                async with session.get(url, params=params, headers=headers, timeout=aiohttp.ClientTimeout(total=10)) as response:
+                async with session.get(url, params=params, headers=headers, timeout=aiohttp.ClientTimeout(total=10)) as response:  # noqa: E501
                     if response.status == 200:
                         data = await response.json()
                         return data.get("data", [])
@@ -1039,7 +1040,7 @@ class AcademicSearchEngine:
         source_times: dict[str, list[float]] = {}
         source_success: dict[str, bool] = {}
 
-        for (source_name, query), result in zip(task_info, search_results, strict=False):
+        for (source_name, query), result in zip(task_info, search_results, strict=False):  # noqa: B007
             if source_name not in source_results_map:
                 source_results_map[source_name] = []
                 source_times[source_name] = []
@@ -1374,7 +1375,7 @@ class SemanticScholarClient:
                     "summary": (entry.findtext("atom:summary", namespaces=ns) or "").strip()[:500],
                     "published": entry.findtext("atom:published", namespaces=ns),
                     "link": next(
-                        (l.get("href", "") for l in entry.findall("atom:link", ns)
+                        (l.get("href", "") for l in entry.findall("atom:link", ns)  # noqa: E741
                          if l.get("type") == "text/html"),
                         ""
                     ),

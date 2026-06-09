@@ -30,6 +30,7 @@ import time as _time
 from typing import Any
 
 import orjson
+
 from hledac.universal.tools.lmdb_kv import LMDBKVStore
 
 __all__ = ["WALManager"]
@@ -201,7 +202,7 @@ class WALManager:
                 cursor = txn.cursor()
                 if cursor.set_range(prefix.encode("utf-8")):
                     for key_bytes, value_bytes in cursor.iternext():
-                        key = key_bytes.decode("utf-8") if isinstance(key_bytes, bytes) else bytes(key_bytes).decode("utf-8")
+                        key = key_bytes.decode("utf-8") if isinstance(key_bytes, bytes) else bytes(key_bytes).decode("utf-8")  # noqa: E501
                         if not key.startswith(prefix):
                             break
                         try:
@@ -318,7 +319,7 @@ class WALManager:
                     return 0
                 total_count = 0
                 for key_bytes, _ in cursor.iternext():
-                    key = key_bytes.decode("utf-8") if isinstance(key_bytes, bytes) else bytes(key_bytes).decode("utf-8")
+                    key = key_bytes.decode("utf-8") if isinstance(key_bytes, bytes) else bytes(key_bytes).decode("utf-8")  # noqa: E501
                     if not key.startswith(prefix):
                         break
                     total_count += 1
@@ -338,7 +339,7 @@ class WALManager:
                 cursor = txn.cursor()
                 if cursor.set_range(prefix_bytes):
                     for key_bytes, value_bytes in cursor.iternext():
-                        key = key_bytes.decode("utf-8") if isinstance(key_bytes, bytes) else bytes(key_bytes).decode("utf-8")
+                        key = key_bytes.decode("utf-8") if isinstance(key_bytes, bytes) else bytes(key_bytes).decode("utf-8")  # noqa: E501
                         if not key.startswith(prefix):
                             break
                         try:

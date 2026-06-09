@@ -16,6 +16,7 @@ from datetime import datetime
 from typing import Any
 
 from utils.async_helpers import safe_gather_dropin
+
 logger = logging.getLogger(__name__)
 
 # Module timeout in seconds
@@ -155,7 +156,7 @@ class ComprehensiveReport:
             "",
             f"**Verdict:** {self.verdict}",
             f"**Confidence:** {self.confidence:.2%}",
-            f"**Generated:** {datetime.now().isoformat()}",
+            f"**Generated:** {datetime.now().isoformat()}",  # noqa: DTZ005
             "",
             "## Input Summary",
             ""
@@ -215,7 +216,7 @@ class ComprehensiveReport:
         .section h2 {{ color: #333; border-bottom: 1px solid #eee; padding-bottom: 10px; }}
         .finding {{ padding: 10px; margin: 10px 0; background: #f8f9fa; border-left: 4px solid #007bff; }}
         .anomaly {{ padding: 10px; margin: 10px 0; background: #fff3cd; border-left: 4px solid #ffc107; }}
-        .risk-score {{ font-size: 24px; font-weight: bold; color: {'#dc3545' if self.correlations.risk_score > 0.7 else '#ffc107' if self.correlations.risk_score > 0.3 else '#28a745'}; }}
+        .risk-score {{ font-size: 24px; font-weight: bold; color: {'#dc3545' if self.correlations.risk_score > 0.7 else '#ffc107' if self.correlations.risk_score > 0.3 else '#28a745'}; }}  # noqa: E501
         pre {{ background: #f4f4f4; padding: 15px; border-radius: 4px; overflow-x: auto; }}
         .recommendation {{ padding: 10px; margin: 5px 0; background: #e7f3ff; border-radius: 4px; }}
     </style>
@@ -226,7 +227,7 @@ class ComprehensiveReport:
             <h1>Comprehensive Analysis Report</h1>
             <span class="verdict {verdict_class}">{self.verdict}</span>
             <p><strong>Confidence:</strong> {self.confidence:.2%}</p>
-            <p><strong>Generated:</strong> {datetime.now().isoformat()}</p>
+            <p><strong>Generated:</strong> {datetime.now().isoformat()}</p>  # noqa: DTZ005
         </div>
 
         <div class="section">
@@ -378,7 +379,7 @@ class WorkflowOrchestrator:
             details: Event details
         """
         self._execution_timeline.append({
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": datetime.now().isoformat(),  # noqa: DTZ005
             "type": event_type,
             "details": details
         })
@@ -820,7 +821,7 @@ class WorkflowOrchestrator:
 
         if len(timestamps) > 1:
             # Check for future timestamps
-            now = datetime.now()
+            now = datetime.now()  # noqa: DTZ005
             for module, ts in timestamps:
                 if ts > now:
                     anomalies.append(Anomaly(
@@ -880,7 +881,7 @@ class WorkflowOrchestrator:
         # Prepare export data
         export_data = {
             "version": "1.0",
-            "generated_at": datetime.now().isoformat(),
+            "generated_at": datetime.now().isoformat(),  # noqa: DTZ005
             "total_modules": len(context.module_status),
             "successful_modules": len(results),
             "risk_score": correlations.risk_score
@@ -1279,18 +1280,18 @@ def _extract_entities(
 
     import re
 
-    DOMAIN_RE = re.compile(
+    DOMAIN_RE = re.compile(  # noqa: N806
         r'\b(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}\b',
         re.IGNORECASE
     )
-    IPV4_RE = re.compile(
+    IPV4_RE = re.compile(  # noqa: N806
         r'\b(?:(?:25[0-5]|2[0-4]\d|[01]?\d{1,2})\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d{1,2})\b'
     )
-    HASH_RE = re.compile(
+    HASH_RE = re.compile(  # noqa: N806
         r'\b(?:[a-f0-9]{32}|[a-f0-9]{40}|[a-f0-9]{64})\b',
         re.IGNORECASE
     )
-    URL_RE = re.compile(
+    URL_RE = re.compile(  # noqa: N806
         r'https?://[^\s<>"{}|\\^`\[\]]+',
         re.IGNORECASE
     )
@@ -1719,7 +1720,7 @@ def _get_what_matters_first(
             return f"Pivot on {len(high_risk_branch)} critical/high findings with infra signals"
         if corroborated_iocs:
             top = corroborated_iocs[0]
-            return f"Corroborated IOC: {top.get('type','ioc')}={top.get('value','?')} (sources={top.get('source_count',1)})"
+            return f"Corroborated IOC: {top.get('type','ioc')}={top.get('value','?')} (sources={top.get('source_count',1)})"  # noqa: E501
         return "HIGH_RISK verdict — review all high-severity findings"
     elif verdict == "SUSPICIOUS":
         if dominant_cluster:

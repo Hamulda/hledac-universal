@@ -273,7 +273,7 @@ class PhaseTracker:
                 try:
                     lanes = list(lm.active_lanes)
                     if len(lanes) >= 2:
-                        priorities = [getattr(l, 'priority', 0.0) for l in lanes]
+                        priorities = [getattr(l, 'priority', 0.0) for l in lanes]  # noqa: E741
                         winner_margin = max(priorities) - sorted(priorities)[-2] if len(priorities) > 1 else 0.0
                 except Exception:
                     pass
@@ -320,18 +320,20 @@ class PhaseTracker:
 
 def detect_ner_fallback() -> str:
     try:
-        from NaturalLanguage import NLTagger
+        from NaturalLanguage import NLTagger  # noqa: F401  # NaturalLanguage.NLTagger
         return "NaturalLanguage.framework (ANE)"
     except ImportError:
         pass
     try:
-        import coremltools
+        import coremltools  # noqa: F401  # coremltools
         return "CoreML (ANE)"
     except ImportError:
         pass
     try:
-        import torch
-        from transformers import AutoModelForTokenClassification
+        import torch  # noqa: F401  # torch
+        from transformers import (
+            AutoModelForTokenClassification,  # noqa: F401  # transformers.AutoModelForTokenClassification
+        )
         return "GLiNER (torch)"
     except ImportError:
         pass
@@ -423,7 +425,7 @@ async def run_live_benchmark(
                 if hasattr(result, 'statistics') and isinstance(result.statistics, dict):
                     results.iterations = result.statistics.get('iterations', 0)
                 else:
-                    results.iterations = getattr(result.statistics, 'iterations', 0) if hasattr(result, 'statistics') else 0
+                    results.iterations = getattr(result.statistics, 'iterations', 0) if hasattr(result, 'statistics') else 0  # noqa: E501
         except TimeoutError:
             print("  Research timed out — collecting partial results...")
             results.error = "timeout"
@@ -529,21 +531,21 @@ def print_live_results(results: LiveBenchmarkResults) -> bool:
     print(f"  HHI:                    {results.action_selection_hhi:.3f}")
 
     print("\n[HANDLER LATENCY TABLE]")
-    print(f"  {'Handler':<25s} {'min_ms':>8s} {'mean_ms':>8s} {'p95_ms':>8s} {'max_ms':>8s} {'calls':>6s} {'errors':>6s} {'timeouts':>8s} {'429':>6s}")
+    print(f"  {'Handler':<25s} {'min_ms':>8s} {'mean_ms':>8s} {'p95_ms':>8s} {'max_ms':>8s} {'calls':>6s} {'errors':>6s} {'timeouts':>8s} {'429':>6s}")  # noqa: E501
     print(f"  {'-'*25} {'-'*8} {'-'*8} {'-'*8} {'-'*8} {'-'*6} {'-'*6} {'-'*8} {'-'*6}")
     for name in TIMEOUT_BUDGETS:
         if name in results.handler_latency:
             lat = results.handler_latency[name]
-            print(f"  {name:<25s} {lat.min_ms:8.1f} {lat.mean_ms:8.1f} {lat.p95_ms:8.1f} {lat.max_ms:8.1f} {lat.calls:6d} {lat.errors:6d} {lat.timeouts:8d} {lat.rate_limited:6d}")
+            print(f"  {name:<25s} {lat.min_ms:8.1f} {lat.mean_ms:8.1f} {lat.p95_ms:8.1f} {lat.max_ms:8.1f} {lat.calls:6d} {lat.errors:6d} {lat.timeouts:8d} {lat.rate_limited:6d}")  # noqa: E501
         else:
-            print(f"  {name:<25s} {'N/A':>8s} {'N/A':>8s} {'N/A':>8s} {'N/A':>8s} {'0':>6s} {'0':>6s} {'0':>8s} {'0':>6s}")
+            print(f"  {name:<25s} {'N/A':>8s} {'N/A':>8s} {'N/A':>8s} {'N/A':>8s} {'0':>6s} {'0':>6s} {'0':>8s} {'0':>6s}")  # noqa: E501
 
     print("\n[PHASE TIMELINE]")
     print(f"  promotion_score_max:   {results.promotion_score_max:.3f}")
     print(f"  winner_margin_max:      {results.winner_margin_max:.3f}")
     if results.phase_timeline:
         for entry in results.phase_timeline[:8]:
-            print(f"    t={entry['elapsed_s']:6.1f}s phase={entry['phase']:15s} promo={entry['promotion_score']:.3f} margin={entry['winner_margin']:.3f}")
+            print(f"    t={entry['elapsed_s']:6.1f}s phase={entry['phase']:15s} promo={entry['promotion_score']:.3f} margin={entry['winner_margin']:.3f}")  # noqa: E501
         if len(results.phase_timeline) > 8:
             print(f"    ... ({len(results.phase_timeline)} total entries)")
     else:

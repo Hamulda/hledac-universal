@@ -65,7 +65,7 @@ def _get_mlx():
             _MLX_CORE = None
     return _MLX_CORE
 
-from hledac.universal.project_types import (
+from hledac.universal.project_types import (  # noqa: E402
     MemoryConfig,
     MemoryPressureError,
     OrchestratorState,
@@ -875,16 +875,16 @@ class MemoryLayer:
 # KERNEL MEMORY MANAGEMENT (from kernel/memory.py)
 # =============================================================================
 
-import math
-import mmap
-import multiprocessing as mp
-import multiprocessing.shared_memory as shm
-import os
-import secrets
-import shutil
-import uuid
-from dataclasses import dataclass
-from pathlib import Path
+import math  # noqa: E402
+import mmap  # noqa: E402
+import multiprocessing as mp  # noqa: E402
+import multiprocessing.shared_memory as shm  # noqa: E402
+import os  # noqa: E402
+import secrets  # noqa: E402
+import shutil  # noqa: E402
+import uuid  # noqa: E402
+from dataclasses import dataclass  # noqa: E402
+from pathlib import Path  # noqa: E402
 
 
 @dataclass
@@ -1247,6 +1247,8 @@ class SharedMemoryManager:
 
             shared_mem = self.shared_memory_objects[block_id]
             block_info = self.active_blocks[block_id]
+            if block_info is None:
+                return None
 
             # Zero-copy read access - create new bytes object from memoryview
             data = bytes(shared_mem.buf[:block_info.size])

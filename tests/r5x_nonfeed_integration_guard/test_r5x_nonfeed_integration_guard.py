@@ -77,7 +77,7 @@ FAMILY_WAYBACK = _ledger_mod.FAMILY_WAYBACK
 FAMILY_PASSIVE_DNS = _ledger_mod.FAMILY_PASSIVE_DNS
 
 # Load acquisition_strategy via normal import (numpy is available in test env)
-from hledac.universal.runtime import acquisition_strategy as _acq_real
+from hledac.universal.runtime import acquisition_strategy as _acq_real  # noqa: E402
 
 _acq_mod = _acq_real
 build_acquisition_report = _acq_mod.build_acquisition_report
@@ -86,7 +86,7 @@ AcquisitionLane = _acq_mod.AcquisitionLane
 get_lane_plan = _acq_mod.get_lane_plan
 
 # Load sprint_scheduler via normal import
-from hledac.universal.runtime import sprint_scheduler as _ss_real
+from hledac.universal.runtime import sprint_scheduler as _ss_real  # noqa: E402
 
 _ss_mod = _ss_real
 _compute_public_stage = _ss_mod._compute_public_stage
@@ -586,7 +586,7 @@ class TestImportPathGuards:
         ss_source = inspect.getsource(_ss_mod)
         lines = ss_source.split("\n")
         active_deep_lines = [
-            l for l in lines
+            l for l in lines  # noqa: E741
             if "deep_probe" in l.lower() and not l.strip().startswith("#") and "import" in l.lower()
         ]
         assert len(active_deep_lines) == 0, f"deep_probe in sprint_scheduler: {active_deep_lines}"
@@ -597,7 +597,7 @@ class TestImportPathGuards:
         ss_source = inspect.getsource(_ss_mod)
         lines = ss_source.split("\n")
         dht_lines = [
-            l for l in lines
+            l for l in lines  # noqa: E741
             if "dht" in l.lower() and not l.strip().startswith("#") and "import" in l.lower()
         ]
         assert len(dht_lines) == 0, f"DHT in sprint_scheduler: {dht_lines}"

@@ -41,7 +41,7 @@ try:
         ResurrectionResult,
         Snapshot,
         SnapshotInfo,
-        WaybackCDX,
+        WaybackCDX,  # noqa: F401  # .archive_discovery.WaybackCDX
         WaybackCDXClient,  # DEPRECATED: alias pro WaybackCDX, odstranit po CE-001
         WaybackMachineClient,
         discover_from_wayback,
@@ -49,7 +49,7 @@ try:
         get_wayback_snapshots,
         resurrect_url,
         search_archives,
-        wayback_cdx_lookup,  # COMPAT: search-shaped wrapper pro fetch_coordinator
+        wayback_cdx_lookup,  # COMPAT: search-shaped wrapper pro fetch_coordinator  # noqa: F401  # .archive_discovery.wayback_cdx_lookup
     )
     ARCHIVE_AVAILABLE = True
 except ImportError:

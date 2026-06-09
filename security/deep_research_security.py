@@ -287,7 +287,7 @@ class SecureSession:
     def __init__(self, security: DeepResearchSecurity, name: str):
         self.security = security
         self.name = name
-        self.session_id = f"{name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        self.session_id = f"{name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"  # noqa: DTZ005
         self._temp_files = []
         self._encrypted_data = []
 

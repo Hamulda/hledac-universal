@@ -60,7 +60,7 @@ def check_ane_embedder_not_implemented(
     if not file_path.exists():
         results.append(ClaimResult(
             claim_id="P1-ane_embedder",
-            original_text="brain/ane_embedder.py:154 raise NotImplementedError — ANE embed production path always raises",
+            original_text="brain/ane_embedder.py:154 raise NotImplementedError — ANE embed production path always raises",  # noqa: E501
             status=ClaimStatus.UNKNOWN,
             evidence=f"File not found: {file_path}",
             suggested_action="Locate original file",
@@ -87,7 +87,7 @@ def check_ane_embedder_not_implemented(
         # The audit claim is now FALSE — NotImplementedError removed
         results.append(ClaimResult(
             claim_id="P1-ane_embedder",
-            original_text="brain/ane_embedder.py:154 raise NotImplementedError — ANE embed production path always raises",
+            original_text="brain/ane_embedder.py:154 raise NotImplementedError — ANE embed production path always raises",  # noqa: E501
             status=ClaimStatus.FIXED,
             evidence=(
                 "F228B: embed() method rewritten. No 'raise NotImplementedError' found in embed(). "
@@ -101,7 +101,7 @@ def check_ane_embedder_not_implemented(
     else:
         results.append(ClaimResult(
             claim_id="P1-ane_embedder",
-            original_text="brain/ane_embedder.py:154 raise NotImplementedError — ANE embed production path always raises",
+            original_text="brain/ane_embedder.py:154 raise NotImplementedError — ANE embed production path always raises",  # noqa: E501
             status=ClaimStatus.OPEN,
             evidence="raise NotImplementedError still present in embed() body",
             suggested_action="Fix embed() to use fallback path",
@@ -139,7 +139,7 @@ def check_worker_pool_module_level_process_pool_executor(
         # This is INTENTIONAL — it's kept for potential future migration
         results.append(ClaimResult(
             claim_id="P2-worker_pool",
-            original_text="utils/worker_pool.py:1 # DEPRECATED/UNUSED — zero callers as of F214CLEAN (2026-05-06) — ProcessPoolExecutor singleton",
+            original_text="utils/worker_pool.py:1 # DEPRECATED/UNUSED — zero callers as of F214CLEAN (2026-05-06) — ProcessPoolExecutor singleton",  # noqa: E501
             status=ClaimStatus.LEGACY_DEPRECATED,
             evidence=(
                 "Module-level _executor singleton exists but is lazy (None until first get_executor() call). "
@@ -280,7 +280,7 @@ def check_discovery_planner_provider_capability_state(
             claim_id="P3-discovery_planner_provider_state",
             original_text="discovery/discovery_planner.py: missing ProviderCapabilityState",
             status=ClaimStatus.OPEN,
-            evidence=f"ProviderCapabilityState present: {has_provider_capability_state}, PRODUCTION: {has_production_state}",
+            evidence=f"ProviderCapabilityState present: {has_provider_capability_state}, PRODUCTION: {has_production_state}",  # noqa: E501
             suggested_action="Add ProviderCapabilityState enum",
             file_ref="discovery/discovery_planner.py",
         ))
@@ -355,7 +355,7 @@ def check_social_identity_miner_if_false(
     if not file_path.exists():
         results.append(ClaimResult(
             claim_id="P4-social_identity_miner_if_false",
-            original_text="intelligence/social_identity_miner.py:31 'if False: from ..knowledge.duckdb_store import DuckDBShadowStore'",
+            original_text="intelligence/social_identity_miner.py:31 'if False: from ..knowledge.duckdb_store import DuckDBShadowStore'",  # noqa: E501
             status=ClaimStatus.UNKNOWN,
             evidence=f"File not found: {file_path}",
             suggested_action="Verify file exists",
@@ -369,7 +369,7 @@ def check_social_identity_miner_if_false(
     if has_if_false:
         results.append(ClaimResult(
             claim_id="P4-social_identity_miner_if_false",
-            original_text="intelligence/social_identity_miner.py:31 'if False: from ..knowledge.duckdb_store import DuckDBShadowStore' — dead import",
+            original_text="intelligence/social_identity_miner.py:31 'if False: from ..knowledge.duckdb_store import DuckDBShadowStore' — dead import",  # noqa: E501
             status=ClaimStatus.OPEN,
             evidence="'if False:' block found — conditional import never executed",
             suggested_action="Remove the if False: block",
@@ -398,7 +398,7 @@ def check_sidecar_bus_if_false(
     if not file_path.exists():
         results.append(ClaimResult(
             claim_id="P4-sidecar_bus_if_false",
-            original_text="runtime/sidecar_bus.py:36 'if False: from hledac.universal.knowledge.duckdb_store import DuckDBShadowStore'",
+            original_text="runtime/sidecar_bus.py:36 'if False: from hledac.universal.knowledge.duckdb_store import DuckDBShadowStore'",  # noqa: E501
             status=ClaimStatus.UNKNOWN,
             evidence=f"File not found: {file_path}",
             suggested_action="Verify file exists",
@@ -412,7 +412,7 @@ def check_sidecar_bus_if_false(
     if has_if_false:
         results.append(ClaimResult(
             claim_id="P4-sidecar_bus_if_false",
-            original_text="runtime/sidecar_bus.py:36 'if False: from hledac.universal.knowledge.duckdb_store import DuckDBShadowStore'",
+            original_text="runtime/sidecar_bus.py:36 'if False: from hledac.universal.knowledge.duckdb_store import DuckDBShadowStore'",  # noqa: E501
             status=ClaimStatus.OPEN,
             evidence="'if False:' block found in sidecar_bus.py",
             suggested_action="Remove the if False: block",
@@ -441,7 +441,7 @@ def check_htn_planner_canonical_finding_confidence(
     if not file_path.exists():
         results.append(ClaimResult(
             claim_id="P3-htn_planner_confidence_hardcode",
-            original_text="planning/htn_planner.py:724 confidence=0.8 hardcoded in _runtime_result_to_canonical_finding()",
+            original_text="planning/htn_planner.py:724 confidence=0.8 hardcoded in _runtime_result_to_canonical_finding()",  # noqa: E501
             status=ClaimStatus.UNKNOWN,
             evidence=f"File not found: {file_path}",
             suggested_action="Verify file exists",
@@ -470,9 +470,9 @@ def check_htn_planner_canonical_finding_confidence(
     if has_hardcoded_08 and not has_cost_model_confidence:
         results.append(ClaimResult(
             claim_id="P3-htn_planner_confidence_hardcode",
-            original_text="planning/htn_planner.py:724 confidence=0.8 hardcoded in _runtime_result_to_canonical_finding()",
+            original_text="planning/htn_planner.py:724 confidence=0.8 hardcoded in _runtime_result_to_canonical_finding()",  # noqa: E501
             status=ClaimStatus.OPEN,
-            evidence="Hardcoded 'confidence = 0.8' found in _runtime_result_to_canonical_finding(), _cost_model_confidence() not called",
+            evidence="Hardcoded 'confidence = 0.8' found in _runtime_result_to_canonical_finding(), _cost_model_confidence() not called",  # noqa: E501
             suggested_action="Replace 'confidence = 0.8' with 'confidence=self._cost_model_confidence()'",
             file_ref="planning/htn_planner.py",
             line_ref=724,
@@ -482,7 +482,7 @@ def check_htn_planner_canonical_finding_confidence(
             claim_id="P3-htn_planner_confidence_hardcode",
             original_text="planning/htn_planner.py:724 confidence=0.8 hardcoded",
             status=ClaimStatus.FIXED,
-            evidence="_runtime_result_to_canonical_finding() calls self._cost_model_confidence() instead of hardcoded 0.8",
+            evidence="_runtime_result_to_canonical_finding() calls self._cost_model_confidence() instead of hardcoded 0.8",  # noqa: E501
             suggested_action="Remove from AUDIT_REPORT.md — F224E fixed this",
             file_ref="planning/htn_planner.py",
         ))

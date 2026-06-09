@@ -164,6 +164,7 @@ class TestSecureExportRoundTrip:
             pytest.skip("pyzipper not available")
 
         import zipfile
+
         import pyzipper
 
         # Test pyzipper directly (not through LootManager which may use CryptoKit)

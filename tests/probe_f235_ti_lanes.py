@@ -9,7 +9,6 @@ Verifies:
 - API key env var documentation exists
 """
 
-import os
 import sys
 from pathlib import Path
 
@@ -35,10 +34,10 @@ def test_ti_lane_enums():
 def test_ti_lane_specs():
     """Verify TI lane specs are defined."""
     from runtime.acquisition_strategy import (
-        LaneSpecShodan,
+        LaneSpec,
         LaneSpecCensys,
         LaneSpecGreyNoise,
- LaneSpec,
+        LaneSpecShodan,
     )
 
     # All are LaneSpec instances
@@ -79,7 +78,7 @@ def test_ti_lane_run_methods_exist():
 
 def test_ti_lane_modules_importable():
     """Verify TI lane modules are importable."""
-    from intelligence import shodan_lane, greynoise_lane, censys_lane
+    from intelligence import censys_lane, greynoise_lane, shodan_lane
 
     # Classes exist
     assert hasattr(shodan_lane, "ShodanLane")
@@ -97,9 +96,9 @@ def test_ti_lane_fail_soft_on_missing_key():
     """Verify TI lanes return empty on missing API key."""
     import asyncio
 
-    from intelligence.shodan_lane import search_shodan_lane
-    from intelligence.greynoise_lane import search_greynoise_lane
     from intelligence.censys_lane import search_censys_lane
+    from intelligence.greynoise_lane import search_greynoise_lane
+    from intelligence.shodan_lane import search_shodan_lane
 
     async def check():
         # Without API keys, should return empty tuples
@@ -118,9 +117,9 @@ def test_ti_lane_fail_soft_on_missing_key():
 
 def test_ti_lane_rate_limiters():
     """Verify TI lanes use TokenBucket rate limiting."""
-    from intelligence.shodan_lane import RATE_LIMIT_KEY as SHODAN_KEY
-    from intelligence.greynoise_lane import RATE_LIMIT_KEY as GN_KEY
     from intelligence.censys_lane import RATE_LIMIT_KEY as CENSYS_KEY
+    from intelligence.greynoise_lane import RATE_LIMIT_KEY as GN_KEY
+    from intelligence.shodan_lane import RATE_LIMIT_KEY as SHODAN_KEY
 
     assert SHODAN_KEY == "shodan_api"
     assert GN_KEY == "greynoise_api"
@@ -156,7 +155,7 @@ def test_env_example_documents_ti_keys():
 
 def test_ti_lane_ghost_invariants():
     """Verify TI lanes follow GHOST_INVARIANTS."""
-    from intelligence import shodan_lane, greynoise_lane, censys_lane
+    from intelligence import censys_lane, greynoise_lane, shodan_lane
 
     # Check that API key is never logged (only checked with warning)
     src_shodan = Path(shodan_lane.__file__).read_text()
@@ -178,6 +177,7 @@ def test_ti_lane_canonical_finding_structure():
     """Verify TI lanes return CanonicalFinding with correct structure."""
     import asyncio
     from datetime import datetime
+
     from intelligence.shodan_lane import _build_findings
 
     async def check():
@@ -192,7 +192,7 @@ def test_ti_lane_canonical_finding_structure():
                 "tags": ["google", "dns"],
             }
         ]
-        findings = _build_findings("8.8.8.8", raw, datetime.now().timestamp())
+        findings = _build_findings("8.8.8.8", raw, datetime.now().timestamp())  # noqa: DTZ005
 
         assert len(findings) == 1
         f = findings[0]

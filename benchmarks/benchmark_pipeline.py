@@ -295,7 +295,7 @@ async def run_benchmark(
     # Build output
     benchmark_output = {
         "metadata": {
-            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "timestamp": datetime.utcnow().isoformat() + "Z",  # noqa: DTZ003
             "num_runs": num_runs,
             "mode": mode,
             "duration_s": duration_s,

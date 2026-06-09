@@ -671,7 +671,7 @@ def render_jsonld_to_path(
             filename = f"ghost_diagnostic_{safe}.jsonld"
         else:
             try:
-                ts = normalize_export_input(report).get("started_ts") or normalize_export_input(report).get("finished_ts")
+                ts = normalize_export_input(report).get("started_ts") or normalize_export_input(report).get("finished_ts")  # noqa: E501
             except Exception:
                 ts = None
             if ts:

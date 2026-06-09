@@ -320,7 +320,7 @@ class I2PTransport(Transport):
                 session = await self.get_session()
             except I2PUnavailableError:
                 logger.warning(f"No I2P session available for message to {target}")
-                raise I2PUnavailableError(
+                raise I2PUnavailableError(  # noqa: B904
                     f"No I2P session available (transport_mode={self.transport_mode})"
                 )
 
@@ -448,7 +448,7 @@ async def get_i2p_session() -> aiohttp.ClientSession:
         try:
             from aiohttp_socks import ProxyConnector
         except ImportError:
-            raise RuntimeError("aiohttp_socks required for I2P: pip install aiohttp_socks")
+            raise RuntimeError("aiohttp_socks required for I2P: pip install aiohttp_socks")  # noqa: B904
         # Bounded connector — same limits as HTTP mode for M1 8GB safety
         connector = ProxyConnector.from_url(
             I2P_SOCKS_PROXY,

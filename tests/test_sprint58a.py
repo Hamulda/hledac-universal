@@ -22,6 +22,7 @@ class TestQMIX(unittest.IsolatedAsyncioTestCase):
     async def test_qmix_agent_init(self):
         """Test #1: QMIXAgent – inicializace a forward pass."""
         import mlx.core as mx
+
         from hledac.universal.rl.qmix import QMIXAgent
 
         agent = QMIXAgent(state_dim=12, action_dim=5, hidden_dim=32)
@@ -32,6 +33,7 @@ class TestQMIX(unittest.IsolatedAsyncioTestCase):
     async def test_qmix_mixer(self):
         """Test #3: QMixer – správné tvary a nezáporné váhy."""
         import mlx.core as mx
+
         from hledac.universal.rl.qmix import QMixer
 
         mixer = QMixer(n_agents=3, state_dim=12, embedding_dim=16)
@@ -45,6 +47,7 @@ class TestQMIX(unittest.IsolatedAsyncioTestCase):
     async def test_qmix_joint_update(self):
         """Test #4: QMIXJointTrainer – joint update krok."""
         import mlx.core as mx
+
         from hledac.universal.rl.qmix import QMIXJointTrainer, QNetwork
 
         networks = [QNetwork(state_dim=12, action_dim=5, hidden_dim=32) for _ in range(3)]
@@ -80,6 +83,7 @@ class TestReplayBuffer(unittest.IsolatedAsyncioTestCase):
     async def test_replay_buffer_push_sample(self):
         """Test #5: Replay buffer – push a sample."""
         import mlx.core as mx
+
         from hledac.universal.rl.replay_buffer import MARLReplayBuffer
 
         buffer = MARLReplayBuffer(capacity=100, state_dim=12, n_agents=3)
@@ -102,6 +106,7 @@ class TestReplayBuffer(unittest.IsolatedAsyncioTestCase):
     async def test_replay_persistence(self):
         """Test #6: Replay buffer – perzistence s .npz."""
         import mlx.core as mx
+
         from hledac.universal.rl.replay_buffer import MARLReplayBuffer
 
         buffer1 = MARLReplayBuffer(capacity=100, state_dim=12, n_agents=3)

@@ -3,9 +3,8 @@ Tests for Sprint 77 - Embedding optimization.
 """
 
 import asyncio
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch  # noqa: F401  # unittest.mock.AsyncMock
 
-import numpy as np
 import pytest
 
 

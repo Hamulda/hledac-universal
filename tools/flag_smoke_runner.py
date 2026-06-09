@@ -36,7 +36,6 @@ import time
 import tracemalloc
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable
 
 # ---------------------------------------------------------------------------
 # sys.path bootstrap — must run BEFORE any hledac.* / utils.* import.
@@ -173,7 +172,7 @@ def _check_flag(flag: str) -> FlagReport:
     try:
         # Phase 3: lightweight probe — registry import is ~5ms, no
         # transitive coordinator load.
-        from utils.flag_registry import is_flag_active, get_spec  # noqa: F401
+        from utils.flag_registry import get_spec, is_flag_active  # noqa: F401
 
         spec = get_spec(flag)
         observed = is_flag_active(flag)

@@ -526,7 +526,7 @@ def get_content_cleaner() -> ContentCleaner:
 # UTILITY FUNCTIONS (from stealth_crawler.py integration)
 # =============================================================================
 
-from urllib.parse import parse_qs, unquote, urlparse
+from urllib.parse import parse_qs, unquote, urlparse  # noqa: E402
 
 
 def clean_html_tags(text: str) -> str:
@@ -653,7 +653,7 @@ def clean_search_result_url(url: str, source: str = "auto") -> str | None:
 # SEARCH RESULT PARSERS (from stealth_crawler.py integration)
 # =============================================================================
 
-from dataclasses import dataclass
+from dataclasses import dataclass  # noqa: E402
 
 
 @dataclass
@@ -687,7 +687,7 @@ def parse_duckduckgo_results(html: str, num_results: int = 10) -> list[SearchRes
     results = []
 
     # Primary pattern: result with snippet
-    pattern = r'<a[^>]*class="result__a"[^>]*href="([^"]*)"[^>]*>(.*?)</a>.*?<a[^>]*class="result__snippet"[^>]*>(.*?)</a>'
+    pattern = r'<a[^>]*class="result__a"[^>]*href="([^"]*)"[^>]*>(.*?)</a>.*?<a[^>]*class="result__snippet"[^>]*>(.*?)</a>'  # noqa: E501
     matches = re.findall(pattern, html, re.DOTALL)
 
     for i, (url_raw, title, snippet) in enumerate(matches[:num_results]):
@@ -740,7 +740,7 @@ def parse_google_results(html: str, num_results: int = 10) -> list[SearchResultI
     """
     results = []
 
-    pattern = r'<div[^>]*class="g"[^>]*>.*?<h3[^>]*>.*?<a[^>]*href="([^"]*)"[^>]*>(.*?)</a>.*?<span[^>]*class="st"[^>]*>(.*?)</span>'
+    pattern = r'<div[^>]*class="g"[^>]*>.*?<h3[^>]*>.*?<a[^>]*href="([^"]*)"[^>]*>(.*?)</a>.*?<span[^>]*class="st"[^>]*>(.*?)</span>'  # noqa: E501
     matches = re.findall(pattern, html, re.DOTALL)
 
     for i, (url_raw, title, snippet) in enumerate(matches[:num_results]):

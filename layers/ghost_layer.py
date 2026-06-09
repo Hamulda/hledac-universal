@@ -526,13 +526,13 @@ class GhostLayer:
 # SYSTEM CONTEXT - Anti-VM Protection (from kernel/context.py)
 # =============================================================================
 
-import gc
-import platform
-import time
-from dataclasses import dataclass
-from enum import Enum
+import gc  # noqa: E402
+import platform  # noqa: E402
+import time  # noqa: E402
+from dataclasses import dataclass  # noqa: E402
+from enum import Enum  # noqa: E402
 
-import psutil
+import psutil  # noqa: E402
 
 
 class VMThreatLevel(Enum):

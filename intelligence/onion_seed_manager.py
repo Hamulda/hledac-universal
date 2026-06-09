@@ -164,7 +164,7 @@ class OnionSeedManager:
         Fallback na clearnet Ahmia pokud Tor nedostupný."""
         import aiohttp
 
-        AHMIA_ONION = (
+        AHMIA_ONION = (  # noqa: N806
             "juhanurmihxlp77nkq76byazcldy2hmbbj3j3jbcrpvzmntbxnjbxqd.onion"
         )
         q_enc = urllib.parse.quote_plus(query)

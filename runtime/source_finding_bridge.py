@@ -183,7 +183,7 @@ def _ts_from_wayback_timestamp(ts: str) -> float:
     try:
         from datetime import datetime
 
-        return datetime.strptime(ts, "%Y%m%d%H%M%S").timestamp()
+        return datetime.strptime(ts, "%Y%m%d%H%M%S").timestamp()  # noqa: DTZ007
     except Exception:
         return 0.0
 
@@ -2615,7 +2615,7 @@ def network_recon_result_to_findings(
 
         if ssl_dict and built < max_findings:
             issuer = _safe_dict_str(ssl_dict.get("issuer", {}), "O") or _safe_dict_str(ssl_dict.get("issuer", {}), "CN")
-            subject = _safe_dict_str(ssl_dict.get("subject", {}), "O") or _safe_dict_str(ssl_dict.get("subject", {}), "CN")
+            subject = _safe_dict_str(ssl_dict.get("subject", {}), "O") or _safe_dict_str(ssl_dict.get("subject", {}), "CN")  # noqa: E501
             san_domains = _safe_list(ssl_dict.get("san_domains", []))[:16]
             is_valid = ssl_dict.get("is_valid", True)
             days_until_expiry = ssl_dict.get("days_until_expiry")

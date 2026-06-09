@@ -504,7 +504,7 @@ def collect_graph_summary(
     PURE function — no side effects, no I/O.
 
     Args:
-        ioc_graph: DuckPGQGraph instance (from duckdb_store._ioc_graph or duckdb_store.get_analytics_graph_for_synthesis()); None for scorecard-only path
+        ioc_graph: DuckPGQGraph instance (from duckdb_store._ioc_graph or duckdb_store.get_analytics_graph_for_synthesis()); None for scorecard-only path  # noqa: E501
         scorecard: scorecard dict (compat path) or None
 
     Returns:

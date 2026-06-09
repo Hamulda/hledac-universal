@@ -220,7 +220,7 @@ class ResearchObfuscator:
             if all_chaff:
                 query = random.choice(all_chaff)
                 # Přidat timestamp pro unikátnost
-                query = f"{query} {datetime.now().strftime('%H:%M')}"
+                query = f"{query} {datetime.now().strftime('%H:%M')}"  # noqa: DTZ005
                 chaff.append(query)
                 self._chaff_queries_generated += 1
 

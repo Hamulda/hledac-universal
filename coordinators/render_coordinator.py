@@ -142,7 +142,7 @@ class PlaywrightWebKitRenderer(RenderBackend):
         try:
             context = await self._browser.new_context(
                 viewport={"width": 1280, "height": 720},
-                user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15",
+                user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15",  # noqa: E501
                 locale="en-US",
                 extra_http_headers={"Accept-Language": "en-US,en;q=0.9"},
                 bypass_csp=True,

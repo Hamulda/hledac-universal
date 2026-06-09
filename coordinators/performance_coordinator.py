@@ -506,7 +506,7 @@ class AsyncExecutionOptimizer:
             # Remove from active tasks
             self._active_tasks.discard(execution_id)
 
-    def _is_circuit_breaker_open(self, agent_name: str) -> bool:
+    def _is_circuit_breaker_open(self, agent_name: str) -> bool | None:
         """Check if circuit breaker is open for an agent."""
         recent_executions = self._execution_stats.get(agent_name, [])
 
@@ -630,7 +630,7 @@ class AgentPerformanceOptimizer:
         available_agents: list[str],
         query: str = "",
         metrics: dict[str, AgentMetrics] | None = None,
-    ) -> str:
+    ) -> str | None:
         """
         Select the best agent for execution based on current conditions.
 
@@ -663,7 +663,7 @@ class AgentPerformanceOptimizer:
         # Use load balancer to select best agent
             return self.load_balancer.select_agent(healthy_agents, metrics=metrics)
 
-    async def optimize_performance(self) -> OptimizationReport:
+    async def optimize_performance(self) -> OptimizationReport | None:
         """
         Perform comprehensive performance optimization.
 

@@ -28,7 +28,8 @@ import os
 import sys
 import types
 import unittest
-from typing import Any, Callable, cast
+from collections.abc import Callable
+from typing import Any, cast
 
 # ─── Rust extension probe ───────────────────────────────────────────────
 
@@ -40,7 +41,11 @@ _bulk_snapshot_dict: Callable[..., Any] | None = None
 try:
     from hledac_rust_extensions import (  # type: ignore[import-not-found]
         IntCounterLayoutRust as _RustCls,
+    )
+    from hledac_rust_extensions import (
         bulk_bump_aggregate as _bulk_bump,
+    )
+    from hledac_rust_extensions import (
         bulk_snapshot_dict as _bulk_snap,
     )
     _IntCounterLayoutRust = _RustCls
@@ -393,9 +398,11 @@ class TestRustF3Integration(unittest.TestCase):
         try:
             # Sprint P1-5: chain_hash_snapshot lives in the
             # `int_counter_layout` module (logically paired with SoA snapshots).
+            from hledac_rust_extensions import (
+                IocDedupStore as _IocStore,
+            )
             from hledac_rust_extensions import (  # type: ignore[import-not-found]
                 chain_hash_snapshot as _chain_snap,
-                IocDedupStore as _IocStore,
             )
             cls.chain_snap = _chain_snap
             cls.IocStore = _IocStore

@@ -8,10 +8,8 @@ Run with: uv run pytest tests/test_alt_protocols.py -v
 """
 from __future__ import annotations
 
-import asyncio
 import os
 import sys
-import time
 
 import pytest
 
@@ -279,6 +277,7 @@ class TestAlternativeProtocolFetcher:
         try:
             # Re-import to get fresh gate value
             import importlib
+
             import hledac.universal.fetching.alternative_protocol_fetcher
             importlib.reload(hledac.universal.fetching.alternative_protocol_fetcher)
             assert not hledac.universal.fetching.alternative_protocol_fetcher.ALT_PROTOCOLS_ENABLED
@@ -291,6 +290,7 @@ class TestAlternativeProtocolFetcher:
         os.environ["HLEDAC_ENABLE_ALT_PROTOCOLS"] = "1"
         try:
             import importlib
+
             import hledac.universal.fetching.alternative_protocol_fetcher
             importlib.reload(hledac.universal.fetching.alternative_protocol_fetcher)
             assert hledac.universal.fetching.alternative_protocol_fetcher.ALT_PROTOCOLS_ENABLED
@@ -363,7 +363,7 @@ class TestFediverseAdapter:
 
     def test_fediverse_adapter_init(self):
         """Test FediverseAdapter initialization."""
-        from discovery.fediverse_adapter import FediverseAdapter, DEFAULT_INSTANCES
+        from discovery.fediverse_adapter import DEFAULT_INSTANCES, FediverseAdapter
 
         adapter = FediverseAdapter()
         assert adapter is not None
@@ -382,8 +382,8 @@ class TestFediverseAdapter:
         """Test Fediverse constants are bounded."""
         from discovery.fediverse_adapter import (
             FEDIVERSE_TIMEOUT,
-            MAX_RESULTS_PER_INSTANCE,
             MAX_CONCURRENT_INSTANCES,
+            MAX_RESULTS_PER_INSTANCE,
             RATE_LIMIT_DELAY,
         )
 
@@ -394,7 +394,7 @@ class TestFediverseAdapter:
 
     def test_fediverse_instances_defined(self):
         """Test OSINT instances are defined."""
-        from discovery.fediverse_adapter import OSINT_INSTANCES, DEFAULT_INSTANCES
+        from discovery.fediverse_adapter import DEFAULT_INSTANCES, OSINT_INSTANCES
 
         assert len(OSINT_INSTANCES) >= 4
         assert len(DEFAULT_INSTANCES) == 2
@@ -409,7 +409,7 @@ class TestMatrixAdapter:
 
     def test_matrix_adapter_init(self):
         """Test MatrixPublicAdapter initialization."""
-        from discovery.matrix_adapter import MatrixPublicAdapter, MATRIX_HOMESERVER
+        from discovery.matrix_adapter import MATRIX_HOMESERVER, MatrixPublicAdapter
 
         adapter = MatrixPublicAdapter()
         assert adapter is not None
@@ -428,9 +428,9 @@ class TestMatrixAdapter:
         """Test Matrix constants are bounded."""
         from discovery.matrix_adapter import (
             MATRIX_TIMEOUT,
+            MAX_GUEST_TOKEN_AGE,
             MAX_ROOM_MESSAGES,
             MAX_ROOMS_TO_SEARCH,
-            MAX_GUEST_TOKEN_AGE,
         )
 
         assert MATRIX_TIMEOUT == 10.0
@@ -453,7 +453,7 @@ class TestTorrentMetadataFetcher:
 
     def test_metadata_fetcher_init(self):
         """Test TorrentMetadataFetcher initialization."""
-        from dht.metadata_fetcher import TorrentMetadataFetcher, MAX_CONCURRENT_FETCHES
+        from dht.metadata_fetcher import MAX_CONCURRENT_FETCHES, TorrentMetadataFetcher
 
         fetcher = TorrentMetadataFetcher()
         assert fetcher is not None
@@ -493,11 +493,11 @@ class TestTorrentMetadataFetcher:
     def test_constants(self):
         """Test BEP-9 constants are bounded."""
         from dht.metadata_fetcher import (
-            UT_METADATA_ID,
-            METADATA_PIECE_SIZE,
             BEP_9_TIMEOUT,
             MAX_CONCURRENT_FETCHES,
             MAX_PEERS_TO_TRY,
+            METADATA_PIECE_SIZE,
+            UT_METADATA_ID,
         )
 
         assert UT_METADATA_ID == 1
@@ -524,7 +524,7 @@ class TestTorrentMetadataFetcher:
 
     def test_extract_intel_from_torrent(self):
         """Test OSINT extraction from torrent metadata."""
-        from dht.metadata_fetcher import TorrentMetadataFetcher, TorrentInfo
+        from dht.metadata_fetcher import TorrentInfo, TorrentMetadataFetcher
 
         fetcher = TorrentMetadataFetcher()
         info = TorrentInfo(

@@ -24,7 +24,6 @@ from __future__ import annotations
 import os
 from typing import Final
 
-
 # ---------------------------------------------------------------------------
 # Preset definitions (Phase 3 spec)
 # ---------------------------------------------------------------------------
@@ -92,7 +91,7 @@ def _build_full() -> dict[str, str]:
     # Local import to avoid hard dependency on registry import order
     # (utils.flag_presets is independent of utils.flag_registry).
     from .flag_registry import FLAG_REGISTRY  # type: ignore
-    return {name: "1" for name in FLAG_REGISTRY}
+    return dict.fromkeys(FLAG_REGISTRY, "1")
 
 
 FULL: Final[dict[str, str]] = _build_full()
@@ -190,10 +189,10 @@ def list_presets_table() -> str:
 
     header = ("PRESET", "FLAGS", "RAM", "STATUS")
     widths = [max(len(r[i]) for r in rows + [header]) for i in range(4)]
-    line = "  ".join(h.ljust(w) for h, w in zip(header, widths))
+    line = "  ".join(h.ljust(w) for h, w in zip(header, widths, strict=False))
     sep = "  ".join("-" * w for w in widths)
     body = "\n".join(
-        "  ".join(c.ljust(w) for c, w in zip(row, widths)) for row in rows
+        "  ".join(c.ljust(w) for c, w in zip(row, widths, strict=False)) for row in rows
     )
     return f"{line}\n{sep}\n{body}"
 

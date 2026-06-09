@@ -28,22 +28,22 @@ See LEGACY_MIGRATION.md for details.
 
 # Base classes and types
 # Privacy enhanced research
-from hledac.universal.project_types import PrivacyLevel  # type: ignore[ty:unresolved-import]  # pre-existing absolute import — module not in project (historical namespace)
+from hledac.universal.project_types import (
+    PrivacyLevel,  # type: ignore[ty:unresolved-import]  # pre-existing absolute import — module not in project (historical namespace)
+)
 
 # Coordinator catalog for domain-grouped lazy access
 from ._catalog import catalog
 
-# Research coordinator exports (ACTIVE)
-from .research_coordinator import (
-    ExcavationConfig,
-    ExcavationStrategy,
-    MetaPattern,
-    ResearchPaper,
-    ResearchTheory,
-    ResearchThread,
-    ResearchDepth,
-    HierarchicalPlan,
-    UniversalResearchCoordinator,
+# Benchmark coordinator (DEPRECATED 2026-06-03 → _deprecated/benchmark_coordinator_shim)
+from ._deprecated.benchmark_coordinator_shim import (
+    AgentBenchmarker,
+    AgentBenchmarkResult,
+    BenchmarkConfig,
+    BenchmarkReport,
+    MemoryProfiler,
+    run_agent_benchmarks,
+    run_quick_performance_check,
 )
 
 # Multi-agent coordination
@@ -65,17 +65,6 @@ from .base import (
     OperationResult,
     OperationType,
     UniversalCoordinator,
-)
-
-# Benchmark coordinator (DEPRECATED 2026-06-03 → _deprecated/benchmark_coordinator_shim)
-from ._deprecated.benchmark_coordinator_shim import (
-    AgentBenchmarker,
-    AgentBenchmarkResult,
-    BenchmarkConfig,
-    BenchmarkReport,
-    MemoryProfiler,
-    run_agent_benchmarks,
-    run_quick_performance_check,
 )
 
 # Registry
@@ -115,9 +104,20 @@ from .privacy_enhanced_research import (
     private_research,
 )
 
-# Core coordinators
-from .research_coordinator import UniversalResearchCoordinator
+# Research coordinator exports (ACTIVE)
+from .research_coordinator import (
+    ExcavationConfig,
+    ExcavationStrategy,
+    HierarchicalPlan,
+    MetaPattern,
+    ResearchDepth,
+    ResearchPaper,
+    ResearchTheory,
+    ResearchThread,
+    UniversalResearchCoordinator,
+)
 
+# Core coordinators
 # Research optimizer
 from .research_optimizer import (
     CachePolicy,

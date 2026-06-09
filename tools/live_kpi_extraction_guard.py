@@ -10,7 +10,7 @@ VERDICTS (mutually exclusive):
     FAIL_KPI_INPUT_MISSING           — LiveKpiInput dataclass not found in live_sprint_measurement.py
     FAIL_KPI_WRAPPER_MISSING         — _derive_live_kpi compatibility wrapper missing
     FAIL_KPI_BARE_PARAM_USAGE        — _derive_live_kpi_from_input body uses bare old params (not inp.*)
-    FAIL_KPI_MODULE_BAD_IMPORT       — live_sprint_measurement.py imports _derive_next_action locally (not from next_action module)
+    FAIL_KPI_MODULE_BAD_IMPORT       — live_sprint_measurement.py imports _derive_next_action locally (not from next_action module)  # noqa: E501
     FAIL_NEXT_ACTION_NOT_EXTRACTED   — next_action not wired from live_measurement_next_action module
     FAIL_KPI_MODULE_RUNTIME_IMPORT   — extracted module would import runtime/network/MLX
 
@@ -445,7 +445,7 @@ def format_json(result: dict) -> str:
 
 def format_markdown(result: dict) -> str:
     phase = result.get("phase", "pre")
-    title = "F229B2 Live KPI Extraction Guard — Post-Extraction" if phase == "post" else "F229B2 Live KPI Extraction Guard — Pre-Extraction"
+    title = "F229B2 Live KPI Extraction Guard — Post-Extraction" if phase == "post" else "F229B2 Live KPI Extraction Guard — Pre-Extraction"  # noqa: E501
 
     lines = [
         f"# {title}",

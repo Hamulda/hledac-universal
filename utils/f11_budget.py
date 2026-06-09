@@ -12,7 +12,6 @@ from __future__ import annotations
 
 from typing import Final
 
-
 # Seconds per ResearchMode tier (M1 8GB UMA ceiling).
 # Mapped 1:1 with project_types.ResearchMode strings.
 _BUDGET_BY_MODE: Final[dict[str, float]] = {

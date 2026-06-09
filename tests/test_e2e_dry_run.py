@@ -23,8 +23,8 @@ async def test_e2e_pipeline_completes():
     # Use importlib to load __main__ directly (pytest's --main__ is pytest's own module)
     import importlib.util
     import os
-    _ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
-    _MAIN_PY = os.path.join(_ROOT, "hledac", "universal", "__main__.py")
+    _ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))  # noqa: N806
+    _MAIN_PY = os.path.join(_ROOT, "hledac", "universal", "__main__.py")  # noqa: N806
     _spec = importlib.util.spec_from_file_location("hledac_main", _MAIN_PY)
     assert _spec is not None, f"Failed to load spec for {_MAIN_PY}"
     _main_mod = importlib.util.module_from_spec(_spec)

@@ -173,7 +173,7 @@ class _PythonIocDedupStore:
 
         lower = value.lower()
         if ioc_type in ("domain", "fqdn"):
-            return lower.lstrip("www.")
+            return lower.lstrip("www.")  # noqa: B005
         elif ioc_type in ("md5", "sha1", "sha256", "sha2"):
             return lower
         elif ioc_type == "cve":

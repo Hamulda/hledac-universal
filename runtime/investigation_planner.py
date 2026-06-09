@@ -673,7 +673,7 @@ def build_planner_state_from_report(report: dict) -> dict:
     public_down_reason = pick("no_provider_selected") or pick("public_discovery_empty_reason") or ""
     provider_debug = pick("public_provider_selection_debug") or {}
     if isinstance(provider_debug, dict):
-        public_down = provider_debug.get("provider_selected") is None or provider_debug.get("no_provider_selected", False)
+        public_down = provider_debug.get("provider_selected") is None or provider_debug.get("no_provider_selected", False)  # noqa: E501
     else:
         public_down = bool(public_down_reason) or (provider_debug == "no_provider_selected")
     result["public_provider_status"] = {"public": not public_down}
@@ -697,7 +697,7 @@ def summarize_planner_actions(actions: list[InvestigationAction]) -> list[dict]:
 
     Bounds: max 10 actions.
     """
-    MAX = 10
+    MAX = 10  # noqa: N806
     summarized: list[dict] = []
     for action in actions:
         if len(summarized) >= MAX:

@@ -30,7 +30,7 @@ from typing import Any
 PROJECT_ROOT = Path(__file__).parent.parent.resolve()
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from fetching.public_fetcher import async_fetch_public_text
+from fetching.public_fetcher import async_fetch_public_text  # noqa: E402
 
 # ============================================================================
 # FIXTURE HTML — contains OSINT patterns that PatternMatcher detects
@@ -139,7 +139,7 @@ async def fetch_via_httpx(url: str, timeout: float = 10.0) -> dict[str, Any]:
             "fetched_bytes": len(text.encode("utf-8")),
             "selected_transport": "httpx_h2",
             "http_version": f"http/{http_ver}" if http_ver else None,
-            "transport_policy_reason": "httpx_h2_disabled_env" if os.environ.get("HLEDAC_ENABLE_HTTPX_H2") else "clearnet_default",
+            "transport_policy_reason": "httpx_h2_disabled_env" if os.environ.get("HLEDAC_ENABLE_HTTPX_H2") else "clearnet_default",  # noqa: E501
             "transport_fallback_reason": None,
             "error": None,
         }

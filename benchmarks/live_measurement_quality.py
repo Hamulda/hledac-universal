@@ -145,7 +145,7 @@ def _derive_run_quality_verdict(
         hardware_constrained = True
         recommended_next_profile = "none_until_memory_ok"
         recommended_operator_action = _MEMORY_GATE_OPERATOR_ACTION
-        return verdict, hardware_constrained, memory_state_pre, swap_warning, recommended_next_profile, recommended_operator_action
+        return verdict, hardware_constrained, memory_state_pre, swap_warning, recommended_next_profile, recommended_operator_action  # noqa: E501
 
     # Rule 0b: SWAP_GATE — active profile with high swap, proceeding anyway (allow_high_swap)
     # F212D: when swap_gate_triggered=True, mark hardware_constrained so results are flagged
@@ -155,29 +155,29 @@ def _derive_run_quality_verdict(
         hardware_constrained = True
         recommended_next_profile = "smoke180 or active300_after_restart"
         recommended_operator_action = _SWAP_GATE_OPERATOR_ACTION
-        return verdict, hardware_constrained, memory_state_pre, swap_warning, recommended_next_profile, recommended_operator_action
+        return verdict, hardware_constrained, memory_state_pre, swap_warning, recommended_next_profile, recommended_operator_action  # noqa: E501
 
     # Rule 1: ENTRY_SMOKE_ONLY for smoke profiles (always determinable)
     if profile_verdict == "ENTRY_SMOKE_ONLY":
         verdict = RunQualityVerdict.ENTRY_SMOKE_ONLY
         recommended_next_profile = "active300"
-        return verdict, hardware_constrained, memory_state_pre, swap_warning, recommended_next_profile, recommended_operator_action
+        return verdict, hardware_constrained, memory_state_pre, swap_warning, recommended_next_profile, recommended_operator_action  # noqa: E501
 
     # Rule 2: FAIL_RUNTIME_ERROR / FAIL_MEASUREMENT_ERROR for failed/aborted runs
     if status == MeasurementStatus.FAILED:
         verdict = RunQualityVerdict.FAIL_RUNTIME_ERROR
-        return verdict, hardware_constrained, memory_state_pre, swap_warning, recommended_next_profile, recommended_operator_action
+        return verdict, hardware_constrained, memory_state_pre, swap_warning, recommended_next_profile, recommended_operator_action  # noqa: E501
 
     if status == MeasurementStatus.ABORTED:
         verdict = RunQualityVerdict.FAIL_MEASUREMENT_ERROR
-        return verdict, hardware_constrained, memory_state_pre, swap_warning, recommended_next_profile, recommended_operator_action
+        return verdict, hardware_constrained, memory_state_pre, swap_warning, recommended_next_profile, recommended_operator_action  # noqa: E501
 
     # Rule 3: COMPLETED — requires runtime_truth to derive meaningful verdict
     if status == MeasurementStatus.COMPLETED:
         if runtime_truth is None:
             # Completed but no runtime data — cannot determine meaningful verdict
             verdict = None
-            return verdict, hardware_constrained, memory_state_pre, swap_warning, recommended_next_profile, recommended_operator_action
+            return verdict, hardware_constrained, memory_state_pre, swap_warning, recommended_next_profile, recommended_operator_action  # noqa: E501
 
         is_critical_uma = _uma_state_is_critical_or_emergency(uma_pre_state)
         runtime_meaningful = runtime_truth.get("cycles_started", 0) > 0
@@ -212,7 +212,7 @@ def _derive_run_quality_verdict(
         _is_domain_query = _is_active_domain_query(runtime_truth, profile_verdict)
         if _is_domain_query:
             # 4a: acquisition_report.schema_version must be present
-            if acquisition_report is None or not isinstance(acquisition_report, dict) or not acquisition_report.get("schema_version"):
+            if acquisition_report is None or not isinstance(acquisition_report, dict) or not acquisition_report.get("schema_version"):  # noqa: E501
                 verdict = RunQualityVerdict.FAIL_TERMINALITY_NOT_CHECKED
             # 4b: acquisition_terminality_checked must be True
             elif acquisition_terminality_checked is not True:
@@ -232,7 +232,7 @@ def _derive_run_quality_verdict(
             elif not _has_scheduler_exit_path(scheduler_exit):
                 verdict = RunQualityVerdict.FAIL_SCHEDULER_EXIT_MISSING
 
-    return verdict, hardware_constrained, memory_state_pre, swap_warning, recommended_next_profile, recommended_operator_action
+    return verdict, hardware_constrained, memory_state_pre, swap_warning, recommended_next_profile, recommended_operator_action  # noqa: E501
 
 
 def _stamp_run_quality_verdict(
@@ -246,7 +246,7 @@ def _stamp_run_quality_verdict(
     used as arguments to _derive_run_quality_verdict. This avoids a runtime import
     of LiveMeasurementResult itself (which lives in live_measurement_schema.py).
     """
-    verdict, hardware_constrained, memory_state_pre, swap_warning, recommended_next, operator_action = _derive_run_quality_verdict(
+    verdict, hardware_constrained, memory_state_pre, swap_warning, recommended_next, operator_action = _derive_run_quality_verdict(  # noqa: E501
         status=result.status,
         profile_verdict=result.profile_verdict,
         uma_pre_state=result.uma_pre_state,

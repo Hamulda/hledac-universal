@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 """JS Bundle AST extractor – finds API endpoints in external JS files."""
-import logging
-import re
+import logging  # noqa: E402
+import re  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -12,7 +12,7 @@ class _JSBundleExtractor:
 
     # Common API call patterns
     FETCH_PATTERN = re.compile(r'fetch\(["\']([^"\']+)["\']', re.IGNORECASE)
-    XHR_PATTERN = re.compile(r'XMLHttpRequest\([^)]*\)[^;]*\.open\(["\'][^"\']*["\'],\s*["\']([^"\']+)["\']', re.IGNORECASE)
+    XHR_PATTERN = re.compile(r'XMLHttpRequest\([^)]*\)[^;]*\.open\(["\'][^"\']*["\'],\s*["\']([^"\']+)["\']', re.IGNORECASE)  # noqa: E501
     AXIOS_PATTERN = re.compile(r'axios\.(?:get|post|put|delete)\(["\']([^"\']+)["\']', re.IGNORECASE)
     AXIOS_INSTANCE_PATTERN = re.compile(r'\.(?:get|post|put|delete)\(["\']([^"\']+)["\']', re.IGNORECASE)
 

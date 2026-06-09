@@ -26,6 +26,7 @@ sys.path.insert(0, "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal
 from hledac.universal.knowledge.duckdb_store import DuckDBShadowStore
 
 from utils.async_helpers import safe_gather_fire_and_forget
+
 # ---------------------------------------------------------------------------
 # Tests 1-2: Boot isolation
 # ---------------------------------------------------------------------------
@@ -43,7 +44,7 @@ class TestBootIsolation:
             capture_output=True, text=True, check=True,
         )
         # Last line contains the 0/1 answer
-        lines = [l for l in r.stdout.strip().split("\n") if l]
+        lines = [l for l in r.stdout.strip().split("\n") if l]  # noqa: E741
         val = int(lines[-1])
         assert val == 0, f"duckdb was loaded during boot: {r.stdout}"
 
@@ -58,7 +59,7 @@ class TestBootIsolation:
             [sys.executable, "-c", code],
             capture_output=True, text=True, check=True,
         )
-        lines = [l for l in r.stdout.strip().split("\n") if l]
+        lines = [l for l in r.stdout.strip().split("\n") if l]  # noqa: E741
         val = int(lines[-1])
         assert val == 0, f"duckdb_store was loaded during boot: {r.stdout}"
 

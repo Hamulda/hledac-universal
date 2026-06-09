@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 """JS Source Maps extractor – retrieves and parses source maps to discover hidden source paths."""
-import json
-import logging
+import json  # noqa: E402
+import logging  # noqa: E402
 
-from hledac.universal.network.session_runtime import async_get_aiohttp_session
+from hledac.universal.network.session_runtime import async_get_aiohttp_session  # noqa: E402
 
 logger = logging.getLogger(__name__)
 

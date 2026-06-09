@@ -33,10 +33,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 import sys
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -286,7 +285,7 @@ class TestLanceDBIdentityStoreFlags:
         monkeypatch.delenv("HLEDAC_LANCEDB_QUANTIZE", raising=False)
         # We cannot instantiate the real class without LanceDB — verify via
         # module-level: search for flag init code in source
-        from pathlib import Path as P
+        from pathlib import Path as P  # noqa: N817
         src_path = (
             P(__file__).resolve().parent.parent
             / "knowledge" / "lancedb_store.py"
@@ -296,7 +295,7 @@ class TestLanceDBIdentityStoreFlags:
 
     def test_flag_wired_in_init(self):
         """Verify flag initialization code is present in __init__."""
-        from pathlib import Path as P
+        from pathlib import Path as P  # noqa: N817
         src_path = (
             P(__file__).resolve().parent.parent
             / "knowledge" / "lancedb_store.py"
@@ -310,7 +309,7 @@ class TestLanceDBIdentityStoreFlags:
 
     def test_bounded_num_partitions(self):
         """num_partitions bounded to [8, 256] in source."""
-        from pathlib import Path as P
+        from pathlib import Path as P  # noqa: N817
         src_path = (
             P(__file__).resolve().parent.parent
             / "knowledge" / "lancedb_store.py"
@@ -323,7 +322,7 @@ class TestLanceDBIdentityStoreFlags:
 
     def test_bounded_num_sub_vectors(self):
         """num_sub_vectors bounded to [4, 64] in source."""
-        from pathlib import Path as P
+        from pathlib import Path as P  # noqa: N817
         src_path = (
             P(__file__).resolve().parent.parent
             / "knowledge" / "lancedb_store.py"

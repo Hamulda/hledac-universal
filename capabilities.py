@@ -64,7 +64,7 @@ def __getattr__(name: str) -> Any:
                 _MLX_LOADED = True
             except ImportError:
                 _MLX_LOADED = True
-                raise AttributeError("mlx.core not available")
+                raise AttributeError("mlx.core not available")  # noqa: B904
         return globals().get("mx")
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
@@ -322,7 +322,7 @@ def _get_tool_capability_declarations() -> dict[str, set[str]]:
     """
     # Curated list of tools with required_capabilities
     # This avoids creating full ToolRegistry just to read 3 tools
-    _CURATED_TOOL_CAPS: dict[str, set[str]] = {
+    _CURATED_TOOL_CAPS: dict[str, set[str]] = {  # noqa: N806
         "web_search": {"reranking"},
         "academic_search": {"reranking", "entity_linking"},
         "entity_extraction": {"entity_linking"},
@@ -840,14 +840,14 @@ def create_default_registry() -> CapabilityRegistry:
     registry.register(
         capability=Capability.INSIGHT,
         available=check_module("hledac.universal.brain.insight_engine")[0],
-        reason="Insight engine available" if check_module("hledac.universal.brain.insight_engine")[0] else "Insight engine not available",
+        reason="Insight engine available" if check_module("hledac.universal.brain.insight_engine")[0] else "Insight engine not available",  # noqa: E501
         module_path="hledac.universal.brain.insight_engine"
     )
 
     registry.register(
         capability=Capability.PATTERN_MINING,
         available=check_module("hledac.universal.intelligence.pattern_mining")[0],
-        reason="Pattern mining available" if check_module("hledac.universal.intelligence.pattern_mining")[0] else "Pattern mining not available",
+        reason="Pattern mining available" if check_module("hledac.universal.intelligence.pattern_mining")[0] else "Pattern mining not available",  # noqa: E501
         module_path="hledac.universal.intelligence.pattern_mining"
     )
 
@@ -882,7 +882,7 @@ def create_default_registry() -> CapabilityRegistry:
     registry.register(
         capability=Capability.SHODAN,
         available=_shodan_env and bool(_shodan_key),
-        reason=f"Shodan enabled (key present: {bool(_shodan_key)})" if _shodan_env else "Shodan disabled via HLEDAC_ENABLE_SHODAN",
+        reason=f"Shodan enabled (key present: {bool(_shodan_key)})" if _shodan_env else "Shodan disabled via HLEDAC_ENABLE_SHODAN",  # noqa: E501
         module_path="hledac.universal.intelligence.shodan_lane"
     )
 
@@ -892,7 +892,7 @@ def create_default_registry() -> CapabilityRegistry:
     registry.register(
         capability=Capability.CENSYS,
         available=_censys_env and bool(_censys_id) and bool(_censys_secret),
-        reason=f"Censys enabled (credentials present: {bool(_censys_id and _censys_secret)})" if _censys_env else "Censys disabled via HLEDAC_ENABLE_CENSYS",
+        reason=f"Censys enabled (credentials present: {bool(_censys_id and _censys_secret)})" if _censys_env else "Censys disabled via HLEDAC_ENABLE_CENSYS",  # noqa: E501
         module_path="hledac.universal.intelligence.censys_lane"
     )
 
@@ -901,7 +901,7 @@ def create_default_registry() -> CapabilityRegistry:
     registry.register(
         capability=Capability.GREYNOISE,
         available=_gn_env and bool(_gn_key),
-        reason=f"GreyNoise enabled (key present: {bool(_gn_key)})" if _gn_env else "GreyNoise disabled via HLEDAC_ENABLE_GREYNOISE",
+        reason=f"GreyNoise enabled (key present: {bool(_gn_key)})" if _gn_env else "GreyNoise disabled via HLEDAC_ENABLE_GREYNOISE",  # noqa: E501
         module_path="hledac.universal.intelligence.greynoise_lane"
     )
 
@@ -924,7 +924,7 @@ def create_default_registry() -> CapabilityRegistry:
     registry.register(
         capability=Capability.QUANTUM_PQ,
         available=_pq_available,
-        reason="Real PQ crypto available (ML-KEM-768 + ML-DSA-65)" if _pq_available else "PQ crypto in SIMULATION mode (liboqs-python not installed)",
+        reason="Real PQ crypto available (ML-KEM-768 + ML-DSA-65)" if _pq_available else "PQ crypto in SIMULATION mode (liboqs-python not installed)",  # noqa: E501
         module_path="hledac.universal.security.quantum_safe"
     )
 
@@ -932,14 +932,16 @@ def create_default_registry() -> CapabilityRegistry:
     _gopher_available = False
     if _gopher_env:
         try:
-            from hledac.universal.transport.gopher_transport import GopherTransport
+            from hledac.universal.transport.gopher_transport import (
+                GopherTransport,  # noqa: F401  # hledac.universal.transport.gopher_transport.GopherTransport
+            )
             _gopher_available = True
         except ImportError:
             pass
     registry.register(
         capability=Capability.GOPHER,
         available=_gopher_available,
-        reason=f"Gopher transport enabled (env: {_gopher_env})" if _gopher_available else f"Gopher transport disabled (env: {_gopher_env})",
+        reason=f"Gopher transport enabled (env: {_gopher_env})" if _gopher_available else f"Gopher transport disabled (env: {_gopher_env})",  # noqa: E501
         module_path="hledac.universal.transport.gopher_transport"
     )
 
@@ -952,8 +954,8 @@ def create_default_registry() -> CapabilityRegistry:
         )
         _bgp_pdns_available = _bgp_pdns_env and (BGP_LOOKUP_AVAILABLE or PASSIVE_DNS_AVAILABLE)
     except ImportError:
-        BGP_LOOKUP_AVAILABLE = False
-        PASSIVE_DNS_AVAILABLE = False
+        BGP_LOOKUP_AVAILABLE = False  # noqa: N806
+        PASSIVE_DNS_AVAILABLE = False  # noqa: N806
         _bgp_pdns_available = False
 
     # F350M-FED: Federated research — gate on HLEDAC_ENABLE_FEDERATED=1
@@ -963,7 +965,9 @@ def create_default_registry() -> CapabilityRegistry:
     # Q-tables and aggregates their findings by (ioc_type, ioc_value) dedup.
     _federated_env = os.environ.get("HLEDAC_ENABLE_FEDERATED", "").lower() in ("1", "true", "yes", "on")
     try:
-        from hledac.universal.federated import is_federated_enabled
+        from hledac.universal.federated import (
+            is_federated_enabled,  # noqa: F401  # hledac.universal.federated.is_federated_enabled
+        )
         # Double-check: the env-var resolution in the federated package
         # uses the same token set as the env check above. We do NOT call
         # the runtime gate function — capability registration must be

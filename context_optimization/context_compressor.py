@@ -11,7 +11,6 @@ FastEmbed uses quantized ONNX models for maximum inference speed
 and minimal memory footprint (~50MB vs ~420MB for PyTorch).
 """
 
-import asyncio
 import hashlib
 import logging
 import re
@@ -31,6 +30,7 @@ except ImportError:
 import numpy as np
 
 from utils.async_helpers import safe_gather_dropin
+
 logger = logging.getLogger(__name__)
 
 try:
@@ -42,7 +42,9 @@ except ImportError:
 
 # MLX Embedding Manager (primary for M1)
 try:
-    from _shims.core_mlx_embeddings import MLXEmbeddingManager
+    from _shims.core_mlx_embeddings import (
+        MLXEmbeddingManager,  # noqa: F401  # _shims.core_mlx_embeddings.MLXEmbeddingManager
+    )
     MLX_EMBED_AVAILABLE = True
 except ImportError:
     MLX_EMBED_AVAILABLE = False
@@ -219,7 +221,7 @@ class ContextCompressor:
                 self.embedder = self._mlx_manager
                 self.embedding_dim = self._mlx_manager.EMBEDDING_DIM
                 self._embedder_type = 'mlx'
-                logger.info(f"[EMBEDDER] Using shared MLXEmbeddingManager: {self._mlx_manager.model_path}, dim={self.embedding_dim}")
+                logger.info(f"[EMBEDDER] Using shared MLXEmbeddingManager: {self._mlx_manager.model_path}, dim={self.embedding_dim}")  # noqa: E501
             except Exception as e:
                 logger.warning(f"MLXEmbeddingManager init failed: {e}, falling back to FastEmbed")
                 self._mlx_manager = None
@@ -460,7 +462,7 @@ class ContextCompressor:
         selected_sentences = []
         current_tokens = 0
 
-        for sentence, score in scored_sentences:
+        for sentence, score in scored_sentences:  # noqa: B007
             sentence_tokens = self._estimate_tokens(sentence)
             if current_tokens + sentence_tokens > max_tokens:
                 break

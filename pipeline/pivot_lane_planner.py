@@ -368,7 +368,7 @@ def _plan_dark_surface_pivot(
     if dark_lane is None:
         return  # No dark transport, skip
 
-    _PRIORITY_DARK_SURFACE = 0.65  # Medium-high priority
+    _PRIORITY_DARK_SURFACE = 0.65  # Medium-high priority  # noqa: N806
 
     for dq in dark_queries:
         seed_value = dq.query
@@ -388,7 +388,7 @@ def _plan_dark_surface_pivot(
             seed_value=seed_value,
             seed_type="dark_query",
             priority=dq.priority,
-            reason=f"dark_{dq.query_type.value}__{dq.reasoning[:50]}" if dq.reasoning else f"dark_{dq.query_type.value}",
+            reason=f"dark_{dq.query_type.value}__{dq.reasoning[:50]}" if dq.reasoning else f"dark_{dq.query_type.value}",  # noqa: E501
         ))
 
 

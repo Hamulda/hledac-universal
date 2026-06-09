@@ -324,7 +324,7 @@ class MoERouter:
 
             # Get embeddings - lazy import torch
             try:
-                from contextlib import nullcontext
+                from contextlib import nullcontext  # noqa: F401  # contextlib.nullcontext
 
                 import torch
 
@@ -621,7 +621,7 @@ class MoERouter:
                 formatted_prompt = self._sanitize_for_llm(formatted_prompt)[:MAX_LLM_PROMPT_CHARS]
             else:
                 # Failsafe: use fallback when no callback injected
-                formatted_prompt = fallback_sanitize(formatted_prompt, max_length=MAX_LLM_PROMPT_CHARS)[:MAX_LLM_PROMPT_CHARS]
+                formatted_prompt = fallback_sanitize(formatted_prompt, max_length=MAX_LLM_PROMPT_CHARS)[:MAX_LLM_PROMPT_CHARS]  # noqa: E501
 
             # Generate
             response = generate(
@@ -663,11 +663,11 @@ class MoERouter:
         """
         # Default systémové zprávy pro jednotlivé experty
         expert_system_prompts = {
-            "osint": "You are an OSINT (Open Source Intelligence) expert. Focus on finding publicly available information from open sources.",
-            "security": "You are a cybersecurity expert. Focus on security analysis, vulnerabilities, and protective measures.",
+            "osint": "You are an OSINT (Open Source Intelligence) expert. Focus on finding publicly available information from open sources.",  # noqa: E501
+            "security": "You are a cybersecurity expert. Focus on security analysis, vulnerabilities, and protective measures.",  # noqa: E501
             "temporal": "You are a temporal analysis expert. Focus on timelines, chronology, and time-based patterns.",
             "graph": "You are a graph analysis expert. Focus on relationships, connections, and network structures.",
-            "synthesis": "You are a synthesis expert. Combine multiple expert analyses into a coherent, comprehensive answer.",
+            "synthesis": "You are a synthesis expert. Combine multiple expert analyses into a coherent, comprehensive answer.",  # noqa: E501
         }
 
         system = system_prompt or expert_system_prompts.get(

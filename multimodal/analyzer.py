@@ -37,6 +37,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from utils.async_helpers import safe_gather_dropin
+
 if TYPE_CHECKING:
     from knowledge.duckdb_store import CanonicalFinding
 
@@ -86,7 +87,7 @@ def _lazy_load_modules() -> None:
 
     # Image extraction via PIL
     try:
-        from PIL import Image
+        from PIL import Image  # noqa: F401  # PIL.Image
         _PIL_AVAILABLE = True
     except ImportError:
         _PIL_AVAILABLE = False
@@ -200,7 +201,7 @@ def _build_document_envelope(
                 "embedded_urls": triage_facets.get("embedded_urls", []),
                 "embedded_domains": triage_facets.get("embedded_domains", []),
             },
-            "content_preview": (text_content[:1000] + "...") if text_content and len(text_content) > 1000 else (text_content or ""),
+            "content_preview": (text_content[:1000] + "...") if text_content and len(text_content) > 1000 else (text_content or ""),  # noqa: E501
         }
 
         json_text = json.dumps(envelope, separators=(",", ":"))

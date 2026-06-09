@@ -156,7 +156,7 @@ class TestEvidenceLogCorrelation:
             assert len(events) == 2
 
             # Find event with correlation
-            corr_events = [e for e in events if "_correlation" in e.payload and e.payload["_correlation"]["branch_id"] == "branch_query"]
+            corr_events = [e for e in events if "_correlation" in e.payload and e.payload["_correlation"]["branch_id"] == "branch_query"]  # noqa: E501
             assert len(corr_events) == 1
             assert corr_events[0].payload["key"] == "value1"
 
@@ -248,7 +248,7 @@ class TestToolExecLogCorrelation:
 
         data = {
             "event_id": "tool_1",
-            "ts": datetime.utcnow().isoformat(),
+            "ts": datetime.utcnow().isoformat(),  # noqa: DTZ003
             "tool_name": "test",
             "input_hash": "hash1",
             "output_hash": "hash2",

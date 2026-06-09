@@ -658,7 +658,7 @@ def configure_patterns(registry: tuple[tuple[str, str], ...]) -> None:
         return  # no-op on identical registry
     _matcher_state._registry_snapshot = new_snapshot
     global _PATTERN_LABEL_INDEX
-    _PATTERN_LABEL_INDEX = {p.lower(): l for p, l in registry}
+    _PATTERN_LABEL_INDEX = {p.lower(): l for p, l in registry}  # noqa: E741
     _matcher_state._pattern_version += 1
     _matcher_state._dirty = True
     _matcher_state._rust_aco = None  # invalidate Rust instance on rebuild

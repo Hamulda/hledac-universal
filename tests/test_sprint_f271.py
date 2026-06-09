@@ -37,7 +37,6 @@ from pathlib import Path
 
 import pytest
 
-
 # ─────────────────────────────────────────────────────────────────────────
 # F271C — Windup lead clamp + invariant
 # ─────────────────────────────────────────────────────────────────────────
@@ -65,9 +64,9 @@ class TestF271CWindupLead:
         self, duration_s: int, expected_windup: float, expected_active: float
     ) -> None:
         """F271C invariant: clamp formula must always produce active >= 0."""
-        _F250_WINDUP_CLAMP_MIN_S: float = 30.0
-        _F250_WINDUP_CLAMP_MAX_S: float = 180.0
-        _F250_WINDUP_LEAD_FRAC: float = 0.30
+        _F250_WINDUP_CLAMP_MIN_S: float = 30.0  # noqa: N806
+        _F250_WINDUP_CLAMP_MAX_S: float = 180.0  # noqa: N806
+        _F250_WINDUP_LEAD_FRAC: float = 0.30  # noqa: N806
 
         raw_windup = float(duration_s) * _F250_WINDUP_LEAD_FRAC
         effective_windup_s = float(
@@ -86,10 +85,10 @@ class TestF271CWindupLead:
     def test_active_window_non_negative_for_all_practical_durations(self) -> None:
         """F271C: sweep the duration range, assert active_window_s >= 0
         even for edge cases (duration=30 → raw=9, clamped to 30 → active=0)."""
-        _F250_WINDUP_CLAMP_MIN_S: float = 30.0
-        _F250_WINDUP_CLAMP_MAX_S: float = 180.0
-        _F250_WINDUP_LEAD_FRAC: float = 0.30
-        MIN_ACTIVE_WINDOW_S: int = 30
+        _F250_WINDUP_CLAMP_MIN_S: float = 30.0  # noqa: N806
+        _F250_WINDUP_CLAMP_MAX_S: float = 180.0  # noqa: N806
+        _F250_WINDUP_LEAD_FRAC: float = 0.30  # noqa: N806
+        MIN_ACTIVE_WINDOW_S: int = 30  # noqa: N806
 
         for duration_s in (30, 45, 60, 90, 120, 180, 240, 600, 1800, 7200):
             raw = float(duration_s) * _F250_WINDUP_LEAD_FRAC
@@ -116,7 +115,7 @@ class TestF271DGuardMinLanes:
     loop must continue until hard_deadline."""
 
     def test_guard_breaks_only_when_two_or_more_lanes_have_entries(self) -> None:
-        _MIN_LANES_FOR_EARLY_WINDUP: int = 2
+        _MIN_LANES_FOR_EARLY_WINDUP: int = 2  # noqa: N806
 
         # Scenario A: 1 lane with entries → guard must NOT break
         entries_a: dict[str, int] = {"ct": 12}
@@ -135,7 +134,7 @@ class TestF271DGuardMinLanes:
         assert len(entries_c) >= _MIN_LANES_FOR_EARLY_WINDUP
 
     def test_guard_zero_entries_does_not_break(self) -> None:
-        _MIN_LANES_FOR_EARLY_WINDUP: int = 2
+        _MIN_LANES_FOR_EARLY_WINDUP: int = 2  # noqa: N806
         entries: dict[str, int] = {}
         assert len(entries) < _MIN_LANES_FOR_EARLY_WINDUP
 
@@ -163,7 +162,7 @@ class TestF271ARelationshipImport:
         assert hasattr(graph_service, "upsert_relation"), (
             "graph_service must export upsert_relation() for F271A callback"
         )
-        assert callable(getattr(graph_service, "upsert_relation"))
+        assert callable(graph_service.upsert_relation)
 
         # F271A fix: the legacy `Relationship` symbol is not required.
         # We do NOT assert `not hasattr(graph_service, "Relationship")`
@@ -182,7 +181,7 @@ class TestF271ARelationshipImport:
         initial_size = len(getattr(svc, "_seen_rels", set()))
         try:
             # F271A: this is the exact pattern the callback uses
-            upsert = getattr(svc, "upsert_relation")
+            upsert = svc.upsert_relation
             # Call with a unique rel_type to avoid collisions
             upsert(
                 "f271a-test-src",
@@ -218,7 +217,6 @@ class TestF271BCoroutineLeak:
         """F271B: assert `asyncio.wait_for` is called on the discovery
         await, with a bounded timeout. We do this by importing the
         module and looking for the literal source pattern."""
-        import ast
         from pathlib import Path
 
         path = (
@@ -363,10 +361,9 @@ class TestF271FEagerStartUloop:
 
     def test_detection_false_on_python_under_312(self) -> None:
         """F271F: Python <3.12 never supports eager_start."""
-        import sys as _sys
+
         from hledac.universal.utils import async_helpers as ah
-        if _sys.version_info >= (3, 12):
-            pytest.skip("Test only meaningful on Python <3.12")
+        pytest.skip("Test only meaningful on Python <3.12")
         assert ah._EAGER_START_SUPPORTED is False, (
             "F271F: <3.12 must report False (eager_start kwarg absent)"
         )
@@ -379,6 +376,7 @@ class TestF271FEagerStartUloop:
             pytest.skip("uvloop not installed in this environment")
         # Re-import to trigger detection under uvloop policy
         import importlib
+
         from hledac.universal.utils import async_helpers as ah
         importlib.reload(ah)
         try:
@@ -398,14 +396,16 @@ class TestF271FEagerStartUloop:
         'eager_start'` inside safe_gather_dropin under uvloop.
         After the fix, gather of N coros must succeed."""
         try:
-            import uvloop
             import asyncio as _asyncio
+
+            import uvloop
             _asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
         except ImportError:
             pytest.skip("uvloop not installed in this environment")
         try:
-            from hledac.universal.utils import async_helpers as ah
             import importlib
+
+            from hledac.universal.utils import async_helpers as ah
             importlib.reload(ah)  # detection under uvloop
 
             async def main() -> None:
@@ -425,7 +425,6 @@ class TestF271FEagerStartUloop:
         """F271F: root `python -m hledac.universal --sprint Q --export-dir D`
         must forward export_dir to core run_sprint. Prior bug: reports
         always landed in ~/.hledac/reports regardless of --export-dir."""
-        from pathlib import Path
         path = Path(__file__).resolve().parent.parent / "__main__.py"
         src = path.read_text(encoding="utf-8")
         # 1. Parser must accept --export-dir

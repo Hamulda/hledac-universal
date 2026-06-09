@@ -11,7 +11,6 @@ Verifies:
 
 import asyncio
 import sys
-from datetime import datetime
 from pathlib import Path
 
 # Ensure hledac.universal is importable
@@ -21,12 +20,12 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 def test_pattern_mining_canonical_importable():
     """Verify pattern_mining_canonical module imports."""
     from intelligence.pattern_mining_canonical import (
-        PatternCandidate,
-        PatternMiningResult,
-        PatternMiningAdapter,
-        create_pattern_mining_adapter,
         MAX_FINDINGS,
         MAX_PATTERNS,
+        PatternCandidate,
+        PatternMiningAdapter,
+        PatternMiningResult,
+        create_pattern_mining_adapter,
     )
     assert PatternCandidate is not None
     assert PatternMiningResult is not None
@@ -137,7 +136,6 @@ def test_network_classification():
 def test_sidecar_runner_function():
     """Verify _pattern_mining_runner exists and is callable."""
     from runtime.sidecar_bus import _pattern_mining_runner
-    import asyncio
 
     assert callable(_pattern_mining_runner)
     # Call with empty findings should return None (fail-soft)

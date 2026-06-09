@@ -34,7 +34,8 @@ from pathlib import Path
 from typing import Any
 
 import aiohttp
-from hledac.universal.network.session_runtime import async_get_aiohttp_session
+
+from hledac.universal.intelligence._http_helpers import get_intelligence_session
 from hledac.universal.paths import open_lmdb
 from hledac.universal.utils.msgspec_json import decode, encode
 
@@ -196,10 +197,9 @@ class ShodanClient:
         self._injected_session: aiohttp.ClientSession | None = session
 
     async def _get_session(self) -> aiohttp.ClientSession:
-        # Use injected session if provided; otherwise fall back to shared plain-TCP surface
         if self._injected_session is not None and not self._injected_session.closed:
             return self._injected_session
-        return await async_get_aiohttp_session()
+        return await get_intelligence_session()
 
     async def query_host(self, ip: str) -> dict[str, Any] | None:
         """
@@ -292,10 +292,9 @@ class CensysClient:
         self._injected_session: aiohttp.ClientSession | None = session
 
     async def _get_session(self) -> aiohttp.ClientSession:
-        # Use injected session if provided; otherwise fall back to shared plain-TCP surface
         if self._injected_session is not None and not self._injected_session.closed:
             return self._injected_session
-        return await async_get_aiohttp_session()
+        return await get_intelligence_session()
 
     async def search_hosts(self, query: str) -> list[dict[str, Any]] | None:
         """
@@ -709,7 +708,7 @@ class CVIntelligenceClient:
       Adds epss_score, percentile; EPSS >0.7 → IMMEDIATE_ACTION flag.
 
     M1 invariants:
-      - async_get_aiohttp_session() for HTTP
+      - get_intelligence_session() for HTTP (shared aiohttp session)
       - LMDB cache with 6h TTL
       - AsyncIterator[dict] for streaming results
       - No asyncio.run() inside async functions
@@ -781,7 +780,7 @@ class CVIntelligenceClient:
         return "PyPI", pkg
 
     async def _get_session(self) -> aiohttp.ClientSession:
-        return await async_get_aiohttp_session()
+        return await get_intelligence_session()
 
     async def _fetch_osv_batch(
         self, tech_stack: list[str], session: aiohttp.ClientSession

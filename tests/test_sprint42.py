@@ -15,11 +15,12 @@ import unittest
 from unittest.mock import MagicMock
 
 import pytest
+
 from hledac.universal.layers.communication_layer import _BatchItem
 from hledac.universal.tools.source_bandit import SourceBandit
 
 
-class TestSprint42A_Aging(unittest.IsolatedAsyncioTestCase):
+class TestSprint42A_Aging(unittest.IsolatedAsyncioTestCase):  # noqa: N801
     """Tests for Batch Aging (anti-starvation)."""
 
     async def test_starvation_prevention(self):
@@ -104,7 +105,7 @@ class TestSprint42A_Aging(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(item.priority, -0.5)
 
 
-class TestSprint42B_PredictiveRSS(unittest.IsolatedAsyncioTestCase):
+class TestSprint42B_PredictiveRSS(unittest.IsolatedAsyncioTestCase):  # noqa: N801
     """Tests for Predictive RSS Monitor (EMA)."""
 
     async def test_ema_convergence(self):
@@ -122,7 +123,7 @@ class TestSprint42B_PredictiveRSS(unittest.IsolatedAsyncioTestCase):
         true_avg = sum(samples) / len(samples)
 
         # Manually apply EMA
-        EMA_ALPHA = 0.3
+        EMA_ALPHA = 0.3  # noqa: N806
         ema = 0.0
         initialized = False
 
@@ -162,7 +163,7 @@ class TestSprint42B_PredictiveRSS(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(orch._coordinator_bounds['fetch']['max_concurrent'], 2)
 
 
-class TestSprint42C_LinUCB(unittest.IsolatedAsyncioTestCase):
+class TestSprint42C_LinUCB(unittest.IsolatedAsyncioTestCase):  # noqa: N801
     """Tests for LinUCB Contextual Bandit."""
 
     def test_linucb_selects_sources(self):

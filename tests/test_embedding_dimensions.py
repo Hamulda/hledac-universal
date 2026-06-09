@@ -48,10 +48,10 @@ class TestEmbeddingDimensions:
 
     def test_lancedb_store_mrl_dim_is_256(self) -> None:
         """LanceDBIdentityStore._current_mrl_dim must be 256 (MRL canonical)."""
-        from hledac.universal.knowledge.lancedb_store import LanceDBIdentityStore
-
         # Read the source to verify the class-level default
         import inspect
+
+        from hledac.universal.knowledge.lancedb_store import LanceDBIdentityStore
         source = inspect.getsource(LanceDBIdentityStore.__init__)
         assert '_current_mrl_dim = 256' in source, (
             "LanceDBIdentityStore.__init__ must set _current_mrl_dim = 256"
@@ -70,10 +70,10 @@ class TestEmbeddingDimensions:
 
     def test_all_backends_consistent(self) -> None:
         """All canonical embedding backends must use 256d vectors."""
-        from hledac.universal.core.mlx_embeddings import MLXEmbeddingManager
         from hledac.universal import embedding_pipeline
+        from hledac.universal.core.mlx_embeddings import MLXEmbeddingManager
 
-        CANONICAL_DIM = 256
+        CANONICAL_DIM = 256  # noqa: N806
 
         # Collect all dimension values
         dimensions = {
@@ -206,6 +206,7 @@ class TestMRLArchitecture:
     def test_assert_embedding_dimension_supports_512(self) -> None:
         """assert_embedding_dimension() must accept 512 (newly added MRL mid-dim)."""
         import inspect
+
         from hledac.universal.core.mlx_embeddings import assert_embedding_dimension
 
         # Static check: 512 must be in the valid set referenced in the function source

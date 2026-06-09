@@ -23,6 +23,7 @@ from typing import Any
 from hledac.universal.intelligence.confidence_policy import (  # type: ignore[ty:unresolved-import]  # pre-existing absolute import — module not in project (historical namespace)
     compute_confidence,
 )
+
 from .base import UniversalCoordinator
 
 logger = logging.getLogger(__name__)

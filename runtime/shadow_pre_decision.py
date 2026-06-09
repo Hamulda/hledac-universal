@@ -1955,7 +1955,7 @@ def preview_dispatch_parity(
     # Sprint F3.11: Read mapping from canonical read-side owner (tool_registry.py)
     # Previously this was a local constant — now centralized to prevent drift
     from ..tool_registry import get_task_tool_preview_mapping
-    TASK_TYPE_TO_TOOL = get_task_tool_preview_mapping()
+    TASK_TYPE_TO_TOOL = get_task_tool_preview_mapping()  # noqa: N806
 
     # Load tools from registry (read-only, no execute)
     # H350A FIX: M1-friendly fallback — truthful unknown místo heavy create_default_registry()

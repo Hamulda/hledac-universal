@@ -22,9 +22,9 @@ GHOST_INVARIANTS:
 import asyncio
 import tempfile
 import time as _time
-from typing import Any
 
 import pytest
+
 
 # Test fixtures
 @pytest.fixture
@@ -88,7 +88,7 @@ async def test_research_memory_singleton(temp_duckdb):
 
     # Second instance should raise RuntimeError
     with pytest.raises(RuntimeError, match="singleton"):
-        mem2 = ResearchSessionMemory(temp_duckdb)
+        ResearchSessionMemory(temp_duckdb)
 
     # Reset singleton for other tests
     import hledac.universal.knowledge.research_memory as rm

@@ -165,8 +165,8 @@ class TestCorroborationScoreDataclass:
 class TestScoreSeedsByCorroboration:
     def test_seed_scoring(self):
         seeds = [
-            {"value": "lockbit3.tw", "kind": "domain", "source": "body", "confidence": 0.7, "quality_decision": "keep", "quality_score": 0.85},
-            {"value": "mozilla.org", "kind": "domain", "source": "body", "confidence": 0.7, "quality_decision": "weak", "quality_score": 0.3},
+            {"value": "lockbit3.tw", "kind": "domain", "source": "body", "confidence": 0.7, "quality_decision": "keep", "quality_score": 0.85},  # noqa: E501
+            {"value": "mozilla.org", "kind": "domain", "source": "body", "confidence": 0.7, "quality_decision": "weak", "quality_score": 0.3},  # noqa: E501
         ]
         scores = score_seeds_by_corroboration(seeds)
         assert len(scores) == 2  # both scored, mozilla gets noise score
@@ -175,7 +175,7 @@ class TestScoreSeedsByCorroboration:
 
     def test_rejected_seed_filtered(self):
         seeds = [
-            {"value": "reject.me", "kind": "domain", "source": "body", "confidence": 0.5, "quality_decision": "reject", "quality_score": 0.0},
+            {"value": "reject.me", "kind": "domain", "source": "body", "confidence": 0.5, "quality_decision": "reject", "quality_score": 0.0},  # noqa: E501
         ]
         scores = score_seeds_by_corroboration(seeds)
         assert len(scores) == 0

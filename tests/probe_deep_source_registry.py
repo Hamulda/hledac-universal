@@ -491,10 +491,10 @@ async def test_discover_deep_sources_empty_query_returns_empty():
 # Standalone runner (bypass pytest discovery / conftest)
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
+    import inspect
     import sys
     import tempfile
     import traceback
-    import inspect
 
     # Ensure the project root is on sys.path so enhanced_research imports
     # can resolve `utils.async_helpers` etc. when run as a script.

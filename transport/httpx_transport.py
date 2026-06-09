@@ -393,7 +393,7 @@ async def fetch_via_httpx_h2(
 
     # SEC-08: Standardized browser-like headers to avoid client fingerprinting
     headers = {
-        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",  # noqa: E501
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
         "Accept-Language": "en-US,en;q=0.9",
         "Accept-Encoding": "gzip, deflate, br",
@@ -455,7 +455,7 @@ async def _validate_redirect_url(redirect_url: str) -> None:
         _SSRFBlockError: if redirect target is unsafe
     """
     # Private network ranges to block
-    _PRIVATE_NETS = [
+    _PRIVATE_NETS = [  # noqa: N806
         ipaddress.ip_network("10.0.0.0/8"),
         ipaddress.ip_network("172.16.0.0/12"),
         ipaddress.ip_network("192.168.0.0/16"),

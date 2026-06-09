@@ -242,7 +242,7 @@ _selected_quantization: str = "q4_k_m"
 # on it when switching models.
 # F162F FIX: Now uses weakref to avoid preventing GC — model is released
 # immediately after lifecycle considers it unloaded.
-import weakref
+import weakref  # noqa: E402
 
 _weak_model_ref: weakref.ref | None = None
 
@@ -643,8 +643,8 @@ def preload_model_hint(model_path: str) -> None:
 # Sprint 8QC: Structured Generation with Outlines MLX
 # =============================================================================
 
-import asyncio
-from pathlib import Path
+import asyncio  # noqa: E402
+from pathlib import Path  # noqa: E402
 
 try:
     from ..utils.executors import CPU_EXECUTOR

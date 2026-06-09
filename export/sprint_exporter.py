@@ -48,21 +48,17 @@ Sprint F150P: Finish-layer truth fields — canonical surfaces from scheduler/co
 
 from __future__ import annotations
 
-# Sprint F214Q: Re-export from narrative_builder for backward compat
-from hledac.universal.export.components.narrative_builder import (
-    _build_operator_brief,
-    _build_sprint_summary,
-    _derive_why_this_run_matters,
-    _derive_best_first_move,
-    _derive_branch_truth,
-    _get_branch_value,
-)
-
 import asyncio
 import json
 import logging
 import pathlib
 from typing import TYPE_CHECKING, Any
+
+# Sprint F214Q: Re-export from narrative_builder for backward compat
+from hledac.universal.export.components.narrative_builder import (
+    _derive_best_first_move,
+    _derive_branch_truth,
+)
 
 if TYPE_CHECKING:
     from hledac.universal.project_types import ExportHandoff
@@ -73,19 +69,14 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Sprint F232A: Component imports — narrative, scorecard, pivot, signal, hypothesis
 # ---------------------------------------------------------------------------
-from hledac.universal.export.components.signal_builder import (
-    _compute_runtime_diagnosis,
-    _extract_runtime_timing,
-)
-from hledac.universal.export.components.hypothesis_builder import (
+from hledac.universal.export.components.hypothesis_builder import (  # noqa: E402
     _derive_hypothesis_queries,
 )
-from hledac.universal.export.components.pivot_builder import (
+from hledac.universal.export.components.pivot_builder import (  # noqa: E402
     _derive_branch_seeds,
     _derive_focus_expand,
     _derive_trend_seeds,
     _get_runtime_truth,
-    _get_correlation_from_handoff,
 )
 
 # ---------------------------------------------------------------------------
@@ -93,12 +84,12 @@ from hledac.universal.export.components.pivot_builder import (
 # Connects existing reconciliation + planner into report enrichment.
 # No new storage, no new model deps, no live network calls.
 # ---------------------------------------------------------------------------
-from hledac.universal.runtime.acquisition_telemetry_reconcile import (
+from hledac.universal.runtime.acquisition_telemetry_reconcile import (  # noqa: E402
     complete_source_family_outcomes_from_lane_details,
     complete_source_family_outcomes_from_prelude,
     reconcile_lane_detail_fields,
 )
-from hledac.universal.runtime.investigation_planner import (
+from hledac.universal.runtime.investigation_planner import (  # noqa: E402
     build_planner_state_from_report,
     plan_next_investigation_actions,
     summarize_planner_actions,
@@ -263,7 +254,7 @@ def _build_investigation_packet(report: dict) -> dict:
         logger.warning(f"[EXPORT] investigation_packet build failed (fail-soft): {e}")
         return {
             "query": report.get("query", "") or "",
-            "seed_context": {"available": False, "source": "", "domains": [], "ips": [], "urls": [], "hashes": [], "cves": []},
+            "seed_context": {"available": False, "source": "", "domains": [], "ips": [], "urls": [], "hashes": [], "cves": []},  # noqa: E501
             "source_family_summary": [],
             "terminal_coverage": {},
             "corroboration": {},
@@ -426,7 +417,7 @@ def _build_provider_yield_diagnosis(report: dict) -> dict:
             doh_status = "attempted_empty"
             doh_reason = doh_error or "attempted_empty"
             doh_action = "try_passive_dns_or_wayback"
-        elif doh_terminal in ("ATTEMPTED_ACCEPTED", "attempted_accepted") or (doh_outcome.get("accepted_count", 0) or 0) > 0:
+        elif doh_terminal in ("ATTEMPTED_ACCEPTED", "attempted_accepted") or (doh_outcome.get("accepted_count", 0) or 0) > 0:  # noqa: E501
             doh_status = "successful"
             doh_reason = doh_error or "accepted"
             doh_action = "none"
@@ -971,7 +962,7 @@ def _planner_actions_to_seeds(planner_actions: list[dict]) -> tuple[list[dict], 
             deduped.append(s)
 
     # Enforce max 12
-    MAX_NEXT_SEEDS = 12
+    MAX_NEXT_SEEDS = 12  # noqa: N806
     if len(deduped) > MAX_NEXT_SEEDS:
         deduped = deduped[:MAX_NEXT_SEEDS]
 
@@ -1133,7 +1124,7 @@ def _generate_next_sprint_seeds(
                 next_seeds_source = "quantum_pathfinder"
 
             # Bounded output — keep total seed count manageable
-            MAX_SEEDS = 15
+            MAX_SEEDS = 15  # noqa: N806
             if len(seeds) > MAX_SEEDS:
                 seeds.sort(key=lambda s: s.get("priority", 0.5), reverse=True)
                 seeds = seeds[:MAX_SEEDS]
@@ -1155,7 +1146,7 @@ def _generate_next_sprint_seeds(
         except ImportError:
             logger.warning("[EXPORT] zstd unavailable, plain JSON only")
         seeds_path.write_text(_seeds_text, encoding="utf-8")
-        logger.info(f"[EXPORT] {len(seeds)} seeds ({next_seeds_source}) ({', '.join(_seed_type_counts(seeds))}) → {seeds_path}")
+        logger.info(f"[EXPORT] {len(seeds)} seeds ({next_seeds_source}) ({', '.join(_seed_type_counts(seeds))}) → {seeds_path}")  # noqa: E501
     except Exception as e:
         logger.warning(f"[EXPORT] Enhanced seed generation failed: {e}")
         _empty_wrapper = {
@@ -1746,7 +1737,7 @@ def _build_product_value_summary(
     # in __main__.py run_sprint).
     _sfo_list = scorecard.get("source_family_outcomes", []) if isinstance(scorecard, dict) else []
     _feed_entry = next((e for e in _sfo_list if isinstance(e, dict) and e.get("family") == "feed"), None)
-    _nonfeed_entries = [e for e in _sfo_list if isinstance(e, dict) and e.get("family") != "feed" and e.get("attempted")]
+    _nonfeed_entries = [e for e in _sfo_list if isinstance(e, dict) and e.get("family") != "feed" and e.get("attempted")]  # noqa: E501
     _feed_accepted = (_feed_entry.get("accepted_count") or 0) if _feed_entry else 0
     _nonfeed_accepted = sum((e.get("accepted_count") or 0) for e in _nonfeed_entries)
     _total_accepted = _feed_accepted + _nonfeed_accepted
@@ -1805,14 +1796,14 @@ def _build_product_value_summary(
         "dedup_lmdb_path": dedup_lmdb_path,
         "hot_cache": hot_cache,
         # F193B: Archive + academic discovery contribution surfaces
-        "commoncrawl_archive_augmented": (eh.canonical_run_summary.get("cc_archive_injected", 0) if eh.canonical_run_summary else None) or scorecard.get("cc_archive_injected", 0),
-        "academic_discovery_contribution": (eh.canonical_run_summary.get("academic_findings_count", 0) if eh.canonical_run_summary else None) or scorecard.get("academic_findings_count", 0),
+        "commoncrawl_archive_augmented": (eh.canonical_run_summary.get("cc_archive_injected", 0) if eh.canonical_run_summary else None) or scorecard.get("cc_archive_injected", 0),  # noqa: E501
+        "academic_discovery_contribution": (eh.canonical_run_summary.get("academic_findings_count", 0) if eh.canonical_run_summary else None) or scorecard.get("academic_findings_count", 0),  # noqa: E501
         # Sprint F204F: Production CTI scorecard enrichment fields
         "attribution": eh.canonical_run_summary.get("attribution") if eh.canonical_run_summary else None,
         "wayback_diff": eh.canonical_run_summary.get("wayback_diff") if eh.canonical_run_summary else None,
         "embedding": eh.canonical_run_summary.get("embedding") if eh.canonical_run_summary else None,
-        "hypothesis_feedback": eh.canonical_run_summary.get("hypothesis_feedback") if eh.canonical_run_summary else None,
-        "circuit_state": eh.canonical_run_summary.get("circuit_state") if eh.canonical_run_summary else scorecard.get("circuit_state"),
+        "hypothesis_feedback": eh.canonical_run_summary.get("hypothesis_feedback") if eh.canonical_run_summary else None,  # noqa: E501
+        "circuit_state": eh.canonical_run_summary.get("circuit_state") if eh.canonical_run_summary else scorecard.get("circuit_state"),  # noqa: E501
         # F214-ACQ: Feed dominance and nonfeed diagnostic signals
         "feed_dominance_ratio": round(feed_dominance_ratio, 4) if feed_dominance_ratio is not None else None,
         "should_recommend_nonfeed_diagnostic": should_recommend_nonfeed_diagnostic,
@@ -1997,7 +1988,7 @@ def _build_engineering_action_map(
       - confidence: 0.0-1.0, rounded to 2 decimal places
     """
     if pyd is None and evd is None:
-        return {"primary_action": "none", "reason": "no diagnosis data available", "target_area": "none", "confidence": 0.0}
+        return {"primary_action": "none", "reason": "no diagnosis data available", "target_area": "none", "confidence": 0.0}  # noqa: E501
 
     pyd = pyd if isinstance(pyd, dict) else {}
     evd = evd if isinstance(evd, dict) else {}
@@ -2033,7 +2024,7 @@ def _build_engineering_action_map(
         }
 
     # Rule 3: provider returned zero but was attempted (not skipped)
-    if public_status == "error_or_zero" and ("provider_returned_zero" in str(public_reason) or "provider_unavailable" in str(public_reason)):
+    if public_status == "error_or_zero" and ("provider_returned_zero" in str(public_reason) or "provider_unavailable" in str(public_reason)):  # noqa: E501
         return {
             "primary_action": "add_or_use_provider_replay_fixture",
             "reason": "provider returned zero or unavailable — replay fixture needed for diagnostics",
@@ -2458,8 +2449,8 @@ def _compute_provider_yield_signals(
     _feed_only = False
     if sfo_list:
         feed_entry = next((e for e in sfo_list if isinstance(e, dict) and e.get("family") == "feed"), None)
-        nonfeed_attempted = [e for e in sfo_list if isinstance(e, dict) and e.get("family") in nonfeed_families and e.get("attempted")]
-        _feed_only = (feed_entry is not None and (feed_entry.get("accepted_count") or 0) > 0) and len(nonfeed_attempted) == 0
+        nonfeed_attempted = [e for e in sfo_list if isinstance(e, dict) and e.get("family") in nonfeed_families and e.get("attempted")]  # noqa: E501
+        _feed_only = (feed_entry is not None and (feed_entry.get("accepted_count") or 0) > 0) and len(nonfeed_attempted) == 0  # noqa: E501
 
     # 1. dependency_gap_families — from doh_provider_errors
     _dep_gaps: list[str] = []
@@ -3390,7 +3381,7 @@ def _build_capability_synthesis(
     elif len(source_types) == 2:
         source_diversity_summary = "dual_source_mixed"
     elif len(source_types) == 1:
-        source_diversity_summary = "single_source_feed_only" if source_types[0] in ("ct", "feed") else "single_source_niche"
+        source_diversity_summary = "single_source_feed_only" if source_types[0] in ("ct", "feed") else "single_source_niche"  # noqa: E501
     else:
         source_diversity_summary = "unknown_source"
 
@@ -3588,7 +3579,7 @@ def _derive_run_truth_note(
             return "unknown_run"
 
 
-def _derive_branch_truth(
+def _derive_branch_truth(  # noqa: F811
     feed_verdict: dict[str, Any] | None,
     public_verdict: dict[str, Any] | None,
     branch_value: dict[str, Any] | None,
@@ -3633,7 +3624,7 @@ def _derive_branch_truth(
     return " | ".join(parts)
 
 
-def _derive_best_first_move(
+def _derive_best_first_move(  # noqa: F811
     runtime_truth: dict[str, Any] | None,
     signal_path: dict[str, Any] | None,
     canonical_run_summary: dict[str, Any] | None,

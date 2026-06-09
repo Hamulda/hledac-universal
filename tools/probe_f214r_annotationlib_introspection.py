@@ -207,7 +207,7 @@ def run_probe():
     print(f"  annotationlib available: {ANNOTATIONLIB_AVAILABLE}")
     if not ANNOTATIONLIB_AVAILABLE:
         print(f"  annotationlib error: {ANNOTATIONLIB_ERROR}")
-        print(f"  NOTE: annotationlib ships in Python 3.14+. Current env is {sys.version_info.major}.{sys.version_info.minor}.")
+        print(f"  NOTE: annotationlib ships in Python 3.14+. Current env is {sys.version_info.major}.{sys.version_info.minor}.")  # noqa: E501
     print(f"  msgspec available: {MSGSPEC_AVAILABLE}")
     print()
 
@@ -262,7 +262,7 @@ def run_probe():
     print("B) FORWARD REFERENCE HANDLING")
     print("-" * 70)
 
-    ForwardRefClass = make_class_with_forward_ref()
+    ForwardRefClass = make_class_with_forward_ref()  # noqa: N806
 
     print("\n[B1] typing.get_type_hints() with forward refs:")
     try:

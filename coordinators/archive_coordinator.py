@@ -228,6 +228,6 @@ class ArchiveCoordinator(UniversalCoordinator):
 
     async def _do_shutdown(self, ctx: dict[str, Any]) -> None:
         """Cleanup on shutdown."""
-        logger.info(f"ArchiveCoordinator shutting down: {self._escalations_executed} escalations, {self._urls_emitted} URLs")
+        logger.info(f"ArchiveCoordinator shutting down: {self._escalations_executed} escalations, {self._urls_emitted} URLs")  # noqa: E501
         self._pending_urls.clear()
         self._seen_urls.clear()  # Sprint F206X: clear seen set too

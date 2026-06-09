@@ -294,7 +294,7 @@ class MetadataDeduplicator:
         comparisons = 0
 
         # Compare within each domain bin
-        for domain, bin_entries in domain_bins.items():
+        for domain, bin_entries in domain_bins.items():  # noqa: B007
             if comparisons >= self.max_comparisons:
                 break
 
@@ -338,7 +338,7 @@ class MetadataDeduplicator:
                         if log_callback:
                             log_callback(result)
 
-        self.logger.info(f"Metadata dedup: {len(results)} duplicates from {len(entries)} entries, {comparisons} comparisons")
+        self.logger.info(f"Metadata dedup: {len(results)} duplicates from {len(entries)} entries, {comparisons} comparisons")  # noqa: E501
         return results
 
 

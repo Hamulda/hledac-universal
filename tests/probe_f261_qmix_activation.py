@@ -25,8 +25,6 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 # Ensure hledac imports work
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
@@ -162,7 +160,7 @@ def test_train_step_skipped_inference_only():
             policy_path=Path(tmpdir) / "s.json",
         )
         # 10 sprints in inference mode
-        for i in range(10):
+        for _i in range(10):
             pm.update(MockResult(findings_accepted=10))
         # qmix_weights should remain None (never serialized)
         assert pm._state.qmix_weights is None
@@ -183,7 +181,7 @@ def _init_qmix_mocks(pm):
 
 def test_train_step_per_sprint_cap():
     """F261QMIX: per-sprint cap prevents >1 train_step per sprint."""
-    from hledac.universal.rl.sprint_policy_manager import SprintPolicyManager, _MAX_TRAIN_STEPS_PER_SPRINT
+    from hledac.universal.rl.sprint_policy_manager import _MAX_TRAIN_STEPS_PER_SPRINT, SprintPolicyManager
 
     with tempfile.TemporaryDirectory() as tmpdir:
         pm = SprintPolicyManager(
@@ -229,7 +227,7 @@ def test_train_step_ram_gate():
         # Reload module so module-level _RAM_GATE_DISABLED picks up env
         import hledac.universal.rl.sprint_policy_manager as spm_mod
         importlib.reload(spm_mod)
-        SprintPolicyManager = spm_mod.SprintPolicyManager
+        SprintPolicyManager = spm_mod.SprintPolicyManager  # noqa: N806
         with tempfile.TemporaryDirectory() as tmpdir:
             pm = SprintPolicyManager(
                 enabled=True,
@@ -336,7 +334,7 @@ def test_state_save_load_extended_fields(tmp_path):
         print(f"[DEBUG] raw cumulative_train_steps: {data_loaded.get('cumulative_train_steps')}")
         try:
             test_state = SprintPolicyState(**data_loaded)
-            print(f"[DEBUG] direct SprintPolicyState(**data) → cumulative_train_steps = {test_state.cumulative_train_steps}")
+            print(f"[DEBUG] direct SprintPolicyState(**data) → cumulative_train_steps = {test_state.cumulative_train_steps}")  # noqa: E501
         except Exception as e:
             print(f"[DEBUG] direct SprintPolicyState error: {e}")
         print(f"[DEBUG] pm2._state.cumulative_train_steps = {pm2._state.cumulative_train_steps}")

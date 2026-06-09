@@ -38,6 +38,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from utils.async_helpers import safe_gather_fire_and_forget
+
 if TYPE_CHECKING:
     from hledac.universal.knowledge.duckdb_store import CanonicalFinding
 
@@ -531,12 +532,12 @@ class LeakSentinelAdapter:
 
         # Try github if query looks like 'owner/repo'
         if "/" in query and len(query) > 3:
-            t = asyncio.create_task(_fetch_github_secret_findings(query, self._semaphore), name="leak_sentinel:github_findings")
+            t = asyncio.create_task(_fetch_github_secret_findings(query, self._semaphore), name="leak_sentinel:github_findings")  # noqa: E501
             sources_to_run.append(("github", t))
 
         # Try breach for email/domain/username queries
         if "@" in query or ("." in query and "/" not in query):
-            t = asyncio.create_task(_fetch_breach_findings(query, self._semaphore), name="leak_sentinel:breach_findings")
+            t = asyncio.create_task(_fetch_breach_findings(query, self._semaphore), name="leak_sentinel:breach_findings")  # noqa: E501
             sources_to_run.append(("breach", t))
 
         self._stats.sources_run = len(sources_to_run)

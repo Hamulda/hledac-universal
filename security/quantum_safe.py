@@ -173,8 +173,8 @@ class SpikingNeuralNetwork:
             return
 
         # Initialize weights using Xavier initialization
-        self._weights_input = np.random.randn(self.hidden_neurons, self.input_neurons).astype(np.float32) * np.sqrt(2.0 / self.input_neurons)
-        self._weights_hidden = np.random.randn(self.output_neurons, self.hidden_neurons).astype(np.float32) * np.sqrt(2.0 / self.hidden_neurons)
+        self._weights_input = np.random.randn(self.hidden_neurons, self.input_neurons).astype(np.float32) * np.sqrt(2.0 / self.input_neurons)  # noqa: E501
+        self._weights_hidden = np.random.randn(self.output_neurons, self.hidden_neurons).astype(np.float32) * np.sqrt(2.0 / self.hidden_neurons)  # noqa: E501
         self._initialized = True
 
     def process(self, neural_input: np.ndarray) -> np.ndarray:
@@ -220,7 +220,7 @@ class IzhikevichNeuron:
         self.spike_times: list[float] = []
         self.last_spike_time = -float('inf')
 
-    def update(self, I: float, dt: float = 1.0) -> bool:
+    def update(self, I: float, dt: float = 1.0) -> bool:  # noqa: E741
         """Update neuron state with input current."""
         dv = (0.04 * self.v ** 2 + 5 * self.v + 140 - self.u + I) * dt
         du = (self.a * (self.b * self.v - self.u)) * dt
@@ -264,31 +264,31 @@ class HodgkinHuxleyNeuron:
         self.spike_times: list[float] = []
         self.last_spike_time = -float('inf')
 
-    def _alpha_m(self, V: float) -> float:
+    def _alpha_m(self, V: float) -> float:  # noqa: N803
         return 0.1 * (V + 40) / (1 - np.exp(-(V + 40) / 10))
 
-    def _beta_m(self, V: float) -> float:
+    def _beta_m(self, V: float) -> float:  # noqa: N803
         return 4.0 * np.exp(-(V + 65) / 18)
 
-    def _alpha_h(self, V: float) -> float:
+    def _alpha_h(self, V: float) -> float:  # noqa: N803
         return 0.07 * np.exp(-(V + 65) / 20)
 
-    def _beta_h(self, V: float) -> float:
+    def _beta_h(self, V: float) -> float:  # noqa: N803
         return 1.0 / (1 + np.exp(-(V + 35) / 10))
 
-    def _alpha_n(self, V: float) -> float:
+    def _alpha_n(self, V: float) -> float:  # noqa: N803
         return 0.01 * (V + 55) / (1 - np.exp(-(V + 55) / 10))
 
-    def _beta_n(self, V: float) -> float:
+    def _beta_n(self, V: float) -> float:  # noqa: N803
         return 0.125 * np.exp(-(V + 65) / 80)
 
-    def update(self, I: float, dt: float = 0.01) -> bool:
+    def update(self, I: float, dt: float = 0.01) -> bool:  # noqa: E741
         """Update neuron state."""
-        I_Na = self.g_Na * self.m**3 * self.h * (self.V - self.E_Na)
-        I_K = self.g_K * self.n**4 * (self.V - self.E_K)
-        I_L = self.g_L * (self.V - self.E_L)
+        I_Na = self.g_Na * self.m**3 * self.h * (self.V - self.E_Na)  # noqa: N806
+        I_K = self.g_K * self.n**4 * (self.V - self.E_K)  # noqa: N806
+        I_L = self.g_L * (self.V - self.E_L)  # noqa: N806
 
-        dV = (I - I_Na - I_K - I_L) / self.C_m * dt
+        dV = (I - I_Na - I_K - I_L) / self.C_m * dt  # noqa: N806
         self.V += dV
 
         dm = (self._alpha_m(self.V) * (1 - self.m) - self._beta_m(self.V) * self.m) * dt
@@ -482,7 +482,7 @@ class NeuromorphicCryptoEngine:
             ).astype(np.float32) * 0.1
 
             self._initialized = True
-            logger.info(f"NeuromorphicCryptoEngine initialized ({self.input_neurons} -> {self.hidden_neurons} -> {self.output_neurons})")
+            logger.info(f"NeuromorphicCryptoEngine initialized ({self.input_neurons} -> {self.hidden_neurons} -> {self.output_neurons})")  # noqa: E501
             return True
 
         except Exception as e:
@@ -856,6 +856,9 @@ class QuantumSafeVault:
         if not self._initialized:
             raise RuntimeError("Vault not initialized")
 
+        if self._keypair is None:
+            raise RuntimeError("Keypair not available")
+
         # Generovat nonce
         nonce = secrets.token_bytes(12)
 
@@ -898,6 +901,9 @@ class QuantumSafeVault:
         """
         if not self._initialized:
             raise RuntimeError("Vault not initialized")
+
+        if self._keypair is None:
+            raise RuntimeError("Keypair not available")
 
         # REAL ML-KEM decapsulation via liboqs
         if REAL_PQ_AVAILABLE:

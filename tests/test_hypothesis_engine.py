@@ -12,18 +12,17 @@ Invariant: MAX_HYPOTHESES is a config constant — tests MUST NOT hardcode it.
 """
 from __future__ import annotations
 
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from brain.evidence_fusion import DempsterShafer
 from hledac_hypothesis.hypothesisgenerator import (
+    MAX_HYPOTHESES,
     HypothesisGenerator,
     ResearchHypothesis,
     _heuristic_generate,
-    MAX_HYPOTHESES,
 )
-
 
 # ---------------------------------------------------------------------------
 # Test fixtures
@@ -304,7 +303,7 @@ def test_extract_hashes():
 
 def test_extract_none_returns_empty_lists():
     """Empty payload → no extractions."""
-    from hledac_hypothesis.hypothesisgenerator import _extract_ips, _extract_domains, _extract_emails, _extract_hashes
+    from hledac_hypothesis.hypothesisgenerator import _extract_domains, _extract_emails, _extract_hashes, _extract_ips
 
     assert _extract_ips("") == []
     assert _extract_domains("") == []
@@ -492,7 +491,7 @@ def test_research_hypothesis_immutable():
         pivot_seeds=("seed1",),
     )
 
-    with pytest.raises(Exception):  # frozen dataclass
+    with pytest.raises(Exception):  # frozen dataclass  # noqa: B017
         h.confidence = 0.5  # type: ignore
 
 

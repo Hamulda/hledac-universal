@@ -29,13 +29,12 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-import pytest
-from aiohttp import web
-from aiohttp.test_utils import TestServer
+import pytest  # noqa: E402
+from aiohttp import web  # noqa: E402
+from aiohttp.test_utils import TestServer  # noqa: E402
 
-from hledac.universal.transport import circuit_breaker
-from hledac.universal.network import ipfs_client
-
+from hledac.universal.network import ipfs_client  # noqa: E402
+from hledac.universal.transport import circuit_breaker  # noqa: E402
 
 # =============================================================================
 # Fixtures and helpers
@@ -108,7 +107,6 @@ def test_ipfs_checked_get_records_failure_on_500():
     assert "circuit_breaker_open" in r4[1]
 
     # Breaker key is the URL netloc (host:port), not just host
-    from urllib.parse import urlparse
     # We need to find the right netloc — scan snapshots for OPEN one
     snaps = circuit_breaker.get_all_breaker_snapshots()
     open_breakers = [s for s in snaps if s.state == "open"]
@@ -223,14 +221,14 @@ def test_banner_grabber_records_failure_on_500(monkeypatch):
         app.router.add_get("/", handler)
         async with TestServer(app) as server:
             ip = server.host
-            grabber = banner_grabber.BannerGrabber()
+            banner_grabber.BannerGrabber()
 
             # Patch the fetch session to point to our test server.
             # The grabber uses _get_fetch_session() which uses session_runtime.
             # For hermetic test, we'll call _grab_curl with a forced URL.
-            from unittest.mock import AsyncMock, patch
-            from hledac.universal.network import ipfs_client
             import aiohttp
+
+            from hledac.universal.network import ipfs_client
 
             session = await ipfs_client._get_ipfs_session(
                 ip, timeout=aiohttp.ClientTimeout(total=5)
@@ -245,7 +243,7 @@ def test_banner_grabber_records_failure_on_500(monkeypatch):
     assert resp is not None and resp.status == 500
     # Breaker keyed by netloc (host:port), not just host
     from urllib.parse import urlparse
-    netloc = urlparse(f"http://{ip}:1/").netloc
+    urlparse(f"http://{ip}:1/").netloc  # noqa: B018
     # We need the actual port — reconstruct from the test_server.port path
     # but here we just look up by the netloc stored in breaker
     # Easier: scan snapshots for one with last_failure_kind=banner_probe
@@ -271,6 +269,7 @@ def test_fediverse_breaker_records_429():
         async with TestServer(app) as server:
             # Simulate fediverse adapter logic — record failure on 429
             from urllib.parse import urlparse
+
             from hledac.universal.transport.circuit_breaker import get_breaker
             host = server.host
             url = f"http://{host}:{server.port}/api/v2/search"

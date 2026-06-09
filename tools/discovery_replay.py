@@ -192,10 +192,10 @@ if TYPE_CHECKING:
 # back-ported here so production callers can rely on them.
 # ---------------------------------------------------------------------------
 
-import os as _os
-import re as _re
-import hashlib as _hashlib
-import pathlib as _pathlib
+import hashlib as _hashlib  # noqa: E402
+import os as _os  # noqa: E402
+import pathlib as _pathlib  # noqa: E402
+import re as _re  # noqa: E402
 
 # Bounded cassette size — keeps individual cassettes under 1 MB to
 # avoid LMDB/DuckDB bloat and to make corruption easier to detect.
@@ -205,7 +205,7 @@ CASSETTE_MAX_BYTES: int = 1_000_000  # 1 MB
 _DEFAULT_TTL_SECONDS: int = 24 * 3600  # 24 hours
 
 
-class CassetteSizeExceeded(Exception):
+class CassetteSizeExceeded(Exception):  # noqa: N818
     """Raised when a cassette payload exceeds CASSETTE_MAX_BYTES.
 
     Carries ``max_bytes`` and ``actual_bytes`` for diagnostics; both are

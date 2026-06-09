@@ -8,7 +8,7 @@ def test_sprint_scheduler_result_has_pii_field():
     with open(f'{BASE}/runtime/sprint_scheduler.py') as f:
         content = f.read()
 
-    assert 'pii_findings_anonymized: int = 0' in content, "pii_findings_anonymized field not found in SprintSchedulerResult"
+    assert 'pii_findings_anonymized: int = 0' in content, "pii_findings_anonymized field not found in SprintSchedulerResult"  # noqa: E501
     print("✓ SprintSchedulerResult.pii_findings_anonymized exists")
 
 

@@ -13,9 +13,10 @@ Invariant tests:
 - 10MB cap enforced by fetch_ipfs
 """
 import time
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
+
 from hledac.universal.network.ipfs_client import (
     MAX_FILE_SIZE_BYTES,
     ipfs_content_to_finding_dict,
@@ -95,7 +96,7 @@ class TestIpfsContentToFindingDict:
     def test_finding_id_is_unique_per_content(self):
         """Different content produces different finding_id."""
         cid = "QmTest"
-        ts = time.time()
+        time.time()
 
         result1 = ipfs_content_to_finding_dict(
             cid=cid, content=b"content1", query="q", source_type="ipfs_fetch"

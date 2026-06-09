@@ -95,8 +95,8 @@ def _render_uma_memory(result) -> list[str]:
         "",
         "## UMA Memory",
         "",
-        f"- Pre-sprint: {result.uma_pre_used_gib} GiB used, {result.uma_pre_swap_gib} GiB swap, state={result.uma_pre_state}",
-        f"- Post-sprint: {result.uma_post_used_gib} GiB used, {result.uma_post_swap_gib} GiB swap, state={result.uma_post_state}",
+        f"- Pre-sprint: {result.uma_pre_used_gib} GiB used, {result.uma_pre_swap_gib} GiB swap, state={result.uma_pre_state}",  # noqa: E501
+        f"- Post-sprint: {result.uma_post_used_gib} GiB used, {result.uma_post_swap_gib} GiB swap, state={result.uma_post_state}",  # noqa: E501
     ]
 
 
@@ -111,8 +111,8 @@ def _render_sprint_results(result) -> list[str]:
             f"- Cycles completed: {result.cycles_completed}",
             f"- Cycles started: {result.cycles_started}",
             f"- Accepted findings: {result.accepted_findings}",
-            f"- Runtime truth: {json.dumps(result.runtime_truth, default=str) if isinstance(result.runtime_truth, dict) else result.runtime_truth}",
-            f"- Timing truth: {json.dumps(result.timing_truth, default=str) if isinstance(result.timing_truth, dict) else result.timing_truth}",
+            f"- Runtime truth: {json.dumps(result.runtime_truth, default=str) if isinstance(result.runtime_truth, dict) else result.runtime_truth}",  # noqa: E501
+            f"- Timing truth: {json.dumps(result.timing_truth, default=str) if isinstance(result.timing_truth, dict) else result.timing_truth}",  # noqa: E501
             f"- Checkpoint zero: {result.checkpoint_zero_category}",
             f"- Early exit class: {result.early_exit_class}",
             f"- Primary signal source: {result.primary_signal_source}",
@@ -164,8 +164,8 @@ def _render_readiness_artifacts(result) -> list[str]:
         "## Readiness Artifacts",
         "",
         f"- stabilization_seal.json: {'PRESENT' if result.stabilization_seal_present else 'MISSING'}",
-        f"- hermetic_regression_manifest.json: {'PRESENT' if result.hermetic_regression_manifest_present else 'MISSING'}",
-        f"- transport_authority_status_refreshed.json: {'PRESENT' if result.transport_authority_status_present else 'MISSING'}",
+        f"- hermetic_regression_manifest.json: {'PRESENT' if result.hermetic_regression_manifest_present else 'MISSING'}",  # noqa: E501
+        f"- transport_authority_status_refreshed.json: {'PRESENT' if result.transport_authority_status_present else 'MISSING'}",  # noqa: E501
         f"- mlx_wired_limit_seal.json: {'PRESENT' if result.mlx_wired_limit_seal_present else 'MISSING'}",
     ]
 

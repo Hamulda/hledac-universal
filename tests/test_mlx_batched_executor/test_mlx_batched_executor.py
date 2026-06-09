@@ -35,7 +35,7 @@ _BRAIN_DIR = os.path.abspath(
 )
 
 
-def _load_isolated(name: str) -> "types.ModuleType":
+def _load_isolated(name: str) -> types.ModuleType:
     """Load a brain/ module by path, bypassing brain/__init__.py."""
     path = os.path.join(_BRAIN_DIR, f"{name}.py")
     spec = importlib.util.spec_from_file_location(f"brain.{name}", path)
@@ -48,7 +48,7 @@ def _load_isolated(name: str) -> "types.ModuleType":
 
 # Create a minimal 'hledac' package skeleton so dotted imports work in tests
 # without running hledac/__init__.py (which would trigger heavy imports).
-import types
+import types  # noqa: E402
 
 _hledac = types.ModuleType("hledac")
 sys.modules["hledac"] = _hledac

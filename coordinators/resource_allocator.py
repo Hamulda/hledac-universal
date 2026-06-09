@@ -199,7 +199,7 @@ class IntelligentResourceAllocator:
     """Advanced resource allocation and scaling system"""
 
     def __init__(self, config_path: str | None = None):
-        self.config = self._load_config(config_path or "")  # None → "": empty path falls through to defaults in _load_config
+        self.config = self._load_config(config_path or "")  # None → "": empty path falls through to defaults in _load_config  # noqa: E501
         # Sprint F206X: dict keyed by task_id for O(1) removal after allocation, bounded size
         self._pending_requests_dict: dict[str, ResourceRequest] = {}
         self.active_allocations = {}
@@ -444,7 +444,7 @@ class IntelligentResourceAllocator:
             (request.gpu_memory is None or request.gpu_memory <= available_gpu)
         )
 
-    async def _create_allocation(self, request: ResourceRequest, capacity: ResourceCapacity) -> ResourceAllocation | None:
+    async def _create_allocation(self, request: ResourceRequest, capacity: ResourceCapacity) -> ResourceAllocation | None:  # noqa: E501
         """Create resource allocation"""
         try:
             allocated_resources = {
@@ -458,7 +458,7 @@ class IntelligentResourceAllocator:
             allocation = ResourceAllocation(
                 task_id=request.task_id,
                 allocated_resources=allocated_resources,
-                start_time=datetime.now(),
+                start_time=datetime.now(),  # noqa: DTZ005
                 end_time=None,
                 actual_usage={},
                 efficiency_score=0.0
@@ -511,12 +511,12 @@ class IntelligentResourceAllocator:
         """Release allocated resources"""
         if task_id in self.active_allocations:
                 allocation = self.active_allocations[task_id]
-                allocation.end_time = datetime.now()
+                allocation.end_time = datetime.now()  # noqa: DTZ005
 
             # Calculate efficiency score
                 duration = (allocation.end_time - allocation.start_time).total_seconds()
                 if duration > 0:
-                    allocation.efficiency_score = min(1.0, allocation.allocated_resources.get('cpu_cores', 1) / duration)
+                    allocation.efficiency_score = min(1.0, allocation.allocated_resources.get('cpu_cores', 1) / duration)  # noqa: E501
 
                 self.completed_allocations.append(allocation)  # M218C: deque auto-evicts oldest
                 del self.active_allocations[task_id]
@@ -530,7 +530,7 @@ class IntelligentResourceAllocator:
                 # Update resource history
                 capacity = await self.get_current_capacity()
                 self.resource_history.append({
-                    'timestamp': datetime.now(),
+                    'timestamp': datetime.now(),  # noqa: DTZ005
                     'cpu_usage': capacity.cpu_usage,
                     'memory_usage': capacity.memory_usage,
                     'gpu_usage': capacity.gpu_usage,
@@ -659,7 +659,7 @@ class IntelligentResourceAllocator:
     def get_allocation_statistics(self) -> dict[str, Any]:
         """Get resource allocation statistics"""
         stats = {
-            'total_requests': len(self._pending_requests_dict) + len(self.active_allocations) + len(self.completed_allocations),
+            'total_requests': len(self._pending_requests_dict) + len(self.active_allocations) + len(self.completed_allocations),  # noqa: E501
             'pending_requests': len(self._pending_requests_dict),
             'active_allocations': len(self.active_allocations),
             'completed_allocations': len(self.completed_allocations),
@@ -688,7 +688,7 @@ class IntelligentResourceAllocator:
     def export_allocation_report(self, filepath: str):
         """Export detailed allocation report"""
         report = {
-            'timestamp': datetime.now().isoformat(),
+            'timestamp': datetime.now().isoformat(),  # noqa: DTZ005
             'statistics': self.get_allocation_statistics(),
             'active_allocations': [
                 {

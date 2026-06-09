@@ -41,8 +41,8 @@ CRYPTOKIT_AVAILABLE = False
 def _check_cryptokit() -> bool:
     """Check if CryptoKit AES-GCM is available via Swift helper."""
     try:
-        import subprocess
         import json as _json
+        import subprocess
 
         repo_root = Path(__file__).parent.parent
         helper_path = repo_root / "tools" / "secure_enclave_helper" / ".build" / "release" / "secure-enclave-helper"
@@ -331,7 +331,7 @@ class LootManager:
         output_path.mkdir(parents=True, exist_ok=True)
 
         if archive_name is None:
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")  # noqa: DTZ005
             archive_name = f"ghostvault_{timestamp}.enc"
 
         output_file = output_path / archive_name

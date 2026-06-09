@@ -452,13 +452,13 @@ class TestNoProductionEdits:
     def test_report_file_exists(self):
         import os
 
-        report_path = os.path.join(os.path.dirname(__file__), "..", "probe_r0_nonfeed_reality_lock", "REPORT_NONFEED_REALITY_LOCK.md")
+        report_path = os.path.join(os.path.dirname(__file__), "..", "probe_r0_nonfeed_reality_lock", "REPORT_NONFEED_REALITY_LOCK.md")  # noqa: E501
         report_path = os.path.normpath(report_path)
         assert os.path.exists(report_path), f"REPORT_NONFEED_REALITY_LOCK.md must exist at {report_path}"
 
     def test_json_summary_exists(self):
         import os
 
-        json_path = os.path.join(os.path.dirname(__file__), "..", "probe_r0_nonfeed_reality_lock", "nonfeed_reality_lock.json")
+        json_path = os.path.join(os.path.dirname(__file__), "..", "probe_r0_nonfeed_reality_lock", "nonfeed_reality_lock.json")  # noqa: E501
         json_path = os.path.normpath(json_path)
         assert os.path.exists(json_path), f"nonfeed_reality_lock.json must exist at {json_path}"

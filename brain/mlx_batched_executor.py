@@ -89,7 +89,7 @@ class MLXBatchedExecutor:
 
     def __init__(
         self,
-        engine: "Hermes3Engine",
+        engine: Hermes3Engine,
         worker_thread: Any = None,
     ) -> None:
         """
@@ -104,9 +104,9 @@ class MLXBatchedExecutor:
             Does NOT instantiate BatchScheduler here — lazy on first execute()
             so cold-start cost is paid once, at first use, not at import.
         """
-        self._engine: "Hermes3Engine" = engine
+        self._engine: Hermes3Engine = engine
         self._worker_thread = worker_thread  # Optional MLXWorkerThread (P0-3)
-        self._scheduler: "BatchScheduler | None" = None
+        self._scheduler: BatchScheduler | None = None
         self._mlx_lock: asyncio.Lock | None = None
         self._initialized: bool = False
 
@@ -140,7 +140,7 @@ class MLXBatchedExecutor:
         try:
             from hledac.universal.brain.batch_scheduler import BatchScheduler
 
-            scheduler: "BatchScheduler" = BatchScheduler(
+            scheduler: BatchScheduler = BatchScheduler(
                 execute_callback=self._execute_callback,
                 max_size=MAX_BATCH_SIZE_M1,
                 max_queue=MAX_QUEUE_DEPTH,
@@ -349,7 +349,7 @@ class MLXBatchedExecutor:
                     "[MLXBatch] worker submit failed, falling back to direct: %s",
                     _e,
                 )
-            except (asyncio.TimeoutError, TimeoutError):
+            except TimeoutError:
                 raise
         # Local path (no worker thread, or worker unavailable)
         t0 = time.monotonic()

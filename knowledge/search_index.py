@@ -68,7 +68,7 @@ class BM25Index:
         self, term: str, doc_idx: int, doc_len: int, term_freq: int
     ) -> float:
         """Compute BM25 score for one term-document pair."""
-        N = self._N
+        N = self._N  # noqa: N806
         df = self._doc_freqs.get(term, 0)
         if df == 0:
             return 0.0

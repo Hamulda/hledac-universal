@@ -21,6 +21,7 @@ from enum import Enum
 from typing import Any
 
 from .async_helpers import safe_gather_dropin
+
 # Sprint 8U: Lazy networkx import to avoid loading 285 modules at cold-start
 _nx = None
 
@@ -231,7 +232,7 @@ class WorkflowEngine:
             semaphore = asyncio.Semaphore(self.max_concurrency)
 
             async def run_task(task_id: str) -> None:
-                async with semaphore:
+                async with semaphore:  # noqa: B023
                     try:
                         await self._execute_task_with_retry(workflow, task_id)
                     except Exception as e:

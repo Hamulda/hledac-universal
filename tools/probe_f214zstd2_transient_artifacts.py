@@ -304,7 +304,7 @@ def evaluate_candidates() -> list[CandidateReport]:
             )
         else:
             c2.patch_decision = "NO_PATCH"
-            c2.patch_decision_reason = f"Gate FAILS: size_imp={(1/z1.ratio-1)*100:.1f}%, speedup={gzip.compress(seeds_raw,1) and 1:.1f}x"
+            c2.patch_decision_reason = f"Gate FAILS: size_imp={(1/z1.ratio-1)*100:.1f}%, speedup={gzip.compress(seeds_raw,1) and 1:.1f}x"  # noqa: E501
     candidates.append(c2)
 
     # Candidate 3: large next_seeds (stress test)
@@ -421,7 +421,7 @@ def write_report(candidates: list[CandidateReport]) -> Path:
         "|---|---|---|---|---|---|---|---|---|",
     ])
     for c in candidates:
-        reason_short = c.patch_decision_reason[:80] + "..." if len(c.patch_decision_reason) > 80 else c.patch_decision_reason
+        reason_short = c.patch_decision_reason[:80] + "..." if len(c.patch_decision_reason) > 80 else c.patch_decision_reason  # noqa: E501
         lines.append(
             f"| `{c.file_line}` | {c.artifact_type} | {c.transient} | {c.read_path_exists} | "
             f"{c.migration_needed} | {c.gate_passed} | **{c.patch_decision}** | {reason_short} |"
@@ -444,7 +444,7 @@ def write_report(candidates: list[CandidateReport]) -> Path:
         "Gate analysis:",
         "",
         "```",
-        f"  zstd-l1: ratio={candidates[1].results.get('zstd_l1', candidates[1].results.get('gzip_l1', None)).ratio:.1%}, ",
+        f"  zstd-l1: ratio={candidates[1].results.get('zstd_l1', candidates[1].results.get('gzip_l1', None)).ratio:.1%}, ",  # noqa: E501
         "  gate=CONDITIONAL (migration_needed=True)",
         "```",
         "",

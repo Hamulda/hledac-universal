@@ -42,7 +42,8 @@ logger = logging.getLogger(__name__)
 # risk OOM (16k nodes = 1 GB; 65k = 16 GB). Caller's max_nodes is clamped
 # DOWN to this ceiling — never enlarged — to keep the cap safety-first.
 # Env override: QUANTUM_MAX_NODES for ops tuning.
-import os as _os
+import os as _os  # noqa: E402
+
 MAX_QUANTUM_NODES: int = int(_os.environ.get("QUANTUM_MAX_NODES", "4096"))
 
 # F264: Edge ceiling — sparse COO with >50k entries would consume
@@ -159,14 +160,14 @@ MLX_AVAILABLE = None  # Will be set on first access
 SCIPY_AVAILABLE = None
 
 
-def _get_MLX_AVAILABLE():
+def _get_MLX_AVAILABLE():  # noqa: N802
     global MLX_AVAILABLE
     if MLX_AVAILABLE is None:
         MLX_AVAILABLE = _is_mlx_available()
     return MLX_AVAILABLE
 
 
-def _get_SCIPY_AVAILABLE():
+def _get_SCIPY_AVAILABLE():  # noqa: N802
     global SCIPY_AVAILABLE
     if SCIPY_AVAILABLE is None:
         SCIPY_AVAILABLE = _is_scipy_available()
@@ -504,7 +505,7 @@ class QuantumInspiredPathFinder:
 
         if self._mlx_available and _get_mlx() is not None:
             state = mx.zeros(n, dtype=mx.float32)
-            for idx in start_indices:
+            for idx in start_indices:  # noqa: B007
                 # Build update indices and values
                 pass
             # Create state with values at start indices
@@ -705,7 +706,7 @@ class QuantumInspiredPathFinder:
         degrees[degrees == 0] = 1.0  # Avoid division by zero
 
         # Create diagonal matrix for normalization
-        D_inv = sparse_mod.diags(1.0 / degrees)
+        D_inv = sparse_mod.diags(1.0 / degrees)  # noqa: N806
         normalized = D_inv @ adj_csr
 
         # Apply shift
@@ -1125,7 +1126,7 @@ class QuantumInspiredPathFinder:
 # Sprint 8VE B.2: DuckPGQ IOC Graph — SQL/PGQ graph backend přes DuckDB
 # =============================================================================
 
-import hashlib as _hashlib
+import hashlib as _hashlib  # noqa: E402
 
 _DUCKPGQ_AVAILABLE = False
 _duckpgq_checked   = False
@@ -1258,7 +1259,7 @@ class DuckPGQGraph:
                 LIMIT ?
             """, [n])
             cols = [c[0] for c in cur.description]
-            return [dict(zip(cols, row)) for row in cur.fetchall()]
+            return [dict(zip(cols, row, strict=False)) for row in cur.fetchall()]
         except (duckdb.Error, ImportError) as e:
             logger.warning(f"[GRAPH] get_top_nodes_by_degree failed: {e}")
             return []
@@ -1386,7 +1387,7 @@ class DuckPGQGraph:
         if not values:
             return {}
         # Use CTE with IN clause for batch query
-        sql = """
+        sql = """  # noqa: UP031
             WITH RECURSIVE paths(src_value, dst_id, depth) AS (
                 SELECT n.value, e.dst_id, 1
                 FROM ioc_edges e
@@ -1493,7 +1494,7 @@ def _find_paths_between_iocs_sync(
             rows_iter = pdf.iter_rows(named=True)
         except ImportError:
             # Fallback: pyarrow dict-style iteration (no pandas)
-            rows_iter = (dict(zip(rows.column_names, vals)) for vals in rows.to_pylist())
+            rows_iter = (dict(zip(rows.column_names, vals, strict=False)) for vals in rows.to_pylist())
 
         adj: dict[str, list[str]] = {}
         for row in rows_iter:

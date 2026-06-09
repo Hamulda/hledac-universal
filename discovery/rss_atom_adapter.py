@@ -51,9 +51,9 @@ def _entry_hash(title: str, published_raw: str) -> str:
 # Sprint 8AH: defusedxml is primary parser when available.
 # stdlib xml.etree.ElementTree is fallback.
 try:
-    import defusedxml.ElementTree as _DET
+    import defusedxml.ElementTree as _DET  # noqa: N814
 except ImportError:
-    import xml.etree.ElementTree as _DET
+    import xml.etree.ElementTree as _DET  # noqa: N814
 
 if TYPE_CHECKING:
     from hledac.universal.fetching.public_fetcher import FetchResult  # noqa: F401
@@ -564,7 +564,7 @@ def _entry_dedup_key(
 # Sprint 8AR — Safe XML Recovery
 # ---------------------------------------------------------------------------
 
-import xml.etree.ElementTree as _ET  # stdlib fallback only
+import xml.etree.ElementTree as _ET  # stdlib fallback only  # noqa: N814
 
 
 class _ParseMode:
@@ -1315,7 +1315,7 @@ async def async_fetch_feed_entries(
     # Clamp to max_entries and rebuild with scoring metadata
     entries: list[FeedEntryHit] = []
     for rank, (entry, freshness_score, quality_score, freshness_tier, _,
-               combined, ts_rel, richness_band, usefulness_band,
+               combined, ts_rel, richness_band, usefulness_band,  # noqa: B007
                spb, time_signal) in enumerate(scored[:max_entries]):
 
         # Determine selection_reason
@@ -1343,7 +1343,7 @@ async def async_fetch_feed_entries(
             reason = "enhanced_" + reason
 
         # Append downstream-significant bands to reason (F150K adds time_signal)
-        reason = f"{reason}|ts_rel={ts_rel:.2f}|richness={richness_band}|usefulness={usefulness_band}|src_bias={spb:.2f}|ts_signal={time_signal}"
+        reason = f"{reason}|ts_rel={ts_rel:.2f}|richness={richness_band}|usefulness={usefulness_band}|src_bias={spb:.2f}|ts_signal={time_signal}"  # noqa: E501
 
         # Build final entry with additive metadata (F150J + F150K delta)
         entries.append(
@@ -2026,8 +2026,8 @@ def merge_feed_sources(
 # Sprint 8VE D.1: CPU-heavy HTML parsing via ProcessPoolExecutor (GIL bypass)
 # =============================================================================
 
-import atexit as _atexit
-import concurrent.futures as _cf
+import atexit as _atexit  # noqa: E402
+import concurrent.futures as _cf  # noqa: E402
 
 _PARSE_POOL: _cf.ProcessPoolExecutor | None = None
 

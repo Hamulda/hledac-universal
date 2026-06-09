@@ -272,7 +272,7 @@ class SprintLifecycleManager:
     # future_owner: __main__.py
     # caller_class: __main__.py (line ~2904)
     # removal_condition: __main__.py uses transition_to(ACTIVE) directly — WARMUP→ACTIVE handled by start()
-    # why_still_needed: 1 call-site in __main__.py; start() already transitions to WARMUP, so this is redundant but still wired
+    # why_still_needed: 1 call-site in __main__.py; start() already transitions to WARMUP, so this is redundant but still wired  # noqa: E501
 
     def mark_warmup_done(self) -> None:
         """
@@ -364,7 +364,7 @@ class SprintLifecycleManager:
     # future_owner: synthesis_runner.py
     # caller_class: synthesis_runner (Path 3 compat fallback, line ~881)
     # removal_condition: synthesis_runner fully migrates to runtime path — requires windup gate injection verified
-    # why_still_needed: synthesis_runner Path 3 (compat fallback) is still active; runtime path preferred but compat still reachable
+    # why_still_needed: synthesis_runner Path 3 (compat fallback) is still active; runtime path preferred but compat still reachable  # noqa: E501
 
     def is_windup_phase(self) -> bool:
         """

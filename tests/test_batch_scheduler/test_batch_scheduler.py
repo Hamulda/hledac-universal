@@ -4,8 +4,9 @@ import asyncio
 import unittest
 from unittest.mock import AsyncMock
 
-from hledac.universal.brain.batch_scheduler import BatchScheduler
 from pydantic import BaseModel
+
+from hledac.universal.brain.batch_scheduler import BatchScheduler
 
 
 class FakeStructuredOutput(BaseModel):

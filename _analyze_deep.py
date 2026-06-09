@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Deep sprint report analysis."""
-import json, sys
+import json
+import sys
+
 path = sys.argv[1] if len(sys.argv) > 1 else "/Users/vojtechhamada/.hledac/reports/8sa_1780756273297_7d9878_report.json"
 with open(path) as f:
     r = json.load(f)

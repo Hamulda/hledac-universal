@@ -4,6 +4,7 @@ import logging
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+
 from hledac.universal.coordinators.resource_allocator import (
     IntelligentResourceAllocator,
     Priority,

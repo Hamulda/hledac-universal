@@ -62,7 +62,7 @@ class TestHashChainCompatibility:
             # Unicode
             {'unicode': 'čeština 🚀'},
             # Datetime
-            {'datetime': datetime.datetime(2024, 1, 1, 12, 0, 0)},
+            {'datetime': datetime.datetime(2024, 1, 1, 12, 0, 0)},  # noqa: DTZ001
             # Complex mix
             {'mixed': [{'a': 1}, {'b': 2}, None, 3.14]},
             # Boolean

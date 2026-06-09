@@ -865,7 +865,7 @@ class PivotPlanner:
                                 expected_value=max(p.expected_value, hermes_match.expected_value),
                                 source_hint=p.source_hint,
                                 evidence_pointers=p.evidence_pointers,
-                                score_reason=f"hermes_boost:{hermes_match.score_reason}" if hermes_match.score_reason else "",
+                                score_reason=f"hermes_boost:{hermes_match.score_reason}" if hermes_match.score_reason else "",  # noqa: E501
                                 estimated_cost=p.estimated_cost,
                                 mission_boost=p.mission_boost,
                             )

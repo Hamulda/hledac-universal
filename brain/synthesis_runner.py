@@ -49,9 +49,9 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Sprint 8UF B.1: xgrammar grammar cache — compile ONCE per schema lifetime
 # ---------------------------------------------------------------------------
-import hashlib
-import re as _re_synth
-import threading as _threading
+import hashlib  # noqa: E402
+import re as _re_synth  # noqa: E402
+import threading as _threading  # noqa: E402
 
 _MAX_VALIDATION_FINDINGS = 100  # bounded — M1 8GB guard
 
@@ -750,7 +750,6 @@ class SynthesisRunner:
             try:
                 # GraphRAGOrchestrator vyžaduje knowledge_layer — zkusíme najít
                 from hledac.universal.legacy.persistent_layer import PersistentKnowledgeLayer
-
                 from knowledge.graph_rag import GraphRAGOrchestrator
                 kl = PersistentKnowledgeLayer()
                 _grag = GraphRAGOrchestrator(kl)
@@ -1239,7 +1238,7 @@ class SynthesisRunner:
                 "**/*135M*/config.json",
                 "**/SmolLM2*135M*/config.json",
             ]:
-                hits = await asyncio.to_thread(lambda: list(d.glob(pat)))
+                hits = await asyncio.to_thread(lambda: list(d.glob(pat)))  # noqa: B023
                 if hits:
                     self._cached_model_path = hits[0].parent
                     logger.info("[SYNTHESIS] Model found: %s", self._cached_model_path.name)
@@ -1270,7 +1269,7 @@ class SynthesisRunner:
                 # Re-scan disk
                 for d in search:
                     for pat in ["**/config.json"]:
-                        hits = await asyncio.to_thread(lambda: list(d.glob(pat)))
+                        hits = await asyncio.to_thread(lambda: list(d.glob(pat)))  # noqa: B023
                         if hits:
                             self._cached_model_path = hits[0].parent
                             return self._cached_model_path
@@ -1465,7 +1464,7 @@ class SynthesisRunner:
             logger.debug("decompose_query: no model → identity fallback")
             return [query]
 
-        PROMPT = (
+        PROMPT = (  # noqa: N806
             "You are a security OSINT assistant. "
             f"Generate 3-5 specific search queries for: {query}\n"
             "Output ONLY a JSON array of strings, no explanation.\n"
@@ -1506,7 +1505,7 @@ class SynthesisRunner:
             return [query]
 
         loop = asyncio.get_running_loop()
-        _CPU_EXECUTOR = ThreadPoolExecutor(max_workers=1)
+        _CPU_EXECUTOR = ThreadPoolExecutor(max_workers=1)  # noqa: N806
         try:
             result = await loop.run_in_executor(_CPU_EXECUTOR, _gen)
         finally:
@@ -1624,7 +1623,7 @@ class SynthesisRunner:
                     return f"\nKnown IOCs from graph ({len(values)} entities): {', '.join(values)}"
                 else:
                     self._stix_status = "available"
-                    self._stix_reason = "stix_graph export_stix_bundle returned nodes but none had extractable 'value' field"
+                    self._stix_reason = "stix_graph export_stix_bundle returned nodes but none had extractable 'value' field"  # noqa: E501
                     self._stix_backend = type(stix_graph).__name__
                     return ""
             except Exception as e:
@@ -1644,7 +1643,7 @@ class SynthesisRunner:
             if export_fn is None:
                 backend_name = type(self._ioc_graph).__name__
                 self._stix_status = "unavailable"
-                self._stix_reason = f"backend '{backend_name}' lacks export_stix_bundle — DuckPGQGraph donor cannot serve STIX"
+                self._stix_reason = f"backend '{backend_name}' lacks export_stix_bundle — DuckPGQGraph donor cannot serve STIX"  # noqa: E501
                 self._stix_backend = backend_name
                 return ""
             # IOCGraph.export_stix_bundle is async; DuckPGQGraph lacks it entirely

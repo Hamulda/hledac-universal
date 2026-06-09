@@ -243,7 +243,7 @@ class SourceCredibility:
             self.historical_accuracy * 0.7 +
             (1.0 - min(1.0, self.contradiction_count / 10)) * 0.3
         )
-        self.last_updated = datetime.now()
+        self.last_updated = datetime.now()  # noqa: DTZ005
 
 
 @dataclass(slots=True)

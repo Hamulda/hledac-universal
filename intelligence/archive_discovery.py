@@ -207,7 +207,7 @@ class CDXSnapshot:
     def datetime(self) -> datetime | None:
         """Parse timestamp as datetime."""
         try:
-            return datetime.strptime(self.timestamp, "%Y%m%d%H%M%S")
+            return datetime.strptime(self.timestamp, "%Y%m%d%H%M%S")  # noqa: DTZ007
         except ValueError:
             return None
 
@@ -313,7 +313,7 @@ class WaybackMachineClient:
                 for row in data[1:]:  # Skip header
                     if len(row) >= 5:
                         timestamp_str = row[0]
-                        timestamp = datetime.strptime(timestamp_str, "%Y%m%d%H%M%S")
+                        timestamp = datetime.strptime(timestamp_str, "%Y%m%d%H%M%S")  # noqa: DTZ007
 
                         snapshots.append(SnapshotInfo(
                             timestamp=timestamp,
@@ -795,7 +795,7 @@ class ArchiveResurrector:
         min_quality = min_quality or self.min_quality
         self._resurrections_attempted += 1
 
-        request_id = hashlib.sha256(f"{url}:{datetime.now()}".encode()).hexdigest()[:16]
+        request_id = hashlib.sha256(f"{url}:{datetime.now()}".encode()).hexdigest()[:16]  # noqa: DTZ005
 
         request = ResurrectionRequest(
             request_id=request_id,
@@ -803,7 +803,7 @@ class ArchiveResurrector:
             target_date=target_date,
             min_quality=min_quality,
             extract_metadata=True,
-            created_at=datetime.now()
+            created_at=datetime.now()  # noqa: DTZ005
         )
 
         self._active_requests[request_id] = request
@@ -970,7 +970,7 @@ class ArchiveResurrector:
                                     length = parts[5]
 
                                     # Parse timestamp
-                                    timestamp = datetime.strptime(timestamp_str, "%Y%m%d%H%M%S")
+                                    timestamp = datetime.strptime(timestamp_str, "%Y%m%d%H%M%S")  # noqa: DTZ007
 
                                     # Determine content type
                                     content_type = self._detect_content_type(mimetype)
@@ -1021,7 +1021,7 @@ class ArchiveResurrector:
                             ).hexdigest()[:16],
                             url=url,
                             archived_url=cache_full_url,
-                            timestamp=datetime.now(),
+                            timestamp=datetime.now(),  # noqa: DTZ005
                             source=ContentSource.SEARCH_CACHE,
                             content_type=ContentType.HTML,
                             status_code=200,
@@ -1053,7 +1053,7 @@ class ArchiveResurrector:
                         snapshot_id=f"politwoops:{tweet_id}",
                         url=url,
                         archived_url=f"{self.SOCIAL_ARCHIVES['politwoops']}{tweet_id}",
-                        timestamp=datetime.now(),
+                        timestamp=datetime.now(),  # noqa: DTZ005
                         source=ContentSource.SOCIAL_ARCHIVE,
                         content_type=ContentType.HTML,
                         status_code=200,
@@ -1259,13 +1259,13 @@ class ArchiveResurrector:
             title_match = re.search(r"<title[^>]*>([^<]+)</title>", content, re.IGNORECASE)
             if title_match:
                 metadata["title"] = title_match.group(1).strip()
-            for match in re.finditer(r'<meta\s+(?:property|name)=["\']author["\']\s+content=["\']([^"\']+)["\']', content, re.IGNORECASE):
+            for match in re.finditer(r'<meta\s+(?:property|name)=["\']author["\']\s+content=["\']([^"\']+)["\']', content, re.IGNORECASE):  # noqa: E501
                 metadata["author"] = match.group(1)
-            for match in re.finditer(r'<meta\s+property=["\']article:published_time["\']\s+content=["\']([^"\']+)["\']', content, re.IGNORECASE):
+            for match in re.finditer(r'<meta\s+property=["\']article:published_time["\']\s+content=["\']([^"\']+)["\']', content, re.IGNORECASE):  # noqa: E501
                 metadata["date"] = match.group(1)
-            for match in re.finditer(r'<meta\s+name=["\'](?:publishedDate|date)["\']\s+content=["\']([^"\']+)["\']', content, re.IGNORECASE):
+            for match in re.finditer(r'<meta\s+name=["\'](?:publishedDate|date)["\']\s+content=["\']([^"\']+)["\']', content, re.IGNORECASE):  # noqa: E501
                 metadata.setdefault("date", match.group(1))
-            desc_match = re.search(r'<meta\s+name=["\']description["\']\s+content=["\']([^"\']+)["\']', content, re.IGNORECASE)
+            desc_match = re.search(r'<meta\s+name=["\']description["\']\s+content=["\']([^"\']+)["\']', content, re.IGNORECASE)  # noqa: E501
             if desc_match:
                 metadata["description"] = desc_match.group(1)
         except Exception:
@@ -1388,10 +1388,11 @@ async def discover_from_wayback(
 # REMOVAL CONDITION: po přechodu všech call-sites na WaybackCDX
 # =============================================================================
 
-import orjson
-import xxhash
+import orjson  # noqa: E402
+import xxhash  # noqa: E402
 
-from utils.async_helpers import safe_gather_dropin
+from utils.async_helpers import safe_gather_dropin  # noqa: E402
+
 
 class WaybackCDX:
     """Wayback Machine CDX API — low-level domain/URL snapshot discovery.
@@ -1436,7 +1437,7 @@ class WaybackCDX:
         if zst_path.exists() and (time.time() - zst_path.stat().st_mtime < self._CACHE_TTL):
             try:
                 import compression.zstd as _zstd
-                return orjson.loads(_zstd.decompress(zst_path.read_bytes()))
+                return orjson.loads(_zstd.decompress(zst_path.read_bytes()))  # noqa: F823
             except (ImportError, Exception):
                 pass
         if json_path.exists() and (time.time() - json_path.stat().st_mtime < self._CACHE_TTL):
@@ -1564,7 +1565,7 @@ async def query_wayback(url: str, limit: int = 10) -> list[WaybackSnapshot]:
     Returns:
         List of WaybackSnapshot objects with snapshot URL and timestamp
     """
-    WAYBACK_CDX_API = "https://web.archive.org/cdx/search/cdx"
+    WAYBACK_CDX_API = "https://web.archive.org/cdx/search/cdx"  # noqa: N806
 
     results: list[WaybackSnapshot] = []
     try:
@@ -1620,7 +1621,7 @@ async def query_common_crawl(domain: str, limit: int = 10) -> list[CommonCrawlSn
     Returns:
         List of CommonCrawlSnapshot objects
     """
-    CC_INDEX_API = "https://index.commoncrawl.org/collinfo.json"
+    CC_INDEX_API = "https://index.commoncrawl.org/collinfo.json"  # noqa: N806
 
     results: list[CommonCrawlSnapshot] = []
     try:

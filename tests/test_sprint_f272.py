@@ -25,7 +25,6 @@ from hledac.universal.runtime.sprint_scheduler import (  # type: ignore
     canonical_lane_name,
 )
 
-
 # ── F272A: windup_lead amendment ────────────────────────────────────────────
 
 

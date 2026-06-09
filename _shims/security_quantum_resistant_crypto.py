@@ -48,10 +48,10 @@ class QuantumResistantCrypto:
         key_id = kwargs.get("key_id", "com.hledac.pq.signing.v1")
 
         try:
-            from hledac.universal.security.pq_crypto import create_post_quantum_backend
-
             # Synchronous wrapper for async factory
             import asyncio
+
+            from hledac.universal.security.pq_crypto import create_post_quantum_backend
             loop = asyncio.new_event_loop()
             self._backend, self._status = loop.run_until_complete(
                 create_post_quantum_backend(enabled=enabled, key_id=key_id)
@@ -61,16 +61,16 @@ class QuantumResistantCrypto:
             if self._backend.is_available():
                 logger.info(f"QuantumResistantCrypto: Backend available ({self._backend.name})")
             else:
-                logger.warning(f"QuantumResistantCrypto: Backend unavailable — using null")
+                logger.warning("QuantumResistantCrypto: Backend unavailable — using null")
 
         except Exception as e:
             logger.warning(f"QuantumResistantCrypto: Init failed: {e}")
-            from hledac.universal.security.pq_crypto import NullPostQuantumBackend, PQStatus, PQAvailability
+            from hledac.universal.security.pq_crypto import NullPostQuantumBackend, PQAvailability, PQStatus
 
             self._backend = NullPostQuantumBackend()
             self._status = PQStatus(availability=PQAvailability.UNAVAILABLE, error_message=str(e))
 
-    def get_backend(self) -> "PostQuantumBackend":
+    def get_backend(self) -> PostQuantumBackend:
         """Get the underlying PostQuantumBackend instance."""
         return self._backend
 

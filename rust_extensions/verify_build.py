@@ -22,7 +22,8 @@ from __future__ import annotations
 import statistics
 import sys
 import time
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 # ---------------------------------------------------------------------------
 # Import guard — abort early if extension is missing.
@@ -278,7 +279,7 @@ def test_content_hash() -> None:
 
 def main() -> int:
     print("=" * 96)
-    print(f"hledac-rust-extensions verify_build.py")
+    print("hledac-rust-extensions verify_build.py")
     print(f"  Python : {sys.version.split()[0]}")
     print(f"  Module : {r.__file__}")
     print("=" * 96)

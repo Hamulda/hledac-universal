@@ -42,7 +42,7 @@ logger = logging.getLogger(__name__)
 # Optional dependencies with graceful fallback
 try:
     import piexif
-    from PIL import ExifTags, Image, ImageChops
+    from PIL import ExifTags, Image, ImageChops  # noqa: F401  # PIL.ImageChops
     from PIL.TiffImagePlugin import IFDRational
     PIL_AVAILABLE = True
 except ImportError:
@@ -296,7 +296,7 @@ class PDFAnalyzer:
             probe_result = self._probe_pdf(doc)
 
             # Use deep parse only if signal is high (>= 0.5)
-            SIGNAL_THRESHOLD = 0.5
+            SIGNAL_THRESHOLD = 0.5  # noqa: N806
             full_text = ""
 
             if probe_result["signal_score"] >= SIGNAL_THRESHOLD:
@@ -357,10 +357,10 @@ class PDFAnalyzer:
         Returns:
             dict with "signal_score" (float) and "candidate_pages" (list[int])
         """
-        MAX_DEEP_PDF_PAGES = 12
+        MAX_DEEP_PDF_PAGES = 12  # noqa: N806
 
         if not PYMUPDF_AVAILABLE:
-            return {"signal_score": 0.5, "candidate_pages": list(range(min(10, len(doc) if hasattr(doc, '__len__') else 10)))}
+            return {"signal_score": 0.5, "candidate_pages": list(range(min(10, len(doc) if hasattr(doc, '__len__') else 10)))}  # noqa: E501
 
         try:
             total_pages = len(doc)
@@ -500,7 +500,7 @@ class PDFAnalyzer:
             minute = int(date_str[10:12]) if len(date_str) >= 12 else 0
             second = int(date_str[12:14]) if len(date_str) >= 14 else 0
 
-            return datetime(year, month, day, hour, minute, second)
+            return datetime(year, month, day, hour, minute, second)  # noqa: DTZ001
         except Exception:
             return None
 
@@ -953,7 +953,7 @@ class ImageAnalyzer:
         """Parse EXIF datetime string."""
         if isinstance(value, str):
             try:
-                return datetime.strptime(value, "%Y:%m:%d %H:%M:%S")
+                return datetime.strptime(value, "%Y:%m:%d %H:%M:%S")  # noqa: DTZ007
             except ValueError:
                 pass
         return None

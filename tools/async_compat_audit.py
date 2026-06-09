@@ -130,7 +130,7 @@ if __name__ == "__main__":
 
     for classification in ["SIMPLE_HELPER_FIX", "NEEDS_REVIEW", "RUNTIME_CRITICAL_DEFER", "SAFE_TEST_ONLY"]:
         count = report["summary"].get(classification, 0)
-        emoji = {"SIMPLE_HELPER_FIX": "🔧", "NEEDS_REVIEW": "👀", "RUNTIME_CRITICAL_DEFER": "🚧", "SAFE_TEST_ONLY": "✅"}.get(classification, "")
+        emoji = {"SIMPLE_HELPER_FIX": "🔧", "NEEDS_REVIEW": "👀", "RUNTIME_CRITICAL_DEFER": "🚧", "SAFE_TEST_ONLY": "✅"}.get(classification, "")  # noqa: E501
         lines.append(f"- **{emoji} {classification}:** {count}")
 
     lines.append("\n## Findings by Classification\n")

@@ -10,7 +10,6 @@ Run: pytest tests/probe_encoding_wiring.py -v -q
 """
 from __future__ import annotations
 
-import os
 import sys
 from pathlib import Path
 
@@ -69,7 +68,7 @@ def test_f261_decode_response_bytes_no_hint_chain():
     from hledac.universal.utils.encoding import decode_response_bytes
 
     # Plain UTF-8 — must roundtrip
-    out = decode_response_bytes("Příliš žluťoučký kůň".encode("utf-8"))
+    out = decode_response_bytes("Příliš žluťoučký kůň".encode())
     assert out == "Příliš žluťoučký kůň", f"UTF-8 roundtrip lost: {out!r}"
     assert "�" not in out
     print("OK f261-3: UTF-8 roundtrip without hint")
@@ -108,7 +107,7 @@ def test_f261_try_decode_with_charset_clean_utf8():
         pytest.skip(f"public_fetcher not importable: {e}")
 
     text, replaced, count = _try_decode_with_charset(
-        "Příliš žluťoučký kůň".encode("utf-8")
+        "Příliš žluťoučký kůň".encode()
     )
     assert text == "Příliš žluťoučký kůň"
     assert replaced is False
@@ -224,7 +223,6 @@ def test_f261_end_to_end_latin1_payload_text():
         b"<p>Findings: \x80\x81\x82\x83 affected hosts.</p>"
         b"</body></html>"
     )
-    content_type = "text/html; charset=windows-1252"
     http_charset = "windows-1252"
 
     # Path 1: aiohttp body decoding
@@ -289,4 +287,4 @@ def test_f261_static_wiring_in_alternative_protocol_fetcher():
         f"expected >= 2 decode_response_bytes call sites, found "
         f"{src.count('decode_response_bytes(')}"
     )
-    print(f"OK f261-14: alternative_protocol_fetcher wiring — {src.count('decode_response_bytes(')} normalize call sites")
+    print(f"OK f261-14: alternative_protocol_fetcher wiring — {src.count('decode_response_bytes(')} normalize call sites")  # noqa: E501

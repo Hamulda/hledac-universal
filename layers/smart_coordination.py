@@ -33,7 +33,10 @@ from typing import Any
 
 # Import the connected coordination system
 try:
-    from .hive_coordination import ConnectedCoordinationSystem, CoordinationTask
+    from .hive_coordination import (  # noqa: F401  # .hive_coordination.CoordinationTask
+        ConnectedCoordinationSystem,
+        CoordinationTask,
+    )
 except ImportError:
     from hive_coordination import ConnectedCoordinationSystem
 
@@ -79,7 +82,7 @@ class SmartSpawnedCoordinationIntegration:
             agent_id="agent_1762976821473_w4tl18",
             name="smart_spawned_coordinator",
             role=SmartSpawnedRole.COORDINATOR,
-            capabilities=["workload_analysis", "task_orchestration", "coordination_optimization", "performance_monitoring"]
+            capabilities=["workload_analysis", "task_orchestration", "coordination_optimization", "performance_monitoring"]  # noqa: E501
         )
 
         # Smart-spawned Coders (3 agents)
@@ -131,7 +134,7 @@ class SmartSpawnedCoordinationIntegration:
         """
         Process a task using smart-spawned agents integrated with the connected coordination system
         """
-        task_start_time = datetime.now()
+        task_start_time = datetime.now()  # noqa: DTZ005
 
         # Step 1: Smart Coordinator Analysis
         coordinator_result = await self._coordinate_task_analysis(task_description, priority)
@@ -160,7 +163,7 @@ class SmartSpawnedCoordinationIntegration:
             "implementation_results": implementation_results,
             "validation_results": validation_results,
             "performance_analysis": performance_analysis,
-            "total_processing_time": (datetime.now() - task_start_time).total_seconds()
+            "total_processing_time": (datetime.now() - task_start_time).total_seconds()  # noqa: DTZ005
         }
 
     async def _coordinate_task_analysis(self, task_description: str, priority: str) -> dict[str, Any]:
@@ -176,7 +179,7 @@ class SmartSpawnedCoordinationIntegration:
             "performance_targets": self._set_performance_targets(priority)
         }
 
-        coordinator.current_task = f"analysis_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        coordinator.current_task = f"analysis_{datetime.now().strftime('%Y%m%d_%H%M%S')}"  # noqa: DTZ005
         coordinator.performance_metrics["coordination_efficiency"] = 0.92
 
         # Store coordination event
@@ -307,7 +310,7 @@ class SmartSpawnedCoordinationIntegration:
     async def _analyze_performance(self, task_start_time: datetime, task_id: str,
                                  validation_results: dict[str, Any]) -> dict[str, Any]:
         """Analyze overall performance and provide optimization recommendations"""
-        total_time = (datetime.now() - task_start_time).total_seconds()
+        total_time = (datetime.now() - task_start_time).total_seconds()  # noqa: DTZ005
 
         performance_analysis = {
             "execution_metrics": {
@@ -331,7 +334,7 @@ class SmartSpawnedCoordinationIntegration:
         self._store_coordination_event("performance_analysis", "coordinator", "system",
                                       {"analysis": performance_analysis, "task_id": task_id})
 
-        logger.info(f"Performance analysis completed for task {task_id} - Efficiency: {performance_analysis['efficiency_score']:.2f}")
+        logger.info(f"Performance analysis completed for task {task_id} - Efficiency: {performance_analysis['efficiency_score']:.2f}")  # noqa: E501
         return performance_analysis
 
     def get_smart_coordination_status(self) -> dict[str, Any]:
@@ -350,7 +353,7 @@ class SmartSpawnedCoordinationIntegration:
         }
 
     # Helper methods
-    def _calculate_smart_complexity(self, task_description: str) -> float:
+    def _calculate_smart_complexity(self, task_description: str) -> float | None:
         """Calculate complexity score using smart analysis"""
         complexity_keywords = {
             "integrate": 0.8, "implement": 0.7, "optimize": 0.6, "analyze": 0.5,
@@ -424,7 +427,7 @@ class SmartSpawnedCoordinationIntegration:
             "cognitive_pattern_mesh_network"
         ]
 
-    def _generate_optimization_recommendations(self, validation_results: dict[str, Any]) -> list[str]:
+    def _generate_optimization_recommendations(self, validation_results: dict[str, Any]) -> list[str] | None:
         """Generate optimization recommendations based on validation results"""
         recommendations = []
 
@@ -478,7 +481,7 @@ class SmartSpawnedCoordinationIntegration:
         else:
                 return "stable"
 
-    def _get_system_recommendations(self) -> list[str]:
+    def _get_system_recommendations(self) -> list[str] | None:
         """Get system-level recommendations"""
         recommendations = []
 
@@ -504,7 +507,7 @@ class SmartSpawnedCoordinationIntegration:
     def _store_coordination_event(self, event_type: str, source: str, target: str, data: Any):
         """Store coordination events for tracking and analysis"""
         event = {
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": datetime.now().isoformat(),  # noqa: DTZ005
             "event_type": event_type,
             "source": source,
             "target": target,

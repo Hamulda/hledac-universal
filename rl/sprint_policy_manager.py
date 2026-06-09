@@ -441,7 +441,7 @@ class SprintPolicyManager:
             with open(self._policy_path, "rb") as f:
                 raw_bytes = f.read()
             # F261QMIX: detect zstd magic (0x28 0xB5 0x2F 0xFD) regardless of suffix
-            ZSTD_MAGIC = b"\x28\xb5\x2f\xfd"
+            ZSTD_MAGIC = b"\x28\xb5\x2f\xfd"  # noqa: N806
             if raw_bytes[:4] == ZSTD_MAGIC:
                 if ZSTD_AVAILABLE and _zstd:
                     raw = _zstd.decompress(raw_bytes)
@@ -661,8 +661,8 @@ class SprintPolicyManager:
         # F261OPT: epsilon decay — gentle multiplicative decay per sprint
         # Floor at 0.05 prevents complete greediness; rate chosen so default 0.1
         # approaches floor over ~hundreds of sprints without underflow.
-        _EPSILON_FLOOR = 0.05
-        _EPSILON_DECAY = 0.995
+        _EPSILON_FLOOR = 0.05  # noqa: N806
+        _EPSILON_DECAY = 0.995  # noqa: N806
         if self._state.epsilon > _EPSILON_FLOOR:
             self._state.epsilon = max(_EPSILON_FLOOR, self._state.epsilon * _EPSILON_DECAY)
         # F262OBS: record epsilon after decay into bounded history (FIFO 100)
@@ -991,7 +991,7 @@ class SprintPolicyManager:
                                 best_action = int(agent_id)
                         # Map to action constants
                         from rl.actions import ACTION_BRANCH, ACTION_CONTINUE, ACTION_FETCH_MORE, ACTION_YIELD
-                        ACTION_MAP = {0: ACTION_CONTINUE, 1: ACTION_FETCH_MORE, 2: ACTION_BRANCH, 3: ACTION_YIELD, 4: ACTION_CONTINUE}
+                        ACTION_MAP = {0: ACTION_CONTINUE, 1: ACTION_FETCH_MORE, 2: ACTION_BRANCH, 3: ACTION_YIELD, 4: ACTION_CONTINUE}  # noqa: E501
                         return ACTION_MAP.get(best_action, ACTION_CONTINUE)
             except Exception:
                 pass

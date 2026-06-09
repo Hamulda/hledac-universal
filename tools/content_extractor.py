@@ -77,7 +77,7 @@ def extract_main_text_from_html(html_preview: str, max_chars: int = 20_000) -> s
 
             # Try common content containers
             main_content = ""
-            for selector in ['main', 'article', '[role="main"]', '.content', '.post-content', '.entry-content', '#content']:
+            for selector in ['main', 'article', '[role="main"]', '.content', '.post-content', '.entry-content', '#content']:  # noqa: E501
                 content_elem = soup.select_one(selector)
                 if content_elem:
                     main_content = content_elem.get_text(separator=' ', strip=True)

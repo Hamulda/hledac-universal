@@ -1,4 +1,4 @@
-"""
+"""  # noqa: N999
 Sprint 3A: Phase Gate Manifests
 ================================
 Defines pytest markers for layered test execution.

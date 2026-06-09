@@ -7,6 +7,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import numpy as np
+
 from hledac.universal.core.resource_governor import Priority, ResourceGovernor
 
 logger = logging.getLogger(__name__)
@@ -51,8 +52,8 @@ def _check_torch():
     global _TORCH_AVAILABLE, _TORCHVISION_AVAILABLE
     if _TORCH_AVAILABLE is None:
         try:
-            import torch
-            import torchvision
+            import torch  # noqa: F401  # torch
+            import torchvision  # noqa: F401  # torchvision
             _TORCH_AVAILABLE = True
             _TORCHVISION_AVAILABLE = True
         except ImportError:
@@ -150,7 +151,7 @@ class VisionEncoder:
         2. If not → attempt torch→CoreML conversion (one-time download)
         3. If conversion fails → fall through to dummy mode (no crash)
         """
-        ct_mod, MLModel = _get_coremltools()
+        ct_mod, MLModel = _get_coremltools()  # noqa: N806
         torch_ok, torchvision_ok = _check_torch()
 
         # Reserve RAM for model load
@@ -327,7 +328,7 @@ class VisionEncoder:
         # Using scipy-free real DCT via np.fft since scipy is not always available.
         def _dct2(x: np.ndarray) -> np.ndarray:
             # Pad to power of 2 not needed; use FFT-based DCT for O(N log N).
-            N = x.shape[0]
+            N = x.shape[0]  # noqa: N806
             # DCT-II: y[k] = sum_n x[n] * cos(pi/N * (n + 0.5) * k)
             # FFT trick: prepend zero column and take real part of 2N FFT.
             n = np.arange(N, dtype=np.float32)

@@ -88,7 +88,7 @@ class TestArrowFetchBatchSignature:
                         # Check default in the args.defaults
                 # The default is in args.defaults (last N align with last N args)
                 defaults = node.args.defaults
-                args_n = len(node.args.args)
+                len(node.args.args)
                 defaults_n = len(defaults)
                 if defaults_n > 0:
                     last_default = defaults[-1]
@@ -106,7 +106,7 @@ class TestArrowFetchBatchSignature:
 class TestArrowFetchBatchIteration:
     def test_yields_list_per_batch(self):
         """Each yielded value must be a list of tuples (matches fetchall() shape)."""
-        mod = _load_module()
+        _load_module()
         # We can't import the real DuckDBShadowStore without side effects.
         # Inspect the source: the method body must `yield list(rows)` (fetchmany path)
         # or `yield [tuple(row) for row in batch.to_pylist()]` (Arrow path).
@@ -191,7 +191,7 @@ class TestCallsitesMigrated:
         violations = []
         in_arrow_method = False
         in_docstring = False
-        for i, l in enumerate(lines, start=1):
+        for i, l in enumerate(lines, start=1):  # noqa: E741
             stripped = l.strip()
             # Track docstring state (triple-quoted block)
             triple_open_count = stripped.count('"""') + stripped.count("'''")
@@ -227,7 +227,7 @@ class TestCallsitesMigrated:
         assert not violations, (
             f"Found {len(violations)} unbounded .fetchall() callsites "
             f"outside arrow_fetch_batch + healthcheck + textual mentions:\n"
-            + "\n".join(f"  L{l}: {t}" for l, t in violations[:10])
+            + "\n".join(f"  L{l}: {t}" for l, t in violations[:10])  # noqa: E741
         )
 
     def test_at_least_25_arrow_fetch_batch_callsites(self):

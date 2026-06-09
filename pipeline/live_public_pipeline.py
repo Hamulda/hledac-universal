@@ -23,13 +23,12 @@ import time
 import urllib.parse
 
 logger = logging.getLogger(__name__)
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any  # noqa: E402
 
-import msgspec
+import msgspec  # noqa: E402
 
 if TYPE_CHECKING:
     from hledac.universal.knowledge.duckdb_store import DuckDBShadowStore
-    from hledac.universal.utils.source_types import SourceType
 
 # F206AB: discovery error taxonomy helper
 from hledac.universal.discovery.duckduckgo_adapter import (  # noqa: E402
@@ -309,7 +308,7 @@ def _is_threat_query(query: str) -> bool:
 
     # IP address check — domain bootstrap can't help
     import re as _re
-    IP_PAT = _re.compile(
+    IP_PAT = _re.compile(  # noqa: N806
         r"^\d{1,3}(?:\.\d{1,3}){3}(?:\/\d{1,2})?$|^"
         r"[0-9a-fA-F]{1,4}(?::[0-9a-fA-F]{0,4}){2,7}(?::\d{1,3})?(?:\/\d{1,2})?$"
     )
@@ -317,12 +316,12 @@ def _is_threat_query(query: str) -> bool:
         return True
 
     # CVE pattern
-    CVE_PAT = _re.compile(r"^CVE-\d{4}-\d{4,}$", _re.IGNORECASE)
+    CVE_PAT = _re.compile(r"^CVE-\d{4}-\d{4,}$", _re.IGNORECASE)  # noqa: N806
     if CVE_PAT.match(q):
         return True
 
     # Ransomware/malware/threat actor name patterns
-    THREAT_PAT = _re.compile(
+    THREAT_PAT = _re.compile(  # noqa: N806
         r"^(?:"
         r"lockbit|conti|revil|clop|darkside|blackcat|alphv|ransomware|"
         r"apt[_\s]?\d+|apt[_-]\w+|sidecopy|callback|triangle|temp"
@@ -347,7 +346,7 @@ def _is_threat_query(query: str) -> bool:
             return True
 
     # Extended patterns: check bare tokens that are known threat names
-    _EXTENDED_PAT = _re.compile(
+    _EXTENDED_PAT = _re.compile(  # noqa: N806
         r"^(?:"
         r"meterpreter|sandworm|lazarus|log4shell|finacrypt|prodaft|labyrinth|"
         r"zcrypt|poisonivy|plugx|gh0st|gain|wellmess|whispergate|hermetic|"
@@ -360,7 +359,7 @@ def _is_threat_query(query: str) -> bool:
             return True
 
     # Generic keywords (must be stand-alone, not part of a sentence)
-    THREAT_KW_PAT = _re.compile(
+    THREAT_KW_PAT = _re.compile(  # noqa: N806
         r"^(?:"
         r"ransomware|malware|threat[_-]?actor|cobalt[_\s]?strike|"
         r"breach|exploit|0day|zero[_\s]?day|vulnerability|"
@@ -478,7 +477,7 @@ def generate_bootstrap_urls(query: str, max_urls: int = _MAX_BOOTSTRAP_URLS) -> 
 _MAX_SEED_CONTEXT_BOOTSTRAP: int = 10  # hard cap
 
 
-def generate_seed_context_bootstrap_urls(seed_context: Any, max_candidates: int = _MAX_SEED_CONTEXT_BOOTSTRAP) -> list[str]:
+def generate_seed_context_bootstrap_urls(seed_context: Any, max_candidates: int = _MAX_SEED_CONTEXT_BOOTSTRAP) -> list[str]:  # noqa: E501
     """
     Generate deterministic bootstrap URLs from NonfeedSeedContext.
 
@@ -641,7 +640,7 @@ def _extract_domain_from_query(query: str) -> str | None:
 
 
 # Sprint F193B: Explicit fetch policy — policy-driven JS/DoH/stealth, not dormant defaults
-from dataclasses import dataclass, field
+from dataclasses import dataclass  # noqa: E402
 
 
 @dataclass(frozen=True)
@@ -730,7 +729,7 @@ def _extract_provider_surface(
       - empty_reason_out[0]: set to refined discovery_empty subtype
     """
     # discovery_result may be a real DiscoveryBatchResult or a mock with .hits/.error
-    result_error = getattr(discovery_result, "error", None) or (discovery_result.get("error") if isinstance(discovery_result, dict) else None)
+    result_error = getattr(discovery_result, "error", None) or (discovery_result.get("error") if isinstance(discovery_result, dict) else None)  # noqa: E501
     error_str = str(result_error) if result_error else ""
 
     # provider_status_debug may be attached as attribute or in dict
@@ -947,7 +946,7 @@ class PipelineRunResult(msgspec.Struct, frozen=True, gc=False):
     public_bootstrap_errors: int = 0  # bootstrap-specific errors (parse, dedup, etc.)
     # Sprint F229A: Bootstrap ordering telemetry
     public_bootstrap_order: str = "disabled"  # "before_discovery" | "after_discovery" | "disabled"
-    public_bootstrap_prevented_discovery_timeout: bool = False  # True when bootstrap produced candidates but discovery would have returned zero
+    public_bootstrap_prevented_discovery_timeout: bool = False  # True when bootstrap produced candidates but discovery would have returned zero  # noqa: E501
     public_bootstrap_first_fetch_attempted: bool = False  # True when bootstrap hits were added to hits before fetch
     # Sprint F220C: Public Provider Rescue telemetry
     public_rescue_candidates_count: int = 0  # rescue URLs generated from threat query
@@ -1019,7 +1018,7 @@ class PipelineRunResult(msgspec.Struct, frozen=True, gc=False):
     public_rejected_url_samples: tuple[str, ...] = ()  # rejected URL samples
 
     # F231A: PUBLIC Candidate Ledger — stage progression summary
-    # discovery → fetch_attempted → fetch_success → parse_success → pattern_matched → built → store_attempted → stored/rejected
+    # discovery → fetch_attempted → fetch_success → parse_success → pattern_matched → built → store_attempted → stored/rejected  # noqa: E501
     public_candidates_discovered: int = 0
     public_candidates_fetch_attempted: int = 0
     public_candidates_fetch_success: int = 0
@@ -1031,7 +1030,7 @@ class PipelineRunResult(msgspec.Struct, frozen=True, gc=False):
     public_candidates_rejected: int = 0
     public_rejection_summary: dict = {}  # {stage: count} where candidates were lost
     # F231A: Canonical terminal stage — where PUBLIC evidence stream terminated
-    public_terminal_stage: str = ""  # discovery_empty | fetch_zero | parse_zero | match_zero | build_zero | store_zero | accepted
+    public_terminal_stage: str = ""  # discovery_empty | fetch_zero | parse_zero | match_zero | build_zero | store_zero | accepted  # noqa: E501
     # F232: Provider surface telemetry — discovery provider selection and outcome truth
     # NOTE: msgspec.Struct does NOT support dataclasses.field(default_factory=...);
     # using mutable default=[] is safe here because PipelineRunResult is frozen=True,
@@ -1044,7 +1043,7 @@ class PipelineRunResult(msgspec.Struct, frozen=True, gc=False):
     public_provider_timeout_count: int = 0  # providers that timed out
     public_provider_import_error_count: int = 0  # providers that failed to import/initialize
     # F232: Refined discovery_empty subtypes — explicit reason when discovery returns zero
-    public_discovery_empty_reason: str = ""  # no_provider_selected | provider_unavailable | provider_timeout | provider_returned_zero | query_builder_empty
+    public_discovery_empty_reason: str = ""  # no_provider_selected | provider_unavailable | provider_timeout | provider_returned_zero | query_builder_empty  # noqa: E501
 
 
 # -----------------------------------------------------------------------------
@@ -1658,7 +1657,7 @@ async def _fetch_and_process_page(
     async with semaphore:
         # ---- Fetch -----------------------------------------------------------
         if skip_fetch:
-            usable_signal, value_tier, resolution_reason, discovery_false_positive, waste_category, structural_quality = _compute_page_usable_fields(
+            usable_signal, value_tier, resolution_reason, discovery_false_positive, waste_category, structural_quality = _compute_page_usable_fields(  # noqa: E501
                 fetched=False, matched_patterns=0, stored_findings=0,
                 quality_reason="SKIP_WEAK:weak_discovery",
                 discovery_signal=has_signal,
@@ -1696,7 +1695,7 @@ async def _fetch_and_process_page(
         from urllib.parse import urlparse
         _parsed_url = urlparse(hit_url)
         if not _parsed_url.scheme or _parsed_url.scheme.lower() not in ("http", "https"):
-            usable_signal, value_tier, resolution_reason, discovery_false_positive, waste_category, structural_quality = _compute_page_usable_fields(
+            usable_signal, value_tier, resolution_reason, discovery_false_positive, waste_category, structural_quality = _compute_page_usable_fields(  # noqa: E501
                 fetched=False, matched_patterns=0, stored_findings=0,
                 quality_reason=None, discovery_signal=has_signal,
                 discovery_score=discovery_score,
@@ -1741,7 +1740,7 @@ async def _fetch_and_process_page(
                         use_doh=policy.use_doh,
                     ),
         except TimeoutError:
-            usable_signal, value_tier, resolution_reason, discovery_false_positive, waste_category, structural_quality = _compute_page_usable_fields(
+            usable_signal, value_tier, resolution_reason, discovery_false_positive, waste_category, structural_quality = _compute_page_usable_fields(  # noqa: E501
                 fetched=False, matched_patterns=0, stored_findings=0,
                 quality_reason=None, discovery_signal=has_signal,
                 discovery_score=discovery_score,
@@ -1774,7 +1773,7 @@ async def _fetch_and_process_page(
         except asyncio.CancelledError:
             raise  # [I6] propagate, never swallow
         except Exception as exc:
-            usable_signal, value_tier, resolution_reason, discovery_false_positive, waste_category, structural_quality = _compute_page_usable_fields(
+            usable_signal, value_tier, resolution_reason, discovery_false_positive, waste_category, structural_quality = _compute_page_usable_fields(  # noqa: E501
                 fetched=False, matched_patterns=0, stored_findings=0,
                 quality_reason=None, discovery_signal=has_signal,
                 discovery_score=discovery_score,
@@ -1824,7 +1823,7 @@ async def _fetch_and_process_page(
             fetched_text = None
 
         if not fetched_text:
-            usable_signal, value_tier, resolution_reason, discovery_false_positive, waste_category, structural_quality = _compute_page_usable_fields(
+            usable_signal, value_tier, resolution_reason, discovery_false_positive, waste_category, structural_quality = _compute_page_usable_fields(  # noqa: E501
                 fetched=True, matched_patterns=0, stored_findings=0,
                 quality_reason=None, discovery_signal=has_signal,
                 discovery_score=discovery_score,
@@ -1860,7 +1859,7 @@ async def _fetch_and_process_page(
                 None, _html_to_text, fetched_text
             )
         except Exception as exc:
-            usable_signal, value_tier, resolution_reason, discovery_false_positive, waste_category, structural_quality = _compute_page_usable_fields(
+            usable_signal, value_tier, resolution_reason, discovery_false_positive, waste_category, structural_quality = _compute_page_usable_fields(  # noqa: E501
                 fetched=True, matched_patterns=0, stored_findings=0,
                 quality_reason=None, discovery_signal=has_signal,
                 discovery_score=discovery_score,
@@ -1908,7 +1907,7 @@ async def _fetch_and_process_page(
 
         # Skip very-low-quality pages early — preserve fetch budget
         if quality_reason.startswith("SKIP_WEAK"):
-            usable_signal, value_tier, resolution_reason, discovery_false_positive, waste_category, structural_quality = _compute_page_usable_fields(
+            usable_signal, value_tier, resolution_reason, discovery_false_positive, waste_category, structural_quality = _compute_page_usable_fields(  # noqa: E501
                 fetched=True, matched_patterns=0, stored_findings=0,
                 quality_reason=quality_reason, discovery_signal=has_signal,
                 discovery_score=discovery_score,
@@ -1974,7 +1973,7 @@ async def _fetch_and_process_page(
         if graph is not None and hits:
             _add_pattern_hits_to_graph(hits, graph)
         if matched_count == 0:
-            usable_signal, value_tier, resolution_reason, discovery_false_positive, waste_category, structural_quality = _compute_page_usable_fields(
+            usable_signal, value_tier, resolution_reason, discovery_false_positive, waste_category, structural_quality = _compute_page_usable_fields(  # noqa: E501
                 fetched=True, matched_patterns=0, stored_findings=0,
                 quality_reason=quality_reason, discovery_signal=has_signal,
                 discovery_score=discovery_score,
@@ -2034,7 +2033,7 @@ async def _fetch_and_process_page(
                 # by URL pattern since the hit object is not available in this scope.
                 # Bootstrap URLs are deterministic and start with known prefixes.
                 pass
-            elif _public_findings or (extracted_text and quality_reason is not None and not quality_reason.startswith("SKIP_WEAK")):
+            elif _public_findings or (extracted_text and quality_reason is not None and not quality_reason.startswith("SKIP_WEAK")):  # noqa: E501
                 # Check if the finding was rejected as duplicate (stored but not accepted)
                 if _public_findings and _pub_stored > 0 and _pub_accepted == 0:
                     # Duplicate: finding_id already existed in storage from this run
@@ -2048,7 +2047,7 @@ async def _fetch_and_process_page(
 
             # F226B: If public finding was accepted, report it; otherwise fall through to rejection
             if _pub_accepted > 0:
-                usable_signal, value_tier, resolution_reason, discovery_false_positive, waste_category, structural_quality = _compute_page_usable_fields(
+                usable_signal, value_tier, resolution_reason, discovery_false_positive, waste_category, structural_quality = _compute_page_usable_fields(  # noqa: E501
                     fetched=True, matched_patterns=0, stored_findings=_pub_stored,
                     quality_reason=quality_reason, discovery_signal=has_signal,
                     discovery_score=discovery_score,
@@ -2302,7 +2301,7 @@ async def _fetch_and_process_page(
                     # Fail-soft: vector storage errors don't fail the page
                     pass
 
-        usable_signal, value_tier, resolution_reason, discovery_false_positive, waste_category, structural_quality = _compute_page_usable_fields(
+        usable_signal, value_tier, resolution_reason, discovery_false_positive, waste_category, structural_quality = _compute_page_usable_fields(  # noqa: E501
             fetched=True, matched_patterns=matched_count,
             stored_findings=stored_count,
             quality_reason=quality_reason,
@@ -2460,7 +2459,6 @@ async def _generate_and_store_report(
         try:
             from hledac.universal.brain.model_manager import get_model_manager
             from hledac.universal.embedding_pipeline import embed_query_async
-
             from utils.ranking import rrf_fuse
 
             # Generate query embedding with proper lifecycle management
@@ -3346,7 +3344,7 @@ async def async_run_live_public_pipeline(
                 # When query-based bootstrap + rescue both returned zero AND seed_context is available,
                 # use bounded static URLs from seed_context.domains/urls.
                 # Enabled only in nonfeed_diagnostic profile with seed_context (propagated from scheduler).
-                if _pub_bootstrap_candidates_count == 0 and _pub_rescue_candidates_count == 0 and self.seed_context is not None:
+                if _pub_bootstrap_candidates_count == 0 and _pub_rescue_candidates_count == 0 and self.seed_context is not None:  # noqa: E501
                     try:
                         seed_bootstrap_urls = generate_seed_context_bootstrap_urls(
                             self.seed_context, max_candidates=_MAX_SEED_CONTEXT_BOOTSTRAP
@@ -3385,7 +3383,7 @@ async def async_run_live_public_pipeline(
                 )
                 discovery_elapsed_s = time.monotonic() - _discovery_start
 
-                cache_hit = getattr(discovery_result, "cache_hit", False) if hasattr(discovery_result, "cache_hit") else False
+                cache_hit = getattr(discovery_result, "cache_hit", False) if hasattr(discovery_result, "cache_hit") else False  # noqa: E501
                 public_discovery_cache_hit += int(cache_hit)
                 public_discovery_query_count += 1
 
@@ -3425,7 +3423,7 @@ async def async_run_live_public_pipeline(
                     if len(_disc_hits) == 0:
                         _pub_bootstrap_prevented_discovery_timeout = True
 
-                err_val = discovery_result.get("error") if isinstance(discovery_result, dict) else getattr(discovery_result, "error", None)
+                err_val = discovery_result.get("error") if isinstance(discovery_result, dict) else getattr(discovery_result, "error", None)  # noqa: E501
                 if err_val:
                     discovery_error = str(err_val)
 
@@ -3458,7 +3456,7 @@ async def async_run_live_public_pipeline(
                 discovery_telemetry = {
                     'discovery_result': None,
                     'public_stage_failure': 'discovery_empty',
-                    'public_stage_failure_reason': discovery_error if discovery_error else 'no URLs returned from discovery',
+                    'public_stage_failure_reason': discovery_error if discovery_error else 'no URLs returned from discovery',  # noqa: E501
                     'public_discovery_raw_count': 0,
                     'public_discovery_deduped_count': 0,
                     'public_discovery_attempted': discovery_attempted,
@@ -3483,7 +3481,7 @@ async def async_run_live_public_pipeline(
                     'public_query_variants': list(_pub_query_variants),
                     'public_provider_timeout_count': _pub_provider_timeout_count[0],
                     'public_provider_import_error_count': _pub_provider_import_error_count[0],
-                    'public_discovery_empty_reason': _pub_discovery_empty_reason[0] if _pub_discovery_empty_reason else '',
+                    'public_discovery_empty_reason': _pub_discovery_empty_reason[0] if _pub_discovery_empty_reason else '',  # noqa: E501
                     'public_candidates_discovered': 0,
                     'public_candidates_fetch_attempted': 0,
                     'public_candidates_fetch_success': 0,
@@ -3504,16 +3502,16 @@ async def async_run_live_public_pipeline(
             if self.store is not None:
                 try:
                     # Check env gate and academic keywords
-                    academic_enabled = os.environ.get("HLEDAC_ENABLE_ACADEMIC", "0").strip().lower() in ("1", "true", "yes", "on")
+                    academic_enabled = os.environ.get("HLEDAC_ENABLE_ACADEMIC", "0").strip().lower() in ("1", "true", "yes", "on")  # noqa: E501
                     query_lower = self.query.lower()
-                    academic_keywords = ["paper", "research", "academic", "scholar", "study", "journal", "citation", "doi", "arxiv", "publication", "conference", "thesis"]
+                    academic_keywords = ["paper", "research", "academic", "scholar", "study", "journal", "citation", "doi", "arxiv", "publication", "conference", "thesis"]  # noqa: E501
                     has_academic_keywords = any(kw in query_lower for kw in academic_keywords)
 
                     # Also check for --deep-research flag via query or env
-                    deep_research = os.environ.get("HLEDAC_DEEP_RESEARCH", "0").strip().lower() in ("1", "true", "yes", "on")
+                    deep_research = os.environ.get("HLEDAC_DEEP_RESEARCH", "0").strip().lower() in ("1", "true", "yes", "on")  # noqa: E501
 
                     if academic_enabled or has_academic_keywords or deep_research:
-                        from hledac.universal.discovery.academic import search_all_academic, ACADEMIC_ENABLED
+                        from hledac.universal.discovery.academic import ACADEMIC_ENABLED, search_all_academic
                         if ACADEMIC_ENABLED:
                             academic_semaphore = asyncio.Semaphore(3)
                             async def limited_academic_search():
@@ -3523,14 +3521,14 @@ async def async_run_live_public_pipeline(
 
                             # Collect all findings from new adapters
                             all_findings = []
-                            for source, findings in academic_results.items():
+                            for _source, findings in academic_results.items():
                                 all_findings.extend(findings)
 
                             if all_findings:
                                 # Ingest directly (findings already CanonicalFinding)
                                 await self.store.async_ingest_findings_batch(all_findings)
                                 academic_findings_count = len(all_findings)
-                                logger.info(f"[F259] Academic lane: {academic_findings_count} findings from {len(academic_results)} sources")
+                                logger.info(f"[F259] Academic lane: {academic_findings_count} findings from {len(academic_results)} sources")  # noqa: E501
                 except Exception as e:
                     logger.warning(f"[F259] Academic research lane failed: {e}")
 
@@ -3558,7 +3556,7 @@ async def async_run_live_public_pipeline(
             if self.store is not None:
                 try:
                     import re as _re
-                    _DOMAIN_ORG_RE = _re.compile(
+                    _DOMAIN_ORG_RE = _re.compile(  # noqa: N806
                         r"(?:[a-zA-Z0-9](?:[a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}"
                     )
                     _match = _DOMAIN_ORG_RE.search(self.query)
@@ -3820,7 +3818,7 @@ async def async_run_live_public_pipeline(
     _pub_bootstrap_accepted_findings = discovery_telemetry.get('public_bootstrap_accepted_findings', 0)
     _pub_bootstrap_errors = discovery_telemetry.get('public_bootstrap_errors', 0)
     _pub_bootstrap_order = discovery_telemetry.get('public_bootstrap_order', 'disabled')
-    _pub_bootstrap_prevented_discovery_timeout = discovery_telemetry.get('public_bootstrap_prevented_discovery_timeout', False)
+    _pub_bootstrap_prevented_discovery_timeout = discovery_telemetry.get('public_bootstrap_prevented_discovery_timeout', False)  # noqa: E501
     _pub_bootstrap_first_fetch_attempted = discovery_telemetry.get('public_bootstrap_first_fetch_attempted', False)
     _pub_build_success_count = discovery_telemetry.get('public_build_success_count', 0)
     _pub_build_failure_count = discovery_telemetry.get('public_build_failure_count', 0)
@@ -4042,18 +4040,18 @@ async def async_run_live_public_pipeline(
     # Sprint F213B: stage failure — discovery returned URLs but no findings accepted
     if public_discovery_deduped_count > 0 and public_findings_accepted == 0:
         public_stage_failure = "fetch_zero"
-        public_stage_failure_reason = f"discovery returned {public_discovery_deduped_count} URLs but no findings were accepted"
+        public_stage_failure_reason = f"discovery returned {public_discovery_deduped_count} URLs but no findings were accepted"  # noqa: E501
 
     # F231A: PUBLIC Candidate Ledger — derive from page results
-    # Tracks stage progression: discovery → fetch_attempted → fetch_success → parse_success → pattern_matched → built → store_attempted → stored/rejected
+    # Tracks stage progression: discovery → fetch_attempted → fetch_success → parse_success → pattern_matched → built → store_attempted → stored/rejected  # noqa: E501
     # fetch_attempted = pages that passed quality gate and entered page processing
     public_candidates_discovered = total_discovered
     public_candidates_fetch_attempted = public_pages_fetched  # pages that entered fetch/parse
     public_candidates_fetch_success = sum(
-        1 for p in all_page_results if p.fetched and p.error and not p.error.startswith(("fetch_text_none_or_empty", "html_extract_failed"))
+        1 for p in all_page_results if p.fetched and p.error and not p.error.startswith(("fetch_text_none_or_empty", "html_extract_failed"))  # noqa: E501
     )
     public_candidates_parse_success = sum(
-        1 for p in all_page_results if p.fetched and p.error not in ("fetch_text_none_or_empty", "html_extract_failed", None)
+        1 for p in all_page_results if p.fetched and p.error not in ("fetch_text_none_or_empty", "html_extract_failed", None)  # noqa: E501
     )
     public_candidates_pattern_matched = sum(1 for p in all_page_results if p.fetched and p.matched_patterns > 0)
     public_candidates_built = sum(
@@ -4349,7 +4347,7 @@ async def async_run_live_public_pipeline(
 
     # structural_health_ratio: fraction of fetched pages that are structurally healthy
     structural_health_ratio = (
-        round(sum(1 for p in fetched_pages if getattr(p, "structural_quality", "") == "healthy") / max(fetched_count, 1), 3)
+        round(sum(1 for p in fetched_pages if getattr(p, "structural_quality", "") == "healthy") / max(fetched_count, 1), 3)  # noqa: E501
         if fetched_count > 0 else 0.0
     )
 
@@ -4402,7 +4400,7 @@ async def async_run_live_public_pipeline(
     # F185A DF-3 FIX: replace hardcoded if/elif chain with explicit dictionary.
     # Key: duckduckgo_adapter.py fallback_triggered string → public pipeline enum string.
     # This eliminates the silent-fail risk when new fallback_triggered variants are added.
-    _FALLBACK_STATE_MAP: dict[str, str] = {
+    _FALLBACK_STATE_MAP: dict[str, str] = {  # noqa: N806
         "primary_backend_failed_fallback_succeeded": "primary_failed_fallback_succeeded",
         "primary_backend_failed_fallback_failed": "primary_failed_fallback_failed",
     }
@@ -4473,7 +4471,7 @@ async def async_run_live_public_pipeline(
                 "failure_stage": p.failure_stage,
                 "network_error_kind": getattr(pfr, "network_error_kind", None) if pfr is not None else None,
                 "transport_policy_reason": getattr(pfr, "transport_policy_reason", None) if pfr is not None else None,
-                "transport_fallback_reason": getattr(pfr, "transport_fallback_reason", None) if pfr is not None else None,
+                "transport_fallback_reason": getattr(pfr, "transport_fallback_reason", None) if pfr is not None else None,  # noqa: E501
                 "content_type": getattr(pfr, "content_type", None) if pfr is not None else None,
             }
             _fetch_error_samples.append(sample)
@@ -4488,7 +4486,7 @@ async def async_run_live_public_pipeline(
     public_branch_verdict["pattern_hits"] = sum(p.matched_patterns for p in all_page_results)
 
     # F185A DF-3 FIX: same dictionary approach for public_discovery_blocker
-    _BLOCKER_BY_BACKEND_ERROR: dict[str, str] = {
+    _BLOCKER_BY_BACKEND_ERROR: dict[str, str] = {  # noqa: N806
         "primary_backend_failed_fallback_failed": "backend_error_fallback_failed",
     }
     if uma_state == "UMA_STATE_EMERGENCY":
@@ -4601,7 +4599,7 @@ async def async_run_live_public_pipeline(
             from hledac.universal.loops.research_loop import ResearchLoop, ResearchResult
 
             # P17: Default RL loop time limit (5 minutes)
-            _RL_LOOP_TIME_LIMIT_S = 300.0
+            _RL_LOOP_TIME_LIMIT_S = 300.0  # noqa: N806
 
             research_loop = ResearchLoop(
                 hypothesis_engine=hermes_engine,
@@ -4768,7 +4766,7 @@ async def async_run_live_public_pipeline(
                     "findings": [
                         {
                             "finding_id": f.finding_id if hasattr(f, "finding_id") else str(f.get("finding_id", "")),
-                            "source_type": f.source_type if hasattr(f, "source_type") else str(f.get("source_type", "")),
+                            "source_type": f.source_type if hasattr(f, "source_type") else str(f.get("source_type", "")),  # noqa: E501
                             "confidence": f.confidence if hasattr(f, "confidence") else float(f.get("confidence", 0.0)),
                             "provenance": f.provenance if hasattr(f, "provenance") else f.get("provenance", ""),
                         }
@@ -4788,13 +4786,13 @@ async def async_run_live_public_pipeline(
                 hypotheses_to_eval = hypotheses[:5]
                 if hypotheses_to_eval:
                     async def run_tot_with_timeout(hypo: str, timeout_s: float = 15.0) -> str:
-                        """Run ToT solve with per-hypothesis timeout. Fail-soft: returns empty string on timeout/error."""
+                        """Run ToT solve with per-hypothesis timeout. Fail-soft: returns empty string on timeout/error."""  # noqa: E501
                         try:
                             # Primary path: asyncio.timeout ctx (P12 invariant — bounded per-task timeout)
                             async with asyncio.timeout(timeout_s):
                                 result = await tot_layer.solve_with_tot(hypo)
                             return result
-                        except asyncio.TimeoutError:
+                        except TimeoutError:
                             logger.debug(f"[P12] ToT timed out after {timeout_s}s for hypothesis: {hypo[:50]}...")
                             return ""
                         except Exception as e:
@@ -4875,8 +4873,8 @@ async def async_run_live_public_pipeline(
                 if rss_gib > 5.5:
                     logger.debug("[SYNTHESIS] Skipped: RSS %.1fGiB > 5.5GiB", rss_gib)
                 else:
-                    from hledac.universal.brain.synthesis_runner import SynthesisRunner
                     from hledac.universal.brain.model_lifecycle import ModelLifecycle
+                    from hledac.universal.brain.synthesis_runner import SynthesisRunner
 
                     # Build findings list from all_page_results
                     findings_for_synth = []
@@ -4919,9 +4917,10 @@ async def async_run_live_public_pipeline(
 
                         if report is not None:
                             # Add synthesis result as CanonicalFinding
-                            from hledac.universal.knowledge.duckdb_store import CanonicalFinding
                             import hashlib
                             import time as _time
+
+                            from hledac.universal.knowledge.duckdb_store import CanonicalFinding
 
                             report_id = f"synth_{hashlib.md5(query.encode()).hexdigest()[:12]}"
                             synthesis_finding = CanonicalFinding(
@@ -4930,7 +4929,7 @@ async def async_run_live_public_pipeline(
                                 source_type=_SourceTypeEnum.LLM_SYNTHESIS,
                                 confidence=getattr(report, 'confidence', 0.7) or 0.7,
                                 ts=_time.time(),
-                                ioc_val=getattr(report, 'threat_summary', '')[:500] if hasattr(report, 'threat_summary') else "",
+                                ioc_val=getattr(report, 'threat_summary', '')[:500] if hasattr(report, 'threat_summary') else "",  # noqa: E501
                                 payload_text=f"Threat actors: {', '.join(getattr(report, 'threat_actors', []) or [])}",
                                 provenance=("synthesis", getattr(report, 'query', query)[:50]),
                             )

@@ -191,7 +191,7 @@ class OpenAlexAdapter:
                     concepts=item_concepts[:5],
                     citation_count=item.get("citation_count", 0),
                     cited_by_count=item.get("cited_by_count", 0),
-                    open_access=item.get("open_access", {}).get("is_oa", False) if isinstance(item.get("open_access"), dict) else False,
+                    open_access=item.get("open_access", {}).get("is_oa", False) if isinstance(item.get("open_access"), dict) else False,  # noqa: E501
                     related_works=[w.replace("https://openalex.org/", "") for w in item.get("related_works", [])],
                     abstract="",  # OpenAlex doesn't provide abstracts by default
                     publication_date=item.get("publication_date"),
@@ -234,7 +234,7 @@ class OpenAlexAdapter:
                     concepts=[c.get("display_name", "") for c in item.get("concepts", [])[:5]],
                     citation_count=item.get("citation_count", 0),
                     cited_by_count=item.get("cited_by_count", 0),
-                    open_access=item.get("open_access", {}).get("is_oa", False) if isinstance(item.get("open_access"), dict) else False,
+                    open_access=item.get("open_access", {}).get("is_oa", False) if isinstance(item.get("open_access"), dict) else False,  # noqa: E501
                     related_works=[],
                     abstract="",
                     publication_date=item.get("publication_date"),

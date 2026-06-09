@@ -19,6 +19,7 @@ from enum import StrEnum
 from typing import TYPE_CHECKING
 
 from utils.async_helpers import safe_gather_dropin
+
 if TYPE_CHECKING:
     import aiohttp
 else:

@@ -12,6 +12,7 @@ from collections import OrderedDict
 from typing import Any
 
 import numpy as np
+
 logger = logging.getLogger(__name__)
 
 # Sprint 79a: GNN protective fixes
@@ -237,7 +238,7 @@ class GNNPredictor:
             raise RuntimeError("GNN not trained yet")
 
         # G1: Guard - limit node count to prevent OOM
-        MAX_PREDICT_NODES = 1000
+        MAX_PREDICT_NODES = 1000  # noqa: N806
         if len(node_ids) > MAX_PREDICT_NODES:
             logger.warning(f"Limiting prediction from {len(node_ids)} to {MAX_PREDICT_NODES} nodes")
             node_ids = node_ids[:MAX_PREDICT_NODES]
@@ -397,7 +398,7 @@ class GNNPredictor:
         """
         import asyncio
         from concurrent.futures import ThreadPoolExecutor
-        _CPU = ThreadPoolExecutor(max_workers=1)
+        _CPU = ThreadPoolExecutor(max_workers=1)  # noqa: N806
 
         def _sync():
             return self.score_ioc_batch(ioc_nodes, ioc_graph)
@@ -470,20 +471,20 @@ class GNNPredictor:
                 features_data.append(feat)
 
             # MLX tensory
-            A = mx.array(adj_data, dtype=mx.float32)  # [n, n]
-            X = mx.array(features_data, dtype=mx.float32)  # [n, feat_dim]
+            A = mx.array(adj_data, dtype=mx.float32)  # [n, n]  # noqa: N806
+            X = mx.array(features_data, dtype=mx.float32)  # [n, feat_dim]  # noqa: N806
 
             # Normalizovaná Laplacian: D^(-1/2) * A * D^(-1/2)
             degree = mx.sum(A, axis=1, keepdims=True)  # [n, 1]
             degree_inv_sqrt = mx.where(degree > 0, 1.0 / mx.sqrt(degree + 1e-8), mx.zeros_like(degree))
-            A_norm = degree_inv_sqrt * A * mx.transpose(degree_inv_sqrt)
+            A_norm = degree_inv_sqrt * A * mx.transpose(degree_inv_sqrt)  # noqa: N806
 
             # 2-vrstvý GCN forward pass (jednoduché váhy — není trénovaný, ale topologie funguje)
             hidden_dim = 16
             # Layer 1: W1 ∈ R^(feat_dim × hidden_dim) — náhodná inicializace (fixní seed)
             mx.random.seed(42)
-            W1 = mx.random.normal((feat_dim, hidden_dim)) * 0.1
-            H1 = mx.maximum(A_norm @ X @ W1, 0)  # ReLU activation, [n, hidden_dim]
+            W1 = mx.random.normal((feat_dim, hidden_dim)) * 0.1  # noqa: N806
+            H1 = mx.maximum(A_norm @ X @ W1, 0)  # ReLU activation, [n, hidden_dim]  # noqa: N806
 
             # Layer 2: link prediction = H1 @ H1.T (dot product similarity)
             scores_matrix = H1 @ mx.transpose(H1)  # [n, n] — link probability scores
@@ -633,7 +634,7 @@ def predict_from_edge_list(
         try:
             from brain.gnn_predictor import GNNPredictor
         except ImportError:
-            GNNPredictor = None
+            GNNPredictor = None  # noqa: N806
 
         if GNNPredictor is not None:
             predictor = GNNPredictor()
@@ -730,7 +731,7 @@ def get_anomaly_scores(
         try:
             from brain.gnn_predictor import GNNPredictor
         except ImportError:
-            GNNPredictor = None
+            GNNPredictor = None  # noqa: N806
 
         if GNNPredictor is not None:
             predictor = GNNPredictor()
@@ -811,7 +812,7 @@ def train_gnn_task(predictor: GNNPredictor,
     n_nodes = features.shape[0]
 
     # G1: Guard against OOM - limit training graph size
-    MAX_TRAIN_NODES = 5000
+    MAX_TRAIN_NODES = 5000  # noqa: N806
     if n_nodes > MAX_TRAIN_NODES:
         logger.warning(f"Limiting GNN training from {n_nodes} to {MAX_TRAIN_NODES} nodes")
         # Sample subset of nodes and edges

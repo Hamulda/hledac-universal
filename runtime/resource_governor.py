@@ -24,7 +24,7 @@ Invariant table:
   Invariant                          | Test file:method
   ─────────────────────────────────────────────────────────────────────
   model_loaded path → fetch_limit=3  | test_m1_resource_governor.py:test_governor_sets_fetch_limit_3_when_model_loaded
-  model_unloaded path → fetch_limit=25| test_m1_resource_governor.py:test_governor_restores_fetch_limit_25_when_model_unloaded
+  model_unloaded path → fetch_limit=25| test_m1_resource_governor.py:test_governor_restores_fetch_limit_25_when_model_unloaded  # noqa: E501
   no_model_plus_renderer_concurrently| test_m1_resource_governor.py:test_no_renderer_when_model_loaded
   advisory_only_fails_soft           | test_m1_resource_governor.py:test_advisory_fails_soft
   sidecar_admission checks RSS/high_water | test_m1_mission_budget.py:test_sidecar_admission_rss_guard
@@ -477,7 +477,7 @@ class M1ResourceGovernor:
             uma_state = uma.state
         except Exception as exc:
             logger.debug("[Governor] branch_admission sample_uma_status failed: %s", exc)
-            return BranchAdmission(allowed=True, reason="uma_check_failed_allowing", uma_state="unknown", branch_concurrency=4, estimated_mb=estimated_mb)
+            return BranchAdmission(allowed=True, reason="uma_check_failed_allowing", uma_state="unknown", branch_concurrency=4, estimated_mb=estimated_mb)  # noqa: E501
 
         # CRITICAL/EMERGENCY → force minimal concurrency
         if uma_state in (UMA_STATE_CRITICAL, UMA_STATE_EMERGENCY):
@@ -537,7 +537,7 @@ class M1ResourceGovernor:
             uma_state = uma.state
         except Exception as exc:
             logger.debug("[Governor] lane_admission sample_uma_status failed: %s", exc)
-            return LaneAdmission(allowed=True, reason="uma_check_failed_allowing", uma_state="unknown", risk_level=risk_level)
+            return LaneAdmission(allowed=True, reason="uma_check_failed_allowing", uma_state="unknown", risk_level=risk_level)  # noqa: E501
 
         # CRITICAL/EMERGENCY → block high/critical risk lanes
         if uma_state in (UMA_STATE_CRITICAL, UMA_STATE_EMERGENCY):

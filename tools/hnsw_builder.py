@@ -24,7 +24,7 @@ class IncrementalHNSW:
     Mapuje string ID na interní integery.
     """
 
-    def __init__(self, dim: int, max_elements: int = 100000, ef_construction: int = 200, M: int = 16):
+    def __init__(self, dim: int, max_elements: int = 100000, ef_construction: int = 200, M: int = 16):  # noqa: N803
         """
         Inicializuje inkrementální HNSW index.
 

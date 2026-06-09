@@ -266,7 +266,7 @@ def extract_file_refs(md_path: Path) -> dict[str, list[str]]:
     # file:// links — only capture if they look like real paths
     # (contain a slash, or end with .py/.md/.txt/.json, or are known root files)
     raw_file_links = re.findall(r'file://([^\)]+)', content)
-    KNOWN_ROOT_FILES = {"__main__.py", "config.py", "paths.py", "requirements.txt",
+    KNOWN_ROOT_FILES = {"__main__.py", "config.py", "paths.py", "requirements.txt",  # noqa: N806
                         "requirements-optional.txt", "pytest.ini", "project_types.py",
                         "autonomous_orchestrator.py"}
     file_links = []
@@ -313,7 +313,7 @@ def extract_file_refs(md_path: Path) -> dict[str, list[str]]:
         code_paths.extend(re.findall(pat, content))
 
     # Module/class names (CamelCase)
-    module_names = re.findall(r'\b([A-Z][a-zA-Z0-9]+(?:Engine|Manager|Store|Service|Adapter|Coordinator|Runner|Helper|Bus|Dispatcher|Exporter|Client|Layer|Resolver|Breaker))\b', content)
+    module_names = re.findall(r'\b([A-Z][a-zA-Z0-9]+(?:Engine|Manager|Store|Service|Adapter|Coordinator|Runner|Helper|Bus|Dispatcher|Exporter|Client|Layer|Resolver|Breaker))\b', content)  # noqa: E501
 
     # Normalize file:// refs - strip line numbers, hledac/ prefix, leading/trailing noise
     normalized_file_links = []
@@ -1092,7 +1092,7 @@ def write_markdown(modules: dict[str, ModuleReality], overclaims: list[Overclaim
         lines.append("")
         for o in sorted(overclaims, key=lambda x: -x.affected_modules_count)[:30]:
             lines.append(f"- **[{o.severity}]** `{o.doc_path}`: {o.claim}")
-            lines.append(f"  → `{o.affected_modules_count}` affected modules, examples: {', '.join(f'`{e}`' for e in o.examples[:3])}")
+            lines.append(f"  → `{o.affected_modules_count}` affected modules, examples: {', '.join(f'`{e}`' for e in o.examples[:3])}")  # noqa: E501
     else:
         lines.append("No significant overclaims detected.")
 

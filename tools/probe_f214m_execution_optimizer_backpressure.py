@@ -22,7 +22,8 @@ from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
-from utils.async_helpers import safe_gather_dropin, safe_gather_fire_and_forget
+from utils.async_helpers import safe_gather_dropin
+
 # ── Probe Configuration ──────────────────────────────────────────────────────
 
 IO_WORKLOAD_SIZES = [4, 8, 16, 32]  # Simulate caller patterns
@@ -90,7 +91,7 @@ async def probe_len_tasks_histogram():
         scaled = max(1, int(5 * confidence))
         coordinator_tasks.append(scaled)
         print(f"  confidence={confidence:.1f} → {scaled} tasks")
-    print(f"  → Range: {min(coordinator_tasks)}-{max(coordinator_tasks)}, P95~{sorted(coordinator_tasks)[int(len(coordinator_tasks)*0.95)]:.0f}")
+    print(f"  → Range: {min(coordinator_tasks)}-{max(coordinator_tasks)}, P95~{sorted(coordinator_tasks)[int(len(coordinator_tasks)*0.95)]:.0f}")  # noqa: E501
 
     # Pattern 2: resource_allocator max_parallel_tasks capped at 8
     print("\n[CANDIDATE 2] resource_allocator (max_parallel_tasks≤8, batched):")
@@ -129,7 +130,7 @@ async def probe_memory_pressure():
             return "cpu_result"
         return [cpu_task for _ in range(n)]
 
-    async def measure(name: str, task_count: int, task_factory: Callable, use_bounded: bool = False, max_pending: int = 32):
+    async def measure(name: str, task_count: int, task_factory: Callable, use_bounded: bool = False, max_pending: int = 32):  # noqa: E501
         gc.collect()
         tracemalloc.start()
         start = time.time()
@@ -236,7 +237,7 @@ async def probe_strategy_comparison():
         elif mp:
             results = await execute_parallel_bounded(tasks, mp, thread_pool)
         else:
-            results = await safe_gather_dropin(*[t() for t in tasks], label="probe_f214m_execution_optimizer_backpressure:238")
+            results = await safe_gather_dropin(*[t() for t in tasks], label="probe_f214m_execution_optimizer_backpressure:238")  # noqa: E501
 
         elapsed = time.time() - start
         _, peak = tracemalloc.get_traced_memory()

@@ -9,6 +9,7 @@ import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from utils.async_helpers import safe_gather_fire_and_forget
+
 sys.path.insert(0, '/Users/vojtechhamada/PycharmProjects/Hledac')
 
 
@@ -178,7 +179,7 @@ class TestResourceAllocator(unittest.IsolatedAsyncioTestCase):
         """Ověří, že can_use_ane() vrací True při nízké zátěži GPU."""
         from hledac.universal.coordinators.resource_allocator import IntelligentResourceAllocator
 
-        with patch('hledac.universal.coordinators.resource_allocator.IntelligentResourceAllocator._load_config') as mock_config:
+        with patch('hledac.universal.coordinators.resource_allocator.IntelligentResourceAllocator._load_config') as mock_config:  # noqa: E501
             mock_config.return_value = {
                 'scaling': {'scale_up_threshnew': 0.8, 'scale_down_threshnew': 0.3},
                 'optimization': {'m1_specific': True, 'mlx_acceleration': True}
@@ -196,7 +197,7 @@ class TestResourceAllocator(unittest.IsolatedAsyncioTestCase):
         """Ověří, že can_use_ane() vrací False při vysoké zátěži GPU."""
         from hledac.universal.coordinators.resource_allocator import IntelligentResourceAllocator
 
-        with patch('hledac.universal.coordinators.resource_allocator.IntelligentResourceAllocator._load_config') as mock_config:
+        with patch('hledac.universal.coordinators.resource_allocator.IntelligentResourceAllocator._load_config') as mock_config:  # noqa: E501
             mock_config.return_value = {
                 'scaling': {'scale_up_threshnew': 0.8, 'scale_down_threshnew': 0.3},
                 'optimization': {'m1_specific': True, 'mlx_acceleration': True}

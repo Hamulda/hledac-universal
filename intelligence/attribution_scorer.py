@@ -651,7 +651,7 @@ def enrich_candidate_with_attribution(
 
 
 # IdentityCandidate imported from identity_stitching_canonical
-from hledac.universal.intelligence.identity_stitching_canonical import IdentityCandidate
+from hledac.universal.intelligence.identity_stitching_canonical import IdentityCandidate  # noqa: E402
 
 __all__ = [
     "AttributionFactor",

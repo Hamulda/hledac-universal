@@ -34,6 +34,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 from typing import TypeVar
 
 from .async_helpers import safe_gather_dropin, safe_gather_strict
+
 logger = logging.getLogger(__name__)
 
 T = TypeVar('T')

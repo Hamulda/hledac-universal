@@ -14,7 +14,7 @@ from dataclasses import dataclass
 logger = logging.getLogger(__name__)
 
 # Platform detection
-import platform
+import platform  # noqa: E402
 
 IS_DARWIN = platform.system() == "Darwin"
 
@@ -208,7 +208,7 @@ class UnifiedMemoryMonitor:
         snap = self.snapshot()
 
         lines = [
-            f"Memory: {snap.sys_available_gb:.2f}GB / {snap.sys_total_gb:.2f}GB available ({snap.sys_percent:.1f}% used)",
+            f"Memory: {snap.sys_available_gb:.2f}GB / {snap.sys_total_gb:.2f}GB available ({snap.sys_percent:.1f}% used)",  # noqa: E501
         ]
 
         if snap.metal_active_gb is not None:

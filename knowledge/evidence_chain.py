@@ -152,7 +152,7 @@ class EvidenceChainBuilder:
 
     Usage:
         builder = EvidenceChainBuilder()
-        builder.record_step(root_finding_id, STEP_TYPE_IDENTITY, ["f1", "f2"], "f3-id", 0.85, "linked via email+username")
+        builder.record_step(root_finding_id, STEP_TYPE_IDENTITY, ["f1", "f2"], "f3-id", 0.85, "linked via email+username")  # noqa: E501
         chain = builder.build(root_finding_id)
     """
 

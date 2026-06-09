@@ -54,32 +54,20 @@ Key invariants:
 
 from __future__ import annotations
 
-
-
 import asyncio
-
 import concurrent.futures
-
 import gc
-
 import logging
-
 import os
-
 import struct
-
 import time as _time
-
 from collections import deque
-from functools import lru_cache
-
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
-
-from pathlib import Path
-
 from enum import Enum, auto
-
-from typing import TYPE_CHECKING, Any, Callable, Final, Sequence
+from functools import lru_cache
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, Final
 
 # Sprint P0-1: SoA overlay for hot-path integer counters in SprintSchedulerResult
 # (see runtime/int_counter_layout.py). Lazy import pattern preserved.
@@ -101,16 +89,6 @@ except ImportError:  # pragma: no cover — fallback when run as a script
 # Lazy import zde by zpusobil cyklicke importy; msgspec je stdlib-equivalent
 # (zero runtime cost, ~50ns import resolution, single C-extension module).
 import msgspec
-
-
-
-from hledac.universal.patterns.pattern_matcher import match_text
-
-from hledac.universal.runtime.sprint_lifecycle import SprintLifecycleManager, SprintPhase
-
-
-
-
 
 # ── Sprint F228F: Nonfeed Prelude Policy ────────────────────────────────────
 
@@ -159,10 +137,10 @@ def canonical_lane_name(lane: object) -> str:
 # Cutting-edge: OrderedDict O(1) move_to_end + popitem(last=False) eviction.
 # No threadsafety needed — sprint loop is single-threaded asyncio; GIL is
 # sufficient. Zero allocation on cache hit (just an int increment).
-from collections import OrderedDict
+from collections import OrderedDict  # noqa: E402
 
 _ADVISORY_LOG_LRU_MAX = 16
-_advisory_log_lru: "OrderedDict[str, int]" = OrderedDict()
+_advisory_log_lru: OrderedDict[str, int] = OrderedDict()
 _advisory_log_suppressed_total: int = 0
 
 
@@ -279,9 +257,13 @@ def resolve_nonfeed_expected_lanes(
 
 
 
-from hledac.universal.runtime.graph_accumulator import SprintGraphAccumulator
-
-from hledac.universal.utils.async_helpers import _check_gathered, safe_gather, safe_gather_dropin, safe_gather_fire_and_forget, safe_gather_strict
+from hledac.universal.runtime.graph_accumulator import SprintGraphAccumulator  # noqa: E402
+from hledac.universal.utils.async_helpers import (  # noqa: E402
+    safe_gather,
+    safe_gather_dropin,
+    safe_gather_fire_and_forget,
+    safe_gather_strict,
+)
 
 # Sprint F262OBS: centralize source_type literals via utils.source_types
 try:
@@ -289,19 +271,11 @@ try:
 except ImportError:
     SourceType = None  # type: ignore[assignment]
 
-from hledac.universal.transport.circuit_breaker import (
-
-    get_all_breaker_snapshots,
-
-    get_all_breaker_states,
-
+from hledac.universal.transport.circuit_breaker import (  # noqa: E402
     MAX_TRACKED_DOMAINS,
-
+    get_all_breaker_snapshots,
+    get_all_breaker_states,
 )
-
-
-
-from hledac.universal.intelligence.doh_lane import DOHAdapter
 
 MAX_LANE_REJECTIONS: int = 1000
 
@@ -339,185 +313,74 @@ def _gc_sprint_callback(phase: str, info: dict) -> None:
 
 
 
-from hledac.universal.runtime.shadow_inputs import (
-
-    collect_lifecycle_snapshot,
-
-    collect_graph_summary,
-
-    collect_model_control_facts,
-
-    collect_provider_runtime_facts,
-
-)
-
-from hledac.universal.runtime.sidecar_bus import (
-
-    SidecarBatch,
-
-    SidecarRunResult,
-
-    create_sidecar_bus,
-
-)
-
-from hledac.universal.runtime.sidecar_dispatcher import (
-
-    SidecarDispatcher,
-
-)
-
-from hledac.universal.runtime.sprint_advisory_runner import (
-
-    AdvisoryRunOutcome,
-
-    SprintAdvisoryRunner,
-
-)
-
-from hledac.universal.runtime.sprint_lifecycle_runner import SprintLifecycleRunner
-
-from hledac.universal.runtime.shadow_parity import run_shadow_parity
-
 # Sprint F204D: Target memory integration
-
-from hledac.universal.knowledge.target_memory import (
-
-    TargetMemoryService,
-
-    TargetMemoryUpdate,
-
+from hledac.universal.knowledge.target_memory import (  # noqa: E402
     MAX_MEMORY_ENTITIES,
-
     MAX_MEMORY_EXPOSURES,
-
     MAX_MEMORY_PIVOTS,
-
+    TargetMemoryService,
+    TargetMemoryUpdate,
 )
-
-from hledac.universal.runtime.shadow_pre_decision import compose_pre_decision
+from hledac.universal.pipeline.pivot_lane_planner import (  # noqa: E402
+    plan_lanes_for_pivot_seeds,
+)
 
 # Sprint F206BG: Canonical acquisition strategy layer
-
-from hledac.universal.runtime.acquisition_strategy import (
-
+from hledac.universal.runtime.acquisition_strategy import (  # noqa: E402
     AcquisitionLane,
-
     AcquisitionLaneOutcome,
-
-    MandatoryLaneTerminality,
-
-    NonfeedPlanDebug,
-
     NonfeedMissionController,
-
+    NonfeedPlanDebug,
     NonfeedSeedContext,
-
-    FeedDominanceBudget,
-
-    normalize_source_family_outcome,
-
-    canonicalize_source_family_outcomes,
-
-    build_acquisition_plan,
-
-    infer_mission_intent,
-
-    is_lane_enabled,
-
-    lane_skip_reason,
-
-    get_lane_plan,
-
-    build_lane_query,
-
-    run_enabled_acquisition_lanes,
-
-    required_terminal_lanes,
-
-    terminality_report,
-
-    lane_is_terminal,
-
     _get_ct_adapter,
-
-    _load_feed_budget_from_env,
-
+    build_acquisition_plan,
+    build_lane_query,
+    canonicalize_source_family_outcomes,
+    get_lane_plan,
+    infer_mission_intent,
+    is_lane_enabled,
+    normalize_source_family_outcome,
+    required_terminal_lanes,
+    run_enabled_acquisition_lanes,
+    terminality_report,
 )
 
 # F216F: Pivot candidate generation from query
-
 # F217E: Nonfeed candidate evidence ledger
-
-from hledac.universal.runtime.nonfeed_candidate_ledger import (
-
+from hledac.universal.runtime.nonfeed_candidate_ledger import (  # noqa: E402
     NonfeedCandidateLedger,
-
-    STAGE_ACCEPTED,
-
-    STAGE_DISCOVERED,
-
-    STAGE_FETCHED,
-
-    STAGE_PARSED,
-
-    STAGE_PROVIDER_FAILED,
-
-    STAGE_QUARANTINED,
-
-    STAGE_REJECTED,
-
-    STAGE_STORED,
-
-    FAMILY_CT,
-
-    FAMILY_PUBLIC,
-
-    FAMILY_PIVOT,
-
 )
-
-from hledac.universal.runtime.pivot_planner import generate_pivot_candidates_from_query
+from hledac.universal.runtime.pivot_planner import generate_pivot_candidates_from_query  # noqa: E402
+from hledac.universal.runtime.shadow_inputs import (  # noqa: E402
+    collect_graph_summary,
+    collect_lifecycle_snapshot,
+    collect_model_control_facts,
+    collect_provider_runtime_facts,
+)
+from hledac.universal.runtime.shadow_parity import run_shadow_parity  # noqa: E402
+from hledac.universal.runtime.shadow_pre_decision import compose_pre_decision  # noqa: E402
+from hledac.universal.runtime.source_finding_bridge import (  # noqa: E402
+    REJECTION_UNSUPPORTED_SHAPE,
+    ct_results_to_findings,
+    passive_dns_results_to_findings,
+    record_ct_storage_results,
+    wayback_results_to_findings,
+)
+from hledac.universal.runtime.sprint_lifecycle_runner import SprintLifecycleRunner  # noqa: E402
 
 # Sprint F220G: Pivot seed extraction and lane planning from feed findings
-
-from hledac.universal.utils.pivot_seed_extractor import (
-
+from hledac.universal.utils.pivot_seed_extractor import (  # noqa: E402
     extract_pivot_seeds_from_texts,
-
 )
-
-from hledac.universal.pipeline.pivot_lane_planner import (
-
-    plan_lanes_for_pivot_seeds,
-
-)
-
-from hledac.universal.runtime.source_finding_bridge import (
-
-    ct_results_to_findings,
-
-    record_ct_storage_results,
-
-    wayback_results_to_findings,
-
-    passive_dns_results_to_findings,
-
-    REJECTION_UNSUPPORTED_SHAPE,
-
-)
-
-
 
 if TYPE_CHECKING:
-
-    pass
-
+    from hledac.universal.knowledge.duckdb_store import CanonicalFinding  # noqa: F401
 
 
-import lmdb
 
-import xxhash
+import lmdb  # noqa: E402
+import xxhash  # noqa: E402
+
 logger = logging.getLogger(__name__)
 
 
@@ -1431,7 +1294,7 @@ _TIER_ORDER = [
 # These five canonical structured threat-intel feeds are high-quality, curated
 # sources -- they belong in STRUCTURED_TI, not OTHER. Mapping them here
 # guarantees they survive both normal and prune mode.
-_DEFAULT_SOURCE_TIER_MAP: dict[str, "SourceTier"] = {
+_DEFAULT_SOURCE_TIER_MAP: dict[str, SourceTier] = {
 
     "cisa_kev": SourceTier.STRUCTURED_TI,
 
@@ -1487,7 +1350,7 @@ class CTLossStage(Enum):
 
     ALL_REJECTED_BY_BRIDGE = "all_rejected_by_bridge"  # hits existed but all candidates rejected
 
-    CANDIDATES_BUILT_NOT_ACCUMULATED = "candidates_built_not_accumulated"  # bridge returned candidates but scheduler dropped them
+    CANDIDATES_BUILT_NOT_ACCUMULATED = "candidates_built_not_accumulated"  # bridge returned candidates but scheduler dropped them  # noqa: E501
 
     ACCUMULATED_NOT_STORED = "accumulated_not_stored"  # candidates accumulated but storage rejected
 
@@ -1854,8 +1717,8 @@ class LaneBudgetPool:
         return min(total / self._total_budget_s, 1.0)
 
     def get_lane_stats(self) -> dict:
-        return {n: dict(allocated_s=a.allocated_s, consumed_s=a.consumed_s,
-                        released_s=a.released_s, timeout_count=a.timeout_count)
+        return {n: {"allocated_s": a.allocated_s, "consumed_s": a.consumed_s,
+                        "released_s": a.released_s, "timeout_count": a.timeout_count}
                 for n, a in self._allocations.items()}
 
 
@@ -2593,7 +2456,7 @@ class SprintSchedulerResult:
 
     doh_accepted_findings: int = 0  # CanonicalFinding candidates accepted (== lane_doh_accepted_findings)
 
-    doh_terminal_stage: str = ""  # Final stage: no_candidates|attempted_empty|attempted_accepted|timeout|provider_error|dependency_missing|skipped|error
+    doh_terminal_stage: str = ""  # Final stage: no_candidates|attempted_empty|attempted_accepted|timeout|provider_error|dependency_missing|skipped|error  # noqa: E501
 
     doh_provider_errors: tuple[str, ...] = ()  # Provider error strings
 
@@ -2658,7 +2521,7 @@ class SprintSchedulerResult:
 
     # Sprint F207L: Nonfeed lane planning debug snapshot for live KPI diagnosis
 
-    nonfeed_plan_debug: "NonfeedPlanDebug | None" = None
+    nonfeed_plan_debug: NonfeedPlanDebug | None = None
 
     # Sprint F207Q-A: Pre-windup barrier telemetry
 
@@ -3159,7 +3022,7 @@ class SprintSchedulerResult:
     # (less frequently bumped) stay AoS.
 
     @property
-    def cycles_started(self) -> int:  # type: ignore[override]
+    def cycles_started(self) -> int:  # type: ignore[override]  # noqa: F811
         if self._int_counter_layout is None:
             return 0
         return self._int_counter_layout.get("cycles_started")
@@ -3170,7 +3033,7 @@ class SprintSchedulerResult:
             self._int_counter_layout.set("cycles_started", value)
 
     @property
-    def cycles_completed(self) -> int:  # type: ignore[override]
+    def cycles_completed(self) -> int:  # type: ignore[override]  # noqa: F811
         if self._int_counter_layout is None:
             return 0
         return self._int_counter_layout.get("cycles_completed")
@@ -3181,7 +3044,7 @@ class SprintSchedulerResult:
             self._int_counter_layout.set("cycles_completed", value)
 
     @property
-    def consecutive_empty_cycles(self) -> int:  # type: ignore[override]
+    def consecutive_empty_cycles(self) -> int:  # type: ignore[override]  # noqa: F811
         if self._int_counter_layout is None:
             return 0
         return self._int_counter_layout.get("consecutive_empty_cycles")
@@ -3192,7 +3055,7 @@ class SprintSchedulerResult:
             self._int_counter_layout.set("consecutive_empty_cycles", value)
 
     @property
-    def unique_entry_hashes_seen(self) -> int:  # type: ignore[override]
+    def unique_entry_hashes_seen(self) -> int:  # type: ignore[override]  # noqa: F811
         if self._int_counter_layout is None:
             return 0
         return self._int_counter_layout.get("unique_entry_hashes_seen")
@@ -3203,7 +3066,7 @@ class SprintSchedulerResult:
             self._int_counter_layout.set("unique_entry_hashes_seen", value)
 
     @property
-    def duplicate_entry_hashes_skipped(self) -> int:  # type: ignore[override]
+    def duplicate_entry_hashes_skipped(self) -> int:  # type: ignore[override]  # noqa: F811
         if self._int_counter_layout is None:
             return 0
         return self._int_counter_layout.get("duplicate_entry_hashes_skipped")
@@ -3214,7 +3077,7 @@ class SprintSchedulerResult:
             self._int_counter_layout.set("duplicate_entry_hashes_skipped", value)
 
     @property
-    def hard_deadline_checked_count(self) -> int:  # type: ignore[override]
+    def hard_deadline_checked_count(self) -> int:  # type: ignore[override]  # noqa: F811
         if self._int_counter_layout is None:
             return 0
         return self._int_counter_layout.get("hard_deadline_checked_count")
@@ -3225,7 +3088,7 @@ class SprintSchedulerResult:
             self._int_counter_layout.set("hard_deadline_checked_count", value)
 
     @property
-    def windup_guard_call_count(self) -> int:  # type: ignore[override]
+    def windup_guard_call_count(self) -> int:  # type: ignore[override]  # noqa: F811
         if self._int_counter_layout is None:
             return 0
         return self._int_counter_layout.get("windup_guard_call_count")
@@ -3236,7 +3099,7 @@ class SprintSchedulerResult:
             self._int_counter_layout.set("windup_guard_call_count", value)
 
     @property
-    def windup_guard_callback_supplied_count(self) -> int:  # type: ignore[override]
+    def windup_guard_callback_supplied_count(self) -> int:  # type: ignore[override]  # noqa: F811
         if self._int_counter_layout is None:
             return 0
         return self._int_counter_layout.get("windup_guard_callback_supplied_count")
@@ -3247,7 +3110,7 @@ class SprintSchedulerResult:
             self._int_counter_layout.set("windup_guard_callback_supplied_count", value)
 
     @property
-    def windup_guard_callback_executed_count(self) -> int:  # type: ignore[override]
+    def windup_guard_callback_executed_count(self) -> int:  # type: ignore[override]  # noqa: F811
         if self._int_counter_layout is None:
             return 0
         return self._int_counter_layout.get("windup_guard_callback_executed_count")
@@ -3258,7 +3121,7 @@ class SprintSchedulerResult:
             self._int_counter_layout.set("windup_guard_callback_executed_count", value)
 
     @property
-    def policy_quality_feedback_calls(self) -> int:  # type: ignore[override]
+    def policy_quality_feedback_calls(self) -> int:  # type: ignore[override]  # noqa: F811
         if self._int_counter_layout is None:
             return 0
         return self._int_counter_layout.get("policy_quality_feedback_calls")
@@ -3269,7 +3132,7 @@ class SprintSchedulerResult:
             self._int_counter_layout.set("policy_quality_feedback_calls", value)
 
     @property
-    def policy_quality_feedback_errors(self) -> int:  # type: ignore[override]
+    def policy_quality_feedback_errors(self) -> int:  # type: ignore[override]  # noqa: F811
         if self._int_counter_layout is None:
             return 0
         return self._int_counter_layout.get("policy_quality_feedback_errors")
@@ -3280,7 +3143,7 @@ class SprintSchedulerResult:
             self._int_counter_layout.set("policy_quality_feedback_errors", value)
 
     @property
-    def ipfs_cids_attempted(self) -> int:  # type: ignore[override]
+    def ipfs_cids_attempted(self) -> int:  # type: ignore[override]  # noqa: F811
         if self._int_counter_layout is None:
             return 0
         return self._int_counter_layout.get("ipfs_cids_attempted")
@@ -3291,7 +3154,7 @@ class SprintSchedulerResult:
             self._int_counter_layout.set("ipfs_cids_attempted", value)
 
     @property
-    def multimodal_enriched_findings(self) -> int:  # type: ignore[override]
+    def multimodal_enriched_findings(self) -> int:  # type: ignore[override]  # noqa: F811
         if self._int_counter_layout is None:
             return 0
         return self._int_counter_layout.get("multimodal_enriched_findings")
@@ -3302,7 +3165,7 @@ class SprintSchedulerResult:
             self._int_counter_layout.set("multimodal_enriched_findings", value)
 
     @property
-    def feed_suppression_count(self) -> int:  # type: ignore[override]
+    def feed_suppression_count(self) -> int:  # type: ignore[override]  # noqa: F811
         if self._int_counter_layout is None:
             return 0
         return self._int_counter_layout.get("feed_suppression_count")
@@ -3313,7 +3176,7 @@ class SprintSchedulerResult:
             self._int_counter_layout.set("feed_suppression_count", value)
 
     @property
-    def forensics_enriched_ct_findings(self) -> int:  # type: ignore[override]
+    def forensics_enriched_ct_findings(self) -> int:  # type: ignore[override]  # noqa: F811
         if self._int_counter_layout is None:
             return 0
         return self._int_counter_layout.get("forensics_enriched_ct_findings")
@@ -3324,7 +3187,7 @@ class SprintSchedulerResult:
             self._int_counter_layout.set("forensics_enriched_ct_findings", value)
 
     @property
-    def acquisition_lanes_skipped(self) -> int:  # type: ignore[override]
+    def acquisition_lanes_skipped(self) -> int:  # type: ignore[override]  # noqa: F811
         if self._int_counter_layout is None:
             return 0
         return self._int_counter_layout.get("acquisition_lanes_skipped")
@@ -4440,11 +4303,8 @@ class SourceWork(msgspec.Struct, frozen=True, gc=False):
 def _import_live_feed_pipeline():
 
     from hledac.universal.pipeline.live_feed_pipeline import (
-
-        async_run_live_feed_pipeline,
-
         FeedPipelineRunResult,
-
+        async_run_live_feed_pipeline,
     )
 
     return async_run_live_feed_pipeline, FeedPipelineRunResult
@@ -4464,11 +4324,8 @@ def _import_live_feed_pipeline():
 def _import_live_public_pipeline():
 
     from hledac.universal.pipeline.live_public_pipeline import (
-
-        async_run_live_public_pipeline,
-
         PipelineRunResult,
-
+        async_run_live_public_pipeline,
     )
 
     return async_run_live_public_pipeline, PipelineRunResult
@@ -4488,17 +4345,11 @@ def _import_live_public_pipeline():
 def _import_exporters():
 
     from hledac.universal.export import (
-
-        render_diagnostic_markdown_to_path,
-
-        render_jsonld_to_path,
-
-        render_stix_bundle_to_path,
-
         render_cti_stix_bundle_to_path,
-
+        render_diagnostic_markdown_to_path,
+        render_jsonld_to_path,
+        render_stix_bundle_to_path,
     )
-
     from hledac.universal.export.stix_exporter import collect_cti_export_inputs
 
     return (
@@ -4708,6 +4559,12 @@ class SprintScheduler:
 
         self._stop_requested = False
 
+        # Recursion guard: track nested SprintScheduler.run() calls to prevent
+        # infinite recursion via self-calls (DoH prelude, pre-windup barrier,
+        # tiered feed sub-sprint). MAX depth = 3, enforced in run().
+
+        self._sprint_depth: int = 0
+
         # Sprint F217E: Nonfeed candidate evidence ledger (runtime only, not persisted)
 
         self._nonfeed_ledger: NonfeedCandidateLedger = NonfeedCandidateLedger()
@@ -4811,13 +4668,13 @@ class SprintScheduler:
 
         self._MAX_FETCH_LATENCY_EMA: int = 1000  # max domains to track
 
-        _EMA_ALPHA: float = 0.3
+        _EMA_ALPHA: float = 0.3  # noqa: N806
 
-        _TIMEOUT_MIN: float = 5.0
+        _TIMEOUT_MIN: float = 5.0  # noqa: N806
 
-        _TIMEOUT_MAX: float = 30.0
+        _TIMEOUT_MAX: float = 30.0  # noqa: N806
 
-        _TIMEOUT_MULT: float = 3.0
+        _TIMEOUT_MULT: float = 3.0  # noqa: N806
 
         # Sprint 8VD §B: Arrow columnar buffer
 
@@ -4955,7 +4812,7 @@ class SprintScheduler:
         # pattern `scheduler.enqueue_pivot = mock` resolves correctly at
         # call time (Python late-binding of attribute lookup).
         from hledac.universal.coordinators.fetch_coordinator import (
-            FetchCoordinator as _FC,
+            FetchCoordinator as _FC,  # noqa: N814
         )
         self._fetch_coordinator = _FC(
             pivot_queue_provider=lambda: getattr(self, "_pivot_queue", None),
@@ -5151,7 +5008,7 @@ class SprintScheduler:
 
         # Sprint F245A: Planner action IOC scope fix -- instance fields for cross-phase access
 
-        # Written at planner_actions_consumption phase (line ~2689), read at _run_mandatory_acquisition_prelude (line ~5458)
+        # Written at planner_actions_consumption phase (line ~2689), read at _run_mandatory_acquisition_prelude (line ~5458)  # noqa: E501
 
         self._planner_seed_iocs: dict[str, tuple[str, ...]] = {}
 
@@ -5553,7 +5410,7 @@ class SprintScheduler:
 
             except Exception as _exc:
 
-                log.debug("prefetch_oracle.suggest_scores failed: %s", _exc)  # Advisory only -- fall back to default ordering
+                log.debug("prefetch_oracle.suggest_scores failed: %s", _exc)  # Advisory only -- fall back to default ordering  # noqa: E501
 
                 oracle_scores = {}
 
@@ -5685,15 +5542,12 @@ class SprintScheduler:
 
         try:
 
-            from hledac.universal.runtime.hypothesis_feedback import (
-
-                HypothesisFeedbackRecord,
-
-            )
-
+            import time as _time
             import uuid
 
-            import time as _time
+            from hledac.universal.runtime.hypothesis_feedback import (
+                HypothesisFeedbackRecord,
+            )
 
 
 
@@ -6126,6 +5980,81 @@ class SprintScheduler:
 
         """
 
+        Recursion guard + thin wrapper around _run_internal().
+
+        Tracks _sprint_depth to prevent infinite recursion via self-calls
+        (DoH prelude / pre-windup barrier / tiered feed sub-sprint). MAX depth = 3.
+        """
+
+        self._sprint_depth += 1
+
+        if self._sprint_depth > 3:
+            import logging as _logging
+
+            _logging.getLogger(__name__).critical(
+
+                "RECURSION GUARD: SprintScheduler.run depth=%d > 3 — aborting to prevent infinite recursion",
+
+                self._sprint_depth,
+
+            )
+
+            self._sprint_depth -= 1
+
+            raise RecursionError(f"SprintScheduler recursion depth exceeded: {self._sprint_depth}")
+
+        try:
+
+            return await self._run_internal(
+
+                lifecycle,
+
+                sources,
+
+                now_monotonic=now_monotonic,
+
+                query=query,
+
+                duckdb_store=duckdb_store,
+
+                ct_log_client=ct_log_client,
+
+                policy_manager=policy_manager,
+
+                progress_callback=progress_callback,
+
+            )
+
+        finally:
+
+            self._sprint_depth -= 1
+
+
+
+    async def _run_internal(
+
+        self,
+
+        lifecycle: Any,
+
+        sources: Sequence[str],
+
+        now_monotonic: float | None = None,
+
+        query: str = "",
+
+        duckdb_store: Any = None,
+
+        ct_log_client: Any = None,
+
+        policy_manager: Any = None,
+
+        progress_callback: Any | None = None,
+
+    ) -> SprintSchedulerResult:
+
+        """
+
         Run the sprint to completion.
 
 
@@ -6303,7 +6232,7 @@ class SprintScheduler:
 
             # Sprint 8SA: Source scoring -- order sources by priority at start of ACTIVE
 
-            _DEFAULT_SOURCE_TYPES = [
+            _DEFAULT_SOURCE_TYPES = [  # noqa: N806
 
                 "cisa_kev", "threatfox_ioc", "urlhaus_recent",
 
@@ -6319,7 +6248,7 @@ class SprintScheduler:
 
             )
 
-    
+
 
             # Sprint F166B: Capture pre-loop surfaces before entering while loop
 
@@ -6331,7 +6260,7 @@ class SprintScheduler:
 
             self._result.entered_active_at_monotonic = _pre_loop_elapsed
 
-    
+
 
             # Sprint F206BG: Build acquisition strategy plan at sprint start
 
@@ -6402,13 +6331,8 @@ class SprintScheduler:
                     try:
 
                         from hledac.universal.runtime.next_seeds_consumption import (
-
                             consume_next_sprint_seeds,
-
                             extract_ioc_values_from_seeds,
-
-                            NextSeedsDiagnostics,
-
                         )
 
                         (
@@ -6497,7 +6421,7 @@ class SprintScheduler:
 
                 self._timer.phase("runtime_pivot_seed_extraction_end")
 
-    
+
 
                 # F240A: planner_actions_consumption phase
 
@@ -6523,7 +6447,7 @@ class SprintScheduler:
 
                             import orjson
 
-    
+
 
                             _pred_raw = _pred_report_path.read_bytes()
 
@@ -6533,14 +6457,12 @@ class SprintScheduler:
 
                             _planner_actions = _inv_packet.get("planner_actions") or []
 
-    
+
 
                             if _planner_actions:
 
                                 from hledac.universal.runtime.next_seeds_consumption import (
-
                                     consume_planner_actions,
-
                                 )
 
                                 (
@@ -6589,7 +6511,7 @@ class SprintScheduler:
 
                 self._timer.phase("planner_actions_consumption_end")
 
-    
+
 
                 # F240A: acquisition_plan_build phase
 
@@ -6659,7 +6581,7 @@ class SprintScheduler:
 
                         _nd.pivot_candidates_count = len(_pivot_candidates)
 
-                        _nd.pivot_candidate_types = tuple(set(p.pivot_type for p in _pivot_candidates))
+                        _nd.pivot_candidate_types = tuple({p.pivot_type for p in _pivot_candidates})
 
                         _nd.pivot_scheduled_lanes = ()
 
@@ -6725,7 +6647,7 @@ class SprintScheduler:
 
                 self._result.acquisition_plan_build_error = str(_exc)[:500]
 
-    
+
 
             # Sprint F245A: Run Mandatory Acquisition Prelude and first cycle concurrently.
 
@@ -6765,7 +6687,7 @@ class SprintScheduler:
 
                 self._timer.phase("prelude_end")
 
-    
+
 
             # Phase 3: Initialize background transports
             await self._init_background_transports()
@@ -6794,20 +6716,20 @@ class SprintScheduler:
             # Sprint F245A: Run prelude and first cycle concurrently
 
             # Sprint F245A: Build first-cycle work items from ordered feed sources
-            first_cycle_work_items = self._build_work_items(ordered_sources)
+            self._build_work_items(ordered_sources)
             first_cycle_task = safe_create_task(
 
-                self._run_one_cycle(lifecycle, ordered_sources, now_monotonic=None, query=query, duckdb_store=duckdb_store),
+                self._run_one_cycle(lifecycle, ordered_sources, now_monotonic=None, query=query, duckdb_store=duckdb_store),  # noqa: E501
                 name="sprint:first_cycle",
             )
 
-    
+
 
             _results = await asyncio.gather(prelude_task, first_cycle_task, return_exceptions=True)
 
             _prelude_exc, _cycle_exc = _results[0], _results[1]
 
-    
+
 
             if isinstance(_prelude_exc, BaseException) and not isinstance(_prelude_exc, asyncio.CancelledError):
 
@@ -6817,11 +6739,11 @@ class SprintScheduler:
 
                 log.warning("[sprint] first cycle raised: %s: %s", type(_cycle_exc).__name__, _cycle_exc)
 
-    
+
 
             self._result.cycles_completed += 1
 
-    
+
 
             # Sprint F214: Only record prelude_complete if prelude actually ran.
 
@@ -6839,7 +6761,7 @@ class SprintScheduler:
 
                 )
 
-    
+
 
             # Propagate CancelledError from either task
 
@@ -6851,7 +6773,7 @@ class SprintScheduler:
 
                 raise _cycle_exc
 
-    
+
 
             # F214: Check deadline after gather -- prevents deadline cascade into advisory lanes
 
@@ -6869,7 +6791,7 @@ class SprintScheduler:
 
                     "hard_deadline_exceeded",
 
-                    f"hard deadline exceeded after first_cycle_gather",
+                    "hard deadline exceeded after first_cycle_gather",
 
                     "GATHER",
 
@@ -6879,7 +6801,7 @@ class SprintScheduler:
 
                 return
 
-    
+
 
             # Sprint 8VD §C: Outer try-except wraps the main cycle loop
 
@@ -6937,7 +6859,7 @@ class SprintScheduler:
 
                             self._capture_timing_fields()
 
-                            await self._finalize_result_truth("stop_requested_break", "stop_requested guard passed", "GATHER", query)
+                            await self._finalize_result_truth("stop_requested_break", "stop_requested guard passed", "GATHER", query)  # noqa: E501
 
                             break
 
@@ -6975,17 +6897,17 @@ class SprintScheduler:
 
                         self._capture_timing_fields()
 
-                        await self._finalize_result_truth("lifecycle_abort_break", "abort_requested from lifecycle", "GATHER", query)
+                        await self._finalize_result_truth("lifecycle_abort_break", "abort_requested from lifecycle", "GATHER", query)  # noqa: E501
 
                         break
 
-    
+
 
                     # Periodic tick
 
-                    phase = self._runner.tick(now_monotonic)
+                    self._runner.tick(now_monotonic)
 
-    
+
 
                     # ── Sprint F207M-A: Nonfeed pre-dispatch checkpoint ───────────
 
@@ -6995,7 +6917,7 @@ class SprintScheduler:
 
                     await self._maybe_dispatch_nonfeed_probe_lanes(query, duckdb_store)
 
-    
+
 
                     # ── Sprint F207S-B: Scheduler-owned prewindup barrier ───────
 
@@ -7021,7 +6943,7 @@ class SprintScheduler:
 
                     self._result.windup_guard_call_count += 1
 
-    
+
 
                     _barrier_result = await self._ensure_pre_windup_lane_terminal_states(
 
@@ -7035,7 +6957,7 @@ class SprintScheduler:
 
                     _barrier_delayed = self._prewindup_barrier_delayed
 
-    
+
 
                     if _barrier_required and not _barrier_satisfied and not _barrier_delayed:
 
@@ -7057,7 +6979,7 @@ class SprintScheduler:
 
                         continue
 
-    
+
 
                     # Barrier satisfied or already delayed once -- delegate to runner
 
@@ -7091,7 +7013,7 @@ class SprintScheduler:
 
                         self._result.windup_guard_last_allowed = _obs.get("allowed")
 
-                        self._result.windup_guard_last_callback_not_executed_reason = _obs.get("callback_not_executed_reason", "")
+                        self._result.windup_guard_last_callback_not_executed_reason = _obs.get("callback_not_executed_reason", "")  # noqa: E501
 
                     if _guard_result:
 
@@ -7105,7 +7027,7 @@ class SprintScheduler:
 
                             await self._maybe_dispatch_nonfeed_probe_lanes(query, duckdb_store)
 
-    
+
 
                         # Phase already advanced via tick(); let scheduler handle pre-windup ops
 
@@ -7151,7 +7073,7 @@ class SprintScheduler:
 
                             self._capture_timing_fields()
 
-                            await self._finalize_result_truth("windup_barrier_passed", "pre-windup barrier satisfied, entered windup", "WINDUP", query)
+                            await self._finalize_result_truth("windup_barrier_passed", "pre-windup barrier satisfied, entered windup", "WINDUP", query)  # noqa: E501
 
                             break  # exit work loop -> teardown
 
@@ -7171,11 +7093,11 @@ class SprintScheduler:
 
                         self._capture_timing_fields()
 
-                        await self._finalize_result_truth("windup_barrier_break", "pre-windup barrier unsatisfied, forced terminalization", "WINDUP", query)
+                        await self._finalize_result_truth("windup_barrier_break", "pre-windup barrier unsatisfied, forced terminalization", "WINDUP", query)  # noqa: E501
 
                         break  # exit work loop -> teardown
 
-    
+
 
                     # ── Sprint 8SA: Source scoring re-ordering ───────────────────
 
@@ -7191,7 +7113,7 @@ class SprintScheduler:
 
                         )
 
-    
+
 
                     # ── Run one cycle ───────────────────────────────────────────
 
@@ -7259,11 +7181,11 @@ class SprintScheduler:
 
                         self._capture_timing_fields()
 
-                        await self._finalize_result_truth("max_cycles_break", "cycles >= max_cycles reached", "GATHER", query)
+                        await self._finalize_result_truth("max_cycles_break", "cycles >= max_cycles reached", "GATHER", query)  # noqa: E501
 
                         break
 
-    
+
 
                     self._result.cycles_started += 1
 
@@ -7328,7 +7250,7 @@ class SprintScheduler:
 
                         self._capture_timing_fields()
 
-                        await self._finalize_result_truth("duration_budget_break", "duration_budget exhausted", "GATHER", query)
+                        await self._finalize_result_truth("duration_budget_break", "duration_budget exhausted", "GATHER", query)  # noqa: E501
 
                         break
 
@@ -7388,13 +7310,13 @@ class SprintScheduler:
 
                     self._result.cycles_completed += 1
 
-    
+
 
                     # Sprint F205H: Tick metrics at cycle completion (bounded, fail-soft)
 
                     self._tick_metrics_on_cycle_end()
 
-    
+
 
                     # Sprint F195C: Progress callback for dashboard / observability
 
@@ -7410,13 +7332,13 @@ class SprintScheduler:
 
                             pass  # fail-safe: dashboard must never affect sprint
 
-    
+
 
                     # Sprint F195B: Partial export every N findings in aggressive mode
 
                     await self._maybe_export_partial(lifecycle)
 
-    
+
 
                     # Sprint 8TB: Drain pivot queue after each ACTIVE cycle
 
@@ -7428,7 +7350,7 @@ class SprintScheduler:
 
                             log.debug(f"Pivot queue drained: {pivot_n} tasks, stats={self._pivot_stats}")
 
-    
+
 
                     if not cycle_ok:
 
@@ -7448,7 +7370,7 @@ class SprintScheduler:
 
                             self._capture_timing_fields()
 
-                            await self._finalize_result_truth("cycle_ok_false_break", "cycle returned False, guard passed", "GATHER", query)
+                            await self._finalize_result_truth("cycle_ok_false_break", "cycle returned False, guard passed", "GATHER", query)  # noqa: E501
 
                             break
 
@@ -7456,7 +7378,7 @@ class SprintScheduler:
 
                         continue
 
-    
+
 
                     # Early exit check
 
@@ -7486,7 +7408,7 @@ class SprintScheduler:
 
                             self._capture_timing_fields()
 
-                            await self._finalize_result_truth("stop_on_first_accepted_break", "first accepted finding, stop", "GATHER", query)
+                            await self._finalize_result_truth("stop_on_first_accepted_break", "first accepted finding, stop", "GATHER", query)  # noqa: E501
 
                             break
 
@@ -7494,7 +7416,7 @@ class SprintScheduler:
 
                         continue
 
-    
+
 
                     # Sleep between cycles (short interval, not one long sleep)
 
@@ -7510,7 +7432,7 @@ class SprintScheduler:
 
                     await self._runner.sleep_or_abort(self._config.effective_cycle_sleep_s)
 
-    
+
 
                     # ── Post-sleep windup gate ──────────────────────────────────
 
@@ -7539,7 +7461,7 @@ class SprintScheduler:
                         # sprint will still exit; it just won't claim "complete" on a
                         # single-lane run. Bounded: entries_per_source is a dict[str,int]
                         # with ≤ 16 source names; no allocation.
-                        _MIN_LANES_FOR_EARLY_WINDUP: int = 2
+                        _MIN_LANES_FOR_EARLY_WINDUP: int = 2  # noqa: N806
                         _lanes_with_evidence = len(self._result.entries_per_source)
                         if (
                             await self._ensure_mandatory_nonfeed_before_return(
@@ -7602,7 +7524,7 @@ class SprintScheduler:
 
                                 log.debug("[F220D] Feed dominance rescue window returned no candidates")
 
-    
+
 
                         self._capture_timing_fields()
 
@@ -7638,7 +7560,7 @@ class SprintScheduler:
 
                             break
 
-    
+
 
                     # Sprint 8UC B.4: Speculative prefetch every 15s
 
@@ -7654,7 +7576,7 @@ class SprintScheduler:
 
                         self._last_speculative = now_mono
 
-    
+
 
                     # Sprint 8UC B.5: OODA cycle every 60s
 
@@ -7668,7 +7590,7 @@ class SprintScheduler:
 
                         self._last_ooda = now_mono
 
-    
+
 
             except Exception as exc:
 
@@ -7682,7 +7604,7 @@ class SprintScheduler:
 
                 self._run_exit_path_override = "aborted_by_error"
 
-    
+
 
             finally:
 
@@ -7699,7 +7621,7 @@ class SprintScheduler:
 
                         log.debug(f"[E4] GC sprint stats: {len(_gc_sprint_stats)} collections")
 
-    
+
 
                 # E2: Opt-in tracemalloc snapshot diff
 
@@ -7745,7 +7667,7 @@ class SprintScheduler:
 
                             pass
 
-    
+
 
             # ── Teardown / Export ───────────────────────────────────────────────
 
@@ -7767,11 +7689,11 @@ class SprintScheduler:
 
                     self._timer.phase("export_end")
 
-    
+
 
             self._result.final_phase = self._runner.current_phase
 
-    
+
 
             # Sprint 8RA: Close persistent dedup at TEARDOWN
 
@@ -7829,7 +7751,7 @@ class SprintScheduler:
 
             await self._unload_hermes_at_teardown()
 
-    
+
 
             # F2 Audit: Release all lazy models (NER, GNN, ANE, MoE) via brain._lazy
 
@@ -7837,7 +7759,7 @@ class SprintScheduler:
 
             lazy_module.unload_all()
 
-    
+
 
             # Sprint 8UC B.4: Cancel all background speculative tasks
 
@@ -7925,7 +7847,7 @@ class SprintScheduler:
             if hasattr(self._fetch_coordinator, 'reset_cover_count'):
                 self._fetch_coordinator.reset_cover_count()
 
-    
+
 
             # Sprint F215G: Close aiohttp sessions for Tor/I2P (session leak fix)
 
@@ -7943,7 +7865,7 @@ class SprintScheduler:
 
                 pass  # fail-safe: session close must not crash teardown
 
-    
+
 
             # WARN 14: Close GopherTransport and OpenSourceCollectors at teardown
 
@@ -7967,7 +7889,7 @@ class SprintScheduler:
 
                 pass  # fail-safe: collector close must not crash teardown
 
-    
+
 
             # Sprint F169E: Compute dominant branch blocker summary (additive, first-non-empty wins)
 
@@ -8069,7 +7991,7 @@ class SprintScheduler:
 
                 _r.branch_degradation_summary = "_".join(_tags)
 
-    
+
 
             # Sprint F195C: Update RL policy with sprint result (opt-in, fail-safe)
             if self._policy_manager is not None:
@@ -8105,7 +8027,7 @@ class SprintScheduler:
                 except Exception:
                     pass  # fail-safe: telemetry is read-only snapshot
 
-    
+
 
             # Sprint F199A: Adapt source weights from per-source quality feedback (fail-soft)
 
@@ -8117,7 +8039,7 @@ class SprintScheduler:
 
                 log.debug(f"[F199A] _adapt_source_weights_from_feedback() failed: {e}")
 
-    
+
 
             # Sprint F228A: Call policy_manager.update_with_quality_decisions if enabled and decisions exist.
 
@@ -8173,7 +8095,7 @@ class SprintScheduler:
 
                             self._result.policy_quality_feedback_decisions += len(_decisions)
 
-                            self._result.policy_quality_feedback_sources += len(set(d.get("source_family") for d in _decisions))
+                            self._result.policy_quality_feedback_sources += len({d.get("source_family") for d in _decisions})  # noqa: E501
 
                         except asyncio.CancelledError:
 
@@ -8304,7 +8226,7 @@ class SprintScheduler:
                 try:
                     _broadcast = getattr(self._communication_layer, "broadcast_message", None)
                     if _broadcast is not None:
-                        _summary = {"event": "sprint_end", "sprint_id": self._sprint_id, "findings": len(self._result.findings) if self._result is not None else 0}
+                        _summary = {"event": "sprint_end", "sprint_id": self._sprint_id, "findings": len(self._result.findings) if self._result is not None else 0}  # noqa: E501
                         if asyncio.iscoroutine(_broadcast(_summary)):
                             await _broadcast(_summary)
                 except Exception:
@@ -9777,13 +9699,7 @@ class SprintScheduler:
         # Build a minimal CT plan with tiny bounds
 
         from hledac.universal.runtime.acquisition_strategy import (
-
-            AcquisitionLanePlan,
-
             AcquisitionLaneOutcome,
-
-            RiskLevel,
-
         )
 
 
@@ -9946,7 +9862,7 @@ class SprintScheduler:
 
                         _sample_hits = list(result.hits)[:3]
 
-                        _raw_keys = tuple(sorted(set(
+                        _raw_keys = tuple(sorted({
 
                             k for hit in _sample_hits
 
@@ -9954,7 +9870,7 @@ class SprintScheduler:
 
                             if k
 
-                        )))
+                        }))
 
 
 
@@ -10124,9 +10040,9 @@ class SprintScheduler:
 
                         self._result.ct_valid_domain_count = _ct_telemetry.get("ct_bridge_valid_domain_count", 0)
 
-                        self._result.ct_bridge_build_success_count = _ct_telemetry.get("ct_bridge_build_success_count", 0)
+                        self._result.ct_bridge_build_success_count = _ct_telemetry.get("ct_bridge_build_success_count", 0)  # noqa: E501
 
-                        self._result.ct_bridge_quality_rejected_count = _ct_telemetry.get("ct_bridge_quality_rejected_count", 0)
+                        self._result.ct_bridge_quality_rejected_count = _ct_telemetry.get("ct_bridge_quality_rejected_count", 0)  # noqa: E501
 
                         # F231B: CT expansion clue summary -- domain expansion evidence visible even when accepted=0
 
@@ -10167,9 +10083,9 @@ class SprintScheduler:
 
                     # Sprint F216D: CT quarantine evidence for raw hits rejected by bridge
 
-                    _ct_quarantine_count = _ct_telemetry.get("ct_quarantine_count", 0) if isinstance(_ct_telemetry, dict) else 0
+                    _ct_quarantine_count = _ct_telemetry.get("ct_quarantine_count", 0) if isinstance(_ct_telemetry, dict) else 0  # noqa: E501
 
-                    _ct_quarantine_entries = _ct_telemetry.get("ct_quarantine_entries", []) if isinstance(_ct_telemetry, dict) else []
+                    _ct_quarantine_entries = _ct_telemetry.get("ct_quarantine_entries", []) if isinstance(_ct_telemetry, dict) else []  # noqa: E501
 
                     self._result.ct_quarantine_count = _ct_quarantine_count
 
@@ -10262,7 +10178,7 @@ class SprintScheduler:
 
                     )
 
-            except asyncio.TimeoutError:
+            except TimeoutError:
 
                 return AcquisitionLaneOutcome(
 
@@ -10384,9 +10300,9 @@ class SprintScheduler:
 
                         self._result.wayback_added_url_count += wayback_telemetry.get("wayback_added_count", 0)
 
-                        self._result.wayback_digest_changed_count += wayback_telemetry.get("wayback_digest_changed_count", 0)
+                        self._result.wayback_digest_changed_count += wayback_telemetry.get("wayback_digest_changed_count", 0)  # noqa: E501
 
-                        self._result.wayback_unchanged_rejected += wayback_telemetry.get("wayback_unchanged_rejected", 0)
+                        self._result.wayback_unchanged_rejected += wayback_telemetry.get("wayback_unchanged_rejected", 0)  # noqa: E501
 
                     _attempted_lanes.append("wayback")
 
@@ -10400,7 +10316,7 @@ class SprintScheduler:
 
         else:
 
-            _skip_reason = "memory_critical" if not _memory_ok else ("ct_timeout" if _outcome and _outcome.timeout else "ct_failed")
+            _skip_reason = "memory_critical" if not _memory_ok else ("ct_timeout" if _outcome and _outcome.timeout else "ct_failed")  # noqa: E501
 
             _skipped["wayback"] = _skip_reason
 
@@ -10832,18 +10748,12 @@ class SprintScheduler:
 
         try:
 
-            from hledac.universal.runtime.acquisition_strategy import (
-
-                build_lane_query,
-
-                AcquisitionLane,
-
-            )
-
             from hledac.universal.pipeline.live_public_pipeline import (
-
                 async_run_live_public_pipeline,
-
+            )
+            from hledac.universal.runtime.acquisition_strategy import (
+                AcquisitionLane,
+                build_lane_query,
             )
 
 
@@ -10890,7 +10800,7 @@ class SprintScheduler:
 
                 }
 
-            except asyncio.TimeoutError:
+            except TimeoutError:
 
                 return {"attempted": True, "timeout": True}
 
@@ -10923,17 +10833,8 @@ class SprintScheduler:
         try:
 
             from hledac.universal.runtime.acquisition_strategy import (
-
-                build_lane_query,
-
                 AcquisitionLane,
-
-            )
-
-            from hledac.universal.runtime.source_finding_bridge import (
-
-                ct_results_to_findings,
-
+                build_lane_query,
             )
 
 
@@ -10970,7 +10871,7 @@ class SprintScheduler:
 
                 }
 
-            except asyncio.TimeoutError:
+            except TimeoutError:
 
                 return {"attempted": True, "timeout": True}
 
@@ -11122,13 +11023,13 @@ class SprintScheduler:
 
                         # Sample (max 10, no raw payload text)
 
-                        _sample = tuple(sorted(set(
+                        _sample = tuple(sorted({
 
                             getattr(_s, "value", "") or ""
 
                             for _s in _extraction.seeds
 
-                        ))[:10])
+                        })[:10])
 
                         self._result.pivot_seed_sample = _sample
 
@@ -11140,35 +11041,35 @@ class SprintScheduler:
 
                             # [F226A] Populate seed tuples for NonfeedSeedContext propagation
 
-                            _domains = tuple(sorted(set(
+                            _domains = tuple(sorted({
 
                                 s.value for s in _extraction.seeds if s.seed_type == "domain"
 
-                            )))
+                            }))
 
-                            _ips = tuple(sorted(set(
+                            _ips = tuple(sorted({
 
                                 s.value for s in _extraction.seeds if s.seed_type == "ip"
 
-                            )))
+                            }))
 
-                            _urls = tuple(sorted(set(
+                            _urls = tuple(sorted({
 
                                 s.value for s in _extraction.seeds if s.seed_type == "url"
 
-                            )))
+                            }))
 
-                            _hashes = tuple(sorted(set(
+                            _hashes = tuple(sorted({
 
                                 s.value for s in _extraction.seeds if s.seed_type == "hash"
 
-                            )))
+                            }))
 
-                            _cves = tuple(sorted(set(
+                            _cves = tuple(sorted({
 
                                 s.value for s in _extraction.seeds if s.seed_type == "cve"
 
-                            )))
+                            }))
 
                             self._result.pivot_seed_domains = _domains
 
@@ -11192,7 +11093,7 @@ class SprintScheduler:
 
                             self._result.planned_pivot_lanes = tuple(
 
-                                sorted(set(item.lane.upper() for item in _plan.items))
+                                sorted({item.lane.upper() for item in _plan.items})
 
                             )
 
@@ -11224,7 +11125,7 @@ class SprintScheduler:
 
                         log.debug(f"[F220D] PUBLIC rescue: {_pub_result['accepted']} accepted")
 
-            except asyncio.TimeoutError:
+            except TimeoutError:
 
                 log.debug("[F220D] PUBLIC rescue timed out (15s)")
 
@@ -11258,7 +11159,7 @@ class SprintScheduler:
 
                         log.debug(f"[F220D] CT rescue: {_ct_result['raw_count']} raw results")
 
-            except asyncio.TimeoutError:
+            except TimeoutError:
 
                 log.debug("[F220D] CT rescue timed out (15s)")
 
@@ -11487,11 +11388,10 @@ class SprintScheduler:
             try:
 
                 from hledac.universal.runtime.acquisition_strategy import (
-
-                    required_terminal_lanes as _rtl,
-
                     AcquisitionLane,
-
+                )
+                from hledac.universal.runtime.acquisition_strategy import (
+                    required_terminal_lanes as _rtl,
                 )
 
                 _mlt_tuples = _rtl(
@@ -11533,11 +11433,10 @@ class SprintScheduler:
             try:
 
                 from hledac.universal.runtime.acquisition_strategy import (
-
                     build_acquisition_plan,
-
+                )
+                from hledac.universal.runtime.acquisition_strategy import (
                     required_terminal_lanes as _rtl,
-
                 )
 
                 # F226C: Pass acquisition_profile from config so nonfeed lanes are enabled.
@@ -11656,7 +11555,7 @@ class SprintScheduler:
 
         self._result.acquisition_prelude_required_lanes = _required
 
-        self._result.acquisition_prelude_reason = f"domain_query_requires_prelude"
+        self._result.acquisition_prelude_reason = "domain_query_requires_prelude"
 
 
 
@@ -11680,18 +11579,12 @@ class SprintScheduler:
 
             try:
 
-                from hledac.universal.runtime.acquisition_strategy import (
-
-                    build_lane_query,
-
-                    AcquisitionLane,
-
-                )
-
                 from hledac.universal.pipeline.live_public_pipeline import (
-
                     async_run_live_public_pipeline,
-
+                )
+                from hledac.universal.runtime.acquisition_strategy import (
+                    AcquisitionLane,
+                    build_lane_query,
                 )
 
 
@@ -11760,7 +11653,7 @@ class SprintScheduler:
 
                         _terminal_lanes.append("PUBLIC")
 
-                    except asyncio.TimeoutError:
+                    except TimeoutError:
 
                         _public_result = {
 
@@ -11819,19 +11712,12 @@ class SprintScheduler:
             try:
 
                 from hledac.universal.runtime.acquisition_strategy import (
-
-                    build_lane_query,
-
                     AcquisitionLane,
-
                     AcquisitionLaneOutcome,
-
+                    build_lane_query,
                 )
-
                 from hledac.universal.runtime.source_finding_bridge import (
-
                     ct_results_to_findings,
-
                 )
 
 
@@ -11922,7 +11808,7 @@ class SprintScheduler:
 
                             _terminal_lanes.append("CT")
 
-                    except asyncio.TimeoutError:
+                    except TimeoutError:
 
                         _ct_outcome_prelude = AcquisitionLaneOutcome(
 
@@ -12026,7 +11912,7 @@ class SprintScheduler:
 
                 if _ct_results_raw > 0 and hasattr(_ct_result, 'hits') and _ct_result.hits:
 
-                    _prelude_keys = tuple(sorted(set(
+                    _prelude_keys = tuple(sorted({
 
                         k for hit in list(_ct_result.hits)[:3]
 
@@ -12034,7 +11920,7 @@ class SprintScheduler:
 
                         if k
 
-                    )))
+                    }))
 
                 self._result.ct_loss_stage = _prelude_loss_stage
 
@@ -12050,7 +11936,7 @@ class SprintScheduler:
 
                 self._result.ct_bridge_rejections_count = len(_rejections_prelude) if _rejections_prelude else 0
 
-                self._result.ct_bridge_rejection_reasons = tuple(str(r) for r in (_rejections_prelude[:3] if _rejections_prelude else []))
+                self._result.ct_bridge_rejection_reasons = tuple(str(r) for r in (_rejections_prelude[:3] if _rejections_prelude else []))  # noqa: E501
 
                 self._result.ct_candidates_accumulated = 0  # prelude does not accumulate
 
@@ -12066,15 +11952,15 @@ class SprintScheduler:
 
                     self._result.ct_valid_domain_count = _ct_telemetry_prelude.get("ct_bridge_valid_domain_count", 0)
 
-                    self._result.ct_bridge_build_success_count = _ct_telemetry_prelude.get("ct_bridge_build_success_count", 0)
+                    self._result.ct_bridge_build_success_count = _ct_telemetry_prelude.get("ct_bridge_build_success_count", 0)  # noqa: E501
 
-                    self._result.ct_bridge_quality_rejected_count = _ct_telemetry_prelude.get("ct_bridge_quality_rejected_count", 0)
+                    self._result.ct_bridge_quality_rejected_count = _ct_telemetry_prelude.get("ct_bridge_quality_rejected_count", 0)  # noqa: E501
 
                 # Sprint F216D: CT quarantine evidence for raw hits rejected by bridge
 
-                _ct_quarantine_count = _ct_telemetry_prelude.get("ct_quarantine_count", 0) if isinstance(_ct_telemetry_prelude, dict) else 0
+                _ct_quarantine_count = _ct_telemetry_prelude.get("ct_quarantine_count", 0) if isinstance(_ct_telemetry_prelude, dict) else 0  # noqa: E501
 
-                _ct_quarantine_entries = _ct_telemetry_prelude.get("ct_quarantine_entries", []) if isinstance(_ct_telemetry_prelude, dict) else []
+                _ct_quarantine_entries = _ct_telemetry_prelude.get("ct_quarantine_entries", []) if isinstance(_ct_telemetry_prelude, dict) else []  # noqa: E501
 
                 self._result.ct_quarantine_count = _ct_quarantine_count
 
@@ -12188,8 +12074,9 @@ class SprintScheduler:
                 try:
 
                     from hledac.universal.pipeline.pivot_lane_planner import plan_lanes_for_pivot_seeds
-
-                    from hledac.universal.runtime.pivot_planner import generate_pivot_candidates_from_query as _gen_pivots
+                    from hledac.universal.runtime.pivot_planner import (
+                        generate_pivot_candidates_from_query as _gen_pivots,
+                    )
 
                     _pivot_seeds = _gen_pivots(query)
 
@@ -12224,9 +12111,7 @@ class SprintScheduler:
             # Safe: no network, no model load, duckdb read capped at 1000 rows, fail-soft.
 
             from hledac.universal.runtime.nonfeed_seed_runtime import (
-
                 run_runtime_pivot_prelude as _run_runtime_pivot_prelude,
-
             )
 
 
@@ -12336,15 +12221,8 @@ class SprintScheduler:
                 if _is_domain_query and not self._result.seed_context_available:
 
                     from hledac.universal.runtime.nonfeed_seed_runtime import (
-
-                        _ACQUISITION_PROFILE,
-
                         _should_allow_low_quality_seed_for_profile,
-
-                        _classify_and_filter_seeds,
-
                         classify_seed_quality,
-
                     )
 
                     _domain = query.strip().lower()
@@ -12525,7 +12403,7 @@ class SprintScheduler:
 
             # run in the current sprint instead of waiting for the next query-derived run.
 
-            self._result.nonfeed_profile_expected_lanes = getattr(self._result, "nonfeed_profile_expected_lanes", ()) or ()
+            self._result.nonfeed_profile_expected_lanes = getattr(self._result, "nonfeed_profile_expected_lanes", ()) or ()  # noqa: E501
 
             _unlocked: list[str] = getattr(self._result, "lanes_unlocked_by_seed_context", []) or []
 
@@ -12615,7 +12493,7 @@ class SprintScheduler:
 
                 _seed_ctx = NonfeedSeedContext(
 
-                    domains=tuple((self._result.pivot_seed_domains or ()) + (self._result.next_seeds_ioc_domains or ())),
+                    domains=tuple((self._result.pivot_seed_domains or ()) + (self._result.next_seeds_ioc_domains or ())),  # noqa: E501
 
                     ips=tuple((self._result.pivot_seed_ips or ()) + (self._result.next_seeds_ioc_ips or ())),
 
@@ -12805,7 +12683,7 @@ class SprintScheduler:
 
         pivot_lanes: (Sequence[Any] | None) = None,
 
-        seed_context: "NonfeedSeedContext" | None = None,
+        seed_context: NonfeedSeedContext | None = None,
 
     ) -> None:
 
@@ -12923,7 +12801,7 @@ class SprintScheduler:
 
                             return (_lane_name, 0)
 
-                except asyncio.TimeoutError:
+                except TimeoutError:
 
                     nonfeed_prelude_errors[_lane_name] = "prelude_timeout"
 
@@ -12989,7 +12867,7 @@ class SprintScheduler:
 
         nonfeed_prelude_skipped: dict[str, str],
 
-        seed_context: "NonfeedSeedContext" | None = None,
+        seed_context: NonfeedSeedContext | None = None,
 
     ) -> tuple[str, int]:
 
@@ -13001,10 +12879,8 @@ class SprintScheduler:
 
         """
 
-        from hledac.universal.runtime.acquisition_strategy import AcquisitionLane, build_lane_query
-
         from hledac.universal.intelligence.wayback_diff_miner import WaybackDiffMiner
-
+        from hledac.universal.runtime.acquisition_strategy import AcquisitionLane
         from hledac.universal.runtime.source_finding_bridge import wayback_results_to_findings
 
 
@@ -13093,7 +12969,7 @@ class SprintScheduler:
 
         nonfeed_prelude_accepted: dict[str, int],
 
-        seed_context: "NonfeedSeedContext" | None = None,
+        seed_context: NonfeedSeedContext | None = None,
 
     ) -> tuple[str, int]:
 
@@ -13105,11 +12981,9 @@ class SprintScheduler:
 
         """
 
-        from hledac.universal.runtime.acquisition_strategy import AcquisitionLane, build_lane_query
-
-        from hledac.universal.security.passive_dns import call_lookup_passive_dns
-
+        from hledac.universal.runtime.acquisition_strategy import AcquisitionLane
         from hledac.universal.runtime.source_finding_bridge import passive_dns_results_to_findings
+        from hledac.universal.security.passive_dns import call_lookup_passive_dns
 
 
 
@@ -13183,7 +13057,7 @@ class SprintScheduler:
 
         pivot_doh_items: (Sequence[Any] | None) = None,
 
-        seed_context: "NonfeedSeedContext" | None = None,
+        seed_context: NonfeedSeedContext | None = None,
 
     ) -> tuple[str, int]:
 
@@ -13217,8 +13091,7 @@ class SprintScheduler:
 
         """
 
-        from hledac.universal.runtime.acquisition_strategy import AcquisitionLane, build_lane_query, is_lane_enabled
-
+        from hledac.universal.runtime.acquisition_strategy import AcquisitionLane, is_lane_enabled
         from hledac.universal.runtime.source_finding_bridge import doh_results_to_findings
 
 
@@ -13429,7 +13302,7 @@ class SprintScheduler:
 
 
 
-        except asyncio.TimeoutError:
+        except TimeoutError:
 
             self._result.doh_terminal_stage = "timeout"
 
@@ -13531,7 +13404,6 @@ class SprintScheduler:
 
         """
 
-        import time as _time
 
 
 
@@ -13643,7 +13515,7 @@ class SprintScheduler:
 
         # OR ct_request_timeout (timeout counts as terminal even with zero findings),
 
-        # OR ct_terminal_stage in (error, skipped, request_timeout, no_candidates, provider_cooldown, provider_unavailable).
+        # OR ct_terminal_stage in (error, skipped, request_timeout, no_candidates, provider_cooldown, provider_unavailable).  # noqa: E501
 
         # [F250B] provider_cooldown/provider_unavailable count as terminal even without findings.
 
@@ -14301,7 +14173,7 @@ class SprintScheduler:
 
         """
 
-        async_run_live_feed, FeedPipelineRunResult = _import_live_feed_pipeline()
+        async_run_live_feed, FeedPipelineRunResult = _import_live_feed_pipeline()  # noqa: N806
 
 
 
@@ -14385,7 +14257,7 @@ class SprintScheduler:
 
                     return work.feed_url, result
 
-                except asyncio.TimeoutError:
+                except TimeoutError:
 
                     return work.feed_url, FeedPipelineRunResult(
 
@@ -14546,7 +14418,7 @@ class SprintScheduler:
 
                     )
 
-            except asyncio.TimeoutError:
+            except TimeoutError:
 
                 log.debug("[stable] PUBLIC branch timed out after %ss", public_timeout)
 
@@ -14670,13 +14542,13 @@ class SprintScheduler:
 
                         _seed_ctx = NonfeedSeedContext(
 
-                            domains=tuple((self._result.pivot_seed_domains or ()) + (self._result.next_seeds_ioc_domains or ())),
+                            domains=tuple((self._result.pivot_seed_domains or ()) + (self._result.next_seeds_ioc_domains or ())),  # noqa: E501
 
                             ips=tuple((self._result.pivot_seed_ips or ()) + (self._result.next_seeds_ioc_ips or ())),
 
                             urls=tuple((self._result.pivot_seed_urls or ()) + (self._result.next_seeds_ioc_urls or ())),
 
-                            hashes=tuple((self._result.pivot_seed_hashes or ()) + (self._result.next_seeds_ioc_hashes or ())),
+                            hashes=tuple((self._result.pivot_seed_hashes or ()) + (self._result.next_seeds_ioc_hashes or ())),  # noqa: E501
 
                             cves=tuple((self._result.pivot_seed_cves or ()) + (self._result.next_seeds_ioc_cves or ())),
 
@@ -14766,7 +14638,7 @@ class SprintScheduler:
 
                         self._ingest_feed_public_candidates_to_ledger()
 
-            except asyncio.TimeoutError:
+            except TimeoutError:
 
                 log.debug("[stable] ADVISORY lanes timed out after %ss", lanes_timeout)
 
@@ -14964,7 +14836,7 @@ class SprintScheduler:
 
             """Feed branch: fetches all sources concurrently."""
 
-            async_run_live_feed, FeedPipelineRunResult = _import_live_feed_pipeline()
+            async_run_live_feed, FeedPipelineRunResult = _import_live_feed_pipeline()  # noqa: N806
 
             branch_concurrency = 4
 
@@ -15024,7 +14896,7 @@ class SprintScheduler:
 
                         return work.feed_url, result
 
-                    except _asyncio.TimeoutError:
+                    except TimeoutError:
 
                         return work.feed_url, FeedPipelineRunResult(
 
@@ -15163,7 +15035,7 @@ class SprintScheduler:
                     # Bootstrap is the recovery path -- it should be on by default and turned
                     # off only for profiles that explicitly opt out (e.g. nonfeed_diagnostic).
                     _acq_profile = getattr(self._config, "acquisition_profile", "") or ""
-                    _BOOTSTRAP_OPT_OUT_PROFILES = frozenset({"nonfeed_diagnostic", "none", "off"})
+                    _BOOTSTRAP_OPT_OUT_PROFILES = frozenset({"nonfeed_diagnostic", "none", "off"})  # noqa: N806
                     _bootstrap_enabled = _acq_profile not in _BOOTSTRAP_OPT_OUT_PROFILES
 
                     # Sprint F221C: Store bootstrap state before timeout context so exception handler
@@ -15188,7 +15060,7 @@ class SprintScheduler:
 
                     )
 
-            except _asyncio.TimeoutError:
+            except TimeoutError:
 
                 log.debug("[aggressive] Public branch timed out after %ss", branch_timeout)
 
@@ -15340,7 +15212,7 @@ class SprintScheduler:
 
                     await self._run_ct_log_discovery_in_cycle(query=query, store=duckdb_store)
 
-            except _asyncio.TimeoutError:
+            except TimeoutError:
 
                 log.debug("[aggressive] CT branch timed out after %ss", branch_timeout)
 
@@ -15388,7 +15260,6 @@ class SprintScheduler:
 
         outer_timeout = self._branch_timeout_s("cycle_envelope", remaining_s)
 
-        results = []
 
         if outer_timeout > 0:
 
@@ -15398,7 +15269,7 @@ class SprintScheduler:
 
                     # F262D: migrated _asyncio.gather -> safe_gather_dropin
                     # (fail-soft invariant preserved; timeout context stays external)
-                    results = await safe_gather_dropin(
+                    await safe_gather_dropin(
 
                         feed_branch, public_branch, ct_branch,
 
@@ -15406,7 +15277,7 @@ class SprintScheduler:
 
                     )
 
-            except _asyncio.TimeoutError:
+            except TimeoutError:
 
                 log.debug("[aggressive] Branch(es) did not complete within %ss", outer_timeout)
 
@@ -15450,7 +15321,6 @@ class SprintScheduler:
 
                 )
 
-                results = []
 
                 # F214-E: Always emit PUBLIC outcome so Lane Execution Truth never loses PUBLIC
 
@@ -15676,7 +15546,7 @@ class SprintScheduler:
 
                                 pass  # fail-soft
 
-            except _asyncio.TimeoutError:
+            except TimeoutError:
 
                 log.debug("[aggressive] ADVISORY lanes timed out after %ss", lanes_timeout)
 
@@ -15751,7 +15621,7 @@ class SprintScheduler:
 
         try:
 
-            async_run_public, PipelineRunResult = _import_live_public_pipeline()
+            async_run_public, PipelineRunResult = _import_live_public_pipeline()  # noqa: N806
 
         except Exception as exc:
 
@@ -15849,7 +15719,7 @@ class SprintScheduler:
 
                 if isinstance(e, asyncio.CancelledError):
 
-                    raise e  # [I6] propagate CancelledError
+                    raise e  # [I6] propagate CancelledError  # noqa: B904
 
                 log.error(f"Public pipeline task failed: {e}")
 
@@ -16416,7 +16286,7 @@ class SprintScheduler:
 
         )
 
-        domain = matches[0].lstrip("www.") if matches else query.strip()
+        domain = matches[0].lstrip("www.") if matches else query.strip()  # noqa: B005
 
         if not domain:
 
@@ -16586,7 +16456,7 @@ class SprintScheduler:
 
                 # Sprint F204A: Route all accepted CT findings through FindingSidecarBus
 
-                accepted_findings = [f for f, r in zip(findings, results)
+                accepted_findings = [f for f, r in zip(findings, results, strict=False)
 
                                      if isinstance(r, dict) and r.get("accepted")]
 
@@ -16698,11 +16568,9 @@ class SprintScheduler:
 
                     try:
 
-                        from hledac.universal.project_types import ActionType
-
                         from hledac.universal.layers import get_temporal_signal_layer
-
                         from hledac.universal.layers.temporal_signal_layer import event_from_finding_like
+                        from hledac.universal.project_types import ActionType
 
                         ghost = getattr(self._layer_manager, "ghost", None)
 
@@ -16852,17 +16720,14 @@ class SprintScheduler:
 
         """
 
-        import os
 
         import asyncio as _asyncio
-
-        from urllib.parse import urlparse
 
 
 
         # Guard: HLEDAC_ENABLE_TOR gate
 
-        if not _env_flag("HLEDAC_ENABLE_TOR", "").strip() in ("1", "true", "True"):
+        if _env_flag("HLEDAC_ENABLE_TOR", "").strip() not in ("1", "true", "True"):
 
             return
 
@@ -16978,7 +16843,7 @@ class SprintScheduler:
 
         findings: list = []
 
-        semaphore = _asyncio.Semaphore(3)
+        _asyncio.Semaphore(3)
 
 
 
@@ -16991,11 +16856,8 @@ class SprintScheduler:
             try:
 
                 from hledac.universal.intelligence.dark_web_intelligence import (
-
                     DarkWebCrawler,
-
                     darkweb_content_to_canonical,
-
                 )
 
 
@@ -17026,7 +16888,7 @@ class SprintScheduler:
 
                         await crawler.close()  # F251: prevent session/connector leak
 
-            except _asyncio.TimeoutError:
+            except TimeoutError:
 
                 log.debug("[F251] Seed %s timed out after 45s", seed)
 
@@ -17052,7 +16914,7 @@ class SprintScheduler:
 
                         findings.extend(result)
 
-        except _asyncio.TimeoutError:
+        except TimeoutError:
 
             log.debug("[F251] Onion sidecar timed out after 120s")
 
@@ -17115,7 +16977,6 @@ class SprintScheduler:
 
         """
 
-        import os
 
         import asyncio as _asyncio
 
@@ -17123,7 +16984,7 @@ class SprintScheduler:
 
         # Guard: HLEDAC_ENABLE_I2P gate
 
-        if not _env_flag("HLEDAC_ENABLE_I2P", "").strip() in ("1", "true", "True"):
+        if _env_flag("HLEDAC_ENABLE_I2P", "").strip() not in ("1", "true", "True"):
 
             return
 
@@ -17156,7 +17017,6 @@ class SprintScheduler:
         try:
 
             from hledac.universal.transport.i2p_transport import I2PTransport
-
             from hledac.universal.transport.transport_resolver import get_i2p_transport_singleton
 
             singleton = get_i2p_transport_singleton()
@@ -17262,11 +17122,9 @@ class SprintScheduler:
             inner: list = []
 
             try:
-
                 from hledac.universal.knowledge.duckdb_store import CanonicalFinding
-
+                from hledac.universal.utils.source_types import SourceType
             except Exception:
-
                 return inner
 
 
@@ -17293,7 +17151,7 @@ class SprintScheduler:
 
                     finding = CanonicalFinding(
 
-                        finding_id=f"i2p-{addr}-{int(datetime.now().timestamp() * 1000)}",
+                        finding_id=f"i2p-{addr}-{int(datetime.now().timestamp() * 1000)}",  # noqa: DTZ005
 
                         query="i2p_discovery",
 
@@ -17301,7 +17159,7 @@ class SprintScheduler:
 
                         confidence=0.5,
 
-                        ts=datetime.now().isoformat(),
+                        ts=datetime.now().isoformat(),  # noqa: DTZ005
 
                         provenance=["i2p_transport"],
 
@@ -17333,7 +17191,7 @@ class SprintScheduler:
 
                         findings.extend(result)
 
-        except _asyncio.TimeoutError:
+        except TimeoutError:
 
             log.debug("[F2P] I2P sidecar timed out after 120s")
 
@@ -17424,14 +17282,10 @@ class SprintScheduler:
 
         try:
 
-            from hledac.universal.dht.kademlia_node import KademliaNode, DHT_REAL_UDP
-
+            from hledac.universal.dht.kademlia_node import DHT_REAL_UDP
             from hledac.universal.intelligence.dark_web_intelligence import (
-
                 DHTFinding,
-
                 dht_content_to_canonical,
-
             )
 
 
@@ -17664,7 +17518,7 @@ class SprintScheduler:
 
 
 
-        except _asyncio.TimeoutError:
+        except TimeoutError:
 
             log.debug("[F214Q] DHT sidecar timed out after 60s")
 
@@ -17684,10 +17538,9 @@ class SprintScheduler:
         Gate: HLEDAC_ENABLE_GOPHER=1, max_items=50, timeout=30s.
         Fail-soft: Gopher errors logged, never crash sprint.
         """
-        import asyncio as _asyncio
 
         # Guard: HLEDAC_ENABLE_GOPHER gate
-        if not _env_flag("HLEDAC_ENABLE_GOPHER", "").strip() in ("1", "true", "True"):
+        if _env_flag("HLEDAC_ENABLE_GOPHER", "").strip() not in ("1", "true", "True"):
             return []
 
         # Guard: memory pressure check (M1 8GB safety)
@@ -17782,13 +17635,12 @@ class SprintScheduler:
 
         """
 
-        import aiohttp as _aiohttp
 
 
 
         # Guard: IPFS gate
 
-        if not _env_flag("HLEDAC_ENABLE_IPFS", "").strip() in ("1", "true", "True"):
+        if _env_flag("HLEDAC_ENABLE_IPFS", "").strip() not in ("1", "true", "True"):
 
             return []
 
@@ -17851,14 +17703,9 @@ class SprintScheduler:
         try:
 
             from hledac.universal.network.ipfs_client import (
-
                 ipfs_fetch_as_findings,
-
                 ipfs_search_as_findings,
-
             )
-
-            from hledac.universal.knowledge.duckdb_store import CanonicalFinding
 
 
 
@@ -17963,8 +17810,7 @@ class SprintScheduler:
             from forensics.enrichment_service import _extract_file_path_from_payload
             from security.digital_ghost_detector import analyze_file_ghosts
 
-            MAX_FILES = 10
-            MAX_FILE_SIZE_MB = 50
+            MAX_FILES = 10  # noqa: N806
 
             file_paths = []
             for f in file_findings:
@@ -18011,7 +17857,7 @@ class SprintScheduler:
                             confidence=getattr(r, 'overall_confidence', 0.5),
                             payload={
                                 "ghost_signals_count": len(getattr(r, 'ghost_signals', [])),
-                                "ghost_signals": [gs.__dict__ if hasattr(gs, '__dict__') else str(gs) for gs in getattr(r, 'ghost_signals', [])],
+                                "ghost_signals": [gs.__dict__ if hasattr(gs, '__dict__') else str(gs) for gs in getattr(r, 'ghost_signals', [])],  # noqa: E501
                                 "deletion_indicators": getattr(r, 'deletion_indicators', False),
                                 "recovered_content_count": len(getattr(r, 'recovered_content', [])),
                             },
@@ -18058,12 +17904,12 @@ class SprintScheduler:
                     return findings
 
             from pathlib import Path
-            import shutil
+
             from security.stego_detector import StatisticalStegoDetector, StegoConfig
 
-            MAX_IMAGES = 10
-            MAX_IMAGE_SIZE_MB = 50
-            IMAGE_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.gif', '.bmp', '.tiff', '.webp'}
+            MAX_IMAGES = 10  # noqa: N806
+            MAX_IMAGE_SIZE_MB = 50  # noqa: N806
+            IMAGE_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.gif', '.bmp', '.tiff', '.webp'}  # noqa: N806
 
             # Filter for image findings
             image_paths = []
@@ -18146,7 +17992,7 @@ class SprintScheduler:
 
         """F214Q: BGP enrichment -- AS path analysis for IP/ASN seeds.
 
-        
+
 
         Gate: HLEDAC_ENABLE_BGP=1 + M1 memory guard (skip if critical/emergency).
 
@@ -18163,9 +18009,9 @@ class SprintScheduler:
         try:
             from ..knowledge.ioc_graph import IOC_TYPES
         except (ImportError, ModuleNotFoundError):
-            IOC_TYPES = ["ip", "asn", "ipv6", "cidr"]
+            IOC_TYPES = ["ip", "asn", "ipv6", "cidr"]  # noqa: N806
 
-        
+
 
         _bgp_env = _env_flag("HLEDAC_ENABLE_BGP", "").lower() in ("1", "true", "yes", "on")
 
@@ -18173,7 +18019,7 @@ class SprintScheduler:
 
             return []
 
-        
+
 
         try:
 
@@ -18193,7 +18039,7 @@ class SprintScheduler:
 
             pass
 
-        
+
 
         # Extract IP/ASN seeds from current findings
 
@@ -18215,17 +18061,17 @@ class SprintScheduler:
 
                     seed_ips.extend(ips)
 
-        
+
 
         seed_ips = list(set(seed_ips))[:3]  # Max 3
 
-        
+
 
         findings = []
 
         sem = asyncio.Semaphore(1)
 
-        
+
 
         async def _query_one(ip_or_asn: str) -> list[CanonicalFinding]:
 
@@ -18245,7 +18091,7 @@ class SprintScheduler:
 
                 return []
 
-        
+
 
         try:
 
@@ -18261,7 +18107,7 @@ class SprintScheduler:
 
             log.debug("[F214Q] BGP query failed: %s", e)
 
-        
+
 
         # Canonical write
 
@@ -18275,7 +18121,7 @@ class SprintScheduler:
 
         return findings[:20]
 
-    
+
 
     # ── F214Q: Banner Grab Sidecar ──────────────────────────────────────────────
 
@@ -18283,7 +18129,7 @@ class SprintScheduler:
 
         """F214Q: Banner grab -- service fingerprinting via TCP probe.
 
-        
+
 
         Gate: HLEDAC_ENABLE_BANNER_GRAB=1 + memory guard.
 
@@ -18297,7 +18143,7 @@ class SprintScheduler:
 
         from hledac.universal.network.banner_grabber import banner_grab_to_canonical
 
-        
+
 
         _banner_env = _env_flag("HLEDAC_ENABLE_BANNER_GRAB", "").lower() in ("1", "true", "yes", "on")
 
@@ -18305,7 +18151,7 @@ class SprintScheduler:
 
             return []
 
-        
+
 
         try:
 
@@ -18325,7 +18171,7 @@ class SprintScheduler:
 
             pass
 
-        
+
 
         # Extract IP seeds from findings
 
@@ -18347,11 +18193,11 @@ class SprintScheduler:
 
                         seed_ips.append(first)
 
-        
+
 
         seed_ips = list(set(seed_ips))[:3]  # Max 3
 
-        
+
 
         # Default ports z ENV
 
@@ -18367,11 +18213,11 @@ class SprintScheduler:
 
         ports = ports[:5]  # Max 5
 
-        
+
 
         findings = []
 
-        
+
 
         async def _grab_one(ip: str) -> list[CanonicalFinding]:
 
@@ -18389,7 +18235,7 @@ class SprintScheduler:
 
                 return []
 
-        
+
 
         try:
 
@@ -18405,7 +18251,7 @@ class SprintScheduler:
 
             log.debug("[F214Q] Banner grab failed: %s", e)
 
-        
+
 
         # Canonical write
 
@@ -18539,7 +18385,6 @@ class SprintScheduler:
 
         """
 
-        import os as _os
 
         if __env_flag("HLEDAC_ENABLE_GRAPH_ANALYSIS", "0") != "1":
 
@@ -18832,9 +18677,7 @@ class SprintScheduler:
 
 
         from hledac.universal.runtime.acquisition_strategy import (
-
             select_ct_domains_for_passivedns_pivot,
-
         )
 
         pivot_domains = select_ct_domains_for_passivedns_pivot(ct_findings, max_pivots=5)
@@ -18863,18 +18706,14 @@ class SprintScheduler:
 
 
 
-        from hledac.universal.security.passive_dns import (
-
-            call_lookup_passive_dns as _pdns_lookup,
-
-            PassiveDNSOutcome,
-
-        )
-
         from hledac.universal.runtime.source_finding_bridge import (
-
             passive_dns_results_to_findings,
-
+        )
+        from hledac.universal.security.passive_dns import (
+            PassiveDNSOutcome,
+        )
+        from hledac.universal.security.passive_dns import (
+            call_lookup_passive_dns as _pdns_lookup,
         )
 
 
@@ -19138,7 +18977,7 @@ class SprintScheduler:
 
         """
 
-        _LANE_SOURCE_MAP = {
+        _LANE_SOURCE_MAP = {  # noqa: N806
 
             AcquisitionLane.CT: "ct",
 
@@ -19279,7 +19118,7 @@ class SprintScheduler:
 
                             ts_val = getattr(cf, "ts", 0.0) or 0.0
 
-                            desc = getattr(cf, "payload_text", f"bridge finding") or f"bridge finding"
+                            desc = getattr(cf, "payload_text", "bridge finding") or "bridge finding"
 
                             if len(self._all_findings) < self._MAX_FINDINGS_PER_SPRINT:
 
@@ -19442,25 +19281,14 @@ class SprintScheduler:
         try:
 
             from hledac.universal.runtime.nonfeed_candidate_ledger import (
-
-                extract_domain_candidates_from_finding,
-
-                extract_domain_candidates_from_text,
-
-                compute_lane_eligibility,
-
-                rank_candidates,
-
-                filter_source_host_only,
-
-                MAX_DOMAIN_CANDIDATES_FOR_LANES,
-
-                MAX_FEED_CANDIDATES,
-
                 FAMILY_FEED,
-
                 FAMILY_PUBLIC,
-
+                MAX_DOMAIN_CANDIDATES_FOR_LANES,
+                MAX_FEED_CANDIDATES,
+                compute_lane_eligibility,
+                extract_domain_candidates_from_text,
+                filter_source_host_only,
+                rank_candidates,
             )
 
         except Exception:
@@ -19637,7 +19465,7 @@ class SprintScheduler:
 
                 # For each family, filter source-host-only candidates
 
-                for sf, surl in source_url_by_family.items():
+                for _sf, surl in source_url_by_family.items():
 
                     if surl:
 
@@ -19817,7 +19645,7 @@ class SprintScheduler:
 
             rejection_reasons = getattr(outcome, "rejection_reasons", ()) or ()
 
-            sample_rejections = getattr(outcome, "sample_rejections", ()) or ()
+            getattr(outcome, "sample_rejections", ()) or ()
 
             for rej in rejection_reasons[:5]:
 
@@ -20103,7 +19931,7 @@ class SprintScheduler:
 
                 for pivot in pivots[:5]:  # Max 5 pivots per finding
 
-                    pivot_key = f"{pivot.get('pivot_type', '')}:{pivot.get('ioc_value', '')}"
+                    f"{pivot.get('pivot_type', '')}:{pivot.get('ioc_value', '')}"
 
                     if target_id not in pivot_facets:
 
@@ -20425,9 +20253,7 @@ class SprintScheduler:
         # Step 2: Select deduplicated domains (max 10 hard cap, default 5)
 
         from hledac.universal.runtime.acquisition_strategy import (
-
             select_ct_domains_for_passivedns_pivot,
-
         )
 
         pivot_domains = select_ct_domains_for_passivedns_pivot(
@@ -20452,7 +20278,7 @@ class SprintScheduler:
 
         # Step 3: Run PassiveDNS for each domain (bounded, fail-soft)
 
-        store = getattr(self, "_duckdb_store", None)
+        getattr(self, "_duckdb_store", None)
 
         pdns_results: list = []
 
@@ -20461,11 +20287,10 @@ class SprintScheduler:
 
 
         from hledac.universal.security.passive_dns import (
-
-            call_lookup_passive_dns as _pdns_lookup,
-
             PassiveDNSOutcome,
-
+        )
+        from hledac.universal.security.passive_dns import (
+            call_lookup_passive_dns as _pdns_lookup,
         )
 
 
@@ -20480,7 +20305,7 @@ class SprintScheduler:
 
                 return domain, ips, outcome
 
-            except Exception as exc:
+            except Exception:
 
                 return domain, [], None
 
@@ -20785,7 +20610,6 @@ class SprintScheduler:
 
                 if store is not None:
 
-                    from hledac.universal.knowledge.duckdb_store import CanonicalFinding
 
                     findings: list[CanonicalFinding] = []
 
@@ -21879,13 +21703,15 @@ class SprintScheduler:
 
             import orjson
 
-            _serialize = lambda r: orjson.dumps(r)
+            def _serialize(r):
+                return orjson.dumps(r)
 
         except ImportError:
 
             import json
 
-            _serialize = lambda r: json.dumps(r).encode()
+            def _serialize(r):
+                return json.dumps(r).encode()
 
 
 
@@ -21978,7 +21804,7 @@ class SprintScheduler:
 
         self,
 
-        work: "_FeedWorkItem",
+        work: _FeedWorkItem,
 
         nonfeed_terminal: bool,
 
@@ -22370,13 +22196,15 @@ class SprintScheduler:
 
             import orjson
 
-            _serialize = lambda r: orjson.dumps(r)
+            def _serialize(r):
+                return orjson.dumps(r)
 
         except ImportError:
 
             import json
 
-            _serialize = lambda r: json.dumps(r).encode()
+            def _serialize(r):
+                return json.dumps(r).encode()
 
 
 
@@ -22777,8 +22605,8 @@ class SprintScheduler:
 
         # Lazy import SynthesisRunner
         try:
-            from hledac.universal.brain.synthesis_runner import SynthesisRunner
             from hledac.universal.brain.model_lifecycle import ModelLifecycle
+            from hledac.universal.brain.synthesis_runner import SynthesisRunner
         except ImportError as e:
             log.debug("[F259] SynthesisRunner import failed: %s", e)
             self._result.synthesis_engine = "import_failed"
@@ -22810,7 +22638,7 @@ class SprintScheduler:
             # Capture results
             self._result.synthesis_findings_count = len(findings)
             self._result.synthesis_success = report is not None
-            self._result.synthesis_engine = getattr(runner, "_last_synthesis_engine", "synthesis_runner") or "synthesis_runner"
+            self._result.synthesis_engine = getattr(runner, "_last_synthesis_engine", "synthesis_runner") or "synthesis_runner"  # noqa: E501
 
             if report is not None:
                 try:
@@ -22905,9 +22733,9 @@ class SprintScheduler:
         # Lazy import DSPy programs
         try:
             from hledac.universal.brain.dspy_programs import (
-                EpistemicGapProgram,
-                ContradictionResolverProgram,
                 MAX_EPISTEMIC_FINDINGS,
+                ContradictionResolverProgram,
+                EpistemicGapProgram,
             )
             from hledac.universal.brain.evidence_fusion import DempsterShafer
             from hledac.universal.knowledge.research_memory import ResearchSessionMemory
@@ -22982,7 +22810,7 @@ class SprintScheduler:
                 # Compute DS conflict from evidence if available
                 evidence = f.get("evidence", [])
                 if evidence:
-                    hypotheses = set(e.get("hypothesis", "present") for e in evidence)
+                    hypotheses = {e.get("hypothesis", "present") for e in evidence}
                     hypotheses.add("absent")
                     ds = DempsterShafer(hypotheses=hypotheses)
                     for e in evidence:
@@ -23087,7 +22915,7 @@ class SprintScheduler:
             async with asyncio.timeout(180.0):
                 await self._run_enhanced_research()
 
-        except asyncio.TimeoutError:
+        except TimeoutError:
 
             log.warning("[F11] Deep research timed out after 180s")
 
@@ -23114,14 +22942,10 @@ class SprintScheduler:
         try:
 
             from hledac.universal.enhanced_research import (
-
-                UnifiedResearchEngine,
-
+                ResearchDepth,
                 UnifiedResearchConfig,
-
+                UnifiedResearchEngine,
             )
-
-            from hledac.universal.enhanced_research import ResearchDepth
 
         except ImportError:
 
@@ -23264,7 +23088,7 @@ class SprintScheduler:
                     query=query, depth=depth, max_results=50
                 )
 
-        except asyncio.TimeoutError:
+        except TimeoutError:
 
             log.warning(f"[F11] UnifiedResearchEngine timed out after {remaining_s:.0f}s")
 
@@ -23288,9 +23112,9 @@ class SprintScheduler:
 
             try:
 
-                from hledac.universal.capabilities import CanonicalFinding
-
                 import time as _time_module
+
+                from hledac.universal.capabilities import CanonicalFinding
 
                 ts = getattr(f, 'timestamp', None)
 
@@ -23368,7 +23192,6 @@ class SprintScheduler:
 
         try:
 
-            import os
 
             if not _env_flag("HLEDAC_ENABLE_DARK_PIVOTS") == "1":
 
@@ -23970,7 +23793,7 @@ class SprintScheduler:
 
         # Hard headroom rule: if RSS > 4GB before prewarm, skip Hermes fail-soft
 
-        RSS_PREWARM_HEADROOM_GB = 4.0
+        RSS_PREWARM_HEADROOM_GB = 4.0  # noqa: N806
 
         if self._config.aggressive_mode:
 
@@ -24044,9 +23867,8 @@ class SprintScheduler:
 
             try:
 
-                from hledac.universal.core.resource_governor import sample_uma_status
-
                 from hledac.universal.brain.quantization_selector import QuantizationSelector
+                from hledac.universal.core.resource_governor import sample_uma_status
 
                 uma = sample_uma_status()
 
@@ -25066,17 +24888,17 @@ class SprintScheduler:
 
                         "enabled_nonfeed_lanes": list(self._acquisition_plan.nonfeed_plan_debug.enabled_nonfeed_lanes),
 
-                        "disabled_nonfeed_lanes": list(self._acquisition_plan.nonfeed_plan_debug.disabled_nonfeed_lanes),
+                        "disabled_nonfeed_lanes": list(self._acquisition_plan.nonfeed_plan_debug.disabled_nonfeed_lanes),  # noqa: E501
 
                         "disabled_reasons": list(self._acquisition_plan.nonfeed_plan_debug.disabled_reasons),
 
-                        "scheduled_nonfeed_lanes": list(self._acquisition_plan.nonfeed_plan_debug.scheduled_nonfeed_lanes),
+                        "scheduled_nonfeed_lanes": list(self._acquisition_plan.nonfeed_plan_debug.scheduled_nonfeed_lanes),  # noqa: E501
 
-                        "hardware_skipped_lanes": list(self._acquisition_plan.nonfeed_plan_debug.hardware_skipped_lanes),
+                        "hardware_skipped_lanes": list(self._acquisition_plan.nonfeed_plan_debug.hardware_skipped_lanes),  # noqa: E501
 
-                        "nonfeed_execution_scheduled": self._acquisition_plan.nonfeed_plan_debug.nonfeed_execution_scheduled,
+                        "nonfeed_execution_scheduled": self._acquisition_plan.nonfeed_plan_debug.nonfeed_execution_scheduled,  # noqa: E501
 
-                        "nonfeed_execution_skip_reason": self._acquisition_plan.nonfeed_plan_debug.nonfeed_execution_skip_reason,
+                        "nonfeed_execution_skip_reason": self._acquisition_plan.nonfeed_plan_debug.nonfeed_execution_skip_reason,  # noqa: E501
 
                     }
 
@@ -25088,9 +24910,9 @@ class SprintScheduler:
 
                 # [F207Q-A] Pre-windup barrier telemetry for live KPI diagnosis
 
-                "prewindup_barrier": self._get_prewindup_barrier_report() if hasattr(self, "_get_prewindup_barrier_report") else None,
+                "prewindup_barrier": self._get_prewindup_barrier_report() if hasattr(self, "_get_prewindup_barrier_report") else None,  # noqa: E501
 
-                # [F207Q-A] Flat field so live_sprint_measurement can read acquisition_strategy.prewindup_barrier_checked directly
+                # [F207Q-A] Flat field so live_sprint_measurement can read acquisition_strategy.prewindup_barrier_checked directly  # noqa: E501
 
                 "prewindup_barrier_checked": getattr(self._result, "prewindup_barrier_checked", False),
 
@@ -25228,7 +25050,7 @@ class SprintScheduler:
 
             _attempted = [o["lane"] for o in _outcomes_list if o.get("attempted")]
 
-            _skipped_lanes = [l for l in _planned if l not in _attempted and l not in (_executed if self._acquisition_plan else [])]
+            _skipped_lanes = [l for l in _planned if l not in _attempted and l not in (_executed if self._acquisition_plan else [])]  # noqa: E501
 
             _lane_errors = [o["error"] for o in _outcomes_list if o.get("error")]
 
@@ -25360,7 +25182,7 @@ class SprintScheduler:
 
                 "terminal_state": "ATTEMPTED_ERROR" if getattr(self._result, "rdap_enrichment_error", None)
 
-                    else ("ATTEMPTED_ACCEPTED" if getattr(self._result, "rdap_enrichment_findings_stored", 0) else "ATTEMPTED_NO_RESULTS"),
+                    else ("ATTEMPTED_ACCEPTED" if getattr(self._result, "rdap_enrichment_findings_stored", 0) else "ATTEMPTED_NO_RESULTS"),  # noqa: E501
 
             }
 
@@ -25547,9 +25369,7 @@ class SprintScheduler:
         try:
 
             from hledac.universal.runtime.sprint_timer import (
-
                 compute_runtime_loop_telemetry,
-
             )
 
             _timer_ev = getattr(self._result, "timer_events", None) or []
@@ -25581,9 +25401,7 @@ class SprintScheduler:
         try:
 
             from hledac.universal.runtime.acquisition_strategy import (
-
                 build_acquisition_report,
-
             )
 
             # Build windup guard observation dict
@@ -25810,11 +25628,11 @@ class SprintScheduler:
 
             _sfo_by_family = {entry.get("family", ""): entry for entry in _sfo_list}
 
-            _expected = list(_nd.get("nonfeed_profile_expected_lanes", ()) or []) if _nd else (nonfeed_expected_lanes or [])
+            _expected = list(_nd.get("nonfeed_profile_expected_lanes", ()) or []) if _nd else (nonfeed_expected_lanes or [])  # noqa: E501
 
             # Map uppercase lane constants to lowercase family names for comparison
 
-            _FAM_MAP = {
+            _FAM_MAP = {  # noqa: N806
 
                 "CT": "ct", "WAYBACK": "wayback", "PASSIVE_DNS": "passive_dns",
 
@@ -25962,13 +25780,13 @@ class SprintScheduler:
 
                 # F216G/F217E: Quality/duplicate/nonfeed ledger summaries from result fields
 
-                quality_rejection_summary_by_family=getattr(self._result, "quality_rejection_summary_by_family", None) or {},
+                quality_rejection_summary_by_family=getattr(self._result, "quality_rejection_summary_by_family", None) or {},  # noqa: E501
 
-                duplicate_rejection_summary_by_family=getattr(self._result, "duplicate_rejection_summary_by_family", None) or {},
+                duplicate_rejection_summary_by_family=getattr(self._result, "duplicate_rejection_summary_by_family", None) or {},  # noqa: E501
 
                 low_information_by_family=getattr(self._result, "low_information_by_family", None) or {},
 
-                nonfeed_candidate_ledger_summary=(self._nonfeed_ledger.summary() if hasattr(self, "_nonfeed_ledger") and self._nonfeed_ledger is not None and hasattr(self._nonfeed_ledger, "summary") else {}),
+                nonfeed_candidate_ledger_summary=(self._nonfeed_ledger.summary() if hasattr(self, "_nonfeed_ledger") and self._nonfeed_ledger is not None and hasattr(self._nonfeed_ledger, "summary") else {}),  # noqa: E501
 
                 # Sprint F225A: Acquisition plan build error surface
 
@@ -26671,7 +26489,6 @@ class SprintScheduler:
         try:
 
             from hledac.universal.transport.i2p_transport import I2PTransport
-
             from hledac.universal.transport.transport_resolver import get_i2p_transport_singleton
 
             singleton = get_i2p_transport_singleton()
@@ -26995,7 +26812,7 @@ class SprintScheduler:
 
                 self._pivot_stats["processed"] += 1
 
-            except (asyncio.TimeoutError, Exception) as e:
+            except (TimeoutError, Exception) as e:
 
                 self._pivot_stats["errors"] += 1
 
@@ -27011,21 +26828,8 @@ class SprintScheduler:
 
         """Dispatch pivot task to appropriate intelligence client."""
 
-        from hledac.universal.intelligence.exposure_clients import (
 
-            GitHubCodeSearchClient,
 
-            MalwareBazaarClient,
-
-        )
-
-        from hledac.universal.intelligence.network_reconnaissance import (
-
-            PassiveDNSClient,
-
-        )
-
-        from hledac.universal.paths import CACHE_ROOT
 
         from hledac.universal.tool_registry import get_task_handler
 
@@ -27464,7 +27268,6 @@ class SprintScheduler:
         try:
 
             import pyarrow as pa
-
             import pyarrow.parquet as pq
 
         except ImportError:
@@ -27816,19 +27619,14 @@ class SprintScheduler:
 
         try:
 
-            from hledac.universal.dht.kademlia_node import (
-
-                KademliaNode,
-
-                DHT_BOOTSTRAP_PEERS,
-
-                DHT_REAL_UDP,
-
-            )
+            import uuid
 
             from hledac.universal.core.resource_governor import ResourceGovernor
-
-            import uuid
+            from hledac.universal.dht.kademlia_node import (
+                DHT_BOOTSTRAP_PEERS,
+                DHT_REAL_UDP,
+                KademliaNode,
+            )
 
 
 
@@ -27976,7 +27774,7 @@ class SprintScheduler:
 
         try:
 
-            from hledac.universal.transport.nym_transport import NymTransport, NYM_CLIENT_AVAILABLE
+            from hledac.universal.transport.nym_transport import NYM_CLIENT_AVAILABLE, NymTransport
 
 
 
@@ -28024,9 +27822,9 @@ class SprintScheduler:
 
         """Background task -- adjusts concurrency based on memory pressure."""
 
-        from hledac.universal.resource_allocator import get_recommended_concurrency
-
         import asyncio as _asyncio
+
+        from hledac.universal.resource_allocator import get_recommended_concurrency
 
 
 
@@ -28487,9 +28285,7 @@ class SprintScheduler:
             try:
 
                 from hledac.universal.runtime.shadow_pre_decision import (
-
                     build_execution_context_readiness,
-
                 )
 
                 # Correlation context from scheduler run (run_id present in sprint context)
@@ -29028,7 +28824,7 @@ class SprintScheduler:
 
                 total_quality = 0
 
-                for tag, sig, fb_use, fb_waste, qual in lane_vlist:
+                for tag, sig, _fb_use, fb_waste, qual in lane_vlist:  # noqa: B007
 
                     verdict_tags[tag] = verdict_tags.get(tag, 0) + sig
 
@@ -29114,9 +28910,9 @@ class SprintScheduler:
 
                     # Sprint F216G: Quality gate rejection summaries by category
 
-                    "quality_rejection_summary_by_family": getattr(self._result, 'quality_rejection_summary_by_family', {}),
+                    "quality_rejection_summary_by_family": getattr(self._result, 'quality_rejection_summary_by_family', {}),  # noqa: E501
 
-                    "duplicate_rejection_summary_by_family": getattr(self._result, 'duplicate_rejection_summary_by_family', {}),
+                    "duplicate_rejection_summary_by_family": getattr(self._result, 'duplicate_rejection_summary_by_family', {}),  # noqa: E501
 
                     "low_information_by_family": getattr(self._result, 'low_information_by_family', {}),
 
@@ -29232,7 +29028,7 @@ class SprintScheduler:
 
         try:
 
-            HypEng = _import_hypothesis_engine()
+            HypEng = _import_hypothesis_engine()  # noqa: N806
 
             eng = HypEng()
 
@@ -29342,7 +29138,7 @@ class SprintScheduler:
 
                 total_fallback_waste = 0
 
-                for tag, sig, fb_use, fb_waste, qual in feed_vlist:
+                for tag, sig, _fb_use, fb_waste, qual in feed_vlist:  # noqa: B007
 
                     verdict_tags[tag] = verdict_tags.get(tag, 0) + 1
 
@@ -29392,11 +29188,11 @@ class SprintScheduler:
 
                 value_ratios = [v.get("value_ratio", 0.0) for v in pub_vlist if "value_ratio" in v]
 
-                corroborations = [v.get("corroboration_vs_burn", 0.0) for v in pub_vlist if "corroboration_vs_burn" in v]
+                corroborations = [v.get("corroboration_vs_burn", 0.0) for v in pub_vlist if "corroboration_vs_burn" in v]  # noqa: E501
 
                 next_actions = [v.get("public_next_action", "") for v in pub_vlist if "public_next_action" in v]
 
-                confidence_notes = [v.get("public_confidence_note", "") for v in pub_vlist if "public_confidence_note" in v]
+                confidence_notes = [v.get("public_confidence_note", "") for v in pub_vlist if "public_confidence_note" in v]  # noqa: E501
 
                 # Sprint F150L: additional economics signals
 
@@ -29416,9 +29212,9 @@ class SprintScheduler:
 
                     "avg_value_ratio": round(sum(value_ratios) / len(value_ratios), 3) if value_ratios else 0.0,
 
-                    "avg_corroboration_vs_burn": round(sum(corroborations) / len(corroborations), 3) if corroborations else 0.0,
+                    "avg_corroboration_vs_burn": round(sum(corroborations) / len(corroborations), 3) if corroborations else 0.0,  # noqa: E501
 
-                    "avg_discovery_squandered": round(sum(squandered_hits) / len(squandered_hits), 2) if squandered_hits else 0.0,
+                    "avg_discovery_squandered": round(sum(squandered_hits) / len(squandered_hits), 2) if squandered_hits else 0.0,  # noqa: E501
 
                     "total_discovery_squandered": sum(squandered_hits),
 
@@ -29452,7 +29248,7 @@ class SprintScheduler:
 
                 total_quality = 0
 
-                for tag, sig, fb_use, fb_waste, qual in lane_vlist:
+                for tag, sig, _fb_use, fb_waste, qual in lane_vlist:  # noqa: B007
 
                     verdict_tags[tag] = verdict_tags.get(tag, 0) + sig
 
@@ -29664,7 +29460,7 @@ class SprintScheduler:
                     branch_mix_health = "feed_only" if feed > 3 else "feed_sparse"
                 case (_, feed, pub, sq) if (feed / pub) > 5:
                     branch_mix_health = "feed_heavy"
-                case (_, feed, pub, sq) if (feed / pub) < 0.2:
+                case (_, feed, pub, sq) if (feed / pub) < 0.2:  # noqa: F841
                     branch_mix_health = "public_heavy"
                 case (_, _, _, "strong"):
                     # Balanced feed/public mix with strong signal quality.
@@ -30416,10 +30212,10 @@ class SprintScheduler:
                 return []
 
             # Convert to CanonicalFinding with context_seed source_type
-            CanonicalFinding = None
+            CanonicalFinding = None  # noqa: N806
             try:
-                from hledac.universal.knowledge.duckdb_store import CanonicalFinding as CF
-                CanonicalFinding = CF
+
+                CanonicalFinding = CF  # noqa: N806
             except ImportError:
                 pass
 

@@ -24,6 +24,7 @@ import logging
 import os
 import time
 from dataclasses import dataclass
+from datetime import UTC
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -199,7 +200,7 @@ class HypothesisBuilder:
     def _to_stix_bundle(self, hypotheses: list[Any]) -> dict[str, Any]:
         """Convert hypotheses to STIX 2.1 relationship bundle."""
         import uuid
-        from datetime import datetime, timezone
+        from datetime import datetime
 
         bundle_id = f"bundle--{uuid.uuid4()}"
         objects = []
@@ -218,8 +219,8 @@ class HypothesisBuilder:
                 "type": "identity",
                 "spec_version": "2.1",
                 "id": identity_id,
-                "created": datetime.now(timezone.utc).isoformat(),
-                "modified": datetime.now(timezone.utc).isoformat(),
+                "created": datetime.now(UTC).isoformat(),
+                "modified": datetime.now(UTC).isoformat(),
                 "name": entity_id,
                 "identity_class": entity_type,
             })
@@ -239,8 +240,8 @@ class HypothesisBuilder:
                 "type": "relationship",
                 "spec_version": "2.1",
                 "id": rel_id,
-                "created": datetime.now(timezone.utc).isoformat(),
-                "modified": datetime.now(timezone.utc).isoformat(),
+                "created": datetime.now(UTC).isoformat(),
+                "modified": datetime.now(UTC).isoformat(),
                 "source_ref": f"identity--{abs(hash(hyp.source_entity)) % (2**32)}",
                 "target_ref": f"identity--{abs(hash(hyp.target_entity)) % (2**32)}",
                 "relationship_type": stix_rel_type,

@@ -12,6 +12,7 @@ Matrix: 13 scenarios × all 12 lanes = 156 assertions.
 from __future__ import annotations
 
 import pytest
+
 from hledac.universal.runtime.acquisition_strategy import (
     LANE_RULES,
     AcquisitionContext,
@@ -69,7 +70,11 @@ def _ctx(
     has_crypto = _has_crypto(query)
     has_long_duration = False  # default scenario duration < 300s
 
-    from hledac.universal.runtime.acquisition_strategy import _has_explicit_cid, is_academic_profile, is_deep_osint_m1_profile
+    from hledac.universal.runtime.acquisition_strategy import (
+        _has_explicit_cid,
+        is_academic_profile,
+        is_deep_osint_m1_profile,
+    )
 
     is_academic = is_academic_profile(acquisition_profile)
     is_deep_osint_m1 = is_deep_osint_m1_profile(acquisition_profile)
@@ -335,21 +340,21 @@ SCENARIOS = [
     ("default_domain_uma_ok", "evil.com", "ok", False, False, False, False, False, "default"),
     ("default_domain_uma_critical", "evil.com", "critical", False, False, False, False, False, "default"),
     ("default_domain_swap", "evil.com", "ok", True, False, False, False, False, "default"),
-    ("default_crypto_uma_ok", "0x742d35Cc6634C0532925a3b844Bc9e7595f1", "ok", False, False, False, False, False, "default"),
-    ("default_crypto_uma_critical", "0x742d35Cc6634C0532925a3b844Bc9e7595f1", "critical", False, False, False, False, False, "default"),
+    ("default_crypto_uma_ok", "0x742d35Cc6634C0532925a3b844Bc9e7595f1", "ok", False, False, False, False, False, "default"),  # noqa: E501
+    ("default_crypto_uma_critical", "0x742d35Cc6634C0532925a3b844Bc9e7595f1", "critical", False, False, False, False, False, "default"),  # noqa: E501
     ("nfd_domain_uma_critical", "evil.com", "critical", False, False, True, False, False, "nonfeed_diagnostic"),
-    ("nfd_non_domain_uma_critical", "some query without domains", "critical", False, False, True, False, False, "nonfeed_diagnostic"),
+    ("nfd_non_domain_uma_critical", "some query without domains", "critical", False, False, True, False, False, "nonfeed_diagnostic"),  # noqa: E501
     ("research_uma_ok", "academic query", "ok", False, False, False, False, False, "research"),
     ("research_uma_critical", "academic query", "critical", False, False, False, False, False, "academic"),
-    ("explicit_cid_uma_ok", "QmY6mPjH1e5eEK2zJ8dGf5eCk1uL6vN3qP9rT4sXwQ2eK8", "ok", False, False, False, False, False, "default"),
-    ("explicit_cid_uma_critical", "QmY6mPjH1e5eEK2zJ8dGf5eCk1uL6vN3qP9rT4sXwQ2eK8", "critical", False, False, False, False, False, "default"),
+    ("explicit_cid_uma_ok", "QmY6mPjH1e5eEK2zJ8dGf5eCk1uL6vN3qP9rT4sXwQ2eK8", "ok", False, False, False, False, False, "default"),  # noqa: E501
+    ("explicit_cid_uma_critical", "QmY6mPjH1e5eEK2zJ8dGf5eCk1uL6vN3qP9rT4sXwQ2eK8", "critical", False, False, False, False, False, "default"),  # noqa: E501
     ("transport_degraded", "example.com", "ok", False, False, False, True, False, "default"),
     ("stealth_ready", "darkweb target", "ok", False, False, False, False, True, "default"),
 ]
 
 
-@pytest.mark.parametrize("label,query,uma_state,swap_detected,aggressive,is_nfd,transport_deg,stealth_ready,profile", SCENARIOS, ids=[s[0] for s in SCENARIOS])
-def test_lane_parity_matrix(label, query, uma_state, swap_detected, aggressive, is_nfd, transport_deg, stealth_ready, profile):
+@pytest.mark.parametrize("label,query,uma_state,swap_detected,aggressive,is_nfd,transport_deg,stealth_ready,profile", SCENARIOS, ids=[s[0] for s in SCENARIOS])  # noqa: E501
+def test_lane_parity_matrix(label, query, uma_state, swap_detected, aggressive, is_nfd, transport_deg, stealth_ready, profile):  # noqa: E501
     """
     Parity matrix: verify all 12 lanes across 13 scenarios.
 

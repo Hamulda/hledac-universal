@@ -45,7 +45,9 @@ except ImportError:
 
 # MLX Embedding Manager (primary for M1)
 try:
-    from _shims.core_mlx_embeddings import MLXEmbeddingManager
+    from _shims.core_mlx_embeddings import (
+        MLXEmbeddingManager,  # noqa: F401  # _shims.core_mlx_embeddings.MLXEmbeddingManager
+    )
     MLX_EMBED_AVAILABLE = True
 except ImportError:
     MLX_EMBED_AVAILABLE = False
@@ -222,7 +224,7 @@ class DynamicContextManager:
                 self.embedder = self._mlx_manager
                 self.embedding_dim = self._mlx_manager.EMBEDDING_DIM
                 self._embedder_type = 'mlx'
-                logger.info(f"[EMBEDDER] Using shared MLXEmbeddingManager: {self._mlx_manager.model_path}, dim={self.embedding_dim}")
+                logger.info(f"[EMBEDDER] Using shared MLXEmbeddingManager: {self._mlx_manager.model_path}, dim={self.embedding_dim}")  # noqa: E501
             except Exception as e:
                 logger.warning(f"MLXEmbeddingManager init failed: {e}, falling back to FastEmbed")
                 self._mlx_manager = None
@@ -636,7 +638,7 @@ class DynamicContextManager:
             return []
 
         # Search in semantic index
-        D, I = self.semantic_index.search(query_embedding, top_k)
+        D, I = self.semantic_index.search(query_embedding, top_k)  # noqa: E741
 
         results = []
         for idx, similarity in zip(I[0], D[0], strict=False):

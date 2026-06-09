@@ -413,7 +413,7 @@ def main() -> int:
         "--profile",
         default="f205-green",
         choices=["f205-green", "f206-regression", "f214-js-rendering"],
-        help="Baseline profile (default: f205-green; f206-regression adds F206 lanes; f214-js-rendering runs F214 JS rendering lanes)",
+        help="Baseline profile (default: f205-green; f206-regression adds F206 lanes; f214-js-rendering runs F214 JS rendering lanes)",  # noqa: E501
     )
     parser.add_argument(
         "--json",

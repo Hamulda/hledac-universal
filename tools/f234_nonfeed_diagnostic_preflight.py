@@ -23,7 +23,7 @@ if _universal not in sys.path:
 if _project_root not in sys.path:
     sys.path.insert(0, _project_root)
 
-import types as _types
+import types as _types  # noqa: E402
 
 _hledac_stub = _types.ModuleType('hledac')
 _hledac_stub.__path__ = [_project_root, _universal]
@@ -37,7 +37,10 @@ _hledac_universal_stub.__path__ = [_universal]
 _hledac_universal_stub.__package__ = 'hledac.universal'
 sys.modules['hledac.universal'] = _hledac_universal_stub
 
-from hledac.universal.runtime.acquisition_strategy import build_acquisition_plan, normalize_acquisition_profile
+from hledac.universal.runtime.acquisition_strategy import (  # noqa: E402
+    build_acquisition_plan,
+    normalize_acquisition_profile,
+)
 
 __all__ = ["run_preflight"]
 

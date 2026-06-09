@@ -80,7 +80,7 @@ class PromptCache:
 
         # Performance tradeoff: limit trigram extraction to first 100.
         # Long prompts (10k chars ≈ 10k trigrams) would be expensive to hash fully.
-        _MAX_TRIGRAMS_PER_PROMPT = 100
+        _MAX_TRIGRAMS_PER_PROMPT = 100  # noqa: N806
         for trigram in trigrams[:_MAX_TRIGRAMS_PER_PROMPT]:
             # Sprint 79b: Use xxhash for faster hashing
             if XXHASH_AVAILABLE:

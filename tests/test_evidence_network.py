@@ -30,14 +30,13 @@ if str(_REPO) not in sys.path:
     sys.path.insert(0, str(_REPO))
 
 from hledac.universal.advanced_web.evidence_network_analyzer import (  # noqa: E402
+    MAX_GRAPH_EDGES,
+    MAX_GRAPH_NODES,
     EvidenceGraph,
     EvidenceGraphEdge,
     EvidenceGraphNode,
     EvidenceNetworkAnalyzer,
-    MAX_GRAPH_EDGES,
-    MAX_GRAPH_NODES,
 )
-
 
 # ── Fixtures / helpers ───────────────────────────────────────────────────────
 
@@ -274,7 +273,7 @@ class TestDTOShape:
             confidence=0.5,
             sources=("ct_log",),
         )
-        with pytest.raises(Exception):
+        with pytest.raises(Exception):  # noqa: B017
             n.value = "2.2.2.2"  # type: ignore[misc]
 
     def test_evidence_graph_edge_is_frozen(self):
@@ -285,7 +284,7 @@ class TestDTOShape:
             weight=0.6,
             evidence_count=1,
         )
-        with pytest.raises(Exception):
+        with pytest.raises(Exception):  # noqa: B017
             e.weight = 0.9  # type: ignore[misc]
 
     def test_evidence_graph_is_frozen(self):
@@ -295,7 +294,7 @@ class TestDTOShape:
             confidence=0.0,
             finding_count=0,
         )
-        with pytest.raises(Exception):
+        with pytest.raises(Exception):  # noqa: B017
             g.finding_count = 99  # type: ignore[misc]
 
     def test_analyzer_is_implemented(self, analyzer: EvidenceNetworkAnalyzer):

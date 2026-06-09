@@ -317,7 +317,7 @@ class InsightEngine:
                         numeric_fields[key] = []
                     numeric_fields[key].append(value)
 
-        for field, values in numeric_fields.items():
+        for field, values in numeric_fields.items():  # noqa: F402
             if len(values) >= 3:
                 mean = np.mean(values)
                 std = np.std(values)

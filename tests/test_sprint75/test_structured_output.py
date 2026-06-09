@@ -22,8 +22,9 @@ class TestStructuredOutput:
     @pytest.mark.asyncio
     async def test_generate_structured_fallback(self):
         """Test structured output fallback on failure."""
-        from hledac.universal.brain.hermes3_engine import Hermes3Engine
         from pydantic import BaseModel
+
+        from hledac.universal.brain.hermes3_engine import Hermes3Engine
 
         class TestSchema(BaseModel):
             name: str = "test"
@@ -47,8 +48,9 @@ class TestStructuredOutput:
     @pytest.mark.asyncio
     async def test_generate_structured_max_retries_param(self):
         """Test max_retries parameter is accepted."""
-        from hledac.universal.brain.hermes3_engine import Hermes3Engine
         from pydantic import BaseModel
+
+        from hledac.universal.brain.hermes3_engine import Hermes3Engine
 
         class TestSchema(BaseModel):
             name: str

@@ -47,7 +47,7 @@ class Decision(StrEnum):
 # Imported from core.resource_governor (F220F: single source of truth for constants).
 # --------------------------------------------------------------------------- #
 
-from core.resource_governor import get_swap_policy_tier
+from core.resource_governor import get_swap_policy_tier  # noqa: E402
 
 # --------------------------------------------------------------------------- #
 # UMA check  (read-only import — no network, no model, no SprintScheduler)
@@ -72,7 +72,7 @@ def _check_uma() -> dict:
         }
 
     try:
-        UmaStatus = sample_uma_status()
+        UmaStatus = sample_uma_status()  # noqa: N806
         return {
             "system_used_gib": round(getattr(UmaStatus, "system_used_gib", 0.0), 3),
             "swap_used_gib": round(getattr(UmaStatus, "swap_used_gib", 0.0), 3),
@@ -767,7 +767,7 @@ def run_gate(
     checked["probe_f216i_zero_findings_quality"] = {
         "found": zf_quality.found,
         "parse_error": zf_quality.parse_error,
-        "detail": zf_quality.data.get("confirmation_zero_findings_stay_failed", {}).get("grade") if zf_quality.found else None,
+        "detail": zf_quality.data.get("confirmation_zero_findings_stay_failed", {}).get("grade") if zf_quality.found else None,  # noqa: E501
     }
     if not zf_sane:
         reasons.append(f"BLOCKED_BY_UNKNOWN: zero-findings quality crashed or wrong verdict — {zf_detail}")
@@ -1110,7 +1110,7 @@ def run_gate(
         feed_baseline_allowed=feed_baseline_allowed,
         capability_live_allowed=capability_live_allowed,
         capability_blockers=capability_blockers,
-        next_action_feed_baseline=live_cmd if feed_baseline_allowed else (highswap_cmd if swap_policy_tier != "hard_block" else "restart required — memory pressure"),
+        next_action_feed_baseline=live_cmd if feed_baseline_allowed else (highswap_cmd if swap_policy_tier != "hard_block" else "restart required — memory pressure"),  # noqa: E501
         next_action_capability=_resolve_next_action_capability(
             live_cmd, capability_live_allowed, _has_memory_block,
             _has_contract_block, _f224_blocks_nonfeed, _f231_blocks_nonfeed,
@@ -1229,7 +1229,7 @@ def _render_markdown(result: DecisionResult, profile: str, query: str) -> str:
     lines.append(f"**Clean run (--require-memory-ok):**\n```bash\n{result.suggested_live_command}\n```")
     # F220F: Show diagnostic command only when swap is elevated (diagnostic tier)
     if result.swap_policy_tier == "diagnostic":
-        lines.append(f"\n**Diagnostic run (--allow-high-swap — results non-comparable):**\n```bash\n{result.suggested_highswap_diagnostic_command}\n```")
+        lines.append(f"\n**Diagnostic run (--allow-high-swap — results non-comparable):**\n```bash\n{result.suggested_highswap_diagnostic_command}\n```")  # noqa: E501
     elif result.swap_policy_tier == "hard_block":
         lines.append("\n**Hard block — restart required before running**")
 
@@ -1293,7 +1293,7 @@ def main() -> int:
         print(f"JSON report written: {args.write_report}")
 
     # Write markdown report
-    md_path = args.output_markdown or (args.write_report.parent / "REPORT_PRELIVE_DECISION_GATE.md" if args.write_report else None)
+    md_path = args.output_markdown or (args.write_report.parent / "REPORT_PRELIVE_DECISION_GATE.md" if args.write_report else None)  # noqa: E501
     if md_path:
         md_text = _render_markdown(result, args.profile, args.query)
         md_path.parent.mkdir(parents=True, exist_ok=True)

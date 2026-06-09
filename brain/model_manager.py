@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 import aiofiles
+
 from hledac.universal.brain.model_inference_guard import (
     check_model_allowed,
     record_model_failure,
@@ -598,7 +599,7 @@ class ModelManager:
             import mlx_lm
         except ImportError:
             logger.error("[MODEL DOWNLOAD] mlx_lm not available - cannot download Hermes")
-            raise RuntimeError("mlx_lm required for Hermes model download")
+            raise RuntimeError("mlx_lm required for Hermes model download")  # noqa: B904
 
         model_id = "mlx-community/DeepHermes-3-Llama-3-3B-Preview-4bit"
 
@@ -1123,9 +1124,9 @@ class ModelManager:
             return ""
 
         # Build context for report generation
-        MAX_CONTEXT = 4000
-        MAX_HYPOTHESES = 10
-        MAX_FINDINGS = 20
+        MAX_CONTEXT = 4000  # noqa: N806
+        MAX_HYPOTHESES = 10  # noqa: N806
+        MAX_FINDINGS = 20  # noqa: N806
 
         # Truncate hypotheses
         hypo_lines = []

@@ -95,83 +95,83 @@ def _build_hypothesis_trainset(num_examples: int = DEFAULT_NUM_EXAMPLES) -> list
     examples: list[dict[str, Any]] = [
         {
             "research_query": "Investigate infrastructure behind evil-domain.ru linked to APT29 C2",
-            "rag_context": "[doc1] BGP AS212238 hosting evil-domain.ru since 2024-Q1; [doc2] JARM fingerprint 27d3ed3ed3ed3ed27c43d3ed3ed3ed3ed3ed3ed3ed3ed3ed3ed3ed3ed3e matches FIN cluster",
+            "rag_context": "[doc1] BGP AS212238 hosting evil-domain.ru since 2024-Q1; [doc2] JARM fingerprint 27d3ed3ed3ed3ed27c43d3ed3ed3ed3ed3ed3ed3ed3ed3ed3ed3ed3ed3e matches FIN cluster",  # noqa: E501
             "graph_summary": "Graph: evil-domain.ru → AS212238 (3 edges) → 194.5.249.0/24 (5 hosts)",
             "reward_context": "Previous pivots: 0 high-confidence. Budget remaining: 8 queries.",
             "existing_hypotheses": ["Pivot to BGP peers of AS212238", "Scan 194.5.249.0/24 for additional hosts"],
-            "hypotheses": "1. Search Shodan/Censys for 194.5.249.0/24 to enumerate hosts sharing the JARM fingerprint.\n2. Pivot to BGP announced prefixes of AS212238 for infrastructure expansion.\n3. Check passive DNS for sibling domains of evil-domain.ru registered in the same window.\n4. Query threat intel feeds (GreyNoise, AlienVault) for the JARM hash.\n5. Run CT log search for certs matching evil-domain.ru SAN entries.\n6. Probe AS212238 for adjacent ASNs (peers) hosting similar TTPs.\n7. Cross-reference IP-to-domain mappings from 2024-Q1 BGP events.",
+            "hypotheses": "1. Search Shodan/Censys for 194.5.249.0/24 to enumerate hosts sharing the JARM fingerprint.\n2. Pivot to BGP announced prefixes of AS212238 for infrastructure expansion.\n3. Check passive DNS for sibling domains of evil-domain.ru registered in the same window.\n4. Query threat intel feeds (GreyNoise, AlienVault) for the JARM hash.\n5. Run CT log search for certs matching evil-domain.ru SAN entries.\n6. Probe AS212238 for adjacent ASNs (peers) hosting similar TTPs.\n7. Cross-reference IP-to-domain mappings from 2024-Q1 BGP events.",  # noqa: E501
         },
         {
             "research_query": "Analyze email pattern user@target-corp.com for breach correlation",
-            "rag_context": "[doc1] Email found in 2 paste dumps (2025-Q3, 2025-Q4); [doc2] target-corp.com WHOIS: registered 2018-03, nameservers ns1.cloudflare.com",
+            "rag_context": "[doc1] Email found in 2 paste dumps (2025-Q3, 2025-Q4); [doc2] target-corp.com WHOIS: registered 2018-03, nameservers ns1.cloudflare.com",  # noqa: E501
             "graph_summary": "Graph: user@target-corp.com → 2 paste sites (1 edge each)",
             "reward_context": "Budget: 5 queries, mode=passive.",
             "existing_hypotheses": [],
-            "hypotheses": "1. Query HaveIBeenPwned API for breach entries containing the email.\n2. Search paste sites (Pastebin, Ghostbin) for additional context around the email.\n3. Pivot to other emails in same paste dump for insider pattern.\n4. Check corporate naming convention: firstname.lastname@target-corp.com for harvesting.\n5. Cross-reference Cloudflare nameserver with other domains for cluster analysis.",
+            "hypotheses": "1. Query HaveIBeenPwned API for breach entries containing the email.\n2. Search paste sites (Pastebin, Ghostbin) for additional context around the email.\n3. Pivot to other emails in same paste dump for insider pattern.\n4. Check corporate naming convention: firstname.lastname@target-corp.com for harvesting.\n5. Cross-reference Cloudflare nameserver with other domains for cluster analysis.",  # noqa: E501
         },
         {
             "research_query": "Map Tor exit node 185.220.101.47 infrastructure to potential scanners",
-            "rag_context": "[doc1] Tor exit list 2025-11-04 confirms 185.220.101.47; [doc2] GreyNoise tags: scanner, ssh_bruteforce",
+            "rag_context": "[doc1] Tor exit list 2025-11-04 confirms 185.220.101.47; [doc2] GreyNoise tags: scanner, ssh_bruteforce",  # noqa: E501
             "graph_summary": "Graph: 185.220.101.47 → 12 destination ports (graph dense)",
             "reward_context": "Sprint mode: active. 6 queries remaining.",
             "existing_hypotheses": ["Check Shodan for historical banners"],
-            "hypotheses": "1. Pull full Tor exit list for 185.220.101.0/24 to find sibling scanners.\n2. Query GreyNoise timeline for 185.220.101.47 to map activity windows.\n3. Cross-check AbuseIPDB for community-confirmed reports.\n4. Search Censys for cert fingerprints observed on the IP.\n5. Look up BGP origin AS for ASN-level pivots.\n6. Check if IP appears in any public scanner wordlists (e.g., projecthoneypot).",
+            "hypotheses": "1. Pull full Tor exit list for 185.220.101.0/24 to find sibling scanners.\n2. Query GreyNoise timeline for 185.220.101.47 to map activity windows.\n3. Cross-check AbuseIPDB for community-confirmed reports.\n4. Search Censys for cert fingerprints observed on the IP.\n5. Look up BGP origin AS for ASN-level pivots.\n6. Check if IP appears in any public scanner wordlists (e.g., projecthoneypot).",  # noqa: E501
         },
         {
             "research_query": "Investigate IPFS CID QmXxx... for hidden content distribution",
-            "rag_context": "[doc1] CID first seen in 3 forum posts on dread.onion; [doc2] Pin count: 47, gateway access log shows 200 OK",
+            "rag_context": "[doc1] CID first seen in 3 forum posts on dread.onion; [doc2] Pin count: 47, gateway access log shows 200 OK",  # noqa: E501
             "graph_summary": "Graph: QmXxx → 3 forum posts (3 edges) → 47 pin nodes",
             "reward_context": "Dark pivot lane active. 4 queries remaining.",
             "existing_hypotheses": ["Enumerate pin nodes"],
-            "hypotheses": "1. Crawl IPFS gateways (ipfs.io, dweb.link, cloudflare-ipfs.com) for the CID content.\n2. Search the same CID on alternative indexes (Pinata, Infura) for metadata.\n3. Pivot to other CIDs referenced in the same forum threads.\n4. Check archive.org Wayback Machine for the gateway URLs.\n5. Map the 47 pin nodes to geolocate distribution.",
+            "hypotheses": "1. Crawl IPFS gateways (ipfs.io, dweb.link, cloudflare-ipfs.com) for the CID content.\n2. Search the same CID on alternative indexes (Pinata, Infura) for metadata.\n3. Pivot to other CIDs referenced in the same forum threads.\n4. Check archive.org Wayback Machine for the gateway URLs.\n5. Map the 47 pin nodes to geolocate distribution.",  # noqa: E501
         },
         {
             "research_query": "Analyze certificate transparency log for subdomain takeover on *.target.io",
-            "rag_context": "[doc1] CT log: 142 certs for *.target.io in 2025; [doc2] 3 certs reference dangling CNAMEs to deleted-cloud-services.io",
+            "rag_context": "[doc1] CT log: 142 certs for *.target.io in 2025; [doc2] 3 certs reference dangling CNAMEs to deleted-cloud-services.io",  # noqa: E501
             "graph_summary": "Graph: *.target.io → 142 certs (3 dangling) → deleted-cloud-services.io",
             "reward_context": "Mode: research. No time pressure.",
             "existing_hypotheses": [],
-            "hypotheses": "1. Register the 3 dangling CNAMEs to claim subdomains before attackers.\n2. Monitor CT logs in real-time (crt.sh RSS) for new *.target.io certs.\n3. Audit all DNS records for *.target.io for stale CNAMEs.\n4. Set up subdomain monitoring (e.g., can-i-take-over-xyz) rules.\n5. Check if any subdomains point to GitHub Pages / S3 / Heroku with claimable names.",
+            "hypotheses": "1. Register the 3 dangling CNAMEs to claim subdomains before attackers.\n2. Monitor CT logs in real-time (crt.sh RSS) for new *.target.io certs.\n3. Audit all DNS records for *.target.io for stale CNAMEs.\n4. Set up subdomain monitoring (e.g., can-i-take-over-xyz) rules.\n5. Check if any subdomains point to GitHub Pages / S3 / Heroku with claimable names.",  # noqa: E501
         },
         {
             "research_query": "Correlate ASN AS212238 with threat actor cluster activity",
-            "rag_context": "[doc1] AS212238 announced 14 prefixes in 2025; [doc2] 8 prefixes overlap with known APT29 infrastructure",
+            "rag_context": "[doc1] AS212238 announced 14 prefixes in 2025; [doc2] 8 prefixes overlap with known APT29 infrastructure",  # noqa: E501
             "graph_summary": "Graph: AS212238 → 14 prefixes (8 flagged) → APT29 cluster",
             "reward_context": "Tier-2 hunt. 10 queries remaining.",
             "existing_hypotheses": ["Pivot to APT29 history"],
-            "hypotheses": "1. Cross-reference 8 flagged prefixes with Shodan/Censys for live services.\n2. Look up BGP history (RIPE RIS) for prefix transitions involving AS212238.\n3. Search threat intel reports (Mandiant, CrowdStrike) for AS212238 attribution.\n4. Check AbuseIPDB and Spamhaus for the 14 prefixes.\n5. Pivot to AS212238's upstream/downstream AS peers for similar patterns.\n6. Map the 6 unflagged prefixes to confirm they are benign (false negative check).",
+            "hypotheses": "1. Cross-reference 8 flagged prefixes with Shodan/Censys for live services.\n2. Look up BGP history (RIPE RIS) for prefix transitions involving AS212238.\n3. Search threat intel reports (Mandiant, CrowdStrike) for AS212238 attribution.\n4. Check AbuseIPDB and Spamhaus for the 14 prefixes.\n5. Pivot to AS212238's upstream/downstream AS peers for similar patterns.\n6. Map the 6 unflagged prefixes to confirm they are benign (false negative check).",  # noqa: E501
         },
         {
             "research_query": "Investigate Pastebin paste https://pastebin.com/raw/abc123 for credential exposure",
-            "rag_context": "[doc1] Paste contains 23 email:password combos; [doc2] 8 emails match corporate-domain.tld employees",
+            "rag_context": "[doc1] Paste contains 23 email:password combos; [doc2] 8 emails match corporate-domain.tld employees",  # noqa: E501
             "graph_summary": "Graph: paste → 23 cred pairs → 8 corporate emails",
             "reward_context": "Leak sentinel active. 3 queries remaining.",
             "existing_hypotheses": [],
-            "hypotheses": "1. Notify affected employees through corporate security channel.\n2. Force password reset for the 8 corporate emails.\n3. Check if the paste contains additional pivotable data (API keys, internal URLs).\n4. Monitor paste sites for new dumps from the same actor (search by similar patterns).\n5. Cross-reference the 15 non-corporate emails to see if they share infrastructure with the corporate 8.",
+            "hypotheses": "1. Notify affected employees through corporate security channel.\n2. Force password reset for the 8 corporate emails.\n3. Check if the paste contains additional pivotable data (API keys, internal URLs).\n4. Monitor paste sites for new dumps from the same actor (search by similar patterns).\n5. Cross-reference the 15 non-corporate emails to see if they share infrastructure with the corporate 8.",  # noqa: E501
         },
         {
             "research_query": "Map BGP announced prefixes for AS-tooling 64512 to active infrastructure",
-            "rag_context": "[doc1] AS64512 announces 3 prefixes: 192.0.2.0/24, 198.51.100.0/24, 203.0.113.0/24; [doc2] All 3 in documentation-reserved ranges (RFC 5737)",
+            "rag_context": "[doc1] AS64512 announces 3 prefixes: 192.0.2.0/24, 198.51.100.0/24, 203.0.113.0/24; [doc2] All 3 in documentation-reserved ranges (RFC 5737)",  # noqa: E501
             "graph_summary": "Graph: AS64512 → 3 doc prefixes (no production hosts)",
             "reward_context": "Low priority. 2 queries remaining.",
             "existing_hypotheses": [],
-            "hypotheses": "1. Verify AS64512 is documentation-only via RFC 5737 range check.\n2. Check if AS64512 is being used as a decoy or honeypot AS.\n3. Search BGPStream for any anomalous announcements from AS64512.",
+            "hypotheses": "1. Verify AS64512 is documentation-only via RFC 5737 range check.\n2. Check if AS64512 is being used as a decoy or honeypot AS.\n3. Search BGPStream for any anomalous announcements from AS64512.",  # noqa: E501
         },
         {
             "research_query": "Analyze GitHub repo github.com/leaked-org/internal-tool for secret exposure",
-            "rag_context": "[doc1] Repo: 247 files, last commit 2025-10-15; [doc2] gitleaks scan: 14 hits (AWS keys, GitHub PATs, 2 DB strings)",
+            "rag_context": "[doc1] Repo: 247 files, last commit 2025-10-15; [doc2] gitleaks scan: 14 hits (AWS keys, GitHub PATs, 2 DB strings)",  # noqa: E501
             "graph_summary": "Graph: repo → 14 secret hits → 3 cloud providers",
             "reward_context": "GitHub monitor active. 7 queries remaining.",
             "existing_hypotheses": [],
-            "hypotheses": "1. Rotate the 14 detected secrets immediately and audit usage.\n2. Check git history for the secrets — were they ever pushed to main?\n3. Look for additional repos under leaked-org with similar patterns.\n4. Notify GitHub Trust & Safety for takedown.\n5. Audit IAM policies for the 3 cloud providers to check blast radius.\n6. Search GitHub Code Search for the same secret strings in other orgs.\n7. Check if any of the secrets were used to access production (CloudTrail, GitHub audit log).",
+            "hypotheses": "1. Rotate the 14 detected secrets immediately and audit usage.\n2. Check git history for the secrets — were they ever pushed to main?\n3. Look for additional repos under leaked-org with similar patterns.\n4. Notify GitHub Trust & Safety for takedown.\n5. Audit IAM policies for the 3 cloud providers to check blast radius.\n6. Search GitHub Code Search for the same secret strings in other orgs.\n7. Check if any of the secrets were used to access production (CloudTrail, GitHub audit log).",  # noqa: E501
         },
         {
             "research_query": "Pivot from exposed S3 bucket corp-backups-2024 to broader AWS exposure",
-            "rag_context": "[doc1] Bucket is public, contains 4.2TB of data; [doc2] Bucket policy shows IAM role 'backup-writer' from account 123456789012",
+            "rag_context": "[doc1] Bucket is public, contains 4.2TB of data; [doc2] Bucket policy shows IAM role 'backup-writer' from account 123456789012",  # noqa: E501
             "graph_summary": "Graph: corp-backups-2024 → 1 IAM role → 23 other buckets in account",
             "reward_context": "Asset exposure lane active. 9 queries remaining.",
             "existing_hypotheses": [],
-            "hypotheses": "1. List all 23 other buckets in the account via S3 API (using public enumeration).\n2. Check if the 4.2TB contains PII (run keyword scan with grep-like patterns).\n3. Pivot to the 'backup-writer' IAM role for privilege escalation paths.\n4. Look up bucket name pattern in GrayhatWarfare / S3Hunter for similar misconfigs.\n5. Check CloudTrail (if accessible) for unauthorized access to this bucket.\n6. Enumerate account 123456789012 for other public assets (EBS snapshots, AMIs, RDS).\n7. Set up ongoing monitoring (e.g., AWS Macie) for the entire account.",
+            "hypotheses": "1. List all 23 other buckets in the account via S3 API (using public enumeration).\n2. Check if the 4.2TB contains PII (run keyword scan with grep-like patterns).\n3. Pivot to the 'backup-writer' IAM role for privilege escalation paths.\n4. Look up bucket name pattern in GrayhatWarfare / S3Hunter for similar misconfigs.\n5. Check CloudTrail (if accessible) for unauthorized access to this bucket.\n6. Enumerate account 123456789012 for other public assets (EBS snapshots, AMIs, RDS).\n7. Set up ongoing monitoring (e.g., AWS Macie) for the entire account.",  # noqa: E501
         },
     ]
     return examples[: max(1, min(num_examples, MAX_NUM_EXAMPLES))]
@@ -234,6 +234,7 @@ def _configure_dspy_with_mlx() -> Any | None:
     """
     try:
         import dspy  # type: ignore[import-not-found]
+
         # Lazy import: avoids loading Hermes3 / MLX at module import
         from hledac.universal.brain.dspy_service import Hermes3DSPyLM  # type: ignore[import-not-found]
         try:

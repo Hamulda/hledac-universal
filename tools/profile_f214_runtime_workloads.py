@@ -291,8 +291,8 @@ def workload_temporal_topk(profile_top: int) -> WorkloadResult:
             str(Path(__file__).parent.parent / "layers" / "temporal_signal_layer.py")
         )
         mod = loader.load_module()
-        TemporalSignalLayer = mod.TemporalSignalLayer
-        TemporalEvent = mod.TemporalEvent
+        TemporalSignalLayer = mod.TemporalSignalLayer  # noqa: N806
+        TemporalEvent = mod.TemporalEvent  # noqa: N806
     except Exception as e:
         return WorkloadResult("temporal_topk", "skip", f"import error: {e}")
 
@@ -394,8 +394,8 @@ def generate_hash_test_file(path: str, num_lines: int = 5000) -> None:
 
     patterns = [
         lambda: f"{random.randint(0, 2**128):032x}",  # MD5/SHA-like hex
-        lambda: f"$2b$12${''.join(random.choices('ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789./', k=53))}",  # bcrypt
-        lambda: f"$argon2id$v=19$m=65536,t=3,p=4${''.join(random.choices('ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/', k=40))}",  # argon2id
+        lambda: f"$2b$12${''.join(random.choices('ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789./', k=53))}",  # bcrypt  # noqa: E501
+        lambda: f"$argon2id$v=19$m=65536,t=3,p=4${''.join(random.choices('ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/', k=40))}",  # argon2id  # noqa: E501
         lambda: " ".join(["word"] * random.randint(3, 10)),  # random text
         lambda: f"0x{random.randint(0, 2**128):032x}",  # hex with prefix
     ]
@@ -417,8 +417,8 @@ def generate_pattern_payload(num_items: int = 2000) -> str:
     chunks = []
     for i in range(num_items):
         t = random.choice([
-            lambda: f"user{i}@mail{i}.example.com",
-            lambda: f"http://sub{i}.domain{i}.org/path?q={i}",
+            lambda: f"user{i}@mail{i}.example.com",  # noqa: B023
+            lambda: f"http://sub{i}.domain{i}.org/path?q={i}",  # noqa: B023
             lambda: f"192.168.{random.randint(0,255)}.{random.randint(1,254)}",
             lambda: f"10.0.{random.randint(0,255)}.{random.randint(1,254)}",
             lambda: f"CVE-{2000 + random.randint(0, 25)}-{random.randint(1000, 99999)}",
@@ -581,8 +581,8 @@ def _temporal_topk_sync():
         str(Path(__file__).parent.parent / "layers" / "temporal_signal_layer.py")
     )
     mod = loader.load_module()
-    TemporalSignalLayer = mod.TemporalSignalLayer
-    TemporalEvent = mod.TemporalEvent
+    TemporalSignalLayer = mod.TemporalSignalLayer  # noqa: N806
+    TemporalEvent = mod.TemporalEvent  # noqa: N806
     layer = TemporalSignalLayer()
     now = time.time()
     for i in range(500):
@@ -631,7 +631,7 @@ def format_text(results: list[WorkloadResult], args) -> str:
     lines.append("| Workload | Status | Median ms | p95 ms | Memory MiB | Main bottleneck |")
     lines.append("|---|---|---:|---:|---:|---|")
     for r in results:
-        lines.append(f"| {r.name} | {r.status} | {r.median_ms:.1f} | {r.p95_ms:.1f} | {r.memory_delta_mib:.1f} | {r.main_bottleneck} |")
+        lines.append(f"| {r.name} | {r.status} | {r.median_ms:.1f} | {r.p95_ms:.1f} | {r.memory_delta_mib:.1f} | {r.main_bottleneck} |")  # noqa: E501
 
     lines.append("")
     lines.append("## Per-workload details\n")

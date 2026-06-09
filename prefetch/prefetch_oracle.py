@@ -61,6 +61,7 @@ except ImportError:
     mx = None
 
 import numpy as np
+
 from hledac.universal.federated.sketches import CountMinSketch, SimHashSketch
 from hledac.universal.intelligence.relationship_discovery import RelationshipDiscoveryEngine
 from hledac.universal.knowledge.pq_index import PQIndex
@@ -121,11 +122,11 @@ class PrefetchOracle:
         self.reranker = None
 
         # Contextual bandit (LinUCB) – per arm
-        self.bandit_arms = {}                            # arm_id -> {'A': np.array(d,d), 'b': np.array(d,), 'A_inv': np.array(d,d)}
+        self.bandit_arms = {}                            # arm_id -> {'A': np.array(d,d), 'b': np.array(d,), 'A_inv': np.array(d,d)}  # noqa: E501
         self._arm_features = {}                          # (arm_id, url) -> context vector (np.array)
 
         # Sledování naplánovaných prefetchů pro pozdější penalizaci
-        self._scheduled = OrderedDict()                  # url -> {'arm_id': arm_id, 'context': np.array, 'expires': float}
+        self._scheduled = OrderedDict()                  # url -> {'arm_id': arm_id, 'context': np.array, 'expires': float}  # noqa: E501
         self._max_scheduled = 100000
 
         # Statistiky
@@ -178,7 +179,7 @@ class PrefetchOracle:
                 self._neighbors_limit = max(2, self._neighbors_limit // 2)
                 self._pq_k = max(1, self._pq_k // 2)
                 self._max_candidates_dynamic = max(10, self._max_candidates_dynamic // 2)
-                logger.info(f"Stage A budget exceeded, reducing limits: neighbors={self._neighbors_limit}, pq_k={self._pq_k}, candidates={self._max_candidates_dynamic}")
+                logger.info(f"Stage A budget exceeded, reducing limits: neighbors={self._neighbors_limit}, pq_k={self._pq_k}, candidates={self._max_candidates_dynamic}")  # noqa: E501
             elif avg_time < STAGE_A_TIME_BUDGET_MS * 0.5:
                 self._neighbors_limit = min(20, self._neighbors_limit + 1)
                 self._pq_k = min(10, self._pq_k + 1)
@@ -412,7 +413,7 @@ class PrefetchOracle:
         arm = self.bandit_arms[arm_id]
         if arm['A_inv'] is None:
             arm['A_inv'] = np.linalg.inv(arm['A'])
-        A_inv = arm['A_inv']
+        A_inv = arm['A_inv']  # noqa: N806
         theta = A_inv @ arm['b']
         mean = x64 @ theta
         var = x64 @ A_inv @ x64
@@ -439,10 +440,10 @@ class PrefetchOracle:
                 'A_inv': np.eye(d, dtype=np.float64) / self.lambda_prior
             }
         arm = self.bandit_arms[arm_id]
-        A_inv = arm['A_inv']
+        A_inv = arm['A_inv']  # noqa: N806
         # Sherman–Morrison: A_inv = A_inv - (A_inv @ x @ x.T @ A_inv) / (1 + x.T @ A_inv @ x)
         x_np = x64.reshape(-1, 1)
-        A_inv_x = A_inv @ x_np
+        A_inv_x = A_inv @ x_np  # noqa: N806
         denominator = 1 + (x_np.T @ A_inv_x).item()
         if denominator > 1e-8:
             arm['A_inv'] = A_inv - (A_inv_x @ A_inv_x.T) / denominator

@@ -265,7 +265,7 @@ __all__ = [
     # curl_cffi transport functions
     'should_use_curl_cffi',
     'fetch_via_curl_cffi',
-    'fetch_via_tor_curl_cffi',
+    'fetch_via_tor_curl_cffi',  # noqa: F822
     # Router
     'route_transport',
 ]

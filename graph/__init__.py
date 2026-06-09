@@ -22,10 +22,10 @@ except ImportError:
 # Quantum Pathfinder (lazy-loaded) — heavy MLX/scipy/numpy only via _get_*() helpers
 try:
     from .quantum_pathfinder import (
-        DuckPGQGraph,
         MAX_QUANTUM_EDGES,
         MAX_QUANTUM_NODES,
         QUANTUM_PATHFINDER_AVAILABLE,
+        DuckPGQGraph,
         QuantumInspiredPathFinder,
         QuantumPathConfig,
         create_quantum_pathfinder,

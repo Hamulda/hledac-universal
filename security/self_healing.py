@@ -611,7 +611,7 @@ class SelfHealingCICD:
                 logger.error(f"Error in self-healing cycle: {e}")
                 await asyncio.sleep(300)  # Wait 5 minutes on error
 
-    async def _run_health_checks(self) -> dict[str, HealthResult]:
+    async def _run_health_checks(self) -> dict[str, HealthResult] | None:
         """Run all health checks"""
         health_results = {}
 
@@ -741,7 +741,7 @@ class SelfHealingCICD:
                 consecutive_failures=self._get_consecutive_failures(check_id) + 1
             )
 
-    def _evaluate_success_criteria(self, criteria: str, exit_code: int, output: str) -> bool:
+    def _evaluate_success_criteria(self, criteria: str, exit_code: int, output: str) -> bool | None:
         """Evaluate success criteria based on exit code and output"""
         try:
             # Handle exit code criteria
@@ -775,7 +775,7 @@ class SelfHealingCICD:
         successful = len([h for h in recent_history if h.status == HealthStatus.HEALTHY])
         return successful / len(recent_history)
 
-    def _get_consecutive_failures(self, check_id: str) -> int:
+    def _get_consecutive_failures(self, check_id: str) -> int | None:
         """Get consecutive failures from health history"""
         history = list(self.health_history[check_id])
         consecutive_failures = 0
@@ -789,7 +789,7 @@ class SelfHealingCICD:
 
             return consecutive_failures
 
-    def _analyze_health_results(self, health_results: dict[str, HealthResult]) -> list[tuple[CIComponent, HealthResult, list[HealingAction]]]:
+    def _analyze_health_results(self, health_results: dict[str, HealthResult]) -> list[tuple[CIComponent, HealthResult, list[HealingAction]]] | None:
         """Analyze health results and identify issues requiring healing"""
         issues = []
 
@@ -801,7 +801,7 @@ class SelfHealingCICD:
 
             return issues
 
-    def _identify_healing_actions(self, health_result: HealthResult) -> list[HealingAction]:
+    def _identify_healing_actions(self, health_result: HealthResult) -> list[HealingAction] | None:
         """Identify appropriate healing actions for a health result"""
         actions = []
 
@@ -814,7 +814,7 @@ class SelfHealingCICD:
 
             return actions
 
-    def _check_trigger_conditions(self, trigger_conditions: list[str], health_result: HealthResult) -> bool:
+    def _check_trigger_conditions(self, trigger_conditions: list[str], health_result: HealthResult) -> bool | None:
         """Check if trigger conditions are met"""
         for condition in trigger_conditions:
             try:
@@ -845,7 +845,7 @@ class SelfHealingCICD:
 
             return False
 
-    def _extract_metric_value(self, metric: str, health_result: HealthResult) -> float:
+    def _extract_metric_value(self, metric: str, health_result: HealthResult) -> float | None:
         """Extract metric value from health result"""
         if metric == "consecutive_failures":
                     return float(health_result.consecutive_failures)
@@ -924,7 +924,7 @@ class SelfHealingCICD:
                 except Exception as e:
                     logger.error(f"Error executing healing action {action.action_id}: {e}")
 
-    async def _execute_healing_action(self, action: HealingAction, health_result: HealthResult) -> bool:
+    async def _execute_healing_action(self, action: HealingAction, health_result: HealthResult) -> bool | None:
         """Execute a healing action"""
         logger.info(f"🔧 Executing healing action: {action.action_type.value} for {action.component.value}")
 
@@ -1101,7 +1101,7 @@ class SelfHealingCICD:
 
                     return history[-1]
 
-    def _calculate_component_health_score(self, component: CIComponent) -> float:
+    def _calculate_component_health_score(self, component: CIComponent) -> float | None:
         """Calculate overall health score for component"""
         history = self.health_history.get(component.value)
         if not history:

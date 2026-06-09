@@ -10,7 +10,7 @@ The canonical sprint facts authority is DuckDBShadowStore (Tier 1 sprint facts).
 This hook is the forwarding seam (analytics path only) from EvidenceLog.
 
 LEDGER → FACTS boundary:
-    EvidenceLog.append()  →  analytics_hook.shadow_record_finding()  →  DuckDBShadowStore.async_record_shadow_findings_batch()
+    EvidenceLog.append()  →  analytics_hook.shadow_record_finding()  →  DuckDBShadowStore.async_record_shadow_findings_batch()  # noqa: E501
 
 The EvidenceLog remains the canonical EVIDENCE LEDGER.
 DuckDBShadowStore holds CANONICAL SPRINT FACTS (sprint_delta, scorecard, hit_log).

@@ -175,8 +175,8 @@ def get_pivot_task_types(pivot_type: str) -> list[str]:
 # Sprint F229: Source registration
 # ---------------------------------------------------------------------------
 
-from .circl_pdns_adapter import async_search_circl_pdns as _circl_adapter
-from .dht_adapter import async_search_dht as _dht_adapter
+from .circl_pdns_adapter import async_search_circl_pdns as _circl_adapter  # noqa: E402
+from .dht_adapter import async_search_dht as _dht_adapter  # noqa: E402
 
 register_source_adapter(
     "circl_pdns",
@@ -203,7 +203,10 @@ register_source_adapter(
 # Sprint F250F: IPFS Discovery — tier-3 experimental (unindexed archival data)
 # ---------------------------------------------------------------------------
 try:
-    from ..network.ipfs_client import ipfs_fetch_as_findings, ipfs_search_as_findings
+    from ..network.ipfs_client import (  # noqa: F401  # ..network.ipfs_client.ipfs_search_as_findings
+        ipfs_fetch_as_findings,
+        ipfs_search_as_findings,
+    )
 
     register_source_adapter(
         "ipfs_discovery",

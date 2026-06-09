@@ -23,6 +23,7 @@ import os
 import time
 
 import aiohttp
+
 from hledac.universal.knowledge.duckdb_store import CanonicalFinding
 from hledac.universal.utils.rate_limiters import get_limiter
 
@@ -63,7 +64,7 @@ def _build_findings(ip: str, raw_result: dict, ts_now: float) -> list[CanonicalF
         confidence=confidence,
         ts=ts_now,
         provenance=("greynoise_intel", ip, classification),
-        payload_text=f"{ip} classification={classification} tags={tags_str} asn={asn} first_seen={first_seen} last_seen={last_seen} metadata={metadata_str}",
+        payload_text=f"{ip} classification={classification} tags={tags_str} asn={asn} first_seen={first_seen} last_seen={last_seen} metadata={metadata_str}",  # noqa: E501
     )
     findings.append(finding)
 

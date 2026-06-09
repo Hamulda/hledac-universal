@@ -56,7 +56,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 import time
 from typing import Any
 
@@ -403,7 +402,7 @@ class LaneDispatchTransport:
             try:
                 async with asyncio.timeout(LANE_DISPATCH_TIMEOUT_S):
                     raw = await dispatcher(query, self._sprint_id)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 logger.warning(
                     "[FED-TRANS] lane_dispatch: lane=%r timeout after %.1fs",
                     lane, LANE_DISPATCH_TIMEOUT_S,

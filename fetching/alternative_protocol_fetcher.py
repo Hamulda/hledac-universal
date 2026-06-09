@@ -23,6 +23,7 @@ import time
 from typing import NamedTuple
 
 from utils.async_helpers import safe_gather_dropin
+
 try:
     from hledac.universal.utils.source_types import SourceType
 except ImportError:
@@ -148,11 +149,11 @@ async def _fetch_from_ipfs(
                 success=True,
                 error=None,
             )
-        except asyncio.TimeoutError:
-            return [], AltProtocolResult(source_type=SourceType.IPFS_CONTENT, findings_count=0, success=False, error="timeout")
+        except TimeoutError:
+            return [], AltProtocolResult(source_type=SourceType.IPFS_CONTENT, findings_count=0, success=False, error="timeout")  # noqa: E501
         except Exception as e:
             logger.debug(f"IPFS alt fetch error: {e}")
-            return [], AltProtocolResult(source_type=SourceType.IPFS_CONTENT, findings_count=0, success=False, error=str(e))
+            return [], AltProtocolResult(source_type=SourceType.IPFS_CONTENT, findings_count=0, success=False, error=str(e))  # noqa: E501
 
 
 async def _fetch_from_gopher(
@@ -165,7 +166,6 @@ async def _fetch_from_gopher(
     Returns:
         (list[CanonicalFinding], AltProtocolResult)
     """
-    from knowledge.duckdb_store import CanonicalFinding
 
     gopher = _get_gopher_transport()
 
@@ -181,11 +181,11 @@ async def _fetch_from_gopher(
                 success=True,
                 error=None,
             )
-        except asyncio.TimeoutError:
-            return [], AltProtocolResult(source_type=SourceType.GOPHER_CONTENT, findings_count=0, success=False, error="timeout")
+        except TimeoutError:
+            return [], AltProtocolResult(source_type=SourceType.GOPHER_CONTENT, findings_count=0, success=False, error="timeout")  # noqa: E501
         except Exception as e:
             logger.debug(f"Gopher alt fetch error: {e}")
-            return [], AltProtocolResult(source_type=SourceType.GOPHER_CONTENT, findings_count=0, success=False, error=str(e))
+            return [], AltProtocolResult(source_type=SourceType.GOPHER_CONTENT, findings_count=0, success=False, error=str(e))  # noqa: E501
 
 
 async def _fetch_from_gemini(
@@ -198,7 +198,6 @@ async def _fetch_from_gemini(
     Returns:
         (list[CanonicalFinding], AltProtocolResult)
     """
-    from knowledge.duckdb_store import CanonicalFinding
 
     gemini = _get_gemini_transport()
 
@@ -214,11 +213,11 @@ async def _fetch_from_gemini(
                 success=True,
                 error=None,
             )
-        except asyncio.TimeoutError:
-            return [], AltProtocolResult(source_type=SourceType.GEMINI_CONTENT, findings_count=0, success=False, error="timeout")
+        except TimeoutError:
+            return [], AltProtocolResult(source_type=SourceType.GEMINI_CONTENT, findings_count=0, success=False, error="timeout")  # noqa: E501
         except Exception as e:
             logger.debug(f"Gemini alt fetch error: {e}")
-            return [], AltProtocolResult(source_type=SourceType.GEMINI_CONTENT, findings_count=0, success=False, error=str(e))
+            return [], AltProtocolResult(source_type=SourceType.GEMINI_CONTENT, findings_count=0, success=False, error=str(e))  # noqa: E501
 
 
 async def _fetch_from_i2p(
@@ -231,7 +230,6 @@ async def _fetch_from_i2p(
     Returns:
         (list[CanonicalFinding], AltProtocolResult)
     """
-    from knowledge.duckdb_store import CanonicalFinding
 
     i2p = _get_i2p_client()
 
@@ -254,11 +252,11 @@ async def _fetch_from_i2p(
                 success=True,
                 error=None,
             )
-        except asyncio.TimeoutError:
-            return [], AltProtocolResult(source_type=SourceType.I2P_DISCOVERY, findings_count=0, success=False, error="timeout")
+        except TimeoutError:
+            return [], AltProtocolResult(source_type=SourceType.I2P_DISCOVERY, findings_count=0, success=False, error="timeout")  # noqa: E501
         except Exception as e:
             logger.debug(f"I2P alt fetch error: {e}")
-            return [], AltProtocolResult(source_type=SourceType.I2P_DISCOVERY, findings_count=0, success=False, error=str(e))
+            return [], AltProtocolResult(source_type=SourceType.I2P_DISCOVERY, findings_count=0, success=False, error=str(e))  # noqa: E501
 
 
 async def _fetch_from_fediverse(
@@ -307,11 +305,11 @@ async def _fetch_from_fediverse(
                 )
             finally:
                 await adapter.close()
-        except asyncio.TimeoutError:
-            return [], AltProtocolResult(source_type=SourceType.FEDIVERSE, findings_count=0, success=False, error="timeout")
+        except TimeoutError:
+            return [], AltProtocolResult(source_type=SourceType.FEDIVERSE, findings_count=0, success=False, error="timeout")  # noqa: E501
         except Exception as e:
             logger.debug(f"Fediverse alt fetch error: {e}")
-            return [], AltProtocolResult(source_type=SourceType.FEDIVERSE, findings_count=0, success=False, error=str(e))
+            return [], AltProtocolResult(source_type=SourceType.FEDIVERSE, findings_count=0, success=False, error=str(e))  # noqa: E501
 
 
 async def _fetch_from_matrix(
@@ -363,11 +361,11 @@ async def _fetch_from_matrix(
                 )
             finally:
                 await adapter.close()
-        except asyncio.TimeoutError:
-            return [], AltProtocolResult(source_type=SourceType.MATRIX_PUBLIC, findings_count=0, success=False, error="timeout")
+        except TimeoutError:
+            return [], AltProtocolResult(source_type=SourceType.MATRIX_PUBLIC, findings_count=0, success=False, error="timeout")  # noqa: E501
         except Exception as e:
             logger.debug(f"Matrix alt fetch error: {e}")
-            return [], AltProtocolResult(source_type=SourceType.MATRIX_PUBLIC, findings_count=0, success=False, error=str(e))
+            return [], AltProtocolResult(source_type=SourceType.MATRIX_PUBLIC, findings_count=0, success=False, error=str(e))  # noqa: E501
 
 
 # =============================================================================

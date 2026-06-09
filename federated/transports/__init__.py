@@ -41,8 +41,8 @@ USAGE
 
 from __future__ import annotations
 
-# Import the Protocol + factory first (no side effects beyond the class def).
-from .protocol import NodeTransport, NodeTransportFactory
+# Import the inmemory_peer module — registers "inmemory_peer" on import.
+from . import inmemory_peer as _inmem_mod  # noqa: F401  (registration side effect)
 
 # Import the lane_dispatch module — registers "lane_dispatch" on import.
 from . import lane_dispatch as _lane_dispatch_mod  # noqa: F401  (registration side effect)
@@ -50,8 +50,8 @@ from . import lane_dispatch as _lane_dispatch_mod  # noqa: F401  (registration s
 # Import the peer_node module — registers "peer_node" on import.
 from . import peer_node as _peer_node_mod  # noqa: F401  (registration side effect)
 
-# Import the inmemory_peer module — registers "inmemory_peer" on import.
-from . import inmemory_peer as _inmem_mod  # noqa: F401  (registration side effect)
+# Import the Protocol + factory first (no side effects beyond the class def).
+from .protocol import NodeTransport, NodeTransportFactory
 
 # NOTE: The legacy `_LocalNodeTransport` is NOT registered through the
 # factory. It remains the direct default in `FederatedResearchCoordinator`
@@ -67,6 +67,10 @@ NodeTransportFactory.set_default("inmemory_peer")
 
 
 # Re-export key names for ergonomic imports.
+from .inmemory_peer import (  # noqa: E402
+    INMEMORY_PEER_MAX_PEERS,
+    InMemoryPeerNodeTransport,
+)
 from .lane_dispatch import (  # noqa: E402
     LANE_DISPATCH_MAX_FINDINGS,
     LANE_DISPATCH_TIMEOUT_S,
@@ -79,11 +83,6 @@ from .peer_node import (  # noqa: E402
     PeerNodeTransport,
     is_peer_node_enabled,
 )
-from .inmemory_peer import (  # noqa: E402
-    INMEMORY_PEER_MAX_PEERS,
-    InMemoryPeerNodeTransport,
-)
-
 
 __all__ = [
     "NodeTransport",

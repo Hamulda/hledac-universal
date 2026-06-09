@@ -31,6 +31,12 @@ from collections import OrderedDict
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
+# Hypothesis lives in brain.hypothesis_engine (carries engine-specific
+# methods like add_test_result, _ds_engine). Imported at runtime here
+# because the type is used in method signatures on this class.
+from brain.research_hypothesis_engine import Hypothesis  # noqa: E402
+from utils.async_helpers import safe_gather_dropin
+
 from ._types import (
     AdversarialReport,
     Contradiction,
@@ -41,12 +47,6 @@ from ._types import (
     SourceCredibility,
 )
 
-# Hypothesis lives in brain.hypothesis_engine (carries engine-specific
-# methods like add_test_result, _ds_engine). Imported at runtime here
-# because the type is used in method signatures on this class.
-from brain.research_hypothesis_engine import Hypothesis  # noqa: E402
-
-from utils.async_helpers import safe_gather_dropin
 if TYPE_CHECKING:
     from brain.research_hypothesis_engine import HypothesisEngine  # noqa: F401
 
@@ -81,7 +81,7 @@ class AdversarialVerifier:
 
     def __init__(
         self,
-        hypothesis_engine: "HypothesisEngine",
+        hypothesis_engine: HypothesisEngine,
         max_contradiction_window: int = 100,
         enable_streaming: bool = True,
     ):
@@ -332,7 +332,7 @@ class AdversarialVerifier:
         if source in self._source_credibility:
             cached = self._source_credibility[source]
             # Refresh if older than 24 hours
-            if datetime.now() - cached.last_updated < timedelta(hours=24):
+            if datetime.now() - cached.last_updated < timedelta(hours=24):  # noqa: DTZ005
                 # Move to end (update LRU order)
                 self._source_credibility.move_to_end(source)
                 return cached
@@ -419,7 +419,7 @@ class AdversarialVerifier:
                         severity=0.9,
                         evidence_supporting_a=[event_a.source],
                         evidence_supporting_b=[event_b.source],
-                        resolution_notes=f"Event {event_a.event_id} claims to occur after {event_b.event_id} but has earlier timestamp",
+                        resolution_notes=f"Event {event_a.event_id} claims to occur after {event_b.event_id} but has earlier timestamp",  # noqa: E501
                     )
                     contradictions.append(contradiction)
 

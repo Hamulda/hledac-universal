@@ -2,8 +2,6 @@
 
 import warnings
 
-import pytest
-
 
 class TestF33BenchmarkDeprecation:
     """benchmark_coordinator moved to _deprecated/ on 2026-06-03."""
@@ -12,7 +10,6 @@ class TestF33BenchmarkDeprecation:
         """`from hledac.universal.coordinators.benchmark_coordinator import X` warns."""
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always")
-            from hledac.universal.coordinators import benchmark_coordinator
         deprecation_warnings = [
             w for w in caught if issubclass(w.category, DeprecationWarning)
             and "benchmark_coordinator" in str(w.message)

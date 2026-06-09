@@ -131,7 +131,7 @@ def _extract_evidence_depth_inputs(live_kpi: dict | None) -> dict:
     pub_seen = _sum_alias_fields(lk, ["public_candidates_seen"])
     if pub_seen == 0:
         pcl = lk.get("public_candidate_ledger_summary") or {}
-        pub_seen = _sum_alias_fields(pcl, ["public_candidates_discovered", "public_candidates_built", "public_candidates_stored"])
+        pub_seen = _sum_alias_fields(pcl, ["public_candidates_discovered", "public_candidates_built", "public_candidates_stored"])  # noqa: E501
 
     # CT clues — F231B alias chain
     ct_seen = _sum_alias_fields(lk, ["ct_clues_seen"])
@@ -330,7 +330,7 @@ def _normalize_benchmark(data: dict) -> dict:
             feed,
         ),
         "planned_duration_s": data.get("planned_duration_s") or data.get("requested_duration_s"),
-        "actual_duration_s": rt.get("actual_duration_s", data.get("actual_duration_s")) if isinstance(rt, dict) else data.get("actual_duration_s"),
+        "actual_duration_s": rt.get("actual_duration_s", data.get("actual_duration_s")) if isinstance(rt, dict) else data.get("actual_duration_s"),  # noqa: E501
         "swap_gib": _extract_uma_swap_gib(data),
         "swap_warning": _extract_swap_warning(data),
         "branch_mix": branch_mix,
@@ -408,7 +408,7 @@ def _normalize_live(data: dict) -> dict:
     passive = int(branch_mix.get("passive_findings", 0))
     feed = int(branch_mix.get("feed_findings", 0))
 
-    nonfeed_total = (live_kpi or {}).get("nonfeed_accepted_findings", ct + pub + passive) if live_kpi else ct + pub + passive
+    nonfeed_total = (live_kpi or {}).get("nonfeed_accepted_findings", ct + pub + passive) if live_kpi else ct + pub + passive  # noqa: E501
 
     # F215B: CT loss stage from lane_verdict (runtime_truth.lane_verdict.ct_loss_stage)
     ct_loss_stage = lane_verdict.get("ct_loss_stage", "no_loss") if isinstance(lane_verdict, dict) else "no_loss"
@@ -445,14 +445,14 @@ def _normalize_live(data: dict) -> dict:
         "public_findings": pub,
         "passive_findings": passive,
         "nonfeed_findings": nonfeed_total,
-        "source_family_count": (live_kpi or {}).get("source_family_count", sum(1 for v in branch_mix.values() if v > 0)) if live_kpi else 0,
+        "source_family_count": (live_kpi or {}).get("source_family_count", sum(1 for v in branch_mix.values() if v > 0)) if live_kpi else 0,  # noqa: E501
         "feed_dominance_score": _coerce_feed_dominance_score(
             (live_kpi or {}).get("feed_dominance_score") if live_kpi else None,
             total_findings,
             feed,
         ),
         "planned_duration_s": data.get("planned_duration_s") or data.get("duration_s"),
-        "actual_duration_s": data.get("actual_duration_s") or (rt.get("actual_duration_s") if isinstance(rt, dict) else None),
+        "actual_duration_s": data.get("actual_duration_s") or (rt.get("actual_duration_s") if isinstance(rt, dict) else None),  # noqa: E501
         "swap_gib": _extract_uma_swap_gib(data),
         "swap_warning": _extract_swap_warning(data),
         "branch_mix": branch_mix,
@@ -884,10 +884,10 @@ def score_research_quality(data: dict) -> dict:
     Returns a dict with all required quality surface fields:
       - total_quality_score: float (0-100)
       - grade: str ("FEED_ONLY", "MULTISOURCE_SHALLOW", "MULTISOURCE_USEFUL", "DEEP_RESEARCH_READY")
-      - quality_gate: str — QUALITY_PASS | QUALITY_FAIL_FEED_ONLY | QUALITY_FAIL_HARDWARE_TAINTED | QUALITY_FAIL_NONFEED_ZERO | QUALITY_WARN_MULTISOURCE_SHALLOW
+      - quality_gate: str — QUALITY_PASS | QUALITY_FAIL_FEED_ONLY | QUALITY_FAIL_HARDWARE_TAINTED | QUALITY_FAIL_NONFEED_ZERO | QUALITY_WARN_MULTISOURCE_SHALLOW  # noqa: E501
       - research_quality_comparable: bool — False when hardware_constrained or swap_gib >= 3.0
       - components: dict of component scores
-      - diagnostic_flags: dict (wallclock_exceeded, swap_gib, swap_warning, hardware_constrained, claims_extracted, ct_quarantine_count, ct_quarantine_without_loss)
+      - diagnostic_flags: dict (wallclock_exceeded, swap_gib, swap_warning, hardware_constrained, claims_extracted, ct_quarantine_count, ct_quarantine_without_loss)  # noqa: E501
       - feed_dominance_score: float (0-1, penalty applied)
       - swap_gib: float | None — post-sprint swap in GiB
       - swap_warning: bool — memory pressure signal
@@ -952,7 +952,7 @@ def score_research_quality(data: dict) -> dict:
             # F216D: CT quarantine diagnostic flag (findings rejected before bridge)
             "ct_quarantine_count": norm.get("ct_quarantine_count", 0),
             # F216D: Inconsistency detection — quarantine occurred but loss stage not updated
-            "ct_quarantine_without_loss": norm.get("ct_quarantine_count", 0) > 0 and norm.get("ct_loss_stage", "no_loss") == "no_loss",
+            "ct_quarantine_without_loss": norm.get("ct_quarantine_count", 0) > 0 and norm.get("ct_loss_stage", "no_loss") == "no_loss",  # noqa: E501
         },
         # F215A: Surface contract — always present fields
         "feed_dominance_score": rqs.feed_dominance_score,

@@ -37,6 +37,7 @@ from pathlib import Path
 from typing import Any
 
 from utils.async_helpers import safe_gather_dropin
+
 # Optional dependencies - imported lazily inside methods
 # PIL, pypdf, docx, mutagen, ffmpeg
 
@@ -76,7 +77,7 @@ def _extract_macro_urls(zf: zipfile.ZipFile, metadata: PPTXMetadata) -> None:
                     vba_parser = olevba.VBALogicalLinesExtractor(vba_data)
                     for _, vba_line in vba_parser.extract_macros():
                         if vba_line:
-                            urls = _URL_PATTERN.findall(vba_line.encode("utf-8", errors="ignore") if isinstance(vba_line, str) else vba_line)
+                            urls = _URL_PATTERN.findall(vba_line.encode("utf-8", errors="ignore") if isinstance(vba_line, str) else vba_line)  # noqa: E501
                             for url in urls[:MAX_MACRO_URLS]:
                                 if len(metadata.macro_urls) >= MAX_MACRO_URLS:
                                     break
@@ -509,7 +510,7 @@ class CADMetadata:
     autocad_version: str | None = None
     insertion_base: dict[str, float] | None = None
     coordinate_extents: dict[str, Any] | None = None
-    viewBox: str | None = None
+    viewBox: str | None = None  # noqa: N815
     width: str | None = None
     height: str | None = None
     internal_paths: list[str] = field(default_factory=list)
@@ -745,7 +746,7 @@ class MetadataCache:
                 # Remove oldest entries
                 await asyncio.to_thread(
                     lambda: self._conn.execute(
-                        "DELETE FROM metadata_cache WHERE file_hash IN (SELECT file_hash FROM metadata_cache ORDER BY extracted_at ASC LIMIT ?)",
+                        "DELETE FROM metadata_cache WHERE file_hash IN (SELECT file_hash FROM metadata_cache ORDER BY extracted_at ASC LIMIT ?)",  # noqa: E501
                         (self.MAX_ENTRIES // 10,)
                     )
                 )
@@ -755,7 +756,7 @@ class MetadataCache:
                     """INSERT OR REPLACE INTO metadata_cache
                    (file_hash, mod_time, file_size, metadata, extracted_at)
                    VALUES (?, ?, ?, ?, ?)""",
-                    (file_hash, mod_time, file_size, json.dumps(metadata), datetime.now().timestamp())
+                    (file_hash, mod_time, file_size, json.dumps(metadata), datetime.now().timestamp())  # noqa: DTZ005
                 )
             )
             await asyncio.to_thread(lambda: self._conn.commit())
@@ -1188,9 +1189,9 @@ class UniversalMetadataExtractor:
             file_size=stat.st_size,
             file_extension=path.suffix.lower(),
             mime_type=mime_type,
-            created=datetime.fromtimestamp(stat.st_ctime),
-            modified=datetime.fromtimestamp(stat.st_mtime),
-            accessed=datetime.fromtimestamp(stat.st_atime),
+            created=datetime.fromtimestamp(stat.st_ctime),  # noqa: DTZ006
+            modified=datetime.fromtimestamp(stat.st_mtime),  # noqa: DTZ006
+            accessed=datetime.fromtimestamp(stat.st_atime),  # noqa: DTZ006
             permissions=stat.st_mode,
             owner=owner,
             group=group,
@@ -1379,7 +1380,7 @@ class UniversalMetadataExtractor:
             import pypdf
         except ImportError:
             try:
-                import PyPDF2 as pypdf
+                import PyPDF2 as pypdf  # noqa: N813
             except ImportError:
                 return None
 
@@ -1633,7 +1634,10 @@ class UniversalMetadataExtractor:
             SteganalysisMetadata object or None
         """
         try:
-            from .steganography_detector import STEGDETECT_AVAILABLE, analyze_image_steganography
+            from .steganography_detector import (  # noqa: F401  # .steganography_detector.STEGDETECT_AVAILABLE
+                STEGDETECT_AVAILABLE,
+                analyze_image_steganography,
+            )
         except ImportError:
             return None
 
@@ -1673,11 +1677,11 @@ class UniversalMetadataExtractor:
         try:
             # Lazy import MLX VLM - only load when actually needed
             try:
-                from mlx.core import load as mlx_load
+                from mlx.core import load as mlx_load  # noqa: F401  # mlx.core.load
                 from mlx_vlm import generate, load
-                MLX_VLM_AVAILABLE = True
+                MLX_VLM_AVAILABLE = True  # noqa: N806
             except ImportError:
-                MLX_VLM_AVAILABLE = False
+                MLX_VLM_AVAILABLE = False  # noqa: N806
 
             if not MLX_VLM_AVAILABLE:
                 return None, []
@@ -1773,7 +1777,7 @@ class UniversalMetadataExtractor:
 
             # Parse
             if len(date_str) >= 14:
-                return datetime(
+                return datetime(  # noqa: DTZ001
                     int(date_str[0:4]),
                     int(date_str[4:6]),
                     int(date_str[6:8]),
@@ -1782,7 +1786,7 @@ class UniversalMetadataExtractor:
                     int(date_str[12:14])
                 )
             elif len(date_str) >= 8:
-                return datetime(
+                return datetime(  # noqa: DTZ001
                     int(date_str[0:4]),
                     int(date_str[4:6]),
                     int(date_str[6:8])
@@ -1842,7 +1846,7 @@ class UniversalMetadataExtractor:
         """
         try:
             from mutagen import File as MutagenFile
-            from mutagen.mp3 import MP3
+            from mutagen.mp3 import MP3  # noqa: F401  # mutagen.mp3.MP3
         except ImportError:
             return None
 
@@ -1977,7 +1981,7 @@ class UniversalMetadataExtractor:
                         "size": info.file_size,
                         "compressed_size": info.compress_size,
                         "is_directory": info.is_dir(),
-                        "modified": datetime(*info.date_time),
+                        "modified": datetime(*info.date_time),  # noqa: DTZ001
                         "crc": info.CRC,
                     })
 
@@ -2025,7 +2029,7 @@ class UniversalMetadataExtractor:
                         "name": member.name,
                         "size": member.size,
                         "is_directory": member.isdir(),
-                        "modified": datetime.fromtimestamp(member.mtime),
+                        "modified": datetime.fromtimestamp(member.mtime),  # noqa: DTZ006
                         "mode": member.mode,
                         "uid": member.uid,
                         "gid": member.gid,
@@ -2063,8 +2067,8 @@ class UniversalMetadataExtractor:
                     ns = {"dc": "http://purl.org/dc/elements/1.1/",
                           "cp": "http://schemas.openxmlformats.org/package/2006/metadata/core-properties"}
 
-                    metadata.title = root.find(".//dc:title", ns).text if root.find(".//dc:title", ns) is not None else None
-                    metadata.author = root.find(".//dc:creator", ns).text if root.find(".//dc:creator", ns) is not None else None
+                    metadata.title = root.find(".//dc:title", ns).text if root.find(".//dc:title", ns) is not None else None  # noqa: E501
+                    metadata.author = root.find(".//dc:creator", ns).text if root.find(".//dc:creator", ns) is not None else None  # noqa: E501
                     subject_el = root.find(".//dc:subject", ns)
                     if subject_el is not None:
                         metadata.subject = subject_el.text
@@ -2222,7 +2226,7 @@ class UniversalMetadataExtractor:
             in_header = False
             for line in content.split("\n"):
                 line = line.strip()
-                if line == "SECTION" and "HEADER" in content[content.find(line) + len(line):content.find(line) + len(line) + 20]:
+                if line == "SECTION" and "HEADER" in content[content.find(line) + len(line):content.find(line) + len(line) + 20]:  # noqa: E501
                     in_header = True
                 elif line == "ENDSEC":
                     in_header = False
@@ -2326,9 +2330,9 @@ class UniversalMetadataExtractor:
                     if olefile.isOleFile(file_path):
                         ole = olefile.OleFileIO(file_path)
                         if ole.exists("__substg1.0_0042001F"):  # Subject
-                            metadata.subject = ole.openstream("__substg1.0_0042001F").read().decode("utf-16-le", errors="ignore").rstrip("\x00")
+                            metadata.subject = ole.openstream("__substg1.0_0042001F").read().decode("utf-16-le", errors="ignore").rstrip("\x00")  # noqa: E501
                         if ole.exists("__substg1.0_0C1F001F"):  # Sender email
-                            metadata.from_addr = ole.openstream("__substg1.0_0C1F001F").read().decode("utf-16-le", errors="ignore").rstrip("\x00")
+                            metadata.from_addr = ole.openstream("__substg1.0_0C1F001F").read().decode("utf-16-le", errors="ignore").rstrip("\x00")  # noqa: E501
                         ole.close()
                 except ImportError:
                     pass
@@ -2375,7 +2379,7 @@ class UniversalMetadataExtractor:
             exif = result.image.exif
             if "DateTime" in exif:
                 try:
-                    dt = datetime.strptime(exif["DateTime"], "%Y:%m:%d %H:%M:%S")
+                    dt = datetime.strptime(exif["DateTime"], "%Y:%m:%d %H:%M:%S")  # noqa: DTZ007
                     events.append(TimelineEvent(
                         timestamp=dt,
                         event_type="captured",
@@ -2385,7 +2389,7 @@ class UniversalMetadataExtractor:
                     pass
             if "DateTimeOriginal" in exif:
                 try:
-                    dt = datetime.strptime(exif["DateTimeOriginal"], "%Y:%m:%d %H:%M:%S")
+                    dt = datetime.strptime(exif["DateTimeOriginal"], "%Y:%m:%d %H:%M:%S")  # noqa: DTZ007
                     events.append(TimelineEvent(
                         timestamp=dt,
                         event_type="captured_original",
@@ -2395,7 +2399,7 @@ class UniversalMetadataExtractor:
                     pass
             if "DateTimeDigitized" in exif:
                 try:
-                    dt = datetime.strptime(exif["DateTimeDigitized"], "%Y:%m:%d %H:%M:%S")
+                    dt = datetime.strptime(exif["DateTimeDigitized"], "%Y:%m:%d %H:%M:%S")  # noqa: DTZ007
                     events.append(TimelineEvent(
                         timestamp=dt,
                         event_type="digitized",
@@ -2435,7 +2439,7 @@ class UniversalMetadataExtractor:
                 ))
 
         # Sort by timestamp
-        events.sort(key=lambda e: e.timestamp or datetime.min)
+        events.sort(key=lambda e: e.timestamp or datetime.min)  # noqa: DTZ901
 
         return events
 
@@ -2631,7 +2635,7 @@ class UniversalMetadataExtractor:
                 creator=pdf.get("creator"),
                 producer=pdf.get("producer"),
                 creation_date=datetime.fromisoformat(pdf["creation_date"]) if pdf.get("creation_date") else None,
-                modification_date=datetime.fromisoformat(pdf["modification_date"]) if pdf.get("modification_date") else None,
+                modification_date=datetime.fromisoformat(pdf["modification_date"]) if pdf.get("modification_date") else None,  # noqa: E501
                 num_pages=pdf.get("num_pages"),
                 pdf_version=pdf.get("pdf_version"),
                 is_encrypted=pdf.get("is_encrypted", False),

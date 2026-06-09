@@ -59,7 +59,7 @@ def get_coreml_embedder() -> CoreMLEmbedder:
     return _coreml_embedder_instance
 
 
-def ANE_AVAILABLE() -> bool:
+def ANE_AVAILABLE() -> bool:  # noqa: N802
     """Check if ANE compute unit is available on this machine."""
     if not _COREMLTOOLS_AVAILABLE:
         return False

@@ -29,9 +29,10 @@ from datetime import UTC, datetime
 from enum import Enum
 from typing import Any
 
+from utils.async_helpers import safe_gather_dropin
+
 from .base import DecisionResponse, OperationResult, OperationType, UniversalCoordinator
 
-from utils.async_helpers import safe_gather_dropin
 logger = logging.getLogger(__name__)
 
 # Memory bounds
@@ -778,7 +779,10 @@ class UniversalResearchCoordinator(UniversalCoordinator):
             Academic search results
         """
         try:
-            from hledac.msqes import MultiSourceQueryExpansionEngine, search_academic
+            from hledac.msqes import (  # noqa: F401  # hledac.msqes.MultiSourceQueryExpansionEngine
+                MultiSourceQueryExpansionEngine,
+                search_academic,
+            )
 
             results = await search_academic(query, sources)
             return {
@@ -814,7 +818,10 @@ class UniversalResearchCoordinator(UniversalCoordinator):
             Archive search results
         """
         try:
-            from hledac.universal.intelligence.archive_discovery import ArchiveDiscovery, search_archives
+            from hledac.universal.intelligence.archive_discovery import (  # noqa: F401  # hledac.universal.intelligence.archive_discovery.ArchiveDiscovery
+                ArchiveDiscovery,
+                search_archives,
+            )
 
             results = await search_archives(url)
             return {
@@ -978,7 +985,7 @@ class UniversalResearchCoordinator(UniversalCoordinator):
                         ),
                         timeout=per_target_timeout,
                     )
-                except (asyncio.TimeoutError, Exception) as e:
+                except (TimeoutError, Exception) as e:
                     logger.debug(
                         f"ResearchCoordinator: path find {start}→{tgt} "
                         f"failed: {e}"
@@ -1390,7 +1397,7 @@ class UniversalResearchCoordinator(UniversalCoordinator):
             'theories': [self._theory_to_dict(t) for t in theories],
             'hypotheses': hypotheses,
             'quality': quality,
-            'summary': f"Meta-synthesis: {len(patterns)} patterns, {len(theories)} theories, {len(hypotheses)} hypotheses"
+            'summary': f"Meta-synthesis: {len(patterns)} patterns, {len(theories)} theories, {len(hypotheses)} hypotheses"  # noqa: E501
         }
 
     async def _detect_meta_patterns(

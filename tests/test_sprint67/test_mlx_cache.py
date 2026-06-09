@@ -9,6 +9,7 @@ import pytest
 
 from utils.async_helpers import safe_gather_fire_and_forget
 
+
 class TestMLXCache:
     """Tests for MLX cache and semaphore."""
 

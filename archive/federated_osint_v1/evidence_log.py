@@ -20,7 +20,7 @@ class FederationEvidenceEvent:
         self.reasons = reasons
         self.refs = refs
         self.confidence = confidence
-        self.timestamp = datetime.utcnow()
+        self.timestamp = datetime.utcnow()  # noqa: DTZ003
 
     def to_dict(self) -> dict[str, Any]:
         return {

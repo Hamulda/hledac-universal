@@ -9,7 +9,7 @@ No feature flags, always-on.
 from __future__ import annotations
 
 
-class GhostBaseException(Exception):
+class GhostBaseException(Exception):  # noqa: N818
     """Base exception for ghost-related errors."""
     pass
 

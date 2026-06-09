@@ -138,7 +138,6 @@ class TestSourceTypeAliases:
 class TestSourceTypeLiteral:
     def test_literal_alias_includes_canonical_values(self) -> None:
         from hledac.universal.utils.source_types import (
-            SourceType,
             SourceTypeLiteral,
         )
 
@@ -186,10 +185,10 @@ class TestSourceTypeBackwardCompat:
         assert "ct_log" in s
 
     def test_msgpack_json_compatible(self) -> None:
-        from hledac.universal.utils.source_types import SourceType
-
         # StrEnum serializes as the bare string in json / orjson
         import json
+
+        from hledac.universal.utils.source_types import SourceType
 
         assert json.dumps({"src": SourceType.CT_LOG}) == '{"src": "ct_log"}'
         assert json.dumps({"src": "ct_log"}) == '{"src": "ct_log"}'
@@ -208,7 +207,6 @@ class TestAdoptionSweep:
     def test_sprint_scheduler_uses_sourcetype_enum(self) -> None:
         """Top 5 source types in sprint_scheduler must be SourceType.X, not raw strings."""
         import ast
-        import re
         from pathlib import Path
 
         from hledac.universal.utils.source_types import SourceType

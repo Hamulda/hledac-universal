@@ -33,7 +33,6 @@ from transport.decompression import (
     is_brotli_available,
 )
 
-
 # ---------------------------------------------------------------------------
 # Runtime probe
 # ---------------------------------------------------------------------------
@@ -157,7 +156,7 @@ def test_decode_br_body_failsoft_when_missing():
     if is_brotli_available():
         return  # env has brotli; this path is exercised by _reset_probe test below
     fake_br_body = b"\x06\x9f" + b"raw br-looking bytes"
-    with warnings.catch_warnings(record=True) as caught:
+    with warnings.catch_warnings(record=True):
         result = decode_response_body(fake_br_body, "br")
     assert result == fake_br_body, "fail-soft must return original body unchanged"
     # logger.warning was emitted (we don't capture log, but passthrough is the contract)

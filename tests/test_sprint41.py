@@ -15,6 +15,7 @@ import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+
 from hledac.universal.brain.hermes3_engine import Hermes3Engine
 from hledac.universal.coordinators.fetch_coordinator import FetchCoordinator, ZstdCompressor
 
@@ -23,7 +24,7 @@ from hledac.universal.layers.communication_layer import CommunicationLayer, _Bat
 from hledac.universal.project_types import CommunicationConfig
 
 
-class TestSprint41A_DynamicBatching(unittest.IsolatedAsyncioTestCase):
+class TestSprint41A_DynamicBatching(unittest.IsolatedAsyncioTestCase):  # noqa: N801
     """Tests for Dynamic Batching feature."""
 
     async def test_batch_size_dynamic(self):
@@ -110,7 +111,7 @@ class TestSprint41A_DynamicBatching(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(True)
 
 
-class TestSprint41B_ZstdCompression(unittest.IsolatedAsyncioTestCase):
+class TestSprint41B_ZstdCompression(unittest.IsolatedAsyncioTestCase):  # noqa: N801
     """Tests for zstd compression feature."""
 
     async def test_compression_threshold(self):
@@ -182,7 +183,7 @@ class TestSprint41B_ZstdCompression(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(comp._dictionary_data)
 
 
-class TestSprint41C_SharedPrefixCache(unittest.IsolatedAsyncioTestCase):
+class TestSprint41C_SharedPrefixCache(unittest.IsolatedAsyncioTestCase):  # noqa: N801
     """Tests for Shared Prefix Cache feature."""
 
     async def test_prefix_cache_hit(self):

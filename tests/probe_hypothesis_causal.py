@@ -19,10 +19,8 @@ from __future__ import annotations
 import asyncio
 import time
 from dataclasses import dataclass
-from typing import Any
 
 import pytest
-
 
 # =============================================================================
 # Test Fixtures
@@ -99,8 +97,8 @@ class TestCausalReasonerStandalone:
     """CausalReasoner can be used without a HypothesisEngine instance."""
 
     def test_extract_entities_returns_causal_entities(self):
-        from brain.hypothesis.causal import CausalReasoner
         from brain.hypothesis._types import CausalEntity
+        from brain.hypothesis.causal import CausalReasoner
 
         cr = CausalReasoner()
         findings = _make_findings()
@@ -152,8 +150,8 @@ class TestCausalReasonerStandalone:
             assert matrix.shape[0] == matrix.shape[1]
 
     def test_generate_hypotheses_respects_max(self):
-        from brain.hypothesis.causal import CausalReasoner
         from brain.hypothesis._types import MAX_CAUSAL_HYPOTHESES
+        from brain.hypothesis.causal import CausalReasoner
 
         cr = CausalReasoner()
         # generate_hypotheses is a sync method (pipeline is fully sync)
@@ -174,16 +172,16 @@ class TestHypothesisEngineCausalFacade:
     """HypothesisEngine.causal methods delegate to CausalReasoner and refresh aliases."""
 
     def test_engine_has_causal_reasoner_instance(self):
-        from brain.research_hypothesis_engine import HypothesisEngine
         from brain.hypothesis.causal import CausalReasoner
+        from brain.research_hypothesis_engine import HypothesisEngine
 
         engine = HypothesisEngine()
         assert hasattr(engine, "_causal_reasoner")
         assert isinstance(engine._causal_reasoner, CausalReasoner)
 
     def test_engine_extract_causal_entities_delegates(self):
-        from brain.research_hypothesis_engine import HypothesisEngine
         from brain.hypothesis._types import CausalEntity
+        from brain.research_hypothesis_engine import HypothesisEngine
 
         engine = HypothesisEngine()
         findings = _make_findings()
@@ -210,15 +208,15 @@ class TestHypothesisEngineCausalFacade:
 
         engine = HypothesisEngine()
         engine.extract_causal_entities(_make_findings())
-        matrix = engine.compute_co_occurrence_matrix()
+        engine.compute_co_occurrence_matrix()
         # May be None if numpy missing, but legacy alias refreshed either way
         assert engine._co_occurrence_matrix is engine._causal_reasoner._co_occurrence_matrix
         assert engine._entity_id_to_idx is engine._causal_reasoner._entity_id_to_idx
         assert engine._idx_to_entity_id is engine._causal_reasoner._idx_to_entity_id
 
     def test_engine_detect_causal_anomalies_delegates(self):
-        from brain.research_hypothesis_engine import HypothesisEngine
         from brain.hypothesis._types import AnomalySignal
+        from brain.research_hypothesis_engine import HypothesisEngine
 
         engine = HypothesisEngine()
         engine.extract_causal_entities(_make_findings())
@@ -283,8 +281,8 @@ class TestCausalM1Bounds:
 
     def test_bounded_extraction_caps_at_max(self):
         """Extraction must stop at MAX_CAUSAL_FINDINGS regardless of input size."""
-        from brain.hypothesis.causal import CausalReasoner
         from brain.hypothesis._types import MAX_CAUSAL_ENTITIES, MAX_CAUSAL_FINDINGS
+        from brain.hypothesis.causal import CausalReasoner
 
         cr = CausalReasoner()
         # 100 findings is below MAX_CAUSAL_FINDINGS — all processed
@@ -347,14 +345,15 @@ class TestExplainWithMLXExtraction:
 
     def test_explain_with_mlx_from_canonical_path(self):
         """`from brain.hypothesis.explainer import explain_with_mlx` must work."""
-        from brain.hypothesis.explainer import explain_with_mlx  # noqa: F401
         import inspect
+
+        from brain.hypothesis.explainer import explain_with_mlx  # noqa: F401
         assert inspect.iscoroutinefunction(explain_with_mlx)
 
     def test_explain_with_mlx_backward_compat(self):
         """`from brain.research_hypothesis_engine import explain_with_mlx` (back-compat)."""
-        from brain.research_hypothesis_engine import explain_with_mlx as old
         from brain.hypothesis.explainer import explain_with_mlx as new
+        from brain.research_hypothesis_engine import explain_with_mlx as old
         # Both resolve to the same function object
         assert old is new
 

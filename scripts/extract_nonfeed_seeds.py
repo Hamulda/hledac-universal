@@ -53,7 +53,7 @@ _hledac_root = _project_root.parent
 _project_root_of_hledac = _hledac_root.parent
 sys.path.insert(0, str(_project_root_of_hledac))
 
-from hledac.universal.runtime.nonfeed_seed_extractor import (
+from hledac.universal.runtime.nonfeed_seed_extractor import (  # noqa: E402
     PUBLISHER_DOMAINS,
     NonfeedSeed,
     SeedQuality,

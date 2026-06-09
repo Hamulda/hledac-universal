@@ -42,6 +42,7 @@ class TestSprint46(unittest.IsolatedAsyncioTestCase):
             # Retrieve session
             session = await sm.get_session('example.com')
             self.assertIsNotNone(session)
+            assert session is not None  # type guard for ty
             self.assertEqual(session['cookies']['cookie'], 'abc123')
             self.assertEqual(session['headers']['X-Custom'], 'value')
 
@@ -56,6 +57,7 @@ class TestSprint46(unittest.IsolatedAsyncioTestCase):
 
             # Get session - should return cached version
             session = await sm.get_session('test.com')
+            assert session is not None  # type guard for ty
             self.assertEqual(session['cookies']['session'], 'xyz789')
 
     async def test_credential_rotation(self):

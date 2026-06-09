@@ -31,6 +31,7 @@ from urllib.parse import urlparse
 import aiohttp
 
 from utils.async_helpers import safe_gather_dropin
+
 logger = logging.getLogger(__name__)
 
 
@@ -850,11 +851,11 @@ class CertificateTransparency:
                             cert = CertificateInfo(
                                 domain=entry.get("common_name", domain),
                                 issuer=entry.get("issuer_name", "Unknown"),
-                                not_before=datetime.strptime(
+                                not_before=datetime.strptime(  # noqa: DTZ007
                                     entry.get("not_before", "1970-01-01"),
                                     "%Y-%m-%d"
                                 ),
-                                not_after=datetime.strptime(
+                                not_after=datetime.strptime(  # noqa: DTZ007
                                     entry.get("not_after", "1970-01-01"),
                                     "%Y-%m-%d"
                                 ),

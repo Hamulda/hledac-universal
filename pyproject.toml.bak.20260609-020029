@@ -1,0 +1,479 @@
+# pyproject.toml — Hledac Universal v18+ packaging authority
+#
+# Sprint F207N-B: Build Truth
+# Single source of truth for dependencies, extras, and Python version policy.
+# No pip install, no network. Reproducible wheel validation for cp314.
+#
+# Usage:
+#   pip install .                    # default deps only
+#   pip install .[light]             # + language detection + LSH dedup
+#   pip install .[apple-accel]       # + MLX on Apple Silicon
+#   pip install .[osint-html]        # + selectolax, curl_cffi, h2
+#   pip install .[graph-storage]     # + duckdb, lancedb, pyarrow, polars
+#   pip install .[torch]             # + PyTorch (CPU or MPS)
+#   pip install .[dev]              # + pytest, ruff, mypy
+#   pip install .[all]              # everything
+
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hledac-universal"
+version = "18.0.0"
+description = "Autonomous OSINT orchestrator for M1 MacBook — Ghost Prime"
+readme = "README.md"
+requires-python = ">=3.14,<3.16"
+license = { text = "Proprietary" }
+authors = [
+    { name = "Vojtech Hamada", email = "vojtahamada@seznam.cz" }
+]
+keywords = ["osint", "autonomous", "orchestrator", "m1", "apple-silicon"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Operating System :: Apple :: macOS",
+    "Operating System :: Apple :: macOS :: macOS 14 Sonoma",
+    "Operating System :: Apple :: macOS :: macOS 15 Sequoia",
+]
+
+# ------------------------------------------------------------------ default
+# Lean default: no torch, no chromium, no browser binary.
+# Aligned with requirements.txt core deps.
+dependencies = [
+    # Core async
+    "aiosqlite>=0.19.0",
+    "aiohttp>=3.9.0",
+    # HTTP/stealth (optional in FetchCoordinator, fallback exists)
+    "httpx>=0.27.0",
+    # Storage
+    "duckdb>=1.2.0",         # Sprint F198A cross-sprint graph accumulation
+    # Serialization
+    "orjson>=3.9.0",
+    "msgspec>=0.21.1",       # Canonical DTO/msgspec.Struct serialization
+    # Browser automation
+    # camoufox is the primary browser (JA3 fingerprint, JS rendering).
+    # Browser binary is bundled with camoufox — NOT a separate chromium dep.
+    # Fails soft if missing (nodriver fallback in public_fetcher).
+    # MOVED_TO_OPTIONAL_BROWSER_BY_CP314_CLEANUP: "camoufox[geoip]",
+    # Web search — MOVED_TO search extra (lazy import, ddgs primary)
+    # duckduckgo-search>=8.0.0
+    # Parsing — beautifulsoup4 MOVED_TO legacy-html extra (selectolax is primary)
+    # beautifulsoup4>=4.12.0
+    # OCR — pytesseract is a lazy-import fallback; primary OCR path uses vision pipeline
+    # "pytesseract>=0.3.10",  # MOVED_TO ocr extra
+    # Networking
+    "dnspython>=2.4.0",
+    # stem MOVED_TO tor extra (lazy import, fail-soft)
+    # "stem>=1.8.0",
+    # DISABLED_BY_CP314_CLEANUP: "aiobtcdht>=0.1.0",  # likely typo/dead package; investigate aiobtdht GitHub source
+    # Core models
+    "pydantic>=2.0.0",
+    "pyyaml>=6.0,<7.0",       # yaml import; 7.x has breaking api changes
+    # Required utilities (proven imports)
+    "pyprobables>=0.7.0",    # url_dedup RotatingBloomFilter
+    "pyzipper>=0.3.6",       # vault_manager AES/ZIP encryption
+    "psutil>=5.9.0",         # memory monitoring
+    "pyahocorasick>=2.3.1",  # pattern_matcher ahocorasick import
+    "lmdb>=2.2.0",           # persistent dedup/store backend
+    "diskcache>=5.6.0",      # SQLite-backed concurrent cache (cache/budget_manager + HTTPDiskCache)
+    # MLX / Apple Silicon (lazy import — fail-soft without torch)
+    "mlx>=0.31.2",
+    "mlx-lm>=0.31.3",
+    # ONNX support (lazy import, fail-soft)
+    "onnxscript>=0.7.0",
+    "pillow>=12.2.0",         # PIL/Pillow in captcha_solver, metadata_extractor
+    "pymupdf>=1.27.2.3",      # fitz (PyMuPDF) in document_intelligence
+    # transformers MOVED to transformers-stack extra: no cp314 wheel, all callers are fail-soft lazy.
+    # Canonical ML path is onnxscript + MLX; transformers is only used for TrOCR/ANE/CoreML embedders.
+    # outlines MOVED to transformers-stack extra: no cp314 wheel, used only in brain/ (ner_engine, model_lifecycle).
+    # flashrank MOVED to flashrank-rerank extra: no cp314 wheel, used in reranker/lancedb_store/synthesis_runner.
+    # All three are still lazy imports in callers — runtime works without them.
+    "aiofiles>=25.1.0",       # async file I/O in content_miner, exporters
+    "numpy>=2.4.6",           # required by onnxscript, transformers, duckdb
+    "xxhash>=3.7.0",          # fast hashing for RSS/feed/dedup paths
+    "cryptography>=48.0.0",   # encryption in vault_manager, key_manager
+    "fast-langdetect>=1.0.1", # language detection
+    "networkx>=3.6.1",       # graph operations in graph_service
+    "datasketch>=1.10.0",     # MinHash for semantic dedup
+    # NOTE: coremltools + sentence-transformers moved to coreml-export extra
+    # (only needed for mlmodel export scripts, not runtime inference)
+    "curl-cffi>=0.15.0",
+    # kuzu moved to kuzu-graph extra: no cp314 arm64 wheel, optional backend.
+    # Canonical graph is DuckPGQGraph (knowledge/graph_service.py) — kuzu is opt-in.
+    "dspy>=3.2.1",
+    # llmlingua removed: 0 importers, no cp314 wheel, fail-soft if re-added
+    "selectolax>=0.4.10",
+    "hypothesis<6.50",
+    "debugpy>=1.8.21",
+    "aiohttp-socks>=0.11.0",
+    "brotlicffi>=1.2.0.1",
+    "aioquic>=1.3.0",
+    "msgpack>=1.1.2",
+    "pyarrow>=24.0.0",
+    "lancedb>=0.33.0",
+    "pandas>=3.0.3",
+    "scipy>=1.17.1",
+    "scikit-learn>=1.9.0",
+    "xgboost>=3.2.0",
+    "lightgbm>=4.6.0",
+    "beautifulsoup4>=4.14.3",
+    "lxml>=6.1.1",
+    "playwright>=1.60.0",
+    "nodriver>=0.50.3",
+    "redis>=8.0.0",
+    "uvloop>=0.22.1",
+    "pyopenssl>=26.2.0",
+    "python-multipart>=0.0.32",
+    "torch",
+    "torchvision",
+    "torchaudio",
+    "transformers>=5.10.2",
+    "sentence-transformers>=5.5.1",
+    "zstandard>=0.25.0",
+    "pybloom-live>=4.0.0",
+    "stem>=1.8.2",
+    "wasmtime>=45.0.0",
+    "pyobjc-framework-cocoa>=12.2",
+    "pyobjc-framework-vision>=12.2",
+    "pyobjc-framework-quartz>=12.2",
+    "ocrmac>=1.0.1",
+    "ahocorasick-rs>=1.0.3",
+    "zstd>=1.5.7.3",
+    "yara-python>=4.5.4",
+    "python-igraph>=1.0.0",
+    "cloudscraper>=1.2.71",
+    "fastembed>=0.8.0",
+    "gliner>=0.2.24",
+    "hnswlib>=0.8.0",
+    "ipwhois>=1.3.0",
+    "mmh3>=5.2.1",
+    "rank-bm25>=0.2.2",
+    "resiliparse>=1.0.4",
+    "rustworkx>=0.17.1",
+    "usearch>=2.25.3",
+    "xgrammar>=0.2.1",
+    "defusedxml",
+    "diff-match-patch",
+    "feedparser",
+    "pytesseract",
+    "pypdf2",
+    "markdownify",
+    "piexif",
+    "pywt",
+    "setproctitle",
+    "stix2",
+    "trafilatura",
+    "coremltools",
+    "mobileclip",
+    "spacy",
+    "duckduckgo-search",
+    "zeroconf",
+    "pyvis",
+    "python-docx",
+    "scapy",
+    "camoufox",
+    "pyobjc-framework-naturallanguage",
+    "pyobjc-framework-coreml",
+    "lz4",
+    "outlines",
+]
+
+# ------------------------------------------------------------------ optionals
+[project.optional-dependencies]
+# --- light: language detection + LSH dedup (under 50MB total) ---
+light = [
+    "fast-langdetect>=1.0.0",   # FTZ-format lang detection; import: fast_langdetect
+    "datasketch>=1.6.0",         # MinHash LSH; import: datasketch
+]
+
+# --- nlp: language detection (fast alternative) ---
+nlp = [
+    "fast-langdetect>=1.0.0",   # FTZ-format lang detection; import: fast_langdetect
+]
+
+# --- apple-accel: Apple Silicon MLX/uvloop ---
+# Platform-guarded: mlx requires Darwin+arm64.
+# uvloop accelerates asyncio on Darwin.
+apple-accel = [
+    "mlx>=0.16.0; platform_system=='Darwin' and platform_machine=='arm64'",
+    "mlx-embeddings>=0.1.0",
+    "uvloop>=0.21.0; platform_system=='Darwin'",        # asyncio event loop acceleration
+]
+
+# --- osint-html: fast HTML parsing + OSINT-specific HTTP ---
+osint-html = [
+    "selectolax>=0.3.21",   # Rust parser; 10-50x faster than BS4
+    "xxhash>=3.6.0",        # fast non-crypto hash for IOC deduplication
+    "curl_cffi>=0.7.0",     # JA3 TLS fingerprint impersonation
+]
+# --- osint-compression: optional brotli decoder for Content-Encoding: br bodies ---
+# Required ONLY for sites that serve brotli-compressed responses.
+# Default install omits this; transport/decompression.py then drops `br` from
+# Accept-Encoding (honest header advertisement) and warns on receive.
+# Install: uv pip install ".[osint-compression]"
+osint-compression = [
+    "brotlicffi>=1.1.0",  # pure CFFI binding, M1 arm64 wheel, ~5MB resident
+]
+# --- pq: post-quantum cryptography via liboqs (Apple Silicon homebrew) ---
+# Requires: brew install liboqs && uv pip install liboqs-python
+pq = [
+    "liboqs-python>=0.10.0",  # ML-KEM-768 + ML-DSA-65 via Open Quantum Safe
+]
+
+# --- graph-storage ---
+graph-storage = [
+    "duckdb>=1.2.0",
+    "lancedb>=0.2.5",
+    "pyarrow>=16.0.0",
+    "polars>=1.0.0",
+]
+
+# --- torch: PyTorch (CPU or MPS on Apple Silicon) ---
+# torch is NEVER in default deps. Install separately:
+#   pip install torch --index-url https://download.pytorch.org/whl/cpu
+# or for MPS:
+#   pip install torch torchvision
+torch = [
+    "torch>=2.1.0",
+    "torchvision>=0.16.0",
+]
+
+# --- dev: testing + linting ---
+dev = [
+    "pytest>=8.0.0",
+    "pytest-xdist>=3.5.0",
+    "pytest-cov>=4.1.0",
+    "pluggy>=1.0.0",           # pytest plugin system
+    "iniconfig>=2.0.0",        # pytest config parsing
+    "pygments>=2.15.0",         # syntax highlighting in test output
+    "ruff>=0.1.0",
+    "mypy>=1.9.0",
+    "pytest-asyncio>=1.3.0",
+    # --- rust: PyO3 extension build ---
+    "maturin>=1.0.0",          # Rust Python extensions via PyO3
+    # numpy>=1.24: required by 50+ production modules and test files
+    # (lancedb/duckdb ship it as transitive; explicit dep ensures clean dev env)
+    "numpy>=1.24.0",
+]
+
+# --- acceleration: fast string matching ---
+acceleration = [
+    "rapidfuzz>=3.0.0",        # fast fuzzy matching; import: rapidfuzz
+]
+
+# --- ocr: optical character recognition (optional, for captcha solving) ---
+# pytesseract is a lazy-import fallback; primary OCR uses vision pipeline.
+# captcha_solver.py already has try/except ImportError — fail-soft by design.
+ocr = [
+    "pytesseract>=0.3.10",
+]
+
+# --- coreml: Apple CoreML / ANE for vision tasks (lazy import, fail-soft) ---
+# Only needed when VisionEncoder or ANE-capable models are used.
+# Platform-guarded: pyobjc only on Darwin.
+coreml = [
+    "coremltools>=8.2",
+    "pyobjc-framework-coreml>=12.1; sys_platform == 'darwin'",
+]
+
+# --- coreml-export: BGE→CoreML export tools (runtime not needed) ---
+# torch is excluded — must be installed separately for Python 3.14
+# (run: pip install torch --index-url https://download.pytorch.org/whl/cpu)
+coreml-export = [
+    "coremltools>=8.2",
+    "sentence-transformers>=5.5.1",
+]
+
+# --- search: web search (DuckDuckGo primary, fail-soft) ---
+search = [
+    "duckduckgo-search>=8.0.0",
+]
+
+# --- tor: Tor control (lazy import, fail-soft) ---
+tor = [
+    "stem>=1.8.0",
+]
+
+# --- legacy-html: BeautifulSoup4 fallback (lazy import) ---
+# Primary HTML parser is selectolax (osint-html); BS4 is only a fallback.
+legacy-html = [
+    "beautifulsoup4>=4.12.0",
+]
+
+# --- rerank: neural reranking ---
+rerank = [
+    "flashrank>=0.2.10",        # neural rerank; import: flashrank
+]
+
+# --- browser: full JS rendering with browser binary ---
+browser = [
+    "camoufox[geoip]>=0.4.0",  # JA3 fingerprint + bundled browser binary
+    "nodriver>=0.1.0",        # fallback CDP browser (lazy import, fail-soft)
+]
+
+# --- webkit: macOS WKWebView JS renderer (lightweight, no Chrome/Chromium) ---
+# Platform-guarded: PyObjC/WebKit only on Darwin. Worker runs as isolated subprocess.
+webkit = [
+    "pyobjc-framework-WebKit>=12.0; sys_platform == 'darwin'",
+    "pyobjc-framework-Cocoa>=12.0; sys_platform == 'darwin'",
+]
+
+# --- security: strong encryption for vault/evidence ---
+# cryptography is heavy (~15MB). Only needed for vault_manager,
+# key_manager, encryption.py, quantum_safe.py, secure_aggregator.
+# All imports are lazy (try/except ImportError) — safe to defer.
+security = [
+    "cryptography>=48.0.0",
+    "liboqs-python>=0.15.0; platform_machine=='arm64' or platform_machine=='aarch64'",  # ML-KEM-768 + ML-DSA-65 via liboqs (optional, simulation fallback exists)
+]
+
+# --- transport: HTTP/2 and alternative transport layers ---
+transport = [
+    "h2>=4.1.0",               # HTTP/2 for optional httpx_h2 transport lane
+    "aiohttp-socks>=0.8.0",     # SOCKS5 proxy support for aiohttp
+    "httpx-socks>=0.10.0",     # SOCKS proxy support for httpx (stealth_crawler Tor fallback)
+]
+
+# --- http3: real HTTP/3 (QUIC) via aioquic ---
+# Pulls in cryptography + OpenSSL bindings (~50-80 MB resident). NOT in
+# the default closure and NOT in m1-local (M1 8GB mission budget).
+# Enable explicitly for fetch-heavy sprints that benefit from QUIC's
+# 0-RTT handshake + head-of-line-blocking elimination:
+#   uv pip install ".[http3]"
+# The opportunistic Alt-Svc-driven HTTP/3 path (curl_cffi HttpVersion.v3)
+# remains available WITHOUT this extra — only the real-QUIC lane needs
+# aioquic. Gated by HLEDAC_ENABLE_HTTPX_H3=1.
+http3 = [
+    "aioquic>=1.2.0",          # pure-Python QUIC + H3; Python 3.10+; M1 arm64 wheel
+]
+
+# --- osint-cache: opt-out HTTP response cache for FetchCoordinator ---
+# Wraps httpx-compatible transports via hishel.AsyncCacheTransport backed by
+# AsyncSQLiteStorage (~/.cache/hledac/hishel.db, 256MB cap, 7d TTL, WAL mode).
+# Gated by env HLEDAC_HTTP_CACHE (default "1" = ON, "0" = opt-out).
+# Fail-soft: missing hishel → transport passes through unchanged.
+osint-cache = [
+    "hishel>=0.0.31",          # httpx response cache (RFC 7234 + heuristic freshness)
+    "aiosqlite>=0.20",          # async SQLite for WAL/PRAGMA setup
+]
+
+# --- kuzu-graph: optional kuzu backend for IOCGraph (no cp314 arm64 wheel — opt-in) ---
+# All callers are fail-soft (try/except ImportError); canonical path stays DuckPGQGraph.
+kuzu-graph = [
+    "kuzu>=0.11.3",
+]
+
+# --- transformers-stack: optional HF transformers + outlines (no cp314 wheel — opt-in) ---
+# Used only by: brain/ner_engine.py, brain/hermes3_engine.py, brain/model_lifecycle.py,
+#               brain/coreml_embedder.py, brain/ane_embedder.py, layers/stealth_layer.py.
+# All imports are LAZY with try/except ImportError → fail-soft. Canonical ML path is
+# onnxscript + MLX (always-on). Install this extra only for HF/ANE embedders and TrOCR.
+transformers-stack = [
+    "transformers>=5.8.0",   # HF transformers: TrOCR, AutoModel, AutoTokenizer
+    "outlines>=1.3.0",       # deterministic JSON generation (used by brain/)
+]
+
+# --- flashrank-rerank: optional neural reranker (no cp314 wheel — opt-in) ---
+# Used only by: tools/reranker.py, knowledge/lancedb_store.py, brain/synthesis_runner.py,
+#               brain/ane_embedder.py. All imports are LAZY with try/except ImportError.
+# Canonical rerank fallback: lexical scoring (already in datasketch / networkx).
+flashrank-rerank = [
+    "flashrank>=0.2.10",     # neural cross-encoder reranker
+]
+
+# --- dspy: DSPy prompt optimization (optional, for OSINT synthesis) ---
+dspy = [
+    "dspy>=2.5.0",
+]
+
+# --- m1-local: ergonomic default for MacBook Air M1 8GB (no torch, no browser, no heavy OCR) ---
+# Recommended for routine local use on Apple Silicon:
+#   uv sync --extra m1-local --extra dev
+m1-local = [
+    "hledac-universal[apple-accel,osint-html,graph-storage,acceleration,transport,transformers-stack,flashrank-rerank]",
+]
+# --- all: everything except torch (torch is too heavy for routine dev) ---
+all = [
+    "hledac-universal[light,apple-accel,osint-html,graph-storage,dev,acceleration,nlp,rerank,browser,webkit,security,transport,http3,ocr,coreml,coreml-export,search,tor,legacy-html,transformers-stack,flashrank-rerank,kuzu-graph,dspy,m1-local]",
+]
+
+[project.scripts]
+hledac = "hledac.universal.__main__:main"
+
+# ------------------------------------------------------------------ static analysis
+[tool.setuptools]
+packages = ["hledac.universal"]
+package-dir = { "hledac.universal" = "." }
+
+[tool.setuptools.package-data]
+"hledac.universal" = ["py.typed"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py314"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "N", "UP", "B", "C4", "DTZ", "T10", "ISC"]
+ignore = [
+    "E501",   # line-length handled by formatter
+    "F821",   # undefined names — false positives with `from __future__ import annotations` + lazy type refs
+    "B027",   # empty abstract methods — intentional in base classes
+]
+
+[tool.mypy]
+python_version = "3.14"
+warn_return_any = true
+warn_unused_configs = true
+ignore_missing_imports = true
+
+[tool.ty.environment]
+python-version = "3.14"
+# extra-paths: `.` covers project-root subpackages (e.g. `from patterns.X`).
+# `/Users/vojtechhamada/PycharmProjects/Hledac` covers the 2-level `hledac.universal`
+# namespace — needed because the project root is `hledac/universal/`, not `universal/`.
+extra-paths = [
+    ".",
+    "/Users/vojtechhamada/PycharmProjects/Hledac",
+]
+
+[tool.ty.analysis]
+# Suppressions: pouze balíky, které nelze rozumně nainstalovat.
+# Vše ostatní (wasmtime, zstd, mlx, Foundation, AppKit, …) je v default
+# deps → ty je vidí přímo a allowed-unresolved-imports nepotřebuje.
+#
+# evaluate/ (vendored externí test repositáře) se vylučuje přes CLI:
+#   ty check --exclude 'evaluate/**' .
+# V pyproject.toml nelze — ty nepodporuje exclude v [tool.ty.analysis].
+allowed-unresolved-imports = [
+    # pyprobables: PyPI wheel `pyprobables>=0.7.0` instaluje se jako modul
+    # `probables` (top-level name v METADATA neobsahuje `pyprobables`).
+    # Kód v tools/url_dedup.py:34 a utils/filtering.py:463,535 používá
+    # `from pyprobables import …` záměrně — ImportError spouští fallback
+    # na Rust BloomFilter / set-based QuotientFilter.
+    "pyprobables",
+    "pyprobables.**",
+    # ahocorasick: C-extension nainstalovaný v .venv-test jako
+    # `ahocorasick.cpython-314-darwin.so` bez METADATA → ty ho nevidí.
+    # pattern_matcher.py:17 a utils/aho_extractor.py:122 importují `ahocorasick`
+    # s lazy fallbackem na Python Aho-Corasick když není k dispozici.
+    "ahocorasick",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "-q --tb=short"
+asyncio_mode = "auto"
+
+[tool.uv]
+python-preference = "managed"
+package = true
+
+[dependency-groups]
+dev = [
+    "pytest-asyncio>=1.4.0",
+]

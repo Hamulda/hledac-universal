@@ -167,7 +167,7 @@ class RateLimitConfig:
         pass
 
 #: Backward-compat placeholder
-class RateLimitExceeded(Exception):
+class RateLimitExceeded(Exception):  # noqa: N818
     """Backward-compat stub. Rate limiting is now implicit in TokenBucket.acquire()."""
     pass
 

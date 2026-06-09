@@ -333,6 +333,7 @@ def lookup_ioc_values_by_ids(
         return {}
     try:
         import duckdb
+
         from hledac.universal.paths import get_ioc_db_path
 
         con = duckdb.connect(str(get_ioc_db_path()), read_only=True)
@@ -346,7 +347,7 @@ def lookup_ioc_values_by_ids(
             cur = con.execute(sql, node_ids)
             cols = [c[0] for c in cur.description]
             return {
-                int(row[0]): dict(zip(cols, row))
+                int(row[0]): dict(zip(cols, row, strict=False))
                 for row in cur.fetchall()
             }
         finally:

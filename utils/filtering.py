@@ -153,7 +153,7 @@ class BinaryFuseFilter:
     def _init_filter(self):
         """Initialize pyxorfilter."""
         try:
-            from pyxorfilter import FuseFilter
+            from pyxorfilter import FuseFilter  # noqa: F401  # pyxorfilter.FuseFilter
             logger.info("Initializing Binary Fuse Filter")
             self._initialized = True
         except ImportError:

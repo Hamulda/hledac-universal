@@ -78,7 +78,6 @@ class UnifiedAIOrchestrator:
         max_results = request.get("max_results", 50)
 
         # Map to UnifiedResearchEngine API
-        from hledac.universal.enhanced_research import ResearchDepth
         depth = _map_depth(depth_arg)
 
         try:

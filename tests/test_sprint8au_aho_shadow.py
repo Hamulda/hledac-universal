@@ -147,7 +147,7 @@ class TestBootIsolation:
             [sys.executable, "-c", code],
             capture_output=True, text=True, check=True,
         )
-        lines = [l for l in r.stdout.strip().split("\n") if l]
+        lines = [l for l in r.stdout.strip().split("\n") if l]  # noqa: E741
         val = int(lines[-1])
         assert val == 0, f"ahocorasick was loaded during boot: {r.stdout}"
 
@@ -162,7 +162,7 @@ class TestBootIsolation:
             [sys.executable, "-c", code],
             capture_output=True, text=True, check=True,
         )
-        lines = [l for l in r.stdout.strip().split("\n") if l]
+        lines = [l for l in r.stdout.strip().split("\n") if l]  # noqa: E741
         val = int(lines[-1])
         assert val == 0, f"aho_extractor was loaded during boot: {r.stdout}"
 

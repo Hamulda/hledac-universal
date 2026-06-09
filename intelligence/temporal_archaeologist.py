@@ -43,9 +43,10 @@ from urllib.parse import quote, urlparse
 
 import numpy as np
 
+from utils.async_helpers import safe_gather_dropin
+
 from ..utils.rate_limiter import RateLimitConfig, RateLimiter
 
-from utils.async_helpers import safe_gather_dropin
 logger = logging.getLogger(__name__)
 
 
@@ -108,7 +109,7 @@ class ArchivedVersion:
     @property
     def age_days(self) -> int:
         """Calculate age in days from now."""
-        return (datetime.now() - self.timestamp).days
+        return (datetime.now() - self.timestamp).days  # noqa: DTZ005
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -803,7 +804,7 @@ class TemporalArchaeologist:
                         parts = line.split(" ")
                         if len(parts) >= 6:
                             timestamp_str = parts[0]
-                            timestamp = datetime.strptime(timestamp_str, "%Y%m%d%H%M%S")
+                            timestamp = datetime.strptime(timestamp_str, "%Y%m%d%H%M%S")  # noqa: DTZ007
 
                             # Build Wayback URL
                             wayback_url = self.WAYBACK_RAW_URL.format(
@@ -898,7 +899,7 @@ class TemporalArchaeologist:
 
                     version = ArchivedVersion(
                         url=archive_url,
-                        timestamp=datetime.now(),  # Archive.today doesn't expose timestamps easily
+                        timestamp=datetime.now(),  # Archive.today doesn't expose timestamps easily  # noqa: DTZ005
                         content_hash="",
                         content=content,
                         source="archive_today",
@@ -952,7 +953,7 @@ class TemporalArchaeologist:
 
                     version = ArchivedVersion(
                         url=cache_url,
-                        timestamp=datetime.now(),
+                        timestamp=datetime.now(),  # noqa: DTZ005
                         content_hash=hashlib.sha256((content or "").encode()).hexdigest()[:16],
                         content=content,
                         source="google_cache",
@@ -990,7 +991,7 @@ class TemporalArchaeologist:
 
                     version = ArchivedVersion(
                         url=cache_url,
-                        timestamp=datetime.now(),
+                        timestamp=datetime.now(),  # noqa: DTZ005
                         content_hash=hashlib.sha256((content or "").encode()).hexdigest()[:16],
                         content=content,
                         source="bing_cache",
@@ -1092,7 +1093,7 @@ class TemporalArchaeologist:
             return anomalies
 
         last_snapshot = timeline.snapshots[-1]
-        days_since_last = (datetime.now() - last_snapshot.timestamp).days
+        days_since_last = (datetime.now() - last_snapshot.timestamp).days  # noqa: DTZ005
 
         # If no snapshot in last 365 days, consider it a disappearance
         if days_since_last > 365:

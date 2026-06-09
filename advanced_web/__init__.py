@@ -1,11 +1,11 @@
 # advanced_web — browser automation within universal
-from .stealth_browser import StealthBrowser
 from .automation_orchestrator import AutomationOrchestrator
+from .stealth_browser import StealthBrowser
 from .structured_extractor import (
-    StructuredExtractor,
-    StructuredExtraction,
     ExtractedEntity,
     ExtractedRelation,
+    StructuredExtraction,
+    StructuredExtractor,
 )
 
 __all__ = [

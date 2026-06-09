@@ -66,7 +66,7 @@ def _extract_sprint_scheduler_result_class() -> str:
     automatically.
     """
     scheduler_path = os.path.join(_RUNTIME_DIR, "sprint_scheduler.py")
-    with open(scheduler_path, "r", encoding="utf-8") as f:
+    with open(scheduler_path, encoding="utf-8") as f:
         lines = f.readlines()
 
     # Find start: first line matching `^class SprintSchedulerResult:`
@@ -386,7 +386,7 @@ class TestSprintSchedulerResultSoAPerf(unittest.TestCase):
         """bump_counter() should be no slower than `attr += 1`."""
         r1 = SprintSchedulerResult()
         r2 = SprintSchedulerResult()
-        N = 10_000
+        N = 10_000  # noqa: N806
 
         # Warm up
         for _ in range(100):

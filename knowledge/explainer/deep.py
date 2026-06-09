@@ -15,7 +15,7 @@ except ImportError:
     mx = None  # type: ignore[assignment]
     nn = None  # type: ignore[assignment]
 
-from hledac.universal.core.resource_governor import Priority, ResourceGovernor
+from hledac.universal.core.resource_governor import Priority, ResourceGovernor  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -102,7 +102,7 @@ class DeepExplainer:
         # MLX gradient pro vektor
         loss_grad_fn = mx.value_and_grad(loss_fn)
 
-        for i in range(30):
+        for i in range(30):  # noqa: B007
             loss, grads = loss_grad_fn(mask)
             optimizer.update(mask, grads)
             mask = mx.clip(mask, 0, 1)

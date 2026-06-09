@@ -87,10 +87,10 @@ async def get_mlx_model(model_name: str) -> tuple[Any, Any]:
         # Check cache first
         if model_name in _MLX_CACHE:
             _MLX_CACHE.move_to_end(model_name)
-            _CACHE_HITS += 1
+            _CACHE_HITS += 1  # noqa: N806
             logger.debug(f"MLX cache hit: {model_name}")
             return _MLX_CACHE[model_name]
-        _CACHE_MISSES += 1
+        _CACHE_MISSES += 1  # noqa: F823
 
         # Try to load model
         try:
@@ -159,7 +159,7 @@ def reset_cache_stats() -> None:
 # MLX Cleanup Functions (Sprint 72)
 # =============================================================================
 
-import gc
+import gc  # noqa: E402
 
 _mx = None  # lazy singleton
 

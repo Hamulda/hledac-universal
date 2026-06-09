@@ -249,9 +249,9 @@ class Relationship:
             except ValueError:
                 self.type = RelationshipType.RELATED_TO
         if self.first_seen is None:
-            self.first_seen = datetime.now()
+            self.first_seen = datetime.now()  # noqa: DTZ005
         if self.last_seen is None:
-            self.last_seen = datetime.now()
+            self.last_seen = datetime.now()  # noqa: DTZ005
 
     def to_dict(self) -> dict[str, Any]:
         """Convert relationship to dictionary."""
@@ -268,7 +268,7 @@ class Relationship:
         }
 
     def __hash__(self) -> int:
-        return hash((self.source, self.target, self.type.value if isinstance(self.type, RelationshipType) else self.type))
+        return hash((self.source, self.target, self.type.value if isinstance(self.type, RelationshipType) else self.type))  # noqa: E501
 
     def __eq__(self, other: object) -> bool:
         if not isinstance(other, Relationship):
@@ -701,7 +701,6 @@ class RelationshipDiscoveryEngine:
         SECURITY: F196B — pickle.load is only used as fallback for files within
         the application's graph directory. External paths are rejected.
         """
-        import os
         import pickle
 
         # F196B: Security hardening — validate path is within expected graph directory
@@ -772,7 +771,7 @@ class RelationshipDiscoveryEngine:
             logger.debug(f"Entity {entity.id} already exists, updating")
             self._entities[entity.id].attributes.update(entity.attributes)
             self._entities[entity.id].sources.extend(entity.sources)
-            self._entities[entity.id].updated_at = datetime.now()
+            self._entities[entity.id].updated_at = datetime.now()  # noqa: DTZ005
             return False
 
         self._entities[entity.id] = entity
@@ -888,7 +887,7 @@ class RelationshipDiscoveryEngine:
                     existing.strength = max(existing.strength, relationship.strength)
                     existing.confidence = max(existing.confidence, relationship.confidence)
                     existing.evidence.extend(relationship.evidence)
-                    existing.last_seen = datetime.now()
+                    existing.last_seen = datetime.now()  # noqa: DTZ005
             # F26X: mark as recently used in LRU
             self._relationship_index.move_to_end(rel_key)
             return False
@@ -994,7 +993,7 @@ class RelationshipDiscoveryEngine:
         communication_counts: dict[tuple[str, str], int] = defaultdict(int)
         communication_evidence: dict[tuple[str, str], list[str]] = defaultdict(list)
 
-        now = datetime.now()
+        now = datetime.now()  # noqa: DTZ005
 
         for comm in communications:
             # Filter by time window
@@ -2107,7 +2106,7 @@ class RelationshipDiscoveryEngine:
                             continue
                         try:
                             target_idx = g.vs.find(id=target).index
-                            path_nodes = g.get_shortest_paths(seed_idx, to=target_idx, weights="weight", output="vpath")[0]
+                            path_nodes = g.get_shortest_paths(seed_idx, to=target_idx, weights="weight", output="vpath")[0]  # noqa: E501
                             if path_nodes:
                                 path_entities = [g.vs[n]["id"] for n in path_nodes]
                                 path = ConnectionPath(
@@ -2258,7 +2257,7 @@ class RelationshipDiscoveryEngine:
         import pickle
         with open(path, "wb") as f:
             pickle.dump(nx_graph, f, protocol=pickle.HIGHEST_PROTOCOL)
-        logger.debug(f"[RelDiscovery] Graph saved: {nx_graph.number_of_nodes()} nodes, {nx_graph.number_of_edges()} edges")
+        logger.debug(f"[RelDiscovery] Graph saved: {nx_graph.number_of_nodes()} nodes, {nx_graph.number_of_edges()} edges")  # noqa: E501
 
     def load_graph(self, path: Path) -> bool:
         """Load persisted NetworkX graph from disk with node-count bound.

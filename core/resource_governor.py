@@ -111,15 +111,16 @@ def get_swap_policy_tier(swap_gib: float) -> tuple[str, str]:
     if swap_gib <= CLEAN_SWAP_MAX_GIB:
         return "clean", f"swap={swap_gib:.2f}GiB <= {CLEAN_SWAP_MAX_GIB:.1f}GiB threshold"
     elif swap_gib <= DIAGNOSTIC_SWAP_MAX_GIB:
-        return "diagnostic", f"swap={swap_gib:.2f}GiB in ({CLEAN_SWAP_MAX_GIB:.1f}GiB, {DIAGNOSTIC_SWAP_MAX_GIB:.1f}GiB] — hardware taint"
+        return "diagnostic", f"swap={swap_gib:.2f}GiB in ({CLEAN_SWAP_MAX_GIB:.1f}GiB, {DIAGNOSTIC_SWAP_MAX_GIB:.1f}GiB] — hardware taint"  # noqa: E501
     else:
         return "hard_block", f"swap={swap_gib:.2f}GiB > {HARD_BLOCK_SWAP_GIB:.1f}GiB — restart required"
 
 # Sprint 8AK: Thread-safe hysteresis latch for io_only
 # Protected by a simple threading.Lock — not an async subsystem
-import threading as _threading
+import threading as _threading  # noqa: E402
 
-from utils.async_helpers import safe_gather_fire_and_forget
+from utils.async_helpers import safe_gather_fire_and_forget  # noqa: E402
+
 _io_only_latch: bool = False
 _io_only_latch_lock: _threading.Lock = _threading.Lock()
 
@@ -371,7 +372,7 @@ def evaluate_uma_state(system_used_gib: float) -> str:
     return "ok"
 
 
-def should_enter_io_only_mode(system_used_gib: float, previous_io_only: bool = False, swap_detected: bool = False) -> bool:
+def should_enter_io_only_mode(system_used_gib: float, previous_io_only: bool = False, swap_detected: bool = False) -> bool:  # noqa: E501
     """
     Sprint 8AB + F165E: Hysteresis-based I/O-only mode gate.
 

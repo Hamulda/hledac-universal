@@ -23,8 +23,8 @@ from typing import NamedTuple
 import orjson
 
 from hledac.universal.knowledge.duckdb_store import CanonicalFinding
-
 from utils.async_helpers import safe_gather_dropin
+
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -249,7 +249,7 @@ class S2ORCAdapter:
                     if p2.paper_id and p2.paper_id not in visited and p2.title:
                         visited.add(p2.paper_id)
                         all_papers.append(p2)
-                        all_edges.append(CitationEdge(source_id=p.paper_id, target_id=p2.paper_id, citation_context=None))
+                        all_edges.append(CitationEdge(source_id=p.paper_id, target_id=p2.paper_id, citation_context=None))  # noqa: E501
 
         return all_papers[:max_papers], all_edges
 

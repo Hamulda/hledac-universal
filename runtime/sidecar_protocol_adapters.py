@@ -150,7 +150,7 @@ class DHTSidecarAdapter(BaseSidecarAdapter):
             return []
 
         try:
-            from hledac.universal.discovery.dht_adapter import DHTAdapter, DHTResult
+            from hledac.universal.discovery.dht_adapter import DHTAdapter
         except Exception:
             logger.debug("DHTSidecarAdapter: import failed")
             return []
@@ -206,7 +206,6 @@ class AcademicSidecarAdapter(BaseSidecarAdapter):
 
         try:
             from hledac.universal.discovery.academic import (
-                AcademicOrchestrator,
                 search_all_academic,
             )
         except Exception:
@@ -268,7 +267,6 @@ class AltProtocolSidecarAdapter(BaseSidecarAdapter):
         try:
             from hledac.universal.fetching.alternative_protocol_fetcher import (
                 AlternativeProtocolFetcher,
-                AltProtocolResult,
             )
         except Exception:
             logger.debug("AltProtocolSidecarAdapter: import failed")
@@ -362,7 +360,6 @@ class LeakSentinelSidecarAdapter(BaseSidecarAdapter):
         try:
             from hledac.universal.intelligence.leak_sentinel import (
                 LeakSentinelAdapter,
-                LeakSentinelResult,
             )
         except Exception:
             logger.debug("LeakSentinelSidecarAdapter: import failed")
@@ -459,4 +456,208 @@ class FederatedResearchSidecarAdapter:  # duck-typed SidecarAdapterProtocol
                 exc_info=True,
             )
             return []
+
+
+# ── Passive Fingerprint Sidecar (F350M-R) ───────────────────────────────────────
+
+@SidecarRegistry.register("passive_fingerprint")
+class PassiveFingerprintSidecarAdapter(BaseSidecarAdapter):
+    """
+    F204G: Passive service fingerprinting — deterministic, no active scan.
+
+    Lazy-imports `intelligence.passive_fingerprint.create_passive_fingerprint_adapter`
+    factory; invokes `adapter.correlate(findings, query)` and returns the
+    derived CanonicalFindings.
+
+    Env: HLEDAC_ENABLE_PASSIVE_FINGERPRINT=1
+    RAM: 50MB budget
+    Priority: 4 (research-tier)
+    """
+
+    sidecar_id: str = "passive_fingerprint"
+    env_gate: str = "HLEDAC_ENABLE_PASSIVE_FINGERPRINT"
+    ram_budget_mb: int = 50
+    priority: int = 4
+
+    async def run_async(self, ctx: SidecarContext) -> list[Any]:
+        try:
+            from hledac.universal.intelligence.passive_fingerprint import (
+                create_passive_fingerprint_adapter,
+            )
+        except Exception:
+            logger.debug("PassiveFingerprintSidecarAdapter: import failed")
+            return []
+
+        try:
+            adapter = create_passive_fingerprint_adapter()
+            derived = adapter.correlate(ctx.findings, ctx.query)
+            return list(derived) if derived else []
+        except Exception:
+            logger.warning(
+                "PassiveFingerprintSidecarAdapter.run: fail-soft",
+                exc_info=True,
+            )
+            return []
+
+
+# ── Passive Tech-Stack Sidecar (F350M-R / R11) ────────────────────────────────
+
+@SidecarRegistry.register("passive_tech_stack")
+class PassiveTechStackSidecarAdapter(BaseSidecarAdapter):
+    """
+    R11: Passive tech-stack extraction — deterministic, no active scan.
+
+    Wraps `intelligence.passive_fingerprint.create_passive_tech_stack_adapter`
+    factory; calls `adapter.correlate(findings, query)`. Derived signal is
+    identical to `passive_fingerprint` for tech-stack component, but exposed
+    under its own registry ID for env-gated opt-in.
+
+    Env: HLEDAC_ENABLE_PASSIVE_TECH_STACK=1
+    RAM: 30MB budget
+    Priority: 4 (research-tier)
+    """
+
+    sidecar_id: str = "passive_tech_stack"
+    env_gate: str = "HLEDAC_ENABLE_PASSIVE_TECH_STACK"
+    ram_budget_mb: int = 30
+    priority: int = 4
+
+    async def run_async(self, ctx: SidecarContext) -> list[Any]:
+        try:
+            from hledac.universal.intelligence.passive_fingerprint import (
+                create_passive_tech_stack_adapter,
+            )
+        except Exception:
+            logger.debug("PassiveTechStackSidecarAdapter: import failed")
+            return []
+
+        try:
+            adapter = create_passive_tech_stack_adapter()
+            derived = adapter.correlate(ctx.findings, ctx.query)
+            return list(derived) if derived else []
+        except Exception:
+            logger.warning(
+                "PassiveTechStackSidecarAdapter.run: fail-soft",
+                exc_info=True,
+            )
+            return []
+
+
+# ── Social Identity Surface Sidecar (F350M-R / F204I) ────────────────────────
+
+@SidecarRegistry.register("social_identity_surface")
+class SocialIdentityMinerSidecarAdapter(BaseSidecarAdapter):
+    """
+    F204I: Social identity surface miner — extract usernames/profiles from findings.
+
+    Wraps `intelligence.social_identity_miner.create_social_identity_miner_adapter`
+    factory. `mine()` requires a `DuckDBShadowStore` instance which is not in
+    SidecarContext, so the adapter is **wiring-only**: registers the sidecar
+    for availability + env-gate, but returns `[]` from `run_async` so the
+    canonical execution path (SprintScheduler with store handle) remains
+    authoritative. This avoids double-execution of the social identity scan.
+
+    Env: HLEDAC_ENABLE_SOCIAL_IDENTITY_SURFACE=1
+    RAM: 60MB budget
+    Priority: 5
+    """
+
+    sidecar_id: str = "social_identity_surface"
+    env_gate: str = "HLEDAC_ENABLE_SOCIAL_IDENTITY_SURFACE"
+    ram_budget_mb: int = 60
+    priority: int = 5
+
+    async def run_async(self, ctx: SidecarContext) -> list[Any]:
+        try:
+            from hledac.universal.intelligence.social_identity_miner import (
+                create_social_identity_miner_adapter,
+            )
+        except Exception:
+            logger.debug("SocialIdentityMinerSidecarAdapter: import failed")
+            return []
+
+        try:
+            miner = create_social_identity_miner_adapter()
+            miner.reset()
+        except Exception:
+            return []
+
+        # mine() requires store handle (not in SidecarContext) — wiring-only
+        return []
+
+
+# ── Identity Stitching Sidecar (F350M-R / F202B) ──────────────────────────────
+
+@SidecarRegistry.register("identity_stitching")
+class IdentityStitchingSidecarAdapter(BaseSidecarAdapter):
+    """
+    F202B: Identity stitching engine — heavy, RAM-guarded by bus.
+
+    Wraps `intelligence.identity_stitching.create_identity_stitching_engine`
+    factory. The engine exposes a builder API (`add_profile`, `find_matches`,
+    `find_all_matches`) that does not match the unified `correlate(findings,
+    query)` contract used by other F350M-R adapters, so the adapter is
+    **wiring-only**: registers the sidecar for availability + env-gate, with
+    actual execution routed through the canonical
+    `intelligence.identity_stitching_canonical.create_identity_stitching_adapter`
+    path which the SprintScheduler invokes directly.
+
+    Env: HLEDAC_ENABLE_IDENTITY_STITCHING=1
+    RAM: 100MB budget
+    Priority: 5
+    """
+
+    sidecar_id: str = "identity_stitching"
+    env_gate: str = "HLEDAC_ENABLE_IDENTITY_STITCHING"
+    ram_budget_mb: int = 100
+    priority: int = 5
+
+    async def run_async(self, ctx: SidecarContext) -> list[Any]:
+        # Smoke-import the factory to validate module availability.
+        try:
+            from hledac.universal.intelligence.identity_stitching import (
+                create_identity_stitching_engine,
+            )
+        except Exception:
+            return []
+        # builder API mismatch — wiring-only, return empty
+        return []
+
+
+# ── Temporal Archaeology Sidecar (F350M-R / F202E) ────────────────────────────
+
+@SidecarRegistry.register("temporal_archaeology")
+class TemporalArchaeologySidecarAdapter(BaseSidecarAdapter):
+    """
+    F202E: Temporal archaeology timeline synthesis.
+
+    Wraps `intelligence.temporal_archaeologist.create_temporal_archaeologist`
+    factory. The archaeologist exposes a context-managed async API
+    (`__aenter__`/`recover_deleted_content`/`reconstruct_version_history`)
+    that does not match the unified `correlate(findings, query)` contract,
+    so the adapter is **wiring-only**: registers the sidecar for
+    availability + env-gate. Actual execution is routed through
+    `intelligence.temporal_archaeologist_adapter.create_temporal_archaeologist_adapter`
+    invoked by SprintScheduler with a CT-findings slice.
+
+    Env: HLEDAC_ENABLE_TEMPORAL_ARCHAEOLOGY=1
+    RAM: 80MB budget
+    Priority: 4
+    """
+
+    sidecar_id: str = "temporal_archaeology"
+    env_gate: str = "HLEDAC_ENABLE_TEMPORAL_ARCHAEOLOGY"
+    ram_budget_mb: int = 80
+    priority: int = 4
+
+    async def run_async(self, ctx: SidecarContext) -> list[Any]:
+        # Smoke-import the factory to validate module availability.
+        try:
+            from hledac.universal.intelligence.temporal_archaeologist import (
+                create_temporal_archaeologist,
+            )
+        except Exception:
+            return []
+        # context-managed API mismatch — wiring-only, return empty
+        return []
 

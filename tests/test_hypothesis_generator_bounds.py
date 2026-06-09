@@ -10,13 +10,11 @@ probe_f214q/ — uses HypothesisGenerator directly (no scheduler, no DuckDB).
 """
 from __future__ import annotations
 
-import pytest
-
 from hledac_hypothesis.hypothesisgenerator import (
-    HypothesisGenerator,
-    ResearchHypothesis,
     MAX_HYPOTHESES,
     MAX_SEEDS_PER_HYPOTHESIS,
+    HypothesisGenerator,
+    ResearchHypothesis,
     _heuristic_generate,
 )
 
@@ -34,7 +32,7 @@ class MockFinding:
 # ---------------------------------------------------------------------------
 
 
-def test_MAX_HYPOTHESES_is_10():
+def test_MAX_HYPOTHESES_is_10():  # noqa: N802
     """Hard cap: generate() never returns more than 10 hypotheses."""
     assert MAX_HYPOTHESES == 10
 
@@ -58,7 +56,7 @@ def test_generate_respects_max_hypotheses_cap():
 # ---------------------------------------------------------------------------
 
 
-def test_MAX_SEEDS_PER_HYPOTHESIS_is_5():
+def test_MAX_SEEDS_PER_HYPOTHESIS_is_5():  # noqa: N802
     """Each hypothesis pivot_seeds tuple never exceeds 5 items."""
     assert MAX_SEEDS_PER_HYPOTHESIS == 5
 
@@ -146,7 +144,7 @@ def test_hypotheses_have_required_fields():
 
 def test_hypothesis_types_are_valid():
     """Returned hypotheses use known type strings."""
-    VALID_TYPES = {"entity_expansion", "temporal", "lateral", "adversarial"}
+    VALID_TYPES = {"entity_expansion", "temporal", "lateral", "adversarial"}  # noqa: N806
     findings = [
         MockFinding("f1", "192.168.1.1"),
         MockFinding("f2", "example.com"),

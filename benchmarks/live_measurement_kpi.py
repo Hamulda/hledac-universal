@@ -754,7 +754,7 @@ def _derive_live_kpi_from_input(inp: LiveKpiInput) -> dict:
         "windup_delayed_for_nonfeed": windup_delayed_for_nonfeed,
         "nonfeed_scheduler_gap_resolved": nonfeed_scheduler_gap_resolved,
         "source_family_outcomes": (
-            inp.explicit_source_family_outcomes if inp.explicit_source_family_outcomes is not None else source_family_outcomes
+            inp.explicit_source_family_outcomes if inp.explicit_source_family_outcomes is not None else source_family_outcomes  # noqa: E501
         ),
         "windup_guard_call_count": wg.get("call_count", 0),
         "windup_guard_callback_supplied_count": wg.get("callback_supplied_count", 0),
@@ -829,26 +829,26 @@ def _derive_live_kpi_from_input(inp: LiveKpiInput) -> dict:
         "ct_bridge_invoked": lane_verdict.get("ct_bridge_invoked", False) if isinstance(lane_verdict, dict) else False,
         "ct_raw_sample_count": lane_verdict.get("ct_raw_sample_count", 0) if isinstance(lane_verdict, dict) else 0,
         "ct_candidates_built": lane_verdict.get("ct_candidates_built", 0) if isinstance(lane_verdict, dict) else 0,
-        "ct_bridge_rejections_count": lane_verdict.get("ct_bridge_rejections_count", 0) if isinstance(lane_verdict, dict) else 0,
-        "ct_candidates_accumulated": lane_verdict.get("ct_candidates_accumulated", 0) if isinstance(lane_verdict, dict) else 0,
+        "ct_bridge_rejections_count": lane_verdict.get("ct_bridge_rejections_count", 0) if isinstance(lane_verdict, dict) else 0,  # noqa: E501
+        "ct_candidates_accumulated": lane_verdict.get("ct_candidates_accumulated", 0) if isinstance(lane_verdict, dict) else 0,  # noqa: E501
         "ct_candidates_stored": lane_verdict.get("ct_candidates_stored", 0) if isinstance(lane_verdict, dict) else 0,
         "ct_storage_rejected": lane_verdict.get("ct_storage_rejected", 0) if isinstance(lane_verdict, dict) else 0,
         # F231B: CT expansion clue summary — domain expansion evidence visible even when accepted=0
-        "ct_expansion_clues_count": lane_verdict.get("ct_expansion_clues_count", 0) if isinstance(lane_verdict, dict) else 0,
-        "ct_valid_public_domains": lane_verdict.get("ct_valid_public_domains", 0) if isinstance(lane_verdict, dict) else 0,
+        "ct_expansion_clues_count": lane_verdict.get("ct_expansion_clues_count", 0) if isinstance(lane_verdict, dict) else 0,  # noqa: E501
+        "ct_valid_public_domains": lane_verdict.get("ct_valid_public_domains", 0) if isinstance(lane_verdict, dict) else 0,  # noqa: E501
         "ct_wildcard_domains": lane_verdict.get("ct_wildcard_domains", 0) if isinstance(lane_verdict, dict) else 0,
-        "ct_private_reserved_domains": lane_verdict.get("ct_private_reserved_domains", 0) if isinstance(lane_verdict, dict) else 0,
-        "ct_duplicate_candidates": lane_verdict.get("ct_duplicate_candidates", 0) if isinstance(lane_verdict, dict) else 0,
+        "ct_private_reserved_domains": lane_verdict.get("ct_private_reserved_domains", 0) if isinstance(lane_verdict, dict) else 0,  # noqa: E501
+        "ct_duplicate_candidates": lane_verdict.get("ct_duplicate_candidates", 0) if isinstance(lane_verdict, dict) else 0,  # noqa: E501
         # F231C: Wayback advisory evidence surface
-        "wayback_advisory_clues_count": lane_verdict.get("wayback_advisory_clues_count", 0) if isinstance(lane_verdict, dict) else 0,
-        "wayback_changed_url_count": lane_verdict.get("wayback_changed_url_count", 0) if isinstance(lane_verdict, dict) else 0,
-        "wayback_added_url_count": lane_verdict.get("wayback_added_url_count", 0) if isinstance(lane_verdict, dict) else 0,
-        "wayback_digest_changed_count": lane_verdict.get("wayback_digest_changed_count", 0) if isinstance(lane_verdict, dict) else 0,
-        "wayback_unchanged_rejected": lane_verdict.get("wayback_unchanged_rejected", 0) if isinstance(lane_verdict, dict) else 0,
+        "wayback_advisory_clues_count": lane_verdict.get("wayback_advisory_clues_count", 0) if isinstance(lane_verdict, dict) else 0,  # noqa: E501
+        "wayback_changed_url_count": lane_verdict.get("wayback_changed_url_count", 0) if isinstance(lane_verdict, dict) else 0,  # noqa: E501
+        "wayback_added_url_count": lane_verdict.get("wayback_added_url_count", 0) if isinstance(lane_verdict, dict) else 0,  # noqa: E501
+        "wayback_digest_changed_count": lane_verdict.get("wayback_digest_changed_count", 0) if isinstance(lane_verdict, dict) else 0,  # noqa: E501
+        "wayback_unchanged_rejected": lane_verdict.get("wayback_unchanged_rejected", 0) if isinstance(lane_verdict, dict) else 0,  # noqa: E501
         # F231C: PassiveDNS advisory evidence surface
-        "passive_dns_advisory_clues_count": lane_verdict.get("passive_dns_advisory_clues_count", 0) if isinstance(lane_verdict, dict) else 0,
-        "passive_dns_private_ip_rejected": lane_verdict.get("passive_dns_private_ip_rejected", 0) if isinstance(lane_verdict, dict) else 0,
-        "passive_dns_empty_ip_rejected": lane_verdict.get("passive_dns_empty_ip_rejected", 0) if isinstance(lane_verdict, dict) else 0,
+        "passive_dns_advisory_clues_count": lane_verdict.get("passive_dns_advisory_clues_count", 0) if isinstance(lane_verdict, dict) else 0,  # noqa: E501
+        "passive_dns_private_ip_rejected": lane_verdict.get("passive_dns_private_ip_rejected", 0) if isinstance(lane_verdict, dict) else 0,  # noqa: E501
+        "passive_dns_empty_ip_rejected": lane_verdict.get("passive_dns_empty_ip_rejected", 0) if isinstance(lane_verdict, dict) else 0,  # noqa: E501
         # F231F: Evidence depth KPI alias fields — normalized names for research_quality_score
         # These allow research_quality_score to read actual F231A/B/C canonical field names
         # regardless of which naming convention the live KPI used.

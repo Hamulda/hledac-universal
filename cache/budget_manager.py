@@ -85,7 +85,7 @@ class BudgetConfig(BaseModel):
     max_time_sec: int = Field(default=180, ge=10, description="Maximum time in seconds")
     max_tool_calls: int = Field(default=60, ge=1, description="Maximum tool calls")
     min_confidence: float = Field(default=0.7, ge=0.0, le=1.0, description="Minimum confidence to stop early")
-    stagnation_threshold: int = Field(default=2, ge=1, description="Iterations without new entities to trigger stagnation")
+    stagnation_threshold: int = Field(default=2, ge=1, description="Iterations without new entities to trigger stagnation")  # noqa: E501
 
 
 class BudgetState(BaseModel):
@@ -164,7 +164,7 @@ class BudgetManager:
             config: Budget configuration. Uses defaults if None.
         """
         self.config = config or BudgetConfig()
-        self.state = BudgetState(start_time=datetime.now())
+        self.state = BudgetState(start_time=datetime.now())  # noqa: DTZ005
         # Sprint 32+33: RotatingBloomFilter instead of unbounded Set
         self._entities_seen = create_rotating_bloom_filter()
         self._sources_seen = create_rotating_bloom_filter()
@@ -246,7 +246,7 @@ class BudgetManager:
             )
 
         # Max time
-        elapsed = (datetime.now() - self.state.start_time).total_seconds()
+        elapsed = (datetime.now() - self.state.start_time).total_seconds()  # noqa: DTZ005
         if elapsed >= self.config.max_time_sec:
             return (
                 True,
@@ -322,7 +322,7 @@ class BudgetManager:
             self.state.stagnation_counter += 1
             logger.debug(
                 f"Stagnation detected: {self.state.stagnation_counter}/"
-                f"{self.config.stagnation_threshold} iterations (existing={existing_stagnation}, jaccard={jaccard_stagnation})"
+                f"{self.config.stagnation_threshold} iterations (existing={existing_stagnation}, jaccard={jaccard_stagnation})"  # noqa: E501
             )
 
             if self.state.stagnation_counter >= self.config.stagnation_threshold:
@@ -408,7 +408,7 @@ class BudgetManager:
         Returns:
             BudgetStatus with current state and utilization metrics
         """
-        elapsed = (datetime.now() - self.state.start_time).total_seconds()
+        elapsed = (datetime.now() - self.state.start_time).total_seconds()  # noqa: DTZ005
 
         # Calculate utilization percentages
         utilization = {
@@ -452,7 +452,7 @@ class BudgetManager:
         Returns:
             Dictionary with summary statistics
         """
-        elapsed = (datetime.now() - self.state.start_time).total_seconds()
+        elapsed = (datetime.now() - self.state.start_time).total_seconds()  # noqa: DTZ005
 
         return {
             "iterations": {
@@ -505,7 +505,7 @@ class BudgetManager:
         Returns:
             True if any budget is at or above threshold
         """
-        elapsed = (datetime.now() - self.state.start_time).total_seconds()
+        elapsed = (datetime.now() - self.state.start_time).total_seconds()  # noqa: DTZ005
 
         checks = [
             self.state.iteration / self.config.max_iterations >= threshold,
@@ -518,7 +518,7 @@ class BudgetManager:
 
     def reset(self) -> None:
         """Reset budget manager to initial state"""
-        self.state = BudgetState(start_time=datetime.now())
+        self.state = BudgetState(start_time=datetime.now())  # noqa: DTZ005
         # Sprint 32+33: Reinitialize RotatingBloomFilter instances
         self._entities_seen = create_rotating_bloom_filter()
         self._sources_seen = create_rotating_bloom_filter()

@@ -45,7 +45,7 @@ logger = logging.getLogger(__name__)
 # Try to import CanonicalFinding (lazy to avoid boot-path overhead)
 _CanonicalFinding = None
 try:
-    from hledac.universal.knowledge.duckdb_store import CanonicalFinding as _CF
+    from hledac.universal.knowledge.duckdb_store import CanonicalFinding as _CF  # noqa: N814
     _CanonicalFinding = _CF
 except ImportError:
     pass

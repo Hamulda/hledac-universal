@@ -356,7 +356,7 @@ def main():
         f.write("| File | Symbol | Role | Can Transition Phase | Calls Barrier | Risk | Line | Evidence |\n")
         f.write("|------|--------|------|---------------------|---------------|------|------|----------|\n")
         for s in sites:
-            f.write(f"| `{s.file}` | `{s.symbol}` | {s.role} | {s.can_transition_phase} | {s.calls_barrier} | {s.risk} | L{s.line} | `{s.evidence[:80]}` |\n")
+            f.write(f"| `{s.file}` | `{s.symbol}` | {s.role} | {s.can_transition_phase} | {s.calls_barrier} | {s.risk} | L{s.line} | `{s.evidence[:80]}` |\n")  # noqa: E501
         f.write("\n## Authority Hierarchy\n\n")
         f.write("```\n")
         f.write("LIFECYCLE_PHASE_AUTHORITY (SprintLifecycle.request_windup)\n")
@@ -369,10 +369,10 @@ def main():
         f.write("```\n")
         f.write("\n## Key Findings\n\n")
         f.write("- Canonical windup guard: `SprintLifecycleRunner.windup_guard()` (L89, sprint_lifecycle_runner.py)\n")
-        f.write("- Scheduler callsite: `SprintScheduler.run()` at ~L1246, calls `self._runner.windup_guard(now_monotonic)`\n")
-        f.write("- Lifecycle authority: `SprintLifecycle.request_windup()` (L300, sprint_lifecycle.py) — sets signal flag\n")
+        f.write("- Scheduler callsite: `SprintScheduler.run()` at ~L1246, calls `self._runner.windup_guard(now_monotonic)`\n")  # noqa: E501
+        f.write("- Lifecycle authority: `SprintLifecycle.request_windup()` (L300, sprint_lifecycle.py) — sets signal flag\n")  # noqa: E501
         f.write("- Phase transition: `SprintLifecycle.transition_to(SprintPhase.WINDUP)` (L92, sprint_lifecycle.py)\n")
-        f.write("- Pre-windup barriers: `_attempt_public_prewindup_barrier()`, `_attempt_ct_prewindup_barrier()` called from SprintScheduler.run()\n")
+        f.write("- Pre-windup barriers: `_attempt_public_prewindup_barrier()`, `_attempt_ct_prewindup_barrier()` called from SprintScheduler.run()\n")  # noqa: E501
         f.write("- report_only mentions found: NO actual transition authority outside lifecycle/transition_to\n")
         f.write("- LEGACY_OR_DORMANT: NONE confirmed — all matches are active production code\n")
 

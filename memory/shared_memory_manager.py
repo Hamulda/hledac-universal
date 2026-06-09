@@ -22,9 +22,9 @@ except ImportError:
 
 # Sprint F264: Use msgspec facade for fast JSON serialization.
 # Falls back to orjson (then stdlib json) on type errors.
-from hledac.universal.utils.msgspec_json import ORJSON_AVAILABLE as _FACADE_ORJSON_AVAILABLE
-from hledac.universal.utils.msgspec_json import decode as _msgspec_decode
-from hledac.universal.utils.msgspec_json import encode as _msgspec_encode
+from hledac.universal.utils.msgspec_json import ORJSON_AVAILABLE as _FACADE_ORJSON_AVAILABLE  # noqa: E402
+from hledac.universal.utils.msgspec_json import decode as _msgspec_decode  # noqa: E402
+from hledac.universal.utils.msgspec_json import encode as _msgspec_encode  # noqa: E402
 
 
 def _json_dumps(obj: Any) -> bytes:

@@ -121,7 +121,7 @@ class TestSprintFADVA:
     @pytest.mark.asyncio
     async def test_rag_caps_at_max_sources(self) -> None:
         """Must never return more than _MAX_SOURCES entries."""
-        from hledac.universal.advanced_rag.rag_orchestrator import RAGOrchestrator, _MAX_SOURCES
+        from hledac.universal.advanced_rag.rag_orchestrator import _MAX_SOURCES, RAGOrchestrator
 
         rag = RAGOrchestrator()
 
@@ -182,6 +182,7 @@ class TestSprintFADVB:
     def test_semaphore_matches_max(self) -> None:
         """Semaphore capacity must equal _MAX_CONCURRENT_TABS."""
         import asyncio
+
         from hledac.universal.advanced_web import stealth_browser
 
         # Module-level semaphore — its _value is the open permits
@@ -449,8 +450,8 @@ class TestSprintFADVC:
     async def test_analyze_network_is_bounded_under_load(self) -> None:
         """Large input must be bounded by MAX_ENTITIES — no RAM explosion."""
         from hledac.universal.advanced_web.evidence_network_analyzer import (
-            EvidenceNetworkAnalyzer,
             MAX_ENTITIES,
+            EvidenceNetworkAnalyzer,
         )
         ana = EvidenceNetworkAnalyzer()
         # 1500 entities, 3 unique (dedup target) + 1 outlier repeated — well over MAX_ENTITIES (500).
@@ -518,8 +519,11 @@ class TestSprintFADVD:
         """Setting HLEDAC_ENABLE_ADVANCED_RAG=1 must flip the config flag."""
         monkeypatch.setenv("HLEDAC_ENABLE_ADVANCED_RAG", "1")
         # Reload the module-level env reader state
-        from hledac.universal.enhanced_research import UnifiedResearchEngine, UnifiedResearchConfig
-        from hledac.universal.enhanced_research import _env_flag, _ADVANCED_RAG_ENV
+        from hledac.universal.enhanced_research import (
+            _ADVANCED_RAG_ENV,
+            UnifiedResearchEngine,
+            _env_flag,
+        )
 
         # Sanity: the env-flag reader picks it up
         assert _env_flag(_ADVANCED_RAG_ENV) is True
@@ -530,7 +534,7 @@ class TestSprintFADVD:
     def test_explicit_config_overrides_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """If config is provided explicitly, env var must NOT override it."""
         monkeypatch.setenv("HLEDAC_ENABLE_ADVANCED_RAG", "1")
-        from hledac.universal.enhanced_research import UnifiedResearchEngine, UnifiedResearchConfig
+        from hledac.universal.enhanced_research import UnifiedResearchConfig, UnifiedResearchEngine
 
         cfg = UnifiedResearchConfig(enable_advanced_rag=False)
         engine = UnifiedResearchEngine(config=cfg)
@@ -539,7 +543,7 @@ class TestSprintFADVD:
 
     def test_stats_keys_include_advanced(self) -> None:
         """Engine stats must include the three new advanced counters."""
-        from hledac.universal.enhanced_research import UnifiedResearchEngine, UnifiedResearchConfig
+        from hledac.universal.enhanced_research import UnifiedResearchConfig, UnifiedResearchEngine
 
         engine = UnifiedResearchEngine(config=UnifiedResearchConfig())
         stats = engine.get_statistics()
@@ -552,7 +556,7 @@ class TestSprintFADVD:
         assert stats["evidence_analyses"] == 0
 
     def test_stats_config_reports_capability_flags(self) -> None:
-        from hledac.universal.enhanced_research import UnifiedResearchEngine, UnifiedResearchConfig
+        from hledac.universal.enhanced_research import UnifiedResearchConfig, UnifiedResearchEngine
 
         engine = UnifiedResearchEngine(config=UnifiedResearchConfig())
         stats = engine.get_statistics()
@@ -562,7 +566,7 @@ class TestSprintFADVD:
 
     @pytest.mark.asyncio
     async def test_get_advanced_rag_returns_none_when_disabled(self) -> None:
-        from hledac.universal.enhanced_research import UnifiedResearchEngine, UnifiedResearchConfig
+        from hledac.universal.enhanced_research import UnifiedResearchConfig, UnifiedResearchEngine
 
         engine = UnifiedResearchEngine(config=UnifiedResearchConfig())
         # No env, no config flag → returns None
@@ -571,7 +575,7 @@ class TestSprintFADVD:
 
     @pytest.mark.asyncio
     async def test_get_stealth_browser_returns_none_when_disabled(self) -> None:
-        from hledac.universal.enhanced_research import UnifiedResearchEngine, UnifiedResearchConfig
+        from hledac.universal.enhanced_research import UnifiedResearchConfig, UnifiedResearchEngine
 
         engine = UnifiedResearchEngine(config=UnifiedResearchConfig())
         out = await engine._get_stealth_browser()
@@ -579,7 +583,7 @@ class TestSprintFADVD:
 
     @pytest.mark.asyncio
     async def test_get_evidence_analyzer_returns_none_when_disabled(self) -> None:
-        from hledac.universal.enhanced_research import UnifiedResearchEngine, UnifiedResearchConfig
+        from hledac.universal.enhanced_research import UnifiedResearchConfig, UnifiedResearchEngine
 
         engine = UnifiedResearchEngine(config=UnifiedResearchConfig())
         out = await engine._get_evidence_analyzer()
@@ -591,7 +595,7 @@ class TestSprintFADVD:
     ) -> None:
         """With enable_stealth_browser=True, _get_stealth_browser must return an
         instance (even if browser init fails — it should not raise)."""
-        from hledac.universal.enhanced_research import UnifiedResearchEngine, UnifiedResearchConfig
+        from hledac.universal.enhanced_research import UnifiedResearchConfig, UnifiedResearchEngine
 
         # Set config explicitly
         cfg = UnifiedResearchConfig(enable_stealth_browser=True)
@@ -611,7 +615,7 @@ class TestSprintFADVD:
         return an implemented EvidenceNetworkAnalyzer instance (not None).
         Post-T1 the analyzer is fully implemented — it must still be lazy and
         must be the same instance on repeated calls."""
-        from hledac.universal.enhanced_research import UnifiedResearchEngine, UnifiedResearchConfig
+        from hledac.universal.enhanced_research import UnifiedResearchConfig, UnifiedResearchEngine
 
         cfg = UnifiedResearchConfig(enable_evidence_analyzer=True)
         engine = UnifiedResearchEngine(config=cfg)
@@ -635,9 +639,9 @@ class TestSprintFADVD:
     async def test_stealth_fetch_count_resets_each_sprint(self) -> None:
         """deep_research() must reset _stealth_fetch_count at entry."""
         from hledac.universal.enhanced_research import (
-            UnifiedResearchEngine,
-            UnifiedResearchConfig,
             ResearchDepth,
+            UnifiedResearchConfig,
+            UnifiedResearchEngine,
         )
 
         engine = UnifiedResearchEngine(config=UnifiedResearchConfig())
@@ -653,7 +657,7 @@ class TestSprintFADVD:
     @pytest.mark.asyncio
     async def test_cleanup_releases_advanced_providers(self) -> None:
         """cleanup() must null out all three advanced provider references."""
-        from hledac.universal.enhanced_research import UnifiedResearchEngine, UnifiedResearchConfig
+        from hledac.universal.enhanced_research import UnifiedResearchConfig, UnifiedResearchEngine
 
         engine = UnifiedResearchEngine(config=UnifiedResearchConfig())
         # Pre-populate to verify they get cleared

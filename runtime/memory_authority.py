@@ -99,7 +99,7 @@ def classify_memory_symbol(symbol_or_path: str) -> str:
 
     # Partial path matches
     for key, role in MEMORY_AUTHORITY.items():
-        if not key.startswith("core/") and not key.startswith("utils/") and not key.startswith("layers/") and not key.startswith("coordinators/") and not key.startswith("legacy/"):
+        if not key.startswith("core/") and not key.startswith("utils/") and not key.startswith("layers/") and not key.startswith("coordinators/") and not key.startswith("legacy/"):  # noqa: E501
             continue
         if s.startswith(key.split("::")[0]) or key.startswith(s):
             return role

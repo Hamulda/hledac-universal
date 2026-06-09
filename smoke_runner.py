@@ -36,18 +36,19 @@ from __future__ import annotations
 
 # Namespace bootstrap — must run before any hledac.* import
 from hledac._namespace_bootstrap import ensure_namespace_paths
+
 ensure_namespace_paths()
 
-import argparse
-import asyncio
-import cProfile
-import importlib.util
-import logging
-import pstats
-import sys
-import time
-from io import StringIO
-from pathlib import Path
+import argparse  # noqa: E402
+import asyncio  # noqa: E402
+import cProfile  # noqa: E402
+import importlib.util  # noqa: E402
+import logging  # noqa: E402
+import pstats  # noqa: E402
+import sys  # noqa: E402
+import time  # noqa: E402
+from io import StringIO  # noqa: E402
+from pathlib import Path  # noqa: E402
 
 # Nastavit logging
 logging.basicConfig(
@@ -82,8 +83,8 @@ async def run_smoke_test() -> int:
         # import chain (security_coordinator relative-import bug). The lazy
         # exports in hledac/universal/__init__.py are the canonical seam.
         from hledac.universal import (
-            AdaptiveSemaphore,
             FETCH_SEMAPHORE,
+            AdaptiveSemaphore,
             adjust_fetch_workers,
         )
         log.info("  ✓ Root package and FETCH_SEMAPHORE imports OK")
@@ -160,7 +161,7 @@ async def run_smoke_test() -> int:
         return 0
 
 
-async def main(mode: str = "public", query: str = "smoke test query", run_loop: bool = False, rl_steps: int = 0, profile: bool = False) -> int:
+async def main(mode: str = "public", query: str = "smoke test query", run_loop: bool = False, rl_steps: int = 0, profile: bool = False) -> int:  # noqa: E501
     """
     Spustí 60s sprint a sleduje RAM.
 

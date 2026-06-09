@@ -34,17 +34,17 @@ import asyncio
 import hashlib
 import logging
 import time
-from collections import OrderedDict, Counter
+from collections import Counter, OrderedDict
 from typing import TYPE_CHECKING, Any
 
 import msgspec
+
 from hledac.universal.pipeline.scoring import (
     EntryQualitySignal,
     _assemble_clean_feed_text,
     _assemble_enriched_feed_text,
     _classify_assembly_substance,
     _compute_entry_quality_signal,
-    _convert_rich_html_to_text,  # backward compat re-export for tests
     _entry_payload_text,
     _strip_html_tags_from_text,
 )
@@ -98,7 +98,7 @@ class FeedPipelineEntryResult(msgspec.Struct, frozen=True, gc=False):
     error: str | None = None
     # F188D: assembly quality transparency for zero-finding diagnosis
     assembly_tier: str = ""           # "no_content" | "title_only" | "summary_only" | "rich_content"
-    quality_reason_tag: str = ""      # comma-separated: "author_present" | "feed_title_context" | "language_match" | "title_only" | etc.
+    quality_reason_tag: str = ""      # comma-separated: "author_present" | "feed_title_context" | "language_match" | "title_only" | etc.  # noqa: E501
 
 
 class FeedPipelineRunResult(msgspec.Struct, frozen=True, gc=False):
@@ -143,20 +143,20 @@ class FeedPipelineRunResult(msgspec.Struct, frozen=True, gc=False):
     # Sprint F150I: feed economics verdicts
     feed_branch_signal_present: bool = False        # True if >=1 entry had feed-native hits (no fallback needed)
     fallback_useful_count: int = 0                  # Fallback entries that produced new findings vs no-signal fallbacks
-    fallback_waste_count: int = 0                   # Fallback entries where feed-native already had signal (unnecessary)
+    fallback_waste_count: int = 0                   # Fallback entries where feed-native already had signal (unnecessary)  # noqa: E501
     findings_from_rich_feed: int = 0                 # Findings where feed-native content carried the hit
     findings_from_fallback: int = 0                  # Findings where article fallback was the winning source
-    feed_branch_hint: str = "unknown"                # "feed_strong" | "feed_weak" | "mixed" | "unknown" — next-sprint signal
+    feed_branch_hint: str = "unknown"                # "feed_strong" | "feed_weak" | "mixed" | "unknown" — next-sprint signal  # noqa: E501
     # Sprint F150I: condensed economics verdict (analogous to public branch economics)
     feed_economics_verdict: tuple[str, int, int, int, int] = ("", 0, 0, 0, 0)
     # (verdict_tag, feed_branch_signal_present_int, fallback_useful, fallback_waste, feed_signal_quality)
     # Sprint F150J: dict-style additive feed branch verdict
     feed_branch_verdict: dict[str, Any] = {}
     # Sprint F150J: derived feed counters with real scheduling value
-    squandered_high_usefulness_entries: int = 0        # fallback attempted on entries that had high-usefulness but no hits
+    squandered_high_usefulness_entries: int = 0        # fallback attempted on entries that had high-usefulness but no hits  # noqa: E501
     fallback_value_ratio: float = 0.0                  # fallback_useful / max(1, fallback_useful + fallback_waste)
     feed_native_yield_ratio: float = 0.0               # findings_rich / max(1, findings_rich + findings_fallback)
-    metadata_strong_but_content_weak: int = 0           # entries where metadata_boost=True but assembled_text < threshold
+    metadata_strong_but_content_weak: int = 0           # entries where metadata_boost=True but assembled_text < threshold  # noqa: E501
     low_trust_feed_hits: int = 0                        # feed-native hits on entries with low quality_band
     feed_next_action: str = "unknown"                   # "continue_feed" | "fallback_more" | "reassess_feed" | "stop"
     feed_confidence_note: str = ""                       # human-readable confidence annotation
@@ -165,7 +165,7 @@ class FeedPipelineRunResult(msgspec.Struct, frozen=True, gc=False):
     # Sprint F151A: winning source breakdown for scheduler/exporter
     winning_source_breakdown: dict[str, int] = {}     # {"feed_native": N, "fallback": N, "mixed": N}
     # Sprint F169D: root-cause propagation into FeedPipelineRunResult
-    upstream_fetch_blocker: str | None = None       # "http_error" | "timeout" | "dns_failure" | "connection_error" | "robots_blocked"
+    upstream_fetch_blocker: str | None = None       # "http_error" | "timeout" | "dns_failure" | "connection_error" | "robots_blocked"  # noqa: E501
     upstream_parse_blocker: str | None = None        # "malformed_xml" | "wrong_content_type" | "redirected_non_feed"
     source_accessibility_blocker: str | None = None  # source-level fetch failure label
     root_zero_yield_reason: str | None = None       # canonical root cause of zero findings
@@ -754,7 +754,7 @@ class FeedSourceBatchRunResult(msgspec.Struct, frozen=True, gc=False):
 
 
 
-def _assemble_clean_feed_text(title: str, summary: str) -> str:
+def _assemble_clean_feed_text(title: str, summary: str) -> str:  # noqa: F811
     """
     Assemble deterministic clean text from title + summary.
 
@@ -780,7 +780,7 @@ def _assemble_clean_feed_text(title: str, summary: str) -> str:
 # --- Feed text assembly (imported from pipeline.scoring) ---
 
 # Backwards-compatible alias (used by probe_8ah tests)
-_entry_payload_text = _assemble_clean_feed_text
+_entry_payload_text = _assemble_clean_feed_text  # noqa: F811
 
 # ---------------------------------------------------------------------------
 # Backwards-compatible entry-to-candidate-findings (used by probe_8ah tests)
@@ -881,7 +881,7 @@ class _RunDeduper:
     _DEDUP_MAX: int = 50_000
 
     def __init__(self) -> None:
-        self._seen: "OrderedDict[str, None]" = OrderedDict()
+        self._seen: OrderedDict[str, None] = OrderedDict()
 
     def is_new(self, entry_url: str, _title: str = "", _raw: str = "") -> bool:
         # Legacy entry-backed callers pass (url, title, raw) — key is entry_url only
@@ -902,9 +902,9 @@ class _RunDeduper:
 # ---------------------------------------------------------------------------
 
 # Import here so that absence of pattern_matcher is a hard fail at import time
-from hledac.universal.patterns.pattern_matcher import match_text
+from hledac.universal.patterns.pattern_matcher import match_text  # noqa: E402
+from utils.async_helpers import safe_gather_dropin  # noqa: E402
 
-from utils.async_helpers import safe_gather_dropin
 # ---------------------------------------------------------------------------
 # Per-entry dedup for pattern-backed findings
 # ---------------------------------------------------------------------------
@@ -920,7 +920,7 @@ class _EntryDeduper:
     _DEDUP_MAX: int = 50_000
 
     def __init__(self) -> None:
-        self._seen: "OrderedDict[tuple[str, str, str], None]" = OrderedDict()
+        self._seen: OrderedDict[tuple[str, str, str], None] = OrderedDict()
 
     def is_new(self, label: str, pattern: str, value: str) -> bool:
         key = (label or "", pattern, value)
@@ -1092,7 +1092,7 @@ async def _check_wayback_cdx(entry_url: str, session: Any) -> str | None:
         return None
 
     try:
-        cdx_url = f"{_WAYBACK_CDX_URL}?url={entry_url}&output=json&limit=1&filter=statuscode:200&from={_WAYBACK_CDX_MAX_AGE_DAYS}d"
+        cdx_url = f"{_WAYBACK_CDX_URL}?url={entry_url}&output=json&limit=1&filter=statuscode:200&from={_WAYBACK_CDX_MAX_AGE_DAYS}d"  # noqa: E501
         async with asyncio.timeout(_WAYBACK_CDX_TIMEOUT):
             try:
                 async with session.get(cdx_url, timeout=_aiohttp.ClientTimeout(total=_WAYBACK_CDX_TIMEOUT)) as resp:
@@ -1176,7 +1176,7 @@ async def _fetch_article_text(entry_url: str) -> tuple[str, bool, int]:
     try:
         async with asyncio.timeout(_MAX_ARTICLE_FALLBACK_TIMEOUT):
             try:
-                async with session.get(fetch_url, timeout=_aiohttp.ClientTimeout(total=_MAX_ARTICLE_FALLBACK_TIMEOUT)) as resp:
+                async with session.get(fetch_url, timeout=_aiohttp.ClientTimeout(total=_MAX_ARTICLE_FALLBACK_TIMEOUT)) as resp:  # noqa: E501
                     if resp.status != 200:
                         return ("", False, 0)
                     raw = await resp.read()
@@ -1672,8 +1672,8 @@ async def async_run_live_feed_pipeline(
     _sample_hit_labels: list[str] = []
     _sample_texts_truncated = False
     _entries_with_content_seen = 0
-    _MAX_SAMPLE_ENTRIES = 3
-    _MAX_SAMPLE_CHARS = 160
+    _MAX_SAMPLE_ENTRIES = 3  # noqa: N806
+    _MAX_SAMPLE_CHARS = 160  # noqa: N806
     # Sprint F300C: separate enriched sample (post-enrichment text)
     _sample_enriched_texts: list[str] = []
     _sample_enriched_texts_truncated = False
@@ -1862,8 +1862,8 @@ async def async_run_live_feed_pipeline(
             _adapter_source_priority_bias_acc += _float_attr(entry, "source_priority_bias", 0.0)
             _adapter_timestamp_reliability_acc += _float_attr(entry, "timestamp_reliability", 0.0)
             # String fields: keep first non-empty value (representative, not last)
-            _adapter_metadata_richness_band_acc = _adapter_metadata_richness_band_acc or _str_attr(entry, "metadata_richness_band", "")
-            _adapter_entry_usefulness_band_acc = _adapter_entry_usefulness_band_acc or _str_attr(entry, "entry_usefulness_band", "")
+            _adapter_metadata_richness_band_acc = _adapter_metadata_richness_band_acc or _str_attr(entry, "metadata_richness_band", "")  # noqa: E501
+            _adapter_entry_usefulness_band_acc = _adapter_entry_usefulness_band_acc or _str_attr(entry, "entry_usefulness_band", "")  # noqa: E501
             _adapter_selection_reason_acc = _adapter_selection_reason_acc or _str_attr(entry, "selection_reason", "")
             _adapter_signal_count += 1
 
@@ -2023,7 +2023,7 @@ async def async_run_live_feed_pipeline(
             else 0.0
         ),
         sample_enriched_texts=tuple(_sample_enriched_texts),
-        enrichment_phase_used="article_fallback" if entries_with_article_fallback > 0 else ("feed_rich_content" if entries_with_rich_feed_content > 0 else "none"),
+        enrichment_phase_used="article_fallback" if entries_with_article_fallback > 0 else ("feed_rich_content" if entries_with_rich_feed_content > 0 else "none"),  # noqa: E501
         temporal_feed_vocabulary_mismatch=_temporal_vocabulary_mismatch,
         # Sprint F150I: feed economics verdicts
         feed_branch_signal_present=_feed_branch_signal_present,

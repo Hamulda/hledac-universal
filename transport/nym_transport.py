@@ -36,7 +36,7 @@ class NymTransport(Transport):
         try:
             import websockets
         except ImportError:
-            raise RuntimeError("NymTransport unavailable: missing websockets")
+            raise RuntimeError("NymTransport unavailable: missing websockets")  # noqa: B904
 
         self._websockets = websockets
 
@@ -90,8 +90,8 @@ class NymTransport(Transport):
         self.available = True
         set_nym_transport_singleton(self)
 
-        self._stdout_task = asyncio.create_task(self._drain_stream(self.client_process.stdout, 'stdout'), name="nym:stdout_drain")
-        self._stderr_task = asyncio.create_task(self._drain_stream(self.client_process.stderr, 'stderr'), name="nym:stderr_drain")
+        self._stdout_task = asyncio.create_task(self._drain_stream(self.client_process.stdout, 'stdout'), name="nym:stdout_drain")  # noqa: E501
+        self._stderr_task = asyncio.create_task(self._drain_stream(self.client_process.stderr, 'stderr'), name="nym:stderr_drain")  # noqa: E501
 
         for _ in range(10):
             try:
@@ -117,7 +117,7 @@ class NymTransport(Transport):
                 await wait_for_self_address()
             logger.info(f"Nym address: {self.nym_address}")
         except TimeoutError:
-            raise RuntimeError("Nym client did not send selfAddress")
+            raise RuntimeError("Nym client did not send selfAddress")  # noqa: B904
 
         self._ready.set()
         self._sender_task = asyncio.create_task(self._sender_loop(), name="nym:sender")

@@ -393,7 +393,7 @@ def compare_capability_artifacts(previous_json: Path | None, current_json: Path)
         operator_summary = f"Capability regressed in: {', '.join(regressed_dims)}"
     else:
         verdict = CapabilityDeltaVerdict.MIXED
-        operator_summary = f"Tied: {len(improved_dims)} improved, {len(regressed_dims)} regressed. Manual review recommended."
+        operator_summary = f"Tied: {len(improved_dims)} improved, {len(regressed_dims)} regressed. Manual review recommended."  # noqa: E501
 
     return CapabilityDelta(
         capability_delta_verdict=verdict,
@@ -525,7 +525,7 @@ def _get_source_families(kpi: dict) -> list[str]:
         bm = kpi.get("branch_mix", {})
         if isinstance(bm, dict):
             # Normalize snake_case keys: "ct_findings" → "CT", "feed_findings" → "FEED"
-            _BRANCH_MAP = {
+            _BRANCH_MAP = {  # noqa: N806
                 "feed_findings": "FEED",
                 "ct_findings": "CT",
                 "public_findings": "PUBLIC",
@@ -627,7 +627,7 @@ def _get_ct_public_info(kpi: dict) -> tuple[bool, bool]:
         if not ct_terminal_state:
             ct_terminal_state = kpi.get("ct_terminal_state")
         # provider_failure, cooldown, timeout are all terminal attempts
-        if ct_provider_status in ("provider_failure", "cooldown", "timeout") or ct_terminal_state in ("provider_failure", "cooldown", "timeout"):
+        if ct_provider_status in ("provider_failure", "cooldown", "timeout") or ct_terminal_state in ("provider_failure", "cooldown", "timeout"):  # noqa: E501
             ct_att = True
 
     return ct_att, pub_att
@@ -905,8 +905,8 @@ def verdict_to_markdown(delta: EvidenceDelta, prev_path: Path | None, curr_path:
         "| Branch | Previous | Current | Delta |",
         "|--------|----------|---------|-------|",
         f"| FEED   | {delta.feed_accepted_prev} | {delta.feed_accepted_curr} | {delta.feed_delta_count:+d} |",
-        f"| CT     | {delta.ct_accepted_prev} | {delta.ct_accepted_curr} | {delta.ct_accepted_curr - delta.ct_accepted_prev:+d} |",
-        f"| PUBLIC | {delta.public_accepted_prev} | {delta.public_accepted_curr} | {delta.public_accepted_curr - delta.public_accepted_prev:+d} |",
+        f"| CT     | {delta.ct_accepted_prev} | {delta.ct_accepted_curr} | {delta.ct_accepted_curr - delta.ct_accepted_prev:+d} |",  # noqa: E501
+        f"| PUBLIC | {delta.public_accepted_prev} | {delta.public_accepted_curr} | {delta.public_accepted_curr - delta.public_accepted_prev:+d} |",  # noqa: E501
         "",
         f"- CT attempted: `{delta.ct_attempted}`",
         f"- PUBLIC attempted: `{delta.public_attempted}`",
@@ -919,7 +919,7 @@ def verdict_to_markdown(delta: EvidenceDelta, prev_path: Path | None, curr_path:
         f"- **Repeated CT domains:** {delta.repeated_ct_domains or '_(none)_'}",
         f"- **CT loss stage (prev):** `{delta.ct_loss_stage_prev}`",
         f"- **CT loss stage (curr):** `{delta.ct_loss_stage_curr}`",
-        f"- **⚠️ CT loss detected:** {'YES — evidence lost in pipeline' if delta.ct_raw_curr > 0 and delta.ct_accepted_curr == 0 else 'NO'},",
+        f"- **⚠️ CT loss detected:** {'YES — evidence lost in pipeline' if delta.ct_raw_curr > 0 and delta.ct_accepted_curr == 0 else 'NO'},",  # noqa: E501
 
         "",
         "---",

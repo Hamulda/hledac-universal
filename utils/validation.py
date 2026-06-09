@@ -381,7 +381,7 @@ class DataValidator:
             'validator_count': len(validator_names)
         }
 
-    def _check_type(self, value: Any, expected_type: str) -> bool:
+    def _check_type(self, value: Any, expected_type: str) -> bool | None:
         """Check if value matches expected JSON schema type."""
         type_mapping = {
             'string': str,
@@ -534,7 +534,7 @@ def demonstrate_validator() -> None:
     # Custom validator example
     print("\n4. Custom Validator Example:")
 
-    def validate_phone_number(data: str) -> ValidationResult:
+    def validate_phone_number(data: str) -> ValidationResult | None:
         """Custom validator for phone numbers."""
         phone_pattern = re.compile(r'^\+?1?-?\.?\s?\(?(\d{3})\)?[\s.-]?(\d{3})[\s.-]?(\d{4})$')
         errors = []

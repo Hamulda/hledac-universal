@@ -115,7 +115,7 @@ def synthetic_texts(n: int, seed: int = 42) -> list[str]:
         template = rng.choice(templates)
         text = template.format(**{k: rng.choice(v) for k, v in vars_data.items()})
         # Pad to realistic length (~200-400 chars)
-        text = text + " | " + " ".join(rng.choice(templates).format(**{k: rng.choice(v) for k, v in vars_data.items()}) for _ in range(2))
+        text = text + " | " + " ".join(rng.choice(templates).format(**{k: rng.choice(v) for k, v in vars_data.items()}) for _ in range(2))  # noqa: E501
         texts.append(text)
     return texts
 

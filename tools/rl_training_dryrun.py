@@ -91,7 +91,7 @@ def _make_synthetic(rng: random.Random) -> SyntheticResult:
         new_iocs = rng.randint(0, 5)
     runtime = rng.uniform(20.0, 60.0)
     return SyntheticResult(
-        sprint_id=f"dryrun-synth",
+        sprint_id="dryrun-synth",
         accepted_findings=accepted,
         produced_findings=accepted + rng.randint(0, 5),
         ingested_findings=accepted,
@@ -140,7 +140,7 @@ def _format_health_report(state: dict[str, Any]) -> str:
     eps = state.get("epsilon", 0.0)
     loss_hist = state.get("loss_history", [])
     q_hist = state.get("mean_q_value_history", [])
-    eps_hist = state.get("epsilon_history", [])
+    state.get("epsilon_history", [])
     rewards = state.get("sprint_rewards", [])
 
     lines: list[str] = []
@@ -274,7 +274,7 @@ def main(argv: list[str] | None = None) -> int:
     print("\n=== BASELINE METRICS ===")
     print(f"train_steps_total: {pm.training_steps_completed}")
     print(f"loss_history ({len(pm._state.loss_history)} entries):")
-    for i, l in enumerate(pm._state.loss_history, 1):
+    for i, l in enumerate(pm._state.loss_history, 1):  # noqa: E741
         print(f"  step {i}: {l:.4f}")
     print(f"mean_q_history ({len(pm._state.mean_q_value_history)} entries):")
     for i, q in enumerate(pm._state.mean_q_value_history, 1):
@@ -299,11 +299,11 @@ def main(argv: list[str] | None = None) -> int:
     if pm._state.mean_q_value_history:
         q_max = max(pm._state.mean_q_value_history)
         if q_max < 1.0:
-            print(f"  → mean_q range observed: < 1.0; recommended A2 threshold: 5.0")
+            print("  → mean_q range observed: < 1.0; recommended A2 threshold: 5.0")
         elif q_max < 10.0:
-            print(f"  → mean_q range observed: 0-10; recommended A2 threshold: 50.0")
+            print("  → mean_q range observed: 0-10; recommended A2 threshold: 50.0")
         else:
-            print(f"  → mean_q range observed: >= 10; keep A2 threshold: 100.0")
+            print("  → mean_q range observed: >= 10; keep A2 threshold: 100.0")
 
     # ── 5) Health report reproduction ───────────────────────────────────────
     print("\n" + _format_health_report(pm._state.__dict__))

@@ -280,7 +280,7 @@ async def run_benchmark(
     result_dict = {
         "metadata": {
             "probe": "F192E.1",
-            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "timestamp": datetime.utcnow().isoformat() + "Z",  # noqa: DTZ003
             "duration_s": duration_s,
             "max_cycles": max_cycles,
             "uvloop_active": _UVLOOP_ACTIVE,

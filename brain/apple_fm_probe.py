@@ -329,7 +329,7 @@ def get_nl_framework_available() -> bool:
         True pokud NaturalLanguage framework dostupný, False jinak
     """
     try:
-        import NaturalLanguage
+        import NaturalLanguage  # noqa: F401  # NaturalLanguage
         return True
     except ImportError:
         return False

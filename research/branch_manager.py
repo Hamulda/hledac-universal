@@ -98,7 +98,7 @@ class BranchManager:
         centrality = 0.0
         if self.rel_engine and entity:
             try:
-                centrality = self.rel_engine.get_entity_centrality(entity) if hasattr(self.rel_engine, 'get_entity_centrality') else 0.0
+                centrality = self.rel_engine.get_entity_centrality(entity) if hasattr(self.rel_engine, 'get_entity_centrality') else 0.0  # noqa: E501
             except Exception:
                 centrality = 0.0
 

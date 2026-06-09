@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 # without the float('inf') loophole the previous min(key=...) approach had
 # (entries missing a timestamp were unevictable because float('inf') is the
 # max, not the min, of the key).
-_previous_versions: "OrderedDict[str, dict[str, Any]]" = OrderedDict()
+_previous_versions: OrderedDict[str, dict[str, Any]] = OrderedDict()
 
 # Constants for boundedness
 MAX_ARCHIVE_FALLBACKS_PER_RUN = 5

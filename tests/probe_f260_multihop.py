@@ -16,8 +16,8 @@ from __future__ import annotations
 import pytest
 
 from brain.dspy_signatures import (
-    DeepResearchHopSignature,
     DeepResearchChain,
+    DeepResearchHopSignature,
     is_dspy_available,
 )
 
@@ -157,8 +157,8 @@ class TestF260HypothesisEngine:
         # Check imports are defined (fail-soft)
         try:
             from brain.research_hypothesis_engine import (
-                MULTIHOP_AVAILABLE,
                 HLEDAC_ENABLE_LLM,
+                MULTIHOP_AVAILABLE,
             )
             assert MULTIHOP_AVAILABLE is not None
             assert isinstance(HLEDAC_ENABLE_LLM, bool)
@@ -167,7 +167,6 @@ class TestF260HypothesisEngine:
 
     def test_hypothesis_engine_has_os_import(self):
         """HypothesisEngine has os import for env vars."""
-        from brain import research_hypothesis_engine
 
         # Check os is in the module
         assert hasattr(hypothesis_engine, "__file__")  # Module exists
@@ -222,11 +221,12 @@ class TestF260GraphRAG:
     def test_graph_rag_returns_dict(self):
         """GraphRAGOrchestrator.multi_hop_search returns dict."""
         try:
-            from knowledge.graph_rag import GraphRAGOrchestrator
             import inspect
 
+            from knowledge.graph_rag import GraphRAGOrchestrator
+
             # Check return type annotation
-            sig = inspect.signature(GraphRAGOrchestrator.multi_hop_search)
+            inspect.signature(GraphRAGOrchestrator.multi_hop_search)
             # Method exists, that's sufficient
             assert "multi_hop_search" in dir(GraphRAGOrchestrator)
         except ImportError:

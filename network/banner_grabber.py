@@ -110,6 +110,11 @@ import time
 from dataclasses import dataclass
 
 from utils.async_helpers import safe_gather_dropin
+
+if TYPE_CHECKING:
+    from hledac.universal.knowledge.duckdb_store import CanonicalFinding  # noqa: F401
+
+
 logger = logging.getLogger(__name__)
 
 
@@ -943,7 +948,7 @@ class BannerGrabber:
 
 
 
-            if not get_breaker(ip).check_circuit().allowed: raise RuntimeError(f"circuit_open: {ip}")
+            if not get_breaker(ip).check_circuit().allowed: raise RuntimeError(f"circuit_open: {ip}")  # noqa: E701
 
 
 
@@ -1234,7 +1239,7 @@ class BannerGrabberAdapter:
 
 
 
-        from typing import Any
+        from typing import Any, TYPE_CHECKING
 
 
 
@@ -1540,9 +1545,6 @@ async def grab_batch_as_findings(
 
         import hashlib
         import time
-
-        from hledac.universal.knowledge.duckdb_store import CanonicalFinding
-
 
 
         grabber = BannerGrabber()

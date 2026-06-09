@@ -134,7 +134,7 @@ def test_new_fields_persisted_in_zstd_state():
     """
     import compression.zstd as _zstd
 
-    from rl.sprint_policy_manager import SprintPolicyState, SprintPolicyManager
+    from rl.sprint_policy_manager import SprintPolicyManager
 
     # Write a fresh state to a temp file
     with tempfile.NamedTemporaryFile(

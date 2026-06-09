@@ -244,7 +244,7 @@ def get_optional_acceleration_status() -> PlatformReport:
     summary_parts = []
     if statuses.get("mlx", AccelerationStatus("", False, DepCategory.OPTIONAL_MISSING, None, None, None)).available:
         summary_parts.append("MLX")
-    if statuses.get("torch_mps", AccelerationStatus("", False, DepCategory.PLATFORM_GUARDED, None, None, None)).available:
+    if statuses.get("torch_mps", AccelerationStatus("", False, DepCategory.PLATFORM_GUARDED, None, None, None)).available:  # noqa: E501
         summary_parts.append("torch.MPS")
     if missing:
         summary_parts.append(f"+{len(missing)} optional")

@@ -157,7 +157,7 @@ def render_collision_warning(report: SprintCollisionReport) -> list[str]:
         return []
 
     lines = ["", "## Sprint ID Collision Warning", ""]
-    lines.append(f"⚠️ **Detected {len(report.collisions)} sprint ID collision(s)** across {report.total_probes_scanned} probes scanned.")
+    lines.append(f"⚠️ **Detected {len(report.collisions)} sprint ID collision(s)** across {report.total_probes_scanned} probes scanned.")  # noqa: E501
     lines.append("")
 
     for coll in report.collisions:
@@ -169,7 +169,7 @@ def render_collision_warning(report: SprintCollisionReport) -> list[str]:
         for probe_dir, report_p, json_p in zip(coll.probe_dirs, coll.report_paths, coll.json_paths, strict=False):
             lines.append(f"| `{probe_dir}` | {report_p or 'N/A'} | {json_p or 'N/A'} |")
         lines.append("")
-        lines.append(f"**Action:** Operator reports may show ambiguous labels. Use full alias (e.g. `{coll.aliases[0]}`) to disambiguate. **Live is NOT blocked** — required artifact paths are explicit.")
+        lines.append(f"**Action:** Operator reports may show ambiguous labels. Use full alias (e.g. `{coll.aliases[0]}`) to disambiguate. **Live is NOT blocked** — required artifact paths are explicit.")  # noqa: E501
 
     return lines
 
@@ -367,7 +367,7 @@ _UNIVERSAL_ROOT = f"{_EXPECTED_REPO_ROOT}/hledac/universal"
 def _get_cwd_guard_state() -> dict:
     """Hermetic CWD diagnostic — no live run, no network, no MLX."""
     import os as _os
-    from pathlib import Path as _P
+    from pathlib import Path as _P  # noqa: N814
 
     _cwd = _os.getcwd()
     _resolved = str(_P(_cwd).resolve())
@@ -600,7 +600,7 @@ def merge_cockpit(
     # D: Gate blocked by contract (non-provider-surface)
     # F225E: also blocks if F224 blocking artifacts missing for blocking profiles
     # F231H: also blocks if F231 Evidence Lift Pack missing for blocking profiles
-    elif gate_decision == "BLOCKED_BY_CONTRACT" or (missing_f224_artifacts and not f224_core_ready) or (missing_f231_artifacts and not f231_core_ready):
+    elif gate_decision == "BLOCKED_BY_CONTRACT" or (missing_f224_artifacts and not f224_core_ready) or (missing_f231_artifacts and not f231_core_ready):  # noqa: E501
         verdict = Verdict.BLOCKED_BY_ARTIFACTS
         next_action = NextAction.RUN_MISSING_PROBE
         # Combine missing F224 and F231 artifacts
@@ -673,7 +673,7 @@ def merge_cockpit(
             elif uma.swap_used_gib <= DIAGNOSTIC_SWAP_MAX_GIB:
                 verdict = Verdict.READY_DIAGNOSTIC_ONLY
                 next_action = NextAction.RUN_NONFEED_DIAGNOSTIC
-                next_action_detail = suggested_highswap_cmd or "nonfeed_diagnostic180 — F220-like feed-only, hardware taint"
+                next_action_detail = suggested_highswap_cmd or "nonfeed_diagnostic180 — F220-like feed-only, hardware taint"  # noqa: E501
                 live_allowed = True
                 uma.hardware_constrained = True
                 uma.swap_policy_tier = "diagnostic"
@@ -681,15 +681,15 @@ def merge_cockpit(
                 hardware_constrained = True
                 swap_policy_tier = "diagnostic"
                 swap_gate_reason = uma.swap_gate_reason
-                log.append(f"verdict=RUN_NONFEED_DIAGNOSTIC (feed-only, swap={uma.swap_used_gib:.2f}GiB, diagnostic tier)")
+                log.append(f"verdict=RUN_NONFEED_DIAGNOSTIC (feed-only, swap={uma.swap_used_gib:.2f}GiB, diagnostic tier)")  # noqa: E501
             else:
                 verdict = Verdict.READY_TO_RESTART_AND_RUN
                 next_action = NextAction.RUN_NONFEED_DIAGNOSTIC
-                next_action_detail = f"swap={uma.swap_used_gib:.2f}GiB > {DIAGNOSTIC_SWAP_MAX_GIB:.1f}GiB — restart then nonfeed_diagnostic180"
+                next_action_detail = f"swap={uma.swap_used_gib:.2f}GiB > {DIAGNOSTIC_SWAP_MAX_GIB:.1f}GiB — restart then nonfeed_diagnostic180"  # noqa: E501
                 live_allowed = False
                 uma.hardware_constrained = True
                 uma.swap_policy_tier = "hard_block"
-                uma.swap_gate_reason = f"nonfeed_diagnostic: swap={uma.swap_used_gib:.2f}GiB > {HARD_BLOCK_SWAP_GIB:.1f}GiB"
+                uma.swap_gate_reason = f"nonfeed_diagnostic: swap={uma.swap_used_gib:.2f}GiB > {HARD_BLOCK_SWAP_GIB:.1f}GiB"  # noqa: E501
                 hardware_constrained = True
                 swap_policy_tier = "hard_block"
                 swap_gate_reason = uma.swap_gate_reason
@@ -713,11 +713,11 @@ def merge_cockpit(
             elif uma.swap_used_gib <= DIAGNOSTIC_SWAP_MAX_GIB:
                 verdict = Verdict.READY_DIAGNOSTIC_ONLY
                 next_action = NextAction.RUN_WITH_HARDWARE_TAINT
-                next_action_detail = f"swap={uma.swap_used_gib:.2f}GiB in ({CLEAN_SWAP_MAX_GIB:.1f}GiB, {DIAGNOSTIC_SWAP_MAX_GIB:.1f}GiB] — hardware taint"
+                next_action_detail = f"swap={uma.swap_used_gib:.2f}GiB in ({CLEAN_SWAP_MAX_GIB:.1f}GiB, {DIAGNOSTIC_SWAP_MAX_GIB:.1f}GiB] — hardware taint"  # noqa: E501
                 live_allowed = True
                 uma.hardware_constrained = True
                 uma.swap_policy_tier = "diagnostic"
-                uma.swap_gate_reason = f"swap={uma.swap_used_gib:.2f}GiB in ({CLEAN_SWAP_MAX_GIB:.1f}GiB, {DIAGNOSTIC_SWAP_MAX_GIB:.1f}GiB]"
+                uma.swap_gate_reason = f"swap={uma.swap_used_gib:.2f}GiB in ({CLEAN_SWAP_MAX_GIB:.1f}GiB, {DIAGNOSTIC_SWAP_MAX_GIB:.1f}GiB]"  # noqa: E501
                 hardware_constrained = True
                 swap_policy_tier = "diagnostic"
                 swap_gate_reason = uma.swap_gate_reason
@@ -725,7 +725,7 @@ def merge_cockpit(
             else:
                 verdict = Verdict.READY_TO_RESTART_AND_RUN
                 next_action = NextAction.RESTART_THEN_RUN_LIVE
-                next_action_detail = f"swap={uma.swap_used_gib:.2f}GiB > {DIAGNOSTIC_SWAP_MAX_GIB:.1f}GiB — restart required"
+                next_action_detail = f"swap={uma.swap_used_gib:.2f}GiB > {DIAGNOSTIC_SWAP_MAX_GIB:.1f}GiB — restart required"  # noqa: E501
                 live_allowed = False
                 uma.hardware_constrained = True
                 uma.swap_policy_tier = "hard_block"
@@ -739,7 +739,7 @@ def merge_cockpit(
     else:
         verdict = Verdict.BLOCKED_BY_UNKNOWN
         next_action = NextAction.FIX_CONTRACT_GATE
-        next_action_detail = f"unhandled combination: gate={gate_decision} artifacts=ready:{ready}/{total} uma_state={uma.uma_state}"
+        next_action_detail = f"unhandled combination: gate={gate_decision} artifacts=ready:{ready}/{total} uma_state={uma.uma_state}"  # noqa: E501
         live_allowed = False
         log.append(f"verdict=BLOCKED_BY_UNKNOWN fallback (gate={gate_decision})")
 
@@ -788,7 +788,7 @@ def merge_cockpit(
 def render_markdown(result: CockpitResult, profile: str, query: str) -> str:
     """Render cockpit result as markdown report."""
     icon = "✅" if result.live_allowed else "❌"
-    action_icon = "🚀" if result.next_action in (NextAction.RUN_LIVE_NOW, NextAction.RUN_WITH_HARDWARE_TAINT, NextAction.RESTART_THEN_RUN_LIVE, NextAction.RUN_NONFEED_DIAGNOSTIC) else "🔧"
+    action_icon = "🚀" if result.next_action in (NextAction.RUN_LIVE_NOW, NextAction.RUN_WITH_HARDWARE_TAINT, NextAction.RESTART_THEN_RUN_LIVE, NextAction.RUN_NONFEED_DIAGNOSTIC) else "🔧"  # noqa: E501
 
     lines = [
         "# Pre-Live Artifact Cockpit Report",
@@ -888,7 +888,7 @@ def render_markdown(result: CockpitResult, profile: str, query: str) -> str:
             "",
             "## ⚠️ Sprint ID Collision Warning",
             "",
-            f"**{result.sprint_collision.collision_count} collision(s)** detected across {result.sprint_collision.total_probes_scanned} probes.",
+            f"**{result.sprint_collision.collision_count} collision(s)** detected across {result.sprint_collision.total_probes_scanned} probes.",  # noqa: E501
         ])
         for w in result.sprint_collision.warnings:
             lines.append(f"- {w}")
@@ -930,7 +930,7 @@ def render_markdown(result: CockpitResult, profile: str, query: str) -> str:
     elif result.next_action == NextAction.RUN_NONFEED_DIAGNOSTIC:
         lines.extend(["", "F220-like feed-only detected. Run nonfeed diagnostic profile:"])
         lines.append("```bash")
-        cmd = result.next_action_detail or "python benchmarks/live_sprint_measurement.py --profile nonfeed_diagnostic180 --query \"mozilla.org certificate transparency subdomains april 2026\" --live"
+        cmd = result.next_action_detail or "python benchmarks/live_sprint_measurement.py --profile nonfeed_diagnostic180 --query \"mozilla.org certificate transparency subdomains april 2026\" --live"  # noqa: E501
         lines.append(cmd)
         lines.append("```")
 
@@ -1091,7 +1091,7 @@ def main() -> int:
             print(f"  - {p}")
 
     uma_sw = result.uma.swap_used_gib
-    print(f"UMA: swap={uma_sw:.2f}GiB [clean<={CLEAN_SWAP_MAX_GIB:.1f}GiB | diagnostic<={DIAGNOSTIC_SWAP_MAX_GIB:.1f}GiB | hard_block>{HARD_BLOCK_SWAP_GIB:.1f}GiB]")
+    print(f"UMA: swap={uma_sw:.2f}GiB [clean<={CLEAN_SWAP_MAX_GIB:.1f}GiB | diagnostic<={DIAGNOSTIC_SWAP_MAX_GIB:.1f}GiB | hard_block>{HARD_BLOCK_SWAP_GIB:.1f}GiB]")  # noqa: E501
     print(f"Swap policy tier: {result.swap_policy_tier} | Hardware constrained: {result.hardware_constrained}")
 
     # Write JSON

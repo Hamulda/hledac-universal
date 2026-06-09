@@ -160,7 +160,7 @@ class MemoryMonitor:
                 self._peak_memory = max(self._peak_memory, memory_mb)
                 self.snapshots.append(MemorySnapshot(
                     phase="monitoring",
-                    timestamp=datetime.now(),
+                    timestamp=datetime.now(),  # noqa: DTZ005
                     memory_mb=memory_mb,
                     rss_mb=memory_info.rss / (1024 * 1024),
                     vms_mb=memory_info.vms / (1024 * 1024),
@@ -177,7 +177,7 @@ class MemoryMonitor:
             self._peak_memory = max(self._peak_memory, memory_mb)
             self.snapshots.append(MemorySnapshot(
                 phase=phase,
-                timestamp=datetime.now(),
+                timestamp=datetime.now(),  # noqa: DTZ005
                 memory_mb=memory_mb,
                 rss_mb=memory_info.rss / (1024 * 1024),
                 vms_mb=memory_info.vms / (1024 * 1024),
@@ -293,7 +293,7 @@ class TestSuiteRunner:
 
     def _generate_html_report(self, result: SuiteResult) -> Path:
         """Generate HTML report for a test suite."""
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")  # noqa: DTZ005
         html_file = self.report_dir / f"{result.file.replace('.py', '')}_{timestamp}.html"
 
         html_content = f"""<!DOCTYPE html>
@@ -441,9 +441,9 @@ class TestSuiteRunner:
         <div class="test-breakdown">
             <h3>Test Breakdown</h3>
             <div class="test-bar">
-                <div class="bar-passed" style="width: {(result.tests_passed / max(result.tests_total, 1)) * 100}%"></div>
-                <div class="bar-failed" style="width: {(result.tests_failed / max(result.tests_total, 1)) * 100}%"></div>
-                <div class="bar-skipped" style="width: {(result.tests_skipped / max(result.tests_total, 1)) * 100}%"></div>
+                <div class="bar-passed" style="width: {(result.tests_passed / max(result.tests_total, 1)) * 100}%"></div>  # noqa: E501
+                <div class="bar-failed" style="width: {(result.tests_failed / max(result.tests_total, 1)) * 100}%"></div>  # noqa: E501
+                <div class="bar-skipped" style="width: {(result.tests_skipped / max(result.tests_total, 1)) * 100}%"></div>  # noqa: E501
                 <div class="bar-error" style="width: {(result.tests_error / max(result.tests_total, 1)) * 100}%"></div>
             </div>
             <p style="margin-top: 1rem; color: var(--text-secondary);">
@@ -457,9 +457,9 @@ class TestSuiteRunner:
             <pre>{self._escape_html(result.output)}</pre>
         </div>
 
-        {f'<div class="output-section"><h3>Error Output</h3><pre>{self._escape_html(result.error_output)}</pre></div>' if result.error_output else ''}
+        {f'<div class="output-section"><h3>Error Output</h3><pre>{self._escape_html(result.error_output)}</pre></div>' if result.error_output else ''}  # noqa: E501
 
-        <p class="timestamp">Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</p>
+        <p class="timestamp">Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</p>  # noqa: DTZ005
     </div>
 </body>
 </html>"""
@@ -478,7 +478,7 @@ class TestSuiteRunner:
 
     def _generate_json_summary(self) -> Path:
         """Generate JSON summary of all test results."""
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")  # noqa: DTZ005
         json_file = self.report_dir / f"test_summary_{timestamp}.json"
 
         summary = {
@@ -486,7 +486,7 @@ class TestSuiteRunner:
                 "version": "1.0",
                 "started": self.start_time.isoformat() if self.start_time else None,
                 "completed": self.end_time.isoformat() if self.end_time else None,
-                "total_duration": (self.end_time - self.start_time).total_seconds() if self.end_time and self.start_time else 0,
+                "total_duration": (self.end_time - self.start_time).total_seconds() if self.end_time and self.start_time else 0,  # noqa: E501
             },
             "summary": {
                 "total_suites": len(SUITES),
@@ -688,18 +688,18 @@ class TestSuiteRunner:
     def run_suite(self, name: str, file: str, timeout: int) -> SuiteResult:
         """Run a single test suite."""
         result = SuiteResult(name=name, file=file)
-        result.start_time = datetime.now()
+        result.start_time = datetime.now()  # noqa: DTZ005
 
         # Discover test file
         test_file = self._discover_test_file(file)
         if not test_file:
             result.status = "skipped"
             result.error_output = f"Test file not found: {file}"
-            result.end_time = datetime.now()
+            result.end_time = datetime.now()  # noqa: DTZ005
             return result
 
         # Generate report paths
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")  # noqa: DTZ005
         html_path = self.report_dir / f"{file.replace('.py', '')}_{timestamp}.html"
         json_path = self.report_dir / f"{file.replace('.py', '')}_{timestamp}.json"
 
@@ -762,7 +762,7 @@ class TestSuiteRunner:
         self.memory_snapshots.extend(self.memory_monitor.snapshots)
 
         # Record end time
-        result.end_time = datetime.now()
+        result.end_time = datetime.now()  # noqa: DTZ005
 
         # Generate HTML report
         if result.status != "skipped":
@@ -773,7 +773,7 @@ class TestSuiteRunner:
 
     def run_all(self) -> bool:
         """Run all test suites."""
-        self.start_time = datetime.now()
+        self.start_time = datetime.now()  # noqa: DTZ005
         self._print_header()
 
         # Record initial memory
@@ -793,7 +793,7 @@ class TestSuiteRunner:
             # Record memory after suite
             self.memory_monitor.record_phase(f"After {name}")
 
-        self.end_time = datetime.now()
+        self.end_time = datetime.now()  # noqa: DTZ005
 
         # Print all reports
         self._print_summary()
@@ -873,12 +873,12 @@ Examples:
         # Find suite
         for name, file, timeout in SUITES:
             if name == args.suite:
-                runner.start_time = datetime.now()
+                runner.start_time = datetime.now()  # noqa: DTZ005
                 runner._print_header()
                 result = runner.run_suite(name, file, timeout)
                 runner.results.append(result)
                 runner._print_suite_result(result)
-                runner.end_time = datetime.now()
+                runner.end_time = datetime.now()  # noqa: DTZ005
                 runner._print_summary()
                 return 0 if result.status == "passed" else 1
         print(red(f"Suite not found: {args.suite}"))

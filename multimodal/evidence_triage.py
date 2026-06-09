@@ -26,7 +26,6 @@ from pathlib import Path
 from typing import Any
 
 from hledac.universal.tools.ocr_engine import VisionOCR, recognize_async
-
 from utils.async_helpers import safe_gather_dropin
 
 logger = logging.getLogger(__name__)
@@ -470,7 +469,7 @@ class EvidenceTriageCoordinator:
             text = ocr_text[:MAX_OCR_CHARS]
 
             # Split into snippets
-            lines = [l.strip() for l in text.split("\n") if l.strip()]
+            lines = [l.strip() for l in text.split("\n") if l.strip()]  # noqa: E741
             facets.ocr_snippets = lines[:MAX_OCR_SNIPPETS]
 
             # Extract URLs and domains

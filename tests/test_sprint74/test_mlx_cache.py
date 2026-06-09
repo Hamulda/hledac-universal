@@ -3,6 +3,7 @@ Tests for MLX prompt cache and SimHash.
 """
 
 import pytest
+
 from hledac.universal.utils.mlx_prompt_cache import MLXPromptCache
 
 

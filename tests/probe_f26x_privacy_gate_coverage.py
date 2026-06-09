@@ -37,7 +37,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-
 # ── Source-level checks (no runtime import required) ────────────────────────
 
 
@@ -47,7 +46,7 @@ SPRINT_SCHEDULER_PATH = os.path.join(
 
 
 def _read_sprint_scheduler() -> str:
-    with open(SPRINT_SCHEDULER_PATH, "r") as f:
+    with open(SPRINT_SCHEDULER_PATH) as f:
         return f.read()
 
 
@@ -196,7 +195,7 @@ def _make_sprint_scheduler_stub(privacy_layer=None):
                         if isinstance(f, dict):
                             f["payload_text"] = anon
                         else:
-                            setattr(f, "payload_text", anon)
+                            f.payload_text = anon
                 except Exception:
                     # Mirror real helper: fail-soft per finding
                     pass

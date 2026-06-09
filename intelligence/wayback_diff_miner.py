@@ -142,7 +142,7 @@ class WaybackDiffResult:
 def _timestamp_to_unix(ts: str) -> float:
     """Convert CDX timestamp string (YYYYMMDDHHMMSS) to Unix float."""
     try:
-        return datetime.strptime(ts, "%Y%m%d%H%M%S").timestamp()
+        return datetime.strptime(ts, "%Y%m%d%H%M%S").timestamp()  # noqa: DTZ007
     except Exception:
         return 0.0
 

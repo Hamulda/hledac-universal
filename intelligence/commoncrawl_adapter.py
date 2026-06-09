@@ -83,7 +83,7 @@ class CCSearchResult:
     def _parse_timestamp(self) -> float:
         try:
             from datetime import datetime
-            return datetime.strptime(self.timestamp[:14], "%Y%m%d%H%M%S").timestamp()
+            return datetime.strptime(self.timestamp[:14], "%Y%m%d%H%M%S").timestamp()  # noqa: DTZ007
         except Exception:
             return 0.0
 

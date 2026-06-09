@@ -121,7 +121,7 @@ async def forecast_mamba2(series: list[float], horizon: int = 5) -> list[float] 
 
     # Prepare prompt
     series_str = " ".join([f"{x:.2f}" for x in series[-50:]])
-    prompt = f"""You are a time series forecaster. Given past values, predict the next {horizon} values as numbers only, separated by spaces.
+    prompt = f"""You are a time series forecaster. Given past values, predict the next {horizon} values as numbers only, separated by spaces.  # noqa: E501
 
 Example:
 Past: 1.0 2.0 3.0 4.0
@@ -630,7 +630,7 @@ class PatternMiningEngine:
         Args:
             pattern_id: Unique identifier for the pattern
         """
-        MAX_TOP_PATTERNS = 200
+        MAX_TOP_PATTERNS = 200  # noqa: N806
 
         # Update count
         if pattern_id in self._top_patterns:
@@ -1429,7 +1429,7 @@ class PatternMiningEngine:
                 entity_cluster[entity] = cluster_id
 
                 # Find connected entities
-                for (s, r), txs in flows.items():
+                for (s, r), txs in flows.items():  # noqa: B007
                     if s == entity or r == entity:
                         other = r if s == entity else s
                         if other not in entity_cluster:

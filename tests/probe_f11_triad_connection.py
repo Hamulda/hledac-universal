@@ -168,7 +168,7 @@ class TestF11EngineConstruction:
             url="http://x",
             source="academic",
             source_type="academic",
-            timestamp=datetime.now(),
+            timestamp=datetime.now(),  # noqa: DTZ005
         )
         # Fields read by CanonicalFinding conversion
         assert hasattr(f, "id")

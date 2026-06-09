@@ -338,7 +338,7 @@ def expand_query(
 # ADVANCED EXPANSION STRATEGIES - From MSQES
 # =============================================================================
 
-from abc import ABC, abstractmethod
+from abc import ABC, abstractmethod  # noqa: E402
 
 
 class ExpansionStrategy(ABC):

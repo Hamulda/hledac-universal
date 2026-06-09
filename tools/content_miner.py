@@ -114,7 +114,7 @@ class RustMiner:
     def _check_trafilex(self) -> bool:
         """Check if trafilex (Rust-based) is available"""
         try:
-            import trafilex
+            import trafilex  # noqa: F401  # trafilex
             return True
         except ImportError:
             return False
@@ -122,7 +122,7 @@ class RustMiner:
     def _check_traflatura(self) -> bool:
         """Check if traflatura is available"""
         try:
-            import traflatura
+            import traflatura  # noqa: F401  # traflatura
             return True
         except ImportError:
             return False
@@ -574,7 +574,7 @@ class RustMiner:
                             text = ""
 
                         # Skip duplicates
-                        if any(l['url'] == href for l in links):
+                        if any(l['url'] == href for l in links):  # noqa: E741
                             continue
 
                         # Get rel attribute
@@ -648,7 +648,7 @@ class RustMiner:
                 context = re.sub(r'\s+', ' ', context).strip()
 
                 # Skip duplicates
-                if any(l['url'] == href for l in links):
+                if any(l['url'] == href for l in links):  # noqa: E741
                     continue
 
                 # Calculate score based on link characteristics
@@ -769,7 +769,8 @@ def extract_embedded_json(
                     }
                     result['extracted_texts'] = limited_texts
 
-                    logger.info(f"[EMBEDDED JSON] url={url} kind=next_data bytes={len(json_str)} extracted_chars={result['embedded_state']['extracted_chars']}")
+                    if result is not None and 'embedded_state' in result:
+                        logger.info(f"[EMBEDDED JSON] url={url} kind=next_data bytes={len(json_str)} extracted_chars={result['embedded_state']['extracted_chars']}")  # noqa: E501
 
                 except json_module.JSONDecodeError:
                     pass
@@ -807,7 +808,7 @@ def extract_embedded_json(
                             }
                             result['extracted_texts'] = limited_texts
 
-                        logger.info(f"[EMBEDDED JSON] url={url} kind=json_script_{i} bytes={len(json_str)} extracted_chars={sum(len(t) for t in limited_texts)}")
+                        logger.info(f"[EMBEDDED JSON] url={url} kind=json_script_{i} bytes={len(json_str)} extracted_chars={sum(len(t) for t in limited_texts)}")  # noqa: E501
 
                     except json_module.JSONDecodeError:
                         pass
@@ -939,7 +940,7 @@ class FeedDiscoverer:
         feeds = []
 
         # Match <link rel="alternate" type="application/rss+xml" href="...">
-        pattern = r'<link[^>]+rel=["\']alternate["\'][^>]+type=["\'](application/rss\+xml|application/atom\+xml|application/feed\+json)["\'][^>]+href=["\']([^"\']+)["\']'
+        pattern = r'<link[^>]+rel=["\']alternate["\'][^>]+type=["\'](application/rss\+xml|application/atom\+xml|application/feed\+json)["\'][^>]+href=["\']([^"\']+)["\']'  # noqa: E501
 
         for match in re.finditer(pattern, html_content, re.IGNORECASE):
             href = match.group(2).strip()
@@ -948,7 +949,7 @@ class FeedDiscoverer:
                 feeds.append(resolved)
 
         # Also try reverse order (type before rel)
-        pattern2 = r'<link[^>]+type=["\'](application/rss\+xml|application/atom\+xml|application/feed\+json)["\'][^>]+rel=["\']alternate["\'][^>]+href=["\']([^"\']+)["\']'
+        pattern2 = r'<link[^>]+type=["\'](application/rss\+xml|application/atom\+xml|application/feed\+json)["\'][^>]+rel=["\']alternate["\'][^>]+href=["\']([^"\']+)["\']'  # noqa: E501
 
         for match in re.finditer(pattern2, html_content, re.IGNORECASE):
             href = match.group(2).strip()
@@ -1028,7 +1029,7 @@ class MetadataExtractor:
     def _check_pymupdf(self) -> bool:
         if self._pymupdf_available is None:
             try:
-                import fitz  # PyMuPDF
+                import fitz  # PyMuPDF  # noqa: F401  # fitz
                 self._pymupdf_available = True
             except ImportError:
                 self._pymupdf_available = False
@@ -1037,7 +1038,7 @@ class MetadataExtractor:
     def _check_exifread(self) -> bool:
         if self._exifread_available is None:
             try:
-                import exifread
+                import exifread  # noqa: F401  # exifread
                 self._exifread_available = True
             except ImportError:
                 self._exifread_available = False
@@ -1046,7 +1047,7 @@ class MetadataExtractor:
     def _check_pillow(self) -> bool:
         if self._pillow_available is None:
             try:
-                from PIL import Image
+                from PIL import Image  # noqa: F401  # PIL.Image
                 self._pillow_available = True
             except ImportError:
                 self._pillow_available = False
@@ -1063,7 +1064,7 @@ class MetadataExtractor:
             metadata = await self._extract_pdf(content_bytes, metadata)
         elif content_type.startswith('image/'):
             metadata = await self._extract_image(content_bytes, metadata)
-        elif content_type in ['application/msword', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document']:
+        elif content_type in ['application/msword', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document']:  # noqa: E501
             metadata = await self._extract_docx(content_bytes, metadata)
 
         return metadata
@@ -1186,13 +1187,13 @@ class MetadataExtractor:
 # SPRINT 69: Structure Map Engine
 # =============================================================================
 
-import ast
-import hashlib
-import os
-import sys
-import time
-from collections import OrderedDict
-from concurrent.futures import ThreadPoolExecutor
+import ast  # noqa: E402
+import hashlib  # noqa: E402
+import os  # noqa: E402
+import sys  # noqa: E402
+import time  # noqa: E402
+from collections import OrderedDict  # noqa: E402
+from concurrent.futures import ThreadPoolExecutor  # noqa: E402
 
 
 def build_structure_map(root_dir: str, *, limits: dict, state: dict) -> dict:

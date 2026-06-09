@@ -119,7 +119,7 @@ class ParallelResearchScheduler:
             loop = asyncio.get_running_loop()
             future.add_done_callback(
                 lambda f: loop.call_soon_threadsafe(
-                    lambda: asyncio.create_task(self._on_cpu_done(task.task_id, f), name=f"parallel_scheduler:cpu_done:{task.task_id}")
+                    lambda: asyncio.create_task(self._on_cpu_done(task.task_id, f), name=f"parallel_scheduler:cpu_done:{task.task_id}")  # noqa: E501
                 )
             )
         except RuntimeError:

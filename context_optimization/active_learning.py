@@ -141,7 +141,7 @@ Formát: jeden dotaz na řádek, bez čísel nebo odrážek."""
         return new_urls[:_MAX_QUEUE_SIZE]
 
 
-async def _ASYNC_DISCOVERY_SEARCH(query: str, max_results: int) -> Any:
+async def _ASYNC_DISCOVERY_SEARCH(query: str, max_results: int) -> Any:  # noqa: N802
     """
     Internal async discovery search wrapper.
 

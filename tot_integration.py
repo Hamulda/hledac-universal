@@ -439,11 +439,11 @@ class TotIntegrationLayer:
         if lang == 'cs':
             # Boost pattern scores for better ToT activation on Czech text
             if indicators["multi_step_keywords"] > 0:
-                indicators["multi_step_keywords"] = min(0.35, indicators["multi_step_keywords"] * self.CZECH_BOOST_MULTIPLIER)
+                indicators["multi_step_keywords"] = min(0.35, indicators["multi_step_keywords"] * self.CZECH_BOOST_MULTIPLIER)  # noqa: E501
             if indicators["needs_alternatives"] > 0:
-                indicators["needs_alternatives"] = min(0.25, indicators["needs_alternatives"] * self.CZECH_BOOST_MULTIPLIER)
+                indicators["needs_alternatives"] = min(0.25, indicators["needs_alternatives"] * self.CZECH_BOOST_MULTIPLIER)  # noqa: E501
             if indicators["contradictions_tradeoffs"] > 0:
-                indicators["contradictions_tradeoffs"] = min(0.20, indicators["contradictions_tradeoffs"] * self.CZECH_BOOST_MULTIPLIER)
+                indicators["contradictions_tradeoffs"] = min(0.20, indicators["contradictions_tradeoffs"] * self.CZECH_BOOST_MULTIPLIER)  # noqa: E501
             logger.debug(f"🇨🇿 Czech boost applied: {self.CZECH_BOOST_MULTIPLIER}x")
 
         # Calculate total complexity score BEFORE adding metadata indicators

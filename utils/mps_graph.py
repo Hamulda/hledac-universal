@@ -18,8 +18,11 @@ _Foundation = None
 
 # Try to import PyObjC and Metal frameworks
 try:
-    from Metal import MTLCreateSystemDefaultDevice, MTLDevice
-    from MetalPerformanceShadersGraph import MPSGraph, MPSGraphTensor
+    from Metal import MTLCreateSystemDefaultDevice, MTLDevice  # noqa: F401  # Metal.MTLDevice
+    from MetalPerformanceShadersGraph import (  # noqa: F401  # MetalPerformanceShadersGraph.MPSGraphTensor
+        MPSGraph,
+        MPSGraphTensor,
+    )
     _MPSGraph = MPSGraph
     _Metal = MTLCreateSystemDefaultDevice
     _MPS_AVAILABLE = True
@@ -92,7 +95,7 @@ def _fallback_dot_product(
 _DCT_AVAILABLE = False
 
 try:
-    from MetalPerformanceShaders import MPSImageDCT
+    from MetalPerformanceShaders import MPSImageDCT  # noqa: F401  # MetalPerformanceShaders.MPSImageDCT
     _DCT_AVAILABLE = True
 except ImportError:
     logger.debug("MPSImageDCT not available")

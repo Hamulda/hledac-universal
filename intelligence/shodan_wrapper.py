@@ -1,3 +1,4 @@
+from typing import TYPE_CHECKING
 #!/usr/bin/env python3
 """
 Shodan Wrapper — Passive host discovery via Shodan API.
@@ -19,6 +20,10 @@ import logging
 import time
 
 import aiohttp
+
+if TYPE_CHECKING:
+    from hledac.universal.knowledge.duckdb_store import CanonicalFinding  # noqa: F401
+
 
 logger = logging.getLogger(__name__)
 
@@ -171,7 +176,6 @@ async def search_shodan_to_findings(
     """
     raw_results = await search_shodan(query, limit=limit, api_key=api_key, use_tor=use_tor)
 
-    from hledac.universal.knowledge.duckdb_store import CanonicalFinding
 
     findings: list[CanonicalFinding] = []
     ts_now = time.time()

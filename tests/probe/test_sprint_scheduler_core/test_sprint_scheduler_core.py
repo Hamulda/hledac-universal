@@ -16,12 +16,10 @@ INVARIANTS (all tests):
 Run: pytest tests/probe/test_sprint_scheduler_core/ -v
 """
 
-from dataclasses import dataclass, field
-from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from dataclasses import dataclass
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-
 
 # =============================================================================
 # Fixtures
@@ -134,7 +132,7 @@ class TestSprintSchedulerEmptyQuery:
     @pytest.mark.asyncio
     async def test_run_returns_sprint_result_on_empty_query(self):
         """Empty query → SprintResult with findings=[], no crash."""
-        from hledac.universal.runtime.sprint_scheduler import SprintScheduler, SprintSchedulerResult
+        from hledac.universal.runtime.sprint_scheduler import SprintSchedulerResult
 
         scheduler = make_scheduler()
 
@@ -163,7 +161,6 @@ class TestSprintSchedulerEmptyQuery:
     @pytest.mark.asyncio
     async def test_run_accepts_none_duckdb_store(self):
         """duckdb_store=None should not cause AttributeError."""
-        from hledac.universal.runtime.sprint_scheduler import SprintScheduler, SprintSchedulerResult
 
         scheduler = make_scheduler()
         scheduler._run_public_discovery_in_cycle = AsyncMock()
@@ -194,7 +191,6 @@ class TestSprintSchedulerGraphAccumulation:
 
     def test_accumulate_findings_to_graph_returns_int(self):
         """_accumulate_findings_to_graph() returns int (count of upserted)."""
-        from hledac.universal.runtime.sprint_scheduler import SprintScheduler
 
         scheduler = make_scheduler()
 
@@ -210,7 +206,6 @@ class TestSprintSchedulerGraphAccumulation:
 
     def test_accumulate_findings_to_graph_with_empty_list(self):
         """Empty findings list → returns 0, no crash."""
-        from hledac.universal.runtime.sprint_scheduler import SprintScheduler
 
         scheduler = make_scheduler()
         scheduler._duckdb_store = MagicMock()
@@ -230,7 +225,6 @@ class TestSprintSchedulerMemoryPressure:
 
     def test_governor_decision_structure(self):
         """Governor decision object has expected fields."""
-        from hledac.universal.runtime.sprint_scheduler import SprintScheduler
 
         scheduler = make_scheduler()
 
@@ -258,7 +252,6 @@ class TestSprintSchedulerHypothesisGeneration:
 
     def test_hypothesis_engine_attribute(self):
         """SprintScheduler can have _hypothesis_engine injected."""
-        from hledac.universal.runtime.sprint_scheduler import SprintScheduler
 
         scheduler = make_scheduler()
 
@@ -279,7 +272,6 @@ class TestSprintSchedulerIPFSGate:
     @pytest.mark.asyncio
     async def test_advisory_runner_is_async_method(self):
         """_run_advisory_runner is an async method that can be awaited."""
-        from hledac.universal.runtime.sprint_scheduler import SprintScheduler
 
         scheduler = make_scheduler()
 
@@ -288,7 +280,6 @@ class TestSprintSchedulerIPFSGate:
 
     def test_ipfs_sidecar_method_exists(self):
         """_run_ipfs_enrichment_sidecar exists on scheduler if IPFS enabled."""
-        from hledac.universal.runtime.sprint_scheduler import SprintScheduler
 
         scheduler = make_scheduler()
 
@@ -308,7 +299,6 @@ class TestComputeSprintIntelligence:
 
     def test_compute_sprint_intelligence_returns_dict(self):
         """compute_sprint_intelligence() returns dict with required keys."""
-        from hledac.universal.runtime.sprint_scheduler import SprintScheduler
 
         scheduler = make_scheduler()
 
@@ -343,7 +333,6 @@ class TestComputeSprintIntelligence:
 
     def test_compute_sprint_intelligence_with_lane_verdicts(self):
         """Lane verdicts are properly aggregated."""
-        from hledac.universal.runtime.sprint_scheduler import SprintScheduler
 
         scheduler = make_scheduler()
         scheduler._all_findings = []
@@ -367,7 +356,6 @@ class TestComputeSprintIntelligence:
 
     def test_compute_sprint_intelligence_empty_findings(self):
         """Empty _all_findings → compute_sprint_intelligence returns structure."""
-        from hledac.universal.runtime.sprint_scheduler import SprintScheduler
 
         scheduler = make_scheduler()
         scheduler._all_findings = []
@@ -397,7 +385,6 @@ class TestSprintSchedulerErrorHandling:
     @pytest.mark.asyncio
     async def test_run_propagates_runtime_error(self):
         """FetchCoordinator RuntimeError → propagates or records error in result."""
-        from hledac.universal.runtime.sprint_scheduler import SprintScheduler
 
         scheduler = make_scheduler()
         scheduler._run_public_discovery_in_cycle = AsyncMock(
@@ -424,7 +411,7 @@ class TestSprintSchedulerErrorHandling:
         except RuntimeError as e:
             error_raised = True
             assert "Network failure" in str(e)
-        except Exception as e:
+        except Exception:
             error_raised = True
 
         if not error_raised:
@@ -435,7 +422,6 @@ class TestSprintSchedulerErrorHandling:
     @pytest.mark.asyncio
     async def test_run_does_not_return_none_on_empty_sources(self):
         """run() must never return None — even on empty sources."""
-        from hledac.universal.runtime.sprint_scheduler import SprintScheduler
 
         scheduler = make_scheduler()
         scheduler._run_public_discovery_in_cycle = AsyncMock()

@@ -29,8 +29,8 @@ from unittest.mock import MagicMock, patch
 _ROOT = Path(__file__).parent.parent.parent.parent  # tests->universal->hledac->Hledac
 sys.path.insert(0, str(_ROOT))
 
-from hledac.universal.export import jsonld_exporter, stix_exporter
-from hledac.universal.security.pq_crypto import (
+from hledac.universal.export import jsonld_exporter, stix_exporter  # noqa: E402
+from hledac.universal.security.pq_crypto import (  # noqa: E402
     PQAvailability,
     PQSignature,
 )
@@ -66,7 +66,7 @@ class FakePQBackend:
         return True
 
     def pq_status(self):
-        class _s:
+        class _s:  # noqa: N801
             availability = PQAvailability.AVAILABLE
             backend_name = "test"
             error_message = None

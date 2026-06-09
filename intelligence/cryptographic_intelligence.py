@@ -43,9 +43,21 @@ logger = logging.getLogger(__name__)
 try:
     from cryptography import x509
     from cryptography.hazmat.backends import default_backend
-    from cryptography.hazmat.primitives import hashes, serialization
-    from cryptography.hazmat.primitives.asymmetric import dsa, ec, padding, rsa
-    from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+    from cryptography.hazmat.primitives import (  # noqa: F401  # cryptography.hazmat.primitives.serialization
+        hashes,
+        serialization,
+    )
+    from cryptography.hazmat.primitives.asymmetric import (  # noqa: F401  # cryptography.hazmat.primitives.asymmetric.dsa
+        dsa,
+        ec,
+        padding,
+        rsa,
+    )
+    from cryptography.hazmat.primitives.ciphers import (  # noqa: F401  # cryptography.hazmat.primitives.ciphers.algorithms
+        Cipher,
+        algorithms,
+        modes,
+    )
     CRYPTOGRAPHY_AVAILABLE = True
 except ImportError:
     CRYPTOGRAPHY_AVAILABLE = False
@@ -579,7 +591,7 @@ class HashAnalyzer:
         HashType.SHA512: {
             'length': 128,
             'regex': r'^[a-f0-9]{128}$',
-            'example': 'b109f3bbbc244eb82441917ed06d618b9008dd09b3befd1b5e07394c706a8bb980b1d7785e5976ec049b46df5f1326af5a2ea6d103fd07c95385ffab0cacbc86'
+            'example': 'b109f3bbbc244eb82441917ed06d618b9008dd09b3befd1b5e07394c706a8bb980b1d7785e5976ec049b46df5f1326af5a2ea6d103fd07c95385ffab0cacbc86'  # noqa: E501
         },
         HashType.BCRYPT: {
             'length': 60,

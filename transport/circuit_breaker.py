@@ -424,9 +424,9 @@ async def checked_aiohttp_get(
         return None, "unknown_error"
 
 
-import time as _time
-from dataclasses import dataclass
-from dataclasses import field as _field
+import time as _time  # noqa: E402
+from dataclasses import dataclass  # noqa: E402
+from dataclasses import field as _field  # noqa: E402
 
 
 @dataclass

@@ -10,16 +10,10 @@ probe_f214q/.
 """
 from __future__ import annotations
 
-import os
-import sys
-from unittest.mock import patch
-
-import pytest
-
 from hledac_hypothesis.hypothesisgenerator import (
+    HLEDAC_ENABLE_DSPY,
     HypothesisGenerator,
     ResearchHypothesis,
-    HLEDAC_ENABLE_DSPY,
     _heuristic_generate,
     _load_dspy_program,
 )
@@ -36,7 +30,7 @@ class MockFinding:
 # ---------------------------------------------------------------------------
 
 
-def test_HLEDAC_ENABLE_DSPY_defaults_to_false():
+def test_HLEDAC_ENABLE_DSPY_defaults_to_false():  # noqa: N802
     """HLEDAC_ENABLE_DSPY is False when env var is not set."""
     # HLEDAC_ENABLE_DSPY reflects current process env — may be set externally
     # The module-level constant reflects the current environment state at import

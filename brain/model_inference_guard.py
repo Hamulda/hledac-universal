@@ -256,7 +256,7 @@ def classify_failure_kind(exc: Exception) -> str:
     if isinstance(exc, asyncio.TimeoutError):
         return "timeout"
 
-    if "memory" in msg and ("admission" in msg or "blocked" in msg or "pressure" in msg or "uma" in msg or "8gb" in msg):
+    if "memory" in msg and ("admission" in msg or "blocked" in msg or "pressure" in msg or "uma" in msg or "8gb" in msg):  # noqa: E501
         return "memory_admission_blocked"
 
     if "oom" in msg or "out of memory" in msg or "cannot allocate" in msg or "allocation failed" in msg:

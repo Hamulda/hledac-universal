@@ -36,12 +36,16 @@ MAX_SNAPSHOT_HISTORY: int = 1000
 
 # Optional imports
 try:
-    from hledac.models import SearchResult  # type: ignore[ty:unresolved-import]  # pre-existing absolute import — module not in project (historical namespace)
+    from hledac.models import (
+        SearchResult,  # type: ignore[ty:unresolved-import]  # pre-existing absolute import — module not in project (historical namespace)
+    )
 except ImportError:
     SearchResult = None
 
 try:
-    from hledac.runtime.unified_orchestrator import AgentProtocol  # type: ignore[ty:unresolved-import]  # pre-existing absolute import — module not in project (historical namespace)
+    from hledac.runtime.unified_orchestrator import (
+        AgentProtocol,  # type: ignore[ty:unresolved-import]  # pre-existing absolute import — module not in project (historical namespace)
+    )
 except ImportError:
     AgentProtocol = Any
 
@@ -569,7 +573,7 @@ class AgentBenchmarker:
     def _generate_comparative_analysis(
         self,
         results: dict[str, AgentBenchmarkResult]
-    ) -> dict[str, Any]:
+    ) -> dict[str, Any] | None:
         """Generate comparative analysis of benchmark results."""
         if not results:
             return {}
@@ -687,7 +691,7 @@ class AgentBenchmarker:
 
         return report
 
-    def _generate_recommendations(self, report: BenchmarkReport) -> list[str]:
+    def _generate_recommendations(self, report: BenchmarkReport) -> list[str] | None:
         """Generate optimization recommendations based on benchmark results."""
         recommendations = []
 

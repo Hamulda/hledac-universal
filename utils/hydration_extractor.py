@@ -241,7 +241,7 @@ def _flatten_text(obj, depth: int = 0, seen: set[int] | None = None) -> str:
         return " ".join(parts)
     if isinstance(obj, dict):
         # Fields that usually contain meaningful content
-        CONTENT_FIELDS = (
+        CONTENT_FIELDS = (  # noqa: N806
             "props", "pageProps", "serverData", "data", "body", "content",
             "text", "html", "result", "articleBody", "description", "headline",
         )

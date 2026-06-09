@@ -86,7 +86,7 @@ async def main():
             non_empty = len(results) > 0
             provider_hits.append({"query": query, "hit": non_empty, "count": len(results), "ms": round(q_elapsed)})
 
-            print(f"  [{elapsed:.0f}s] Q{qi+1}: {query[:40]:<40} → {len(results):>3} results {'✓' if non_empty else '✗'} ({q_elapsed:.0f}ms)")
+            print(f"  [{elapsed:.0f}s] Q{qi+1}: {query[:40]:<40} → {len(results):>3} results {'✓' if non_empty else '✗'} ({q_elapsed:.0f}ms)")  # noqa: E501
 
             # Record each result as a finding in analytics
             for ri, result in enumerate(results):

@@ -219,7 +219,7 @@ def probe(benchmark_json_path: str, report_json_path: str | None = None) -> Prob
             verdict = AuthorityVerdict.AUTHORITY_CANONICAL_CONFIRMED
         elif not runtime_truth_present:
             # is_canonical=True but no runtime truth — something is wrong
-            errors.append("runtime_authority_path='canonical_core_run_sprint' and is_canonical=True but runtime_truth is missing")
+            errors.append("runtime_authority_path='canonical_core_run_sprint' and is_canonical=True but runtime_truth is missing")  # noqa: E501
             verdict = AuthorityVerdict.AUTHORITY_INCONCLUSIVE
         else:
             verdict = AuthorityVerdict.AUTHORITY_CANONICAL_CONFIRMED

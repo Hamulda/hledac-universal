@@ -2,12 +2,11 @@
 Fast explainer – delta‑evidence na základě odebírání hran.
 """
 
-import asyncio
 import logging
 
 from hledac.universal.core.resource_governor import ResourceGovernor
-
 from utils.async_helpers import safe_gather_dropin
+
 logger = logging.getLogger(__name__)
 
 
@@ -75,7 +74,7 @@ class FastExplainer:
             return 0.0
         return 1.0 / length
 
-    async def _score_path_without_edge(self, start: str, end: str, max_hops: int, forbidden_edge: tuple[str, str]) -> float:
+    async def _score_path_without_edge(self, start: str, end: str, max_hops: int, forbidden_edge: tuple[str, str]) -> float:  # noqa: E501
         """Jako _score_path, ale zakáže danou hranu."""
         path = await self.graph_rag.multi_hop_search(start, end, max_hops, forbidden_edges=[forbidden_edge])
         if not path or 'nodes' not in path:

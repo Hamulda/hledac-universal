@@ -36,7 +36,6 @@ __all__ = ["DedupManager", "RotatingBloomFilter"]
 import hashlib
 import os
 import struct
-from typing import Any
 
 # Sprint 8AG §6.17: Default dedup LMDB map size
 _DEDUP_LMDB_MAP_SIZE: int = 64 * 1024 * 1024  # 64MB

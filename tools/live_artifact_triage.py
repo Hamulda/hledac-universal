@@ -513,9 +513,9 @@ def triage_live_artifact(data: dict, allow_high_swap: bool = False) -> TriageRes
             recommended_sprint_family=SprintFamily.NONE,
             another_live_useful=False,
             memory_restart_recommended=False,
-            extracted_metrics={"acquisition_report_keys": list(acquisition_report.keys()) if acquisition_report else []},
+            extracted_metrics={"acquisition_report_keys": list(acquisition_report.keys()) if acquisition_report else []},  # noqa: E501
             exact_followup_command=(
-                "python tools/live_artifact_triage.py --input <json> --output-json /tmp/triage.json --output-md /tmp/triage.md"
+                "python tools/live_artifact_triage.py --input <json> --output-json /tmp/triage.json --output-md /tmp/triage.md"  # noqa: E501
             ),
         )
 
@@ -535,7 +535,7 @@ def triage_live_artifact(data: dict, allow_high_swap: bool = False) -> TriageRes
                 root_cause_class=RootCause.CT_PROVIDER_FAILURE,
                 confidence=0.88,
                 reasons=[f"ct_provider_status={ct_status}"],
-                next_best_action="F220-like: CT provider failure, switch to nonfeed_diagnostic180 for domain query diagnostics",
+                next_best_action="F220-like: CT provider failure, switch to nonfeed_diagnostic180 for domain query diagnostics",  # noqa: E501
                 recommended_sprint_family=SprintFamily.NONE,
                 another_live_useful=True,
                 memory_restart_recommended=False,
@@ -638,11 +638,11 @@ def triage_live_artifact(data: dict, allow_high_swap: bool = False) -> TriageRes
                 root_cause_class=RootCause.TERMINALITY_SURFACE_DRIFT,
                 confidence=0.90,
                 reasons=[
-                    f"verdict=FAIL_TERMINALITY_UNSATISFIED but acquisition_report.terminality.satisfied={ar_terminality_satisfied}",
+                    f"verdict=FAIL_TERMINALITY_UNSATISFIED but acquisition_report.terminality.satisfied={ar_terminality_satisfied}",  # noqa: E501
                     f"top-level acquisition_terminality_satisfied={top_level_term_satisfied}",
                     "benchmark verdict contradicts acquisition terminality SSOT",
                 ],
-                next_best_action="fix_terminality_surface_drift — benchmark and acquisition report disagree on terminality",
+                next_best_action="fix_terminality_surface_drift — benchmark and acquisition report disagree on terminality",  # noqa: E501
                 recommended_sprint_family=SprintFamily.NONE,
                 another_live_useful=True,
                 memory_restart_recommended=False,
@@ -764,7 +764,7 @@ def triage_live_artifact(data: dict, allow_high_swap: bool = False) -> TriageRes
                 "discovery_selected_providers=[] — no providers selected during discovery planning",
                 f"skipped_providers={skipped_providers}",
             ],
-            next_best_action="inspect discovery planner output; check provider reliability scores and budget allocation",
+            next_best_action="inspect discovery planner output; check provider reliability scores and budget allocation",  # noqa: E501
             recommended_sprint_family=SprintFamily.F207,
             another_live_useful=True,
             memory_restart_recommended=False,
@@ -844,7 +844,7 @@ def triage_live_artifact(data: dict, allow_high_swap: bool = False) -> TriageRes
     if feed_share >= 0.9 and nonfeed_acc == 0 and _has_feed(data):
         # Public quality rejection takes priority over FEED_DOMINATED when
         # public was attempted (fetched or acceptance attempted) but all rejected
-        if (_public_fetch_attempted(data) or _public_acceptance_attempted(data) > 0) and _public_acceptance_accepted(data) == 0 and _public_rejected(data) > 0:
+        if (_public_fetch_attempted(data) or _public_acceptance_attempted(data) > 0) and _public_acceptance_accepted(data) == 0 and _public_rejected(data) > 0:  # noqa: E501
             return _public_quality_rejected_result(
                 data,
                 f"feed_share={feed_share:.2f}, public_rejected > 0 but accepted = 0"
@@ -1038,7 +1038,7 @@ def _public_quality_rejected_result(data: dict, reason: str) -> TriageResult:
         root_cause_class=RootCause.PUBLIC_QUALITY_REJECTED,
         confidence=0.90,
         reasons=[reason, f"top_public_reject_reason={top_rej}"],
-        next_best_action="inspect top_public_reject_reason; fix public_pipeline quality gate; check F207 public rejection KPIs",
+        next_best_action="inspect top_public_reject_reason; fix public_pipeline quality gate; check F207 public rejection KPIs",  # noqa: E501
         recommended_sprint_family=SprintFamily.F207,
         another_live_useful=True,
         memory_restart_recommended=False,

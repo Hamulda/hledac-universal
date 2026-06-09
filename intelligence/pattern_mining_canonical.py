@@ -169,7 +169,7 @@ class PatternMiningAdapter:
                         pass
 
                 events.append(Event(
-                    timestamp=datetime.fromtimestamp(ts),
+                    timestamp=datetime.fromtimestamp(ts),  # noqa: DTZ006
                     entity_id=entity_id,
                     event_type=event_type,
                     value=value,
@@ -192,7 +192,7 @@ class PatternMiningAdapter:
                 action_type = f.source_type if hasattr(f, 'source_type') else "unknown"
 
                 actions.append(Action(
-                    timestamp=datetime.fromtimestamp(ts),
+                    timestamp=datetime.fromtimestamp(ts),  # noqa: DTZ006
                     user_id=user_id,
                     action_type=action_type,
                     target=entity_id,

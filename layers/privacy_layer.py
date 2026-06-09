@@ -19,6 +19,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from hledac.universal.config import PrivacyConfig
 from hledac.universal.project_types import (
     AnonymizationLevel,
     PrivacyEventCategory,
@@ -27,32 +28,32 @@ from hledac.universal.project_types import (
     Severity,
 )
 
-from hledac.universal.config import PrivacyConfig
-
 logger = logging.getLogger(__name__)
 
 # Lazy imports for privacy modules
 try:
     from ...privacy_protection.personal_privacy_manager import (
-        BrowserFingerprint,
-        DNSConfig,
-        PersonalPrivacyManager,
-        TorConfig,
-        VPNConfig,
+        BrowserFingerprint,  # noqa: F401  # ...privacy_protection.personal_privacy_manager.BrowserFingerprint
+        DNSConfig,  # noqa: F401  # ...privacy_protection.personal_privacy_manager.DNSConfig
+        PersonalPrivacyManager,  # noqa: F401  # ...privacy_protection.personal_privacy_manager.PersonalPrivacyManager
+        TorConfig,  # noqa: F401  # ...privacy_protection.personal_privacy_manager.TorConfig
+        VPNConfig,  # noqa: F401  # ...privacy_protection.personal_privacy_manager.VPNConfig
     )
-    from ...privacy_protection.personal_privacy_manager import PrivacyLevel as PPMLevel
+    from ...privacy_protection.personal_privacy_manager import (
+        PrivacyLevel as PPMLevel,  # noqa: F401  # ...privacy_protection.personal_privacy_manager.PrivacyLevel
+    )
     HAS_PPM = True
 except ImportError:
     HAS_PPM = False
 
 try:
     from ...privacy_protection.anonymous_communication import (
-        AnonymousCommunication,
-        BurnerIdentity,
-        EmailConfig,
-        PGPKey,
-        SecureChannel,
-        SecureMessage,
+        AnonymousCommunication,  # noqa: F401  # ...privacy_protection.anonymous_communication.AnonymousCommunication
+        BurnerIdentity,  # noqa: F401  # ...privacy_protection.anonymous_communication.BurnerIdentity
+        EmailConfig,  # noqa: F401  # ...privacy_protection.anonymous_communication.EmailConfig
+        PGPKey,  # noqa: F401  # ...privacy_protection.anonymous_communication.PGPKey
+        SecureChannel,  # noqa: F401  # ...privacy_protection.anonymous_communication.SecureChannel
+        SecureMessage,  # noqa: F401  # ...privacy_protection.anonymous_communication.SecureMessage
     )
     HAS_AC = False
 except ImportError:
@@ -60,13 +61,21 @@ except ImportError:
 
 try:
     from ...privacy_protection.privacy_audit_log import AnonymizationLevel as PALLevel
-    from ...privacy_protection.privacy_audit_log import PIIAnonymizer, PrivacyAuditLog, PrivacyLogEntry
+    from ...privacy_protection.privacy_audit_log import (  # noqa: F401  # ...privacy_protection.privacy_audit_log.PrivacyAuditLog
+        PIIAnonymizer,
+        PrivacyAuditLog,
+        PrivacyLogEntry,
+    )
     HAS_PAL = False
 except ImportError:
     HAS_PAL = False
 
 try:
-    from ...privacy_protection.protocol_code_generator import GeneratedProtocol, ProtocolCodeGenerator, ProtocolSpec
+    from ...privacy_protection.protocol_code_generator import (  # noqa: F401  # ...privacy_protection.protocol_code_generator.ProtocolSpec
+        GeneratedProtocol,
+        ProtocolCodeGenerator,
+        ProtocolSpec,
+    )
     HAS_PCG = False
 except ImportError:
     HAS_PCG = False
@@ -316,7 +325,7 @@ class PrivacyLayer:
         # Legacy fallback
         if self._audit:
             from ...privacy_protection.privacy_audit_log import PrivacyEventCategory as PALCat
-            from ...privacy_protection.privacy_audit_log import Severity as PALSEV
+            from ...privacy_protection.privacy_audit_log import Severity as PALSEV  # noqa: N814
 
             cat_map = {
                 PrivacyEventCategory.DATA_ACCESS: PALCat.DATA_ACCESS,
@@ -376,8 +385,8 @@ class PrivacyLayer:
         if self._audit:
             from datetime import datetime, timedelta
             return await self._audit.generate_compliance_report(
-                start_date=datetime.now() - timedelta(days=days),
-                end_date=datetime.now()
+                start_date=datetime.now() - timedelta(days=days),  # noqa: DTZ005
+                end_date=datetime.now()  # noqa: DTZ005
             )
         return None
 
@@ -435,7 +444,7 @@ class PrivacyLayer:
     ) -> str:
         """Anonymize PII in text."""
         if self._audit:
-            from ...privacy_protection.privacy_audit_log import AnonymizationLevel as AL
+            from ...privacy_protection.privacy_audit_log import AnonymizationLevel as AL  # noqa: N817
             level_map = {
                 AnonymizationLevel.NONE: AL.NONE,
                 AnonymizationLevel.PARTIAL: AL.PARTIAL,

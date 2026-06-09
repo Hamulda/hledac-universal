@@ -71,7 +71,7 @@ def build_search_documents_from_findings(findings: list) -> list:
     """
     from hledac.universal.knowledge.search_index import SearchDocument
 
-    MAX_INDEXED_FINDINGS = 5000
+    MAX_INDEXED_FINDINGS = 5000  # noqa: N806
     seen_urls: set[str] = set()
     docs: list = []
     for f in findings:
@@ -79,7 +79,7 @@ def build_search_documents_from_findings(findings: list) -> list:
             break
         try:
             payload = getattr(f, "payload_text", "") or (f.get("payload_text", "") if isinstance(f, dict) else "")
-            source_type = getattr(f, "source_type", "unknown") or (f.get("source_type", "unknown") if isinstance(f, dict) else "unknown")
+            source_type = getattr(f, "source_type", "unknown") or (f.get("source_type", "unknown") if isinstance(f, dict) else "unknown")  # noqa: E501
             finding_id = getattr(f, "finding_id", "?") or (f.get("finding_id", "?") if isinstance(f, dict) else "?")
             url = getattr(f, "url", "") or (f.get("url", "") if isinstance(f, dict) else "")
         except Exception:
@@ -325,7 +325,7 @@ class SprintAdvisoryRunner:
                     from hledac.universal.runtime.hermes_pivot_contract import HermesInferenceOutput
 
                     rows = await store._conn.execute(
-                        f"SELECT payload_text FROM findings WHERE source_type = '{SourceType.HERMES_INFERENCE}' AND query = $1 LIMIT 50",
+                        f"SELECT payload_text FROM findings WHERE source_type = '{SourceType.HERMES_INFERENCE}' AND query = $1 LIMIT 50",  # noqa: E501
                         getattr(self._scheduler, "_query", "") or "",
                     )
                     hermes_outputs = []

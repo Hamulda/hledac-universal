@@ -5,41 +5,24 @@ Tests for Hypothesis Engine (Sprint F259)
 Tests for CausalEngine, HypothesisGraph, and HypothesisBuilder.
 """
 
-import asyncio
 import time
 from dataclasses import dataclass
-from typing import Any
 
 import pytest
 
 # Import the modules under test
 from brain.causal_engine import (
-    CausalEngine,
-    Entity,
-    EntityCluster,
-    TemporalSequence,
-    AnomalySignal,
-    CausalHypothesis,
-    Contradiction,
-    MAX_ENTITIES,
-    MAX_FINDINGS,
     MAX_HYPOTHESES,
-)
-from graph.hypothesis_graph import (
-    HypothesisGraph,
-    HypothesisEdge,
-    HiddenBridge,
-    AnomalousCluster,
-    MAX_NODES,
-    MAX_EDGES,
+    CausalEngine,
 )
 from export.hypothesis_builder import (
-    HypothesisBuilder,
-    HypothesisResult,
     HYPOTHESIS_ENABLED,
-    RAM_THRESHOLD,
+    HypothesisBuilder,
 )
-
+from graph.hypothesis_graph import (
+    HypothesisEdge,
+    HypothesisGraph,
+)
 
 # =============================================================================
 # Fixtures
@@ -272,7 +255,7 @@ class TestHypothesisGraph:
         graph = HypothesisGraph()
 
         # Create a simple chain: A -> B -> C
-        for i, (src, tgt) in enumerate([("A", "B"), ("B", "C")]):
+        for _i, (src, tgt) in enumerate([("A", "B"), ("B", "C")]):
             edge = HypothesisEdge(
                 source=src,
                 target=tgt,
@@ -410,7 +393,7 @@ class TestBoundaries:
 
         # Add more than max nodes
         for i in range(10):
-            result = graph.add_entity(f"entity_{i}", "ip")
+            graph.add_entity(f"entity_{i}", "ip")
 
         assert graph.node_count <= 5, "Should respect MAX_NODES limit"
 

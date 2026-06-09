@@ -19,10 +19,11 @@ from enum import Enum
 from typing import Any
 
 import aiohttp
+
 from hledac.universal.network.session_runtime import async_get_aiohttp_session
 from hledac.universal.utils.uuid7 import new_runtime_id
-
 from utils.async_helpers import safe_gather_fire_and_forget
+
 # psutil je optional — nepovinný pro M1 lightweight provoz
 try:
     import psutil
@@ -238,7 +239,7 @@ class UnifiedWebIntelligence:
                 except psutil.NoSuchProcess:
                     self._process_dead = True
                     return {'rss_mb': None, 'limit_mb': self._memory_limit_bytes / 1024 / 1024, 'error': 'process_dead'}
-            rss_mb = self._process.memory_info().rss / 1024 / 1024 if (self._process and not self._process_dead) else None
+            rss_mb = self._process.memory_info().rss / 1024 / 1024 if (self._process and not self._process_dead) else None  # noqa: E501
             limit_mb = self._memory_limit_bytes / 1024 / 1024
             result = {
                 'rss_mb': round(rss_mb, 1) if rss_mb else None,
@@ -362,7 +363,7 @@ class UnifiedWebIntelligence:
         result = IntelligenceResult(
             operation_id=operation_id,
             target_id=target.target_id,
-            operation_type=IntelligenceOperationType.COMPREHENSIVE_INTELLIGENCE if len(operation_types) > 1 else operation_types[0],
+            operation_type=IntelligenceOperationType.COMPREHENSIVE_INTELLIGENCE if len(operation_types) > 1 else operation_types[0],  # noqa: E501
             status=OperationStatus.PENDING
         )
 
@@ -414,14 +415,14 @@ class UnifiedWebIntelligence:
             # Store enqueue time for aging
             self._queued_op_times[operation_id] = time.time()
             if memory_exceeded:
-                logger.warning(f"⏳ Operation {operation_id} queued due to memory pressure ({current_rss / 1024 / 1024:.1f} MB)")
+                logger.warning(f"⏳ Operation {operation_id} queued due to memory pressure ({current_rss / 1024 / 1024:.1f} MB)")  # noqa: E501
             else:
                 logger.info(f"⏳ Operation {operation_id} queued (priority={target.priority})")
             return operation_id
 
         # Execute operation asynchronously
         self.active_operations[operation_id] = result
-        self._track_task(asyncio.create_task(self._execute_operation_async(target, operation_types, operation_id), name="web_intelligence:execute_operation"))
+        self._track_task(asyncio.create_task(self._execute_operation_async(target, operation_types, operation_id), name="web_intelligence:execute_operation"))  # noqa: E501
 
         return operation_id
 
@@ -496,7 +497,7 @@ class UnifiedWebIntelligence:
         self._queued_op_times.pop(operation_id, None)
         # Place result where _execute_operation_async expects it
         self.active_operations[operation_id] = result
-        self._track_task(asyncio.create_task(self._execute_operation_async(target, op_types, operation_id), name="web_intelligence:process_queued"))
+        self._track_task(asyncio.create_task(self._execute_operation_async(target, op_types, operation_id), name="web_intelligence:process_queued"))  # noqa: E501
         logger.info(f"⏭️ Processing queued operation: {operation_id}")
 
     async def _ensure_components_initialized(self) -> None:
@@ -515,7 +516,7 @@ class UnifiedWebIntelligence:
                 await self._initialize_components()
                 # Start aging task AFTER successful init — don't orphan it on failure
                 if self._aging_task is None:
-                    self._aging_task = asyncio.create_task(self._age_queued_priorities(), name="web_intelligence:aging_loop")
+                    self._aging_task = asyncio.create_task(self._age_queued_priorities(), name="web_intelligence:aging_loop")  # noqa: E501
                 self._components_initialized = True
             except Exception as e:
                 self._components_init_error = e
@@ -758,7 +759,7 @@ class UnifiedWebIntelligence:
 
         return indicators
 
-    def _analyze_personal_threats(self, osint_data: dict[str, Any]) -> list[dict[str, Any]]:
+    def _analyze_personal_threats(self, osint_data: dict[str, Any]) -> list[dict[str, Any]] | None:
         """Analyze OSINT data for personal threats."""
         threats = []
 
@@ -1164,7 +1165,7 @@ class UnifiedWebIntelligence:
                         raw = await resp.text()
                         # Streaming XML parse — defusedxml primary, stdlib fallback
                         try:
-                            import defusedxml.ElementTree as ET
+                            import defusedxml.ElementTree as ET  # noqa: N817
                         except ImportError:
                             import xml.etree.ElementTree as ET
                         # Parse in chunks to avoid loading full XML into memory

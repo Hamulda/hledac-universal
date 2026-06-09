@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 # Sprint F234: ANE/MLX Mutual Exclusion — prevents OOM on M1 8GB
 # ---------------------------------------------------------------------------
 
-class ANE_MLX_Mutex:
+class ANE_MLX_Mutex:  # noqa: N801
     """
     Prevents simultaneous ANE + MLX model loading on M1 8GB.
 
@@ -723,7 +723,7 @@ def rerank_findings_crossencoder(
 # ---------------------------------------------------------------------------
 # Sprint 8VF: IOC extraction — regex patterns (deterministic, M1-safe)
 # ---------------------------------------------------------------------------
-import re as _re
+import re as _re  # noqa: E402
 
 _IOC_PATTERNS: list[tuple[str, str]] = [
     ("ipv4", r"\b(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)(?:\.(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)){3}\b"),

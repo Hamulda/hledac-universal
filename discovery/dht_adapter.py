@@ -272,10 +272,10 @@ async def async_search_dht(
 # BEP-9 Metadata Fetcher (Sprint F229)
 # ---------------------------------------------------------------------------
 
-_METADATA_FETCHER: "TorrentMetadataFetcher | None" = None
+_METADATA_FETCHER: TorrentMetadataFetcher | None = None
 
 
-async def _get_metadata_fetcher() -> "TorrentMetadataFetcher":
+async def _get_metadata_fetcher() -> TorrentMetadataFetcher:
     """Lazily create shared TorrentMetadataFetcher instance."""
     global _METADATA_FETCHER
     if _METADATA_FETCHER is None:

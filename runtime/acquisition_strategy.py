@@ -60,18 +60,18 @@ except ImportError:
 
 # [F207K-A] Non-feed bridge helpers — rejection tracking + candidate conversion
 # Used inside inner async lane runners (closures), not at module scope.
-from hledac.universal.runtime.acquisition_telemetry_reconcile import (
+from hledac.universal.runtime.acquisition_telemetry_reconcile import (  # noqa: E402
     complete_source_family_outcomes_from_lane_details,
     reconcile_lane_detail_fields,
 )
-from hledac.universal.runtime.source_finding_bridge import (
+from hledac.universal.runtime.source_finding_bridge import (  # noqa: E402
     MAX_SAMPLE_REJECTIONS,
     ct_results_to_findings,
     passive_dns_results_to_findings,
     wayback_results_to_findings,
 )
+from utils.async_helpers import safe_gather_dropin  # noqa: E402
 
-from utils.async_helpers import safe_gather_dropin
 __all__ = [
     "AcquisitionLane",
     "AcquisitionProfile",
@@ -130,7 +130,7 @@ def normalize_acquisition_profile(profile: str | None) -> dict:
     Canonical profiles: "default", "nonfeed_diagnostic"
     Benchmark aliases: "nonfeed_diagnostic180" → "nonfeed_diagnostic"
     """
-    _CANONICAL = frozenset(["default", "nonfeed_diagnostic", "deep_osint_m1"])
+    _CANONICAL = frozenset(["default", "nonfeed_diagnostic", "deep_osint_m1"])  # noqa: N806
     _input = profile
     _effective = profile
     _normalized = False
@@ -1335,7 +1335,7 @@ def _build_nonfeed_lane_eligibility(
             "ct":      {"eligible": true|false, "reason": "...", "required_inputs": [...], "available_inputs": {...}},
             "doh":     {"eligible": true|false, "reason": "...", "required_inputs": [...], "available_inputs": {...}},
             "wayback": {"eligible": true|false, "reason": "...", "required_inputs": [...], "available_inputs": {...}},
-            "passive_dns": {"eligible": true|false, "reason": "...", "required_inputs": [...], "available_inputs": {...}},
+            "passive_dns": {"eligible": true|false, "reason": "...", "required_inputs": [...], "available_inputs": {...}},  # noqa: E501
         }
 
     Profile rules (active300/default):
@@ -1823,10 +1823,10 @@ def build_acquisition_report(
         "arrow_last_flush_error": arrow_last_flush_error or "",
         "arrow_batch_dropped": arrow_batch_dropped,
         "prewindup_barrier_errors": (
-            sum(prewindup_barrier_errors.values()) if isinstance(prewindup_barrier_errors, dict) else int(prewindup_barrier_errors or 0)
+            sum(prewindup_barrier_errors.values()) if isinstance(prewindup_barrier_errors, dict) else int(prewindup_barrier_errors or 0)  # noqa: E501
         ),
         "return_guard_errors": (
-            sum(return_guard_errors.values()) if isinstance(return_guard_errors, dict) else int(return_guard_errors or 0)
+            sum(return_guard_errors.values()) if isinstance(return_guard_errors, dict) else int(return_guard_errors or 0)  # noqa: E501
         ),
         "wayback_unchanged_rejected": wayback_unchanged_rejected,
         "nonfeed_provider_failures": nonfeed_provider_failures or [],
@@ -1877,15 +1877,15 @@ def build_acquisition_report(
         "acquisition_plan_build_error": acquisition_plan_build_error,
         # Sprint F228E: Acquisition plan prelude fields
         "acquisition_plan_present_for_prelude": acquisition_plan_present_for_prelude,
-        "acquisition_plan_lanes_for_prelude": list(acquisition_plan_lanes_for_prelude) if acquisition_plan_lanes_for_prelude else [],
-        "acquisition_plan_enabled_lanes_for_prelude": list(acquisition_plan_enabled_lanes_for_prelude) if acquisition_plan_enabled_lanes_for_prelude else [],
+        "acquisition_plan_lanes_for_prelude": list(acquisition_plan_lanes_for_prelude) if acquisition_plan_lanes_for_prelude else [],  # noqa: E501
+        "acquisition_plan_enabled_lanes_for_prelude": list(acquisition_plan_enabled_lanes_for_prelude) if acquisition_plan_enabled_lanes_for_prelude else [],  # noqa: E501
         "acquisition_plan_profile_for_prelude": acquisition_plan_profile_for_prelude,
         "acquisition_plan_build_error_for_prelude": acquisition_plan_build_error_for_prelude,
         # Sprint F228E: Nonfeed prelude telemetry
         "nonfeed_prelude_enabled": nonfeed_prelude_enabled,
-        "nonfeed_prelude_expected_lanes": list(nonfeed_prelude_expected_lanes) if nonfeed_prelude_expected_lanes else [],
-        "nonfeed_prelude_attempted_lanes": list(nonfeed_prelude_attempted_lanes) if nonfeed_prelude_attempted_lanes else [],
-        "nonfeed_prelude_terminal_lanes": list(nonfeed_prelude_terminal_lanes) if nonfeed_prelude_terminal_lanes else [],
+        "nonfeed_prelude_expected_lanes": list(nonfeed_prelude_expected_lanes) if nonfeed_prelude_expected_lanes else [],  # noqa: E501
+        "nonfeed_prelude_attempted_lanes": list(nonfeed_prelude_attempted_lanes) if nonfeed_prelude_attempted_lanes else [],  # noqa: E501
+        "nonfeed_prelude_terminal_lanes": list(nonfeed_prelude_terminal_lanes) if nonfeed_prelude_terminal_lanes else [],  # noqa: E501
         "nonfeed_prelude_missing_lanes": list(nonfeed_prelude_missing_lanes) if nonfeed_prelude_missing_lanes else [],
         "nonfeed_prelude_error_by_lane": nonfeed_prelude_error_by_lane or {},
         "nonfeed_prelude_accepted_by_lane": nonfeed_prelude_accepted_by_lane or {},
@@ -2543,9 +2543,9 @@ class NonfeedMissionController:
 
         # Explicit provider failure: network error, timeout, system error
         # These are terminal but not accepted
-        if error and any(err in str(error).lower() for err in ["timeout", "error", "unavailable", "connection", "refused", "dns"]):
+        if error and any(err in str(error).lower() for err in ["timeout", "error", "unavailable", "connection", "refused", "dns"]):  # noqa: E501
             # Distinguish provider failure from lane error
-            if any(err in str(error).lower() for err in ["timeout", "unavailable", "connection", "refused", "dns", "network"]):
+            if any(err in str(error).lower() for err in ["timeout", "unavailable", "connection", "refused", "dns", "network"]):  # noqa: E501
                 return "provider_failure"
             return "terminal"
 
@@ -3026,7 +3026,7 @@ def _build_plan_impl(
     transport_authority_status: dict | None,
     stealth_phase: dict | None,
     acquisition_profile: str = "default",
-    feed_budget: FeedDominanceBudget = FeedDominanceBudget(),
+    feed_budget: FeedDominanceBudget = FeedDominanceBudget(),  # noqa: B008
 ) -> AcquisitionStrategySnapshot:
     """Internal implementation — raises on error (caller catches)."""
 
@@ -3103,7 +3103,7 @@ def _build_plan_impl(
     # F216B: Updated to include nonfeed_diagnostic telemetry
     # R10: IPFS is included in nonfeed lanes (CID-only, bounded)
     # F222B: DOH is a nonfeed lane for DNS-over-HTTPS acquisition
-    _NONFEED_LANES = (
+    _NONFEED_LANES = (  # noqa: N806
         AcquisitionLane.CT,
         AcquisitionLane.WAYBACK,
         AcquisitionLane.PASSIVE_DNS,
@@ -3373,7 +3373,7 @@ async def run_enabled_acquisition_lanes(
         # [F207I-B] Runtime safety check: WaybackDiffMiner must be importable and instantiable
         try:
             from hledac.universal.intelligence.wayback_diff_miner import (
-                WaybackDiffMiner as _WDM,
+                WaybackDiffMiner as _WDM,  # noqa: N814
             )
             # Verify the class is actually callable (not stub/broken import)
             if not callable(_WDM):
@@ -3668,7 +3668,7 @@ async def run_enabled_acquisition_lanes(
         start = time.monotonic()
         query_cid = query.strip()
         all_cids: list[str] = [query_cid] if _has_explicit_cid(query_cid) else []
-        MAX_IPFS_CIDS = 5
+        MAX_IPFS_CIDS = 5  # noqa: N806
         cids_to_fetch = all_cids[:MAX_IPFS_CIDS]
         accepted = 0
         produced = 0
@@ -3864,7 +3864,7 @@ async def run_enabled_acquisition_lanes(
                 enabled=plan.enabled,
                 attempted=False,
                 source_family="doh",
-                error=shaped_query.get("_disabled_reason", "no_domain_seed") if isinstance(shaped_query, dict) else "build_lane_query_returned_none",
+                error=shaped_query.get("_disabled_reason", "no_domain_seed") if isinstance(shaped_query, dict) else "build_lane_query_returned_none",  # noqa: E501
                 doh_query=shaped_query if isinstance(shaped_query, str) else "",
             )
 

@@ -26,6 +26,7 @@ from typing import TYPE_CHECKING
 
 import aiohttp
 import msgspec
+
 from hledac.universal.tools.discovery_replay import (
     read_cassette,
     replay_enabled,
@@ -192,7 +193,7 @@ def classify_discovery_error(
         return "rate_limited"
 
     # ---- captcha / blocking ----
-    if any(kw in err_str.lower() for kw in ("captcha", "blocked", "403", "bot detection", "forbidden", "access denied")):
+    if any(kw in err_str.lower() for kw in ("captcha", "blocked", "403", "bot detection", "forbidden", "access denied")):  # noqa: E501
         return "captcha_or_blocked"
 
     # ---- import error ----
@@ -274,7 +275,7 @@ def _extract_quoted_tokens(query: str) -> tuple[list[str], str]:
 
 # IOC / domain / time patterns that deserve special treatment
 _IOC_DOMAIN_RE = __import__("re").compile(
-    r"(?:\w+\.){1,6}(?:com|org|net|io|co|uk|edu|gov|mil|info|biz|ru|cn|de|fr|nl|pl|eu|us|ca|au|at|be|ch|jp|kr|br|mx|za|in|it|es|nl|se|no|fi|dk|cz|sk|hu|ro|gr|pt|tr|il|ae|sa|ng|ke|gh|eg|ua|rs|by|kz|uz|tj|ir|iq|pk|bd|kh|la|mm|vn|th|my|sg|ph|id|tl|tz|et|zm|zw|bw|na|ug|rw|mw|mz|ao|ci|cm|sn|gd|jm|ht|cu|do|ve|co|pe|bo|cl|ar|uy|p ypy|py|pr|pa|cr|ni|sv|gt|hn|bz|gy|sr|gf|ec|py)")
+    r"(?:\w+\.){1,6}(?:com|org|net|io|co|uk|edu|gov|mil|info|biz|ru|cn|de|fr|nl|pl|eu|us|ca|au|at|be|ch|jp|kr|br|mx|za|in|it|es|nl|se|no|fi|dk|cz|sk|hu|ro|gr|pt|tr|il|ae|sa|ng|ke|gh|eg|ua|rs|by|kz|uz|tj|ir|iq|pk|bd|kh|la|mm|vn|th|my|sg|ph|id|tl|tz|et|zm|zw|bw|na|ug|rw|mw|mz|ao|ci|cm|sn|gd|jm|ht|cu|do|ve|co|pe|bo|cl|ar|uy|p ypy|py|pr|pa|cr|ni|sv|gt|hn|bz|gy|sr|gf|ec|py)")  # noqa: E501
 _IOC_IP_RE = __import__("re").compile(
     r"\b(?:\d{1,3}\.){3}\d{1,3}\b")
 
@@ -648,9 +649,10 @@ async def _ddgs_text_search(
 # Lightweight: keyed by normalized query string, bounded to MAX_CACHE entries.
 # Does NOT survive across runs — no persistent cache required.
 # ---------------------------------------------------------------------------
-from collections import OrderedDict
+from collections import OrderedDict  # noqa: E402
 
-from utils.async_helpers import safe_gather_dropin
+from utils.async_helpers import safe_gather_dropin  # noqa: E402
+
 _QUERY_CACHE: OrderedDict[str, DiscoveryBatchResult] = OrderedDict()
 _QUERY_CACHE_MAX = 20  # max entries; oldest evicted when full
 
@@ -1064,7 +1066,7 @@ async def async_search_public_web(
             error_tag = "proxy_error"
         elif "network" in err_str.lower() or "ConnectionError" in err_name or "HTTPError" in err_name:
             error_tag = "network_error"
-        elif "server" in err_str.lower() or "500" in err_str or "502" in err_str or "503" in err_str or "504" in err_str:
+        elif "server" in err_str.lower() or "500" in err_str or "502" in err_str or "503" in err_str or "504" in err_str:  # noqa: E501
             error_tag = "server_error"
         else:
             error_tag = "unknown_backend_error"
@@ -1072,14 +1074,14 @@ async def async_search_public_web(
         _last_error = error_tag
 
         # ---- bounded fallback: backend_error variants / timeout only (NOT rate_limited) --
-        _BACKEND_ERROR_TAGS = {"timeout", "proxy_error", "network_error", "server_error", "unknown_backend_error"}
+        _BACKEND_ERROR_TAGS = {"timeout", "proxy_error", "network_error", "server_error", "unknown_backend_error"}  # noqa: N806
         if error_tag not in _BACKEND_ERROR_TAGS and error_tag != "timeout":
             return DiscoveryBatchResult(
             hits=(),
             error=error_tag,
             # F234-FIX: provider selected before failure occurred
             provider_status_debug=[
-                {"provider": "ddg_mojeek", "state": "production", "selected": False, "reason": f"non_backend_error_{error_tag}"},
+                {"provider": "ddg_mojeek", "state": "production", "selected": False, "reason": f"non_backend_error_{error_tag}"},  # noqa: E501
             ],
         )
 
@@ -1138,7 +1140,7 @@ async def async_search_public_web(
                 fallback_triggered="primary_backend_failed_fallback_succeeded",
                 provider_status_debug=[
                     {"provider": "ddg_mojeek", "state": "production", "selected": True, "reason": "fallback_succeeded"},
-                    {"provider": "mojeek_scrape", "state": "production", "selected": True, "reason": "fallback_primary"},
+                    {"provider": "mojeek_scrape", "state": "production", "selected": True, "reason": "fallback_primary"},  # noqa: E501
                 ],
             )
         else:
@@ -1147,8 +1149,8 @@ async def async_search_public_web(
                 error=error_tag,
                 fallback_triggered="primary_backend_failed_fallback_failed",
                 provider_status_debug=[
-                    {"provider": "ddg_mojeek", "state": "production", "selected": False, "reason": "fallback_failed_primary"},
-                    {"provider": "mojeek_scrape", "state": "production", "selected": False, "reason": "fallback_failed"},
+                    {"provider": "ddg_mojeek", "state": "production", "selected": False, "reason": "fallback_failed_primary"},  # noqa: E501
+                    {"provider": "mojeek_scrape", "state": "production", "selected": False, "reason": "fallback_failed"},  # noqa: E501
                 ],
             )
 
@@ -1265,7 +1267,7 @@ async def _scrape_mojeek(
 ) -> list[dict]:
     """Mojeek independent crawler, no CAPTCHA policy."""
     from bs4 import BeautifulSoup
-    _UA = (
+    _UA = (  # noqa: N806
         "Mozilla/5.0 (Macintosh; ARM Mac OS X 14_0) "
         "AppleWebKit/605.1.15 (KHTML, like Gecko) "
         "Version/17.0 Safari/605.1.15"
@@ -1429,7 +1431,7 @@ async def _search_commoncrawl_domain(
         List of dicts with title/url/snippet/source/timestamp.
     """
     import re as _re
-    _DOMAIN_CCX_RE = _re.compile(
+    _DOMAIN_CCX_RE = _re.compile(  # noqa: N806
         r"^(?:\*?\.)?[a-zA-Z0-9][a-zA-Z0-9.\-*[a-zA-Z0-9]\.[a-zA-Z]{2,}$"
         r"|^(?:site|domain):[a-zA-Z0-9]"
     )

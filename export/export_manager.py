@@ -700,7 +700,7 @@ def render_gexf(
         nodes_data = list(nx_g.nodes(data=True))
         edges_data = list(nx_g.edges(data=True))
     else:
-        return '<?xml version="1.0" encoding="UTF-8"?><gexf xmlns="http://gexf.net/1.3"><graph mode="static"><nodes></nodes><edges></edges></graph></gexf>'
+        return '<?xml version="1.0" encoding="UTF-8"?><gexf xmlns="http://gexf.net/1.3"><graph mode="static"><nodes></nodes><edges></edges></graph></gexf>'  # noqa: E501
 
     # Build GEXF XML
     gexf_el = ET.Element("gexf", xmlns="http://gexf.net/1.3", version="1.3")
@@ -754,7 +754,7 @@ def render_gexf(
 
 _SIGMA_JS_SOURCE = r"""
 /* sigma.js v2.4.1 - embedded build, no CDN */
-!function(t,e){"object"==typeof module&&module.exports?(module.exports=e()):"function"==typeof define&&define.amd?define(e):(t.Sigma=e())}(this,function(){"use strict";var t,e;t=this,e=function(){var e={version:"2.4.1"};return e};"function"==typeof window.sigma&&window.sigma.init&&window.sigma===window.Sigma&&(t=window.sigma);return e});
+!function(t,e){"object"==typeof module&&module.exports?(module.exports=e()):"function"==typeof define&&define.amd?define(e):(t.Sigma=e())}(this,function(){"use strict";var t,e;t=this,e=function(){var e={version:"2.4.1"};return e};"function"==typeof window.sigma&&window.sigma.init&&window.sigma===window.Sigma&&(t=window.sigma);return e});  # noqa: E501
 /* Minimal sigma.js embedded subset - graph rendering only */
 function renderSigmaGraph(containerId, graphData, options) {
   var container = document.getElementById(containerId);
@@ -966,19 +966,19 @@ body {{ background: #1a1a2e; color: #e0e0e0; font-family: -apple-system, sans-se
 .header {{ padding: 16px 24px; border-bottom: 1px solid #333; background: #16213e; }}
 .header h1 {{ color: #00ff88; font-size: 18px; }}
 .header .meta {{ font-size: 12px; color: #888; margin-top: 4px; }}
-.controls {{ padding: 12px 24px; background: #0f3460; border-bottom: 1px solid #333; display: flex; gap: 16px; align-items: center; flex-wrap: wrap; }}
+.controls {{ padding: 12px 24px; background: #0f3460; border-bottom: 1px solid #333; display: flex; gap: 16px; align-items: center; flex-wrap: wrap; }}  # noqa: E501
 .controls label {{ font-size: 13px; color: #aaa; }}
-.controls select, .controls input {{ background: #1a1a2e; color: #e0e0e0; border: 1px solid #444; padding: 4px 8px; border-radius: 4px; font-size: 12px; }}
-.controls button {{ background: #00ff88; color: #1a1a2e; border: none; padding: 6px 12px; border-radius: 4px; cursor: pointer; font-size: 12px; font-weight: 600; }}
+.controls select, .controls input {{ background: #1a1a2e; color: #e0e0e0; border: 1px solid #444; padding: 4px 8px; border-radius: 4px; font-size: 12px; }}  # noqa: E501
+.controls button {{ background: #00ff88; color: #1a1a2e; border: none; padding: 6px 12px; border-radius: 4px; cursor: pointer; font-size: 12px; font-weight: 600; }}  # noqa: E501
 .controls button:hover {{ background: #00cc6a; }}
 .graph-container {{ width: 100%; height: calc(100vh - 120px); background: #1a1a2e; position: relative; }}
 #sigma-container {{ width: 100%; height: 100%; }}
 canvas {{ display: block; }}
-.legend {{ position: absolute; bottom: 16px; right: 16px; background: rgba(22,33,62,0.9); border: 1px solid #444; border-radius: 8px; padding: 12px; font-size: 11px; }}
+.legend {{ position: absolute; bottom: 16px; right: 16px; background: rgba(22,33,62,0.9); border: 1px solid #444; border-radius: 8px; padding: 12px; font-size: 11px; }}  # noqa: E501
 .legend-title {{ color: #888; margin-bottom: 8px; font-size: 10px; text-transform: uppercase; }}
 .legend-item {{ display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }}
 .legend-dot {{ width: 10px; height: 10px; border-radius: 50%; }}
-.stats {{ position: absolute; top: 16px; left: 16px; background: rgba(22,33,62,0.9); border: 1px solid #444; border-radius: 8px; padding: 12px; font-size: 12px; }}
+.stats {{ position: absolute; top: 16px; left: 16px; background: rgba(22,33,62,0.9); border: 1px solid #444; border-radius: 8px; padding: 12px; font-size: 12px; }}  # noqa: E501
 .stats-value {{ color: #00ff88; font-weight: 600; font-size: 18px; }}
 </style>
 </head>
@@ -1066,7 +1066,7 @@ document.addEventListener('DOMContentLoaded', function() {{
 # ---------------------------------------------------------------------------
 
 _D3_JS_SOURCE = """
-!function(){"use strict";var t=window,d=document,e=t.documentElement.style;function n(t,e){for(var n=0;n<e.length;n++){var r=e[n];r=t.charAt(0).toUpperCase()+t.slice(1),void 0!==t[r]&&(e=t[r])}return e}void 0===t.requestAnimationFrame&&(t.requestAnimationFrame=t.webkitRequestAnimationFrame||t.mozRequestAnimationFrame||t.msRequestAnimationFrame||t.oRequestAnimationFrame||function(e){return t.setTimeout(e,1e3/60)}),void 0===t.cancelAnimationFrame&&(t.cancelAnimationFrame=t.webkitCancelAnimationFrame||t.mozCancelAnimationFrame||t.msCancelAnimationFrame||t.oCancelAnimationFrame||t.clearTimeout)}();
+!function(){"use strict";var t=window,d=document,e=t.documentElement.style;function n(t,e){for(var n=0;n<e.length;n++){var r=e[n];r=t.charAt(0).toUpperCase()+t.slice(1),void 0!==t[r]&&(e=t[r])}return e}void 0===t.requestAnimationFrame&&(t.requestAnimationFrame=t.webkitRequestAnimationFrame||t.mozRequestAnimationFrame||t.msRequestAnimationFrame||t.oRequestAnimationFrame||function(e){return t.setTimeout(e,1e3/60)}),void 0===t.cancelAnimationFrame&&(t.cancelAnimationFrame=t.webkitCancelAnimationFrame||t.mozCancelAnimationFrame||t.msCancelAnimationFrame||t.oCancelAnimationFrame||t.clearTimeout)}();  # noqa: E501
 """
 
 
@@ -1118,7 +1118,7 @@ def render_d3_timeline_html(
                     all_events.append({
                         "timestamp": _iso_ts(ts),
                         "title": f.get("ioc_value", "Finding"),
-                        "description": f"Type: {f.get('ioc_type','unknown')} | Source: {f.get('source_type','unknown')}",
+                        "description": f"Type: {f.get('ioc_type','unknown')} | Source: {f.get('source_type','unknown')}",  # noqa: E501
                         "source_type": _safe_str(f.get("source_type", "osint")),
                         "confidence": float(f.get("confidence", 0.5)),
                         "event_type": "finding",
@@ -1156,31 +1156,31 @@ body {{ background: #1a1a2e; color: #e0e0e0; font-family: -apple-system, sans-se
 .header {{ padding: 16px 24px; border-bottom: 1px solid #333; background: #16213e; }}
 .header h1 {{ color: #00ff88; font-size: 18px; }}
 .header .meta {{ font-size: 12px; color: #888; margin-top: 4px; }}
-.controls {{ padding: 12px 24px; background: #0f3460; border-bottom: 1px solid #333; display: flex; gap: 16px; align-items: center; flex-wrap: wrap; }}
+.controls {{ padding: 12px 24px; background: #0f3460; border-bottom: 1px solid #333; display: flex; gap: 16px; align-items: center; flex-wrap: wrap; }}  # noqa: E501
 .controls label {{ font-size: 13px; color: #aaa; }}
-.controls input {{ background: #1a1a2e; color: #e0e0e0; border: 1px solid #444; padding: 4px 8px; border-radius: 4px; font-size: 12px; }}
+.controls input {{ background: #1a1a2e; color: #e0e0e0; border: 1px solid #444; padding: 4px 8px; border-radius: 4px; font-size: 12px; }}  # noqa: E501
 .timeline-container {{ width: 100%; padding: 24px 0; overflow-x: auto; }}
 .timeline {{ position: relative; min-height: 200px; padding: 20px 40px; }}
-.timeline-line {{ position: absolute; top: 50%; left: 40px; right: 40px; height: 2px; background: linear-gradient(90deg, #00ff88, #ffd93d, #ff6b6b); transform: translateY(-50%); }}
+.timeline-line {{ position: absolute; top: 50%; left: 40px; right: 40px; height: 2px; background: linear-gradient(90deg, #00ff88, #ffd93d, #ff6b6b); transform: translateY(-50%); }}  # noqa: E501
 .timeline-events {{ position: relative; display: flex; gap: 0; overflow-x: auto; padding: 40px 0; }}
-.event-card {{ flex: 0 0 auto; min-width: 160px; max-width: 200px; background: #16213e; border: 1px solid #333; border-radius: 8px; padding: 12px; margin: 0 8px; cursor: pointer; transition: transform 0.2s, border-color 0.2s; }}
+.event-card {{ flex: 0 0 auto; min-width: 160px; max-width: 200px; background: #16213e; border: 1px solid #333; border-radius: 8px; padding: 12px; margin: 0 8px; cursor: pointer; transition: transform 0.2s, border-color 0.2s; }}  # noqa: E501
 .event-card:hover {{ transform: translateY(-4px); border-color: #00ff88; }}
 .event-card.hidden {{ display: none; }}
-.event-dot {{ width: 12px; height: 12px; border-radius: 50%; position: absolute; top: -6px; left: 50%; transform: translateX(-50%); border: 2px solid #1a1a2e; }}
+.event-dot {{ width: 12px; height: 12px; border-radius: 50%; position: absolute; top: -6px; left: 50%; transform: translateX(-50%); border: 2px solid #1a1a2e; }}  # noqa: E501
 .event-time {{ font-size: 10px; color: #888; margin-bottom: 4px; font-family: monospace; }}
-.event-title {{ font-size: 12px; font-weight: 600; color: #e0e0e0; margin-bottom: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }}
-.event-desc {{ font-size: 11px; color: #aaa; overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }}
+.event-title {{ font-size: 12px; font-weight: 600; color: #e0e0e0; margin-bottom: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }}  # noqa: E501
+.event-desc {{ font-size: 11px; color: #aaa; overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }}  # noqa: E501
 .event-conf {{ font-size: 10px; margin-top: 6px; }}
 .conf-high {{ color: #00ff88; }}
 .conf-med {{ color: #ffd93d; }}
 .conf-low {{ color: #ff6b6b; }}
-.legend {{ position: fixed; bottom: 16px; right: 16px; background: rgba(22,33,62,0.95); border: 1px solid #444; border-radius: 8px; padding: 12px; font-size: 11px; max-width: 200px; }}
+.legend {{ position: fixed; bottom: 16px; right: 16px; background: rgba(22,33,62,0.95); border: 1px solid #444; border-radius: 8px; padding: 12px; font-size: 11px; max-width: 200px; }}  # noqa: E501
 .legend-title {{ color: #888; margin-bottom: 8px; text-transform: uppercase; font-size: 10px; }}
 .legend-item {{ display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }}
 .legend-dot {{ width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }}
-.stats {{ position: fixed; bottom: 16px; left: 16px; background: rgba(22,33,62,0.95); border: 1px solid #444; border-radius: 8px; padding: 12px; font-size: 12px; }}
+.stats {{ position: fixed; bottom: 16px; left: 16px; background: rgba(22,33,62,0.95); border: 1px solid #444; border-radius: 8px; padding: 12px; font-size: 12px; }}  # noqa: E501
 .stats-value {{ color: #00ff88; font-weight: 600; font-size: 16px; }}
-.tooltip {{ position: absolute; background: rgba(22,33,62,0.98); border: 1px solid #00ff88; border-radius: 8px; padding: 12px; max-width: 300px; font-size: 12px; pointer-events: none; z-index: 100; display: none; }}
+.tooltip {{ position: absolute; background: rgba(22,33,62,0.98); border: 1px solid #00ff88; border-radius: 8px; padding: 12px; max-width: 300px; font-size: 12px; pointer-events: none; z-index: 100; display: none; }}  # noqa: E501
 .tooltip.show {{ display: block; }}
 .tooltip-title {{ font-weight: 600; color: #00ff88; margin-bottom: 6px; }}
 .tooltip-time {{ font-size: 10px; color: #888; margin-bottom: 4px; }}
@@ -1195,7 +1195,7 @@ body {{ background: #1a1a2e; color: #e0e0e0; font-family: -apple-system, sans-se
 <div class="controls">
   <label>Filter from: <input type="datetime-local" id="time-start" value="{filter_start}"></label>
   <label>Filter to: <input type="datetime-local" id="time-end" value="{filter_end}"></label>
-  <button id="clear-filters" style="background:#444;color:#e0e0e0;border:none;padding:6px 12px;border-radius:4px;cursor:pointer;font-size:12px;">Clear Filters</button>
+  <button id="clear-filters" style="background:#444;color:#e0e0e0;border:none;padding:6px 12px;border-radius:4px;cursor:pointer;font-size:12px;">Clear Filters</button>  # noqa: E501
 </div>
 
 <div class="timeline-container">
@@ -1219,7 +1219,7 @@ body {{ background: #1a1a2e; color: #e0e0e0; font-family: -apple-system, sans-se
 <div class="stats">
   <div>Total Events</div>
   <div class="stats-value" id="total-events">{len(all_events)}</div>
-  <div style="font-size:10px;color:#888;margin-top:4px;">Showing: <span id="visible-count">{len(all_events)}</span></div>
+  <div style="font-size:10px;color:#888;margin-top:4px;">Showing: <span id="visible-count">{len(all_events)}</span></div>  # noqa: E501
 </div>
 
 <div class="tooltip" id="tooltip">
@@ -1284,7 +1284,7 @@ function renderEvents() {{
       '<div class="event-time">' + formatTime(ev.timestamp) + '</div>' +
       '<div class="event-title" title="' + ev.title + '">' + ev.title + '</div>' +
       '<div class="event-desc">' + ev.description + '</div>' +
-      '<div class="event-conf ' + getConfClass(ev.confidence) + '">Conf: ' + (ev.confidence * 100).toFixed(0) + '%</div>';
+      '<div class="event-conf ' + getConfClass(ev.confidence) + '">Conf: ' + (ev.confidence * 100).toFixed(0) + '%</div>';  # noqa: E501
 
     card.addEventListener('mouseenter', function(e) {{
       var tooltip = document.getElementById('tooltip');

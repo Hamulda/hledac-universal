@@ -254,7 +254,7 @@ class GraphCoordinator(UniversalCoordinator):
             parsed = urlparse(url)
             domain = parsed.netloc
             edge_count = 0
-            MAX_EDGES = 20
+            MAX_EDGES = 20  # noqa: N806
 
             # ct_subdomains -> ct_subdomain_of edges
             for subdomain in metadata.get('ct_subdomains', []):

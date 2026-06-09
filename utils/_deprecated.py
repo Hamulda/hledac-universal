@@ -37,7 +37,8 @@ from __future__ import annotations
 import functools
 import sys
 import warnings
-from typing import Any, Callable, TypeVar
+from collections.abc import Callable
+from typing import Any, TypeVar
 
 __all__ = ["deprecated", "HAS_NATIVE_DEPRECATED"]
 

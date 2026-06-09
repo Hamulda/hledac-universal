@@ -14,7 +14,7 @@ import asyncio
 import hashlib
 import os
 import unittest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 
 class TestDHTGate(unittest.TestCase):
@@ -35,6 +35,7 @@ class TestDHTGate(unittest.TestCase):
         with patch.dict(os.environ, {"HLEDAC_ENABLE_DHT": "1"}):
             # Re-import to pick up env
             import importlib
+
             from hledac.universal.dht import kademlia_node
 
             importlib.reload(kademlia_node)
@@ -132,8 +133,8 @@ class TestDHTFailSoft(unittest.TestCase):
         """invariant_6: _scan_dht returns [] on LocalGraphStore error."""
         async def _test():
             # Patch at the source module level where LocalGraphStore is defined
-            from hledac.universal.dht import local_graph
             from hledac.universal.deep_research import probe_runner
+            from hledac.universal.dht import local_graph
 
             # Clear cached singleton
             if hasattr(probe_runner._scan_dht, "_lgs"):
@@ -227,7 +228,7 @@ class TestDHTModuleBencode(unittest.TestCase):
     """
 
     def test_bencode_bytes_keys(self):
-        from hledac.universal.dht.kademlia_node import bencode, bdecode
+        from hledac.universal.dht.kademlia_node import bdecode, bencode
         msg = {b"y": b"q", b"q": b"ping", b"a": {b"id": b"\x00" * 20}}
         rt = bdecode(bencode(msg))
         self.assertEqual(rt[b"y"], b"q")
@@ -250,7 +251,7 @@ class TestDHTModuleBencode(unittest.TestCase):
         self.assertEqual(bencode(b"hello"), b"5:hello")
 
     def test_bdecode_roundtrip_complex(self):
-        from hledac.universal.dht.kademlia_node import bencode, bdecode
+        from hledac.universal.dht.kademlia_node import bdecode, bencode
         msg = {
             b"t": b"\xaa\xbb\xcc\xdd",
             b"y": b"r",
@@ -277,8 +278,9 @@ class TestBEP5UDPProtocol(unittest.TestCase):
         self.assertTrue(issubclass(BEP5UDPProtocol, asyncio.DatagramProtocol))
 
     def test_protocol_has_send_and_wait(self):
-        from hledac.universal.dht.kademlia_node import BEP5UDPProtocol
         import inspect
+
+        from hledac.universal.dht.kademlia_node import BEP5UDPProtocol
         self.assertTrue(inspect.iscoroutinefunction(BEP5UDPProtocol.send_and_wait))
 
     def test_protocol_initial_state(self):
@@ -350,8 +352,9 @@ class TestKademliaNodeOrderedDictTypo(unittest.TestCase):
     """
 
     def test_data_store_is_ordered_dict_instance(self):
-        from hledac.universal.dht.kademlia_node import KademliaNode
         from collections import OrderedDict
+
+        from hledac.universal.dht.kademlia_node import KademliaNode
         node = KademliaNode(node_id="test", governor=MagicMock())
         self.assertIsInstance(node.data_store, OrderedDict)
 
@@ -424,13 +427,15 @@ class TestLocalGraphStoreSnapshot(unittest.TestCase):
     """
 
     def test_save_snapshot_method_exists(self):
-        from hledac.universal.dht.local_graph import LocalGraphStore
         import inspect
+
+        from hledac.universal.dht.local_graph import LocalGraphStore
         self.assertTrue(inspect.iscoroutinefunction(LocalGraphStore.save_routing_snapshot))
 
     def test_load_snapshot_method_exists(self):
-        from hledac.universal.dht.local_graph import LocalGraphStore
         import inspect
+
+        from hledac.universal.dht.local_graph import LocalGraphStore
         self.assertTrue(inspect.iscoroutinefunction(LocalGraphStore.load_routing_snapshot))
 
 

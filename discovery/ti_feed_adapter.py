@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING, Any
 
 import aiohttp
 import msgspec
+
 from hledac.universal.network.session_runtime import async_get_aiohttp_session
 from hledac.universal.tools.discovery_replay import (
     read_cassette,
@@ -425,7 +426,7 @@ class CisaKevAdapter(SourceAdapter):
             if date_added:
                 try:
                     from datetime import datetime
-                    dt = datetime.strptime(date_added, "%Y-%m-%d")
+                    dt = datetime.strptime(date_added, "%Y-%m-%d")  # noqa: DTZ007
                     published_ts = dt.timestamp()
                 except Exception as e:
                     logger.debug(f"[CISA KEV] Date parse error for {cve_id}: {e}")
@@ -729,7 +730,7 @@ async def scrape_pastebin_for_keyword(
     FIXED: await asyncio.sleep() (previous bug was sync sleep).
     """
     results: list[dict] = []
-    _UA = "Mozilla/5.0 (Macintosh; ARM Mac OS X 14_0) AppleWebKit/605.1.15"
+    _UA = "Mozilla/5.0 (Macintosh; ARM Mac OS X 14_0) AppleWebKit/605.1.15"  # noqa: N806
     try:
         s = await async_get_aiohttp_session()
         # Circuit-breaker protected archive page fetch
@@ -1017,7 +1018,7 @@ async def query_rdap(target: str) -> dict:
         elif replay_strict_enabled():
             # Cassette miss in strict mode: fail-soft, no live call
             logger.debug(f"[RDAP] replay miss for {target}, strict mode")
-            return {"error": "replay_miss", "error_type": "replay_miss", "target": target, "rdap": None, "source": "rdap_org"}
+            return {"error": "replay_miss", "error_type": "replay_miss", "target": target, "rdap": None, "source": "rdap_org"}  # noqa: E501
         # Non-strict miss: fall through to live call
 
     is_ip = (
@@ -1178,7 +1179,7 @@ class WaybackArchiveAdapter(SourceAdapter):
 # Sprint 8VF §A.4: Task handler registration via @register_task decorator
 # ---------------------------------------------------------------------------
 
-from hledac.universal.tool_registry import register_task
+from hledac.universal.tool_registry import register_task  # noqa: E402
 
 
 @register_task("domain_to_pdns")
@@ -1210,7 +1211,7 @@ async def _handle_domain_to_pdns(task, scheduler):
                 confidence=0.75,
                 ts=ts_now,
                 provenance=("circl_pdns", task.ioc_value, r.get("ioc", "")),
-                payload_text=f"{r.get('rrtype', '')} {r.get('rrname', '')} first={r.get('time_first', '')} last={r.get('time_last', '')}",
+                payload_text=f"{r.get('rrtype', '')} {r.get('rrname', '')} first={r.get('time_first', '')} last={r.get('time_last', '')}",  # noqa: E501
             )
             findings.append(finding)
 
@@ -1449,7 +1450,7 @@ async def _handle_i2p_eepsite_fetch(task, scheduler):
 
 # ── IPFS CONTENT ──────────────────────────────────────────────────────────────
 
-import re as _cid_re_mod
+import re as _cid_re_mod  # noqa: E402
 
 _CID_PATTERN = _cid_re_mod.compile(r'\b(Qm[1-9A-HJ-NP-Za-km-z]{44}|b[a-z2-7]{58})\b')
 
@@ -1774,9 +1775,10 @@ async def _handle_usenet_search(task, scheduler):
 
 # ── BGP ROUTING + ASN LOOKUP ─────────────────────────────────────────────────
 
-import re as _ip_re_mod
+import re as _ip_re_mod  # noqa: E402
 
-from utils.async_helpers import safe_gather_dropin
+from utils.async_helpers import safe_gather_dropin  # noqa: E402
+
 _IP_PATTERN = _ip_re_mod.compile(r'^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$')
 
 

@@ -28,8 +28,8 @@ from hledac.universal.transport.circuit_breaker import (
     domain_breaker_check,
     get_breaker,
 )
-
 from utils.async_helpers import safe_gather_dropin
+
 logger = logging.getLogger(__name__)
 
 # CID extraction pattern — matches Qm (v0, base58, 44 chars) and
@@ -299,7 +299,6 @@ async def resolve_ipns(name: str, timeout: int = IPNS_TIMEOUT) -> str | None:
                 session, url, failure_kind="ipns_resolve"
             )
             if err is None and resp is not None and resp.status == 200:
-                import json as _json
 
                 data = await resp.json()
                 # Response: {"Path": "/ipfs/<cid>"}
@@ -358,7 +357,6 @@ async def fetch_directory_recursive(
     for name, gateway_base in IPFS_GATEWAYS:
         try:
             # Try to fetch directory listing (dag.json or UnixFS directory)
-            url = f"{gateway_base}{cid}"
             client_timeout = aiohttp.ClientTimeout(total=20)
 
             host = _host_from_url(gateway_base)
@@ -379,7 +377,6 @@ async def fetch_directory_recursive(
                     api_session, api_url, failure_kind="ipfs_dir_ls"
                 )
             if err is None and resp is not None and resp.status == 200:
-                import json as _json
 
                 data = await resp.json()
                 objects = data.get("Objects", [])
@@ -436,7 +433,6 @@ async def find_via_ipfs_search(query: str) -> list[str]:
 
     try:
         client_timeout = aiohttp.ClientTimeout(total=IPFS_SEARCH_TIMEOUT)
-        params = {"q": query, "size": MAX_SEARCH_RESULTS}
 
         host = _host_from_url(IPFS_SEARCH_GATEWAY)
         session = await _get_ipfs_session(host, timeout=client_timeout)
@@ -480,11 +476,10 @@ async def search_via_estuary(query: str) -> list[str]:
     seen: set[str] = set()
 
     # Public Estuary search endpoint
-    ESTUARY_SEARCH: str = "https://api.estuary.tech/public/search"
+    ESTUARY_SEARCH: str = "https://api.estuary.tech/public/search"  # noqa: N806
 
     try:
         client_timeout = aiohttp.ClientTimeout(total=IPFS_SEARCH_TIMEOUT)
-        params = {"query": query}
 
         host = _host_from_url(ESTUARY_SEARCH)
         session = await _get_ipfs_session(host, timeout=client_timeout)
@@ -536,7 +531,6 @@ async def ipfs_directory_as_findings(
         return []
 
     findings: list = []
-    import time as _time
 
     for entry in entries:
         entry_cid = entry.get("cid", "")
@@ -544,7 +538,7 @@ async def ipfs_directory_as_findings(
             continue  # Skip directories, only files
 
         finding_id = f"ipfs-dir-{entry_cid[:12]}-{_time.time_ns()}"
-        payload = f"Path: {entry.get('path', '')}\nSize: {entry.get('size', 0)} bytes\nType: {entry.get('type', 'file')}"
+        payload = f"Path: {entry.get('path', '')}\nSize: {entry.get('size', 0)} bytes\nType: {entry.get('type', 'file')}"  # noqa: E501
 
         finding = CanonicalFinding(
             finding_id=finding_id,
@@ -737,7 +731,6 @@ def ipfs_content_to_finding_dict(
     Returns:
         Finding dict with all required CanonicalFinding fields.
     """
-    import time as _time
 
     content_text = content.decode("utf-8", errors="replace") if isinstance(content, bytes) else content
 
@@ -749,7 +742,7 @@ def ipfs_content_to_finding_dict(
 
     provenance: tuple[str, ...] = (f"ipfs://{cid}",)
     if gateway:
-        provenance = provenance + (f"https://{gateway}.ipfs.example/{cid}" if not gateway.startswith("http") else f"{gateway}/{cid}",)
+        provenance = provenance + (f"https://{gateway}.ipfs.example/{cid}" if not gateway.startswith("http") else f"{gateway}/{cid}",)  # noqa: E501
 
     return {
         "finding_id": finding_id,
@@ -851,7 +844,7 @@ async def fetch_findings_from_cids(
                 async with asyncio.timeout(timeout_per_cid):
                     results = await ipfs_fetch_as_findings(cid, query)
                 return results[0] if results else None
-            except (asyncio.TimeoutError, Exception) as e:
+            except (TimeoutError, Exception) as e:
                 logger.debug("IPFS CID %s skip: %s", cid[:8], type(e).__name__)
                 return None
 

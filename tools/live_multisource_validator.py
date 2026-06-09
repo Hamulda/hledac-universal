@@ -399,7 +399,7 @@ def _extract_acquisition_prelude(data: dict) -> dict:
       - acquisition_report: data["acquisition_report"]["acquisition_prelude"]
       - canonical_run_summary: data["canonical_run_summary"]["acquisition_prelude"]
     """
-    NONE = object()  # sentinel for "not found"
+    NONE = object()  # sentinel for "not found"  # noqa: N806
 
     def _getnested(container: dict, *keys) -> tuple:
         """Walk nested keys, return (value, found_bool)."""
@@ -562,7 +562,7 @@ def _extract_guard_fields(data: dict) -> tuple:
                 scheduler_exit = sc_exit.get("exit_path")
     return windup_count, windup_reason, windup_not_applicable, return_guard_checked, scheduler_exit
 
-def _failures_from_dict(data: dict, profile: str, query_type: str, allow_hardware_constrained: bool) -> list[ValidationFailure]:
+def _failures_from_dict(data: dict, profile: str, query_type: str, allow_hardware_constrained: bool) -> list[ValidationFailure]:  # noqa: E501
     failures: list[ValidationFailure] = []
     failures_append = failures.append
 
@@ -576,7 +576,7 @@ def _failures_from_dict(data: dict, profile: str, query_type: str, allow_hardwar
     sf_outcomes = _extract_source_family_outcomes(acq_report, data)
     branch_mix = _extract_branch_mix(data)
     term_checked, term_satisfied, missing_lanes = _extract_terminality_fields(data)
-    windup_count, windup_reason, windup_not_applicable, return_guard_checked, scheduler_exit = _extract_guard_fields(data)
+    windup_count, windup_reason, windup_not_applicable, return_guard_checked, scheduler_exit = _extract_guard_fields(data)  # noqa: E501
     live_kpi = _extract_live_kpi(data)
 
     # ── F209B: Acquisition Prelude awareness ────────────────────────────────
@@ -611,12 +611,12 @@ def _failures_from_dict(data: dict, profile: str, query_type: str, allow_hardwar
         if (prelude_checked is True
                 and prelude_missing_lanes is not None and len(prelude_missing_lanes) == 0
                 and prelude_terminal_lanes is not None and missing_lanes is not None):
-            MUST_TERMINAL = frozenset(["PUBLIC", "CT"])
+            MUST_TERMINAL = frozenset(["PUBLIC", "CT"])  # noqa: N806
             prelude_has_mandatory = MUST_TERMINAL.intersection(
-                l.upper() for l in prelude_terminal_lanes if isinstance(l, str)
+                l.upper() for l in prelude_terminal_lanes if isinstance(l, str)  # noqa: E741
             )
             final_has_mandatory = MUST_TERMINAL.intersection(
-                l.upper() for l in missing_lanes if isinstance(l, str)
+                l.upper() for l in missing_lanes if isinstance(l, str)  # noqa: E741
             )
             if prelude_has_mandatory and final_has_mandatory:
                 # Prelude said these lanes terminal, but final says they're still missing
@@ -806,7 +806,7 @@ def _failures_from_dict(data: dict, profile: str, query_type: str, allow_hardwar
 
     # ── F207K: Public acceptance KPI checks ──────────────────────────────
     verdict_kpi, msg_kpi = _check_public_acceptance_kpi(data, _get_safe)
-    if verdict_kpi is not None and verdict_kpi in (Verdict.FAIL_PUBLIC_ACCEPTANCE_KPI, Verdict.WARN_PUBLIC_ACCEPTANCE_KPI):
+    if verdict_kpi is not None and verdict_kpi in (Verdict.FAIL_PUBLIC_ACCEPTANCE_KPI, Verdict.WARN_PUBLIC_ACCEPTANCE_KPI):  # noqa: E501
         failures_append(ValidationFailure(
             verdict_kpi,
             f"public_acceptance_kpi: {msg_kpi}",
@@ -847,7 +847,7 @@ def _check_public_acceptance_kpi(data: dict, _get=_get_safe) -> tuple[Verdict | 
     WARN: next_action not in VALID_NEXT_ACTIONS
     INFO: public_acceptance_* absent (non-public report)
     """
-    VALID_NEXT_ACTIONS = {
+    VALID_NEXT_ACTIONS = {  # noqa: N806
         "PROCEED", "RETRY", "ABORT", "ESCALATE",
         "DEGRADE", "SKIP_PUBLIC", "NONFEED_ONLY",
         "fix_scheduler_return_guard_not_called",
@@ -994,7 +994,7 @@ def emit_markdown(result: ValidationResult, output_path: str | Path) -> None:
         f"**Pass:** {'✅ YES' if result.overall == Verdict.PASS_MULTISOURCE_TERMINALITY else '❌ NO'}",
         f"**Validated at:** {result.metadata.get('validated_at', 'unknown')}",
         f"**Input file:** `{result.metadata.get('input_file', 'unknown')}`",
-        f"**Profile:** {result.metadata.get('profile', 'unknown')} | **Query type:** {result.metadata.get('query_type', 'unknown')}",
+        f"**Profile:** {result.metadata.get('profile', 'unknown')} | **Query type:** {result.metadata.get('query_type', 'unknown')}",  # noqa: E501
         f"**Run ID:** `{result.metadata.get('run_id', 'unknown')}`",
         "",
         "## Failures",
@@ -1028,7 +1028,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--output-md", help="Path to write verdict Markdown report")
     parser.add_argument("--profile", default="active300", help="Profile name (default: active300)")
     parser.add_argument("--query-type", default="domain", help="Query type: domain, identity, leak (default: domain)")
-    parser.add_argument("--allow-hardware-constrained", action="store_true", help="Allow hardware-constrained runs to pass")
+    parser.add_argument("--allow-hardware-constrained", action="store_true", help="Allow hardware-constrained runs to pass")  # noqa: E501
     args = parser.parse_args(argv)
     try:
         result = validate_live_artifact(

@@ -49,6 +49,7 @@ class TestF21PhashFallback:
     @staticmethod
     def _make_image_bytes(width=200, height=200, color=(120, 80, 40)):
         import io
+
         from PIL import Image
         buf = io.BytesIO()
         Image.new("RGB", (width, height), color).save(buf, "PNG")
@@ -95,6 +96,7 @@ class TestF21PhashFallback:
     async def test_encode_batch_fallback_uses_phash(self, mock_governor):
         """encode_batch() in dummy mode uses deterministic pHash, not random noise."""
         import io
+
         from PIL import Image
         enc = VisionEncoder(mock_governor, model_path=None, embedding_dim=1024)
         await enc.load()  # no model file → model stays None

@@ -56,7 +56,7 @@ def refresh_macos_webkit_capability() -> tuple[bool, str]:
 # --------------------------------------------------------------------------
 # Reason taxonomy — used in WebKitRenderResult.reason and telemetry
 # --------------------------------------------------------------------------
-class MACOS_WEBKIT_REASONS:
+class MACOS_WEBKIT_REASONS:  # noqa: N801
     UNAVAILABLE = "macos_webkit_unavailable"
     NON_DARWIN = "macos_webkit_non_darwin"
     PYOBJC_MISSING = "macos_webkit_pyobjc_missing"
@@ -343,7 +343,7 @@ async def fetch_with_macos_webkit(
                 ok_flag = result.get("ok", False)
                 html = result.get("html") or None
                 rendered_bytes = result.get("rendered_bytes", 0)
-                reason = result.get("reason", MACOS_WEBKIT_REASONS.SUCCESS if ok_flag else MACOS_WEBKIT_REASONS.WORKER_ERROR)
+                reason = result.get("reason", MACOS_WEBKIT_REASONS.SUCCESS if ok_flag else MACOS_WEBKIT_REASONS.WORKER_ERROR)  # noqa: E501
 
                 # When ok=False (e.g. max_bytes exceeded), pass through reason even if html is None
                 if not ok_flag:

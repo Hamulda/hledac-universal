@@ -145,7 +145,7 @@ class FederatedQTable:
         alpha: float = 0.1,
         gamma: float = 0.9,
         max_entries: int = MAX_QTABLE_ENTRIES,
-    ) -> "FederatedQTable":
+    ) -> FederatedQTable:
         """Deserialize from the to_dict() format. Best-effort, never raises."""
         try:
             qt = cls(alpha=alpha, gamma=gamma, max_entries=max_entries)

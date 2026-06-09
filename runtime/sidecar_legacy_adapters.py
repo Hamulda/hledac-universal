@@ -52,10 +52,10 @@ logger = logging.getLogger(__name__)
 # Lazy weak reference holder: SidecarOrchestrator sets this once at __init__.
 # We avoid a hard import of SprintScheduler to prevent a circular dep at
 # module load (sprint_scheduler imports sidecar_orchestrator).
-_scheduler_ref: "SprintScheduler | None" = None
+_scheduler_ref: SprintScheduler | None = None
 
 
-def bind_scheduler(scheduler: "SprintScheduler | None") -> None:
+def bind_scheduler(scheduler: SprintScheduler | None) -> None:
     """Bind the live SprintScheduler instance for delegation.
 
     Called by `SidecarOrchestrator.__init__`. Idempotent. Pass `None` to

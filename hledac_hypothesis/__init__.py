@@ -90,7 +90,7 @@ def __getattr__(name: str) -> Any:
             mod[name] = val
             return val
         except ImportError:
-            raise AttributeError(f"module {__name__!r} has no attr {name!r}")
+            raise AttributeError(f"module {__name__!r} has no attr {name!r}")  # noqa: B904
 
     raise AttributeError(f"module {__name__!r} has no attr {name!r}")
 

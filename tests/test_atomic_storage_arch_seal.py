@@ -85,7 +85,7 @@ def _scan_file(path: Path) -> list[ImportFinding]:
         return findings
 
     # Pattern: matches any import of the deprecated shim
-    UNIVERSAL_RE = r"hledac\.universal\.knowledge\.atomic_storage"
+    UNIVERSAL_RE = r"hledac\.universal\.knowledge\.atomic_storage"  # noqa: N806
     pattern = re.compile(
         rf"""
         ^\s*(?:from\s+(?:{UNIVERSAL_RE}|.*\.knowledge\.atomic_storage)\s+import\b

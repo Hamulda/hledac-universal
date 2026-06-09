@@ -24,12 +24,11 @@ import time
 from collections import deque
 from collections.abc import Callable
 
-from utils.async_helpers import safe_gather_dropin
-
 import lmdb
 
 # Sprint 41: zstd compression — re-exported from tools/zstd_compressor
 from hledac.universal.tools.zstd_compressor import ZstdCompressor
+from utils.async_helpers import safe_gather_dropin
 
 try:
     import zstandard as zstd
@@ -105,10 +104,10 @@ def _create_dedup_strategy():
     return RotatingBloomFilterAdapter(create_rotating_bloom_filter())
 
 
-from ..utils.async_helpers import async_getaddrinfo
+from ..utils.async_helpers import async_getaddrinfo  # noqa: E402
 
 # Sprint 8C1: Flow trace
-from ..utils.flow_trace import (
+from ..utils.flow_trace import (  # noqa: E402
     is_enabled,
     trace_counter,
     trace_dedup_decision,
@@ -204,13 +203,13 @@ MAX_EVIDENCE_IDS_PER_STEP = 10
 # Darwin F_NOCACHE constants for large file downloads (>50MB)
 # F_NOCACHE = 48 tells the kernel not to cache the file data (optimization for large downloads)
 # LOW-6/LOW-7 fix: moved fcntl import to module level with platform check
-import platform
+import platform  # noqa: E402
 
 NOCACHE_THRESHOLD_BYTES = 50 * 1024 * 1024  # 50MB
 F_NOCACHE = 48 if platform.system() == "Darwin" else None
 
 # Re-exported from tools/file_cache.py for backward compatibility
-from hledac.universal.tools.file_cache import apply_fcntl_nocache as _apply_fcntl_nocache
+from hledac.universal.tools.file_cache import apply_fcntl_nocache as _apply_fcntl_nocache  # noqa: E402
 
 
 def apply_fcntl_nocache(fd: int, content_length: int | None) -> None:
@@ -230,7 +229,7 @@ class FetchCoordinatorConfig:
 
 
 # Sprint 45: Lightpanda Pool — re-exported from tools/lightpanda_pool
-from hledac.universal.tools.lightpanda_pool import LightpandaPool
+from hledac.universal.tools.lightpanda_pool import LightpandaPool  # noqa: E402
 
 
 class FetchCoordinator(UniversalCoordinator):
@@ -391,7 +390,7 @@ class FetchCoordinator(UniversalCoordinator):
         self._aimd_successes: int = 0  # successes since last increase
         self._aimd_failures: int = 0  # consecutive failures
         self._aimd_semaphore: asyncio.Semaphore | None = None  # created on first use
-        self._aimd_semaphore_limit: int = int(CONCURRENCY_CLEARNET)  # P1-3: track limit explicitly (avoid _value private API)
+        self._aimd_semaphore_limit: int = int(CONCURRENCY_CLEARNET)  # P1-3: track limit explicitly (avoid _value private API)  # noqa: E501
         self._aimd_lock = asyncio.Lock()
 
         # Sprint 4B: Telemetry state
@@ -514,7 +513,7 @@ class FetchCoordinator(UniversalCoordinator):
         # P2-1: Evict stale entries if dict grows too large
         if len(self._domain_failures) > 1000:
             cutoff = time.time() - (24 * 3600)  # 24 hours
-            stale_domains = [d for d, ts in self._domain_failure_timestamps.items() if ts < cutoff and d not in self._domain_blocked_until]
+            stale_domains = [d for d, ts in self._domain_failure_timestamps.items() if ts < cutoff and d not in self._domain_blocked_until]  # noqa: E501
             for d in stale_domains[:len(stale_domains) // 2]:
                 self._domain_failures.pop(d, None)
                 self._domain_failure_timestamps.pop(d, None)
@@ -1271,7 +1270,7 @@ class FetchCoordinator(UniversalCoordinator):
                 if not canonical_allowed:
                     # F206AS: Update active count on each canonical circuit breaker hit
                     self._telemetry['circuit_breaker_active'] = len(self.get_blocked_domains())
-                    logger.debug(f"[F206AS] Canonical circuit breaker open for {domain}: {canonical_reason} (retry in {canonical_retry_after:.1f}s)")
+                    logger.debug(f"[F206AS] Canonical circuit breaker open for {domain}: {canonical_reason} (retry in {canonical_retry_after:.1f}s)")  # noqa: E501
                     trace_fetch_end(url, "circuit_breaker", "circuit_open", 0.0)
                     result = None
                     break
@@ -1291,7 +1290,7 @@ class FetchCoordinator(UniversalCoordinator):
                     is_safe, meta = await self._validate_fetch_target(url)
                     if not is_safe:
                         logger.warning(f"DNS rebinding defense blocked: {meta.get('blocked_reason')} for {domain}")
-                        trace_fetch_end(url, "dns_rebind_defense", "blocked", 0.0, {"reason": meta.get("blocked_reason")})
+                        trace_fetch_end(url, "dns_rebind_defense", "blocked", 0.0, {"reason": meta.get("blocked_reason")})  # noqa: E501
                         result = {"error": "blocked", "blocked_reason": meta.get("blocked_reason"), "meta": meta}
                         break
 
@@ -1400,10 +1399,10 @@ class FetchCoordinator(UniversalCoordinator):
                             # Sprint 4B: Hardcoded 3s for preview (within clearnet HTML class)
                             preview_timeout = aiohttp.ClientTimeout(total=3)
                             async with aiohttp.ClientSession(timeout=preview_timeout) as session:
-                                async with session.head(url, allow_redirects=True, cookies=session_cookies) as resp:
+                                async with session.head(url, allow_redirects=True, cookies=session_cookies) as resp:  # noqa: B023
                                     content_type = resp.headers.get('content-type', '')
                                     if content_type.startswith('text/html'):
-                                        async with session.get(url, cookies=session_cookies) as get_resp:
+                                        async with session.get(url, cookies=session_cookies) as get_resp:  # noqa: B023
                                             text = await get_resp.text()
                                             return text[:10000] if text else ""
                                     return ""

@@ -50,7 +50,8 @@ from __future__ import annotations
 
 import array
 import logging
-from typing import TYPE_CHECKING, Any, Mapping, Sequence
+from collections.abc import Mapping, Sequence
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     pass
@@ -77,9 +78,15 @@ build_layout_rust: Any = None
 try:
     from hledac_rust_extensions import (  # type: ignore[import-not-found]
         IntCounterLayoutRust as _RustLayout,
-        bulk_bump_aggregate as _bulk_bump,
-        bulk_snapshot_dict as _bulk_snap,
+    )
+    from hledac_rust_extensions import (
         build_layout as _build_rust,
+    )
+    from hledac_rust_extensions import (
+        bulk_bump_aggregate as _bulk_bump,
+    )
+    from hledac_rust_extensions import (
+        bulk_snapshot_dict as _bulk_snap,
     )
     IntCounterLayoutRust = _RustLayout
     bulk_bump_aggregate = _bulk_bump

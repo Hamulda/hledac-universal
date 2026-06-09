@@ -13,7 +13,7 @@ def check_import(module_path: str, name: str) -> bool:
         text=True,
     )
     # Filter warnings from output
-    stderr_lines = [l for l in result.stderr.split('\n')
+    stderr_lines = [l for l in result.stderr.split('\n')  # noqa: E741
                    if l and not l.startswith('WARNING:') and not l.startswith('UserWarning')]
     stderr = '\n'.join(stderr_lines).strip()
 
