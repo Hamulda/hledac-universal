@@ -51,19 +51,20 @@ def __getattr__(name: str):
 
 
 # Task handler registry (unchanged — pure decorator pattern)
-_TASK_HANDLERS: dict[str, callable] = {}
+from collections.abc import Callable
+_TASK_HANDLERS: dict[str, Callable] = {}
 _HANDLERS_LOADED: bool = False
 
 
-def register_task(task_type: str) -> callable:
+def register_task(task_type: str) -> Callable:
     """Decorator for registering task handlers."""
-    def decorator(fn: callable) -> callable:
+    def decorator(fn: Callable) -> Callable:
         _TASK_HANDLERS[task_type] = fn
         return fn
     return decorator
 
 
-def get_task_handler(task_type: str) -> callable | None:
+def get_task_handler(task_type: str) -> Callable | None:
     """Lazy-load handlers on first call."""
     global _HANDLERS_LOADED
     if not _HANDLERS_LOADED:

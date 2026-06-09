@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -107,7 +108,15 @@ class LanguageDetector:
         if FAST_LANGDETECT_AVAILABLE:
             try:
                 result = fast_detect(text)
-                return result
+                # fast-langdetect can return either str ("en") or list[dict]
+                # depending on version; normalize to str language code.
+                if isinstance(result, str):
+                    return result
+                if isinstance(result, list) and result:
+                    first = result[0]
+                    if isinstance(first, dict) and "lang" in first:
+                        return str(first["lang"])
+                return "unknown"
             except Exception as e:
                 logger.warning(f"fast-langdetect failed: {e}, using fallback")
 
@@ -233,7 +242,7 @@ class FastLangDetector:
         """Initialize the fast language detector."""
         self._detector = LanguageDetector(fallback_mode=True)
 
-    def detect(self, text: str, *, max_chars: int = 4000) -> dict[str, any]:
+    def detect(self, text: str, *, max_chars: int = 4000) -> dict[str, Any]:
         """
         Detect language with bounded output.
 
@@ -292,7 +301,7 @@ class FastLangDetector:
             "lang_hash": lang_hash,
         }
 
-    def _default_result(self) -> dict[str, any]:
+    def _default_result(self) -> dict[str, Any]:
         """Return default result for insufficient text or error."""
         return {
             "lang": "und",
@@ -301,7 +310,7 @@ class FastLangDetector:
             "lang_hash": "00000000",
         }
 
-    def is_cross_language_comparable(self, result1: dict[str, any], result2: dict[str, any]) -> bool:
+    def is_cross_language_comparable(self, result1: dict[str, Any], result2: dict[str, Any]) -> bool:
         """
         Determine if two language detection results are comparable.
 

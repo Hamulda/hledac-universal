@@ -624,7 +624,7 @@ class HypothesisEngine:
 
         # Hypothesis storage
         self._hypotheses: dict[str, Hypothesis] = {}
-        self._evidence: Ordereddict[str, Evidence] = OrderedDict()
+        self._evidence: OrderedDict[str, Evidence] = OrderedDict()
 
         # Test design templates
         self._test_templates: dict[str, Callable[[Hypothesis], TestDesign]] = {}
@@ -634,7 +634,7 @@ class HypothesisEngine:
         self._adversarial_verifier: AdversarialVerifier | None = None
 
         # Source credibility tracking for adversarial verification (bounded)
-        self._source_credibility_cache: Ordereddict[str, SourceCredibility] = OrderedDict()
+        self._source_credibility_cache: OrderedDict[str, SourceCredibility] = OrderedDict()
 
         # Statistics
         self._stats = {

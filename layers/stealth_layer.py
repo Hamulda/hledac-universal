@@ -17,8 +17,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import random
-import time
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
@@ -2538,7 +2536,6 @@ class StealthLayer:
 import ctypes  # noqa: E402
 import ctypes.util  # noqa: E402
 import os  # noqa: E402
-import sys  # noqa: E402
 
 
 class Chameleon:

@@ -86,7 +86,7 @@ class TransportResult:
     All fields have defaults so existing callers are unaffected.
     """
     # Core response
-    url: str
+    url: str = ""  # default allows error-path construction without url
     final_url: str = ""
     status_code: int = 0
     content_type: str = ""

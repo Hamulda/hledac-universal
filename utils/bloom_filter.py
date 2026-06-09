@@ -39,12 +39,17 @@ logger = logging.getLogger(__name__)
 MAX_HASH_CACHE_SIZE = 10_000
 
 # Optional xxhash for faster hashing (Fix 3)
+#
+# We type `xxhash` as `Any` (not `ModuleType | None`) so attribute access
+# like `xxhash.xxh64(...)` stays statically valid — `Any` carries every
+# attribute, matching the runtime `xxhash.xxh64` shape. Runtime code is
+# gated on `XXHASH_AVAILABLE`; the type stays permissive on purpose.
 try:
-    import xxhash
+    import xxhash  # type: ignore[import-not-found]
     XXHASH_AVAILABLE = True
 except ImportError:
-    xxhash = None
     XXHASH_AVAILABLE = False
+    xxhash: Any = None
 
 # Rust extension import guard — F259/F260 sprint invariant.
 # If hledac_rust_extensions is not compiled (e.g. fresh checkout without maturin
@@ -54,8 +59,12 @@ _RustBloomFilter: type | None = None
 _RUST_BLOOM_AVAILABLE = False
 try:
     import hledac_rust_extensions as _rust  # type: ignore[import]
-    _RustBloomFilter = _rust.BloomFilter
-    _RUST_BLOOM_AVAILABLE = True
+    # ty: The `type: ignore[import]` cascade strips static member resolution
+    # for `_rust.BloomFilter` — ty reports it as `unresolved-attribute`.
+    # Use `getattr` to keep the runtime fallback safe and the static check
+    # silent. The .pyi stub declares `BloomFilter` correctly.
+    _RustBloomFilter = getattr(_rust, "BloomFilter", None)
+    _RUST_BLOOM_AVAILABLE = _RustBloomFilter is not None
 except ImportError:
     _RustBloomFilter = None
     _RUST_BLOOM_AVAILABLE = False
@@ -163,7 +172,8 @@ class BloomFilter:
         """Get bit at position."""
         byte_index = position // 8
         bit_index = position % 8
-        return (self._byte_array[byte_index] >> bit_index) & 1
+        # ty: `& 1` returns int; declared return type is bool. Wrap explicitly.
+        return bool((self._byte_array[byte_index] >> bit_index) & 1)
 
     def add(self, item: str) -> None:
         """

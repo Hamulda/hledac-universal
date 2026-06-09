@@ -659,9 +659,10 @@ def extract_static_hydration(
         sufficient, reason = _is_sufficient(info)
         if sufficient:
             # Build composite text: title + body
-            parts = []
-            if info.get("title"):
-                parts.append(info["title"])
+            parts: list[str] = []
+            title = info.get("title")
+            if title and isinstance(title, str):
+                parts.append(title)
             body = info.get("body") or info.get("description", "")
             if body:
                 parts.append(body)

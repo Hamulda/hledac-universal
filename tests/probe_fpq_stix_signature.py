@@ -92,9 +92,18 @@ def test_stix_bundle_pq_signing_path_called():
     bundle = _fake_report()
     # patch the async backend getter to return our fake
     with patch("export.stix_exporter._get_pq_backend_async") as mock_get:
+        # Python 3.10+ idiomatic: `asyncio.sleep(0, result=X)` is a 1-line
+        # awaitable that resolves to X — replaces deprecated
+        # `asyncio.coroutine(lambda: X)()` (removed in Python 3.11).
         mock_get.return_value = asyncio.get_event_loop().run_until_complete(
             asyncio.gather(
-                asyncio.coroutine(lambda: (FakePQBackend(), type("S", (), {"availability": PQAvailability.AVAILABLE})()))(),  # noqa: E501
+                asyncio.sleep(
+                    0,
+                    result=(
+                        FakePQBackend(),
+                        type("S", (), {"availability": PQAvailability.AVAILABLE})(),
+                    ),
+                ),
                 return_exceptions=True,
             )
         )[0]

@@ -17,11 +17,12 @@ import math
 from typing import Any
 
 try:
-    from brain.evidence_fusion import DempsterShafer
+    from brain.evidence_fusion import DempsterShafer  # type: ignore[import-not-found]
     _DS_AVAILABLE = True
 except ImportError:
-    DempsterShafer = None
     _DS_AVAILABLE = False
+    # ty: invalid-assignment is the correct code for "None not assignable to <class>"
+    DempsterShafer = None  # type: ignore
 
 
 class EIGCalculator:

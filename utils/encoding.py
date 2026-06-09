@@ -38,7 +38,7 @@ def _try_charset_normalizer(raw: bytes) -> str | None:
     Bounded: at most _MAX_CANDIDATES attempts.
     """
     try:
-        from charset_normalizer import from_bytes  # type: ignore
+        from charset_normalizer import from_bytes
     except ImportError:
         return None
     try:

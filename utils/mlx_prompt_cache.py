@@ -20,7 +20,7 @@ class MLXPromptCache:
     """LRU cache for MLX prompt cache states with explicit size tracking."""
 
     def __init__(self, max_entries: int = 10, max_size_gb: float | None = None):
-        self._cache: Ordereddict[str, tuple[list, int]] = OrderedDict()  # (cache_state, size_bytes)
+        self._cache: OrderedDict[str, tuple[list, int]] = OrderedDict()  # (cache_state, size_bytes)
         self._max_entries = max_entries
         self._lock = asyncio.Lock()
         self._hits = 0

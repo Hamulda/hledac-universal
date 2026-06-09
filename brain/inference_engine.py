@@ -420,8 +420,8 @@ class InferenceEngine:
         self._thread_pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
 
         # Evidence storage (bounded with LRU eviction)
-        self._evidence: Ordereddict[str, Evidence] = OrderedDict()
-        self._evidence_graph: Ordereddict[str, set[str]] = OrderedDict()
+        self._evidence: OrderedDict[str, Evidence] = OrderedDict()
+        self._evidence_graph: OrderedDict[str, set[str]] = OrderedDict()
         self._inference_rules: list[InferenceRule] = []
 
         # Internal counters for bounded operations

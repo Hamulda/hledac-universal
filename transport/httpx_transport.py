@@ -27,6 +27,10 @@ import os
 import re
 import socket
 import urllib.parse
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    import httpx  # used only in annotations — actual import is lazy inside fetch_via_httpx_h2
 
 from ..utils.async_helpers import async_getaddrinfo
 
@@ -362,7 +366,7 @@ async def fetch_via_httpx_h2(
     timeout_s: float = 20.0,
     _max_bytes: int = 2 * 1024 * 1024,  # noqa: F841  # reserved; body cap deferred — see TRANSPORT_COMMON_POLICY_AUDIT.md
     _max_redirects: int = 10,
-) -> httpx.Response:  # type: ignore[name-defined]  # httpx imported lazily inside
+) -> "httpx.Response":  # TYPE_CHECKING-only import at top; lazy real import below
     """
     Execute HTTP GET via HTTPX AsyncClient (HTTP/2 capable).
 

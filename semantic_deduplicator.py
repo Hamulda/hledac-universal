@@ -155,7 +155,7 @@ class SemanticDedupCache:
 
     def __init__(self, lmdb_path: str | None = None):
         # LRU cache: key = text, value = embedding (np.ndarray float32 256d)
-        self._cache: Ordereddict[str, np.ndarray] = OrderedDict()
+        self._cache: OrderedDict[str, np.ndarray] = OrderedDict()
         self._cache_memory_bytes: int = 0
 
         # Persistent LMDB store

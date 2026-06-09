@@ -9,6 +9,7 @@ OCR/metadata extraction timeout + fail-soft throughout.
 
 Integration:
     from multimodal.evidence_triage import EvidenceTriageCoordinator
+from PIL import Image
 
     coordinator = EvidenceTriageCoordinator(governor=None)
     await coordinator.initialize()

@@ -107,7 +107,10 @@ _counters: dict[str, int] = {}
 def _get_trace_root() -> Path:
     """Get trace output directory with fallbacks."""
     try:
-        from ..paths import RUNS_ROOT
+        # Absolute import avoids the `..paths` 2-level hop that ty cannot resolve
+        # from inside `utils/flow_trace.py` when running with the project root
+        # configured as `hledac/universal/`.
+        from hledac.universal.paths import RUNS_ROOT  # type: ignore[import-not-found]
         root = RUNS_ROOT
         root.mkdir(parents=True, exist_ok=True)
         return root

@@ -13,6 +13,8 @@ Rules:
 
 from __future__ import annotations
 
+from typing import Any, cast
+
 
 def clamp_confidence(value: object, default: float = 0.5) -> float:
     """
@@ -22,8 +24,9 @@ def clamp_confidence(value: object, default: float = 0.5) -> float:
     """
     if value is None:
         return default
+    # ty: float() rejects `~None` even after the None check; cast to Any to bypass
     try:
-        f = float(value)  # type: ignore[arg-type]
+        f = float(cast(Any, value))
     except (TypeError, ValueError):
         return default
     return max(0.0, min(1.0, f))
@@ -40,13 +43,15 @@ def sqs_to_confidence(score_0_90: object) -> float:
     """
     if score_0_90 is None:
         return 0.5
+    # ty: int() rejects `~None` even after the None check; cast to Any to bypass
     try:
-        score = int(score_0_90)  # type: ignore[arg-type]
+        score_any = int(cast(Any, score_0_90))
     except (TypeError, ValueError):
         return 0.5
-    # Clamp to [0, 90] before mapping
-    score = max(0, min(90, score))
-    return score / 90.0
+    # Clamp to [0, 90] before mapping; mmh3/int can return int|float on backends
+    score_i: int = int(score_any) if isinstance(score_any, (int, float)) else 0
+    score_i = max(0, min(90, score_i))
+    return score_i / 90.0
 
 
 def normalize_source_quality(score: int | float | None) -> float:

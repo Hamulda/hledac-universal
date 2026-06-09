@@ -34,7 +34,11 @@ class NymTransport(Transport):
                  websocket_port: int = 1977, max_queue_size: int = 100):
         # Lazy import check - raise RuntimeError if dependencies unavailable
         try:
-            import websockets
+            # ty: `websockets` is an optional transport dep installed via the
+            # `[nym]` extra. Suppress the unresolved-import check at the
+            # `type: ignore` (no specific rule) level — `websockets` is
+            # imported in a try/except for runtime availability anyway.
+            import websockets  # type: ignore
         except ImportError:
             raise RuntimeError("NymTransport unavailable: missing websockets")  # noqa: B904
 
@@ -103,9 +107,16 @@ class NymTransport(Transport):
             raise RuntimeError("Nym client websocket not available after 10s")
 
         async def wait_for_self_address():
+            # ty: self.websocket is `WebsocketClientProtocol | None` at the
+            # class level. After the 10-retry connect loop above it is
+            # guaranteed to be set (loop breaks on success, `else` raises).
+            # Rebind to a local so ty sees a non-Optional type.
+            ws = self.websocket
+            if ws is None:
+                raise RuntimeError("Nym websocket unavailable after connect loop")
             while True:
                 async with asyncio.timeout(5.0):
-                    response = await self.websocket.recv()
+                    response = await ws.recv()
                 data = json.loads(response)
                 if data.get('type') == 'selfAddress':
                     return data['address']
@@ -201,7 +212,13 @@ class NymTransport(Transport):
             msg_id = None
             try:
                 msg_id, msg = await self._outgoing_queue.get()
-                await self.websocket.send(json.dumps(msg))
+                # ty: self.websocket is `None` until start() succeeds. The
+                # _sender_loop is only created after `_ready.set()` in start(),
+                # so a non-None binding is invariant. Rebind for narrowing.
+                ws = self.websocket
+                if ws is None:
+                    raise RuntimeError("Nym websocket unavailable in sender loop")
+                await ws.send(json.dumps(msg))
                 self._outgoing_queue.task_done()
             except asyncio.CancelledError:
                 break
@@ -216,7 +233,12 @@ class NymTransport(Transport):
     async def _receiver_loop(self):
         while not self._stop_event.is_set():
             try:
-                response = await self.websocket.recv()
+                # ty: same invariant as _sender_loop — _receiver_task is
+                # created after `_ready.set()`, so websocket is non-None.
+                ws = self.websocket
+                if ws is None:
+                    raise RuntimeError("Nym websocket unavailable in receiver loop")
+                response = await ws.recv()
                 data = json.loads(response)
                 if data.get('type') == 'received':
                     msg = data['message']

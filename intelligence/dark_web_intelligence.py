@@ -21,7 +21,6 @@ M1 Optimized: Streaming processing, lazy loading, minimal memory footprint
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import io
 import logging
 import os
@@ -35,8 +34,6 @@ from enum import Enum
 from typing import Any, TYPE_CHECKING
 from urllib.parse import urljoin, urlparse
 
-import aiohttp
-import numpy as np
 
 # Try to import socks for Tor support
 try:
@@ -51,7 +48,6 @@ try:
 except ImportError:
     SELECTOLAX_AVAILABLE = False
 
-from ..project_types import RiskLevel
 
 if TYPE_CHECKING:
     from hledac.universal.knowledge.duckdb_store import CanonicalFinding  # noqa: F401
@@ -309,9 +305,9 @@ class DarkWebCrawler:
 
         # Bounded session state (M1 8GB)
         # OrderedDict provides FIFO LRU eviction on insert beyond limit
-        self.discovered_services: Ordereddict[str, HiddenService] = OrderedDict()
-        self.visited_urls: Ordereddict[str, bool] = OrderedDict()
-        self.content_cache: Ordereddict[str, DarkWebContent] = OrderedDict()
+        self.discovered_services: OrderedDict[str, HiddenService] = OrderedDict()
+        self.visited_urls: OrderedDict[str, bool] = OrderedDict()
+        self.content_cache: OrderedDict[str, DarkWebContent] = OrderedDict()
         self.url_queue: asyncio.Queue = asyncio.Queue(maxsize=self.MAX_URL_QUEUE)
 
         # Statistics

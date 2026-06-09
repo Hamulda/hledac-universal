@@ -17,16 +17,11 @@ No CLI arguments are required for normal operation.
 Benchmark mode activates internal probe tests.
 """
 
-from __future__ import annotations
 
 import asyncio
 import contextlib
-import logging
-import os
 import pathlib
 import signal
-import sys
-import time
 import traceback
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
@@ -3343,7 +3338,7 @@ if __name__ == "__main__":
 
 import logging  # noqa: E402
 
-from hledac.universal.utils.async_helpers import (  # noqa: E402
+from utils.async_helpers import (
     safe_gather_dropin,
     safe_gather_fire_and_forget,
     safe_gather_strict,
@@ -3436,6 +3431,7 @@ async def run_warmup(
     # 7. ANE embedder warmup (pouze v sprint hot-path, kde je potřeba)
     if do_ane_warmup:
         try:
+            import orjson
             from hledac.universal.brain.ane_embedder import ANEEmbedder
             ane = ANEEmbedder()
             await ane.warmup()

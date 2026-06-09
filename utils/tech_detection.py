@@ -26,7 +26,7 @@ class TechStackResult:
     confidence: float
     indicators: list[str]
     version: str | None = None
-    additional_tech: list[str] = None
+    additional_tech: list[str] | None = None
 
     def __post_init__(self):
         if self.additional_tech is None:
@@ -162,9 +162,17 @@ class TechStackSignature:
         for framework, config in self.signatures.items():
             matches = 0
             found_indicators = []
+            # Narrow config: ty sees `list[str] | int | float` from broad dict type.
+            # Cast to Any first so subsequent .get() calls don't hit union narrowing issues.
+            config_typed: Any = config
+            raw_indicators = config_typed.get('indicators', [])
+            indicators: list[str] = list(raw_indicators) if isinstance(raw_indicators, list) else []  # type: ignore
+            weight: float = float(config_typed.get('weight', 1.0)) if not isinstance(
+                config_typed.get('weight', 1.0), list
+            ) else 1.0
 
             # Check URL indicators
-            for indicator in config['indicators']:
+            for indicator in indicators:
                 if indicator.lower() in url_lower:
                     matches += 1
                     found_indicators.append(f"url:{indicator}")
@@ -172,7 +180,7 @@ class TechStackSignature:
             # Check content indicators (weight more)
             if content:
                 content_lower = content.lower()
-                for indicator in config['indicators']:
+                for indicator in indicators:
                     if indicator.lower() in content_lower:
                         matches += 2  # Content matches weigh more
                         found_indicators.append(f"content:{indicator}")
@@ -181,15 +189,15 @@ class TechStackSignature:
             if headers:
                 for header_name, header_value in headers.items():
                     header_str = f"{header_name}: {header_value}".lower()
-                    for indicator in config['indicators']:
+                    for indicator in indicators:
                         if indicator.lower() in header_str:
                             matches += 1
                             found_indicators.append(f"header:{indicator}")
 
             # Calculate confidence
             if matches > 0:
-                base_confidence = matches / len(config['indicators'])
-                confidence = min(base_confidence * config['weight'], 1.0)
+                base_confidence = matches / len(indicators)
+                confidence = min(base_confidence * weight, 1.0)
 
                 if confidence > max_confidence:
                     max_confidence = confidence

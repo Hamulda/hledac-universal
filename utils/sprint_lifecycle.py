@@ -42,6 +42,8 @@ from collections.abc import Callable
 from enum import Enum
 from typing import Any
 
+from .uma_budget import UmaWatchdog  # noqa: F401  # used in type hint for self._uma_watchdog
+
 logger = logging.getLogger(__name__)
 
 # =============================================================================
@@ -316,7 +318,9 @@ class SprintLifecycleManager:
         """
         # Lazy import to avoid heavy import on boot path
         try:
-            from ..brain.model_lifecycle import request_emergency_unload
+            # ty: relative import from utils/ → brain/ crosses the package
+            # boundary; use the canonical absolute namespace path.
+            from hledac.universal.brain.model_lifecycle import request_emergency_unload  # type: ignore[import-not-found]
             from .uma_budget import UmaWatchdog, UmaWatchdogCallbacks
         except Exception as e:
             logger.debug(f"[LIFECYCLE] UmaWatchdog import failed: {e}")

@@ -308,7 +308,7 @@ class Hermes3Engine:
             self._prefix_cache_maxsize: int = max(1, _max) if _max is not None else 64
         except (ValueError, TypeError):
             self._prefix_cache_maxsize: int = 64
-        self._prefix_cache: Ordereddict[str, Any] = OrderedDict()  # type: ignore[assignment]
+        self._prefix_cache: OrderedDict[str, Any] = OrderedDict()  # type: ignore[assignment]
         # Telemetry for prefix cache
         self._prefix_cache_stats = {
             "prefix_cache_maxsize": self._prefix_cache_maxsize,

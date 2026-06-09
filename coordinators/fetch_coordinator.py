@@ -20,7 +20,6 @@ import logging
 import os
 import random
 import socket
-import time
 from collections import deque
 from collections.abc import Callable
 
@@ -69,7 +68,6 @@ except ImportError:
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse
 
 from ..tools.url_dedup import DeduplicationStrategy, RotatingBloomFilterAdapter
 from .base import UniversalCoordinator

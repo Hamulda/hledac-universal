@@ -21,6 +21,12 @@ import time
 from dataclasses import dataclass, field
 from urllib.parse import urlparse
 
+try:
+    import aiohttp  # type: ignore[import-untyped]
+except ImportError:  # aiohttp is optional — runtime imports are guarded in methods
+    # ty: invalid-assignment is the correct code for "None not assignable to <module>"
+    aiohttp = None  # type: ignore
+
 logger = logging.getLogger(__name__)
 
 _DEFAULT_TTL_SECONDS = 900  # 15 minutes
@@ -103,8 +109,9 @@ class RobotsParser:
     def _evict_oldest_if_needed(self):
         """LRU eviction: remove oldest entries if cache is full."""
         if len(self._cache) >= self._max_cache_size:
-            # Find oldest entry
-            oldest_key = min(self._cache_access_time, key=self._cache_access_time.get)
+            # Find oldest entry — ty wants explicit Any widening for `.get` key fn
+            access_times: dict[str, float] = self._cache_access_time
+            oldest_key = min(access_times, key=access_times.get)  # type: ignore
             del self._cache[oldest_key]
             del self._cache_access_time[oldest_key]
             logger.debug(f"Cache eviction: removed {oldest_key}")

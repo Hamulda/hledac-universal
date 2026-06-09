@@ -90,23 +90,23 @@ class CacheEntry(msgspec.Struct, frozen=True, gc=False):
 # Optional accelerator: orjson (fast-fallback for msgspec-incompatible types)
 # ---------------------------------------------------------------------------
 try:
-    import orjson
+    import orjson  # type: ignore[import-not-found]
 
     ORJSON_AVAILABLE = True
 except ImportError:  # pragma: no cover — orjson is in default deps
     ORJSON_AVAILABLE = False
-    orjson = None  # type: ignore[assignment]
+    orjson = None  # type: ignore
 
 # ---------------------------------------------------------------------------
 # Optional compression (zstd) — only loaded when available
 # ---------------------------------------------------------------------------
 try:
-    import compression.zstd as _zstd
+    import compression.zstd as _zstd  # type: ignore[import-not-found]
 
     ZSTD_AVAILABLE = True
 except (ImportError, Exception):  # pragma: no cover
     ZSTD_AVAILABLE = False
-    _zstd = None  # type: ignore[assignment]
+    _zstd = None  # type: ignore
 
 # ---------------------------------------------------------------------------
 # Module-level singletons (zero-overhead for single-threaded hot paths).

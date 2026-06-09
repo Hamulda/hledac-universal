@@ -201,11 +201,18 @@ def _build_index() -> ResponsibilityIndex:
     return ResponsibilityIndex(sections=sections)
 
 
+# ty: storing state on a function object is a runtime-only pattern. Module-
+# level cache variable is the canonical alternative and matches PEP 8 +
+# static analysers. Re-export the same name so callers don't change.
+_INDEX_CACHE: ResponsibilityIndex | None = None
+
+
 def get_index() -> ResponsibilityIndex:
     """Return the singleton responsibility index (cached)."""
-    if not hasattr(get_index, "_index"):
-        get_index._index = _build_index()
-    return get_index._index
+    global _INDEX_CACHE
+    if _INDEX_CACHE is None:
+        _INDEX_CACHE = _build_index()
+    return _INDEX_CACHE
 
 
 def detect_symbol(source_path: str, symbol_name: str) -> bool:

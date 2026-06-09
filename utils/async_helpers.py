@@ -179,7 +179,7 @@ async def async_getaddrinfo(
     type_: int = 0,
     proto: int = 0,
     timeout: float | None = None,
-) -> list[tuple[int, int, int, str, Any]]:
+) -> list[tuple[Any, ...]]:
     """
     Async wrapper around loop.getaddrinfo() with optional timeout.
 
@@ -192,7 +192,10 @@ async def async_getaddrinfo(
         timeout: max seconds to wait (None = use loop default)
 
     Returns:
-        List of (family, type, proto, canonname, sockaddr) tuples
+        List of (family, type, proto, canonname, sockaddr) tuples.
+        Tuple element types are platform-specific (AddressFamily, SocketKind,
+        sockaddr variants) — declared `tuple[Any, ...]` so callers don't
+        depend on a particular stdlib stub shape.
     """
     loop = asyncio.get_running_loop()
     if timeout is not None and timeout > 0:
@@ -521,9 +524,14 @@ async def safe_gather_dropin[T](
         # eager_start kwarg is Python 3.12+ only; guarded by _EAGER_START_SUPPORTED
         # to keep py3.10/3.11 import-time + runtime compatibility.
         if _EAGER_START_SUPPORTED:
-            tasks.append(loop.create_task(_wrap_awaitable(c), eager_start=True))
+            # ty: `_wrap_awaitable` is typed `Awaitable[Any]`, but `create_task`
+            # requires `Coroutine[Any, Any, Unknown]`. Runtime works because
+            # `_wrap_awaitable` either returns the value (if it has __await__)
+            # or a fresh coroutine from `_lift()` — both satisfy create_task
+            # at runtime. Suppress the static narrowing mismatch.
+            tasks.append(loop.create_task(_wrap_awaitable(c), eager_start=True))  # type: ignore[ty:invalid-argument-type]
         else:
-            tasks.append(loop.create_task(_wrap_awaitable(c)))
+            tasks.append(loop.create_task(_wrap_awaitable(c)))  # type: ignore[ty:invalid-argument-type]
     raw = await asyncio.gather(*tasks, return_exceptions=True)
     ok, errors, re_raise = _classify_gathered(raw, label, _log)
 
@@ -624,10 +632,14 @@ async def safe_gather_strict[T](
                 # before they can populate external state).
                 async def _runner(idx: int, coro: Awaitable[Any]) -> None:
                     results[idx] = await coro
+                # NOTE: `eager_start` is a kwarg of `AbstractEventLoop.create_task`,
+                # NOT of `asyncio.TaskGroup.create_task` (stdlib stub: signature
+                # is (coro, *, name=None, context=None)). Spreading it here would
+                # raise TypeError at runtime. eager_start acceleration is only
+                # applied on the safe_gather_dropin path (see line ~532).
                 tg.create_task(
                     _runner(i, c),
                     name=f"sg_strict[{i}]",
-                    **({"eager_start": True} if _EAGER_START_SUPPORTED else {}),
                 )
     except BaseExceptionGroup as eg:
         # Log at WARNING (this is the strict path; failures are expected

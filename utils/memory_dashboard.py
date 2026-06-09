@@ -21,17 +21,18 @@ IS_DARWIN = platform.system() == "Darwin"
 # Optional imports - fail-safe
 PSUTIL_AVAILABLE = False
 try:
-    import psutil
+    import psutil  # type: ignore[import-untyped]
     PSUTIL_AVAILABLE = True
 except ImportError:
-    psutil = None
+    # ty: invalid-assignment is the correct code for "None not assignable to <module>"
+    psutil = None  # type: ignore
 
 MLX_AVAILABLE = False
 try:
-    import mlx.core as mx
+    import mlx.core as mx  # type: ignore[import-not-found]
     MLX_AVAILABLE = True
 except ImportError:
-    mx = None
+    mx = None  # type: ignore
 
 
 @dataclass

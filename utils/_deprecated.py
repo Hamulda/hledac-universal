@@ -64,8 +64,12 @@ def _fallback_deprecated(message: str) -> Callable[[_F], _F]:
             warnings.warn(message, category=DeprecationWarning, stacklevel=2)
             return func(*args, **kwargs)
 
-        _wrapper.__deprecated__ = message  # type: ignore[attr-defined]
-        return _wrapper  # type: ignore[return-value]
+        # ty: error codes differ from mypy. PEP 702 __deprecated__ is unknown
+        # to ty (resolves as `unresolved-attribute`); the wrapped _Wrapper
+        # instance can't be cast back to _F (the original callable) without
+        # a `cast` round-trip — both are type-system artefacts of @wraps.
+        _wrapper.__deprecated__ = message  # type: ignore[ty:unresolved-attribute]
+        return _wrapper  # type: ignore[ty:invalid-return-type]
 
     return _decorator
 

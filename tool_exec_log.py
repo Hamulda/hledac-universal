@@ -110,7 +110,7 @@ class ToolExecEvent:
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize to dict for JSONL"""
-        result = {
+        result: dict[str, Any] = {
             "event_id": self.event_id,
             "ts": self.ts.isoformat(),
             "tool_name": self.tool_name,

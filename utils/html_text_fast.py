@@ -19,8 +19,8 @@ import re
 from typing import Optional
 
 try:
-    from selectolax.parser import HTMLParser as _SelectolaxHTMLParser
-    from selectolax.tags import Node as _SelectolaxNode
+    from selectolax.parser import HTMLParser as _SelectolaxHTMLParser  # type: ignore[import-not-found]
+    from selectolax.tags import Node as _SelectolaxNode  # type: ignore[import-not-found]
 
     SELECTOLAX_AVAILABLE = True
 except ImportError:
@@ -202,7 +202,7 @@ def _regex_fallback_extract(
 # Public API
 # ---------------------------------------------------------------------------
 
-opt: type = Optional
+opt = Optional  # type: ignore[assignment]
 
 
 def html_to_text_fast(

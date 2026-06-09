@@ -35,7 +35,6 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, BinaryIO
 
-import numpy as np
 
 logger = logging.getLogger(__name__)
 

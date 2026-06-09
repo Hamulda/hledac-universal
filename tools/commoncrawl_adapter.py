@@ -165,9 +165,9 @@ class CommonCrawlAdapter:
             {
                 "title": f"[CC] {r.url}",
                 "url": r.url,
-                "snippet": f"Archived: {r.metadata.get('timestamp', 'unknown')}",
+                "snippet": f"Archived: {(r.metadata or {}).get('timestamp', 'unknown')}",
                 "source": SOURCE_NAME,
-                "timestamp": r.metadata.get("timestamp", ""),
+                "timestamp": (r.metadata or {}).get("timestamp", ""),
             }
             for r in results
         ]

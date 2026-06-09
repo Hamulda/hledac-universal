@@ -39,6 +39,7 @@ from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING
 
 import numpy as np
+from typing import Any
 
 if TYPE_CHECKING:
     from hledac.universal.knowledge.duckdb_store import CanonicalFinding

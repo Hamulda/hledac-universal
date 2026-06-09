@@ -387,7 +387,7 @@ class MultiLevelContextCache:
         self.max_entries = max_entries
 
         # Multi-level storage
-        self.l1_cache: Ordereddict[str, CacheEntry] = OrderedDict()
+        self.l1_cache: OrderedDict[str, CacheEntry] = OrderedDict()
         self.l2_cache: dict[str, CacheEntry] = {}
 
         # Semantic search structures - lazy loaded

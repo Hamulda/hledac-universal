@@ -20,7 +20,7 @@ _WASMTIME_AVAILABLE = False
 
 try:
     import wasmtime
-    from wasmtime import Config, Engine, Module, Store
+    from wasmtime import Config, Engine, Module, Store, Instance
     _WASMTIME_AVAILABLE = True
 except ImportError:
     wasmtime = None
@@ -28,6 +28,7 @@ except ImportError:
     Engine = None
     Store = None
     Module = None
+    Instance = None
 
 
 class WasmSandbox:
@@ -239,10 +240,10 @@ class WasmSandbox:
             store = Store(self._engine)
 
             # Set fuel limit
-            store.add_fuel(self.fuel_limit)
+            store.set_fuel(self.fuel_limit)
 
-            # Set epoch deadline
-            store.set_epoch_deadline(self.epoch_deadline)
+            # Set epoch deadline (wasmtime v45+ requires int, not float)
+            store.set_epoch_deadline(int(self.epoch_deadline))
 
             # Add to running instances
             instance_id = id(store)
@@ -253,12 +254,12 @@ class WasmSandbox:
             module = Module(self._engine, wasm_bytes)
 
             # Instantiate with imports
-            # For now, use empty imports
-            instance = Instance(module, [])
+            # wasmtime v45+ API: Instance(store, module, imports) — not (module, imports)
+            instance = Instance(store, module, [])
 
             # Get function
-            if function_name in instance.exports:
-                func = instance.exports[function_name]
+            if function_name in instance.exports(store):
+                func = instance.exports(store)[function_name]
 
                 # Call with arguments if provided
                 if args:
@@ -267,7 +268,7 @@ class WasmSandbox:
                     func()
 
                 # Get fuel used
-                fuel_remaining = store.fuel()
+                fuel_remaining = store.get_fuel()
                 result['fuel_used'] = self.fuel_limit - fuel_remaining
                 result['success'] = True
                 result['result'] = True  # Void function

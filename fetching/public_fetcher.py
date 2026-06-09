@@ -13,10 +13,8 @@ P4: Tor + stealth layer integration:
 """
 from __future__ import annotations
 
-import asyncio
 import atexit
 import logging
-import os
 import random
 import re
 import time

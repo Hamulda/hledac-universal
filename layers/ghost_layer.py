@@ -20,6 +20,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import subprocess
 from typing import Any
 
 from hledac.universal.project_types import (

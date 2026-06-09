@@ -31,9 +31,7 @@ if TYPE_CHECKING:
     pass
 
 # Secure Enclave abstraction (Sprint F206X)
-import numpy as np
-
-from hledac.universal.security.secure_enclave import (
+from security.secure_enclave import (  # type: ignore[import-not-found]
     EnclaveAvailability,
     EnclaveStatus,
     SecureEnclaveBackend,

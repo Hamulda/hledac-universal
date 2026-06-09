@@ -37,6 +37,7 @@ from pathlib import Path
 from typing import Any
 
 from utils.async_helpers import safe_gather_dropin
+import orjson
 
 # Optional dependencies - imported lazily inside methods
 # PIL, pypdf, docx, mutagen, ffmpeg

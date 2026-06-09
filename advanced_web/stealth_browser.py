@@ -15,7 +15,6 @@ import logging
 import random
 from typing import Any
 
-from utils.async_helpers import safe_gather_fire_and_forget
 
 logger = logging.getLogger(__name__)
 

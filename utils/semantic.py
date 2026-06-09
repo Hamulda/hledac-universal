@@ -133,7 +133,9 @@ class ModernBERTEmbedding:
 
     def _load_model(self):
         """Load ModernBERT embedder."""
-        from ...embeddings.modernbert_embedder import ModernBERTEmbedder
+        # ty: 3-level relative imports confuse the resolver; use absolute path
+        # through the hledac.universal namespace (canonical for the wheel).
+        from hledac.universal.embeddings.modernbert_embedder import ModernBERTEmbedder  # type: ignore[import-not-found]
 
         logger.info(f"[MODEL LOAD] ModernBERT: {self._model_path} (MLX) dim=768")
         self._embedder = ModernBERTEmbedder(

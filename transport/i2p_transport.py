@@ -20,7 +20,7 @@ import socket
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from .base import Transport
+from .base import Transport, TransportConfig, TransportResult
 
 # Module-level imports for aiohttp — used by module-level functions
 # (get_i2p_session) that are called without I2PTransport instantiation.
@@ -30,8 +30,8 @@ try:
     import aiohttp
     import aiohttp_socks
 except ImportError:
-    aiohttp = None  # type: ignore[assignment]
-    aiohttp_socks = None  # type: ignore[assignment]
+    aiohttp = None  # type: ignore[assignment]  # ty: ignore[invalid-assignment]
+    aiohttp_socks = None  # type: ignore[assignment]  # ty: ignore[invalid-assignment]
 
 if TYPE_CHECKING:
     import aiohttp
@@ -385,14 +385,14 @@ class I2PTransport(Transport):
 
         SOCKS5H mode (default): DNS resolution happens on the proxy side,
         preventing .i2p hostname leaks. HTTP mode uses plain aiohttp with
-        the proxy URL configured via TCPConnector.
+        the proxy URL configured by TCPConnector.
 
-        Fail-safe: returns TransportResult with err if I2P unavailable.
+        Fail-safe: returns TransportResult with `error` if I2P unavailable.
         """
         if not self.is_running():
-            from .base import TransportResult
             return TransportResult(
-                err="i2p_unavailable",
+                url=config.url,
+                error="i2p_unavailable",
                 failure_stage="i2p_check",
                 selected_transport="i2p",
             )
@@ -400,29 +400,30 @@ class I2PTransport(Transport):
         try:
             session = await self.get_session()
         except I2PUnavailableError as e:
-            from .base import TransportResult
             return TransportResult(
-                err=f"i2p_session_unavailable: {e}",
+                url=config.url,
+                error=f"i2p_session_unavailable: {e}",
                 failure_stage="i2p_session",
                 selected_transport="i2p",
             )
 
         try:
-            timeout = getattr(config, 'timeout', 30) or 30
+            timeout = getattr(config, 'timeout_s', 30) or 30
             async with session.get(
                 config.url,
                 timeout=self._aiohttp.ClientTimeout(total=timeout),
             ) as resp:
                 body = await resp.text()
                 return TransportResult(
-                    content=body,
+                    url=config.url,
+                    text=body,
                     status_code=resp.status,
                     selected_transport="i2p",
                 )
         except Exception as e:
-            from .base import TransportResult
             return TransportResult(
-                err=f"i2p_fetch_failed: {e}",
+                url=config.url,
+                error=f"i2p_fetch_failed: {e}",
                 failure_stage="i2p_fetch",
                 selected_transport="i2p",
             )

@@ -22,7 +22,7 @@ import gc
 import logging
 import time as _time
 from contextlib import nullcontext
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from types import ModuleType
@@ -215,13 +215,17 @@ def get_mlx_memory_metrics() -> dict:
     }
 
 
-def configure_mlx_limits(cache_limit_mb: int = 1536, memory_limit_mb: int | None = None) -> dict:
+def configure_mlx_limits(cache_limit_mb: int = 1536, memory_limit_mb: int | None = None) -> dict[str, Any]:
     """Configure MLX cache and memory limits for M1 8GB."""
     mx_core = _get_mlx_core()
     if mx_core is None:
         return {"success": False, "error": "MLX not available"}
 
-    result = {"success": True, "cache_limit_mb": cache_limit_mb, "memory_limit_mb": memory_limit_mb}
+    result: dict[str, Any] = {
+        "success": True,
+        "cache_limit_mb": cache_limit_mb,
+        "memory_limit_mb": memory_limit_mb,
+    }
 
     try:
         if hasattr(mx_core, "set_cache_limit"):

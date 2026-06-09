@@ -686,6 +686,13 @@ _SCHEMA_SQL = """
 # Sprint 8R: Module-level reusable encoder singleton for CanonicalFinding serialization
 _CANONICAL_ENCODER = msgspec.json.Encoder()
 
+# Sprint F-CLEAN: Max concurrent in-flight graph update tasks (advisory only).
+# Bounds the `_bg_tasks` set under bursty accepted-write load. Discard callback
+# on each task ensures steady-state count returns near 0 after the burst.
+# M1 8GB safe — work runs on the default ThreadPoolExecutor, never a subprocess.
+# 16 concurrent DuckPGQ upserts is well under the 1-worker DuckDB executor.
+_MAX_INFLIGHT_GRAPH_UPDATES: int = 16
+
 
 class DuckDBShadowStore:
     """
@@ -7470,19 +7477,30 @@ class DuckDBShadowStore:
 
     def _schedule_graph_update(self, accepted_findings: list[CanonicalFinding]) -> None:
         """
-        Sprint F241: Fire graph update as non-blocking asyncio task.
+        Fire graph update as non-blocking asyncio task (Python 3.10+ safe).
 
-        Writes accepted findings to DuckPGQGraph for cross-sprint entity accumulation.
-        Graph is ADVISORY ONLY — failures are silently swallowed.
+        Sprint F241: Writes accepted findings to DuckPGQGraph for cross-sprint
+        entity accumulation. Graph is ADVISORY ONLY — failures are silently
+        swallowed.
 
-        LAZY IMPORT: graph_service imported here to avoid circular deps with duckdb_store.
+        Sprint F-CLEAN fix: replaced `asyncio.coroutine(_graph_update_task)()`
+        (removed in Python 3.11) with the modern `async def` +
+        `loop.run_in_executor()` pattern. M1 8GB safe — DuckDB sync ops run
+        in the default ThreadPoolExecutor, not a separate process. Bounded
+        by `_MAX_INFLIGHT_GRAPH_UPDATES` via the existing `self._bg_tasks`
+        set (Sprint 8QA), auto-drained on completion.
+
+        Sync context (no running event loop — tests / sync CLI / F8H worker
+        threads) is a no-op; the graph update is advisory and not required
+        for correctness.
+
+        LAZY IMPORT: graph_service imported here to avoid circular deps
+        with duckdb_store.
         """
         try:
-            import asyncio
-
             from hledac.universal.knowledge.graph_service import _get_graph
 
-            def _graph_update_task():
+            def _sync_graph_update() -> None:
                 try:
                     gs = _get_graph()
                     rows = [
@@ -7495,7 +7513,32 @@ class DuckDBShadowStore:
                 except Exception:
                     pass  # fail-safe: graph is advisory, never propagates
 
-            asyncio.create_task(asyncio.coroutine(_graph_update_task)())
+            # Bounded in-flight cap: reuse Sprint 8QA self._bg_tasks set.
+            # getattr fallback covers F233A test fixtures that bypass __init__.
+            tasks = getattr(self, "_bg_tasks", None)
+            if tasks is None:
+                tasks = set()
+                self._bg_tasks = tasks
+            if len(tasks) >= _MAX_INFLIGHT_GRAPH_UPDATES:
+                return  # advisory: drop excess, never block write path
+
+            # asyncio is imported at module level.
+            # get_running_loop() (3.10+) raises RuntimeError when no loop
+            # is running — replaces deprecated get_event_loop() (which used
+            # to silently create one in 3.9 and was removed in 3.12).
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                return  # No event loop — sync context (test/CLI); skip advisory.
+
+            async def _graph_update_coro() -> None:
+                # DuckDB is NOT thread-safe; route sync upsert via the
+                # default ThreadPoolExecutor (in-process, M1 8GB friendly).
+                await loop.run_in_executor(None, _sync_graph_update)
+
+            task = asyncio.create_task(_graph_update_coro())
+            tasks.add(task)
+            task.add_done_callback(tasks.discard)
         except Exception:
             pass  # fail-safe: feature-gated, never blocks write path
 

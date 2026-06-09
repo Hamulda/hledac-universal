@@ -7,14 +7,20 @@ Designed for M1/Apple Silicon with fail-safe fallbacks.
 """
 
 import logging
+from typing import Any, cast
 
-# MLX import with fallback
+# MLX import with fallback.
+#
+# We type `mx` as `Any` (not `ModuleType | None`) so downstream signatures
+# like `mx.array`, `mx.zeros`, `mx.compile` stay statically valid — `Any`
+# carries every attribute, including the ones used in type hints. Runtime
+# code is gated on `MLX_AVAILABLE`; the type stays permissive on purpose.
 try:
-    import mlx.core as mx
+    import mlx.core as mx  # type: ignore[import-not-found]
     MLX_AVAILABLE = True
 except ImportError:
     MLX_AVAILABLE = False
-    mx = None
+    mx: Any = None
 
 logger = logging.getLogger(__name__)
 

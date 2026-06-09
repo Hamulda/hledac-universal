@@ -31,7 +31,7 @@ import logging
 import random
 import sys
 from collections.abc import AsyncIterator, Awaitable, Callable
-from typing import TypeVar
+from typing import TypeVar, cast
 
 from .async_helpers import safe_gather_dropin, safe_gather_strict
 
@@ -140,7 +140,11 @@ async def bounded_map[T](
         # F262D: standardized asyncio.TaskGroup → safe_gather_strict
         # (PEP 654 / 3.11+ TaskGroup-based, all-or-nothing preserved)
         coros = [_run(i, fn, a, k) for i, (fn, a, k) in enumerate(tasks)]
-        return await safe_gather_strict(*coros, label=f"async_utils:run[{len(tasks)}]")
+        # ty: safe_gather_strict return is `list[T]`, our callable is
+        # `_run(...) -> T | None`. The union widens to include the
+        # coroutine type before the call — a type-inference artefact
+        # of *unpacking inside await. Suppress.
+        return await safe_gather_strict(*coros, label=f"async_utils:run[{len(tasks)}]")  # type: ignore[ty:invalid-return-type]
 
     # Python < 3.11 nebo cancel_on_error=False
     coros = [_run(i, fn, a, k) for i, (fn, a, k) in enumerate(tasks)]
@@ -153,7 +157,15 @@ async def bounded_map[T](
         return gathered
     else:
         for i, res in enumerate(gathered):
-            results[i] = None if isinstance(res, BaseException) else res
+            # ty: results: list[T | None]; res: T | Exception from
+            # safe_gather_dropin. safe_gather_dropin awaits all coros before
+            # returning, so `res` here is `T | Exception` — no CoroutineType
+            # in the runtime union. ty's narrow through `isinstance` does
+            # not peel off the wider element type, so cast explicitly.
+            if isinstance(res, BaseException):
+                results[i] = None
+            else:
+                results[i] = cast(T, res)
         return results
 
 
@@ -237,7 +249,7 @@ async def bounded_gather[T](
                     return await coro
             return await coro
 
-    return await safe_gather_dropin(*(_run(c) for c in coros), label="async_utils:242")  # type: ignore[return-value]
+    return await safe_gather_dropin(*(_run(c) for c in coros), label="async_utils:242")  # type: ignore[ty:invalid-return-type,return-value]
 
 
 __all__ = [

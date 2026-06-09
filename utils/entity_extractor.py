@@ -77,11 +77,11 @@ class EntityExtractor:
     def __init__(self):
         """Initialize regex patterns for entity extraction."""
         self._compile_patterns()
-        self._stats = {
+        self._stats: dict[str, Any] = {
             'total_scans': 0,
             'entities_found': 0,
             'critical_findings': 0,
-            'pattern_counts': {pt.value: 0 for pt in PatternType}
+            'pattern_counts': {pt.value: 0 for pt in PatternType},
         }
 
     def _compile_patterns(self) -> None:
@@ -175,7 +175,8 @@ class EntityExtractor:
         entities = []
         text.split('\n')
 
-        self._stats['total_scans'] += 1
+        # ty: dict[str, Any] += Literal[1] needs explicit Any widening
+        self._stats['total_scans'] = int(self._stats.get('total_scans', 0)) + 1
 
         for pattern_type, pattern in self.patterns.items():
             for match in pattern.finditer(text):
@@ -199,15 +200,18 @@ class EntityExtractor:
                     context=context,
                     line_number=line_number,
                     start_pos=match.start(),
-                    end_pos=match.end()
+                    end_pos=match.end(),
                 )
 
                 entities.append(entity)
-                self._stats['entities_found'] += 1
-                self._stats['pattern_counts'][pattern_type.value] += 1
+                self._stats['entities_found'] = int(self._stats.get('entities_found', 0)) + 1
+                pc = self._stats.get('pattern_counts', {})
+                if isinstance(pc, dict):
+                    pc[pattern_type.value] = int(pc.get(pattern_type.value, 0)) + 1
+                self._stats['pattern_counts'] = pc
 
                 if pattern_type in [PatternType.PRIVATE_KEY, PatternType.PASSWORD]:
-                    self._stats['critical_findings'] += 1
+                    self._stats['critical_findings'] = int(self._stats.get('critical_findings', 0)) + 1
 
         # Sort by position for consistent output
         entities.sort(key=lambda x: x.start_pos or 0)

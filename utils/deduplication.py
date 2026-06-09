@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 import logging
 import os
 import re
@@ -21,7 +22,7 @@ import struct
 import threading
 import time
 from abc import ABC, abstractmethod
-from collections import OrderedDict
+from collections import OrderedDict, defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -35,10 +36,12 @@ from typing import Any
 # jinak by se mohla poslat ne-deduplikovaná URL a narušit invariant RotatingBloomFilteru).
 # Vzor: core/resource_governor.py:33-41.
 try:
-    import numpy as np
+    import numpy as np  # type: ignore[import-not-found]
     _NUMPY_AVAILABLE = True
 except ImportError:
-    np = None  # type: ignore[assignment]
+    # ty 0.0.42 does not respect `[invalid-assignment]` in this position — use
+    # bare `type: ignore` to suppress reliably.
+    np = None  # type: ignore
     _NUMPY_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
@@ -210,7 +213,7 @@ class SemanticDeduplicator(BaseDeduplicator):
 
     def __init__(self, config: DeduplicationConfig):
         super().__init__(config)
-        self.embedding_cache: Ordereddict[str, np.ndarray] = OrderedDict()
+        self.embedding_cache: OrderedDict[str, np.ndarray] = OrderedDict()
         self.embedding_cache_size = 0
         self.max_cache_size_mb = 256
         self._embedding_model = None
@@ -330,17 +333,18 @@ class SemanticDeduplicator(BaseDeduplicator):
 
         return cached_embeddings
 
-    async def _generate_embedding(self, content: str) -> np.ndarray:
+    async def _generate_embedding(self, content: str) -> Any:
         """Generate embedding for content using dedup-specific task."""
         try:
             if not self._model_loaded:
                 await self._load_model()
-            if self._embedding_model:
+            model: Any = self._embedding_model
+            if model is not None:
                 # Sprint 87B: Use embed_for_dedup() for proper task semantics (CLUSTERING + normalize)
-                if hasattr(self._embedding_model, 'embed_for_dedup'):
-                    return self._embedding_model.embed_for_dedup(content)
+                if hasattr(model, 'embed_for_dedup'):
+                    return model.embed_for_dedup(content)
                 # Fallback for sentence-transformers
-                return self._embedding_model.encode([content])[0]
+                return model.encode([content])[0]
         except Exception as e:
             self.logger.debug(f"Embedding generation failed: {e}")
 
@@ -348,22 +352,23 @@ class SemanticDeduplicator(BaseDeduplicator):
 
     async def _generate_batch_embeddings(
         self, contents: list[str]
-    ) -> list[np.ndarray | None]:
+    ) -> list[Any | None]:
         """Generate embeddings for batch of contents using dedup-specific task."""
         try:
             if not self._model_loaded:
                 await self._load_model()
-            if self._embedding_model:
+            model: Any = self._embedding_model
+            if model is not None:
                 # Sprint 87B: Use embed_for_dedup() for proper task semantics (CLUSTERING + normalize)
-                if hasattr(self._embedding_model, 'embed_for_dedup'):
-                    return [self._embedding_model.embed_for_dedup(c) for c in contents]
+                if hasattr(model, 'embed_for_dedup'):
+                    return [model.embed_for_dedup(c) for c in contents]
                 # Fallback for sentence-transformers
-                batch_embeddings = self._embedding_model.encode(contents)
+                batch_embeddings = model.encode(contents)
                 return list(batch_embeddings)
         except Exception as e:
             self.logger.debug(f"Batch embedding failed: {e}")
 
-        embeddings = []
+        embeddings: list[Any | None] = []
         for content in contents:
             try:
                 embedding = await self._generate_embedding(content)
@@ -667,16 +672,17 @@ class ContentDeduplicator(BaseDeduplicator):
         if not ngrams:
             return [0] * self.config.minhash_size
 
-        minhash_signature = []
+        minhash_signature: list[int] = []
 
         for i in range(self.config.minhash_size):
-            min_hash = float("inf")
+            min_hash: float = float("inf")
 
             for ngram in ngrams:
                 hash_value = mmh3.hash(f"{ngram}_{i}", signed=False)
                 min_hash = min(min_hash, hash_value)
 
-            minhash_signature.append(min_hash)
+            # mmh3 returns int|float depending on backend; ty widens → int
+            minhash_signature.append(int(min_hash))
 
         return minhash_signature
 
@@ -1261,7 +1267,7 @@ class DomainStatsManager:
         if path.exists():
             try:
                 with open(path) as f:
-                    data = json.load(f)
+                    data: dict[str, Any] = json.load(f)
                 for domain, stats_data in data.items():
                     self._stats[domain] = DomainStats.from_dict(stats_data)
                 logger.info(f"[DOMAIN STATS] Loaded {len(self._stats)} domains from disk")
@@ -1413,7 +1419,7 @@ class SimHash:
                 "Install: uv pip install numpy"
             )
         try:
-            import mlx.core as mx
+            import mlx.core as mx  # type: ignore[import-not-found]
 
             # Try different API variants for compatibility
             try:
@@ -1424,12 +1430,12 @@ class SimHash:
                     key=key
                 )
             except TypeError:
-                # Fallback for older API
+                # Fallback for older API (positional args) — ty widens dtype/shape Any
                 key = mx.random.key(self.seed)
                 hyperplanes = mx.random.normal(
-                    key,
-                    (self.hashbits, embeddings.shape[1]),
-                    dtype=mx.bfloat16
+                    key,  # type: ignore
+                    (self.hashbits, embeddings.shape[1]),  # type: ignore
+                    dtype=mx.bfloat16,  # type: ignore
                 )
 
             dots = embeddings @ hyperplanes.T

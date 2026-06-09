@@ -1,0 +1,58 @@
+# Stub for CoreML (pyobjc-framework-CoreML; Darwin-only)
+# Re-exports MLMultiArray, MLModel, MLDictionaryFeatureProvider from Foundation
+# and declares CoreML-specific types.
+
+from ._types import (
+    MLMultiArray,
+    MLMultiArrayDataType,
+    MLMultiArrayDataTypeInt32,
+    MLMultiArrayDataTypeFloat32,
+    MLMultiArrayDataTypeDouble,
+    MLModel,
+    MLDictionaryFeatureProvider,
+    MLFeatureDescription,
+    MLFeatureValue,
+    MLFeatureType,
+    MLModelConfiguration,
+    MLComputeUnit,
+    MLModelDescription,
+    MLParameterKey,
+    MLPredictionOptions,
+    MLFeatureProvider,
+    MLArrayBatchProvider,
+    MLSendableFeatureValue,
+    MLNumericConstraint,
+    MLImageSize,
+    MLImageSizeConstraint,
+    MLModelAsset,
+)
+from Foundation import NSURL, NSNumber, NSArray, NSDictionary  # type: ignore[attr-defined]
+
+__all__ = [
+    "MLMultiArray",
+    "MLMultiArrayDataType",
+    "MLMultiArrayDataTypeInt32",
+    "MLMultiArrayDataTypeFloat32",
+    "MLMultiArrayDataTypeDouble",
+    "MLModel",
+    "MLDictionaryFeatureProvider",
+    "MLFeatureDescription",
+    "MLFeatureValue",
+    "MLFeatureType",
+    "MLModelConfiguration",
+    "MLComputeUnit",
+    "MLModelDescription",
+    "MLParameterKey",
+    "MLPredictionOptions",
+    "MLFeatureProvider",
+    "MLArrayBatchProvider",
+    "MLSendableFeatureValue",
+    "MLNumericConstraint",
+    "MLImageSize",
+    "MLImageSizeConstraint",
+    "MLModelAsset",
+    "NSURL",
+    "NSNumber",
+    "NSArray",
+    "NSDictionary",
+]

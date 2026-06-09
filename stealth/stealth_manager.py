@@ -148,7 +148,7 @@ class StealthManager:
             )
 
         # Sprint 80: Per-profil sessions (LRU cache)
-        self._sessions: Ordereddict[str, AsyncSession] = OrderedDict()
+        self._sessions: OrderedDict[str, AsyncSession] = OrderedDict()
         self._max_sessions = 5
         self._profile_index = 0
         self._sessions_lock = asyncio.Lock()

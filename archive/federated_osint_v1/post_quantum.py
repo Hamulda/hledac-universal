@@ -43,8 +43,8 @@ class PQCProvider:
 
     def _init_pqc(self):
         """Inicializace post‑kvantové kryptografie."""
-        # Detekce podpisů
-        available_sigs = oqs.get_enabled_signature_mechanisms()
+        # Detekce podpisů — real oqs API name (was `get_enabled_signature_mechanisms`)
+        available_sigs = oqs.get_enabled_sig_mechanisms()
         for alg in self._SIG_ALGOS:
             if alg in available_sigs:
                 self._sig_name = alg
@@ -100,7 +100,8 @@ class PQCProvider:
         if self._sig_name == 'ED25519':
             return self._ed25519_private.sign(message)
         else:
-            return self._sig_impl.sign(message, self._sign_secret_key)
+            # oqs.Signature stores the secret_key on the instance; .sign(message) is 1-arg
+            return self._sig_impl.sign(message)
 
     def verify(self, public_key: bytes, message: bytes, signature: bytes) -> bool:
         """Ověří podpis."""

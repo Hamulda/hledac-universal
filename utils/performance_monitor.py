@@ -476,7 +476,7 @@ class FlowTraceSnapshotEmitter:
 
         # Only start if tracing is enabled
         try:
-            from ..utils.flow_trace import is_enabled
+            from .flow_trace import is_enabled
             if not is_enabled():
                 return
         except Exception:
@@ -504,7 +504,7 @@ class FlowTraceSnapshotEmitter:
 
                 # Emit as trace event
                 try:
-                    from ..utils.flow_trace import trace_event
+                    from .flow_trace import trace_event
                     trace_event(
                         component="performance_monitor",
                         stage="system_snapshot",

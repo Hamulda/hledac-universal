@@ -36,7 +36,7 @@ def _detect_mlx_available() -> bool:
 MLX_AVAILABLE: bool = _detect_mlx_available()
 
 # LRU cache for MLX models (max 2 models)
-_MLX_CACHE: Ordereddict[str, tuple[Any, Any]] = OrderedDict()
+_MLX_CACHE: OrderedDict[str, tuple[Any, Any]] = OrderedDict()
 _MLX_CACHE_MAX = 2
 
 # Lazy locks
@@ -87,9 +87,11 @@ async def get_mlx_model(model_name: str) -> tuple[Any, Any]:
         # Check cache first
         if model_name in _MLX_CACHE:
             _MLX_CACHE.move_to_end(model_name)
+            global _CACHE_HITS
             _CACHE_HITS += 1  # noqa: N806
             logger.debug(f"MLX cache hit: {model_name}")
             return _MLX_CACHE[model_name]
+        global _CACHE_MISSES
         _CACHE_MISSES += 1  # noqa: F823
 
         # Try to load model
@@ -98,7 +100,9 @@ async def get_mlx_model(model_name: str) -> tuple[Any, Any]:
             loop = asyncio.get_running_loop()
 
             logger.info(f"Loading MLX model: {model_name}")
-            model, tokenizer = await loop.run_in_executor(
+            # mlx_lm.load returns (model, tokenizer) on stable, may include
+            # a third element (e.g. config) on newer versions — unpack tail-safe.
+            model, tokenizer, *_ = await loop.run_in_executor(  # type: ignore[misc]
                 None,
                 mlx_load,
                 model_name

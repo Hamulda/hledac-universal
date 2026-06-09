@@ -29,8 +29,6 @@ import hashlib
 import json
 import logging
 import random
-import re
-import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
@@ -38,7 +36,6 @@ from enum import Enum
 from typing import Any
 from urllib.parse import quote, unquote, urlparse
 
-from utils.async_helpers import safe_gather_fire_and_forget
 
 logger = logging.getLogger(__name__)
 

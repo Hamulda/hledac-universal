@@ -42,7 +42,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from utils.async_helpers import safe_gather_dropin
 
 log = logging.getLogger(__name__)
 

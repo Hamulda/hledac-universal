@@ -3,14 +3,15 @@ SharedTensor – obálka nad mlx.core.array, umožňuje předávání referencí
 Skutečný zero-copy vyžaduje Metal buffer – to je zatím TODO.
 """
 
+from __future__ import annotations
 
 # MLX import s fallback
 try:
-    import mlx.core as mx
+    import mlx.core as mx  # type: ignore[import-not-found]
     MLX_AVAILABLE = True
 except ImportError:
     MLX_AVAILABLE = False
-    mx = None
+    mx = None  # type: ignore
 
 
 class SharedTensor:

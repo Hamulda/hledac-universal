@@ -79,7 +79,15 @@ class _LazyModule:
                 self._module = cached
                 return self._module
             else:
-                raise self._load_error
+                # ty: `_load_error` is `Exception | None`. In practice a
+                # cached `None` is only written after `_ensure_loaded` /
+                # `ensure_loaded` set `_load_error` — but the static type
+                # can't see that. Guard with an explicit None check.
+                if self._load_error is not None:
+                    raise self._load_error
+                raise RuntimeError(
+                    f"Module '{self._name}' cached as None without load error"
+                )
 
         # Load in thread to avoid blocking event loop
         try:
@@ -107,9 +115,12 @@ class CapabilityProber:
     """Enhanced capability prober with sync/async methods and hardware detection."""
 
     def __init__(self):
-        self._cache: Ordereddict[str, bool] = OrderedDict()
+        self._cache: OrderedDict[str, bool] = OrderedDict()
         self._cache_max = _MAX_CACHE_SIZE
-        self._stats = {"hits": 0, "misses": 0, "missed_modules": deque()}
+        # ty: explicit annotation — dict literal is inferred as deque[Unknown]
+        # in the absence of a declared type. `Any` covers both int counters
+        # and the bounded deque of missed module names.
+        self._stats: dict[str, Any] = {"hits": 0, "misses": 0, "missed_modules": deque()}
 
     def has_module(self, name: str) -> bool:
         """
@@ -255,7 +266,11 @@ def probe_call(fn: Callable, *args, **kwargs) -> Any:
     try:
         return fn(*args, **kwargs)
     except Exception as e:
-        logger.debug(f"Probe call failed: {fn.__name__}: {e}")
+        # ty: not all `Callable` instances carry `__name__` (e.g. functools.partial
+        # bound methods, instances with `__call__` only). Use getattr + fallback
+        # to `repr` for safe logging.
+        fn_name = getattr(fn, "__name__", None) or repr(fn)
+        logger.debug(f"Probe call failed: {fn_name}: {e}")
         return None
 
 

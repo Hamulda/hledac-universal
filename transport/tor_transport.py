@@ -6,8 +6,9 @@ import signal
 import socket
 from collections.abc import Callable
 from pathlib import Path
+from urllib.parse import urlparse
 
-from .base import Transport
+from .base import Transport, TransportConfig, TransportResult
 
 logger = logging.getLogger(__name__)
 
@@ -134,7 +135,16 @@ class TorTransport(Transport):
         await self.runner.setup()
         self.http_server = self._aiohttp_web.TCPSite(self.runner, '127.0.0.1', 0)
         await self.http_server.start()
-        self.http_port = self.http_server._server.sockets[0].getsockname()[1]
+        # ty: TCPSite._server is `AbstractServer | None` until start() binds
+        # the socket. Rebind to a local so the attribute chain narrows cleanly.
+        # ty: `AbstractServer.sockets` is not in stdlib typeshed — use getattr
+        # to keep the runtime access safe even if the stub is incomplete.
+        site = self.http_server
+        server = site._server if site is not None else None
+        sockets = getattr(server, "sockets", None) if server is not None else None
+        if not sockets:
+            raise RuntimeError("Tor HTTP server failed to bind (no sockets)")
+        self.http_port = sockets[0].getsockname()[1]
 
         # Tor proces — autonomous subprocess start with torrc
         try:
@@ -359,15 +369,19 @@ class TorTransport(Transport):
         Sprint F214 B.1: Fetch URL via Tor using curl_cffi with SOCKS5H.
         Circuit rotation after MAX_CIRCUIT_REQUESTS.
 
-        Fail-safe: returns TransportResult with error if Tor unavailable.
+        Fail-safe: returns TransportResult with `error` if Tor unavailable.
         """
         from .curl_cffi_fetch import fetch_via_curl_cffi
 
         # Check Tor availability first
         if not await self.is_circuit_established():
-            from .base import TransportResult
+            # ty: top-level `from .base import TransportResult` exists, but ty
+            # narrows it as unresolved when accessed through re-exports that
+            # rely on __getattr__ in base.py. Re-import locally for stability.
+            from .base import TransportResult  # noqa: PLC0415
             return TransportResult(
-                err="tor_unavailable",
+                url=config.url,
+                error="tor_unavailable",
                 failure_stage="tor_check",
                 selected_transport="tor",
             )
@@ -391,19 +405,22 @@ class TorTransport(Transport):
         try:
             result = await fetch_via_curl_cffi(
                 url=config.url,
-                method=config.method,
-                headers=config.headers or {},
-                body=config.body,
-                timeout=config.timeout,
+                timeout_s=config.timeout_s,
+                max_bytes=config.max_bytes,
             )
-            # Convert curl_cffi result to TransportResult
+            # Convert curl_cffi result to TransportResult.
+            # ty fix: TransportResult requires `url=` (not `final_url=`) and
+            # uses `error=` (not `err=`). curl_cffi's result dict has both
+            # `url` and `final_url` keys; we map `url` to the required
+            # field and `final_url` to the optional redirect-target.
             from .base import TransportResult
             return TransportResult(
-                final_url=result.get("url", config.url),
+                url=config.url,
+                final_url=result.get("final_url", config.url),
                 status_code=result.get("status_code", 0),
                 content_type=result.get("content_type", ""),
                 fetched_bytes=len(result.get("content", b"")),
-                err=result.get("error"),
+                error=result.get("error"),
                 failure_stage=result.get("failure_stage"),
                 network_error_kind=result.get("network_error_kind"),
                 selected_transport="tor",
@@ -411,7 +428,8 @@ class TorTransport(Transport):
         except Exception as e:
             from .base import TransportResult
             return TransportResult(
-                err=f"tor_fetch_failed: {e}",
+                url=config.url,
+                error=f"tor_fetch_failed: {e}",
                 failure_stage="tor_fetch",
                 selected_transport="tor",
             )
@@ -426,6 +444,12 @@ class TorTransport(Transport):
         else:
             url = f"http://{target}/message"
             session = self._session_tor
+        # ty: _session_direct / _session_tor are `ClientSession | None` until
+        # start() completes. Fail-soft: return empty body if no session
+        # (caller can detect via empty response).
+        if session is None:
+            logger.warning("TorTransport.send_message called before start() — no session")
+            return ""
         data = {
             'sender': self.onion_address,
             'type': msg_type,

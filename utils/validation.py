@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
 from typing import Any, TypeVar
+from collections.abc import Callable
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -21,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 # Generic type variables for better type safety
 T = TypeVar('T')
-ValidationResult = dict[str, bool | str | list[str]]
+ValidationResult = dict[str, Any]
 
 
 class ValidationSeverity(Enum):
@@ -71,7 +72,7 @@ class DataValidator:
         """
         self._cache: dict[str, ValidationResult] = {}
         self._cache_size = cache_size
-        self._custom_validators: dict[str, callable] = {}
+        self._custom_validators: dict[str, Callable] = {}
 
         # Pre-compiled regex patterns for performance
         self._email_pattern = re.compile(
@@ -313,7 +314,7 @@ class DataValidator:
         success = len([e for e in errors if e.severity == ValidationSeverity.ERROR]) == 0
         return self._create_result(success, errors, cache_key)
 
-    def add_custom_validator(self, name: str, validator_func: callable) -> None:
+    def add_custom_validator(self, name: str, validator_func: Callable) -> None:
         """
         Add a custom validation function to the validator.
 

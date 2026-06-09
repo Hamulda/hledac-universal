@@ -1,5 +1,5 @@
-from typing import TYPE_CHECKING
 #!/usr/bin/env python3
+from typing import TYPE_CHECKING
 
 """
 

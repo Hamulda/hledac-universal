@@ -341,7 +341,7 @@ class BlockchainForensics:
         self.transport_policy = "injected" if fetch_func else "bypass_legacy"
 
         # In-memory cache — F184F: OrderedDict pro LRU eviction, MAX_CACHE_SIZE bounded
-        self._cache: Ordereddict[str, APIResponse] = OrderedDict()
+        self._cache: OrderedDict[str, APIResponse] = OrderedDict()
         self._cache_lock = asyncio.Lock()
 
         # HTTP client (initialized lazily — only used when _fetch_func is None)

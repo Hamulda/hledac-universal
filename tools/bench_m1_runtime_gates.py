@@ -42,7 +42,7 @@ import resource
 import sys
 import tempfile
 import time
-from collections.abc import AsyncIterator
+from collections.abc import Callable, AsyncIterator
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -563,7 +563,7 @@ def _build_record(
 # ── main ──────────────────────────────────────────────────────────────────────
 
 
-BENCHMARKS: list[tuple[str, callable]] = [
+BENCHMARKS: list[tuple[str, Callable]] = [
     ("body_limiter_throughput", bench_body_limiter_throughput),
     ("html_parser_characterization", bench_html_parser_characterization),
     ("msgspec_dto_serialization", bench_msgspec_dto_serialization),

@@ -17,25 +17,26 @@ import heapq
 import logging
 import pathlib
 from collections import OrderedDict
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
 # Optional MLX
 try:
-    import mlx.core as mx
+    import mlx.core as mx  # type: ignore[import-not-found]
 
     MLX_AVAILABLE = True
 except ImportError:
-    mx = None
+    mx = None  # type: ignore
     MLX_AVAILABLE = False
 
 # Optional LMDB
 try:
-    import lmdb
+    import lmdb  # type: ignore[import-not-found]
 
     LMDB_AVAILABLE = True
 except ImportError:
-    lmdb = None
+    lmdb = None  # type: ignore
     LMDB_AVAILABLE = False
 
 
@@ -72,7 +73,7 @@ class HybridFrequencySketch:
         self._item_set: set[str] = set()  # Track items in heap for fast lookup
 
         # LRU cache for recently accessed rare items
-        self.lru_cache: Ordereddict[str, int] = OrderedDict()
+        self.lru_cache: OrderedDict[str, int] = OrderedDict()
 
         # LMDB environment (if available)
         self.lmdb_env = None
@@ -107,7 +108,8 @@ class HybridFrequencySketch:
             # Create update matrix and add in one operation
             updates = mx.zeros((self.depth, self.width), dtype=mx.int32)
             updates = updates.at[rows, cols].add(count)
-            self.table = self.table + updates
+            # ty: array + array is fine, but the static type of `self.table` is union
+            self.table = self.table + updates  # type: ignore
         else:
             for d in range(self.depth):
                 idx = self._hash(item, d)
@@ -232,13 +234,14 @@ class HybridFrequencySketch:
             rows = mx.arange(self.depth)
             cols = mx.array(indices, dtype=mx.int32)
 
-            # Get values using advanced indexing (vectorized)
-            sketch_vals = self.table[rows, cols]
+            # Get values using advanced indexing (vectorized).
+            # ty: advanced indexing on union (mlx.array | list[list[int]]) needs Any widening.
+            sketch_vals: Any = self.table[rows, cols]  # type: ignore
             min_count = int(mx.min(sketch_vals))
 
             # Noise: adjacent cells (idx + 1) % width
             noise_cols = mx.array([(idx + 1) % self.width for idx in indices], dtype=mx.int32)
-            noise_vals = self.table[rows, noise_cols]
+            noise_vals: Any = self.table[rows, noise_cols]  # type: ignore
             mean_noise = int(mx.mean(noise_vals))
         else:
             vals = [self.table[d][self._hash(item, d)] for d in range(self.depth)]
@@ -250,7 +253,8 @@ class HybridFrequencySketch:
             ]
             mean_noise = sum(noise_vals) // len(noise_vals)
 
-        return max(0, min_count - mean_noise)
+        # ty: min_count, mean_noise are int|array|Unknown; coerce to plain int
+        return max(0, int(min_count) - int(mean_noise))
 
     def get_top_k(self, k: int = 10) -> list[tuple[str, int]]:
         """Get top K items by exact count."""
@@ -388,10 +392,11 @@ def commvq_quantize(cache, bits: int = 2):
                 new_centroids = mx.zeros_like(centroids)
                 counts = mx.zeros(n_clusters)
                 for k in range(n_clusters):
-                    mask = (assignments == k)
+                    mask: Any = (assignments == k)
                     cnt = mx.sum(mask)
                     counts[k] = cnt
                     if cnt > 0:
+                        # ty: mask[:, None] needs `array` (not array|bool); widen.
                         new_centroids[k] = mx.sum(group * mask[:, None], axis=0) / cnt
                 centroids = new_centroids
 

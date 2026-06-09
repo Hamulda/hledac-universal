@@ -28,7 +28,6 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any
 
-import numpy as np
 
 logger = logging.getLogger(__name__)
 

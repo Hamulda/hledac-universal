@@ -17,6 +17,7 @@ Features:
 
 Example:
     from hledac.universal.forensics import (
+import piexif
         UniversalMetadataExtractor,
         create_metadata_extractor,
         MetadataResult,

@@ -229,7 +229,9 @@ def _print_table(reports: list[FlagReport]) -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
+    # ty: `__doc__` is `str | None` at module level. Fall back to empty
+    # string so the ArgumentParser description is always a valid str.
+    parser = argparse.ArgumentParser(description=(__doc__ or "").split("\n")[0])
     parser.add_argument("--only", help="Check a single flag name (e.g. HLEDAC_ENABLE_DSPY)")
     parser.add_argument("--json", action="store_true", help="Emit JSON instead of table")
     parser.add_argument(

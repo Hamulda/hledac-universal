@@ -1,7 +1,0 @@
-{
-  "tool_name": "Bash",
-  "tool_input_preview": "{\"command\":\"cd hledac/universal && git add __main__.py core/__main__.py intelligence/exposure_clients.py intelligence/web_intelligence.py patterns/pattern_matcher.py && git diff --cached --stat\",\"desc...",
-  "error": "Exit code 1\n(eval):cd:1: no such file or directory: hledac/universal",
-  "timestamp": "2026-04-12T15:27:51.551Z",
-  "retry_count": 1
-}

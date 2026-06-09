@@ -141,7 +141,7 @@ class UnifiedWebIntelligence:
 
         # Operation tracking
         self.active_operations: dict[str, IntelligenceResult] = {}
-        self._completed_operations: Ordereddict[str, IntelligenceResult] = OrderedDict()
+        self._completed_operations: OrderedDict[str, IntelligenceResult] = OrderedDict()
         self._completed_operations_limit: int = self.config.get('completed_operations_limit', 1000)
         # Priority queue using heapq: (priority, counter, operation_id)
         # Priority: 0=low, 1=medium, 2=high, 3=critical (lower = higher priority)

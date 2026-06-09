@@ -41,7 +41,11 @@ def collect_except_handlers(tree: ast.AST) -> dict[int, ast.ExceptHandler]:
     def visit(node: ast.AST, handler: ast.ExceptHandler | None) -> None:
         if isinstance(node, ast.ExceptHandler):
             handler = node
-        result[id(node)] = handler  # type: ignore[assignment]
+        # ty: only assign when handler is concrete — None means "not inside
+        # any except block" and is a valid sentinel for downstream callers
+        # (they skip emit on None).
+        if handler is not None:
+            result[id(node)] = handler
         for child in ast.iter_child_nodes(node):
             visit(child, handler)
 

@@ -6,20 +6,23 @@ PyObjC wrappers for MPSGraph on Apple Silicon.
 Provides batch dot product and DCT operations via Metal.
 """
 
+from __future__ import annotations
+
 import logging
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
 # Lazy imports for Metal frameworks
 _MPS_AVAILABLE = False
-_MPSGraph = None
-_Metal = None
-_Foundation = None
+_MPSGraph: Any = None
+_Metal: Any = None
+_Foundation: Any = None
 
 # Try to import PyObjC and Metal frameworks
 try:
-    from Metal import MTLCreateSystemDefaultDevice, MTLDevice  # noqa: F401  # Metal.MTLDevice
-    from MetalPerformanceShadersGraph import (  # noqa: F401  # MetalPerformanceShadersGraph.MPSGraphTensor
+    from Metal import MTLCreateSystemDefaultDevice, MTLDevice  # type: ignore[import-not-found]  # noqa: F401  # Metal.MTLDevice
+    from MetalPerformanceShadersGraph import (  # type: ignore[import-not-found]  # noqa: F401  # MetalPerformanceShadersGraph.MPSGraphTensor
         MPSGraph,
         MPSGraphTensor,
     )
@@ -31,11 +34,13 @@ except ImportError as e:
     _MPS_AVAILABLE = False
 
 
-def _ensure_metal() -> object | None:
+def _ensure_metal() -> Any:
     """Get Metal device, return None if unavailable."""
     if not _MPS_AVAILABLE:
         return None
     try:
+        if _Metal is None:
+            return None
         return _Metal()
     except Exception as e:
         logger.warning(f"Failed to create Metal device: {e}")
@@ -51,7 +56,7 @@ def batch_dot_product(
     query_emb: list,
     doc_embs: list,
     use_metal: bool = True
-) -> list:
+) -> list[float]:
     """
     Compute batch dot products between query and document embeddings.
 
@@ -77,7 +82,8 @@ def batch_dot_product(
         # We want (num_docs,) dot products
         scores = mx.sum(query_array * doc_array, axis=1)
 
-        return scores.tolist()
+        # ty: .tolist() returns `int | float | list[Divergent]`; coerce to list[float]
+        return [float(x) for x in scores.tolist()]  # type: ignore
     except Exception as e:
         logger.warning(f"MPSGraph dot product failed: {e}, using fallback")
         return _fallback_dot_product(query_emb, doc_embs)
@@ -95,7 +101,7 @@ def _fallback_dot_product(
 _DCT_AVAILABLE = False
 
 try:
-    from MetalPerformanceShaders import MPSImageDCT  # noqa: F401  # MetalPerformanceShaders.MPSImageDCT
+    from MetalPerformanceShaders import MPSImageDCT  # type: ignore[import-not-found]  # noqa: F401  # MetalPerformanceShaders.MPSImageDCT
     _DCT_AVAILABLE = True
 except ImportError:
     logger.debug("MPSImageDCT not available")
@@ -197,7 +203,7 @@ def mps_graph_matmul(
     b: list,
     trans_a: bool = False,
     trans_b: bool = False
-) -> list:
+) -> list[list[float]]:
     """
     Matrix multiplication using MPSGraph.
 
@@ -222,7 +228,8 @@ def mps_graph_matmul(
             b_arr = b_arr.T
 
         result = mx.matmul(a_arr, b_arr)
-        return result.tolist()
+        # ty: .tolist() returns `int | float | list[Divergent]`; coerce to list[list[float]]
+        return [[float(x) for x in row] for row in result.tolist()]  # type: ignore
     except Exception as e:
         logger.warning(f"MPS matmul failed: {e}, using numpy")
         return _numpy_matmul(a, b, trans_a, trans_b)
@@ -233,7 +240,7 @@ def _numpy_matmul(
     b: list,
     trans_a: bool,
     trans_b: bool
-) -> list:
+) -> list[list[float]]:
     """NumPy fallback for matrix multiplication."""
     try:
         import numpy as np
@@ -246,7 +253,7 @@ def _numpy_matmul(
             b_arr = b_arr.T
 
         result = np.matmul(a_arr, b_arr)
-        return result.tolist()
+        return [[float(x) for x in row] for row in result.tolist()]
     except Exception:
         # Pure Python fallback
         a_t = list(zip(*a, strict=False)) if trans_a else a
@@ -273,10 +280,10 @@ def get_metal_memory_info() -> dict:
             return {}
 
         return {
-            'name': device.name,
-            'registrySize': device.registrySize,
-            'recommendedMaxWorkingSetSize': device.recommendedMaxWorkingSetSize,
-            'currentAllocatedSize': device.currentAllocatedSize,
+            'name': getattr(device, 'name', 'unknown'),
+            'registrySize': getattr(device, 'registrySize', 0),
+            'recommendedMaxWorkingSetSize': getattr(device, 'recommendedMaxWorkingSetSize', 0),
+            'currentAllocatedSize': getattr(device, 'currentAllocatedSize', 0),
         }
     except Exception as e:
         logger.debug(f"Failed to get Metal memory info: {e}")

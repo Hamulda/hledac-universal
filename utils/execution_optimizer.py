@@ -11,7 +11,7 @@ import multiprocessing
 import os
 import threading
 import time
-from collections import OrderedDict, deque
+from collections import OrderedDict, defaultdict, deque
 from collections.abc import Callable
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from dataclasses import dataclass, field
@@ -19,7 +19,7 @@ from datetime import datetime
 from enum import Enum
 
 # Machine learning for optimization - lazy imports to reduce cold-start
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
 import psutil
@@ -31,6 +31,10 @@ if TYPE_CHECKING:
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# Module-level psutil availability flag (F224E hygiene: also referenced by
+# other modules in utils/ that import this as a peer).
+PSUTIL_AVAILABLE = True
 
 
 class ExecutionStrategy(Enum):
@@ -158,7 +162,11 @@ class ParallelExecutionOptimizer:
     PARALLEL_GROUP_TTL_SECS = 3600  # 1 hour
 
     def __init__(self, config_path: str | None = None):
-        self.config = self._load_config(config_path)
+        # ty: _load_config expects str, accepts str | None → widen
+        if config_path is not None:
+            self.config = self._load_config(config_path)
+        else:
+            self.config = self._load_config("")
         self.task_history = deque(maxlen=1000)
         # Bounded storage with timestamps for TTL eviction
         self.worker_metrics: OrderedDict[str, dict] = OrderedDict()
@@ -174,6 +182,11 @@ class ParallelExecutionOptimizer:
         # Sprint F214OPT-D: Telemetry
         self._execution_max_pending = self._max_pending_ops
         self._execution_pending_throttled_count = 0
+        # ty: _concurrency_controller attribute must be declared for downstream use
+        self._concurrency_controller: _ConcurrencyController = _ConcurrencyController()
+        # Pools created lazily in _init_execution_pools
+        self.thread_pool: ThreadPoolExecutor | None = None
+        self.process_pool: ProcessPoolExecutor | None = None
 
     @property
     def _pending_limit(self) -> asyncio.Semaphore:
@@ -299,7 +312,7 @@ class ParallelExecutionOptimizer:
 
     def _load_config(self, config_path: str) -> dict[str, Any]:
         """Load parallel execution configuration"""
-        default_config = {
+        default_config: dict[str, Any] = {
             'execution': {
                 'default_strategy': ExecutionStrategy.ADAPTIVE.value,
                 'max_workers': multiprocessing.cpu_count(),
@@ -365,8 +378,12 @@ class ParallelExecutionOptimizer:
             max_workers=self.config['execution']['process_pool_size']
         )
 
+        # ty: _max_workers is a private attr; read via getattr for M1-safe logging
+        t_max = getattr(self.thread_pool, "_max_workers", "?")
+        p_max = getattr(self.process_pool, "_max_workers", "?")
         logger.info(
-            f"Initialized execution pools - Threads: {self.thread_pool._max_workers}, Processes: {self.process_pool._max_workers}")  # noqa: E501
+            f"Initialized execution pools - Threads: {t_max}, Processes: {p_max}"  # noqa: E501
+        )
 
     async def initialize(self) -> None:
         """Initialize async components like concurrency controller."""
@@ -488,7 +505,9 @@ class ParallelExecutionOptimizer:
 
         # Run all chunks concurrently
         chunk_tasks = [execute_chunk(chunk) for chunk in task_chunks]
-        chunk_results = await safe_gather_dropin(*chunk_tasks, label="execution_optimizer:489")
+        chunk_results_raw = await safe_gather_dropin(*chunk_tasks, label="execution_optimizer:489")
+        # ty: safe_gather_dropin returns list[list[Any] | BaseException]; flatten explicitly
+        chunk_results: list[list[Any]] = [r for r in chunk_results_raw if isinstance(r, list)]
 
         # Flatten results
         return [result for chunk_result in chunk_results for result in chunk_result]
@@ -520,7 +539,9 @@ class ParallelExecutionOptimizer:
             for worker_id, tasks in task_distribution.items()
         ]
 
-        worker_results = await safe_gather_dropin(*worker_tasks, label="execution_optimizer:521")
+        worker_results_raw = await safe_gather_dropin(*worker_tasks, label="execution_optimizer:521")
+        # ty: narrow to list-of-list; safe_gather may yield BaseException entries
+        worker_results: list[list[Any]] = [r for r in worker_results_raw if isinstance(r, list)]
 
         # Flatten results
         return [result for worker_result in worker_results for result in worker_result]
@@ -539,7 +560,8 @@ class ParallelExecutionOptimizer:
         task_classifications = await self._classify_tasks_by_resources(tasks)
 
         # Execute tasks with resource constraints
-        return await self._execute_with_resource_constraints(tasks, task_classifications, adjusted_workers)
+        workers: int = int(adjusted_workers) if adjusted_workers is not None else 1
+        return await self._execute_with_resource_constraints(tasks, task_classifications, workers)
 
     async def _execute_predictive(self, tasks: list[Any], max_workers: int) -> list[Any]:
         """Execute tasks with predictive optimization"""
@@ -570,7 +592,7 @@ class ParallelExecutionOptimizer:
         performance_samples = []
 
         # Start with conservative worker count
-        current_workers = max(1, max_workers // 2)
+        current_workers: int = max(1, max_workers // 2)
         results = []
         task_index = 0
 
@@ -607,24 +629,26 @@ class ParallelExecutionOptimizer:
 
             # Monitor resources and adjust workers
             current_resources = await self.resource_monitor.get_current_resources()
-            current_workers = self._adapt_worker_count(
+            # _adapt_worker_count may return None; ty widens to int|None — coerce
+            adapted = self._adapt_worker_count(
                 current_workers,
                 performance_samples,
                 current_resources,
                 initial_resources
             )
+            current_workers = int(adapted) if adapted is not None else current_workers
 
             task_index += batch_size
 
         return results
 
-    async def _calculate_resource_allocation(self, tasks: list[Any], max_workers: int) -> dict[str, float]:
+    async def _calculate_resource_allocation(self, tasks: list[Any], max_workers: int) -> dict[str, Any]:
         """Calculate optimal resource allocation for task group"""
         total_tasks = len(tasks)
         system_memory = psutil.virtual_memory().total / (1024**3)
         cpu_cores = multiprocessing.cpu_count()
 
-        allocation = {
+        allocation: dict[str, Any] = {
             'cpu_cores_per_worker': cpu_cores / max_workers,
             'memory_gb_per_worker': system_memory / max_workers * 0.8,  # Use 80% of available memory
             'expected_throughput': total_tasks / max_workers,
@@ -885,6 +909,11 @@ class ParallelExecutionOptimizer:
         """Adapt worker count based on performance and resources"""
         if len(performance_samples) < 2:
                     return current_workers
+        # ty: current_resources values may be int|None (from psutil paths); coerce
+        cpu_val: Any = current_resources.get('cpu_usage', 0.0)
+        mem_val: Any = current_resources.get('memory_usage', 0.0)
+        cpu_usage: float = float(cpu_val) if cpu_val is not None else 0.0
+        memory_usage: float = float(mem_val) if mem_val is not None else 0.0
 
         # Calculate performance trend
         recent_throughput = performance_samples[-1]['throughput']
@@ -892,10 +921,7 @@ class ParallelExecutionOptimizer:
 
         throughput_change = (recent_throughput - previous_throughput) / previous_throughput
 
-        # Get resource constraints
-        cpu_usage = current_resources['cpu_usage']
-        memory_usage = current_resources['memory_usage']
-
+        # Get resource constraints (already narrowed above for ty)
         cpu_threshnew = self.config['threshnews']['cpu_threshnew']
         memory_threshnew = self.config['threshnews']['memory_threshnew']
 
@@ -997,11 +1023,11 @@ class ParallelExecutionOptimizer:
             'statistics': self.get_performance_statistics(),
             'parallel_groups': {
                 group_id: {
-                    'strategy': group.strategy.value,
-                    'max_workers': group.max_workers,
-                    'task_count': len(group.tasks),
-                    'resource_allocation': group.resource_allocation,
-                    'created_at': group.created_at.isoformat()
+                    'strategy': group.strategy.value,  # type: ignore
+                    'max_workers': group.max_workers,  # type: ignore
+                    'task_count': len(group.tasks),  # type: ignore
+                    'resource_allocation': group.resource_allocation,  # type: ignore
+                    'created_at': group.created_at.isoformat()  # type: ignore
                 }
                 for group_id, group in self.parallel_groups.items()
             },
@@ -1315,11 +1341,13 @@ class IntelligentResourceAllocator:
         Returns:
             Allocation configuration with CPU affinity
         """
-        allocation = {
+        # ty: cpu_affinity holds list[int] | None but declared as str|None|bool.
+        # Widen the dict value type to Any.
+        allocation: dict[str, Any] = {
             "core_type": "any",
             "cpu_affinity": None,
             "priority_boost": False,
-            "thermal_throttle": False
+            "thermal_throttle": False,
         }
 
         # Check thermal state
@@ -1711,12 +1739,15 @@ def auto_optimize(
         memory_limit_mb: Memory limit for execution
     """
     def decorator(func: Callable) -> Callable:
-        cache_manager = PredictiveCacheManager() if cache_results else None
+        cache_manager: Any = PredictiveCacheManager() if cache_results else None
+        # ty: Callable may not be a function; getattr() guards missing __name__
+        func_name: str = getattr(func, "__name__", repr(func))
 
         async def wrapper(*args, **kwargs):
             # Create cache key
+            cache_key: str = ""
             if cache_manager:
-                cache_key = f"{func.__name__}:{hash(str(args))}:{hash(str(kwargs))}"
+                cache_key = f"{func_name}:{hash(str(args))}:{hash(str(kwargs))}"
                 cached = cache_manager.get(cache_key)
                 if cached is not None:
                     return cached
@@ -1738,7 +1769,8 @@ def auto_optimize(
 
             return result
 
-        wrapper._cache_manager = cache_manager
+        # ty: setting attribute on async function works at runtime; use setattr
+        setattr(wrapper, "_cache_manager", cache_manager)
         return wrapper
 
     return decorator
