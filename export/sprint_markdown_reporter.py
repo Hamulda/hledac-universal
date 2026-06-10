@@ -323,8 +323,8 @@ def _render_analyst_brief_section(analyst_brief: dict) -> str:
 
     # Format timestamp
     try:
-        from datetime import datetime
-        ts_str = datetime.utcfromtimestamp(generated_ts).strftime("%Y-%m-%d %H:%M:%S UTC") if generated_ts else "unknown"  # noqa: DTZ004
+        from datetime import datetime, timezone
+        ts_str = datetime.fromtimestamp(generated_ts, tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC") if generated_ts else "unknown"
     except Exception:
         ts_str = str(generated_ts) if generated_ts else "unknown"
 

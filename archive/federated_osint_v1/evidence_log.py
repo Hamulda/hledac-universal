@@ -4,7 +4,7 @@ Evidence log pro federated learning (downgrade a security events).
 
 import logging
 from collections import deque
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -20,7 +20,7 @@ class FederationEvidenceEvent:
         self.reasons = reasons
         self.refs = refs
         self.confidence = confidence
-        self.timestamp = datetime.utcnow()  # noqa: DTZ003
+        self.timestamp = datetime.now(timezone.utc)
 
     def to_dict(self) -> dict[str, Any]:
         return {

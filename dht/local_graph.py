@@ -6,6 +6,7 @@ import numpy as np
 
 from hledac.universal.security import decrypt_aes_gcm, encrypt_aes_gcm
 from hledac.universal.security.key_manager import KeyManager
+from hledac.universal.utils.lmdb_bulk import putmulti_bounded
 from hledac.universal.utils.msgspec_json import decode, encode
 
 if TYPE_CHECKING:
@@ -75,9 +76,16 @@ class LocalGraphStore:
         encrypted = encrypt_aes_gcm(bucket_key, plaintext, associated_data=node_id.encode())
 
         def _put():
-            with self.env.begin(write=True) as txn:
-                txn.put(node_id.encode(), encrypted)
-                txn.put(f"neighbors:{node_id}".encode(), encode(neighbors[:1000]))
+            # Bulk write: 2 puty v jedné transakci -> putmulti.
+            # Konzistentní s invariantem CLAUDE.md (LMDB bulk write).
+            putmulti_bounded(
+                self.env,
+                [
+                    (node_id.encode(), encrypted),
+                    (f"neighbors:{node_id}".encode(), encode(neighbors[:1000])),
+                ],
+                overwrite=True,
+            )
 
         loop = asyncio.get_running_loop()
         await loop.run_in_executor(None, _put)

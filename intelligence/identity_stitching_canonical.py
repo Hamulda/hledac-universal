@@ -27,7 +27,7 @@ from __future__ import annotations
 import logging
 import time
 from dataclasses import dataclass
-from typing import Any, Dict, List  # noqa: F401 used in subclasses
+from typing import Any
 
 logger = logging.getLogger(__name__)
 

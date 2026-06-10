@@ -673,45 +673,77 @@ class RelationshipDiscoveryEngine:
         """
         Save the current graph to disk.
 
-        Uses igraph's native picklez format when available (faster than generic pickle,
-        handles igraph objects correctly). Falls back to generic pickle for other graph types.
+        Format policy (F-BLOOM-REGRESSION companion):
+          * igraph -> ``write_picklez`` (igraph's native compact format, NOT
+            the Python ``pickle`` module — no exec surface).
+          * NetworkX -> ``_graph_serde.save_nx_graph_jsonl`` (JSON via orjson,
+            zero-copy, no ``pickle`` interpreter surface).
+          * Fallback: igraph instance saved via JSON if available.
+
+        Both paths bounded, fail-soft. Never raises.
         """
-        import pickle
-        if IGRAPH_AVAILABLE and self._igraph_graph is not None:
-            # igraph native format — handles igraph serialization correctly
-            self._igraph_graph.write_picklez(path)
-            return
-        # For networkx and other graph types, pickle is the standard format.
-        # networkx.write_gpickle() is also pickle-based but requires specific networkx version.
+        if IGRAPH_AVAILABLE and self._igraph_graph is not None and self._nx_graph is None:
+            # igraph native format — its own optimized picklez, not Python pickle.
+            try:
+                self._igraph_graph.write_picklez(path)
+                return
+            except Exception as e:  # noqa: BLE001
+                logger.warning("[RelDiscovery] igraph write_picklez failed: %s", e)
+        # NetworkX + igraph-as-NX: use JSON envelope. No Python pickle.
+        try:
+            from ._graph_serde import save_nx_graph_jsonl
+        except ImportError:
+            from intelligence._graph_serde import save_nx_graph_jsonl  # type: ignore
         if NETWORKX_AVAILABLE and self._nx_graph is not None:
-            graph_to_save = self._nx_graph
-        elif self._igraph_graph is not None:
-            graph_to_save = self._igraph_graph
-        else:
-            raise RuntimeError("No graph available to save")
-        with open(path, 'wb') as f:
-            pickle.dump(graph_to_save, f)
+            ok = save_nx_graph_jsonl(path, self._nx_graph, max_nodes=self.MAX_NODES)
+            if not ok:
+                raise RuntimeError("Graph save failed (NetworkX path)")
+            return
+        if self._igraph_graph is not None and NETWORKX_AVAILABLE:
+            from networkx import Graph as _NX  # type: ignore
+            tmp_nx = _NX()
+            tmp_nx.add_nodes_from(self._igraph_graph.vs.indices)
+            tmp_nx.add_edges_from(self._igraph_graph.get_edgelist())
+            ok = save_nx_graph_jsonl(path, tmp_nx, max_nodes=self.MAX_NODES)
+            if not ok:
+                raise RuntimeError("Graph save failed (igraph->NX path)")
+            return
+        raise RuntimeError("No graph available to save")
 
     def _load_graph(self, path: str) -> bool:
         """
         Load a graph from disk.
 
-        Supports both igraph native and pickle formats.
+        Format policy (F-BLOOM-REGRESSION companion):
+          * Our JSON envelope (orjson + node_link) is the canonical read path.
+            No ``pickle.load`` exec surface.
+          * igraph native ``Graph.Load`` (NOT Python pickle) is used for files
+            that don't match our JSON magic.
+          * Legacy ``.pkl`` (Python pickle) is only accepted as a one-shot
+            migration and ONLY on F196B-safe paths (``~/.hledac/graphs``).
 
-        SECURITY: F196B — pickle.load is only used as fallback for files within
-        the application's graph directory. External paths are rejected.
+        SECURITY: F196B — legacy pickle is rejected outside the application's
+        graph directory. New code never writes Python pickle.
         """
-        import pickle
-
         # F196B: Security hardening — validate path is within expected graph directory
-        # This prevents loading malicious pickle files from unexpected locations
         from pathlib import Path
         graph_base_dir = Path("~/.hledac/graphs").expanduser()
         resolved_path = Path(path).resolve()
         resolved_base = graph_base_dir.resolve()
-
         is_safe_path = str(resolved_path).startswith(str(resolved_base) + "/")
 
+        # Try our JSON envelope first (canonical, no pickle interpreter).
+        try:
+            from ._graph_serde import is_our_format, load_nx_graph_jsonl
+        except ImportError:
+            from intelligence._graph_serde import is_our_format, load_nx_graph_jsonl  # type: ignore
+        if NETWORKX_AVAILABLE and is_our_format(path):
+            loaded = load_nx_graph_jsonl(path, max_nodes=self.MAX_NODES)
+            if loaded is not None:
+                self._nx_graph = loaded
+                return True
+
+        # igraph native format (NOT Python pickle).
         if IGRAPH_AVAILABLE:
             try:
                 if is_safe_path:
@@ -723,22 +755,28 @@ class RelationshipDiscoveryEngine:
                     )
             except Exception:
                 pass
-        if NETWORKX_AVAILABLE:
+
+        # Legacy Python pickle — one-shot migration, F196B-safe only.
+        if is_safe_path and NETWORKX_AVAILABLE:
             try:
-                if is_safe_path:
-                    with open(path, 'rb') as f:
-                        self._nx_graph = pickle.load(f)
+                import pickle  # lazy, only for legacy migration
+                with open(path, "rb") as f:
+                    obj = pickle.load(f)
+                if obj is not None:
+                    self._nx_graph = obj
                     return True
-                else:
-                    logger.warning(
-                        f"[F196B] Pickle load rejected for path outside graphs dir: {path}"
-                    )
-            except Exception:
-                pass
+            except Exception as e:  # noqa: BLE001
+                logger.warning("[F196B] legacy pickle load failed: %s", e)
+        elif not is_safe_path:
+            logger.warning(
+                f"[F196B] legacy pickle load rejected for unsafe path: {path}"
+            )
+
         # Generic pickle fallback for any graph type — only from safe paths
         if is_safe_path:
             try:
-                with open(path, 'rb') as f:
+                import pickle  # lazy, only for legacy migration
+                with open(path, "rb") as f:
                     loaded = pickle.load(f)
                     if IGRAPH_AVAILABLE and loaded is not None:
                         self._igraph_graph = loaded
@@ -2240,36 +2278,68 @@ class RelationshipDiscoveryEngine:
     MAX_RELATIONSHIPS: int = 20_000
 
     def save_graph(self, path: Path) -> None:
-        """Persist NetworkX graph to disk with node-count pruning."""
+        """Persist NetworkX graph to disk with node-count pruning.
+
+        Uses ``_graph_serde.save_nx_graph_jsonl`` (JSON via orjson, no
+        Python ``pickle``). Bounded, fail-soft.
+        """
         nx_graph = self._build_networkx_graph()
         if nx_graph is None:
             return
-        node_count = nx_graph.number_of_nodes()
-        if node_count > self.MAX_NODES:
-            degree_sorted = sorted(nx_graph.nodes(), key=lambda n: nx_graph.degree(n))
-            prune_count = node_count - self.MAX_NODES
-            nodes_to_remove = set(degree_sorted[:prune_count])
-            nx_graph.remove_nodes_from(nodes_to_remove)
-            logger.warning(
-                f"[RelDiscovery] Pruned {prune_count} lowest-degree nodes, "
-                f"remaining: {nx_graph.number_of_nodes()}"
-            )
-        import pickle
-        with open(path, "wb") as f:
-            pickle.dump(nx_graph, f, protocol=pickle.HIGHEST_PROTOCOL)
-        logger.debug(f"[RelDiscovery] Graph saved: {nx_graph.number_of_nodes()} nodes, {nx_graph.number_of_edges()} edges")  # noqa: E501
+        try:
+            from ._graph_serde import save_nx_graph_jsonl
+        except ImportError:
+            from intelligence._graph_serde import save_nx_graph_jsonl  # type: ignore
+        ok = save_nx_graph_jsonl(str(path), nx_graph, max_nodes=self.MAX_NODES)
+        if not ok:
+            logger.warning("[RelDiscovery] save_graph failed (jsonl path) -> %s", path)
+            return
+        logger.debug(
+            f"[RelDiscovery] Graph saved: {nx_graph.number_of_nodes()} nodes, "
+            f"{nx_graph.number_of_edges()} edges"
+        )
 
     def load_graph(self, path: Path) -> bool:
         """Load persisted NetworkX graph from disk with node-count bound.
+
+        Reads JSON envelope (orjson + node_link). Legacy ``.pkl`` is accepted
+        only on F196B-safe paths as a one-shot migration.
 
         Returns True if loaded, False if file missing or error.
         """
         if not path.exists():
             return False
         try:
-            import pickle
-            with open(path, "rb") as f:
-                nx_graph = pickle.load(f)
+            from ._graph_serde import is_our_format, load_nx_graph_jsonl
+        except ImportError:
+            from intelligence._graph_serde import is_our_format, load_nx_graph_jsonl  # type: ignore
+        nx_graph: Any | None = None
+        if is_our_format(str(path)):
+            nx_graph = load_nx_graph_jsonl(str(path), max_nodes=self.MAX_NODES)
+        else:
+            # Legacy pickle fallback — F196B path check inside helper.
+            from pathlib import Path as _P
+            graphs_root = (_P("~/.hledac/graphs").expanduser()).resolve()
+            if str(_P(str(path)).resolve()).startswith(str(graphs_root) + "/"):  # F196B
+                try:
+                    import pickle  # lazy, legacy migration only
+                    with open(path, "rb") as f:
+                        nx_graph = pickle.load(f)
+                    # Bound legacy graph
+                    if nx_graph is not None and self.MAX_NODES and nx_graph.number_of_nodes() > self.MAX_NODES:
+                        degree_sorted = sorted(nx_graph.nodes(), key=lambda n: nx_graph.degree(n))
+                        prune_count = nx_graph.number_of_nodes() - self.MAX_NODES
+                        nx_graph.remove_nodes_from(set(degree_sorted[:prune_count]))
+                except Exception as e:  # noqa: BLE001
+                    logger.warning("[F196B] legacy pickle load_graph failed: %s", e)
+                    nx_graph = None
+            else:
+                logger.warning(
+                    f"[F196B] load_graph rejected path outside graphs dir: {path}"
+                )
+        if nx_graph is None:
+            return False
+        try:
             node_count = nx_graph.number_of_nodes()
             if node_count > self.MAX_NODES:
                 degree_sorted = sorted(nx_graph.nodes(), key=lambda n: nx_graph.degree(n))

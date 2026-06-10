@@ -20,7 +20,7 @@ import asyncio
 import json
 import sys
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -295,7 +295,7 @@ async def run_benchmark(
     # Build output
     benchmark_output = {
         "metadata": {
-            "timestamp": datetime.utcnow().isoformat() + "Z",  # noqa: DTZ003
+            "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
             "num_runs": num_runs,
             "mode": mode,
             "duration_s": duration_s,

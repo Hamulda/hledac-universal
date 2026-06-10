@@ -18,708 +18,371 @@ Integrated from deep_research:
 - Temporal Analysis (time-series, trend detection)
 - Stealth Crawler (DuckDuckGo/Google scraping)
 - Web Intelligence (unified platform)
+
+Sprint F-A2: lazy module loading via PEP 562 ``__getattr__``.
+Each optional subsystem defers its import until first attribute access.
+Cold ``import intelligence`` now only pays for the spec table (~5-10ms)
+instead of all 21 try/except blocks (~200ms).
 """
 
 from __future__ import annotations
 
-# Archive Discovery (from deep_research/advanced_archive_discovery.py)
-# Enhanced with stealth_osint integration
-try:
-    from .archive_discovery import (
-        ArchiveDiscovery,
-        ArchiveResult,
-        # From stealth_osint/archive_resurrector.py
-        ArchiveResurrector,
-        ArchiveTodayClient,
-        CDXSnapshot,
-        ContentSource,
-        ContentType,
-        DiscoveredEndpoint,
-        GitHubHistoricalClient,
-        IPFSClient,
-        ResurrectionRequest,
-        ResurrectionResult,
-        Snapshot,
-        SnapshotInfo,
-        WaybackCDX,  # noqa: F401  # .archive_discovery.WaybackCDX
-        WaybackCDXClient,  # DEPRECATED: alias pro WaybackCDX, odstranit po CE-001
-        WaybackMachineClient,
-        discover_from_wayback,
-        get_archive_resurrector,
-        get_wayback_snapshots,
-        resurrect_url,
-        search_archives,
-        wayback_cdx_lookup,  # COMPAT: search-shaped wrapper pro fetch_coordinator  # noqa: F401  # .archive_discovery.wayback_cdx_lookup
-    )
-    ARCHIVE_AVAILABLE = True
-except ImportError:
-    ARCHIVE_AVAILABLE = False
+import importlib
+import logging
+from typing import Any
 
-# Temporal Analysis (from deep_research/temporal_analyzer.py + predictive_modeler.py)
-try:
-    from .temporal_analysis import (
-        CausalEvent,
-        PatternType,
-        Scenario,
-        TemporalAnalysisResult,
-        TemporalAnalyzer,
-        TemporalPattern,
-        TrendAnalysis,
-        TrendDirection,
-        TurningPoint,
-        create_temporal_analyzer,
-        # Advanced predictive methods from predictive_modeler.py:
-        # - ARIMA projection
-        # - Monte Carlo simulation
-        # - Bayesian updating
-        # - Exponential smoothing
-        # - Ensemble prediction
-    )
-    TEMPORAL_AVAILABLE = True
-except ImportError:
-    TEMPORAL_AVAILABLE = False
+_log = logging.getLogger(__name__)
 
-# Stealth Crawler (from deep_research/distributed_dark_web_crawler.py)
-# Enhanced with stealth_toolkit and stealth_osint integration
-try:
-    from .stealth_crawler import (
-        Alert,
-        AlertRule,
-        BypassMethod,
-        Change,
-        ChangeType,
-        FingerprintProfile,
-        HeaderConfig,
-        # Header Spoofer (from stealth_toolkit integration)
-        HeaderSpoofer,
-        MonitoredSource,
-        ProtectionType,
-        ProxyConfig,
-        ScrapingResult,
-        SearchResult,
-        Severity,
-        SourceType,
-        StealthCrawler,
-        # From stealth_osint/stealth_web_scraper.py
-        StealthWebScraper,
-        StreamEvent,
-        # Streaming Monitor (continuous monitoring capabilities)
-        StreamingMonitor,
-        create_stealth_crawler,
-        get_stealth_headers,
-        get_stealth_web_scraper,
-        quick_scrape,
-    )
-    CRAWLER_AVAILABLE = True
-except ImportError:
-    CRAWLER_AVAILABLE = False
+# Lazy spec table. Each spec = (submodule, flag, names_imported, names_set_to_None_on_import_error).
+# Loading order matches the historical import order; for name collisions
+# (Anomaly, Pattern, EntityType, etc. imported from multiple submodules),
+# the LAST spec wins — same behaviour as the original ``from X import Y``
+# shadowing at module top level.
+_LAZY_SPECS: tuple[tuple[str, str, tuple[str, ...], tuple[str, ...]], ...] = (
+    (".archive_discovery", "ARCHIVE_AVAILABLE", (
+        "ArchiveDiscovery", "ArchiveResult",
+        "ArchiveResurrector", "ArchiveTodayClient", "CDXSnapshot",
+        "ContentSource", "ContentType", "DiscoveredEndpoint",
+        "GitHubHistoricalClient", "IPFSClient",
+        "ResurrectionRequest", "ResurrectionResult",
+        "Snapshot", "SnapshotInfo",
+        "WaybackCDX",
+        "WaybackCDXClient",
+        "WaybackMachineClient",
+        "discover_from_wayback", "get_archive_resurrector",
+        "get_wayback_snapshots", "resurrect_url", "search_archives",
+        "wayback_cdx_lookup",
+    ), ()),
+    (".temporal_analysis", "TEMPORAL_AVAILABLE", (
+        "CausalEvent", "PatternType",
+        "Scenario", "TemporalAnalysisResult", "TemporalAnalyzer",
+        "TemporalPattern", "TrendAnalysis", "TrendDirection",
+        "TurningPoint", "create_temporal_analyzer",
+    ), ()),
+    (".stealth_crawler", "CRAWLER_AVAILABLE", (
+        "Alert", "AlertRule", "BypassMethod", "Change", "ChangeType",
+        "FingerprintProfile", "HeaderConfig", "HeaderSpoofer",
+        "MonitoredSource", "ProtectionType", "ProxyConfig",
+        "ScrapingResult", "SearchResult", "Severity", "SourceType",
+        "StealthCrawler", "StealthWebScraper", "StreamEvent",
+        "StreamingMonitor",
+        "create_stealth_crawler", "get_stealth_headers",
+        "get_stealth_web_scraper", "quick_scrape",
+    ), ()),
+    (".web_intelligence", "WEB_INTEL_AVAILABLE", (
+        "IntelligenceOperationType", "IntelligenceResult",
+        "IntelligenceTarget", "OperationStatus",
+        "UnifiedWebIntelligence",
+    ), ()),
+    (".academic_search", "ACADEMIC_SEARCH_AVAILABLE", (
+        "AcademicSearchEngine", "AcademicSearchResult", "AcademicSource",
+        "ArxivAdapter", "BaseSourceAdapter", "CrossrefAdapter",
+        "QueryAnalysis", "ResultType", "SearchResult",
+        "SemanticScholarAdapter", "SourcePerformance", "SourceResult",
+        "search_academic",
+    ), ()),
+    (".data_leak_hunter", "DATA_LEAK_HUNTER_AVAILABLE", (
+        "AlertSeverity", "BreachAPIConfig", "DataLeakHunter",
+        "LeakAlert", "LeakSource", "MonitoringTarget",
+        "check_email_breaches", "get_data_leak_hunter",
+    ), ()),
+    (".cryptographic_intelligence", "CRYPTO_AVAILABLE", (
+        "CertificateAnalyzer", "CertificateInfo", "CipherType",
+        "ClassicalCryptanalysis", "CryptanalysisResult",
+        "CryptographicIntelligence", "EncryptionDetection",
+        "EncryptionDetector", "HashAnalysis", "HashAnalyzer", "HashType",
+    ), ()),
+    (".document_intelligence", "DOCUMENT_INTELLIGENCE_AVAILABLE", (
+        "CrossDocumentLink", "DocumentAnalysis",
+        "DocumentIntelligenceEngine", "DocumentMetadata", "DocumentType",
+        "EmbeddedObject", "EntityMention", "EXIFData", "GeoLocation",
+        "ImageAnalyzer", "LongContextAnalysis", "MLXLongContextAnalyzer",
+        "OfficeDocumentAnalyzer", "PDFAnalyzer", "TimelineEvent",
+    ), ()),
+    (".temporal_archaeologist", "TEMPORAL_ARCHAEOLOGIST_AVAILABLE", (
+        "AnomalyType", "ArchivedVersion", "ArchiveSource",
+        "EntitySnapshot", "EntityTimeline", "EntityType", "IdentityChange",
+        "RecoveryResult", "ResolvedEntity", "TemporalAnomaly",
+        "TemporalArchaeologist", "TemporalCorrelation", "TemporalGap",
+        "create_temporal_archaeologist", "detect_anomalies",
+        "reconstruct_timeline", "recover_deleted_content",
+    ), ()),
+    (".timeline_synthesizer", "TIMELINE_SYNTHESIZER_AVAILABLE", (
+        "MAX_EVENT_AGE_DAYS", "MAX_TIMELINE_EVENTS",
+        "SynthesizedTimeline", "TimelineEvent", "TimelineMetadata",
+        "TimelineSynthesizer", "create_timeline_synthesizer",
+    ), ()),
+    (".temporal_archaeologist_adapter", "TEMPORAL_ARCHAEOLOGIST_ADAPTER_AVAILABLE", (
+        "MAX_TIMELINE_FINDINGS", "TemporalArchaeologistAdapter",
+        "TimelineFindingResult", "create_temporal_archaeologist_adapter",
+    ), ()),
+    (".exposed_service_hunter", "EXPOSED_SERVICE_HUNTER_AVAILABLE", (
+        "CertificateInfo", "CertificateTransparency",
+        "ContainerAPIExplorer", "DatabasePortScanner",
+        "ExposedService", "ExposedServiceHunter", "ExposureType",
+        "GraphQLIntrospector", "RiskLevel", "S3Bucket",
+        "S3BucketEnumerator", "ServiceType",
+        "check_s3_bucket", "quick_hunt", "scan_graphql_endpoint",
+    ), ()),
+    (".open_source_collectors", "OPEN_SOURCE_COLLECTORS_AVAILABLE", (
+        "OpenSourceCollectors", "get_open_source_collectors",
+    ), ()),
+    (".academic_discovery", "ACADEMIC_DISCOVERY_AVAILABLE", (
+        "AcademicPaper", "search_academic_all", "search_arxiv",
+        "search_arxiv_sync", "search_crossref", "search_crossref_sync",
+        "search_semantic_scholar", "search_semantic_scholar_sync",
+    ), ()),
+    (".pastebin_monitor", "PASTEBIN_MONITOR_AVAILABLE", (
+        "PasteFinding", "pastebin_run",
+    ), ()),
+    (".relationship_discovery", "RELATIONSHIP_DISCOVERY_AVAILABLE", (
+        "AffinityMatrix", "Communication", "Community", "ConnectionPath",
+        "Document", "Entity", "EntityType", "InfluenceModel",
+        "Relationship", "RelationshipDiscoveryEngine", "RelationshipType",
+        "create_relationship_engine",
+    ), ()),
+    (".pattern_mining", "PATTERN_MINING_AVAILABLE", (
+        "Action", "Anomaly", "AnomalyType", "BehavioralPattern",
+        "Communication", "CommunicationPattern", "Event", "FlowPattern",
+        "Pattern", "PatternMiningEngine", "PatternType",
+        "SeasonalityType", "SequentialPattern", "StructuralPattern",
+        "TemporalPattern", "Transaction", "TrendDirection",
+        "create_pattern_mining_engine",
+    ), ()),
+    (".identity_stitching", "IDENTITY_STITCHING_AVAILABLE", (
+        "IdentityMatch", "IdentityProfile", "IdentityStitchingEngine",
+        "StitchedIdentity", "UsernameEntry",
+        "create_identity_stitching_engine",
+    ), ()),
+    # blockchain_analyzer: original code had 3 separate ``from`` blocks (names,
+    # then PatternType alias, then RiskLevel alias). One merged spec preserves
+    # the same final namespace contents.
+    (".blockchain_analyzer", "BLOCKCHAIN_FORENSICS_AVAILABLE", (
+        "BlockchainForensics", "ChainType", "Cluster", "CrossChainResult",
+        "EntityType", "Transaction", "TransactionPattern", "WalletAnalysis",
+        "analyze_blockchain_address", "detect_transaction_patterns",
+        "get_blockchain_forensics",
+        "BlockchainPatternType", "BlockchainRiskLevel",
+    ), ()),
+    # input_detector + workflow_orchestrator: original set explicit
+    # ``Name = None`` in the except branch so callers can ``if X is None`` guard.
+    (".input_detector", "INPUT_DETECTOR_AVAILABLE", (
+        "ComplexityScore", "InputAnalysis", "IntelligenceConfig",
+        "IntelligentInputDetector", "Pattern", "create_input_detector",
+    ), (
+        "IntelligentInputDetector", "InputAnalysis", "Pattern",
+        "ComplexityScore", "create_input_detector",
+    )),
+    (".workflow_orchestrator", "WORKFLOW_ORCHESTRATOR_AVAILABLE", (
+        "Anomaly", "ComprehensiveReport", "CorrelationReport", "Finding",
+        "SharedContext", "WorkflowOrchestrator", "create_workflow_orchestrator",
+    ), (
+        "WorkflowOrchestrator", "ComprehensiveReport", "SharedContext",
+        "CorrelationReport", "Anomaly", "Finding", "create_workflow_orchestrator",
+    )),
+)
 
-# Web Intelligence
-try:
-    from .web_intelligence import (
-        IntelligenceOperationType,
-        IntelligenceResult,
-        IntelligenceTarget,
-        OperationStatus,
-        UnifiedWebIntelligence,
-    )
-    WEB_INTEL_AVAILABLE = True
-except ImportError:
-    WEB_INTEL_AVAILABLE = False
+# Build the name -> spec index. For duplicate names (Anomaly, Pattern, EntityType,
+# AlertSeverity, CertificateInfo imported from multiple submodules), the LAST
+# spec in _LAZY_SPECS wins — mirroring the historical ``from X import Y`` shadowing
+# where the final assignment to the module namespace is the one that sticks.
+_NAME_TO_SPEC: dict[str, tuple[str, str, tuple[str, ...], tuple[str, ...]]] = {}
+for _spec in _LAZY_SPECS:
+    _modname, _flag, _names, _nulls = _spec
+    for _n in _names:
+        _NAME_TO_SPEC[_n] = _spec  # last write wins (intentional)
+_FLAG_TO_SPEC: dict[str, tuple[str, str, tuple[str, ...], tuple[str, ...]]] = {
+    _flag: _spec for _spec in _LAZY_SPECS for _flag in [_spec[1]]
+}
 
-# Academic Search (from MSQES)
-try:
-    from .academic_search import (
-        AcademicSearchEngine,
-        AcademicSearchResult,
-        AcademicSource,
-        ArxivAdapter,
-        BaseSourceAdapter,
-        CrossrefAdapter,
-        QueryAnalysis,
-        ResultType,
-        SearchResult,
-        SemanticScholarAdapter,
-        SourcePerformance,
-        SourceResult,
-        search_academic,
-    )
-    ACADEMIC_SEARCH_AVAILABLE = True
-except ImportError:
-    ACADEMIC_SEARCH_AVAILABLE = False
-
-# Data Leak Hunter (from stealth_osint/data_leak_hunter.py)
-try:
-    from .data_leak_hunter import (
-        AlertSeverity,
-        BreachAPIConfig,
-        DataLeakHunter,
-        LeakAlert,
-        LeakSource,
-        MonitoringTarget,
-        check_email_breaches,
-        get_data_leak_hunter,
-    )
-    DATA_LEAK_HUNTER_AVAILABLE = True
-except ImportError:
-    DATA_LEAK_HUNTER_AVAILABLE = False
-
-# Cryptographic Intelligence (cryptanalysis, hash analysis, certificates)
-try:
-    from .cryptographic_intelligence import (
-        CertificateAnalyzer,
-        CertificateInfo,
-        CipherType,
-        ClassicalCryptanalysis,
-        CryptanalysisResult,
-        CryptographicIntelligence,
-        EncryptionDetection,
-        EncryptionDetector,
-        HashAnalysis,
-        HashAnalyzer,
-        HashType,
-    )
-    CRYPTO_AVAILABLE = True
-except ImportError:
-    CRYPTO_AVAILABLE = False
-
-# Document Intelligence (PDF, Office, Images, MLX Long-Context)
-try:
-    from .document_intelligence import (
-        CrossDocumentLink,
-        DocumentAnalysis,
-        DocumentIntelligenceEngine,
-        DocumentMetadata,
-        DocumentType,
-        EmbeddedObject,
-        EntityMention,
-        EXIFData,
-        GeoLocation,
-        ImageAnalyzer,
-        LongContextAnalysis,
-        MLXLongContextAnalyzer,
-        OfficeDocumentAnalyzer,
-        PDFAnalyzer,
-        TimelineEvent,
-    )
-    DOCUMENT_INTELLIGENCE_AVAILABLE = True
-except ImportError:
-    DOCUMENT_INTELLIGENCE_AVAILABLE = False
-
-# Temporal Archaeologist (deleted content recovery, timeline reconstruction)
-try:
-    from .temporal_archaeologist import (
-        AnomalyType,
-        ArchivedVersion,
-        ArchiveSource,
-        EntitySnapshot,
-        EntityTimeline,
-        EntityType,
-        IdentityChange,
-        RecoveryResult,
-        ResolvedEntity,
-        TemporalAnomaly,
-        TemporalArchaeologist,
-        TemporalCorrelation,
-        TemporalGap,
-        create_temporal_archaeologist,
-        detect_anomalies,
-        reconstruct_timeline,
-        recover_deleted_content,
-    )
-    TEMPORAL_ARCHAEOLOGIST_AVAILABLE = True
-except ImportError:
-    TEMPORAL_ARCHAEOLOGIST_AVAILABLE = False
-
-# Timeline Synthesizer (Sprint F202E)
-try:
-    from .timeline_synthesizer import (
-        MAX_EVENT_AGE_DAYS,
-        MAX_TIMELINE_EVENTS,
-        SynthesizedTimeline,
-        TimelineEvent,
-        TimelineMetadata,
-        TimelineSynthesizer,
-        create_timeline_synthesizer,
-    )
-    TIMELINE_SYNTHESIZER_AVAILABLE = True
-except ImportError:
-    TIMELINE_SYNTHESIZER_AVAILABLE = False
-
-# Temporal Archaeologist Adapter (Sprint F202E)
-try:
-    from .temporal_archaeologist_adapter import (
-        MAX_TIMELINE_FINDINGS,
-        TemporalArchaeologistAdapter,
-        TimelineFindingResult,
-        create_temporal_archaeologist_adapter,
-    )
-    TEMPORAL_ARCHAEOLOGIST_ADAPTER_AVAILABLE = True
-except ImportError:
-    TEMPORAL_ARCHAEOLOGIST_ADAPTER_AVAILABLE = False
-
-# Exposed Service Hunter (S3, Databases, GraphQL, CT logs, Container APIs)
-try:
-    from .exposed_service_hunter import (
-        CertificateInfo,
-        CertificateTransparency,
-        ContainerAPIExplorer,
-        DatabasePortScanner,
-        ExposedService,
-        ExposedServiceHunter,
-        ExposureType,
-        GraphQLIntrospector,
-        RiskLevel,
-        S3Bucket,
-        S3BucketEnumerator,
-        ServiceType,
-        check_s3_bucket,
-        quick_hunt,
-        scan_graphql_endpoint,
-    )
-    EXPOSED_SERVICE_HUNTER_AVAILABLE = True
-except ImportError:
-    EXPOSED_SERVICE_HUNTER_AVAILABLE = False
+# Track which specs have already been resolved (one-shot load per process).
+_RESOLVED_SPECS: set[tuple[str, str, tuple[str, ...], tuple[str, ...]]] = set()
 
 
-# Open Source Collectors (Paste sites, Usenet, Matrix, Academic, SEC EDGAR, Court Records)
-try:
-    from .open_source_collectors import (
-        OpenSourceCollectors,
-        get_open_source_collectors,
-    )
-    OPEN_SOURCE_COLLECTORS_AVAILABLE = True
-except ImportError:
-    OPEN_SOURCE_COLLECTORS_AVAILABLE = False
+def _load_spec(spec: tuple[str, str, tuple[str, ...], tuple[str, ...]]) -> None:
+    """Import the submodule, inject names + flag into module globals, set None fallbacks on failure.
+
+    Idempotent — re-entry (e.g. re-raised import) is a no-op once resolved.
+    """
+    if spec in _RESOLVED_SPECS:
+        return
+    modname, flag, names, nulls = spec
+    try:
+        mod = importlib.import_module(modname, __name__)
+    except Exception as exc:  # ImportError + all transitive failures
+        _log.debug("intelligence lazy load failed: %s (%s)", modname, type(exc).__name__)
+        for n in nulls:
+            globals()[n] = None
+        globals()[flag] = False
+        _RESOLVED_SPECS.add(spec)
+        return
+    for n in names:
+        globals()[n] = getattr(mod, n, None)
+    globals()[flag] = True
+    _RESOLVED_SPECS.add(spec)
 
 
-# Academic Discovery (P14 — convenience wrapper around AcademicSearchEngine)
-try:
-    from .academic_discovery import (
-        AcademicPaper,
-        search_academic_all,
-        search_arxiv,
-        search_arxiv_sync,
-        search_crossref,
-        search_crossref_sync,
-        search_semantic_scholar,
-        search_semantic_scholar_sync,
-    )
-    ACADEMIC_DISCOVERY_AVAILABLE = True
-except ImportError:
-    ACADEMIC_DISCOVERY_AVAILABLE = False
+def __getattr__(name: str) -> Any:
+    """PEP 562 lazy attribute access.
+
+    Lookup order:
+      1. ``name`` is one of the imported names → ensure the owning spec is loaded, return the value.
+      2. ``name`` is a flag (``XXX_AVAILABLE``) → ensure the owning spec is loaded, return the flag.
+      3. Raise ``AttributeError`` so ``hasattr(...)`` and dir() behave correctly.
+    """
+    spec = _NAME_TO_SPEC.get(name)
+    if spec is not None:
+        _load_spec(spec)
+        return globals().get(name)
+    spec = _FLAG_TO_SPEC.get(name)
+    if spec is not None:
+        _load_spec(spec)
+        return globals().get(name, False)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
-# PastebinMonitor (P20 — paste site scraper for leak OSINT)
-try:
-    from .pastebin_monitor import (
-        PasteFinding,
-    )
-    from .pastebin_monitor import (
-        run as pastebin_run,
-    )
-    PASTEBIN_MONITOR_AVAILABLE = True
-except ImportError:
-    PASTEBIN_MONITOR_AVAILABLE = False
+def __dir__() -> list[str]:
+    """Tab completion: union of eager globals + all lazy names + all flags."""
+    names: set[str] = set(globals().keys())
+    for _modname, _flag, _names, _nulls in _LAZY_SPECS:
+        names.add(_flag)
+        names.update(_names)
+    return sorted(names)
 
 
-# Relationship Discovery (Social Network Analysis)
-try:
-    from .relationship_discovery import (
-        AffinityMatrix,
-        Communication,
-        Community,
-        ConnectionPath,
-        Document,
-        Entity,
-        EntityType,
-        InfluenceModel,
-        Relationship,
-        RelationshipDiscoveryEngine,
-        RelationshipType,
-        create_relationship_engine,
-    )
-    RELATIONSHIP_DISCOVERY_AVAILABLE = True
-except ImportError:
-    RELATIONSHIP_DISCOVERY_AVAILABLE = False
+def _lazy_stats() -> dict[str, Any]:
+    """Diagnostic snapshot: which specs are loaded, which are pending.
 
-# Pattern Mining Engine (behavioral, temporal, communication patterns)
-try:
-    from .pattern_mining import (
-        Action,
-        Anomaly,
-        AnomalyType,
-        BehavioralPattern,
-        Communication,
-        CommunicationPattern,
-        Event,
-        FlowPattern,
-        Pattern,
-        PatternMiningEngine,
-        PatternType,
-        SeasonalityType,
-        SequentialPattern,
-        StructuralPattern,
-        TemporalPattern,
-        Transaction,
-        TrendDirection,
-        create_pattern_mining_engine,
-    )
-    PATTERN_MINING_AVAILABLE = True
-except ImportError:
-    PATTERN_MINING_AVAILABLE = False
-
-# Identity Stitching Engine (cross-platform identity linking)
-try:
-    from .identity_stitching import (
-        IdentityMatch,
-        IdentityProfile,
-        IdentityStitchingEngine,
-        StitchedIdentity,
-        UsernameEntry,
-        create_identity_stitching_engine,
-    )
-    IDENTITY_STITCHING_AVAILABLE = True
-except ImportError:
-    IDENTITY_STITCHING_AVAILABLE = False
-
-# Blockchain Forensics (cryptocurrency analysis and tracing)
-try:
-    from .blockchain_analyzer import (
-        BlockchainForensics,
-        ChainType,
-        Cluster,
-        CrossChainResult,
-        EntityType,
-        Transaction,
-        TransactionPattern,
-        WalletAnalysis,
-        analyze_blockchain_address,
-        detect_transaction_patterns,
-        get_blockchain_forensics,
-    )
-    from .blockchain_analyzer import (
-        PatternType as BlockchainPatternType,
-    )
-    from .blockchain_analyzer import (
-        RiskLevel as BlockchainRiskLevel,
-    )
-    BLOCKCHAIN_FORENSICS_AVAILABLE = True
-except ImportError:
-    BLOCKCHAIN_FORENSICS_AVAILABLE = False
-
-# Phase 11: Input Detector
-try:
-    from .input_detector import (
-        ComplexityScore,
-        InputAnalysis,
-        IntelligenceConfig,
-        IntelligentInputDetector,
-        Pattern,
-        create_input_detector,
-    )
-    INPUT_DETECTOR_AVAILABLE = True
-except ImportError:
-    INPUT_DETECTOR_AVAILABLE = False
-    IntelligentInputDetector = None  # type: ignore
-    InputAnalysis = None  # type: ignore
-    Pattern = None  # type: ignore
-    ComplexityScore = None  # type: ignore
-    create_input_detector = None  # type: ignore
-
-# Phase 11: Workflow Orchestrator
-try:
-    from .workflow_orchestrator import (
-        Anomaly,
-        ComprehensiveReport,
-        CorrelationReport,
-        Finding,
-        SharedContext,
-        WorkflowOrchestrator,
-        create_workflow_orchestrator,
-    )
-    WORKFLOW_ORCHESTRATOR_AVAILABLE = True
-except ImportError:
-    WORKFLOW_ORCHESTRATOR_AVAILABLE = False
-    WorkflowOrchestrator = None  # type: ignore
-    ComprehensiveReport = None  # type: ignore
-    SharedContext = None  # type: ignore
-    CorrelationReport = None  # type: ignore
-    Anomaly = None  # type: ignore
-    Finding = None  # type: ignore
-    create_workflow_orchestrator = None  # type: ignore
+    Returned shape: ``{"loaded": [flag, ...], "pending": [flag, ...],
+    "resolved_count": int, "total_count": int}``.
+    """
+    loaded: list[str] = []
+    pending: list[str] = []
+    for spec in _LAZY_SPECS:
+        if spec in _RESOLVED_SPECS:
+            loaded.append(spec[1])
+        else:
+            pending.append(spec[1])
+    return {
+        "loaded": loaded,
+        "pending": pending,
+        "resolved_count": len(loaded),
+        "total_count": len(_LAZY_SPECS),
+    }
 
 
-__all__ = [
+__all__ = sorted(set([
     # Availability flags
-    "ARCHIVE_AVAILABLE",
-    "TEMPORAL_AVAILABLE",
-    "CRAWLER_AVAILABLE",
-    "WEB_INTEL_AVAILABLE",
-    "ACADEMIC_SEARCH_AVAILABLE",
-    "DATA_LEAK_HUNTER_AVAILABLE",
-    "CRYPTO_AVAILABLE",
-    "DOCUMENT_INTELLIGENCE_AVAILABLE",
-    "TEMPORAL_ARCHAEOLOGIST_AVAILABLE",
+    "ARCHIVE_AVAILABLE", "TEMPORAL_AVAILABLE", "CRAWLER_AVAILABLE",
+    "WEB_INTEL_AVAILABLE", "ACADEMIC_SEARCH_AVAILABLE",
+    "DATA_LEAK_HUNTER_AVAILABLE", "CRYPTO_AVAILABLE",
+    "DOCUMENT_INTELLIGENCE_AVAILABLE", "TEMPORAL_ARCHAEOLOGIST_AVAILABLE",
     "TIMELINE_SYNTHESIZER_AVAILABLE",
     "TEMPORAL_ARCHAEOLOGIST_ADAPTER_AVAILABLE",
-    "EXPOSED_SERVICE_HUNTER_AVAILABLE",
-    "OPEN_SOURCE_COLLECTORS_AVAILABLE",
+    "EXPOSED_SERVICE_HUNTER_AVAILABLE", "OPEN_SOURCE_COLLECTORS_AVAILABLE",
+    "ACADEMIC_DISCOVERY_AVAILABLE", "PASTEBIN_MONITOR_AVAILABLE",
+    "RELATIONSHIP_DISCOVERY_AVAILABLE", "PATTERN_MINING_AVAILABLE",
+    "IDENTITY_STITCHING_AVAILABLE", "BLOCKCHAIN_FORENSICS_AVAILABLE",
+    "INPUT_DETECTOR_AVAILABLE", "WORKFLOW_ORCHESTRATOR_AVAILABLE",
     # Archive
-    "ArchiveDiscovery",
-    "ArchiveResult",
-    "SnapshotInfo",
-    "WaybackMachineClient",
-    "ArchiveTodayClient",
-    "IPFSClient",
-    "GitHubHistoricalClient",
-    "WaybackCDXClient",
-    "CDXSnapshot",
-    "DiscoveredEndpoint",
-    "search_archives",
-    "get_wayback_snapshots",
+    "ArchiveDiscovery", "ArchiveResult", "SnapshotInfo",
+    "WaybackMachineClient", "ArchiveTodayClient", "IPFSClient",
+    "GitHubHistoricalClient", "WaybackCDXClient", "CDXSnapshot",
+    "DiscoveredEndpoint", "search_archives", "get_wayback_snapshots",
     "discover_from_wayback",
     # Temporal
-    "TemporalAnalyzer",
-    "TemporalAnalysisResult",
-    "TrendAnalysis",
-    "TrendDirection",
-    "TemporalPattern",
-    "PatternType",
-    "CausalEvent",
-    "Scenario",
-    "TurningPoint",
-    "create_temporal_analyzer",
+    "TemporalAnalyzer", "TemporalAnalysisResult", "TrendAnalysis",
+    "TrendDirection", "TemporalPattern", "PatternType", "CausalEvent",
+    "Scenario", "TurningPoint", "create_temporal_analyzer",
     # Crawler
-    "StealthCrawler",
-    "SearchResult",
-    "create_stealth_crawler",
-    # Header Spoofer (from stealth_toolkit)
-    "HeaderSpoofer",
-    "HeaderConfig",
-    "get_stealth_headers",
+    "StealthCrawler", "SearchResult", "create_stealth_crawler",
+    "HeaderSpoofer", "HeaderConfig", "get_stealth_headers",
     # Web Intelligence
-    "UnifiedWebIntelligence",
-    "IntelligenceTarget",
-    "IntelligenceResult",
-    "IntelligenceOperationType",
-    "OperationStatus",
-    # Academic Search (from MSQES)
-    "AcademicSearchEngine",
-    "AcademicSearchResult",
-    "SearchResult",
-    "SourceResult",
-    "QueryAnalysis",
-    "SourcePerformance",
-    "BaseSourceAdapter",
-    "ArxivAdapter",
-    "CrossrefAdapter",
-    "SemanticScholarAdapter",
-    "ResultType",
-    "AcademicSource",
-    "search_academic",
-    # Archive Resurrector (from stealth_osint)
-    "ArchiveResurrector",
-    "ContentSource",
-    "ContentType",
-    "Snapshot",
-    "ResurrectionResult",
-    "ResurrectionRequest",
-    "resurrect_url",
+    "UnifiedWebIntelligence", "IntelligenceTarget", "IntelligenceResult",
+    "IntelligenceOperationType", "OperationStatus",
+    # Academic Search (MSQES)
+    "AcademicSearchEngine", "AcademicSearchResult", "SourceResult",
+    "QueryAnalysis", "SourcePerformance", "BaseSourceAdapter",
+    "ArxivAdapter", "CrossrefAdapter", "SemanticScholarAdapter",
+    "ResultType", "AcademicSource", "search_academic",
+    # Archive Resurrector (stealth_osint)
+    "ArchiveResurrector", "ContentSource", "ContentType", "Snapshot",
+    "ResurrectionResult", "ResurrectionRequest", "resurrect_url",
     "get_archive_resurrector",
-    # Stealth Web Scraper (from stealth_osint)
-    "StealthWebScraper",
-    "ScrapingResult",
-    "ProxyConfig",
-    "FingerprintProfile",
-    "ProtectionType",
-    "BypassMethod",
-    "quick_scrape",
-    "get_stealth_web_scraper",
-    # Data Leak Hunter (from stealth_osint)
-    "DataLeakHunter",
-    "LeakAlert",
-    "MonitoringTarget",
-    "BreachAPIConfig",
-    "AlertSeverity",
-    "LeakSource",
-    "check_email_breaches",
+    # Stealth Web Scraper (stealth_osint)
+    "StealthWebScraper", "ScrapingResult", "ProxyConfig",
+    "FingerprintProfile", "ProtectionType", "BypassMethod",
+    "quick_scrape", "get_stealth_web_scraper",
+    # Data Leak Hunter (stealth_osint)
+    "DataLeakHunter", "LeakAlert", "MonitoringTarget", "BreachAPIConfig",
+    "AlertSeverity", "LeakSource", "check_email_breaches",
     "get_data_leak_hunter",
     # Cryptographic Intelligence
-    "CryptographicIntelligence",
-    "ClassicalCryptanalysis",
-    "HashAnalyzer",
-    "EncryptionDetector",
-    "CertificateAnalyzer",
-    "CryptanalysisResult",
-    "HashAnalysis",
-    "EncryptionDetection",
-    "CertificateInfo",
-    "CipherType",
-    "HashType",
+    "CryptographicIntelligence", "ClassicalCryptanalysis", "HashAnalyzer",
+    "EncryptionDetector", "CertificateAnalyzer", "CryptanalysisResult",
+    "HashAnalysis", "EncryptionDetection", "CertificateInfo",
+    "CipherType", "HashType",
     # Document Intelligence
-    "DocumentIntelligenceEngine",
-    "PDFAnalyzer",
-    "OfficeDocumentAnalyzer",
-    "ImageAnalyzer",
-    "DocumentAnalysis",
-    "DocumentMetadata",
-    "EXIFData",
-    "GeoLocation",
-    "EmbeddedObject",
-    "DocumentType",
-    "MLXLongContextAnalyzer",
-    "LongContextAnalysis",
-    "EntityMention",
-    "CrossDocumentLink",
-    "TimelineEvent",
+    "DocumentIntelligenceEngine", "PDFAnalyzer", "OfficeDocumentAnalyzer",
+    "ImageAnalyzer", "DocumentAnalysis", "DocumentMetadata", "EXIFData",
+    "GeoLocation", "EmbeddedObject", "DocumentType",
+    "MLXLongContextAnalyzer", "LongContextAnalysis", "EntityMention",
+    "CrossDocumentLink", "TimelineEvent",
     # Temporal Archaeologist
-    "TemporalArchaeologist",
-    "ArchivedVersion",
-    "EntityTimeline",
-    "EntitySnapshot",
-    "IdentityChange",
-    "TemporalGap",
-    "TemporalAnomaly",
-    "TemporalCorrelation",
-    "ResolvedEntity",
-    "RecoveryResult",
-    "ArchiveSource",
-    "AnomalyType",
-    "EntityType",
-    "recover_deleted_content",
-    "reconstruct_timeline",
-    "detect_anomalies",
+    "TemporalArchaeologist", "ArchivedVersion", "EntityTimeline",
+    "EntitySnapshot", "IdentityChange", "TemporalGap", "TemporalAnomaly",
+    "TemporalCorrelation", "ResolvedEntity", "RecoveryResult",
+    "ArchiveSource", "AnomalyType", "EntityType", "recover_deleted_content",
+    "reconstruct_timeline", "detect_anomalies",
     "create_temporal_archaeologist",
-    # Timeline Synthesizer (Sprint F202E)
-    "TimelineSynthesizer",
-    "TimelineEvent",
-    "TimelineMetadata",
-    "SynthesizedTimeline",
-    "create_timeline_synthesizer",
-    "MAX_TIMELINE_EVENTS",
-    "MAX_EVENT_AGE_DAYS",
-    # Temporal Archaeologist Adapter (Sprint F202E)
-    "TemporalArchaeologistAdapter",
-    "TimelineFindingResult",
-    "create_temporal_archaeologist_adapter",
-    "MAX_TIMELINE_FINDINGS",
+    # Timeline Synthesizer (F202E)
+    "TimelineSynthesizer", "TimelineEvent", "TimelineMetadata",
+    "SynthesizedTimeline", "create_timeline_synthesizer",
+    "MAX_TIMELINE_EVENTS", "MAX_EVENT_AGE_DAYS",
+    # Temporal Archaeologist Adapter (F202E)
+    "TemporalArchaeologistAdapter", "TimelineFindingResult",
+    "create_temporal_archaeologist_adapter", "MAX_TIMELINE_FINDINGS",
     # Exposed Service Hunter
-    "EXPOSED_SERVICE_HUNTER_AVAILABLE",
-    "ExposedServiceHunter",
-    "S3BucketEnumerator",
-    "DatabasePortScanner",
-    "GraphQLIntrospector",
-    "CertificateTransparency",
-    "ContainerAPIExplorer",
-    "ExposedService",
-    "S3Bucket",
-    "CertificateInfo",
-    "ServiceType",
-    # Open Source Collectors
-    "OPEN_SOURCE_COLLECTORS_AVAILABLE",
-    "OpenSourceCollectors",
-    "get_open_source_collectors",
-    "ExposureType",
-    "RiskLevel",
-    "quick_hunt",
-    "check_s3_bucket",
+    "ExposedServiceHunter", "S3BucketEnumerator", "DatabasePortScanner",
+    "GraphQLIntrospector", "CertificateTransparency",
+    "ContainerAPIExplorer", "ExposedService", "S3Bucket", "ServiceType",
+    "ExposureType", "RiskLevel", "quick_hunt", "check_s3_bucket",
     "scan_graphql_endpoint",
+    # Open Source Collectors
+    "OpenSourceCollectors", "get_open_source_collectors",
     # Academic Discovery (P14)
-    "ACADEMIC_DISCOVERY_AVAILABLE",
-    "AcademicPaper",
-    "search_arxiv",
-    "search_crossref",
-    "search_semantic_scholar",
-    "search_academic_all",
-    "search_arxiv_sync",
-    "search_crossref_sync",
-    "search_semantic_scholar_sync",
+    "AcademicPaper", "search_arxiv", "search_crossref",
+    "search_semantic_scholar", "search_academic_all", "search_arxiv_sync",
+    "search_crossref_sync", "search_semantic_scholar_sync",
     # PastebinMonitor (P20)
-    "PASTEBIN_MONITOR_AVAILABLE",
-    "PasteFinding",
-    "pastebin_run",
+    "PasteFinding", "pastebin_run",
     # Relationship Discovery
-    "RELATIONSHIP_DISCOVERY_AVAILABLE",
-    "RelationshipDiscoveryEngine",
-    "Entity",
-    "Relationship",
-    "ConnectionPath",
-    "Community",
-    "AffinityMatrix",
-    "Communication",
-    "Document",
-    "InfluenceModel",
-    "RelationshipType",
+    "RelationshipDiscoveryEngine", "Entity", "Relationship",
+    "ConnectionPath", "Community", "AffinityMatrix", "Communication",
+    "Document", "InfluenceModel", "RelationshipType",
     "create_relationship_engine",
     # Pattern Mining
-    "PATTERN_MINING_AVAILABLE",
-    "PatternMiningEngine",
-    "Pattern",
-    "TemporalPattern",
-    "BehavioralPattern",
-    "CommunicationPattern",
-    "FlowPattern",
-    "StructuralPattern",
-    "SequentialPattern",
-    "Anomaly",
-    "Event",
-    "Action",
-    "Communication",
-    "Transaction",
-    "PatternType",
-    "SeasonalityType",
-    "TrendDirection",
-    "AnomalyType",
-    "create_pattern_mining_engine",
+    "PatternMiningEngine", "Pattern", "TemporalPattern", "BehavioralPattern",
+    "CommunicationPattern", "FlowPattern", "StructuralPattern",
+    "SequentialPattern", "Anomaly", "Event", "Action", "Transaction",
+    "SeasonalityType", "create_pattern_mining_engine",
     # Identity Stitching
-    "IDENTITY_STITCHING_AVAILABLE",
-    "IdentityStitchingEngine",
-    "IdentityProfile",
-    "IdentityMatch",
-    "StitchedIdentity",
-    "UsernameEntry",
-    "create_identity_stitching_engine",
+    "IdentityStitchingEngine", "IdentityProfile", "IdentityMatch",
+    "StitchedIdentity", "UsernameEntry", "create_identity_stitching_engine",
     # Streaming Monitor
-    "StreamingMonitor",
-    "MonitoredSource",
-    "StreamEvent",
-    "Alert",
-    "AlertRule",
-    "Change",
-    "ChangeType",
-    "Severity",
-    "SourceType",
+    "StreamingMonitor", "MonitoredSource", "StreamEvent",
     # Blockchain Forensics
-    "BLOCKCHAIN_FORENSICS_AVAILABLE",
-    "INPUT_DETECTOR_AVAILABLE",
-    "WORKFLOW_ORCHESTRATOR_AVAILABLE",
-    "BlockchainForensics",
-    "WalletAnalysis",
-    "TransactionPattern",
-    "Cluster",
-    "CrossChainResult",
-    "Transaction",
-    "ChainType",
-    "EntityType",
-    "BlockchainPatternType",
-    "BlockchainRiskLevel",
-    "analyze_blockchain_address",
-    "detect_transaction_patterns",
+    "BlockchainForensics", "WalletAnalysis", "TransactionPattern",
+    "Cluster", "CrossChainResult", "Transaction", "ChainType",
+    "BlockchainPatternType", "BlockchainRiskLevel",
+    "analyze_blockchain_address", "detect_transaction_patterns",
     "get_blockchain_forensics",
     # Input Detector
-    "IntelligentInputDetector",
-    "InputAnalysis",
-    "Pattern",
-    "ComplexityScore",
-    "create_input_detector",
-    "IntelligenceConfig",  # config class used by IntelligentInputDetector
+    "IntelligentInputDetector", "InputAnalysis", "ComplexityScore",
+    "create_input_detector", "IntelligenceConfig",
     # Workflow Orchestrator
-    "WorkflowOrchestrator",
-    "ComprehensiveReport",
-    "SharedContext",
-    "CorrelationReport",
-    "Anomaly",
-    "Finding",
-    "create_workflow_orchestrator",
-]
+    "WorkflowOrchestrator", "ComprehensiveReport", "SharedContext",
+    "CorrelationReport", "Finding", "create_workflow_orchestrator",
+    # Lazy internals (diagnostic)
+    "_lazy_stats",
+]))

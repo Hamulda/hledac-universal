@@ -106,6 +106,20 @@ ASYNC API SURFACE
 from __future__ import annotations
 
 import asyncio
+
+# Sprint T1: OpenTelemetry instrumentation (always-on, M1 8GB safe, fail-soft)
+try:
+    from otel import (  # type: ignore
+        add_event as _otel_add_event,
+        instrumented as _otel_instrumented,
+        set_attribute as _otel_set_attribute,
+    )
+except ImportError:  # production fallback
+    from hledac.universal.telemetry import (  # type: ignore
+        add_event as _otel_add_event,
+        instrumented as _otel_instrumented,
+        set_attribute as _otel_set_attribute,
+    )
 import datetime as _dt
 import logging
 import os
@@ -5646,6 +5660,7 @@ class DuckDBShadowStore:
             self._quality_state._accepted_count += 1
         return result
 
+    @_otel_instrumented("duckdb.ingest_batch", component="storage")
     async def async_ingest_findings_batch(
         self,
         findings: list[CanonicalFinding],
@@ -5724,10 +5739,14 @@ class DuckDBShadowStore:
                 await asyncio.sleep(0)
 
         if accepted_findings:
-            storage_results = await self.async_record_canonical_findings_batch(accepted_findings)
-            # NOTE: _accepted_count is incremented INSIDE async_record_canonical_findings_batch
-            # (line ~3454) — NOT here. Incrementing here would double-count because
-            # async_record_canonical_findings_batch already increments for lmdb_success results.
+            # Sprint S1 wire-in: route through Arrow zero-copy path (P0-4) when
+            # env opt-in is set + N >= _ARROW_MIN_BATCH. Internal 4-stupňový
+            # fallback to legacy `async_record_canonical_findings_batch` on any
+            # failure, so default-off behavior is identical to pre-wire.
+            # Env gate: HLEDAC_ARROW_INGEST=1 (opt-in).
+            storage_results = await self.async_record_canonical_findings_batch_arrow(accepted_findings)
+            # NOTE: _accepted_count is incremented INSIDE both arrow wrapper
+            # and legacy batch. Do NOT increment here — would double-count.
             for idx, sr in zip(accepted_indices, storage_results, strict=False):
                 results[idx] = sr
 

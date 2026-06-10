@@ -80,6 +80,7 @@ class CausalEngine:
     def __init__(self, max_entities: int = MAX_ENTITIES) -> None:
         self.max_entities = max_entities
         self._entities: dict[str, Entity] = {}
+        self.__sequences: list[list[str]] = []
 
     def add_entity(self, entity: Entity) -> bool:
         """Add an entity; return False when bounded."""
@@ -90,6 +91,33 @@ class CausalEngine:
 
     def entities(self) -> list[Entity]:
         return list(self._entities.values())
+
+    def extract_entities(self, findings: list[Any]) -> list[str]:
+        """Extrahuje entity z findings pro grafovou analýzu."""
+        ...
+
+    def build_temporal_sequences(self) -> list[list[str]]:
+        """Sestaví časové sekvence z extrahovaných entit."""
+        ...
+
+    def compute_co_occurrence_matrix(self) -> dict[str, dict[str, int]]:
+        ...
+
+    async def generate_causal_hypotheses(self) -> list[Any]:
+        ...
+
+    async def generate_hypotheses(self, findings: list[Any]) -> list[Any]:
+        ...
+
+    def detect_anomalies(self, findings: list[Any]) -> list[Any]:
+        ...
+
+    def detect_contradictions(self, findings: list[Any]) -> list[Any]:
+        ...
+
+    @property
+    def _sequences(self) -> list[list[str]]:
+        return self.__sequences
 
 
 __all__ = [

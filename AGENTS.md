@@ -9,14 +9,22 @@
 - Before edits: rg/fd/read for context.
 - After edits: ruff + show diff (diff -u | delta).
 
+## Agent skills
+
+### Issue tracker
+
+Local markdown — issues live in `.scratch/<feature>/issues/<NN>-<slug>.md`. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+1:1 with canonical role names (`needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`). See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context — one `CONTEXT.md` at root + system-wide `docs/adr/`. See `docs/agents/domain.md`.
+
 @RTK.md
 
-<!-- lean-ctx -->
-## lean-ctx
-
-Prefer lean-ctx MCP tools over native equivalents for token savings.
-Full rules: @LEAN-CTX.md
-<!-- /lean-ctx -->
 <!-- code-review-graph MCP tools -->
 ## MCP Tools: code-review-graph
 

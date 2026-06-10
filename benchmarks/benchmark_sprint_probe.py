@@ -20,7 +20,7 @@ import asyncio
 import json
 import sys
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -280,7 +280,7 @@ async def run_benchmark(
     result_dict = {
         "metadata": {
             "probe": "F192E.1",
-            "timestamp": datetime.utcnow().isoformat() + "Z",  # noqa: DTZ003
+            "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
             "duration_s": duration_s,
             "max_cycles": max_cycles,
             "uvloop_active": _UVLOOP_ACTIVE,

@@ -25,6 +25,20 @@ from collections.abc import Callable
 
 import lmdb
 
+# Sprint T1: OpenTelemetry instrumentation (always-on, M1 8GB safe, fail-soft)
+try:
+    from otel import (  # type: ignore
+        add_event as _otel_add_event,
+        instrumented as _otel_instrumented,
+        set_attribute as _otel_set_attribute,
+    )
+except ImportError:  # production fallback
+    from hledac.universal.telemetry import (  # type: ignore
+        add_event as _otel_add_event,
+        instrumented as _otel_instrumented,
+        set_attribute as _otel_set_attribute,
+    )
+
 # Sprint 41: zstd compression — re-exported from tools/zstd_compressor
 from hledac.universal.tools.zstd_compressor import ZstdCompressor
 from utils.async_helpers import safe_gather_dropin
@@ -103,6 +117,16 @@ def _create_dedup_strategy():
 
 
 from ..utils.async_helpers import async_getaddrinfo  # noqa: E402
+
+# Sprint F-A4: Bounded batch DNS resolver (LRU + parallel via c-ares).
+# Used in run_step to pre-resolve all unique hostnames for the batch
+# so _validate_fetch_target can skip the per-URL getaddrinfo call.
+from ..utils.batch_dns import get_batch_dns_resolver  # noqa: E402
+
+# Sprint F-A5: Pre-fetch URL dedup gate. Runs the dedup ONCE on the
+# candidate list before submission so the fetch loop only sees unique
+# URLs (eliminates the per-URL Bloom check overhead inside the loop).
+from ..tools.url_dedup import dedupe_url_list  # noqa: E402
 
 # Sprint 8C1: Flow trace
 from ..utils.flow_trace import (  # noqa: E402
@@ -279,6 +303,13 @@ class FetchCoordinator(UniversalCoordinator):
         self._evidence_ids: deque = deque(maxlen=500)
         self._urls_fetched_count: int = 0
         self._stop_reason: str | None = None
+
+        # Sprint F-A4: per-batch host→IPs cache. Populated by run_step
+        # via the batch DNS resolver, consumed by _validate_fetch_target.
+        # Reset at the start of every run_step so stale entries from a
+        # prior batch never leak through (DNS rebinding defense requires
+        # fresh resolution per fetch).
+        self._host_ips_cache: dict[str, list[str]] = {}
 
         # Per-domain circuit breaker (Sprint F195C)
         self._domain_failures: dict[str, int] = {}
@@ -659,7 +690,16 @@ class FetchCoordinator(UniversalCoordinator):
         resolves DNS independently. For HTTPS, certificate validation provides
         secondary protection. For HTTP, the risk is acknowledged but the
         performance cost of binding to pre-validated IPs is prohibitive.
+
+        Sprint F-A4: consults ``self._host_ips_cache`` first (populated
+        by ``run_step`` via the batch DNS resolver) and falls through
+        to a per-fetch ``async_getaddrinfo`` on miss. Cache is reset
+        every batch so freshness is preserved.
         """
+        # Local import — module-level ``urlparse`` was never bound here,
+        # causing the previous implementation to silently route every
+        # hostname URL through the ``validation_error`` exception branch.
+        from urllib.parse import urlparse
         try:
             parsed = urlparse(url)
             hostname = parsed.hostname
@@ -675,7 +715,23 @@ class FetchCoordinator(UniversalCoordinator):
             except ValueError:
                 pass  # It's a domain, not an IP
 
-            # Resolve DNS natively (async, no thread pool)
+            # Sprint F-A4: check the per-batch host→IPs cache first.
+            # On hit we skip the getaddrinfo round-trip entirely.
+            cache_key = hostname.lower()
+            cached_ips = self._host_ips_cache.get(cache_key)
+            if cached_ips is not None:
+                if not cached_ips:
+                    return False, {"resolved_ips": [], "blocked_reason": "dns_resolution_failed"}
+                for ip_str in cached_ips:
+                    if not self._is_ip_public(ip_str):
+                        return False, {
+                            "resolved_ips": list(cached_ips),
+                            "blocked_reason": "private_ip_resolved",
+                            "blocked_ip": ip_str,
+                        }
+                return True, {"resolved_ips": list(cached_ips)}
+
+            # Cache miss — resolve DNS natively (async, no thread pool)
             raw_results = await async_getaddrinfo(hostname, 0, proto=socket.IPPROTO_TCP)
             ips = sorted({str(r[4][0]) for r in raw_results})
             if not ips:
@@ -1120,14 +1176,27 @@ class FetchCoordinator(UniversalCoordinator):
         # Sprint 5B: Collect URLs with lightweight priority intake
         # Sort frontier candidates by priority (cheap/fast first) before selecting
         candidates = []
+        raw_batch: list[str] = []
         for _ in range(self._config.max_urls_per_step * 2):
             if not self._frontier:
                 break
             url = self._frontier.popleft()
-            is_deduped = url in self._processed_urls
-            trace_dedup_decision(url, is_deduped)
-            if not is_deduped:
-                candidates.append((self._url_priority(url), url))
+            raw_batch.append(url)
+
+        # Sprint F-A5: Pre-fetch dedup gate — run dedupe_url_list ONCE
+        # on the popped batch instead of per-URL. Eliminates the
+        # O(2N) Bloom lookups (per-URL `in` check + add) in the
+        # original loop. The per-URL atomic check inside _fetch_url
+        # is kept as defense-in-depth for concurrent enqueue paths.
+        unique_batch, dropped = dedupe_url_list(raw_batch, self._processed_urls)
+        # Replay dedup decisions for telemetry / flow trace.
+        for url in raw_batch:
+            trace_dedup_decision(url, url not in unique_batch)
+
+        # Add priority scores only for URLs that survived dedup.
+        for url in unique_batch:
+            candidates.append((self._url_priority(url), url))
+        del unique_batch  # bounded: drop the staging list immediately
 
         if not candidates:
             self._stop_reason = "frontier_empty"
@@ -1136,6 +1205,40 @@ class FetchCoordinator(UniversalCoordinator):
         # Sprint 5B: Sort by priority (lower score = higher priority) and take top N
         candidates.sort(key=lambda x: x[0])
         urls_to_fetch = [url for _, url in candidates[:self._config.max_urls_per_step]]
+
+        # Sprint F-A4: Batch pre-resolve unique hostnames for this batch
+        # BEFORE the fetch loop. _validate_fetch_target consults the
+        # cache and skips the per-URL getaddrinfo round-trip.
+        # Reset the per-batch cache so stale IPs from a prior batch
+        # never leak through (DNS rebinding defense is freshness-sensitive).
+        from urllib.parse import urlparse as _urlparse_for_dns
+        self._host_ips_cache = {}
+        unique_hosts: set[str] = set()
+        for url in urls_to_fetch:
+            # Skip .onion / .i2p — those are darknet-routed, not DNS.
+            if url.endswith('.onion') or url.endswith('.i2p'):
+                continue
+            try:
+                hostname = _urlparse_for_dns(url).hostname
+            except Exception:
+                continue
+            if hostname:
+                unique_hosts.add(hostname.lower())
+        if unique_hosts:
+            try:
+                resolver = get_batch_dns_resolver()
+                resolved = await resolver.resolve_many(
+                    list(unique_hosts),
+                    timeout=5.0,
+                )
+                # Defensive copy: keep cache immutable from resolver side.
+                self._host_ips_cache = {h: list(ips) for h, ips in resolved.items()}
+            except Exception as exc:  # noqa: BLE001 — fail-soft
+                # _validate_fetch_target will fall through to per-fetch DNS.
+                logger.debug(
+                    "[F-A4] batch DNS pre-resolve failed: %s: %s",
+                    type(exc).__name__, exc,
+                )
 
         # Sprint 5B: Determine effective batch size (limited by AIMD window)
         batch_size = len(urls_to_fetch)
@@ -1216,6 +1319,7 @@ class FetchCoordinator(UniversalCoordinator):
             'batch_elapsed_ms': batch_elapsed_ms,
         }
 
+    @_otel_instrumented("fetch.url", component="network")
     async def _fetch_url(self, url: str, attempt: int = 0) -> dict[str, Any] | None:
         """
         Fetch a single URL with AIMD concurrency control and timeout matrix.

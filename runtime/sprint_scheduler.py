@@ -69,6 +69,20 @@ from functools import lru_cache
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Final
 
+# Sprint T1: OpenTelemetry instrumentation (always-on, M1 8GB safe, fail-soft)
+try:
+    from otel import (  # type: ignore
+        add_event as _otel_add_event,
+        instrumented as _otel_instrumented,
+        set_attribute as _otel_set_attribute,
+    )
+except ImportError:  # production fallback
+    from hledac.universal.telemetry import (  # type: ignore
+        add_event as _otel_add_event,
+        instrumented as _otel_instrumented,
+        set_attribute as _otel_set_attribute,
+    )
+
 # Sprint P0-1: SoA overlay for hot-path integer counters in SprintSchedulerResult
 # (see runtime/int_counter_layout.py). Lazy import pattern preserved.
 try:
@@ -264,6 +278,7 @@ from hledac.universal.utils.async_helpers import (  # noqa: E402
     safe_gather_fire_and_forget,
     safe_gather_strict,
 )
+from hledac.universal.utils.lmdb_bulk import putmulti_bounded  # noqa: E402
 
 # Sprint F262OBS: centralize source_type literals via utils.source_types
 try:
@@ -1404,6 +1419,16 @@ class SprintSchedulerConfig:
 
     cycle_sleep_s: float = 5.0                 # sleep between cycles
 
+    # Sprint F-A3: per-cycle hard deadline. Wraps `_run_one_cycle` in
+    # `asyncio.timeout(cycle_budget_s)`. If a cycle exceeds this budget
+    # (e.g. a branch wraps sync I/O via `asyncio.to_thread` and the
+    # thread doesn't respect CancelledError promptly), TimeoutError
+    # propagates and the cycle is counted as empty so the F228G
+    # consecutive-empty-cycles guard eventually forces windup. 60s =
+    # 4x the typical 15s branch timeout — generous headroom for the
+    # concurrent aggressive-mode feed/public/CT trio.
+    cycle_budget_s: float = 60.0                # hard per-cycle deadline
+
     max_cycles: int = 100                      # safety cap
 
     max_parallel_sources: int = 4              # concurrent source fetches
@@ -1905,9 +1930,18 @@ class FeedDominanceGuard:
 
 
 
-@dataclass(slots=True)
+# ── Sprint S2: HealthReport jako msgspec.Struct (frozen, gc=False) ────────────
+# Puvodne @dataclass(slots=True). Msgspec.Struct advantages (2-3× rychlejsi
+# __init__, ~40B/instance uspora, no GC tracking). M1 8GB friendly.
+#
+# `msgspec.field(default_factory=list)` spravne izoluje list per-instanci
+# (overeno 2026-06-10 — factory called on each construction).
+#
+# Metoda `summary()` zustava — msgspec.Struct plne podporuje metody.
 
-class HealthReport:
+
+
+class HealthReport(msgspec.Struct, frozen=True, gc=False):
 
     """
 
@@ -1936,7 +1970,7 @@ class HealthReport:
     # sprint path. False here triggers the F221-ABORT guard.
     blocking_ok: bool = False
 
-    errors: list[str] = field(default_factory=list)
+    errors: list[str] = msgspec.field(default_factory=list)
 
 
 
@@ -4565,6 +4599,13 @@ class SprintScheduler:
 
         self._sprint_depth: int = 0
 
+        # Sprint F-A3: per-cycle deadline diagnostic counter. Incremented when
+        # `_run_one_cycle` raises `asyncio.TimeoutError` (cycle exceeded
+        # `config.cycle_budget_s`). Reset each `run()`. Lives on the instance
+        # (not on `_result`) because it's a per-scheduler diagnostic, not a
+        # finding accumulator. Public access via `.cycle_timeout_count` property.
+        self._cycle_timeout_count: int = 0
+
         # Sprint F217E: Nonfeed candidate evidence ledger (runtime only, not persisted)
 
         self._nonfeed_ledger: NonfeedCandidateLedger = NonfeedCandidateLedger()
@@ -5956,6 +5997,7 @@ class SprintScheduler:
 
 
 
+    @_otel_instrumented("sprint.scheduler.run", component="scheduler")
     async def run(
 
         self,
@@ -7258,11 +7300,43 @@ class SprintScheduler:
 
                     self._last_sources = list(ordered_sources)
 
-                    cycle_ok = await self._run_one_cycle(
-
-                        lifecycle, ordered_sources, now_monotonic, query, duckdb_store
-
-                    )
+                    # Sprint F-A3: hard per-cycle deadline. Wraps the entire
+                    # `_run_one_cycle` call so a single misbehaving branch
+                    # (e.g. one that wraps sync I/O via `asyncio.to_thread`
+                    # and the thread doesn't promptly respect `CancelledError`)
+                    # cannot stall the outer loop beyond `config.cycle_budget_s`.
+                    # `TimeoutError` -> treat as empty cycle so the F228G
+                    # empty-cycle guard eventually forces windup. log level
+                    # WARNING because timeouts indicate a misbehaving branch
+                    # and need to surface in monitoring.
+                    _cycle_budget_s = self._config.cycle_budget_s
+                    try:
+                        async with asyncio.timeout(_cycle_budget_s):
+                            cycle_ok = await self._run_one_cycle(
+                                lifecycle, ordered_sources, now_monotonic,
+                                query, duckdb_store,
+                            )
+                    except TimeoutError:
+                        self._cycle_timeout_count += 1
+                        log.warning(
+                            "[F-A3] cycle exceeded %.1fs budget (count=%d) "
+                            "-- counting as empty",
+                            _cycle_budget_s, self._cycle_timeout_count,
+                        )
+                        # Treat as empty cycle so F228G guard eventually
+                        # forces windup after the consecutive-empty limit.
+                        self._result.consecutive_empty_cycles += 1
+                        if (
+                            self._result.consecutive_empty_cycles
+                            > self._result.max_consecutive_empty_cycles
+                        ):
+                            self._result.max_consecutive_empty_cycles = (
+                                self._result.consecutive_empty_cycles
+                            )
+                        # Return True so the loop continues; F228G guard
+                        # in the surrounding code is responsible for forcing
+                        # windup once the limit is hit.
+                        cycle_ok = True
 
                     # Sprint F228G: empty-cycle guard -- if N consecutive cycles
 
@@ -22541,13 +22615,16 @@ class SprintScheduler:
 
             ts_bytes = struct.pack("d", _time.time())
 
-            with self._dedup_env.begin(write=True) as txn:
-
-                for key in self._dedup_seen:
-
-                    txn.put(key.encode(), ts_bytes, overwrite=True)
-
-            log.info(f"Dedup flushed: {len(self._dedup_seen)} hashes")
+            # Bulk write: single commit for N hashes (10× speedup vs
+            # per-item put in loop on M1 UMA — TLB shootdown is the
+            # bottleneck, not memcpy). putmulti_bounded opens its own
+            # write transaction internally.
+            written = putmulti_bounded(
+                self._dedup_env,
+                [(k.encode(), ts_bytes) for k in self._dedup_seen],
+                overwrite=True,
+            )
+            log.info(f"Dedup flushed: {written}/{len(self._dedup_seen)} hashes")
 
         except Exception as exc:
 

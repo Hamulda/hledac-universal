@@ -351,83 +351,52 @@ class RotatingBloomFilter:
         return int(py_count)
 
 
-class ScalableBloomFilter:
+class ScalableBloomFilter(RotatingBloomFilter):
     """
-    Scalable Bloom Filter that grows as elements are added.
+    DEPRECATED: Use :class:`RotatingBloomFilter` directly.
 
-    Automatically creates additional Bloom filters when the current
-    one reaches capacity, maintaining a target false positive rate.
+    This class was unbounded (grew without limit, violating the
+    GHOST_INVARIANT "bounded collections" rule). It is kept as a
+    backward-compatibility alias — instantiating now issues a
+    ``DeprecationWarning`` and forwards to ``RotatingBloomFilter``.
+
+    Why deprecated:
+        CLAUDE.md invariant #7 — "RotatingBloomFilter pro URL dedup —
+        nikdy ``Set[str]`` nebo ``ScalableBloomFilter``". The original
+        ScalableBloomFilter was unused at runtime (verified 2026-06-09);
+        all production call sites use ``RotatingBloomFilter``. See
+        ``execution/ghost_executor.py:528`` for the canonical comment.
+
+    API note:
+        The original class grew by allocating a new ``BloomFilter`` each
+        time the current one filled up. The replacement is **bounded**
+        — the filter stops accepting new items past its capacity, so
+        downstream callers must size ``initial_capacity`` correctly.
+
+    Args:
+        initial_capacity: Forwarded as ``max_elements`` (M1 8GB safety:
+            pre-size for the actual URL set, not "infinity").
+        error_rate: Target false positive rate (default 0.01).
+        growth_factor: **Ignored.** Kept only for signature compat with
+            the original API; the bounded replacement never grows.
     """
 
     def __init__(
         self,
         initial_capacity: int = 10000,
         error_rate: float = 0.01,
-        growth_factor: float = 2.0
-    ):
-        """
-        Initialize scalable Bloom filter.
+        growth_factor: float = 2.0,  # noqa: ARG002 — API compat only
+    ) -> None:
+        import warnings
 
-        Args:
-            initial_capacity: Initial capacity of first filter
-            error_rate: Target false positive rate
-            growth_factor: Factor by which capacity grows for each new filter
-        """
-        self.initial_capacity = initial_capacity
-        self.target_error_rate = error_rate
-        self.growth_factor = growth_factor
-        self.filters: list[BloomFilter] = []
-        self._add_new_filter()
-
-    def _add_new_filter(self) -> None:
-        """Add a new Bloom filter with increased capacity."""
-        if not self.filters:
-            capacity = self.initial_capacity
-        else:
-            capacity = int(self.initial_capacity * (self.growth_factor ** len(self.filters)))
-
-        # Allocate error rate budget among filters
-        filter_error = self.target_error_rate / (2 ** len(self.filters))
-
-        self.filters.append(BloomFilter(
-            max_elements=capacity,
-            error_rate=filter_error
-        ))
-
-    def add(self, item: str) -> None:
-        """Add an item to the scalable Bloom filter."""
-        # Check if we need to add a new filter
-        current_filter = self.filters[-1]
-        if current_filter.element_count >= current_filter.max_elements * 0.9:
-            self._add_new_filter()
-            current_filter = self.filters[-1]
-
-        current_filter.add(item)
-
-    def __contains__(self, item: str) -> bool:
-        """Check if item may exist in any filter."""
-        return any(item in bf for bf in self.filters)
-
-    def get_stats(self) -> dict[str, Any]:
-        """Get statistics for all filters."""
-        total_elements = sum(bf.element_count for bf in self.filters)
-        total_memory = sum(bf.get_stats().memory_bytes for bf in self.filters)
-
-        # Combined false positive probability
-        # P(fp) = 1 - product(1 - p_i) for all filters i
-        combined_fpp = 1.0
-        for bf in self.filters:
-            stats = bf.get_stats()
-            combined_fpp *= (1 - stats.current_fpp)
-        combined_fpp = 1 - combined_fpp
-
-        return {
-            'filter_count': len(self.filters),
-            'total_elements': total_elements,
-            'total_memory_bytes': total_memory,
-            'combined_fpp': combined_fpp,
-            'filters': [bf.get_stats() for bf in self.filters]
-        }
+        warnings.warn(
+            "ScalableBloomFilter is deprecated and unbounded. "
+            "Use RotatingBloomFilter (bounded) for M1 8GB safety. "
+            "See CLAUDE.md invariant #7.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        super().__init__(max_elements=initial_capacity, error_rate=error_rate)
 
 
 def create_url_deduplicator(expected_urls: int = 100000) -> BloomFilter:

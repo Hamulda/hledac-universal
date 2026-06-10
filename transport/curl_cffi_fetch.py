@@ -395,3 +395,161 @@ def _make_error_result(
         "failure_stage": failure_stage,
         "network_error_kind": network_error_kind,
     }
+
+
+# ---------------------------------------------------------------------------
+# F265B: conditional cache wrapper for the curl_cffi stealth lane.
+#
+# Closes the F261 gap: hishel covers the httpx path, but every fetch
+# through fetch_via_curl_cffi bypassed the cache entirely. SERP pages
+# (Bing, DDG, Google Scholar) that we fetched 30 s ago are almost
+# identical to the live page; paying 1-3 s RTT for them is wasteful.
+#
+# This wrapper:
+#   1. Looks up the URL in conditional_cache.
+#   2. If hit + fresh: sends the request with If-None-Match /
+#      If-Modified-Since headers.
+#   3. On 200: updates the cache, returns the body.
+#   4. On 304: returns the cached body (0 bytes transferred) — this
+#      is the fast path that saves 1-3 s per cache hit.
+#   5. On error: returns the result normally (cache is best-effort).
+#
+# Telemetry is recorded in conditional_cache.get_stats(); the sprint
+# dashboard surfaces hit_rate, 304_count, store_count.
+# ---------------------------------------------------------------------------
+async def fetch_via_curl_cffi_cached(
+    url: str,
+    headers: dict[str, str] | None = None,
+    timeout_s: float = DEFAULT_TIMEOUT_S,
+    max_bytes: int = DEFAULT_MAX_BYTES,
+    profile: str = "chrome124",
+    proxies: dict[str, str] | None = None,
+    http_version: Any = None,
+    *,
+    ttl_s: int = 3600,
+    _force_refresh: bool = False,
+) -> dict[str, Any]:
+    """fetch_via_curl_cffi with conditional-GET (304) shortcut.
+
+    Args:
+        url: Same as fetch_via_curl_cffi.
+        headers: Caller headers; ``If-None-Match`` / ``If-Modified-Since``
+            from the cache are MERGED in (caller wins on conflict).
+        timeout_s: Same as fetch_via_curl_cffi.
+        max_bytes: Same as fetch_via_curl_cffi.
+        profile: TLS profile (passed through).
+        proxies: Same as fetch_via_curl_cffi.
+        http_version: HttpVersion.v3 from http3_lane (passed through).
+        ttl_s: Cache freshness window in seconds. Default 1h.
+        _force_refresh: Skip the cache entirely (always send no
+            validators). For tests and one-off live fetches.
+
+    Returns:
+        Same FetchResult dict as fetch_via_curl_cffi. On 304, the
+        ``content`` field is the cached bytes and the result carries
+        ``conditional_304=True`` so callers can log the hit.
+    """
+    # Lazy import to keep the module-load footprint minimal.
+    from .conditional_cache import (
+        conditional_headers_for,
+        lookup as _cc_lookup,
+        record_conditional_result as _cc_record,
+        store as _cc_store,
+    )
+
+    merged_headers: dict[str, str] = dict(headers) if headers else {}
+    sent_conditional = False
+
+    if not _force_refresh:
+        try:
+            cache_headers = conditional_headers_for(url, ttl_s=ttl_s)
+            if cache_headers:
+                # Caller's explicit headers win on conflict (e.g. an
+                # operator forcing no-cache should not be silently
+                # overridden by the cache layer).
+                for k, v in cache_headers.items():
+                    if k not in merged_headers:
+                        merged_headers[k] = v
+                sent_conditional = True
+        except Exception:  # noqa: BLE001
+            # Cache lookup failed — fall through to live fetch.
+            pass
+
+    result = await fetch_via_curl_cffi(
+        url=url,
+        headers=merged_headers,
+        timeout_s=timeout_s,
+        max_bytes=max_bytes,
+        profile=profile,
+        proxies=proxies,
+        http_version=http_version,
+    )
+
+    if not result.get("success"):
+        # Don't pollute telemetry on failures. The 304 path requires
+        # the request to actually reach the server.
+        return result
+
+    status = int(result.get("status_code", 0) or 0)
+    if sent_conditional:
+        try:
+            _cc_record(url, sent=True, response_status=status)
+        except Exception:  # noqa: BLE001
+            pass
+
+    if status == 304:
+        # 304: serve the cached body, do not touch the network body.
+        try:
+            entry = _cc_lookup(url)
+            if entry is not None and entry.body:
+                result["content"] = bytes(entry.body)
+                result["final_url"] = url
+                # Surface 304 in the result so callers can log/distinguish.
+                result["conditional_304"] = True
+                return result
+        except Exception:  # noqa: BLE001
+            pass
+        # If the cache lookup failed post-304 (race / corruption), fall
+        # through and return whatever the server sent. 304 should never
+        # carry a body, so the body is empty anyway.
+        result["conditional_304"] = True
+        return result
+
+    if 200 <= status < 300:
+        # 2xx: persist for next time. Extract etag + last_modified +
+        # content-type from response headers.
+        try:
+            resp_headers = result.get("headers") or {}
+            etag = ""
+            last_modified = ""
+            content_type = ""
+            for k, v in resp_headers.items():
+                kl = k.lower()
+                if kl == "etag":
+                    etag = str(v)
+                elif kl == "last-modified":
+                    last_modified = str(v)
+                elif kl == "content-type":
+                    content_type = str(v)
+            body_bytes = result.get("content", b"") or b""
+            sha_hex = ""
+            try:
+                import hashlib
+
+                sha_hex = hashlib.sha256(body_bytes).hexdigest()
+            except Exception:  # noqa: BLE001
+                pass
+            _cc_store(
+                url,
+                etag=etag,
+                last_modified=last_modified,
+                body=body_bytes,
+                sha256=sha_hex,
+                status_code=status,
+                content_type=content_type,
+            )
+        except Exception:  # noqa: BLE001
+            # Cache store failed — the live response is still returned.
+            pass
+    return result
+

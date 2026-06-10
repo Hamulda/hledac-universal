@@ -225,7 +225,7 @@ class WasmSandbox:
                 'error': 'wasmtime not available'
             }
 
-        result = {
+        result: dict[str, Any] = {
             'success': False,
             'result': None,
             'fuel_used': 0,
@@ -236,6 +236,9 @@ class WasmSandbox:
         instance = None
 
         try:
+            # Engine guard — is_available() already verified this, narrow for type checker.
+            assert self._engine is not None, "Engine not initialized"
+
             # Create store
             store = Store(self._engine)
 

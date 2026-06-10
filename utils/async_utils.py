@@ -30,7 +30,7 @@ import asyncio
 import logging
 import random
 import sys
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from typing import TypeVar, cast
 
 from .async_helpers import safe_gather_dropin, safe_gather_strict
@@ -79,7 +79,7 @@ def _get_memory_level() -> float:
 
 
 async def bounded_map[T](
-    tasks: list[tuple[Callable[..., Awaitable[T]], tuple, dict]],
+    tasks: Sequence[tuple[Callable[..., Awaitable[T]], tuple, dict]],
     max_concurrent: int = 3,
     max_retries: int = 0,
     cancel_on_error: bool = True,
@@ -170,7 +170,7 @@ async def bounded_map[T](
 
 
 async def map_as_completed[T](
-    tasks: list[tuple[Callable[..., Awaitable[T]], tuple, dict]],
+    tasks: Sequence[tuple[Callable[..., Awaitable[T]], tuple, dict]],
     max_concurrent: int = 3,
     **kwargs
 ) -> AsyncIterator[tuple[int, T]]:

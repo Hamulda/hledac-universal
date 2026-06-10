@@ -23,6 +23,20 @@ import json
 import logging
 import os
 import time
+
+# Sprint T1: OpenTelemetry instrumentation (always-on, M1 8GB safe, fail-soft)
+try:
+    from otel import (  # type: ignore
+        add_event as _otel_add_event,
+        instrumented as _otel_instrumented,
+        set_attribute as _otel_set_attribute,
+    )
+except ImportError:  # production fallback
+    from hledac.universal.telemetry import (  # type: ignore
+        add_event as _otel_add_event,
+        instrumented as _otel_instrumented,
+        set_attribute as _otel_set_attribute,
+    )
 from collections import OrderedDict
 from collections.abc import AsyncIterator, Callable, Iterator
 from dataclasses import dataclass
@@ -212,6 +226,16 @@ MAX_LLM_PROMPT_CHARS = 8192
 
 # Sprint F206X: Bounded pending futures to prevent memory exhaustion
 MAX_PENDING_FUTURES = 256
+
+# Sprint M3: Granular Metal cache management during token streaming.
+# Bounded: every EVAL_GRANULARITY_TOKENS flush pending lazy ops; every
+# CLEAR_GRANULARITY_TOKENS check active Metal pressure and drop the cache
+# when above M3_METAL_PRESSURE_BYTES (2 GiB headroom under the 2.5 GiB
+# Metal limit set in init_mlx_buffers). kv_cache itself is referenced by
+# Python and survives clear_cache, so this is transparent to the caller.
+EVAL_GRANULARITY_TOKENS = 50
+CLEAR_GRANULARITY_TOKENS = 200
+M3_METAL_PRESSURE_BYTES = 2 * 1024 * 1024 * 1024  # 2 GiB
 
 
 @dataclass
@@ -1010,16 +1034,39 @@ class Hermes3Engine:
             self._speculative_enabled = False
 
     async def _init_system_prompt_cache(self) -> None:
-        """Initialize persistent system-prompt cache (Sprint 75)."""
+        """Initialize persistent system-prompt cache (Sprint 75 + Sprint M4)."""
         if not KV_CACHE_AVAILABLE or self._model is None:
             return
 
         try:
             from mlx_lm.models.cache import make_prompt_cache
 
+            # Sprint M4: probe disk BEFORE allocating/prefilling. A valid
+            # on-disk cache is the cheapest path (~0 ms vs ~1.5 s prefill
+            # for a 1500-token system prompt). Probe via path check, not
+            # via full _load_cache, so we can branch on existence.
+            from pathlib import Path
+            _disk_cache = (
+                Path.home() / '.hledac' / 'cache' / 'system_prompt_cache.npz'
+            )
+            _has_disk = _disk_cache.exists()
+
             self._system_prompt_cache = make_prompt_cache(self._model, max_kv_size=512)
 
-            # Prefill the cache
+            # Detect KV quantization support (always — needed for both paths)
+            for layer in self._system_prompt_cache:
+                if hasattr(layer, 'quantize'):
+                    self._supports_kv_quant = True
+                    break
+
+            # Try disk first (M4) — skip the expensive prefill entirely
+            # on a cache hit. _load_cache populates _system_prompt_cache
+            # in place, replacing the empty cache object created above.
+            if _has_disk and await self._load_cache():
+                logger.info("[CACHE] System prompt cache loaded from disk (prefill skipped)")
+                return
+
+            # Cold path: no disk cache — pay the prefill cost once
             if self._supports_stream_generate:
                 import mlx_lm
 
@@ -1034,51 +1081,82 @@ class Hermes3Engine:
                         ):
                             pass
                     finally:
-                        # F219B: safe eval + clear via helper (replaces direct _mx.eval/_mx.metal.clear_cache)
+                        # F219B: safe eval + clear via helper
                         _safe_mlx_eval_and_clear_cache("system_prompt_cache_prefill")
 
                 await asyncio.to_thread(_prefill)
                 self._kv_cache_stats['cache_prefills'] = 1
 
-            # Detect KV quantization support
-            for layer in self._system_prompt_cache:
-                if hasattr(layer, 'quantize'):
-                    self._supports_kv_quant = True
-                    break
-
-            # Try to load cache from disk
-            await self._load_cache()
-
-            logger.info("[CACHE] System prompt cache initialized")
+            logger.info("[CACHE] System prompt cache initialized (cold prefill)")
 
         except Exception as e:
             logger.warning(f"[CACHE] System prompt cache init failed: {e}")
 
     async def _save_cache(self) -> None:
-        """Save system prompt cache to disk (best-effort)."""
+        """Save system prompt cache to disk (best-effort).
+
+        Sprint M4: stores keys/values SEPARATELY per layer — mx.array() on a
+        (keys, values) tuple is shape-ambiguous and silently stacks incorrectly
+        on some MLX versions. Separate named arrays round-trip cleanly via
+        mx.savez. The PromptCache-level offset is also persisted so resume
+        picks up at the right token position.
+        """
         try:
             from pathlib import Path
 
             cache_path = Path.home() / '.hledac' / 'cache' / 'system_prompt_cache.npz'
-            cache_path.parent.mkdir(parents=True, exist_ok=True)
+            # Fail-soft mkdir: sandboxed tests faking Path.home() to a
+            # non-existent path must not break the save path itself.
+            try:
+                cache_path.parent.mkdir(parents=True, exist_ok=True)
+            except Exception:
+                pass
 
             if self._system_prompt_cache:
                 import mlx.core as mx
 
-                data = {}
+                data: dict[str, Any] = {}
                 for i, layer in enumerate(self._system_prompt_cache):
-                    if hasattr(layer, 'state'):
-                        data[f'layer_{i}'] = mx.array(layer.state)
+                    state = getattr(layer, "state", None)
+                    if state is None:
+                        continue
+                    # mlx_lm KVCache.state returns (keys, values) tuple
+                    try:
+                        keys, values = state
+                    except Exception:
+                        continue
+                    data[f"layer_{i}_keys"] = keys
+                    data[f"layer_{i}_values"] = values
+
+                # Persist PromptCache-level offset for resume correctness
+                if hasattr(self._system_prompt_cache, "offset"):
+                    try:
+                        data["_offset"] = mx.array(
+                            [int(self._system_prompt_cache.offset)]
+                        )
+                    except Exception:
+                        pass
 
                 if data:
                     mx.savez(str(cache_path), **data)
-                    logger.debug(f"[CACHE] Saved to {cache_path}")
+                    logger.debug(
+                        f"[CACHE] Saved to {cache_path} ({len(self._system_prompt_cache)} layers)"
+                    )
 
         except Exception as e:
             logger.debug(f"[CACHE] Save failed (non-critical): {e}")
 
     async def _load_cache(self) -> bool:
-        """Try to load cache from disk."""
+        """Try to load cache from disk and restore into self._system_prompt_cache.
+
+        Sprint M4: was previously dead code (logged and returned True without
+        ever touching the cache). Now actually rebuilds the KV cache from
+        disk: per-layer keys+values, plus PromptCache-level offset. M4 win
+        = ~1500 system-prompt tokens of prefill cost avoided on each process
+        restart.
+        """
+        if self._system_prompt_cache is None:
+            return False
         try:
             from pathlib import Path
 
@@ -1089,8 +1167,44 @@ class Hermes3Engine:
                 return False
 
             data = mx.load(str(cache_path))
-            logger.info(f"[CACHE] Found existing cache at {cache_path}, size {len(data)} layers")
-            return True
+
+            n_layers = len(self._system_prompt_cache)
+            restored = 0
+            for i in range(n_layers):
+                k_key = f"layer_{i}_keys"
+                v_key = f"layer_{i}_values"
+                if k_key in data and v_key in data:
+                    layer = self._system_prompt_cache[i]
+                    if hasattr(layer, "keys") and hasattr(layer, "values"):
+                        try:
+                            layer.keys = data[k_key]
+                            layer.values = data[v_key]
+                            restored += 1
+                        except Exception as e:
+                            logger.debug(
+                                f"[CACHE] layer {i} restore failed: {e}"
+                            )
+
+            # Restore PromptCache-level offset
+            if "_offset" in data and hasattr(self._system_prompt_cache, "offset"):
+                try:
+                    arr = data["_offset"]
+                    # mx.array([N]).item() → int; robust to scalar array
+                    if hasattr(arr, "item"):
+                        offset_val = int(arr.item())
+                    else:
+                        offset_val = int(arr)
+                    self._system_prompt_cache.offset = offset_val
+                except Exception:
+                    pass
+
+            if restored > 0:
+                logger.info(
+                    f"[CACHE] Loaded from {cache_path} ({restored}/{n_layers} layers restored)"
+                )
+                return True
+            logger.debug(f"[CACHE] No layers restored from {cache_path}")
+            return False
 
         except Exception as e:
             logger.debug(f"[CACHE] Load failed: {e}")
@@ -1350,6 +1464,7 @@ class Hermes3Engine:
             )
             return await asyncio.wait_for(inference_future, timeout=timeout)
 
+    @_otel_instrumented("hermes.generate", component="mlx")
     async def generate(
         self,
         prompt: str,
@@ -1736,6 +1851,13 @@ class Hermes3Engine:
             "verbose": False,
         }
 
+        # M3: Token counter for granular eval/clear during streaming.
+        # Peak Metal cache growth without this is O(N) for an N-token
+        # output; with periodic eval+clear it stays bounded by
+        # M3_METAL_PRESSURE_BYTES. The kv_cache object remains live
+        # (Python-referenced) and is not affected by mx.metal.clear_cache()
+        # — only intermediate Metal buffers get reclaimed.
+        _eval_counter = 0
         for chunk in stream_generate(
             self._model,
             self._tokenizer,
@@ -1751,6 +1873,32 @@ class Hermes3Engine:
                 tok = str(chunk)
 
             if tok:
+                _eval_counter += 1
+                # Periodic barrier: flush lazy MLX ops so the next stream
+                # step starts from a clean Metal state. M3 invariant:
+                # mx.eval([]) ALWAYS precedes mx.metal.clear_cache().
+                if _eval_counter % EVAL_GRANULARITY_TOKENS == 0:
+                    try:
+                        import mlx.core as _m3_mx
+
+                        _m3_mx.eval([])
+                        if _eval_counter % CLEAR_GRANULARITY_TOKENS == 0:
+                            # Memory-aware clear — only when pressure is real
+                            _active = 0
+                            try:
+                                if hasattr(_m3_mx, "get_active_memory"):
+                                    _active = int(_m3_mx.get_active_memory())
+                                elif hasattr(_m3_mx.metal, "get_active_memory"):
+                                    _active = int(_m3_mx.metal.get_active_memory())
+                            except Exception:
+                                _active = 0
+                            if _active > M3_METAL_PRESSURE_BYTES and hasattr(
+                                _m3_mx.metal, "clear_cache"
+                            ):
+                                _m3_mx.metal.clear_cache()
+                    except Exception:
+                        # Fail-soft: never break the stream on eval/clear
+                        pass
                 yield tok
 
     async def decide_next_action(self, context: dict[str, Any]) -> dict[str, Any]:

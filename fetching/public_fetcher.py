@@ -13,8 +13,10 @@ P4: Tor + stealth layer integration:
 """
 from __future__ import annotations
 
+import asyncio
 import atexit
 import logging
+import os
 import random
 import re
 import time
@@ -129,6 +131,15 @@ from hledac.universal.transport.base import (  # noqa: E402
     route_transport,
     should_use_curl_cffi,
 )
+
+# F265B: conditional-cache wrapper for the curl_cffi stealth lane.
+# Same signature as fetch_via_curl_cffi but with ETag/Last-Modified
+# 304 short-circuit. Always-on inside the curl_cffi lane; opt-out
+# via HLEDAC_CONDITIONAL_CACHE=0.
+from hledac.universal.transport.curl_cffi_fetch import fetch_via_curl_cffi_cached  # noqa: E402
+# F265B: speculative Alt-Svc probe — primes the H3 LRU so the
+# second fetch (not the first) can use HttpVersion.v3.
+from hledac.universal.transport.http3_lane import probe_altsvc_speculative  # noqa: E402
 
 # F226: Body-cap helper — replaces inline duplicitu v httpx_h2 + aiohttp cestách
 from hledac.universal.transport.body_limiter import BodyReadResult, _read_body_into  # noqa: E402
@@ -2538,7 +2549,18 @@ async def async_fetch_public_text(
             # F260+: opportunistic HTTP/3 (QUIC) upgrade via Alt-Svc cache.
             # None when host has no h3 advertisement or feature disabled.
             _curl_http_version = _altsvc_http_version_for(_altsvc_extract_host(url))
-            _curl_result = await fetch_via_curl_cffi(
+            # F265B: speculative Alt-Svc probe — fire-and-forget. If the
+            # host hasn't been seen yet, the probe primes the LRU in the
+            # background so a later fetch (e.g. follow-up SERP pages in
+            # the same sprint) can use HttpVersion.v3 on the FIRST hit.
+            try:
+                probe_altsvc_speculative(url)
+            except Exception:
+                pass
+            # F265B: conditional-cache wrapper. Uses ETag/Last-Modified
+            # from the cache to send If-None-Match/If-Modified-Since;
+            # 304 responses return the cached body (0 bytes transferred).
+            _curl_result = await fetch_via_curl_cffi_cached(
                 url=url,
                 headers=_stealth_headers,
                 timeout_s=timeout_s,
@@ -2786,7 +2808,12 @@ async def async_fetch_public_text(
                                     try:
                                         # F260+: opportunistic HTTP/3 (QUIC) upgrade via Alt-Svc cache.
                                         _esc_http_version = _altsvc_http_version_for(_altsvc_extract_host(url))
-                                        _esc_result = await fetch_via_curl_cffi(
+                                        # F265B: conditional-cache wrapper.
+                                        # The URL already 403/429'd in the prior
+                                        # httpx attempt, so the cache is likely
+                                        # cold here, but if a previous sprint
+                                        # cached it we still save the RTT.
+                                        _esc_result = await fetch_via_curl_cffi_cached(
                                             url=url,
                                             headers=None,
                                             timeout_s=timeout_s,

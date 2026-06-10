@@ -51,6 +51,11 @@ try:
 except ImportError:
     LMDB_AVAILABLE = False
 
+try:
+    from hledac.universal.utils.lmdb_bulk import putmulti_bounded
+except ImportError:
+    putmulti_bounded = None  # type: ignore[assignment]
+
 logger = logging.getLogger(__name__)
 
 # Default bounds
@@ -178,12 +183,21 @@ class MemoryManager:
                     "created": now,
                 }
 
-                with self._env.begin(write=True) as txn:
-                    # Store value
-                    txn.put(full_key, data)
-
-                    # Update session index
-                    txn.put(session_index_key, _json_dumps(session_meta))
+                # Bulk write: 2 puty v jedné transakci -> putmulti.
+                # Konzistentní s invariantem CLAUDE.md (LMDB bulk write).
+                if putmulti_bounded is not None:
+                    putmulti_bounded(
+                        self._env,
+                        [
+                            (full_key, data),
+                            (session_index_key, _json_dumps(session_meta)),
+                        ],
+                        overwrite=True,
+                    )
+                else:  # pragma: no cover (defensive fallback)
+                    with self._env.begin(write=True) as txn:
+                        txn.put(full_key, data)
+                        txn.put(session_index_key, _json_dumps(session_meta))
 
                 return True
 

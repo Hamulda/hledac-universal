@@ -33,6 +33,8 @@ import psutil
 # Sprint F222F: RotatingBloomFilter for cross-run URL dedup pre-check
 __all__ = ["DedupManager", "RotatingBloomFilter"]
 
+from hledac.universal.utils.lmdb_bulk import putmulti_bounded  # noqa: E402
+
 import hashlib
 import os
 import struct
@@ -181,13 +183,23 @@ class RotatingBloomFilter:
         if self._lmdb_env is None:
             return
         try:
-            with self._lmdb_env.begin(write=True) as txn:
-                txn.put(self.BLOOM_KEY_ACTIVE.encode(), bytes(self._active))
-                txn.put(
-                    self.BLOOM_KEY_PREVIOUS.encode(),
-                    bytes(self._previous) if self._previous else b""
-                )
-                txn.put(self.BLOOM_KEY_COUNTER.encode(), struct.pack("<Q", self._counter))
+            # Bulk write: 3 puty v jedné transakci -> putmulti.
+            # Konzistentní s invariantem "LMDB bulk write: vždy přes put_many()".
+            putmulti_bounded(
+                self._lmdb_env,
+                [
+                    (self.BLOOM_KEY_ACTIVE.encode(), bytes(self._active)),
+                    (
+                        self.BLOOM_KEY_PREVIOUS.encode(),
+                        bytes(self._previous) if self._previous else b"",
+                    ),
+                    (
+                        self.BLOOM_KEY_COUNTER.encode(),
+                        struct.pack("<Q", self._counter),
+                    ),
+                ],
+                overwrite=True,
+            )
         except Exception:
             pass
 

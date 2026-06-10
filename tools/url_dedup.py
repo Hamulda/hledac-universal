@@ -47,6 +47,13 @@ try:
 except ImportError:
     xxhash_available = False
 
+# Configuration (declared up-front so default values in class / function
+# signatures below can reference them — Python evaluates defaults at
+# definition time, so the names must already be bound).
+DEFAULT_URL_ESTIMATE = 100_000
+DEFAULT_FPR = 0.01  # 1% false positive rate
+MAX_URL_ESTIMATE = 1_000_000
+
 # Rust extension import guard — BloomFilter exposed as
 # RustRotatingBloomFilter for API compatibility with probables.
 _RUST_BLOOM_AVAILABLE = False
@@ -99,6 +106,17 @@ try:
     )
 
     _RUST_URL_ENGINE_AVAILABLE = True
+except ImportError:
+    pass
+
+# Rust MmapBloomFilter — file-backed persistent dedup (F266-U1).
+# Persists across process restart, no Python warm-up cost, M1 8GB safe.
+_RUST_MMAP_BLOOM_AVAILABLE = False
+RustMmapBloomFilter: Any = None
+try:
+    from hledac_rust_extensions import MmapBloomFilter as RustMmapBloomFilter  # noqa: F811
+
+    _RUST_MMAP_BLOOM_AVAILABLE = True
 except ImportError:
     pass
 
@@ -208,6 +226,149 @@ def create_rust_url_set() -> DeduplicationStrategy:
     return RustUrlSetAdapter()
 
 
+# =============================================================================
+# F266-U1: Mmap-backed persistent Bloom filter (cross-restart dedup state)
+# =============================================================================
+
+
+class MmapBloomFilterAdapter:
+    """
+    Thread-safe adapter wrapping Rust MmapBloomFilter.
+
+    The underlying Rust class is not Send+Sync at the bit level — concurrent
+    add/contains on the same filter would race on the bitmap. This adapter
+    adds a `threading.Lock` so multi-threaded dedup is safe.
+
+    Lifecycle:
+      - File is opened or created on first call to `create_mmap_bloom_filter`.
+      - State persists in `path` across process restarts (msync(MS_ASYNC) per
+        write + msync(MS_SYNC) on Drop).
+      - On `reset()` the file is truncated to empty state (in-place, no
+        re-alloc — the mmap region stays valid).
+
+    M1 8GB safety:
+      - Demand-paged: cold pages live on disk, not in RSS.
+      - Bounded: capacity is fixed at creation; FPR degrades past capacity.
+      - Fail-soft: every method is wrapped in try/except. On IO error the
+        dedup degrades to "definitely not present" so the caller can still
+        proceed without crashing the sprint.
+    """
+
+    __slots__ = ("_filter", "_lock", "_path", "_capacity", "_fp_rate")
+
+    def __init__(
+        self,
+        path: str,
+        capacity: int = DEFAULT_URL_ESTIMATE,
+        fp_rate: float = DEFAULT_FPR,
+        force_new: bool = False,
+    ) -> None:
+        import threading
+
+        if not _RUST_MMAP_BLOOM_AVAILABLE:
+            raise ImportError(
+                "MmapBloomFilter unavailable — Rust extension not built. "
+                "Run `maturin develop` in rust_extensions/."
+            )
+        # Enforce URL_ESTIMATE upper bound (same policy as in-memory filter).
+        capacity = min(capacity, MAX_URL_ESTIMATE)
+        self._path = path
+        self._capacity = int(capacity)
+        self._fp_rate = float(fp_rate)
+        self._filter: Any = RustMmapBloomFilter(
+            path=path,
+            capacity=capacity,
+            fp_rate=fp_rate,
+            force_new=force_new,
+        )
+        self._lock = threading.Lock()
+
+    @property
+    def path(self) -> str:
+        return self._path
+
+    @property
+    def byte_size(self) -> int:
+        try:
+            return int(self._filter.byte_size())
+        except Exception:
+            return 0  # fail-soft
+
+    def add(self, item: str) -> bool:
+        with self._lock:
+            try:
+                return bool(self._filter.add(item))
+            except Exception:
+                return False  # fail-soft
+
+    def __contains__(self, item: str) -> bool:
+        # Read path: no lock needed for single-writer/many-reader (GIL holds
+        # off concurrent writers in CPython). For strict multi-thread semantics
+        # the caller should serialize.
+        try:
+            return bool(self._filter.contains(item))
+        except Exception:
+            return False  # fail-soft
+
+    def __len__(self) -> int:
+        try:
+            return int(self._filter.__len__())
+        except Exception:
+            return 0
+
+    def sync(self) -> bool:
+        """Force durable sync to disk (MS_SYNC)."""
+        with self._lock:
+            try:
+                return bool(self._filter.sync())
+            except Exception:
+                return False
+
+    def reset(self) -> None:
+        with self._lock:
+            try:
+                self._filter.reset()
+            except Exception:
+                pass  # fail-soft
+
+    def capacity(self) -> int:
+        return self._capacity
+
+    def fp_rate(self) -> float:
+        return self._fp_rate
+
+
+def create_mmap_bloom_filter(
+    path: str,
+    est_elements: int = DEFAULT_URL_ESTIMATE,
+    false_positive_rate: float = DEFAULT_FPR,
+    force_new: bool = False,
+) -> DeduplicationStrategy:
+    """
+    Create a file-backed mmap Bloom filter (F266-U1).
+
+    Persists dedup state across process restarts. M1 8GB UMA safe:
+    pages are demand-loaded, working set is bounded by access pattern.
+
+    Args:
+        path: File path. Parent dirs are created if missing.
+        est_elements: Expected unique element count (default 100K).
+        false_positive_rate: Target FPR (default 1%).
+        force_new: Truncate any existing file (default False — reuses).
+
+    Returns:
+        MmapBloomFilterAdapter — thread-safe, fail-soft, DeduplicationStrategy
+        protocol-compliant.
+    """
+    adapter = MmapBloomFilterAdapter(
+        path=path,
+        capacity=est_elements,
+        fp_rate=false_positive_rate,
+        force_new=force_new,
+    )
+    return cast(DeduplicationStrategy, adapter)
+
+
 def fast_hash(text: str) -> str:
     """
     Fast non-crypto hash for URL fingerprinting.
@@ -219,12 +380,6 @@ def fast_hash(text: str) -> str:
         return xxhash.xxh64(text).hexdigest()
     # Fallback to blake2b (crypto-grade but slower)
     return hashlib.blake2b(text.encode(), digest_size=8).hexdigest()
-
-
-# Configuration
-DEFAULT_URL_ESTIMATE = 100_000
-DEFAULT_FPR = 0.01  # 1% false positive rate
-MAX_URL_ESTIMATE = 1_000_000
 
 
 def create_rotating_bloom_filter(
@@ -475,3 +630,102 @@ def extract_domain(url: str) -> str | None:
         return parsed.hostname
     except Exception:
         return None
+
+
+# =============================================================================
+# Sprint F-A5: Pre-fetch URL dedup gate
+# =============================================================================
+# Discovery stage returns 50 URLs from 3 search queries → ~30 unique.
+# Without this gate, FetchCoordinator pops all 150 from the frontier,
+# does a per-URL Bloom check inside the loop, and only then sees the
+# 120 dupes it must drop — wasted CPU + frontier churn. This helper
+# runs the dedup ONCE on the candidate list before submission, so
+# the fetch loop only sees unique URLs.
+#
+# M1 8 GB safety:
+#  - O(N) time, O(N) memory (the set of seen URLs only).
+#  - No new heavy deps; reuses the existing DeduplicationStrategy
+#    (Rust UrlSet preferred → O(1) FNV-1a contains/add).
+#  - No asyncio primitives — pure sync, safe to call from any context.
+# =============================================================================
+
+
+def dedupe_url_list(
+    urls: list[str],
+    filter_strategy: DeduplicationStrategy,
+    *,
+    normalize: bool = True,
+) -> tuple[list[str], int]:
+    """
+    Deduplicate a list of URLs against the given filter, in order.
+
+    Args:
+        urls: candidate URLs (may contain duplicates; order preserved).
+        filter_strategy: the dedup filter to consult + mutate. Caller
+            owns the filter; this function does not clear it.
+        normalize: if True (default), run ``normalize_url`` on each URL
+            before the filter check. Matches the F214AD contract used
+            by FetchCoordinator (URLs in ``_processed_urls`` are stored
+            normalized).
+
+    Returns:
+        (unique_urls, dropped_count) where:
+          - unique_urls preserves the order of first appearance in
+            ``urls``, after normalization, with duplicates removed.
+          - dropped_count is the number of URLs that were already
+            present in the filter (or duplicates within the input).
+          - Only the surviving URLs are added to the filter. Duplicates
+            that were already in the filter are NOT re-added (the
+            underlying strategy's ``add`` is called once per unique URL).
+
+    Invariants:
+      - Pure function on the input list (no in-place mutation of ``urls``).
+      - Fail-soft: invalid URLs (empty / unparseable) are kept in the
+        result list as-is so callers don't lose track of the work.
+      - Rust UrlSet adapter is preferred when available — O(1) per
+        check/add, atomic.
+    """
+    if not urls:
+        return ([], 0)
+    if filter_strategy is None:
+        # Defensive: caller forgot the filter. Fall through to a
+        # naive in-list dedup (no filter mutation).
+        seen: set[str] = set()
+        unique: list[str] = []
+        for u in urls:
+            key = normalize_url(u) if normalize else u
+            if key not in seen:
+                seen.add(key)
+                unique.append(u)
+        return (unique, len(urls) - len(unique))
+
+    unique: list[str] = []
+    seen_in_input: set[str] = set()
+    dropped = 0
+
+    for raw_url in urls:
+        if not raw_url:
+            dropped += 1
+            continue
+        key = normalize_url(raw_url) if normalize else raw_url
+        if not key:
+            # Unparseable URL — keep as-is, don't poison the filter.
+            unique.append(raw_url)
+            continue
+        if key in seen_in_input:
+            # Duplicate within the input batch.
+            dropped += 1
+            continue
+        # Consult the filter. This is the key hot path: O(1) for Rust
+        # UrlSet / RotatingBloomFilter; O(1) for the bounded set fallback.
+        if key in filter_strategy:
+            # Already in the filter from a prior batch / sprint.
+            seen_in_input.add(key)
+            dropped += 1
+            continue
+        # New URL — add to filter and emit.
+        filter_strategy.add(key)
+        seen_in_input.add(key)
+        unique.append(raw_url)
+
+    return (unique, dropped)

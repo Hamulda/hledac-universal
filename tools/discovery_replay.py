@@ -131,7 +131,10 @@ def write_cassette(
     if not replay_enabled():
         return
     try:
-        import orjson
+        # Sprint S4: msgspec facade — 2-3× faster than orjson for small
+        # cassette envelopes. The facade falls back to orjson internally
+        # on type errors, preserving the prior fail-soft semantics.
+        from hledac.universal.utils.msgspec_json import encode as _msgspec_encode
     except Exception:
         return
 
@@ -144,7 +147,7 @@ def write_cassette(
         "ttl_s": effective_ttl,
     }
     try:
-        payload = orjson.dumps(envelope)
+        payload = _msgspec_encode(envelope)
     except Exception:
         return
     # JSONL line terminator — consistent with the multi-line format

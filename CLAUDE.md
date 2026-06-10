@@ -273,7 +273,70 @@ Centralized HTTP/3 lane in `transport/http3_lane.py` (new). Two strategies behin
 
 ---
 
-*Last updated: F260 (2026-05-30)*
+## F265B — Curl CFFI Prewarm + Conditional Cache (2026-06-10)
+
+Closes two gaps in the curl_cffi stealth lane that F260 + F261 left open:
+1. **Prewarm** — eliminates the 200-400 ms TLS handshake cost on the
+   first request to a profile.
+2. **Conditional cache** — closes the gap that hishel (F261) only
+   covered the httpx path; SERP fetches through curl_cffi now enjoy
+   ETag/Last-Modified 304 short-circuits.
+
+### Prewarm pool (`transport/prewarm_pool.py`)
+- 2-slot ring buffer. Slot A = active, slot B = prewarmed.
+- Round-robin: every acquire kicks off a background HEAD probe to
+  prime the next slot.
+- Bounded: exactly 2 sessions, never grows.
+- M1 8GB: ~30 MB resident for 2 sessions.
+- Fail-soft: any error → lazy runtime path.
+- Opt-out: `HLEDAC_CURL_CFFI_PREWARM=0` (default ON).
+- Wired into `curl_cffi_runtime._get_or_create_session` — callers
+  see no API change.
+
+### Conditional cache (`transport/conditional_cache.py`)
+- LMDB-backed (4 MB map, 5000 entries) with zstd/zlib compression.
+- In-memory fallback when LMDB is unavailable (hermetic tests).
+- Stores `(etag, last_modified, body, sha256, fetched_at, status_code)`.
+- 304 = `If-None-Match` / `If-Modified-Since` short-circuit, returns
+  cached body, 0 bytes transferred. ~200 ms vs ~3 s.
+- TTL: 1 hour (Bing SERP freshness window).
+- Bounds: 256 B ≤ body ≤ 2 MB per entry.
+- Opt-out: `HLEDAC_CONDITIONAL_CACHE=0` (default ON).
+- Public wrapper: `fetch_via_curl_cffi_cached(url, ..., _force_refresh=False)`.
+- Wired into the F260 call sites in `public_fetcher.py` (primary +
+  403/429 escalation). `probe_altsvc_speculative(url)` is now
+  called once per primary fetch to prime the H3 LRU in the
+  background (so the SECOND fetch, not the first, can use
+  `HttpVersion.v3`).
+
+### Speculative Alt-Svc probe
+Added to `transport/http3_lane.py`. Fire-and-forget HEAD that
+primes the H3 LRU before the second fetch hits the same host.
+Idempotent: skips hosts already in the LRU. Gated by
+`HLEDAC_ENABLE_HTTPX_H3=1`. Never raises. No event loop → no-op.
+
+### Probe tests
+`tests/probe_p14_prewarm_conditional/` — 25 hermetic tests covering:
+prewarm opt-out, fallback, round-robin, bounds, stats, conditional
+cache miss/hit/store/headers/304/force-refresh/error path, LMDB and
+in-memory backends, TTL expiry, LRU eviction, compression roundtrip,
+speculative Alt-Svc gating.
+
+### Invariants
+- **Always-on, bounded, fail-safe** — no new feature flags beyond
+  opt-out env vars; prewarm disabled → lazy fallback; conditional
+  cache disabled → live fetch; LMDB missing → in-memory fallback;
+  any error → no exception, telemetry records the miss.
+- **No new public APIs required** — `fetch_via_curl_cffi_cached`
+  drops in at the existing call sites; `probe_altsvc_speculative`
+  is fire-and-forget.
+- **M1 8GB safe** — 30 MB prewarm + 4 MB LMDB map + 1-hour TTL.
+- **Lazy imports** — no curl_cffi / aioquic / zstandard at module
+  load; all deps loaded on first use.
+
+---
+
+*Last updated: F265B (2026-06-10)*
 ## MCP Tools: code-review-graph
 
 **IMPORTANT: This project has a knowledge graph. ALWAYS use the

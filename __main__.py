@@ -22,6 +22,7 @@ import asyncio
 import contextlib
 import pathlib
 import signal
+import sys
 import traceback
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any

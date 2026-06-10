@@ -108,6 +108,7 @@ import asyncio
 import logging
 import time
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from utils.async_helpers import safe_gather_dropin
 

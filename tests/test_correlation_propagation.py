@@ -18,7 +18,7 @@ Also verifies:
 import json
 import tempfile
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 
 
@@ -51,7 +51,7 @@ class TestEvidenceLogCorrelation:
             run_id = f"test_run_{uuid.uuid4().hex[:8]}"
             log = EvidenceLog(run_id=run_id, enable_persist=False)
 
-            correlation = {
+            correlation: dict[str, str | None] = {
                 "run_id": "run_123",
                 "branch_id": "branch_a",
                 "provider_id": "mlx",
@@ -105,7 +105,7 @@ class TestEvidenceLogCorrelation:
             run_id = f"test_run_{uuid.uuid4().hex[:8]}"
             log = EvidenceLog(run_id=run_id, enable_persist=False)
 
-            correlation = {
+            correlation: dict[str, str | None] = {
                 "run_id": "run_abc",
                 "branch_id": "branch_b",
                 "provider_id": "anthropic",
@@ -134,7 +134,7 @@ class TestEvidenceLogCorrelation:
             run_id = f"test_run_{uuid.uuid4().hex[:8]}"
             log = EvidenceLog(run_id=run_id, enable_persist=False)
 
-            correlation = {
+            correlation: dict[str, str | None] = {
                 "run_id": "run_query",
                 "branch_id": "branch_query",
                 "provider_id": "mlx",
@@ -190,7 +190,7 @@ class TestToolExecLogCorrelation:
             run_id = f"test_run_{uuid.uuid4().hex[:8]}"
             log = ToolExecLog(run_dir=Path(tmpdir), run_id=run_id, enable_persist=False)
 
-            correlation = {
+            correlation: dict[str, str | None] = {
                 "run_id": "run_tool",
                 "branch_id": "branch_tool",
                 "provider_id": "mlx",
@@ -219,7 +219,7 @@ class TestToolExecLogCorrelation:
             run_id = f"test_run_{uuid.uuid4().hex[:8]}"
             log = ToolExecLog(run_dir=Path(tmpdir), run_id=run_id, enable_persist=False)
 
-            correlation = {
+            correlation: dict[str, str | None] = {
                 "run_id": "run_ser",
                 "branch_id": "branch_ser",
                 "provider_id": "openai",
@@ -248,7 +248,7 @@ class TestToolExecLogCorrelation:
 
         data = {
             "event_id": "tool_1",
-            "ts": datetime.utcnow().isoformat(),  # noqa: DTZ003
+            "ts": datetime.now(UTC).isoformat(),
             "tool_name": "test",
             "input_hash": "hash1",
             "output_hash": "hash2",
@@ -293,7 +293,7 @@ class TestMetricsRegistryCorrelation:
         from hledac.universal.metrics_registry import MetricsRegistry
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            correlation = {
+            correlation: dict[str, str | None] = {
                 "branch_id": "branch_metric",
                 "provider_id": "mlx",
                 "action_id": "metric_action",
@@ -312,7 +312,7 @@ class TestMetricsRegistryCorrelation:
         from hledac.universal.metrics_registry import MetricsRegistry
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            correlation = {
+            correlation: dict[str, str | None] = {
                 "branch_id": "branch_flush",
                 "provider_id": "openai",
                 "action_id": "flush_action",
@@ -413,7 +413,7 @@ class TestAnalyticsHookCorrelation:
             log = EvidenceLog(run_id=run_id, enable_persist=False)
 
             # Create evidence_packet event with full correlation
-            correlation = {
+            correlation: dict[str, str | None] = {
                 "run_id": "run_cross_ledger",
                 "branch_id": "branch_cross",
                 "provider_id": "mlx",

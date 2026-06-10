@@ -364,6 +364,118 @@ def record_h3_support(url: str, supports: bool) -> None:
 
 
 # ---------------------------------------------------------------------------
+# F265B: Speculative Alt-Svc probe (background, fire-and-forget).
+#
+# The opportunistic H3 path is reactive: the first fetch to a host
+# runs on HTTP/1.1 or HTTP/2, parses the Alt-Svc response header, and
+# only then can the SECOND fetch use ``HttpVersion.v3``. That means
+# single-shot sprints (most of them) never get the h3 win.
+#
+# Solution: when the public_fetcher sees a host for the first time
+# AND the H3 lane is enabled, fire a background HEAD probe to prime
+# the LRU. The probe is fully detached (asyncio.create_task); the
+# caller never blocks. The probe result is written into the same
+# LRU the reactive path uses, so the very next call to
+# ``http_version_for_curl_cffi`` for that host sees the cached True.
+# ---------------------------------------------------------------------------
+import asyncio  # noqa: E402  — late import to keep module-load cheap
+_HEAD_PROBE_TIMEOUT_S: float = 4.0  # bounded; M1 8GB friendly
+
+
+async def _speculative_altsvc_probe_inner(url: str) -> None:
+    """Inner coroutine for the speculative Alt-Svc probe. Sends a
+    single HEAD request, parses the response headers, and updates
+    the LRU if the server advertises h3. Never raises.
+
+    Uses the same bounded AsyncSession as the curl_cffi runtime —
+    the session is borrowed (not owned) so we don't multiply
+    connection pools. If no session is available, the probe falls
+    through to a fresh AsyncSession.
+    """
+    try:
+        host = extract_host(url)
+        if not host:
+            return
+        # Use a per-probe session to keep the probe isolated from
+        # the live fetch session. The session is closed at the end
+        # of the probe to avoid leaking connections.
+        from curl_cffi.requests import AsyncSession  # type: ignore
+
+        sess = AsyncSession(
+            impersonate="chrome124",
+            timeout=_HEAD_PROBE_TIMEOUT_S,
+            max_clients=2,
+        )
+        try:
+            try:
+                resp = await asyncio.wait_for(
+                    sess.head(url, timeout=_HEAD_PROBE_TIMEOUT_S),
+                    timeout=_HEAD_PROBE_TIMEOUT_S + 1.0,
+                )
+            except TimeoutError:
+                return
+            except Exception as e:  # noqa: BLE001
+                logger.debug("http3_lane: speculative probe to %s failed: %s", host, e)
+                return
+            try:
+                if resp is not None and resp.headers:
+                    if _altsvc_advertises_h3(resp.headers):
+                        _cache_put(host, True)
+                        logger.debug(
+                            "http3_lane: speculative probe primed H3 for %s", host
+                        )
+            except Exception as e:  # noqa: BLE001
+                logger.debug("http3_lane: speculative header parse failed: %s", e)
+        finally:
+            try:
+                await sess.aclose()
+            except Exception:  # noqa: BLE001
+                pass
+    except asyncio.CancelledError:
+        raise
+    except Exception as e:  # noqa: BLE001
+        logger.debug("http3_lane: speculative probe outer error: %s", e)
+
+
+def probe_altsvc_speculative(url: str) -> None:
+    """Schedule a background Alt-Svc probe for ``url``. Fire-and-forget.
+
+    Idempotent: if the host is already in the LRU, the probe is skipped.
+    Gated by ``HLEDAC_ENABLE_HTTPX_H3=1`` (the same env gate as the
+    reactive path). Bounded: one task per call; the loop will garbage
+    collect the task on completion. Never raises.
+
+    Calling this from a sync context (e.g. an analysis path that runs
+    outside the event loop) is a no-op: the create_task() call would
+    raise RuntimeError, which we swallow and log at debug level.
+
+    M1 8GB safety: the probe uses a dedicated session with max_clients=2
+    so it cannot starve the live fetch path.
+    """
+    if not _resolve_enabled():
+        return
+    host = extract_host(url)
+    if not host:
+        return
+    # Idempotency: skip if we already know.
+    if _cache_get(host) is not None:
+        return
+    try:
+        asyncio.create_task(
+            _speculative_altsvc_probe_inner(url),
+            name=f"http3_lane:speculative_probe:{host}",
+        )
+    except RuntimeError:
+        # No event loop in this context. The probe simply does not
+        # happen; the next reactive fetch will populate the LRU.
+        logger.debug(
+            "http3_lane: speculative probe skipped (no event loop) for %s", host
+        )
+    except Exception as e:  # noqa: BLE001
+        logger.debug("http3_lane: speculative probe scheduling failed: %s", e)
+
+
+# ---------------------------------------------------------------------------
 # Public API: real QUIC via aioquic (stealth / DA+ profile lane).
 # ---------------------------------------------------------------------------
 def _probe_aioquic() -> bool:

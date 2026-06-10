@@ -100,9 +100,14 @@ async def async_get_curl_cffi_session(profile: str = "chrome110") -> tuple[bool,
 
 
 async def _get_or_create_session(profile: str) -> Any | None:
-    """Internal: get from cache or create new, with bounded LRU."""
-    global _curl_cffi_sessions, _curl_cffi_profiles_order
+    """Internal: get from cache or create new, with bounded LRU.
 
+    F265B: delegates to ``prewarm_pool`` first when the prewarm lane
+    is enabled. The prewarm pool keeps 2 sessions warm
+    (TCP+TLS handshakes pre-completed) so the first request to a
+    profile does not pay the 200-400 ms cold-start cost. On any
+    prewarm failure, falls back to the original lazy path.
+    """
     # Fast path: already cached
     if profile in _curl_cffi_sessions:
         # Move to end (most recently used)
@@ -115,6 +120,35 @@ async def _get_or_create_session(profile: str) -> Any | None:
             return session
         # Session was closed — remove from cache
         del _curl_cffi_sessions[profile]
+
+    # F265B: try prewarm pool first. The pool returns a session that
+    # has already completed TCP+TLS handshake against a known-good
+    # host; the curl_cffi connection-pool inside the session is warm
+    # for any host the caller fetches next. If the pool is disabled
+    # or fails, fall through to the original lazy path.
+    try:
+        from .prewarm_pool import acquire_session as _prewarm_acquire
+
+        ok, sess, used = await _prewarm_acquire(profile)
+        if ok and sess is not None:
+            # Warm session from the pool. Promote it into the local
+            # LRU so subsequent same-profile calls hit the fast path.
+            # The pool keeps its own reference for the round-robin
+            # swap; we share the session object (idempotent close).
+            if profile in _curl_cffi_sessions:
+                # Evict any existing entry for this profile.
+                if profile in _curl_cffi_profiles_order:
+                    _curl_cffi_profiles_order.remove(profile)
+                _curl_cffi_sessions.pop(profile, None)
+            _curl_cffi_sessions[profile] = sess
+            _curl_cffi_profiles_order.append(profile)
+            logger.debug(
+                f"curl_cffi session acquired from prewarm pool for profile: {used}"
+            )
+            return sess
+    except Exception as e:  # noqa: BLE001
+        # Fail-soft: never let a prewarm failure block the lazy path.
+        logger.debug(f"prewarm pool acquire failed (fallback to lazy): {e}")
 
     # Sessions to close after releasing lock (evicted during creation)
     _sessions_to_close: list[Any] = []

@@ -246,3 +246,62 @@ def test_concurrent_encode_decode():
         results = list(ex.map(roundtrip, range(200)))
     assert all(results)
     assert len(results) == 200
+
+
+# ---------------------------------------------------------------------------
+# Sprint S4: 3 per-item hot paths migrated to msgspec facade
+# ---------------------------------------------------------------------------
+# 1. coordinators.memory_coordinator._serialize_to_json (L2 persistence)
+# 2. intelligence._graph_serde.save_nx_graph_jsonl (per-graph persist)
+# 3. tools.discovery_replay.write_cassette (per-response cassette)
+# ---------------------------------------------------------------------------
+
+
+def test_s4_memory_coordinator_uses_msgspec():
+    """Sprint S4: memory_coordinator._serialize_to_json must use msgspec facade."""
+    from hledac.universal.coordinators import memory_coordinator as mc
+    # The import path should resolve to msgspec_json.encode
+    assert hasattr(mc, "_msgspec_encode"), "memory_coordinator must import _msgspec_encode"
+    # And the encode function must be the msgspec facade
+    from hledac.universal.utils import msgspec_json
+    assert mc._msgspec_encode is msgspec_json.encode
+    # Roundtrip test
+    payload = {"k": "v", "n": 1, "tags": ["a", "b"]}
+    raw = mc._msgspec_encode(payload)
+    assert isinstance(raw, bytes)
+    assert msgspec_json.decode(raw) == payload
+
+
+def test_s4_graph_serde_uses_msgspec():
+    """Sprint S4: _graph_serde.save_nx_graph_jsonl must use msgspec facade."""
+    # Text-based check (avoids importing the full module which pulls
+    # networkx, etc.).
+    path = Path("intelligence/_graph_serde.py")
+    if not path.exists():
+        pytest.skip("_graph_serde.py not present")
+    source = path.read_text(encoding="utf-8")
+    # The write path should reference _msgspec_encode
+    assert "_msgspec_encode" in source, (
+        "_graph_serde must use _msgspec_encode for write path (Sprint S4)"
+    )
+    # The OPT_SERIALIZE_NUMPY orjson call must be gone (replaced)
+    assert "orjson.dumps(envelope" not in source, (
+        "orjson.dumps(envelope) in _graph_serde.save_nx_graph_jsonl "
+        "must be replaced with _msgspec_encode"
+    )
+
+
+def test_s4_discovery_replay_uses_msgspec():
+    """Sprint S4: tools.discovery_replay.write_cassette must use msgspec facade."""
+    path = Path("tools/discovery_replay.py")
+    if not path.exists():
+        pytest.skip("tools/discovery_replay.py not present")
+    source = path.read_text(encoding="utf-8")
+    # The write path should reference _msgspec_encode
+    assert "_msgspec_encode" in source, (
+        "tools/discovery_replay.write_cassette must use _msgspec_encode (Sprint S4)"
+    )
+    # The orjson.dumps(envelope) call must be gone (replaced)
+    assert "orjson.dumps(envelope)" not in source, (
+        "orjson.dumps(envelope) in write_cassette must be replaced with _msgspec_encode"
+    )

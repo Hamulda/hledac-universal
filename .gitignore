@@ -109,3 +109,14 @@ rl/.qmix_weights.npz
 archive/runs/*.json
 archive/runs/*.log
 archive/exports/*.json
+**/target/**
+**/.venv/**
+**/__pycache__/**
+**/*.lock
+**/*.pyc
+**/*.so
+**/*.dylib
+**/*.rlib
+**/.git/**
+**/dist/**
+**/build/**
