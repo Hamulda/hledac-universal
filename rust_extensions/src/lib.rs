@@ -19,10 +19,12 @@ use std::sync::OnceLock;
 
 pub mod aho_corasick;
 pub mod bloom;
+pub mod compress;
 pub mod content_hasher;
 pub mod int_counter_layout;
 pub mod ioc_dedup;
 pub mod ioc_extract;
+pub mod madvise;
 pub mod quality_gate;
 pub mod rolling_hash;
 pub mod simhash_ext;
@@ -147,6 +149,13 @@ fn hledac_rust_extensions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // identical to Python's hashlib.blake2b(digest_size=16) so existing
     // LMDB-persisted fingerprints remain valid (no migration).
     quality_gate::register_functions(m)?;
+
+    // F273F: Darwin madvise — MADV_FREE_REUSABLE for LMDB/DuckDB mmap regions
+    madvise::register_functions(m)?;
+
+    // Sprint F265B-III: LMDB page compression (lz4 + zstd) for hot-edges cache.
+    // Wire format: [marker=0x00/0x01/0x02][payload] — lz4 fast path, zstd fallback.
+    compress::register_functions(m)?;
 
     Ok(())
 }

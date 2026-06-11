@@ -743,7 +743,7 @@ def _extract_domain_token(query: str) -> str | None:
     return None
 
 
-def _build_query_variants(query: str) -> list[str]:
+def _build_query_variants(query: str, dspy_variants: list | None = None) -> list[str]:
     """
     Sprint F213B + F232: Generate bounded query variants for domain-aware queries.
 
@@ -752,21 +752,14 @@ def _build_query_variants(query: str) -> list[str]:
 
     Returns [query] (single variant, no expansion) when no domain token found.
 
-    Phase A (DSPy): if HLEDAC_ENABLE_DSPY=1, call brain.dspy_service.expand_query
-    first for semantic query expansion before structural variants are built.
+    Phase A (DSPy): caller is responsible for passing pre-expanded dspy_variants
+    from brain.dspy_service.expand_query (called in the async caller context).
     """
-    # Phase A: DSPy query expansion (semantic variants before structural ones)
-    dspy_variants: list = []
-    if os.getenv("HLEDAC_ENABLE_DSPY", "0") == "1":
-        try:
-            import asyncio
-
-            from hledac.universal.brain.dspy_service import expand_query
-            dspy_variants = asyncio.run(expand_query(query)) or []
-            if dspy_variants:
-                logger.debug("dspy_service: expand_query added %d semantic variants", len(dspy_variants))
-        except Exception:
-            dspy_variants = []
+    # Phase A: DSPy variants already injected by caller
+    if dspy_variants is None:
+        dspy_variants = []
+    elif dspy_variants:
+        logger.debug("dspy_service: expand_query added %d semantic variants", len(dspy_variants))
 
     # Original structural variant logic follows
     # Fast path: already a clean domain
@@ -885,7 +878,15 @@ async def async_search_public_web(
             )
 
     # ---- Sprint F213B: query variant expansion for domain-like queries ----
-    variants = _build_query_variants(trimmed)
+    # Phase A: async DSPy expansion (no asyncio.run nesting — runs in caller's event loop)
+    dspy_expanded: list = []
+    if os.getenv("HLEDAC_ENABLE_DSPY", "0") == "1":
+        try:
+            from hledac.universal.brain.dspy_service import expand_query
+            dspy_expanded = await expand_query(trimmed) or []
+        except Exception:
+            dspy_expanded = []
+    variants = _build_query_variants(trimmed, dspy_expanded)
     if len(variants) > 1:
         # Multiple variants: run each with proportional budget, merge results
         per_variant_results = max(1, max_results // len(variants))

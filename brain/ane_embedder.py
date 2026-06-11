@@ -10,6 +10,7 @@ Tyto dvě instance jsou záměrně oddělené — ANE brain pipeline vs. vector 
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
 import threading
 from collections.abc import Awaitable, Callable
@@ -449,7 +450,7 @@ class ANEEmbedder:
             _ANE_TELEMETRY["ane_embed_fallback_used"] += 1
             fb = self._fallback_embedder
             # Handle both sync and async fallback
-            if asyncio.iscoroutinefunction(fb):
+            if inspect.iscoroutinefunction(fb):
                 return await fb(texts)
             else:
                 loop = asyncio.get_running_loop()

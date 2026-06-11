@@ -48,6 +48,7 @@ import logging
 import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from enum import Enum
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -439,7 +440,14 @@ def _load_feed_budget_from_env() -> FeedDominanceBudget:
 # ── Risk levels ───────────────────────────────────────────────────────────────
 
 
-class RiskLevel:
+class RiskLevel(str, Enum):
+    """Risk levels for acquisition lane planning.
+
+    Inherits from `str` so the enum members are also `str` instances —
+    preserves the existing `risk_level: str = RiskLevel.MEDIUM` field
+    type without forcing all callers to migrate. Values match canonical
+    `project_types.RiskLevel` (lowercase).
+    """
     LOW = "low"
     MEDIUM = "medium"
     HIGH = "high"
@@ -609,7 +617,9 @@ LANE_RULES: tuple[LaneRule, ...] = (
     # ── FEED ────────────────────────────────────────────────────────────────
     _lane_rule(
         AcquisitionLane.FEED, LaneSpecFeed,
-        lambda ctx: not ctx.hardware_critical,
+        # F266: FEED runs in warn state — only blocked at critical/emergency.
+        # hardware_critical includes swap_detected which is too aggressive for FEED.
+        lambda ctx: ctx.uma_state not in ("critical", "emergency"),
         lambda ctx: "always_allowed",
         lambda ctx: _lc(AcquisitionLane.FEED, ctx.base_concurrency, ctx.uma_state),
     ),
@@ -624,7 +634,7 @@ LANE_RULES: tuple[LaneRule, ...] = (
             else (
                 (ctx.is_nonfeed_diagnostic and ctx.has_domain and not ctx.transport_degraded)
                 if ctx.is_nonfeed_diagnostic
-                else (not ctx.hardware_critical and not ctx.transport_degraded)
+                else (ctx.uma_state not in ("critical", "emergency") and not ctx.transport_degraded)
             )
         ),
         lambda ctx: (
@@ -634,7 +644,7 @@ LANE_RULES: tuple[LaneRule, ...] = (
                 "nonfeed_diagnostic_domain"
                 if (ctx.is_nonfeed_diagnostic and ctx.has_domain)
                 else ("transport_degraded" if ctx.transport_degraded
-                      else ("hardware_critical" if ctx.hardware_critical else "query_eligible"))
+                      else ("hardware_critical" if ctx.uma_state in ("critical", "emergency") else "query_eligible"))
             )
         ),
         lambda ctx: _lc(AcquisitionLane.PUBLIC, ctx.base_concurrency, ctx.uma_state),
@@ -840,6 +850,8 @@ class NonfeedSeedContext:
     urls: tuple[str, ...] = ()
     hashes: tuple[str, ...] = ()
     cves: tuple[str, ...] = ()
+    # F280: Cross-sprint DuckPGQ entity neighbors (value, ioc_type, confidence, source)
+    duckpgq_entities: tuple[dict, ...] = ()
 
     def __post_init__(self) -> None:
         # Enforce hard caps
@@ -1707,7 +1719,7 @@ def build_acquisition_report(
     # (env fallback is the legacy path for CLI-driven runs)
     import os as _os
     if _effective_profile == "default":
-        _env_override = _os.environ.get("HLEDAC_ACQUISITION_PROFILE", "default")
+        _env_override = _os.environ.get("HLEDAC_ACQUISITION_PROFILE", "active")
         if _env_override != "default":
             logger.debug(
                 "[build_acquisition_report] acquisition_profile='default' "
@@ -2975,7 +2987,7 @@ def build_acquisition_plan(
     # F216B: Fall back to env var if not explicitly passed
     if acquisition_profile == "default":
         import os
-        _env_profile = os.environ.get("HLEDAC_ACQUISITION_PROFILE", "default")
+        _env_profile = os.environ.get("HLEDAC_ACQUISITION_PROFILE", "active")
         if _env_profile != "default":
             logger.info(
                 "[F228B] acquisition_profile overridden by env var "
@@ -3033,7 +3045,7 @@ def _build_plan_impl(
     # ── Derive AcquisitionContext ─────────────────────────────────────────────
     hardware_critical = uma_state in ("critical", "emergency") or swap_detected
     has_domain = _has_domain_or_ip(query)
-    has_ip = bool(_DOMAIN_OR_IP_RE.search(query) and _re.search(r'\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b', query))
+    has_ip = bool(_DOMAIN_OR_IP_RE.search(query) and re.search(r'\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b', query))
     has_url = _has_url(query)
     has_crypto = _has_crypto_indicator(query)
     has_long_duration = duration_s >= 300.0

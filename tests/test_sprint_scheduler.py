@@ -676,6 +676,13 @@ async def test_synthesis_sidecar_skipped_when_uma_emergency(minimal_config):
     mock_uma.is_critical = True
     mock_uma.state = "emergency"
 
+    # F266: accepted_findings must be > 0 to reach the uma_guard check
+    sched._result.accepted_findings = 5
+
+    # F266: clear _env_flag lru_cache before test (other tests may have cached "0")
+    from hledac.universal.runtime import sprint_scheduler as _ss_mod
+    _ss_mod._env_flag.cache_clear()
+
     with patch.dict(os.environ, {"HLEDAC_ENABLE_SYNTHESIS": "1"}):
         with patch("hledac.universal.utils.uma_budget.get_uma_snapshot", return_value=mock_uma):
             await sched._run_synthesis_sidecar("test query", sched._duckdb_store, None)
@@ -701,6 +708,13 @@ async def test_synthesis_sidecar_graceful_on_error(minimal_config):
     mock_runner = MagicMock()
     mock_runner.synthesize_findings = AsyncMock(side_effect=RuntimeError("model error"))
     mock_runner.inject_lifecycle_adapter = MagicMock()
+
+    # F266: accepted_findings must be > 0 to reach SynthesisRunner instantiation
+    sched._result.accepted_findings = 5
+
+    # F266: clear _env_flag lru_cache before test
+    from hledac.universal.runtime import sprint_scheduler as _ss_mod
+    _ss_mod._env_flag.cache_clear()
 
     with patch.dict(os.environ, {"HLEDAC_ENABLE_SYNTHESIS": "1"}):
         with patch("hledac.universal.brain.synthesis_runner.SynthesisRunner", return_value=mock_runner):
@@ -802,10 +816,11 @@ async def test_synthesis_sidecar_runs_when_accepted_findings_present(minimal_con
     mock_runner.inject_stix_graph = MagicMock()
     mock_runner.close = AsyncMock()
 
-    with patch.dict(os.environ, {"HLEDAC_ENABLE_SYNTHESIS": "1"}):
+    # F266: patch _env_flag directly to bypass lru_cache (scheduler init may have cached "0")
+    with patch("hledac.universal.runtime.sprint_scheduler._env_flag", return_value="1"):
         with patch("hledac.universal.brain.synthesis_runner.SynthesisRunner", return_value=mock_runner):
             await sched._run_synthesis_sidecar("test query", sched._duckdb_store, None)
 
-    # Synthesis DID run (because accepted_findings > 0)
+    # Synthesis DID run (because accepted_findings > 0 and env flag enabled)
     assert mock_runner.synthesize_findings.call_count == 1
     assert sched._result.synthesis_findings_count == 1

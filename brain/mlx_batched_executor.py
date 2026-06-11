@@ -34,7 +34,7 @@ Invariants (P0-2):
     B.M4  MLX execution lock: asyn semaphore(1) — no concurrent MLX.generate
           on the same Hermes3Engine instance
     B.M5  Memory guard: psutil.virtual_memory().percent > 90% → disable batching
-    B.M6  max_batch_size = 4 (3B model on M1 8GB, KV cache 0.75 GB, headroom
+    B.M6  max_batch_size = 6 (3B model on M1 8GB, KV cache 0.75 GB, headroom for speculative); memory guard at 85% RSS
           for parallel calls)
     B.M7  Telemetry counters exposed via get_stats() — non-intrusive
     B.M8  Shutdown: bounded ≤ 3.0s, all pending futures failed
@@ -60,8 +60,8 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 # ─── Bounded constants (M1 8GB safety) ──────────────────────────────
-MAX_BATCH_SIZE_M1: int = 4
-MEMORY_GUARD_PCT: float = 90.0
+MAX_BATCH_SIZE_M1: int = 6  # 3B model + speculative + KV 0.75 GB; headroom at 4→6 with RAM guard 85%
+MEMORY_GUARD_PCT: float = 85.0  # tighter — allows batch 6 when headroom, drops to 4 near limit
 DEFAULT_FLUSH_INTERVAL_S: float = 1.0
 MAX_QUEUE_DEPTH: int = 256
 SHUTDOWN_TIMEOUT_S: float = 3.0
@@ -186,6 +186,10 @@ class MLXBatchedExecutor:
             self._stats["urgent_bypass"] += 1
             return False
         if not prompt or not prompt.strip():
+            return False
+        # Long prompts (>4096 chars ≈ 2048 tokens) go direct — no batching win
+        if len(prompt) > 4096:
+            self._stats["long_prompt_bypass"] += 1
             return False
         # system_msg influences schema segregation downstream; empty != urgent
         if system_msg is not None and len(system_msg) > 8192:

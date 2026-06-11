@@ -3088,6 +3088,11 @@ async def async_run_live_public_pipeline(
     discovery_fn: Any | None = None,  # async_search_public_web replacement
     ct_subdomains_fn: Any | None = None,  # CT scanner get_subdomains replacement
     clear_query_cache_fn: Any | None = None,  # _clear_query_cache replacement
+    # F271E: Export directory for P18 in-pipeline markdown/graph export.
+    # When None, the singleton ExportManager falls back to ~/hledac_outputs/.
+    # Threaded from __main__.py dispatcher so ``--export-dir`` is honoured
+    # by the in-pipeline Obsidian export as well as the post-sprint export.
+    export_dir: str | None = None,
 ) -> PipelineRunResult:
     """
     Sprint 8AE: Live public OSINT pipeline.
@@ -3502,7 +3507,7 @@ async def async_run_live_public_pipeline(
             if self.store is not None:
                 try:
                     # Check env gate and academic keywords
-                    academic_enabled = os.environ.get("HLEDAC_ENABLE_ACADEMIC", "0").strip().lower() in ("1", "true", "yes", "on")  # noqa: E501
+                    academic_enabled = os.environ.get("HLEDAC_ENABLE_ACADEMIC", "1").strip().lower() in ("1", "true", "yes", "on")  # noqa: E501
                     query_lower = self.query.lower()
                     academic_keywords = ["paper", "research", "academic", "scholar", "study", "journal", "citation", "doi", "arxiv", "publication", "conference", "thesis"]  # noqa: E501
                     has_academic_keywords = any(kw in query_lower for kw in academic_keywords)
@@ -3555,6 +3560,12 @@ async def async_run_live_public_pipeline(
             github_secrets_count = 0
             if self.store is not None:
                 try:
+                    from hledac.universal.knowledge.duckdb_store import (
+                        CanonicalFinding as _CanonicalFinding,
+                    )
+                    from hledac.universal.utils.source_types import (
+                        SourceType as _SourceTypeEnumLocal,
+                    )
                     import re as _re
                     _DOMAIN_ORG_RE = _re.compile(  # noqa: N806
                         r"(?:[a-zA-Z0-9](?:[a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}"
@@ -3572,7 +3583,7 @@ async def async_run_live_public_pipeline(
                                     f"{self.query}\x00{pf.uri}\x00pastebin".encode()
                                 ).hexdigest()[:16]
                                 masked = pf.masked_secrets()
-                                p20_findings.append(CanonicalFinding(
+                                p20_findings.append(_CanonicalFinding(
                                     finding_id=pf_id,
                                     query=self.query,
                                     source_type=_SourceTypeEnum.PASTEBIN_MONITOR,
@@ -3595,7 +3606,7 @@ async def async_run_live_public_pipeline(
                         from hledac.universal.intelligence.github_secret_scanner import (
                             search_org_secrets,
                         )
-                        gh_findings: list[CanonicalFinding] = []
+                        gh_findings: list[_CanonicalFinding] = []
                         if org_candidate:
                             try:
                                 gh_results = await search_org_secrets(org_candidate)
@@ -3605,7 +3616,7 @@ async def async_run_live_public_pipeline(
                                 gf_id = hashlib.sha256(
                                     f"{self.query}\x00{gf.file_path}\x00{gf.pattern}\x00github".encode()
                                 ).hexdigest()[:16]
-                                gh_findings.append(CanonicalFinding(
+                                gh_findings.append(_CanonicalFinding(
                                     finding_id=gf_id,
                                     query=self.query,
                                     source_type=_SourceTypeEnum.GITHUB_SECRET_SCANNER,
@@ -4681,7 +4692,15 @@ async def async_run_live_public_pipeline(
             from hledac.universal.export.export_manager import get_export_manager
             from hledac.universal.memory.memory_manager import export_session
 
-            export_mgr = get_export_manager()
+            # F271E: honour --export-dir (or GHOST_EXPORT_DIR) for the
+            # in-pipeline P18 export. When unset, the singleton falls
+            # back to ~/hledac_outputs/ for backwards compatibility.
+            import os as _os
+            _resolved_export_dir = (
+                export_dir
+                or _os.environ.get("GHOST_EXPORT_DIR")
+            )
+            export_mgr = get_export_manager(_resolved_export_dir)
 
             # Build sources list from pages
             sources = [
@@ -4864,7 +4883,7 @@ async def async_run_live_public_pipeline(
     # Cap: max 50 findings for M1 8GB RAM safety
     # Timeout: 90 seconds max
     synthesis_finding = None
-    if total_accepted >= 5 and os.environ.get("HLEDAC_ENABLE_SYNTHESIS") == "1":
+    if total_accepted >= 5 and os.environ.get("HLEDAC_ENABLE_SYNTHESIS", "1") == "1":
         try:
             # Check RAM constraint: skip if RSS > 5.5GB
             try:
@@ -5111,7 +5130,7 @@ def _ensure_discovery_patched() -> None:
         # Sprint F206AO: env-gated providerless cascade wiring
         # HLEDAC_ENABLE_PROVIDERLESS_DISCOVERY=1 → use cascade (DDG→Historical→Wayback)
         # Default (0/false/off) → use direct DDG (unchanged behavior)
-        _env = os.environ.get("HLEDAC_ENABLE_PROVIDERLESS_DISCOVERY", "0").strip().lower()
+        _env = os.environ.get("HLEDAC_ENABLE_PROVIDERLESS_DISCOVERY", "1").strip().lower()
         _providerless = _env in ("1", "true", "yes", "on")
         if _providerless:
             from hledac.universal.discovery.cascade import (

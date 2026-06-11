@@ -426,3 +426,77 @@ class TestPublicFetcherMigration:
 
         assert pf._looks_like_feed_url("") is False
         assert pf._looks_like_feed_url(None) is False  # type: ignore[arg-type]
+
+
+class TestCanonicalUrl:
+    """canonical_url — normalize URL to canonical form for dedup."""
+
+    def test_lowercases_scheme_and_host(self):
+        result = _rust.canonical_url("HTTPS://Example.COM/Path")
+        assert result == "https://example.com/path"
+
+    def test_strips_default_http_port(self):
+        assert _rust.canonical_url("http://example.com:80/path") == "http://example.com/path"
+
+    def test_strips_default_https_port(self):
+        assert _rust.canonical_url("https://example.com:443/path") == "https://example.com/path"
+
+    def test_keeps_non_default_port(self):
+        assert _rust.canonical_url("http://example.com:8080/path") == "http://example.com:8080/path"
+
+    def test_sorts_query_params(self):
+        result = _rust.canonical_url("https://example.com/search?z=1&a=2&m=3")
+        assert result == "https://example.com/search?a=2&m=3&z=1"
+
+    def test_drops_fragment(self):
+        assert _rust.canonical_url("https://example.com/page#section") == "https://example.com/page"
+
+    def test_empty_input_returns_empty(self):
+        assert _rust.canonical_url("") == ""
+
+    def test_trims_trailing_slashes(self):
+        assert _rust.canonical_url("https://example.com/path///") == "https://example.com/path"
+        assert _rust.canonical_url("https://example.com/") == "https://example.com/"
+
+    def test_preserves_root_trailing_slash(self):
+        assert _rust.canonical_url("https://example.com/") == "https://example.com/"
+
+    def test_urlencoded_query_params_decoded_and_sorted(self):
+        result = _rust.canonical_url("https://example.com/search?q=%7Euser%2Fname&lang=en")
+        assert "lang=en" in result
+        assert "q=" in result
+
+
+class TestUrlDedupKey:
+    """url_dedup_key — BLAKE3-64 dedup key for BloomFilter."""
+
+    def test_returns_16_hex_chars(self):
+        key = _rust.url_dedup_key("https://google.com")
+        assert len(key) == 16
+        assert key.isascii()
+        assert all(c in "0123456789abcdef" for c in key)
+
+    def test_deterministic(self):
+        url = "https://Example.COM:443/path?b=2&a=1"
+        key1 = _rust.url_dedup_key(url)
+        key2 = _rust.url_dedup_key(url)
+        assert key1 == key2
+
+    def test_same_canonical_form_same_key(self):
+        url1 = "https://example.com/path"
+        url2 = "https://EXAMPLE.COM/path/"
+        assert _rust.url_dedup_key(url1) == _rust.url_dedup_key(url2)
+
+    def test_different_urls_different_keys(self):
+        key1 = _rust.url_dedup_key("https://google.com")
+        key2 = _rust.url_dedup_key("https://apple.com")
+        assert key1 != key2
+
+    def test_empty_input_returns_16_hex(self):
+        key = _rust.url_dedup_key("")
+        assert len(key) == 16
+        assert all(c in "0123456789abcdef" for c in key)
+
+    def test_whitespace_input_returns_16_hex(self):
+        key = _rust.url_dedup_key("   ")
+        assert len(key) == 16

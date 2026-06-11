@@ -1,14 +1,20 @@
 """F250: Dynamic windup lead — scales with sprint duration to prevent short-sprint starvation.
 
-Sprint F272A amendment: 30% ratio with [30, 180] clamp → 10% ratio with [15, 60] clamp.
-Rationale: 60-120s sprints spent 25-50% of their budget in windup under F250.
-The F272A floor of 15s preserves a 45s+ active window for any quick sprint,
-while the 60s ceiling still bounds long-sprint windup overhead.
+Sprint evolution:
+  F250     : 30% ratio with [30, 180] clamp   (over-spend on short sprints)
+  F272A    : 10% ratio with [15, 60] clamp    (over-corrected: starved windup)
+  F273B    : 20% ratio with [20, 90] clamp    (current contract)
 
-Original F250 was correct for 300-1800s thorough runs but starved short
-sprints. F272A amends the contract — the F250 backward-compat tests below
-are updated to assert the new contract; the property is still "scales with
-duration" but with a tighter, more M1-8GB-friendly envelope.
+Rationale for F273B: 20% gives windup enough budget for the pattern
+extraction drain (F273C) + Hermes synthesis + DuckDB ingest, while still
+preserving a usable active window for 60s+ sprints. The 20s floor gives
+short sprints 33% of budget in windup (vs F272A's 25%); the 90s ceiling
+caps long thorough runs at 5% overhead (vs F250's 10%).
+
+The F250 backward-compat tests below are updated to assert the F273B
+contract; the property is still "scales with duration" but with the
+M1-8GB-friendly envelope. See tests/test_sprint_f273.py for the full
+F273B test suite including the cycle-adaptive component.
 """
 
 import unittest
@@ -17,50 +23,50 @@ from hledac.universal.runtime.sprint_scheduler import SprintSchedulerConfig
 
 
 class TestF250DynamicWindup(unittest.TestCase):
-    """F272A amendment: 10% duration, clamped to [15, 60]."""
+    """F273B amendment: 20% duration, clamped to [20, 90]."""
 
-    def test_300s_sprint_windup_30s_active_270s(self):
-        """300s sprint -> windup=30s (10% of 300), active=270s."""
+    def test_300s_sprint_windup_60s_active_240s(self):
+        """300s sprint -> windup=60s (20% of 300), active=240s."""
         cfg = SprintSchedulerConfig(sprint_duration_s=300)
-        self.assertEqual(cfg.effective_windup_lead_s, 30)
-        self.assertEqual(cfg.sprint_duration_s - cfg.effective_windup_lead_s, 270)
+        self.assertEqual(cfg.effective_windup_lead_s, 60)
+        self.assertEqual(cfg.sprint_duration_s - cfg.effective_windup_lead_s, 240)
 
     def test_300s_sprint_active_budget_meets_minimum(self):
-        """300s sprint active_budget must be >= 270s (F272A gives MORE active than F250)."""
+        """300s sprint active_budget must be >= 240s (F273B)."""
         cfg = SprintSchedulerConfig(sprint_duration_s=300)
         active = cfg.sprint_duration_s - cfg.effective_windup_lead_s
-        self.assertGreaterEqual(active, 270)
+        self.assertGreaterEqual(active, 240)
 
-    def test_600s_sprint_preserves_envelope(self):
-        """600s sprint -> windup=60s (10% of 600, exactly at the cap boundary)."""
+    def test_600s_sprint_windup_at_ceiling(self):
+        """600s sprint -> windup=90s (20% = 120, clamped to ceiling)."""
         cfg = SprintSchedulerConfig(sprint_duration_s=600)
-        self.assertEqual(cfg.effective_windup_lead_s, 60)
+        self.assertEqual(cfg.effective_windup_lead_s, 90)
 
-    def test_600s_sprint_active_budget_540s(self):
-        """600s sprint -> active_budget=540s (F272A: 90s MORE active than F250)."""
+    def test_600s_sprint_active_budget_510s(self):
+        """600s sprint -> active_budget=510s."""
         cfg = SprintSchedulerConfig(sprint_duration_s=600)
-        self.assertEqual(cfg.sprint_duration_s - cfg.effective_windup_lead_s, 540)
+        self.assertEqual(cfg.sprint_duration_s - cfg.effective_windup_lead_s, 510)
 
-    def test_60s_sprint_respects_minimum_floor(self):
-        """60s sprint -> windup=15s (F272A floor, not 30s from F250 which broke 50% of budget)."""
+    def test_60s_sprint_respects_floor(self):
+        """60s sprint -> windup=20s (F273B floor, 12s computed, clamped up)."""
         cfg = SprintSchedulerConfig(sprint_duration_s=60)
-        self.assertEqual(cfg.effective_windup_lead_s, 15)
+        self.assertEqual(cfg.effective_windup_lead_s, 20)
 
-    def test_60s_sprint_active_budget_45s(self):
-        """60s sprint -> active_budget=45s (F272A: 15s MORE active than F250)."""
+    def test_60s_sprint_active_budget_40s(self):
+        """60s sprint -> active_budget=40s."""
         cfg = SprintSchedulerConfig(sprint_duration_s=60)
-        self.assertEqual(cfg.sprint_duration_s - cfg.effective_windup_lead_s, 45)
+        self.assertEqual(cfg.sprint_duration_s - cfg.effective_windup_lead_s, 40)
 
-    def test_120s_sprint_windup_at_floor(self):
-        """120s sprint -> windup=15s (12s computed but clamped up to floor)."""
+    def test_120s_sprint_windup_24s(self):
+        """120s sprint -> windup=24s (20% of 120, no clamp)."""
         cfg = SprintSchedulerConfig(sprint_duration_s=120)
-        self.assertEqual(cfg.effective_windup_lead_s, 15)
+        self.assertEqual(cfg.effective_windup_lead_s, 24)
 
-    def test_1800s_sprint_capped_at_60s(self):
-        """1800s sprint -> windup=60s (F272A: 120s LESS windup than F250, active 1800-60=1740s)."""
+    def test_1800s_sprint_capped_at_90s(self):
+        """1800s sprint -> windup=90s (F273B: 270s LESS windup than F250)."""
         cfg = SprintSchedulerConfig(sprint_duration_s=1800)
-        self.assertEqual(cfg.effective_windup_lead_s, 60)
-        self.assertEqual(cfg.sprint_duration_s - cfg.effective_windup_lead_s, 1740)
+        self.assertEqual(cfg.effective_windup_lead_s, 90)
+        self.assertEqual(cfg.sprint_duration_s - cfg.effective_windup_lead_s, 1710)
 
     def test_windup_lead_property_returns_float(self):
         """effective_windup_lead_s returns float for arithmetic compatibility."""
@@ -73,28 +79,28 @@ class TestF250DynamicWindup(unittest.TestCase):
         cfg = SprintSchedulerConfig()
         self.assertEqual(cfg.windup_lead_s, 180.0)
 
-    def test_900s_sprint_windup_60s_capped(self):
-        """900s sprint -> windup=60s (10% = 90, capped at 60)."""
+    def test_900s_sprint_windup_capped(self):
+        """900s sprint -> windup=90s (20% = 180, capped at 90)."""
         cfg = SprintSchedulerConfig(sprint_duration_s=900)
-        self.assertEqual(cfg.effective_windup_lead_s, 60)
-        self.assertEqual(cfg.sprint_duration_s - cfg.effective_windup_lead_s, 840)
+        self.assertEqual(cfg.effective_windup_lead_s, 90)
+        self.assertEqual(cfg.sprint_duration_s - cfg.effective_windup_lead_s, 810)
 
-    def test_f272a_floor_at_15s_never_below(self):
-        """F272A floor is 15s. Sub-150s sprints all hit the floor."""
-        for dur in (30, 60, 90, 120, 149):
+    def test_f273b_floor_at_20s_never_below(self):
+        """F273B floor is 20s. Sub-100s sprints all hit the floor."""
+        for dur in (30, 60, 90, 99):
             cfg = SprintSchedulerConfig(sprint_duration_s=float(dur))
             self.assertEqual(
-                cfg.effective_windup_lead_s, 15.0,
-                f"F272A floor broken at dur={dur}s",
+                cfg.effective_windup_lead_s, 20.0,
+                f"F273B floor broken at dur={dur}s",
             )
 
-    def test_f272a_ceiling_at_60s_never_above(self):
-        """F272A ceiling is 60s. Any duration >= 600s caps at 60s."""
-        for dur in (600, 900, 1200, 1800, 3600):
+    def test_f273b_ceiling_at_90s_never_above(self):
+        """F273B ceiling is 90s. Any duration >= 450s caps at 90s."""
+        for dur in (450, 600, 900, 1200, 1800, 3600):
             cfg = SprintSchedulerConfig(sprint_duration_s=float(dur))
             self.assertEqual(
-                cfg.effective_windup_lead_s, 60.0,
-                f"F272A ceiling broken at dur={dur}s",
+                cfg.effective_windup_lead_s, 90.0,
+                f"F273B ceiling broken at dur={dur}s",
             )
 
 

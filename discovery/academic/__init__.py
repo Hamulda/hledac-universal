@@ -27,7 +27,7 @@ from utils.async_helpers import safe_gather_dropin
 # Env gate
 # ---------------------------------------------------------------------------
 
-ACADEMIC_ENABLED = os.environ.get("HLEDAC_ENABLE_ACADEMIC", "0").strip().lower() in (
+ACADEMIC_ENABLED = os.environ.get("HLEDAC_ENABLE_ACADEMIC", "1").strip().lower() in (
     "1", "true", "yes", "on"
 )
 

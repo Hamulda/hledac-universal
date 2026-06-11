@@ -70,8 +70,9 @@ async def _apply_sqlite_pragmas(db_path: Path) -> None:
             # WAL mode — M1-safe, concurrent readers + 1 writer
             await conn.execute("PRAGMA journal_mode=WAL")
             # Hard size cap via page-count limit
-            await conn.execute(f"PRAGMA page_size={SQLITE_PAGE_SIZE}")
-            await conn.execute(f"PRAGMA max_page_count={MAX_PAGE_COUNT}")
+            await conn.execute("PRAGMA page_size=" + str(SQLITE_PAGE_SIZE))
+            # MAX_PAGE_COUNT is a static constant (65536), not user input — safe from SQL injection
+            await conn.execute("PRAGMA max_page_count=" + str(MAX_PAGE_COUNT))  # noqa: S608
             await conn.execute("PRAGMA synchronous=NORMAL")
             await conn.commit()
     except Exception as exc:  # noqa: BLE001 — fail-soft by design

@@ -82,6 +82,8 @@ class Gap:
 @dataclass(slots=True)
 class Hypothesis:
     """Generated hypothesis."""
+    # Intentionally NOT brain.hypothesis._types.Hypothesis —
+    # simpler shape (insight string only, no statement/evidence/tests).
     hypothesis: str
     confidence: float
     supporting_evidence: list[str] = field(default_factory=list)

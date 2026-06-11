@@ -69,8 +69,14 @@ class ExportManager:
         Initialize ExportManager.
 
         Args:
-            output_dir: Base output directory. Defaults to ~/hledac_outputs/
+            output_dir: Base output directory. Falls back to
+                ``$GHOST_EXPORT_DIR`` if set, then ``~/hledac_outputs/``.
+                The dispatch chain (``__main__.py``) sets
+                ``GHOST_EXPORT_DIR`` from ``--export-dir`` so the in-pipeline
+                P18 export stays consistent with the post-sprint export.
         """
+        if output_dir is None:
+            output_dir = os.environ.get("GHOST_EXPORT_DIR")
         if output_dir is None:
             output_dir = os.path.expanduser("~/hledac_outputs")
         self._output_dir = Path(output_dir)
@@ -655,9 +661,26 @@ def _safe_str(val: Any) -> str:
 _export_manager: ExportManager | None = None
 
 
-def get_export_manager() -> ExportManager:
-    """Get the singleton ExportManager instance."""
+def get_export_manager(output_dir: str | None = None) -> ExportManager:
+    """
+    Get the singleton ExportManager instance.
+
+    Args:
+        output_dir: Optional override for the output directory. When provided
+            and differs from the singleton's current output_dir, the singleton
+            is replaced with a new ExportManager bound to the requested dir.
+            When ``None`` (default), the existing singleton is returned
+            (creating it on first use with the default ``~/hledac_outputs/``).
+
+    F271E: ``--export-dir`` flows through here so P18 in-pipeline export
+    honours the same directory the rest of the sprint uses.
+    """
     global _export_manager
+    if output_dir is not None and (
+        _export_manager is None
+        or str(_export_manager._output_dir) != str(Path(output_dir).expanduser().resolve())
+    ):
+        _export_manager = ExportManager(output_dir=output_dir)
     if _export_manager is None:
         _export_manager = ExportManager()
     return _export_manager

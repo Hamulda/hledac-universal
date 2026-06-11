@@ -28,7 +28,7 @@ Orchestrátor běží v tzv. "sprint" cyklech — každý sprint zpracovává vy
 5. **DuckDB write přes `async_ingest_findings_batch()`** — jediná canonical write path, nikdy ne přímo
 6. **LMDB bulk write přes `cursor.putmulti()`** — nikdy ne per-item `env.begin(write=True)` v loopu
 7. **RotatingBloomFilter pro URL dedup** — nikdy `Set[str]` nebo `ScalableBloomFilter`
-8. **M1 Metal cache limit 2.5 GiB** — `mx.metal.set_cache_limit(2_684_354_560)` v `init_mlx_buffers()`
+8. **M1 Metal cache limit 1.5 GiB** — `mx.metal.set_cache_limit(1_610_612_736)` v `init_mlx_buffers()`
 9. **Fail-safe everywhere** — sidecary vrací `[]` při chybách, nikdy nehazují exceptions
 10. **Žádné bare `except:`** — vždy `except Exception:` nebo konkrétní typ
 
@@ -117,7 +117,8 @@ CLI / __main__.py
 | HLEDAC_ENABLE_ZERO_ATTRIBUTION | 0 | Zero-attribution mode |
 | HLEDAC_LANCEDB_QUANTIZE | 0 | IVF-PQ vector quantization (LanceDB entities + semantic_dedup_v1, M1 8GB friendly, opt-in) |
 | HLEDAC_LANCEDB_IVFPQ_NUM_PARTITIONS | 64 | IVF-PQ num_partitions (LanceDB IVF_PQ index, M1 8GB bounded) |
-| HLEDAC_LANCEDB_IVFPQ_NUM_SUB_VECTORS | 16 | IVF-PQ num_sub_vectors (16d sub-vectors; 256d/16=16 sub-vectors, 384d/16=24) |
+| HLEDAC_LANCEDB_IVFPQ_NUM_SUB_VECTORS | 12 | IVF-PQ num_sub_vectors (12 sub-vectors; 256d/12≈21, 384d/12=32; M1 8GB friendly) |
+| HLEDAC_ARROW_INGEST | 1 | Arrow zero-copy ingest for DuckDB (default ON, opt-out=0) |
 | HLEDAC_ENABLE_ZKP | 0 | Zero-knowledge proofs |
 
 ---
@@ -229,7 +230,7 @@ smoke_runner.py --smoke
 ## HARDWARE CONSTRAINTS (M1 8GB UMA)
 
 - **RAM budget:** macOS ~2.5GB + orchestrátor ~1GB + LLM ~2GB + KV cache ~0.75GB = **6.25GB max**
-- **Metal cache limit:** 2.5 GiB (2_684_354_560 bytes)
+- **Metal cache limit:** 1.5 GiB (1_610_612_736 bytes)
 - **KV cache:** `kv_bits=4`, `max_kv_size=8192` v `mlx_lm.generate()`, NE v `load()`
 - **Soft ceiling:** 5.5 GiB → hard cap fetch concurrency
 - **SWAP warning:** `relaxed=False` v MLX je feature, ne bug

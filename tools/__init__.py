@@ -7,7 +7,7 @@ Tools optimized for M1 8GB RAM with minimal memory footprint.
 # Sprint 80: OSINT adapters
 from .commoncrawl_adapter import CommonCrawlAdapter, RawFinding
 from .content_miner import MiningResult, RustMiner, create_rust_miner
-from .file_cache import F_NOCACHE, NOCACHE_THRESHOLD_BYTES, apply_fcntl_nocache
+from .file_cache import F_NOCACHE, NOCACHE_THRESHOLD_BYTES, apply_fcntl_nocache, apply_nocache_to_path
 from .lightpanda_manager import LightpandaManager
 from .lightpanda_pool import LightpandaPool
 from .reranker import LightweightReranker, RerankerConfig, RerankerFactory, RerankRequest, RerankResult, create_reranker
@@ -40,6 +40,7 @@ __all__ = [
     'LightpandaManager',
     'LightpandaPool',
     'apply_fcntl_nocache',
+    'apply_nocache_to_path',
     'NOCACHE_THRESHOLD_BYTES',
     'F_NOCACHE',
     # Sprint F214AD: URL deduplication

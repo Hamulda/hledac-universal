@@ -358,7 +358,7 @@ class SidecarOrchestrator:
                 _stego_task.add_done_callback(bg_tasks.discard)
 
             # F252: TI feed advisory sidecar (NVD + CISA KEV)
-            _ti_env = _os.environ.get("HLEDAC_ENABLE_TI_FEEDS", "0")
+            _ti_env = _os.environ.get("HLEDAC_ENABLE_TI_FEEDS", "1")
             if _ti_env == "1":
                 _ti_task = _asyncio.create_task(
                     self._run_ti_feed_sidecar(), name="sprint:ti_feed_sidecar"

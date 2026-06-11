@@ -78,7 +78,7 @@ def _load_programs() -> dict:
 # Gate: HLEDAC_ENABLE_LLM=1 (default OFF to save RAM when not needed)
 # M1 constraint: lazy load, unload after synthesis, mx.metal.clear_cache() on finish
 
-Hermes3LM_ENABLED = os.getenv("HLEDAC_ENABLE_LLM", "0") == "1"
+Hermes3LM_ENABLED = os.getenv("HLEDAC_ENABLE_LLM", "1") == "1"
 _HERMES_LM_INSTANCE: Hermes3DSPyLM | None = None
 
 

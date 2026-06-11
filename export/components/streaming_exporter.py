@@ -106,8 +106,18 @@ async def export_sprint_streaming(
 
     # Helper: write section to file as it's yielded
     async def _write_section(section_name: str, content: str) -> None:
-        with open(output_path, "a", encoding="utf-8") as f:
-            f.write(f"\n\n{content}\n\n")
+        # F273E: use aiofiles for non-blocking append. Falls back to sync
+        # open() if aiofiles is unavailable (e.g. minimal install on CI).
+        # Single-thread async I/O, M1 8GB safe.
+        try:
+            import aiofiles as _f273e_aiofiles  # type: ignore
+            async with _f273e_aiofiles.open(
+                output_path, "a", encoding="utf-8",
+            ) as f:
+                await f.write(f"\n\n{content}\n\n")
+        except ImportError:
+            with open(output_path, "a", encoding="utf-8") as f:
+                f.write(f"\n\n{content}\n\n")
         result.sections_written += 1
 
     # ── Section 1: Executive Summary ───────────────────────────────

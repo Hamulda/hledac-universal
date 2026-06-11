@@ -366,7 +366,7 @@ class TransportRouter:
         the lane choice so telemetry reflects the intended transport.
         """
         # Env gate (also accepts the legacy F260 alias HLEDAC_HTTP3=1)
-        env_h3 = os.environ.get("HLEDAC_ENABLE_HTTPX_H3", "").strip().lower()
+        env_h3 = os.environ.get("HLEDAC_ENABLE_HTTPX_H3", "1").strip().lower()
         env_legacy = os.environ.get("HLEDAC_HTTP3", "").strip().lower()
         gate = env_h3 or env_legacy
         if not gate or gate in ("0", "false", "no", "off"):

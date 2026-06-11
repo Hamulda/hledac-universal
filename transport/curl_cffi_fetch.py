@@ -113,6 +113,68 @@ def _ja3_log(*, profile: str, url: str, used_profile: str) -> None:
         pass
 
 
+# ---------------------------------------------------------------------------
+# F265C: blocking Alt-Svc pre-probe for first-fetch H3 priming.
+# Runs synchronously before the cached fetch when _pre_probe=True.
+# Bounded: ~200-400ms; fail-soft; never raises.
+# ---------------------------------------------------------------------------
+async def _blocking_altsvc_probe_for_url(url: str) -> Any:
+    """Perform a blocking HEAD probe to prime the H3 LRU before first fetch.
+
+    Returns ``curl_cffi.requests.HttpVersion.v3`` if the server advertises h3,
+    else ``None``. All errors are swallowed and ``None`` is returned so the
+    caller always proceeds on HTTP/1.1/2 without H3.
+
+    M1 8GB: uses a dedicated session (max_clients=2) so it cannot starve
+    the live fetch path. Timeout is4s — well under the fetch timeout budget.
+    """
+    try:
+        from curl_cffi.requests import AsyncSession, HttpVersion # type: ignore
+    except Exception:
+        return None
+
+    try:
+        from hledac.universal.transport.http3_lane import (
+            _cache_get,
+            _cache_put,
+            _altsvc_advertises_h3,
+            extract_host,
+ _resolve_enabled,
+        )
+    except Exception:
+        return None
+
+    if not _resolve_enabled():
+        return None
+
+    host = extract_host(url)
+    if not host:
+        return None
+    if _cache_get(host) is not None:
+        # LRU already warm — no probe needed.
+        return None
+
+    try:
+        sess: Any = AsyncSession(impersonate="chrome124", timeout=4.0, max_clients=2)
+        try:
+            resp = await asyncio.wait_for(
+                sess.head(url, timeout=4.0),
+                timeout=5.0,
+            )
+            if resp is not None and resp.headers and _altsvc_advertises_h3(resp.headers):
+                _cache_put(host, True)
+                return HttpVersion.v3
+        finally:
+            try:
+                await sess.aclose()
+            except Exception:
+                pass
+    except Exception:
+        # Fail-soft: probe error — caller falls through to HTTP/1.1/2.
+        pass
+    return None
+
+
 def decode_curl_cffi_result(result: dict, *, max_bytes: int = 5 * 1024 * 1024) -> str | None:
     """F261 helper: decode raw bytes from a curl_cffi result dict to str.
 
@@ -242,7 +304,8 @@ async def fetch_via_curl_cffi(
 
     CancelledError is re-raised.
     """
-    from .curl_cffi_runtime import async_get_curl_cffi_session, is_curl_cffi_available
+    # F273H: use per-host session for keepalive reuse
+    from .curl_cffi_runtime import async_get_curl_cffi_session_for_host, is_curl_cffi_available
 
     # Check availability first
     available, avail_reason = is_curl_cffi_available()
@@ -256,9 +319,9 @@ async def fetch_via_curl_cffi(
             tls_impersonate=profile,
         )
 
-    # Get session (lazy, cached, bounded)
+    # Get session (lazy, cached, bounded, per-host keepalive)
     try:
-        ok, session, used_profile = await async_get_curl_cffi_session(profile)
+        ok, session, used_profile, _host = await async_get_curl_cffi_session_for_host(url, profile)
         # Log the resolved JA3 profile (requested vs actually used) so operators
         # can verify fingerprint rotation in production via HLEDAC_DEBUG_JA3=1.
         _ja3_log(profile=profile, url=url, used_profile=used_profile)
@@ -428,6 +491,7 @@ async def fetch_via_curl_cffi_cached(
     *,
     ttl_s: int = 3600,
     _force_refresh: bool = False,
+    _pre_probe: bool = False,
 ) -> dict[str, Any]:
     """fetch_via_curl_cffi with conditional-GET (304) shortcut.
 
@@ -443,6 +507,12 @@ async def fetch_via_curl_cffi_cached(
         ttl_s: Cache freshness window in seconds. Default 1h.
         _force_refresh: Skip the cache entirely (always send no
             validators). For tests and one-off live fetches.
+        _pre_probe: If True and the H3 LRU is cold for this host,
+            perform a blocking HEAD probe (~200-400ms) to prime the
+            LRU before the first fetch. On H3 detection the fetch
+            itself uses HttpVersion.v3 immediately (no round-trip
+            wasted). Fail-soft: any probe error falls through to
+            normal fetch without H3.
 
     Returns:
         Same FetchResult dict as fetch_via_curl_cffi. On 304, the
@@ -456,6 +526,18 @@ async def fetch_via_curl_cffi_cached(
         record_conditional_result as _cc_record,
         store as _cc_store,
     )
+
+    # F265C: optional blocking pre-probe — primes H3 LRU before first fetch.
+    # Runs only when: _pre_probe=True, LRU is cold, feature is enabled.
+    # Bounded: ~200-400ms overhead max; never raises.
+    if _pre_probe and http_version is None and not _force_refresh:
+        try:
+            _resolved_h3 = await _blocking_altsvc_probe_for_url(url)
+            if _resolved_h3 is not None:
+                http_version = _resolved_h3
+        except Exception:  # noqa: BLE001
+            # Probe failed — fall through with http_version=None (HTTP/1.1/2).
+            pass
 
     merged_headers: dict[str, str] = dict(headers) if headers else {}
     sent_conditional = False

@@ -33,7 +33,7 @@ logger = logging.getLogger(__name__)
 # Feature gate
 # =============================================================================
 
-HYPOTHESIS_ENABLED = os.environ.get("HLEDAC_ENABLE_HYPOTHESIS", "0") == "1"
+HYPOTHESIS_ENABLED = os.environ.get("HLEDAC_ENABLE_HYPOTHESIS", "1") == "1"
 
 # RAM threshold for M1 safety
 RAM_THRESHOLD = 0.70

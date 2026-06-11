@@ -4,7 +4,7 @@ InferenceEngine - Advanced Inference and Reasoning for OSINT
 
 M1 8GB Optimized inference engine providing:
 - Abductive reasoning (finding best explanations for observations)
-- Evidence chaining (connecting facts through inference chains)
+- InferenceEvidence chaining (connecting facts through inference chains)
 - Probabilistic entity resolution (merging fragmented identities)
 - Bayesian belief updating
 - Indirect evidence inference
@@ -62,7 +62,7 @@ except ImportError:
 # =============================================================================
 
 @dataclass(slots=True)
-class Evidence:
+class InferenceEvidence:
     """Single piece of evidence with metadata."""
     fact: str
     confidence: float  # 0-1
@@ -419,8 +419,8 @@ class InferenceEngine:
         # Thread pool for safe async execution in sync context
         self._thread_pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
 
-        # Evidence storage (bounded with LRU eviction)
-        self._evidence: OrderedDict[str, Evidence] = OrderedDict()
+        # InferenceEvidence storage (bounded with LRU eviction)
+        self._evidence: OrderedDict[str, InferenceEvidence] = OrderedDict()
         self._evidence_graph: OrderedDict[str, set[str]] = OrderedDict()
         self._inference_rules: list[InferenceRule] = []
 
@@ -700,15 +700,15 @@ class InferenceEngine:
                     cleaned += 1
             self._graph_pruned_count += 1
 
-    def add_evidence(self, evidence: Evidence) -> str:
+    def add_evidence(self, evidence: InferenceEvidence) -> str:
         """
         Add evidence to the inference engine with bounded storage.
 
         Args:
-            evidence: Evidence to add
+            evidence: InferenceEvidence to add
 
         Returns:
-            Evidence ID
+            InferenceEvidence ID
         """
         # Move to end if exists (update = touch)
         if evidence.evidence_id in self._evidence:
@@ -723,7 +723,7 @@ class InferenceEngine:
 
         return evidence.evidence_id
 
-    def add_evidence_batch(self, evidence_list: list[Evidence]) -> list[str]:
+    def add_evidence_batch(self, evidence_list: list[InferenceEvidence]) -> list[str]:
         """
         Add multiple evidence items efficiently.
 
@@ -738,7 +738,7 @@ class InferenceEngine:
             ids.append(self.add_evidence(evidence))
         return ids
 
-    def _update_evidence_graph(self, new_evidence: Evidence) -> None:
+    def _update_evidence_graph(self, new_evidence: InferenceEvidence) -> None:
         """Update evidence graph with new connections (bounded)."""
         new_evidence_dict = new_evidence.to_dict()
 
@@ -776,7 +776,7 @@ class InferenceEngine:
 
     def abductive_reasoning(
         self,
-        observations: list[Evidence],
+        observations: list[InferenceEvidence],
         max_hypotheses: int = 10,
     ) -> list[Hypothesis]:
         """
@@ -844,7 +844,7 @@ class InferenceEngine:
 
         return hypotheses[:max_hypotheses]
 
-    def _generate_candidate_explanations(self, observations: list[Evidence]) -> list[str]:
+    def _generate_candidate_explanations(self, observations: list[InferenceEvidence]) -> list[str]:
         """Generate candidate explanations from observations."""
         explanations = set()
 
@@ -901,7 +901,7 @@ class InferenceEngine:
     def _calculate_prior_probability(
         self,
         explanation: str,
-        observations: list[Evidence],
+        observations: list[InferenceEvidence],
     ) -> float:
         """Calculate prior probability of an explanation."""
         # Base rate from historical data (simplified)
@@ -919,7 +919,7 @@ class InferenceEngine:
     def _calculate_likelihood(
         self,
         explanation: str,
-        observations: list[Evidence],
+        observations: list[InferenceEvidence],
     ) -> float:
         """Calculate likelihood of observations given explanation."""
         if not observations:
@@ -939,7 +939,7 @@ class InferenceEngine:
 
         return likelihood * avg_confidence
 
-    def _evidence_supports(self, evidence: Evidence, explanation: str) -> bool:
+    def _evidence_supports(self, evidence: InferenceEvidence, explanation: str) -> bool:
         """Check if evidence supports an explanation."""
         explanation_lower = explanation.lower()
         fact_lower = evidence.fact.lower()
@@ -958,7 +958,7 @@ class InferenceEngine:
     def _build_inference_chain(
         self,
         explanation: str,
-        observations: list[Evidence],
+        observations: list[InferenceEvidence],
     ) -> list[InferenceStep]:
         """Build inference chain from observations to explanation."""
         chain = []
@@ -1477,7 +1477,7 @@ class InferenceEngine:
 
     def streaming_inference(
         self,
-        evidence_iterator: Iterator[Evidence],
+        evidence_iterator: Iterator[InferenceEvidence],
         callback: Callable[[Hypothesis], None] | None = None,
     ) -> list[Hypothesis]:
         """
@@ -1764,7 +1764,7 @@ class InferenceEngine:
 
         return reachable
 
-    def _extract_entity_from_evidence_sync(self, evidence: Evidence) -> str | None:
+    def _extract_entity_from_evidence_sync(self, evidence: InferenceEvidence) -> str | None:
         """Extract primary entity identifier from evidence (sync version)."""
         # Try metadata first
         for key in ["entity", "actor", "subject", "name", "id"]:
@@ -2180,7 +2180,7 @@ class MultiHopReasoner:
 
         return list(seen.values())
 
-    def _extract_entity_from_evidence(self, evidence: Evidence) -> str | None:
+    def _extract_entity_from_evidence(self, evidence: InferenceEvidence) -> str | None:
         """Extract primary entity identifier from evidence."""
         # Try metadata first
         for key in ["entity", "actor", "subject", "name", "id"]:
@@ -2198,7 +2198,7 @@ class MultiHopReasoner:
         return evidence.evidence_id
 
     def _determine_relation_type(
-        self, evidence_a: Evidence, evidence_b: Evidence
+        self, evidence_a: InferenceEvidence, evidence_b: InferenceEvidence
     ) -> str:
         """Determine the type of relationship between two evidence items."""
         # Check for specific relation in metadata

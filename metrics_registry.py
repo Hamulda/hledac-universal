@@ -289,7 +289,7 @@ class MetricsRegistry:
         # Collect metrics
         metrics = []
         for name, value in self._counters.items():
-            m = {
+            m: dict[str, Any] = {
                 "ts": now.isoformat(),
                 "name": name,
                 "type": "counter",
@@ -299,7 +299,7 @@ class MetricsRegistry:
                 m["correlation"] = self._correlation
             metrics.append(m)
         for name, value in self._gauges.items():
-            m = {
+            m: dict[str, Any] = {
                 "ts": now.isoformat(),
                 "name": name,
                 "type": "gauge",

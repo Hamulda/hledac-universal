@@ -26,6 +26,13 @@ blake3 = "1"
 # backward compatibility with existing LMDB-persisted fingerprints. Tiny crate
 # (~30KB compiled), zero deps, NEON-vectorized on aarch64.
 blake2 = "0.10"
+# Sprint F265B-III: Page compression for LMDB hot-edges cache.
+# lz4_flex = pure-Rust lz4, no C deps, M1-safe.
+# zstd = higher ratio (~3:1), stdlib zlib fallback in conditional_cache.py.
+lz4_flex = "0.10"
+zstd = "0.13"
+# F273F: madvise syscalls — libc provides madvise/open/close on Darwin
+libc = "0.2"
 
 [profile.release]
 opt-level = 3

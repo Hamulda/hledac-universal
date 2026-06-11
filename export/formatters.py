@@ -238,6 +238,7 @@ class JSONFormatter(ExportFormatter):
         )
 
         # 1. JSON report — canonical path
+        _pq_encrypted_path: str | None = None
         try:
             # Sprint F234: sanitized_obj already parsed from sanitized_str above.
             # No dict→str→dict→str roundtrip, no 5000-char truncation fallback.
@@ -252,16 +253,6 @@ class JSONFormatter(ExportFormatter):
                     sanitized_obj["canonical_run_summary"] = eh.canonical_run_summary
                     if "timing_truth" in eh.canonical_run_summary:
                         sanitized_obj["timing_truth"] = eh.canonical_run_summary["timing_truth"]
-                # Sprint F238E Phase C: Optional runtime_timing section (timer events)
-                from hledac.universal.export.sprint_exporter import _extract_runtime_timing
-                _rt = _extract_runtime_timing(eh)
-                if _rt is not None:
-                    sanitized_obj["runtime_timing"] = _rt
-                    # Sprint F240B: runtime_diagnosis derived from telemetry
-                    from hledac.universal.export.sprint_exporter import _compute_runtime_diagnosis
-                    _diag = _compute_runtime_diagnosis(_rt.get("summary"))
-                    if _diag:
-                        sanitized_obj["runtime_diagnosis"] = _diag
                 if eh.runtime_truth:
                     sanitized_obj["runtime_truth"] = eh.runtime_truth
                 acq_truth = _get_acquisition_truth(eh)
@@ -296,7 +287,6 @@ class JSONFormatter(ExportFormatter):
 
             # Sprint F260B: PQ export encryption (HPKE X-Wing)
             # Encrypt the report bundle when HLEDAC_ENABLE_PQ_EXPORT=1
-            _pq_encrypted_path = None
             try:
                 import os as _os
                 if _os.environ.get("HLEDAC_ENABLE_PQ_EXPORT") == "1":
@@ -321,7 +311,7 @@ class JSONFormatter(ExportFormatter):
                         policy=ExportPolicy.PQ_PREFERRED,
                     )
                     if was_encrypted and envelope:
-                        _pq_encrypted_path = report_path.with_suffix(".pq.enc")
+                        _pq_encrypted_path = str(report_path.with_suffix(".pq.enc"))
                         encrypted_bundle = {
                             "version": 1,
                             "mode": envelope.mode,

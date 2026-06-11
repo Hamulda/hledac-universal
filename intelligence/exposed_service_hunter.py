@@ -58,11 +58,15 @@ class ExposureType(Enum):
 
 
 class RiskLevel(Enum):
-    """Risk levels for exposed services."""
-    CRITICAL = "critical"
-    HIGH = "high"
-    MEDIUM = "medium"
+    """Risk levels for exposed services.
+
+    Re-ordered to canonical order (LOW → CRITICAL) to match
+    `project_types.RiskLevel`. Values are identical lowercase strings.
+    """
     LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
+    CRITICAL = "critical"
 
 
 @dataclass
@@ -1423,6 +1427,24 @@ class APICache:
     def close(self) -> None:
         """Close database connection."""
         self._conn.close()
+
+    def __enter__(self) -> "APICache":
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        try:
+            self.close()
+        except Exception:
+            pass
+
+    def __del__(self) -> None:
+        # F271E: Fail-safe teardown. ResourceWarning previously fired from
+        # resource_allocator.py:307 (gc.collect) when the module-level
+        # singleton was never explicitly closed. Idempotent.
+        try:
+            self._conn.close()
+        except Exception:
+            pass
 
 
 async def search_shodan(

@@ -88,11 +88,68 @@ class SprintGraphAccumulator:
         try:
             gs = self._get_graph_service()
             gs.upsert_ioc_batch(rows)
+
+            # F265B-FIX: Edge creation between findings from same source_type+sprint.
+            # Without edges the graph is N isolated nodes — OODA PageRank gets 0,
+            # decided_seeds stays empty, "acted on 0 nodes" every cycle.
+            # OSINT semantics: co-source findings are thematically related (same query,
+            # same lane, same campaign). Connect them with co_source edge.
+            self._create_co_source_edges(findings, gs, sprint_id or "")
+
             return len(rows)
         except Exception:
             # Fail-soft: graph must never block sprint
             logger.warning("[GraphAccumulator] upsert_ioc_batch failed, returning 0")
             return 0
+
+    def _create_co_source_edges(
+        self, findings: list, gs, sprint_id: str
+    ) -> None:
+        """
+        F265B-FIX: Create edges between findings that share source_type.
+
+        Groups findings by source_type and creates co_source edges between
+        all pairs within each group. This gives the DuckPGQ graph the edge
+        density needed for OODA PageRank to rank nodes.
+
+        Bounded: MAX_EDGES_PER_SPRINT=200 to avoid O(n²) blowup on large batches.
+        """
+        from collections import defaultdict
+
+        MAX_EDGES_PER_SPRINT = 200
+
+        try:
+            # Group finding_ids by source_type
+            by_source: dict[str, list[str]] = defaultdict(list)
+            for f in findings:
+                fid = getattr(f, "finding_id", None)
+                if not fid:
+                    continue
+                src = getattr(f, "source_type", "unknown") or "unknown"
+                by_source[src].append(fid)
+
+            edges_created = 0
+            for src, fids in by_source.items():
+                if len(fids) < 2:
+                    continue
+                # Connect all pairs in group (fully connected subgraph per source)
+                for i in range(len(fids)):
+                    for j in range(i + 1, len(fids)):
+                        if edges_created >= MAX_EDGES_PER_SPRINT:
+                            return
+                        try:
+                            gs.upsert_relation(
+                                fids[i],
+                                fids[j],
+                                "co_source",
+                                weight=0.5,
+                                evidence=f"sprint:{sprint_id}",
+                            )
+                            edges_created += 1
+                        except Exception:
+                            pass
+        except Exception:
+            pass  # fail-soft
 
     def buffer_pivot_relation(
         self, ioc_value: str, ioc_type: str, confidence: float

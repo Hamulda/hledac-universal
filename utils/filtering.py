@@ -28,6 +28,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import re
+from contextlib import closing
 from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -630,27 +631,29 @@ class PersistentFrontier:
             import sqlite3
 
             storage_file = self._get_storage_file()
-            conn = sqlite3.connect(storage_file)
-            cursor = conn.cursor()
+            # F271E: closing() guarantees Connection is closed even if the
+            # executemany or commit raises. Prevents ResourceWarning at
+            # gc.collect() in resource_allocator.py:307.
+            with closing(sqlite3.connect(storage_file)) as conn:
+                cursor = conn.cursor()
 
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS frontier (
-                    url TEXT PRIMARY KEY,
-                    timestamp TEXT
+                cursor.execute('''
+                    CREATE TABLE IF NOT EXISTS frontier (
+                        url TEXT PRIMARY KEY,
+                        timestamp TEXT
+                    )
+                ''')
+
+                cursor.execute('DELETE FROM frontier')
+                timestamp = datetime.now(UTC).isoformat()
+
+                data = [(url, timestamp) for url in self._frontier._exact_set]
+                cursor.executemany(
+                    'INSERT OR REPLACE INTO frontier (url, timestamp) VALUES (?, ?)',
+                    data
                 )
-            ''')
 
-            cursor.execute('DELETE FROM frontier')
-            timestamp = datetime.now(UTC).isoformat()
-
-            data = [(url, timestamp) for url in self._frontier._exact_set]
-            cursor.executemany(
-                'INSERT OR REPLACE INTO frontier (url, timestamp) VALUES (?, ?)',
-                data
-            )
-
-            conn.commit()
-            conn.close()
+                conn.commit()
 
         except Exception as e:
             logger.error(f"Failed to save SQLite frontier: {e}")
@@ -694,18 +697,17 @@ class PersistentFrontier:
             import sqlite3
 
             storage_file = self._get_storage_file()
-            conn = sqlite3.connect(storage_file)
-            cursor = conn.cursor()
+            # F271E: closing() ensures Connection release on every exit path.
+            with closing(sqlite3.connect(storage_file)) as conn:
+                cursor = conn.cursor()
 
-            cursor.execute('SELECT url FROM frontier LIMIT 50000')
-            # LIMIT 50000 — cold path (startup only).
-            # Add ORDER BY timestamp DESC when frontier table exceeds 100k rows.
-            urls = [row[0] for row in cursor.fetchall()]
+                cursor.execute('SELECT url FROM frontier LIMIT 50000')
+                # LIMIT 50000 — cold path (startup only).
+                # Add ORDER BY timestamp DESC when frontier table exceeds 100k rows.
+                urls = [row[0] for row in cursor.fetchall()]
 
-            self._frontier._exact_set = set(urls)
-            self._frontier._stats.total_urls = len(urls)
-
-            conn.close()
+                self._frontier._exact_set = set(urls)
+                self._frontier._stats.total_urls = len(urls)
 
         except Exception as e:
             logger.error(f"Failed to load SQLite frontier: {e}")

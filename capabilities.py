@@ -852,7 +852,7 @@ def create_default_registry() -> CapabilityRegistry:
     )
 
     # F229: Deep OSINT sidecars — gate on env vars
-    _bgp_env = os.environ.get("HLEDAC_ENABLE_BGP", "").lower() in ("1", "true", "yes", "on")
+    _bgp_env = os.environ.get("HLEDAC_ENABLE_BGP", "1").lower() in ("1", "true", "yes", "on")
     registry.register(
         capability=Capability.BGP,
         available=_bgp_env and check_module("hledac.universal.network.bgp_monitor")[0],

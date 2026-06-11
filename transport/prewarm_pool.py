@@ -1,9 +1,9 @@
 """
-transport/prewarm_pool.py — 2-slot prewarm pool for curl_cffi AsyncSession.
+transport/prewarm_pool.py — 4-slot prewarm pool for curl_cffi AsyncSession.
 
-Sprint F265B (2026-06-10). Eliminates cold-start TLS handshake latency
-on the first request to a new (host, profile) tuple. M1 8GB safe: 2
-sessions ≈ 30 MB resident (well inside mission budget).
+Sprint F265B (2026-06-10) + F265B-ext (2026-06-11). Eliminates cold-start
+TLS handshake latency on the first request to a new (host, profile) tuple.
+M1 8GB safe: 4 sessions ≈ 60 MB resident (well inside mission budget).
 
 Design invariants
 -----------------
@@ -11,7 +11,10 @@ Design invariants
   (per project invariant "no new toggles for new functions"; the
   opt-out is honored for operators who need a tighter RAM footprint
   in CI containers).
-* Bounded: exactly 2 sessions, evict-on-acquire, never grows.
+* Bounded: 4 slots, evict-on-acquire, never grows.
+* M1 8GB: 4 sessions × ~15 MB each ≈ 60 MB resident (within mission budget).
+* Profiles are routed by (profile, host) affinity; a slot is re-used
+  when the same profile is requested again.
 * Fail-soft: any error in prewarm (import, create, probe) is caught;
   the lazy session path is used as fallback. The fetch never fails
   because prewarm failed.
@@ -55,7 +58,7 @@ logger = logging.getLogger("hledac.universal.transport.prewarm_pool")
 # ---------------------------------------------------------------------------
 # Bounded constants (M1 8GB tuned).
 # ---------------------------------------------------------------------------
-_POOL_SIZE: int = 2
+_POOL_SIZE: int = 4
 # Per-request hard cap on the speculative probe. 3 s is enough for a
 # TCP+TLS handshake against a public CDN; longer timeouts add nothing
 # because the probe is best-effort.
@@ -149,7 +152,7 @@ async def _create_session(profile: str) -> Any | None:
         return None
 
 
-async def _probe_warm(session: Any, profile: str) -> bool:
+async def _probe_warm(session: Any) -> bool:
     """Send a bounded HEAD to a probe host to establish TCP+TLS state.
 
     Returns True if the probe completed (any status code is success —
@@ -238,7 +241,7 @@ async def _fill_slot(slot_idx: int, profile: str) -> None:
     # still usable (just cold) — same behaviour as the lazy path.
     async def _probe_and_mark() -> None:
         try:
-            ok = await _probe_warm(sess, profile)
+            ok = await _probe_warm(sess)
             if ok and slot_idx in _pool:
                 _pool[slot_idx]["warmed_at"] = time.monotonic()
         except asyncio.CancelledError:

@@ -66,7 +66,7 @@ logger = logging.getLogger(__name__)
 # Bounds (M1 8GB tuned; do NOT loosen without re-running the
 # M1 8GB mission budget probe in ``benchmarks/m1_phase4_budget.py``).
 # ---------------------------------------------------------------------------
-_H3_CACHE_MAX: int = 512                # host -> (timestamp, supports_h3)
+_H3_CACHE_MAX: int = 1024               # host -> (timestamp, supports_h3)
 _H3_CONCURRENCY_MAX: int = 3            # M1 8GB: 3 concurrent QUIC handshakes
 _H3_TIMEOUT_S: float = 8.0              # per-request hard cap
 _H3_WAIT_TIMEOUT_S: float = 2.0         # how long to wait for the semaphore
@@ -108,14 +108,16 @@ def _get_psutil_proc() -> Any:
 # Env-gate resolution (project convention: HLEDAC_ENABLE_<LANE>).
 # ---------------------------------------------------------------------------
 def _resolve_enabled() -> bool:
-    """Resolve HTTP/3 gate. ``HLEDAC_ENABLE_HTTPX_H3=1`` takes precedence;
+    """Resolve HTTP/3 gate. Default ON (opt-out); set ``HLEDAC_ENABLE_HTTPX_H3=0`` to disable.
     ``HLEDAC_HTTP3=1`` (legacy F260 alias) is honored for back-compat.
-    Anything else (including unset) -> disabled.
     """
     v = os.environ.get("HLEDAC_ENABLE_HTTPX_H3", "")
+    if v == "0":
+        return False
     if v == "1":
         return True
-    return os.environ.get("HLEDAC_HTTP3", "") == "1"
+    # F273G: always-on default (docstring), legacy alias still honored
+    return os.environ.get("HLEDAC_HTTP3", "1") == "1"
 
 
 _ENABLED: bool = _resolve_enabled()

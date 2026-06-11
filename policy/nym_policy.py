@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 import logging
-from enum import Enum
 
 import numpy as np
 
 from hledac.universal.core.resource_governor import ResourceGovernor
+from hledac.universal.project_types import RiskLevel
 from hledac.universal.transport.transport_resolver import Transport
 
 logger = logging.getLogger(__name__)
@@ -27,13 +27,6 @@ def _get_nym_transport():
         from hledac.universal.transport.nym_transport import NymTransport
         _NymTransport = NymTransport
     return _NymTransport
-
-
-class RiskLevel(Enum):
-    LOW = "low"
-    MEDIUM = "medium"
-    HIGH = "high"
-    CRITICAL = "critical"
 
 
 class LinUCBArm:

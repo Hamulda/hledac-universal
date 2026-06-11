@@ -13,6 +13,8 @@ Run: pytest tests/probe/test_acquisition_context_m1.py -v
 """
 from __future__ import annotations
 
+from unittest.mock import patch
+
 from hledac.universal.runtime.acquisition_strategy import (
     AcquisitionContext,
     AcquisitionProfile,
@@ -44,18 +46,20 @@ def test_acquisition_context_with_is_deep_osint_m1_true():
         cid_present=False,
     )
     assert ctx.is_deep_osint_m1 is True
-    # FEED disabled only when hardware_critical; is_deep_osint_m1 alone does NOT block FEED
-    plan = build_acquisition_plan(
-        query="test.example.com",
-        duration_s=180.0,
-        aggressive_mode=False,
-        uma_state="ok",
-        swap_detected=False,
-        acquisition_profile="deep_osint_m1",
-    )
-    feed_plan = next((p for p in plan.plans if p.lane.value == "FEED"), None)
+    # F266: FEED runs in warn state — only blocked at critical/emergency.
+    # Isolated from HLEDAC_ACQUISITION_PROFILE env var interference.
+    with patch.dict("os.environ", {}, clear=True):
+        plan = build_acquisition_plan(
+            query="test.example.com",
+            duration_s=180.0,
+            aggressive_mode=False,
+            uma_state="ok",
+            swap_detected=False,
+            acquisition_profile="deep_osint_m1",
+        )
+    feed_plan = next((p for p in plan.plans if p.lane == "FEED"), None)
     assert feed_plan is not None, "FEED lane missing from snapshot"
-    assert feed_plan.enabled is True, "FEED should be enabled when hardware_critical=False"
+    assert feed_plan.enabled is True, "FEED should be enabled when uma_state=ok"
 
 
 def test_acquisition_context_default_is_false():
@@ -113,7 +117,7 @@ def test_acquisition_context_deep_osint_m1_blocks_feed_when_hardware_critical():
         swap_detected=False,
         acquisition_profile="deep_osint_m1",
     )
-    feed_plan = next((p for p in plan.plans if p.lane.value == "FEED"), None)
+    feed_plan = next((p for p in plan.plans if p.lane == "FEED"), None)
     assert feed_plan is not None, "FEED lane missing from snapshot"
     assert feed_plan.enabled is False, "FEED should be disabled when hardware_critical"
 

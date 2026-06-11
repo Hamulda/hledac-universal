@@ -28,8 +28,18 @@ GHOST_INVARIANTS:
   this package — it lives in ``brain.hypothesis_engine`` as a module-level
   function and is imported lazily by ``AdversarialVerifier`` when path
   explanations are requested.
+
+CAVEAT (F265B): This package lives on the ``hypothesis`` namespace which
+conflicts with the pip ``hypothesis`` package used by pytest's
+``_hypothesis_pytestplugin`` (``from hypothesis import Verbosity``).
+The conflict is resolved via ``__getattr__`` at the package level: this
+__init__.py re-exports only local submodules and never registers as
+``hypothesis`` in ``sys.modules``. The pip package (site-packages) is
+accessed only when an external caller does ``import hypothesis``.
 """
 from __future__ import annotations
+
+# ── Local submodule re-exports (no pip hypothesis imports here) ───────────────
 
 from ._types import (
     CO_OCCURRENCE_FP16,

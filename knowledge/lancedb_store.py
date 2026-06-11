@@ -33,6 +33,7 @@ import numpy as np
 import orjson
 
 from context_optimization.mmr import maximal_marginal_relevance
+from hledac.universal.tools.file_cache import apply_nocache_to_path, madv_free_reusable_on_path
 
 logger = logging.getLogger(__name__)
 
@@ -654,6 +655,9 @@ class LanceDBIdentityStore:
             cache_path = Path(self.uri).parent / 'embedding_cache'
             cache_path.mkdir(parents=True, exist_ok=True)
             self._cache_env = lmdb.open(str(cache_path), map_size=self._MAX_CACHE_SIZE)
+            # F273F: tell Darwin not to cache LMDB mmap pages — they compete with Metal budget
+            madv_free_reusable_on_path(cache_path)
+            apply_nocache_to_path(cache_path)
             self._cache_db = self._cache_env.open_db()
             self._memory_history = deque(maxlen=10)
             logger.debug("LMDB embedding cache initialized")
@@ -1215,7 +1219,7 @@ class LanceDBIdentityStore:
                     return
                 loop = asyncio.get_running_loop()
                 num_partitions = getattr(self, "_ivfpq_num_partitions", 64)
-                num_sub_vectors = getattr(self, "_ivfpq_num_sub_vectors", 16)
+                num_sub_vectors = getattr(self, "_ivfpq_num_sub_vectors", 12)
 
                 def _train() -> None:
                     # LanceDB Python API: tbl.create_index(metric, index_type, num_partitions, num_sub_vectors)

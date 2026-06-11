@@ -11,7 +11,15 @@ from __future__ import annotations
 
 import hashlib
 from collections.abc import Callable
-from typing import Any, Protocol, cast, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol, TypeGuard, cast, runtime_checkable
+
+if TYPE_CHECKING:
+    # Static-only import — never executed at runtime. Resolves MmapBloomFilter
+    # to the typed stub (stubs/hledac_rust_extensions/__init__.pyi) so ty can
+    # narrow the field type and verify call-site types.
+    from hledac_rust_extensions import MmapBloomFilter as _MmapBloomFilterT
+else:
+    _MmapBloomFilterT = object  # type: ignore[assignment,misc]  # runtime sentinel
 
 # ---------------------------------------------------------------------------
 # Conditional imports — every symbol below has an explicit type annotation
@@ -111,14 +119,34 @@ except ImportError:
 
 # Rust MmapBloomFilter — file-backed persistent dedup (F266-U1).
 # Persists across process restart, no Python warm-up cost, M1 8GB safe.
+# At runtime the import may fail (extension not built) so we keep a
+# `MmapBloomFilter = None` sentinel — MmapBloomFilterAdapter.__init__
+# raises ImportError before any method can be called. At type-check time
+# the `TYPE_CHECKING` import above resolves MmapBloomFilter to the
+# typed stub, so field annotations and `_bloom_ready` narrow correctly.
 _RUST_MMAP_BLOOM_AVAILABLE = False
-RustMmapBloomFilter: Any = None
+MmapBloomFilter: Any = None
 try:
-    from hledac_rust_extensions import MmapBloomFilter as RustMmapBloomFilter  # noqa: F811
+    from hledac_rust_extensions import MmapBloomFilter  # noqa: F811
 
     _RUST_MMAP_BLOOM_AVAILABLE = True
 except ImportError:
     pass
+
+
+def _bloom_ready(b: object) -> TypeGuard[MmapBloomFilter]:  # type: ignore[valid-type]
+    """TypeGuard narrowing for Rust MmapBloomFilter instance.
+
+    Returns True iff `b` is a live Rust MmapBloomFilter (not the
+    ImportError sentinel `None`). Use at call sites where the field
+    may be the sentinel during the import-failure path so that
+    `ty` can narrow the type without a runtime `is not None` check
+    leaking into the call site.
+
+    M1 8GB safety: identity + isinstance, zero allocation, no PyObject
+    boxing beyond the existing field reference.
+    """
+    return MmapBloomFilter is not None and isinstance(b, MmapBloomFilter)
 
 
 @runtime_checkable
@@ -275,7 +303,12 @@ class MmapBloomFilterAdapter:
         self._path = path
         self._capacity = int(capacity)
         self._fp_rate = float(fp_rate)
-        self._filter: Any = RustMmapBloomFilter(
+        # Field is typed as `MmapBloomFilter | None` so ty can flag any
+        # un-guarded access; every call site uses `_bloom_ready()` to narrow
+        # before touching the field. The `None` branch is unreachable in
+        # practice (the `__init__` ImportError above blocks construction),
+        # but the annotation + guard make the contract explicit.
+        self._filter: MmapBloomFilter | None = MmapBloomFilter(
             path=path,
             capacity=capacity,
             fp_rate=fp_rate,
@@ -289,15 +322,19 @@ class MmapBloomFilterAdapter:
 
     @property
     def byte_size(self) -> int:
-        try:
-            return int(self._filter.byte_size())
-        except Exception:
-            return 0  # fail-soft
+        if _bloom_ready(self._filter):
+            try:
+                return int(self._filter.byte_size())
+            except Exception:
+                return 0  # fail-soft
+        return 0  # unreachable when extension built; defensive
 
     def add(self, item: str) -> bool:
         with self._lock:
             try:
-                return bool(self._filter.add(item))
+                if _bloom_ready(self._filter):
+                    return bool(self._filter.add(item))
+                return False
             except Exception:
                 return False  # fail-soft
 
@@ -305,31 +342,38 @@ class MmapBloomFilterAdapter:
         # Read path: no lock needed for single-writer/many-reader (GIL holds
         # off concurrent writers in CPython). For strict multi-thread semantics
         # the caller should serialize.
-        try:
-            return bool(self._filter.contains(item))
-        except Exception:
-            return False  # fail-soft
+        if _bloom_ready(self._filter):
+            try:
+                return bool(self._filter.contains(item))
+            except Exception:
+                return False  # fail-soft
+        return False  # unreachable when extension built; defensive
 
     def __len__(self) -> int:
-        try:
-            return int(self._filter.__len__())
-        except Exception:
-            return 0
+        if _bloom_ready(self._filter):
+            try:
+                return int(self._filter.__len__())
+            except Exception:
+                return 0
+        return 0  # unreachable when extension built; defensive
 
     def sync(self) -> bool:
         """Force durable sync to disk (MS_SYNC)."""
         with self._lock:
             try:
-                return bool(self._filter.sync())
+                if _bloom_ready(self._filter):
+                    return bool(self._filter.sync())
+                return False
             except Exception:
                 return False
 
     def reset(self) -> None:
         with self._lock:
-            try:
-                self._filter.reset()
-            except Exception:
-                pass  # fail-soft
+            if _bloom_ready(self._filter):
+                try:
+                    self._filter.reset()
+                except Exception:
+                    pass  # fail-soft
 
     def capacity(self) -> int:
         return self._capacity

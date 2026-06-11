@@ -224,7 +224,7 @@ class UnifiedResearchConfig:
 
     # Quality controls
     enable_deduplication: bool = True
-    dedup_threshold: float = 0.85
+    dedup_threshold: float = 0.70
 
     # Feature toggles by depth
     enable_temporal_analysis: bool = True

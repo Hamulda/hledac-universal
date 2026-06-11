@@ -6,8 +6,8 @@ Covers the invariants declared in brain/mlx_batched_executor.py:
     B.M2  BatchScheduler instantiated lazily (not at import time)
     B.M3  Fail-soft: any submit/future error → direct path
     B.M4  MLX execution lock: asyn semaphore(1) — no concurrent MLX
-    B.M5  Memory guard: psutil.virtual_memory().percent > 90% → disable
-    B.M6  max_batch_size = 4 (M1 8GB, KV cache 0.75 GB)
+    B.M5  Memory guard: psutil.virtual_memory().percent > 85% → disable
+    B.M6  max_batch_size = 6 (M1 8GB, KV cache 0.75 GB, headroom for speculative)
     B.M7  Telemetry counters exposed via get_stats()
     B.M8  Shutdown: bounded ≤ 3.0s, all pending futures failed
     B.M9  Bypass: priority == 0 → direct path (urgent)
@@ -268,12 +268,12 @@ class TestMLXBatchedExecutorExecute(unittest.TestCase):
         self.assertIsInstance(executor._mlx_lock, asyncio.Lock)
 
     def test_bm6_max_batch_size_bounded(self):
-        """B.M6: max_batch_size = 4 for M1 8GB safety."""
-        self.assertEqual(MAX_BATCH_SIZE_M1, 4)
+        """B.M6: max_batch_size = 6 for M1 8GB safety."""
+        self.assertEqual(MAX_BATCH_SIZE_M1, 6)
 
     def test_memory_guard_threshold(self):
-        """B.M5: threshold = 90% — verify constant value."""
-        self.assertEqual(MEMORY_GUARD_PCT, 90.0)
+        """B.M5: threshold = 85% — verify constant value."""
+        self.assertEqual(MEMORY_GUARD_PCT, 85.0)
 
 
 class TestMLXBatchedExecutorShutdown(unittest.TestCase):

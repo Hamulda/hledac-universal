@@ -1,0 +1,823 @@
+===START 2026-06-10T22:54:51+02:00 TS=20260610_225451===
+/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tools/lightpanda_manager.py:19: UserWarning: [GHOST OPSEC] No active ramdisk found at /Volumes/ghost_tmp and GHOST_RAMDISK is unset. Runtime artifacts will be written to SSD fallback location. Set GHOST_RAMDISK env var or mount /Volumes/ghost_tmp to avoid OPSEC degradation.
+  from hledac.universal.paths import DB_ROOT
+WARNING:coremltools:scikit-learn version 1.9.0 is not supported. Minimum required version: 0.17. Maximum required version: 1.5.1. Disabling scikit-learn conversion API.
+WARNING:coremltools:XGBoost version 3.2.0 has not been tested with coremltools. You may run into unexpected errors. XGBoost 1.4.2 is the most recent version that has been tested.
+WARNING:coremltools:Torch version 2.12.0 has not been tested with coremltools. You may run into unexpected errors. Torch 2.7.0 is the most recent version that has been tested.
+WARNING:coremltools:Failed to load _MLModelProxy: No module named 'coremltools.libcoremlpython'
+WARNING:coremltools:Failed to load _MLCPUComputeDeviceProxy: No module named 'coremltools.libcoremlpython'
+WARNING:coremltools:Failed to load _MLGPUComputeDeviceProxy: No module named 'coremltools.libcoremlpython'
+WARNING:coremltools:Failed to load _MLNeuralEngineComputeDeviceProxy: No module named 'coremltools.libcoremlpython'
+WARNING:coremltools:Failed to load _MLModelProxy: No module named 'coremltools.libcoremlpython'
+WARNING:coremltools:Failed to load _MLComputePlanProxy: No module named 'coremltools.libcoremlpython'
+WARNING:coremltools:Fail to import BlobReader from libmilstoragepython. No module named 'coremltools.libmilstoragepython'
+WARNING:coremltools:Failed to load _MLModelProxy: No module named 'coremltools.libcoremlpython'
+WARNING:coremltools:Failed to load _MLModelAssetProxy: No module named 'coremltools.libcoremlpython'
+WARNING:coremltools:Fail to import BlobWriter from libmilstoragepython. No module named 'coremltools.libmilstoragepython'
+/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/.venv/lib/python3.14/site-packages/coremltools/optimize/torch/palettization/fake_palettize.py:82: SyntaxWarning: "\_" is an invalid escape sequence. Such sequences will not work in the future. Did you mean "\\_"? A raw string is also an option.
+  n_bits (:obj:`int`): Number of palettization bits. There would be :math:`2^{n\_bits}` unique weights in the ``LUT``.
+WARNING:coremltools:Failed to load _MLComputePlanProxy: No module named 'coremltools.libcoremlpython'
+WARNING:coremltools:Failed to load _MLCPUComputeDeviceProxy: No module named 'coremltools.libcoremlpython'
+WARNING:coremltools:Failed to load _MLGPUComputeDeviceProxy: No module named 'coremltools.libcoremlpython'
+WARNING:coremltools:Failed to load _MLNeuralEngineComputeDeviceProxy: No module named 'coremltools.libcoremlpython'
+WARNING:coremltools:Failed to load '_MLCPUComputeDeviceRemoteProxy'. Remote device functionality for retrieving the compute plan is unavailable.
+WARNING:coremltools:Failed to load '_MLGPUComputeDeviceRemoteProxy'. Remote device functionality for retrieving the compute plan is unavailable.
+WARNING:coremltools:Failed to load '_MLNeuralEngineComputeDeviceRemoteProxy'. Remote device functionality for retrieving the compute plan is unavailable.
+WARNING:coremltools:Failed to load '_MLComputePlanRemoteProxy'. Remote device functionality for retrieving the compute plan is unavailable.
+INFO:root:[SIGNAL] SIGINT/SIGTERM handlers installed
+INFO:__main__:[GC] gc.freeze() applied — reduces GC pause variance
+INFO:hledac.universal.utils.mlx_cache:[Sprint 8T] Metal limits configured: cache=2560 MiB, wired=2560 MiB
+INFO:hledac.universal.utils.mlx_cache:MLX buffers initialized: cache=2560 MiB, wired=2560 MiB, configured=True, error=None
+INFO:__main__:[BOOT] MLX buffers: cache=2560MiB wired=2560MiB configured=True
+INFO:__main__:[BOOT] Pre-sprint checks OK | UMA: 5.55GiB used | swap: 0.04GiB
+INFO:hledac.universal.patterns.pattern_matcher:[PATTERNS] configured 134 bootstrap patterns
+INFO:hledac.universal.tools.lmdb_kv:LMDB KV store initialized at /Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/runtime/cti/db/shadow_wal.lmdb
+INFO:hledac.universal.tools.lmdb_kv:LMDB KV store initialized at /Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/runtime/cti/db/lmdb/dedup.lmdb
+liboqs-python faulthandler is disabled
+INFO:oqs.oqs:liboqs-python faulthandler is disabled
+INFO:hledac.universal.layers.stealth_layer:StealthLayer initialized
+INFO:hledac.universal.layers.ghost_layer:GhostLayer initialized (GhostDirector: lazy)
+INFO:hledac.sprint:[F228F] Health check: duckdb=OK hermes=FAIL fetch=not_initialized graph=OK overall=DEGRADED (advisory-degraded, non-blocking: ['hermes not loaded', 'public_fetcher sessions not available'])
+WARNING:__main__:[F228F] health_check warnings: duckdb=OK hermes=FAIL fetch=not_initialized graph=OK overall=DEGRADED
+INFO:hledac.universal.metrics_registry:MetricsRegistry initialized: run_id=default
+INFO:hledac.universal.intelligence.relationship_discovery:RelationshipDiscoveryEngine initialized (sparse=True, mlx=True)
+WARNING:hledac.universal.intelligence.relationship_discovery:[F196B] load_graph rejected path outside graphs dir: /Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/runtime/cti/db/lmdb/rel_discovery_graph.pkl
+INFO:hledac.universal.runtime.sprint_scheduler:Dedup LMDB loaded: 0 existing hashes
+Fetching 6 files:   0%|          | 0/6 [00:00<?, ?it/s]Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+WARNING:huggingface_hub.utils._http:Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+Fetching 6 files:  17%|█▋        | 1/6 [00:00<00:02,  2.38it/s]Fetching 6 files:  33%|███▎      | 2/6 [00:18<00:43, 10.89s/it]Fetching 6 files: 100%|██████████| 6/6 [00:18<00:00,  3.11s/it]
+INFO:hledac.universal.brain.model_manager:[MODEL DOWNLOAD] Hermes-3 already cached at mlx-community/DeepHermes-3-Llama-3-3B-Preview-4bit
+INFO:hledac.universal.brain.model_lifecycle:[LIFECYCLE] MLX runtime initialized via mlx_cache authority
+INFO:hledac.universal.brain.model_manager:[F203J] Hermes quantization selected: q5_k_m (tokens=1024, latency=45000ms, reason=uma_warn: free_uma=1.83GiB >= 1.5GiB)
+INFO:hledac.universal.brain.model_manager:[MODEL LOAD] hermes start
+INFO:hledac.universal.brain.hermes3_engine:Loading Hermes-3 from mlx-community/DeepHermes-3-Llama-3-3B-Preview-4bit...
+Fetching 6 files:   0%|          | 0/6 [00:00<?, ?it/s]Fetching 6 files: 100%|██████████| 6/6 [00:00<00:00, 9276.01it/s]
+INFO:hledac.universal.brain.hermes3_engine:✓ Hermes-3 loaded successfully
+INFO:hledac.universal.brain.hermes3_engine:[HERMES] KV_CACHE not available – KV cache disabled
+INFO:hledac.universal.brain.hermes3_engine:✓ Outlines model initialized
+INFO:hledac.universal.brain.hermes3_engine:[SPEC] Insufficient RAM (2.1GB), speculative decoding disabled
+INFO:hledac.universal.brain.hermes3_engine:[WARMUP] Starting prefix cache warmup...
+INFO:hledac.universal.brain.hermes3_engine:[WARMUP] Warmup prompt: ~88 tokens
+WARNING:hledac.universal.brain.hermes3_engine:[WARMUP] Warmup failed: generate_step() got an unexpected keyword argument 'temp'
+INFO:hledac.universal.brain.model_manager:[MODEL LOAD] hermes done (RSS before=0.66GB)
+INFO:hledac.universal.utils.concurrency:[FETCH_WORKERS] Adjusted fetch 0→3, clearnet 0→3
+INFO:hledac.universal.memory.memory_manager:MemoryManager initialized at /Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/runtime/cti/db/memory_manager.lmdb
+INFO:hledac.universal.memory.memory_manager:MemoryManager closed
+Fetching 6 files:   0%|          | 0/6 [00:00<?, ?it/s]Fetching 6 files: 100%|██████████| 6/6 [00:00<00:00, 16080.40it/s]
+INFO:hledac.universal.brain.model_manager:[MODEL DOWNLOAD] Hermes-3 already cached at mlx-community/DeepHermes-3-Llama-3-3B-Preview-4bit
+INFO:hledac.universal.brain.model_lifecycle:[LIFECYCLE] MLX runtime initialized via mlx_cache authority
+INFO:hledac.universal.memory.memory_manager:MemoryManager initialized at /Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/runtime/cti/db/memory_manager.lmdb
+mx.metal.get_active_memory is deprecated and will be removed in a future version. Use mx.get_active_memory instead.
+mx.metal.get_peak_memory is deprecated and will be removed in a future version. Use mx.get_peak_memory instead.
+mx.metal.get_cache_memory is deprecated and will be removed in a future version. Use mx.get_cache_memory instead.
+INFO:hledac.universal.knowledge.graph_rag:GraphRAGOrchestrator initialized
+INFO:hledac.universal.knowledge.graph_rag:🔍 Multi-hop search: query='OSINT reconnaissance sample target example.com', hops=2, max_nodes=20, timeline=False, prefer_recent=True
+INFO:hledac.universal.runtime.sprint_scheduler:[MEM] fetch_limit=2 ml_jobs=0
+/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/discovery/duckduckgo_adapter.py:633: RuntimeWarning: This package (`duckduckgo_search`) has been renamed to `ddgs`! Use `pip install ddgs` instead.
+  backend: DDGS = DDGS(timeout=int(timeout_s))
+/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/discovery/duckduckgo_adapter.py:633: RuntimeWarning: This package (`duckduckgo_search`) has been renamed to `ddgs`! Use `pip install ddgs` instead.
+  backend: DDGS = DDGS(timeout=int(timeout_s))
+/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/discovery/duckduckgo_adapter.py:633: RuntimeWarning: This package (`duckduckgo_search`) has been renamed to `ddgs`! Use `pip install ddgs` instead.
+  backend: DDGS = DDGS(timeout=int(timeout_s))
+/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/discovery/duckduckgo_adapter.py:633: RuntimeWarning: This package (`duckduckgo_search`) has been renamed to `ddgs`! Use `pip install ddgs` instead.
+  backend: DDGS = DDGS(timeout=int(timeout_s))
+/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/discovery/duckduckgo_adapter.py:633: RuntimeWarning: This package (`duckduckgo_search`) has been renamed to `ddgs`! Use `pip install ddgs` instead.
+  backend: DDGS = DDGS(timeout=int(timeout_s))
+/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/discovery/duckduckgo_adapter.py:633: RuntimeWarning: This package (`duckduckgo_search`) has been renamed to `ddgs`! Use `pip install ddgs` instead.
+  backend: DDGS = DDGS(timeout=int(timeout_s))
+/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/discovery/duckduckgo_adapter.py:633: RuntimeWarning: This package (`duckduckgo_search`) has been renamed to `ddgs`! Use `pip install ddgs` instead.
+  backend: DDGS = DDGS(timeout=int(timeout_s))
+/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/discovery/duckduckgo_adapter.py:633: RuntimeWarning: This package (`duckduckgo_search`) has been renamed to `ddgs`! Use `pip install ddgs` instead.
+  backend: DDGS = DDGS(timeout=int(timeout_s))
+INFO:primp:response: https://www.bing.com/search?q=site%3Aexample.com 200
+INFO:primp:response: https://www.bing.com/search?q=%22example.com%22+SSL+certificate 200
+INFO:primp:response: https://www.bing.com/search?q=%22example.com%22+certificate+transparency 200
+INFO:primp:response: https://www.bing.com/search?q=%22example.com%22+SSL+certificate 200
+INFO:primp:response: https://www.bing.com/search?q=site%3Aexample.com 200
+INFO:primp:response: https://www.bing.com/search?q=%22example.com%22+certificate+transparency 200
+INFO:primp:response: https://www.bing.com/search?q=%22example.com%22+subdomains 200
+INFO:primp:response: https://www.bing.com/search?q=%22example.com%22+subdomains 200
+INFO:primp:response: https://www.bing.com/search?q=site%3Aexample.com&first=11&FORM=PERE 200
+INFO:primp:response: https://www.bing.com/search?q=site%3Aexample.com&first=11&FORM=PERE 200
+INFO:primp:response: https://www.bing.com/search?q=site%3Aexample.com&first=21&FORM=PERE1 200
+INFO:primp:response: https://www.bing.com/search?q=site%3Aexample.com&first=21&FORM=PERE1 200
+INFO:primp:response: https://www.bing.com/search?q=site%3Aexample.com&first=31&FORM=PERE2 200
+INFO:primp:response: https://www.bing.com/search?q=site%3Aexample.com&first=31&FORM=PERE2 200
+INFO:primp:response: https://www.bing.com/search?q=site%3Aexample.com&first=41&FORM=PERE3 200
+INFO:primp:response: https://www.bing.com/search?q=site%3Aexample.com&first=41&FORM=PERE3 200
+INFO:hledac.universal.pipeline.live_public_pipeline:[P20] PastebinMonitor targeting: example.com
+/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/.venv/lib/python3.14/site-packages/aiohttp/connector.py:1232: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x364fdf880>
+  async def _create_connection(
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/.venv/lib/python3.14/site-packages/aiohttp/connector.py:1232: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x3650c0040>
+  async def _create_connection(
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/.venv/lib/python3.14/site-packages/aiohttp/connector.py:1232: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x3650c1300>
+  async def _create_connection(
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/.venv/lib/python3.14/site-packages/aiohttp/connector.py:1232: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x3650c18a0>
+  async def _create_connection(
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+WARNING:hledac.universal.pipeline.live_public_pipeline:[P20] Pastebin/GitHub scan failed: cannot access free variable 'CanonicalFinding' where it is not associated with a value in enclosing scope
+INFO:hledac.universal.runtime.sprint_scheduler:[MEM] fetch_limit=2 ml_jobs=0
+/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/discovery/duckduckgo_adapter.py:633: RuntimeWarning: This package (`duckduckgo_search`) has been renamed to `ddgs`! Use `pip install ddgs` instead.
+  backend: DDGS = DDGS(timeout=int(timeout_s))
+/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/discovery/duckduckgo_adapter.py:633: RuntimeWarning: This package (`duckduckgo_search`) has been renamed to `ddgs`! Use `pip install ddgs` instead.
+  backend: DDGS = DDGS(timeout=int(timeout_s))
+/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/discovery/duckduckgo_adapter.py:633: RuntimeWarning: This package (`duckduckgo_search`) has been renamed to `ddgs`! Use `pip install ddgs` instead.
+  backend: DDGS = DDGS(timeout=int(timeout_s))
+/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/discovery/duckduckgo_adapter.py:633: RuntimeWarning: This package (`duckduckgo_search`) has been renamed to `ddgs`! Use `pip install ddgs` instead.
+  backend: DDGS = DDGS(timeout=int(timeout_s))
+INFO:primp:response: https://www.bing.com/search?q=site%3Aexample.com 200
+INFO:primp:response: https://www.bing.com/search?q=%22example.com%22+SSL+certificate 200
+INFO:primp:response: https://www.bing.com/search?q=%22example.com%22+subdomains 200
+INFO:primp:response: https://www.bing.com/search?q=%22example.com%22+certificate+transparency 200
+INFO:primp:response: https://www.bing.com/search?q=site%3Aexample.com&first=11&FORM=PERE 200
+INFO:primp:response: https://www.bing.com/search?q=site%3Aexample.com&first=21&FORM=PERE1 200
+INFO:primp:response: https://www.bing.com/search?q=site%3Aexample.com&first=31&FORM=PERE2 200
+INFO:primp:response: https://www.bing.com/search?q=site%3Aexample.com&first=41&FORM=PERE3 200
+INFO:hledac.universal.pipeline.live_public_pipeline:[P20] PastebinMonitor targeting: example.com
+WARNING:hledac.universal.pipeline.live_public_pipeline:[P20] Pastebin/GitHub scan failed: cannot access free variable 'CanonicalFinding' where it is not associated with a value in enclosing scope
+INFO:hledac.universal.brain.moe_router:✓ Router MLP initialized (5 experts)
+INFO:hledac.universal.brain.moe_router:MoE router using hash-based routing (no embedding model)
+INFO:hledac.universal.pipeline.live_public_pipeline:[P16] MoE experts: ['synthesis', 'temporal'] for query: OSINT reconnaissance sample target example.com
+INFO:hledac.universal.pipeline.live_public_pipeline:[P14] MoE route: hermes3 for query: OSINT reconnaissance sample target example.com
+WARNING:hledac.universal.pipeline.live_public_pipeline:[REPORT] Generation failed: 'str' object has no attribute 'exists'
+INFO:hledac.universal.pipeline.live_public_pipeline:[P18] Exported markdown to /Users/vojtechhamada/hledac_outputs/1781124951_report.md
+<frozen importlib._bootstrap_external>:511: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x3650c17b0>
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/.venv/lib/python3.14/site-packages/PyPDF2/__init__.py:21: DeprecationWarning: PyPDF2 is deprecated. Please move to the pypdf library instead.
+  warnings.warn(
+INFO:hledac.universal.runtime.sprint_scheduler:OODA: cycle start
+INFO:hledac.universal.runtime.sprint_scheduler:OODA: acted on 0 nodes
+/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/discovery/duckduckgo_adapter.py:633: RuntimeWarning: This package (`duckduckgo_search`) has been renamed to `ddgs`! Use `pip install ddgs` instead.
+  backend: DDGS = DDGS(timeout=int(timeout_s))
+/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/discovery/duckduckgo_adapter.py:633: RuntimeWarning: This package (`duckduckgo_search`) has been renamed to `ddgs`! Use `pip install ddgs` instead.
+  backend: DDGS = DDGS(timeout=int(timeout_s))
+/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/discovery/duckduckgo_adapter.py:633: RuntimeWarning: This package (`duckduckgo_search`) has been renamed to `ddgs`! Use `pip install ddgs` instead.
+  backend: DDGS = DDGS(timeout=int(timeout_s))
+/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/discovery/duckduckgo_adapter.py:633: RuntimeWarning: This package (`duckduckgo_search`) has been renamed to `ddgs`! Use `pip install ddgs` instead.
+  backend: DDGS = DDGS(timeout=int(timeout_s))
+INFO:primp:response: https://www.bing.com/search?q=%22example.com%22+certificate+transparency 200
+INFO:primp:response: https://www.bing.com/search?q=site%3Aexample.com 200
+INFO:primp:response: https://www.bing.com/search?q=%22example.com%22+subdomains 200
+INFO:primp:response: https://www.bing.com/search?q=%22example.com%22+SSL+certificate 200
+INFO:primp:response: https://www.bing.com/search?q=site%3Aexample.com&first=11&FORM=PERE 200
+INFO:hledac.universal.runtime.sprint_scheduler:[MEM] fetch_limit=2 ml_jobs=0
+INFO:primp:response: https://www.bing.com/search?q=site%3Aexample.com&first=21&FORM=PERE1 200
+INFO:primp:response: https://www.bing.com/search?q=site%3Aexample.com&first=31&FORM=PERE2 200
+INFO:primp:response: https://www.bing.com/search?q=site%3Aexample.com&first=41&FORM=PERE3 200
+INFO:hledac.universal.pipeline.live_public_pipeline:[P20] PastebinMonitor targeting: example.com
+<frozen abc>:121: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x3650c0f40>
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+WARNING:hledac.universal.runtime.sprint_scheduler:ct_storage_rejected: candidates=9 stored=0 top_reason=duplicate_detected reasons=('duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected')
+{"traceId":"00d09c2f25b1ba445bb24cceba719eae","spanId":"9eac2d844359c006","parentSpanId":"4f868c656b0a1f35","name":"duckdb.ingest_batch","kind":"SPAN_KIND_INTERNAL","startTimeUnixNano":"1781124956893816000","endTimeUnixNano":"1781124956899637000","attributes":[{"key":"component","value":{"stringValue":"storage"}}],"status":{"code":"STATUS_CODE_UNSET"},"events":[]}
+WARNING:hledac.universal.pipeline.live_public_pipeline:[P20] Pastebin/GitHub scan failed: cannot access free variable 'CanonicalFinding' where it is not associated with a value in enclosing scope
+INFO:hledac.universal.brain.moe_router:✓ Router MLP initialized (5 experts)
+INFO:hledac.universal.brain.moe_router:MoE router using hash-based routing (no embedding model)
+INFO:hledac.universal.pipeline.live_public_pipeline:[P16] MoE experts: ['graph', 'osint'] for query: OSINT reconnaissance sample target example.com
+INFO:hledac.universal.pipeline.live_public_pipeline:[P14] MoE route: hermes3 for query: OSINT reconnaissance sample target example.com
+WARNING:hledac.universal.pipeline.live_public_pipeline:[REPORT] Generation failed: 'str' object has no attribute 'exists'
+INFO:hledac.universal.pipeline.live_public_pipeline:[P18] Exported markdown to /Users/vojtechhamada/hledac_outputs/1781124959_report.md
+WARNING:hledac.universal.runtime.sprint_scheduler:ct_storage_rejected: candidates=9 stored=0 top_reason=duplicate_detected reasons=('duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected')
+/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/discovery/duckduckgo_adapter.py:633: RuntimeWarning: This package (`duckduckgo_search`) has been renamed to `ddgs`! Use `pip install ddgs` instead.
+  backend: DDGS = DDGS(timeout=int(timeout_s))
+/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/discovery/duckduckgo_adapter.py:633: RuntimeWarning: This package (`duckduckgo_search`) has been renamed to `ddgs`! Use `pip install ddgs` instead.
+  backend: DDGS = DDGS(timeout=int(timeout_s))
+/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/discovery/duckduckgo_adapter.py:633: RuntimeWarning: This package (`duckduckgo_search`) has been renamed to `ddgs`! Use `pip install ddgs` instead.
+  backend: DDGS = DDGS(timeout=int(timeout_s))
+/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/discovery/duckduckgo_adapter.py:633: RuntimeWarning: This package (`duckduckgo_search`) has been renamed to `ddgs`! Use `pip install ddgs` instead.
+  backend: DDGS = DDGS(timeout=int(timeout_s))
+INFO:primp:response: https://www.bing.com/search?q=%22example.com%22+subdomains 200
+INFO:primp:response: https://www.bing.com/search?q=%22example.com%22+certificate+transparency 200
+INFO:primp:response: https://www.bing.com/search?q=%22example.com%22+SSL+certificate 200
+INFO:primp:response: https://www.bing.com/search?q=site%3Aexample.com 200
+{"traceId":"00d09c2f25b1ba445bb24cceba719eae","spanId":"bc5cc057c46a31c2","parentSpanId":"4f868c656b0a1f35","name":"duckdb.ingest_batch","kind":"SPAN_KIND_INTERNAL","startTimeUnixNano":"1781124960766937000","endTimeUnixNano":"1781124960767117000","attributes":[{"key":"component","value":{"stringValue":"storage"}}],"status":{"code":"STATUS_CODE_UNSET"},"events":[]}
+INFO:primp:response: https://www.bing.com/search?q=site%3Aexample.com&first=11&FORM=PERE 200
+INFO:primp:response: https://www.bing.com/search?q=site%3Aexample.com&first=21&FORM=PERE1 200
+INFO:hledac.universal.runtime.sprint_scheduler:[MEM] fetch_limit=2 ml_jobs=0
+INFO:primp:response: https://www.bing.com/search?q=site%3Aexample.com&first=31&FORM=PERE2 200
+INFO:primp:response: https://www.bing.com/search?q=site%3Aexample.com&first=41&FORM=PERE3 200
+INFO:hledac.universal.pipeline.live_public_pipeline:[P20] PastebinMonitor targeting: example.com
+WARNING:hledac.universal.pipeline.live_public_pipeline:[P20] Pastebin/GitHub scan failed: cannot access free variable 'CanonicalFinding' where it is not associated with a value in enclosing scope
+INFO:hledac.universal.brain.moe_router:✓ Router MLP initialized (5 experts)
+INFO:hledac.universal.brain.moe_router:MoE router using hash-based routing (no embedding model)
+INFO:hledac.universal.pipeline.live_public_pipeline:[P16] MoE experts: ['temporal', 'security'] for query: OSINT reconnaissance sample target example.com
+INFO:hledac.universal.pipeline.live_public_pipeline:[P14] MoE route: hermes3 for query: OSINT reconnaissance sample target example.com
+WARNING:hledac.universal.pipeline.live_public_pipeline:[REPORT] Generation failed: 'str' object has no attribute 'exists'
+INFO:hledac.universal.pipeline.live_public_pipeline:[P18] Exported markdown to /Users/vojtechhamada/hledac_outputs/1781124968_report.md
+WARNING:hledac.universal.runtime.sprint_scheduler:ct_storage_rejected: candidates=9 stored=0 top_reason=duplicate_detected reasons=('duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected')
+/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/discovery/duckduckgo_adapter.py:633: RuntimeWarning: This package (`duckduckgo_search`) has been renamed to `ddgs`! Use `pip install ddgs` instead.
+  backend: DDGS = DDGS(timeout=int(timeout_s))
+/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/discovery/duckduckgo_adapter.py:633: RuntimeWarning: This package (`duckduckgo_search`) has been renamed to `ddgs`! Use `pip install ddgs` instead.
+  backend: DDGS = DDGS(timeout=int(timeout_s))
+/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/discovery/duckduckgo_adapter.py:633: RuntimeWarning: This package (`duckduckgo_search`) has been renamed to `ddgs`! Use `pip install ddgs` instead.
+  backend: DDGS = DDGS(timeout=int(timeout_s))
+/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/discovery/duckduckgo_adapter.py:633: RuntimeWarning: This package (`duckduckgo_search`) has been renamed to `ddgs`! Use `pip install ddgs` instead.
+  backend: DDGS = DDGS(timeout=int(timeout_s))
+INFO:primp:response: https://www.bing.com/search?q=%22example.com%22+SSL+certificate 200
+INFO:primp:response: https://www.bing.com/search?q=site%3Aexample.com 200
+INFO:primp:response: https://www.bing.com/search?q=%22example.com%22+certificate+transparency 200
+INFO:primp:response: https://www.bing.com/search?q=%22example.com%22+subdomains 200
+{"traceId":"00d09c2f25b1ba445bb24cceba719eae","spanId":"4907fa6ab6b795c0","parentSpanId":"4f868c656b0a1f35","name":"duckdb.ingest_batch","kind":"SPAN_KIND_INTERNAL","startTimeUnixNano":"1781124969013255000","endTimeUnixNano":"1781124969013428000","attributes":[{"key":"component","value":{"stringValue":"storage"}}],"status":{"code":"STATUS_CODE_UNSET"},"events":[]}
+INFO:primp:response: https://www.bing.com/search?q=site%3Aexample.com&first=11&FORM=PERE 200
+INFO:primp:response: https://www.bing.com/search?q=site%3Aexample.com&first=21&FORM=PERE1 200
+INFO:primp:response: https://www.bing.com/search?q=site%3Aexample.com&first=31&FORM=PERE2 200
+INFO:primp:response: https://www.bing.com/search?q=site%3Aexample.com&first=41&FORM=PERE3 200
+INFO:hledac.universal.pipeline.live_public_pipeline:[P18] Exported markdown to /Users/vojtechhamada/hledac_outputs/1781124972_report.md
+/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/resource_allocator.py:307: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x36506c7c0>
+  import gc; gc.collect()  # noqa: E702
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+INFO:hledac.universal.runtime.sprint_scheduler:[MEM] fetch_limit=2 ml_jobs=0
+WARNING:hledac.universal.runtime.sprint_scheduler:ct_storage_rejected: candidates=9 stored=0 top_reason=duplicate_detected reasons=('duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected')
+/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/discovery/duckduckgo_adapter.py:633: RuntimeWarning: This package (`duckduckgo_search`) has been renamed to `ddgs`! Use `pip install ddgs` instead.
+  backend: DDGS = DDGS(timeout=int(timeout_s))
+/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/discovery/duckduckgo_adapter.py:633: RuntimeWarning: This package (`duckduckgo_search`) has been renamed to `ddgs`! Use `pip install ddgs` instead.
+  backend: DDGS = DDGS(timeout=int(timeout_s))
+/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/discovery/duckduckgo_adapter.py:633: RuntimeWarning: This package (`duckduckgo_search`) has been renamed to `ddgs`! Use `pip install ddgs` instead.
+  backend: DDGS = DDGS(timeout=int(timeout_s))
+/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/discovery/duckduckgo_adapter.py:633: RuntimeWarning: This package (`duckduckgo_search`) has been renamed to `ddgs`! Use `pip install ddgs` instead.
+  backend: DDGS = DDGS(timeout=int(timeout_s))
+INFO:primp:response: https://www.bing.com/search?q=%22example.com%22+certificate+transparency 200
+INFO:primp:response: https://www.bing.com/search?q=%22example.com%22+SSL+certificate 200
+INFO:primp:response: https://www.bing.com/search?q=site%3Aexample.com 200
+INFO:primp:response: https://www.bing.com/search?q=%22example.com%22+subdomains 200
+INFO:primp:response: https://www.bing.com/search?q=site%3Aexample.com&first=11&FORM=PERE 200
+{"traceId":"00d09c2f25b1ba445bb24cceba719eae","spanId":"1d17c8e80bcf9f71","parentSpanId":"4f868c656b0a1f35","name":"duckdb.ingest_batch","kind":"SPAN_KIND_INTERNAL","startTimeUnixNano":"1781124973676334000","endTimeUnixNano":"1781124973676414000","attributes":[{"key":"component","value":{"stringValue":"storage"}}],"status":{"code":"STATUS_CODE_UNSET"},"events":[]}
+INFO:primp:response: https://www.bing.com/search?q=site%3Aexample.com&first=21&FORM=PERE1 200
+INFO:primp:response: https://www.bing.com/search?q=site%3Aexample.com&first=31&FORM=PERE2 200
+INFO:primp:response: https://www.bing.com/search?q=site%3Aexample.com&first=41&FORM=PERE3 200
+INFO:hledac.universal.pipeline.live_public_pipeline:[P18] Exported markdown to /Users/vojtechhamada/hledac_outputs/1781124977_report.md
+WARNING:hledac.universal.runtime.sprint_scheduler:ct_storage_rejected: candidates=9 stored=0 top_reason=duplicate_detected reasons=('duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected')
+/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/discovery/duckduckgo_adapter.py:633: RuntimeWarning: This package (`duckduckgo_search`) has been renamed to `ddgs`! Use `pip install ddgs` instead.
+  backend: DDGS = DDGS(timeout=int(timeout_s))
+/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/discovery/duckduckgo_adapter.py:633: RuntimeWarning: This package (`duckduckgo_search`) has been renamed to `ddgs`! Use `pip install ddgs` instead.
+  backend: DDGS = DDGS(timeout=int(timeout_s))
+/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/discovery/duckduckgo_adapter.py:633: RuntimeWarning: This package (`duckduckgo_search`) has been renamed to `ddgs`! Use `pip install ddgs` instead.
+  backend: DDGS = DDGS(timeout=int(timeout_s))
+/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/discovery/duckduckgo_adapter.py:633: RuntimeWarning: This package (`duckduckgo_search`) has been renamed to `ddgs`! Use `pip install ddgs` instead.
+  backend: DDGS = DDGS(timeout=int(timeout_s))
+INFO:primp:response: https://www.bing.com/search?q=%22example.com%22+subdomains 200
+INFO:primp:response: https://www.bing.com/search?q=%22example.com%22+certificate+transparency 200
+INFO:primp:response: https://www.bing.com/search?q=site%3Aexample.com 200
+INFO:primp:response: https://www.bing.com/search?q=%22example.com%22+SSL+certificate 200
+{"traceId":"00d09c2f25b1ba445bb24cceba719eae","spanId":"6314b9ecb7de8866","parentSpanId":"4f868c656b0a1f35","name":"duckdb.ingest_batch","kind":"SPAN_KIND_INTERNAL","startTimeUnixNano":"1781124978454498000","endTimeUnixNano":"1781124978454617000","attributes":[{"key":"component","value":{"stringValue":"storage"}}],"status":{"code":"STATUS_CODE_UNSET"},"events":[]}
+INFO:primp:response: https://www.bing.com/search?q=site%3Aexample.com&first=11&FORM=PERE 200
+INFO:primp:response: https://www.bing.com/search?q=site%3Aexample.com&first=21&FORM=PERE1 200
+INFO:primp:response: https://www.bing.com/search?q=site%3Aexample.com&first=31&FORM=PERE2 200
+INFO:primp:response: https://www.bing.com/search?q=site%3Aexample.com&first=41&FORM=PERE3 200
+INFO:hledac.universal.pipeline.live_public_pipeline:[P20] PastebinMonitor targeting: example.com
+WARNING:hledac.universal.pipeline.live_public_pipeline:[P20] Pastebin/GitHub scan failed: cannot access free variable 'CanonicalFinding' where it is not associated with a value in enclosing scope
+/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/resource_allocator.py:307: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x36506c310>
+  import gc; gc.collect()  # noqa: E702
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+INFO:hledac.universal.runtime.sprint_scheduler:[MEM] fetch_limit=2 ml_jobs=0
+INFO:hledac.universal.brain.moe_router:✓ Router MLP initialized (5 experts)
+INFO:hledac.universal.brain.moe_router:MoE router using hash-based routing (no embedding model)
+INFO:hledac.universal.pipeline.live_public_pipeline:[P16] MoE experts: ['security', 'graph'] for query: OSINT reconnaissance sample target example.com
+INFO:hledac.universal.pipeline.live_public_pipeline:[P14] MoE route: hermes3 for query: OSINT reconnaissance sample target example.com
+WARNING:hledac.universal.pipeline.live_public_pipeline:[REPORT] Generation failed: 'str' object has no attribute 'exists'
+INFO:hledac.universal.pipeline.live_public_pipeline:[P18] Exported markdown to /Users/vojtechhamada/hledac_outputs/1781124985_report.md
+WARNING:hledac.universal.runtime.sprint_scheduler:ct_storage_rejected: candidates=9 stored=0 top_reason=duplicate_detected reasons=('duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected')
+/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/discovery/duckduckgo_adapter.py:633: RuntimeWarning: This package (`duckduckgo_search`) has been renamed to `ddgs`! Use `pip install ddgs` instead.
+  backend: DDGS = DDGS(timeout=int(timeout_s))
+/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/discovery/duckduckgo_adapter.py:633: RuntimeWarning: This package (`duckduckgo_search`) has been renamed to `ddgs`! Use `pip install ddgs` instead.
+  backend: DDGS = DDGS(timeout=int(timeout_s))
+/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/discovery/duckduckgo_adapter.py:633: RuntimeWarning: This package (`duckduckgo_search`) has been renamed to `ddgs`! Use `pip install ddgs` instead.
+  backend: DDGS = DDGS(timeout=int(timeout_s))
+/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/discovery/duckduckgo_adapter.py:633: RuntimeWarning: This package (`duckduckgo_search`) has been renamed to `ddgs`! Use `pip install ddgs` instead.
+  backend: DDGS = DDGS(timeout=int(timeout_s))
+INFO:primp:response: https://www.bing.com/search?q=%22example.com%22+SSL+certificate 200
+INFO:primp:response: https://www.bing.com/search?q=%22example.com%22+subdomains 200
+INFO:primp:response: https://www.bing.com/search?q=site%3Aexample.com 200
+INFO:primp:response: https://www.bing.com/search?q=%22example.com%22+certificate+transparency 200
+{"traceId":"00d09c2f25b1ba445bb24cceba719eae","spanId":"dfde65ef737537c0","parentSpanId":"4f868c656b0a1f35","name":"duckdb.ingest_batch","kind":"SPAN_KIND_INTERNAL","startTimeUnixNano":"1781124986780091000","endTimeUnixNano":"1781124986780300000","attributes":[{"key":"component","value":{"stringValue":"storage"}}],"status":{"code":"STATUS_CODE_UNSET"},"events":[]}
+INFO:primp:response: https://www.bing.com/search?q=site%3Aexample.com&first=11&FORM=PERE 200
+INFO:primp:response: https://www.bing.com/search?q=site%3Aexample.com&first=21&FORM=PERE1 200
+INFO:primp:response: https://www.bing.com/search?q=site%3Aexample.com&first=31&FORM=PERE2 200
+INFO:primp:response: https://www.bing.com/search?q=site%3Aexample.com&first=41&FORM=PERE3 200
+INFO:hledac.universal.pipeline.live_public_pipeline:[P18] Exported markdown to /Users/vojtechhamada/hledac_outputs/1781124990_report.md
+WARNING:hledac.universal.runtime.sprint_scheduler:ct_storage_rejected: candidates=9 stored=0 top_reason=duplicate_detected reasons=('duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected')
+/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/discovery/duckduckgo_adapter.py:633: RuntimeWarning: This package (`duckduckgo_search`) has been renamed to `ddgs`! Use `pip install ddgs` instead.
+  backend: DDGS = DDGS(timeout=int(timeout_s))
+/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/discovery/duckduckgo_adapter.py:633: RuntimeWarning: This package (`duckduckgo_search`) has been renamed to `ddgs`! Use `pip install ddgs` instead.
+  backend: DDGS = DDGS(timeout=int(timeout_s))
+/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/discovery/duckduckgo_adapter.py:633: RuntimeWarning: This package (`duckduckgo_search`) has been renamed to `ddgs`! Use `pip install ddgs` instead.
+  backend: DDGS = DDGS(timeout=int(timeout_s))
+/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/discovery/duckduckgo_adapter.py:633: RuntimeWarning: This package (`duckduckgo_search`) has been renamed to `ddgs`! Use `pip install ddgs` instead.
+  backend: DDGS = DDGS(timeout=int(timeout_s))
+INFO:primp:response: https://www.bing.com/search?q=%22example.com%22+certificate+transparency 200
+INFO:primp:response: https://www.bing.com/search?q=%22example.com%22+SSL+certificate 200
+INFO:primp:response: https://www.bing.com/search?q=site%3Aexample.com 200
+INFO:primp:response: https://www.bing.com/search?q=%22example.com%22+subdomains 200
+INFO:primp:response: https://www.bing.com/search?q=site%3Aexample.com&first=11&FORM=PERE 200
+{"traceId":"00d09c2f25b1ba445bb24cceba719eae","spanId":"5e83194fea83ed3a","parentSpanId":"4f868c656b0a1f35","name":"duckdb.ingest_batch","kind":"SPAN_KIND_INTERNAL","startTimeUnixNano":"1781124991604441000","endTimeUnixNano":"1781124991604557000","attributes":[{"key":"component","value":{"stringValue":"storage"}}],"status":{"code":"STATUS_CODE_UNSET"},"events":[]}
+INFO:hledac.universal.runtime.sprint_scheduler:[MEM] fetch_limit=2 ml_jobs=0
+INFO:primp:response: https://www.bing.com/search?q=site%3Aexample.com&first=21&FORM=PERE1 200
+INFO:primp:response: https://www.bing.com/search?q=site%3Aexample.com&first=31&FORM=PERE2 200
+INFO:primp:response: https://www.bing.com/search?q=site%3Aexample.com&first=41&FORM=PERE3 200
+INFO:hledac.universal.pipeline.live_public_pipeline:[P18] Exported markdown to /Users/vojtechhamada/hledac_outputs/1781124995_report.md
+WARNING:hledac.universal.runtime.sprint_scheduler:ct_storage_rejected: candidates=9 stored=0 top_reason=duplicate_detected reasons=('duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected')
+/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/discovery/duckduckgo_adapter.py:633: RuntimeWarning: This package (`duckduckgo_search`) has been renamed to `ddgs`! Use `pip install ddgs` instead.
+  backend: DDGS = DDGS(timeout=int(timeout_s))
+/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/discovery/duckduckgo_adapter.py:633: RuntimeWarning: This package (`duckduckgo_search`) has been renamed to `ddgs`! Use `pip install ddgs` instead.
+  backend: DDGS = DDGS(timeout=int(timeout_s))
+/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/discovery/duckduckgo_adapter.py:633: RuntimeWarning: This package (`duckduckgo_search`) has been renamed to `ddgs`! Use `pip install ddgs` instead.
+  backend: DDGS = DDGS(timeout=int(timeout_s))
+/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/discovery/duckduckgo_adapter.py:633: RuntimeWarning: This package (`duckduckgo_search`) has been renamed to `ddgs`! Use `pip install ddgs` instead.
+  backend: DDGS = DDGS(timeout=int(timeout_s))
+INFO:primp:response: https://www.bing.com/search?q=site%3Aexample.com 200
+INFO:primp:response: https://www.bing.com/search?q=%22example.com%22+SSL+certificate 200
+INFO:primp:response: https://www.bing.com/search?q=%22example.com%22+certificate+transparency 200
+INFO:primp:response: https://www.bing.com/search?q=%22example.com%22+subdomains 200
+{"traceId":"00d09c2f25b1ba445bb24cceba719eae","spanId":"385d42bcb1dfb7c3","parentSpanId":"4f868c656b0a1f35","name":"duckdb.ingest_batch","kind":"SPAN_KIND_INTERNAL","startTimeUnixNano":"1781124996683165000","endTimeUnixNano":"1781124996683288000","attributes":[{"key":"component","value":{"stringValue":"storage"}}],"status":{"code":"STATUS_CODE_UNSET"},"events":[]}
+INFO:primp:response: https://www.bing.com/search?q=site%3Aexample.com&first=11&FORM=PERE 200
+INFO:primp:response: https://www.bing.com/search?q=site%3Aexample.com&first=21&FORM=PERE1 200
+INFO:primp:response: https://www.bing.com/search?q=site%3Aexample.com&first=31&FORM=PERE2 200
+INFO:primp:response: https://www.bing.com/search?q=site%3Aexample.com&first=41&FORM=PERE3 200
+INFO:hledac.universal.pipeline.live_public_pipeline:[P20] PastebinMonitor targeting: example.com
+WARNING:hledac.universal.pipeline.live_public_pipeline:[P20] Pastebin/GitHub scan failed: cannot access free variable 'CanonicalFinding' where it is not associated with a value in enclosing scope
+INFO:hledac.universal.brain.moe_router:✓ Router MLP initialized (5 experts)
+INFO:hledac.universal.brain.moe_router:MoE router using hash-based routing (no embedding model)
+INFO:hledac.universal.pipeline.live_public_pipeline:[P16] MoE experts: ['temporal', 'synthesis'] for query: OSINT reconnaissance sample target example.com
+INFO:hledac.universal.pipeline.live_public_pipeline:[P14] MoE route: hermes3 for query: OSINT reconnaissance sample target example.com
+WARNING:hledac.universal.pipeline.live_public_pipeline:[REPORT] Generation failed: 'str' object has no attribute 'exists'
+INFO:hledac.universal.pipeline.live_public_pipeline:[P18] Exported markdown to /Users/vojtechhamada/hledac_outputs/1781125004_report.md
+/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/resource_allocator.py:307: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x3650c13f0>
+  import gc; gc.collect()  # noqa: E702
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+INFO:hledac.universal.runtime.sprint_scheduler:[MEM] fetch_limit=2 ml_jobs=0
+WARNING:hledac.universal.runtime.sprint_scheduler:ct_storage_rejected: candidates=9 stored=0 top_reason=duplicate_detected reasons=('duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected')
+/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/discovery/duckduckgo_adapter.py:633: RuntimeWarning: This package (`duckduckgo_search`) has been renamed to `ddgs`! Use `pip install ddgs` instead.
+  backend: DDGS = DDGS(timeout=int(timeout_s))
+/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/discovery/duckduckgo_adapter.py:633: RuntimeWarning: This package (`duckduckgo_search`) has been renamed to `ddgs`! Use `pip install ddgs` instead.
+  backend: DDGS = DDGS(timeout=int(timeout_s))
+/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/discovery/duckduckgo_adapter.py:633: RuntimeWarning: This package (`duckduckgo_search`) has been renamed to `ddgs`! Use `pip install ddgs` instead.
+  backend: DDGS = DDGS(timeout=int(timeout_s))
+/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/discovery/duckduckgo_adapter.py:633: RuntimeWarning: This package (`duckduckgo_search`) has been renamed to `ddgs`! Use `pip install ddgs` instead.
+  backend: DDGS = DDGS(timeout=int(timeout_s))
+INFO:primp:response: https://www.bing.com/search?q=site%3Aexample.com 200
+INFO:primp:response: https://www.bing.com/search?q=%22example.com%22+SSL+certificate 200
+INFO:primp:response: https://www.bing.com/search?q=%22example.com%22+certificate+transparency 200
+INFO:primp:response: https://www.bing.com/search?q=%22example.com%22+subdomains 200
+INFO:primp:response: https://www.bing.com/search?q=site%3Aexample.com&first=11&FORM=PERE 200
+{"traceId":"00d09c2f25b1ba445bb24cceba719eae","spanId":"1f3bea13efea3884","parentSpanId":"4f868c656b0a1f35","name":"duckdb.ingest_batch","kind":"SPAN_KIND_INTERNAL","startTimeUnixNano":"1781125005422607000","endTimeUnixNano":"1781125005422775000","attributes":[{"key":"component","value":{"stringValue":"storage"}}],"status":{"code":"STATUS_CODE_UNSET"},"events":[]}
+INFO:primp:response: https://www.bing.com/search?q=site%3Aexample.com&first=21&FORM=PERE1 200
+INFO:primp:response: https://www.bing.com/search?q=site%3Aexample.com&first=31&FORM=PERE2 200
+INFO:primp:response: https://www.bing.com/search?q=site%3Aexample.com&first=41&FORM=PERE3 200
+INFO:hledac.universal.pipeline.live_public_pipeline:[P18] Exported markdown to /Users/vojtechhamada/hledac_outputs/1781125009_report.md
+WARNING:hledac.universal.runtime.sprint_scheduler:ct_storage_rejected: candidates=9 stored=0 top_reason=duplicate_detected reasons=('duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected')
+/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/discovery/duckduckgo_adapter.py:633: RuntimeWarning: This package (`duckduckgo_search`) has been renamed to `ddgs`! Use `pip install ddgs` instead.
+  backend: DDGS = DDGS(timeout=int(timeout_s))
+/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/discovery/duckduckgo_adapter.py:633: RuntimeWarning: This package (`duckduckgo_search`) has been renamed to `ddgs`! Use `pip install ddgs` instead.
+  backend: DDGS = DDGS(timeout=int(timeout_s))
+/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/discovery/duckduckgo_adapter.py:633: RuntimeWarning: This package (`duckduckgo_search`) has been renamed to `ddgs`! Use `pip install ddgs` instead.
+  backend: DDGS = DDGS(timeout=int(timeout_s))
+/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/discovery/duckduckgo_adapter.py:633: RuntimeWarning: This package (`duckduckgo_search`) has been renamed to `ddgs`! Use `pip install ddgs` instead.
+  backend: DDGS = DDGS(timeout=int(timeout_s))
+INFO:primp:response: https://www.bing.com/search?q=%22example.com%22+SSL+certificate 200
+INFO:primp:response: https://www.bing.com/search?q=%22example.com%22+certificate+transparency 200
+INFO:primp:response: https://www.bing.com/search?q=%22example.com%22+subdomains 200
+INFO:primp:response: https://www.bing.com/search?q=site%3Aexample.com 200
+{"traceId":"00d09c2f25b1ba445bb24cceba719eae","spanId":"0e9dbb87ab7bf24a","parentSpanId":"4f868c656b0a1f35","name":"duckdb.ingest_batch","kind":"SPAN_KIND_INTERNAL","startTimeUnixNano":"1781125010163427000","endTimeUnixNano":"1781125010163550000","attributes":[{"key":"component","value":{"stringValue":"storage"}}],"status":{"code":"STATUS_CODE_UNSET"},"events":[]}
+INFO:primp:response: https://www.bing.com/search?q=site%3Aexample.com&first=11&FORM=PERE 200
+INFO:primp:response: https://www.bing.com/search?q=site%3Aexample.com&first=21&FORM=PERE1 200
+INFO:primp:response: https://www.bing.com/search?q=site%3Aexample.com&first=31&FORM=PERE2 200
+INFO:primp:response: https://www.bing.com/search?q=site%3Aexample.com&first=41&FORM=PERE3 200
+INFO:hledac.universal.pipeline.live_public_pipeline:[P20] PastebinMonitor targeting: example.com
+/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/resource_allocator.py:307: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x3650c2200>
+  import gc; gc.collect()  # noqa: E702
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+INFO:hledac.universal.runtime.sprint_scheduler:[MEM] fetch_limit=2 ml_jobs=0
+WARNING:hledac.universal.pipeline.live_public_pipeline:[P20] Pastebin/GitHub scan failed: cannot access free variable 'CanonicalFinding' where it is not associated with a value in enclosing scope
+INFO:hledac.universal.brain.moe_router:✓ Router MLP initialized (5 experts)
+INFO:hledac.universal.brain.moe_router:MoE router using hash-based routing (no embedding model)
+INFO:hledac.universal.pipeline.live_public_pipeline:[P16] MoE experts: ['synthesis', 'graph'] for query: OSINT reconnaissance sample target example.com
+INFO:hledac.universal.pipeline.live_public_pipeline:[P14] MoE route: hermes3 for query: OSINT reconnaissance sample target example.com
+WARNING:hledac.universal.pipeline.live_public_pipeline:[REPORT] Generation failed: 'str' object has no attribute 'exists'
+INFO:hledac.universal.pipeline.live_public_pipeline:[P18] Exported markdown to /Users/vojtechhamada/hledac_outputs/1781125017_report.md
+INFO:hledac.universal.runtime.sprint_scheduler:OODA: cycle start
+INFO:hledac.universal.runtime.sprint_scheduler:OODA: acted on 0 nodes
+WARNING:hledac.universal.runtime.sprint_scheduler:ct_storage_rejected: candidates=9 stored=0 top_reason=duplicate_detected reasons=('duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected')
+/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/discovery/duckduckgo_adapter.py:633: RuntimeWarning: This package (`duckduckgo_search`) has been renamed to `ddgs`! Use `pip install ddgs` instead.
+  backend: DDGS = DDGS(timeout=int(timeout_s))
+/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/discovery/duckduckgo_adapter.py:633: RuntimeWarning: This package (`duckduckgo_search`) has been renamed to `ddgs`! Use `pip install ddgs` instead.
+  backend: DDGS = DDGS(timeout=int(timeout_s))
+/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/discovery/duckduckgo_adapter.py:633: RuntimeWarning: This package (`duckduckgo_search`) has been renamed to `ddgs`! Use `pip install ddgs` instead.
+  backend: DDGS = DDGS(timeout=int(timeout_s))
+/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/discovery/duckduckgo_adapter.py:633: RuntimeWarning: This package (`duckduckgo_search`) has been renamed to `ddgs`! Use `pip install ddgs` instead.
+  backend: DDGS = DDGS(timeout=int(timeout_s))
+INFO:primp:response: https://www.bing.com/search?q=%22example.com%22+subdomains 200
+INFO:primp:response: https://www.bing.com/search?q=%22example.com%22+SSL+certificate 200
+INFO:primp:response: https://www.bing.com/search?q=%22example.com%22+certificate+transparency 200
+INFO:primp:response: https://www.bing.com/search?q=site%3Aexample.com 200
+{"traceId":"00d09c2f25b1ba445bb24cceba719eae","spanId":"9b8fbcc0d98e5e7d","parentSpanId":"4f868c656b0a1f35","name":"duckdb.ingest_batch","kind":"SPAN_KIND_INTERNAL","startTimeUnixNano":"1781125018370975000","endTimeUnixNano":"1781125018371176000","attributes":[{"key":"component","value":{"stringValue":"storage"}}],"status":{"code":"STATUS_CODE_UNSET"},"events":[]}
+INFO:primp:response: https://www.bing.com/search?q=site%3Aexample.com&first=11&FORM=PERE 200
+INFO:primp:response: https://www.bing.com/search?q=site%3Aexample.com&first=21&FORM=PERE1 200
+INFO:primp:response: https://www.bing.com/search?q=site%3Aexample.com&first=31&FORM=PERE2 200
+INFO:primp:response: https://www.bing.com/search?q=site%3Aexample.com&first=41&FORM=PERE3 200
+INFO:hledac.universal.pipeline.live_public_pipeline:[P20] PastebinMonitor targeting: example.com
+WARNING:hledac.universal.pipeline.live_public_pipeline:[P20] Pastebin/GitHub scan failed: cannot access free variable 'CanonicalFinding' where it is not associated with a value in enclosing scope
+/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/resource_allocator.py:307: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x3650c13f0>
+  import gc; gc.collect()  # noqa: E702
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+INFO:hledac.universal.runtime.sprint_scheduler:[MEM] fetch_limit=2 ml_jobs=0
+INFO:hledac.universal.brain.moe_router:✓ Router MLP initialized (5 experts)
+INFO:hledac.universal.brain.moe_router:MoE router using hash-based routing (no embedding model)
+INFO:hledac.universal.pipeline.live_public_pipeline:[P16] MoE experts: ['synthesis', 'temporal'] for query: OSINT reconnaissance sample target example.com
+INFO:hledac.universal.pipeline.live_public_pipeline:[P14] MoE route: hermes3 for query: OSINT reconnaissance sample target example.com
+WARNING:hledac.universal.pipeline.live_public_pipeline:[REPORT] Generation failed: 'str' object has no attribute 'exists'
+INFO:hledac.universal.pipeline.live_public_pipeline:[P18] Exported markdown to /Users/vojtechhamada/hledac_outputs/1781125025_report.md
+WARNING:hledac.universal.runtime.sprint_scheduler:ct_storage_rejected: candidates=9 stored=0 top_reason=duplicate_detected reasons=('duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected')
+/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/discovery/duckduckgo_adapter.py:633: RuntimeWarning: This package (`duckduckgo_search`) has been renamed to `ddgs`! Use `pip install ddgs` instead.
+  backend: DDGS = DDGS(timeout=int(timeout_s))
+/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/discovery/duckduckgo_adapter.py:633: RuntimeWarning: This package (`duckduckgo_search`) has been renamed to `ddgs`! Use `pip install ddgs` instead.
+  backend: DDGS = DDGS(timeout=int(timeout_s))
+/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/discovery/duckduckgo_adapter.py:633: RuntimeWarning: This package (`duckduckgo_search`) has been renamed to `ddgs`! Use `pip install ddgs` instead.
+  backend: DDGS = DDGS(timeout=int(timeout_s))
+/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/discovery/duckduckgo_adapter.py:633: RuntimeWarning: This package (`duckduckgo_search`) has been renamed to `ddgs`! Use `pip install ddgs` instead.
+  backend: DDGS = DDGS(timeout=int(timeout_s))
+INFO:primp:response: https://www.bing.com/search?q=%22example.com%22+certificate+transparency 200
+INFO:primp:response: https://www.bing.com/search?q=%22example.com%22+subdomains 200
+INFO:primp:response: https://www.bing.com/search?q=%22example.com%22+SSL+certificate 200
+INFO:primp:response: https://www.bing.com/search?q=site%3Aexample.com 200
+{"traceId":"00d09c2f25b1ba445bb24cceba719eae","spanId":"fcfb9989cdf0a3ee","parentSpanId":"4f868c656b0a1f35","name":"duckdb.ingest_batch","kind":"SPAN_KIND_INTERNAL","startTimeUnixNano":"1781125026785304000","endTimeUnixNano":"1781125026785497000","attributes":[{"key":"component","value":{"stringValue":"storage"}}],"status":{"code":"STATUS_CODE_UNSET"},"events":[]}
+INFO:primp:response: https://www.bing.com/search?q=site%3Aexample.com&first=11&FORM=PERE 200
+INFO:primp:response: https://www.bing.com/search?q=site%3Aexample.com&first=21&FORM=PERE1 200
+INFO:primp:response: https://www.bing.com/search?q=site%3Aexample.com&first=31&FORM=PERE2 200
+INFO:primp:response: https://www.bing.com/search?q=site%3Aexample.com&first=41&FORM=PERE3 200
+INFO:hledac.universal.pipeline.live_public_pipeline:[P20] PastebinMonitor targeting: example.com
+WARNING:hledac.universal.pipeline.live_public_pipeline:[P20] Pastebin/GitHub scan failed: cannot access free variable 'CanonicalFinding' where it is not associated with a value in enclosing scope
+INFO:hledac.universal.brain.moe_router:✓ Router MLP initialized (5 experts)
+INFO:hledac.universal.brain.moe_router:MoE router using hash-based routing (no embedding model)
+INFO:hledac.universal.pipeline.live_public_pipeline:[P16] MoE experts: ['synthesis', 'temporal'] for query: OSINT reconnaissance sample target example.com
+INFO:hledac.universal.pipeline.live_public_pipeline:[P14] MoE route: hermes3 for query: OSINT reconnaissance sample target example.com
+WARNING:hledac.universal.pipeline.live_public_pipeline:[REPORT] Generation failed: 'str' object has no attribute 'exists'
+INFO:hledac.universal.pipeline.live_public_pipeline:[P18] Exported markdown to /Users/vojtechhamada/hledac_outputs/1781125034_report.md
+/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/resource_allocator.py:307: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x3650c1e40>
+  import gc; gc.collect()  # noqa: E702
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+INFO:hledac.universal.runtime.sprint_scheduler:[MEM] fetch_limit=2 ml_jobs=0
+WARNING:hledac.universal.runtime.sprint_scheduler:ct_storage_rejected: candidates=9 stored=0 top_reason=duplicate_detected reasons=('duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected')
+/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/discovery/duckduckgo_adapter.py:633: RuntimeWarning: This package (`duckduckgo_search`) has been renamed to `ddgs`! Use `pip install ddgs` instead.
+  backend: DDGS = DDGS(timeout=int(timeout_s))
+/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/discovery/duckduckgo_adapter.py:633: RuntimeWarning: This package (`duckduckgo_search`) has been renamed to `ddgs`! Use `pip install ddgs` instead.
+  backend: DDGS = DDGS(timeout=int(timeout_s))
+/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/discovery/duckduckgo_adapter.py:633: RuntimeWarning: This package (`duckduckgo_search`) has been renamed to `ddgs`! Use `pip install ddgs` instead.
+  backend: DDGS = DDGS(timeout=int(timeout_s))
+/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/discovery/duckduckgo_adapter.py:633: RuntimeWarning: This package (`duckduckgo_search`) has been renamed to `ddgs`! Use `pip install ddgs` instead.
+  backend: DDGS = DDGS(timeout=int(timeout_s))
+INFO:primp:response: https://www.bing.com/search?q=%22example.com%22+certificate+transparency 200
+INFO:primp:response: https://www.bing.com/search?q=%22example.com%22+subdomains 200
+INFO:primp:response: https://www.bing.com/search?q=site%3Aexample.com 200
+INFO:primp:response: https://www.bing.com/search?q=%22example.com%22+SSL+certificate 200
+{"traceId":"00d09c2f25b1ba445bb24cceba719eae","spanId":"65294d7df68edaf5","parentSpanId":"4f868c656b0a1f35","name":"duckdb.ingest_batch","kind":"SPAN_KIND_INTERNAL","startTimeUnixNano":"1781125035052599000","endTimeUnixNano":"1781125035052733000","attributes":[{"key":"component","value":{"stringValue":"storage"}}],"status":{"code":"STATUS_CODE_UNSET"},"events":[]}
+INFO:primp:response: https://www.bing.com/search?q=site%3Aexample.com&first=11&FORM=PERE 200
+INFO:primp:response: https://www.bing.com/search?q=site%3Aexample.com&first=21&FORM=PERE1 200
+INFO:primp:response: https://www.bing.com/search?q=site%3Aexample.com&first=31&FORM=PERE2 200
+INFO:primp:response: https://www.bing.com/search?q=site%3Aexample.com&first=41&FORM=PERE3 200
+INFO:hledac.universal.pipeline.live_public_pipeline:[P20] PastebinMonitor targeting: example.com
+WARNING:hledac.universal.pipeline.live_public_pipeline:[P20] Pastebin/GitHub scan failed: cannot access free variable 'CanonicalFinding' where it is not associated with a value in enclosing scope
+INFO:hledac.universal.brain.moe_router:✓ Router MLP initialized (5 experts)
+INFO:hledac.universal.brain.moe_router:MoE router using hash-based routing (no embedding model)
+INFO:hledac.universal.pipeline.live_public_pipeline:[P16] MoE experts: ['graph', 'security'] for query: OSINT reconnaissance sample target example.com
+INFO:hledac.universal.pipeline.live_public_pipeline:[P14] MoE route: hermes3 for query: OSINT reconnaissance sample target example.com
+WARNING:hledac.universal.pipeline.live_public_pipeline:[REPORT] Generation failed: 'str' object has no attribute 'exists'
+INFO:hledac.universal.pipeline.live_public_pipeline:[P18] Exported markdown to /Users/vojtechhamada/hledac_outputs/1781125042_report.md
+WARNING:hledac.universal.runtime.sprint_scheduler:ct_storage_rejected: candidates=9 stored=0 top_reason=duplicate_detected reasons=('duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected')
+/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/discovery/duckduckgo_adapter.py:633: RuntimeWarning: This package (`duckduckgo_search`) has been renamed to `ddgs`! Use `pip install ddgs` instead.
+  backend: DDGS = DDGS(timeout=int(timeout_s))
+/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/discovery/duckduckgo_adapter.py:633: RuntimeWarning: This package (`duckduckgo_search`) has been renamed to `ddgs`! Use `pip install ddgs` instead.
+  backend: DDGS = DDGS(timeout=int(timeout_s))
+/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/discovery/duckduckgo_adapter.py:633: RuntimeWarning: This package (`duckduckgo_search`) has been renamed to `ddgs`! Use `pip install ddgs` instead.
+  backend: DDGS = DDGS(timeout=int(timeout_s))
+/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/discovery/duckduckgo_adapter.py:633: RuntimeWarning: This package (`duckduckgo_search`) has been renamed to `ddgs`! Use `pip install ddgs` instead.
+  backend: DDGS = DDGS(timeout=int(timeout_s))
+{"traceId":"00d09c2f25b1ba445bb24cceba719eae","spanId":"c38a0902a33a903f","parentSpanId":"4f868c656b0a1f35","name":"duckdb.ingest_batch","kind":"SPAN_KIND_INTERNAL","startTimeUnixNano":"1781125043332792000","endTimeUnixNano":"1781125043332964000","attributes":[{"key":"component","value":{"stringValue":"storage"}}],"status":{"code":"STATUS_CODE_UNSET"},"events":[]}
+INFO:primp:response: https://www.bing.com/search?q=site%3Aexample.com 200
+INFO:primp:response: https://www.bing.com/search?q=%22example.com%22+certificate+transparency 200
+INFO:primp:response: https://www.bing.com/search?q=%22example.com%22+SSL+certificate 200
+INFO:primp:response: https://www.bing.com/search?q=%22example.com%22+subdomains 200
+INFO:primp:response: https://www.bing.com/search?q=site%3Aexample.com&first=11&FORM=PERE 200
+/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/resource_allocator.py:307: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x3650c1a80>
+  import gc; gc.collect()  # noqa: E702
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+INFO:hledac.universal.runtime.sprint_scheduler:[MEM] fetch_limit=2 ml_jobs=0
+INFO:primp:response: https://www.bing.com/search?q=site%3Aexample.com&first=21&FORM=PERE1 200
+INFO:primp:response: https://www.bing.com/search?q=site%3Aexample.com&first=31&FORM=PERE2 200
+INFO:primp:response: https://www.bing.com/search?q=site%3Aexample.com&first=41&FORM=PERE3 200
+INFO:hledac.universal.pipeline.live_public_pipeline:[P20] PastebinMonitor targeting: example.com
+WARNING:hledac.universal.pipeline.live_public_pipeline:[P20] Pastebin/GitHub scan failed: cannot access free variable 'CanonicalFinding' where it is not associated with a value in enclosing scope
+INFO:hledac.universal.brain.moe_router:✓ Router MLP initialized (5 experts)
+INFO:hledac.universal.brain.moe_router:MoE router using hash-based routing (no embedding model)
+INFO:hledac.universal.pipeline.live_public_pipeline:[P16] MoE experts: ['osint', 'graph'] for query: OSINT reconnaissance sample target example.com
+INFO:hledac.universal.pipeline.live_public_pipeline:[P14] MoE route: hermes3 for query: OSINT reconnaissance sample target example.com
+WARNING:hledac.universal.pipeline.live_public_pipeline:[REPORT] Generation failed: 'str' object has no attribute 'exists'
+INFO:hledac.universal.pipeline.live_public_pipeline:[P18] Exported markdown to /Users/vojtechhamada/hledac_outputs/1781125049_report.md
+WARNING:hledac.universal.runtime.sprint_scheduler:ct_storage_rejected: candidates=9 stored=0 top_reason=duplicate_detected reasons=('duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected')
+/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/discovery/duckduckgo_adapter.py:633: RuntimeWarning: This package (`duckduckgo_search`) has been renamed to `ddgs`! Use `pip install ddgs` instead.
+  backend: DDGS = DDGS(timeout=int(timeout_s))
+/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/discovery/duckduckgo_adapter.py:633: RuntimeWarning: This package (`duckduckgo_search`) has been renamed to `ddgs`! Use `pip install ddgs` instead.
+  backend: DDGS = DDGS(timeout=int(timeout_s))
+/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/discovery/duckduckgo_adapter.py:633: RuntimeWarning: This package (`duckduckgo_search`) has been renamed to `ddgs`! Use `pip install ddgs` instead.
+  backend: DDGS = DDGS(timeout=int(timeout_s))
+/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/discovery/duckduckgo_adapter.py:633: RuntimeWarning: This package (`duckduckgo_search`) has been renamed to `ddgs`! Use `pip install ddgs` instead.
+  backend: DDGS = DDGS(timeout=int(timeout_s))
+INFO:primp:response: https://www.bing.com/search?q=%22example.com%22+certificate+transparency 200
+INFO:primp:response: https://www.bing.com/search?q=site%3Aexample.com 200
+INFO:primp:response: https://www.bing.com/search?q=%22example.com%22+subdomains 200
+INFO:primp:response: https://www.bing.com/search?q=%22example.com%22+SSL+certificate 200
+{"traceId":"00d09c2f25b1ba445bb24cceba719eae","spanId":"f423a465f5f419a4","parentSpanId":"4f868c656b0a1f35","name":"duckdb.ingest_batch","kind":"SPAN_KIND_INTERNAL","startTimeUnixNano":"1781125050617126000","endTimeUnixNano":"1781125050617300000","attributes":[{"key":"component","value":{"stringValue":"storage"}}],"status":{"code":"STATUS_CODE_UNSET"},"events":[]}
+INFO:primp:response: https://www.bing.com/search?q=site%3Aexample.com&first=11&FORM=PERE 200
+INFO:primp:response: https://www.bing.com/search?q=site%3Aexample.com&first=21&FORM=PERE1 200
+INFO:primp:response: https://www.bing.com/search?q=site%3Aexample.com&first=31&FORM=PERE2 200
+INFO:primp:response: https://www.bing.com/search?q=site%3Aexample.com&first=41&FORM=PERE3 200
+INFO:hledac.universal.pipeline.live_public_pipeline:[P18] Exported markdown to /Users/vojtechhamada/hledac_outputs/1781125054_report.md
+/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/resource_allocator.py:307: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x3650c3b50>
+  import gc; gc.collect()  # noqa: E702
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+INFO:hledac.universal.runtime.sprint_scheduler:[MEM] fetch_limit=2 ml_jobs=0
+WARNING:hledac.universal.runtime.sprint_scheduler:ct_storage_rejected: candidates=9 stored=0 top_reason=duplicate_detected reasons=('duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected')
+/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/discovery/duckduckgo_adapter.py:633: RuntimeWarning: This package (`duckduckgo_search`) has been renamed to `ddgs`! Use `pip install ddgs` instead.
+  backend: DDGS = DDGS(timeout=int(timeout_s))
+/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/discovery/duckduckgo_adapter.py:633: RuntimeWarning: This package (`duckduckgo_search`) has been renamed to `ddgs`! Use `pip install ddgs` instead.
+  backend: DDGS = DDGS(timeout=int(timeout_s))
+/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/discovery/duckduckgo_adapter.py:633: RuntimeWarning: This package (`duckduckgo_search`) has been renamed to `ddgs`! Use `pip install ddgs` instead.
+  backend: DDGS = DDGS(timeout=int(timeout_s))
+/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/discovery/duckduckgo_adapter.py:633: RuntimeWarning: This package (`duckduckgo_search`) has been renamed to `ddgs`! Use `pip install ddgs` instead.
+  backend: DDGS = DDGS(timeout=int(timeout_s))
+INFO:primp:response: https://www.bing.com/search?q=site%3Aexample.com 200
+INFO:primp:response: https://www.bing.com/search?q=%22example.com%22+SSL+certificate 200
+INFO:primp:response: https://www.bing.com/search?q=%22example.com%22+subdomains 200
+INFO:primp:response: https://www.bing.com/search?q=%22example.com%22+certificate+transparency 200
+INFO:primp:response: https://www.bing.com/search?q=site%3Aexample.com&first=11&FORM=PERE 200
+{"traceId":"00d09c2f25b1ba445bb24cceba719eae","spanId":"2f6ce3870f118c56","parentSpanId":"4f868c656b0a1f35","name":"duckdb.ingest_batch","kind":"SPAN_KIND_INTERNAL","startTimeUnixNano":"1781125055472037000","endTimeUnixNano":"1781125055472152000","attributes":[{"key":"component","value":{"stringValue":"storage"}}],"status":{"code":"STATUS_CODE_UNSET"},"events":[]}
+INFO:primp:response: https://www.bing.com/search?q=site%3Aexample.com&first=21&FORM=PERE1 200
+INFO:primp:response: https://www.bing.com/search?q=site%3Aexample.com&first=31&FORM=PERE2 200
+INFO:primp:response: https://www.bing.com/search?q=site%3Aexample.com&first=41&FORM=PERE3 200
+INFO:hledac.universal.pipeline.live_public_pipeline:[P18] Exported markdown to /Users/vojtechhamada/hledac_outputs/1781125059_report.md
+WARNING:hledac.universal.runtime.sprint_scheduler:ct_storage_rejected: candidates=9 stored=0 top_reason=duplicate_detected reasons=('duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected')
+/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/discovery/duckduckgo_adapter.py:633: RuntimeWarning: This package (`duckduckgo_search`) has been renamed to `ddgs`! Use `pip install ddgs` instead.
+  backend: DDGS = DDGS(timeout=int(timeout_s))
+/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/discovery/duckduckgo_adapter.py:633: RuntimeWarning: This package (`duckduckgo_search`) has been renamed to `ddgs`! Use `pip install ddgs` instead.
+  backend: DDGS = DDGS(timeout=int(timeout_s))
+/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/discovery/duckduckgo_adapter.py:633: RuntimeWarning: This package (`duckduckgo_search`) has been renamed to `ddgs`! Use `pip install ddgs` instead.
+  backend: DDGS = DDGS(timeout=int(timeout_s))
+/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/discovery/duckduckgo_adapter.py:633: RuntimeWarning: This package (`duckduckgo_search`) has been renamed to `ddgs`! Use `pip install ddgs` instead.
+  backend: DDGS = DDGS(timeout=int(timeout_s))
+INFO:primp:response: https://www.bing.com/search?q=%22example.com%22+SSL+certificate 200
+INFO:primp:response: https://www.bing.com/search?q=site%3Aexample.com 200
+INFO:primp:response: https://www.bing.com/search?q=%22example.com%22+subdomains 200
+INFO:primp:response: https://www.bing.com/search?q=%22example.com%22+certificate+transparency 200
+{"traceId":"00d09c2f25b1ba445bb24cceba719eae","spanId":"1caa04567622ab76","parentSpanId":"4f868c656b0a1f35","name":"duckdb.ingest_batch","kind":"SPAN_KIND_INTERNAL","startTimeUnixNano":"1781125060863548000","endTimeUnixNano":"1781125060863685000","attributes":[{"key":"component","value":{"stringValue":"storage"}}],"status":{"code":"STATUS_CODE_UNSET"},"events":[]}
+INFO:primp:response: https://www.bing.com/search?q=site%3Aexample.com&first=11&FORM=PERE 200
+INFO:primp:response: https://www.bing.com/search?q=site%3Aexample.com&first=21&FORM=PERE1 200
+INFO:primp:response: https://www.bing.com/search?q=site%3Aexample.com&first=31&FORM=PERE2 200
+INFO:primp:response: https://www.bing.com/search?q=site%3Aexample.com&first=41&FORM=PERE3 200
+INFO:hledac.universal.pipeline.live_public_pipeline:[P18] Exported markdown to /Users/vojtechhamada/hledac_outputs/1781125064_report.md
+INFO:hledac.universal.runtime.sprint_scheduler:[MEM] fetch_limit=2 ml_jobs=0
+WARNING:hledac.universal.runtime.sprint_scheduler:ct_storage_rejected: candidates=9 stored=0 top_reason=duplicate_detected reasons=('duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected')
+/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/discovery/duckduckgo_adapter.py:633: RuntimeWarning: This package (`duckduckgo_search`) has been renamed to `ddgs`! Use `pip install ddgs` instead.
+  backend: DDGS = DDGS(timeout=int(timeout_s))
+/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/discovery/duckduckgo_adapter.py:633: RuntimeWarning: This package (`duckduckgo_search`) has been renamed to `ddgs`! Use `pip install ddgs` instead.
+  backend: DDGS = DDGS(timeout=int(timeout_s))
+/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/discovery/duckduckgo_adapter.py:633: RuntimeWarning: This package (`duckduckgo_search`) has been renamed to `ddgs`! Use `pip install ddgs` instead.
+  backend: DDGS = DDGS(timeout=int(timeout_s))
+/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/discovery/duckduckgo_adapter.py:633: RuntimeWarning: This package (`duckduckgo_search`) has been renamed to `ddgs`! Use `pip install ddgs` instead.
+  backend: DDGS = DDGS(timeout=int(timeout_s))
+INFO:primp:response: https://www.bing.com/search?q=%22example.com%22+certificate+transparency 200
+INFO:primp:response: https://www.bing.com/search?q=%22example.com%22+SSL+certificate 200
+INFO:primp:response: https://www.bing.com/search?q=%22example.com%22+subdomains 200
+INFO:primp:response: https://www.bing.com/search?q=site%3Aexample.com 200
+INFO:primp:response: https://www.bing.com/search?q=site%3Aexample.com&first=11&FORM=PERE 200
+{"traceId":"00d09c2f25b1ba445bb24cceba719eae","spanId":"f904b699116a8a79","parentSpanId":"4f868c656b0a1f35","name":"duckdb.ingest_batch","kind":"SPAN_KIND_INTERNAL","startTimeUnixNano":"1781125065577620000","endTimeUnixNano":"1781125065577734000","attributes":[{"key":"component","value":{"stringValue":"storage"}}],"status":{"code":"STATUS_CODE_UNSET"},"events":[]}
+INFO:primp:response: https://www.bing.com/search?q=site%3Aexample.com&first=21&FORM=PERE1 200
+INFO:primp:response: https://www.bing.com/search?q=site%3Aexample.com&first=31&FORM=PERE2 200
+INFO:primp:response: https://www.bing.com/search?q=site%3Aexample.com&first=41&FORM=PERE3 200
+INFO:hledac.universal.pipeline.live_public_pipeline:[P20] PastebinMonitor targeting: example.com
+WARNING:hledac.universal.pipeline.live_public_pipeline:[P20] Pastebin/GitHub scan failed: cannot access free variable 'CanonicalFinding' where it is not associated with a value in enclosing scope
+INFO:hledac.universal.brain.moe_router:✓ Router MLP initialized (5 experts)
+INFO:hledac.universal.brain.moe_router:MoE router using hash-based routing (no embedding model)
+INFO:hledac.universal.pipeline.live_public_pipeline:[P16] MoE experts: ['temporal', 'security'] for query: OSINT reconnaissance sample target example.com
+INFO:hledac.universal.pipeline.live_public_pipeline:[P14] MoE route: hermes3 for query: OSINT reconnaissance sample target example.com
+WARNING:hledac.universal.pipeline.live_public_pipeline:[REPORT] Generation failed: 'str' object has no attribute 'exists'
+INFO:hledac.universal.pipeline.live_public_pipeline:[P18] Exported markdown to /Users/vojtechhamada/hledac_outputs/1781125073_report.md
+WARNING:hledac.universal.runtime.sprint_scheduler:ct_storage_rejected: candidates=9 stored=0 top_reason=duplicate_detected reasons=('duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected')
+/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/discovery/duckduckgo_adapter.py:633: RuntimeWarning: This package (`duckduckgo_search`) has been renamed to `ddgs`! Use `pip install ddgs` instead.
+  backend: DDGS = DDGS(timeout=int(timeout_s))
+/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/discovery/duckduckgo_adapter.py:633: RuntimeWarning: This package (`duckduckgo_search`) has been renamed to `ddgs`! Use `pip install ddgs` instead.
+  backend: DDGS = DDGS(timeout=int(timeout_s))
+/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/discovery/duckduckgo_adapter.py:633: RuntimeWarning: This package (`duckduckgo_search`) has been renamed to `ddgs`! Use `pip install ddgs` instead.
+  backend: DDGS = DDGS(timeout=int(timeout_s))
+/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/discovery/duckduckgo_adapter.py:633: RuntimeWarning: This package (`duckduckgo_search`) has been renamed to `ddgs`! Use `pip install ddgs` instead.
+  backend: DDGS = DDGS(timeout=int(timeout_s))
+INFO:primp:response: https://www.bing.com/search?q=%22example.com%22+certificate+transparency 200
+INFO:primp:response: https://www.bing.com/search?q=site%3Aexample.com 200
+INFO:primp:response: https://www.bing.com/search?q=%22example.com%22+subdomains 200
+INFO:primp:response: https://www.bing.com/search?q=%22example.com%22+SSL+certificate 200
+/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/resource_allocator.py:307: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x36506c7c0>
+  import gc; gc.collect()  # noqa: E702
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+INFO:hledac.universal.runtime.sprint_scheduler:[MEM] fetch_limit=2 ml_jobs=0
+INFO:primp:response: https://www.bing.com/search?q=site%3Aexample.com&first=11&FORM=PERE 200
+{"traceId":"00d09c2f25b1ba445bb24cceba719eae","spanId":"7f137010d4e857f5","parentSpanId":"4f868c656b0a1f35","name":"duckdb.ingest_batch","kind":"SPAN_KIND_INTERNAL","startTimeUnixNano":"1781125074001284000","endTimeUnixNano":"1781125074001554000","attributes":[{"key":"component","value":{"stringValue":"storage"}}],"status":{"code":"STATUS_CODE_UNSET"},"events":[]}
+INFO:primp:response: https://www.bing.com/search?q=site%3Aexample.com&first=21&FORM=PERE1 200
+INFO:primp:response: https://www.bing.com/search?q=site%3Aexample.com&first=31&FORM=PERE2 200
+INFO:primp:response: https://www.bing.com/search?q=site%3Aexample.com&first=41&FORM=PERE3 200
+INFO:hledac.universal.pipeline.live_public_pipeline:[P20] PastebinMonitor targeting: example.com
+WARNING:hledac.universal.pipeline.live_public_pipeline:[P20] Pastebin/GitHub scan failed: cannot access free variable 'CanonicalFinding' where it is not associated with a value in enclosing scope
+INFO:hledac.universal.brain.moe_router:✓ Router MLP initialized (5 experts)
+INFO:hledac.universal.brain.moe_router:MoE router using hash-based routing (no embedding model)
+INFO:hledac.universal.pipeline.live_public_pipeline:[P16] MoE experts: ['osint', 'synthesis'] for query: OSINT reconnaissance sample target example.com
+INFO:hledac.universal.pipeline.live_public_pipeline:[P14] MoE route: hermes3 for query: OSINT reconnaissance sample target example.com
+WARNING:hledac.universal.pipeline.live_public_pipeline:[REPORT] Generation failed: 'str' object has no attribute 'exists'
+INFO:hledac.universal.pipeline.live_public_pipeline:[P18] Exported markdown to /Users/vojtechhamada/hledac_outputs/1781125080_report.md
+INFO:hledac.universal.runtime.sprint_scheduler:OODA: cycle start
+INFO:hledac.universal.runtime.sprint_scheduler:OODA: acted on 0 nodes
+WARNING:hledac.universal.runtime.sprint_scheduler:ct_storage_rejected: candidates=9 stored=0 top_reason=duplicate_detected reasons=('duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected')
+/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/discovery/duckduckgo_adapter.py:633: RuntimeWarning: This package (`duckduckgo_search`) has been renamed to `ddgs`! Use `pip install ddgs` instead.
+  backend: DDGS = DDGS(timeout=int(timeout_s))
+/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/discovery/duckduckgo_adapter.py:633: RuntimeWarning: This package (`duckduckgo_search`) has been renamed to `ddgs`! Use `pip install ddgs` instead.
+  backend: DDGS = DDGS(timeout=int(timeout_s))
+/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/discovery/duckduckgo_adapter.py:633: RuntimeWarning: This package (`duckduckgo_search`) has been renamed to `ddgs`! Use `pip install ddgs` instead.
+  backend: DDGS = DDGS(timeout=int(timeout_s))
+/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/discovery/duckduckgo_adapter.py:633: RuntimeWarning: This package (`duckduckgo_search`) has been renamed to `ddgs`! Use `pip install ddgs` instead.
+  backend: DDGS = DDGS(timeout=int(timeout_s))
+INFO:primp:response: https://www.bing.com/search?q=site%3Aexample.com 200
+INFO:primp:response: https://www.bing.com/search?q=%22example.com%22+SSL+certificate 200
+INFO:primp:response: https://www.bing.com/search?q=%22example.com%22+subdomains 200
+INFO:primp:response: https://www.bing.com/search?q=%22example.com%22+certificate+transparency 200
+{"traceId":"00d09c2f25b1ba445bb24cceba719eae","spanId":"82a3172b502699d3","parentSpanId":"4f868c656b0a1f35","name":"duckdb.ingest_batch","kind":"SPAN_KIND_INTERNAL","startTimeUnixNano":"1781125081089174000","endTimeUnixNano":"1781125081089347000","attributes":[{"key":"component","value":{"stringValue":"storage"}}],"status":{"code":"STATUS_CODE_UNSET"},"events":[]}
+INFO:primp:response: https://www.bing.com/search?q=site%3Aexample.com&first=11&FORM=PERE 200
+INFO:primp:response: https://www.bing.com/search?q=site%3Aexample.com&first=21&FORM=PERE1 200
+INFO:primp:response: https://www.bing.com/search?q=site%3Aexample.com&first=31&FORM=PERE2 200
+INFO:primp:response: https://www.bing.com/search?q=site%3Aexample.com&first=41&FORM=PERE3 200
+/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/resource_allocator.py:307: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x3650c1e40>
+  import gc; gc.collect()  # noqa: E702
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/resource_allocator.py:307: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x3650c27a0>
+  import gc; gc.collect()  # noqa: E702
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+INFO:hledac.universal.runtime.sprint_scheduler:[MEM] fetch_limit=2 ml_jobs=0
+INFO:hledac.universal.pipeline.live_public_pipeline:[P20] PastebinMonitor targeting: example.com
+WARNING:hledac.universal.pipeline.live_public_pipeline:[P20] Pastebin/GitHub scan failed: cannot access free variable 'CanonicalFinding' where it is not associated with a value in enclosing scope
+INFO:hledac.universal.transport.conditional_cache:conditional_cache: LMDB backend at /Users/vojtechhamada/.cache/hledac/conditional_cache (map=4096KB)
+INFO:hledac.universal.brain.moe_router:✓ Router MLP initialized (5 experts)
+INFO:hledac.universal.brain.moe_router:MoE router using hash-based routing (no embedding model)
+INFO:hledac.universal.pipeline.live_public_pipeline:[P16] MoE experts: ['graph', 'synthesis'] for query: OSINT reconnaissance sample target example.com
+INFO:hledac.universal.pipeline.live_public_pipeline:[P14] MoE route: hermes3 for query: OSINT reconnaissance sample target example.com
+WARNING:hledac.universal.pipeline.live_public_pipeline:[REPORT] Generation failed: 'str' object has no attribute 'exists'
+INFO:hledac.universal.pipeline.live_public_pipeline:[P18] Exported markdown to /Users/vojtechhamada/hledac_outputs/1781125087_report.md
+WARNING:hledac.universal.runtime.sprint_scheduler:ct_storage_rejected: candidates=9 stored=0 top_reason=duplicate_detected reasons=('duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected')
+/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/discovery/duckduckgo_adapter.py:633: RuntimeWarning: This package (`duckduckgo_search`) has been renamed to `ddgs`! Use `pip install ddgs` instead.
+  backend: DDGS = DDGS(timeout=int(timeout_s))
+/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/discovery/duckduckgo_adapter.py:633: RuntimeWarning: This package (`duckduckgo_search`) has been renamed to `ddgs`! Use `pip install ddgs` instead.
+  backend: DDGS = DDGS(timeout=int(timeout_s))
+/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/discovery/duckduckgo_adapter.py:633: RuntimeWarning: This package (`duckduckgo_search`) has been renamed to `ddgs`! Use `pip install ddgs` instead.
+  backend: DDGS = DDGS(timeout=int(timeout_s))
+/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/discovery/duckduckgo_adapter.py:633: RuntimeWarning: This package (`duckduckgo_search`) has been renamed to `ddgs`! Use `pip install ddgs` instead.
+  backend: DDGS = DDGS(timeout=int(timeout_s))
+INFO:primp:response: https://www.bing.com/search?q=%22example.com%22+subdomains 200
+INFO:primp:response: https://www.bing.com/search?q=%22example.com%22+SSL+certificate 200
+INFO:primp:response: https://www.bing.com/search?q=site%3Aexample.com 200
+INFO:primp:response: https://www.bing.com/search?q=%22example.com%22+certificate+transparency 200
+INFO:primp:response: https://www.bing.com/search?q=site%3Aexample.com&first=11&FORM=PERE 200
+{"traceId":"00d09c2f25b1ba445bb24cceba719eae","spanId":"79ad2ca1423a8f5f","parentSpanId":"4f868c656b0a1f35","name":"duckdb.ingest_batch","kind":"SPAN_KIND_INTERNAL","startTimeUnixNano":"1781125088335554000","endTimeUnixNano":"1781125088335723000","attributes":[{"key":"component","value":{"stringValue":"storage"}}],"status":{"code":"STATUS_CODE_UNSET"},"events":[]}
+INFO:primp:response: https://www.bing.com/search?q=site%3Aexample.com&first=21&FORM=PERE1 200
+INFO:primp:response: https://www.bing.com/search?q=site%3Aexample.com&first=31&FORM=PERE2 200
+INFO:primp:response: https://www.bing.com/search?q=site%3Aexample.com&first=41&FORM=PERE3 200
+INFO:hledac.universal.pipeline.live_public_pipeline:[P20] PastebinMonitor targeting: example.com
+WARNING:hledac.universal.pipeline.live_public_pipeline:[P20] Pastebin/GitHub scan failed: cannot access free variable 'CanonicalFinding' where it is not associated with a value in enclosing scope
+INFO:hledac.universal.brain.moe_router:✓ Router MLP initialized (5 experts)
+INFO:hledac.universal.brain.moe_router:MoE router using hash-based routing (no embedding model)
+INFO:hledac.universal.pipeline.live_public_pipeline:[P16] MoE experts: ['graph', 'security'] for query: OSINT reconnaissance sample target example.com
+INFO:hledac.universal.pipeline.live_public_pipeline:[P14] MoE route: hermes3 for query: OSINT reconnaissance sample target example.com
+WARNING:hledac.universal.pipeline.live_public_pipeline:[REPORT] Generation failed: 'str' object has no attribute 'exists'
+INFO:hledac.universal.pipeline.live_public_pipeline:[P18] Exported markdown to /Users/vojtechhamada/hledac_outputs/1781125095_report.md
+/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/resource_allocator.py:307: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x3650c2200>
+  import gc; gc.collect()  # noqa: E702
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+INFO:hledac.universal.runtime.sprint_scheduler:[MEM] fetch_limit=2 ml_jobs=0
+WARNING:hledac.universal.runtime.sprint_scheduler:ct_storage_rejected: candidates=9 stored=0 top_reason=duplicate_detected reasons=('duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected')
+/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/discovery/duckduckgo_adapter.py:633: RuntimeWarning: This package (`duckduckgo_search`) has been renamed to `ddgs`! Use `pip install ddgs` instead.
+  backend: DDGS = DDGS(timeout=int(timeout_s))
+/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/discovery/duckduckgo_adapter.py:633: RuntimeWarning: This package (`duckduckgo_search`) has been renamed to `ddgs`! Use `pip install ddgs` instead.
+  backend: DDGS = DDGS(timeout=int(timeout_s))
+/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/discovery/duckduckgo_adapter.py:633: RuntimeWarning: This package (`duckduckgo_search`) has been renamed to `ddgs`! Use `pip install ddgs` instead.
+  backend: DDGS = DDGS(timeout=int(timeout_s))
+/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/discovery/duckduckgo_adapter.py:633: RuntimeWarning: This package (`duckduckgo_search`) has been renamed to `ddgs`! Use `pip install ddgs` instead.
+  backend: DDGS = DDGS(timeout=int(timeout_s))
+INFO:primp:response: https://www.bing.com/search?q=%22example.com%22+subdomains 200
+INFO:primp:response: https://www.bing.com/search?q=%22example.com%22+certificate+transparency 200
+INFO:primp:response: https://www.bing.com/search?q=site%3Aexample.com 200
+INFO:primp:response: https://www.bing.com/search?q=%22example.com%22+SSL+certificate 200
+INFO:primp:response: https://www.bing.com/search?q=site%3Aexample.com&first=11&FORM=PERE 200
+{"traceId":"00d09c2f25b1ba445bb24cceba719eae","spanId":"2c740c1a1ab13aec","parentSpanId":"4f868c656b0a1f35","name":"duckdb.ingest_batch","kind":"SPAN_KIND_INTERNAL","startTimeUnixNano":"1781125096039888000","endTimeUnixNano":"1781125096040091000","attributes":[{"key":"component","value":{"stringValue":"storage"}}],"status":{"code":"STATUS_CODE_UNSET"},"events":[]}
+INFO:primp:response: https://www.bing.com/search?q=site%3Aexample.com&first=21&FORM=PERE1 200
+INFO:primp:response: https://www.bing.com/search?q=site%3Aexample.com&first=31&FORM=PERE2 200
+INFO:primp:response: https://www.bing.com/search?q=site%3Aexample.com&first=41&FORM=PERE3 200
+INFO:hledac.universal.pipeline.live_public_pipeline:[P20] PastebinMonitor targeting: example.com
+WARNING:hledac.universal.pipeline.live_public_pipeline:[P20] Pastebin/GitHub scan failed: cannot access free variable 'CanonicalFinding' where it is not associated with a value in enclosing scope
+INFO:hledac.universal.brain.moe_router:✓ Router MLP initialized (5 experts)
+INFO:hledac.universal.brain.moe_router:MoE router using hash-based routing (no embedding model)
+INFO:hledac.universal.pipeline.live_public_pipeline:[P16] MoE experts: ['osint', 'synthesis'] for query: OSINT reconnaissance sample target example.com
+INFO:hledac.universal.pipeline.live_public_pipeline:[P14] MoE route: hermes3 for query: OSINT reconnaissance sample target example.com
+WARNING:hledac.universal.pipeline.live_public_pipeline:[REPORT] Generation failed: 'str' object has no attribute 'exists'
+INFO:hledac.universal.pipeline.live_public_pipeline:[P18] Exported markdown to /Users/vojtechhamada/hledac_outputs/1781125103_report.md
+WARNING:hledac.universal.runtime.sprint_scheduler:ct_storage_rejected: candidates=9 stored=0 top_reason=duplicate_detected reasons=('duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected')
+/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/discovery/duckduckgo_adapter.py:633: RuntimeWarning: This package (`duckduckgo_search`) has been renamed to `ddgs`! Use `pip install ddgs` instead.
+  backend: DDGS = DDGS(timeout=int(timeout_s))
+/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/discovery/duckduckgo_adapter.py:633: RuntimeWarning: This package (`duckduckgo_search`) has been renamed to `ddgs`! Use `pip install ddgs` instead.
+  backend: DDGS = DDGS(timeout=int(timeout_s))
+/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/discovery/duckduckgo_adapter.py:633: RuntimeWarning: This package (`duckduckgo_search`) has been renamed to `ddgs`! Use `pip install ddgs` instead.
+  backend: DDGS = DDGS(timeout=int(timeout_s))
+/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/discovery/duckduckgo_adapter.py:633: RuntimeWarning: This package (`duckduckgo_search`) has been renamed to `ddgs`! Use `pip install ddgs` instead.
+  backend: DDGS = DDGS(timeout=int(timeout_s))
+INFO:primp:response: https://www.bing.com/search?q=%22example.com%22+subdomains 200
+INFO:primp:response: https://www.bing.com/search?q=%22example.com%22+certificate+transparency 200
+INFO:primp:response: https://www.bing.com/search?q=%22example.com%22+SSL+certificate 200
+INFO:primp:response: https://www.bing.com/search?q=site%3Aexample.com 200
+/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/resource_allocator.py:307: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x3650c1120>
+  import gc; gc.collect()  # noqa: E702
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+INFO:hledac.universal.runtime.sprint_scheduler:[MEM] fetch_limit=2 ml_jobs=0
+INFO:primp:response: https://www.bing.com/search?q=site%3Aexample.com&first=11&FORM=PERE 200
+{"traceId":"00d09c2f25b1ba445bb24cceba719eae","spanId":"edf5b23b746d923a","parentSpanId":"4f868c656b0a1f35","name":"duckdb.ingest_batch","kind":"SPAN_KIND_INTERNAL","startTimeUnixNano":"1781125103930371000","endTimeUnixNano":"1781125103930528000","attributes":[{"key":"component","value":{"stringValue":"storage"}}],"status":{"code":"STATUS_CODE_UNSET"},"events":[]}
+INFO:primp:response: https://www.bing.com/search?q=site%3Aexample.com&first=21&FORM=PERE1 200
+INFO:primp:response: https://www.bing.com/search?q=site%3Aexample.com&first=31&FORM=PERE2 200
+INFO:primp:response: https://www.bing.com/search?q=site%3Aexample.com&first=41&FORM=PERE3 200
+INFO:hledac.universal.pipeline.live_public_pipeline:[P18] Exported markdown to /Users/vojtechhamada/hledac_outputs/1781125107_report.md
+WARNING:hledac.universal.runtime.sprint_scheduler:ct_storage_rejected: candidates=9 stored=0 top_reason=duplicate_detected reasons=('duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected')
+/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/discovery/duckduckgo_adapter.py:633: RuntimeWarning: This package (`duckduckgo_search`) has been renamed to `ddgs`! Use `pip install ddgs` instead.
+  backend: DDGS = DDGS(timeout=int(timeout_s))
+/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/discovery/duckduckgo_adapter.py:633: RuntimeWarning: This package (`duckduckgo_search`) has been renamed to `ddgs`! Use `pip install ddgs` instead.
+  backend: DDGS = DDGS(timeout=int(timeout_s))
+/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/discovery/duckduckgo_adapter.py:633: RuntimeWarning: This package (`duckduckgo_search`) has been renamed to `ddgs`! Use `pip install ddgs` instead.
+  backend: DDGS = DDGS(timeout=int(timeout_s))
+/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/discovery/duckduckgo_adapter.py:633: RuntimeWarning: This package (`duckduckgo_search`) has been renamed to `ddgs`! Use `pip install ddgs` instead.
+  backend: DDGS = DDGS(timeout=int(timeout_s))
+INFO:primp:response: https://www.bing.com/search?q=site%3Aexample.com 200
+INFO:primp:response: https://www.bing.com/search?q=%22example.com%22+subdomains 200
+INFO:primp:response: https://www.bing.com/search?q=%22example.com%22+SSL+certificate 200
+INFO:primp:response: https://www.bing.com/search?q=%22example.com%22+certificate+transparency 200
+{"traceId":"00d09c2f25b1ba445bb24cceba719eae","spanId":"24e0a23111dffbf5","parentSpanId":"4f868c656b0a1f35","name":"duckdb.ingest_batch","kind":"SPAN_KIND_INTERNAL","startTimeUnixNano":"1781125108916187000","endTimeUnixNano":"1781125108916323000","attributes":[{"key":"component","value":{"stringValue":"storage"}}],"status":{"code":"STATUS_CODE_UNSET"},"events":[]}
+INFO:primp:response: https://www.bing.com/search?q=site%3Aexample.com&first=11&FORM=PERE 200
+INFO:primp:response: https://www.bing.com/search?q=site%3Aexample.com&first=21&FORM=PERE1 200
+INFO:primp:response: https://www.bing.com/search?q=site%3Aexample.com&first=31&FORM=PERE2 200
+INFO:primp:response: https://www.bing.com/search?q=site%3Aexample.com&first=41&FORM=PERE3 200
+INFO:hledac.universal.pipeline.live_public_pipeline:[P18] Exported markdown to /Users/vojtechhamada/hledac_outputs/1781125112_report.md
+WARNING:hledac.universal.runtime.sprint_scheduler:ct_storage_rejected: candidates=9 stored=0 top_reason=duplicate_detected reasons=('duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected', 'duplicate_detected')
+/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/discovery/duckduckgo_adapter.py:633: RuntimeWarning: This package (`duckduckgo_search`) has been renamed to `ddgs`! Use `pip install ddgs` instead.
+  backend: DDGS = DDGS(timeout=int(timeout_s))
+/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/discovery/duckduckgo_adapter.py:633: RuntimeWarning: This package (`duckduckgo_search`) has been renamed to `ddgs`! Use `pip install ddgs` instead.
+  backend: DDGS = DDGS(timeout=int(timeout_s))
+/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/discovery/duckduckgo_adapter.py:633: RuntimeWarning: This package (`duckduckgo_search`) has been renamed to `ddgs`! Use `pip install ddgs` instead.
+  backend: DDGS = DDGS(timeout=int(timeout_s))
+/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/discovery/duckduckgo_adapter.py:633: RuntimeWarning: This package (`duckduckgo_search`) has been renamed to `ddgs`! Use `pip install ddgs` instead.
+  backend: DDGS = DDGS(timeout=int(timeout_s))
+INFO:primp:response: https://www.bing.com/search?q=%22example.com%22+SSL+certificate 200
+INFO:primp:response: https://www.bing.com/search?q=%22example.com%22+certificate+transparency 200
+INFO:primp:response: https://www.bing.com/search?q=%22example.com%22+subdomains 200
+INFO:primp:response: https://www.bing.com/search?q=site%3Aexample.com 200
+INFO:primp:response: https://www.bing.com/search?q=site%3Aexample.com&first=11&FORM=PERE 200
+INFO:hledac.universal.runtime.sprint_scheduler:[MEM] fetch_limit=2 ml_jobs=0
+{"traceId":"00d09c2f25b1ba445bb24cceba719eae","spanId":"6d0ae38be8d6821e","parentSpanId":"4f868c656b0a1f35","name":"duckdb.ingest_batch","kind":"SPAN_KIND_INTERNAL","startTimeUnixNano":"1781125113653227000","endTimeUnixNano":"1781125113653348000","attributes":[{"key":"component","value":{"stringValue":"storage"}}],"status":{"code":"STATUS_CODE_UNSET"},"events":[]}
+INFO:primp:response: https://www.bing.com/search?q=site%3Aexample.com&first=21&FORM=PERE1 200
+INFO:primp:response: https://www.bing.com/search?q=site%3Aexample.com&first=31&FORM=PERE2 200
+INFO:primp:response: https://www.bing.com/search?q=site%3Aexample.com&first=41&FORM=PERE3 200
+INFO:hledac.universal.pipeline.live_public_pipeline:[P20] PastebinMonitor targeting: example.com
+WARNING:hledac.universal.pipeline.live_public_pipeline:[P20] Pastebin/GitHub scan failed: cannot access free variable 'CanonicalFinding' where it is not associated with a value in enclosing scope
+INFO:hledac.universal.brain.moe_router:✓ Router MLP initialized (5 experts)
+INFO:hledac.universal.brain.moe_router:MoE router using hash-based routing (no embedding model)
+INFO:hledac.universal.pipeline.live_public_pipeline:[P16] MoE experts: ['osint', 'security'] for query: OSINT reconnaissance sample target example.com
+INFO:hledac.universal.pipeline.live_public_pipeline:[P14] MoE route: hermes3 for query: OSINT reconnaissance sample target example.com
+WARNING:hledac.universal.pipeline.live_public_pipeline:[REPORT] Generation failed: 'str' object has no attribute 'exists'
+INFO:hledac.universal.pipeline.live_public_pipeline:[P18] Exported markdown to /Users/vojtechhamada/hledac_outputs/1781125120_report.md
+<frozen importlib._bootstrap>:491: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x364fdf880>
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+INFO:hledac.universal.utils.concurrency:[FETCH_WORKERS] Adjusted fetch 3→3, clearnet 3→3
+INFO:hledac.universal.runtime.sidecar_orchestrator:IPFS sidecar: ENABLED — gateway=https://ipfs.io
+INFO:hledac.universal.brain.model_manager:[MODEL RELEASE] hermes start
+INFO:hledac.universal.brain.hermes3_engine:[CACHE] Prefix cache invalidated
+INFO:hledac.universal.brain.hermes3_engine:Unloading Hermes-3...
+mx.metal.clear_cache is deprecated and will be removed in a future version. Use mx.clear_cache instead.
+INFO:hledac.universal.brain.hermes3_engine:✓ Hermes-3 unloaded (Sprint 7K lifecycle closed)
+INFO:hledac.universal.brain.model_manager:[MODEL RELEASE] hermes done
+WARNING:hledac.universal.brain.model_manager:[MODEL MEMORY] RSS did not drop expected amount after unload: dropped=-0.05GB, expected~2.00GB (RSS before=0.31GB, after=0.36GB, model=hermes)
+INFO:hledac.universal.utils.concurrency:[FETCH_WORKERS] Adjusted fetch 3→25, clearnet 3→25
+INFO:hledac.universal.rl.sprint_policy_manager:[SprintPolicyManager] QMIX components initialized (rl_train_mode=False)
+INFO:__main__:[TEARDOWN] sprint_delta written: 0 findings, 0 dedup hits, UMA delta: +1.04GiB, top_source: '', findings_per_min: 0.00
+INFO:__main__:[RUNTIME TRUTH] ✅ MEANINGFUL ACTIVE RUN | 216s runtime, 27/26 cycles completed, no findings but within normal parameters | primary: none | cycles: 27/26 | windup: 216s (budget=210s)
+INFO:__main__:[SPRINT DONE] 8sa_1781124906899_78256d | findings: 0 | cycles: 27/26 | duplicates: 0 | phase: TEARDOWN
+INFO:__main__:[SUMMARY] 🔍  NOVELTY: public found hits, feed accepted nothing | feed=0 public=0(0%) | f/min=0.00 | dup=0.0% | public: disc=16 fetch=16 match=0 stored=0
+INFO:__main__:[NEXT] query may be too narrow — broaden terms or switch seed
+INFO:__main__:[SOURCES] none
+INFO:__main__:[REPORT] /Users/vojtechhamada/.hledac/reports/8sa_1781124906899_78256d_report.json
+INFO:__main__:[EXPORT] fully_enriched → sprint_id=8sa_1781124906899_78256d
+WARNING:__main__:[EXPORT] sprint_exporter seam failed (non-fatal): cannot import name '_build_operator_brief' from 'hledac.universal.export.sprint_exporter' (/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/export/sprint_exporter.py)
+INFO:hledac.universal.tools.lmdb_kv:LMDB KV store closed
+INFO:hledac.universal.tools.lmdb_kv:LMDB KV store closed
+{"traceId":"00d09c2f25b1ba445bb24cceba719eae","spanId":"4f868c656b0a1f35","parentSpanId":"4391fcd15be4632a","name":"sprint.scheduler.run","kind":"SPAN_KIND_INTERNAL","startTimeUnixNano":"1781124908638985000","endTimeUnixNano":"1781125123247493000","attributes":[{"key":"component","value":{"stringValue":"scheduler"}}],"status":{"code":"STATUS_CODE_UNSET"},"events":[]}
+{"traceId":"00d09c2f25b1ba445bb24cceba719eae","spanId":"4391fcd15be4632a","parentSpanId":"","name":"sprint.run","kind":"SPAN_KIND_INTERNAL","startTimeUnixNano":"1781124906879854000","endTimeUnixNano":"1781125123332791000","attributes":[{"key":"component","value":{"stringValue":"cli"}}],"status":{"code":"STATUS_CODE_UNSET"},"events":[]}
+<sys>:0: DeprecationWarning: builtin type swigvarlink has no __module__ attribute
+===EXIT 0 END 2026-06-10T22:58:44+02:00===

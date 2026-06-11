@@ -76,6 +76,12 @@ async def _search_all_providers(
                 provider_name=name,
                 provider_chain=default_chain,
                 source_family=default_family,
+                provider_status_debug=[{
+                    "provider": name,
+                    "state": "production",
+                    "selected": False,
+                    "reason": "cascade_timeout",
+                }],
             )
         if isinstance(result, Exception):
             return DiscoveryBatchResult(
@@ -85,6 +91,12 @@ async def _search_all_providers(
                 provider_name=name,
                 provider_chain=default_chain,
                 source_family=default_family,
+                provider_status_debug=[{
+                    "provider": name,
+                    "state": "production",
+                    "selected": False,
+                    "reason": "cascade_exception",
+                }],
             )
         return result
 
@@ -111,6 +123,12 @@ async def _run_ddg(query: str, max_results: int, timeout_s: float) -> DiscoveryB
             provider_chain=("duckduckgo",),
             source_family="search",
             elapsed_s=timeout,
+            provider_status_debug=[{
+                "provider": "duckduckgo",
+                "state": "production",
+                "selected": False,
+                "reason": "ddg_timeout",
+            }],
         )
 
 
@@ -132,6 +150,12 @@ async def _run_historical_frontier(query: str, max_results: int, timeout_s: floa
             provider_chain=("historical_frontier",),
             source_family="historical",
             elapsed_s=timeout,
+            provider_status_debug=[{
+                "provider": "historical_frontier",
+                "state": "production",
+                "selected": False,
+                "reason": "hf_timeout",
+            }],
         )
 
 
@@ -153,6 +177,12 @@ async def _run_wayback_cdx(query: str, max_results: int, timeout_s: float) -> Di
             provider_chain=("wayback_cdx",),
             source_family="archive",
             elapsed_s=timeout,
+            provider_status_debug=[{
+                "provider": "wayback_cdx",
+                "state": "production",
+                "selected": False,
+                "reason": "wb_timeout",
+            }],
         )
 
 
@@ -365,4 +395,5 @@ async def async_search_providerless(
         source_family=fused.source_family,
         elapsed_s=elapsed,
         error_type=None,
+        provider_status_debug=getattr(fused, 'provider_status_debug', None),
     )

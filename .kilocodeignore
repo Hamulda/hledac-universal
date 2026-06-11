@@ -1,0 +1,72 @@
+# Rust build artifacts
+target/
+**/*.rlib
+**/*.rmeta
+**/*.d
+**/*.pdb
+
+# Python
+.venv/
+venv/
+__pycache__/
+**/*.pyc
+**/*.pyo
+**/*.pyd
+**/*.so
+**/*.dylib
+dist/
+build/
+*.egg-info/
+.eggs/
+
+# Lock files a velké binárky
+*.lock
+*.log
+*.bin
+*.dat
+
+# Git
+.git/
+
+# IDE
+.idea/
+.vscode/
+**/.DS_Store
+
+# Cache
+.cache/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+
+# Venv složky v podprojektech
+rust_extensions/.venv/
+.venv-test/
+tests/probe_8bg/
+
+# Generované výstupy a cache
+.code-review-graph/
+graphify-out/
+cache_storage/
+benchmark_results/
+
+# Testovací repozitáře
+evaluate/test_repos/
+
+# Velké binárky a indexy
+*.scip
+index.scip
+
+# Zbývající venv v podprojektech
+**/site-packages/**
+**/.venv*/**
+**/venv*/
+rust_extensions/target/
+
+# Evaluate a testy
+evaluate/
+tests/
+
+# Circular symlink
+hledac-universal-link
+.kilo/node_modules/

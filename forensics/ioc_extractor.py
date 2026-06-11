@@ -98,39 +98,50 @@ except ImportError:
         return iocs
 
     def url_normalize(url: str) -> str:
+        """Python fallback — mirrors Rust url_engine::normalize() behavior.
+
+        Rust path (url_engine.rs) handles: scheme-less URLs, IDN/punycode,
+        default-port stripping, tracking-param removal, sorted query params.
+        This fallback replicates the same normalization for forensics inputs
+        when Rust is unavailable (fail-soft, never raises).
+        """
         try:
-            parsed = urlparse(url)
+            trimmed = url.strip()
+            if not trimmed:
+                return url
+
+            # Scheme-less rescue (same as Rust: try synthetic http:// prefix)
+            if "://" not in trimmed:
+                synthetic = f"http://{trimmed.lstrip('/')}"
+            else:
+                synthetic = trimmed
+
+            parsed = urlparse(synthetic)
+            scheme = parsed.scheme.lower()
+            host = parsed.hostname or ""
+            port = parsed.port
+            path = parsed.path or "/"
+
+            # Strip default ports (mirrors Rust url_engine)
+            if port == 80 and scheme == "http":
+                port = None
+            elif port == 443 and scheme == "https":
+                port = None
+
+            result = f"{scheme}://{host}"
+            if port:
+                result += f":{port}"
+            result += path
+
+            # Filter tracking params, sort, encode (mirrors Rust url_engine)
+            params = [(k, v) for k, v in parse_qsl(parsed.query) if k not in _TRACKING_PARAMS]
+            params.sort()
+            if params:
+                result += "?" + urlencode(params)
+
+            return result
         except Exception:
             return url
-
-        scheme = parsed.scheme.lower()
-        host = parsed.hostname or ""
-        port = parsed.port
-        path = parsed.path or "/"
-
-        # Strip default ports
-        if port == 80 and scheme == "http":
-            port = None
-        elif port == 443 and scheme == "https":
-            port = None
-
-        result = f"{scheme}://{host}"
-        if port:
-            result += f":{port}"
-        result += path
-
-        # Ensure path ends with / if no extension
-        if "." not in path:
-            result = result.rstrip("/") + "/"
-
-        # Filter tracking params, sort, encode
-        params = [(k, v) for k, v in parse_qsl(parsed.query) if k not in _TRACKING_PARAMS]
-        params.sort()
-
-        if params:
-            result += "?" + urlencode(params)
-
-        return result
 
     def batch_dedup_urls(urls: list[str]) -> list[str]:
         seen = set()

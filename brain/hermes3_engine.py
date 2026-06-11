@@ -304,6 +304,9 @@ class Hermes3Engine:
         # normal: max_kv_size=full, warn: half, critical/emergency: KV off
         self._max_kv_size = 8192
 
+        # Sprint P1: Configurable KV quantization bits (default 4, OSINT can reduce to 2)
+        self._kv_bits = int(os.getenv("GHOST_KV_BITS", "4"))
+
         # Sprint 33: outlines model for grammar-constrained decoding
         self._outlines_model = None
 
@@ -1305,6 +1308,42 @@ class Hermes3Engine:
         )
         return kv_kwargs
 
+    def _get_adaptive_kv_bits(self) -> int:
+        """
+        Sprint F265C: Adaptive KV quantization bits based on RSS pressure.
+
+        PID-style adaptation (per LanceDBAutoTuner pattern):
+        - RSS < 5.5 GiB  → kv_bits=4  (default, low memory)
+        - RSS 5.5-6.0 GiB → kv_bits=6  (medium compromise)
+        - RSS > 6.0 GiB  → kv_bits=8  (high quality, higher memory)
+
+        Uses ResourceGovernor signal via get_uma_pressure_level().
+        Falls back to env var GHOST_KV_BITS or default 4.
+
+        Returns:
+            int: kv_bits value (2, 4, 6, or 8)
+        """
+        try:
+            from ..utils.uma_budget import get_uma_pressure_level
+
+            _pct, tier = get_uma_pressure_level()
+        except Exception:
+            tier = "normal"  # safe default
+
+        # Map RAM tier to kv_bits (always-on, fail-safe)
+        if tier == "normal":
+            kv_bits = 4
+        elif tier == "warn":
+            kv_bits = 6
+        else:
+            # critical or emergency — reduce memory further
+            kv_bits = 8
+
+        logger.debug(
+            "[F265C] Adaptive KV bits: tier=%s kv_bits=%d", tier, kv_bits
+        )
+        return kv_bits
+
     def _run_inference(self, formatted_prompt: str, temp: float, max_tok: int, prefix_cache=None) -> str:
         """
         Run MLX inference synchronously in thread pool (Sprint 75).
@@ -1325,11 +1364,13 @@ class Hermes3Engine:
         kv_cache = make_prompt_cache(self._model, max_kv_size=max_tok)
 
         # Sprint 75: KV quantization (capability-based)
+        # F265C: Use adaptive kv_bits based on RSS pressure
+        kv_bits = self._get_adaptive_kv_bits()
         if self._supports_kv_quant:
             for layer in kv_cache:
                 if hasattr(layer, 'quantize'):
                     try:
-                        layer.quantize(group_size=64, bits=4)
+                        layer.quantize(group_size=64, bits=kv_bits)
                         self._kv_cache_stats['quantized_count'] += 1
                     except Exception:
                         pass
@@ -1340,7 +1381,7 @@ class Hermes3Engine:
             "prompt": formatted_prompt,
             "temp": temp,
             "max_tokens": max_tok,
-            "kv_bits": 4,
+            "kv_bits": kv_bits,
             "prompt_cache": kv_cache,
             "verbose": False,
             **self._get_kv_cache_kwargs(),
@@ -1537,7 +1578,7 @@ class Hermes3Engine:
             if decide_context_budget is not None and apply_context_budget is not None:
                 decision = decide_context_budget(
                     prompt,
-                    requested_context_window=self.context_window,
+                    requested_context_window=self.config.context_window,
                 )
                 if decision.mode == "reject":
                     # Memory critical — record and fail soft
@@ -1832,20 +1873,22 @@ class Hermes3Engine:
         kv_cache = make_prompt_cache(self._model, max_kv_size=max_tok)
 
         # Sprint 75: KV quantisation (capability-gated, fail-soft)
+        # F265C: Use adaptive kv_bits based on RSS pressure
+        kv_bits = self._get_adaptive_kv_bits()
         if self._supports_kv_quant:
             for layer in kv_cache:
                 if hasattr(layer, "quantize"):
                     try:
-                        layer.quantize(group_size=64, bits=4)
+                        layer.quantize(group_size=64, bits=kv_bits)
                     except Exception:
                         # Per-layer failure is non-fatal — proceed without
                         pass
 
-        # CLAUDE.md invariant #2: kv_bits=4 + max_kv_size=8192 in generate, NOT load
+        # CLAUDE.md invariant #2: kv_bits + max_kv_size=8192 in generate, NOT load
         stream_kwargs = {
             "max_tokens": max_tok,
             "temp": temp,
-            "kv_bits": 4,
+            "kv_bits": kv_bits,
             "max_kv_size": 8192,
             "prompt_cache": kv_cache,
             "verbose": False,

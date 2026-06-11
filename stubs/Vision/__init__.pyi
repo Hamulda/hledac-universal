@@ -1,6 +1,6 @@
 # Stub for Vision (pyobjc-framework-Vision; Darwin-only)
 # Minimal surface — only what hledac/tools/vision_analyzer.py uses.
-from typing import Any, Optional
+from typing import Any, List, Optional
 
 VNRequestRecognitionLevelAccurate: int
 VNRequestRecognitionLevelFast: int
@@ -54,4 +54,4 @@ class VNFeaturePrintObservation(VNObservation):
     elementCount: int
 
 class VNRecognizedTextObservation(VNObservation):
-    topCandidates_(self, max_n: int) -> list: ...
+    def topCandidates_(self, max_n: int) -> list[Any]: ...

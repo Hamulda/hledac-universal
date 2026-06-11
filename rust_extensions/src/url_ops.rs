@@ -2,11 +2,16 @@
 //!
 //! Provides bounded, fail-soft URL classification by transport class
 //! (Clearnet / Onion / I2P / Freenet) and bulk host extraction.
+//! Also provides canonical URL normalization and BLAKE3-64 dedup keys
+//! for BloomFilter-backed URL deduplication.
+//!
 //! Pure Rust, no C dependencies, M1-safe. No panics, no unwrap.
 
 use pyo3::prelude::*;
 use rayon::prelude::*;
 use url::Url;
+
+use blake3::Hasher;
 
 /// Threshold for parallel batch processing (rayon).
 /// Below this, sequential is faster than parallel (work overhead).
@@ -263,6 +268,149 @@ fn matches_any_word(haystack: &str, needle: &str) -> bool {
     false
 }
 
+/// Normalize a URL to canonical form for deduplication.
+///
+/// Strips: default ports (80/443), fragments, trailing slashes from path.
+/// Sorts query parameters (stable order).
+/// Lowercases scheme and host.
+///
+/// Used by `url_dedup_key()` to produce a stable canonical form before hashing.
+/// Falls back to the raw URL string on parse failure (never raises).
+#[pyfunction]
+pub fn canonical_url(url: &str) -> String {
+    let trimmed = url.trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+
+    // Parse with synthetic http:// prefix for scheme-less inputs.
+    let synthetic = if trimmed.contains("://") {
+        trimmed.to_string()
+    } else {
+        format!("http://{}", trimmed.trim_start_matches('/'))
+    };
+
+    let parsed = match Url::parse(&synthetic) {
+        Ok(p) => p,
+        Err(_) => return trimmed.to_string(),
+    };
+
+    // Lowercase scheme and host.
+    let scheme = parsed.scheme().to_ascii_lowercase();
+    let host = parsed.host_str().unwrap_or("").to_ascii_lowercase();
+
+    // Strip default ports.
+    let port = parsed.port();
+    let port_str = match (port, scheme.as_str()) {
+        (Some(p), "http") if p == 80 => String::new(),
+        (Some(p), "https") if p == 443 => String::new(),
+        (Some(p), _) => format!(":{}", p),
+        _ => String::new(),
+    };
+
+    // Normalize path: lowercase, drop trailing slash, keep single leading slash.
+    let path = parsed.path();
+    let path_norm = if path.is_empty() || path == "/" {
+        "/".to_string()
+    } else {
+        path.trim_end_matches('/').to_ascii_lowercase()
+    };
+
+    // Sort query params.
+    let query = match parsed.query() {
+        None => String::new(),
+        Some(q) => {
+            // Parse and re-sort query string — stable sort by key.
+            let mut params: Vec<(String, String)> = q
+                .split('&')
+                .filter_map(|pair| {
+                    let kv: Vec<&str> = pair.splitn(2, '=').collect();
+                    let k = urlencoding_decode(kv.get(0).unwrap_or(&""));
+                    let v = kv.get(1).map(|v| urlencoding_decode(v)).unwrap_or_default();
+                    if k.is_empty() {
+                        None
+                    } else {
+                        Some((k, v))
+                    }
+                })
+                .collect();
+            params.sort_by(|a, b| a.0.cmp(&b.0));
+            if params.is_empty() {
+                String::new()
+            } else {
+                let encoded: Vec<String> = params
+                    .into_iter()
+                    .map(|(k, v)| format!("{}={}", k, v))
+                    .collect();
+                format!("?{}", encoded.join("&"))
+            }
+        }
+    };
+
+    format!("{}://{}{}{}{}", scheme, host, port_str, path_norm, query)
+}
+
+/// Compute a BLAKE3-64 dedup key for a URL.
+///
+/// Canonicalizes the URL first via `canonical_url()`, then hashes the
+/// canonical form with BLAKE3-64 (first 8 bytes, little-endian u64).
+///
+/// Returns a 16-character lowercase hex string suitable as a BloomFilter
+/// dedup key. Replaces storing the full normalized URL string — saves
+/// ~20-50 bytes per entry in the BloomFilter with zero collision risk
+/// increase (BLAKE3-64 is uniformly distributed).
+///
+/// Never panics — on any error returns the blake3-64 of the raw URL.
+#[pyfunction]
+pub fn url_dedup_key(url: &str) -> String {
+    let canonical = canonical_url(url);
+    let mut hasher = Hasher::new();
+    hasher.update(canonical.as_bytes());
+    let hash = hasher.finalize();
+    let bytes: [u8; 8] = match hash.as_bytes()[..8].try_into() {
+        Ok(b) => b,
+        Err(_) => return blake3_fallback(url),
+    };
+    format!("{:016x}", u64::from_le_bytes(bytes))
+}
+
+/// Fallback blake3-64 when canonical_url returns empty.
+fn blake3_fallback(url: &str) -> String {
+    let hash = blake3::hash(url.as_bytes());
+    let bytes: [u8; 8] = hash.as_bytes()[..8].try_into().unwrap_or([0u8; 8]);
+    format!("{:016x}", u64::from_le_bytes(bytes))
+}
+
+/// Decode %-encoded string (URL encoding). Used by canonical_url for query params.
+fn urlencoding_decode(s: &str) -> String {
+    let mut result = String::with_capacity(s.len());
+    let mut chars = s.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '%' {
+            let hex: String = chars.by_ref().take(2).collect();
+            if hex.len() == 2 {
+                if let Ok(byte) = u8::from_str_radix(&hex, 16) {
+                    result.push(byte as char);
+                } else {
+                    result.push('%');
+                    result.push_str(&hex);
+                }
+            } else {
+                result.push('%');
+                if !hex.is_empty() {
+                    result.push_str(&hex);
+                }
+            }
+        } else if c == '+' {
+            // + in query string = space (application/x-www-form-urlencoded)
+            result.push(' ');
+        } else {
+            result.push(c);
+        }
+    }
+    result
+}
+
 /// Register all url_ops functions with a Python module.
 pub fn register_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<UrlKind>()?;
@@ -270,6 +418,8 @@ pub fn register_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(batch_classify, m)?)?;
     m.add_function(wrap_pyfunction!(extract_host, m)?)?;
     m.add_function(wrap_pyfunction!(looks_like_feed_url, m)?)?;
+    m.add_function(wrap_pyfunction!(canonical_url, m)?)?;
+    m.add_function(wrap_pyfunction!(url_dedup_key, m)?)?;
     Ok(())
 }
 
@@ -352,5 +502,79 @@ mod tests {
             assert_eq!(kind, "clearnet");
             assert!(host.starts_with("example"));
         }
+    }
+
+    #[test]
+    fn test_canonical_url_basic() {
+        // Lowercase scheme and host.
+        assert_eq!(canonical_url("HTTPS://Example.COM/Path"), "https://example.com/path");
+    }
+
+    #[test]
+    fn test_canonical_url_strips_default_port() {
+        assert_eq!(canonical_url("http://example.com:80/path"), "http://example.com/path");
+        assert_eq!(canonical_url("https://example.com:443/path"), "https://example.com/path");
+        // Non-default port kept.
+        assert_eq!(canonical_url("http://example.com:8080/path"), "http://example.com:8080/path");
+    }
+
+    #[test]
+    fn test_canonical_url_sorts_query_params() {
+        assert_eq!(
+            canonical_url("https://example.com/search?z=1&a=2&m=3"),
+            "https://example.com/search?a=2&m=3&z=1"
+        );
+    }
+
+    #[test]
+    fn test_canonical_url_drops_fragment() {
+        assert_eq!(
+            canonical_url("https://example.com/page#section"),
+            "https://example.com/page"
+        );
+    }
+
+    #[test]
+    fn test_canonical_url_empty_input() {
+        assert_eq!(canonical_url(""), "");
+    }
+
+    #[test]
+    fn test_canonical_url_trims_trailing_slash() {
+        assert_eq!(canonical_url("https://example.com/path///"), "https://example.com/path");
+        assert_eq!(canonical_url("https://example.com/"), "https://example.com/");
+    }
+
+    #[test]
+    fn test_url_dedup_key_deterministic() {
+        let url = "https://Example.COM:443/path?b=2&a=1";
+        let key1 = url_dedup_key(url);
+        let key2 = url_dedup_key(url);
+        assert_eq!(key1, key2, "url_dedup_key must be deterministic");
+        assert_eq!(key1.len(), 16, "BLAKE3-64 key is 16 hex chars");
+    }
+
+    #[test]
+    fn test_url_dedup_key_different_urls_same_content() {
+        // Two URLs with same canonical form should produce same key.
+        let url1 = "https://example.com/path";
+        let url2 = "https://EXAMPLE.COM/path/";  // trailing slash should be trimmed
+        let key1 = url_dedup_key(url1);
+        let key2 = url_dedup_key(url2);
+        assert_eq!(key1, key2, "same canonical form = same dedup key");
+    }
+
+    #[test]
+    fn test_url_dedup_key_hex_format() {
+        let key = url_dedup_key("https://google.com");
+        assert!(key.chars().all(|c| c.is_ascii_hexdigit()), "key must be lowercase hex");
+        assert_eq!(key.len(), 16);
+    }
+
+    #[test]
+    fn test_url_dedup_key_empty_input() {
+        let key = url_dedup_key("");
+        assert_eq!(key.len(), 16);
+        assert!(key.chars().all(|c| c.is_ascii_hexdigit()));
     }
 }

@@ -74,7 +74,7 @@ MIN_NUM_PARTITIONS: int = 8
 MAX_NUM_PARTITIONS: int = 256
 
 #: Default num_sub_vectors (matches F264D default).
-DEFAULT_NUM_SUB_VECTORS: int = 16
+DEFAULT_NUM_SUB_VECTORS: int = 12
 #: Hard floor for sub_vectors (4 bytes per codebook × 4 = 16B per vector).
 MIN_NUM_SUB_VECTORS: int = 4
 #: Hard ceiling for sub_vectors (256d / 4 = 64, 384d / 4 = 96).

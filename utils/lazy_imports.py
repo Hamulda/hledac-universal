@@ -28,6 +28,53 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
+# Whitelist of allowed module names for importlib.import_module()
+# Defense-in-depth: prevents arbitrary code execution if untrusted input reaches these functions
+_ALLOWED_LAZY_MODULES: frozenset[str] = frozenset({
+    # Stdlib
+    "os", "json", "time", "re", "sys", "logging", "asyncio", "threading",
+    "pathlib", "functools", "collections", "copy", "inspect", "traceback",
+    "warnings", "weakref", "types", "gc", "io", "abc", "contextlib",
+    # MLX ecosystem
+    "mlx", "mlx.core", "mlx_lm",
+    # Scientific computing
+    "numpy", "pandas", "scipy",
+    # HTTP/networking
+    "aiohttp", "httpx", "curl_cffi", "requests",
+    # Database
+    "duckdb", "lancedb", "lmdb", "sqlite3",
+    # Graph analytics
+    "igraph",
+    # Parsing
+    "orjson", "msgspec", "pydantic",
+    # Cryptography
+    "cryptography", "hashlib", "hmac", "secrets",
+    # Browser automation
+    "nodriver", "playwright",
+    # Academic/scientific APIs
+    "arxiv", "openalex", "unpaywall", "core",
+    # Optional ML
+    "torch", "transformers", "sentence_transformers",
+    # Compression
+    "zstandard", "zlib", "gzip", "bz2", "lz4",
+    # OSINT utilities
+    "psutil", "yara_python",
+    # Project modules
+    "hledac.universal", "hledac.universal.brain",
+    "hledac.universal.knowledge", "hledac.universal.fetching",
+    "hledac.universal.discovery", "hledac.universal.coordinators",
+})
+
+
+def _validate_lazy_module(name: str) -> None:
+    """Validate module name against whitelist. Raises ImportError if not allowed."""
+    if name not in _ALLOWED_LAZY_MODULES:
+        raise ImportError(
+            f"Module '{name}' not in whitelist. "
+            f"Dynamic module loading requires explicit allowlisting. "
+            f"Allowed modules: {sorted(_ALLOWED_LAZY_MODULES) if len(_ALLOWED_LAZY_MODULES) <= 20 else 'see _ALLOWED_LAZY_MODULES'}"
+        )
+
 
 @dataclass
 class LazyLoadStats:
@@ -70,6 +117,7 @@ class LazyLoader:
         start_time = time.perf_counter()
 
         try:
+            _validate_lazy_module(self._module_name)
             self._module = importlib.import_module(self._module_name)
             self._loaded = True
             self._load_time = time.perf_counter() - start_time

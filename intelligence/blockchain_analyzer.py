@@ -152,8 +152,14 @@ class PatternType(Enum):
     RAPID_TRADING = "rapid_trading"
 
 
-class RiskLevel(Enum):
-    """Risk levels for addresses/transactions."""
+class RiskScore(Enum):
+    """Float-based risk score (0.0–1.0) for addresses/transactions.
+
+    Renamed from `RiskLevel` to disambiguate from canonical
+    `project_types.RiskLevel` (str-valued enum). Float semantics
+    are intentional — callers need numeric comparison, not ordinal.
+    Use `project_types.RiskLevel` for categorical risk tagging.
+    """
     CRITICAL = 1.0
     HIGH = 0.75
     MEDIUM = 0.5

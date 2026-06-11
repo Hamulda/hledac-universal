@@ -43,6 +43,12 @@ except ImportError:  # production fallback
 from hledac.universal.tools.zstd_compressor import ZstdCompressor
 from utils.async_helpers import safe_gather_dropin
 
+# F281: Privacy compute budget allocator
+from hledac.universal.runtime.privacy_budget import (  # noqa: E402
+    PrivacyBudgetAllocator,
+    make_privacy_allocator,
+)
+
 try:
     import zstandard as zstd
 
@@ -100,7 +106,7 @@ except Exception:
 # Rate: 15% chance after each successful real fetch
 # Limit: max 2 cover traffic requests per sprint (M1 RAM protection)
 # Invariant: cover traffic MUST use identical transport as real request
-_COVER_RATE = float(os.environ.get("HLEDAC_COVER_TRAFFIC_RATE", "0.15"))
+_COVER_RATE = float(os.environ.get("HLEDAC_COVER_TRAFFIC_RATE", "0.05"))
 _COVER_RATE = min(max(_COVER_RATE, 0.0), 1.0)  # rate guard: clamp to [0.0, 1.0]
 _COVER_MAX = 2  # max cover traffic fires per sprint
 
@@ -350,6 +356,10 @@ class FetchCoordinator(UniversalCoordinator):
         self._tor_max_sessions = CONCURRENCY_TOR
         self._tor_lock = asyncio.Lock()
 
+        # F281: Privacy compute budget allocator — 15% of AIMD window for privacy lanes
+        self._privacy_allocator: PrivacyBudgetAllocator | None = None
+        self._privacy_lock = asyncio.Lock()
+
         # Sprint F214: TorTransport opt-in backend (HLEDAC_ENABLE_TOR=1)
         self._tor_transport: Any = None
         self._tor_transport_enabled: bool = False
@@ -444,6 +454,11 @@ class FetchCoordinator(UniversalCoordinator):
         self._canonical_breaker_blocks: int = 0
         self._canonical_breaker_fallback_used: int = 0
         self._canonical_breaker_lock = __import__('threading').Lock()
+
+        # F272: Auto-init session manager on construction so health check
+        # (_session_manager being None) doesn't return not_initialized when
+        # sessions are actually available. Idempotent — safe to call.
+        self.init_session_manager()
 
     def _ensure_canonical_breaker(self) -> tuple[bool, Any, str]:
         """
@@ -618,15 +633,22 @@ class FetchCoordinator(UniversalCoordinator):
         # is bounded: max ~5s of session cache lost on crash; canonical
         # findings live in DuckDB/LanceDB. metasync=False lets the OS
         # batch metadata flushes independently.
-        self._session_lmdb_env = lmdb.open(
-            str(lmdb_path),
-            map_size=10*1024*1024,
-            readahead=False,
-            sync=False,
-            metasync=False,
-            writemap=True,
-        )
-        self._session_manager = SessionManager(self._session_lmdb_env)
+        # F272: fail-soft LMDB init — on open error, session persistence disabled
+        # but fetch coordinator stays functional (health check uses _session_manager)
+        try:
+            self._session_lmdb_env = lmdb.open(
+                str(lmdb_path),
+                map_size=10*1024*1024,
+                readahead=False,
+                sync=False,
+                metasync=False,
+                writemap=True,
+            )
+            self._session_manager = SessionManager(self._session_lmdb_env)
+        except Exception as e:
+            logger.warning(f"[FETCH] LMDB session init failed: {e} — session persistence disabled")
+            self._session_lmdb_env = None
+            self._session_manager = None
 
     def _load_geo_proxies(self) -> dict[str, str]:
         """Load proxy servers for different regions from configuration."""
@@ -843,6 +865,61 @@ class FetchCoordinator(UniversalCoordinator):
         self._aimd_successes = 0
         self._telemetry['aimd_concurrency'] = self._aimd_concurrency
         return self._aimd_concurrency
+
+    # -------------------------------------------------------------------------
+    # F281: Privacy lane semaphore helpers
+    # -------------------------------------------------------------------------
+
+    def _get_privacy_semaphore(self, url: str) -> tuple[asyncio.Semaphore | None, str]:
+        """
+        Get the privacy semaphore for a URL's transport class.
+
+        Returns (semaphore, lane). lane="clearnet" means no privacy lane needed.
+        """
+        if self._privacy_allocator is None:
+            return None, "clearnet"
+        lane = self._privacy_allocator.get_lane_for_url(url)
+        if lane == "clearnet":
+            return None, "clearnet"
+        sem = self._privacy_allocator.get_semaphore(lane)
+        return sem, lane
+
+    async def _privacy_acquire_for_url(self, url: str) -> tuple[str, bool]:
+        """
+        Acquire privacy lane slot for URL if applicable.
+
+        Returns (lane, acquired). If lane is "clearnet" or privacy lane unavailable,
+        returns ("clearnet", True) so caller falls back to AIMD path.
+
+        Fail-soft: any error → fall back to clearnet.
+        """
+        if self._privacy_allocator is None:
+            return "clearnet", True
+        lane = self._privacy_allocator.get_lane_for_url(url)
+        if lane == "clearnet":
+            return "clearnet", True
+        sem = self._privacy_allocator.get_semaphore(lane)
+        if sem is None:
+            # Privacy lane not available (env disabled) → fall back to clearnet
+            return "clearnet", True
+        try:
+            async with self._privacy_lock:
+                await sem.acquire()
+            return lane, True
+        except Exception:
+            # Fail-soft: treat as clearnet
+            return "clearnet", True
+
+    def _privacy_release(self, lane: str) -> None:
+        """Release privacy lane slot. No-op for clearnet."""
+        if lane == "clearnet" or self._privacy_allocator is None:
+            return
+        sem = self._privacy_allocator.get_semaphore(lane)
+        if sem is not None:
+            try:
+                sem.release()
+            except ValueError:
+                pass  # already released
 
     async def _fetch_with_lightpanda(self, url: str, proxy: str | None = None):
         """Fetch URL with Lightpanda using pool (JS rendering)."""
@@ -1118,6 +1195,15 @@ class FetchCoordinator(UniversalCoordinator):
         self._ctx = ctx
         self._orchestrator = ctx.get('orchestrator')
 
+        # F281: Initialize privacy budget allocator from AIMD concurrency window.
+        # Lazy: created on first start so that subclasses can override max_concurrent.
+        if self._privacy_allocator is None:
+            _target = int(self._aimd_concurrency)
+            self._privacy_allocator = make_privacy_allocator(_target)
+            logger.info(
+                f"[F281] PrivacyBudgetAllocator: {self._privacy_allocator.get_budget_summary()}"
+            )
+
         # Load frontier if provided
         if 'frontier' in ctx:
             self._frontier = deque(ctx['frontier'], maxlen=1000)
@@ -1349,8 +1435,18 @@ class FetchCoordinator(UniversalCoordinator):
                 return None
             self._processed_urls.add(url)
 
-        # Sprint 4B: AIMD concurrency gate
-        await self._aimd_acquire()
+        # F281: Privacy lane gate — reserve privacy slot before AIMD
+        _privacy_lane = "clearnet"
+        _privacy_acquired = False
+        try:
+            _privacy_lane, _privacy_acquired = await self._privacy_acquire_for_url(url)
+        except Exception:
+            _privacy_lane = "clearnet"
+            _privacy_acquired = True
+
+        # Sprint 4B: AIMD concurrency gate (clearnet path or privacy fallback)
+        if _privacy_acquired:
+            await self._aimd_acquire()
 
         # Sprint 23: Exponential backoff retry
         max_retries = getattr(self, '_max_retries', 3)
@@ -1598,6 +1694,9 @@ class FetchCoordinator(UniversalCoordinator):
                     self._aimd_semaphore.release()
                 except ValueError:
                     pass  # Semaphore not acquired or already released
+            # F281: Release privacy lane slot if acquired
+            if _privacy_lane != "clearnet":
+                self._privacy_release(_privacy_lane)
 
         # Sprint 46: Handle 401/403 - rotate credentials
         if result and result.get('status_code') in (401, 403):

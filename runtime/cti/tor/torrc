@@ -1,0 +1,8 @@
+DataDirectory /Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/runtime/cti/tor/data
+SocksPort 9050
+ControlPort 9051
+MaxCircuitDirtiness 600
+IsolateSOCKSAuth 1
+NumEntryGuards 3
+HiddenServiceStatistics 0
+Log notice stderr

@@ -40,8 +40,7 @@ from collections import OrderedDict
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
-from enum import Enum
-from typing import Any, Protocol
+from typing import Any
 
 from brain.evidence_fusion import DempsterShafer
 
@@ -65,130 +64,20 @@ except ImportError:
     get_uma_snapshot = None  # type: ignore[assignment, misc]
     MULTIHOP_AVAILABLE = False
 
-HLEDAC_ENABLE_LLM = os.environ.get("HLEDAC_ENABLE_LLM", "0") == "1"
+HLEDAC_ENABLE_LLM = os.environ.get("HLEDAC_ENABLE_LLM", "1") == "1"
 
 logger = logging.getLogger(__name__)
 
 
-class HypothesisType(Enum):
-    """Types of hypotheses supported by the engine."""
-    EXISTENCE = "existence"           # Does X exist?
-    RELATIONSHIP = "relationship"     # Is A connected to B?
-    CAUSAL = "causal"                 # Does X cause Y?
-    IDENTITY = "identity"             # Is X the same as Y?
-    TEMPORAL = "temporal"             # Did X happen before Y?
-
-
-class HypothesisStatus(Enum):
-    """Status of a hypothesis in its lifecycle."""
-    ACTIVE = "active"                 # Currently being tested
-    CONFIRMED = "confirmed"           # Sufficient evidence supports it
-    REJECTED = "rejected"             # Falsified or insufficient support
-    PENDING = "pending"               # Awaiting testing
-    MERGED = "merged"                 # Merged with another hypothesis
-
-
-class TestType(Enum):
-    """Types of tests that can be designed and executed."""
-    EXISTENCE_CHECK = "existence_check"
-    CORRELATION_TEST = "correlation_test"
-    CAUSAL_TEST = "causal_test"
-    IDENTITY_VERIFICATION = "identity_verification"
-    TEMPORAL_ORDERING = "temporal_ordering"
-    CONSISTENCY_CHECK = "consistency_check"
-    PREDICTION_TEST = "prediction_test"
-
-
-@dataclass(slots=True)
-class Evidence:
-    """Evidence item supporting or conflicting with a hypothesis."""
-    evidence_id: str
-    source: str
-    content: str
-    timestamp: datetime
-    reliability: float = 1.0  # 0-1, source reliability
-    relevance: float = 1.0    # 0-1, relevance to hypothesis
-    metadata: dict[str, Any] = field(default_factory=dict)
-
-
-@dataclass(slots=True)
-class TestResult:
-    """Result of executing a test against a hypothesis."""
-    test_type: str
-    result: str  # passed, failed, inconclusive
-    confidence: float
-    evidence_collected: list[str] = field(default_factory=list)
-    metadata: dict[str, Any] = field(default_factory=dict)
-    timestamp: datetime = field(default_factory=datetime.now)
-
-    def __post_init__(self):
-        if isinstance(self.timestamp, str):
-            self.timestamp = datetime.fromisoformat(self.timestamp)
-
-
-@dataclass(slots=True)
-class TestDesign:
-    """Design for testing a hypothesis."""
-    test_type: str
-    description: str
-    required_data: list[str] = field(default_factory=list)
-    expected_outcome_if_true: str = ""
-    expected_outcome_if_false: str = ""
-    priority: float = 0.5  # 0-1, higher = test sooner
-    cost_estimate: float = 1.0  # Estimated computational cost
-
-
-@dataclass(slots=True)
-class FalsificationResult:
-    """Result of a falsification attempt."""
-    falsified: bool
-    confidence: float
-    counter_evidence: list[str] = field(default_factory=list)
-    reasoning: str = ""
-    timestamp: datetime = field(default_factory=datetime.now)
-
-
 # =============================================================================
-# Dark Surface Query Data Classes
+# Type DTOs — single source of truth: brain.hypothesis._types
 # =============================================================================
-
-class DarkQueryType(Enum):
-    """Types of dark surface queries for unindexed source expansion."""
-    ONION = "onion"
-    IPFS = "ipfs"
-    PASTE = "paste"
-    I2P = "i2p"
-
-
-@dataclass(frozen=True, slots=True)
-class DarkQuery:
-    """
-    Query for exploring dark/unindexed surface.
-
-    Invariant: All dark queries MUST transit via Tor/I2P transport.
-    NEVER route through aiohttp clearnet.
-    """
-    query_type: DarkQueryType
-    query: str
-    priority: float  # 0-1, higher = explore first
-    source_iocs: tuple[str, ...] = field(default_factory=lambda: ())  # IOC refs for context
-    reasoning: str = ""  # Why this query was generated
-
-
-@dataclass(slots=True)
-class _DarkQueryListResponse:
-    """Response model for Hermes LLM dark query generation."""
-    queries: list[dict[str, Any]] = field(default_factory=list)
-
-
-
-
-# =============================================================================
-# Sprint F259: Causal Reasoning Data Classes
-# =============================================================================
-# Re-exported from brain.hypothesis._types (extracted in C4 Tier-1+2).
-# We alias the dataclass names to keep the engine's public surface
-# unchanged while ensuring Pyright sees a single class identity.
+# C4 Sprint: All DTOs/enums/protocols live in ``brain.hypothesis._types`` (the
+# canonical module). This monolith re-exports the public surface for
+# backward compat. The local ``Hypothesis`` class (see below) is the sole
+# exception — it carries engine-specific methods (add_test_result,
+# add_supporting_evidence, add_conflicting_evidence, update_probability)
+# that the canonical DTO does not expose.
 
 from brain.hypothesis._types import (  # noqa: E402,F401
     CO_OCCURRENCE_FP16,
@@ -196,106 +85,27 @@ from brain.hypothesis._types import (  # noqa: E402,F401
     MAX_CAUSAL_FINDINGS,
     MAX_CAUSAL_HYPOTHESES,
     MAX_CO_OCCURRENCE_MATRIX_SIZE,
+    AdversarialReport,
     AnomalySignal,
     CausalEntity,
     CausalHypothesis,
+    Contradiction,
+    CrossReferenceResult,
+    DarkQuery,
+    DarkQueryType,
+    Event,
+    Evidence,
+    FalsificationResult,
+    HypothesisStatus,
+    HypothesisType,
+    InferenceEngineProtocol,
+    SourceCredibility,
     TemporalSequence,
+    TestDesign,
+    TestResult,
+    TestType,
+    _DarkQueryListResponse,
 )
-
-# =============================================================================
-# Adversarial Verification Data Classes
-# =============================================================================
-
-@dataclass(slots=True)
-class SourceCredibility:
-    """
-    Credibility assessment for an evidence source.
-
-    Tracks historical accuracy, bias indicators, and overall trustworthiness.
-    Used to weight evidence by source quality.
-    """
-    source_id: str
-    credibility_score: float  # 0-1, overall credibility
-    bias_indicators: list[str] = field(default_factory=list)
-    historical_accuracy: float = 0.5  # 0-1, based on past verification
-    last_updated: datetime = field(default_factory=datetime.now)
-    total_claims: int = 0
-    verified_claims: int = 0
-    contradiction_count: int = 0
-
-    def update_accuracy(self, was_correct: bool) -> None:
-        """Update historical accuracy with a new verification result."""
-        self.total_claims += 1
-        if was_correct:
-            self.verified_claims += 1
-        self.historical_accuracy = self.verified_claims / self.total_claims
-        # Recalculate credibility score
-        self.credibility_score = (
-            self.historical_accuracy * 0.7 +
-            (1.0 - min(1.0, self.contradiction_count / 10)) * 0.3
-        )
-        self.last_updated = datetime.now()  # noqa: DTZ005
-
-
-@dataclass(slots=True)
-class Event:
-    """Temporal event for consistency checking."""
-    event_id: str
-    description: str
-    timestamp: datetime
-    source: str
-    metadata: dict[str, Any] = field(default_factory=dict)
-
-
-@dataclass(slots=True)
-class Contradiction:
-    """
-    Represents a contradiction between two claims or evidence items.
-
-    Tracks the type of contradiction (temporal, factual, logical) and severity.
-    """
-    claim_a: str
-    claim_b: str
-    contradiction_type: str  # temporal, factual, logical, source_bias
-    severity: float  # 0-1, how serious the contradiction is
-    evidence_supporting_a: list[str] = field(default_factory=list)
-    evidence_supporting_b: list[str] = field(default_factory=list)
-    detected_at: datetime = field(default_factory=datetime.now)
-    resolution_notes: str = ""
-
-
-@dataclass(slots=True)
-class CrossReferenceResult:
-    """Result of cross-referencing a claim across databases."""
-    database_id: str
-    claim_found: bool
-    confidence: float
-    supporting_sources: list[str] = field(default_factory=list)
-    conflicting_sources: list[str] = field(default_factory=list)
-    metadata: dict[str, Any] = field(default_factory=dict)
-
-
-@dataclass(slots=True)
-class AdversarialReport:
-    """
-    Comprehensive adversarial verification report.
-
-    Contains all findings from the devil's advocate analysis including
-    counter-evidence, contradictions, source credibility assessments,
-    and overall confidence scoring.
-    """
-    hypothesis: str
-    supporting_evidence: list[Evidence]
-    contradicting_evidence: list[Evidence]
-    credibility_assessment: dict[str, SourceCredibility]
-    contradictions_found: list[Contradiction]
-    temporal_consistency: bool
-    overall_confidence: float  # 0-1, confidence in hypothesis after adversarial analysis
-    devil_advocate_score: float  # 0-1, strength of counter-case (higher = stronger counter-arguments)
-    alternative_explanations: list[str] = field(default_factory=list)
-    logical_fallacies: list[str] = field(default_factory=list)
-    generated_at: datetime = field(default_factory=datetime.now)
-    verification_duration_ms: float = 0.0
 
 
 @dataclass(slots=True)
@@ -475,29 +285,6 @@ class Hypothesis:
         )
 
 
-# Protocol for InferenceEngine integration
-class InferenceEngineProtocol(Protocol):
-    """Protocol for inference engine integration."""
-
-    async def abductive_reasoning(
-        self, observations: list[Evidence], context: dict[str, Any]
-    ) -> list[dict[str, Any]]:
-        """Generate possible explanations (hypotheses) from observations."""
-        ...
-
-    async def evidence_chaining(
-        self, hypothesis: Hypothesis, context: dict[str, Any]
-    ) -> list[dict[str, Any]]:
-        """Chain evidence to design tests for a hypothesis."""
-        ...
-
-    async def belief_update(
-        self, hypothesis: Hypothesis, new_evidence: Evidence
-    ) -> float:
-        """Calculate updated belief given new evidence."""
-        ...
-
-
 # =============================================================================
 # Adversarial Verifier (extracted to brain.hypothesis.adversarial — C4 Tier-3)
 # =============================================================================
@@ -659,8 +446,8 @@ class HypothesisEngine:
         self._causal_reasoner: CausalReasoner = CausalReasoner()
         # Legacy attribute aliases — kept for backward compat with any
         # external code that introspected HypothesisEngine internals.
-        # type: ignore[assignment] — CausalEntity is identical class
-        # (re-exported); Pyright is overly strict about invariance.
+        # CausalEntity is identical class (re-exported);
+        # Pyright is overly strict about invariance.
         self._causal_entities: dict[str, CausalEntity] = self._causal_reasoner._causal_entities  # type: ignore[assignment]
         self._co_occurrence_matrix: Any | None = self._causal_reasoner._co_occurrence_matrix
         self._entity_id_to_idx: dict[str, int] = self._causal_reasoner._entity_id_to_idx

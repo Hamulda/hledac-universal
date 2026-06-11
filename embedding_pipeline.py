@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import asyncio
 import gc
+import inspect
 import logging
 import threading
 import time
@@ -168,7 +169,7 @@ class EmbeddingRouter:
         if hasattr(embedder, 'embed'):
             if isinstance(texts, str):
                 texts = [texts]
-            if asyncio.iscoroutinefunction(embedder.embed):
+            if inspect.iscoroutinefunction(embedder.embed):
                 # asyncio.run() creates its own loop — correct for executor thread
                 return asyncio.run(embedder.embed(texts))
             else:
@@ -326,7 +327,7 @@ class EmbeddingRouter:
         embedder = await self.get_embedder()
         if embedder is None:
             return
-        if hasattr(embedder, 'warmup') and asyncio.iscoroutinefunction(embedder.warmup):
+        if hasattr(embedder, 'warmup') and inspect.iscoroutinefunction(embedder.warmup):
             await embedder.warmup()
         elif hasattr(embedder, 'warmup'):
             embedder.warmup()

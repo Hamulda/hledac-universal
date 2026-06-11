@@ -112,12 +112,27 @@ def fuse_discovery_hits(
     combined_chain = _combine_provider_chains(provider_results)
     combined_family = _infer_combined_source_family(provider_results)
 
+    # F265C: Collect provider_status_debug from batches that had hits
+    # so _extract_provider_surface knows which providers were selected
+    psd: list[dict] = []
+    for batch in provider_results:
+        if batch.hits and batch.provider_status_debug:
+            for entry in batch.provider_status_debug:
+                if isinstance(entry, dict):
+                    psd.append({
+                        "provider": entry.get("provider", "?"),
+                        "state": "production",
+                        "selected": True,
+                        "reason": "fusion_provider",
+                    })
+
     return DiscoveryBatchResult(
         hits=tuple(final_hits),
         provider_name="fusion",
         provider_chain=combined_chain,
         source_family=combined_family,
         elapsed_s=None,
+        provider_status_debug=psd if psd else None,
     )
 
 
@@ -330,10 +345,34 @@ def _infer_combined_source_family(batches: list[DiscoveryBatchResult]) -> str | 
 
 def _empty_fused_result(batches: list[DiscoveryBatchResult]) -> DiscoveryBatchResult:
     """Return an empty fused result with combined metadata."""
+    # F265C: provider_status_debug tells _extract_provider_surface which
+    # providers were actually queried so it does NOT fall through to
+    # "no_provider_selected" when providers ran but returned 0 hits.
+    # Also extract from provider_status_debug for batches where provider_name
+    # is None (e.g. cache-hit DDG results).
+    psd: list[dict] = []
+    for batch in batches:
+        if batch.provider_name:
+            psd.append({
+                "provider": batch.provider_name,
+                "state": "production",
+                "selected": True,
+                "reason": "fusion_zero_hits",
+            })
+        elif batch.provider_status_debug:
+            for entry in batch.provider_status_debug:
+                if isinstance(entry, dict):
+                    psd.append({
+                        "provider": entry.get("provider", "?"),
+                        "state": "production",
+                        "selected": True,
+                        "reason": "fusion_zero_hits",
+                    })
     return DiscoveryBatchResult(
         hits=(),
         provider_name="fusion",
         provider_chain=_combine_provider_chains(batches),
         source_family=_infer_combined_source_family(batches),
         elapsed_s=None,
+        provider_status_debug=psd if psd else None,
     )

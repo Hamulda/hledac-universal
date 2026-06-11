@@ -149,7 +149,7 @@ class EntityType(StrEnum):
     UNKNOWN = "unknown"
 
 
-class HypothesisStatus(StrEnum):
+class ResearchContextStatus(StrEnum):
     """Stav hypotézy ve výzkumném procesu"""
     PENDING = "pending"           # Čeká na ověření
     TESTING = "testing"           # Právě testována
@@ -247,7 +247,7 @@ class Hypothesis(BaseModel):
     """Hypotéza formulovaná během výzkumu"""
     hypothesis_id: str = Field(..., description="Unikátní ID hypotézy")
     statement: str = Field(..., description="Text hypotézy")
-    status: HypothesisStatus = Field(default=HypothesisStatus.PENDING)
+    status: ResearchContextStatus = Field(default=ResearchContextStatus.PENDING)
     confidence: float = Field(default=0.5, ge=0.0, le=1.0)
     supporting_evidence: list[str] = Field(default_factory=list)
     contradicting_evidence: list[str] = Field(default_factory=list)
@@ -430,11 +430,11 @@ class ResearchContext(BaseModel):
 
     def get_pending_hypotheses(self) -> list[Hypothesis]:
         """Vrátí hypotézy čekající na ověření"""
-        return [h for h in self.hypotheses if h.status == HypothesisStatus.PENDING]
+        return [h for h in self.hypotheses if h.status == ResearchContextStatus.PENDING]
 
     def get_confirmed_hypotheses(self) -> list[Hypothesis]:
         """Vrátí potvrzené hypotézy"""
-        return [h for h in self.hypotheses if h.status == HypothesisStatus.CONFIRMED]
+        return [h for h in self.hypotheses if h.status == ResearchContextStatus.CONFIRMED]
 
     def get_errors_by_severity(self, severity: ErrorSeverity) -> list[ErrorRecord]:
         """Vrátí chyby dané závažnosti"""

@@ -60,8 +60,8 @@ def should_use_curl_cffi(
         return False, "freenet_not_supported"
 
     # Rule 4: Env gate
-    env_value = os.environ.get("HLEDAC_ENABLE_CURL_CFFI", "")
-    if env_value != "1":
+    env_value = os.environ.get("HLEDAC_ENABLE_CURL_CFFI", "1")
+    if env_value == "0":
         return False, "curl_cffi_disabled_env"
 
     # Rule 5: curl_cffi availability checked at runtime by caller

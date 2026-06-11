@@ -74,7 +74,7 @@ class TestPlatformPatterns:
     ])
     def test_platform_url_parsing(self, platform, url, expected_username):
         """Each platform pattern extracts correct username from profile URL."""
-        for plat, url_re, username_re in _PLATFORM_PATTERNS:
+        for plat, url_re, username_re, _is_invite_only in _PLATFORM_PATTERNS:
             if plat == platform:
                 match = url_re.match(url)
                 if match and match.lastindex and match.lastindex >= 1:

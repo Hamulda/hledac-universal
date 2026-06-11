@@ -39,10 +39,11 @@ from hledac.universal.utils.exceptions import MemoryPressureError
 MLX_AVAILABLE = False
 
 # P19: Memory guard - configurable max_rss_gb and model sizes for M1 8GB
-# Hermes-3-Llama-3.2-3B-4bit ~2GB, ModernBERT ~500MB, GLiNER ~300MB
-_model_max_rss_gb: float = 5.5
+# Hermes-3-Llama-3.2-3B-4bit ~1.75GB (4bit quantization), ModernBERT ~500MB, GLiNER ~300MB
+# F272: Raised threshold from 5.5→6.0 GiB to account for M1 UMA overhead (metal driver ~0.3GB)
+_model_max_rss_gb: float = 6.0
 _MODEL_SIZES_GB = {
-    "hermes": 2.0,
+    "hermes": 1.75,
     "modernbert": 0.5,
     "gliner": 0.3,
 }
@@ -123,7 +124,20 @@ def _verify_rss_after_unload(model_key: str, rss_before: float) -> None:
     model_size = _MODEL_SIZES_GB.get(model_key.lower(), 0.5)
     dropped = rss_before - rss_after
 
-    if dropped < model_size * 0.5:  # 50% tolerance
+    # F271E: If RSS before unload was already below the model's footprint
+    # (with a 50% tolerance), the model was never actually loaded — this
+    # is a no-op unload (e.g., lazy registry cleared without instantiation).
+    # Skip the warning and the success log; neither would be informative.
+    noop_threshold = model_size * 0.5
+    if rss_before < noop_threshold:
+        logger.debug(
+            f"[MODEL MEMORY] Unload was a no-op for {model_key} "
+            f"(rss_before={rss_before:.2f}GB < expected~{model_size:.2f}GB); "
+            f"skipping RSS drop verification."
+        )
+        return
+
+    if dropped < noop_threshold:
         logger.warning(
             f"[MODEL MEMORY] RSS did not drop expected amount after unload: "
             f"dropped={dropped:.2f}GB, expected~{model_size:.2f}GB "

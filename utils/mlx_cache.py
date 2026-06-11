@@ -191,9 +191,12 @@ MLX_AVAILABLE = True  # assume available until proven otherwise at runtime
 #
 # Both limits use bytes as the native API unit (verified via inspect.signature
 # on darwin with mlx.core.metal.set_cache_limit / set_wired_limit).
-# GHOST_INVARIANT (CLAUDE.md): M1 Metal cache limit 2.5 GiB.
-_METAL_CACHE_LIMIT_BYTES = int(2.5 * 1024 ** 3)   # 2.5 GiB — GHOST_INVARIANT (CLAUDE.md)
-_METAL_WIRED_LIMIT_BYTES = int(2.5 * 1024 ** 3)   # 2.5 GiB — pinned Metal memory
+# GHOST_INVARIANT (CLAUDE.md): M1 Metal cache limit 1.5 GiB on 8GB machines.
+# F266: 2.5 GiB was too aggressive — system_used_gib hits 6.5 GiB critical threshold
+# with only 8GB total. At 1.5 GiB: model(~2GB) + cache(1.5GB) + KV(~0.75GB) = ~4.25GB,
+# leaving ~3.75GB for macOS → system stays in warn, FEED/PUBLIC lanes run.
+_METAL_CACHE_LIMIT_BYTES = int(1.5 * 1024 ** 3)   # 1.5 GiB — M1 8GB safe
+_METAL_WIRED_LIMIT_BYTES = int(1.5 * 1024 ** 3)   # 1.5 GiB — pinned Metal memory
 
 # Public aliases for test surface (Sprint 7B / 6B probes)
 _MLX_CACHE_LIMIT = _METAL_CACHE_LIMIT_BYTES

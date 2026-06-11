@@ -120,3 +120,10 @@ archive/exports/*.json
 **/.git/**
 **/dist/**
 **/build/**
+# Kilo Code indexing excludes
+cache_storage/
+graphify-out/
+.code-review-graph/
+benchmark_results/
+.venv-test/
+*.scip

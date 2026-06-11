@@ -35,11 +35,18 @@ if TYPE_CHECKING:
 
 
 class RiskLevel(StrEnum):
-    """Risk levels for tool execution."""
+    """Risk levels for tool execution.
+
+    Tool-sandboxing risk (NOT detection risk). Kept as local enum to
+    preserve semantic isolation from `project_types.RiskLevel`
+    (which is OSINT detection risk). Values match canonical
+    lowercase strings for cross-comparison safety.
+    """
 
     LOW = "low"
     MEDIUM = "medium"
     HIGH = "high"
+    CRITICAL = "critical"
 
 
 # ============================================================================

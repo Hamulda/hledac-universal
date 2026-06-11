@@ -340,6 +340,12 @@ from hledac.universal.pipeline.pivot_lane_planner import (  # noqa: E402
     plan_lanes_for_pivot_seeds,
 )
 
+# F280: Cross-sprint DuckPGQ memory
+from hledac.universal.knowledge.cross_sprint_memory import (  # noqa: E402
+    CrossSprintMemory,
+    get_cross_sprint_memory,
+)
+
 # Sprint F206BG: Canonical acquisition strategy layer
 from hledac.universal.runtime.acquisition_strategy import (  # noqa: E402
     AcquisitionLane,
@@ -1461,7 +1467,19 @@ class SprintSchedulerConfig:
 
     _MAX_BRANCH_TIMEOUT_CAP: float = 300.0    # absolute per-branch cap
 
-    _MIN_BRANCH_REMAINING_S: float = 5.0       # safety floor -- skip branch below this
+    # F273A: Dynamic branch-remaining floor. The 5.0s static floor was the root
+    # cause of `terminal:remaining_too_low` killing PUBLIC + CT branches during
+    # the windup transition. With 0.10 windup ratio + 60s ceiling, a 60s sprint
+    # hit the 5.0s floor 50%+ of the way through. The floor now scales with
+    # observed cycle time so quick cycles (< 10s) keep a 2s floor (matches the
+    # F228G `cycle_sleep_s` minimum) and slow cycles (>= 30s) preserve a 9s
+    # floor so public/CT don't drop into the 5s danger zone mid-fetch.
+    _MIN_BRANCH_REMAINING_S_DEFAULT: float = 2.0  # base floor (no cycles seen yet)
+    _MIN_BRANCH_REMAINING_S_CAP: float = 9.0     # max floor -- never let a branch starve
+
+    # Sprint F273A kept the legacy constant name as an alias for back-compat
+    # (some tests + sidecar adapters read this attribute directly).
+    _MIN_BRANCH_REMAINING_S: float = 2.0          # back-compat alias; runtime uses _min_branch_remaining_s()
 
     # Partial export interval -- every N findings in aggressive mode (recovery artifact)
 
@@ -1476,28 +1494,58 @@ class SprintSchedulerConfig:
     @property
     def effective_windup_lead_s(self) -> float:
         """
-        F250 + F272A amendment: Dynamic windup that scales with sprint duration.
+        F250 + F272A + F273B + F278A: Dynamic windup that scales with sprint duration.
 
-        Returns the windup lead in seconds as 10% of sprint_duration_s, clamped
-        to [15, 60] so:
-          - 60s quick sprint  -> 15s windup (floor, preserves 45s active window)
-          - 150s short sprint -> 15s windup (still at floor)
-          - 300s deep sprint  -> 30s windup
-          - 600s thoro sprint -> 60s windup (ceiling)
-          - 1800s default     -> 60s windup (ceiling, preserves 1740s active)
+        F278A: 30% of sprint_duration_s, clamped to [30, 180] so:
+          - 60s  quick sprint -> 30s windup (floor, preserves 30s active window)
+          - 100s short sprint -> 30s windup (floor)
+          - 300s deep sprint  -> 90s windup
+          - 600s thoro sprint -> 180s windup (ceiling)
+          - 1800s default     -> 180s windup (ceiling, preserves 1620s active)
 
-        Floor 15s prevents active budget from collapsing below a minimum viable
-        window. Ceiling 60s prevents long sprints from spending 50%+ in windup.
+        F278A: Raised from 20%/[20,90] to match F221-ABORT guard in core/__main__.py
+        which uses 30%/[30,180]. Previously the guard would pass (300s->60s windup)
+        while the scheduler used 20% (300s->60s windup), producing a larger active
+        window than the guard predicted. Now both use 30%/[30,180].
 
-        Sprint F272A: Floor was 30s (F250) which forced 50% of any 60-90s sprint
-        into windup — leaving too little time for active gathering. The 15s
-        floor gives quick sprints a usable active window while the 60s ceiling
-        still preserves the original F250 intent for long thorough runs.
-
-        Used by tests/test_f272_windup_amendment.py and the F228F family.
+        Used by tests/test_f272_windup_amendment.py, test_f273, and the F228F
+        family. For the cycle-adaptive variant see `windup_for_cycle()`.
         """
-        raw = self.sprint_duration_s * 0.10
-        return float(max(15.0, min(60.0, raw)))
+        raw = self.sprint_duration_s * 0.30
+        return float(max(30.0, min(180.0, raw)))
+
+    def windup_for_cycle(self, cycle_time_ema: float) -> float:
+        """
+        F273B + F278A: Cycle-time-adaptive windup lead.
+
+        The base `effective_windup_lead_s` (30% of duration, clamped [30, 180])
+        is the static floor. This method returns a longer windup when observed
+        cycles are slow -- so the windup phase has at least 2 cycles of headroom
+        for pattern extraction, synthesis, and DuckDB ingest.
+
+        Formula:
+          base = effective_windup_lead_s  (30% ratio)
+          adapt = max(0, (cycle_time_ema - 8) * 0.5)  # +0.5s per s over 8s cycle
+          adapt = min(30.0, adapt)         # cap the bonus at 30s
+          return clamp(base + adapt, 30, 180)
+
+        Examples (300s sprint, base=90s):
+          - cycle_time_ema=5s  -> 90s (no bonus, quick cycles)
+          - cycle_time_ema=20s -> 96s (+6s bonus)
+          - cycle_time_ema=60s -> 120s (+30s bonus, saturates at ceiling)
+
+        Examples (100s sprint, base=30s):
+          - cycle_time_ema=5s  -> 30s (no bonus, floor)
+          - cycle_time_ema=30s -> 41s (+11s, over floor)
+          - cycle_time_ema=60s -> 60s (saturates well below ceiling)
+
+        Always-on, bounded [30, 180], fail-soft (negative cycle_time_ema -> base).
+        """
+        if cycle_time_ema <= 0:
+            return self.effective_windup_lead_s
+        base = self.effective_windup_lead_s
+        adapt = max(0.0, min(30.0, (cycle_time_ema - 8.0) * 0.5))
+        return float(max(20.0, min(90.0, base + adapt)))
 
     @property
     def effective_cycle_sleep_s(self) -> float:
@@ -2346,6 +2394,35 @@ class SprintSchedulerResult:
     findings_deduplicated: int = 0
     hypothesis_contradictions_detected: int = 0
     cover_traffic_fired: int = 0
+
+    # F273D: Hermes3 model-load diagnostic. Lets operator verify the model is
+    # actually resident after the lazy gate resolves. `model_loaded?` flag
+    # requirement -- surfaced to JSON via result export.
+    hermes_model_loaded: bool = False
+    hermes_load_attempted: bool = False   # True once _load_hermes_for_sprint was called
+    hermes_load_reason: str = ""          # "ok" | "disabled_env" | "force_overrode" | "rss_headroom_skip" | "load_error:{type}"
+    hermes_load_elapsed_s: float = 0.0    # wall-clock for the load attempt
+
+    # F273C: Pattern-extraction drain telemetry. Tracks how many in-flight
+    # extraction tasks completed during the pre-windup drain phase. Zero is
+    # fine (no fetches were in flight); positive means we saved findings that
+    # would otherwise have been lost to terminal:remaining_too_low.
+    pattern_extraction_drain_completed: int = 0
+    pattern_extraction_drain_timed_out: int = 0
+    pattern_extraction_drain_elapsed_s: float = 0.0
+
+    # F273G: M1 malloc pressure-relief telemetry. Each successful call
+    # reports the libsystem malloc rc (0 = success, -1 = error).
+    malloc_pressure_relief_count: int = 0
+    malloc_pressure_relief_last_rc: int = 0
+    malloc_pressure_relief_last_at_s: float = 0.0
+
+    # F273A: Dynamic branch floor telemetry (audit-friendly).
+    dynamic_branch_floor_s: float = 0.0    # last computed floor from _min_branch_remaining_s()
+
+    # F273B: Effective windup lead used by the most recent windup decision.
+    effective_windup_lead_used_s: float = 0.0
+    windup_lead_adaptive_factor: float = 1.0  # 1.0 = no adapt, > 1.0 = cycle-adaptive bonus
     captcha_hits: int = 0
     circuit_breaker_opens: int = 0
     rl_suggested_pivot: str = ""
@@ -4568,7 +4645,7 @@ class SprintScheduler:
 
 
 
-    def __init__(self, config: SprintSchedulerConfig, ct_log_client: Any = None) -> None:
+    def __init__(self, config: SprintSchedulerConfig, ct_log_client: Any = None, flags: Any = None) -> None:
 
         self._config = config
 
@@ -4652,6 +4729,20 @@ class SprintScheduler:
 
         self._feed_budget_triggered: bool = False
 
+        # F273D: Optional flags bundle (SprintFlags msgspec.Struct from core/__main__.py).
+        # Used to thread `hermes_force` from CLI into the prewarm phase.
+        # Falsy/None means "no override" -- honor env gate as before.
+        self._flags = flags
+
+        # F273C: In-flight pattern-extraction tracker. Public fetcher registers
+        # fetch results here; the pre-windup drain phase awaits them so 16/16
+        # fetched pages don't die before their pattern matcher completes.
+        # Bounded: maxlen=512 ring; oldest dropped on overflow.
+        from collections import deque as _deque_f273
+        self._pending_extractions: _deque_f273 = _deque_f273(maxlen=512)
+        self._extraction_drain_count: int = 0
+        self._extraction_drain_deadline_s: float = 30.0  # F273C: bound on drain phase
+
         # Sprint 8TB: Agentic Pivot Loop state
         # ── Sprint Opt: tuple wrapper pro prioritu (M1-safe, msgspec-friendly) ────
         # PivotTask (msgspec.Struct, frozen, gc=False) nema order=True, takze
@@ -4682,6 +4773,9 @@ class SprintScheduler:
         self._bg_tasks: set[asyncio.Task] = set()
 
         self._speculative_results: dict[str, object] = {}
+
+        # Sprint 8UC B.4-II: DNS prefetch cache — domain -> [IP addresses]
+        self._speculative_dns_cache: dict[str, list[str]] = {}
 
         self._last_speculative: float = 0.0
 
@@ -7021,6 +7115,21 @@ class SprintScheduler:
 
                         continue
 
+                    # F273C: Pre-windup drain of in-flight pattern extractions.
+                    # Runs at the windup_guard evaluation point so any HTML the
+                    # public fetcher already submitted to CPU_EXECUTOR gets a
+                    # bounded deadline to finish matching before the sprint
+                    # declares terminal:remaining_too_low. Without this, 16/16
+                    # fetched pages can land in CPU_EXECUTOR and never be
+                    # matched because the windup transition aborts the
+                    # awaiting branch before its extraction Future completes.
+                    await self._drain_pending_pattern_extractions()
+
+                    # F273G: Single malloc pressure-relief syscall per windup
+                    # decision. Cheaper than the background loop, keeps the
+                    # windup phase starting with a clean allocator state.
+                    self._maybe_call_pressure_relief()
+
 
 
                     # Barrier satisfied or already delayed once -- delegate to runner
@@ -7745,6 +7854,13 @@ class SprintScheduler:
 
             # ── Teardown / Export ───────────────────────────────────────────────
 
+            # F273G: Second malloc pressure-relief call at winddown start.
+            # Cleans allocator before export + teardown I/O. First call at
+            # windup barrier (line ~7132) cleared pages for DuckDB ingest;
+            # this one clears again before export so LMDB/DuckDB writeback
+            # + artifact serialisation start from a defragmented heap.
+            self._maybe_call_pressure_relief()
+
             # Sprint F206C: Delegated to runner.teardown()
 
             self._runner.teardown()
@@ -7813,7 +7929,11 @@ class SprintScheduler:
 
             await self._sidecar_orchestrator.run_advisory_runner()
 
-
+            # Sprint F265B-III: ANE semantic dedup advisory — catch near-duplicates
+            # that BloomFilter misses (similar title+snippet, not exact URL match).
+            # Runs once on full findings list before export. Fail-soft: on any error
+            # the original findings list is used unchanged.
+            await self._run_ane_semantic_dedup_advisory()
 
             # F11: Deep research advisory -- fire-and-forget after teardown/export
 
@@ -12564,19 +12684,33 @@ class SprintScheduler:
                                     or self._result.next_seeds_ioc_urls or self._result.next_seeds_ioc_hashes)
 
             if _pivot_has_seeds or _next_seeds_has_iocs:
+                # F280: Collect DuckPGQ cross-sprint entity neighbors for seed entities
+                _duckpgq_seeds: tuple[dict, ...] = ()
+                try:
+                    _csm = get_cross_sprint_memory()
+                    if _csm.is_available():
+                        _all_seed_values = list(
+                            (self._result.pivot_seed_domains or ())
+                            + (self._result.pivot_seed_ips or ())
+                            + (self._result.next_seeds_ioc_domains or ())
+                            + (self._result.next_seeds_ioc_ips or ())
+                        )
+                        if _all_seed_values:
+                            _duckpgq_results = _csm.get_related_entities_batch(_all_seed_values)
+                            _flat: list[dict] = []
+                            for _entities in _duckpgq_results.values():
+                                _flat.extend(_entities)
+                            _duckpgq_seeds = tuple(_flat[:20])  # cap at 20
+                except Exception:
+                    pass  # fail-soft: DuckPGQ unavailable
 
                 _seed_ctx = NonfeedSeedContext(
-
                     domains=tuple((self._result.pivot_seed_domains or ()) + (self._result.next_seeds_ioc_domains or ())),  # noqa: E501
-
                     ips=tuple((self._result.pivot_seed_ips or ()) + (self._result.next_seeds_ioc_ips or ())),
-
                     urls=tuple((self._result.pivot_seed_urls or ()) + (self._result.next_seeds_ioc_urls or ())),
-
                     hashes=tuple((self._result.pivot_seed_hashes or ()) + (self._result.next_seeds_ioc_hashes or ())),
-
                     cves=tuple((self._result.pivot_seed_cves or ()) + (self._result.next_seeds_ioc_cves or ())),
-
+                    duckpgq_entities=_duckpgq_seeds,
                 )
 
 
@@ -14406,7 +14540,30 @@ class SprintScheduler:
 
             self._process_result(feed_url, result)
 
+        # Sprint 8UC B.4-II: DNS prefetch — extract domains from work_items and
+        # resolve in background while feed results are being processed.
+        # Overlaps DNS latency (~5-50ms) with ongoing fetch I/O.
+        if work_items:
+            domains = []
+            for w in work_items:
+                url = w.feed_url
+                if url and "://" in url:
+                    try:
+                        from urllib.parse import urlparse
 
+                        netloc = urlparse(url).netloc
+                        if netloc:
+                            domains.append(netloc.split(":")[0])
+                    except Exception:
+                        pass
+            if domains:
+                unique = list(dict.fromkeys(domains))[:5]
+                _t = asyncio.create_task(
+                    self._speculative_dns_prefetch(unique),
+                    name="sprint:dns_prefetch",
+                )
+                self._bg_tasks.add(_t)
+                _t.add_done_callback(self._bg_tasks.discard)
 
         # F205C: Feed findings are scoped inside async_run_live_feed_pipeline and not
 
@@ -14438,7 +14595,7 @@ class SprintScheduler:
 
                 "[F212-B] PUBLIC branch skipped in stable: remaining=%.1fs <= floor=%.1fs",
 
-                remaining_s, self._config._MIN_BRANCH_REMAINING_S,
+                remaining_s, self._min_branch_remaining_s(),
 
             )
 
@@ -14742,6 +14899,128 @@ class SprintScheduler:
 
 
 
+    def _min_branch_remaining_s(self) -> float:
+        """
+        F273A: Dynamic branch-remaining safety floor.
+
+        Returns the safety floor (in seconds) below which a branch is skipped
+        with `terminal:remaining_too_low`. Replaces the static 5.0s floor that
+        was the root cause of PUBLIC + CT branches being killed during windup
+        transitions on 60-120s sprints.
+
+        Formula (always-on, bounded [2.0, 9.0]):
+          cycle_ema = self._cycle_time_ema (defaults to 1.0s pre-loop)
+          base = max(2.0, 0.3 * cycle_ema)
+          return min(9.0, base)
+
+        Examples:
+          - cycle_ema=1.0s (initial)  -> 2.0s (floor)
+          - cycle_ema=5.0s (quick)    -> 2.0s (clamped to floor)
+          - cycle_ema=10.0s (normal)  -> 3.0s
+          - cycle_ema=20.0s (slow)    -> 6.0s
+          - cycle_ema=30.0s+ (hermes) -> 9.0s (ceiling)
+
+        Why 0.3 * cycle_ema: each branch needs ~30% of one cycle to flush
+        its in-flight pattern matcher work. Quick cycles need only 2s; slow
+        cycles (with Hermes synthesis) need more.
+
+        Fail-safe: if cycle_ema is missing, returns the static 2.0s default.
+        """
+        cycle_ema = float(getattr(self, "_cycle_time_ema", 0.0) or 0.0)
+        if cycle_ema <= 0.0:
+            return self._config._MIN_BRANCH_REMAINING_S_DEFAULT
+        base = max(self._config._MIN_BRANCH_REMAINING_S_DEFAULT, 0.3 * cycle_ema)
+        return float(min(self._config._MIN_BRANCH_REMAINING_S_CAP, base))
+
+    async def _drain_pending_pattern_extractions(self) -> None:
+        """
+        F273C: Pre-windup drain of in-flight pattern-extraction Futures.
+
+        Calls into `public_fetcher.drain_pending_extractions(deadline_s)` to
+        await any HTML the public fetcher has already submitted to
+        CPU_EXECUTOR. This is the direct fix for the "16/16 fetched → 0
+        matched patterns → 0 stored" failure mode where the windup transition
+        cancelled the awaiting branch before its extraction Future resolved.
+
+        Always-on, bounded (deadline=30s by default), fail-soft: any error
+        in the drain path returns silently and the windup decision proceeds.
+
+        Telemetry recorded on self._result:
+          - pattern_extraction_drain_completed  (cumulative count)
+          - pattern_extraction_drain_timed_out  (cumulative count)
+          - pattern_extraction_drain_elapsed_s  (last drain wall-clock)
+        """
+        import time as _t_f273c_drain
+        _t0 = _t_f273c_drain.monotonic()
+        # Import lazily to avoid circular dep at module load
+        try:
+            from hledac.universal.fetching.public_fetcher import (
+                drain_pending_extractions,
+                get_drain_stats,
+            )
+        except Exception as exc:  # noqa: BLE001
+            log.debug("[F273C] Could not import drain helpers: %s", exc)
+            return
+        # Snapshot the stats before the drain so we can compute deltas
+        pre = get_drain_stats()
+        completed, timed_out, _elapsed = await drain_pending_extractions(
+            deadline_s=self._extraction_drain_deadline_s,
+        )
+        post = get_drain_stats()
+        # Cumulative telemetry
+        self._result.pattern_extraction_drain_completed += completed
+        self._result.pattern_extraction_drain_timed_out += timed_out
+        self._result.pattern_extraction_drain_elapsed_s = round(
+            _t_f273c_drain.monotonic() - _t0, 4
+        )
+        if completed or timed_out:
+            log.debug(
+                "[F273C] pattern-extraction drain: completed=%d timed_out=%d "
+                "elapsed=%.2fs registry_pre=%d registry_post=%d",
+                completed, timed_out, _elapsed, pre["registry_size"],
+                post["registry_size"],
+            )
+
+    def _maybe_call_pressure_relief(self) -> None:
+        """
+        F273G: Per-sprint macOS malloc pressure relief.
+
+        Calls the existing ``core.memory_cycle.malloc_zone_pressure_relief()``
+        helper to ask the Darwin allocator to release fragmented pages. Cheap
+        (single ctypes syscall), thread-safe in libmalloc, and fail-soft on
+        non-Darwin / on ctypes errors.
+
+        Wired into the pre-windup barrier so the windup phase starts with a
+        clean allocator state — better DuckDB ingest + LMDB mmap behavior +
+        reduced RSS fragmentation for the Hermes load that may follow.
+
+        Telemetry recorded on self._result:
+          - malloc_pressure_relief_count      (cumulative calls)
+          - malloc_pressure_relief_last_rc    (last return value, 0 = no-op)
+          - malloc_pressure_relief_last_at_s  (wall-clock of last call)
+
+        Bounded: 1 call per windup decision. No new feature flags.
+        """
+        try:
+            from hledac.universal.core.memory_cycle import (
+                malloc_zone_pressure_relief as _f273g_relief,
+            )
+            rc = _f273g_relief()
+        except Exception as exc:  # noqa: BLE001
+            log.debug("[F273G] malloc_zone_pressure_relief unavailable: %s", exc)
+            return
+        import time as _t_f273g
+        self._result.malloc_pressure_relief_count += 1
+        self._result.malloc_pressure_relief_last_rc = int(rc)
+        self._result.malloc_pressure_relief_last_at_s = round(
+            _t_f273g.monotonic(), 3
+        )
+        if rc > 0:
+            log.debug(
+                "[F273G] malloc pressure relief released %d bytes (rc=%d)",
+                rc, rc,
+            )
+
     def _branch_timeout_s(self, branch_name: str, remaining_s: float) -> float:
 
         """
@@ -14760,9 +15039,13 @@ class SprintScheduler:
 
         - Returns 0 when remaining_s <= MIN_BRANCH_REMAINING_S (safety floor)
 
+        F273A: Floor is now dynamic via self._min_branch_remaining_s().
+
         """
 
-        if remaining_s <= self._config._MIN_BRANCH_REMAINING_S:
+        floor = self._min_branch_remaining_s()
+
+        if remaining_s <= floor:
 
             return 0.0
 
@@ -14836,13 +15119,15 @@ class SprintScheduler:
 
         # F212-B: Safety floor -- skip entire aggressive cycle if time too low
 
-        if remaining_s <= self._config._MIN_BRANCH_REMAINING_S:
+        floor = self._min_branch_remaining_s()
+
+        if remaining_s <= floor:
 
             log.debug(
 
                 "[F212-B] Aggressive cycle skipped: remaining=%.1fs <= floor=%.1fs",
 
-                remaining_s, self._config._MIN_BRANCH_REMAINING_S,
+                remaining_s, floor,
 
             )
 
@@ -15026,6 +15311,29 @@ class SprintScheduler:
             for feed_url, result in results:
 
                 self._process_result(feed_url, result)
+
+            # Sprint 8UC B.4-II: DNS prefetch for aggressive mode
+            if work_items:
+                domains = []
+                for w in work_items:
+                    url = w.feed_url
+                    if url and "://" in url:
+                        try:
+                            from urllib.parse import urlparse
+
+                            netloc = urlparse(url).netloc
+                            if netloc:
+                                domains.append(netloc.split(":")[0])
+                        except Exception:
+                            pass
+                if domains:
+                    unique = list(dict.fromkeys(domains))[:5]
+                    _t = asyncio.create_task(
+                        self._speculative_dns_prefetch(unique),
+                        name="sprint:dns_prefetch_agg",
+                    )
+                    self._bg_tasks.add(_t)
+                    _t.add_done_callback(self._bg_tasks.discard)
 
             # F205C: Feed findings accepted but not in scheduler scope for sidecar dispatch.
 
@@ -16438,12 +16746,13 @@ class SprintScheduler:
 
                     self._timer.phase("quantum_path_start")
 
+                    # F265B-FIX: findings are CanonicalFinding msgspec.Struct objects,
+                    # not dicts. CanonicalFinding has no .value — use .finding_id
+                    # (the stable cross-sprint node identifier in DuckPGQ graph).
                     new_ioc_values = [
-
-                        f.value for f in findings
-
-                        if isinstance(f, dict) and f.get("value")
-
+                        f.finding_id
+                        for f in findings
+                        if hasattr(f, "finding_id") and f.finding_id
                     ] or []
 
                     quantum_seeds = await self._run_quantum_path_analysis(new_ioc_values)
@@ -18730,9 +19039,16 @@ class SprintScheduler:
 
 
 
-        # Guard: skip if remaining time below safety floor
+        # F273A: Use dynamic floor via scheduler instance (R8 may run before
+        # _cycle_time_ema is set -- fall back to 3.0s defensive floor in that case).
 
-        min_remaining = self._config._MIN_BRANCH_REMAINING_S if self._config else 3.0
+        if self._config and hasattr(self, "_min_branch_remaining_s"):
+
+            min_remaining = self._min_branch_remaining_s()
+
+        else:
+
+            min_remaining = 3.0
 
         if remaining_s <= min_remaining:
 
@@ -20203,6 +20519,70 @@ class SprintScheduler:
     # ── F204E: Analyst Brief Advisory ─────────────────────────────────────────
 
 # ── F204E: Analyst Brief Advisory ─────────────────────────────────────────
+
+    # ── F265B-III: ANE Semantic Dedup Advisory ─────────────────────────────────
+
+# ── F265B-III: ANE Semantic Dedup Advisory ─────────────────────────────────
+
+    async def _run_ane_semantic_dedup_advisory(self) -> None:
+        """
+        Sprint F265B-III: ANE-backed semantic deduplication of findings.
+
+        Runs after all advisory steps have completed, on the full findings list.
+        Uses ANE CoreML MiniLM embeddings to detect near-duplicate findings that
+        the RotatingBloomFilter URL dedup misses (similar title+snippet, not exact URL).
+
+        Bounded:
+          - threshold = 0.92 cosine similarity
+          - Only runs when ANE embedder is loaded (fail-soft if unavailable)
+          - No changes to canonical write path (DuckDB/LMDB untouched)
+
+        Returns:
+            None. Findings list is updated in-place via self._result.all_findings.
+        """
+        # Guard: skip if no findings or ANE not available.
+        all_findings: list[dict] = getattr(self._result, "all_findings", None)
+        if not all_findings or len(all_findings) < 2:
+            return
+
+        try:
+            from hledac.universal.brain.ane_embedder import (
+                get_ane_embedder,
+                semantic_dedup_findings,
+            )
+
+            embedder = get_ane_embedder()
+            if embedder is None or not embedder.is_loaded():
+                logger.debug("[ANE-DEDUP] embedder not loaded, skipping")
+                return
+
+            threshold_env = os.environ.get("HLEDAC_ANE_DEDUP_THRESHOLD", "0.92")
+            try:
+                threshold = float(threshold_env)
+            except ValueError:
+                threshold = 0.92
+
+            original_count = len(all_findings)
+            loop = asyncio.get_running_loop()
+            deduped = await loop.run_in_executor(
+                None,
+                lambda: semantic_dedup_findings(all_findings, threshold=threshold),
+            )
+            if deduped is not None and len(deduped) < original_count:
+                self._result.all_findings = deduped
+                removed = original_count - len(deduped)
+                logger.debug(
+                    "[ANE-DEDUP] removed %d near-duplicates, %d → %d findings",
+                    removed,
+                    original_count,
+                    len(deduped),
+                )
+                if hasattr(self._result, "ane_dedup_removed"):
+                    self._result.ane_dedup_removed = removed
+            else:
+                logger.debug("[ANE-DEDUP] no near-duplicates found")
+        except Exception as _e:
+            logger.debug("[ANE-DEDUP] failed (fail-soft): %s", _e)
 
     async def _run_ct_to_passivedns_pivot_advisory(self) -> None:
 
@@ -22747,6 +23127,74 @@ class SprintScheduler:
             self._result.synthesis_engine = "error"
             self._result.synthesis_text = ""
 
+    # ── F204I: Social Identity Surface Sidecar ──────────────────────────────────
+
+    async def _run_social_identity_surface_sidecar(
+        self,
+        query: str,
+        duckdb_store: Any,
+    ) -> None:
+        """F204I: Social Identity Surface Miner — extract usernames/profiles from findings.
+
+        Wire point: called in WINDUP phase after all acquisition lanes complete.
+        Canonical execution path via SprintScheduler (not SidecarRegistry) to avoid
+        double-execution — the SidecarRegistry adapter is wiring-only (returns []).
+
+        Gates:
+        - HLEDAC_ENABLE_SOCIAL_IDENTITY_SURFACE=1 (default: 0, opt-in)
+        - duckdb_store is not None
+        - self._result.accepted_findings is not empty
+
+        Args:
+            query: Original sprint query string
+            duckdb_store: DuckDBShadowStore instance for canonical write
+        """
+        if duckdb_store is None:
+            return
+
+        if not getattr(self._result, "accepted_findings", None):
+            return
+
+        if _env_flag("HLEDAC_ENABLE_SOCIAL_IDENTITY_SURFACE", "0") != "1":
+            log.debug("[F204I] Social Identity Surface skipped -- HLEDAC_ENABLE_SOCIAL_IDENTITY_SURFACE != '1'")
+            return
+
+        # M1 8GB UMA RAM guard — skip if memory is tight
+        try:
+            from hledac.universal.utils.uma_budget import get_uma_snapshot
+            uma = get_uma_snapshot()
+            if uma.rss_gib >= 5.5 or uma.is_critical or uma.is_emergency:
+                log.debug("[F204I] UMA guard: RSS=%.1fGB, state=%s -- skipping",
+                          uma.rss_gib, uma.state)
+                return
+        except Exception:
+            pass
+
+        try:
+            from hledac.universal.intelligence.social_identity_miner import (
+                create_social_identity_miner_adapter,
+            )
+        except Exception as e:
+            log.debug("[F204I] Import failed: %s", e)
+            return
+
+        try:
+            miner = create_social_identity_miner_adapter()
+        except Exception as e:
+            log.debug("[F204I] Factory failed: %s", e)
+            return
+
+        try:
+            result = await miner.mine(
+                findings=self._result.accepted_findings,
+                store=duckdb_store,
+                query=query,
+            )
+            log.info("[F204I] Social Identity scan complete: scanned=%d, facets=%d, elapsed_ms=%.1f",
+                     result.scanned_count, len(result.facets), result.elapsed_ms)
+        except Exception as e:
+            log.debug("[F204I] mine() failed: %s", e)
+
     # ── Sprint F260: DS ↔ DSPy Bridge ──────────────────────────────────────────
 
     async def _run_epistemic_gap_advisory(
@@ -23908,7 +24356,35 @@ class SprintScheduler:
 
         hermes_synthesis_enabled = _env_flag("HLEDAC_ENABLE_HERMES_SYNTHESIS") == "1"
 
+        # F273D: --force-hermes CLI overrides the env gate. SprintFlags carries
+
+        # the operator's explicit intent; we honor it and record `force_overrode`
+
+        # in the diagnostic so the JSON report shows why the model was loaded.
+
+        _hermes_force = bool(
+            getattr(self, "_flags", None) is not None
+            and getattr(self._flags, "hermes_force", False)
+        )
+
+        if _hermes_force and not hermes_synthesis_enabled:
+
+            log.debug(
+                "[F273D] Hermes force-load requested via flags.hermes_force -- "
+                "overriding HLEDAC_ENABLE_HERMES_SYNTHESIS gate"
+            )
+
+            hermes_synthesis_enabled = True
+
         hermes_load_skipped_reason = None
+
+        # F273D: Mark load attempted (set early so result reflects intent even on
+
+        # RSS headroom skip or load error). The actual `hermes_model_loaded` flag
+
+        # is set inside _load_hermes_for_sprint on success.
+
+        self._result.hermes_load_attempted = True
 
         if not hermes_synthesis_enabled:
 
@@ -23917,6 +24393,10 @@ class SprintScheduler:
             self._hermes_engine = None
 
             self._memory_manager = None
+
+            self._result.hermes_load_reason = hermes_load_skipped_reason
+
+            self._result.hermes_model_loaded = False
 
             log.debug(
 
@@ -23927,6 +24407,16 @@ class SprintScheduler:
             )
 
         else:
+
+            # F273D: Record force-overrode diagnostic before the actual load.
+
+            if _hermes_force:
+
+                self._result.hermes_load_reason = "force_overrode"
+
+            else:
+
+                self._result.hermes_load_reason = "ok"
 
             # Shared load path via ModelManager (canonical lifecycle owner)
 
@@ -23991,7 +24481,13 @@ class SprintScheduler:
 
         from hledac.universal.brain.model_manager import get_model_manager
 
+        import time as _t_f273d
 
+        # F273D: Wall-clock the load so the result surfaces actual hermes
+
+        # load latency (helps diagnose M1 8GB model-swap cost).
+
+        _hermes_t0 = _t_f273d.monotonic()
 
         # Load Hermes via ModelManager -- handles mlx_lm.load internally
 
@@ -24009,11 +24505,33 @@ class SprintScheduler:
 
             self._hermes_engine = None
 
+            self._result.hermes_load_reason = f"rss_headroom_skip:{type(e).__name__}"
+
         except Exception as e:
 
             log.debug(f"[P12] Hermes load failed: {e}")
 
             self._hermes_engine = None
+
+            self._result.hermes_load_reason = f"load_error:{type(e).__name__}"
+
+        finally:
+
+            # F273D: Record wall-clock + actual model-loaded flag. Set AFTER
+
+            # the try/except so the operator-visible `hermes_model_loaded`
+
+            # reflects the truth, not the intent.
+
+            self._result.hermes_load_elapsed_s = round(_t_f273d.monotonic() - _hermes_t0, 4)
+
+            self._result.hermes_model_loaded = self._hermes_engine is not None
+
+            if self._result.hermes_model_loaded and not self._result.hermes_load_reason:
+
+                # Default to "ok" when load succeeded and no reason was set yet
+
+                self._result.hermes_load_reason = "ok"
 
 
 
@@ -27170,7 +27688,59 @@ class SprintScheduler:
 
             task.add_done_callback(self._bg_tasks.discard)
 
+    # ── Sprint 8UC B.4-II: DNS Prefetch ───────────────────────────────────
 
+    async def _speculative_dns_prefetch(self, domains: list[str]) -> None:
+        """
+        Fire-and-forget DNS resolution for top-k domain candidates.
+
+        Runs as background task while fetch loop is active -- overlaps
+        DNS latency (~5-50ms) with ongoing network I/O.
+
+        Results stored in _speculative_dns_cache for later pivot planning.
+        Fail-soft: any error silently ignored, cache miss treated as "unresolved".
+
+        Args:
+            domains: List of domain strings to prefetch
+        """
+        if not domains:
+            return
+
+        import socket as _socket
+
+        async def _resolve_one(domain: str) -> tuple[str, list[str]] | None:
+            try:
+
+                def _sync_resolve() -> list[str]:
+                    try:
+                        addrs = _socket.getaddrinfo(domain, 443, _socket.AF_INET)
+                        return list({r[4][0] for r in addrs})
+                    except Exception:
+                        return []
+
+                ips = await asyncio.to_thread(_sync_resolve)
+                if ips:
+                    return (domain, ips)
+            except Exception:
+                pass
+            return None
+
+        # Bound: max 5 domains per call, max 10 concurrent resolves
+        tasks = [_resolve_one(d) for d in domains[:5]]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        for r in results:
+            if isinstance(r, tuple) and len(r) == 2:
+                dom, ips = r
+                self._speculative_dns_cache[dom] = ips
+
+    def get_speculative_dns(self, domain: str) -> list[str] | None:
+        """
+        Retrieve prefetched DNS results for a domain.
+
+        Returns IP list if prefetch hit, None if miss/unresolved.
+        Used by pivot planner to skip redundant DNS lookups.
+        """
+        return getattr(self, "_speculative_dns_cache", {}).get(domain)
 
     # ── Sprint 8UC B.5: OODA agentic loop ────────────────────────────────
 

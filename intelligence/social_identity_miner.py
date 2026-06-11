@@ -32,6 +32,33 @@ from utils.async_helpers import safe_gather_dropin
 
 from .confidence_policy import compute_confidence as _compute_confidence
 
+# ── Aho-Corasick platform matcher (lazy, thread-safe) ─────────────────────────
+# Single-pass O(n) scan across all 17 platform URL patterns.
+# Falls back to sequential pattern matching if Rust extension unavailable.
+
+_AC_MATCHER: "Any" = None
+
+def _get_ac_matcher() -> "Any":
+    """Lazy-init Aho-Corasick matcher for platform URL patterns."""
+    global _AC_MATCHER
+    if _AC_MATCHER is None:
+        try:
+            from hledac_rust_extensions import AhoCorasickMatcher
+            # Build AC automaton: patterns = URL prefixes for fast platform detection
+            patterns = [p[1].pattern for p in _PLATFORM_PATTERNS]
+            _AC_MATCHER = AhoCorasickMatcher(patterns)
+        except Exception:
+            pass
+    return _AC_MATCHER
+
+def _extract_platform_username(text: str, platform_idx: int) -> str:
+    """Extract username from text using the given platform's username regex."""
+    _, _, username_re, _ = _PLATFORM_PATTERNS[platform_idx]
+    m = username_re.search(text)
+    if m and m.group(1):
+        return m.group(1)
+    return ""
+
 if TYPE_CHECKING:
     from ..project_types import CanonicalFinding
 
@@ -178,6 +205,17 @@ _BIO_LINK_PATTERNS: list[re.Pattern[str]] = [
 # Email patterns in text
 _EMAIL_PATTERNS: re.Pattern[str] = re.compile(
     r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}"
+)
+
+# Pre-compiled URL scan pattern (used by _scan_text_for_urls)
+_SOCIAL_URL_RE: re.Pattern[str] = re.compile(
+    r"https?://[a-zA-Z0-9][a-zA-Z0-9-]*(?:\.[a-zA-Z]{2,})+(?:/[^\s<>\"')\]]*)?",
+    re.IGNORECASE,
+)
+
+# Pre-compiled domain extraction pattern (used by _extract_domains_from_cert_text)
+_SOCIAL_DOMAIN_RE: re.Pattern[str] = re.compile(
+    r"[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?\.(?:[a-zA-Z]{2,})"
 )
 
 # PGP fingerprint patterns — defined for future use (PGP extraction not yet wired)
@@ -373,18 +411,67 @@ class SocialIdentityMiner:
         text_sample: str,
         source: str = "url_in_payload",  # R7: evidence_kind source
     ) -> SocialIdentityFacet | None:
-        """Extract social identity from a single URL."""
+        """Extract social identity from a single URL.
+
+        Fast path: Aho-Corasick single-pass platform detection.
+        Fallback: sequential pattern matching (same logic, same results).
+        """
         async with self._semaphore:
             try:
-                # Parse URL
                 parsed = urlparse(url)
                 path = parsed.path.strip("/")
 
-                # Check against known platform patterns
+                # ── Fast path: Aho-Corasick single-pass ───────────────────────────
+                ac = _get_ac_matcher()
+                if ac is not None:
+                    # AC scans all17 patterns in O(n) — one pass vs17 sequential
+                    matches = ac.scan(url)
+                    if matches:
+                        _, _, pattern_str = matches[0]
+                        # Find matching platform index by URL pattern string
+                        matched_idx = None
+                        for idx, (_plat, url_re, _, _) in enumerate(_PLATFORM_PATTERNS):
+                            if url_re.pattern == pattern_str:
+                                matched_idx = idx
+                                break
+                        if matched_idx is None:
+                            return None
+                        platform, _url_re, _username_re, is_invite_only = _PLATFORM_PATTERNS[matched_idx]
+
+                        # discord_invite is NOT a person identity
+                        if is_invite_only:
+                            return None
+
+                        # Extract username from URL
+                        username = _extract_platform_username(url, matched_idx)
+                        if not username or len(username) < 2:
+                            return None
+
+                        profile_url = self._build_profile_url(platform, username, parsed.netloc)
+                        linked_domains = self._extract_linked_domains(text_sample)
+                        linked_emails = self._extract_linked_emails(text_sample)
+                        confidence = self._compute_confidence(platform, username, linked_domains, linked_emails)
+
+                        if confidence < SOCIAL_MIN_CONFIDENCE:
+                            return None
+
+                        return SocialIdentityFacet(
+                            finding_id=finding_id,
+                            platform=platform,
+                            username=username,
+                            display_name=username,
+                            profile_url=profile_url,
+                            linked_domains=tuple(linked_domains),
+                            linked_emails=tuple(linked_emails),
+                            confidence=confidence,
+                            evidence_kind=source,
+                        )
+                    # No AC match — fall through to fallback (AC may miss some variants)
+
+                # ── Fallback: sequential pattern matching ─────────────────────────
                 for platform, url_re, username_re, is_invite_only in _PLATFORM_PATTERNS:
                     url_match = url_re.match(url)
                     if not url_match:
-                        # Try host + path matching
                         host_match = re.match(
                             r"https?://(?:www\.)?" + re.escape(parsed.netloc) + r"/?",
                             url,
@@ -395,11 +482,9 @@ class SocialIdentityMiner:
                     if not url_match and platform not in parsed.netloc:
                         continue
 
-                    # R7: discord_invite is NOT a person identity — skip
                     if is_invite_only:
                         return None
 
-                    # Extract username
                     username = ""
                     if path:
                         username = path.split("/")[0]
@@ -411,14 +496,9 @@ class SocialIdentityMiner:
                     if not username or len(username) < 2:
                         continue
 
-                    # Build profile URL
                     profile_url = self._build_profile_url(platform, username, parsed.netloc)
-
-                    # Linked domains/emails from text_sample
                     linked_domains = self._extract_linked_domains(text_sample)
                     linked_emails = self._extract_linked_emails(text_sample)
-
-                    # Confidence scoring
                     confidence = self._compute_confidence(platform, username, linked_domains, linked_emails)
 
                     if confidence < SOCIAL_MIN_CONFIDENCE:
@@ -428,7 +508,7 @@ class SocialIdentityMiner:
                         finding_id=finding_id,
                         platform=platform,
                         username=username,
-                        display_name=username,  # display name unknown without scraping
+                        display_name=username,
                         profile_url=profile_url,
                         linked_domains=tuple(linked_domains),
                         linked_emails=tuple(linked_emails),
@@ -481,12 +561,7 @@ class SocialIdentityMiner:
             return []
 
         urls: list[str] = []
-        # HTTP(S) URLs
-        url_re = re.compile(
-            r"https?://[a-zA-Z0-9][a-zA-Z0-9-]*(?:\.[a-zA-Z]{2,})+(?:/[^\s<>\"')\]]*)?",
-            re.IGNORECASE,
-        )
-        for m in url_re.finditer(text):
+        for m in _SOCIAL_URL_RE.finditer(text):
             url = m.group(0)
             if len(url) < 200:  # Sanity bound
                 urls.append(url)
@@ -497,10 +572,8 @@ class SocialIdentityMiner:
         """Extract domains from certificate transparency text."""
         if not text:
             return []
-        # Common domain extraction patterns in CT data
-        domain_re = re.compile(r"[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?\.(?:[a-zA-Z]{2,})")
         domains = []
-        for m in domain_re.finditer(text):
+        for m in _SOCIAL_DOMAIN_RE.finditer(text):
             d = m.group(0)
             if len(d) > 4 and "." in d and d.count(".") < 4:
                 domains.append(d)
@@ -550,8 +623,19 @@ class SocialIdentityMiner:
             model_score=None,
         )
 
-        # Preserve minimum threshold
-        return max(confidence, SOCIAL_MIN_CONFIDENCE)
+        # Platform-specific base bonus (F204I-5: GitHub gets higher base)
+        _platform_upper = _platform.upper()
+        if _platform_upper == "GITHUB":
+            confidence += 0.10
+        elif _platform_upper in ("TWITTER", "LINKEDIN", "MASTODON", "KEYBASE", "GITLAB"):
+            confidence += 0.05
+
+        # Username length bonus (F204I-5: >5 chars gets +0.05)
+        if len(_username) > 5:
+            confidence += 0.05
+
+        # Preserve minimum threshold, cap at MAX_CONFIDENCE
+        return max(min(confidence, 0.95), SOCIAL_MIN_CONFIDENCE)
 
     # ── Deduplication & Write ───────────────────────────────────────────────────
 

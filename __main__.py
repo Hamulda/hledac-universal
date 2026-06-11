@@ -20,9 +20,11 @@ Benchmark mode activates internal probe tests.
 
 import asyncio
 import contextlib
+import logging
 import pathlib
 import signal
 import sys
+import time
 import traceback
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
@@ -45,9 +47,18 @@ sys.path = [p for p in sys.path if not p.endswith("/legacy")]
 _uvloop_installed = False
 try:
     import uvloop
-    uvloop.install()
-    _uvloop_installed = True
-    logging.info("[RUNTIME] uvloop installed successfully")
+    import sys as _sys
+    # Python 3.14+: uvloop.install() triggers AbstractEventLoopPolicy deprecation
+    # inside the library itself — skip it and use stdlib asyncio loop
+    if _sys.version_info >= (3, 14):
+        logging.warning("[RUNTIME] Python 3.14+ detected, skipping uvloop.install()")
+    else:
+        import warnings as _lw
+        with _lw.catch_warnings():
+            _lw.filterwarnings("ignore", message=".*AbstractEventLoopPolicy.*", category=DeprecationWarning)
+            uvloop.install()
+        _uvloop_installed = True
+        logging.info("[RUNTIME] uvloop installed successfully")
 except ImportError:
     # Fail-open: fall back to default asyncio loop
     logging.warning("[RUNTIME] uvloop not available, using default asyncio loop")
@@ -3210,6 +3221,14 @@ def main() -> None:
 
     # Sprint 8PC: CLI parsing — after help check
     args = parser.parse_args()
+
+    # F271E: --export-dir flows into the env so every export path that
+    # already reads GHOST_EXPORT_DIR (P18 in live_public_pipeline,
+    # markdown_reporter, jsonld_exporter, stix_exporter) honours it
+    # without each call site having to be threaded individually.
+    _cli_export_dir = getattr(args, "export_dir", None)
+    if _cli_export_dir:
+        os.environ["GHOST_EXPORT_DIR"] = str(_cli_export_dir)
 
     # Phase 3: --list-presets short-circuit (exit 0 before any heavy work).
     if getattr(args, "list_presets", False):

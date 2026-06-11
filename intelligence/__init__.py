@@ -156,13 +156,14 @@ _LAZY_SPECS: tuple[tuple[str, str, tuple[str, ...], tuple[str, ...]], ...] = (
     ), ()),
     # blockchain_analyzer: original code had 3 separate ``from`` blocks (names,
     # then PatternType alias, then RiskLevel alias). One merged spec preserves
-    # the same final namespace contents.
+    # the same final namespace contents. RiskLevel was renamed to RiskScore
+    # (float-valued) — see project_types.RiskLevel for canonical str-valued enum.
     (".blockchain_analyzer", "BLOCKCHAIN_FORENSICS_AVAILABLE", (
         "BlockchainForensics", "ChainType", "Cluster", "CrossChainResult",
         "EntityType", "Transaction", "TransactionPattern", "WalletAnalysis",
         "analyze_blockchain_address", "detect_transaction_patterns",
         "get_blockchain_forensics",
-        "BlockchainPatternType", "BlockchainRiskLevel",
+        "BlockchainPatternType", "BlockchainRiskScore",
     ), ()),
     # input_detector + workflow_orchestrator: original set explicit
     # ``Name = None`` in the except branch so callers can ``if X is None`` guard.
@@ -374,7 +375,7 @@ __all__ = sorted(set([
     # Blockchain Forensics
     "BlockchainForensics", "WalletAnalysis", "TransactionPattern",
     "Cluster", "CrossChainResult", "Transaction", "ChainType",
-    "BlockchainPatternType", "BlockchainRiskLevel",
+    "BlockchainPatternType", "BlockchainRiskScore",
     "analyze_blockchain_address", "detect_transaction_patterns",
     "get_blockchain_forensics",
     # Input Detector

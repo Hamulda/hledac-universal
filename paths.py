@@ -398,6 +398,10 @@ def get_sprint_report_path(sprint_id: str) -> Path:
         Absolute path to sprint report markdown file.
     """
     reports_dir = Path.home() / ".hledac" / "reports"
+    # F265B-FIX: guard against reports being a FILE (not directory).
+    # Can happen from interrupted prior runs or manual creation.
+    if reports_dir.exists() and not reports_dir.is_dir():
+        reports_dir.rename(reports_dir.with_suffix(".bak.reports"))
     reports_dir.mkdir(parents=True, exist_ok=True)
     return reports_dir / f"{sprint_id}.md"
 
@@ -418,6 +422,8 @@ def get_sprint_json_report_path(sprint_id: str) -> Path:
         Absolute path to sprint report JSON file.
     """
     reports_dir = Path.home() / ".hledac" / "reports"
+    if reports_dir.exists() and not reports_dir.is_dir():
+        reports_dir.rename(reports_dir.with_suffix(".bak.reports"))
     reports_dir.mkdir(parents=True, exist_ok=True)
     return reports_dir / f"{sprint_id}_report.json"
 
@@ -440,6 +446,8 @@ def get_sprint_next_seeds_path(sprint_id: str) -> Path:
         Absolute path to next-seeds JSON file.
     """
     reports_dir = Path.home() / ".hledac" / "reports"
+    if reports_dir.exists() and not reports_dir.is_dir():
+        reports_dir.rename(reports_dir.with_suffix(".bak.reports"))
     reports_dir.mkdir(parents=True, exist_ok=True)
     return reports_dir / f"{sprint_id}_next_seeds.json"
 

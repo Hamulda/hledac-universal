@@ -32,9 +32,9 @@ Bounded
 * Min body size cached: ``_MIN_BODY_CACHE_BYTES = 256`` (404 stubs,
   empty 204s — not worth caching).
 * Default TTL: 1 hour (Bing/DDG SERP freshness window).
-* LMDB map size: 4 MB. Average entry ~400 bytes (200B zstd body +
-  200B metadata); 5000 entries ≈ 2 MB. The 4 MB ceiling gives us
-  100 % headroom for compression variance.
+* LMDB map size: 16 MB. Average entry ~400 bytes (200B zstd body +
+  200B metadata); 5000 entries ≈ 2 MB. The 16 MB ceiling gives us
+  100 % headroom for compression variance and 4× growth margin.
 
 In-memory fallback
 ------------------
@@ -76,7 +76,7 @@ logger = logging.getLogger("hledac.universal.transport.conditional_cache")
 # the M1 mission budget probe).
 # ---------------------------------------------------------------------------
 _MAX_ENTRIES: int = 5000
-_LMDB_MAP_SIZE: int = 4 * 1024 * 1024  # 4 MB hard ceiling
+_LMDB_MAP_SIZE: int = 16 * 1024 * 1024  # 16 MB hard ceiling (was 4 MB; supports up to ~40k entries at avg 400B)
 _DEFAULT_TTL_S: int = 3600  # 1 hour (SERP freshness window)
 _MIN_BODY_CACHE_BYTES: int = 256  # skip < 256 byte responses
 _MAX_BODY_CACHE_BYTES: int = 2 * 1024 * 1024  # 2 MB hard cap per entry
@@ -493,6 +493,24 @@ def lookup(url: str) -> CacheEntry | None:
         if entry is None:
             _stats["lookup_misses"] += 1
             return None
+        # Integrity check: verify sha256 if stored (cache corruption guard).
+        if entry.sha256:
+            try:
+                import hashlib
+                actual = hashlib.sha256(entry.body).hexdigest()
+                if actual != entry.sha256:
+                    logger.debug(
+                        "conditional_cache: sha256 mismatch for %s — cache corrupted, "
+                        "serving live",
+                        url,
+                    )
+                    _stats["lookup_misses"] += 1
+                    # Don't delete — next store() overwrites. Avoid adding
+                    # a delete() method just for this edge case.
+                    return None
+            except Exception:  # noqa: BLE001
+                # sha256 computation failed — serve the entry anyway
+                pass
         _stats["lookup_hits"] += 1
         return entry
     except Exception as e:  # noqa: BLE001
@@ -581,7 +599,7 @@ def conditional_headers_for(url: str, *, ttl_s: int = _DEFAULT_TTL_S) -> dict[st
     return entry.conditional_headers()
 
 
-def record_conditional_result(url: str, *, sent: bool, response_status: int) -> None:
+def record_conditional_result(_url: str, *, sent: bool, response_status: int) -> None:
     """Telemetry: was a conditional request sent, and was it a 304?
 
     Does not touch the cache itself; just updates counters so we

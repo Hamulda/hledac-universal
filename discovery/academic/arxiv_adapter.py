@@ -258,11 +258,11 @@ class ArxivAdapter:
             full_url = f"{url}?{urllib.parse.urlencode(params)}"
 
             result = await async_fetch_public_text(full_url, timeout_s=REQUEST_TIMEOUT_S, use_stealth=True)
-            if not result or not result.content:
+            if not result or not result.text:
                 return ArxivResult([], "no content")
 
             # Parse Atom feed
-            root = ET.fromstring(result.content)
+            root = ET.fromstring(result.text)
             ns = {"atom": "http://www.w3.org/2005/Atom", "arxiv": "http://arxiv.org/schemas/atom"}
 
             papers = []

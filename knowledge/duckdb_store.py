@@ -233,6 +233,9 @@ __all__ = [
 # Import QualityRejectionRecord from quality_assessment (moved in Sprint F216G refactor)
 from utils.async_helpers import safe_gather_fire_and_forget  # noqa: E402
 
+# F273F: MADV_FREE_REUSABLE + F_NOCACHE for DuckDB file-backed mmap regions
+from hledac.universal.tools.file_cache import apply_nocache_to_path, madv_free_reusable_on_path  # noqa: E402
+
 from .dedup import DedupManager  # noqa: E402
 
 # Also import DEDUP_HOT_CACHE_MAX since it's used in get_dedup_runtime_status
@@ -420,14 +423,15 @@ def _get_duckdb() -> Any:
 _DUCKDB_MEMORY_LIMIT: str = os.environ.get("GHOST_DUCKDB_MEMORY", "400MB")
 _DUCKDB_MAX_TEMP: str = os.environ.get("GHOST_DUCKDB_MAX_TEMP", "1GB")
 
-# Sprint P0-4: Arrow zero-copy ingest opt-in. Default off (executemany proven, fail-safe).
+# Sprint P0-4: Arrow zero-copy ingest (default ON — M1 8GB optimized, 1.5-2× faster than executemany).
+# Disabled via HLEDAC_ARROW_INGEST=0 when Arrow path causes issues.
 # Off → async_record_canonical_findings_batch_arrow silently falls back to legacy executemany.
 # On  → Arrow path for batches >= ARROW_MIN_BATCH (below threshold still falls back to executemany
 #       because per-row executemany call overhead is lower than Arrow table build for tiny N).
-_ARROW_INGEST_ENABLED: bool = os.environ.get("HLEDAC_ARROW_INGEST") == "1"
-# Sprint P0-4: Arrow path break-even vs executemany is roughly N=64-128 on M1 8GB.
-# Below this, executemany wins on per-call overhead; above, Arrow register+INSERT dominates.
-_ARROW_MIN_BATCH: int = int(os.environ.get("HLEDAC_ARROW_MIN_BATCH", "100"))
+_ARROW_INGEST_ENABLED: bool = os.environ.get("HLEDAC_ARROW_INGEST", "1") != "0"
+# Sprint P0-4: Arrow path break-even vs executemany is roughly N=20-50 on M1 8GB.
+# Below 20, executemany wins on per-call overhead; above, Arrow register+INSERT dominates.
+_ARROW_MIN_BATCH: int = int(os.environ.get("HLEDAC_ARROW_MIN_BATCH", "20"))
 
 
 # ---------------------------------------------------------------------------
@@ -537,6 +541,7 @@ _SCHEMA_SQL = """
         confidence      DOUBLE,
         ts              DOUBLE,
         provenance_json TEXT,
+        UNIQUE (id),
         UNIQUE (query, source_type)
     );
     -- Sprint STORAGE-FIX-1: time-range + per-query lookups
@@ -1091,6 +1096,9 @@ class DuckDBShadowStore:
                 self._temp_dir = self._db_path.parent / "duckdb_tmp"
             self._temp_dir.mkdir(parents=True, exist_ok=True)
             conn = duckdb.connect(str(self._db_path))
+            # F273F: mark DuckDB mmap pages as reusable — reclaimable without writeback
+            madv_free_reusable_on_path(self._db_path)
+            apply_nocache_to_path(self._db_path)
             # F231: Use resolved settings instead of hardcoded class attrs
             memory_limit_val = _validate_duckdb_setting(str(resolved_memory), 'memory_limit')
             max_temp_val = _validate_duckdb_setting(self._max_temp, 'max_temp')
@@ -1112,6 +1120,9 @@ class DuckDBShadowStore:
             self._apply_schema_migrations()
             # Sprint 7H: Persistent file-backed connection for reuse across writes
             self._file_conn = duckdb.connect(str(self._db_path))
+            # F273F: mark DuckDB mmap pages as reusable — reclaimable without writeback
+            madv_free_reusable_on_path(self._db_path)
+            apply_nocache_to_path(self._db_path)
             memory_limit_val = _validate_duckdb_setting(str(resolved_memory), 'memory_limit')
             max_temp_val = _validate_duckdb_setting(self._max_temp, 'max_temp')
             temp_dir_val = _validate_path_setting(self._temp_dir, 'temp_directory')
@@ -1159,6 +1170,9 @@ class DuckDBShadowStore:
             return  # :memory: mode — nothing to migrate
         duckdb = _get_duckdb()
         conn = duckdb.connect(str(self._db_path))
+        # F273F: mark DuckDB mmap pages as reusable
+        madv_free_reusable_on_path(self._db_path)
+        apply_nocache_to_path(self._db_path)
         try:
             conn.execute(
                 "ALTER TABLE sprint_delta ADD COLUMN findings_per_minute REAL DEFAULT 0"
@@ -4706,7 +4720,7 @@ class DuckDBShadowStore:
 
         3-stupňový fallback na legacy `async_record_canonical_findings_batch`:
           1. pyarrow chybí (try/except import) → legacy
-          2. `HLEDAC_ARROW_INGEST != "1"` (env gate, default off) → legacy
+          2. `HLEDAC_ARROW_INGEST == "0"` (env gate, default ON, opt-out) → legacy
           3. `len(findings) < _ARROW_MIN_BATCH` (default 100) → legacy
           4. sync helper vrátí 0 (jakýkoliv error v Table build / register / INSERT) → legacy
 
@@ -4767,6 +4781,22 @@ class DuckDBShadowStore:
         # error, register error, INSERT error). Empty list = legacy returns
         # [] only for empty input, which we already filtered above.
         if not results:
+            _logger.error(
+                "[D7] Arrow path returned 0 results for %d findings — "
+                "falling back to legacy executemany. "
+                "Enable HLEDAC_ARROW_INGEST=0 to use legacy path only.",
+                len(findings),
+            )
+            return await self.async_record_canonical_findings_batch(findings)
+
+        # Fallback gate 5: complete DuckDB failure (all duckdb_success=False)
+        # despite non-empty results → fall back so canonical write is guaranteed.
+        if results and all(r.get("duckdb_success") is False for r in results):
+            _logger.error(
+                "[D7] Arrow path: all %d findings failed DuckDB write — "
+                "falling back to legacy executemany.",
+                len(results),
+            )
             return await self.async_record_canonical_findings_batch(findings)
 
         # Post-processing — identical to async_record_canonical_findings_batch
@@ -5543,7 +5573,7 @@ class DuckDBShadowStore:
                 try:
                     text_for_embed = url_from_provenance or (finding.payload_text or finding.query)
                     if text_for_embed and len(text_for_embed) >= 16:
-                        is_dup = dedup_cache.check_and_cache(text_for_embed, threshold=0.90)
+                        is_dup = dedup_cache.check_and_cache(text_for_embed, threshold=0.95)
                         if is_dup:
                             self._quality_state._quality_duplicate_count += 1
                             return FindingQualityDecision(

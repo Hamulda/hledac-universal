@@ -39,7 +39,16 @@ class PromptBandit:
         self._counts: dict[int, int] = defaultdict(int)
         self._rewards: dict[int, float] = defaultdict(float)
         self._n_variants = 0
-        self._persist_path = persist_path or Path.home() / '.hledac' / 'prompt_bandit.json'
+        # F271E: Always coerce to Path. Previously the `or` fallback could
+        # leave a non-empty ``str`` (e.g. ``"./state.json"``) assigned,
+        # which then crashed in ``_load()`` with
+        # ``'str' object has no attribute 'exists'``. The bug surfaced
+        # downstream as an empty markdown report — the failure was caught
+        # by ``live_public_pipeline.py:_generate_and_store_report``.
+        if persist_path:
+            self._persist_path = Path(persist_path).expanduser()
+        else:
+            self._persist_path = Path.home() / '.hledac' / 'prompt_bandit.json'
         self._save_counter = 0
         self._save_lock = asyncio.Lock()
 

@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import inspect
 import logging
 import time
 from collections.abc import Callable
@@ -658,7 +659,7 @@ class UMAAlarmDispatcher:
         # F130C FIX: Create fresh wrapper coroutines at dispatch time so the same
         # registered callback can fire on multiple independent alarms without reuse bugs.
         async def _dispatch_one(cb):
-            if asyncio.iscoroutinefunction(cb):
+            if inspect.iscoroutinefunction(cb):
                 await cb()
             elif asyncio.iscoroutine(cb):
                 await cb

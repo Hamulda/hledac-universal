@@ -794,11 +794,25 @@ class WipeStandard(Enum):
 
 
 class RiskLevel(Enum):
-    """Detection risk levels"""
+    """Detection risk levels (CANONICAL — lowercase str values).
+
+    Single source of truth for OSINT risk classification. All other
+    RiskLevel definitions across the codebase MUST be aliases or
+    imports of this enum. Comparison of str vs int/float values
+    is a silent bug — see `assert` below.
+    """
     LOW = "low"
     MEDIUM = "medium"
     HIGH = "high"
     CRITICAL = "critical"
+
+
+# Canonical invariant: values are lowercase strings, comparable via `==`.
+# If a sibling module defines RiskLevel with int/float values, any
+# `x == project_types.RiskLevel.HIGH` check returns False silently.
+assert RiskLevel.HIGH.value == "high", (
+    "RiskLevel values must be lowercase strings; check sibling definitions"
+)
 
 
 class BrowserType(Enum):

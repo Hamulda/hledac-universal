@@ -143,9 +143,9 @@ class BloomFilter:
                 pos = h % self.size
                 positions.append(pos)
         else:
-            # Fallback to md5 + sha1
+            # Fallback to md5 + sha256 (sha1 removed — not needed for distribution)
             hash1 = int(hashlib.md5(item.encode()).hexdigest(), 16)
-            hash2 = int(hashlib.sha1(item.encode()).hexdigest(), 16)
+            hash2 = int(hashlib.sha256(item.encode()).hexdigest(), 16)
             for i in range(self.hash_count):
                 # Double hashing: (hash1 + i * hash2) % size
                 pos = (hash1 + i * hash2) % self.size

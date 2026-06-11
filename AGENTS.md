@@ -73,3 +73,9 @@ OUTPUT STYLE: dense
 - No narration, no filler, no hedging
 - BUDGET: ≤200 tokens per response unless code block required
 <!-- /lean-ctx-compression -->
+<!-- lean-ctx -->
+## lean-ctx
+
+Prefer lean-ctx MCP tools over native equivalents for token savings.
+Full rules: @LEAN-CTX.md
+<!-- /lean-ctx -->

@@ -161,6 +161,7 @@ class SprintFlags(msgspec.Struct, frozen=True, gc=False):
     no_ghost: bool = False  # F260: skip GhostLayer injection
     no_coordination: bool = False  # F26X-2: skip CoordinationLayer (canonical contract)
     production: bool = False  # F272B: abort on fetch=NA in pre-flight (exit 2)
+    hermes_force: bool = False  # F273D: force-load Hermes3 model even if HLEDAC_ENABLE_HERMES_SYNTHESIS != '1'
 
 
 def _make_sprint_id() -> str:
@@ -1049,7 +1050,7 @@ def _configure_gc_for_sprint() -> dict:
     import gc as _gc
 
     result["gc_freeze_attempted"] = True
-    if os.environ.get("HLEDAC_DISABLE_GC_FREEZE") == "1":
+    if os.environ.get("HLEDAC_DISABLE_GC_FREEZE", "1") != "0":
         logger.info("[GC] HLEDAC_DISABLE_GC_FREEZE=1 — skipping gc.freeze()")
     else:
         try:
@@ -1099,11 +1100,18 @@ def run_pre_sprint_checks() -> bool:
         except Exception as exc:
             logger.warning(f"[BOOT] MLX buffer init failed: {exc}")
 
-    # Swap check — WARNING only, non-blocking
+    # F278A: Swap tiered policy — WARNING for diagnostic tier, EXIT 2 for hard_block.
+    # CLEAN_SWAP_MAX_GIB=2.0, DIAGNOSTIC_SWAP_MAX_GIB=4.0, HARD_BLOCK_SWAP_GIB=4.0
     s = sample_uma_status()
-    if s.swap_used_gib > 2.0:
+    if s.swap_used_gib > 4.0:
+        logger.error(
+            "[BOOT] SWAP %.1fGB > 4GB — HARD_BLOCK (restart required). Exit 2.",
+            s.swap_used_gib,
+        )
+        sys.exit(2)
+    elif s.swap_used_gib > 2.0:
         logger.warning(
-            f"[BOOT] SWAP {s.swap_used_gib:.1f}GB > 2GB — "
+            f"[BOOT] SWAP {s.swap_used_gib:.1f}GB > 2GB (diagnostic tier) — "
             f"doporučuji restart před long run"
         )
 
@@ -1577,7 +1585,11 @@ async def run_sprint(
         extreme_mode=extreme_mode,
     )
 
-    scheduler = SprintScheduler(config)
+    # F273D: thread flags bundle (carries hermes_force) into SprintScheduler
+
+    # so _prewarm_hermes_for_sprint can override HLEDAC_ENABLE_HERMES_SYNTHESIS.
+
+    scheduler = SprintScheduler(config, flags=flags)
 
     # Sprint F153: Lifecycle receives explicit runtime params — duration authority propagated
     lifecycle = SprintLifecycleManager(
@@ -2817,6 +2829,18 @@ def _main_dispatch() -> None:
             "Use for CI / orchestration where a degraded run is worse than no run."
         ),
     )
+    parser.add_argument(
+        "--force-hermes",
+        action="store_true",
+        help=(
+            "F273D: Force-load Hermes3 model at sprint start even if "
+            "HLEDAC_ENABLE_HERMES_SYNTHESIS != '1'. Overrides the lazy hermes gate. "
+            "Result exposes hermes_model_loaded (bool) and hermes_load_reason (str) "
+            "so you can verify whether the model is actually resident. M1 8GB: "
+            "Hermes-3-3B-4bit ~2GB -- use only when you need synthesis output, "
+            "not for routine OSINT sprints."
+        ),
+    )
     args = args_with_rl_resolution = parser.parse_args()
     # F261QMIX: --rl-no-train overrides --rl-train (explicit disable wins)
     if args.rl_no_train:
@@ -2876,6 +2900,7 @@ def _main_dispatch() -> None:
             no_ghost=getattr(args, "no_ghost", False),
             no_coordination=getattr(args, "no_coordination", False),
             production=getattr(args, "production", False),
+            hermes_force=getattr(args, "force_hermes", False),
         )
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)

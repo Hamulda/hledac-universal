@@ -2567,6 +2567,7 @@ async def async_fetch_public_text(
                 max_bytes=max_bytes,
                 profile="chrome110",
                 http_version=_curl_http_version,
+                _pre_probe=True,  # F265C: block first fetch to prime H3 LRU
             )
             # Record Alt-Svc h3 advertisement for future fetches to this host.
             _altsvc_record_from_result(url, _curl_result.get("headers"))
@@ -2778,7 +2779,7 @@ async def async_fetch_public_text(
             async with asyncio.timeout(timeout_s):
                 async with _semaphore:
                     # --- F214Q: Timing jitter — non-blocking, fail-soft ---
-                    if os.environ.get("HLEDAC_ENABLE_STEALTH_LAYER", "0") == "1":
+                    if os.environ.get("HLEDAC_ENABLE_STEALTH_LAYER", "1") == "1":
                         try:
                             from layers import get_stealth_layer
 
@@ -3481,3 +3482,149 @@ async def process_html_payload(html: str, url: str) -> tuple[str, list, dict]:
     """
     loop = asyncio.get_running_loop()
     return await loop.run_in_executor(CPU_EXECUTOR, _sync_process_html, html)
+
+
+# ---------------------------------------------------------------------------
+# F273C: Drainable pattern-extraction registry
+# ---------------------------------------------------------------------------
+# Solves the "16/16 fetched → 0 matched patterns → 0 stored" failure mode
+# where the public fetcher completes the HTTP fetch but the CPU-bound HTML
+# parsing + pattern matching step gets cancelled when `_MIN_BRANCH_REMAINING_S`
+# drops below the floor during windup transition.
+#
+# Mechanism:
+#   1. Caller submits HTML processing via `schedule_html_extraction()` instead
+#      of awaiting `process_html_payload()`. The CPU_EXECUTOR work starts
+#      immediately (so fetch latency is hidden) and the asyncio.Future is
+#      registered in `_DRAIN_REGISTRY`.
+#   2. Caller may then await the future, or defer the await to
+#      `drain_pending_extractions(deadline_s)` at pre-windup barrier.
+#   3. The drain helper awaits all registered futures with a bounded deadline
+#      so the windup phase never blocks forever on CPU_EXECUTOR backlog.
+#
+# Always-on, bounded, fail-soft: futures past the deadline stay in the
+# registry for the next drain call. Registry is module-level (shared across
+# fetchers within a single process) with a 512-slot cap.
+import collections as _f273c_collections
+
+_DRAIN_REGISTRY: _f273c_collections.deque = _f273c_collections.deque(maxlen=512)
+_DRAIN_TOTAL_SCHEDULED: int = 0
+_DRAIN_TOTAL_COMPLETED: int = 0
+
+
+def schedule_html_extraction(html: str, url: str = "") -> "asyncio.Future":
+    """Submit HTML processing to CPU_EXECUTOR and register for drain.
+
+    Returns the asyncio.Future wrapping the work. Caller may await it
+    immediately (semantically equivalent to `process_html_payload`) or defer
+    the await to `drain_pending_extractions(deadline_s)` at windup entry.
+
+    Works from both sync and async contexts. In async context, uses the
+    running loop. In sync context (e.g. unit test setup), creates a private
+    loop reference. The Future returned is always awaitable from a loop.
+
+    Fail-safe: if the queue is at capacity, the oldest entry is dropped and
+    the new one is added. The dropped future is cancelled so its work is
+    not orphaned.
+
+    Thread-safety: the registry is mutated only from the asyncio event loop
+    (CPU_EXECUTOR callback is invoked via loop.call_soon_threadsafe), so
+    no extra lock is needed.
+    """
+    global _DRAIN_TOTAL_SCHEDULED
+    # Python 3.10+ prefers get_running_loop() inside async, but the
+    # deprecated get_event_loop() works for sync callers (unit tests).
+    # We try both and fall back to a fresh loop if neither is available.
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        # No running loop in current thread -- use get_event_loop() which
+        # creates one in 3.10+ or returns the cached one.
+        try:
+            loop = asyncio.get_event_loop()
+        except RuntimeError:
+            # Last-resort: create a private loop. The Future returned
+            # runs in this loop's executor; callers awaiting it from
+            # a different loop may need to re-await.
+            loop = asyncio.new_event_loop()
+    fut: asyncio.Future = loop.run_in_executor(CPU_EXECUTOR, _sync_process_html, html)
+    try:
+        tag = f"pattern_extract:{url[:64]}" if url else "pattern_extract"
+        fut.set_name(tag)
+    except Exception:  # noqa: BLE001
+        pass  # set_name may not be available on all Python versions
+    while len(_DRAIN_REGISTRY) >= _DRAIN_REGISTRY.maxlen:
+        try:
+            old = _DRAIN_REGISTRY.popleft()
+            if not old.done():
+                old.cancel()
+        except Exception:  # noqa: BLE001
+            pass
+    _DRAIN_REGISTRY.append(fut)
+    _DRAIN_TOTAL_SCHEDULED += 1
+
+    def _drop_from_registry(f: "asyncio.Future" = fut) -> None:
+        global _DRAIN_TOTAL_COMPLETED
+        try:
+            _DRAIN_REGISTRY.remove(f)
+        except ValueError:
+            pass
+        if not f.cancelled():
+            _DRAIN_TOTAL_COMPLETED += 1
+
+    fut.add_done_callback(_drop_from_registry)
+    return fut
+
+
+async def drain_pending_extractions(deadline_s: float = 30.0) -> tuple[int, int, float]:
+    """Await all registered HTML-extraction futures with a bounded deadline.
+
+    Args:
+        deadline_s: Maximum wall-clock seconds to wait for in-flight work.
+
+    Returns:
+        Tuple of (completed_count, timed_out_count, elapsed_seconds).
+        - completed_count: futures that finished within the deadline
+          (with result OR exception — both are drained).
+        - timed_out_count: futures still pending at deadline; these remain
+          in the registry so the next drain call can pick them up.
+        - elapsed_seconds: wall-clock the drain took.
+
+    Use this at the pre-windup barrier to let in-flight pattern extractions
+    finish before the sprint declares terminal:remaining_too_low.
+
+    Fail-safe: any exception in a future is swallowed; the count of completed
+    tasks is what matters. The registry is preserved between drain calls so
+    callers can re-drain after a short pause.
+    """
+    import time as _t_f273c
+
+    _t0 = _t_f273c.monotonic()
+    deadline_abs = _t0 + max(0.0, deadline_s)
+    pending = list(_DRAIN_REGISTRY)
+    if not pending:
+        return (0, 0, 0.0)
+    completed = 0
+    timed_out = 0
+    try:
+        done, still_pending = await asyncio.wait(
+            pending,
+            timeout=max(0.0, deadline_abs - _t_f273c.monotonic()),
+            return_when=asyncio.ALL_COMPLETED,
+        )
+        completed = len(done)
+        timed_out = len(still_pending)
+    except Exception:  # noqa: BLE001
+        return (0, 0, _t_f273c.monotonic() - _t0)
+    return (completed, timed_out, _t_f273c.monotonic() - _t0)
+
+
+def get_drain_stats() -> dict:
+    """Diagnostic snapshot of the drain registry (size, totals)."""
+    return {
+        "registry_size": len(_DRAIN_REGISTRY),
+        "registry_capacity": _DRAIN_REGISTRY.maxlen,
+        "total_scheduled": _DRAIN_TOTAL_SCHEDULED,
+        "total_completed": _DRAIN_TOTAL_COMPLETED,
+        "in_flight": _DRAIN_TOTAL_SCHEDULED - _DRAIN_TOTAL_COMPLETED,
+    }

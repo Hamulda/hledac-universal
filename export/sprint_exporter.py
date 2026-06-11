@@ -54,10 +54,26 @@ import logging
 import pathlib
 from typing import TYPE_CHECKING, Any
 
-# Sprint F214Q: Re-export from narrative_builder for backward compat
-from hledac.universal.export.components.narrative_builder import (
+# Sprint F214Q / F271E: Re-export narrative_builder helpers for formatters.py
+# compat. narrative_builder.py holds TEMPORARY stubs (Sprint F232A) for
+# functions that will be re-implemented in the components package. Until then
+# the dispatcher in export/formatters.py imports them by name from
+# sprint_exporter — keep the contract intact here.
+from hledac.universal.export.components.narrative_builder import (  # noqa: F401
+    _build_operator_brief,
+    _build_sprint_summary,
     _derive_best_first_move,
     _derive_branch_truth,
+    _derive_confidence_band,
+    _derive_follow_ups,
+    _derive_high_value_findings,
+    _derive_next_step,
+    _derive_priority_stack,
+    _derive_trust_note,
+    _derive_what_not_to_do,
+    _derive_why_this_run_matters,
+    _enrich_follow_ups,
+    _get_branch_value,
 )
 
 if TYPE_CHECKING:
@@ -76,6 +92,7 @@ from hledac.universal.export.components.pivot_builder import (  # noqa: E402
     _derive_branch_seeds,
     _derive_focus_expand,
     _derive_trend_seeds,
+    _get_correlation_from_handoff,
     _get_runtime_truth,
 )
 

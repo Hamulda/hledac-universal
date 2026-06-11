@@ -48,7 +48,7 @@ INVARIANTS
 
 ENV GATE
 ========
-HLEDAC_HOT_EDGES=1   opt-in (default off)
+HLEDAC_HOT_EDGES=1   opt-out (default ON — unset or any value ≠ "0" enables)
 HLEDAC_HOT_EDGES_MAP_SIZE_MB   override 32 MB default
 """
 from __future__ import annotations
@@ -71,15 +71,18 @@ logger = logging.getLogger(__name__)
 # Constants
 # ---------------------------------------------------------------------------
 
+# Sprint P1-3: 8 MB default (was 32 MB). With ~43 edges per sprint the DB is <10 KB —
+# 32 MB was 6400× overhead. 8 MB covers 1000+ edges easily. Override via
+# HLEDAC_HOT_EDGES_MAP_SIZE_MB if needed.
 _LMDB_PATH: Path = LMDB_ROOT / "hot_edges.lmdb"
 _LMDB_MAP_SIZE: int = int(
-    os.environ.get("HLEDAC_HOT_EDGES_MAP_SIZE_MB", "32")
+    os.environ.get("HLEDAC_HOT_EDGES_MAP_SIZE_MB", "8")
 ) * 1024 * 1024
 _KEY_PREFIX: bytes = b"hot:"
 
 MAX_HOT_NEIGHBORS_PER_NODE: int = 50
 MAX_HOT_NODES: int = 10_000
-HOT_EDGES_ENABLED: bool = os.environ.get("HLEDAC_HOT_EDGES") == "1"
+HOT_EDGES_ENABLED: bool = os.environ.get("HLEDAC_HOT_EDGES", "1") == "1"
 
 # Counter encoding — 8 bytes unsigned int, little-endian.
 # Picked for: zero allocations, native int.from_bytes on M1 ARM64.
@@ -132,6 +135,24 @@ def _open_env():
 # Encoding helpers
 # ---------------------------------------------------------------------------
 
+# Sprint F265B-III: Compress LMDB pages with lz4 (fast) + zstd (ratio).
+# Wire format: [marker=0x00/0x01/0x02][payload].
+# Opt-in via HLEDAC_HOT_EDGES_COMPRESS=1 (default ON when rust ext available).
+_HOT_EDGES_COMPRESS = os.environ.get("HLEDAC_HOT_EDGES_COMPRESS", "1") not in ("0", "no", "off")
+_compress_available = False
+_decompress_available = False
+
+try:
+    from hledac_rust_extensions import compress_page as _rust_compress
+    from hledac_rust_extensions import decompress_page as _rust_decompress
+
+    _compress_available = True
+    _decompress_available = True
+except Exception:
+    _rust_compress = None
+    _rust_decompress = None
+
+
 def _make_key(src_id: int) -> bytes:
     """Encode src node id as fixed-width LMDB key (16 hex chars = 8 bytes).
 
@@ -144,10 +165,14 @@ def _make_key(src_id: int) -> bytes:
 def _decode_neighbors(blob: bytes) -> list[tuple[int, int]]:
     """Decode msgspec blob → list[(dst_id, count)].
 
-    Schema: list[[dst_id, count]] — msgspec-native 2-element list form
-    is ~30% smaller than tuple form and decodes 2× faster.
+    Handles both raw msgspec and lz4/zstd wire-format blobs.
     """
     try:
+        # Decompress if wire format detected (marker byte).
+        if _HOT_EDGES_COMPRESS and _decompress_available and len(blob) > 1:
+            marker = blob[0]
+            if marker in (0x01, 0x02, 0x00):
+                blob = _rust_decompress(blob)
         raw = _msgspec_decode(blob)
         if not raw:
             return []
@@ -157,8 +182,15 @@ def _decode_neighbors(blob: bytes) -> list[tuple[int, int]]:
 
 
 def _encode_neighbors(neighbors: list[tuple[int, int]]) -> bytes:
-    """Encode list[(dst_id, count)] → msgspec blob."""
-    return _msgspec_encode([list(pair) for pair in neighbors])
+    """Encode list[(dst_id, count)] → msgspec blob, optionally lz4/zstd compressed."""
+    encoded = _msgspec_encode([list(pair) for pair in neighbors])
+    if not _HOT_EDGES_COMPRESS or not _compress_available:
+        return encoded
+    try:
+        return _rust_compress(encoded)
+    except Exception:
+        # Compression failed — store uncompressed.
+        return encoded
 
 
 # ---------------------------------------------------------------------------

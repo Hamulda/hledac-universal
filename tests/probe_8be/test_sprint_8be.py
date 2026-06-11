@@ -16,10 +16,12 @@ import pytest
 
 from hledac.universal.pipeline.live_feed_pipeline import (
     _assemble_enriched_feed_text,
-    _convert_rich_html_to_text,
     _assemble_clean_feed_text,
     _strip_html_tags_from_text,
     FeedPipelineRunResult,
+)
+from hledac.universal.pipeline.scoring import (
+    _convert_rich_html_to_text,
 )
 from hledac.universal.discovery.rss_atom_adapter import FeedEntryHit as RSSFeedEntryHit
 

@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import functools
+import inspect
 from typing import Any, Callable, TypeVar
 
 from otel._noop import _NOOP_SPAN, _NOOP_TRACER, _NoOpSpan
@@ -144,7 +145,7 @@ def instrumented(
 
     def deco(fn: F) -> F:
         n = name or fn.__qualname__ or fn.__name__
-        is_coro = asyncio.iscoroutinefunction(fn)
+        is_coro = inspect.iscoroutinefunction(fn)
 
         if is_coro:
 

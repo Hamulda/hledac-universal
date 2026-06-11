@@ -32,7 +32,7 @@ class RRFConfig:
     max_results: int = 100
     min_score_threshold: float = 0.01
     deduplication: bool = True
-    dedup_threshold: float = 0.85
+    dedup_threshold: float = 0.70
 
 
 @dataclass
