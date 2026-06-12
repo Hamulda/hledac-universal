@@ -524,6 +524,24 @@ def _validate_path_setting(value: Path, setting_name: str) -> str:
             raise ValueError(f"Invalid DuckDB {setting_name}: dangerous char {char!r} in {value_str!r}")
     return value_str
 
+
+def _validate_duckdb_threads(value: str | int, setting_name: str = "threads") -> int:
+    """
+    Validate threads is a safe positive integer in DuckDB-supported range.
+
+    P1-3: Replaces f-string interpolation in PRAGMA threads=...
+    DuckDB PRAGMA does not support ? prepared params, so we validate
+    the integer at write time rather than use parameterized syntax.
+    """
+    try:
+        int_val = int(value)
+    except (ValueError, TypeError):
+        raise ValueError(f"Invalid DuckDB {setting_name}: cannot convert {value!r} to int")
+    max_threads = min(os.cpu_count() or 4, 8)
+    if not (1 <= int_val <= max_threads):
+        raise ValueError(f"Invalid DuckDB {setting_name}: {int_val} out of safe range [1, {max_threads}]")
+    return int_val
+
 # Sprint 8AG §6.17: Persistent dedup config
 _DEDUP_LMDB_MAP_SIZE: int = 64 * 1024 * 1024  # 64MB dedicated dedup LMDB
 # _DEDUP_HOT_CACHE_MAX moved to quality_assessment.py (Sprint F216G refactor)
@@ -1106,7 +1124,7 @@ class DuckDBShadowStore:
             conn.execute("SET memory_limit = ?", [memory_limit_val])
             conn.execute("SET max_temp_directory_size = ?", [max_temp_val])
             conn.execute("SET temp_directory = ?", [temp_dir_val])
-            conn.execute(f"PRAGMA threads={resolved_threads}")
+            conn.execute(f"PRAGMA threads={_validate_duckdb_threads(resolved_threads)}")
             conn.execute("PRAGMA enable_progress_bar=false")
             conn.execute("PRAGMA enable_object_cache=false")
             # F231 B: preserve_insertion_order — fail-soft
@@ -1129,7 +1147,7 @@ class DuckDBShadowStore:
             self._file_conn.execute("SET memory_limit = ?", [memory_limit_val])
             self._file_conn.execute("SET max_temp_directory_size = ?", [max_temp_val])
             self._file_conn.execute("SET temp_directory = ?", [temp_dir_val])
-            self._file_conn.execute(f"PRAGMA threads={resolved_threads}")
+            self._file_conn.execute(f"PRAGMA threads={_validate_duckdb_threads(resolved_threads)}")
             self._file_conn.execute("PRAGMA enable_progress_bar=false")
             self._file_conn.execute("PRAGMA enable_object_cache=false")
             try:
@@ -1142,7 +1160,7 @@ class DuckDBShadowStore:
             memory_limit_val = _validate_duckdb_setting(str(resolved_memory), 'memory_limit')
             self._persistent_conn.execute("SET memory_limit = ?", [memory_limit_val])
             self._persistent_conn.execute("SET max_temp_directory_size = '0GB'")
-            self._persistent_conn.execute(f"PRAGMA threads={resolved_threads}")
+            self._persistent_conn.execute(f"PRAGMA threads={_validate_duckdb_threads(resolved_threads)}")
             self._persistent_conn.execute("PRAGMA enable_progress_bar=false")
             self._persistent_conn.execute("PRAGMA enable_object_cache=false")
             try:
@@ -5618,7 +5636,7 @@ class DuckDBShadowStore:
                 dedup_cache_ref = dedup_cache
                 text_for_embed = url_from_provenance or (finding.payload_text or finding.query)
                 if text_for_embed and len(text_for_embed) >= 16:
-                    is_dup = dedup_cache_ref.check_and_cache(text_for_embed, threshold=0.90)
+                    is_dup = dedup_cache_ref.check_and_cache(text_for_embed, threshold=0.95)
                     if is_dup:
                         self._quality_state._quality_duplicate_count += 1
                         return FindingQualityDecision(

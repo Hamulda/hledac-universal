@@ -201,7 +201,7 @@ def _smoke_import(module_name: str) -> ImportResult:
     """Attempt a lazy import of a module (no MLX)."""
     import importlib
     try:
-        importlib.import_module(module_name)
+        importlib.import_module(module_name)  # noqa: S322  # module_name from filesystem scan, not user input
         return ImportResult(module=module_name, ok=True, error=None)
     except Exception as e:
         tb = traceback.format_exc()

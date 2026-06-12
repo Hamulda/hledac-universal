@@ -567,10 +567,15 @@ class QualityAssessor:
                     text_for_embed = url_from_provenance or (finding.payload_text or finding.query)
                     if text_for_embed and len(text_for_embed) >= 16:
                         is_dup = self._semantic_dedup_cache.check_and_cache(
-                            text_for_embed, threshold=0.85
+                            text_for_embed, threshold=0.80  # P0-2: was 0.85, too tight for complex queries
                         )
                         if is_dup:
                             self._state._quality_duplicate_count += 1
+                            _logger.debug(
+                                "[QUALITY] short_string semantic_dup hit fp=%s url=%s",
+                                fingerprint[:16],
+                                (url_from_provenance or "")[:80],
+                            )
                             return self._make_decision(
                                 accepted=False,
                                 reason="semantic_duplicate",
@@ -595,6 +600,14 @@ class QualityAssessor:
         # Entropy threshold check
         if entropy < _QUALITY_ENTROPY_THRESHOLD:
             self._state._quality_rejected_count += 1
+            _logger.debug(
+                "[QUALITY] low_entropy rejected entropy=%.3f threshold=%.3f fp=%s url=%s text=%s",
+                entropy,
+                _QUALITY_ENTROPY_THRESHOLD,
+                fingerprint[:16],
+                (url_from_provenance or "")[:80],
+                (finding.payload_text or "")[:60],
+            )
             return self._make_decision(
                 accepted=False,
                 reason="low_entropy_rejected",
@@ -609,10 +622,15 @@ class QualityAssessor:
                 text_for_embed = url_from_provenance or (finding.payload_text or finding.query)
                 if text_for_embed and len(text_for_embed) >= 16:
                     is_dup = self._semantic_dedup_cache.check_and_cache(
-                        text_for_embed, threshold=0.85
+                        text_for_embed, threshold=0.80  # P0-2: was 0.85, too tight for complex queries
                     )
                     if is_dup:
                         self._state._quality_duplicate_count += 1
+                        _logger.debug(
+                            "[QUALITY] semantic_dup hit fp=%s url=%s",
+                            fingerprint[:16],
+                            (url_from_provenance or "")[:80],
+                        )
                         return self._make_decision(
                             accepted=False,
                             reason="semantic_duplicate",

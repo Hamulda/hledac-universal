@@ -21,18 +21,9 @@ _COREML_AVAILABLE = False
 _VN_AVAILABLE = False
 _YOLO_AVAILABLE = False
 
-# CoreML tools version
+# CoreML tools version — lazy import, only attempts in py3.14 if coremltools is installed
 _COREMLTOOLS_VERSION: float = 0.0
-
-try:
-    import coremltools as ct
-    _COREML_AVAILABLE = True
-    try:
-        _COREMLTOOLS_VERSION = float(ct.__version__)
-    except (ValueError, TypeError):
-        _COREMLTOOLS_VERSION = 6.0  # Assume 6.0 if parsing fails
-except ImportError:
-    _COREML_AVAILABLE = False
+_ct = None  # type: ignore[assignment] — lazy loaded coremltools module
 
 
 def has_apple_intelligence() -> bool:
@@ -74,12 +65,27 @@ def _get_vn_request():
     return None
 
 
-# Check Vision framework
-try:
-    from Vision import VNCoreMLModel, VNCoreMLRequest, VNImageRequestHandler  # noqa: F401  # Vision.VNCoreMLRequest
-    _VN_AVAILABLE = True
-except ImportError:
-    _VN_AVAILABLE = False
+# Vision framework — lazy import at first use (pyobjc may not be available in py3.14)
+_VNCoreMLModel = None  # type: ignore[assignment]
+_VNCoreMLRequest = None  # type: ignore[assignment]
+_VNImageRequestHandler = None  # type: ignore[assignment]
+
+
+def _ensure_vision():
+    """Lazily import Vision framework. Call before using Vision classes."""
+    global _VNCoreMLModel, _VNCoreMLRequest, _VNImageRequestHandler, _VN_AVAILABLE
+    if _VN_AVAILABLE:
+        return True
+    try:
+        from Vision import VNCoreMLModel, VNCoreMLRequest, VNImageRequestHandler  # noqa: F401
+        _VNCoreMLModel = VNCoreMLModel
+        _VNCoreMLRequest = VNCoreMLRequest
+        _VNImageRequestHandler = VNImageRequestHandler
+        _VN_AVAILABLE = True
+        return True
+    except ImportError:
+        _VN_AVAILABLE = False
+        return False
 
 
 class VisionCaptchaSolver:
@@ -121,27 +127,40 @@ class VisionCaptchaSolver:
         )
 
     def _load_model(self):
-        """Load the CoreML model if not already loaded."""
-        if self._model is not None:
-            return
+        """Load the CoreML model if not already loaded. Lazy import in py3.14."""
+        global _ct, _COREML_AVAILABLE, _COREMLTOOLS_VERSION
 
-        if not _COREML_AVAILABLE:
-            logger.warning("CoreML tools not available")
+        if self._model is not None:
             return
 
         if self.model_path is None:
             logger.info("No model path provided, using text-only mode")
             return
 
+        # Lazy import coremltools at runtime (py3.14 may not have it)
+        if _ct is None:
+            try:
+                import coremltools as _ct_module
+                _ct = _ct_module
+                _COREML_AVAILABLE = True
+                try:
+                    _COREMLTOOLS_VERSION = float(_ct.__version__)
+                except (ValueError, TypeError):
+                    _COREMLTOOLS_VERSION = 6.0
+            except ImportError:
+                _COREML_AVAILABLE = False
+                logger.warning("CoreML tools not available in this Python environment")
+                return
+
         try:
             # Load CoreML model
-            self._model = ct.models.MLModel(self.model_path)
+            self._model = _ct.models.MLModel(self.model_path)
             logger.info(f"Loaded CoreML model from {self.model_path}")
 
             # Try to create VNCoreMLModel for Vision framework
-            if _VN_AVAILABLE:
+            if _ensure_vision() and _VNCoreMLModel is not None:
                 try:
-                    self._vn_model = VNCoreMLModel.modelForMLModel(self._model)
+                    self._vn_model = _VNCoreMLModel.modelForMLModel(self._model)
                 except Exception as e:
                     logger.warning(f"Failed to create VNCoreMLModel: {e}")
 

@@ -325,8 +325,8 @@ class SprintAdvisoryRunner:
                     from hledac.universal.runtime.hermes_pivot_contract import HermesInferenceOutput
 
                     rows = await store._conn.execute(
-                        f"SELECT payload_text FROM findings WHERE source_type = '{SourceType.HERMES_INFERENCE}' AND query = $1 LIMIT 50",  # noqa: E501
-                        getattr(self._scheduler, "_query", "") or "",
+                        "SELECT payload_text FROM findings WHERE source_type = ? AND query = ? LIMIT 50",
+                        [SourceType.HERMES_INFERENCE.value, getattr(self._scheduler, "_query", "") or ""],
                     )
                     hermes_outputs = []
                     for row in rows:

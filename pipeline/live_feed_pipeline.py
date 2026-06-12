@@ -1470,6 +1470,7 @@ async def async_run_live_feed_pipeline(
     max_entries: int = 20,
     timeout_s: float = 35.0,
     max_bytes: int = 2_000_000,
+    sprint_id: str = "",  # F268: graph accumulation context
 ) -> FeedPipelineRunResult:
     """
     Run live feed pipeline for a single feed_url.
@@ -1488,6 +1489,9 @@ async def async_run_live_feed_pipeline(
         Optional storage. None = count-only mode.
     query_context : str | None
         Optional query context for findings.
+    sprint_id : str
+        Sprint identifier for cross-sprint graph accumulation. If non-empty,
+        findings are upserted to DuckPGQ graph after canonical write.
     max_entries : int
         Max entries to process (clamped by 8AF to 1-100).
     timeout_s : float
@@ -1913,6 +1917,20 @@ async def async_run_live_feed_pipeline(
 
                 results = await store.async_ingest_findings_batch(canonicals)
 
+
+                # F268: Accumulate findings to cross-sprint graph after canonical write.
+                # Fail-soft: graph errors never block pipeline continuation.
+                if canonicals and sprint_id:
+                    try:
+                        from hledac.universal.runtime.graph_accumulator import (
+                            SprintGraphAccumulator,
+                        )
+
+                        _acc = SprintGraphAccumulator()
+                        _acc.accumulate_findings(canonicals, sprint_id=sprint_id)
+                    except Exception:
+                        pass  # fail-soft: graph never blocks storage
+
                 # F180B FIX: Count accepted (quality-gated) and stored (lmdb_success)
                 # separately — accepted does NOT imply stored when DuckDB fails.
                 # accepted: FindingQualityDecision.accepted OR ActivationResult.accepted
@@ -1926,6 +1944,7 @@ async def async_run_live_feed_pipeline(
                     else:
                         accepted_findings += int(getattr(r, "accepted", False))
                         stored_findings += int(getattr(r, "lmdb_success", False))
+
 
             except asyncio.CancelledError:
                 raise

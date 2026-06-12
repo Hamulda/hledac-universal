@@ -2144,6 +2144,20 @@ async def _fetch_and_process_page(
             try:
                 # DuckDBShadowStore quality-gated ingest surface (8W + 8S)
                 store_results = await store.async_ingest_findings_batch(unique_findings)
+
+                # F268: Accumulate findings to cross-sprint graph after canonical write.
+                # Fail-soft: graph errors never block pipeline continuation.
+                if unique_findings and sprint_id:
+                    try:
+                        from hledac.universal.runtime.graph_accumulator import (
+                            SprintGraphAccumulator,
+                        )
+
+                        _acc = SprintGraphAccumulator()
+                        _acc.accumulate_findings(unique_findings, sprint_id=sprint_id)
+                    except Exception:
+                        pass  # fail-soft: graph never blocks storage
+
                 # F180B FIX: accepted_count from quality gate, stored_count from lmdb_success.
                 # accepted_count = number that passed quality gate (may not all reach storage)
                 # stored_count = number that actually reached LMDB WAL successfully
@@ -3093,6 +3107,7 @@ async def async_run_live_public_pipeline(
     # Threaded from __main__.py dispatcher so ``--export-dir`` is honoured
     # by the in-pipeline Obsidian export as well as the post-sprint export.
     export_dir: str | None = None,
+    sprint_id: str = "",  # F268: graph accumulation context
 ) -> PipelineRunResult:
     """
     Sprint 8AE: Live public OSINT pipeline.

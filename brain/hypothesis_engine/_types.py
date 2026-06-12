@@ -2,7 +2,7 @@
 Hypothesis Engine — Type Definitions (C4 Sprint Refactoring)
 =============================================================
 
-Extracted from :mod:`brain.hypothesis_engine` to break the 5 373 LOC monolith
+Extracted from :mod:`brain.hypothesis_engine_engine` to break the 5 373 LOC monolith
 into focused modules. This module contains the **value types only**: enums,
 dataclasses, and the inference-engine Protocol.
 
@@ -10,8 +10,8 @@ GHOST_INVARIANTS:
 - The extraction is **byte-for-byte identical** to the original — no
   behaviour change, no field rename, no default mutation. Existing tests
   must pass unchanged.
-- ``brain.hypothesis_engine`` re-exports everything for backward compat.
-- New code should ``from brain.hypothesis._types import Hypothesis, …`` —
+- ``brain.hypothesis_engine_engine`` re-exports everything for backward compat.
+- New code should ``from brain.hypothesis_engine._types import Hypothesis, …`` —
   but the public path is the re-exported surface.
 
 M1 8GB UMA: 0 KB runtime overhead. Imports happen once at module load.
@@ -24,7 +24,7 @@ from enum import Enum
 from typing import TYPE_CHECKING, Any, Protocol
 
 if TYPE_CHECKING:
-    # Hypothesis lives in brain.hypothesis_engine (carries engine-specific
+    # Hypothesis lives in brain.hypothesis_engine_engine (carries engine-specific
     # methods). Imported only for the Protocol type signatures below.
     from brain.research_hypothesis_engine import Hypothesis
 
@@ -311,12 +311,12 @@ class AdversarialReport:
 # Hypothesis Master Dataclass
 # ============================================================================
 # NOTE: ``Hypothesis`` is intentionally NOT extracted to this module because
-# the version in ``brain.hypothesis_engine`` carries extra methods
+# the version in ``brain.hypothesis_engine_engine`` carries extra methods
 # (``add_test_result``, ``add_supporting_evidence``, ``add_conflicting_evidence``,
 # ``_recalculate_confidence``, ``_ds_engine``) that are tightly coupled to
 # the engine's runtime state. Future sprint: extract the methods into a
 # helper class and keep only the data fields here. Until then, callers
-# should import ``Hypothesis`` from ``brain.hypothesis_engine`` directly.
+# should import ``Hypothesis`` from ``brain.hypothesis_engine_engine`` directly.
 # A reference import is provided below for IDE / type-checker convenience
 # but is commented out to avoid import-time drift if the engine changes
 # the class shape.

@@ -403,10 +403,14 @@ class SidecarOrchestrator:
             from runtime.sidecar_protocol import (
                 SidecarContext,
                 SidecarRegistry,
+                ensure_adapters_registered,
             )
         except Exception as e:
             log.debug("[F350M-FED] SidecarRegistry import failed: %s", e)
             return
+
+        # Sprint P2-3: Ensure all @SidecarRegistry.register() decorators have run.
+        ensure_adapters_registered()
 
         try:
             # Determine the available memory budget from the governor, if any.

@@ -1,0 +1,21 @@
+rules:
+  # Security false positives — documented and intentional:
+  # - hledac_doctor.py: import_name from static DEPENDENCY_REGISTRY (no user input)
+  # - lightpanda_manager.py: 0o755 on SHA256-verified binary (standard for executables)
+  - id: hledac-false-positive-importlib
+    pattern: importlib.import_module(...)
+    paths:
+      - tools/hledac_doctor.py
+    message: |
+      False positive. import_name is sourced exclusively from DEPENDENCY_REGISTRY
+      (static constant at module load). No user input, no env vars, no network data.
+      See tools/hledac_doctor.py lines 169-186 for full context.
+
+  - id: hledac-false-positive-chmod
+    pattern: os.chmod(..., 0o755)
+    paths:
+      - tools/lightpanda_manager.py
+    message: |
+      False positive. Binary is verified against LIGHTPANDA_SHA256 env var
+      (trusted hash) before chmod is called. 0o755 is standard for executables.
+      See tools/lightpanda_manager.py lines 76-117 for full context.

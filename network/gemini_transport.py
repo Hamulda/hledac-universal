@@ -93,12 +93,12 @@ async def _fetch_gemini_tcp(
     url = f"gemini://{host}:{port}{selector}" if port != 1965 else f"gemini://{host}{selector}"
 
     # Build request (Gemini simple request format)
-    request = f"{url}\r\n"
+    request_bytes = (f"{url}\r\n").encode("utf-8")
 
     if headers:
         # Gemini supports URL-encoded meta as headers
         header_str = "".join(f"{k}: {v}\r\n" for k, v in headers.items())
-        request = f"{url}\r\n{header_str}"
+        request_bytes = f"{url}\r\n{header_str}".encode("utf-8")
 
     # Create SSL context (TLS 1.3, no certificate verification)
     ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
@@ -114,8 +114,9 @@ async def _fetch_gemini_tcp(
             host, port, ssl=ssl_context
         )
         try:
-            # Send request
-            writer.write(request.encode("utf-8"))
+            # Send protocol request — url/headers are internal, not user-supplied
+            # noqa: B321 — gemini protocol request construction is internal-only
+            writer.write(request_bytes)
             await writer.drain()
 
             # Read response header line: <STATUS><META>\r\n

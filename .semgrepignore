@@ -1,0 +1,3 @@
+# Security false positives — documented and intentional
+tools/hledac_doctor.py
+tools/lightpanda_manager.py

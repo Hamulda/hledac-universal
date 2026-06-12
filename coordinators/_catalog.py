@@ -134,6 +134,9 @@ class CoordinatorCatalog:
                 else:
                     full_module = module_path
 
+                # noaudit[python.lang.security.audit.non-literal-import.non-literal-import]
+                # _DOMAIN_MODULES is a static module-level constant dict; full_module
+                # is derived from hardcoded module paths — no user input reaches here.
                 mod = importlib.import_module(full_module)
                 result = getattr(mod, name)
                 self._cache[name] = result
@@ -152,6 +155,9 @@ class CoordinatorCatalog:
                             full_module = f'coordinators{module_path}'
                         else:
                             full_module = module_path
+                        # noaudit[python.lang.security.audit.non-literal-import.non-literal-import]
+                        # _DOMAIN_MODULES is a static module-level constant dict; full_module
+                        # is derived from hardcoded module paths — no user input reaches here.
                         mod = importlib.import_module(full_module)
                         result = getattr(mod, name)
                         self._cache[name] = result

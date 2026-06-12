@@ -28,7 +28,10 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
+
+import hishel.httpx as hh  # hishel.httpx provides AsyncCacheTransport (httpx-compatible API)
+import httpx
 
 logger = logging.getLogger("hledac.universal.transport.http_cache")
 
@@ -60,7 +63,7 @@ async def _apply_sqlite_pragmas(db_path: Path) -> None:
     just without WAL or hard size cap.
     """
     try:
-        import aiosqlite  # type: ignore
+        import aiosqlite
     except ImportError:
         logger.debug("aiosqlite not installed; skipping SQLite PRAGMAs")
         return
@@ -70,9 +73,10 @@ async def _apply_sqlite_pragmas(db_path: Path) -> None:
             # WAL mode — M1-safe, concurrent readers + 1 writer
             await conn.execute("PRAGMA journal_mode=WAL")
             # Hard size cap via page-count limit
-            await conn.execute("PRAGMA page_size=" + str(SQLITE_PAGE_SIZE))
-            # MAX_PAGE_COUNT is a static constant (65536), not user input — safe from SQL injection
-            await conn.execute("PRAGMA max_page_count=" + str(MAX_PAGE_COUNT))  # noqa: S608
+            # SQLITE_PAGE_SIZE/MAX_PAGE_COUNT are static int constants (no user input)
+            # SQLite PRAGMAs don't accept parameterized queries; raw string is safe here
+            await conn.execute(f"PRAGMA page_size={SQLITE_PAGE_SIZE}")  # noqa: S608
+            await conn.execute(f"PRAGMA max_page_count={MAX_PAGE_COUNT}")  # noqa: S608
             await conn.execute("PRAGMA synchronous=NORMAL")
             await conn.commit()
     except Exception as exc:  # noqa: BLE001 — fail-soft by design
@@ -101,7 +105,7 @@ async def build_cache_transport(base_transport: Any = None) -> Any:
     """
     # --- fail-soft import gate ------------------------------------------------
     try:
-        import hishel  # type: ignore
+        import hishel
     except ImportError:
         logger.info(
             "hishel not installed — HTTP cache disabled (install: "
@@ -110,7 +114,7 @@ async def build_cache_transport(base_transport: Any = None) -> Any:
         return base_transport
 
     try:
-        import httpx  # type: ignore
+        import httpx
     except ImportError:
         logger.warning("httpx not installed; cannot build hishel cache transport")
         return base_transport
@@ -127,32 +131,28 @@ async def build_cache_transport(base_transport: Any = None) -> Any:
     # Apply WAL + page-count cap BEFORE hishel opens its own connection
     await _apply_sqlite_pragmas(db_path)
 
-    # --- storage + controller -------------------------------------------------
+    # --- storage + policy ----------------------------------------------------
+    # hishel.AsyncSqliteStorage requires `anysqlite` extra (pip install hishel[async])
+    # If not available, ImportError triggers fail-soft: PRAGMAs still applied via aiosqlite
+    # but hishel falls back to null storage (cache disabled, transport still works)
     try:
-        storage = hishel.AsyncSQLiteStorage(  # type: ignore[attr-defined]
-            ttl=float(DEFAULT_TTL_SECONDS),
+        storage = hishel.AsyncSqliteStorage(  # type: ignore[attr-defined]
+            default_ttl=float(DEFAULT_TTL_SECONDS),
         )
-    except TypeError:
-        # Older hishel versions may not accept ``ttl`` kwarg — try positional.
-        try:
-            storage = hishel.AsyncSQLiteStorage()  # type: ignore[attr-defined]
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("hishel SQLite storage init failed: %s", exc)
-            return base_transport
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("hishel SQLite storage init failed: %s", exc)
-        return base_transport
+    except (TypeError, ImportError) as exc:
+        # Fallback: storage=None lets AsyncCacheTransport use default (null/in-memory)
+        logger.debug("hishel AsyncSqliteStorage unavailable (%s), using null storage", exc)
+        storage = None
 
-    try:
-        controller = hishel.Controller(  # type: ignore[attr-defined]
-            cacheable_methods=["GET", "HEAD"],
-            cacheable_status_codes=CACHEABLE_STATUS_CODES,
-            allow_heuristics=True,
+    # hishel 1.2.1 API: SpecificationPolicy with CacheOptions
+    # SpecificationPolicy.cache_options configures shared/method/allow_stale
+    policy = hishel.SpecificationPolicy(
+        cache_options=hishel.CacheOptions(
+            shared=True,
+            supported_methods=["GET", "HEAD"],
             allow_stale=True,
         )
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("hishel Controller init failed: %s", exc)
-        return base_transport
+    )
 
     # --- wrap base transport --------------------------------------------------
     if base_transport is None:
@@ -163,10 +163,14 @@ async def build_cache_transport(base_transport: Any = None) -> Any:
             return None
 
     try:
-        cached_transport = hishel.AsyncCacheTransport(  # type: ignore[attr-defined]
-            transport=base_transport,
-            storage=storage,
-            controller=controller,
+        # hishel.httpx.AsyncCacheTransport: wraps httpx.AsyncBaseTransport with caching
+        # next_transport=base_transport, storage=storage, policy=policy
+        # Note: AsyncSqliteStorage inherits from AsyncBaseStorage only when anysqlite is
+        # installed (runtime-only). Without anysqlite, storage=None and cache is disabled.
+        cached_transport = hh.AsyncCacheTransport(  # type: ignore[attr-defined, arg-type]
+            next_transport=base_transport,
+            storage=cast(hishel.AsyncBaseStorage | None, storage),
+            policy=policy,
         )
     except Exception as exc:  # noqa: BLE001
         logger.warning("hishel AsyncCacheTransport wrap failed: %s", exc)

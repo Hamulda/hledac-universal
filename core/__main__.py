@@ -1295,7 +1295,7 @@ async def dry_run_sprint(query: str, duration_s: float = 300.0) -> None:
             try:
                 req = urllib.request.Request(src_url, method="HEAD")
                 req.add_header("User-Agent", "curl/8.4.0")
-                with urllib.request.urlopen(req, timeout=5) as resp:
+                with urllib.request.urlopen(req, timeout=5) as resp:  # nosem: python.lang.security.audit.dynamic-urllib-use-detected
                     if resp.status < 500:
                         online_sources[src_name] = True
             except Exception:
@@ -1529,6 +1529,12 @@ async def run_sprint(
     # Initialize stores
     store = DuckDBShadowStore()
     await store.async_initialize()
+
+    # CoreML sidecar — must be first, otherwise SemanticStore fails at init
+    from utils.coreml import CoreMLServiceManager
+    _coreml_manager = CoreMLServiceManager()
+    await asyncio.to_thread(_coreml_manager.ensure_running)
+    logger.info("[startup] CoreML sidecar ready on port 8765")
 
     # Scheduler config
     # F221: windup_lead_s param + active-budget guard for 'default' profile
@@ -2510,6 +2516,12 @@ async def run_sprint(
                 _dashboard.finish(result, elapsed_s)
             except Exception as e:
                 logger.warning(f"Dashboard finish failed: {e}")  # fail-safe
+        # CoreML sidecar teardown
+        try:
+            _coreml_manager.stop()
+        except Exception as e:
+            logger.debug(f"[TEARDOWN] CoreML sidecar stop failed: {e}")  # fail-soft
+
         await store.aclose()
         # Sprint F206K: Close HTTPX client if it was lazily instantiated
         try:

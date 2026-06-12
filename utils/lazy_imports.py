@@ -117,7 +117,7 @@ class LazyLoader:
         start_time = time.perf_counter()
 
         try:
-            _validate_lazy_module(self._module_name)
+            _validate_lazy_module(self._module_name)  # noqa: S608 — validated by whitelist
             self._module = importlib.import_module(self._module_name)
             self._loaded = True
             self._load_time = time.perf_counter() - start_time

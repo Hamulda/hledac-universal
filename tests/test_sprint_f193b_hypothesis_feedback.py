@@ -233,7 +233,7 @@ class TestSprintF193BPipelineIntegration:
         assert p12_start != -1, "P12 block not found"
 
         # P12 block should reference the callback
-        p12_block = source[p12_start:p12_start + 5000]
+        p12_block = source[p12_start:p12_start + 6000]  # P1-3G: 5000→6000 to capture guard 5150 chars after P12 comment
         assert "enqueue_hypothesis_pivot" in p12_block, (
             "F193B: P12 block must call enqueue_hypothesis_pivot callback"
         )
@@ -244,7 +244,7 @@ class TestSprintF193BPipelineIntegration:
 
         source = inspect.getsource(async_run_live_public_pipeline)
         p12_start = source.find("# P12: Hypothesis generation")
-        p12_block = source[p12_start:p12_start + 5000]
+        p12_block = source[p12_start:p12_start + 6000]  # P1-3G: 5000→6000 to capture guard 5150 chars after P12 comment
 
         # Must check if callback is not None before calling
         assert "enqueue_hypothesis_pivot is not None" in p12_block or "if enqueue_hypothesis_pivot" in p12_block, (
@@ -357,13 +357,14 @@ class TestSprintF193BSeamInterface:
         p12_block = source[p12_start:p12_start + 6000]
 
         # Callback must be called after ToT result (after store.async_ingest)
-        assert "enqueue_hypothesis_pivot" in p12_block, (
+        # P1-3G: search for call syntax "enqueue_hypothesis_pivot(" to skip comment reference
+        assert "enqueue_hypothesis_pivot(" in p12_block, (
             "F193B: callback must be called in P12 block"
         )
 
         # The call must be after the tot_finding storage
         tot_finding_pos = p12_block.find("async_ingest_findings_batch")
-        callback_pos = p12_block.find("enqueue_hypothesis_pivot")
+        callback_pos = p12_block.find("enqueue_hypothesis_pivot(")  # P1-3G: call syntax, not comment
         assert callback_pos > tot_finding_pos > 0, (
             "F193B: callback must be called after storing ToT finding"
         )

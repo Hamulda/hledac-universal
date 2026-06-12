@@ -1158,7 +1158,7 @@ def _stable_node_id(value: str) -> int:
     SHA1 prvních 8 bytů = 64bit, oríznutý na 63bit (positive BIGINT).
     """
     return int.from_bytes(
-        _hashlib.sha1(value.encode("utf-8")).digest()[:8], "little"
+        _hashlib.sha256(value.encode("utf-8")).digest()[:8], "little"
     ) & 0x7FFFFFFFFFFFFFFF
 
 
@@ -1207,6 +1207,11 @@ class DuckPGQGraph:
             # in many extension builds (Parser Error at `&`). Use DuckDB's
             # native hash() builtin which returns UBIGINT (already 64-bit) —
             # equivalent masking without operator dependence.
+            # Guard: parquet_glob must be a safe relative path (no wildcards, no absolute, no traversal)
+            import os
+            safe_glob = os.path.normpath(parquet_glob)
+            if safe_glob.startswith("..") or os.path.isabs(safe_glob):
+                raise ValueError(f"unsafe parquet path: {parquet_glob}")
             result = self.con.execute(f"""
                 INSERT OR IGNORE INTO ioc_nodes (id, value, ioc_type, confidence, source)
                 SELECT
@@ -1215,7 +1220,7 @@ class DuckPGQGraph:
                     ioc_type,
                     MAX(confidence),
                     MAX(source)
-                FROM read_parquet('{parquet_glob}')
+                FROM read_parquet('{safe_glob}')
                 WHERE ioc IS NOT NULL AND length(ioc) > 3
                 GROUP BY ioc, ioc_type
             """).fetchone()

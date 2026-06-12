@@ -70,16 +70,16 @@ logger = logging.getLogger(__name__)
 
 
 # =============================================================================
-# Type DTOs — single source of truth: brain.hypothesis._types
+# Type DTOs — single source of truth: brain.hypothesis_engine._types
 # =============================================================================
-# C4 Sprint: All DTOs/enums/protocols live in ``brain.hypothesis._types`` (the
+# C4 Sprint: All DTOs/enums/protocols live in ``brain.hypothesis_engine._types`` (the
 # canonical module). This monolith re-exports the public surface for
 # backward compat. The local ``Hypothesis`` class (see below) is the sole
 # exception — it carries engine-specific methods (add_test_result,
 # add_supporting_evidence, add_conflicting_evidence, update_probability)
 # that the canonical DTO does not expose.
 
-from brain.hypothesis._types import (  # noqa: E402,F401
+from brain.hypothesis_engine._types import (  # noqa: E402,F401
     CO_OCCURRENCE_FP16,
     MAX_CAUSAL_ENTITIES,
     MAX_CAUSAL_FINDINGS,
@@ -286,41 +286,41 @@ class Hypothesis:
 
 
 # =============================================================================
-# Adversarial Verifier (extracted to brain.hypothesis.adversarial — C4 Tier-3)
+# Adversarial Verifier (extracted to brain.hypothesis_engine.adversarial — C4 Tier-3)
 # =============================================================================
 
-from brain.hypothesis.adversarial import (  # noqa: E402,F401
+from brain.hypothesis_engine.adversarial import (  # noqa: E402,F401
     AdversarialVerifier,
 )
 
 # =============================================================================
-# Sprint F259 CausalReasoner (extracted to brain.hypothesis.causal — C4 Tier-5)
+# Sprint F259 CausalReasoner (extracted to brain.hypothesis_engine.causal — C4 Tier-5)
 # =============================================================================
-from brain.hypothesis.causal import (  # noqa: E402,F401
+from brain.hypothesis_engine.causal import (  # noqa: E402,F401
     CausalReasoner,
 )
 
 # =============================================================================# =============================================================================  # noqa: E501
-# Sprint 67: Simple Node Ablation Explainer (extracted to brain.hypothesis.explainer — C4 Tier-3)
+# Sprint 67: Simple Node Ablation Explainer (extracted to brain.hypothesis_engine.explainer — C4 Tier-3)
 # =============================================================================
 # =============================================================================
-# explain_with_mlx helper (extracted to brain.hypothesis.explainer — C4 Tier-5)
+# explain_with_mlx helper (extracted to brain.hypothesis_engine.explainer — C4 Tier-5)
 # =============================================================================
-from brain.hypothesis.explainer import (  # noqa: E402,F401  # noqa: E402,F401
+from brain.hypothesis_engine.explainer import (  # noqa: E402,F401  # noqa: E402,F401
     SimpleNodeAblationExplainer,
     explain_with_mlx,
 )
 
 # =============================================================================
-# SourceHint + HypothesisPack (extracted to brain.hypothesis.packs — C4 Tier-4)
+# SourceHint + HypothesisPack (extracted to brain.hypothesis_engine.packs — C4 Tier-4)
 # =============================================================================
-from brain.hypothesis.packs import (  # noqa: E402,F401
+from brain.hypothesis_engine.packs import (  # noqa: E402,F401
     HypothesisPack,
     SourceHint,
 )
 
 # =============================================================================
-# explain_with_mlx helper (extracted to brain.hypothesis.explainer — C4 Tier-5)
+# explain_with_mlx helper (extracted to brain.hypothesis_engine.explainer — C4 Tier-5)
 # =============================================================================
 
 
@@ -442,7 +442,7 @@ class HypothesisEngine:
         )
 
         # Sprint F259: Causal reasoning storage — delegated to CausalReasoner
-        # (extracted to brain.hypothesis.causal in C4 Tier-5)
+        # (extracted to brain.hypothesis_engine.causal in C4 Tier-5)
         self._causal_reasoner: CausalReasoner = CausalReasoner()
         # Legacy attribute aliases — kept for backward compat with any
         # external code that introspected HypothesisEngine internals.
@@ -458,7 +458,7 @@ class HypothesisEngine:
 
     # -------------------------------------------------------------------------
     # Causal Reasoning Methods (Sprint F259) — facades over CausalReasoner
-    # (extracted to brain.hypothesis.causal in C4 Tier-5)
+    # (extracted to brain.hypothesis_engine.causal in C4 Tier-5)
     # -------------------------------------------------------------------------
 
     def extract_causal_entities(self, findings: list[Any]) -> list[CausalEntity]:

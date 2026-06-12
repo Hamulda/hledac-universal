@@ -246,10 +246,10 @@ Centralized HTTP/3 lane in `transport/http3_lane.py` (new). Two strategies behin
 | `curl_cffi_opportunistic` (default) | `curl_cffi >= 0.7` `HttpVersion.v3` kwarg, gated on Alt-Svc h3 advertisement | 0 extra deps | All clearnet fetches that benefit from Alt-Svc-driven H3 upgrade |
 | `aioquic_stealth` (opt-in via `[http3]` extra) | Real QUIC handshake + H3 via `aioquic` | ~50-80 MB resident (cryptography + OpenSSL) | Stealth / DA+ profile lane when real QUIC is required |
 
-**Env gate:** `HLEDAC_ENABLE_HTTPX_H3=1` enables both strategies; default off. Legacy alias `HLEDAC_HTTP3=1` (F260) is honored for back-compat.
+**Env gate:** `HLEDAC_ENABLE_HTTPX_H3=1` enables both strategies; default **ON** (always-on, opt-out via `HLEDAC_ENABLE_HTTPX_H3=0`). Legacy alias `HLEDAC_HTTP3=1` (F260) is honored for back-compat.
 
 **M1 8GB bounds** (`transport/http3_lane.py`):
-- `_H3_CACHE_MAX = 512` — bounded LRU (host → `True`), FIFO eviction
+- `_H3_CACHE_MAX = 1024` — bounded LRU (host → `True`), FIFO eviction
 - `_H3_CONCURRENCY_MAX = 3` — semaphore caps concurrent aioquic handshakes
 - `_H3_TIMEOUT_S = 8.0` — per-request `asyncio.wait_for` hard cap
 - `_H3_CACHE_TTL_S = 86_400` — 24h, same as stealth_manager F194
@@ -258,7 +258,7 @@ Centralized HTTP/3 lane in `transport/http3_lane.py` (new). Two strategies behin
 
 **Fail-soft invariants:** every error path returns `None` and lets the caller continue on HTTP/1.1 / HTTP/2. No bare `except:`; every cache write is best-effort; cooperative `CancelledError` is re-raised.
 
-**Probe tests:** `tests/probe_p12_http3_lane/test_p12_http3_lane.py` — 30+ hermetic tests covering: lazy import without aioquic, env gate resolution (incl. legacy alias), Alt-Svc parser, bounded LRU + TTL + LRU touch, per-request timeout, semaphore saturation, memory guard, record helpers, F260 compat shims, transport router H3 candidate, `pyproject.toml` `[http3]` extra presence + `m1-local` exclusion.
+**Probe tests:** `tests/probe_p12_http3_lane/test_p12_http3_lane.py` — 48 hermetic tests covering: lazy import without aioquic, env gate resolution (incl. legacy alias), Alt-Svc parser, bounded LRU + TTL + LRU touch, per-request timeout, semaphore saturation, memory guard, record helpers, F260 compat shims, transport router H3 candidate, `pyproject.toml` `[http3]` extra presence + `m1-local` exclusion.
 
 ---
 
@@ -284,18 +284,17 @@ Closes two gaps in the curl_cffi stealth lane that F260 + F261 left open:
    ETag/Last-Modified 304 short-circuits.
 
 ### Prewarm pool (`transport/prewarm_pool.py`)
-- 2-slot ring buffer. Slot A = active, slot B = prewarmed.
-- Round-robin: every acquire kicks off a background HEAD probe to
-  prime the next slot.
-- Bounded: exactly 2 sessions, never grows.
-- M1 8GB: ~30 MB resident for 2 sessions.
+- 4-slot ring buffer. Round-robin across slots; on a hit, the other
+  slot is re-prewarmed in the background so the pool stays warm.
+- Bounded: exactly 4 sessions, never grows.
+- M1 8GB: ~60 MB resident for 4 sessions (~15 MB each).
 - Fail-soft: any error → lazy runtime path.
 - Opt-out: `HLEDAC_CURL_CFFI_PREWARM=0` (default ON).
 - Wired into `curl_cffi_runtime._get_or_create_session` — callers
   see no API change.
 
 ### Conditional cache (`transport/conditional_cache.py`)
-- LMDB-backed (4 MB map, 5000 entries) with zstd/zlib compression.
+- LMDB-backed (16 MB map, 5000 entries) with zstd/zlib compression.
 - In-memory fallback when LMDB is unavailable (hermetic tests).
 - Stores `(etag, last_modified, body, sha256, fetched_at, status_code)`.
 - 304 = `If-None-Match` / `If-Modified-Since` short-circuit, returns
@@ -331,7 +330,7 @@ speculative Alt-Svc gating.
 - **No new public APIs required** — `fetch_via_curl_cffi_cached`
   drops in at the existing call sites; `probe_altsvc_speculative`
   is fire-and-forget.
-- **M1 8GB safe** — 30 MB prewarm + 4 MB LMDB map + 1-hour TTL.
+- **M1 8GB safe** — 60 MB prewarm + 16 MB LMDB map + 1-hour TTL.
 - **Lazy imports** — no curl_cffi / aioquic / zstandard at module
   load; all deps loaded on first use.
 

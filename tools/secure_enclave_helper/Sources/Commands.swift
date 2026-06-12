@@ -529,13 +529,19 @@ struct Commands {
         let privateKeyBytes = privateKey.integrityCheckedRepresentation
         let publicKeyBytes = privateKey.publicKey.rawRepresentation
 
-        // Store private key bytes in Keychain
+        // Store private key bytes in Keychain with biometric protection
         let privateKeyQuery: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrAccount as String: keyId,
             kSecAttrService as String: "com.hledac.pq.mldsa.private",
             kSecValueData as String: privateKeyBytes,
-            kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlockedThisDeviceOnly
+            kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlockedThisDeviceOnly,
+            kSecAttrAccessControl as String: SecAccessControlCreateWithFlags(
+                nil,
+                kSecAttrAccessibleWhenUnlockedThisDeviceOnly,
+                .biometryCurrentSet,
+                nil
+            )!
         ]
 
         SecItemDelete(privateKeyQuery as CFDictionary)
@@ -547,7 +553,7 @@ struct Commands {
             )
         }
 
-        // Store public key bytes in Keychain
+        // Store public key bytes in Keychain (public key — no biometric needed)
         let publicKeyQuery: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrAccount as String: keyId,

@@ -291,7 +291,7 @@ class CTLogClient:
         domain = ct_result.get("domain", "")
 
         for san in san_names[:MAX]:
-            finding_id = f"ct_{hashlib.sha1(san.encode()).hexdigest()[:16]}"
+            finding_id = f"ct_{hashlib.sha256(san.encode()).hexdigest()[:16]}"  # sha256
             # Sprint F234: Include san in payload_text so each CT finding gets a
             # unique dedup fingerprint. Without san, all 50 entries share one
             # payload_text → one fingerprint → dedup rejects 49/50 as duplicates.

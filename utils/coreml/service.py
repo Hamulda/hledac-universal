@@ -9,15 +9,16 @@ import asyncio
 import logging
 import sys
 import time
-from collections import OrderedDict
+from collections import OrderedDict, defaultdict
 from enum import Enum
 from pathlib import Path
 from typing import Any
 
 import coremltools as ct
+import numpy as np
 from coremltools.models import MLModel
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, PlainTextResponse
 from pydantic import BaseModel
 
 # ── ComputeUnit (local, not from models.py) ─────────────────────────────────
@@ -258,6 +259,94 @@ class _ModelCache:
 app = FastAPI(title="CoreML Service", version="9.0")
 _cache = _ModelCache(max_size=_MAX_CACHE)
 
+# ── Prometheus metrics ───────────────────────────────────────────────────────────
+_request_count: dict[str, int] = defaultdict(int)
+_latency_sum: dict[str, float] = defaultdict(float)
+_error_count: dict[str, int] = defaultdict(int)
+_start_time = time.time()
+
+
+@app.get("/metrics", response_class=PlainTextResponse)
+async def metrics() -> str:
+    uptime = time.time() - _start_time
+    lines = [
+        "# HELP coreml_requests_total Total requests per endpoint",
+        "# TYPE coreml_requests_total counter",
+    ]
+    for endpoint, count in _request_count.items():
+        lines.append(f'coreml_requests_total{{endpoint="{endpoint}"}} {count}')
+    lines += [
+        "# HELP coreml_latency_ms_sum Sum of latencies",
+        "# TYPE coreml_latency_ms_sum counter",
+    ]
+    for endpoint, total in _latency_sum.items():
+        avg = total / max(_request_count[endpoint], 1)
+        lines.append(f'coreml_latency_ms_avg{{endpoint="{endpoint}"}} {avg:.2f}')
+    lines.append(f"coreml_uptime_seconds {uptime:.0f}")
+    models = await _cache.list_models()
+    lines.append(f"coreml_models_loaded {len(models)}")
+    return "\n".join(lines)
+
+
+# ── Embedding models ────────────────────────────────────────────────────────────
+
+
+class EmbedRequest(BaseModel):
+    model_name: str
+    texts: list[str]
+    compute_unit: ComputeUnit = ComputeUnit.ANE
+
+
+class EmbedResult(BaseModel):
+    embeddings: list[list[float]]
+    dim: int
+    latency_ms: float
+    backend: str
+
+
+@app.post("/embed", response_model=EmbedResult)
+async def embed(req: EmbedRequest) -> EmbedResult:
+    """High-level embedding endpoint — handles tokenization + mean pooling internally."""
+    t0 = time.perf_counter()
+    try:
+        # Lazy-load tokenizer
+        from transformers import AutoTokenizer
+
+        tokenizer = AutoTokenizer.from_pretrained("BAAI/bge-small-en-v1.5")
+        tokens = tokenizer(
+            req.texts,
+            return_tensors="np",
+            padding=True,
+            truncation=True,
+            max_length=512,
+        )
+        import numpy as np
+
+        results: list[list[float]] = []
+        for i in range(len(req.texts)):
+            single = {
+                "input_ids": tokens["input_ids"][i : i + 1].astype(np.int32),
+                "attention_mask": tokens["attention_mask"][i : i + 1].astype(np.int32),
+            }
+            out, _, _ = await _cache.predict(req.model_name, single, req.compute_unit)
+            # Mean pool
+            lhs = np.array(out["last_hidden_state"])
+            mask = tokens["attention_mask"][i : i + 1, :, np.newaxis]
+            pooled = (lhs * mask).sum(axis=1) / (mask.sum(axis=1) + 1e-8)
+            # L2 normalize
+            norm = np.linalg.norm(pooled, axis=-1, keepdims=True)
+            pooled = pooled / (norm + 1e-8)
+            results.append(pooled.tolist()[0])
+        latency = (time.perf_counter() - t0) * 1000
+        return EmbedResult(
+            embeddings=results,
+            dim=len(results[0]) if results else 0,
+            latency_ms=latency,
+            backend="ane",
+        )
+    except Exception as e:
+        raise HTTPException(500, f"Embed failed: {e}")
+
 
 @app.get("/health", response_model=HealthResult)
 async def health() -> HealthResult:
@@ -304,13 +393,30 @@ async def convert(req: ConvertRequest) -> ConvertResult:
         if req.model_type == "torch":
             import torch
             model = torch.jit.load(str(src))
+            model.eval()
+            # Introspect input shapes from TorchScript graph
+            try:
+                graph = model.graph
+                inputs = list(graph.inputs())[1:]  # skip self
+                ct_inputs = []
+                for inp in inputs:
+                    t = inp.type()
+                    if hasattr(t, "sizes") and t.sizes():
+                        shape = ct.Shape(shape=list(t.sizes()))
+                    else:
+                        shape = ct.Shape(shape=(1, 512))  # fallback for transformers
+                    ct_inputs.append(ct.TensorType(name=inp.debugName(), shape=shape))
+            except Exception:
+                # Fallback: use fixed transformer input shapes
+                ct_inputs = [
+                    ct.TensorType(name="input_ids", shape=(1, ct.RangeDim(1, 512)), dtype=np.int32),
+                    ct.TensorType(name="attention_mask", shape=(1, ct.RangeDim(1, 512)), dtype=np.int32),
+                ]
             mlmodel = ct.convert(
                 model,
-                inputs=[
-                    ct.TensorType(name=k, shape=v.shape)
-                    for k, v in dict(model.state_dict()).items()
-                ],
+                inputs=ct_inputs,
                 compute_units=cu,
+                minimum_deployment_target=ct.target.iOS15,
             )
         elif req.model_type == "onnx":
             try:

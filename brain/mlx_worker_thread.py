@@ -199,7 +199,15 @@ class MLXWorkerThread:
             self._loop = None
 
     def is_active(self) -> bool:
-        """True if worker thread is alive and loop is running."""
+        """True if worker thread is alive and loop is running.
+
+        M.T7: also checks _stopped flag — once shutdown() is called, the
+        worker is considered inactive even if the thread is still alive
+        (e.g. blocked in MLX inference). This prevents callers from
+        routing new requests to a worker that is already shutting down.
+        """
+        if self._stopped:
+            return False
         if self._thread is None:
             return False
         if not self._thread.is_alive():

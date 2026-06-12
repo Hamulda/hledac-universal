@@ -2,7 +2,7 @@
 Hypothesis Engine — Simple Node Ablation Explainer (C4 Sprint Refactoring)
 ==========================================================================
 
-Extracted from :mod:`brain.hypothesis_engine` to break the 5 373 LOC monolith
+Extracted from :mod:`brain.hypothesis_engine_engine` to break the 5 373 LOC monolith
 into focused modules. This module hosts:
 
 - :class:`SimpleNodeAblationExplainer` — the leave-one-node-out path
@@ -14,12 +14,12 @@ GHOST_INVARIANTS:
 - The extraction is **byte-for-byte identical** to the original — no
   behaviour change, no field rename, no default mutation. Existing tests
   must pass unchanged.
-- ``brain.hypothesis_engine`` re-exports both symbols
+- ``brain.hypothesis_engine_engine`` re-exports both symbols
   (:class:`SimpleNodeAblationExplainer` and ``explain_with_mlx``) for
   backward compat.
 - New code should
-  ``from brain.hypothesis.explainer import SimpleNodeAblationExplainer, explain_with_mlx``.
-- Zero dependency on :mod:`brain.hypothesis_engine` types — the class
+  ``from brain.hypothesis_engine.explainer import SimpleNodeAblationExplainer, explain_with_mlx``.
+- Zero dependency on :mod:`brain.hypothesis_engine_engine` types — the class
   is graph-RAG-agnostic and operates on duck-typed ``graph_rag.score_path``
   / ``graph_rag._get_embedder`` interfaces.
 - ``explain_with_mlx`` is M1-safe: it loads the MLX model lazily, uses

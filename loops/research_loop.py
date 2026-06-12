@@ -12,7 +12,11 @@ prev_reward integration in hypothesis generation.
 
 from __future__ import annotations
 
+import asyncio
+import ast
 import logging
+from dataclasses import dataclass, field
+from typing import Any
 
 try:
     import orjson
@@ -197,7 +201,9 @@ class QTable:
             # Parse the string representation back to tuple
             # Format: "('state', 1, 2, 3)" or similar
             try:
-                state_key = eval(key_str)  # Safe here as we control the format
+                # ast.literal_eval parses only Python literals — no arbitrary code execution
+                # unlike eval() which can execute any Python expression
+                state_key = ast.literal_eval(key_str)
                 if isinstance(state_key, tuple):
                     qtable._table[state_key] = action_dict
             except Exception:
@@ -536,7 +542,7 @@ class ResearchLoop:
                     falsified = False
                     if hasattr(engine, "attempt_falsification"):
                         try:
-                            from dataclasses import dataclass, field
+                            from dataclasses import dataclass, field, field
                             @dataclass
                             class _H:
                                 hypothesis: str = ""

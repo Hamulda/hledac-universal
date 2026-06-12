@@ -71,13 +71,12 @@ class _FakeResult:
     """Minimal fake SprintSchedulerResult for testing."""
     cycles_started: int = 0
     cycles_completed: int = 0
-    accepted_findings: int = 0
+    consecutive_empty_cycles: int = 0
+    max_consecutive_empty_cycles: int = 0
+    unique_entry_hashes_seen: int = 0
     duplicate_entry_hashes_skipped: int = 0
     total_pattern_hits: int = 0
-    public_accepted_findings: int = 0
-    ct_log_accepted_findings: int = 0
-    multimodal_enriched_findings: int = 0
-    forensics_enriched_ct_findings: int = 0
+    accepted_findings: int = 0
     entries_per_source: dict = {}
     hits_per_source: dict = {}
     branch_timeout_count: int = 0
@@ -89,6 +88,13 @@ class _FakeResult:
     abort_reason: str = ""
     stop_requested: bool = False
     feed_zero_yield_detected: bool = False
+    # F203C kill chain tagging
+    kill_chain_tags_produced: int = 0
+    # Public/CT pipeline fields accessed by _build_table
+    public_accepted_findings: int = 0
+    ct_log_accepted_findings: int = 0
+    multimodal_enriched_findings: int = 0
+    forensics_enriched_ct_findings: int = 0
 
 
 class TestSprintDashboardInit:

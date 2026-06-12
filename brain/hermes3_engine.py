@@ -361,6 +361,11 @@ class Hermes3Engine:
         # Always-on: routing layer in _submit_inference() picks thread vs executor.
         self._mlx_worker_thread: Any = None  # MLXWorkerThread | None (lazy)
 
+        # Task #4: Interruptible streaming — cancellation flag checked between
+        # token yields so CancelledError propagates promptly, not only when
+        # the to_thread generator completes. M1 8GB safe.
+        self._stream_cancelled: asyncio.Event = asyncio.Event()
+
         # Sprint 71/7E: Continuous batching — schema-aware PriorityQueue
         self._batch_queue: asyncio.PriorityQueue = None
         self._batch_worker_task: asyncio.Task | None = None
@@ -1536,7 +1541,8 @@ class Hermes3Engine:
         try:
             batcher = await self._ensure_mlx_batcher()
             if batcher is not None and batcher.is_batch_safe(
-                prompt=prompt, system_msg=system_msg, priority=1.0
+                prompt=prompt, system_msg=system_msg, priority=1.0,
+                speculative=self._speculative_enabled,
             ):
                 return await batcher.execute(
                     prompt=prompt,
@@ -1822,6 +1828,8 @@ class Hermes3Engine:
             return
 
         # --- Stream tokens under semaphore + to_thread (M1-safe) ---
+        # Task #4: reset cancellation flag so each stream starts clean
+        self._stream_cancelled.clear()
         async with self._inference_semaphore:
             try:
                 async for token in asyncio.to_thread(
@@ -1833,7 +1841,10 @@ class Hermes3Engine:
                     if token:
                         yield token
             except asyncio.CancelledError:
-                # Structured cancellation — propagate, do not record as failure
+                # Structured cancellation — set flag, then propagate (Task #4).
+                # The flag is checked between token yields in _stream_tokens so
+                # cancellation propagates promptly, not only when to_thread completes.
+                self._stream_cancelled.set()
                 raise
             except Exception as e:
                 logger.warning("[STREAM] generate_stream failed: %s", e)
@@ -1942,6 +1953,17 @@ class Hermes3Engine:
                     except Exception:
                         # Fail-soft: never break the stream on eval/clear
                         pass
+                # Task #4: check cancellation flag between token yields so
+                # CancelledError propagates promptly rather than waiting for
+                # to_thread to complete. isinstance guard: safe for existing
+                # tests (MagicMock instances are not asyncio.Event, so the
+                # check returns False). Also safe for uninitialized engines.
+                try:
+                    if isinstance(self._stream_cancelled, asyncio.Event) and self._stream_cancelled.is_set():
+                        break
+                except Exception:
+                    # Fail-open: any error → continue streaming
+                    pass
                 yield tok
 
     async def decide_next_action(self, context: dict[str, Any]) -> dict[str, Any]:

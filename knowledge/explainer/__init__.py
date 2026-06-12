@@ -29,11 +29,15 @@ _LAZY_ATTRS: dict[str, str] = {
 }
 
 
+_LAZY_WHITELIST: frozenset[str] = frozenset(_LAZY_ATTRS.keys())
+
+
 def __getattr__(name: str):
     """
     PEP 562 lazy module attribute access.
+    Whitelist-only: only names in _LAZY_WHITELIST can be imported.
     """
-    if name in _LAZY_ATTRS:
+    if name in _LAZY_WHITELIST:
         module = importlib.import_module(_LAZY_ATTRS[name])
         attr = getattr(module, name)
         globals()[name] = attr

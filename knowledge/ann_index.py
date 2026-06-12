@@ -30,7 +30,7 @@ import threading
 from pathlib import Path
 
 import numpy as np
-from typing import Any
+from typing import Any, Callable
 
 logger = logging.getLogger(__name__)
 
@@ -246,9 +246,36 @@ class _ANNIndex:
                     f"[ANN] IVF-PQ training failed (fallback brute-force): {e}"
                 )
 
-    def ann_search(self, embedding: np.ndarray, top_k: int = 5) -> list[dict]:
+    def ann_search(
+        self,
+        embedding: np.ndarray,
+        top_k: int = 5,
+        graph_filter: Callable[[list[str]], list[str]] | None = None,
+    ) -> list[dict]:
         """
         ANN cosine search — returns list of dicts with finding_key, text_hash, score.
+
+        P2-3 Enhancement — Graph-aware filtering:
+          When ``graph_filter`` is provided, ANN candidates are expanded through
+          the knowledge graph before re-scoring. Flow:
+
+          1. ANN top-(top_k × 2) for broader candidate pool
+          2. Extract candidate ``finding_key`` list
+          3. ``graph_filter(candidate_keys)`` → expanded/filtered key list
+          4. Fetch vectors for expanded keys + query
+          5. Re-score with exact cosine, return top-K
+
+        This enables graph-grounded deduplication: e.g. "find duplicates of
+        entity E, but only among entities that share a DuckPGQ relation with E"
+        (domain, IP range, AS ownership, etc.).
+
+        M1 8GB safe: (top_k × 2) ANN fetch + O(20) re-scores = negligible.
+
+        Args:
+            embedding: 256d float32 query vector.
+            top_k: Number of results to return.
+            graph_filter: Optional callable(candidate_keys: list[str]) -> list[str].
+                Return keys to include in final scoring. None = pure ANN (backward compat).
 
         Returns [] if not initialized or on any error (fail-open).
         Thread-safe via lock.
@@ -270,23 +297,61 @@ class _ANNIndex:
             norm = np.linalg.norm(emb, axis=1, keepdims=True) + 1e-8
             emb_norm = (emb / norm).squeeze(0).tolist()
 
+            fetch_limit = top_k * 2 if graph_filter is not None else top_k
+
             with self._lock:
                 results = (
                     self._table.search(emb_norm, vector_column_name="vector")
                     .metric("cosine")
-                    .limit(top_k)
+                    .limit(fetch_limit)
                     .to_list()
                 )
 
-            output = []
+            # P2-3: Build candidate map {finding_key: (vector, text_hash, raw_distance)}
+            candidates: dict[str, tuple[list[float], str, float]] = {}
             for r in results:
-                score = max(0.0, min(1.0, 1.0 - r.get("_distance", 1.0)))
+                fk = r.get("finding_key", "") or r.get("id", "")
+                if not fk:
+                    continue
+                vec = r.get("vector", [])
+                th = r.get("text_hash", "")
+                dist = r.get("_distance", 1.0)
+                if vec:
+                    candidates[fk] = (vec, th, dist)
+
+            if not candidates:
+                return []
+
+            # P2-3: Graph-filter expansion
+            if graph_filter is not None and candidates:
+                try:
+                    candidate_keys = list(candidates.keys())
+                    filtered_keys = graph_filter(candidate_keys)
+                    # Keep only filtered keys (preserves order from graph_filter)
+                    candidates = {k: v for k, v in candidates.items() if k in filtered_keys}
+                except Exception as e:
+                    # Fail-soft: graph filter error → fall back to pure ANN candidates
+                    logger.debug(f"[ANN] graph_filter failed: {e}")
+
+            if not candidates:
+                return []
+
+            # Re-score with exact cosine on expanded candidates
+            q_vec = np.array(emb_norm, dtype=np.float32)
+            scored: list[tuple[str, str, float]] = []
+            for fk, (vec, th, _dist) in candidates.items():
+                v = np.array(vec, dtype=np.float32)
+                v_norm = v / (np.linalg.norm(v) + 1e-8)
+                score = float(np.dot(q_vec, v_norm))
+                score = max(0.0, min(1.0, score))
                 if score >= _MIN_SCORE:
-                    output.append({
-                        "finding_key": r.get("finding_key", ""),
-                        "text_hash": r.get("text_hash", ""),
-                        "score": score,
-                    })
+                    scored.append((fk, th, score))
+
+            scored.sort(key=lambda x: x[2], reverse=True)
+            output = [
+                {"finding_key": fk, "text_hash": th, "score": sc}
+                for fk, th, sc in scored[:top_k]
+            ]
             return output
 
         except Exception as e:
@@ -330,20 +395,23 @@ class _ANNIndex:
             self._maybe_compact_blocking()
 
             # Sprint F264E: adaptive auto-tune (sync, under lock for thread safety).
-            # The tuner decides internally whether cooldown + insert-threshold are met.
+            # P1-2 Enhancement: Now tunes BOTH num_partitions AND num_sub_vectors.
             if self._ivfpq_enabled and self._autotune is not None:
                 try:
                     result = self._autotune.tune_if_due(
                         self._table,  # type: ignore[arg-type]
                         current_num_partitions=self._ivfpq_num_partitions,
+                        current_num_sub_vectors=self._ivfpq_num_sub_vectors,
                         inserts_delta=1,
                     )
                     if result.changed():
                         self._ivfpq_num_partitions = result.new_partitions
+                        self._ivfpq_num_sub_vectors = result.new_num_sub_vectors
                         logger.info(
-                            f"[ANN] auto-tune adjusted num_partitions="
-                            f"{result.old_partitions}->{result.new_partitions} "
-                            f"recall@K={result.recall:.3f} avg_ms={result.avg_search_ms:.2f}"
+                            f"[ANN] auto-tune adjusted "
+                            f"num_partitions={result.old_partitions}->{result.new_partitions} "
+                            f"num_sub_vectors={result.old_num_sub_vectors}->{result.new_num_sub_vectors} "
+                            f"recall={result.recall:.3f} avg_ms={result.avg_search_ms:.2f}"
                         )
                 except Exception:
                     # Fail-soft: any tuner error must not break upsert.
@@ -498,19 +566,30 @@ def check_ann_duplicate(
     embedding: np.ndarray,
     text_hash: str,
     finding_key: str,
+    graph_filter: Callable[[list[str]], list[str]] | None = None,
 ) -> bool:
     """
     Check if an embedding matches any existing entry in ANN index.
 
+    P2-3 Enhancement — Graph-aware filtering:
+      When ``graph_filter`` is provided, ANN candidates are first expanded
+      through the knowledge graph (via ``graph_filter`` callable) before
+      exact cosine re-scoring. See ``_ANNIndex.ann_search`` for details.
+
     Flow:
-    1. ANN search for top-5 similar vectors
-    2. If score >= 0.90 → duplicate detected
-    3. If no match → upsert current embedding (async-safe, best-effort)
+    1. ANN search for top-(5×2) similar vectors (or graph-filtered pool)
+    2. Graph expansion/filtering if graph_filter provided
+    3. Exact cosine re-score on expanded candidates
+    4. If score >= 0.90 → duplicate detected
+    5. If no match → upsert current embedding (async-safe, best-effort)
 
     Args:
         embedding: 256d float32 numpy array
         text_hash: SHA256 of original text (for verification)
         finding_key: BLAKE2b key for this finding
+        graph_filter: Optional callable(candidate_keys: list[str]) -> list[str].
+            Expands/filters ANN candidates via graph relations.
+            None = pure ANN (backward compatible).
 
     Returns:
         True if duplicate detected, False otherwise.
@@ -524,7 +603,7 @@ def check_ann_duplicate(
         if ann._boot_error is not None:
             return False
 
-        results = ann.ann_search(embedding, top_k=5)
+        results = ann.ann_search(embedding, top_k=5, graph_filter=graph_filter)
         for r in results:
             # Verify text_hash matches (prevents hash collision false positives)
             if r.get("text_hash") == text_hash and r.get("score", 0) >= _MIN_SCORE:

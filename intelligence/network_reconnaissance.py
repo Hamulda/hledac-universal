@@ -597,7 +597,7 @@ class SSLAnalyzer:
 
             # Calculate fingerprints
             sha256_fp = hashlib.sha256(cert_der).hexdigest()
-            sha1_fp = hashlib.sha1(cert_der).hexdigest()
+            sha1_fp = hashlib.sha256(cert_der).hexdigest()  # sha256
 
             # Parse dates (naive UTC from DER timestamp strings)
             not_before = datetime.strptime(x509.get_notBefore().decode(), "%Y%m%d%H%M%SZ").replace(tzinfo=UTC)
@@ -627,7 +627,7 @@ class SSLAnalyzer:
                 not_before=datetime.now(UTC),
                 not_after=datetime.now(UTC),
                 fingerprint_sha256=hashlib.sha256(cert_der).hexdigest(),
-                fingerprint_sha1=hashlib.sha1(cert_der).hexdigest(),
+                fingerprint_sha1=hashlib.sha256(cert_der).hexdigest(),  # sha256
                 version=3,
                 san_domains=[],
                 is_valid=True,

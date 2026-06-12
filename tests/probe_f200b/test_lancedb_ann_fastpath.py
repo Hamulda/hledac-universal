@@ -148,9 +148,22 @@ class TestANNSearch:
         ann = _ANNIndex("/tmp/test_ann_search_structure")
         ann._initialized = True  # bypass init
         ann._table = MagicMock()
+        # P2-3 fix: Provide vector field for exact cosine recomputation (line 340-345).
+        # First mock: identical to query → cosine=1.0.
+        # Second mock: use a nearly-identical vector (query + small noise) so cosine≈0.90
+        # MIN_SCORE=0.90 filters out anything below, so ~0.90 passes.
+        q_emb = _make_256d_embedding(1)
+        # Create near-duplicate: cosine≈0.90 by blending with a small random direction
+        noise = np.random.randn(_EMBEDDING_DIM).astype(np.float32)
+        noise = noise / (np.linalg.norm(noise) + 1e-8)
+        # Blend: 0.90*query + sqrt(1-0.90²)*noise → cosine=0.90
+        near90 = 0.90 * q_emb + 0.436 * noise
+        near90 = (near90 / (np.linalg.norm(near90) + 1e-8)).astype(np.float32)
         mock_results = [
-            {"finding_key": "abc123", "text_hash": "xyz789", "_distance": 0.05},
-            {"finding_key": "def456", "text_hash": "uvw456", "_distance": 0.10},
+            {"finding_key": "abc123", "text_hash": "xyz789", "_distance": 0.05,
+             "vector": q_emb.tolist()},  # cosine=1.0
+            {"finding_key": "def456", "text_hash": "uvw456", "_distance": 0.10,
+             "vector": near90.tolist()},  # cosine≈0.90
         ]
         mock_table = MagicMock()
         mock_table.search.return_value.metric.return_value.limit.return_value.to_list.return_value = mock_results
@@ -163,9 +176,9 @@ class TestANNSearch:
             assert "finding_key" in r
             assert "text_hash" in r
             assert "score" in r
-        # Scores computed from _distance
-        assert results[0]["score"] == pytest.approx(0.95, abs=0.01)
-        assert results[1]["score"] == pytest.approx(0.90, abs=0.01)
+        # P2-3: Scores computed via exact cosine on vectors (not from _distance)
+        assert results[0]["score"] == pytest.approx(1.0, abs=0.01)  # identical
+        assert results[1]["score"] == pytest.approx(0.90, abs=0.05)  # near-duplicate
 
     def test_search_filters_below_min_score(self):
         """

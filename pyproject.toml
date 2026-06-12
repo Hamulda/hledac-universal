@@ -111,7 +111,6 @@ dependencies = [
     "liboqs-python>=0.15.0; platform_machine == 'arm64'",
     # ── Hashing / dedup / Bloom ───────────────────────────────────────────────
     "pyprobables>=0.7.0",
-    "pybloom-live>=4.0.0",
     "xxhash>=3.7.0",
     "mmh3>=5.2.1",
     # ── Networking / OSINT ────────────────────────────────────────────────────
@@ -170,6 +169,20 @@ ml = [
     "transformers>=5.10.2",
     # Re-ranker for semantic search
     "flashrank>=0.2.10",
+]
+mlx-embed = [
+    # MLX-native embedding (M1 unified memory, no subprocess, no conversion)
+    "mlx>=0.22.0; sys_platform == 'darwin' and platform_machine == 'arm64'",
+    "mlx-embedding-models>=0.0.1; sys_platform == 'darwin' and platform_machine == 'arm64'",
+]
+http3 = [
+    # Real QUIC lane for stealth/DA+ profiles (M1 8GB: ~50-80 MB resident)
+    "aioquic>=0.9.25",
+    "cryptography>=43.0.0",
+]
+m1-local = [
+    # Excluded from [http3] extra — aioquic + cryptography too heavy for M1 8GB
+    # but some M1 workloads may want the aioquic path explicitly
 ]
 
 # ── Dev tools (oddělené od runtime, uv sync --group dev) ─────────────────────

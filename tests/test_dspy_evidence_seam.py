@@ -91,7 +91,9 @@ class TestDspyEvidenceSeam:
 
         try:
             paths_mod.EVIDENCE_ROOT = mock_evidence_dir
-            examples = await optimizer._load_training_examples(limit=100)
+            # Patch synthetic fallback so test isolates the file-reading seam
+            with patch.object(optimizer, '_generate_synthetic_examples', return_value=[]):
+                examples = await optimizer._load_training_examples(limit=100)
         finally:
             paths_mod.EVIDENCE_ROOT = original_ev_root
 
@@ -122,7 +124,9 @@ class TestDspyEvidenceSeam:
 
         try:
             paths_mod.EVIDENCE_ROOT = evidence_dir
-            examples = await optimizer._load_training_examples(limit=100)
+            # Patch synthetic fallback so test isolates the file-reading seam
+            with patch.object(optimizer, '_generate_synthetic_examples', return_value=[]):
+                examples = await optimizer._load_training_examples(limit=100)
         finally:
             paths_mod.EVIDENCE_ROOT = original_ev_root
 

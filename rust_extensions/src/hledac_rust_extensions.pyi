@@ -355,18 +355,18 @@ def ioc_dedup_from_bytes(path: str) -> IocDedupStore:
 # Int counter layout (rust_extensions/src/int_counter_layout.rs)
 # ---------------------------------------------------------------------------
 
-def bulk_bump_aggregate(layout: IntCounterLayoutRust, deltas: list[int]) -> None:
-    """Apply a vector of int deltas to the layout in one call."""
+def bulk_bump_aggregate(layout: IntCounterLayoutRust, deltas: list[int]) -> list[int]:
+    """Apply a vector of int deltas to the layout in one call. Returns new values per layout."""
     ...
 
 def bulk_snapshot_dict(layout: IntCounterLayoutRust) -> dict[str, int]:
     """Materialize the current layout as a str-keyed dict."""
     ...
 
-def build_layout(capacity: int) -> IntCounterLayoutRust:
-    """Allocate a fresh bounded IntCounterLayoutRust of given capacity."""
+def build_layout(names: list[str]) -> IntCounterLayoutRust:
+    """Allocate a fresh IntCounterLayoutRust with given field names."""
     ...
 
-def chain_hash_snapshot(layout: IntCounterLayoutRust) -> str:
-    """BLAKE3 hash of the current layout snapshot, hex-encoded."""
+def chain_hash_snapshot(snap: dict[str, int], prev_chain_hex: str, event_id: str) -> tuple[str, str]:
+    """BLAKE3-256 + SHA-256 dual-emit over snapshot dict. Returns (blake3_hex, sha256_hex)."""
     ...

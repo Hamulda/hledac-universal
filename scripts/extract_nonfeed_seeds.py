@@ -74,6 +74,15 @@ _TEXT_COLUMNS: frozenset[str] = frozenset([
 ])
 """Column names treated as text content for IOC extraction."""
 
+# Safe identifier validation: alphanumeric + underscore only, no dots, no dashes
+import re
+_SAFE_IDENTIFIER_RE = re.compile(r'^[a-zA-Z_][a-zA-Z0-9_]*$')
+
+
+def _safe_table_name(name: str) -> str | None:
+    """Validate table name is safe for DESCRIBE / SQL interpolation."""
+    return name if _SAFE_IDENTIFIER_RE.match(name) else None
+
 
 def _read_findings_from_duckdb(
     db_path: str,
@@ -107,12 +116,15 @@ def _read_findings_from_duckdb(
     tables_checked: list[str] = []
 
     for table_name in tables:
+        safe_name = _safe_table_name(table_name)
+        if not safe_name:
+            continue  # Skip unsafe table names
         tables_checked.append(table_name)
         try:
-            col_result = conn.execute(f'DESCRIBE "{table_name}"').fetchall()
+            col_result = conn.execute(f'DESCRIBE "{safe_name}"').fetchall()
         except Exception:
             try:
-                col_result = conn.execute(f"DESCRIBE {table_name}").fetchall()
+                col_result = conn.execute(f"DESCRIBE {safe_name}").fetchall()
             except Exception:
                 continue
 

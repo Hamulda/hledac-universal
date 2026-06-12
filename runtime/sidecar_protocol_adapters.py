@@ -661,3 +661,94 @@ class TemporalArchaeologySidecarAdapter(BaseSidecarAdapter):
         # context-managed API mismatch — wiring-only, return empty
         return []
 
+
+# ── LanceDB RAG Sidecar — Sprint P2-3 Layer A ──────────────────────────────────
+# Registry imports must be at bottom (after class definition).
+# We import here to avoid circular deps.
+
+
+@SidecarRegistry.register("lancedb_rag")
+class LanceDBRAGSidecarAdapter(BaseSidecarAdapter):
+    """
+    Sprint P2-3 Layer A: Cross-sprint corpus mining sidecar.
+
+    Embeds current sprint query + top findings into LanceDB "documents" table.
+    Next sprint will retrieve similar queries as advisory seeds.
+
+    Env: HLEDAC_ENABLE_GRAPH_RAG=1 (shares gate with GraphRAGOrchestrator)
+    RAM: 60MB budget (M1 8GB safe)
+    Priority: 7 (runs early — results available to next sprint)
+    """
+
+    sidecar_id: str = "lancedb_rag"
+    env_gate: str = "HLEDAC_ENABLE_GRAPH_RAG"
+    ram_budget_mb: int = 60
+    priority: int = 7
+
+    async def run_async(self, ctx: SidecarContext) -> list[Any]:
+        """Embed query + findings into LanceDB for cross-sprint persistence."""
+        if not ctx.query:
+            return []
+
+        try:
+            from knowledge.lancedb_rag_engine import LanceDBRAGEngine, RAGDocument
+        except Exception:
+            logger.debug("LanceDBRAGSidecarAdapter: import failed")
+            return []
+
+        try:
+            rag = LanceDBRAGEngine()
+
+            # Add current query as anchor document
+            query_doc = RAGDocument(
+                id=f"query:{ctx.sprint_id}",
+                content=ctx.query,
+                metadata={
+                    "sprint_id": ctx.sprint_id,
+                    "sprint_mode": ctx.sprint_mode,
+                    "type": "query_anchor",
+                },
+            )
+            await rag.add_document(query_doc)
+
+            # Add top findings (up to 20) as evidence documents
+            finding_docs = []
+            for f in ctx.findings[:20]:
+                content = getattr(f, "payload_text", "") or getattr(f, "query", "") or ""
+                if not content:
+                    continue
+                doc = RAGDocument(
+                    id=f"finding:{getattr(f, 'finding_id', 'unknown')}",
+                    content=content[:2000],  # cap at 2KB
+                    metadata={
+                        "sprint_id": ctx.sprint_id,
+                        "ioc_type": getattr(f, "ioc_type", "unknown"),
+                        "confidence": getattr(f, "confidence", 0.5),
+                        "type": "finding_evidence",
+                    },
+                )
+                finding_docs.append(doc)
+
+            if finding_docs:
+                await rag.add_documents_batch(finding_docs, batch_size=16)
+
+            # Search for similar past queries (for advisory output)
+            similar = await rag.search(query=ctx.query, top_k=5, use_mmr=True)
+            findings = []
+            for i, chunk in enumerate(similar[:5]):
+                findings.append({
+                    "source_type": "lancedb_rag_corpus",
+                    "query": ctx.query,
+                    "sprint_id": ctx.sprint_id,
+                    "ioc_type": "corpus_similar",
+                    "ioc_value": f"similar_query_{i}",
+                    "confidence": chunk.final_score,
+                    "payload_text": chunk.chunk_text[:1024],
+                })
+
+            return findings
+
+        except Exception:
+            logger.debug("LanceDBRAGSidecarAdapter.run: fail-soft", exc_info=True)
+            return []
+

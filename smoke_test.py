@@ -31,7 +31,7 @@ results: list[TestResult] = []
 
 def test(name: str, code: str) -> None:
     try:
-        exec(code, {})
+        exec(code, {})  # noqa: S102  # hardcoded test strings, not user input
         results.append(TestResult(name, True))
         print(f"  ✅ {name}")
     except Exception as exc:

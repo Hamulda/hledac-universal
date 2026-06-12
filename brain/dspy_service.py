@@ -285,8 +285,8 @@ async def expand_query(query: str) -> list | None:
             answer: str = dspy.OutputField()
 
         program = dspy.Predict(QueryExpandSignature)
-        # Inject the compiled prompt as instructions
-        program._predictor.instructions = prompt_template
+        # Inject the compiled prompt as instructions (DSPy 3.2+ uses signature.instructions)
+        program.signature.instructions = prompt_template
 
         async def _run():
             with dspy.ctx(lm=lm):
@@ -395,7 +395,7 @@ async def score_findings(findings: list, min_score: float = 4.0) -> list | None:
             answer: str = dspy.OutputField()
 
         program = dspy.Predict(RelevanceScoreSignature)
-        program._predictor.instructions = prompt_template
+        program.signature.instructions = prompt_template
 
         async def _run():
             with dspy.ctx(lm=lm):
@@ -495,7 +495,7 @@ async def suggest_pivots(findings: list, context: dict | None = None) -> list | 
             answer: str = dspy.OutputField()
 
         program = dspy.Predict(PivotSuggestSignature)
-        program._predictor.instructions = prompt_template
+        program.signature.instructions = prompt_template
 
         async def _run():
             with dspy.ctx(lm=lm):

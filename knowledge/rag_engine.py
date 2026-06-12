@@ -487,19 +487,21 @@ class HNSWVectorIndex:
                 index_file = str(save_path / "hnsw_index.bin")
                 self._index.save_index(index_file)
 
-                # Save id mappings
-                np.savez(
-                    save_path / "hnsw_metadata.npz",
-                    id_to_label=self._id_to_label,
-                    label_to_id=self._label_to_id,
-                    current_label=self._current_label,
-                    dim=self.dim,
-                    max_elements=self.max_elements,
-                    M=self.M,
-                    ef_construction=self.ef_construction,
-                    ef_search=self.ef_search,
-                    space=self.space
-                )
+                # Save id mappings — orjson (safe, no pickle)
+                import orjson
+
+                meta = {
+                    "id_to_label": self._id_to_label,
+                    "label_to_id": self._label_to_id,
+                    "current_label": self._current_label,
+                    "dim": self.dim,
+                    "max_elements": self.max_elements,
+                    "M": self.M,
+                    "ef_construction": self.ef_construction,
+                    "ef_search": self.ef_search,
+                    "space": self.space,
+                }
+                (save_path / "hnsw_metadata.orjson").write_bytes(orjson.dumps(meta))
                 logger.info(f"HNSW index saved to {save_path}")
             except Exception as e:
                 logger.error(f"Failed to save HNSW index: {e}")
@@ -530,21 +532,23 @@ class HNSWVectorIndex:
 
         # Try to load HNSW index
         index_file = load_path / "hnsw_index.bin"
-        metadata_file = load_path / "hnsw_metadata.npz"
+        orjson_meta = load_path / "hnsw_metadata.orjson"
 
-        if self._available and index_file.exists() and metadata_file.exists():
+        if self._available and index_file.exists() and orjson_meta.exists():
             try:
-                # Load metadata
-                metadata = np.load(metadata_file, allow_pickle=True)
-                self._id_to_label = metadata["id_to_label"].item()
-                self._label_to_id = metadata["label_to_id"].item()
-                self._current_label = int(metadata["current_label"])
-                self.dim = int(metadata["dim"])
-                self.max_elements = int(metadata["max_elements"])
-                self.M = int(metadata["M"])
-                self.ef_construction = int(metadata["ef_construction"])
-                self.ef_search = int(metadata["ef_search"])
-                self.space = str(metadata["space"])
+                # Load metadata — orjson is safe, no arbitrary code execution (unlike np.load with allow_pickle=True)
+                import orjson
+
+                meta = orjson.loads(orjson_meta.read_bytes())
+                self._id_to_label = meta["id_to_label"]
+                self._label_to_id = meta["label_to_id"]
+                self._current_label = int(meta["current_label"])
+                self.dim = int(meta["dim"])
+                self.max_elements = int(meta["max_elements"])
+                self.M = int(meta["M"])
+                self.ef_construction = int(meta["ef_construction"])
+                self.ef_search = int(meta["ef_search"])
+                self.space = str(meta["space"])
 
                 # Initialize and load index
                 self._init_index()
@@ -557,7 +561,7 @@ class HNSWVectorIndex:
                 logger.error(f"Failed to load HNSW index: {e}")
                 self._available = False
 
-        # Fallback: load brute-force vectors
+        # Fallback: load brute-force vectors (no pickle, pure numpy binary)
         vectors_file = load_path / "vectors.npz"
         if vectors_file.exists():
             try:

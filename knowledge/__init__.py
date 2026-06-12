@@ -172,6 +172,11 @@ __all__ = sorted(_LAZY_EXPORT_MAP.keys()) + sorted(_LEGACY_NAMES)
 def __getattr__(name: str) -> Any:
     if name in _LAZY_EXPORT_MAP:
         module_path = _LAZY_EXPORT_MAP[name]
+        # SECURITY: module_path comes from _LAZY_EXPORT_MAP which is a
+        # hardcoded dict — no user input reaches here directly. Defense-in-depth:
+        # validate it doesn't contain path traversal or shell chars.
+        if ".." in module_path or module_path.startswith("/") or not module_path.replace(".", "").replace("_", "").isalnum():
+            raise AttributeError(f"unsafe module path: {module_path!r}")
         try:
             module = import_module(module_path)
         except ModuleNotFoundError as exc:
@@ -199,10 +204,19 @@ def __getattr__(name: str) -> Any:
                 "NodeType", "EdgeType", "KuzuDBBackend", "JSONBackend",
             ):
                 import importlib
+                # SECURITY: whitelist-based path construction — only known-safe
+                # module names are resolved. No arbitrary module loading.
+                _KNOWN_LEGACY_MODULES = frozenset([
+                    "legacy.atomic_storage", "legacy.persistent_layer",
+                    "persistent_layer", "atomic_storage",
+                ])
                 rel_path = "legacy.atomic_storage" if name not in (
                     "PersistentKnowledgeLayer", "KnowledgeNode", "KnowledgeEdge",
                     "NodeType", "EdgeType", "KuzuDBBackend", "JSONBackend",
                 ) else "legacy.persistent_layer"
+                # Validate rel_path is in whitelist before import
+                if rel_path not in _KNOWN_LEGACY_MODULES:
+                    raise AttributeError(f"unknown legacy module: {rel_path!r}")
                 try:
                     mod = importlib.import_module(rel_path)
                 except ModuleNotFoundError:

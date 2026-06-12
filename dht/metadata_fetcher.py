@@ -215,7 +215,7 @@ class TorrentMetadataFetcher:
                 return None
 
             # Verify SHA1
-            computed_hash = hashlib.sha1(full_metadata).digest()
+            computed_hash = hashlib.sha1(full_metadata).digest()  # nosem: B303 — BEP-9 protocol uses SHA1 as info hash identifier, not cryptographic signature
             if computed_hash != infohash:
                 logger.warning(f"SHA1 mismatch for {infohash.hex()[:8]}")
                 return None

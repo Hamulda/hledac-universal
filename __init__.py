@@ -26,6 +26,7 @@ except Exception:
 # ─────────────────────────────────────────────────────────────────────────────
 
 from importlib import import_module
+from importlib.util import find_spec as _importlib_util_find_spec
 
 # Lazy export map — defers all heavy module imports to first-use
 # F214-PERF: eliminates ~48ms of eager import cost at boot
@@ -143,10 +144,15 @@ def __getattr__(name: str):
         )
 
     try:
+        # noaudit[python.lang.security.audit.non-literal-import.non-literal-import]
+        # _LAZY_EXPORTS is a static module-level constant dict; values are
+        # hardcoded module paths — no user input reaches this call site.
         module = import_module(module_name)
     except ModuleNotFoundError as exc:
         if exc.name == "hledac" and module_name.startswith("hledac.universal."):
             local_path = module_name[len("hledac.universal."):]
+            # noaudit[python.lang.security.audit.non-literal-import.non-literal-import]
+            # local_path is derived from a static _LAZY_EXPORTS entry.
             module = import_module(local_path)
         else:
             raise
@@ -156,18 +162,30 @@ def __getattr__(name: str):
     return value
 
 
+# Security: load_optional accepts user-provided module names.
+# The `package=` scope gates imports under hledac.universal only.
+# Additional hardening: identifier pattern + find_spec pre-check.
+import re as _re
+_IDENTIFIER_RE = _re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
+
+
 def load_optional(name: str):
     """Load an optional module by name.
 
     Args:
         name: Full module name relative to hledac.universal, e.g. 'coordinators' or 'layers'
-
     Returns:
         The imported module.
-
     Raises:
-        ImportError: If the module cannot be imported.
+        ImportError: If the module cannot be imported or name is invalid.
     """
+    # Whitelist: must be a valid Python identifier
+    if not _IDENTIFIER_RE.match(name):
+        raise ImportError(f"Invalid module name: {name!r}")
+    # Safety net: verify the module spec exists before importing
+    # (importlib.util.find_spec is read-only, no code execution)
+    if not _importlib_util_find_spec(name, package="hledac.universal"):
+        raise ImportError(f"Module spec not found: {name!r}")
     return import_module(name, package="hledac.universal")
 
 

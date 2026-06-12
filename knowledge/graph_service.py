@@ -142,11 +142,54 @@ class GraphService:
                     self._seen_iocs.add(value, ioc_type)
                 else:
                     self._seen_iocs.add((value, ioc_type))
+
+                # Sprint P2-3: Wire LanceDB entity store — fire-and-forget async
+                # upsert so graph_service stays synchronous (non-blocking).
+                # Fail-soft: any error → sprint continues without LanceDB entity.
+                try:
+                    loop = asyncio.get_event_loop()
+                    loop.run_until_complete(
+                        self._upsert_lancedb_entity_async(value, ioc_type)
+                    )
+                except Exception as _e:
+                    logger.debug(f"[GraphService] LanceDB entity upsert skipped: {_e}")
+
                 return True
             return False
         except Exception as e:
             logger.warning(f"[GraphService] upsert_ioc failed for {value}: {e}")
             return False
+
+    # ── LanceDB Entity Store Seam (Sprint P2-3) ────────────────────────────────
+
+    async def _upsert_lancedb_entity_async(
+        self, value: str, ioc_type: str
+    ) -> None:
+        """Sprint P2-3: Upsert entity embedding to LanceDBIdentityStore.
+
+        Fire-and-forget async upsert after DuckPGQ IOC insert.
+        Bounded: skips if LanceDB store unavailable (fail-soft).
+        M1 8GB: uses shared MLXEmbeddingManager singleton, no duplicate model load.
+        """
+        try:
+            from knowledge.lancedb_store import get_identity_store
+
+            store = get_identity_store()
+            # Compute embedding via shared MLX embedder (already initialized in store)
+            emb = await store._embed_single(value)
+            if emb is None:
+                return
+            # Normalize
+            import numpy as np
+            norm = np.linalg.norm(emb) + 1e-8
+            emb_norm = (np.array(emb) / norm).tolist()
+            await store.add_entity(
+                entity_id=f"{ioc_type}:{value}",
+                embedding=emb_norm,
+                aliases=[value],
+            )
+        except Exception as _e:
+            logger.debug(f"[GraphService] LanceDB entity upsert failed: {_e}")
 
     def upsert_ioc_batch(self, rows: list[tuple[str, str, float, str]]) -> int:
         """
@@ -208,7 +251,10 @@ class GraphService:
         Returns:
             True on success, False on error or if already seen.
         """
+        rel_key = (src, dst, rel_type)
         if _RUST_IOC_DEDUP_AVAILABLE and self._seen_rels.contains(src, dst, rel_type):
+            return False
+        if not _RUST_IOC_DEDUP_AVAILABLE and rel_key in self._seen_rels:
             return False
 
         graph = _get_graph()
@@ -216,7 +262,7 @@ class GraphService:
             return False
         try:
             graph.add_relation(src, dst, rel_type, weight, evidence)
-            self._seen_rels.add(src, dst, rel_type)
+            self._seen_rels.add(rel_key)
             # Sprint P1-3: hot-edges counter hook — best-effort, fail-soft
             try:
                 from hledac.universal.knowledge import hot_edges_cache
@@ -566,20 +612,20 @@ def _estimate_community_count(graph: DuckPGQGraph) -> int:
     Returns 0 on error.
     """
     try:
-        rows = graph.con.execute(f"""
-            SELECT COUNT(DISTINCT src_id) + COUNT(DISTINCT dst_id) as node_count
-            FROM ioc_edges
-            LIMIT {MAX_GRAPH_ANALYTICS_NODES}
-        """).fetchone()
+        limit_n: int = MAX_GRAPH_ANALYTICS_NODES
+        rows = graph.con.execute(
+            "SELECT COUNT(DISTINCT src_id) + COUNT(DISTINCT dst_id) as node_count FROM ioc_edges LIMIT ?",
+            (limit_n,),
+        ).fetchone()
         node_count = rows[0] if rows else 0
         if node_count < 3:
             return 1
 
         labels: dict[int, int] = {}
-        edges = graph.con.execute(f"""
-            SELECT src_id, dst_id FROM ioc_edges
-            LIMIT {MAX_GRAPH_ANALYTICS_NODES}
-        """).fetchall()
+        edges = graph.con.execute(
+            "SELECT src_id, dst_id FROM ioc_edges LIMIT ?",
+            (limit_n,),
+        ).fetchall()
 
         nodes: set[int] = set()
         for src, dst in edges:

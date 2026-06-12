@@ -75,7 +75,7 @@ def save_nx_graph_jsonl(path: str, graph: Any, max_nodes: int = DEFAULT_MAX_NODE
     """
     try:
         # Lazy import — networkx may be missing in some profiles.
-        from networkx.readwrite import json_graph as _nx_json  # type: ignore
+        from networkx.readwrite import json_graph as _nx_json
 
         # Inline prune — match caller's MAX_NODES policy.
         if max_nodes and graph.number_of_nodes() > max_nodes:
@@ -132,7 +132,7 @@ def load_nx_graph_jsonl(path: str, max_nodes: int = DEFAULT_MAX_NODES) -> Any | 
     if not Path(path).exists():
         return None
     try:
-        from networkx.readwrite import json_graph as _nx_json  # type: ignore
+        from networkx.readwrite import json_graph as _nx_json
 
         with open(path, "rb") as f:
             raw = f.read(64)  # peek for magic
@@ -147,6 +147,15 @@ def load_nx_graph_jsonl(path: str, max_nodes: int = DEFAULT_MAX_NODES) -> Any | 
             logger.info(
                 "[GraphSerde] Legacy pickle file detected, one-shot migration: %s", path
             )
+            # F265C: size guard against zip bombs / memory exhaustion on M1 8GB
+            import os as _os
+            file_size = _os.path.getsize(path)
+            _MAX_PICKLE_SIZE = 50 * 1024 * 1024  # 50 MB cap
+            if file_size > _MAX_PICKLE_SIZE:
+                logger.warning(
+                    "[F265C] Refused pickle load >50MB (%d bytes): %s", file_size, path
+                )
+                return None
             import pickle  # lazy, only for legacy migration
 
             with open(path, "rb") as f:

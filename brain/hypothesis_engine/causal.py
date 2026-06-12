@@ -2,7 +2,7 @@
 Hypothesis Engine — Causal Reasoning (C4 Tier-5 Extraction)
 ============================================================
 
-Extracted from :mod:`brain.hypothesis_engine` to break the remaining 3 126 LOC
+Extracted from :mod:`brain.hypothesis_engine_engine` to break the remaining 3 126 LOC
 orchestrator into focused modules. This module hosts :class:`CausalReasoner`
 — the self-contained causal inference component responsible for entity
 extraction, temporal sequencing, co-occurrence matrix computation, anomaly
@@ -32,7 +32,7 @@ GHOST_INVARIANTS:
   ``generate_causal_hypotheses``) keep their original signatures and
   behaviour — existing call sites and tests remain unchanged.
 - ``CausalReasoner`` is **standalone** — no dependency on
-  :mod:`brain.hypothesis_engine`. The engine wraps it as a private
+  :mod:`brain.hypothesis_engine_engine`. The engine wraps it as a private
   delegate (``self._causal_reasoner``).
 - ``generate_causal_hypotheses`` stays a facade on the engine class because
   it coordinates 3+ causal methods AND needs the engine's
@@ -60,7 +60,7 @@ import re
 from collections import defaultdict
 from typing import Any
 
-from brain.hypothesis._types import (
+from brain.hypothesis_engine._types import (
     CO_OCCURRENCE_FP16,
     MAX_CAUSAL_ENTITIES,
     MAX_CAUSAL_FINDINGS,

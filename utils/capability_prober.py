@@ -151,7 +151,8 @@ class _LazyModule:
         """Legacy sync load - for backwards compatibility only."""
         if self._module is None and self._load_error is None:
             try:
-                _validate_lazy_module(self._name)
+                # Whitelist validated at construction time; double-check for defense-in-depth
+                _validate_lazy_module(self._name)  # noqa: S608 — validated by whitelist
                 self._module = importlib.import_module(self._name)
                 _LazyModule._cache[self._name] = self._module
             except ImportError as e:
@@ -208,6 +209,8 @@ class CapabilityProber:
         """
         loop = asyncio.get_running_loop()
         try:
+            # Whitelist validation before import — defense-in-depth
+            _validate_lazy_module(name)  # noqa: S608 — validated by whitelist
             async with asyncio.timeout(timeout):
                 module = await loop.run_in_executor(None, importlib.import_module, name)
             return module
@@ -233,7 +236,8 @@ class CapabilityProber:
         if not self.has_module(module_name):
             return None
         try:
-            _validate_lazy_module(module_name)
+            # Whitelist validated above in has_module(); double-check here for defense-in-depth
+            _validate_lazy_module(module_name)  # noqa: S608 — validated by whitelist
             module = importlib.import_module(module_name)
             return getattr(module, class_name, None)
         except ImportError:

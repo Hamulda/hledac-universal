@@ -5,8 +5,8 @@ Sprint Tier-5: CausalReasoner extraction probe
 Validates that the CausalReasoner extracted from brain.research_hypothesis_engine
 (C4 Tier-5 refactoring) is:
 
-1. Importable from new canonical path brain.hypothesis.causal
-2. Importable from package facade brain.hypothesis
+1. Importable from new canonical path brain.hypothesis_engine.causal
+2. Importable from package facade brain.hypothesis_engine
 3. Backward-compat: HypothesisEngine methods still work and return
    the same results as direct CausalReasoner usage
 4. The HypothesisEngine.causal attribute aliases still expose the
@@ -68,13 +68,13 @@ class TestCausalReasonerImports:
     """CausalReasoner is importable from new and old paths."""
 
     def test_import_from_canonical_path(self):
-        """`from brain.hypothesis.causal import CausalReasoner` must work."""
-        from brain.hypothesis.causal import CausalReasoner  # noqa: F401
+        """`from brain.hypothesis_engine.causal import CausalReasoner` must work."""
+        from brain.hypothesis_engine.causal import CausalReasoner  # noqa: F401
         assert CausalReasoner is not None
 
     def test_import_from_package_facade(self):
-        """`from brain.hypothesis import CausalReasoner` must work."""
-        from brain.hypothesis import CausalReasoner  # noqa: F401
+        """`from brain.hypothesis_engine import CausalReasoner` must work."""
+        from brain.hypothesis_engine import CausalReasoner  # noqa: F401
         assert CausalReasoner is not None
 
     def test_import_from_engine_module(self):
@@ -83,8 +83,8 @@ class TestCausalReasonerImports:
         assert CausalReasoner is not None
 
     def test_no_circular_import(self):
-        """brain.hypothesis.causal and brain.hypothesis_engine coexist without cycles."""
-        import brain.hypothesis.causal  # noqa: F401
+        """brain.hypothesis_engine.causal and brain.hypothesis_engine_engine coexist without cycles."""
+        import brain.hypothesis_engine.causal  # noqa: F401
         import brain.research_hypothesis_engine  # noqa: F401
         # If we get here, no circular import was triggered.
 
@@ -97,8 +97,8 @@ class TestCausalReasonerStandalone:
     """CausalReasoner can be used without a HypothesisEngine instance."""
 
     def test_extract_entities_returns_causal_entities(self):
-        from brain.hypothesis._types import CausalEntity
-        from brain.hypothesis.causal import CausalReasoner
+        from brain.hypothesis_engine._types import CausalEntity
+        from brain.hypothesis_engine.causal import CausalReasoner
 
         cr = CausalReasoner()
         findings = _make_findings()
@@ -113,7 +113,7 @@ class TestCausalReasonerStandalone:
         assert "email" in types_seen
 
     def test_entity_dedup_same_value(self):
-        from brain.hypothesis.causal import CausalReasoner
+        from brain.hypothesis_engine.causal import CausalReasoner
 
         cr = CausalReasoner()
         findings = _make_findings()
@@ -125,7 +125,7 @@ class TestCausalReasonerStandalone:
         assert ip_entities[0].value == "192.168.1.1"
 
     def test_build_temporal_sequences_minimum_size_2(self):
-        from brain.hypothesis.causal import CausalReasoner
+        from brain.hypothesis_engine.causal import CausalReasoner
 
         cr = CausalReasoner()
         cr.extract_entities(_make_findings())
@@ -136,7 +136,7 @@ class TestCausalReasonerStandalone:
             assert len(seq.timestamps) == len(seq.entities)
 
     def test_compute_co_occurrence_matrix(self):
-        from brain.hypothesis.causal import CausalReasoner
+        from brain.hypothesis_engine.causal import CausalReasoner
 
         cr = CausalReasoner()
         cr.extract_entities(_make_findings())
@@ -150,8 +150,8 @@ class TestCausalReasonerStandalone:
             assert matrix.shape[0] == matrix.shape[1]
 
     def test_generate_hypotheses_respects_max(self):
-        from brain.hypothesis._types import MAX_CAUSAL_HYPOTHESES
-        from brain.hypothesis.causal import CausalReasoner
+        from brain.hypothesis_engine._types import MAX_CAUSAL_HYPOTHESES
+        from brain.hypothesis_engine.causal import CausalReasoner
 
         cr = CausalReasoner()
         # generate_hypotheses is a sync method (pipeline is fully sync)
@@ -172,7 +172,7 @@ class TestHypothesisEngineCausalFacade:
     """HypothesisEngine.causal methods delegate to CausalReasoner and refresh aliases."""
 
     def test_engine_has_causal_reasoner_instance(self):
-        from brain.hypothesis.causal import CausalReasoner
+        from brain.hypothesis_engine.causal import CausalReasoner
         from brain.research_hypothesis_engine import HypothesisEngine
 
         engine = HypothesisEngine()
@@ -180,7 +180,7 @@ class TestHypothesisEngineCausalFacade:
         assert isinstance(engine._causal_reasoner, CausalReasoner)
 
     def test_engine_extract_causal_entities_delegates(self):
-        from brain.hypothesis._types import CausalEntity
+        from brain.hypothesis_engine._types import CausalEntity
         from brain.research_hypothesis_engine import HypothesisEngine
 
         engine = HypothesisEngine()
@@ -215,7 +215,7 @@ class TestHypothesisEngineCausalFacade:
         assert engine._idx_to_entity_id is engine._causal_reasoner._idx_to_entity_id
 
     def test_engine_detect_causal_anomalies_delegates(self):
-        from brain.hypothesis._types import AnomalySignal
+        from brain.hypothesis_engine._types import AnomalySignal
         from brain.research_hypothesis_engine import HypothesisEngine
 
         engine = HypothesisEngine()
@@ -260,29 +260,29 @@ class TestCausalM1Bounds:
     """M1 8GB bounds still enforced after extraction."""
 
     def test_max_causal_entities_constant(self):
-        from brain.hypothesis._types import MAX_CAUSAL_ENTITIES
+        from brain.hypothesis_engine._types import MAX_CAUSAL_ENTITIES
         assert MAX_CAUSAL_ENTITIES == 5000
 
     def test_max_causal_hypotheses_constant(self):
-        from brain.hypothesis._types import MAX_CAUSAL_HYPOTHESES
+        from brain.hypothesis_engine._types import MAX_CAUSAL_HYPOTHESES
         assert MAX_CAUSAL_HYPOTHESES == 200
 
     def test_max_co_occurrence_matrix_size_constant(self):
-        from brain.hypothesis._types import MAX_CO_OCCURRENCE_MATRIX_SIZE
+        from brain.hypothesis_engine._types import MAX_CO_OCCURRENCE_MATRIX_SIZE
         assert MAX_CO_OCCURRENCE_MATRIX_SIZE == 2000
 
     def test_co_occurrence_fp16_enabled(self):
-        from brain.hypothesis._types import CO_OCCURRENCE_FP16
+        from brain.hypothesis_engine._types import CO_OCCURRENCE_FP16
         assert CO_OCCURRENCE_FP16 is True
 
     def test_max_causal_findings_constant(self):
-        from brain.hypothesis._types import MAX_CAUSAL_FINDINGS
+        from brain.hypothesis_engine._types import MAX_CAUSAL_FINDINGS
         assert MAX_CAUSAL_FINDINGS == 50000
 
     def test_bounded_extraction_caps_at_max(self):
         """Extraction must stop at MAX_CAUSAL_FINDINGS regardless of input size."""
-        from brain.hypothesis._types import MAX_CAUSAL_ENTITIES, MAX_CAUSAL_FINDINGS
-        from brain.hypothesis.causal import CausalReasoner
+        from brain.hypothesis_engine._types import MAX_CAUSAL_ENTITIES, MAX_CAUSAL_FINDINGS
+        from brain.hypothesis_engine.causal import CausalReasoner
 
         cr = CausalReasoner()
         # 100 findings is below MAX_CAUSAL_FINDINGS — all processed
@@ -312,7 +312,7 @@ class TestCausalIsolation:
     """Two CausalReasoner instances must not share state."""
 
     def test_two_reasoners_have_independent_storage(self):
-        from brain.hypothesis.causal import CausalReasoner
+        from brain.hypothesis_engine.causal import CausalReasoner
 
         cr1 = CausalReasoner()
         cr2 = CausalReasoner()
@@ -341,18 +341,18 @@ class TestCausalIsolation:
 # =============================================================================
 
 class TestExplainWithMLXExtraction:
-    """explain_with_mlx extracted to brain.hypothesis.explainer (Tier-5)."""
+    """explain_with_mlx extracted to brain.hypothesis_engine.explainer (Tier-5)."""
 
     def test_explain_with_mlx_from_canonical_path(self):
-        """`from brain.hypothesis.explainer import explain_with_mlx` must work."""
+        """`from brain.hypothesis_engine.explainer import explain_with_mlx` must work."""
         import inspect
 
-        from brain.hypothesis.explainer import explain_with_mlx  # noqa: F401
+        from brain.hypothesis_engine.explainer import explain_with_mlx  # noqa: F401
         assert inspect.iscoroutinefunction(explain_with_mlx)
 
     def test_explain_with_mlx_backward_compat(self):
         """`from brain.research_hypothesis_engine import explain_with_mlx` (back-compat)."""
-        from brain.hypothesis.explainer import explain_with_mlx as new
+        from brain.hypothesis_engine.explainer import explain_with_mlx as new
         from brain.research_hypothesis_engine import explain_with_mlx as old
         # Both resolve to the same function object
         assert old is new

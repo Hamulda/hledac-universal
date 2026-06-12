@@ -3,8 +3,8 @@ Hypothesis engine — C4 Tier-3 partial extraction: AdversarialVerifier
 =====================================================================
 
 Sprint F262OBS-Tier3: Verify that :class:`AdversarialVerifier` was successfully
-extracted from the 5 373 LOC monolith :mod:`brain.hypothesis_engine` into
-:mod:`brain.hypothesis.adversarial`, with byte-for-byte class equivalence
+extracted from the 5 373 LOC monolith :mod:`brain.hypothesis_engine_engine` into
+:mod:`brain.hypothesis_engine.adversarial`, with byte-for-byte class equivalence
 and 100% backward compatibility (legacy import path still works).
 
 Run: ``uv run pytest tests/probe_adversarial_extraction.py -v``
@@ -30,29 +30,29 @@ class TestBackwardCompat:
 
     def test_legacy_class_is_same_object(self) -> None:
         """The legacy import and the new import return the SAME class object."""
-        from brain.hypothesis.adversarial import AdversarialVerifier as New
+        from brain.hypothesis_engine.adversarial import AdversarialVerifier as New
         from brain.research_hypothesis_engine import AdversarialVerifier as Old
 
         # Identity check — same class, not a copy
         assert New is Old, "Legacy and new import paths must resolve to the same class"
         # And the class lives in the new module after extraction
-        assert New.__module__ == "brain.hypothesis.adversarial"
+        assert New.__module__ == "brain.hypothesis_engine.adversarial"
 
 
-# ── Forward import path: brain.hypothesis.adversarial ─────────────────────
+# ── Forward import path: brain.hypothesis_engine.adversarial ─────────────────────
 
 
 class TestForwardImport:
     def test_package_exports_adversarial_verifier(self) -> None:
-        """`from brain.hypothesis import AdversarialVerifier` must work."""
-        import brain.hypothesis as pkg
+        """`from brain.hypothesis_engine import AdversarialVerifier` must work."""
+        import brain.hypothesis_engine as pkg
 
         assert hasattr(pkg, "AdversarialVerifier")
         assert "AdversarialVerifier" in pkg.__all__
 
     def test_module_construction(self) -> None:
         """AdversarialVerifier can be constructed with a mock hypothesis_engine."""
-        from brain.hypothesis.adversarial import AdversarialVerifier
+        from brain.hypothesis_engine.adversarial import AdversarialVerifier
 
         # Mock the hypothesis_engine — only need an object reference
         mock_he = MagicMock()
@@ -72,8 +72,8 @@ class TestForwardImport:
 class TestFunctionalBehavior:
     def test_assess_source_credibility_no_bias(self) -> None:
         """assess_source_credibility returns valid SourceCredibility."""
-        from brain.hypothesis._types import SourceCredibility
-        from brain.hypothesis.adversarial import AdversarialVerifier
+        from brain.hypothesis_engine._types import SourceCredibility
+        from brain.hypothesis_engine.adversarial import AdversarialVerifier
 
         verifier = AdversarialVerifier(hypothesis_engine=MagicMock())
         result = verifier.assess_source_credibility("https://example.edu/paper")
@@ -86,7 +86,7 @@ class TestFunctionalBehavior:
 
     def test_detect_logical_fallacies(self) -> None:
         """_detect_logical_fallacies returns fallacy types for matching text."""
-        from brain.hypothesis.adversarial import AdversarialVerifier
+        from brain.hypothesis_engine.adversarial import AdversarialVerifier
 
         verifier = AdversarialVerifier(hypothesis_engine=MagicMock())
         fallacies = verifier._detect_logical_fallacies(

@@ -132,7 +132,7 @@ def __getattr__(name: str) -> Any:
         if name in _TRANSPORT_EXPORTS:
             import importlib
             module_path, attr = _TRANSPORT_EXPORTS[name].rsplit(".", 1)
-            mod = importlib.import_module(module_path)
+            mod = importlib.import_module(module_path)  # nosem: B404 — _TRANSPORT_EXPORTS is static whitelist, no user input
             value = getattr(mod, attr)
             # Cache for subsequent accesses.
             globals()[name] = value
@@ -140,7 +140,7 @@ def __getattr__(name: str) -> Any:
         # All public names are already bound above; this branch should
         # not normally fire. Provided for forward-compat with dynamic
         # attribute injection.
-        return globals().get(name)
+        return globals().get(name)  # nosem: B102 — only reads pre-defined __all__ names, no user input
     raise AttributeError(
         f"module {__name__!r} has no attribute {name!r} "
         f"(known: {sorted(__all__)})"

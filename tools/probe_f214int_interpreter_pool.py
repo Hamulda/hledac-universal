@@ -473,8 +473,22 @@ def benchmark_candidate(
 # Import overhead measurement
 # -----------------------------------------------------------------------
 
+# Whitelist — only benchmark candidates, no user input flows here
+_ALLOWED_IMPORT_MODULES = frozenset({
+    "utils.ranking",
+    "utils.entity_extractor",
+    "utils.language",
+    "utils.validation",
+    "utils.aho_extractor",
+    "tools.content_extractor",
+    "export.sprint_markdown_reporter",
+})
+
+
 def measure_import(module_path: str) -> tuple[float, float]:
     """Measure import time and return (import_time_ms, module_size_kb)."""
+    if module_path not in _ALLOWED_IMPORT_MODULES:
+        return -1.0, 0.0
     gc.collect()
     t0 = time.perf_counter()
     try:

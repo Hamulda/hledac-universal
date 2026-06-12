@@ -236,7 +236,7 @@ mod tests {
     fn test_uncompressed_when_incompressible() {
         // Deterministic pseudo-random — should not compress well.
         let data: Vec<u8> = (0..1000)
-            .map(|i| ((i * 6364136223846793005 + 1) >> 33) as u8)
+            .map(|i| ((i as u64 * 6364136223846793005_u64 + 1) >> 33) as u8)
             .collect();
         let wire = compress_page_impl(&data).unwrap();
         // Just check roundtrip — may be lz4/zstd/uncompressed.

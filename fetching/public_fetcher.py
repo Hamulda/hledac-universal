@@ -2078,7 +2078,6 @@ async def _camoufox_locked(url: str, timeout: float) -> str:
                 headless=True,
                 os="macos",
                 webgl_config=("Apple", "Apple M1, or similar"),
-                fingerprint_seed=int(time.time()),
             ) as browser:
                 page = await browser.new_page()
                 try:

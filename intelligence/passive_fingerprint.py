@@ -1097,7 +1097,7 @@ def to_canonical_findings(
     for fp in fingerprints[:MAX_FINGERPRINT_FINDINGS]:
         # Build stable finding_id
         id_input = f"{fp.finding_id}:{fp.service_name}:{fp.product}:{int(ts)}"
-        fid = f"pfp_{hashlib.sha1(id_input.encode()).hexdigest()[:24]}"
+        fid = f"pfp_{hashlib.sha256(id_input.encode()).hexdigest()[:24]}"  # sha256
 
         payload = {
             "service_name": fp.service_name,
@@ -1447,7 +1447,7 @@ def _extract_tech_stack_findings(
                     if match:
                         sample = match.group(0)[:_MAX_EVIDENCE_SAMPLE]
                         seen.add(dedup_key)
-                        fid = f"pts_{hashlib.sha1(f'{tech_name}:{source_url}:{int(ts)}'.encode()).hexdigest()[:20]}"
+                        fid = f"pts_{hashlib.sha256(f'{tech_name}:{source_url}:{int(ts)}'.encode()).hexdigest()[:20]}"  # sha256
                         payload_out = {
                             "technology": tech_name,
                             "category": category,
@@ -1476,7 +1476,7 @@ def _extract_tech_stack_findings(
                             continue
                         sample = match.group(0)[:_MAX_EVIDENCE_SAMPLE]
                         seen.add(dedup_key)
-                        fid = f"pts_{hashlib.sha1(f'{tech_name}:{source_url}:{int(ts)}'.encode()).hexdigest()[:20]}"
+                        fid = f"pts_{hashlib.sha256(f'{tech_name}:{source_url}:{int(ts)}'.encode()).hexdigest()[:20]}"  # sha256
                         payload_out = {
                             "technology": tech_name,
                             "category": category,
@@ -1624,7 +1624,7 @@ async def _cve_lookup_background(
         for r in results[:5]:  # cap at 5 results per tech
             url_val = r["url"]
             fid_input = f"{cve_id}:{url_val}"
-            fid = f"cve_gh_{hashlib.sha1(fid_input.encode()).hexdigest()[:16]}"
+            fid = f"cve_gh_{hashlib.sha256(fid_input.encode()).hexdigest()[:16]}"  # sha256
             payload = {
                 "technology": tech,
                 "cve_id": cve_id,

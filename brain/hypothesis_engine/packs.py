@@ -3,7 +3,7 @@ Hypothesis Engine — Pack DTOs (C4 Tier-4)
 ==========================================
 
 Sprint F262OBS-Tier4: Pure-DTO classes extracted from
-:mod:`brain.hypothesis_engine` — the 714 LOC pack definitions
+:mod:`brain.hypothesis_engine_engine` — the 714 LOC pack definitions
 that carry the "what next?" advice for the sprint scheduler.
 
 Scope
@@ -37,9 +37,9 @@ GHOST_INVARIANTS:
 - Field names, defaults, and ordering preserved byte-for-byte.
 - All 17 method bodies preserved verbatim — no refactor, no rename.
 - Backward compat shim lives in ``brain/research_hypothesis_engine.py``:
-  ``from brain.hypothesis.packs import SourceHint, HypothesisPack``
+  ``from brain.hypothesis_engine.packs import SourceHint, HypothesisPack``
 - New code should prefer the forward import:
-  ``from brain.hypothesis.packs import SourceHint, HypothesisPack``
+  ``from brain.hypothesis_engine.packs import SourceHint, HypothesisPack``
 """
 from __future__ import annotations
 

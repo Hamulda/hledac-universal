@@ -516,9 +516,13 @@ def main() -> int:
         print("=" * 60)
         for cmd in commands:
             print(f"\n$ {cmd}")
+            # SECURITY: shell=False prevents shell injection. Commands are
+            # constructed from static probe_dir names validated by Sprint ID regex
+            # (alphanumeric + underscore only), so splitting on whitespace is safe.
+            cmd_parts = cmd.split()
             result = subprocess.run(
-                cmd,
-                shell=True,
+                cmd_parts,
+                shell=False,
                 cwd=str(repo_root),
                 capture_output=False,
             )

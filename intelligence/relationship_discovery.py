@@ -757,31 +757,32 @@ class RelationshipDiscoveryEngine:
                 pass
 
         # Legacy Python pickle — one-shot migration, F196B-safe only.
+        # SECURITY: replaced pickle.load with orjson-based load_nx_graph_jsonl
+        # to eliminate arbitrary code execution surface (CVE-class risk).
+        # The canonical JSON path is _graph_serde.load_nx_graph_jsonl; this
+        # legacy path now uses the same safe deserializer.
         if is_safe_path and NETWORKX_AVAILABLE:
             try:
-                import pickle  # lazy, only for legacy migration
-                with open(path, "rb") as f:
-                    obj = pickle.load(f)
+                from intelligence._graph_serde import load_nx_graph_jsonl
+                obj = load_nx_graph_jsonl(str(path), max_nodes=self.MAX_NODES)
                 if obj is not None:
                     self._nx_graph = obj
                     return True
             except Exception as e:  # noqa: BLE001
-                logger.warning("[F196B] legacy pickle load failed: %s", e)
+                logger.warning("[F196B] legacy JSON load failed: %s", e)
         elif not is_safe_path:
             logger.warning(
                 f"[F196B] legacy pickle load rejected for unsafe path: {path}"
             )
 
-        # Generic pickle fallback for any graph type — only from safe paths
+        # Generic pickle fallback — replaced with JSON for safety.
+        # SECURITY: pickle.load eliminated; use orjson-based canonical path.
         if is_safe_path:
             try:
-                import pickle  # lazy, only for legacy migration
-                with open(path, "rb") as f:
-                    loaded = pickle.load(f)
-                    if IGRAPH_AVAILABLE and loaded is not None:
-                        self._igraph_graph = loaded
-                    elif NETWORKX_AVAILABLE:
-                        self._nx_graph = loaded
+                from intelligence._graph_serde import load_nx_graph_jsonl
+                loaded = load_nx_graph_jsonl(str(path), max_nodes=self.MAX_NODES)
+                if loaded is not None:
+                    self._nx_graph = loaded
                     return True
             except Exception:
                 pass
@@ -2317,21 +2318,16 @@ class RelationshipDiscoveryEngine:
         if is_our_format(str(path)):
             nx_graph = load_nx_graph_jsonl(str(path), max_nodes=self.MAX_NODES)
         else:
-            # Legacy pickle fallback — F196B path check inside helper.
+            # Legacy pickle fallback — replaced with JSON for safety.
+            # SECURITY: pickle.load eliminated; use orjson-based canonical path.
             from pathlib import Path as _P
             graphs_root = (_P("~/.hledac/graphs").expanduser()).resolve()
             if str(_P(str(path)).resolve()).startswith(str(graphs_root) + "/"):  # F196B
                 try:
-                    import pickle  # lazy, legacy migration only
-                    with open(path, "rb") as f:
-                        nx_graph = pickle.load(f)
-                    # Bound legacy graph
-                    if nx_graph is not None and self.MAX_NODES and nx_graph.number_of_nodes() > self.MAX_NODES:
-                        degree_sorted = sorted(nx_graph.nodes(), key=lambda n: nx_graph.degree(n))
-                        prune_count = nx_graph.number_of_nodes() - self.MAX_NODES
-                        nx_graph.remove_nodes_from(set(degree_sorted[:prune_count]))
+                    from intelligence._graph_serde import load_nx_graph_jsonl
+                    nx_graph = load_nx_graph_jsonl(str(path), max_nodes=self.MAX_NODES)
                 except Exception as e:  # noqa: BLE001
-                    logger.warning("[F196B] legacy pickle load_graph failed: %s", e)
+                    logger.warning("[F196B] legacy JSON load_graph failed: %s", e)
                     nx_graph = None
             else:
                 logger.warning(

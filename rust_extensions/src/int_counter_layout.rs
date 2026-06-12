@@ -464,25 +464,32 @@ fn chain_hash_snapshot<'py>(
         }
     }
 
-    // BLAKE3-256
-    let mut h = Hasher::new();
-    h.update(prev_chain_hex.as_bytes());
-    h.update(b":");
-    h.update(content.as_bytes());
-    h.update(b":");
-    h.update(event_id.as_bytes());
-    let blake3_out = h.finalize();
-    let blake3_hex = blake3_out.to_hex().to_string();
+    // Build content bytes once — reused by both hashers (dual-emit).
+    // digest::Digest needs content as a single contiguous slice.
+    let content_bytes = content.as_bytes();
+    let prefix_parts: [&[u8]; 4] = [
+        prev_chain_hex.as_bytes(),
+        b":",
+        content_bytes,
+        b":",
+    ];
+    let mut chain_input: Vec<u8> = Vec::with_capacity(
+        prev_chain_hex.len() + 1 + content.len() + 1 + event_id.len(),
+    );
+    for part in &prefix_parts {
+        chain_input.extend_from_slice(part);
+    }
+    chain_input.extend_from_slice(event_id.as_bytes());
 
-    // SHA-256 (dual-emit, same format as evidence_rs.chain_hash)
+    // BLAKE3-256 (NEON-accelerated on M1 aarch64)
+    let mut h = Hasher::new();
+    h.update(&chain_input);
+    let blake3_hex = h.finalize().to_hex().to_string();
+
+    // SHA-256 (dual-emit — same bytes, different hasher)
     let mut sha = Sha256::new();
-    sha.update(prev_chain_hex.as_bytes());
-    sha.update(b":");
-    sha.update(content.as_bytes());
-    sha.update(b":");
-    sha.update(event_id.as_bytes());
-    let sha_out = sha.finalize();
-    let sha256_hex = hex_encode_local(&sha_out);
+    sha.update(&chain_input);
+    let sha256_hex = hex_encode_local(&sha.finalize());
 
     // Suppress py unused warning — py is reserved for future use if we
     // need to coerce a Python object directly (e.g. via PyDict::from(py)).

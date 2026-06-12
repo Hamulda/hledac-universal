@@ -618,7 +618,7 @@ def extract_signals(findings: list[CanonicalFinding]) -> list[AssetSignal]:
             data = {}
 
         if src == "ct_log":
-            # finding_id is ct_{sha1(san)[:16]}, asset key is the SAN
+            # finding_id is ct_{sha256(san)[:16]}, asset key is the SAN
             san = fid.replace("ct_", "") if fid.startswith("ct_") else fid
             asset_key = _normalize_host(san)
             issuer = data.get("issuer", "")
@@ -983,7 +983,7 @@ def to_canonical_findings(
     for finding in findings[:MAX_FINDINGS]:
         # Build a stable finding_id from asset_key + corr_type + ts
         id_input = f"{finding.asset_key}:{finding.corr_type}:{int(ts)}"
-        fid = f"exp_{hashlib.sha1(id_input.encode()).hexdigest()[:24]}"
+        fid = f"exp_{hashlib.sha256(id_input.encode()).hexdigest()[:24]}"  # sha256
 
         # Build evidence envelope payload
         import json

@@ -2,7 +2,7 @@
 Hypothesis Engine — Adversarial Verifier (C4 Sprint Refactoring)
 ================================================================
 
-Extracted from :mod:`brain.hypothesis_engine` to break the 5 373 LOC monolith
+Extracted from :mod:`brain.hypothesis_engine_engine` to break the 5 373 LOC monolith
 into focused modules. This module hosts the :class:`AdversarialVerifier`
 (Devil's Advocate mode) — the falsification layer that actively seeks evidence
 against hypotheses, detects contradictions, and assesses source credibility.
@@ -11,10 +11,10 @@ GHOST_INVARIANTS:
 - The extraction is **byte-for-byte identical** to the original — no
   behaviour change, no field rename, no default mutation. Existing tests
   must pass unchanged.
-- ``brain.hypothesis_engine`` re-exports :class:`AdversarialVerifier` for
+- ``brain.hypothesis_engine_engine`` re-exports :class:`AdversarialVerifier` for
   backward compat.
-- New code should ``from brain.hypothesis.adversarial import AdversarialVerifier``.
-- Imports from :mod:`brain.hypothesis._types` (the canonical type home) —
+- New code should ``from brain.hypothesis_engine.adversarial import AdversarialVerifier``.
+- Imports from :mod:`brain.hypothesis_engine._types` (the canonical type home) —
   no circular dependency on ``hypothesis_engine`` because all referenced
   types live in the package leaf.
 - The :class:`HypothesisEngine` type hint is imported under
@@ -31,7 +31,7 @@ from collections import OrderedDict
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
-# Hypothesis lives in brain.hypothesis_engine (carries engine-specific
+# Hypothesis lives in brain.hypothesis_engine_engine (carries engine-specific
 # methods like add_test_result, _ds_engine). Imported at runtime here
 # because the type is used in method signatures on this class.
 from brain.research_hypothesis_engine import Hypothesis  # noqa: E402
@@ -211,7 +211,7 @@ class AdversarialVerifier:
                     # Local import — both classes live in this package after Tier-3
                     # extraction, but we keep a lazy import for byte-for-byte
                     # equivalence with the pre-extraction call path.
-                    from brain.hypothesis.explainer import SimpleNodeAblationExplainer
+                    from brain.hypothesis_engine.explainer import SimpleNodeAblationExplainer
                     explainer = SimpleNodeAblationExplainer(graph_rag)
                     importances = await explainer.explain_path(path, claim, max_nodes=5)
                     from brain.research_hypothesis_engine import explain_with_mlx

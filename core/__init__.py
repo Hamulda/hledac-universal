@@ -36,6 +36,9 @@ def __getattr__(name: str):
     Jinak AttributeError (default chování Pythonu).
     """
     if name in _LAZY_ATTRS:
+        # noaudit[python.lang.security.audit.non-literal-import.non-literal-import]
+        # _LAZY_ATTRS is a static module-level constant dict; values are
+        # hardcoded module paths — no user input reaches this call site.
         module = importlib.import_module(_LAZY_ATTRS[name])
         attr = getattr(module, name)
         # Cache pro další přístup (PEP 562 best practice)

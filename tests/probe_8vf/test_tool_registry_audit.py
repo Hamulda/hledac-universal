@@ -39,7 +39,9 @@ class TestExecuteWithLimitsAuditIntegration:
     @pytest.fixture
     def registry(self):
         from hledac.universal.tool_registry import create_default_registry
-        return create_default_registry()
+        from tools.executor import ToolExecutor
+        registry = create_default_registry()
+        return ToolExecutor(registry)
 
     @pytest.mark.asyncio
     async def test_execute_with_limits_success_no_logger(self, registry):
@@ -278,15 +280,18 @@ class TestCanonicalSurfaceUnchanged:
     @pytest.fixture
     def registry(self):
         from hledac.universal.tool_registry import create_default_registry
-        return create_default_registry()
+        from tools.executor import ToolExecutor
+        registry = create_default_registry()
+        return ToolExecutor(registry)
+
 
     @pytest.mark.asyncio
     async def test_single_entry_point(self, registry):
         """Only execute_with_limits() is canonical, no other execute method."""
-        from hledac.universal.tool_registry import ToolRegistry
-        # execute_with_limits is on the class, not module
-        assert hasattr(ToolRegistry, "execute_with_limits")
-        # No parallel execute() method added to ToolRegistry
+        from tools.executor import ToolExecutor
+        # execute_with_limits is on ToolExecutor, not ToolRegistry
+        assert hasattr(ToolExecutor, "execute_with_limits")
+        # No parallel execute() method added to ToolExecutor
         assert not hasattr(registry, "execute")
 
     @pytest.mark.asyncio

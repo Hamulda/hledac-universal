@@ -2,8 +2,8 @@
 Hypothesis engine — C4 sprint refactoring probe tests.
 
 Sprint F350M-S: Verify that the 5 373 LOC monolith
-:mod:`brain.hypothesis_engine` was successfully split into the
-:mod:`brain.hypothesis` package, with byte-for-byte equivalent type
+:mod:`brain.hypothesis_engine_engine` was successfully split into the
+:mod:`brain.hypothesis_engine` package, with byte-for-byte equivalent type
 definitions and 100% backward compatibility.
 
 Run: ``uv run pytest tests/probe_hypothesis_types_extraction.py -v``
@@ -24,7 +24,7 @@ class TestBackwardCompat:
         # The original import path — what every existing call site uses.
         # Note: ``Hypothesis`` is intentionally only at this path (carries
         # extra methods). All other DTOs are re-exported from
-        # :mod:`brain.hypothesis`.
+        # :mod:`brain.hypothesis_engine`.
         from brain.research_hypothesis_engine import (  # noqa: F401
             CO_OCCURRENCE_FP16,
             MAX_CAUSAL_ENTITIES,
@@ -54,14 +54,14 @@ class TestBackwardCompat:
         )
 
     def test_new_package_path_works(self) -> None:
-        from brain.hypothesis import (  # noqa: F401
+        from brain.hypothesis_engine import (  # noqa: F401
             MAX_CAUSAL_ENTITIES,
             AdversarialReport,
             Evidence,
         )
 
     def test_internal_types_module_works(self) -> None:
-        from brain.hypothesis._types import (  # noqa: F401
+        from brain.hypothesis_engine._types import (  # noqa: F401
             AdversarialReport,
             CausalEntity,
             CausalHypothesis,
@@ -74,7 +74,7 @@ class TestBackwardCompat:
     def test_three_paths_yield_equivalent_class(self) -> None:
         """``Hypothesis`` is intentionally NOT extracted because the version
         in ``hypothesis_engine`` carries extra runtime methods. New code
-        imports the simple DTOs from :mod:`brain.hypothesis._types`; the
+        imports the simple DTOs from :mod:`brain.hypothesis_engine._types`; the
         full ``Hypothesis`` class still lives at the legacy path. Verify
         that the legacy class is still importable and constructs."""
         from brain.research_hypothesis_engine import Hypothesis as OldHypothesis
@@ -101,7 +101,7 @@ class TestBackwardCompat:
 
 class TestHypothesisBehaviour:
     def test_bayesian_update_still_works(self) -> None:
-        from brain.hypothesis import Evidence
+        from brain.hypothesis_engine import Evidence
         from brain.research_hypothesis_engine import Hypothesis
 
         h = Hypothesis(
@@ -124,7 +124,7 @@ class TestHypothesisBehaviour:
         assert h.posterior_probability > 0.5
 
     def test_test_result_iso_timestamp_parsing(self) -> None:
-        from brain.hypothesis import TestResult
+        from brain.hypothesis_engine import TestResult
 
         # String timestamp must be parsed via fromisoformat
         tr = TestResult(
@@ -136,7 +136,7 @@ class TestHypothesisBehaviour:
         assert isinstance(tr.timestamp, datetime)
 
     def test_dark_query_frozen_slots(self) -> None:
-        from brain.hypothesis import DarkQuery, DarkQueryType
+        from brain.hypothesis_engine import DarkQuery, DarkQueryType
 
         dq = DarkQuery(query_type=DarkQueryType.ONION, query="q", priority=0.5)
         try:
@@ -146,7 +146,7 @@ class TestHypothesisBehaviour:
         raise AssertionError("DarkQuery should be frozen — assignment must fail")
 
     def test_source_credibility_update_accuracy(self) -> None:
-        from brain.hypothesis import SourceCredibility
+        from brain.hypothesis_engine import SourceCredibility
 
         sc = SourceCredibility(source_id="s1", credibility_score=0.5)
         sc.update_accuracy(True)
@@ -159,7 +159,7 @@ class TestHypothesisBehaviour:
         assert 0.0 < sc.credibility_score < 1.0
 
     def test_causal_hypothesis_frozen(self) -> None:
-        from brain.hypothesis import CausalHypothesis
+        from brain.hypothesis_engine import CausalHypothesis
 
         ch = CausalHypothesis(
             hypothesis_id="c1",
@@ -184,7 +184,7 @@ class TestHypothesisBehaviour:
 
 class TestBoundsPreservation:
     def test_causal_bounds_unchanged(self) -> None:
-        from brain.hypothesis import (
+        from brain.hypothesis_engine import (
             MAX_CAUSAL_ENTITIES,
             MAX_CAUSAL_FINDINGS,
             MAX_CAUSAL_HYPOTHESES,
@@ -197,7 +197,7 @@ class TestBoundsPreservation:
         assert MAX_CO_OCCURRENCE_MATRIX_SIZE == 2000
 
     def test_co_occurrence_fp16_still_true(self) -> None:
-        from brain.hypothesis import CO_OCCURRENCE_FP16
+        from brain.hypothesis_engine import CO_OCCURRENCE_FP16
 
         assert CO_OCCURRENCE_FP16 is True
 

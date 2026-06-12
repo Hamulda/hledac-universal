@@ -371,11 +371,8 @@ def lookup_ioc_values_by_ids(
         con = duckdb.connect(str(get_ioc_db_path()), read_only=True)
         try:
             placeholders = ",".join(["?"] * len(node_ids))
-            sql = f"""
-                SELECT id, value, ioc_type, confidence, source
-                FROM ioc_nodes
-                WHERE id IN ({placeholders})
-            """
+            sql = f"SELECT id, value, ioc_type, confidence, source FROM ioc_nodes WHERE id IN ({placeholders})"
+            # noqa: B608 — placeholders are integer-count-derived, node_ids are internal int list, read-only query
             cur = con.execute(sql, node_ids)
             cols = [c[0] for c in cur.description]
             return {

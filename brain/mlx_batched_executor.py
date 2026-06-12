@@ -126,6 +126,18 @@ class MLXBatchedExecutor:
         self._ema_alpha: float = 0.3
         self._memory_check_failures: int = 0
 
+        # PID-style adaptive batch size (Task #2)
+        # Tracks EMA of RSS memory percent; adjusts effective batch size
+        # based on trend, not instant snapshot. Starts conservative at 4
+        # (below static MAX_BATCH_SIZE_M1=6 for headroom).
+        self._memory_ema: float = 0.0
+        self._memory_ema_alpha: float = 0.15  # slower EMA for trend
+        self._pid_integral: float = 0.0  # integral term (accumulates overshoot)
+        self._pid_Kp: float = 0.5  # proportional gain
+        self._pid_Ki: float = 0.05  # integral gain
+        self._pid_Kd: float = 0.1  # derivative gain
+        self._effective_batch_size: int = 4  # starts at 4, adapts [1, MAX_BATCH_SIZE_M1]
+
     # ─── Lazy init ─────────────────────────────────────────────────────
 
     async def _ensure_initialized(self) -> None:
@@ -142,7 +154,7 @@ class MLXBatchedExecutor:
 
             scheduler: BatchScheduler = BatchScheduler(
                 execute_callback=self._execute_callback,
-                max_size=MAX_BATCH_SIZE_M1,
+                max_size=self._effective_batch_size,
                 max_queue=MAX_QUEUE_DEPTH,
                 default_flush_interval=DEFAULT_FLUSH_INTERVAL_S,
                 medium_pressure_depth=64,
@@ -169,6 +181,7 @@ class MLXBatchedExecutor:
         prompt: str,
         system_msg: str | None = None,
         priority: float = 1.0,
+        speculative: bool = False,
     ) -> bool:
         """
         Decide whether this request is eligible for batching.
@@ -179,7 +192,13 @@ class MLXBatchedExecutor:
             - priority == 0 (urgent, bypass — B.M9)
             - prompt is empty or whitespace-only
             - max_tokens > 1024 (long outputs serialized anyway, no batching win)
+            - speculative=True (draft model extra RAM on M1 8GB — direct path)
         """
+        # Speculative decoding: draft model consumes ~500MB extra on M1 8GB.
+        # Route to direct path to keep headroom for batched main-model inference.
+        if speculative:
+            self._stats["speculative_bypass"] = self._stats.get("speculative_bypass", 0) + 1
+            return False
         if not self._initialized or self._scheduler is None:
             return False
         if priority == URGENT_PRIORITY:
@@ -197,11 +216,51 @@ class MLXBatchedExecutor:
             # (length-bin boundary would shatter the batch anyway)
             return False
         # Memory guard (B.M5) — psutil only when available, fail-open
+        # PID-style adaptive: use EMA of memory pressure, not instant snapshot.
+        # Update EMA each call, run PID feedback to adjust effective batch size.
         try:
             import psutil
 
             pct = psutil.virtual_memory().percent
-            if pct > MEMORY_GUARD_PCT:
+            # Update memory EMA (trend, not instant)
+            if self._memory_ema == 0.0:
+                self._memory_ema = pct  # bootstrap
+            else:
+                self._memory_ema = (
+                    self._memory_ema_alpha * pct
+                    + (1 - self._memory_ema_alpha) * self._memory_ema
+                )
+
+            # PID feedback: setpoint = MEMORY_GUARD_PCT - 5% (headroom margin)
+            setpoint = MEMORY_GUARD_PCT - 5.0
+            error = self._memory_ema - setpoint
+
+            # Integral: accumulate overshoot (clamp to prevent windup)
+            self._pid_integral = max(-20.0, min(20.0, self._pid_integral + error))
+
+            # Derivative: trend = current error - previous error (approx from EMA diff)
+            derivative = error - (self._memory_ema - pct)  # approx derivative
+
+            # PID output → delta to batch size
+            pid_output = (
+                self._pid_Kp * error
+                + self._pid_Ki * self._pid_integral
+                + self._pid_Kd * derivative
+            )
+
+            # Adjust effective batch size: shrink when above setpoint, grow below
+            new_size = int(round(self._effective_batch_size - pid_output))
+            new_size = max(1, min(MAX_BATCH_SIZE_M1, new_size))
+            if new_size != self._effective_batch_size:
+                old = self._effective_batch_size
+                self._effective_batch_size = new_size
+                logger.debug(
+                    "[MLXBatch] PID adjust batch %d→%d (mem_ema=%.1f%%, error=%.1f)",
+                    old, new_size, self._memory_ema, error,
+                )
+
+            # Memory guard: disable batching when EMA is above the tighter threshold
+            if self._memory_ema > MEMORY_GUARD_PCT:
                 self._stats["memory_guard_disabled"] += 1
                 return False
         except Exception:
@@ -423,6 +482,10 @@ class MLXBatchedExecutor:
         stats = dict(self._stats)
         stats["initialized"] = self._initialized
         stats["memory_check_failures"] = self._memory_check_failures
+        # PID adaptive batch size state (Task #2)
+        stats["memory_ema"] = round(self._memory_ema, 2)
+        stats["pid_integral"] = round(self._pid_integral, 2)
+        stats["effective_batch_size"] = self._effective_batch_size
         if self._scheduler is not None:
             try:
                 sched_t = self._scheduler.get_telemetry()

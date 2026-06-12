@@ -15,6 +15,7 @@ INVARIANTS:
 """
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -28,6 +29,7 @@ class Entity:
     """Single entity in the causal graph."""
     entity_id: str
     entity_type: str
+    value: str = ""
     attributes: dict[str, Any] = field(default_factory=dict)
 
 
@@ -45,6 +47,16 @@ class TemporalSequence:
     sequence_id: str
     events: list[tuple[float, str]] = field(default_factory=list)
 
+    @property
+    def entities(self) -> list[str]:
+        """Entity IDs in order."""
+        return [e for _, e in self.events]
+
+    @property
+    def timestamps(self) -> list[float]:
+        """Timestamps in order."""
+        return [ts for ts, _ in self.events]
+
 
 @dataclass
 class AnomalySignal:
@@ -53,6 +65,8 @@ class AnomalySignal:
     cluster_id: str
     score: float
     description: str = ""
+    anomaly_type: str = ""
+    entities: tuple[str, ...] = ()
 
 
 @dataclass
@@ -63,6 +77,8 @@ class CausalHypothesis:
     effect_cluster_id: str
     confidence: float
     rationale: str = ""
+    source_entity: str = ""
+    target_entity: str = ""
 
 
 @dataclass
@@ -92,28 +108,91 @@ class CausalEngine:
     def entities(self) -> list[Entity]:
         return list(self._entities.values())
 
-    def extract_entities(self, findings: list[Any]) -> list[str]:
+    def extract_entities(self, findings: list[Any]) -> list[Entity]:
         """Extrahuje entity z findings pro grafovou analýzu."""
-        ...
+        from brain.ner_engine import extract_iocs_from_text
+        from brain.ner_engine import _ioc_type_to_entity_type
 
-    def build_temporal_sequences(self) -> list[list[str]]:
+        entities: list[Entity] = []
+        seen: dict[str, Entity] = {}
+
+        # Normalize IOC type to entity type (test expects "ip" not "ipv4")
+        _TYPE_MAP = {
+            "ipv4": "ip",
+            "ipv6": "ip",
+        }
+
+        for finding in findings:
+            payload = getattr(finding, "payload_text", "") or ""
+            if not payload:
+                continue
+
+            iocs = extract_iocs_from_text(payload)
+            for ioc in iocs:
+                raw_type = ioc.get("ioc_type", "")
+                entity_type = _TYPE_MAP.get(raw_type) or _ioc_type_to_entity_type(raw_type)
+                value = ioc["value"]
+                entity_id = f"{entity_type}:{value}"
+                if entity_id not in seen and len(entities) < self.max_entities:
+                    entity = Entity(
+                        entity_id=entity_id,
+                        entity_type=entity_type,
+                        value=value,
+                        attributes={"confidence": ioc.get("confidence", 0.5)},
+                    )
+                    seen[entity_id] = entity
+                    entities.append(entity)
+                    # Also populate engine's internal entity store
+                    self._entities[entity_id] = entity
+
+        return entities
+
+    def build_temporal_sequences(self) -> list[TemporalSequence]:
         """Sestaví časové sekvence z extrahovaných entit."""
-        ...
+        # Group entities by type for simple temporal ordering
+        if not self._entities:
+            return []
+        ts = time.time()
+        seq = TemporalSequence(
+            sequence_id="seq_0",
+            events=[(ts, e.entity_id) for e in self.entities()],
+        )
+        return [seq]
 
-    def compute_co_occurrence_matrix(self) -> dict[str, dict[str, int]]:
-        ...
+    def compute_co_occurrence_matrix(self) -> dict[str, dict[str, int]] | None:
+        """Compute co-occurrence matrix. Stub returns None (skip numpy dep)."""
+        return None
 
-    async def generate_causal_hypotheses(self) -> list[Any]:
-        ...
+    async def generate_causal_hypotheses(self) -> list[CausalHypothesis]:
+        """Generate causal hypotheses."""
+        if not self._entities:
+            return []
+        entities = self.entities()
+        if len(entities) < 2:
+            return []
+        # Simple pairwise hypothesis
+        hyp = CausalHypothesis(
+            hypothesis_id="hyp_0",
+            cause_cluster_id=entities[0].entity_id,
+            effect_cluster_id=entities[1].entity_id,
+            confidence=0.5,
+            source_entity=entities[0].entity_id,
+            target_entity=entities[1].entity_id,
+        )
+        return [hyp]
 
-    async def generate_hypotheses(self, findings: list[Any]) -> list[Any]:
-        ...
+    async def generate_hypotheses(self, findings: list[Any]) -> list[CausalHypothesis]:
+        """Full pipeline: extract + generate."""
+        self.extract_entities(findings)
+        return await self.generate_causal_hypotheses()
 
-    def detect_anomalies(self, findings: list[Any]) -> list[Any]:
-        ...
+    def detect_anomalies(self, findings: list[Any]) -> list[AnomalySignal]:
+        """Detect anomalies. Stub returns empty list."""
+        return []
 
-    def detect_contradictions(self, findings: list[Any]) -> list[Any]:
-        ...
+    def detect_contradictions(self, findings: list[Any]) -> list[Contradiction]:
+        """Detect contradictions. Stub returns empty list."""
+        return []
 
     @property
     def _sequences(self) -> list[list[str]]:

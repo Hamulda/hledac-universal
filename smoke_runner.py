@@ -288,7 +288,7 @@ def run_sprint_import_test() -> bool:
             if importlib.util.find_spec(mod) is None:
                 errors.append(f"{mod}: module not found")
                 continue
-            importlib.import_module(mod)
+            importlib.import_module(mod)  # noqa: S322  # hardcoded canonical module list, not user input
             log.debug(f"✓ {mod}")
         except Exception as e:
             errors.append(f"{mod}: {e}")

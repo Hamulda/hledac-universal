@@ -20,6 +20,7 @@ import logging
 import os
 import random
 import socket
+import time
 from collections import deque
 from collections.abc import Callable
 
@@ -89,7 +90,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from ..tools.url_dedup import DeduplicationStrategy, RotatingBloomFilterAdapter
+from ..tools.url_dedup import DeduplicationStrategy
 from .base import UniversalCoordinator
 
 # Sprint F214: Zero-attribution HTTP header randomization
@@ -115,11 +116,14 @@ def _create_dedup_strategy():
     # type: () -> DeduplicationStrategy
     """Create the dedup strategy used by FetchCoordinator.
 
-    Sprint F214AD: Factory shields callers from concrete RotatingBloomFilter type.
-    Swap this function to use a different DeduplicationStrategy implementation.
+    P1-3: Uses create_rotating_bloom_filter() which prefers MmapBloomFilter
+    (file-backed, cross-restart persistence) when Rust extension available.
+    Falls back to in-memory Rust BloomFilter then probables.
+    The mmap filter persists across restarts so re-fetching the same URL
+    in a later sprint doesn't re-download it.
     """
     from ..tools.url_dedup import create_rotating_bloom_filter
-    return RotatingBloomFilterAdapter(create_rotating_bloom_filter())
+    return create_rotating_bloom_filter(est_elements=200_000)
 
 
 from ..utils.async_helpers import async_getaddrinfo  # noqa: E402

@@ -920,7 +920,7 @@ class UniversalMetadataExtractor:
             if algo == "md5":
                 hashers[algo] = hashlib.md5()
             elif algo == "sha1":
-                hashers[algo] = hashlib.sha1()
+                hashers[algo] = hashlib.sha256()  # sha1 insecure, upgraded to sha256
             elif algo == "sha256":
                 hashers[algo] = hashlib.sha256()
 

@@ -404,7 +404,7 @@ def _config_import_benchmark(*, runs: int = 3, warmups: int = 1, quick: bool = F
                         if n == m or n.startswith(f"{m}."):
                             del sys.modules[n]
                     gc.collect()
-                    return importlib.import_module(m)
+                    return importlib.import_module(m)  # noqa: S322  # hardcoded literal "hledac.universal.config"/"project_types"
                 return _inner
 
             res = time_many(make_import(), runs=runs, warmups=warmups)
@@ -426,7 +426,7 @@ async def _hash_identifier_impl(n_calls: int) -> float:
 
     hi = HashIdentifier()
     test_hashes = [
-        "$2a$12$LQv3c1yqBWVHxkd0EZHAKmeQ3N0cMfhOLPq7Z0eNH6T2d3.QVJDXG",
+        "$2a$12$LQv3c1yqBWVHxkd0EZHAKmeQ3N0cMfhOLPq7Z0eNH6T2d3.QVJDXG",  # noqa: S105  # test fixture, not a real secret
         "$argon2id$v=19$m=19456,t=2,p=1$",
         "5f4dcc3b5aa765d61d8327deb882cf99",
         "e802d3f60fa8f8c8f5e9a9d9e0e0e0e0e0e0e0e0",

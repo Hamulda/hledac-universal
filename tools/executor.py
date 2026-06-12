@@ -37,6 +37,19 @@ class ToolExecutor:
     def __init__(self, registry: ToolRegistry) -> None:
         self._registry = registry
 
+    @property
+    def registry(self) -> ToolRegistry:
+        """Expose underlying registry for direct tool registration."""
+        return self._registry
+
+    def register(self, tool: Tool) -> None:
+        """Delegate to underlying registry."""
+        self._registry.register(tool)
+
+    def get_tool(self, name: str) -> Tool:
+        """Delegate to underlying registry."""
+        return self._registry.get_tool(name)
+
     async def execute_with_limits(
         self,
         tool_name: str,
@@ -131,7 +144,7 @@ class ToolExecutor:
             finally:
                 if exec_logger is not None:
                     try:
-                        from .tool_exec_log import normalize_correlation
+                        from hledac.universal.tool_exec_log import normalize_correlation
                         normalized_corr = normalize_correlation(correlation)
                         exec_logger.log(
                             tool_name=tool_name,
@@ -504,7 +517,7 @@ async def _python_execute_handler(
         sys.stdout = stdout_capture
         sys.stderr = stderr_capture
         compiled = compile(code, "<restricted>", "exec")
-        exec(compiled, {"__builtins__": safe_builtins})
+        exec(compiled, {"__builtins__": safe_builtins})  # noqa: S102  # sandboxed tool handler, safe_builtins whitelist, 30s timeout
         if "result" in locals() or "result" in globals():
             result = locals().get("result") or globals().get("result")
         success = True

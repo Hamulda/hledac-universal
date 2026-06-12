@@ -97,9 +97,16 @@ class SemanticStore:
         self._table: lancedb.Table | None = None  # lancedb.Table
         self._model: Any = None  # FastEmbed TextEmbedding
         # Sprint F228B: CoreML/ANE embedder — preferred when ANE is available
-        self._coreml_embedder: CoreMLEmbedder | None = (
-            get_coreml_embedder() if _COREML_AVAILABLE else None
-        )
+        # Ensure microservice is running before creating embedder (lazy start)
+        if _COREML_AVAILABLE:
+            try:
+                from hledac.universal.utils.coreml import CoreMLServiceManager
+                CoreMLServiceManager.ensure_running()
+            except Exception:
+                pass
+            self._coreml_embedder = get_coreml_embedder()
+        else:
+            self._coreml_embedder = None
         self._pending_texts: deque = deque()
         self._pending_meta: deque = deque()
         self._embed_dim: int = _EMBED_DIM

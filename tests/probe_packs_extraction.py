@@ -4,7 +4,7 @@ Hypothesis engine — C4 Tier-4 extraction: SourceHint + HypothesisPack
 
 Sprint F262OBS-Tier4: Verify that :class:`SourceHint` and
 :class:`HypothesisPack` were successfully extracted from
-:mod:`brain.hypothesis_engine` into :mod:`brain.hypothesis.packs`,
+:mod:`brain.hypothesis_engine_engine` into :mod:`brain.hypothesis_engine.packs`,
 with byte-for-byte class equivalence and 100% backward compatibility
 (legacy import path still works).
 
@@ -37,28 +37,28 @@ class TestBackwardCompat:
 
     def test_legacy_source_hint_is_same_object(self) -> None:
         """Legacy and new import paths return the SAME class object."""
-        from brain.hypothesis.packs import SourceHint as New
+        from brain.hypothesis_engine.packs import SourceHint as New
         from brain.research_hypothesis_engine import SourceHint as Old
 
         assert New is Old, "Legacy and new SourceHint must resolve to same class"
-        assert New.__module__ == "brain.hypothesis.packs"
+        assert New.__module__ == "brain.hypothesis_engine.packs"
 
     def test_legacy_hypothesis_pack_is_same_object(self) -> None:
         """Legacy and new import paths return the SAME class object."""
-        from brain.hypothesis.packs import HypothesisPack as New
+        from brain.hypothesis_engine.packs import HypothesisPack as New
         from brain.research_hypothesis_engine import HypothesisPack as Old
 
         assert New is Old, "Legacy and new HypothesisPack must resolve to same class"
-        assert New.__module__ == "brain.hypothesis.packs"
+        assert New.__module__ == "brain.hypothesis_engine.packs"
 
 
-# ── Forward import path: brain.hypothesis.packs ──────────────────────────
+# ── Forward import path: brain.hypothesis_engine.packs ──────────────────────────
 
 
 class TestForwardImport:
     def test_package_exports_packs(self) -> None:
-        """`from brain.hypothesis import SourceHint, HypothesisPack` must work."""
-        import brain.hypothesis as pkg
+        """`from brain.hypothesis_engine import SourceHint, HypothesisPack` must work."""
+        import brain.hypothesis_engine as pkg
 
         assert hasattr(pkg, "SourceHint")
         assert hasattr(pkg, "HypothesisPack")
@@ -72,7 +72,7 @@ class TestForwardImport:
 class TestFunctionalBehavior:
     def test_source_hint_construction(self) -> None:
         """SourceHint instantiates with source/quality/hint_type defaults."""
-        from brain.hypothesis.packs import SourceHint
+        from brain.hypothesis_engine.packs import SourceHint
 
         # Defaults: hint_type = "general"
         h = SourceHint(source="example.com", quality=0.85)
@@ -86,7 +86,7 @@ class TestFunctionalBehavior:
 
     def test_empty_hypothesis_pack(self) -> None:
         """Empty HypothesisPack: is_empty=True, signal_quality=weak, summary=empty."""
-        from brain.hypothesis.packs import HypothesisPack
+        from brain.hypothesis_engine.packs import HypothesisPack
 
         pack = HypothesisPack()
         assert pack.is_empty() is True
@@ -98,7 +98,7 @@ class TestFunctionalBehavior:
 
     def test_rich_hypothesis_pack_signal_quality(self) -> None:
         """3+ hypotheses, 2+ queries, 1+ IOC → signal_quality = strong."""
-        from brain.hypothesis.packs import HypothesisPack
+        from brain.hypothesis_engine.packs import HypothesisPack
 
         pack = HypothesisPack(
             hypotheses=[{"hypothesis": f"h{i}"} for i in range(3)],
@@ -113,7 +113,7 @@ class TestFunctionalBehavior:
 
     def test_best_first_path_prefers_ioc(self) -> None:
         """best_first_path returns IOC pivot over queries when both present."""
-        from brain.hypothesis.packs import HypothesisPack
+        from brain.hypothesis_engine.packs import HypothesisPack
 
         pack = HypothesisPack(
             suggested_queries=[{"query": "broad_query", "priority": 0.9}],
@@ -127,7 +127,7 @@ class TestFunctionalBehavior:
 
     def test_actionable_shortlist_respects_max(self) -> None:
         """actionable_shortlist(max_items=2) returns at most 2 items."""
-        from brain.hypothesis.packs import HypothesisPack
+        from brain.hypothesis_engine.packs import HypothesisPack
 
         pack = HypothesisPack(
             ioc_follow_ups=[
@@ -143,7 +143,7 @@ class TestFunctionalBehavior:
 
     def test_source_hint_used_in_action_confidence(self) -> None:
         """action_confidence uses SourceHint quality for source_check actions."""
-        from brain.hypothesis.packs import HypothesisPack, SourceHint
+        from brain.hypothesis_engine.packs import HypothesisPack, SourceHint
 
         pack = HypothesisPack(
             source_hints=[SourceHint(source="nytimes.com", quality=0.9)],

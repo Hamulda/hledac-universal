@@ -1,84 +1,91 @@
 """
 Sprint F228B: CoreML/ANE embedding backend for Apple Neural Engine.
 
-Priority routing: CoreML/ANE → CPU fallback (sentence-transformers).
+Priority routing: CoreML microservice (py3.12 FastAPI :8765) → ONNXRuntime CPU fallback.
 Identical API to FastEmbed BAAI/bge-small-en-v1.5 caller.
 
 M1 8GB constraint: model cache ≤ 256MB, batch_size ≤ 32.
+
+py3.14 compatibility: coremltools is NOT imported directly.
+All CoreML/ANE inference routes through CoreMLClient HTTP → microservice.
+Model conversion (torch→CoreML) stays in py3.12 subprocess via CoreMLServiceManager.
 """
 from __future__ import annotations
 
 import asyncio
 import logging
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 
+from hledac.universal.utils.coreml import CoreMLClient, CoreMLServiceManager
+
 logger = logging.getLogger(__name__)
 
-# ── CoreML/coremltools availability ───────────────────────────────────────────
+# ── CoreML microservice availability ──────────────────────────────────────────
+# Microservice availability is checked lazily at load() time.
+# coremltools is never imported in py3.14 — all inference goes through HTTP.
 _COREMLTOOLS_AVAILABLE = False
-try:
-    import coremltools as cml
-
-    _COREMLTOOLS_AVAILABLE = True
-except ImportError:
-    cml = None
 
 # ── ONNXRuntime availability (CPU fallback) ──────────────────────────────────
 _ORT_AVAILABLE = False
+_ort: Any = None
 try:
-    import onnxruntime as ort
+    import onnxruntime as _ort
 
     _ORT_AVAILABLE = True
 except ImportError:
-    ort = None
+    pass
+ort = _ort
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 _MODEL_NAME = "BAAI/bge-small-en-v1.5"
 _EMBED_DIM = 384  # bge-small-en-v1.5 output dim
 _BATCH_SIZE = 32  # M1 8GB safety cap
 _MAX_TEXT_LEN = 512  # per-text truncation before embedding
+_COREML_MODEL_NAME = "bge-small-ane"
 
 # Cache path: ~/.hledac/models/bge-small-ane.mlpackage
-# F234: Use MODELS_DIR (~/.hledac/models) so .mlmodel files are resolved in one place
 _MODELS_DIR = Path.home() / ".hledac" / "models"
 _MODELS_DIR.mkdir(parents=True, exist_ok=True)
 _MLPACKAGE_PATH = _MODELS_DIR / "bge-small-ane.mlpackage"
 _ONNX_FALLBACK_PATH = _MODELS_DIR / "bge-small-ort.onnx"
 
+# ThreadPoolExecutor for sync inference paths (GHOST_INVARIANTS: no asyncio.to_thread)
+_INFERENCE_EXECUTOR = ThreadPoolExecutor(max_workers=1, thread_name_prefix="coreml_infer")
+
 # ── Singleton ─────────────────────────────────────────────────────────────────
 _coreml_embedder_instance: CoreMLEmbedder | None = None
+_coreml_embedder_lock = threading.Lock()
 
 
 def get_coreml_embedder() -> CoreMLEmbedder:
     """Get or create the CoreMLEmbedder singleton."""
     global _coreml_embedder_instance
     if _coreml_embedder_instance is None:
-        _coreml_embedder_instance = CoreMLEmbedder()
+        with _coreml_embedder_lock:
+            if _coreml_embedder_instance is None:
+                _coreml_embedder_instance = CoreMLEmbedder()
     return _coreml_embedder_instance
 
 
 def ANE_AVAILABLE() -> bool:  # noqa: N802
     """Check if ANE compute unit is available on this machine."""
-    if not _COREMLTOOLS_AVAILABLE:
-        return False
+    # Proxy by checking architecture — M-series chips have ANE.
     try:
-        # Apple Neural Engine is accessible via CoreML on M-series chips
-        # No direct API to query ANE availability; proxy by checking architecture
         import platform
 
-        if platform.machine() not in ("arm64", "arm64e"):
-            return False
-        # CoreML models can target the "ane" compute unit on M1/M2/M3
-        return True
+        return platform.machine() in ("arm64", "arm64e")
     except Exception:
         return False
 
 
 # ── Tokenizer (lightweight, no external deps) ─────────────────────────────────
 class _BGETokenizer:
-    """Minimal BPE tokenizer matching BAAI/bge-small-en-v1.5 vocabulary."""
+    """Minimal tokenizer matching BAAI/bge-small-en-v1.5 vocabulary."""
 
     VOCAB = [
         "[PAD]", "[UNK]", "[CLS]", "[SEP]", "[MASK]",
@@ -87,7 +94,7 @@ class _BGETokenizer:
         "be", "been", "being", "have", "has", "had", "do", "does", "did",
         "will", "would", "should", "could", "may", "might", "must",
     ]
-    # Minimal vocab for fallback; real tokenizer loaded from model files
+
     def __init__(self) -> None:
         self._vocab = {w: i for i, w in enumerate(self.VOCAB)}
 
@@ -112,13 +119,15 @@ class CoreMLEmbedder:
     CoreML/ANE embedder with identical API to FastEmbed caller.
 
     encode_batch(texts, batch_size=32) -> np.ndarray of shape (len(texts), 384)
-    Falls back to ONNXRuntime CPU if coremltools unavailable or conversion fails.
+    Routing: CoreML microservice (py3.12) → ONNXRuntime CPU fallback → hash fallback.
     """
 
     def __init__(self) -> None:
-        self._model: object | None = None  # CoreML MLModel or ONNX session
+        self._client: CoreMLClient | None = None  # HTTP client to microservice
+        self._model: Any = None  # ONNX InferenceSession (onnx backend only)
         self._backend: str | None = None  # "coreml" | "onnx" | None
-        self._tokenizer = _BGETokenizer()
+        self._tokenizer = _BGETokenizer()  # type: _BGETokenizer | Any
+        self._hf_tokenizer: Any = None  # AutoTokenizer for coreml service tokenization
         self._is_loaded = False
 
     @property
@@ -134,23 +143,33 @@ class CoreMLEmbedder:
     # -------------------------------------------------------------------------
     async def load(self) -> bool:
         """
-        Load the model: CoreML/ANE preferred → ONNX CPU fallback.
-        Caches .mlpackage after first conversion.
+        Load the model: MLX native preferred → CoreML microservice → ONNX CPU fallback.
+        Ensures CoreMLServiceManager is running before first inference.
 
         Returns True if model is ready for inference.
         """
         if self._is_loaded:
             return True
 
-        # Try CoreML/ANE first
-        if _COREMLTOOLS_AVAILABLE and ANE_AVAILABLE():
-            if await self._load_coreml():
-                self._backend = "coreml"
-                self._is_loaded = True
-                logger.warning("[CoreML] ANE embedder loaded (bge-small-en-v1.5)")
-                return True
+        # 1. MLX — best for M1, no subprocess, no conversion
+        from brain.mlx_embedder import MLXEmbedder
 
-        # Fallback to ONNXRuntime CPU
+        mlx_embedder = MLXEmbedder()
+        if mlx_embedder.is_available and await mlx_embedder.load():
+            self._model = mlx_embedder
+            self._backend = "mlx"
+            self._is_loaded = True
+            logger.info("[Embedder] MLX backend active (unified memory)")
+            return True
+
+        # 2. CoreML microservice (py3.12)
+        if await self._load_coreml_service():
+            self._backend = "coreml"
+            self._is_loaded = True
+            logger.warning("[CoreML] Microservice embedder loaded (bge-small-ane)")
+            return True
+
+        # 3. ONNXRuntime CPU fallback
         if _ORT_AVAILABLE:
             if self._load_onnx_fallback():
                 self._backend = "onnx"
@@ -161,116 +180,38 @@ class CoreMLEmbedder:
         logger.warning("[CoreML] No embedder backend available — hash fallback active")
         return False
 
-    async def _load_coreml(self) -> bool:
-        """Convert + load CoreML model targeting ANE compute unit."""
-        if not _COREMLTOOLS_AVAILABLE:
-            return False
-
+    async def _load_coreml_service(self) -> bool:
+        """
+        Start CoreML microservice and load model via HTTP.
+        Uses py3.12 FastAPI service on :8765.
+        """
         try:
-            # Check if cached .mlpackage exists
+            # Ensure the microservice is running (no-op if already up)
+            CoreMLServiceManager.ensure_running()
+
+            # Create HTTP client and probe health
+            self._client = CoreMLClient()
+
+            # Try to pre-load the model into the microservice cache
             if _MLPACKAGE_PATH.exists():
-                return self._load_coreml_package(_MLPACKAGE_PATH)
+                loaded = await self._client.load_model(
+                    _COREML_MODEL_NAME,
+                    str(_MLPACKAGE_PATH),
+                )
+                if loaded:
+                    return True
 
-            # Need to convert — requires HF transformers model
-            return await self._convert_and_load()
+            # Health check as fallback probe
+            health = await self._client.health()
+            if health.status == "ok":
+                # Service is up but model not pre-loaded — will load on first predict
+                return True
+
+            return False
 
         except Exception as e:
-            logger.warning("[CoreML] CoreML load failed: %s", e)
+            logger.warning("[CoreML] Microservice load failed: %s", e)
             return False
-
-    async def _convert_and_load(self) -> bool:
-        """
-        Convert BAAI/bge-small-en-v1.5 to CoreML targeting ANE.
-        Downloads model if not cached, converts via coremltools,
-        saves .mlpackage to _MLPACKAGE_PATH.
-        """
-        if not _COREMLTOOLS_AVAILABLE:
-            return False
-
-        try:
-            # Import transformers lazily (heavy dep)
-            from transformers import AutoModel, AutoTokenizer
-
-            logger.warning("[CoreML] Downloading bge-small-en-v1.5...")
-            self._download_model()
-
-            logger.warning("[CoreML] Loading model for conversion...")
-            loop = asyncio.get_running_loop()
-            tokenizer = await loop.run_in_executor(
-                None, lambda: AutoTokenizer.from_pretrained(_MODEL_NAME)
-            )
-            model = await loop.run_in_executor(
-                None, lambda: AutoModel.from_pretrained(_MODEL_NAME)
-            )
-
-            logger.warning("[CoreML] Converting to CoreML targeting ANE...")
-            import torch
-
-            # Trace the model with dummy input
-            dummy_input = tokenizer(
-                "test text",
-                return_tensors="pt",
-                padding=True,
-                truncation=True,
-                max_length=512,
-            )
-
-            traced = torch.jit.trace(model, (dummy_input["input_ids"], dummy_input["attention_mask"]))
-
-            # CoreML conversion targeting ANE compute unit
-            mlmodel = cml.convert(
-                traced,
-                compute_units=cml.ComputeUnit.ANE_ONLY,
-                minimum_deployment_target=15,
-            )
-
-            # Save .mlpackage
-            _MODELS_DIR.mkdir(parents=True, exist_ok=True)
-            mlmodel.save(str(_MLPACKAGE_PATH))
-            logger.warning("[CoreML] .mlpackage saved to %s", _MLPACKAGE_PATH)
-
-            # Clean up model from memory
-            del model, traced, tokenizer
-            import gc
-
-            gc.collect()
-
-            return self._load_coreml_package(_MLPACKAGE_PATH)
-
-        except Exception as e:
-            logger.warning("[CoreML] Conversion failed: %s", e)
-            return False
-
-    def _load_coreml_package(self, path: Path) -> bool:
-        """Load a .mlpackage CoreML model."""
-        if not _COREMLTOOLS_AVAILABLE:
-            return False
-        try:
-            import coremltools as cml
-
-            self._model = cml.models.MLModel(str(path))
-            self._backend = "coreml"
-            return True
-        except Exception as e:
-            logger.warning("[CoreML] Failed to load .mlpackage: %s", e)
-            return False
-
-    def _download_model(self) -> Path:
-        """Download and cache HF model to temp directory."""
-
-        cache_dir = _MODELS_DIR / "hf_model"
-        cache_dir.mkdir(parents=True, exist_ok=True)
-
-        # Download only once
-        if not (cache_dir / "config.json").exists():
-            from huggingface_hub import snapshot_download
-
-            snapshot_download(
-                repo_id=_MODEL_NAME,
-                cache_dir=str(cache_dir),
-                local_files_only=False,
-            )
-        return cache_dir
 
     def _load_onnx_fallback(self) -> bool:
         """Load ONNX Runtime CPU fallback model (pre-converted)."""
@@ -284,11 +225,11 @@ class CoreMLEmbedder:
 
             sess_options = ort.SessionOptions()
             sess_options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
-            self._model = ort.InferenceSession(str(_ONNX_FALLBACK_PATH), sess_options=sess_options)
+            self._model = ort.InferenceSession(str(_ONNX_FALLBACK_PATH), sess_options=sess_options)  # type: ignore[assignment]
 
-            # Load tokenizer for ONNX backend
+            # Load tokenizer for ONNX backend (store in _hf_tokenizer, keep _tokenizer as _BGETokenizer)
             from transformers import AutoTokenizer
-            self._tokenizer = AutoTokenizer.from_pretrained(_MODEL_NAME)
+            self._hf_tokenizer = AutoTokenizer.from_pretrained(_MODEL_NAME)
 
             self._backend = "onnx"
             return True
@@ -299,7 +240,7 @@ class CoreMLEmbedder:
 
     def _convert_onnx_fallback(self) -> bool:
         """Convert model to ONNX format for CPU fallback."""
-        if not _COREMLTOOLS_AVAILABLE or not _ORT_AVAILABLE:
+        if not _ORT_AVAILABLE:
             return False
 
         try:
@@ -311,10 +252,9 @@ class CoreMLEmbedder:
             model = AutoModel.from_pretrained(_MODEL_NAME)
             model.eval()
 
-            # Export to ONNX
             _MODELS_DIR.mkdir(parents=True, exist_ok=True)
+            assert tokenizer is not None  # type: ignore[truthy-boolean]
 
-            # Tokenize
             dummy_tokens = tokenizer(
                 "test",
                 return_tensors="pt",
@@ -323,7 +263,6 @@ class CoreMLEmbedder:
                 max_length=512,
             )
 
-            # Export BERT base to ONNX
             torch.onnx.export(
                 model,
                 (dummy_tokens["input_ids"], dummy_tokens["attention_mask"]),
@@ -339,13 +278,11 @@ class CoreMLEmbedder:
 
             del model, tokenizer
             import gc
-
             gc.collect()
 
-            # Load the converted model
             sess_options = ort.SessionOptions()
             sess_options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
-            self._model = ort.InferenceSession(str(_ONNX_FALLBACK_PATH), sess_options=sess_options)
+            self._model = ort.InferenceSession(str(_ONNX_FALLBACK_PATH), sess_options=sess_options)  # type: ignore[assignment]
             self._backend = "onnx"
             return True
 
@@ -354,8 +291,10 @@ class CoreMLEmbedder:
             return False
 
     def unload(self) -> None:
-        """Release model memory."""
-        self._model = None
+        """Release model memory and close HTTP client."""
+        if self._client is not None:
+            asyncio.run(self._client.close())
+            self._client = None
         self._backend = None
         self._is_loaded = False
         logger.debug("[CoreML] Embedder unloaded")
@@ -392,7 +331,9 @@ class CoreMLEmbedder:
             # Truncate each text
             batch = [t[:_MAX_TEXT_LEN] for t in batch]
 
-            if self._backend == "coreml":
+            if self._backend == "mlx":
+                emb = await self._model.encode_batch(batch, batch_size=len(batch))
+            elif self._backend == "coreml":
                 emb = await self._encode_coreml(batch)
             elif self._backend == "onnx":
                 emb = await self._encode_onnx(batch)
@@ -409,43 +350,73 @@ class CoreMLEmbedder:
         return result.astype(np.float32)
 
     async def _encode_coreml(self, texts: list[str]) -> np.ndarray:
-        """Encode via CoreML/ANE model."""
-        loop = asyncio.get_running_loop()
+        """Encode via CoreML microservice HTTP API."""
+        if self._client is None:
+            return self._encode_hash_fallback(texts)
 
-        def _sync_encode() -> np.ndarray:
-            import torch
+        try:
+            # Lazy-load HF tokenizer (heavy dep, done once)
+            if self._hf_tokenizer is None:
+                try:
+                    from transformers import AutoTokenizer
+                    self._hf_tokenizer = AutoTokenizer.from_pretrained(_MODEL_NAME)
+                except Exception:
+                    pass
 
-            try:
-                # Tokenize
-                tokens = self._tokenizer.encode_batch(texts)
-                input_ids = torch.tensor(tokens, dtype=torch.long)
-                attention_mask = torch.ones_like(input_ids)
+            if self._hf_tokenizer is not None:
+                tok_result = self._hf_tokenizer(
+                    texts,
+                    return_tensors="np",
+                    padding=True,
+                    truncation=True,
+                    max_length=512,
+                )
+                inputs = {
+                    "input_ids": tok_result["input_ids"].tolist(),
+                    "attention_mask": tok_result["attention_mask"].tolist(),
+                }
+            else:
+                # Minimal fallback tokenization using _BGETokenizer
+                max_len = 512
+                batch_tokens: list[list[int]] = []
+                batch_masks: list[list[int]] = []
+                for t in texts:
+                    tok_list = self._tokenizer.encode(t)
+                    if len(tok_list) < max_len:
+                        tok_list = tok_list + [0] * (max_len - len(tok_list))
+                    batch_tokens.append(tok_list[:max_len])
+                    batch_masks.append([1 if j < len(self._tokenizer.encode(t)) else 0 for j in range(max_len)])
+                inputs = {
+                    "input_ids": batch_tokens,
+                    "attention_mask": batch_masks,
+                }
 
-                # Run CoreML inference
-                # CoreML expects dict input
-                {"input_ids": input_ids.numpy().astype(np.int32)}
-                # Note: real CoreML batch path uses coremltools model prediction
-                # For now, using single-sample fallback
-                results = []
-                for idx in range(len(texts)):
-                    single_inp = {
-                        "input_ids": input_ids[idx : idx + 1].numpy().astype(np.int32),
-                        "attention_mask": attention_mask[idx : idx + 1].numpy().astype(np.int32),
-                    }
-                    # CoreML predict
-                    out = self._model.predict(single_inp)
-                    # Extract pooled output (mean pooling)
-                    last_hidden = out["last_hidden_state"]
-                    mask = attention_mask[idx].unsqueeze(-1).numpy()
-                    pooled = (last_hidden * mask).sum(axis=1) / mask.sum()
-                    results.append(pooled.astype(np.float32))
-                return np.vstack(results)
+            # Call microservice — batch predict
+            result = await self._client.predict(_COREML_MODEL_NAME, inputs)
 
-            except Exception as e:
-                logger.warning("[CoreML] CoreML inference failed: %s", e)
-                return self._encode_hash_fallback(texts)
+            # Extract embeddings from response
+            outputs = result.outputs
+            if isinstance(outputs, dict) and "last_hidden_state" in outputs:
+                hs = outputs["last_hidden_state"]
+                # Handle nested list structure
+                if isinstance(hs, list) and len(hs) > 0 and isinstance(hs[0], list):
+                    arr = np.array(hs, dtype=np.float32)
+                else:
+                    arr = np.array(hs, dtype=np.float32)
+                # Mean pooling
+                if arr.ndim == 3:
+                    arr = arr.squeeze(0) if arr.shape[0] == 1 else arr
+                mask = np.array(inputs["attention_mask"], dtype=np.float32)[..., np.newaxis]
+                pooled = (arr * mask).sum(axis=1) / (mask.sum(axis=1) + 1e-8)
+                return pooled.astype(np.float32)
 
-        return await loop.run_in_executor(None, _sync_encode)
+            # Fallback: treat outputs as flat embedding list
+            val = outputs.get("embedding", outputs) if isinstance(outputs, dict) else outputs
+            return np.array(val, dtype=np.float32)
+
+        except Exception as e:
+            logger.warning("[CoreML] Microservice inference failed: %s", e)
+            return self._encode_hash_fallback(texts)
 
     async def _encode_onnx(self, texts: list[str]) -> np.ndarray:
         """Encode via ONNXRuntime CPU."""
@@ -453,8 +424,11 @@ class CoreMLEmbedder:
 
         def _sync_encode() -> np.ndarray:
             try:
-                # Tokenize
-                tokens = self._tokenizer(
+                # Tokenize via HF tokenizer (loaded in _load_onnx_fallback → stored in _hf_tokenizer)
+                tok = self._hf_tokenizer
+                if tok is None:
+                    return self._encode_hash_fallback(texts)
+                tokens = tok(
                     texts,
                     return_tensors="np",
                     padding=True,
@@ -464,18 +438,8 @@ class CoreMLEmbedder:
                 input_ids = np.array(tokens["input_ids"], dtype=np.int64)
                 attention_mask = np.array(tokens["attention_mask"], dtype=np.int64)
 
-                # Pad to max length in batch
-                max_len = input_ids.shape[1]
-                if max_len < 512:
-                    pad_width = ((0, 0), (0, 512 - max_len))
-                    input_ids = np.pad(input_ids, pad_width, constant_values=0)
-                    attention_mask = np.pad(attention_mask, pad_width, constant_values=0)
-
-                outputs = self._model.run(
-                    None,
-                    {"input_ids": input_ids, "attention_mask": attention_mask},
-                )
-                last_hidden = outputs[0]  # shape: (batch, seq, hidden)
+                outputs = self._model.run(None, {"input_ids": input_ids, "attention_mask": attention_mask})  # type: ignore[union-attr]
+                last_hidden = outputs[0]
 
                 # Mean pooling
                 mask = attention_mask[..., np.newaxis]
@@ -486,19 +450,20 @@ class CoreMLEmbedder:
                 logger.warning("[CoreML] ONNX inference failed: %s", e)
                 return self._encode_hash_fallback(texts)
 
-        return await loop.run_in_executor(None, _sync_encode)
+        return await loop.run_in_executor(_INFERENCE_EXECUTOR, _sync_encode)
 
     def _encode_hash_fallback(self, texts: list[str]) -> np.ndarray:
-        """Deterministic hash-based embeddings — zero RAM, fail-safe."""
+        """Deterministic hash embeddings s plnou entropií — SHAKE256 stretch na 384 dims."""
         import hashlib
 
         results = []
         for t in texts:
-            h = int(hashlib.sha256(t[:_MAX_TEXT_LEN].encode()).hexdigest()[:32], 16)
-            vec = np.zeros(_EMBED_DIM, dtype=np.float32)
-            for j in range(_EMBED_DIM):
-                vec[j] = float((h >> (j % 256)) & 1) * 2.0 - 1.0
-            results.append(vec)
+            # SHAKE256 produkuje libovolně dlouhý output — žádné opakování bitů
+            h = hashlib.shake_256(t[:_MAX_TEXT_LEN].encode()).digest(length=_EMBED_DIM * 4)
+            vec = np.frombuffer(h, dtype=np.float32).copy()
+            # Normalize do [-1, 1] range
+            vec = vec / (np.max(np.abs(vec)) + 1e-8)
+            results.append(vec[:_EMBED_DIM])
         return np.vstack(results)
 
     # -------------------------------------------------------------------------
@@ -508,12 +473,73 @@ class CoreMLEmbedder:
         """Sync alias — runs encode_batch in executor (matches FastEmbed .embed())."""
         try:
             loop = asyncio.get_running_loop()
-            return asyncio.run_coroutine_threadsafe(
-                self.encode_batch(texts, **kwargs),
-                loop,
-            ).result(timeout=60)
-        except Exception:
-            return np.zeros(
-                (len(texts) if isinstance(texts, list) else 1, _EMBED_DIM),
-                dtype=np.float32,
+            future = asyncio.run_coroutine_threadsafe(
+                self.encode_batch(texts, **kwargs), loop
             )
+            return future.result(timeout=60)
+        except RuntimeError:
+            # No running loop — create new one
+            return asyncio.run(self.encode_batch(texts, **kwargs))
+        except Exception:
+            n = len(texts) if isinstance(texts, list) else 1
+            return np.zeros((n, _EMBED_DIM), dtype=np.float32)
+
+
+# Backward-compatibility alias (coreml_embedder is imported from here in semantic_store.py)
+_ANE_EMBEDDER: CoreMLEmbedder | None = None
+_GLOBAL_TOKENIZER = None  # type: ignore[assignment]
+
+
+def get_ane_embedder() -> CoreMLEmbedder | None:
+    """Lazy init CoreML embedder (alias for get_coreml_embedder)."""
+    return get_coreml_embedder()
+
+
+def unload_ane_embedder() -> None:
+    """Unload the embedder (called by memory pressure governor)."""
+    global _coreml_embedder_instance
+    if _coreml_embedder_instance is not None:
+        _coreml_embedder_instance.unload()
+    _coreml_embedder_instance = None
+
+
+async def semantic_dedup_findings(
+    findings: list[dict],
+    threshold: float = 0.92,
+) -> list[dict]:
+    """
+    Semantic deduplication of findings.
+    CoreML path: microservice batch inference → cosine similarity matrix.
+    Hash fallback: url+title hash (zero RAM, always works).
+    """
+    embedder = get_coreml_embedder()
+
+    if embedder is None or not embedder.is_loaded:
+        seen: set[int] = set()
+        out: list[dict] = []
+        for f in findings:
+            key = hash((f.get("url", ""), f.get("title", "")))
+            if key not in seen:
+                seen.add(key)
+                out.append(f)
+        return out
+
+    try:
+        texts = [
+            f"{f.get('title', '')} {f.get('snippet', '')}".strip()[:512]
+            for f in findings
+        ]
+        embeddings = await embedder.encode_batch(texts, batch_size=32)
+
+        # Cosine similarity dedup
+        # Normalized embeddings → dot product = cosine similarity
+        sim_matrix = embeddings @ embeddings.T
+        keep = []
+        for i, f in enumerate(findings):
+            if i == 0 or np.max(sim_matrix[i, :i]) < threshold:
+                keep.append(f)
+        return keep
+
+    except Exception:
+        # Fail-safe: return originals
+        return findings

@@ -1287,21 +1287,24 @@ class LanceDBIdentityStore:
             )
 
             # Sprint F264E: trigger adaptive auto-tune (off-thread, fire-and-forget).
-            # The tuner decides internally whether cooldown + insert-threshold are met.
+            # P1-2 Enhancement: Now tunes BOTH num_partitions AND num_sub_vectors.
             tuner = getattr(self, "_autotune", None)
             if tuner is not None and getattr(self, "_ivfpq_enabled", False):
                 try:
                     result = await tuner.tune_if_due_async(
                         self._table,
                         current_num_partitions=self._ivfpq_num_partitions,
+                        current_num_sub_vectors=self._ivfpq_num_sub_vectors,
                         inserts_delta=1,
                     )
                     if result.changed():
                         self._ivfpq_num_partitions = result.new_partitions
+                        self._ivfpq_num_sub_vectors = result.new_num_sub_vectors
                         logger.info(
-                            f"[LANCEDB] auto-tune adjusted num_partitions="
-                            f"{result.old_partitions}->{result.new_partitions} "
-                            f"recall@K={result.recall:.3f} avg_ms={result.avg_search_ms:.2f}"
+                            f"[LANCEDB] auto-tune adjusted "
+                            f"num_partitions={result.old_partitions}->{result.new_partitions} "
+                            f"num_sub_vectors={result.old_num_sub_vectors}->{result.new_num_sub_vectors} "
+                            f"recall={result.recall:.3f} avg_ms={result.avg_search_ms:.2f}"
                         )
                 except Exception:
                     # Fail-soft: any tuner error must not break add_entity.

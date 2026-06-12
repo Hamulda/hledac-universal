@@ -4963,146 +4963,6 @@ class SprintScheduler:
         # Sprint F250F: Privacy context ID -- created at STARTUP, closed at TEARDOWN
         self._privacy_context_id: str | None = None
 
-        async def _run_privacy_gate(
-            findings: list,
-            privacy_layer,
-        ) -> tuple[list, int]:
-            """Pre-storage PII anonymization gate.
-
-            Runs BEFORE async_ingest_findings_batch() for ALL storage paths.
-            Returns (anonymized_findings, pii_count).
-
-            Scopes: content, raw_content, payload_text, title, summary.
-            Fail-soft: never raises -- findings pass through unmodified on any error.
-
-            INVARIANT: Never raises. Always returns input findings on error.
-            """
-            if privacy_layer is None:
-                return findings, 0
-
-            pii_count = 0
-            anonymized = []
-            _ctx_id = getattr(self, '_privacy_context_id', None)
-
-            for f in findings:
-                try:
-                    # Sprint F26X: support both CanonicalFinding objects AND
-                    # duckdb-compatible dicts (e.g. gopher sidecar). getattr
-                    # returns "" on dict, item access on object -- both safe.
-                    if isinstance(f, dict):
-                        text_fields = {
-                            'content': f.get('content') or "",
-                            'raw_content': f.get('raw_content') or "",
-                            'payload_text': f.get('payload_text') or "",
-                            'title': f.get('title') or "",
-                            'summary': f.get('summary') or "",
-                        }
-                    else:
-                        text_fields = {
-                            'content': getattr(f, 'content', None) or "",
-                            'raw_content': getattr(f, 'raw_content', None) or "",
-                            'payload_text': getattr(f, 'payload_text', None) or "",
-                            'title': getattr(f, 'title', None) or "",
-                            'summary': getattr(f, 'summary', None) or "",
-                        }
-
-                    has_pii = False
-                    for field_name, field_value in text_fields.items():
-                        if not field_value:
-                            continue
-                        pii_result = privacy_layer.detect_pii(field_value)
-                        field_has_pii = (
-                            bool(pii_result) if isinstance(pii_result, bool)
-                            else any(v for v in pii_result.values() if v)
-                        )
-
-                        if field_has_pii:
-                            has_pii = True
-                            anon_text = privacy_layer.anonymize_text(field_value)
-                            # Sprint F26X: write back via setattr (object)
-                            # or __setitem__ (dict). Both fail-soft.
-                            try:
-                                if isinstance(f, dict):
-                                    f[field_name] = anon_text
-                                else:
-                                    setattr(f, field_name, anon_text)
-                            except Exception as e:
-                                logger.debug(f"[PII] anonymization setattr failed for field {field_name}: {e}")
-
-                    if has_pii:
-                        pii_count += 1
-                        if _ctx_id:
-                            try:
-                                if isinstance(f, dict):
-                                    f['_privacy_context_id'] = _ctx_id
-                                else:
-                                    f._privacy_context_id = _ctx_id
-                            except Exception:
-                                pass
-
-                    anonymized.append(f)
-
-                except Exception as _e:
-                    logger.debug("privacy_gate finding error: %s", _e)
-                    anonymized.append(f)
-
-            return anonymized, pii_count
-
-        self._run_privacy_gate = _run_privacy_gate
-
-        async def _gate_then_ingest(
-            store: Any,
-            findings: list,
-        ) -> Any:
-            """PII-gated canonical write seam.
-
-            Sprint F26X: Centralizes the privacy gate + DuckDB ingest that
-            used to be duplicated at 20 call sites in sprint_scheduler.py.
-            When HLEDAC_ENABLE_PRIVACY_LAYER=1, anonymizes PII in
-            content/raw_content/payload_text/title/summary BEFORE the
-            findings hit async_ingest_findings_batch.
-
-            Fail-soft: never raises. On any error, findings pass through
-            to the canonical write path unmodified.
-
-            Args:
-                store: duckdb_store (or any object with
-                    async_ingest_findings_batch). None -> no-op.
-                findings: list of CanonicalFinding (or duckdb-compatible
-                    dicts). Empty -> no-op.
-
-            Returns:
-                Whatever async_ingest_findings_batch returns, or None on
-                skip / error.
-            """
-            if store is None or not findings:
-                return None
-            try:
-                _gated: list = findings
-                if _env_flag("HLEDAC_ENABLE_PRIVACY_LAYER") == "1":
-                    try:
-                        _privacy = (self._privacy_layer or getattr(self._layer_manager, "privacy", None))
-                        if _privacy:
-                            _gated, _pii_count = await _run_privacy_gate(
-                                findings, _privacy,
-                            )
-                            if _pii_count > 0:
-                                self._result.pii_findings_anonymized = (
-                                    getattr(self._result, "pii_findings_anonymized", 0)
-                                    + _pii_count
-                                )
-                    except Exception as _e:
-                        # Fail-soft: keep original findings on gate error
-                        logger.debug("privacy_gate call failed: %s", _e)
-                        _gated = findings
-                return await store.async_ingest_findings_batch(_gated)
-            except Exception as _e:
-                # Fail-soft: never raise from the ingest path
-                logger.debug("gate_then_ingest failed: %s", _e)
-                return None
-
-        self._gate_then_ingest = _gate_then_ingest
-
         # Sprint 8VI §C: All findings collected during sprint
 
         self._all_findings: list[dict] = []
@@ -13129,21 +12989,16 @@ class SprintScheduler:
 
                 try:
 
-                    _ing = await self._gate_then_ingest(duckdb_store, list(_wb_cands))
+                    _ing = await self._gate_then_ingest_and_accumulate(duckdb_store, list(_wb_cands), sprint_id=self.sprint_id or "")
 
                     _wb_acc = sum(1 for r in _ing if isinstance(r, dict) and r.get("accepted"))
-
                 except Exception as _exc:
-
                     log.warning(
-
                         "sprint %s: wayback ledger write failed -- %s: %s",
-
                         getattr(self._result, "sprint_id", "?"),
-
                         type(_exc).__name__, _exc,
-
                     )
+
 
             nonfeed_prelude_accepted["WAYBACK"] = _wb_acc
 
@@ -13223,12 +13078,9 @@ class SprintScheduler:
 
                 try:
 
-                    _ing = await self._gate_then_ingest(duckdb_store, list(_pdns_cands))
-
+                    _ing = await self._gate_then_ingest_and_accumulate(duckdb_store, list(_pdns_cands), sprint_id=self.sprint_id or "")
                     _pdns_acc = sum(1 for r in _ing if isinstance(r, dict) and r.get("accepted"))
-
                 except Exception:
-
                     pass
 
             nonfeed_prelude_accepted["PASSIVE_DNS"] = _pdns_acc
@@ -13464,14 +13316,11 @@ class SprintScheduler:
 
                     try:
 
-                        _ing = await self._gate_then_ingest(duckdb_store, list(_doh_cands))
+                        _ing = await self._gate_then_ingest_and_accumulate(duckdb_store, list(_doh_cands), sprint_id=self.sprint_id or "")
 
                         _doh_acc = sum(1 for r in _ing if isinstance(r, dict) and r.get("accepted"))
-
                     except Exception:
-
                         pass
-
 
 
                 self._result.lane_doh_accepted_findings = _doh_acc
@@ -16932,7 +16781,7 @@ class SprintScheduler:
                         try:
                             _privacy = (self._privacy_layer or getattr(self._layer_manager, "privacy", None))
                             if _privacy and accepted_findings:
-                                accepted_findings, _pii_count = await self._run_privacy_gate(
+                                accepted_findings, _pii_count = await self._run_privacy_gate_async(
                                     accepted_findings, _privacy
                                 )
                                 if _pii_count > 0:
@@ -17319,12 +17168,11 @@ class SprintScheduler:
 
             if duckdb is not None:
 
-                _ = await self._gate_then_ingest(duckdb, findings)
+                _ = await self._gate_then_ingest_and_accumulate(duckdb, findings, sprint_id=self.sprint_id or "")
 
                 log.debug("[F251] Ingested %d onion findings", len(findings))
 
         except Exception as e:
-
             _log_advisory_dedup(log, f"onion_ingest_fail:{type(e).__name__}",
                                 "[F251] Onion findings ingest failed: %s", e)
 
@@ -17594,12 +17442,11 @@ class SprintScheduler:
 
             if duckdb is not None:
 
-                _ = await self._gate_then_ingest(duckdb, findings)
+                _ = await self._gate_then_ingest_and_accumulate(duckdb, findings, sprint_id=self.sprint_id or "")
 
                 log.debug("[F2P] Ingested %d I2P findings", len(findings))
 
         except Exception as e:
-
             _log_advisory_dedup(log, f"i2p_ingest_fail:{type(e).__name__}",
                                 "[F2P] I2P findings ingest failed: %s", e)
 
@@ -17893,11 +17740,10 @@ class SprintScheduler:
 
             if duckdb is not None:
 
-                _ = await self._gate_then_ingest(duckdb, findings)
+                _ = await self._gate_then_ingest_and_accumulate(duckdb, findings, sprint_id=self.sprint_id or "")
 
                 log.debug("[F214Q] Ingested %d DHT findings", len(findings))
 
-                self._result.dht_findings_produced = len(findings)
 
 
 
@@ -17967,7 +17813,7 @@ class SprintScheduler:
 
             # Ingest findings through canonical write path
             if findings and self._duckdb is not None:
-                _ = await self._gate_then_ingest(self._duckdb, findings)
+                _ = await self._gate_then_ingest_and_accumulate(self._duckdb, findings, sprint_id=self.sprint_id or "")
                 log.debug("[F214R] Ingested %d Gopher findings", len(findings))
 
         except Exception as e:
@@ -18142,11 +17988,10 @@ class SprintScheduler:
 
             if findings and self._duckdb is not None:
 
-                _ = await self._gate_then_ingest(self._duckdb, findings)
+                _ = await self._gate_then_ingest_and_accumulate(self._duckdb, findings, sprint_id=self.sprint_id or "")
 
                 log.debug("[F218Z] Ingested %d IPFS findings", len(findings))
 
-                self._result.ipfs_findings_accepted = len(findings)
 
 
 
@@ -18252,7 +18097,7 @@ class SprintScheduler:
 
             # Ingest findings through canonical write path
             if findings and self._duckdb is not None:
-                _ = await self._gate_then_ingest(self._duckdb, findings)
+                _ = await self._gate_then_ingest_and_accumulate(self._duckdb, findings, sprint_id=self.sprint_id or "")
                 log.debug("[F3FORENSICS] Ingested %d digital ghost findings", len(findings))
 
         except Exception as e:
@@ -18360,13 +18205,12 @@ class SprintScheduler:
 
             # Ingest findings through canonical write path
             if findings and self._duckdb is not None:
-                _ = await self._gate_then_ingest(self._duckdb, findings)
+                _ = await self._gate_then_ingest_and_accumulate(self._duckdb, findings, sprint_id=self.sprint_id or "")
                 log.debug("[F3FORENSICS] Ingested %d steganography findings", len(findings))
 
         except Exception as e:
             _log_advisory_dedup(log, f"steg_sidecar_fail:{type(e).__name__}",
                                 "[F3FORENSICS] Steganography sidecar failed: %s", e)
-
         return findings
 
     # ── F214Q: BGP Enrichment Sidecar ──────────────────────────────────────────
@@ -18496,11 +18340,10 @@ class SprintScheduler:
 
         if findings and self._duckdb is not None:
 
-            _ = await self._gate_then_ingest(self._duckdb, findings)
+            _ = await self._gate_then_ingest_and_accumulate(self._duckdb, findings, sprint_id=self.sprint_id or "")
 
             log.debug("[F214Q] Ingested %d BGP enrichment findings", len(findings))
 
-            self._result.bgp_enrichment_findings_ingested = len(findings)
 
         return findings[:20]
 
@@ -18640,11 +18483,10 @@ class SprintScheduler:
 
         if findings and self._duckdb is not None:
 
-            _ = await self._gate_then_ingest(self._duckdb, findings)
+            _ = await self._gate_then_ingest_and_accumulate(self._duckdb, findings, sprint_id=self.sprint_id or "")
 
             log.debug("[F214Q] Ingested %d banner grab findings", len(findings))
 
-            self._result.banner_grab_findings_ingested = len(findings)
 
         return findings[:50]
 
@@ -18691,6 +18533,178 @@ class SprintScheduler:
     # ── Wave 2: Latent Relationship Sync ───────────────────────────────────────
 
 
+
+
+
+    # ── F266: Class-method replacements for __init__ closures ───────────────
+
+    async def _run_privacy_gate_async(
+        self,
+        findings: list,
+        privacy_layer,
+    ) -> tuple[list, int]:
+        """Pre-storage PII anonymization gate.
+
+        Runs BEFORE async_ingest_findings_batch() for ALL storage paths.
+        Returns (anonymized_findings, pii_count).
+
+        Scopes: content, raw_content, payload_text, title, summary.
+        Fail-soft: never raises -- findings pass through unmodified on any error.
+
+        INVARIANT: Never raises. Always returns input findings on error.
+        """
+        if privacy_layer is None:
+            return findings, 0
+
+        pii_count = 0
+        anonymized = []
+        _ctx_id = getattr(self, '_privacy_context_id', None)
+
+        for f in findings:
+            try:
+                if isinstance(f, dict):
+                    text_fields = {
+                        'content': f.get('content') or "",
+                        'raw_content': f.get('raw_content') or "",
+                        'payload_text': f.get('payload_text') or "",
+                        'title': f.get('title') or "",
+                        'summary': f.get('summary') or "",
+                    }
+                else:
+                    text_fields = {
+                        'content': getattr(f, 'content', None) or "",
+                        'raw_content': getattr(f, 'raw_content', None) or "",
+                        'payload_text': getattr(f, 'payload_text', None) or "",
+                        'title': getattr(f, 'title', None) or "",
+                        'summary': getattr(f, 'summary', None) or "",
+                    }
+
+                has_pii = False
+                for field_name, field_value in text_fields.items():
+                    if not field_value:
+                        continue
+                    pii_result = privacy_layer.detect_pii(field_value)
+                    field_has_pii = (
+                        bool(pii_result) if isinstance(pii_result, bool)
+                        else any(v for v in pii_result.values() if v)
+                    )
+
+                    if field_has_pii:
+                        has_pii = True
+                        anon_text = privacy_layer.anonymize_text(field_value)
+                        try:
+                            if isinstance(f, dict):
+                                f[field_name] = anon_text
+                            else:
+                                setattr(f, field_name, anon_text)
+                        except Exception as e:
+                            logger.debug(f"[PII] anonymization setattr failed for field {field_name}: {e}")
+
+                if has_pii:
+                    pii_count += 1
+                    if _ctx_id:
+                        try:
+                            if isinstance(f, dict):
+                                f['_privacy_context_id'] = _ctx_id
+                            else:
+                                f._privacy_context_id = _ctx_id
+                        except Exception:
+                            pass
+
+                anonymized.append(f)
+
+            except Exception as _e:
+                logger.debug("privacy_gate finding error: %s", _e)
+                anonymized.append(f)
+
+        return anonymized, pii_count
+
+    async def _gate_then_ingest(
+        self,
+        store: Any,
+        findings: list,
+    ) -> Any:
+        """PII-gated canonical write seam.
+
+        Sprint F26X: Centralizes the privacy gate + DuckDB ingest that
+        used to be duplicated at 20 call sites in sprint_scheduler.py.
+        When HLEDAC_ENABLE_PRIVACY_LAYER=1, anonymizes PII in
+        content/raw_content/payload_text/title/summary BEFORE the
+        findings hit async_ingest_findings_batch.
+
+        Fail-soft: never raises. On any error, findings pass through
+        to the canonical write path unmodified.
+
+        Args:
+            store: duckdb_store (or any object with
+                async_ingest_findings_batch). None -> no-op.
+            findings: list of CanonicalFinding (or duckdb-compatible
+                dicts). Empty -> no-op.
+
+        Returns:
+            Whatever async_ingest_findings_batch returns, or None on
+            skip / error.
+        """
+        if store is None or not findings:
+            return None
+        try:
+            _gated: list = findings
+            if _env_flag("HLEDAC_ENABLE_PRIVACY_LAYER") == "1":
+                try:
+                    _privacy = (self._privacy_layer or getattr(self._layer_manager, "privacy", None))
+                    if _privacy:
+                        _gated, _pii_count = await self._run_privacy_gate_async(
+                            findings, _privacy,
+                        )
+                        if _pii_count > 0:
+                            self._result.pii_findings_anonymized = (
+                                getattr(self._result, "pii_findings_anonymized", 0)
+                                + _pii_count
+                            )
+                except Exception as _e:
+                    logger.debug("privacy_gate call failed: %s", _e)
+                    _gated = findings
+            return await store.async_ingest_findings_batch(_gated)
+        except Exception as _e:
+            logger.debug("gate_then_ingest failed: %s", _e)
+            return None
+
+    async def _gate_then_ingest_and_accumulate(
+        self,
+        store: Any,
+        findings: list,
+        sprint_id: str = "",
+    ) -> Any:
+        """F266: PII-gated canonical write + graph accumulation.
+
+        Combines _gate_then_ingest (DuckDB write) with _accumulate_findings_to_graph
+        (graph upsert) in a single await chain. Fail-soft: graph errors never
+        prevent the DuckDB write from completing.
+
+        This is the canonical call for ALL nonfeed lanes (wayback/pdns/doh)
+        and sidecars that need graph wiring.
+
+        Args:
+            store: duckdb_store (or any object with async_ingest_findings_batch).
+            findings: list of CanonicalFinding.
+            sprint_id: Sprint identifier for graph source field.
+
+        Returns:
+            Whatever async_ingest_findings_batch returns.
+        """
+        if store is None or not findings:
+            return None
+        # DuckDB write
+        _ingest_result = await self._gate_then_ingest(store, findings)
+        # Graph accumulation (fail-soft, never blocks)
+        if findings:
+            try:
+                if self._graph_accumulator is None:
+                    self._graph_accumulator = SprintGraphAccumulator()
+                self._graph_accumulator.accumulate_findings(findings, sprint_id=sprint_id or "")
+            except Exception as _e:
+                logger.debug("[F266] graph_accumulate failed: %s", _e)
+        return _ingest_result
 
     def _sync_latent_relationships_to_graph(self) -> None:
 
@@ -19195,11 +19209,10 @@ class SprintScheduler:
 
                     try:
 
-                        ingest_results = await self._gate_then_ingest(store, pdns_findings)
+                        ingest_results = await self._gate_then_ingest_and_accumulate(store, pdns_findings, sprint_id=self.sprint_id or "")
 
                         stored = sum(1 for r in ingest_results if isinstance(r, dict) and r.get("accepted"))
 
-                        log.debug(f"[R8] PDNS pivot stored: domain={domain} stored={stored}")
 
                     except asyncio.CancelledError:
 
@@ -20067,11 +20080,10 @@ class SprintScheduler:
 
             try:
 
-                storage_results = await self._gate_then_ingest(duckdb_store, list(candidates))
+                storage_results = await self._gate_then_ingest_and_accumulate(duckdb_store, list(candidates), sprint_id=self.sprint_id or "")
 
 
 
-                # Record storage outcomes in ledger
 
                 accepted_count = 0
 
@@ -21093,11 +21105,10 @@ class SprintScheduler:
 
                     if findings:
 
-                        _ = await self._gate_then_ingest(store, findings)
+                        _ = await self._gate_then_ingest_and_accumulate(store, findings, sprint_id=self.sprint_id or "")
 
                         self._result.bgp_advisory_findings_produced = len(findings)
 
-                # F214R: PassiveDNS enrichment via HackerTarget (after BGP enrich)
                 if pdns_adapter is not None and unique_domains and store is not None:
                     pdns_findings = []
                     for domain in unique_domains[:5]:  # Cap at 5 domains
@@ -21110,11 +21121,10 @@ class SprintScheduler:
                         except Exception:
                             pass
                     if pdns_findings:
-                        _ = await self._gate_then_ingest(store, pdns_findings)
+                        _ = await self._gate_then_ingest_and_accumulate(store, pdns_findings, sprint_id=self.sprint_id or "")
                         self._result.pdns_advisory_findings_produced = len(pdns_findings)
 
                 # Record source_family_outcomes
-
                 _sfos = list(getattr(self._result, "source_family_outcomes_list", []) or [])
 
                 _sfos.append({
@@ -21312,11 +21322,10 @@ class SprintScheduler:
 
                 if store is not None:
 
-                    ingested = await self._gate_then_ingest(store, findings)
+                    ingested = await self._gate_then_ingest_and_accumulate(store, findings, sprint_id=self.sprint_id or "")
 
                     stored = sum(1 for r in ingested if isinstance(r, dict) and r.get("accepted"))
 
-                    self._result.wayback_cdx_advisory_findings_produced = stored
 
                 else:
 
@@ -22782,8 +22791,12 @@ class SprintScheduler:
             )
 
         # Sprint 8VD §F: Track finding count for scorecard
-
-        self._finding_count += result.accepted_findings
+        # F265B: Use stored_findings (DuckDB WAL success via lmdb_success) instead of
+        # accepted_findings (quality-gate pass count). accepted does NOT imply stored
+        # when DuckDB fails. Feed pipeline calls async_run_live_feed_pipeline(store=None)
+        # so findings are NOT written to DuckDB here — only the scheduler's canonical
+        # write path (via public pipeline) writes. Feed findings are count-only telemetry.
+        self._finding_count += result.stored_findings
 
         # Sprint 8VN §C: Accumulate feed economics verdict (additive, fail-soft)
 
@@ -23685,12 +23698,11 @@ class SprintScheduler:
 
             if store and hasattr(store, 'async_ingest_findings_batch'):
 
-                _ = await self._gate_then_ingest(store, canonicals)
+                _ = await self._gate_then_ingest_and_accumulate(store, canonicals, sprint_id=self.sprint_id or "")
 
                 log.info(f"[F11] Deep research ingested {len(canonicals)} findings")
 
         except Exception as e:
-
             log.warning(f"[F11] DuckDB ingest failed: {e}")
 
         return canonicals

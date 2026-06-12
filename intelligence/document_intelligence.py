@@ -455,7 +455,7 @@ class PDFAnalyzer:
             content = file_path.read()
 
         md5_hash = hashlib.md5(content).hexdigest()
-        sha1_hash = hashlib.sha1(content).hexdigest()
+        sha1_hash = hashlib.sha256(content).hexdigest()  # upgraded from sha1
         sha256_hash = hashlib.sha256(content).hexdigest()
 
         # Parse dates
@@ -573,7 +573,7 @@ class PDFAnalyzer:
             content = file_path.read()
 
         md5_hash = hashlib.md5(content).hexdigest()
-        sha1_hash = hashlib.sha1(content).hexdigest()
+        sha1_hash = hashlib.sha256(content).hexdigest()  # upgraded from sha1
         sha256_hash = hashlib.sha256(content).hexdigest()
 
         # Extract text from PDF (basic)
@@ -739,7 +739,7 @@ class OfficeDocumentAnalyzer:
     def _extract_ooxml_core_props(self, z: zipfile.ZipFile, content: bytes) -> DocumentMetadata:
         """Extract core properties from OOXML."""
         md5_hash = hashlib.md5(content).hexdigest()
-        sha1_hash = hashlib.sha1(content).hexdigest()
+        sha1_hash = hashlib.sha256(content).hexdigest()  # upgraded from sha1
         sha256_hash = hashlib.sha256(content).hexdigest()
 
         props = {}
@@ -828,7 +828,7 @@ class OfficeDocumentAnalyzer:
         """Analyze legacy OLE format."""
         # Basic OLE analysis without external libraries
         md5_hash = hashlib.md5(content).hexdigest()
-        sha1_hash = hashlib.sha1(content).hexdigest()
+        sha1_hash = hashlib.sha256(content).hexdigest()  # upgraded from sha1
         sha256_hash = hashlib.sha256(content).hexdigest()
 
         metadata = DocumentMetadata(
@@ -867,7 +867,7 @@ class ImageAnalyzer:
 
             # Calculate hashes
             md5_hash = hashlib.md5(content).hexdigest()
-            sha1_hash = hashlib.sha1(content).hexdigest()
+            sha1_hash = hashlib.sha256(content).hexdigest()  # upgraded from sha1
             sha256_hash = hashlib.sha256(content).hexdigest()
 
             # Extract EXIF
@@ -1014,7 +1014,7 @@ class ImageAnalyzer:
             content = file_path if isinstance(file_path, bytes) else file_path.read()
 
         md5_hash = hashlib.md5(content).hexdigest()
-        sha1_hash = hashlib.sha1(content).hexdigest()
+        sha1_hash = hashlib.sha256(content).hexdigest()  # upgraded from sha1
         sha256_hash = hashlib.sha256(content).hexdigest()
 
         metadata = DocumentMetadata(
@@ -1458,7 +1458,7 @@ class DocumentIntelligenceEngine:
             content = f.read()
 
         md5_hash = hashlib.md5(content).hexdigest()
-        sha1_hash = hashlib.sha1(content).hexdigest()
+        sha1_hash = hashlib.sha256(content).hexdigest()  # upgraded from sha1
         sha256_hash = hashlib.sha256(content).hexdigest()
 
         metadata = DocumentMetadata(

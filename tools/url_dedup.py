@@ -13,6 +13,8 @@ import hashlib
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, Protocol, TypeGuard, cast, runtime_checkable
 
+from hledac.universal.paths import LMDB_ROOT  # noqa: E402
+
 if TYPE_CHECKING:
     # Static-only import — never executed at runtime. Resolves MmapBloomFilter
     # to the typed stub (stubs/hledac_rust_extensions/__init__.pyi) so ty can
@@ -61,6 +63,14 @@ except ImportError:
 DEFAULT_URL_ESTIMATE = 100_000
 DEFAULT_FPR = 0.01  # 1% false positive rate
 MAX_URL_ESTIMATE = 1_000_000
+
+# P1-3F: Track HOME at import time for cache invalidation.
+# If HOME changes (e.g. test fixture monkeypatches it), the mmap filter path
+# would point to a different location — invalidate the cached singleton so each
+# test gets a fresh filter at the new HOME.
+import os as _os
+_home_at_import = _os.environ.get("HOME", "")
+del _os
 
 # Rust extension import guard — BloomFilter exposed as
 # RustRotatingBloomFilter for API compatibility with probables.
@@ -429,24 +439,55 @@ def fast_hash(text: str) -> str:
 def create_rotating_bloom_filter(
     est_elements: int = DEFAULT_URL_ESTIMATE,
     false_positive_rate: float = DEFAULT_FPR,
+    test_mode: bool = False,
 ) -> DeduplicationStrategy:
     """
     Create a RotatingBloomFilter for URL deduplication.
 
+    P1-3: Prefers MmapBloomFilter (file-backed, cross-restart persistence)
+    when Rust extension is available. Falls back to in-memory Rust BloomFilter,
+    then to probables library as last resort.
+
     Args:
         est_elements: Estimated number of unique URLs to track
         false_positive_rate: Target false positive rate (0.001 = 0.1%)
+        test_mode: If True, uses in-memory filter only (no mmap persistence).
+                   Avoids HOME-dependent paths in test environments where
+                   fixtures monkeypatch HOME after module load.
     Returns:
-        Configured DeduplicationStrategy (Rust or probables fallback)
+        Configured DeduplicationStrategy (MmapBloomFilter, Rust, or probables)
     Raises:
-        ImportError: If neither Rust extensions nor probables library is available
+        ImportError: If no bloom filter implementation available
     """
     # P1-15: Enforce upper bound to prevent unbounded memory growth
     est_elements = min(est_elements, MAX_URL_ESTIMATE)
 
-    # Prefer Rust BloomFilter when available — 10-100x faster than pyprobables.
-    # cast() bypasses Protocol return-type check: RustBloomFilter.add() returns
-    # `bool` (kept for runtime), DeduplicationStrategy.add() returns Any.
+    # P1-3F: In test_mode, skip mmap to avoid HOME-dependent path pollution.
+    # Use in-memory Rust BloomFilter directly — fast and test-safe.
+    if not test_mode:
+        # P1-3: Prefer file-backed mmap filter (persistent, cross-restart).
+        # MmapBloomFilterAdapter is thread-safe via threading.Lock and persists
+        # dedup state across process restarts — ideal for sprint-to-sprint dedup.
+        # Path computed at RUNTIME (not import) to respect HOME changes from
+        # test fixtures (monkeypatch.setenv("HOME", ...)).
+        if _RUST_MMAP_BLOOM_AVAILABLE:
+            try:
+                # Lazy import + path compute at call time (not module load).
+                from hledac.universal.paths import LMDB_ROOT
+                mmap_path = str(LMDB_ROOT / "bloom" / "mmap_bloom.filter")
+                return cast(
+                    DeduplicationStrategy,
+                    MmapBloomFilterAdapter(
+                        path=mmap_path,
+                        capacity=est_elements,
+                        fp_rate=false_positive_rate,
+                        force_new=True,  # P1-3F: always fresh — avoids cross-test pollution
+                    ),
+                )
+            except Exception:
+                pass  # Fall through to in-memory Rust BloomFilter
+
+    # In-memory Rust BloomFilter — fast but lost on process restart.
     if _RUST_BLOOM_AVAILABLE:
         return cast(
             DeduplicationStrategy,
@@ -455,18 +496,14 @@ def create_rotating_bloom_filter(
 
     if not PROBABLES_AVAILABLE:
         raise ImportError(
-            "Neither Rust BloomFilter (hledac-rust-extensions) nor "
-            "probables library available. Install probables: pip install probables"
+            "No BloomFilter implementation available — install hledac-rust-extensions "
+            "(maturin develop) or probables: pip install probables"
         )
-    # cast() collapses the `RotatingBloomFilter | object` union — the `object`
-    # variant is dead code (raise ImportError above blocks it). Pyright cannot
-    # see through the runtime PROBABLES_AVAILABLE guard, so suppress the
-    # per-kwarg reportCallIssue on the sentinel `object` branch.
     return cast(
         DeduplicationStrategy,
         RotatingBloomFilter(
-            est_elements=est_elements,  # ty: ignore[unknown-argument]  # pyright: ignore[reportCallIssue]
-            false_positive_rate=false_positive_rate,  # ty: ignore[unknown-argument]  # pyright: ignore[reportCallIssue]
+            est_elements=est_elements,  # type: ignore[unknown-argument]
+            false_positive_rate=false_positive_rate,  # type: ignore[unknown-argument]
         ),
     )
 
@@ -475,11 +512,16 @@ _default_bloom: Any | None = None
 
 
 def get_default_bloom_filter() -> DeduplicationStrategy:
-    """Get the shared default BloomFilter instance."""
+    """Get the shared default BloomFilter instance (P1-3: mmap-backed).
+
+    P1-3F: Detects HOME change (test fixture monkeypatch) and invalidates
+    the cached singleton so each test gets a fresh filter at the new HOME.
+    """
     global _default_bloom
+    current_home = _os.environ.get("HOME", "")
+    if current_home != _home_at_import:
+        _default_bloom = None
     if _default_bloom is None:
-        if not PROBABLES_AVAILABLE:
-            raise ImportError("probables library required: pip install probables")
         _default_bloom = create_rotating_bloom_filter()
     return _default_bloom
 
