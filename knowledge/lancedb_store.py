@@ -194,6 +194,9 @@ class LanceDBIdentityStore:
         self._mlx_embeddings = None
         self._mlx_ids = None
         self._mlx_id_to_idx = {}
+        # Sprint P6-fix: chunked streaming load for M1 8GB safety
+        self._mlx_embeddings_total_count = 0
+        self._mlx_load_chunk_size = 10_000  # rows per chunk, M1 8GB safe
 
         # Sprint 76: Binary embeddings for fast pre-filter
         self._binary_embeddings = None
@@ -796,30 +799,74 @@ class LanceDBIdentityStore:
             logger.debug(f"Cache warming failed: {e}")
 
     async def _load_embeddings_to_mlx(self) -> None:
-        """Load embeddings to MLX (index mapping only, not full copies)."""
+        """
+        Load embeddings to MLX using chunked streaming for M1 8GB safety.
+
+        P6-fix: original loaded ALL embeddings at once (~400MB+ for 100k rows).
+        Now streams in chunks of _mlx_load_chunk_size rows, building index incrementally.
+        Memory budget: 10k rows × 256 dims × 4 bytes ≈ 10MB per chunk.
+        """
         if self._table is None:
             return
         try:
             import mlx.core as mx
-            data = self._table.to_lance().to_table(columns=['_embedding', 'id']).to_pydict()
-            if len(data.get('_embedding', [])) == 0:
-                return
-            self._embedding_dim = len(data['_embedding'][0])
-            self._mlx_embeddings = mx.array(data['_embedding'])
-            self._mlx_ids = data['id']
-            self._mlx_id_to_idx = {row_id: i for i, row_id in enumerate(data['id'])}
 
-            # Binary embeddings - pack to 1 bit
-            signs = (self._mlx_embeddings > 0).astype(mx.uint8)
-            batch, dim = signs.shape
-            padded_dim = ((dim + 7) // 8) * 8
-            padded = mx.zeros((batch, padded_dim), dtype=mx.uint8)
-            padded[:, :dim] = signs
-            packed = mx.zeros((batch, padded_dim // 8), dtype=mx.uint8)
-            for i in range(8):
-                packed |= (padded[:, i::8] << (7 - i))
-            self._binary_embeddings = packed
-            logger.info(f"Loaded {len(data['_embedding'])} embeddings to MLX")
+            total_count = self._table.count_rows()
+            if total_count == 0:
+                return
+
+            chunk_size = self._mlx_load_chunk_size
+            all_embeddings: list[mx.array] = []
+            all_ids: list[str] = []
+            id_to_idx_global: dict[str, int] = {}
+
+            for offset in range(0, total_count, chunk_size):
+                limit = min(chunk_size, total_count - offset)
+                chunk_data = self._table.to_lance().to_table(
+                    columns=['_embedding', 'id'],
+                    offset=offset,
+                    limit=limit,
+                ).to_pydict()
+
+                if not chunk_data.get('_embedding'):
+                    continue
+
+                emb_chunk = mx.array(chunk_data['_embedding'])
+                ids_chunk = chunk_data['id']
+
+                # Binary pack this chunk
+                signs = (emb_chunk > 0).astype(mx.uint8)
+                batch, dim = signs.shape
+                padded_dim = ((dim + 7) // 8) * 8
+                padded = mx.zeros((batch, padded_dim), dtype=mx.uint8)
+                padded[:, :dim] = signs
+                packed = mx.zeros((batch, padded_dim // 8), dtype=mx.uint8)
+                for i in range(8):
+                    packed |= (padded[:, i::8] << (7 - i))
+
+                all_embeddings.append(packed)
+                base_idx = len(all_ids)
+                for i, row_id in enumerate(ids_chunk):
+                    id_to_idx_global[str(row_id)] = base_idx + i
+                all_ids.extend(str(r) for r in ids_chunk)
+
+                self._mlx_embeddings_total_count = offset + limit
+                logger.debug(
+                    f"MLX chunk {offset}-{offset + limit}/{total_count} loaded"
+                )
+
+            if not all_embeddings:
+                return
+
+            self._mlx_embeddings = mx.concatenate(all_embeddings, axis=0)
+            self._mlx_ids = all_ids
+            self._mlx_id_to_idx = id_to_idx_global
+            self._embedding_dim = len(chunk_data['_embedding'][0]) if chunk_data.get('_embedding') else 256
+
+            logger.info(
+                f"Loaded {len(all_ids)} embeddings to MLX in "
+                f"{len(all_embeddings)} chunks (M1 8GB safe)"
+            )
         except Exception as e:
             logger.warning(f"Failed to load embeddings to MLX: {e}")
 
@@ -847,7 +894,12 @@ class LanceDBIdentityStore:
 
     async def _mlx_rerank(self, query_emb: list[float], candidates: list[dict], top_k: int) -> list[dict]:
         """Rerank candidates using MLX cosine similarity."""
-        if self._mlx_embeddings is None or len(candidates) == 0:
+        if len(candidates) == 0:
+            return candidates[:top_k]
+        # P6 fix: lazy-load MLX embeddings on first use (dead code was never wired)
+        if self._mlx_embeddings is None:
+            await self._load_embeddings_to_mlx()
+        if self._mlx_embeddings is None:
             return candidates[:top_k]
 
         await self._ensure_compiled_similarity()

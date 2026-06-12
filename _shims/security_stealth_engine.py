@@ -5,9 +5,6 @@ Sprint F214Q — StealthEngine aliasing.
 """
 from __future__ import annotations
 
-import asyncio
-import random
-
 
 class StealthEngine:
     """
@@ -23,8 +20,8 @@ class StealthEngine:
     """
 
     def __init__(self, *args, **kwargs) -> None:  # noqa: ARG002
-        from hledac.universal.stealth.stealth_session import StealthSession
-        self._session = StealthSession()
+        from hledac.universal.stealth.stealth_manager import StealthManager
+        self._manager = StealthManager()
         self._active = False
         self._activations = 0
 
@@ -34,46 +31,38 @@ class StealthEngine:
 
     async def activate_stealth_mode(
         self,
-        operation_type: str,
-        confidence_threshold: float,
-        security_level: int,
+        operation_type: str = "research",
+        confidence_threshold: float = 0.0,
+        security_level: int = 1,
     ) -> dict:
         """
-        Simulate stealth activation using StealthSession primitives.
+        Activate stealth mode via StealthManager.
 
-        Returns dict shape expected by SecurityCoordinator._execute_stealth_operation:
-        {
-            'active': bool,
-            'success': bool,
-            'measures_activated': int,
-        }
+        Returns dict shape expected by SecurityCoordinator._execute_stealth_operation.
         """
         self._activations += 1
-
-        # Canonical stealth: timing variance + UA rotation
-        jitter_min = getattr(self._session, '_jitter_min', 0.05)
-        jitter_max = getattr(self._session, '_jitter_max', 5.0)
-        delay = random.uniform(jitter_min, jitter_max)
-        await asyncio.sleep(delay)
-
-        ua = self._session.rotate_ua()
         self._active = True
 
+        await self._manager.rotate_all()
+        ua = self._manager.header_spoofer.get_random_ua() if self._manager.header_spoofer else "unknown"
+        js_prot = self._manager.get_js_protection()
+        profile = self._manager.get_browser_profile()
+
         return {
-            'active': True,
-            'success': True,
-            'measures_activated': 1,  # UA rotation counts as one measure
-            'ua_used': ua[:60],
-            'operation_type': operation_type,
+            "active": True,
+            "success": True,
+            "measures_activated": 4,
+            "ua_used": ua[:60],
+            "operation_type": operation_type,
+            "canvas_normalized": profile is not None,
+            "webgl_spoofed": profile is not None,
+            "webdriver_hidden": profile is not None,
+            "js_protection_script": js_prot,
+            "browser_profile": profile,
         }
 
     async def cleanup(self) -> None:
-        """Close the underlying StealthSession if it supports close()."""
-        if hasattr(self._session, 'close'):
-            try:
-                await self._session.close()
-            except Exception:
-                pass
+        """No-op: StealthManager has no close requirement."""
         self._active = False
 
     def is_active(self) -> bool:

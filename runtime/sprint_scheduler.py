@@ -106,6 +106,20 @@ except ImportError:  # pragma: no cover — fallback when run as a script
 # (zero runtime cost, ~50ns import resolution, single C-extension module).
 import msgspec
 
+# ── Sprint F265B: orjson with TYPE_CHECKING pattern ─────────────────────────
+# Type checker sees orjson via TYPE_CHECKING import; runtime uses lazy import.
+# Pattern eliminates type: ignore[name-defined] hackery.
+if TYPE_CHECKING:
+    import orjson
+
+try:
+    import orjson as _orjson
+
+    HAS_ORJSON: bool = True
+except ImportError:
+    _orjson = None  # type: ignore[assignment]
+    HAS_ORJSON = False
+
 # ── Sprint F228F: Nonfeed Prelude Policy ────────────────────────────────────
 
 _NONFEED_DIAGNOSTIC_FALLBACK_LANES = ("CT", "WAYBACK", "PASSIVE_DNS", "PIVOT_EXECUTOR", "DOH")
@@ -211,6 +225,47 @@ def _reset_advisory_log_dedup() -> None:
 
 
 
+
+
+def _build_deep_security_config(sprint_mode: str) -> DeepSecurityConfig:
+    """
+    DS4: Mode-aware DeepSecurityConfig factory. research=conservative, aggressive=stricter.
+
+    DS1+DS2+DS3 audit fix: use privacy_level to drive the cascade.
+    - "medium" activates obfuscation + chaff, but does NOT force heavy crypto.
+    - "low" activates audit only, no heavy ops at all.
+    - privacy_level="maximum" SILENTLY forces enable_quantum_safe=True +
+      enable_steganography=True via _apply_privacy_level() — M1 8GB killer.
+      Dead flags (enable_anti_fingerprinting, enable_request_signing,
+      enable_zero_knowledge) do not exist in DeepSecurityConfig — Python
+      silently ignores them, so they are removed from this factory entirely.
+    """
+    from hledac.universal.security.deep_research_security import DeepSecurityConfig
+
+    if sprint_mode == "aggressive":
+        return DeepSecurityConfig(
+            privacy_level="medium",       # obfuscation ON, no forced heavy crypto
+            enable_quantum_safe=False,    # ML-KEM overhead not worth it on M1 8GB
+            enable_steganography=False,   # image stego not needed in sprint context
+            enable_obfuscation=True,      # chaff queries OK for aggressive
+            enable_destruction=True,      # secure cleanup always
+            enable_audit=True,            # audit trail always
+            chaff_enabled=True,           # fake traffic in aggressive mode
+            chaff_ratio=0.2,              # 20% chaff — enough cover, not overwhelming
+            auto_cleanup=True,
+        )
+    else:  # research (default)
+        return DeepSecurityConfig(
+            privacy_level="low",          # audit only, no heavy crypto
+            enable_quantum_safe=False,    # no ML-KEM overhead
+            enable_steganography=False,   # no image processing
+            enable_obfuscation=False,     # no chaff noise in research
+            enable_destruction=True,      # secure cleanup always
+            enable_audit=True,            # audit trail always
+            chaff_enabled=False,          # no fake traffic in research
+            chaff_ratio=0.0,
+            auto_cleanup=True,
+        )
 
 
 def resolve_nonfeed_expected_lanes(
@@ -2550,6 +2605,9 @@ class SprintSchedulerResult:
 
     lane_ipfs_accepted_findings: int = 0
 
+    # Issue 9: PUBLIC lane telemetry (PUBLIC bypasses _accumulate_lane_findings)
+    lane_public_accepted_findings: int = 0
+
     # F218Z: IPFS discovery sidecar telemetry
 
     ipfs_cids_attempted: int = 0
@@ -3724,6 +3782,9 @@ class SprintResult:
 
     lane_doh_accepted_findings: int = 0
 
+    # Issue 9: PUBLIC lane telemetry (PUBLIC bypasses _accumulate_lane_findings)
+    lane_public_accepted_findings: int = 0
+
     # Sprint F214: DOH acquisition report fields
 
     doh_planned: bool = False
@@ -3921,10 +3982,6 @@ class SprintResult:
     pivot_seed_hashes: tuple[str, ...] = ()
 
     pivot_seed_cves: tuple[str, ...] = ()
-
-    pivot_lane_plan_count: int = 0
-
-    planned_pivot_lanes: tuple[str, ...] = ()
 
     pivot_integration_reason: str = ""
     findings: list = field(default_factory=list)
@@ -4802,6 +4859,10 @@ class SprintScheduler:
         # Sprint 8UC B.4: Speculative prefetch
 
         self._bg_tasks: set[asyncio.Task] = set()
+        # Sprint F265C: Non-blocking sidecar tasks tracked separately from
+        # speculative bg_tasks so teardown can await them with timeout
+        # before hard-cancelling. Prevents findings loss on fast sprint exit.
+        self._sidecar_tasks: set[asyncio.Task] = set()
 
         self._speculative_results: dict[str, object] = {}
 
@@ -4941,6 +5002,7 @@ class SprintScheduler:
 
         # Sprint F26X: Privacy layer injection (preferred over self._layer_manager.privacy)
         self._privacy_layer: Any = None
+        self._security_coordinator: Any = None
 
         # Sprint F250F: Privacy layer context ID for lifecycle management
         self._privacy_context_id: str | None = None
@@ -6469,13 +6531,9 @@ class SprintScheduler:
 
                         if _pred_report_path.exists():
 
-                            import orjson
-
-
-
                             _pred_raw = _pred_report_path.read_bytes()
 
-                            _pred_data: dict = orjson.loads(_pred_raw)
+                            _pred_data: dict = _orjson.loads(_pred_raw) if _orjson else {}
 
                             _inv_packet = _pred_data.get("investigation_packet") or {}
 
@@ -7854,6 +7912,44 @@ class SprintScheduler:
                 await safe_gather_fire_and_forget(*self._bg_tasks, label="sprint_scheduler:7141")
 
             self._bg_tasks.clear()
+
+            # Sprint F265C: Await non-blocking sidecar tasks with bounded timeout
+            # before hard-cancelling. Uses asyncio.wait_for so CancelledError
+            # propagates correctly. On timeout, tasks are cancelled and re-raised.
+            # Sidecar tasks (BGP, IPFS, DHT, I2P, Gopher, CC, DigitalGhost,
+            # Steganography, TI-Feed) are tracked in _sidecar_tasks separately
+            # from speculative _bg_tasks so they get graceful shutdown first.
+            if self._sidecar_tasks:
+
+                _pending = list(self._sidecar_tasks)
+
+                try:
+
+                    await asyncio.wait_for(
+
+                        safe_gather_fire_and_forget(*_pending, label="sprint_scheduler:sidecar_tasks"),
+
+                        timeout=10.0,
+
+                    )
+
+                except TimeoutError:
+
+                    log.debug("[F265C] Sidecar tasks did not complete in 10s, cancelling")
+
+                    for t in _pending:
+
+                        if not t.done():
+
+                            t.cancel()
+
+                    # Re-raise CancelledError so the caller sees the timeout
+
+                    raise
+
+                finally:
+
+                    self._sidecar_tasks.clear()
 
 
 
@@ -10155,7 +10251,7 @@ class SprintScheduler:
 
                                 try:
 
-                                    _ex_samples.append(orjson.dumps(_ex).decode("utf-8"))  # type: ignore[no-redef,name-defined]
+                                    _ex_samples.append(_orjson.dumps(_ex).decode("utf-8") if _orjson else "")
 
                                 except Exception:
 
@@ -10182,7 +10278,7 @@ class SprintScheduler:
 
                             try:
 
-                                _samples.append(orjson.dumps(_entry).decode("utf-8"))  # type: ignore[name-defined]  # type: ignore[no-redef,name-defined]
+                                _samples.append(_orjson.dumps(_entry).decode("utf-8") if _orjson else "")
 
                             except Exception:
 
@@ -11171,9 +11267,9 @@ class SprintScheduler:
 
                             )
 
-                            self._result.pivot_lane_plan_count = len(_plan.items)
+                            self._result.pivot_lane_plan_count = len(_plan.items)  # type: ignore[unresolved-attribute]
 
-                            self._result.planned_pivot_lanes = tuple(
+                            self._result.planned_pivot_lanes = tuple(  # type: ignore[unresolved-attribute]
 
                                 sorted({item.lane.upper() for item in _plan.items})
 
@@ -12057,7 +12153,7 @@ class SprintScheduler:
 
                         try:
 
-                            _samples.append(orjson.dumps(_entry).decode("utf-8"))  # type: ignore[name-defined]
+                            _samples.append(_orjson.dumps(_entry).decode("utf-8") if _orjson else "")
 
                         except Exception:
 
@@ -12652,6 +12748,10 @@ class SprintScheduler:
             self._lane_outcomes = tuple(_prelude_outcomes)
 
             self._result.acquisition_lane_outcomes = tuple(_prelude_outcomes)
+
+            # Sprint F268: Populate telemetry for nonfeed prelude lanes that bypass
+            # run_enabled_acquisition_lanes / _accumulate_lane_findings.
+            self._accumulate_lane_findings(tuple(_prelude_outcomes), query)
 
 
 
@@ -14663,6 +14763,10 @@ class SprintScheduler:
 
                         )
 
+                    # F265C: Lazy-init graph_accumulator before passing to lane runners
+                    if self._graph_accumulator is None:
+                        self._graph_accumulator = SprintGraphAccumulator()
+
                     _outcomes = await run_enabled_acquisition_lanes(
 
                         snapshot=self._acquisition_plan,
@@ -14674,6 +14778,8 @@ class SprintScheduler:
                         uma_state=_uma,
 
                         seed_context=_seed_ctx,
+
+                        graph_accumulator=self._graph_accumulator,
 
                     )
 
@@ -15730,6 +15836,10 @@ class SprintScheduler:
 
                 async with _asyncio.timeout(lanes_timeout):
 
+                    # F265C: Lazy-init graph_accumulator before passing to lane runners
+                    if self._graph_accumulator is None:
+                        self._graph_accumulator = SprintGraphAccumulator()
+
                     _outcomes = await run_enabled_acquisition_lanes(
 
                         snapshot=self._acquisition_plan,
@@ -15741,6 +15851,7 @@ class SprintScheduler:
                         uma_state=_uma,
 
                         seed_context=None,  # aggressive mode uses plan-level eligibility, not pivot seeds
+                        graph_accumulator=self._graph_accumulator,
 
                     )
 
@@ -16297,6 +16408,7 @@ class SprintScheduler:
             "public_accepted_url_sample": _pub_accepted_url_sample,
 
         }
+        self._result.lane_public_accepted_findings = getattr(public_result, 'accepted_findings', 0) or 0
 
 
 
@@ -18067,7 +18179,6 @@ class SprintScheduler:
 
             # Extract file paths from file findings
             from forensics.enrichment_service import _extract_file_path_from_payload
-            from security.digital_ghost_detector import analyze_file_ghosts
 
             MAX_FILES = 10  # noqa: N806
 
@@ -18088,6 +18199,11 @@ class SprintScheduler:
 
             async def analyze_one(path_and_conf):
                 path, _ = path_and_conf
+                try:
+                    from security.digital_ghost_detector import analyze_file_ghosts
+                except ImportError:
+                    log.debug("[F3FORENSICS] digital_ghost_detector not available")
+                    return None
                 try:
                     import asyncio
                     result = await asyncio.to_thread(analyze_file_ghosts, path)
@@ -18164,7 +18280,6 @@ class SprintScheduler:
 
             from pathlib import Path
 
-            from security.stego_detector import StatisticalStegoDetector, StegoConfig
 
             MAX_IMAGES = 10  # noqa: N806
             MAX_IMAGE_SIZE_MB = 50  # noqa: N806
@@ -18189,6 +18304,11 @@ class SprintScheduler:
 
             async def analyze_one(path_and_conf):
                 path, _ = path_and_conf
+                try:
+                    from security.stego_detector import StatisticalStegoDetector, StegoConfig
+                except ImportError:
+                    log.debug("[F3FORENSICS] stego_detector not available")
+                    return None
                 try:
                     config = StegoConfig(max_image_size=MAX_IMAGE_SIZE_MB * 1024 * 1024)
                     detector = StatisticalStegoDetector(config)
@@ -19423,6 +19543,8 @@ class SprintScheduler:
 
             AcquisitionLane.IPFS: "ipfs",
 
+            AcquisitionLane.PUBLIC: "public",
+
         }
 
 
@@ -19583,6 +19705,27 @@ class SprintScheduler:
                         except Exception:
 
                             continue
+
+                # Sprint F265C: Accumulate lane findings into DuckPGQ graph.
+                # F268: Skip lanes already graphed in run_enabled_acquisition_lanes
+                # (CT/WAYBACK/PDNS/DOH/BLOCKCHAIN/IPFS/ACADEMIC all call graph_accumulator
+                # directly there). Only graph lanes that bypass run_enabled_acquisition_lanes.
+                _already_graphed_in_lane = {
+                    AcquisitionLane.CT,
+                    AcquisitionLane.WAYBACK,
+                    AcquisitionLane.PASSIVE_DNS,
+                    AcquisitionLane.DOH,
+                    AcquisitionLane.BLOCKCHAIN,
+                    AcquisitionLane.IPFS,
+                    AcquisitionLane.ACADEMIC,
+                }
+                if candidate_findings and lane_name not in _already_graphed_in_lane:
+                    try:
+                        self._accumulate_findings_to_graph(
+                            candidate_findings, sprint_id=self.sprint_id or ""
+                        )
+                    except Exception:
+                        log.debug("[F265C] Lane graph accumulation failed (non-fatal)")
 
                 elif remaining > 0:
 
@@ -20583,21 +20726,15 @@ class SprintScheduler:
         Returns:
             None. Findings list is updated in-place via self._result.all_findings.
         """
-        # Guard: skip if no findings or ANE not available.
+        # Guard: skip if no findings.
         all_findings: list[dict] = getattr(self._result, "all_findings", None)
         if not all_findings or len(all_findings) < 2:
             return
 
         try:
             from hledac.universal.brain.ane_embedder import (
-                get_ane_embedder,
                 semantic_dedup_findings,
             )
-
-            embedder = get_ane_embedder()
-            if embedder is None or not embedder.is_loaded():
-                logger.debug("[ANE-DEDUP] embedder not loaded, skipping")
-                return
 
             threshold_env = os.environ.get("HLEDAC_ANE_DEDUP_THRESHOLD", "0.92")
             try:
@@ -22193,19 +22330,11 @@ class SprintScheduler:
 
         # Sprint F251C: orjson available (requirements.txt line 27)
 
-        try:
-
-            import orjson
-
-            def _serialize(r):
-                return orjson.dumps(r)
-
-        except ImportError:
-
-            import json
-
-            def _serialize(r):
-                return json.dumps(r).encode()
+        def _serialize(r):
+            if _orjson:
+                return _orjson.dumps(r)
+            import json  # noqa: F401
+            return json.dumps(r).encode()
 
 
 
@@ -22686,19 +22815,11 @@ class SprintScheduler:
 
         # Sprint F251C: orjson available (requirements.txt line 27)
 
-        try:
-
-            import orjson
-
-            def _serialize(r):
-                return orjson.dumps(r)
-
-        except ImportError:
-
-            import json
-
-            def _serialize(r):
-                return json.dumps(r).encode()
+        def _serialize(r):
+            if _orjson:
+                return _orjson.dumps(r)
+            import json  # noqa: F401
+            return json.dumps(r).encode()
 
 
 
@@ -23142,8 +23263,7 @@ class SprintScheduler:
 
             if report is not None:
                 try:
-                    import orjson
-                    self._result.synthesis_text = orjson.dumps({
+                    self._result.synthesis_text = _orjson.dumps({
                         "query": query,
                         "ioc_entities": [
                             {"type": e.ioc_type, "value": e.value}
@@ -23324,8 +23444,7 @@ class SprintScheduler:
                         "SELECT gaps_json FROM research_sessions ORDER BY ts DESC LIMIT 1"
                     ).fetchone()
                     if result and result[0]:
-                        import orjson
-                        gaps_data = orjson.loads(result[0])
+                        gaps_data = (_orjson.loads(result[0]) if _orjson else [])
                         known_gaps = [g.get("description", "") for g in gaps_data if g]
                 except Exception:
                     pass
@@ -23514,6 +23633,10 @@ class SprintScheduler:
                 UnifiedResearchConfig,
                 UnifiedResearchEngine,
             )
+            from hledac.universal.security.deep_research_security import (
+                DeepResearchSecurity,
+                DeepSecurityConfig,
+            )
 
         except ImportError:
 
@@ -23646,15 +23769,20 @@ class SprintScheduler:
         )
 
         # Execute via canonical UnifiedResearchEngine.deep_research()
+        # wrapped in DeepResearchSecurity.protected_session() for anti-fingerprinting
+
+        _mode = "aggressive" if self._config.aggressive_mode else "research"
+        _deep_sec = DeepResearchSecurity(_build_deep_security_config(_mode))
 
         try:
 
-            engine = UnifiedResearchEngine(config=engine_config)
+            async with _deep_sec.protected_session() as _sec_ctx:
+                engine = UnifiedResearchEngine(config=engine_config)
 
-            async with asyncio.timeout(remaining_s):
-                response = await engine.deep_research(
-                    query=query, depth=depth, max_results=50
-                )
+                async with asyncio.timeout(remaining_s):
+                    response = await engine.deep_research(
+                        query=query, depth=depth, max_results=50
+                    )
 
         except TimeoutError:
 
@@ -27041,7 +27169,18 @@ class SprintScheduler:
 
         self._privacy_layer = layer
 
+    def inject_security_coordinator(self, coordinator: Any) -> None:
+        """
+        F26X+: Inject UniversalSecurityCoordinator for multi-layer security.
 
+
+        Coordinates: StealthEngine, ThreatIntelligence, QuantumCrypto, ZKP.
+        Security levels: MINIMAL(1) → STANDARD(2) → HIGH(3) → MAXIMUM(4).
+
+        OWNERSHIP: caller owns the coordinator. Scheduler uses it for
+        _run_security_session() in research/aggressive sprint modes.
+        """
+        self._security_coordinator = coordinator
 
     def get_analyst_brief(self) -> Any:
 
@@ -29521,6 +29660,16 @@ class SprintScheduler:
 
                     total_quality += qual
 
+                # Issue 9: Inject PUBLIC as virtual lane entry so dominant_tag sees PUBLIC
+                # PUBLIC runs synchronously in-cycle (bypass _accumulate_lane_findings) so
+                # its signal is tracked separately in _public_outcome. We fold it into
+                # lane_verdict here so cross-lane comparison is unified.
+                if self._public_outcome is not None:
+                    pub_accepted = self._public_outcome.get("accepted_count", 0) or 0
+                    if pub_accepted > 0:
+                        verdict_tags["public"] = verdict_tags.get("public", 0) + pub_accepted
+                        total_signal += pub_accepted
+
                 dominant_tag = max(verdict_tags, key=verdict_tags.get) if verdict_tags else "none"
 
                 avg_quality = total_quality / len(lane_vlist) if lane_vlist else 0.0
@@ -29554,6 +29703,9 @@ class SprintScheduler:
                     "ipfs_findings": self._result.lane_ipfs_accepted_findings,
 
                     "doh_findings": self._result.lane_doh_accepted_findings,
+
+                    # Issue 9: PUBLIC lane findings in lane_verdict
+                    "public_findings": self._result.lane_public_accepted_findings,
 
                     # Sprint F214D: CT Bridge Loss Audit telemetry
 

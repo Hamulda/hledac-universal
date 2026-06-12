@@ -1,4 +1,4 @@
-from typing import TYPE_CHECKING
+from __future__ import annotations
 
 #!/usr/bin/env python3
 """
@@ -14,11 +14,11 @@ Anti-patterns prevented:
   - Non-blocking aiohttp only
   - Always returns valid dict shape (missing fields = empty value)
 """
-from __future__ import annotations
 
 import asyncio
 import logging
 import time
+from typing import TYPE_CHECKING
 
 import aiohttp
 

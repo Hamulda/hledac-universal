@@ -61,13 +61,13 @@ async def active_learning_step(
 
     try:
         # Import here to avoid circular dependencies
-        from hledac.universal.brain.hermes3_engine import Hermes3Engine
+        from hledac.universal.brain.deephermes3_engine import DeepHermes3Engine
         from hledac.universal.brain.model_lifecycle import model_lifecycle
         from hledac.universal.discovery.duckduckgo_adapter import async_search_public_web
 
         # Create Hermes engine with memory guard via model_lifecycle
         async with model_lifecycle("hermes3"):
-            hermes = Hermes3Engine()
+            hermes = DeepHermes3Engine()
 
             while step_count < _MAX_LEARNING_STEPS:
                 step_count += 1

@@ -265,7 +265,7 @@ class SidecarOrchestrator:
 
         # Steps 3-4: Non-blocking advisory sidecars
         if self._scheduler is not None:
-            bg_tasks: set | None = getattr(self._scheduler, "_bg_tasks", None)
+            bg_tasks: set | None = getattr(self._scheduler, "_sidecar_tasks", None)
             if bg_tasks is None:
                 bg_tasks = set()
             _bgp_task = _asyncio.create_task(
@@ -289,7 +289,7 @@ class SidecarOrchestrator:
 
         # Steps 5-7: F229 deep OSINT sidecars (non-blocking, env-gated)
         if self._scheduler is not None:
-            bg_tasks: set | None = getattr(self._scheduler, "_bg_tasks", None)
+            bg_tasks: set | None = getattr(self._scheduler, "_sidecar_tasks", None)
             if bg_tasks is None:
                 bg_tasks = set()
             _ipfs_env = _os.environ.get("HLEDAC_ENABLE_IPFS", "").strip()
@@ -378,10 +378,10 @@ class SidecarOrchestrator:
                 name="sprint:plugin_sidecars",
             )
             if self._scheduler is not None:
-                _bg_tasks: set | None = getattr(self._scheduler, "_bg_tasks", None)
-                if _bg_tasks is not None:
-                    _bg_tasks.add(_plugin_task)
-                    _plugin_task.add_done_callback(_bg_tasks.discard)
+                _sidecar_tasks: set | None = getattr(self._scheduler, "_sidecar_tasks", None)
+                if _sidecar_tasks is not None:
+                    _sidecar_tasks.add(_plugin_task)
+                    _plugin_task.add_done_callback(_sidecar_tasks.discard)
 
     async def run_plugin_sidecars(self, ctx: Any) -> None:
         """
@@ -452,7 +452,7 @@ class SidecarOrchestrator:
                     return
 
             # Dispatch each plugin sidecar as its own non-blocking task.
-            # Each inner task is tracked in _bg_tasks so teardown can await them.
+            # Each inner task is tracked in _sidecar_tasks so teardown can await them.
             for adapter in available:
                 try:
                     _inner_task = _asyncio.create_task(
@@ -460,7 +460,7 @@ class SidecarOrchestrator:
                         name=f"sprint:plugin_sidecar:{adapter.sidecar_id}",
                     )
                     if self._scheduler is not None:
-                        _bg: set | None = getattr(self._scheduler, "_bg_tasks", None)
+                        _bg: set | None = getattr(self._scheduler, "_sidecar_tasks", None)
                         if _bg is not None:
                             _bg.add(_inner_task)
                             _inner_task.add_done_callback(_bg.discard)

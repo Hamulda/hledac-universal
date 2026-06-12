@@ -176,8 +176,8 @@ def _make_lazy_registry() -> dict[str, LazyModel]:
     """
 
     def _hermes3():
-        from brain.hermes3_engine import Hermes3Engine  # type: ignore
-        return Hermes3Engine()
+        from brain.deephermes3_engine import DeepHermes3Engine  # type: ignore
+        return DeepHermes3Engine()
 
     def _ner():
         from brain.ner_engine import NEREngine  # type: ignore

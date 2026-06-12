@@ -138,10 +138,12 @@ async def run_windup(
     all_findings = getattr(scheduler, "_all_findings", [])
     deduped = all_findings
     try:
-        from brain.ane_embedder import get_ane_embedder, semantic_dedup_findings
+        from _shims.core_mlx_embeddings import get_embedding_manager
+        from brain.ane_embedder import semantic_dedup_findings
         if all_findings:
             deduped = await semantic_dedup_findings(all_findings)
-            engine = "ANE-MiniLM" if get_ane_embedder() else "hash-fallback"
+            mgr = get_embedding_manager()
+            engine = "MLX-ModernBERT" if (mgr and mgr._is_loaded) else "hash-fallback"
             logger.info(
                 f"[ANE] {len(all_findings)} → {len(deduped)} unique "
                 f"(engine={engine})"

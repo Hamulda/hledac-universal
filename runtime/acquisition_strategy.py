@@ -3235,6 +3235,7 @@ async def run_enabled_acquisition_lanes(
     store,  # DuckDBShadowStore | None
     uma_state: str = "ok",
     seed_context: NonfeedSeedContext | None = None,
+    graph_accumulator=None,  # SprintGraphAccumulator | None — F265C: wire nonfeed IOCs to graph
 ) -> tuple:
     """
     Run all enabled optional acquisition lanes (CT, WAYBACK, PASSIVE_DNS, BLOCKCHAIN)
@@ -3250,6 +3251,9 @@ async def run_enabled_acquisition_lanes(
         query:      Sprint query string.
         store:      DuckDBShadowStore for canonical storage (async_ingest_findings_batch).
         uma_state:  Current UMA state ("ok" | "warn" | "critical" | "emergency").
+        seed_context: NonfeedSeedContext for domain/IP seeding.
+        graph_accumulator: SprintGraphAccumulator instance for graph wiring.
+                           If None, graph accumulation is skipped (fail-soft, F265C).
 
     Returns:
         Tuple of AcquisitionLaneOutcome, one per optional lane.
@@ -3320,6 +3324,12 @@ async def run_enabled_acquisition_lanes(
                             )
                         except Exception:
                             pass  # fail-soft
+                # F265C: Accumulate lane IOCs to DuckPGQ graph
+                if candidate_findings and graph_accumulator is not None:
+                    try:
+                        graph_accumulator.accumulate_findings(list(candidate_findings), sprint_id=f"ct-{int(time.time())}")
+                    except Exception:
+                        pass  # fail-soft
                 if ct_outcome.error:
                     ct_error = ct_outcome.error
 
@@ -3436,6 +3446,12 @@ async def run_enabled_acquisition_lanes(
                             )
                         except Exception:
                             pass  # fail-soft
+                # F265C: Accumulate lane IOCs to DuckPGQ graph
+                if candidate_findings and graph_accumulator is not None:
+                    try:
+                        graph_accumulator.accumulate_findings(list(candidate_findings), sprint_id=f"wayback-{int(time.time())}")
+                    except Exception:
+                        pass  # fail-soft
 
                 return AcquisitionLaneOutcome(
                     lane=AcquisitionLane.WAYBACK,
@@ -3535,6 +3551,12 @@ async def run_enabled_acquisition_lanes(
                             )
                         except Exception:
                             pass  # fail-soft
+                # F265C: Accumulate lane IOCs to DuckPGQ graph
+                if candidate_findings and graph_accumulator is not None:
+                    try:
+                        graph_accumulator.accumulate_findings(list(candidate_findings), sprint_id=f"pdns-{int(time.time())}")
+                    except Exception:
+                        pass  # fail-soft
 
                 return AcquisitionLaneOutcome(
                     lane=AcquisitionLane.PASSIVE_DNS,
@@ -3636,6 +3658,12 @@ async def run_enabled_acquisition_lanes(
                             )
                         except Exception:
                             pass  # fail-soft
+                # F265C: Accumulate lane IOCs to DuckPGQ graph
+                if candidate_findings and graph_accumulator is not None:
+                    try:
+                        graph_accumulator.accumulate_findings(list(candidate_findings), sprint_id=f"academic-{int(time.time())}")
+                    except Exception:
+                        pass  # fail-soft
                 return AcquisitionLaneOutcome(
                     lane=AcquisitionLane.ACADEMIC,
                     enabled=plan.enabled,
@@ -3761,6 +3789,12 @@ async def run_enabled_acquisition_lanes(
                             )
                         except Exception:
                             pass
+                # F265C: Accumulate lane IOCs to DuckPGQ graph
+                if candidate_findings and graph_accumulator is not None:
+                    try:
+                        graph_accumulator.accumulate_findings(list(candidate_findings), sprint_id=f"ipfs-{int(time.time())}")
+                    except Exception:
+                        pass
 
                 return AcquisitionLaneOutcome(
                     lane=AcquisitionLane.IPFS,
@@ -3825,6 +3859,12 @@ async def run_enabled_acquisition_lanes(
                             )
                         except Exception:
                             pass  # fail-soft
+                # F265C: Accumulate lane IOCs to DuckPGQ graph
+                if all_findings and graph_accumulator is not None:
+                    try:
+                        graph_accumulator.accumulate_findings(all_findings, sprint_id=f"open_source-{int(time.time())}")
+                    except Exception:
+                        pass  # fail-soft
 
                 return AcquisitionLaneOutcome(
                     lane=AcquisitionLane.OPEN_SOURCE,
@@ -3917,6 +3957,12 @@ async def run_enabled_acquisition_lanes(
                             accepted = sum(1 for r in ingest_results if isinstance(r, dict) and r.get("accepted"))
                         except Exception:
                             pass  # fail-soft
+                # F265C: Accumulate lane IOCs to DuckPGQ graph
+                if candidate_findings and graph_accumulator is not None:
+                    try:
+                        graph_accumulator.accumulate_findings(list(candidate_findings), sprint_id=f"doh-{int(time.time())}")
+                    except Exception:
+                        pass  # fail-soft
 
                 return AcquisitionLaneOutcome(
                     lane=AcquisitionLane.DOH,
@@ -3966,6 +4012,7 @@ async def run_enabled_acquisition_lanes(
                 accepted = 0
                 total_tx = 0
 
+                all_blockchain_findings: list = []
                 for address in wallets[: plan.max_items]:
                     try:
                         bf = BlockchainForensics()
@@ -3974,6 +4021,7 @@ async def run_enabled_acquisition_lanes(
                         if result and hasattr(store, "async_ingest_findings_batch"):
                             findings = _wallet_to_findings(result, query)
                             if findings:
+                                all_blockchain_findings.extend(findings)
                                 try:
                                     ingest_results = await store.async_ingest_findings_batch(findings)
                                     accepted += sum(
@@ -3985,6 +4033,13 @@ async def run_enabled_acquisition_lanes(
                                     pass  # fail-soft
                     except Exception:
                         continue  # fail-soft per address
+
+                # F265C: Accumulate lane IOCs to DuckPGQ graph
+                if all_blockchain_findings and graph_accumulator is not None:
+                    try:
+                        graph_accumulator.accumulate_findings(all_blockchain_findings, sprint_id=f"blockchain-{int(time.time())}")
+                    except Exception:
+                        pass  # fail-soft
 
                 return AcquisitionLaneOutcome(
                     lane=AcquisitionLane.BLOCKCHAIN,
@@ -4048,6 +4103,12 @@ async def run_enabled_acquisition_lanes(
                             accepted = sum(1 for r in ingest_results if isinstance(r, dict) and r.get("accepted"))
                         except Exception:
                             pass
+                # F265C: Accumulate lane IOCs to DuckPGQ graph
+                if findings and graph_accumulator is not None:
+                    try:
+                        graph_accumulator.accumulate_findings(findings, sprint_id=f"shodan-{int(time.time())}")
+                    except Exception:
+                        pass
 
                 return AcquisitionLaneOutcome(
                     lane=AcquisitionLane.SHODAN,
@@ -4096,6 +4157,12 @@ async def run_enabled_acquisition_lanes(
                             accepted = sum(1 for r in ingest_results if isinstance(r, dict) and r.get("accepted"))
                         except Exception:
                             pass
+                # F265C: Accumulate lane IOCs to DuckPGQ graph
+                if findings and graph_accumulator is not None:
+                    try:
+                        graph_accumulator.accumulate_findings(findings, sprint_id=f"censys-{int(time.time())}")
+                    except Exception:
+                        pass
 
                 return AcquisitionLaneOutcome(
                     lane=AcquisitionLane.CENSYS,
@@ -4144,6 +4211,12 @@ async def run_enabled_acquisition_lanes(
                             accepted = sum(1 for r in ingest_results if isinstance(r, dict) and r.get("accepted"))
                         except Exception:
                             pass
+                # F265C: Accumulate lane IOCs to DuckPGQ graph
+                if findings and graph_accumulator is not None:
+                    try:
+                        graph_accumulator.accumulate_findings(findings, sprint_id=f"greynoise-{int(time.time())}")
+                    except Exception:
+                        pass
 
                 return AcquisitionLaneOutcome(
                     lane=AcquisitionLane.GREYNOISE,

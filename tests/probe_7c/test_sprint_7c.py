@@ -149,6 +149,7 @@ class TestBootstrapScripts:
         assert "IsolateSOCKSAuth" in content
 
 
+@pytest.mark.skip(reason="security/self_healing.py deleted — module no longer exists")
 class TestSecuritySelfHealing:
     """Test security/self_healing.py hygiene."""
 
@@ -200,6 +201,7 @@ class TestLMDBMapSize:
         assert "map_size=None" in content or "map_size" not in content
 
 
+@pytest.mark.skip(reason="security/self_healing.py deleted — module no longer exists")
 class TestAsyncTimeoutMigration:
     """Test asyncio.timeout migration in self_healing.py."""
 

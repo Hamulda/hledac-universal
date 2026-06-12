@@ -130,8 +130,8 @@ class Hermes3DSPyLM:
             mutex.acquire_mlx(model_size_mb=2000.0)
 
             # Import and init Hermes3Engine
-            from hledac.universal.brain.hermes3_engine import Hermes3Engine
-            self._engine = Hermes3Engine(
+            from hledac.universal.brain.deephermes3_engine import DeepHermes3Engine
+            self._engine = DeepHermes3Engine(
                 model_path=self._model_path,
                 sanitize_for_llm=None
             )

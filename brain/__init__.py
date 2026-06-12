@@ -40,7 +40,7 @@ class DecisionType(Enum):
     ERROR = "error"
     COMPLETE = "complete"
 
-from .hermes3_engine import Hermes3Engine  # noqa: E402
+from .deephermes3_engine import DeepHermes3Engine, parse_thinking_output  # noqa: E402
 
 # Sprint P0-2: Continuous batching executor (F226H wiring).
 # Always-on routing layer for Hermes3 inference requests.
@@ -248,7 +248,8 @@ def get_available_brain_engines() -> dict[str, bool]:
     return AVAILABLE_BRAIN_ENGINES.copy()
 
 __all__ = [
-    "Hermes3Engine",
+    "DeepHermes3Engine",
+    "parse_thinking_output",
     # Sprint P0-2: Continuous batching executor
     "MLXBatchedExecutor",
     "MLX_BATCHED_EXECUTOR_AVAILABLE",

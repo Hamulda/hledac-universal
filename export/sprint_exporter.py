@@ -51,6 +51,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import pathlib
 from typing import TYPE_CHECKING, Any
 
@@ -757,7 +758,7 @@ async def export_sprint(
     store: Any,
     handoff: ExportHandoff,  # type: ignore[name-defined]
     sprint_id: str | None = None,
-    enable_security_enrichment: bool = False,
+    enable_security_enrichment: bool = os.environ.get("HLEDAC_VAULT_EXPORT", "0") == "1",
     export_mode: str = "slim",
 ) -> dict:
     """

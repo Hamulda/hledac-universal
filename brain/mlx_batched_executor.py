@@ -55,7 +55,6 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from hledac.universal.brain.batch_scheduler import BatchScheduler
-    from hledac.universal.brain.hermes3_engine import Hermes3Engine
 
 logger = logging.getLogger(__name__)
 

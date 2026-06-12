@@ -4760,16 +4760,28 @@ class DuckDBShadowStore:
 
         # Fallback gate 1: env opt-in
         if not _ARROW_INGEST_ENABLED:
+            logger.debug(
+                "[D7-arrow-fallback] HLEDAC_ARROW_INGEST=0, using legacy path "
+                f"for {len(findings)} findings"
+            )
             return await self.async_record_canonical_findings_batch(findings)
 
         # Fallback gate 2: batch size — executemany is faster for small N
         if len(findings) < _ARROW_MIN_BATCH:
+            logger.debug(
+                f"[D7-arrow-fallback] batch size {len(findings)} < "
+                f"_ARROW_MIN_BATCH({_ARROW_MIN_BATCH}), using legacy path"
+            )
             return await self.async_record_canonical_findings_batch(findings)
 
         # Fallback gate 3: pyarrow availability (lazy import)
         try:
             import pyarrow  # noqa: F401
         except ImportError:
+            logger.debug(
+                "[D7-arrow-fallback] pyarrow not available, using legacy path "
+                f"for {len(findings)} findings"
+            )
             return await self.async_record_canonical_findings_batch(findings)
 
         # Init / closed guards — mirror legacy semantics (mark all as failed)
@@ -4791,9 +4803,13 @@ class DuckDBShadowStore:
                 self._sync_record_canonical_findings_batch_arrow_full,
                 findings,
             )
-        except Exception:
+        except Exception as exc:
             # Any executor-side failure (pyarrow missing at worker import, etc.)
             # → fall back to proven executemany path. This is the 4th fallback gate.
+            logger.warning(
+                f"[D7-arrow-fallback] executor error ({exc}), using legacy path "
+                f"for {len(findings)} findings"
+            )
             return await self.async_record_canonical_findings_batch(findings)
 
         # Fallback gate 4: empty results from sync helper = failure (table build
@@ -4811,7 +4827,7 @@ class DuckDBShadowStore:
         # Fallback gate 5: complete DuckDB failure (all duckdb_success=False)
         # despite non-empty results → fall back so canonical write is guaranteed.
         if results and all(r.get("duckdb_success") is False for r in results):
-            _logger.error(
+            logger.error(
                 "[D7] Arrow path: all %d findings failed DuckDB write — "
                 "falling back to legacy executemany.",
                 len(results),

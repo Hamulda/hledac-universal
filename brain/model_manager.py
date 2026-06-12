@@ -321,8 +321,8 @@ class ModelManager:
 
     def _create_hermes_engine(self) -> Any:
         """Factory pro Hermes3Engine."""
-        from .hermes3_engine import Hermes3Engine
-        return Hermes3Engine()
+        from .deephermes3_engine import DeepHermes3Engine
+        return DeepHermes3Engine()
 
     def _create_modernbert_engine(self) -> Any:
         """Factory pro ModernBertModelAdapter (bridges ModernBertEngine → ModelEngine)."""
@@ -1128,9 +1128,9 @@ class ModelManager:
         async with self.acquire_model_ctx("hermes"):
             pass  # Model loaded in context, will be released after
 
-        # We need to use hermes3_engine directly for generate_report
-        from .hermes3_engine import Hermes3Engine
-        engine = Hermes3Engine()
+        # We need to use deephermes3_engine directly for generate_report
+        from .deephermes3_engine import DeepHermes3Engine
+        engine = DeepHermes3Engine()
         try:
             await engine.initialize()
         except Exception as e:

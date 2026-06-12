@@ -15,11 +15,30 @@ Interface expected by security_coordinator.py:
 from __future__ import annotations
 
 import logging
+import os
 import re
 from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger(__name__)
+
+
+def _looks_like_ip(s: str) -> bool:
+    return bool(re.match(r"^\d{1,3}(\.\d{1,3}){3}$", s.strip()))
+
+
+def _ioc_type_from_value(val: str) -> str:
+    """Classify IOC type from value string."""
+    if _looks_like_ip(val):
+        return "ip"
+    if re.match(r"^[a-f0-9]{32,}$", val, re.IGNORECASE):
+        return "hash"
+    if "://" in val or val.startswith("http"):
+        return "url"
+    if "." in val:
+        return "domain"
+    return "unknown"
+
 
 # Static IOC fallback — known malicious patterns
 _STATIC_IOC_PATTERNS: dict[str, list[str]] = {
@@ -57,7 +76,7 @@ class ThreatIntelligence:
         _feed_source: Source of loaded IOCs ("file", "static")
     """
 
-    def __init__(self, *args, **kwargs) -> None:
+    def __init__(self, *_args: Any, **_kwargs: Any) -> None:
         """Initialize without parameters — async initialize() loads feeds."""
         self._initialized = False
         self._iocs: dict[str, set[str]] = {
@@ -134,48 +153,65 @@ class ThreatIntelligence:
         if not self._initialized:
             await self.initialize()
 
+        from intelligence.kill_chain_tagger import ioc_to_technique_ids
+
         threats: list[dict[str, Any]] = []
-        analyzed = 0
-        matches = 0
+        stats = {"total": 0, "high": 0, "medium": 0, "low": 0}
 
-        # Extract entities from context
-        entities = context.get("entities", [])
-        if isinstance(entities, str):
-            entities = [entities]
+        # Extract findings from context
+        findings = context.get("findings", [])
+        if isinstance(findings, str):
+            findings = [findings]
 
-        # Analyze each entity
-        for entity in entities:
-            if not entity:
+        for finding in findings:
+            if not finding:
                 continue
-            analyzed += 1
+            iocs = finding.get("iocs") or []
+            for ioc in iocs:
+                ioc_val = str(ioc.get("value", ioc) if isinstance(ioc, dict) else ioc)
+                ioc_type = _ioc_type_from_value(ioc_val)
+                techniques = ioc_to_technique_ids(ioc_type, ioc_val)
+                if techniques:
+                    threats.append({
+                        "type": "kill_chain_match",
+                        "ioc": ioc_val,
+                        "ioc_type": ioc_type,
+                        "techniques": techniques,
+                        "source": "kill_chain_tagger",
+                        "severity": "medium",
+                    })
+            # P1: GreyNoise IP lookup (async, free community API)
+            if os.getenv("HLEDAC_ENABLE_GREYNOISE"):
+                try:
+                    from intelligence.greynoise_lane import query_greynoise_ip
+                    for ioc in iocs:
+                        ioc_val = str(ioc.get("value", ioc) if isinstance(ioc, dict) else ioc)
+                        if _looks_like_ip(ioc_val):
+                            _, raw = await query_greynoise_ip(ioc_val, use_community=True)
+                            if raw.get("classification") == "malicious":
+                                threats.append({
+                                    "type": "greynoise_malicious_ip",
+                                    "ioc": ioc_val,
+                                    "source": "greynoise",
+                                    "severity": "high",
+                                    "detail": raw,
+                                })
+                except Exception:
+                    pass  # fail-safe: greynoise optional
 
-            entity_str = str(entity).lower()
-            ioc_type = self._classify_entity(entity_str)
+        for t in threats:
+            stats["total"] += 1
+            stats[t.get("severity", "low")] += 1
 
-            # Check if entity matches any IOC
-            if self._check_ioc_match(entity_str, ioc_type):
-                matches += 1
-                threats.append({
-                    "entity": entity,
-                    "type": ioc_type,
-                    "severity": "high",
-                    "source": self._feed_source,
-                    "description": f"Matched known {ioc_type} IOC pattern",
-                })
-
-        # Calculate threat level
-        if analyzed == 0:
-            threat_level = 0.0
-        else:
-            match_ratio = matches / analyzed
-            # Scale by priority and security level
-            threat_level = min(1.0, match_ratio * (priority_level / 5) * (security_level / 3))
+        analyzed = len(findings)
+        threat_level = min(1.0, stats["total"] / max(analyzed, 1) * (priority_level / 5) * (security_level / 3))
 
         return {
             "threats": threats,
             "threat_level": threat_level,
             "analyzed_count": analyzed,
-            "ioc_matches": matches,
+            "ioc_matches": stats["total"],
+            "stats": stats,
             "feed_source": self._feed_source,
         }
 
@@ -216,6 +252,21 @@ class ThreatIntelligence:
 
         return False
 
+    @staticmethod
+    def _rdap_find_base(ip: str, bootstrap: dict) -> str:
+        """Find correct RDAP base URL from IANA bootstrap data."""
+        import ipaddress
+        try:
+            addr = ipaddress.ip_address(ip)
+            for service in bootstrap.get("services", []):
+                cidrs, urls = service[0], service[1]
+                for cidr in cidrs:
+                    if addr in ipaddress.ip_network(cidr, strict=False):
+                        return urls[0].rstrip("/")
+        except Exception:
+            pass
+        return "https://rdap.arin.net/registry"
+
     async def lookup_ioc(self, ioc: str) -> dict[str, Any]:
         """
         Direct IOC lookup.
@@ -233,18 +284,104 @@ class ThreatIntelligence:
         if not self._initialized:
             await self.initialize()
 
-        ioc_str = str(ioc).lower()
-        ioc_type = self._classify_entity(ioc_str)
+        from intelligence.kill_chain_tagger import ioc_to_technique_ids
 
-        matched = self._check_ioc_match(ioc_str, ioc_type)
+        ioc_str = str(ioc).strip()
+        ioc_type = _ioc_type_from_value(ioc_str)
+        techniques = ioc_to_technique_ids(ioc_type, ioc_str)
 
-        return {
-            "found": matched,
+        result: dict[str, Any] = {
+            "found": False,
             "type": ioc_type,
-            "severity": "high" if matched else None,
-            "source": self._feed_source,
-            "ioc": ioc,
+            "severity": "low",
+            "sources": [],
         }
+
+        if techniques:
+            result.update({
+                "found": True,
+                "severity": "medium",
+                "techniques": techniques,
+                "sources": ["kill_chain_tagger"],
+            })
+
+        # P1: GreyNoise IP lookup
+        if os.getenv("HLEDAC_ENABLE_GREYNOISE") and _looks_like_ip(ioc_str):
+            try:
+                from intelligence.greynoise_lane import query_greynoise_ip
+                _, raw = await query_greynoise_ip(ioc_str, use_community=True)
+                if raw.get("classification") in ("malicious", "suspicious"):
+                    result.update({
+                        "found": True,
+                        "severity": "high",
+                        "classification": raw["classification"],
+                        "sources": result["sources"] + ["greynoise"],
+                    })
+            except Exception:
+                pass  # fail-safe: greynoise optional
+
+        # P2a — RDAP (IANA standard, decentralized, no key, minimal logging)
+        if _looks_like_ip(ioc_str):
+            try:
+                import aiohttp
+
+                async with aiohttp.ClientSession() as s:
+                    # Step 1: bootstrap lookup
+                    async with s.get(
+                        "https://data.iana.org/rdap/ipv4.json",
+                        timeout=aiohttp.ClientTimeout(total=4),
+                    ) as boot_resp:
+                        if boot_resp.status == 200:
+                            bootstrap = await boot_resp.json()
+                            rdap_base = self._rdap_find_base(ioc_str, bootstrap)
+                        else:
+                            rdap_base = "https://rdap.arin.net/registry"
+                    # Step 2: actual RDAP lookup
+                    async with s.get(
+                        f"{rdap_base}/ip/{ioc_str}",
+                        timeout=aiohttp.ClientTimeout(total=5),
+                    ) as resp:
+                        if resp.status == 200:
+                            data = await resp.json()
+                            org = data.get("name", "")
+                            country = data.get("country", "")
+                            asn_info = [e.get("handle", "") for e in data.get("entities", [])]
+                            result.update({
+                                "found": True,
+                                "sources": result["sources"] + ["rdap"],
+                                "org": org,
+                                "country": country,
+                                "asn_entities": asn_info[:3],
+                            })
+            except Exception:
+                pass
+
+        # P2b — BGP.tools (ASN + prefix context, no key, UK indie, open data)
+        if _looks_like_ip(ioc_str) and os.getenv("HLEDAC_ENABLE_BGPTOOLS", "1") != "0":
+            try:
+                import aiohttp
+
+                async with aiohttp.ClientSession() as s:
+                    async with s.get(
+                        f"https://bgp.tools/prefix/{ioc_str}/json",
+                        headers={"User-Agent": "hledac-security-research/1.0"},
+                        timeout=aiohttp.ClientTimeout(total=4),
+                    ) as resp:
+                        if resp.status == 200:
+                            data = await resp.json()
+                            asn = data.get("asn", "")
+                            pfx = data.get("prefix", "")
+                            name = data.get("name", "")
+                            result.update({
+                                "sources": result["sources"] + ["bgptools"],
+                                "asn": asn,
+                                "prefix": pfx,
+                                "asn_name": name,
+                            })
+            except Exception:
+                pass
+
+        return result
 
     async def cleanup(self) -> None:
         """Cleanup resources — no-op for local IOC lookup."""

@@ -4,9 +4,9 @@
 
 Toto je HELPER modul pro MoE routing.
 
-Používá se pouze jako pomocný nástroj pro hermes3_engine.
+Používá se pouze jako pomocný nástroj pro deephermes3_engine.
 Pro decision making použijte CANONICAL verzi:
-    from hledac.universal.brain.hermes3_engine import Hermes3Engine
+    from hledac.universal.brain.deephermes3_engine import DeepHermes3Engine
 
 Tento modul implementuje MoE routing pro výběr specializovaných expertů
 na základě obsahu dotazu. Optimalizováno pro M1 8GB s max 2 aktivními

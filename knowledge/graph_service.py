@@ -172,7 +172,7 @@ class GraphService:
         M1 8GB: uses shared MLXEmbeddingManager singleton, no duplicate model load.
         """
         try:
-            from knowledge.lancedb_store import get_identity_store
+            from hledac.universal.knowledge.lancedb_store import get_identity_store
 
             store = get_identity_store()
             # Compute embedding via shared MLX embedder (already initialized in store)

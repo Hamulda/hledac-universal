@@ -28,7 +28,8 @@ from typing import Any
 from .audit import AuditConfig, AuditEventType, AuditLevel, AuditLogger
 from .destruction import DestructionConfig, SecureDestructor
 from .obfuscation import ObfuscationConfig, ResearchObfuscator
-from .quantum_safe import QuantumSafeVault, SecurityLevel, StealthCommunicator
+from .quantum_safe import EncryptedContainer, QuantumSafeVault, SecurityLevel
+from .stealth_communicator import StealthCommunicator
 
 logger = logging.getLogger(__name__)
 
@@ -340,7 +341,6 @@ class SecureSession:
         import json
         container_data = json.loads(encrypted_data)
 
-        from .quantum_safe import EncryptedContainer
         container = EncryptedContainer.from_dict(container_data)
 
         return await self.security.vault.decrypt(container)

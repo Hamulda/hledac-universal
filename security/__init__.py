@@ -22,6 +22,7 @@ from hledac.universal._shims.security_zkp_research_engine import ZKPResearchEngi
 
 # Real implementations from security/
 from hledac.universal.security.encryption import decrypt_aes_gcm, encrypt_aes_gcm  # noqa: F401
+from hledac.universal.security.ram_vault import RamDiskVault  # noqa: F401
 
 __all__ = [
     # Stub implementations
@@ -36,4 +37,5 @@ __all__ = [
     # Real implementations
     "decrypt_aes_gcm",
     "encrypt_aes_gcm",
+    "RamDiskVault",
 ]

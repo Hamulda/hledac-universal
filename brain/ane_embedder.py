@@ -13,6 +13,7 @@ import asyncio
 import inspect
 import logging
 import threading
+import warnings
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from enum import Enum
@@ -515,7 +516,21 @@ _ANE_EMBEDDER: ANEEmbedder | None = None
 
 
 def get_ane_embedder() -> ANEEmbedder | None:
-    """Lazy init CoreML MiniLM-L6-v2 embedder, s MLX ModernBERT pokud CoreML není."""
+    """
+    Lazy init CoreML MiniLM-L6-v2 embedder, s MLX ModernBERT pokud CoreML není.
+
+    .. deprecated::
+        ANEEmbedder is deprecated. Use MLXEmbeddingManager instead:
+        ``from _shims.core_mlx_embeddings import get_embedding_manager``
+        All embedding should go through the MLX singleton to avoid duplicate model loads.
+    """
+    warnings.warn(
+        "get_ane_embedder() is deprecated. "
+        "Use get_embedding_manager() from _shims.core_mlx_embeddings instead. "
+        "ANEEmbedder will be removed in a future sprint.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     global _ANE_EMBEDDER
     if _ANE_EMBEDDER is None:
         _ANE_EMBEDDER = ANEEmbedder(model_name="minilm_ane", hidden_dim=384)
@@ -551,14 +566,20 @@ async def semantic_dedup_findings(
     threshold: float = 0.92,
 ) -> list[dict]:
     """
-    Semantic deduplication of findings.
-    ANE path: CoreML MiniLM batch inference → cosine similarity matrix.
+    Semantic deduplication of findings using MLXEmbeddingManager.
+
+    MLX path: MLXEmbeddingManager batch embedding → cosine similarity matrix.
     Hash fallback: url+title hash (zero RAM, always works).
     """
-    embedder = get_ane_embedder()
+    # MLXEmbeddingManager singleton — same pattern as SemanticDeduplicator
+    try:
+        from _shims.core_mlx_embeddings import get_embedding_manager
+        mgr = get_embedding_manager()
+    except Exception:
+        mgr = None
 
-    # Hash fallback when no ANE model
-    if embedder is None or not embedder.is_loaded:
+    # Hash fallback when no MLX manager available
+    if mgr is None or not mgr._is_loaded:
         seen: set[int] = set()
         out:  list[dict] = []
         for f in findings:
@@ -568,28 +589,14 @@ async def semantic_dedup_findings(
                 out.append(f)
         return out
 
-    import numpy as np
-
-    def _embed_batch_sync(texts: list[str]) -> np.ndarray:
-        """CoreML batch inference — all texts at once."""
-        if embedder is None or embedder.model is None:
-            return np.zeros((len(texts), 384), dtype=np.float32)
-        vecs = []
-        for t in texts:
-            try:
-                vec = _coreml_embed(embedder.model, t)
-                vecs.append(vec)
-            except Exception:
-                vecs.append(np.zeros(384, dtype=np.float32))
-        return np.array(vecs, dtype=np.float32)
-
     texts = [
         f"{f.get('title', '')} {f.get('snippet', '')}".strip()[:512]
         for f in findings
     ]
-    loop = asyncio.get_running_loop()
     try:
-        vecs  = await loop.run_in_executor(None, _embed_batch_sync, texts)
+        loop = asyncio.get_running_loop()
+        # MLXEmbeddingManager.encode() is sync — run in executor
+        vecs = await loop.run_in_executor(None, mgr.encode, texts, 32, True)
         norms = np.linalg.norm(vecs, axis=1, keepdims=True) + 1e-9
         vecs_n = vecs / norms
         sim    = vecs_n @ vecs_n.T
@@ -615,31 +622,34 @@ def rerank_findings_cosine(
     top_k: int = 20,
 ) -> list[dict]:
     """
-    Cosine similarity reranker over ANE MiniLM embeddings.
-    RAM: ~22MB model (CoreML), <5ms inference, ANE accelerated.
-    Fallback: confidence sort.
+    Cosine similarity reranker over MLX embeddings.
+    Uses MLXEmbeddingManager singleton, fallback: confidence sort.
     """
     try:
-        embedder = get_ane_embedder()
-        if embedder is None or not embedder.is_loaded or embedder.model is None:
-            raise RuntimeError("ANE unavailable")
+        from _shims.core_mlx_embeddings import get_embedding_manager
+        mgr = get_embedding_manager()
+        if mgr is None or not mgr._is_loaded:
+            raise RuntimeError("MLXEmbeddingManager unavailable")
+    except Exception:
+        return sorted(
+            findings,
+            key=lambda x: x.get("confidence", 0.5),
+            reverse=True
+        )[:top_k]
 
-        import numpy as np
-
-        def _embed(text: str) -> np.ndarray:
-            return _coreml_embed(embedder.model, text)
-
-        q_vec = _embed(query[:512])
-        q_norm = np.linalg.norm(q_vec) + 1e-9
-        q_vec = q_vec / q_norm
-
+    try:
+        # Build corpus texts + query
+        corpus = [
+            f"{f.get('title', '')} {f.get('snippet', '')}".strip()[:512]
+            for f in findings[:200]
+        ]
+        all_texts = [query[:512]] + corpus
+        embeddings = mgr.encode(all_texts, batch_size=32, normalize=True)
+        q_vec = embeddings[0]
+        corp_vecs = embeddings[1:]
         scored = []
-        for f in findings[:200]:  # cap for RAM
-            text = f"{f.get('title', '')} {f.get('snippet', '')}".strip()
-            f_vec = _embed(text[:512])
-            f_norm = np.linalg.norm(f_vec) + 1e-9
-            f_vec = f_vec / f_norm
-            score = float(np.dot(q_vec, f_vec))
+        for idx, f in enumerate(findings[:200]):
+            score = float(np.dot(q_vec, corp_vecs[idx]))
             scored.append((score, f))
         scored.sort(key=lambda x: x[0], reverse=True)
         return [f for _, f in scored[:top_k]]

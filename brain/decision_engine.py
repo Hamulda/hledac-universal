@@ -18,7 +18,7 @@ from enum import Enum
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from .hermes3_engine import Hermes3Engine
+    pass
 
 logger = logging.getLogger(__name__)
 

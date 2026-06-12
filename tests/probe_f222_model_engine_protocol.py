@@ -171,13 +171,13 @@ def test_model_manager_creates_modernbert_adapter():
 
 
 def test_model_manager_hermes_factory_unchanged():
-    """model_manager._create_hermes_engine still returns Hermes3Engine."""
+    """model_manager._create_hermes_engine still returns DeepHermes3Engine."""
     with open(MODEL_MANAGER_PATH) as f:
         content = f.read()
 
-    assert 'from .hermes3_engine import Hermes3Engine' in content
-    assert 'return Hermes3Engine()' in content
-    print("  ✓ model_manager._create_hermes_engine unchanged (returns Hermes3Engine)")
+    assert 'from .deephermes3_engine import DeepHermes3Engine' in content
+    assert 'return DeepHermes3Engine()' in content
+    print("  ✓ model_manager._create_hermes_engine unchanged (returns DeepHermes3Engine)")
 
 
 # ── Test 5: brain/__init__.py exports ────────────────────────────────────────

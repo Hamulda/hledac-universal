@@ -1651,6 +1651,20 @@ async def run_sprint(
         except Exception as _e:
             logger.debug("F260: GhostLayer injection failed (fail-soft): %s", _e)
 
+
+    # F26X+: SecurityCoordinator injection (advisory, research/aggressive modes)
+    # Coordinates: StealthEngine, ThreatIntelligence, QuantumCrypto, ZKP.
+    # Security levels: MINIMAL(1) → STANDARD(2) → HIGH(3) → MAXIMUM(4).
+    if not (flags.no_stealth if flags else False):
+        try:
+            from hledac.universal.coordinators.security_coordinator import UniversalSecurityCoordinator
+            _sec_coordinator = UniversalSecurityCoordinator(max_concurrent=3)
+            if _sec_coordinator is not None:
+                scheduler.inject_security_coordinator(_sec_coordinator)
+        except Exception as _e:
+            logger.debug("F26X+: SecurityCoordinator injection failed (fail-soft): %s", _e)
+
+
     # F228F CRITICAL: inject duckdb_store before health_check so health_check
     # reads self._duckdb_store (not always None). run() also sets it from param,
     # but health_check runs BEFORE run(), so injection must happen here first.

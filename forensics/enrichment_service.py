@@ -78,23 +78,117 @@ def _lazy_load_modules() -> None:
         _MetadataExtractor = None
         _METADATA_EXTRACTOR_AVAILABLE = False
 
-    # SteganalysisResult
+    # StegoResult (from security.stego_detector)
     try:
-        from forensics.steganography_detector import SteganalysisResult
-        _SteganalysisResult = SteganalysisResult
+        from security.stego_detector import StegoResult
+        _StegoResult = StegoResult
         _STEGANOGRAPHY_AVAILABLE = True
     except ImportError:
-        _SteganalysisResult = None
+        _StegoResult = None
         _STEGANOGRAPHY_AVAILABLE = False
 
-    # DigitalGhostResult
+    # DigitalGhostAnalysis (from security.digital_ghost_detector)
     try:
-        from forensics.digital_ghost_detector import DigitalGhostResult
-        _DigitalGhostResult = DigitalGhostResult
+        from security.digital_ghost_detector import DigitalGhostAnalysis
+        _DigitalGhostResult = DigitalGhostAnalysis
         _DIGITAL_GHOST_AVAILABLE = True
     except ImportError:
         _DigitalGhostResult = None
         _DIGITAL_GHOST_AVAILABLE = False
+
+
+# ---------------------------------------------------------------------------
+# Adapters: security module -> forensics enrichment contract
+# security/stego_detector uses async StatisticalStegoDetector.analyze_image()
+# security/digital_ghost_detector uses sync DigitalGhostDetector.analyze_file()
+# forensics wrapper results have .to_dict() — adapters bridge the gap
+# ---------------------------------------------------------------------------
+
+def _stego_result_to_dict(result: Any) -> dict[str, Any]:
+    """Bridge security.stego_detector.StegoResult -> enrichment dict."""
+    if result is None:
+        return {}
+    return {
+        "has_stego": result.has_stego,
+        "confidence": result.confidence,
+        "method_used": result.method_used,
+        "message_length_estimate": result.message_length_estimate,
+        "chi_square": (
+            {
+                "p_value": result.chi_square.p_value,
+                "chi_square_stat": result.chi_square.chi_square_stat,
+                "embedded_bytes_estimate": result.chi_square.embedded_bytes_estimate,
+                "is_significant": result.chi_square.is_significant,
+            }
+            if result.chi_square else None
+        ),
+        "rs_analysis": (
+            {
+                "message_length": result.rs_analysis.message_length,
+                "confidence": result.rs_analysis.confidence,
+            }
+            if result.rs_analysis else None
+        ),
+        "dct_analysis": (
+            {
+                "anomaly_score": result.dct_analysis.anomaly_score,
+                "histogram_deviation": result.dct_analysis.histogram_deviation,
+            }
+            if result.dct_analysis else None
+        ),
+        "details": result.details,
+    }
+
+
+def _run_stego_analysis(file_path: str) -> dict[str, Any]:
+    """Sync wrapper for async StatisticalStegoDetector.analyze_image()."""
+    try:
+        from security.stego_detector import StatisticalStegoDetector, StegoConfig
+
+        detector = StatisticalStegoDetector(StegoConfig())
+        result = asyncio.run(detector.analyze_image(file_path))
+        return _stego_result_to_dict(result)
+    except Exception as exc:
+        log.debug("Security stego analysis failed for %s: %s", file_path, exc)
+        return {}
+
+
+def _run_ghost_analysis(file_path: str) -> dict[str, Any]:
+    """Bridge security.digital_ghost_detector.DigitalGhostAnalysis -> enrichment dict."""
+    if _DigitalGhostResult is None:
+        return {}
+    try:
+        detector = _DigitalGhostResult()
+        result = detector.analyze_file(file_path)
+        if result is None:
+            return {}
+        return {
+            "target": result.target,
+            "ghost_signals": [
+                {
+                    "signal_type": s.signal_type,
+                    "location": s.location,
+                    "confidence": s.confidence,
+                    "content_snippet": s.content_snippet,
+                    "indicators": s.indicators,
+                }
+                for s in result.ghost_signals
+            ],
+            "recovered_content": [
+                {
+                    "original_location": c.original_location,
+                    "recovered_text": c.recovered_text,
+                    "confidence": c.confidence,
+                    "recovery_method": c.recovery_method,
+                }
+                for c in result.recovered_content
+            ],
+            "overall_confidence": result.overall_confidence,
+            "recommendations": result.recommendations,
+        }
+    except Exception as exc:
+        log.debug("Security ghost analysis failed for %s: %s", file_path, exc)
+        return {}
 
 
 # ---------------------------------------------------------------------------
@@ -378,20 +472,18 @@ class ForensicsEnricher:
             ext = Path(file_path).suffix.lower()
             if ext in {".jpg", ".jpeg", ".png", ".bmp", ".gif", ".tiff", ".tif", ".webp"}:
                 try:
-                    from forensics.steganography_detector import analyze_image_steganography
-                    stego_result = analyze_image_steganography(file_path)
-                    if stego_result is not None:
-                        enrichment["steganography"] = stego_result.to_dict()
+                    stego_data = _run_stego_analysis(file_path)
+                    if stego_data:
+                        enrichment["steganography"] = stego_data
                 except Exception as exc:
                     log.debug("Steganography analysis failed for %s: %s", finding_id, exc)
 
         # 3. Digital ghost detection (file only)
         if file_path and _DIGITAL_GHOST_AVAILABLE:
             try:
-                from forensics.digital_ghost_detector import analyze_file_ghosts
-                ghost_result = analyze_file_ghosts(file_path)
-                if ghost_result is not None:
-                    enrichment["ghosts"] = ghost_result.to_dict()
+                ghost_data = _run_ghost_analysis(file_path)
+                if ghost_data:
+                    enrichment["ghosts"] = ghost_data
             except Exception as exc:
                 log.debug("Digital ghost detection failed for %s: %s", finding_id, exc)
 

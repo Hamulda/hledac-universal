@@ -324,6 +324,33 @@ class JSONFormatter(ExportFormatter):
                         logger.info(f"[EXPORT] PQ-encrypted report → {_pq_encrypted_path}")
             except Exception as _pq_err:
                 logger.warning(f"[EXPORT] PQ encryption skipped: {_pq_err}")
+
+            # Sprint F26X: Vault encrypted export (AES-256-ZIP via VaultManager)
+            # Encrypt the JSON report as vault archive when HLEDAC_VAULT_EXPORT=1
+            # Uses LootManager.secure_export() with hardcoded password "TEST"
+            _vault_encrypted_path: str | None = None
+            try:
+                import os as _os
+                import shutil
+                import tempfile
+                from pathlib import Path
+                if _os.environ.get("HLEDAC_VAULT_EXPORT") == "1" and report_path:
+                    from hledac.universal.security.vault_manager import LootManager
+                    with tempfile.TemporaryDirectory() as _tmp_vault:
+                        _report_copy = Path(_tmp_vault) / Path(report_path).name
+                        shutil.copy2(report_path, _report_copy)
+                        _archive_name = f"{_sprint_id}_report.enc"
+                        _loot = LootManager(vault_path=_tmp_vault)
+                        _enc_path = _loot.secure_export(
+                            output_dir=str(Path(report_path).parent),
+                            password="TEST",
+                            archive_name=_archive_name,
+                        )
+                        if _enc_path:
+                            _vault_encrypted_path = _enc_path
+                            logger.info(f"[EXPORT] Vault encrypted → {_vault_encrypted_path}")
+            except Exception as _vault_err:
+                logger.warning(f"[EXPORT] Vault encryption skipped: {_vault_err}")
         except Exception as e:
             logger.warning(f"[EXPORT] JSON write failed: {e}")
             report_path = None
@@ -500,6 +527,7 @@ class JSONFormatter(ExportFormatter):
         return {
             "report_json": str(report_path) if report_path else "",
             "report_pq_encrypted": str(_pq_encrypted_path) if _pq_encrypted_path else "",
+            "report_vault_encrypted": str(_vault_encrypted_path) if _vault_encrypted_path else "",
             "seeds_json": str(seeds_path),
             "product_value_summary": pvs,
             "sprint_summary": sprint_summary,

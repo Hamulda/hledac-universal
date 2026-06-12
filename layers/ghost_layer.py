@@ -215,7 +215,7 @@ class GhostLayer:
         """Lazy initialization of RamDiskVault"""
         if self._vault is None:
             try:
-                from hledac.supreme.security.ram_disk_vault import RamDiskVault
+                from security.ram_vault import RamDiskVault
 
                 self._vault = RamDiskVault(
                     size_mb=self.config.vault_size_mb

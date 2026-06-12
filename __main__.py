@@ -245,6 +245,10 @@ def build_parser() -> argparse.ArgumentParser:
         help="Directory for sprint reports (default: ~/.hledac/reports)",
     )
     parser.add_argument(
+        "--vault", action="store_true",
+        help="F26X+: Enable encrypted vault export (AES-256-ZIP via VaultManager)",
+    )
+    parser.add_argument(
         "--aggressive", action="store_true",
         help="Sprint F195B: Enable aggressive mode with 8s branch budgets",
     )
@@ -2989,8 +2993,9 @@ async def _run_sprint_mode(
 
         # Sprint 8VF §C.3: ANE embedder status log at WINDUP
         try:
-            from hledac.universal.brain.ane_embedder import get_ane_embedder
-            engine = "ANE-MiniLM" if get_ane_embedder() else "hash-fallback"
+            from _shims.core_mlx_embeddings import get_embedding_manager
+            mgr = get_embedding_manager()
+            engine = "MLX-ModernBERT" if (mgr and mgr._is_loaded) else "hash-fallback"
             logger.info(f"[ANE] synthesis_engine={engine}")
         except Exception:
             pass
@@ -3323,6 +3328,8 @@ def main() -> None:
             _export_dir = getattr(args, "export_dir", None) or str(
                 pathlib.Path.home() / ".hledac" / "reports"
             )
+            if getattr(args, "vault", False):
+                os.environ["HLEDAC_VAULT_EXPORT"] = "1"
             asyncio.run(_core_run_sprint(
                 query=sprint_target,
                 duration_s=float(sprint_duration),

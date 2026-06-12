@@ -1,4 +1,5 @@
 import logging
+import os
 import re
 import subprocess
 
@@ -150,3 +151,40 @@ class RamDiskVault:
 
     def __del__(self):
         self.unmount()
+
+    # ── ghost_layer compatibility shims ───────────────────────────────────────
+
+    def initialize(self) -> bool:
+        """Alias for mount() — returns True if mount succeeded."""
+        return self.mount() is not None
+
+    def store(self, key: str, data: dict) -> bool:
+        """Write data as JSON under mount_point/<key>.json. Returns True on success."""
+        if not self.mount_point:
+            return False
+        try:
+            import json as _json
+            path = os.path.join(self.mount_point, f"{key}.json")
+            with open(path, "w") as f:
+                _json.dump(data, f, default=str)
+            return True
+        except Exception:
+            return False
+
+    def list_items(self) -> list[str]:
+        """Return list of stored key names (filename stems, without .json)."""
+        if not self.mount_point:
+            return []
+        try:
+            import glob as _glob
+            import os as _os
+            return [
+                _os.path.splitext(_os.path.basename(p))[0]
+                for p in _glob.glob(_os.path.join(self.mount_point, "*.json"))
+            ]
+        except Exception:
+            return []
+
+    def cleanup(self) -> bool:
+        """Alias for unmount()."""
+        return self.unmount()
