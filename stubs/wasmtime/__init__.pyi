@@ -1,7 +1,8 @@
 # Stub for wasmtime (PyPI: wasmtime) — used in tools/wasm_sandbox.py
 # v45+ API surface (constructor signatures matched to .venv inspection).
 
-from typing import Any, Iterable, Sequence
+from collections.abc import Iterable, Sequence
+from typing import Any
 
 class WasmtimeError(Exception): ...
 class ExitTrap(Exception):

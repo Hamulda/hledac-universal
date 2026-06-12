@@ -129,17 +129,17 @@ async def _blocking_altsvc_probe_for_url(url: str) -> Any:
     the live fetch path. Timeout is4s — well under the fetch timeout budget.
     """
     try:
-        from curl_cffi.requests import AsyncSession, HttpVersion # type: ignore
+        from curl_cffi.requests import AsyncSession, HttpVersion  # type: ignore
     except Exception:
         return None
 
     try:
         from hledac.universal.transport.http3_lane import (
+            _altsvc_advertises_h3,
             _cache_get,
             _cache_put,
-            _altsvc_advertises_h3,
+            _resolve_enabled,
             extract_host,
- _resolve_enabled,
         )
     except Exception:
         return None
@@ -522,8 +522,14 @@ async def fetch_via_curl_cffi_cached(
     # Lazy import to keep the module-load footprint minimal.
     from .conditional_cache import (
         conditional_headers_for,
+    )
+    from .conditional_cache import (
         lookup as _cc_lookup,
+    )
+    from .conditional_cache import (
         record_conditional_result as _cc_record,
+    )
+    from .conditional_cache import (
         store as _cc_store,
     )
 

@@ -205,7 +205,7 @@ class CoreMLClient:
             await self._client.aclose()
             self._client = None
 
-    async def __aenter__(self) -> "CoreMLClient":
+    async def __aenter__(self) -> CoreMLClient:
         return self
 
     async def __aexit__(self, *args: Any) -> None:

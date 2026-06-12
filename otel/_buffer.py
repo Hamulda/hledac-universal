@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import threading
 from collections import OrderedDict
-from typing import Any, Generic, TypeVar
+from typing import Generic, TypeVar
 
 K = TypeVar("K")
 V = TypeVar("V")
@@ -34,7 +34,7 @@ class BoundedRing(Generic[K, V]):
         if capacity > 1_000_000:
             raise ValueError("capacity must be <= 1_000_000 (M1 8GB cap)")
         self._capacity = capacity
-        self._data: "OrderedDict[K, V]" = OrderedDict()
+        self._data: OrderedDict[K, V] = OrderedDict()
         self._lock = threading.Lock()
         self._hits = 0
         self._misses = 0

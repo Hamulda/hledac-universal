@@ -1240,7 +1240,7 @@ class BannerGrabberAdapter:
 
 
 
-        from typing import Any, TYPE_CHECKING
+        from typing import Any
 
 
 

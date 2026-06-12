@@ -28,7 +28,6 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -124,8 +123,8 @@ class LanceDBRAGEngine:
     def _initialize(self) -> None:
         """Initialize LanceDB table synchronously."""
         try:
-            import pyarrow as pa
             import lancedb
+            import pyarrow as pa
 
             Path(self.uri).parent.mkdir(parents=True, exist_ok=True)
             self._db = lancedb.connect(self.uri)

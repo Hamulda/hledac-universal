@@ -19,7 +19,7 @@ from datetime import datetime
 from enum import Enum
 
 # Machine learning for optimization - lazy imports to reduce cold-start
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import psutil
@@ -1770,7 +1770,7 @@ def auto_optimize(
             return result
 
         # ty: setting attribute on async function works at runtime; use setattr
-        setattr(wrapper, "_cache_manager", cache_manager)
+        wrapper._cache_manager = cache_manager
         return wrapper
 
     return decorator

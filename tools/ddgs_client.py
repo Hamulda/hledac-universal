@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+
 # ty: lazy import — the search package is in [search] extra. Module-level
 # `DDGS = None` makes ty complain about None being called. Wrap in a
 # function so the symbol is only resolved when actually needed.

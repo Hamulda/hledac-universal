@@ -76,6 +76,7 @@ _TEXT_COLUMNS: frozenset[str] = frozenset([
 
 # Safe identifier validation: alphanumeric + underscore only, no dots, no dashes
 import re
+
 _SAFE_IDENTIFIER_RE = re.compile(r'^[a-zA-Z_][a-zA-Z0-9_]*$')
 
 

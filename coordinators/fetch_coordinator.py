@@ -30,25 +30,26 @@ import lmdb
 try:
     from otel import (  # type: ignore
         add_event as _otel_add_event,
+    )
+    from otel import (
         instrumented as _otel_instrumented,
+    )
+    from otel import (
         set_attribute as _otel_set_attribute,
     )
 except ImportError:  # production fallback
-    from hledac.universal.telemetry import (  # type: ignore
-        add_event as _otel_add_event,
+    from hledac.universal.telemetry import (
         instrumented as _otel_instrumented,
-        set_attribute as _otel_set_attribute,
     )
 
 # Sprint 41: zstd compression — re-exported from tools/zstd_compressor
-from hledac.universal.tools.zstd_compressor import ZstdCompressor
-from utils.async_helpers import safe_gather_dropin
-
 # F281: Privacy compute budget allocator
 from hledac.universal.runtime.privacy_budget import (  # noqa: E402
     PrivacyBudgetAllocator,
     make_privacy_allocator,
 )
+from hledac.universal.tools.zstd_compressor import ZstdCompressor
+from utils.async_helpers import safe_gather_dropin
 
 try:
     import zstandard as zstd
@@ -126,17 +127,16 @@ def _create_dedup_strategy():
     return create_rotating_bloom_filter(est_elements=200_000)
 
 
+# Sprint F-A5: Pre-fetch URL dedup gate. Runs the dedup ONCE on the
+# candidate list before submission so the fetch loop only sees unique
+# URLs (eliminates the per-URL Bloom check overhead inside the loop).
+from ..tools.url_dedup import dedupe_url_list  # noqa: E402
 from ..utils.async_helpers import async_getaddrinfo  # noqa: E402
 
 # Sprint F-A4: Bounded batch DNS resolver (LRU + parallel via c-ares).
 # Used in run_step to pre-resolve all unique hostnames for the batch
 # so _validate_fetch_target can skip the per-URL getaddrinfo call.
 from ..utils.batch_dns import get_batch_dns_resolver  # noqa: E402
-
-# Sprint F-A5: Pre-fetch URL dedup gate. Runs the dedup ONCE on the
-# candidate list before submission so the fetch loop only sees unique
-# URLs (eliminates the per-URL Bloom check overhead inside the loop).
-from ..tools.url_dedup import dedupe_url_list  # noqa: E402
 
 # Sprint 8C1: Flow trace
 from ..utils.flow_trace import (  # noqa: E402

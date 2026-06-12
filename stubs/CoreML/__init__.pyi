@@ -2,31 +2,32 @@
 # Re-exports MLMultiArray, MLModel, MLDictionaryFeatureProvider from Foundation
 # and declares CoreML-specific types.
 
+from Foundation import NSURL, NSArray, NSDictionary, NSNumber  # type: ignore[attr-defined]
+
 from ._types import (
-    MLMultiArray,
-    MLMultiArrayDataType,
-    MLMultiArrayDataTypeInt32,
-    MLMultiArrayDataTypeFloat32,
-    MLMultiArrayDataTypeDouble,
-    MLModel,
+    MLArrayBatchProvider,
+    MLComputeUnit,
     MLDictionaryFeatureProvider,
     MLFeatureDescription,
-    MLFeatureValue,
-    MLFeatureType,
-    MLModelConfiguration,
-    MLComputeUnit,
-    MLModelDescription,
-    MLParameterKey,
-    MLPredictionOptions,
     MLFeatureProvider,
-    MLArrayBatchProvider,
-    MLSendableFeatureValue,
-    MLNumericConstraint,
+    MLFeatureType,
+    MLFeatureValue,
     MLImageSize,
     MLImageSizeConstraint,
+    MLModel,
     MLModelAsset,
+    MLModelConfiguration,
+    MLModelDescription,
+    MLMultiArray,
+    MLMultiArrayDataType,
+    MLMultiArrayDataTypeDouble,
+    MLMultiArrayDataTypeFloat32,
+    MLMultiArrayDataTypeInt32,
+    MLNumericConstraint,
+    MLParameterKey,
+    MLPredictionOptions,
+    MLSendableFeatureValue,
 )
-from Foundation import NSURL, NSNumber, NSArray, NSDictionary  # type: ignore[attr-defined]
 
 __all__ = [
     "MLMultiArray",

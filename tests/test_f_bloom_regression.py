@@ -40,7 +40,6 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 # Production modules that must NEVER import ScalableBloomFilter.
@@ -131,8 +130,9 @@ class TestScalableBloomFilterRegression:
     def test_utils_bloom_filter_alias_is_deprecated(self):
         """The alias in ``utils/bloom_filter.py`` must emit DeprecationWarning
         and forward to ``RotatingBloomFilter``."""
-        from utils.bloom_filter import ScalableBloomFilter, RotatingBloomFilter
         import warnings
+
+        from utils.bloom_filter import RotatingBloomFilter, ScalableBloomFilter
 
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always")

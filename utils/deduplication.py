@@ -224,7 +224,6 @@ class SemanticDeduplicator(BaseDeduplicator):
 
     def _cluster_by_simhash(self, items: list[QueryItem], simhash_bits: int = 16) -> dict[int, list[QueryItem]]:
         """Group items into LSH buckets using SimHash for near-linear deduplication."""
-        from collections import defaultdict
         clusters = defaultdict(list)
         for item in items:
             simhash_val = self._simhash.compute(item.content)
@@ -457,7 +456,6 @@ class SemanticDeduplicator(BaseDeduplicator):
 
     def _cluster_by_simhash(self, items: list[QueryItem], simhash_bits: int = 16) -> dict[int, list[QueryItem]]:
         """Group items into LSH buckets using SimHash for near-linear deduplication."""
-        from collections import defaultdict
         clusters = defaultdict(list)
         for item in items:
             simhash_val = self._simhash.compute(item.content)
@@ -505,7 +503,6 @@ class ContentDeduplicator(BaseDeduplicator):
 
     def _cluster_by_simhash(self, items: list[QueryItem], simhash_bits: int = 16) -> dict[int, list[QueryItem]]:
         """Group items into LSH buckets using SimHash for near-linear deduplication."""
-        from collections import defaultdict
         clusters = defaultdict(list)
         for item in items:
             simhash_val = self._simhash.compute(item.content)

@@ -27,7 +27,6 @@ import sys
 import time
 from dataclasses import dataclass
 from typing import Final
-import subprocess
 
 # Semaphore: max 1 concurrent WKWebView render (M1 8GB-safe)
 _WEBKIT_SEMAPHORE: Final[asyncio.Semaphore] = asyncio.Semaphore(1)

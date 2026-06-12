@@ -15,7 +15,6 @@ import logging
 import random
 from typing import Any
 
-
 logger = logging.getLogger(__name__)
 
 # M1 8GB: max 2 concurrent browser tabs (per project constraint)

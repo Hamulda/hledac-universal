@@ -13,16 +13,11 @@ Run: uv run pytest tests/probe_f271_bug_sweep.py -q
 """
 from __future__ import annotations
 
-import asyncio
 import os
-import sqlite3
-import tempfile
 import warnings
-from contextlib import closing
 from pathlib import Path
 
 import pytest
-
 
 # ── Bug 1: prompt_bandit str path ─────────────────────────────────────────────
 
@@ -95,32 +90,7 @@ class TestOperatorBriefReExport:
         """Mirror the exact import block from formatters.py:126-153 — must
         succeed without ImportError."""
         from hledac.universal.export.sprint_exporter import (
-            _build_capability_synthesis,
             _build_operator_brief,
-            _build_product_value_summary,
-            _build_sprint_summary,
-            _compute_research_depth,
-            _derive_best_first_move,
-            _derive_branch_truth,
-            _derive_run_truth_note,
-            _derive_why_this_run_matters,
-            _generate_next_sprint_seeds,
-            _get_acquisition_truth,
-            _get_branch_value,
-            _get_canonical_run_summary,
-            _get_correlation_from_handoff,
-            _get_feed_verdict,
-            _get_hypothesis_pack,
-            _get_public_verdict,
-            _get_runtime_truth,
-            _get_signal_path,
-            _get_source_leaderboard,
-            _get_sprint_trend,
-            _get_sprint_verdict,
-            _get_synthesis_outcome_payload,
-            _make_serializable,
-            _reconcile_acquisition_terminality_from_source_outcomes,
-            reconcile_terminal_truth,
         )
         # Smoke-call the brief helper to ensure signature compatibility.
         out = _build_operator_brief(
@@ -219,6 +189,7 @@ class TestExportDirThreading:
     def test_pipeline_signature_accepts_export_dir(self) -> None:
         """async_run_live_public_pipeline must accept export_dir kwarg."""
         import inspect
+
         from hledac.universal.pipeline.live_public_pipeline import (
             async_run_live_public_pipeline,
         )
@@ -287,6 +258,7 @@ class TestRssVerificationGate:
         """If rss_before < model_size*0.5, unload was a no-op → no warning,
         no info — only a debug log."""
         import logging
+
         from hledac.universal.brain.model_manager import (
             _verify_rss_after_unload,
         )
@@ -307,6 +279,7 @@ class TestRssVerificationGate:
     def test_real_unload_logs_info(self, caplog) -> None:
         """If rss_before ≥ model_size*0.5 and dropped ≥ threshold, log info."""
         import logging
+
         from hledac.universal.brain.model_manager import (
             _verify_rss_after_unload,
         )
@@ -327,9 +300,10 @@ class TestRssVerificationGate:
         """If rss_before ≥ model_size*0.5 but dropped < 50% of model_size,
         log a warning (the original behaviour, preserved)."""
         import logging
+
         from hledac.universal.brain.model_manager import (
-            _verify_rss_after_unload,
             _get_current_rss_gb,
+            _verify_rss_after_unload,
         )
         rss_now = _get_current_rss_gb()
         # Force a "before" value that's high enough to clear the no-op gate.

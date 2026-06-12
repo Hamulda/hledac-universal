@@ -21,18 +21,9 @@ Pattern follows tests/test_f250_dynamic_windup.py + tests/test_sprint_f272.py.
 from __future__ import annotations
 
 import asyncio
-import importlib
-import importlib.util
-import json
 import os
 import platform
-import sys
-import time
 import unittest
-from pathlib import Path
-from types import SimpleNamespace
-from unittest.mock import patch
-
 
 # ---------------------------------------------------------------------------
 # Test infra: import the modules we need (no pytest fixtures, hermetic)
@@ -128,37 +119,41 @@ class TestF273ADynamicBranchFloor(unittest.TestCase):
 # ===========================================================================
 
 class TestF273BWindupRatio(unittest.TestCase):
-    """F273B: effective_windup_lead_s now uses 0.20 ratio, clamped [20, 90]."""
+    """F273B + F278A: effective_windup_lead_s uses 0.30 ratio, clamped [30, 180].
 
-    def test_windup_ratio_is_20_percent(self):
+    F278A (2026-06-12) updated from 20%/[20,90] to 30%/[30,180] to align
+    with the F221-ABORT guard in core/__main__.py.
+    """
+
+    def test_windup_ratio_is_30_percent(self):
         cfg = _import_sprint_scheduler_config()(sprint_duration_s=300)
-        # 0.20 * 300 = 60, within [20, 90] so exact 60.
-        self.assertEqual(cfg.effective_windup_lead_s, 60.0)
+        # 0.30 * 300 = 90, within [30, 180] so exact 90.
+        self.assertEqual(cfg.effective_windup_lead_s, 90.0)
 
-    def test_windup_60s_uses_floor_20(self):
-        """60s sprint: 0.20*60=12, clamped up to 20."""
+    def test_windup_60s_uses_floor_30(self):
+        """60s sprint: 0.30*60=18, clamped up to 30."""
         cfg = _import_sprint_scheduler_config()(sprint_duration_s=60)
-        self.assertEqual(cfg.effective_windup_lead_s, 20.0)
+        self.assertEqual(cfg.effective_windup_lead_s, 30.0)
 
     def test_windup_120s_no_floor(self):
-        """120s sprint: 0.20*120=24, no clamp."""
+        """120s sprint: 0.30*120=36, no clamp needed."""
         cfg = _import_sprint_scheduler_config()(sprint_duration_s=120)
-        self.assertEqual(cfg.effective_windup_lead_s, 24.0)
+        self.assertEqual(cfg.effective_windup_lead_s, 36.0)
 
-    def test_windup_1800s_capped_at_90(self):
-        """1800s sprint: 0.20*1800=360, capped at 90."""
+    def test_windup_1800s_capped_at_180(self):
+        """1800s sprint: 0.30*1800=540, capped at 180."""
         cfg = _import_sprint_scheduler_config()(sprint_duration_s=1800)
-        self.assertEqual(cfg.effective_windup_lead_s, 90.0)
+        self.assertEqual(cfg.effective_windup_lead_s, 180.0)
 
-    def test_windup_600s_uses_ceiling_90(self):
-        """600s sprint: 0.20*600=120, clamped down to 90."""
+    def test_windup_600s_uses_ceiling_180(self):
+        """600s sprint: 0.30*600=180, at ceiling."""
         cfg = _import_sprint_scheduler_config()(sprint_duration_s=600)
-        self.assertEqual(cfg.effective_windup_lead_s, 90.0)
+        self.assertEqual(cfg.effective_windup_lead_s, 180.0)
 
-    def test_windup_30s_respects_20_floor(self):
-        """30s sprint: 0.20*30=6, clamped up to 20 (floor)."""
+    def test_windup_30s_respects_30_floor(self):
+        """30s sprint: 0.30*30=9, clamped up to 30 (floor)."""
         cfg = _import_sprint_scheduler_config()(sprint_duration_s=30)
-        self.assertEqual(cfg.effective_windup_lead_s, 20.0)
+        self.assertEqual(cfg.effective_windup_lead_s, 30.0)
 
     def test_windup_for_cycle_no_bonus_when_quick(self):
         """Cycle EMA <= 8s gives no adaptive bonus."""
@@ -172,25 +167,25 @@ class TestF273BWindupRatio(unittest.TestCase):
 
     def test_windup_for_cycle_adaptive_bonus(self):
         """Slow cycles get +0.5s per s over 8s, capped at +30s."""
-        cfg = _import_sprint_scheduler_config()(sprint_duration_s=300)  # base=60
-        # cycle_ema=20s -> bonus = 0.5 * (20 - 8) = 6s -> total 66s
-        self.assertEqual(cfg.windup_for_cycle(20.0), 66.0)
-        # cycle_ema=68s -> bonus = 0.5 * 60 = 30 (capped) -> total 90 (ceiling)
-        self.assertEqual(cfg.windup_for_cycle(68.0), 90.0)
-        # cycle_ema=200s -> bonus capped at 30 -> total 90
-        self.assertEqual(cfg.windup_for_cycle(200.0), 90.0)
+        cfg = _import_sprint_scheduler_config()(sprint_duration_s=300)  # base=90
+        # cycle_ema=20s -> bonus = 0.5 * (20 - 8) = 6s -> total 96s
+        self.assertEqual(cfg.windup_for_cycle(20.0), 96.0)
+        # cycle_ema=68s -> bonus = 0.5 * 60 = 30 (capped) -> total 120s
+        self.assertEqual(cfg.windup_for_cycle(68.0), 120.0)
+        # cycle_ema=200s -> bonus capped at 30 -> total 120s
+        self.assertEqual(cfg.windup_for_cycle(200.0), 120.0)
 
     def test_windup_for_cycle_floor_protects_short_sprints(self):
-        """Short sprint (60s, base=20) keeps a usable active window under adapt."""
-        cfg = _import_sprint_scheduler_config()(sprint_duration_s=60)  # base=20
-        # cycle_ema=30s -> bonus = 0.5*22=11s -> total 31s, active=29s
-        self.assertEqual(cfg.windup_for_cycle(30.0), 31.0)
-        self.assertEqual(cfg.sprint_duration_s - cfg.windup_for_cycle(30.0), 29.0)
+        """Short sprint (60s, base=30) keeps a usable active window under adapt."""
+        cfg = _import_sprint_scheduler_config()(sprint_duration_s=60)  # base=30
+        # cycle_ema=30s -> bonus = 0.5*22=11s -> total 41s, active=19s
+        self.assertEqual(cfg.windup_for_cycle(30.0), 41.0)
+        self.assertEqual(cfg.sprint_duration_s - cfg.windup_for_cycle(30.0), 19.0)
 
     def test_windup_for_cycle_negative_ema_returns_base(self):
         """Negative cycle EMA (defensive) returns base — fail-safe."""
         cfg = _import_sprint_scheduler_config()(sprint_duration_s=300)
-        self.assertEqual(cfg.windup_for_cycle(-1.0), 60.0)
+        self.assertEqual(cfg.windup_for_cycle(-1.0), 90.0)
 
 
 # ===========================================================================
@@ -268,7 +263,6 @@ class TestF273CPatternExtractionDrain(unittest.TestCase):
 
     def test_drain_bounded_capacity(self):
         """Registry maxlen=512 — overflow drops oldest (with cancel)."""
-        from hledac.universal.fetching import public_fetcher
         # Pre-fill beyond capacity (simulate via the same code path used in prod)
         from hledac.universal.fetching.public_fetcher import _DRAIN_REGISTRY
         # Direct cap test: ensure maxlen is set
@@ -326,8 +320,9 @@ class TestF273DForceHermes(unittest.TestCase):
 
     def test_sprint_scheduler_accepts_flags_param(self):
         """SprintScheduler.__init__ signature must include flags kwarg."""
-        from hledac.universal.runtime.sprint_scheduler import SprintScheduler
         import inspect
+
+        from hledac.universal.runtime.sprint_scheduler import SprintScheduler
         sig = inspect.signature(SprintScheduler.__init__)
         self.assertIn("flags", sig.parameters)
         self.assertEqual(sig.parameters["flags"].default, None)
@@ -357,8 +352,9 @@ class TestF273EAiofilesStreamingExporter(unittest.TestCase):
 
     def test_write_section_uses_aiofiles_when_available(self):
         """If aiofiles is available, _write_section uses async with aiofiles.open."""
-        from hledac.universal.export.components import streaming_exporter
         import inspect
+
+        from hledac.universal.export.components import streaming_exporter
         src = inspect.getsource(streaming_exporter)
         self.assertIn("aiofiles", src)
         self.assertIn("async with _f273e_aiofiles.open", src)
@@ -380,8 +376,9 @@ class TestF273FFnocacheRuntimeArtifacts(unittest.TestCase):
             self.assertIsNone(F_NOCACHE)
 
     def test_apply_nocache_to_path_returns_bool(self):
-        from hledac.universal.tools.file_cache import apply_nocache_to_path
         import tempfile
+
+        from hledac.universal.tools.file_cache import apply_nocache_to_path
         with tempfile.NamedTemporaryFile(delete=False) as f:
             path = f.name
         try:
@@ -397,7 +394,7 @@ class TestF273FFnocacheRuntimeArtifacts(unittest.TestCase):
     def test_apply_nocache_below_threshold_returns_false(self):
         """Below NOCACHE_THRESHOLD_BYTES the call is a no-op (False)."""
         from hledac.universal.tools.file_cache import (
-            NOCACHE_THRESHOLD_BYTES, apply_nocache_to_path,
+            apply_nocache_to_path,
         )
         if platform.system() != "Darwin":
             self.skipTest("F_NOCACHE only on Darwin")
@@ -452,7 +449,9 @@ class TestF273GMallocPressureRelief(unittest.TestCase):
 
     def test_maybe_call_pressure_relief_increments_counter(self):
         from hledac.universal.runtime.sprint_scheduler import (
-            SprintScheduler, SprintSchedulerConfig, SprintSchedulerResult,
+            SprintScheduler,
+            SprintSchedulerConfig,
+            SprintSchedulerResult,
         )
         instance = SprintScheduler.__new__(SprintScheduler)
         instance._config = SprintSchedulerConfig(sprint_duration_s=60)
@@ -501,36 +500,35 @@ class TestF273HResultDiagnostics(unittest.TestCase):
 # ===========================================================================
 
 class TestF273IBackwardCompat(unittest.TestCase):
-    """F273I: Old F250/F272A tests must be updated to match the 0.20 contract.
+    """F273I + F278A: Windup formula updated to 0.30 ratio / [30, 180].
 
-    This class re-asserts the new F273B values so we can catch any future
-    regression of the windup formula. The original test_f250_dynamic_windup.py
-    is updated separately (test_f273_amends_f250.py).
+    F278A (2026-06-12) aligns the scheduler with the F221-ABORT guard in
+    core/__main__.py. Previous contracts (F272A: 0.10/[15,60], F273B: 0.20/[20,90])
+    are superseded.
     """
 
-    def test_f273b_replaces_f272a_amendment(self):
-        """F273B: 0.20 ratio with [20, 90] clamp replaces F272A's 0.10 with [15, 60]."""
-        # Pre-F272A: 30% / [30, 180]
-        # F272A: 10% / [15, 60]
-        # F273B: 20% / [20, 90]
+    def test_f278a_replaces_f273b_contract(self):
+        """F278A: 0.30 ratio with [30, 180] clamp supersedes F273B's 0.20/[20,90]."""
         for dur, expected in [
-            (60, 20.0),   # floor
-            (150, 30.0),  # 0.20 * 150
-            (300, 60.0),  # 0.20 * 300
-            (450, 90.0),  # 0.20 * 450 = 90, no clamp
-            (600, 90.0),  # 0.20 * 600 = 120 -> 90 (ceiling)
-            (1800, 90.0), # 0.20 * 1800 = 360 -> 90 (ceiling)
+            (60, 30.0),    # floor
+            (100, 30.0),  # floor (0.30*100=30)
+            (150, 45.0),  # 0.30 * 150
+            (300, 90.0),  # 0.30 * 300
+            (600, 180.0), # ceiling
+            (1800, 180.0), # ceiling
         ]:
             cfg = _import_sprint_scheduler_config()(sprint_duration_s=float(dur))
             self.assertEqual(
                 cfg.effective_windup_lead_s, expected,
-                f"F273B: dur={dur} expected={expected}, got {cfg.effective_windup_lead_s}",
+                f"F278A: dur={dur} expected={expected}, got {cfg.effective_windup_lead_s}",
             )
 
     def test_drain_helpers_importable(self):
         """drain_pending_extractions + get_drain_stats are importable."""
         from hledac.universal.fetching.public_fetcher import (
-            drain_pending_extractions, get_drain_stats, schedule_html_extraction,
+            drain_pending_extractions,
+            get_drain_stats,
+            schedule_html_extraction,
         )
         self.assertTrue(callable(drain_pending_extractions))
         self.assertTrue(callable(get_drain_stats))

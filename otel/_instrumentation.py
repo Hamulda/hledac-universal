@@ -5,13 +5,13 @@ gets a NoOp span and continues unchanged.
 """
 from __future__ import annotations
 
-import asyncio
 import contextlib
 import functools
 import inspect
-from typing import Any, Callable, TypeVar
+from collections.abc import Callable
+from typing import Any, TypeVar
 
-from otel._noop import _NOOP_SPAN, _NOOP_TRACER, _NoOpSpan
+from otel._noop import _NOOP_SPAN, _NOOP_TRACER
 from otel._setup import is_initialized
 
 F = TypeVar("F", bound=Callable[..., Any])

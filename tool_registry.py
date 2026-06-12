@@ -52,6 +52,7 @@ def __getattr__(name: str):
 
 # Task handler registry (unchanged — pure decorator pattern)
 from collections.abc import Callable
+
 _TASK_HANDLERS: dict[str, Callable] = {}
 _HANDLERS_LOADED: bool = False
 

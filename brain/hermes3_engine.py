@@ -28,14 +28,16 @@ import time
 try:
     from otel import (  # type: ignore
         add_event as _otel_add_event,
+    )
+    from otel import (
         instrumented as _otel_instrumented,
+    )
+    from otel import (
         set_attribute as _otel_set_attribute,
     )
 except ImportError:  # production fallback
-    from hledac.universal.telemetry import (  # type: ignore
-        add_event as _otel_add_event,
+    from hledac.universal.telemetry import (
         instrumented as _otel_instrumented,
-        set_attribute as _otel_set_attribute,
     )
 from collections import OrderedDict
 from collections.abc import AsyncIterator, Callable, Iterator
@@ -1047,13 +1049,13 @@ class Hermes3Engine:
             return
 
         try:
-            from mlx_lm.models.cache import make_prompt_cache
-
             # Sprint M4: probe disk BEFORE allocating/prefilling. A valid
             # on-disk cache is the cheapest path (~0 ms vs ~1.5 s prefill
             # for a 1500-token system prompt). Probe via path check, not
             # via full _load_cache, so we can branch on existence.
             from pathlib import Path
+
+            from mlx_lm.models.cache import make_prompt_cache
             _disk_cache = (
                 Path.home() / '.hledac' / 'cache' / 'system_prompt_cache.npz'
             )

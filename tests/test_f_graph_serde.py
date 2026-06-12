@@ -24,11 +24,9 @@ Sprint companion to F-Bloom-Regression — verify pickle-free hot path.
 """
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 
 import pytest
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -66,7 +64,7 @@ def tiny_nx_graph():
 
 class TestGraphSerdeJsonRoundtrip:
     def test_save_and_load_roundtrip(self, tmp_graphs_dir: Path, tiny_nx_graph):
-        from intelligence._graph_serde import save_nx_graph_jsonl, load_nx_graph_jsonl
+        from intelligence._graph_serde import load_nx_graph_jsonl, save_nx_graph_jsonl
 
         out = tmp_graphs_dir / "graph.jsonl"
         ok = save_nx_graph_jsonl(str(out), tiny_nx_graph, max_nodes=10_000)
@@ -110,7 +108,7 @@ class TestGraphSerdeJsonRoundtrip:
 class TestGraphSerdeBound:
     def test_prune_on_write_when_over_max(self, tmp_graphs_dir: Path):
         nx = pytest.importorskip("networkx")
-        from intelligence._graph_serde import save_nx_graph_jsonl, load_nx_graph_jsonl
+        from intelligence._graph_serde import load_nx_graph_jsonl, save_nx_graph_jsonl
 
         g = nx.Graph()
         for i in range(100):
@@ -127,7 +125,7 @@ class TestGraphSerdeBound:
 
     def test_bound_preserves_edges(self, tmp_graphs_dir: Path):
         nx = pytest.importorskip("networkx")
-        from intelligence._graph_serde import save_nx_graph_jsonl, load_nx_graph_jsonl
+        from intelligence._graph_serde import load_nx_graph_jsonl, save_nx_graph_jsonl
 
         g = nx.Graph()
         for i in range(50):
@@ -151,6 +149,7 @@ class TestGraphSerdeLegacyMigration:
     def test_legacy_pickle_loads_on_safe_path(self, tmp_graphs_dir: Path):
         nx = pytest.importorskip("networkx")
         import pickle
+
         from intelligence._graph_serde import load_nx_graph_jsonl
 
         legacy_g = nx.Graph()
@@ -175,6 +174,7 @@ class TestGraphSerdeLegacyMigration:
     def test_safe_path_rejects_outside_graphs_dir(self, tmp_path: Path, monkeypatch):
         nx = pytest.importorskip("networkx")
         import pickle
+
         from intelligence._graph_serde import load_nx_graph_jsonl
 
         # Make a non-graphs-dir location

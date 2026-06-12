@@ -23,7 +23,7 @@ except ImportError:
     mx = None  # type: ignore[assignment]
 
 if TYPE_CHECKING:
-    import mlx.core as mx
+    pass
 
 _MLX_EMBEDDINGS_AVAILABLE = False
 try:

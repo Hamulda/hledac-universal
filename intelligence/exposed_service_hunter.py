@@ -1428,7 +1428,7 @@ class APICache:
         """Close database connection."""
         self._conn.close()
 
-    def __enter__(self) -> "APICache":
+    def __enter__(self) -> APICache:
         return self
 
     def __exit__(self, exc_type, exc, tb) -> None:

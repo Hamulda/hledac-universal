@@ -42,7 +42,6 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 PROD_DIRS = [
@@ -355,7 +354,6 @@ class TestAsyncioRunAudit:
         # execution_optimizer._run_in_executor_safe uses run_until_complete, not
         # asyncio.run. If someone re-introduces asyncio.run() there, audit #1
         # catches it.
-        from pathlib import Path
         opt_path = REPO_ROOT / "utils" / "execution_optimizer.py"
         text = opt_path.read_text()
         assert "F206L" in text or "M1-SAFE" in text, (

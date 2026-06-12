@@ -110,8 +110,7 @@ class CausalEngine:
 
     def extract_entities(self, findings: list[Any]) -> list[Entity]:
         """Extrahuje entity z findings pro grafovou analýzu."""
-        from brain.ner_engine import extract_iocs_from_text
-        from brain.ner_engine import _ioc_type_to_entity_type
+        from brain.ner_engine import _ioc_type_to_entity_type, extract_iocs_from_text
 
         entities: list[Entity] = []
         seen: dict[str, Entity] = {}

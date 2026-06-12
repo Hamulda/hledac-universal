@@ -23,8 +23,6 @@ from __future__ import annotations
 
 import warnings
 
-import pytest
-
 
 class TestScalableBloomFilterDeprecation:
     """Backward-compat alias for the removed unbounded class."""

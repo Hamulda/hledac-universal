@@ -33,11 +33,11 @@ import psutil
 # Sprint F222F: RotatingBloomFilter for cross-run URL dedup pre-check
 __all__ = ["DedupManager", "RotatingBloomFilter"]
 
-from hledac.universal.utils.lmdb_bulk import putmulti_bounded  # noqa: E402
-
 import hashlib
 import os
 import struct
+
+from hledac.universal.utils.lmdb_bulk import putmulti_bounded  # noqa: E402
 
 # Sprint 8AG §6.17: Default dedup LMDB map size
 _DEDUP_LMDB_MAP_SIZE: int = 64 * 1024 * 1024  # 64MB

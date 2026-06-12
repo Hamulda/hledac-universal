@@ -25,7 +25,6 @@ import threading
 from dataclasses import dataclass
 from typing import Any, TextIO
 
-
 # ── Bounded constants (M1 8GB safe) ────────────────────────────────────────
 _MAX_QUEUE_SIZE: int = 2048
 _MAX_EXPORT_BATCH: int = 64
@@ -51,7 +50,7 @@ class TelemetryConfig:
     ring_sink: Any | None = None  # for tests
 
     @classmethod
-    def from_env(cls) -> "TelemetryConfig":
+    def from_env(cls) -> TelemetryConfig:
         kind = os.environ.get("HLEDAC_OTEL_EXPORTER", "stdout").strip().lower()
         if kind not in ("stdout", "otlp", "none", "ring"):
             kind = "stdout"
@@ -206,7 +205,6 @@ def init_telemetry(cfg: TelemetryConfig | None = None) -> bool:
                 BatchSpanProcessor,
             )
             from opentelemetry.sdk.trace.sampling import (  # type: ignore
-                ALWAYS_ON,
                 ParentBased,
                 TraceIdRatioBased,
             )

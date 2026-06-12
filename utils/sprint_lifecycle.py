@@ -320,7 +320,10 @@ class SprintLifecycleManager:
         try:
             # ty: relative import from utils/ → brain/ crosses the package
             # boundary; use the canonical absolute namespace path.
-            from hledac.universal.brain.model_lifecycle import request_emergency_unload  # type: ignore[import-not-found]
+            from hledac.universal.brain.model_lifecycle import (
+                request_emergency_unload,  # type: ignore[import-not-found]
+            )
+
             from .uma_budget import UmaWatchdog, UmaWatchdogCallbacks
         except Exception as e:
             logger.debug(f"[LIFECYCLE] UmaWatchdog import failed: {e}")

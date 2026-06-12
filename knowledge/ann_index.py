@@ -27,10 +27,10 @@ from __future__ import annotations
 import logging
 import os
 import threading
+from collections.abc import Callable
 from pathlib import Path
 
 import numpy as np
-from typing import Any, Callable
 
 logger = logging.getLogger(__name__)
 

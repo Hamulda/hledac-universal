@@ -21,10 +21,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-
 
 # ---------------------------------------------------------------------------
 # Config field
@@ -47,9 +45,10 @@ class TestSprintFA3ConfigField:
         assert cfg.cycle_budget_s == 10.0
 
     def test_field_is_part_of_config_dataclass(self):
-        from hledac.universal.runtime.sprint_scheduler import SprintSchedulerConfig
         # Presence in __dataclass_fields__ proves it's a real field, not a monkey-patch
         from dataclasses import fields
+
+        from hledac.universal.runtime.sprint_scheduler import SprintSchedulerConfig
         field_names = {f.name for f in fields(SprintSchedulerConfig)}
         assert "cycle_budget_s" in field_names
 
@@ -64,7 +63,8 @@ class TestSprintFA3InstanceCounter:
 
     def test_counter_starts_at_zero(self):
         from hledac.universal.runtime.sprint_scheduler import (
-            SprintScheduler, SprintSchedulerConfig,
+            SprintScheduler,
+            SprintSchedulerConfig,
         )
         cfg = SprintSchedulerConfig(cycle_budget_s=60.0)
         sched = SprintScheduler(cfg, ct_log_client=None)
@@ -73,7 +73,8 @@ class TestSprintFA3InstanceCounter:
 
     def test_counter_is_int(self):
         from hledac.universal.runtime.sprint_scheduler import (
-            SprintScheduler, SprintSchedulerConfig,
+            SprintScheduler,
+            SprintSchedulerConfig,
         )
         cfg = SprintSchedulerConfig()
         sched = SprintScheduler(cfg, ct_log_client=None)
@@ -94,7 +95,8 @@ class TestSprintFA3Wrapper:
     async def test_fast_cycle_does_not_increment_counter(self):
         """A cycle that finishes well under the budget -> counter unchanged."""
         from hledac.universal.runtime.sprint_scheduler import (
-            SprintScheduler, SprintSchedulerConfig,
+            SprintScheduler,
+            SprintSchedulerConfig,
         )
         cfg = SprintSchedulerConfig(cycle_budget_s=2.0)
         sched = SprintScheduler(cfg, ct_log_client=None)
@@ -121,7 +123,8 @@ class TestSprintFA3Wrapper:
     async def test_slow_cycle_increments_counter_and_treats_as_empty(self):
         """A cycle that exceeds the budget -> counter += 1, cycle_ok = True."""
         from hledac.universal.runtime.sprint_scheduler import (
-            SprintScheduler, SprintSchedulerConfig,
+            SprintScheduler,
+            SprintSchedulerConfig,
         )
         cfg = SprintSchedulerConfig(cycle_budget_s=0.1)  # very tight budget
         sched = SprintScheduler(cfg, ct_log_client=None)
@@ -161,7 +164,8 @@ class TestSprintFA3Wrapper:
         """Multiple consecutive timeouts should update max_consecutive_empty
         in the same way the existing F228G empty-cycle guard does."""
         from hledac.universal.runtime.sprint_scheduler import (
-            SprintScheduler, SprintSchedulerConfig,
+            SprintScheduler,
+            SprintSchedulerConfig,
         )
         cfg = SprintSchedulerConfig(cycle_budget_s=0.05)
         sched = SprintScheduler(cfg, ct_log_client=None)
@@ -236,7 +240,8 @@ class TestSprintFA3Logging:
     @pytest.mark.asyncio
     async def test_timeout_emits_warning_log(self, caplog):
         from hledac.universal.runtime.sprint_scheduler import (
-            SprintScheduler, SprintSchedulerConfig,
+            SprintScheduler,
+            SprintSchedulerConfig,
         )
         cfg = SprintSchedulerConfig(cycle_budget_s=0.05)
         sched = SprintScheduler(cfg, ct_log_client=None)

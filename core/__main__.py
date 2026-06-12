@@ -46,16 +46,15 @@ import sys
 import time
 import traceback
 import uuid
+from pathlib import Path
+from typing import Any
+
+import aiohttp
 
 # Sprint S2: msgspec.Struct for SprintFlags (frozen, gc=False) — 2-3× faster
 # __init__ vs @dataclass, ~40B/instance smaller footprint, no GC tracking.
 # M1 8GB friendly.
 import msgspec
-from dataclasses import dataclass
-from pathlib import Path
-from typing import Any
-
-import aiohttp
 import orjson
 
 from hledac.universal.core import memory_cycle as _memory_cycle  # F266-U2/U3
@@ -92,18 +91,23 @@ logger = logging.getLogger(__name__)
 try:
     from otel import (  # type: ignore
         add_event as _otel_add_event,
+    )
+    from otel import (
         init_telemetry,
-        instrumented as _otel_instrumented,
-        set_attribute as _otel_set_attribute,
         shutdown_telemetry,
     )
-except ImportError:  # production fallback (hledac.universal namespace)
-    from hledac.universal.telemetry import (  # type: ignore
-        add_event as _otel_add_event,
-        init_telemetry,
+    from otel import (
         instrumented as _otel_instrumented,
+    )
+    from otel import (
         set_attribute as _otel_set_attribute,
-        shutdown_telemetry,
+    )
+except ImportError:  # production fallback (hledac.universal namespace)
+    from hledac.universal.telemetry import (
+        init_telemetry,
+    )
+    from hledac.universal.telemetry import (
+        instrumented as _otel_instrumented,
     )
 
 # Idempotent — safe at module load. No-op if OTel SDK is missing.

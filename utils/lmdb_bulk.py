@@ -43,7 +43,8 @@ Invariants
 from __future__ import annotations
 
 import logging
-from typing import Any, List, Mapping, Sequence, Tuple, Union
+from collections.abc import Mapping, Sequence
+from typing import Any, Union
 
 logger = logging.getLogger(__name__)
 
@@ -54,10 +55,10 @@ DEFAULT_BULK_BATCH: int = 500
 _BULK_BATCH_MIN: int = 1
 _BULK_BATCH_MAX: int = 10_000
 
-LMDBPair = Union[Tuple[bytes, bytes], Mapping[bytes, bytes]]
+LMDBPair = Union[tuple[bytes, bytes], Mapping[bytes, bytes]]
 
 
-def _normalise_items(items: Sequence[LMDBPair]) -> List[Tuple[bytes, bytes]]:
+def _normalise_items(items: Sequence[LMDBPair]) -> list[tuple[bytes, bytes]]:
     """Convert (k, v) tuples or single-entry mappings to a list of pairs.
 
     LMDB Python binding (2.2.1) expects ``Transaction.put(k, v)`` per
@@ -65,7 +66,7 @@ def _normalise_items(items: Sequence[LMDBPair]) -> List[Tuple[bytes, bytes]]:
     ergonomic input shapes (``(k, v)`` tuple or 1-entry mapping)
     into a flat list of ``(bytes, bytes)`` pairs ready for the loop.
     """
-    out: List[Tuple[bytes, bytes]] = []
+    out: list[tuple[bytes, bytes]] = []
     for item in items:
         if isinstance(item, tuple) and len(item) == 2:
             out.append((item[0], item[1]))
@@ -89,7 +90,7 @@ def _normalise_items(items: Sequence[LMDBPair]) -> List[Tuple[bytes, bytes]]:
 
 def _write_chunk(
     env: Any,
-    chunk: Sequence[Tuple[bytes, bytes]],
+    chunk: Sequence[tuple[bytes, bytes]],
     overwrite: bool,
     append: bool,
 ) -> int:

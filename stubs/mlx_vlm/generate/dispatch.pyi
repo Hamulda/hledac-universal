@@ -1,4 +1,3 @@
-from typing import Any
 
 class GenerationResult:
     text: str

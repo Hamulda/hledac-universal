@@ -13,8 +13,6 @@ import hashlib
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, Protocol, TypeGuard, cast, runtime_checkable
 
-from hledac.universal.paths import LMDB_ROOT  # noqa: E402
-
 if TYPE_CHECKING:
     # Static-only import — never executed at runtime. Resolves MmapBloomFilter
     # to the typed stub (stubs/hledac_rust_extensions/__init__.pyi) so ty can
@@ -69,6 +67,7 @@ MAX_URL_ESTIMATE = 1_000_000
 # would point to a different location — invalidate the cached singleton so each
 # test gets a fresh filter at the new HOME.
 import os as _os
+
 _home_at_import = _os.environ.get("HOME", "")
 del _os
 

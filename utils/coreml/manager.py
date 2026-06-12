@@ -4,12 +4,8 @@ Starts/stops the FastAPI microservice as a subprocess.
 """
 from __future__ import annotations
 
-import asyncio
 import logging
-import os
-import signal
 import subprocess
-import sys
 import time
 from pathlib import Path
 from typing import Any
@@ -50,14 +46,14 @@ class CoreMLServiceManager:
     Context manager support for clean teardown.
     """
 
-    _instance: "CoreMLServiceManager | None" = None
+    _instance: CoreMLServiceManager | None = None
 
     def __init__(self) -> None:
         self._proc: subprocess.Popen[bytes] | None = None
         self._started = False
 
     @classmethod
-    def get_instance(cls) -> "CoreMLServiceManager":
+    def get_instance(cls) -> CoreMLServiceManager:
         if cls._instance is None:
             cls._instance = cls()
         return cls._instance
@@ -139,7 +135,7 @@ class CoreMLServiceManager:
         self.stop()
         self.start()
 
-    async def __aenter__(self) -> "CoreMLServiceManager":
+    async def __aenter__(self) -> CoreMLServiceManager:
         self.start()
         return self
 

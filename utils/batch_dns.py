@@ -43,7 +43,6 @@ import os
 import socket
 import time
 from collections import OrderedDict
-from typing import Any
 
 from .async_helpers import async_getaddrinfo, safe_gather
 

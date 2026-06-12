@@ -21,15 +21,9 @@ These tests do NOT touch network, MLX, or any other heavy dep.
 
 from __future__ import annotations
 
-import importlib
-import os
-import sys
-import tempfile
-import time
 from pathlib import Path
 
 import pytest
-
 
 # ---------------------------------------------------------------------------
 # Skip helpers — fail fast if Rust extension not built (CI fresh checkouts).

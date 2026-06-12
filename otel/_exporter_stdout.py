@@ -10,7 +10,8 @@ from __future__ import annotations
 import json
 import sys
 import threading
-from typing import Any, Sequence, TextIO
+from collections.abc import Sequence
+from typing import Any, TextIO
 
 try:
     from opentelemetry.sdk.trace import ReadableSpan  # type: ignore

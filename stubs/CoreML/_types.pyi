@@ -1,6 +1,5 @@
 # CoreML type stubs — only what's used in hledac/brain/ane_embedder.py etc.
 from typing import Any
-from . import _internal as _i
 
 class MLMultiArrayDataType:
     Int32: int

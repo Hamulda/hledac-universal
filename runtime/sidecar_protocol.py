@@ -295,8 +295,8 @@ def ensure_adapters_registered() -> None:
             AcademicSidecarAdapter,  # noqa: F401  # runtime.sidecar_protocol_adapters.AcademicSidecarAdapter
             AltProtocolSidecarAdapter,  # noqa: F401  # runtime.sidecar_protocol_adapters.AltProtocolSidecarAdapter
             DHTSidecarAdapter,  # noqa: F401  # runtime.sidecar_protocol_adapters.DHTSidecarAdapter
-            FediverseSidecarAdapter,  # noqa: F401  # runtime.sidecar_protocol_adapters.FediverseSidecarAdapter
             FederatedResearchSidecarAdapter,  # noqa: F401  # runtime.sidecar_protocol_adapters.FederatedResearchSidecarAdapter
+            FediverseSidecarAdapter,  # noqa: F401  # runtime.sidecar_protocol_adapters.FediverseSidecarAdapter
             IdentityStitchingSidecarAdapter,  # noqa: F401  # runtime.sidecar_protocol_adapters.IdentityStitchingSidecarAdapter
             LeakSentinelSidecarAdapter,  # noqa: F401  # runtime.sidecar_protocol_adapters.LeakSentinelSidecarAdapter
             PassiveFingerprintSidecarAdapter,  # noqa: F401  # runtime.sidecar_protocol_adapters.PassiveFingerprintSidecarAdapter

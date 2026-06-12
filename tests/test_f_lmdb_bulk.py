@@ -23,8 +23,6 @@ from __future__ import annotations
 import os
 import tempfile
 import time
-import warnings
-from pathlib import Path
 
 import pytest
 
@@ -35,7 +33,6 @@ from hledac.universal.utils.lmdb_bulk import (  # noqa: E402
     putmulti_bounded,
     putmulti_safe,
 )
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -267,7 +264,6 @@ class TestPutmultiBoundedPerformance:
 # If a future refactor introduces a per-item-txn-in-loop, this test fails.
 # ---------------------------------------------------------------------------
 import ast as _ast
-import inspect as _inspect
 from pathlib import Path as _Path
 
 _S3_AUDIT_FILES = [

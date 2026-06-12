@@ -67,20 +67,22 @@ from dataclasses import dataclass, field
 from enum import Enum, auto
 from functools import lru_cache
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Final
+from typing import TYPE_CHECKING, Any, Final, Protocol
 
 # Sprint T1: OpenTelemetry instrumentation (always-on, M1 8GB safe, fail-soft)
 try:
     from otel import (  # type: ignore
         add_event as _otel_add_event,
+    )
+    from otel import (
         instrumented as _otel_instrumented,
+    )
+    from otel import (
         set_attribute as _otel_set_attribute,
     )
 except ImportError:  # production fallback
-    from hledac.universal.telemetry import (  # type: ignore
-        add_event as _otel_add_event,
+    from hledac.universal.telemetry import (
         instrumented as _otel_instrumented,
-        set_attribute as _otel_set_attribute,
     )
 
 # Sprint P0-1: SoA overlay for hot-path integer counters in SprintSchedulerResult
@@ -91,7 +93,7 @@ except ImportError:  # pragma: no cover — fallback when run as a script
     try:
         from hledac.universal.runtime.int_counter_layout import IntCounterLayout  # type: ignore[no-redef]
     except ImportError:
-        IntCounterLayout = None  # type: ignore[assignment,misc]
+        IntCounterLayout: type | None = None  # type: ignore[assignment,misc,no-redef]
 
 
 
@@ -284,7 +286,7 @@ from hledac.universal.utils.lmdb_bulk import putmulti_bounded  # noqa: E402
 try:
     from hledac.universal.utils.source_types import SourceType
 except ImportError:
-    SourceType = None  # type: ignore[assignment]
+    SourceType: type | None = None  # type: ignore[assignment,no-redef]
 
 from hledac.universal.transport.circuit_breaker import (  # noqa: E402
     MAX_TRACKED_DOMAINS,
@@ -329,6 +331,10 @@ def _gc_sprint_callback(phase: str, info: dict) -> None:
 
 
 # Sprint F204D: Target memory integration
+# F280: Cross-sprint DuckPGQ memory
+from hledac.universal.knowledge.cross_sprint_memory import (  # noqa: E402
+    get_cross_sprint_memory,
+)
 from hledac.universal.knowledge.target_memory import (  # noqa: E402
     MAX_MEMORY_ENTITIES,
     MAX_MEMORY_EXPOSURES,
@@ -338,12 +344,6 @@ from hledac.universal.knowledge.target_memory import (  # noqa: E402
 )
 from hledac.universal.pipeline.pivot_lane_planner import (  # noqa: E402
     plan_lanes_for_pivot_seeds,
-)
-
-# F280: Cross-sprint DuckPGQ memory
-from hledac.universal.knowledge.cross_sprint_memory import (  # noqa: E402
-    CrossSprintMemory,
-    get_cross_sprint_memory,
 )
 
 # Sprint F206BG: Canonical acquisition strategy layer
@@ -396,6 +396,13 @@ from hledac.universal.utils.pivot_seed_extractor import (  # noqa: E402
 
 if TYPE_CHECKING:
     from hledac.universal.knowledge.duckdb_store import CanonicalFinding  # noqa: F401
+
+    class IntCounterLayoutProto(Protocol):
+        """Minimal duck-typed interface for IntCounterLayout (used in hot-path properties)."""
+
+        def get(self, key: str) -> int: ...
+        def set(self, key: str, value: int) -> None: ...
+        def bump(self, name: str, n: int) -> int: ...
 
 
 
@@ -1545,7 +1552,7 @@ class SprintSchedulerConfig:
             return self.effective_windup_lead_s
         base = self.effective_windup_lead_s
         adapt = max(0.0, min(30.0, (cycle_time_ema - 8.0) * 0.5))
-        return float(max(20.0, min(90.0, base + adapt)))
+        return float(max(30.0, min(180.0, base + adapt)))
 
     @property
     def effective_cycle_sleep_s(self) -> float:
@@ -3030,7 +3037,7 @@ class SprintSchedulerResult:
     # Sprint P0-1: SoA counter layout -- declared here so slots=True dataclass
     # can hold it. Allocated lazily in __post_init__; left as None on import
     # failure or MemoryError (property delegations return 0 in that case).
-    _int_counter_layout: object | None = None
+    _int_counter_layout: IntCounterLayoutProto | None = None
 
 
 
@@ -3085,6 +3092,15 @@ class SprintSchedulerResult:
     next_seeds_ioc_hashes: tuple[str, ...] = ()
 
     next_seeds_ioc_cves: tuple[str, ...] = ()
+
+    # F214Q / F237B: missing fields discovered during type-check audit
+    next_seeds_provider_yield: bool = False
+    next_seeds_pivot_deepening: bool = False
+    next_seeds_consumed_count: int = 0
+    next_seeds_seed_source: str = ""
+    planner_actions_consumed_count: int = 0
+    planner_action_lanes_requested: list[str] = field(default_factory=list)
+    planner_action_seed_source: str = ""
 
     # Sprint F214Q: Quantum pathfinder discovered IOC values
 
@@ -3329,6 +3345,12 @@ class SprintSchedulerResult:
             return self._int_counter_layout.bump(name, n)
         except Exception:
             return 0
+
+    # F238D: Pivot graph stats proof fields
+    pivot_graph_stats_used: bool = False
+    pivot_graph_stats_keys: tuple[str, ...] = ()
+    graph_aware_pivot_count: int = 0
+    pivot_integration_reason: str = ""
 
     # ── Sprint P0-1: SoA counter buffer (class attr, set in __post_init__) ─
     # We use a plain class attribute (no `field()`) to avoid the dataclass
@@ -3905,7 +3927,16 @@ class SprintResult:
     planned_pivot_lanes: tuple[str, ...] = ()
 
     pivot_integration_reason: str = ""
-
+    findings: list = field(default_factory=list)
+    pivot_lane_plan_count: int = 0
+    planned_pivot_lanes: tuple[str, ...] = ()
+    seed_quality_checked: bool = False
+    seed_quality_keep_count: int = 0
+    seed_quality_drop_count: int = 0
+    seed_quality_drop_reasons: dict = field(default_factory=dict)
+    seed_quality_kept_sample: list = field(default_factory=list)
+    seed_quality_dropped_sample: list = field(default_factory=list)
+    seed_quality_bypass_reason: str = ""
 
 
     # F226A: Seed context telemetry
@@ -5729,9 +5760,9 @@ class SprintScheduler:
                         self._privacy_context_id = await _privacy.create_privacy_context()
                         log.info("layers privacy_context created: %s", self._privacy_context_id)
                 except Exception as _e:
-                    log.W("layers privacy_context init failed: %s", _e)
+                    log.warning("layers privacy_context init failed: %s", _e)
             except Exception as _e:
-                log.W("layers LayerManager init failed: %s", _e)
+                log.warning("layers LayerManager init failed: %s", _e)
 
         # Sprint F193A: CT log client injection
         if ct_log_client is not None:
@@ -5819,7 +5850,7 @@ class SprintScheduler:
 
         # E2: Opt-in tracemalloc snapshot
         _trace_snap_before: Any = None
-        _trace_enabled = _env_flag("HLEDAC_TRACEMALLOC")
+        _trace_enabled = bool(_env_flag("HLEDAC_TRACEMALLOC"))
         if _trace_enabled:
             try:
                 import tracemalloc
@@ -6111,7 +6142,7 @@ class SprintScheduler:
             try:
                 _broadcast = getattr(self._communication_layer, "broadcast_message", None)
                 if _broadcast is not None:
-                    _payload = {"event": "sprint_start", "sprint_id": self._sprint_id, "query": self._query}
+                    _payload = {"event": "sprint_start", "sprint_id": self.sprint_id, "query": self._query}
                     if asyncio.iscoroutine(_broadcast(_payload)):
                         await _broadcast(_payload)
             except Exception:
@@ -6184,11 +6215,11 @@ class SprintScheduler:
                         self._privacy_context_id = await _privacy.create_privacy_context()
                         log.info("layers privacy_context created: %s", self._privacy_context_id)
                 except Exception as _e:
-                    log.W("layers privacy_context init failed: %s", _e)
+                    log.warning("layers privacy_context init failed: %s", _e)
 
             except Exception as _e:
 
-                log.W("layers LayerManager init failed: %s", _e)
+                log.warning("layers LayerManager init failed: %s", _e)
 
 
         # Sprint F228F: Wrap ALL body statements in defensive try/except
@@ -6301,19 +6332,7 @@ class SprintScheduler:
 
                     uma = sample_uma_status()
 
-                    _uma_state = "ok"
-
-                    if uma.is_emergency:
-
-                        _uma_state = "emergency"
-
-                    elif uma.is_critical:
-
-                        _uma_state = "critical"
-
-                    elif uma.is_warn:
-
-                        _uma_state = "warn"
+                    _uma_state = uma.state if uma.state else "ok"
 
                     _swap_detected = uma.swap_detected
 
@@ -6540,7 +6559,7 @@ class SprintScheduler:
 
                     # F223A: Explicit acquisition profile override from config
 
-                    acquisition_profile=self._config.acquisition_profile,
+                    acquisition_profile=self._config.acquisition_profile or "",
 
                 )
 
@@ -6804,7 +6823,7 @@ class SprintScheduler:
 
                 )
 
-                return
+                return self._result  # type: ignore[return-value]
 
 
 
@@ -8074,7 +8093,7 @@ class SprintScheduler:
                     if _pivot_policy_suggestions:
                         first = _pivot_policy_suggestions[0]
                         if first.get("pivot_type") == "dark_surface":
-                            log.INFO("RL suggests dark_surface pivot: %s", first.get("reason", ""))
+                            log.info("RL suggests dark_surface pivot: %s", first.get("reason", ""))
                         self._result.rl_suggested_pivot = first.get("pivot_type", "unknown")
                 except Exception:
                     pass  # fail-soft: pivot planning is advisory
@@ -8289,7 +8308,7 @@ class SprintScheduler:
                 try:
                     _broadcast = getattr(self._communication_layer, "broadcast_message", None)
                     if _broadcast is not None:
-                        _summary = {"event": "sprint_end", "sprint_id": self._sprint_id, "findings": len(self._result.findings) if self._result is not None else 0}  # noqa: E501
+                        _summary = {"event": "sprint_end", "sprint_id": self.sprint_id, "findings": len(self._result.findings) if self._result is not None else 0}  # type: ignore[unresolved-attribute]  # noqa: E501
                         if asyncio.iscoroutine(_broadcast(_summary)):
                             await _broadcast(_summary)
                 except Exception:
@@ -9539,7 +9558,7 @@ class SprintScheduler:
 
             if _lane == "FEED":
 
-                _raw = getattr(self, "_feed_verdicts", []) or None
+                _raw = getattr(self, "_feed_verdicts", []) or None  # type: ignore[assignment]
 
                 # F221A: FEED accepted_count must come from result-level counts, not _feed_verdicts
 
@@ -9591,7 +9610,7 @@ class SprintScheduler:
 
 
 
-            _normalized = normalize_source_family_outcome(_fam, _raw)
+            _normalized = normalize_source_family_outcome(_fam, _raw)  # type: ignore[arg-type]
 
             _lane_name = _normalized.get("lane") or _fam.upper()
 
@@ -10136,7 +10155,7 @@ class SprintScheduler:
 
                                 try:
 
-                                    _ex_samples.append(orjson.dumps(_ex).decode("utf-8"))
+                                    _ex_samples.append(orjson.dumps(_ex).decode("utf-8"))  # type: ignore[no-redef,name-defined]
 
                                 except Exception:
 
@@ -10163,7 +10182,7 @@ class SprintScheduler:
 
                             try:
 
-                                _samples.append(orjson.dumps(_entry).decode("utf-8"))
+                                _samples.append(orjson.dumps(_entry).decode("utf-8"))  # type: ignore[name-defined]  # type: ignore[no-redef,name-defined]
 
                             except Exception:
 
@@ -11146,7 +11165,7 @@ class SprintScheduler:
 
                             _plan = plan_lanes_for_pivot_seeds(
 
-                                _extraction.seeds,
+                                _extraction.seeds,  # type: ignore[arg-type]
 
                                 max_items=128,
 
@@ -11469,7 +11488,7 @@ class SprintScheduler:
 
                 )
 
-                _required = tuple(
+                _required: tuple[str, ...] = tuple(
 
                     mlt.lane.value if hasattr(mlt.lane, 'value')
 
@@ -12038,7 +12057,7 @@ class SprintScheduler:
 
                         try:
 
-                            _samples.append(orjson.dumps(_entry).decode("utf-8"))
+                            _samples.append(orjson.dumps(_entry).decode("utf-8"))  # type: ignore[name-defined]
 
                         except Exception:
 
@@ -14235,7 +14254,7 @@ class SprintScheduler:
 
             except Exception as _e:
 
-                log.W("layers StealthLayer.rotate_fingerprint failed: %s", _e)
+                log.warning("layers StealthLayer.rotate_fingerprint failed: %s", _e)
 
         """
 
@@ -16858,7 +16877,7 @@ class SprintScheduler:
 
                             except Exception as _e:
 
-                                log.W("layers GhostLayer.execute_action failed: %s", _e)
+                                log.warning("layers GhostLayer.execute_action failed: %s", _e)
 
                         # TemporalSignalLayer: observe finding as temporal event
 
@@ -16874,7 +16893,7 @@ class SprintScheduler:
 
                             except Exception as _e:
 
-                                log.W("layers TemporalSignalLayer.observe failed: %s", _e)
+                                log.warning("layers TemporalSignalLayer.observe failed: %s", _e)
 
                         # SecurityLayer: log finding_accepted audit
 
@@ -16898,7 +16917,7 @@ class SprintScheduler:
 
                             except Exception as _e:
 
-                                log.W("layers SecurityLayer._mission_audit.log_action failed: %s", _e)
+                                log.warning("layers SecurityLayer._mission_audit.log_action failed: %s", _e)
 
 
 
@@ -24502,9 +24521,9 @@ class SprintScheduler:
 
         """
 
-        from hledac.universal.brain.model_manager import get_model_manager
-
         import time as _t_f273d
+
+        from hledac.universal.brain.model_manager import get_model_manager
 
         # F273D: Wall-clock the load so the result surfaces actual hermes
 
@@ -25716,7 +25735,7 @@ class SprintScheduler:
 
             if _lane == "FEED":
 
-                _raw = getattr(self, "_feed_verdicts", []) or None
+                _raw = getattr(self, "_feed_verdicts", []) or None  # type: ignore[assignment]
 
                 # F215E: FEED accepted_count must come from result-level counts, not _feed_verdicts
 

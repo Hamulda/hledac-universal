@@ -93,12 +93,12 @@ async def _fetch_gemini_tcp(
     url = f"gemini://{host}:{port}{selector}" if port != 1965 else f"gemini://{host}{selector}"
 
     # Build request (Gemini simple request format)
-    request_bytes = (f"{url}\r\n").encode("utf-8")
+    request_bytes = (f"{url}\r\n").encode()
 
     if headers:
         # Gemini supports URL-encoded meta as headers
         header_str = "".join(f"{k}: {v}\r\n" for k, v in headers.items())
-        request_bytes = f"{url}\r\n{header_str}".encode("utf-8")
+        request_bytes = f"{url}\r\n{header_str}".encode()
 
     # Create SSL context (TLS 1.3, no certificate verification)
     ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)

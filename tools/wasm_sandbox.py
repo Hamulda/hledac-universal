@@ -20,7 +20,7 @@ _WASMTIME_AVAILABLE = False
 
 try:
     import wasmtime
-    from wasmtime import Config, Engine, Module, Store, Instance
+    from wasmtime import Config, Engine, Instance, Module, Store
     _WASMTIME_AVAILABLE = True
 except ImportError:
     wasmtime = None

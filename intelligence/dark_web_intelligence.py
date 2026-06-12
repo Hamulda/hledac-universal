@@ -31,9 +31,8 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from typing import Any, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from urllib.parse import urljoin, urlparse
-
 
 # Try to import socks for Tor support
 try:

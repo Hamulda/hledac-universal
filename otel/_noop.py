@@ -2,7 +2,8 @@
 from __future__ import annotations
 
 import contextlib
-from typing import Any, Iterator
+from collections.abc import Iterator
+from typing import Any
 
 
 class _NoOpSpan:
@@ -37,7 +38,7 @@ class _NoOpSpan:
     def is_recording(self) -> bool:
         return False
 
-    def __enter__(self) -> "_NoOpSpan":
+    def __enter__(self) -> _NoOpSpan:
         return self
 
     def __exit__(self, *exc_info: Any) -> bool:

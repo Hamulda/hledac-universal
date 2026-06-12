@@ -24,7 +24,6 @@ import json
 import logging
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import Any
 
 __all__ = [
     "ChainStep",

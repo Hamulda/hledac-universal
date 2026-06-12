@@ -42,7 +42,7 @@ import resource
 import sys
 import tempfile
 import time
-from collections.abc import Callable, AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any

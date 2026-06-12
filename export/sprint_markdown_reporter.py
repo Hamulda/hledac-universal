@@ -24,6 +24,7 @@ Path semantics (Sprint 8VY §C):
 from __future__ import annotations
 
 import time as _time
+from datetime import UTC
 from typing import Any
 
 from ..utils.safe_render import escape_markdown_text
@@ -323,8 +324,8 @@ def _render_analyst_brief_section(analyst_brief: dict) -> str:
 
     # Format timestamp
     try:
-        from datetime import datetime, timezone
-        ts_str = datetime.fromtimestamp(generated_ts, tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC") if generated_ts else "unknown"
+        from datetime import datetime
+        ts_str = datetime.fromtimestamp(generated_ts, tz=UTC).strftime("%Y-%m-%d %H:%M:%S UTC") if generated_ts else "unknown"
     except Exception:
         ts_str = str(generated_ts) if generated_ts else "unknown"
 

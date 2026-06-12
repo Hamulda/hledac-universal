@@ -12,8 +12,8 @@ prev_reward integration in hypothesis generation.
 
 from __future__ import annotations
 
-import asyncio
 import ast
+import asyncio
 import logging
 from dataclasses import dataclass, field
 from typing import Any
@@ -542,7 +542,7 @@ class ResearchLoop:
                     falsified = False
                     if hasattr(engine, "attempt_falsification"):
                         try:
-                            from dataclasses import dataclass, field, field
+                            from dataclasses import dataclass, field
                             @dataclass
                             class _H:
                                 hypothesis: str = ""

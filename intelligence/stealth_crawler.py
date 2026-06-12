@@ -36,7 +36,6 @@ from enum import Enum
 from typing import Any
 from urllib.parse import quote, unquote, urlparse
 
-
 logger = logging.getLogger(__name__)
 
 # =============================================================================

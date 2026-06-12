@@ -18,23 +18,9 @@ This module provides comprehensive deep crawling capabilities including:
 Categories: Deep Crawling & "Škvíry Internetu"
 """
 
-import asyncio
-import hashlib
-import json
 import logging
-import re
-import time
-from abc import ABC, abstractmethod
-from collections import deque
 from dataclasses import dataclass
 from typing import Any
-from urllib.parse import urljoin, urlparse
-
-import aiohttp
-import numpy as np
-
-from hledac.universal.transport.circuit_breaker import CircuitBreaker, CircuitDecision, get_breaker
-from utils.async_helpers import safe_gather_dropin
 
 logger = logging.getLogger(__name__)
 

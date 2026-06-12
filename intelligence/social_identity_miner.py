@@ -36,9 +36,9 @@ from .confidence_policy import compute_confidence as _compute_confidence
 # Single-pass O(n) scan across all 17 platform URL patterns.
 # Falls back to sequential pattern matching if Rust extension unavailable.
 
-_AC_MATCHER: "Any" = None
+_AC_MATCHER: Any = None
 
-def _get_ac_matcher() -> "Any":
+def _get_ac_matcher() -> Any:
     """Lazy-init Aho-Corasick matcher for platform URL patterns."""
     global _AC_MATCHER
     if _AC_MATCHER is None:

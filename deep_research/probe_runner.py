@@ -1,4 +1,5 @@
 from typing import TYPE_CHECKING
+
 """
 Deep Research Probe Runner — Bounded Post-Sprint Deep Research
 ==============================================================
@@ -95,7 +96,6 @@ async def run_deep_probe(
         DeepProbeScanner,
         scan_ipfs,
     )
-
     from hledac.universal.knowledge.search_index import LocalSearchSeam
 
     start_time = time.monotonic()

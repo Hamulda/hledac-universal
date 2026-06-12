@@ -16,13 +16,10 @@ Hermetic: every external I/O surface is monkeypatched.
 from __future__ import annotations
 
 import asyncio
-from unittest.mock import AsyncMock, patch
-
-import pytest
+from unittest.mock import patch
 
 from hledac.universal.coordinators.fetch_coordinator import FetchCoordinator
 from hledac.universal.tools.url_dedup import dedupe_url_list
-
 
 # ---------------------------------------------------------------------------
 # _host_ips_cache attribute

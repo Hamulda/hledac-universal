@@ -42,7 +42,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-
 log = logging.getLogger(__name__)
 
 # Default timeout for external lookups (seconds)

@@ -380,7 +380,6 @@ def record_h3_support(url: str, supports: bool) -> None:
 # LRU the reactive path uses, so the very next call to
 # ``http_version_for_curl_cffi`` for that host sees the cached True.
 # ---------------------------------------------------------------------------
-import asyncio  # noqa: E402  — late import to keep module-load cheap
 _HEAD_PROBE_TIMEOUT_S: float = 4.0  # bounded; M1 8GB friendly
 
 

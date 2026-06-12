@@ -26,7 +26,6 @@ from __future__ import annotations
 import asyncio
 import io
 import json
-import sys
 import threading
 import time
 from typing import Any
@@ -52,8 +51,7 @@ from otel._buffer import BoundedRing
 from otel._exporter_ring import RingBufferExporter
 from otel._exporter_stdout import StdoutJSONExporter
 from otel._instrumentation import _filter_attrs
-from otel._noop import _NoOpSpan, _NoOpTracer, _NOOP_TRACER
-
+from otel._noop import _NOOP_TRACER, _NoOpSpan
 
 # ── Reset module state between tests ──────────────────────────────────────
 

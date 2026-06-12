@@ -1,6 +1,5 @@
 # curl_cffi.requests sub-stub (sync, used elsewhere)
 from typing import Any
-from .. import CurlError
 
 class Session:
     def __init__(self, *, impersonate: str | None = None, **kwargs: Any) -> None: ...

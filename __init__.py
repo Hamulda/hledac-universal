@@ -166,6 +166,7 @@ def __getattr__(name: str):
 # The `package=` scope gates imports under hledac.universal only.
 # Additional hardening: identifier pattern + find_spec pre-check.
 import re as _re
+
 _IDENTIFIER_RE = _re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
 
 

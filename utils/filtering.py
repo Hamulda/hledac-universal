@@ -28,8 +28,8 @@ from __future__ import annotations
 import hashlib
 import logging
 import re
-from contextlib import closing
 from collections.abc import Iterator
+from contextlib import closing
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path

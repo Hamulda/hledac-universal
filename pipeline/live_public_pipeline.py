@@ -3575,13 +3575,11 @@ async def async_run_live_public_pipeline(
             github_secrets_count = 0
             if self.store is not None:
                 try:
+                    import re as _re
+
                     from hledac.universal.knowledge.duckdb_store import (
                         CanonicalFinding as _CanonicalFinding,
                     )
-                    from hledac.universal.utils.source_types import (
-                        SourceType as _SourceTypeEnumLocal,
-                    )
-                    import re as _re
                     _DOMAIN_ORG_RE = _re.compile(  # noqa: N806
                         r"(?:[a-zA-Z0-9](?:[a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}"
                     )
@@ -4704,13 +4702,13 @@ async def async_run_live_public_pipeline(
     # Only export on successful pipeline completion (run_error is None)
     if run_error is None:
         try:
-            from hledac.universal.export.export_manager import get_export_manager
-            from hledac.universal.memory.memory_manager import export_session
-
             # F271E: honour --export-dir (or GHOST_EXPORT_DIR) for the
             # in-pipeline P18 export. When unset, the singleton falls
             # back to ~/hledac_outputs/ for backwards compatibility.
             import os as _os
+
+            from hledac.universal.export.export_manager import get_export_manager
+            from hledac.universal.memory.memory_manager import export_session
             _resolved_export_dir = (
                 export_dir
                 or _os.environ.get("GHOST_EXPORT_DIR")

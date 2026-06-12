@@ -264,7 +264,7 @@ class _Backend:
     def __init__(self) -> None:
         self._lmdb_env: Any = None
         self._lmdb_db: Any = None
-        self._memory: "OrderedDict[bytes, bytes]" = OrderedDict()
+        self._memory: OrderedDict[bytes, bytes] = OrderedDict()
         self._using_lmdb: bool = False
         self._init_lmdb()
 

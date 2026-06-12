@@ -324,7 +324,7 @@ class HypothesisGraph:
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "HypothesisGraph":
+    def from_dict(cls, data: dict[str, Any]) -> HypothesisGraph:
         graph = cls(
             max_nodes=int(data.get("max_nodes", MAX_NODES)),
             max_edges=int(data.get("max_edges", MAX_EDGES)),

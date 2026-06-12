@@ -16,12 +16,10 @@ _run_internal() so the guard logic is exercised in isolation.
 
 from __future__ import annotations
 
-import asyncio
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 

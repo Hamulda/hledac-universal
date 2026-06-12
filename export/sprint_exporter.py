@@ -92,7 +92,6 @@ from hledac.universal.export.components.pivot_builder import (  # noqa: E402
     _derive_branch_seeds,
     _derive_focus_expand,
     _derive_trend_seeds,
-    _get_correlation_from_handoff,
     _get_runtime_truth,
 )
 

@@ -111,14 +111,16 @@ import asyncio
 try:
     from otel import (  # type: ignore
         add_event as _otel_add_event,
+    )
+    from otel import (
         instrumented as _otel_instrumented,
+    )
+    from otel import (
         set_attribute as _otel_set_attribute,
     )
 except ImportError:  # production fallback
-    from hledac.universal.telemetry import (  # type: ignore
-        add_event as _otel_add_event,
+    from hledac.universal.telemetry import (
         instrumented as _otel_instrumented,
-        set_attribute as _otel_set_attribute,
     )
 import datetime as _dt
 import logging
@@ -231,10 +233,9 @@ __all__ = [
 ]
 
 # Import QualityRejectionRecord from quality_assessment (moved in Sprint F216G refactor)
-from utils.async_helpers import safe_gather_fire_and_forget  # noqa: E402
-
 # F273F: MADV_FREE_REUSABLE + F_NOCACHE for DuckDB file-backed mmap regions
 from hledac.universal.tools.file_cache import apply_nocache_to_path, madv_free_reusable_on_path  # noqa: E402
+from utils.async_helpers import safe_gather_fire_and_forget  # noqa: E402
 
 from .dedup import DedupManager  # noqa: E402
 

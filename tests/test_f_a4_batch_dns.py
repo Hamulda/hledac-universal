@@ -23,20 +23,16 @@ from __future__ import annotations
 import asyncio
 import os
 import time
-from unittest.mock import AsyncMock, patch
+from unittest.mock import patch
 
 import pytest
 
 from hledac.universal.utils.batch_dns import (
-    DEFAULT_CACHE_MAX,
-    DEFAULT_CONCURRENCY,
-    DEFAULT_TTL_S,
     ENV_OPT_OUT,
     BatchDNSResolver,
     get_batch_dns_resolver,
     reset_batch_dns_resolver,
 )
-
 
 # ---------------------------------------------------------------------------
 # Fixtures + helpers

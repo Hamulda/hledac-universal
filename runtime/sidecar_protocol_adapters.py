@@ -615,9 +615,7 @@ class IdentityStitchingSidecarAdapter(BaseSidecarAdapter):
     async def run_async(self, ctx: SidecarContext) -> list[Any]:
         # Smoke-import the factory to validate module availability.
         try:
-            from hledac.universal.intelligence.identity_stitching import (
-                create_identity_stitching_engine,
-            )
+            pass
         except Exception:
             return []
         # builder API mismatch — wiring-only, return empty
@@ -653,9 +651,7 @@ class TemporalArchaeologySidecarAdapter(BaseSidecarAdapter):
     async def run_async(self, ctx: SidecarContext) -> list[Any]:
         # Smoke-import the factory to validate module availability.
         try:
-            from hledac.universal.intelligence.temporal_archaeologist import (
-                create_temporal_archaeologist,
-            )
+            pass
         except Exception:
             return []
         # context-managed API mismatch — wiring-only, return empty

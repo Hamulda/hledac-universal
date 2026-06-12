@@ -294,7 +294,7 @@ async def _pressure_relief_loop(interval_s: float) -> None:
                     _pressure_relief_stop.wait(),
                     timeout=interval_s,
                 )
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 continue  # normal tick
             else:
                 break  # stop event set
@@ -348,7 +348,7 @@ async def stop_pressure_relief_loop() -> None:
     if _pressure_relief_task is not None:
         try:
             await asyncio.wait_for(_pressure_relief_task, timeout=5.0)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             _pressure_relief_task.cancel()
             try:
                 await _pressure_relief_task

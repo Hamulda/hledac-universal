@@ -46,8 +46,9 @@ sys.path = [p for p in sys.path if not p.endswith("/legacy")]
 # Sprint 0B: uvloop MUST be installed before any async operations
 _uvloop_installed = False
 try:
-    import uvloop
     import sys as _sys
+
+    import uvloop
     # Python 3.14+: uvloop.install() triggers AbstractEventLoopPolicy deprecation
     # inside the library itself — skip it and use stdlib asyncio loop
     if _sys.version_info >= (3, 14):
@@ -3451,7 +3452,6 @@ async def run_warmup(
     # 7. ANE embedder warmup (pouze v sprint hot-path, kde je potřeba)
     if do_ane_warmup:
         try:
-            import orjson
             from hledac.universal.brain.ane_embedder import ANEEmbedder
             ane = ANEEmbedder()
             await ane.warmup()

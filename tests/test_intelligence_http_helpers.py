@@ -14,15 +14,13 @@ import asyncio
 from unittest.mock import AsyncMock, patch
 
 import aiohttp
-import pytest
 
 from hledac.universal.intelligence._http_helpers import get_intelligence_session
 from hledac.universal.intelligence.exposure_clients import (
-    CVIntelligenceClient,
     CensysClient,
+    CVIntelligenceClient,
     ShodanClient,
 )
-
 
 # ---------------------------------------------------------------------------
 # get_intelligence_session — direct unit tests

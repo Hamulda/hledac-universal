@@ -124,7 +124,6 @@ from hledac.universal.patterns.pattern_matcher import match_text  # noqa: E402
 from hledac.universal.transport.base import (  # noqa: E402
     CircuitBreaker,
     TransportDecision,
-    fetch_via_curl_cffi,
     fetch_via_httpx_h2,
     fetch_via_tor_curl_cffi,
     get_breaker,
@@ -132,22 +131,25 @@ from hledac.universal.transport.base import (  # noqa: E402
     should_use_curl_cffi,
 )
 
+# F226: Body-cap helper — replaces inline duplicitu v httpx_h2 + aiohttp cestách
+from hledac.universal.transport.body_limiter import BodyReadResult, _read_body_into  # noqa: E402
+
 # F265B: conditional-cache wrapper for the curl_cffi stealth lane.
 # Same signature as fetch_via_curl_cffi but with ETag/Last-Modified
 # 304 short-circuit. Always-on inside the curl_cffi lane; opt-out
 # via HLEDAC_CONDITIONAL_CACHE=0.
-from hledac.universal.transport.curl_cffi_fetch import fetch_via_curl_cffi_cached  # noqa: E402
-# F265B: speculative Alt-Svc probe — primes the H3 LRU so the
-# second fetch (not the first) can use HttpVersion.v3.
-from hledac.universal.transport.http3_lane import probe_altsvc_speculative  # noqa: E402
-
-# F226: Body-cap helper — replaces inline duplicitu v httpx_h2 + aiohttp cestách
-from hledac.universal.transport.body_limiter import BodyReadResult, _read_body_into  # noqa: E402
-from hledac.universal.transport.curl_cffi_fetch import fetch_via_i2p_curl_cffi  # noqa: E402
+from hledac.universal.transport.curl_cffi_fetch import (
+    fetch_via_curl_cffi_cached,  # noqa: E402
+    fetch_via_i2p_curl_cffi,  # noqa: E402
+)
 
 # F260: JA3 unification — curl_cffi wrappers for Tor/I2P, honest Accept-Encoding
 from hledac.universal.transport.curl_cffi_runtime import is_curl_cffi_available  # noqa: E402
 from hledac.universal.transport.decompression import build_accept_encoding_header  # noqa: E402
+
+# F265B: speculative Alt-Svc probe — primes the H3 LRU so the
+# second fetch (not the first) can use HttpVersion.v3.
+from hledac.universal.transport.http3_lane import probe_altsvc_speculative  # noqa: E402
 from hledac.universal.utils.concurrency import (  # noqa: E402
     get_clearnet_semaphore,
     get_tor_semaphore,
@@ -3511,7 +3513,7 @@ _DRAIN_TOTAL_SCHEDULED: int = 0
 _DRAIN_TOTAL_COMPLETED: int = 0
 
 
-def schedule_html_extraction(html: str, url: str = "") -> "asyncio.Future":
+def schedule_html_extraction(html: str, url: str = "") -> asyncio.Future:
     """Submit HTML processing to CPU_EXECUTOR and register for drain.
 
     Returns the asyncio.Future wrapping the work. Caller may await it
@@ -3562,7 +3564,7 @@ def schedule_html_extraction(html: str, url: str = "") -> "asyncio.Future":
     _DRAIN_REGISTRY.append(fut)
     _DRAIN_TOTAL_SCHEDULED += 1
 
-    def _drop_from_registry(f: "asyncio.Future" = fut) -> None:
+    def _drop_from_registry(f: asyncio.Future = fut) -> None:
         global _DRAIN_TOTAL_COMPLETED
         try:
             _DRAIN_REGISTRY.remove(f)

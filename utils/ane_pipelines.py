@@ -7,7 +7,7 @@ Designed for M1/Apple Silicon with fail-safe fallbacks.
 """
 
 import logging
-from typing import Any, cast
+from typing import Any
 
 # MLX import with fallback.
 #

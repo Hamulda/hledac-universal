@@ -23,7 +23,6 @@ from __future__ import annotations
 import importlib
 import sys
 import time
-import types
 
 import pytest
 
@@ -275,7 +274,6 @@ class TestSprintFA2Idempotency:
     """Repeated attribute access should NOT re-import."""
 
     def test_repeated_access_does_not_reimport(self, reload_intelligence):
-        import intelligence
 
         # First access loads the spec
         _ = reload_intelligence.PasteFinding

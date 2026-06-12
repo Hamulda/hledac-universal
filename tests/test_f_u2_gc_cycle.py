@@ -54,7 +54,6 @@ class TestGcCycleMaintain:
 
     def test_cooldown_skips_refreeze(self) -> None:
         from hledac.universal.core.memory_cycle import (  # type: ignore[import-not-found]
-            _GC_REFREEZE_COOLDOWN_S,
             gc_cycle_maintain,
         )
 
@@ -92,8 +91,8 @@ class TestGcCycleMaintain:
 
     def test_refreeze_count_increments(self) -> None:
         from hledac.universal.core.memory_cycle import (  # type: ignore[import-not-found]
-            get_stats,
             gc_cycle_maintain,
+            get_stats,
         )
 
         if not hasattr(gc, "freeze"):

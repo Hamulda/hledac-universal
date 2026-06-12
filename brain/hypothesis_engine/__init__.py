@@ -40,7 +40,6 @@ accessed only when an external caller does ``import hypothesis``.
 from __future__ import annotations
 
 # ── Local submodule re-exports (no pip hypothesis imports here) ───────────────
-
 from ._types import (
     CO_OCCURRENCE_FP16,
     # Bounds

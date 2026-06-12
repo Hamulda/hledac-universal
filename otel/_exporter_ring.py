@@ -2,7 +2,8 @@
 from __future__ import annotations
 
 import threading
-from typing import Any, Sequence
+from collections.abc import Sequence
+from typing import Any
 
 try:
     from opentelemetry.sdk.trace.export import (  # type: ignore

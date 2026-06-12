@@ -18,7 +18,6 @@ from typing import Any
 
 # Sprint 7C: lazy import — requests is only used in subprocess command strings, not async hot path
 import yaml
-import subprocess
 
 # Configure logging
 logging.basicConfig(
