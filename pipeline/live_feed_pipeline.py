@@ -1907,16 +1907,17 @@ async def async_run_live_feed_pipeline(
         stored_findings = 0
         _entry_store_error: str | None = None
 
+        # F268: Build canonicals once — needed for both DuckDB write and graph accumulation.
+        # Graph accumulation is required even when store=None (feed pipeline count-only mode).
+        from hledac.universal.knowledge.duckdb_store import CanonicalFinding
+
+        canonicals: list[CanonicalFinding] = [
+            CanonicalFinding(**f) for f in findings
+        ]
+
         if store is not None:
             try:
-                from hledac.universal.knowledge.duckdb_store import CanonicalFinding
-
-                canonicals: list[CanonicalFinding] = [
-                    CanonicalFinding(**f) for f in findings
-                ]
-
                 results = await store.async_ingest_findings_batch(canonicals)
-
 
                 # F268: Accumulate findings to cross-sprint graph after canonical write.
                 # Fail-soft: graph errors never block pipeline continuation.
@@ -1957,9 +1958,21 @@ async def async_run_live_feed_pipeline(
                 # from this entry's processing (or 0 if exception happened before any count)
         else:
             # No store: count-only mode — accepted is pre-storage gate hit count,
-            # stored must be 0 (nothing reached storage)
+            # stored must be 0 (nothing reached storage).
+            # F268: Graph accumulation still required — feed findings must enter the
+            # cross-sprint DuckPGQ graph even without DuckDB persistence.
             accepted_findings = len(findings)
             stored_findings = 0
+            if canonicals and sprint_id:
+                try:
+                    from hledac.universal.runtime.graph_accumulator import (
+                        SprintGraphAccumulator,
+                    )
+
+                    _acc = SprintGraphAccumulator()
+                    _acc.accumulate_findings(canonicals, sprint_id=sprint_id)
+                except Exception:
+                    pass  # fail-soft: graph never blocks storage
 
         total_accepted += accepted_findings
         total_stored += stored_findings

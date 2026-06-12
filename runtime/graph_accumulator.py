@@ -173,12 +173,6 @@ class SprintGraphAccumulator:
         try:
             from urllib.parse import urlparse
 
-            # Lazy init DuckPGQGraph
-            if not hasattr(self, "_ioc_graph"):
-                from hledac.universal.graph.quantum_pathfinder import DuckPGQGraph
-
-                self._ioc_graph = DuckPGQGraph()
-
             # Determine target: URL → domain, otherwise raw ioc_value
             target = ioc_value
             try:
@@ -188,10 +182,16 @@ class SprintGraphAccumulator:
             except Exception:
                 pass
 
-            self._ioc_graph.add_relation(
+            # Sprint F265C: Use graph_service upsert_relation (shared singleton)
+            # instead of creating a private DuckPGQGraph instance.
+            # The old _ioc_graph = DuckPGQGraph() here created an isolated graph
+            # that OODA could not see — pivot nodes were invisible to PageRank.
+            gs = self._get_graph_service()
+            gs.upsert_relation(
                 ioc_value,
                 target,
                 rel_type="pivot",
+                weight=1.0,
                 evidence="pivot",
             )
         except Exception:

@@ -6084,6 +6084,15 @@ class SprintScheduler:
 
         self._query = query
 
+        # Sprint F265C: Wire OODA to shared DuckPGQGraph singleton.
+        # _pivot_ioc_graph was None from __init__ — inject_ioc_graph() was never called
+        # externally, so OODA ran against a null graph every cycle.
+        try:
+            from hledac.universal.knowledge.graph_service import _get_graph
+            self.inject_ioc_graph(_get_graph())
+        except Exception as _e:
+            logger.debug(f"[OODA] graph injection failed: {_e}")
+
         # Sprint F206C: Lifecycle runner -- encapsulates lifecycle orchestration
 
         self._runner = SprintLifecycleRunner(lifecycle, adapter)
@@ -14310,6 +14319,7 @@ class SprintScheduler:
                         result = await async_run_live_feed(
                                 feed_url=work.feed_url,
                                 max_entries=work.max_entries,
+                                sprint_id=self.sprint_id or "",
                             )
 
                     return work.feed_url, result
@@ -15100,6 +15110,8 @@ class SprintScheduler:
                             result = await async_run_live_feed(
                                     feed_url=work.feed_url,
                                     max_entries=work.max_entries,
+                                    sprint_id=self.sprint_id or "",
+                                    store=duckdb_store,
                                 )
 
                         return work.feed_url, result
@@ -22791,12 +22803,11 @@ class SprintScheduler:
             )
 
         # Sprint 8VD §F: Track finding count for scorecard
-        # F265B: Use stored_findings (DuckDB WAL success via lmdb_success) instead of
-        # accepted_findings (quality-gate pass count). accepted does NOT imply stored
-        # when DuckDB fails. Feed pipeline calls async_run_live_feed_pipeline(store=None)
-        # so findings are NOT written to DuckDB here — only the scheduler's canonical
-        # write path (via public pipeline) writes. Feed findings are count-only telemetry.
-        self._finding_count += result.stored_findings
+        # F265B (revised): Use accepted_findings for unified scorecard semantics.
+        # Both feed and public lanes now write to DuckDB via async_ingest_findings_batch,
+        # so accepted_findings (quality-gated count) is the consistent metric across lanes.
+        # stored_findings reflects WAL/LMDB success, not signal quality.
+        self._finding_count += result.accepted_findings
 
         # Sprint 8VN §C: Accumulate feed economics verdict (additive, fail-soft)
 

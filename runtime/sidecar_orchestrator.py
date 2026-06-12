@@ -452,12 +452,18 @@ class SidecarOrchestrator:
                     return
 
             # Dispatch each plugin sidecar as its own non-blocking task.
+            # Each inner task is tracked in _bg_tasks so teardown can await them.
             for adapter in available:
                 try:
-                    _asyncio.create_task(
+                    _inner_task = _asyncio.create_task(
                         self._dispatch_plugin_sidecar(adapter, sidecar_ctx),
                         name=f"sprint:plugin_sidecar:{adapter.sidecar_id}",
                     )
+                    if self._scheduler is not None:
+                        _bg: set | None = getattr(self._scheduler, "_bg_tasks", None)
+                        if _bg is not None:
+                            _bg.add(_inner_task)
+                            _inner_task.add_done_callback(_bg.discard)
                 except Exception as e:
                     log.warning(
                         "[F350M-FED] failed to launch plugin sidecar %s: %s",
