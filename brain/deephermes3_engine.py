@@ -355,6 +355,9 @@ class DeepHermes3Engine:
         self._supports_kv_quant = False
         self._kv_cache_stats = {'cache_uses': 0, 'cache_prefills': 1, 'quantized_count': 0}
 
+        # F273H: Idle-based lazy unload — track last inference timestamp
+        self._last_inference_at: float | None = None
+
         # Sprint 75: Persistent system-prompt cache
         self._system_prompt = "You are a helpful research assistant."
         self._system_prompt_cache = None   # built KV cache object
@@ -368,6 +371,9 @@ class DeepHermes3Engine:
         except (ValueError, TypeError):
             self._prefix_cache_maxsize: int = 64
         self._prefix_cache: OrderedDict[str, Any] = OrderedDict()  # type: ignore[assignment]
+
+        # F273H: Idle-based lazy unload — sentinel for idle threshold
+        self._idle_unload_timeout_s: float = float(os.getenv("HLEDAC_IDLE_UNLOAD_TIMEOUT_S", "1800.0"))
         # Telemetry for prefix cache
         self._prefix_cache_stats = {
             "prefix_cache_maxsize": self._prefix_cache_maxsize,
@@ -1381,6 +1387,23 @@ class DeepHermes3Engine:
         )
         return kv_bits
 
+    def is_idle(self) -> bool:
+        """
+        F273H: Check if engine has been idle beyond threshold.
+
+
+        Returns True if no inference occurred within _idle_unload_timeout_s.
+        Fail-safe: returns False if _last_inference_at is None (never used).
+        """
+        if self._last_inference_at is None:
+            return False
+        try:
+            import time as _time
+            elapsed = _time.monotonic() - self._last_inference_at
+            return elapsed >= self._idle_unload_timeout_s
+        except Exception:
+            return False
+
     def _run_inference(self, formatted_prompt: str, temp: float, max_tok: int, prefix_cache=None) -> str:
         """
         Run MLX inference synchronously in thread pool (Sprint 75).
@@ -1443,6 +1466,10 @@ class DeepHermes3Engine:
             _mx.eval([])
         except Exception:
             pass
+
+        # F273H: Timestamp last inference for idle-based lazy unload
+        import time
+        self._last_inference_at = time.monotonic()
 
         return response.strip()
 
@@ -2850,10 +2877,19 @@ Do not include any other text. Output valid JSON only."""
         mutex = get_ane_mlx_mutex()
         try:
             from mlx_lm import load
+            from mlx_lm.utils import make_prompt_cache
             # F234: ANE/MLX mutex — acquire MLX lock before loading
             mutex.acquire_mlx(model_size_mb=2000.0)
             self._model, self._tokenizer = await asyncio.to_thread(load, model_id)
             self.config.model_path = model_id
+            # F265C-EXT: Initialize prompt cache here so load_model() path
+            # has the same KV-cache setup as initialize() path.
+            try:
+                self._prompt_cache = make_prompt_cache(self._model)
+                self._kv_cache_enabled = True
+            except Exception:
+                self._prompt_cache = None
+                self._kv_cache_enabled = False
             logger.info(f"✓ Model loaded: {model_id}")
             return True
         except Exception as e:

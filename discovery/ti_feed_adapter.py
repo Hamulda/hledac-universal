@@ -16,6 +16,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import os
 import time
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Any
@@ -471,7 +472,7 @@ async def fetch_urlhaus(max_items: int = 100) -> list[dict]:
     """URLhaus — live malware URL feed, public API, no key required."""
     try:
         s = await async_get_aiohttp_session()
-        resp, err = await checked_aiohttp_get(
+        data, status, err = await checked_aiohttp_get(
             s,
             "https://urlhaus-api.abuse.ch/v1/urls/recent/",
             timeout=aiohttp.ClientTimeout(total=15),
@@ -480,7 +481,6 @@ async def fetch_urlhaus(max_items: int = 100) -> list[dict]:
         if err:
             logger.debug(f"[URLhaus] {err}")
             return []
-        data = await resp.json()
         return [
             {
                 "ioc":         e.get("url"),
@@ -501,17 +501,19 @@ async def fetch_threatfox(days: int = 1) -> list[dict]:
     """ThreatFox IOC feed — public API, no key required."""
     try:
         s = await async_get_aiohttp_session()
-        resp, err = await checked_aiohttp_post(
+        data, status, err = await checked_aiohttp_post(
             s,
             "https://threatfox-api.abuse.ch/api/v1/",
             json={"query": "get_iocs", "days": days},
-            timeout=aiohttp.ClientTimeout(total=20),
+            timeout=aiohttp.ClientTimeout(
+                total=int(os.environ.get("HLEDAC_FEED_TIMEOUT", "45")),
+                connect=10,
+            ),
             failure_kind="threatfox",
         )
         if err:
             logger.debug(f"[ThreatFox] {err}")
             return []
-        data = await resp.json()
         return [
             {
                 "ioc":        i.get("ioc_value"),
@@ -528,11 +530,58 @@ async def fetch_threatfox(days: int = 1) -> list[dict]:
     return []
 
 
+async def fetch_sslbl() -> list[dict]:
+    """SSLBL SSL Certificate Blacklist — SHA1 fingerprints of blacklisted SSL certs.
+
+    Feed: https://sslbl.abuse.ch/blacklist/sslblacklist.csv
+    No auth required. Updated every 5 min; do not fetch more often.
+    """
+    try:
+        s = await async_get_aiohttp_session()
+        timeout_cfg = aiohttp.ClientTimeout(
+            total=int(os.environ.get("HLEDAC_FEED_TIMEOUT", "45")),
+            connect=10,
+        )
+        async with s.get(
+            "https://sslbl.abuse.ch/blacklist/sslblacklist.csv",
+            timeout=timeout_cfg,
+        ) as resp:
+            if resp.status != 200:
+                logger.debug(f"[SSLBL] HTTP {resp.status}")
+                return []
+            text = await resp.text()
+        findings = []
+        for line in text.splitlines():
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            parts = line.split(",")
+            if len(parts) < 3:
+                continue
+            listing_date, sha1, reason = parts[0], parts[1], ",".join(parts[2:])
+            findings.append(
+                {
+                    "ioc":        sha1,
+                    "ioc_type":   "sha1",
+                    "malware":    reason,
+                    "title":      f"SSLBL: {reason}",
+                    "source":     "sslbl.abuse.ch",
+                    "listing_date": listing_date,
+                }
+            )
+            if len(findings) >= 200:
+                break
+        return findings
+    except Exception as e:
+        logger.debug(f"[SSLBL] {e}")
+    return []
+
+
 async def fetch_feodo_c2() -> list[dict]:
     """Feodo Tracker C2 blocklist — public JSON, no key required."""
     try:
         s = await async_get_aiohttp_session()
-        resp, err = await checked_aiohttp_get(
+        data, status, err = await checked_aiohttp_get(
             s,
             "https://feodotracker.abuse.ch/downloads/ipblocklist.json",
             timeout=aiohttp.ClientTimeout(total=15),
@@ -550,7 +599,7 @@ async def fetch_feodo_c2() -> list[dict]:
                 "title":    f"Feodo C2: {e.get('ip_address')}",
                 "source":   "feodo_tracker"
             }
-            for e in await resp.json(content_type=None)
+            for e in (data if isinstance(data, list) else [])
         ]
     except Exception as e:
         logger.debug(f"[Feodo] {e}")
@@ -566,7 +615,7 @@ async def query_circl_pdns(
     import json as _json
     try:
         s = await async_get_aiohttp_session()
-        resp, err = await checked_aiohttp_get(
+        text, status, err = await checked_aiohttp_get(
             s,
             f"https://www.circl.lu/pdns/query/{domain}",
             timeout=aiohttp.ClientTimeout(total=15),
@@ -575,10 +624,10 @@ async def query_circl_pdns(
         if err:
             logger.debug(f"[CIRCL pDNS] {err}")
             return []
-        if resp.status != 200:
+        if status != 200:
             return []
         results = []
-        for line in (await resp.text()).strip().split("\n")[:max_results]:
+        for line in str(text).strip().split("\n")[:max_results]:
             try:
                 rec = _json.loads(line)
                 results.append({
@@ -605,7 +654,7 @@ async def search_crtsh(
     """crt.sh Certificate Transparency search — no key required."""
     try:
         s = await async_get_aiohttp_session()
-        resp, err = await checked_aiohttp_get(
+        data, status, err = await checked_aiohttp_get(
             s,
             "https://crt.sh/",
             params={"q": f"%.{domain}", "output": "json"},
@@ -615,9 +664,8 @@ async def search_crtsh(
         if err:
             logger.warning(f"[crt.sh] {err}")
             return []
-        if resp.status != 200:
+        if status != 200:
             return []
-        data = await resp.json(content_type=None)
         results: list[dict] = []
         seen:   set[str]    = set()
         for cert in data[:max_results]:
@@ -696,7 +744,7 @@ async def enrich_ip_internetdb(ip: str) -> dict:
     """
     try:
         s = await async_get_aiohttp_session()
-        resp, err = await checked_aiohttp_get(
+        data, status, err = await checked_aiohttp_get(
             s,
             f"https://internetdb.shodan.io/{ip}",
             timeout=aiohttp.ClientTimeout(total=8),
@@ -705,19 +753,109 @@ async def enrich_ip_internetdb(ip: str) -> dict:
         if err:
             logger.debug(f"[ShodanInternetDB] {err}")
             return {}
-        if resp.status == 200:
-            data = await resp.json()
+        if status == 200:
             return {
                 "ip":        ip,
-                "ports":     data.get("ports", []),
-                "cves":      data.get("cves", []),
-                "hostnames": data.get("hostnames", []),
-                "tags":      data.get("tags", []),
+                "ports":     data.get("ports", []) if isinstance(data, dict) else [],
+                "cves":      data.get("cves", []) if isinstance(data, dict) else [],
+                "hostnames": data.get("hostnames", []) if isinstance(data, dict) else [],
+                "tags":      data.get("tags", []) if isinstance(data, dict) else [],
                 "source":    "shodan_internetdb"
             }
     except Exception as e:
         logger.debug(f"[ShodanInternetDB] {e}")
     return {}
+
+
+# ── GREYNOISE COMMUNITY ───────────────────────────────────────────────────
+
+COMMUNITY_URL = "https://api.greynoise.io/v3/community/{ip}"
+
+
+async def enrich_ip_greynoise_community(
+    session: aiohttp.ClientSession,
+    ip: str,
+) -> dict | None:
+    """
+    Single IP lookup via GreyNoise Community API.
+    Returns dict with classification/noise/riot or None on miss/error.
+    No API key required. Rate limit ~50/day — use sparingly.
+    """
+    url = COMMUNITY_URL.format(ip=ip)
+    try:
+        async with session.get(
+            url,
+            timeout=aiohttp.ClientTimeout(total=10, connect=5),
+            headers={"Accept": "application/json"},
+        ) as resp:
+            if resp.status == 404:
+                data = await resp.json(content_type=None)
+                return {
+                    "classification": data.get("classification", "unknown"),
+                    "noise": data.get("noise", False),
+                    "riot": data.get("riot", False),
+                    "name": data.get("name", ""),
+                    "link": data.get("link", ""),
+                }
+            if resp.status == 429:
+                logger.warning("[GreyNoise/community] rate limit hit")
+                return None
+            resp.raise_for_status()
+            data = await resp.json(content_type=None)
+            return {
+                "classification": data.get("classification"),  # malicious/benign/unknown
+                "noise": data.get("noise", False),  # seen scanning internet
+                "riot": data.get("riot", False),  # known benign service
+                "name": data.get("name", ""),  # actor name if known
+                "link": data.get("link", ""),  # viz.greynoise.io URL
+            }
+    except Exception as e:
+        logger.debug(f"[GreyNoise/community] {ip}: {e}")
+        return None
+
+
+async def enrich_findings_greynoise_community(
+    session: aiohttp.ClientSession,
+    findings: list[dict],
+    max_lookups: int = 40,  # stay under 50/day limit
+) -> list[dict]:
+    """
+    Enrich IP findings with GreyNoise Community classification.
+    Only enriches findings where ioc_type == 'ip'.
+    Caps at max_lookups to respect daily rate limit.
+    """
+    ip_findings = [
+        f for f in findings if f.get("ioc_type") == "ip" and f.get("ioc")
+    ][:max_lookups]
+
+    if not ip_findings:
+        return findings
+
+    logger.info(
+        f"[GreyNoise/community] enriching {len(ip_findings)} IPs "
+        f"(cap={max_lookups})"
+    )
+
+    for finding in ip_findings:
+        result = await enrich_ip_greynoise_community(session, finding["ioc"])
+        if result:
+            finding["greynoise"] = result
+            # Boost confidence if malicious
+            if result["classification"] == "malicious":
+                finding["confidence"] = min(
+                    finding.get("confidence", 0.5) + 0.15, 1.0
+                )
+            # Flag known benign (riot) — reduce confidence
+            if result["riot"]:
+                finding["confidence"] = min(
+                    finding.get("confidence", 0.5) * 0.5, 0.3
+                )
+        # Small delay to avoid bursting rate limit
+        await asyncio.sleep(0.3)
+
+    enriched = sum(1 for f in ip_findings if "greynoise" in f)
+    logger.info(f"[GreyNoise/community] enriched {enriched}/{len(ip_findings)} IPs")
+    return findings
 
 
 # ── PASTE MONITORING ────────────────────────────────────────────────────────
@@ -734,7 +872,7 @@ async def scrape_pastebin_for_keyword(
     try:
         s = await async_get_aiohttp_session()
         # Circuit-breaker protected archive page fetch
-        resp, err = await checked_aiohttp_get(
+        text, status, err = await checked_aiohttp_get(
             s,
             "https://pastebin.com/archive",
             timeout=aiohttp.ClientTimeout(total=10),
@@ -743,9 +881,9 @@ async def scrape_pastebin_for_keyword(
         if err:
             logger.debug(f"[Pastebin archive] {err}")
             return []
-        if resp.status != 200:
+        if status != 200:
             return []
-        html_text = await resp.text()
+        html_text = str(text)
         paste_urls: list[str] = []
         if SELECTOLAX_AVAILABLE:
             try:
@@ -777,7 +915,7 @@ async def scrape_pastebin_for_keyword(
             await asyncio.sleep(1.0)  # <- FIXED: await (was bug)
             try:
                 # Individual paste fetches — use circuit breaker too
-                pr, pr_err = await checked_aiohttp_get(
+                content, pr_status, pr_err = await checked_aiohttp_get(
                     s,
                     raw_url,
                     timeout=aiohttp.ClientTimeout(total=8),
@@ -786,14 +924,14 @@ async def scrape_pastebin_for_keyword(
                 if pr_err:
                     logger.debug(f"[Pastebin] Paste fetch error for {raw_url}: {pr_err}")
                     continue
-                if pr.status == 200:
-                    content = await pr.text()
-                    if keyword.lower() in content.lower():
+                if pr_status == 200:
+                    content_str = str(content)
+                    if keyword.lower() in content_str.lower():
                         results.append({
                             "url":          raw_url,
-                            "content":      content[:2000],
+                            "content":      content_str[:2000],
                             "content_hash": hashlib.sha256(
-                                content.encode()
+                                content_str.encode()
                             ).hexdigest()[:16],
                             "title":  f"Pastebin hit: {keyword}",
                             "source": "pastebin_scrape"
@@ -812,7 +950,7 @@ async def search_github_gists(
     results: list[dict] = []
     try:
         s = await async_get_aiohttp_session()
-        resp, err = await checked_aiohttp_get(
+        text, status, err = await checked_aiohttp_get(
             s,
             "https://gist.github.com/search",
             params={"q": keyword, "s": "updated"},
@@ -822,9 +960,9 @@ async def search_github_gists(
         if err:
             logger.debug(f"[GitHub Gist] {err}")
             return []
-        if resp.status != 200:
+        if status != 200:
             return []
-        html_text = await resp.text()
+        html_text = str(text)
         if SELECTOLAX_AVAILABLE:
             try:
                 tree = _SelectolaxHTMLParser(html_text)
@@ -895,7 +1033,7 @@ async def github_dork(
     ).format(v=value)
     try:
         s = await async_get_aiohttp_session()
-        resp, err = await checked_aiohttp_get(
+        data, status, err = await checked_aiohttp_get(
             s,
             "https://api.github.com/search/code",
             params={"q": query, "per_page": min(max_results, 30)},
@@ -906,8 +1044,7 @@ async def github_dork(
         if err:
             logger.debug(f"[GitHub dork] {err}")
             return []
-        if resp.status == 200:
-            data = await resp.json()
+        if status == 200 and isinstance(data, dict):
             return [
                 {
                     "title":   i["name"],
@@ -917,7 +1054,7 @@ async def github_dork(
                 }
                 for i in data.get("items", [])
             ]
-        elif resp.status == 403:
+        elif status == 403:
             logger.debug("[GitHub dork] rate limited — set GITHUB_TOKEN")
     except Exception as e:
         logger.debug(f"[GitHub dork] {e}")
@@ -948,7 +1085,7 @@ async def search_ahmia(
         s = await async_get_aiohttp_session()
         url = f"{base}?q={query}" if use_onion else base
         params = None if use_onion else {"q": query}
-        resp, err = await checked_aiohttp_get(
+        text, status, err = await checked_aiohttp_get(
             s,
             url,
             params=params,
@@ -959,7 +1096,7 @@ async def search_ahmia(
         if err:
             logger.debug(f"[Ahmia] fetch failed: {err}")
             return []
-        html = await resp.text()
+        html = str(text)
         if not html:
             return []
         results: list[dict] = []
@@ -1031,7 +1168,7 @@ async def query_rdap(target: str) -> dict:
     )
     try:
         s = await async_get_aiohttp_session()
-        resp, err = await checked_aiohttp_get(
+        data, status, err = await checked_aiohttp_get(
             s,
             endpoint,
             timeout=aiohttp.ClientTimeout(total=10),
@@ -1040,10 +1177,9 @@ async def query_rdap(target: str) -> dict:
         if err:
             logger.debug(f"[RDAP] {err}")
             return {}
-        data = await resp.json()
         result = {
             "target": target,
-            "rdap":   data,
+            "rdap":   data if isinstance(data, dict) else {},
             "source": "rdap_org"
         }
         # F239A: Record successful response for replay (outside session scope)

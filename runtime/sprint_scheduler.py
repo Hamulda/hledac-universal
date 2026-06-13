@@ -1573,8 +1573,13 @@ class SprintSchedulerConfig:
         Used by tests/test_f272_windup_amendment.py, test_f273, and the F228F
         family. For the cycle-adaptive variant see `windup_for_cycle()`.
         """
-        raw = self.sprint_duration_s * 0.30
-        return float(max(30.0, min(180.0, raw)))
+        # F288: aggressive mode uses 0.15 ratio (target 45s windup for 300s sprint)
+        # standard/research modes use 0.30 ratio
+        ratio = 0.15 if self.aggressive_mode else 0.30
+        raw = self.sprint_duration_s * ratio
+        # F288: absolute cap -- sprints ≤300s capped at 60s windup
+        cap = 60.0 if self.sprint_duration_s <= 300 else 120.0
+        return float(max(30.0, min(cap, raw)))
 
     def windup_for_cycle(self, cycle_time_ema: float) -> float:
         """
@@ -3578,6 +3583,8 @@ class SprintResult:
 
     budget_violations: int = 0
 
+    # F265B: Transport lane efficiency (HTTP/3, conditional cache, prewarm)
+    transport_efficiency: dict[str, int] = field(default_factory=dict)
 
 
     # Branch timeout tracking
@@ -6289,13 +6296,17 @@ class SprintScheduler:
         _run_error_class: str = "unknown"
         try:
             # Phase 1: Initialize sprint
+            _t0_prelude = _time.monotonic()
             _dedup_elapsed, _trace_enabled, _trace_snap_before = await self._initialize_sprint_run(
                 adapter, lifecycle, ct_log_client, policy_manager, duckdb_store, now_monotonic
             )
 
-            # Phase 2: Hermes prewarm
-            await self._prewarm_hermes_for_sprint()
-            await self._prewarm_hermes()
+            # Phase 2: Hermes prewarm (F288 -- non-blocking, runs in background)
+            # MLX load (~60-90s) was blocking windup budget.
+            # Now fires as background task so active window starts immediately.
+            from hledac.universal.utils.async_helpers import safe_create_task
+            safe_create_task(self._prewarm_hermes_for_sprint(), name="hermes_prewarm_bg")
+            safe_create_task(self._prewarm_hermes(), name="hermes_init_bg")
 
 
 
@@ -7284,6 +7295,13 @@ class SprintScheduler:
 
 
 
+                    # F288: log prelude duration before first cycle
+                    if self._result.cycles_started == 0:
+                        _elapsed = _time.monotonic() - _t0_prelude
+                        logger.info(
+                            "[prelude] completed in %.1fs (budget=%.0fs)",
+                            _elapsed, self._config.effective_windup_lead_s
+                        )
                     self._result.cycles_started += 1
 
                     # Sprint F272E: Record cycle start for next-iteration EMA update.
@@ -9161,6 +9179,32 @@ class SprintScheduler:
                 # Fail-soft: telemetry errors don't block return
 
 
+
+
+        # ── F265B: Transport lane efficiency telemetry ──────────────────────────
+        try:
+            from hledac.universal.transport.circuit_breaker import get_stats as _cb_stats
+            from hledac.universal.transport.conditional_cache import get_stats as _cc_stats
+            from hledac.universal.transport.http3_lane import get_stats as _h3_stats
+            from hledac.universal.transport.prewarm_pool import get_stats as _pw_stats
+
+            self._result.transport_efficiency = {
+                "http3_altsvc_hits": _h3_stats().get("altsvc_hits", 0),
+                "http3_altsvc_misses": _h3_stats().get("altsvc_misses", 0),
+                "http3_altsvc_records": _h3_stats().get("altsvc_records", 0),
+                "http3_cache_size": _h3_stats().get("cache_size", 0),
+                "conditional_cache_hits": _cc_stats().get("lookup_hits", 0),
+                "conditional_cache_misses": _cc_stats().get("lookup_misses", 0),
+                "conditional_cache_errors": _cc_stats().get("lookup_errors", 0),
+                "conditional_cache_304s": _cc_stats().get("conditional_304s", 0),
+                "conditional_sends": _cc_stats().get("conditional_sends", 0),
+                "prewarm_sessions_created": _pw_stats().get("sessions_created", 0),
+                "prewarm_hit_rate": _pw_stats().get("round_robin_hits", 0),
+                "circuit_breaker_blocked": _cb_stats().get("blocked_domains", 0),
+            }
+        except Exception as _exc:
+            log.debug("[F265B] transport_efficiency telemetry failed: %s", _exc)
+            # Fail-soft: telemetry errors don't block return
 
     # ── Sprint F208M-A: Nonfeed predispatch before final terminality ──────────
 
@@ -24722,44 +24766,35 @@ class SprintScheduler:
 
 
     async def _unload_hermes_at_teardown(self) -> None:
-
         """
-
         P12: Unload Hermes engine at sprint teardown via ModelManager.
 
-
-
         Bounded lifecycle: loaded at BOOT/WARMUP, released at TEARDOWN.
-
         Uses ModelManager as canonical unload authority.
 
+        F273H: Idle-based lazy unload — skip unload if Hermes was recently
+        used (within _idle_unload_timeout_s window). Keeps model warm for
+        next sprint when inter-sprint gap < 30 min.
         """
-
         from hledac.universal.brain.model_manager import get_model_manager
 
-
-
         if self._hermes_engine is None:
-
             return
 
-
+        # F273H: Check idle status before unload — keep warm if recently used
+        if hasattr(self._hermes_engine, 'is_idle') and callable(self._hermes_engine.is_idle):
+            if not self._hermes_engine.is_idle():
+                log.debug("[P12][F273H] Hermes still active (idle check), skipping unload")
+                return
+            log.debug("[P12][F273H] Hermes idle timeout reached, unloading...")
 
         try:
-
             await get_model_manager().release_model("hermes")
-
             log.debug("[P12] Hermes unloaded via ModelManager")
-
         except Exception as e:
-
             log.debug(f"[P12] Hermes unload failed: {e}")
-
         finally:
-
             self._hermes_engine = None
-
-
 
     def is_duplicate(self, source_type: str, url: str, title: str = "") -> bool:
 

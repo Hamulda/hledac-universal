@@ -246,7 +246,7 @@ async def async_search_circl_pdns(
 
         try:
             async with asyncio.timeout(timeout_s):
-                resp, err = await checked_aiohttp_get(
+                text, status, err = await checked_aiohttp_get(
                     session,
                     url,
                     headers={"User-Agent": "Hledac/1.0 (research bot)"},
@@ -277,13 +277,11 @@ async def async_search_circl_pdns(
                 elapsed_s=elapsed,
             )
 
-        assert resp is not None
-
-        if resp.status >= 500:
-            _enter_cooldown(domain_norm, f"http_{resp.status}", cooldown_now)
+        if status >= 500:
+            _enter_cooldown(domain_norm, f"http_{status}", cooldown_now)
             return DiscoveryBatchResult(
                 hits=(),
-                error=f"http_{resp.status}",
+                error=f"http_{status}",
                 error_type="http_5xx",
                 provider_name="circl_pdns",
                 provider_chain=("circl_pdns",),
@@ -291,21 +289,19 @@ async def async_search_circl_pdns(
                 elapsed_s=elapsed,
             )
 
-        if resp.status == 404 or resp.status >= 400:
+        if status == 404 or status >= 400:
             return DiscoveryBatchResult(
                 hits=(),
-                error=f"http_{resp.status}" if resp.status >= 400 else None,
-                error_type="provider_empty" if resp.status == 404 else "http_4xx",
+                error=f"http_{status}" if status >= 400 else None,
+                error_type="provider_empty" if status == 404 else "http_4xx",
                 provider_name="circl_pdns",
                 provider_chain=("circl_pdns",),
                 source_family="pdns",
                 elapsed_s=elapsed,
             )
-
-        text = await resp.text()
         now_ts = time.time()
 
-        records = parse_circl_pdns_text(text, max_results=max_results)
+        records = parse_circl_pdns_text(str(text), max_results=max_results)
         hits: list[DiscoveryHit] = []
 
         for record in records:
@@ -508,7 +504,7 @@ async def call_circl_pdns(
 
         try:
             async with asyncio.timeout(timeout_s):
-                resp, err = await checked_aiohttp_get(
+                text, status, err = await checked_aiohttp_get(
                     session,
                     url,
                     headers={"User-Agent": "Hledac/1.0 (research bot)"},
@@ -550,22 +546,20 @@ async def call_circl_pdns(
             )
             return result, outcome
 
-        assert resp is not None
-
-        if resp.status >= 500:
-            _enter_cooldown(domain_norm, f"http_{resp.status}", cooldown_now)
+        if status >= 500:
+            _enter_cooldown(domain_norm, f"http_{status}", cooldown_now)
             outcome = PDNSOutcome(
                 attempted=True,
                 query=domain_norm,
                 result_count=0,
-                error=f"http_{resp.status}",
+                error=f"http_{status}",
                 cooldown_active=True,
                 cooldown_remaining_s=_COOLDOWN_DEFAULT_S,
                 duration_s=elapsed,
             )
             result = DiscoveryBatchResult(
                 hits=(),
-                error=f"http_{resp.status}",
+                error=f"http_{status}",
                 error_type="http_5xx",
                 provider_name="circl_pdns",
                 provider_chain=("circl_pdns",),
@@ -574,19 +568,19 @@ async def call_circl_pdns(
             )
             return result, outcome
 
-        if resp.status == 404 or resp.status >= 400:
+        if status == 404 or status >= 400:
             elapsed = time.monotonic() - start
             outcome = PDNSOutcome(
                 attempted=True,
                 query=domain_norm,
                 result_count=0,
-                error=f"http_{resp.status}" if resp.status >= 400 else None,
+                error=f"http_{status}" if status >= 400 else None,
                 duration_s=elapsed,
             )
             result = DiscoveryBatchResult(
                 hits=(),
-                error=f"http_{resp.status}" if resp.status >= 400 else None,
-                error_type="provider_empty" if resp.status == 404 else "http_4xx",
+                error=f"http_{status}" if status >= 400 else None,
+                error_type="provider_empty" if status == 404 else "http_4xx",
                 provider_name="circl_pdns",
                 provider_chain=("circl_pdns",),
                 source_family="pdns",
@@ -594,10 +588,9 @@ async def call_circl_pdns(
             )
             return result, outcome
 
-        text = await resp.text()
         now_ts = time.time()
 
-        records = parse_circl_pdns_text(text, max_results=_MAX_HITS)
+        records = parse_circl_pdns_text(str(text), max_results=_MAX_HITS)
         hits: list[DiscoveryHit] = []
         raw_count = 0
 

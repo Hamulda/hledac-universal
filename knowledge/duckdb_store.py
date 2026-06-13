@@ -432,7 +432,7 @@ _DUCKDB_MAX_TEMP: str = os.environ.get("GHOST_DUCKDB_MAX_TEMP", "1GB")
 _ARROW_INGEST_ENABLED: bool = os.environ.get("HLEDAC_ARROW_INGEST", "1") != "0"
 # Sprint P0-4: Arrow path break-even vs executemany is roughly N=20-50 on M1 8GB.
 # Below 20, executemany wins on per-call overhead; above, Arrow register+INSERT dominates.
-_ARROW_MIN_BATCH: int = int(os.environ.get("HLEDAC_ARROW_MIN_BATCH", "20"))
+_ARROW_MIN_BATCH: int = int(os.environ.get("HLEDAC_ARROW_MIN_BATCH", "50"))  # M1: Arrow amortized overhead from ~50 rows
 
 
 # ---------------------------------------------------------------------------
@@ -5753,7 +5753,7 @@ class DuckDBShadowStore:
 
         # F223: Strict chunking to prevent OOM on M1 8GB
         # Process in batches of 500 with event-loop yield between chunks
-        CHUNK_SIZE = 500  # noqa: N806
+        CHUNK_SIZE = 1024  # noqa: N806  # 2× fewer DuckDB roundtrips, M1-safe (~6 MB peak)
         for chunk_start in range(0, n, CHUNK_SIZE):
             chunk_end = min(chunk_start + CHUNK_SIZE, n)
             chunk_findings = findings[chunk_start:chunk_end]

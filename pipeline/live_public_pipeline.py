@@ -148,7 +148,7 @@ _RESGUE_SOURCE_CANDIDATES: list[tuple[str, str]] = [
     # Threat intelligence aggregators — open-access only (no login/API key required)
     ("ThreatFox", "https://threatfox.abuse.ch/browse.php?search="),
     # Ransomware-specific trackers — open-access
-    ("Ransomware Tracker", "https://ransomwaretracker.xyz/"),
+    # ("Ransomware Tracker", "https://ransomwaretracker.xyz/"),  # OFFLINE 2026-06 -- NS_ERROR_UNKNOWN_HOST
     ("ID Ransomware", "https://id-ransomware.malwarehunterteam.com/"),
     # General CTI/news — open-access
     ("BleepingComputer", "https://www.bleepingcomputer.com/search/?search="),
@@ -204,7 +204,7 @@ _CTI_NEWS_ALLOWED_DOMAINS: tuple[str, ...] = (
     "thehackernews.com",
     "abuse.ch",
     "threatfox.abuse.ch",
-    "ransomwaretracker.xyz",
+    # "ransomwaretracker.xyz",  # OFFLINE 2026-06 -- NS_ERROR_UNKNOWN_HOST
     "id-ransomware.malwarehunterteam.com",
     "malwarehunterteam.com",
     "cyberscoop.com",

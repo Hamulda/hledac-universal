@@ -123,6 +123,9 @@ class JSONFormatter(ExportFormatter):
         from hledac.universal.export.COMPAT_HANDOFF import ensure_export_handoff
         from hledac.universal.paths import get_sprint_json_report_path
 
+        from .components.pivot_builder import (
+            _get_correlation_from_handoff,
+        )
         from .sprint_exporter import (
             _build_capability_synthesis,
             _build_operator_brief,
@@ -137,7 +140,6 @@ class JSONFormatter(ExportFormatter):
             _get_acquisition_truth,
             _get_branch_value,
             _get_canonical_run_summary,
-            _get_correlation_from_handoff,
             _get_feed_verdict,
             _get_hypothesis_pack,
             _get_public_verdict,

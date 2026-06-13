@@ -29,42 +29,46 @@ from hledac.universal.runtime.sprint_scheduler import (  # type: ignore
 
 
 class TestF272AWindupAmendment:
-    """P1-4: Floor 30s→15s, cap 180s→60s, formula 30%→10% of duration."""
+    """F288: Floor 30s, cap 60s/120s, formula 30% (standard) / 15% (aggressive)."""
 
-    def test_60s_sprint_uses_15s_floor(self):
-        """60s duration must yield 15s windup (was 30s, broke 50% of budget)."""
+    def test_60s_sprint_uses_30s_floor(self):
+        """60s duration: 0.30*60=18, clamped to 30s floor."""
         cfg = SprintSchedulerConfig(sprint_duration_s=60.0)
-        assert cfg.effective_windup_lead_s == 15.0
-
-    def test_150s_sprint_at_floor_boundary(self):
-        """150s * 0.10 = 15s exactly -- no clamp needed."""
-        cfg = SprintSchedulerConfig(sprint_duration_s=150.0)
-        assert cfg.effective_windup_lead_s == 15.0
-
-    def test_300s_sprint_scales_to_30s(self):
-        """300s * 0.10 = 30s -- the deep-sprint sweet spot."""
-        cfg = SprintSchedulerConfig(sprint_duration_s=300.0)
         assert cfg.effective_windup_lead_s == 30.0
 
-    def test_600s_sprint_caps_at_60s(self):
-        """600s * 0.10 = 60s exactly -- at cap boundary."""
-        cfg = SprintSchedulerConfig(sprint_duration_s=600.0)
+    def test_150s_sprint_scales(self):
+        """150s * 0.30 = 45s -- no clamp needed."""
+        cfg = SprintSchedulerConfig(sprint_duration_s=150.0)
+        assert cfg.effective_windup_lead_s == 45.0
+
+    def test_300s_sprint_capped_at_60s(self):
+        """300s * 0.30 = 90s, capped at 60s (≤300s cap)."""
+        cfg = SprintSchedulerConfig(sprint_duration_s=300.0)
         assert cfg.effective_windup_lead_s == 60.0
 
-    def test_1800s_sprint_caps_at_60s(self):
-        """1800s would compute 180s but cap holds it at 60s (preserves active window)."""
+    def test_600s_sprint_caps_at_120s(self):
+        """600s * 0.30 = 180s, capped at 120s (>300s cap)."""
+        cfg = SprintSchedulerConfig(sprint_duration_s=600.0)
+        assert cfg.effective_windup_lead_s == 120.0
+
+    def test_1800s_sprint_caps_at_120s(self):
+        """1800s * 0.30 = 540s, capped at 120s."""
         cfg = SprintSchedulerConfig(sprint_duration_s=1800.0)
-        assert cfg.effective_windup_lead_s == 60.0
+        assert cfg.effective_windup_lead_s == 120.0
 
     def test_active_window_preserved_for_short_sprints(self):
-        """The whole point: 60s sprint must keep ≥45s of active window."""
+        """60s sprint: 30s windup → 30s active (≥30s floor, F221-ABORT compatible)."""
         cfg = SprintSchedulerConfig(sprint_duration_s=60.0)
         active = max(0.0, cfg.sprint_duration_s - cfg.effective_windup_lead_s)
-        assert active >= 45.0, f"active={active}, F272A floor broken"
+        assert active >= 30.0, f"active={active}, F288 floor broken"
 
     def test_windup_below_50pct_of_budget_for_all_durations(self):
-        """Hard invariant: windup ≤ 50% of duration for any duration ≥30s."""
-        for dur in (30, 60, 90, 120, 150, 200, 300, 600, 1200, 1800):
+        """Hard invariant: windup ≤ 50% of duration for duration > 60s.
+
+        Short sprints (≤60s) are exempt: F221-ABORT floor (30s) dominates and
+        would violate the 50% rule for 30s sprints (30/30=100%).
+        """
+        for dur in (90, 120, 150, 200, 300, 600, 1200, 1800):
             cfg = SprintSchedulerConfig(sprint_duration_s=float(dur))
             ratio = cfg.effective_windup_lead_s / dur
             assert ratio <= 0.50, f"dur={dur}s, windup_ratio={ratio:.2f}"
@@ -315,7 +319,7 @@ class TestF272CrossCutting:
         assert isinstance(canonical_lane_name(object()), str)
         # P1-4: 0-duration sprint
         cfg = SprintSchedulerConfig(sprint_duration_s=0.0)
-        assert cfg.effective_windup_lead_s == 15.0  # floor applied
+        assert cfg.effective_windup_lead_s == 30.0  # floor applied (30s for 0-duration)
 
     def test_windup_and_max_cycles_invariant_together(self):
         """F272A + F272E must agree: shorter windup allows more cycles."""

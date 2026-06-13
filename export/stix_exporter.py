@@ -1831,18 +1831,12 @@ except ImportError:
 
 def _build_stix2_bundle(data: dict[str, Any]) -> dict[str, Any]:
     """Use stix2 package to build a proper STIX bundle."""
-    bundle = _stix2_module.Bundle(
-        objects=[],
-        allow_custom=True,
-    )
-    # Add identity
+    # Build objects list first — stix2.Bundle has no .objects attribute
     identity = _stix2_module.Identity(
         name="Ghost Prime",
         identity_class="system",
     )
-    bundle.objects.append(identity)
 
-    # Add diagnostic note
     root = data.get("diagnostic_root_cause", "unknown")
     label = _ROOT_CAUSE_LABELS.get(root, _ROOT_CAUSE_LABELS["unknown"])
     rec = _get_recommendation(data)
@@ -1863,9 +1857,7 @@ def _build_stix2_bundle(data: dict[str, Any]) -> dict[str, Any]:
         object_refs=[identity.id],
         created_by_ref=identity.id,
     )
-    bundle.objects.append(note)
 
-    # Root cause note
     rc_note = _stix2_module.Note(
         abstract=f"Root cause: {root} ({label}). Recommendation: {rec}. Network variance: {data.get('is_network_variance', False)}",  # noqa: E501
         content=json.dumps({
@@ -1877,8 +1869,11 @@ def _build_stix2_bundle(data: dict[str, Any]) -> dict[str, Any]:
         object_refs=[identity.id],
         created_by_ref=identity.id,
     )
-    bundle.objects.append(rc_note)
 
+    bundle = _stix2_module.Bundle(
+        objects=[identity, note, rc_note],
+        allow_custom=True,
+    )
     return json.loads(str(bundle))
 
 

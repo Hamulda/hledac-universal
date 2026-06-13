@@ -77,7 +77,7 @@ logger = logging.getLogger("hledac.universal.transport.conditional_cache")
 # ---------------------------------------------------------------------------
 _MAX_ENTRIES: int = 5000
 _LMDB_MAP_SIZE: int = 16 * 1024 * 1024  # 16 MB hard ceiling (was 4 MB; supports up to ~40k entries at avg 400B)
-_DEFAULT_TTL_S: int = 3600  # 1 hour (SERP freshness window)
+_DEFAULT_TTL_S: int = 300  # 5 min — must be ≤ Alt-Svc cache TTL (24h) so capabilities changes propagate faster
 _MIN_BODY_CACHE_BYTES: int = 256  # skip < 256 byte responses
 _MAX_BODY_CACHE_BYTES: int = 2 * 1024 * 1024  # 2 MB hard cap per entry
 _LMDB_DIR: Path = Path.home() / ".cache" / "hledac" / "conditional_cache"
@@ -437,6 +437,7 @@ _stats: dict[str, int] = {
     "memory_backend": 0,
     "lookup_hits": 0,
     "lookup_misses": 0,
+    "lookup_errors": 0,
     "store_count": 0,
     "store_skipped_too_small": 0,
     "store_skipped_too_large": 0,
@@ -515,6 +516,7 @@ def lookup(url: str) -> CacheEntry | None:
         return entry
     except Exception as e:  # noqa: BLE001
         logger.debug("conditional_cache: lookup failed: %s", e)
+        _stats["lookup_errors"] += 1
         return None
 
 
@@ -557,7 +559,6 @@ def store(
             # conditional_headers() will be empty -> next call won't
             # inject a conditional GET. We add a soft metric so
             # operators can spot caches that never pay off.
-            _stats["store_skipped_no_validator"] += 0  # placeholder
         backend = _get_backend()
         entry = CacheEntry(
             url=url,

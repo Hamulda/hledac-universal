@@ -87,7 +87,7 @@ async def async_search_wayback_cdx(
 
     try:
         async with asyncio.timeout(timeout_s):
-            resp, err = await checked_aiohttp_get(
+            data, status, err = await checked_aiohttp_get(
                 session,
                 _WAYBACK_CDX_URL,
                 params=params,
@@ -139,8 +139,6 @@ async def async_search_wayback_cdx(
                     error=f"wayback_cdx_fetch_error:{err}",
                 )
 
-            # checked_aiohttp_get returns resp on any status (including 4xx/5xx)
-            status = resp.status
             if status == 403:
                 elapsed = time.monotonic() - start
                 return DiscoveryBatchResult(
@@ -185,8 +183,6 @@ async def async_search_wayback_cdx(
                     source_family="archive",
                     error=f"wayback_cdx_http_{status}",
                 )
-
-            data = await resp.json()
 
     except TimeoutError:
         elapsed = time.monotonic() - start

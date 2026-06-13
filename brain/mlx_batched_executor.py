@@ -55,6 +55,7 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from hledac.universal.brain.batch_scheduler import BatchScheduler
+    from hledac.universal.brain.hermes3_engine import Hermes3Engine
 
 logger = logging.getLogger(__name__)
 
@@ -292,19 +293,6 @@ class MLXBatchedExecutor:
                 prompt, temperature, max_tokens, system_msg
             )
 
-        loop = asyncio.get_running_loop()
-        future: asyncio.Future = loop.create_future()
-
-        # Build payload — BatchScheduler contract: dict with 'future' key
-        payload: dict[str, Any] = {
-            "future": future,
-            "prompt": prompt,
-            "temperature": temperature,
-            "max_tokens": max_tokens,
-            "system_msg": system_msg,
-            "submitted_at": time.monotonic(),
-        }
-
         try:
             # Use a stub response_model — we treat all text-generation
             # requests as a single virtual schema "FreeText" so they batch
@@ -313,7 +301,13 @@ class MLXBatchedExecutor:
                 __name__ = "FreeText"
                 __struct_fields__ = ("text",)  # msgspec-detectable
 
-            await self._scheduler.submit(
+            submitted_at = time.monotonic()
+
+            # CRITICAL FIX: use scheduler_future returned by submit(), not a
+            # separately-created orphan future. The scheduler creates the future
+            # internally and embeds it in the payload for _execute_callback to
+            # resolve. We await THAT future, not an unrelated one.
+            scheduler_future: asyncio.Future = await self._scheduler.submit(
                 prompt=prompt,
                 response_model=_FreeTextSchema,
                 priority=priority,
@@ -323,11 +317,14 @@ class MLXBatchedExecutor:
             )
             self._stats["submits"] += 1
 
-            # Wait for worker to dispatch + complete
-            result = await asyncio.wait_for(future, timeout=FUTURE_TIMEOUT_S)
+            # Timeout: 5× flush interval gives the scheduler time to gather a
+            # batch, with a hard floor of 10s. Avoids the previous 25s orphan-
+            # wait bug where we awaited a future nobody ever resolved.
+            timeout = max(5.0 * DEFAULT_FLUSH_INTERVAL_S, 10.0)
+            result = await asyncio.wait_for(scheduler_future, timeout=timeout)
 
             # Update latency EMA (B.M10)
-            elapsed_ms = (time.monotonic() - payload["submitted_at"]) * 1000.0
+            elapsed_ms = (time.monotonic() - submitted_at) * 1000.0
             self._stats["latency_ema_ms"] = (
                 self._ema_alpha * elapsed_ms
                 + (1 - self._ema_alpha) * float(self._stats["latency_ema_ms"])

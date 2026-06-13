@@ -301,6 +301,8 @@ class Hermes3Engine:
         # Sprint 36: Conditional MLX cache - disabled by default
         self._kv_cache_enabled = False
         self._prompt_cache = None  # Prompt cache for generation
+        # F265C-EXT: Warmup deferred to first generate() call (not eagerly at init)
+        self._warmup_pending = False
 
         # Sprint F214Q: Dynamic KV cache sizing per RAM tier (M1 8GB)
         # normal: max_kv_size=full, warn: half, critical/emergency: KV off
@@ -921,7 +923,11 @@ class Hermes3Engine:
             from mlx_lm import load
 
             logger.info(f"Loading Hermes-3 from {self.config.model_path}...")
-            self._model, self._tokenizer = load(self.config.model_path)
+            # F265C-EXT: Run mlx_lm.load() in thread — avoids blocking event loop
+            # during the 60-120s model loading phase on M1.
+            self._model, self._tokenizer = await asyncio.to_thread(
+                load, self.config.model_path
+            )
             logger.info("✓ Hermes-3 loaded successfully")
 
             # Sprint 36: Initialize prompt cache only if KV_CACHE_AVAILABLE
@@ -961,15 +967,10 @@ class Hermes3Engine:
             # Sprint 75: Initialize persistent system-prompt cache
             await self._init_system_prompt_cache()
 
-            # Sprint 7D: Warmup prefix cache after model load
-            # This builds clean prefill cache before first inference
-            await self.warmup_prefix_cache(
-                system_prompt=self._system_prompt,
-                few_shot_examples=[
-                    {"user": "What is 2+2?", "assistant": "4"},
-                    {"user": "Capital of France?", "assistant": "Paris"},
-                ]
-            )
+            # F265C-EXT: Defer warmup to first generate() call — saves 1-3s
+            # eager inference from the init path. Warmup populates the KV
+            # cache prefix once, then is skipped on all subsequent calls.
+            self._warmup_pending = True
 
         except Exception as e:
             logger.error(f"Failed to load Hermes-3: {e}")
@@ -1366,6 +1367,7 @@ class Hermes3Engine:
         """
         from mlx_lm import generate as mlx_generate
         from mlx_lm.models.cache import make_prompt_cache
+        from mlx_lm.sample_utils import make_sampler
 
         # Always create new cache (thread-safe)
         kv_cache = make_prompt_cache(self._model, max_kv_size=max_tok)
@@ -1386,7 +1388,7 @@ class Hermes3Engine:
             "model": self._model,
             "tokenizer": self._tokenizer,
             "prompt": formatted_prompt,
-            "temp": temp,
+            "sampler": make_sampler(temp=temp),
             "max_tokens": max_tok,
             "kv_bits": kv_bits,
             "prompt_cache": kv_cache,
@@ -1405,14 +1407,6 @@ class Hermes3Engine:
 
         self._kv_cache_stats['cache_uses'] += 1
         response = mlx_generate(**generate_kwargs)
-
-        # F192B: mx.eval([]) barrier AFTER inference before clear_cache
-        # (consistent with canonical 7K order used in unload())
-        try:
-            import mlx.core as _mx
-            _mx.eval([])
-        except Exception:
-            pass
 
         return response.strip()
 
@@ -1503,14 +1497,19 @@ class Hermes3Engine:
                 except TimeoutError:
                     raise
 
-        # Fallback: legacy ThreadPoolExecutor + wait_for path
+        # Fallback: MLX requires Metal stream on calling thread.
+        # asyncio.to_thread() / run_in_executor use background threads with no Metal.
+        # Run directly on this coroutine's thread (main asyncio thread = has Metal).
+        # Blocks event loop during inference but this is the legacy fallback path.
         async with self._inference_semaphore:
-            loop = asyncio.get_running_loop()
-            inference_future = loop.run_in_executor(
-                self._inference_executor,
-                lambda: fn(*args, **kwargs),
-            )
-            return await asyncio.wait_for(inference_future, timeout=timeout)
+            try:
+                result = await asyncio.wait_for(
+                    asyncio.to_thread(fn, *args, **kwargs),
+                    timeout=timeout,
+                )
+                return result
+            except asyncio.CancelledError:
+                raise
 
     @_otel_instrumented("hermes.generate", component="mlx")
     async def generate(
@@ -1702,6 +1701,23 @@ class Hermes3Engine:
             # P1F-A: Global timeout on inference
             timeout_s = _get_hermes_timeout_s()
 
+            # F265C-EXT: Lazy warmup — run once on first generate(), not eagerly at init.
+            # This defers the 1-3s warmup inference from the init phase (which
+            # blocked the event loop) to here, where it overlaps with the first
+            # real inference request.
+            if getattr(self, '_warmup_pending', False):
+                self._warmup_pending = False
+                try:
+                    await self.warmup_prefix_cache(
+                        system_prompt=system,
+                        few_shot_examples=[
+                            {"user": "What is 2+2?", "assistant": "4"},
+                            {"user": "Capital of France?", "assistant": "Paris"},
+                        ],
+                    )
+                except Exception as e:
+                    logger.debug("[WARMUP] Lazy warmup failed: %s", e)
+
             # Use semaphore for serialization + executor for thread offload.
             # Sprint P0-3: routes through MLXWorkerThread (persistent loop) when
             # available, otherwise falls back to ThreadPoolExecutor. The main
@@ -1711,6 +1727,14 @@ class Hermes3Engine:
                 self._run_inference,
                 formatted_prompt, temp, max_tok, prefix_cache,
             )
+
+            # F192B: mx.eval([]) barrier AFTER inference before clear_cache
+            # Runs on main asyncio thread (has Metal stream), not ThreadPoolExecutor
+            try:
+                import mlx.core as _mx
+                _mx.eval([])
+            except Exception:
+                pass
 
             # P1A: Record successful inference
             if record_model_success is not None:
@@ -2808,10 +2832,19 @@ Do not include any other text. Output valid JSON only."""
         mutex = get_ane_mlx_mutex()
         try:
             from mlx_lm import load
+            from mlx_lm.utils import make_prompt_cache
             # F234: ANE/MLX mutex — acquire MLX lock before loading
             mutex.acquire_mlx(model_size_mb=2000.0)
             self._model, self._tokenizer = await asyncio.to_thread(load, model_id)
             self.config.model_path = model_id
+            # F265C-EXT: Initialize prompt cache here so load_model() path
+            # has the same KV-cache setup as initialize() path.
+            try:
+                self._prompt_cache = make_prompt_cache(self._model)
+                self._kv_cache_enabled = True
+            except Exception:
+                self._prompt_cache = None
+                self._kv_cache_enabled = False
             logger.info(f"✓ Model loaded: {model_id}")
             return True
         except Exception as e:

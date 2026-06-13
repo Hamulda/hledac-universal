@@ -161,6 +161,60 @@ _PRIVATE_HOSTNAMES = {
 # Wildcard-only domain pattern (crt.sh often returns certs like "*.example.com")
 _WILDCARD_ONLY_RE = re.compile(r"^\*\.")
 
+# Stopwords — terms too generic to drive CT wildcard queries
+_STOPWORDS = {
+    "ransomware",
+    "malware",
+    "threat",
+    "attack",
+    "report",
+    "infrastructure",
+    "operation",
+    "campaign",
+    "group",
+    "apt",
+    "actor",
+    "tool",
+    "framework",
+    "payload",
+    "dropper",
+    "loader",
+    "backdoor",
+}
+
+
+def _build_crtsh_queries(seed: str) -> list[str]:
+    """
+    Build structured crt.sh wildcard queries from sprint seed.
+
+    Uses domain wildcard API (fast, <2s) instead of full-text search (slow,
+    timeout-prone). Generates %.{term}.{tld} patterns for each significant
+    alphanum term found in the seed.
+
+    Returns up to 6 URLs (max 2 TLDs × 3 terms). Empty list if no qualifying
+    terms found.
+    """
+    terms = [
+        t.lower()
+        for t in re.findall(r"[a-zA-Z0-9]{4,}", seed)
+        if t.lower() not in _STOPWORDS
+    ]
+    # deduplicate, preserve order
+    seen: set[str] = set()
+    unique: list[str] = []
+    for t in terms:
+        if t not in seen:
+            seen.add(t)
+            unique.append(t)
+    terms = unique[:3]  # max 3 terms to avoid hammering API
+
+    tlds = ("com", "net", "io")
+    queries: list[str] = []
+    for term in terms:
+        for tld in tlds:
+            queries.append(f"https://crt.sh/?q=%.{term}.{tld}&output=json")
+    return queries[:6]  # max 6 per sprint
+
 
 def _is_private_domain(domain: str) -> bool:
     """Return True if domain is private, internal, or reserved."""
@@ -452,6 +506,135 @@ async def call_crtsh(
 
     # Extract domain candidate from query
     domain_candidate = _extract_domain_from_query(query_stripped)
+
+    # F265D: Wildcard URL iteration — fast structured queries for non-domain seeds
+    wildcard_urls = _build_crtsh_queries(query_stripped)
+    if wildcard_urls and domain_candidate is None:
+        # Non-domain seed with meaningful terms → use structured wildcard queries
+        all_hits: list[DiscoveryHit] = []
+        all_errors: list[str] = []
+        strong_error: str | None = None
+        strong_outcome_tag: CTProviderStatus = CTProviderStatus.DISABLED
+        _start = time.monotonic()
+        _sem = asyncio.Semaphore(2)  # max 2 concurrent crt.sh requests
+
+        async def _fetch_one(url: str) -> tuple[list[DiscoveryHit], str | None, CTProviderStatus]:
+            async with _sem:
+                try:
+                    _session = await async_get_aiohttp_session()
+                    _timeout = aiohttp.ClientTimeout(total=min(15.0, _HTTP_TIMEOUT_S))
+                    _data, _status, _err = await checked_aiohttp_get(
+                        _session,
+                        url,
+                        params={"output": "json"},
+                        headers={"User-Agent": "Hledac/1.0 (research bot)"},
+                        timeout=_timeout,
+                        failure_kind="crtsh",
+                    )
+                    if _err:
+                        return [], _err, CTProviderStatus.TIMEOUT if _err == "timeout" else CTProviderStatus.HTTP_5XX
+                    if _status != 200:
+                        return [], f"http_{_status}", CTProviderStatus.HTTP_5XX
+                    hits, _raw = _build_hits_from_raw(_data, url, url, max_results)
+                    return hits, None, CTProviderStatus.OK
+                except asyncio.CancelledError:
+                    raise
+                except Exception as _e:
+                    return [], str(_e), CTProviderStatus.DISABLED
+
+        try:
+            async with asyncio.timeout(min(timeout_s, 15.0)):
+                results = await asyncio.gather(*[_fetch_one(u) for u in wildcard_urls], return_exceptions=True)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            results = []
+
+        for r in results:
+            if isinstance(r, BaseException):
+                all_errors.append(str(r))
+                continue
+            _hits, _err, _tag = r
+            if _err:
+                all_errors.append(_err)
+                if strong_error is None:
+                    strong_error = _err
+                    strong_outcome_tag = _tag
+            else:
+                all_hits.extend(_hits)
+                strong_outcome_tag = CTProviderStatus.OK  # at least one succeeded
+
+        elapsed = time.monotonic() - _start
+        if all_hits:
+            deduped = {_hit.url: _hit for _hit in all_hits}
+            final_hits = tuple(deduped.values())[:_MAX_HITS]
+            final_raw = len(all_hits)
+            final_outcome = CTOutcome(
+                attempted=True,
+                query=query_stripped,
+                raw_count=final_raw,
+                built_count=len(final_hits),
+                error=None,
+                timeout=False,
+                duration_s=elapsed,
+                provider_status=CTProviderStatus.OK,
+            )
+            final_result = DiscoveryBatchResult(
+                hits=final_hits,
+                error=None,
+                error_type="ok",
+                provider_name="crtsh",
+                provider_chain=("crtsh",),
+                source_family="ct",
+                elapsed_s=elapsed,
+            )
+            return final_result, final_outcome
+        else:
+            # All wildcard queries failed — fall through to domain path if available
+            if not wildcard_urls:
+                elapsed = time.monotonic() - start
+                outcome = CTOutcome(
+                    attempted=True,
+                    query=query_stripped,
+                    raw_count=0,
+                    built_count=0,
+                    error="no_domain_like_token",
+                    skip_reason="no_domain_like_token",
+                    duration_s=elapsed,
+                )
+                result = DiscoveryBatchResult(
+                    hits=(),
+                    error="no_domain_like_token",
+                    error_type="invalid_query",
+                    provider_name="crtsh",
+                    provider_chain=("crtsh",),
+                    source_family="ct",
+                    elapsed_s=elapsed,
+                )
+                return result, outcome
+            # had URLs but all failed
+            elapsed = time.monotonic() - _start
+            outcome = CTOutcome(
+                attempted=True,
+                query=query_stripped,
+                raw_count=0,
+                built_count=0,
+                error=strong_error or "all_wildcard_failed",
+                timeout=strong_outcome_tag == CTProviderStatus.TIMEOUT,
+                duration_s=elapsed,
+                provider_status=strong_outcome_tag,
+            )
+            result = DiscoveryBatchResult(
+                hits=(),
+                error=strong_error or "all_wildcard_failed",
+                error_type="wildcard_exhausted",
+                provider_name="crtsh",
+                provider_chain=("crtsh",),
+                source_family="ct",
+                elapsed_s=elapsed,
+            )
+            return result, outcome
+
     if domain_candidate is None:
         elapsed = time.monotonic() - start
         outcome = CTOutcome(
@@ -547,7 +730,7 @@ async def call_crtsh(
 
         try:
             async with asyncio.timeout(timeout_s):
-                resp, err = await checked_aiohttp_get(
+                data, status, err = await checked_aiohttp_get(
                     session,
                     _CRTSH_URL,
                     params=params,
@@ -627,8 +810,7 @@ async def call_crtsh(
             )
             return result, outcome
 
-        assert resp is not None
-        if resp.status == 429:
+        if status == 429:
             elapsed = time.monotonic() - start
             outcome = CTOutcome(
                 attempted=True,
@@ -649,7 +831,7 @@ async def call_crtsh(
                 elapsed_s=elapsed,
             )
             return result, outcome
-        if resp.status == 403:
+        if status == 403:
             elapsed = time.monotonic() - start
             outcome = CTOutcome(
                 attempted=True,
@@ -670,10 +852,10 @@ async def call_crtsh(
                 elapsed_s=elapsed,
             )
             return result, outcome
-        if resp.status >= 500:
+        if status >= 500:
             elapsed = time.monotonic() - start
             # F219E: Enter cooldown on 5xx before stale-cache fallback
-            _enter_cooldown(domain_candidate, f"http_{resp.status}", cooldown_now)
+            _enter_cooldown(domain_candidate, f"http_{status}", cooldown_now)
             # F217D: Try stale cache on 5xx before returning failure
             stale_data, stale_age = _read_stale_cache(
                 domain_candidate, cache_dir, _STALE_THRESHOLD_S
@@ -689,7 +871,7 @@ async def call_crtsh(
                     query=domain_candidate,
                     raw_count=stale_raw_count,
                     built_count=len(stale_hits),
-                    error=f"http_{resp.status}_stale_cache",
+                    error=f"http_{status}_stale_cache",
                     timeout=False,
                     duration_s=elapsed,
                     ct_cache_used=True,
@@ -699,7 +881,7 @@ async def call_crtsh(
                 )
                 cache_result = DiscoveryBatchResult(
                     hits=tuple(stale_hits),
-                    error=f"http_{resp.status}_stale_cache",
+                    error=f"http_{status}_stale_cache",
                     error_type="http_5xx_cache_fallback",
                     provider_name="crtsh",
                     provider_chain=("crtsh",),
@@ -713,13 +895,13 @@ async def call_crtsh(
                 query=domain_candidate,
                 raw_count=0,
                 built_count=0,
-                error=f"http_{resp.status}",
+                error=f"http_{status}",
                 duration_s=elapsed,
                 provider_status=CTProviderStatus.HTTP_5XX,
             )
             result = DiscoveryBatchResult(
                 hits=(),
-                error=f"http_{resp.status}",
+                error=f"http_{status}",
                 error_type="http_5xx",
                 provider_name="crtsh",
                 provider_chain=("crtsh",),
@@ -727,45 +909,21 @@ async def call_crtsh(
                 elapsed_s=elapsed,
             )
             return result, outcome
-        if resp.status >= 400:
+        if status >= 400:
             elapsed = time.monotonic() - start
             outcome = CTOutcome(
                 attempted=True,
                 query=domain_candidate,
                 raw_count=0,
                 built_count=0,
-                error=f"http_{resp.status}",
+                error=f"http_{status}",
                 duration_s=elapsed,
                 provider_status=CTProviderStatus.HTTP_4XX,
             )
             result = DiscoveryBatchResult(
                 hits=(),
-                error=f"http_{resp.status}",
+                error=f"http_{status}",
                 error_type="http_4xx",
-                provider_name="crtsh",
-                provider_chain=("crtsh",),
-                source_family="ct",
-                elapsed_s=elapsed,
-            )
-            return result, outcome
-
-        try:
-            data = await resp.json(content_type=None)
-        except Exception as e:
-            elapsed = time.monotonic() - start
-            outcome = CTOutcome(
-                attempted=True,
-                query=domain_candidate,
-                raw_count=0,
-                built_count=0,
-                error=f"parse_error:{e}",
-                duration_s=elapsed,
-                provider_status=CTProviderStatus.PARSE_ERROR,
-            )
-            result = DiscoveryBatchResult(
-                hits=(),
-                error=f"parse_error:{e}",
-                error_type="parse_error",
                 provider_name="crtsh",
                 provider_chain=("crtsh",),
                 source_family="ct",
@@ -1058,7 +1216,7 @@ async def async_search_crtsh(
 
         try:
             async with asyncio.timeout(timeout_s):
-                resp, err = await checked_aiohttp_get(
+                data, status, err = await checked_aiohttp_get(
                     session,
                     _CRTSH_URL,
                     params=params,
@@ -1092,10 +1250,7 @@ async def async_search_crtsh(
                 elapsed_s=elapsed,
             )
 
-        # resp is non-None when err is None (canonical checked_aiohttp_get returns
-        # (resp, None) for HTTP 4xx/5xx — caller checks resp.status)
-        assert resp is not None
-        if resp.status == 429:
+        if status == 429:
             return DiscoveryBatchResult(
                 hits=(),
                 error="rate_limited",
@@ -1105,7 +1260,7 @@ async def async_search_crtsh(
                 source_family="ct",
                 elapsed_s=time.monotonic() - start,
             )
-        if resp.status == 403:
+        if status == 403:
             return DiscoveryBatchResult(
                 hits=(),
                 error="captcha_or_blocked",
@@ -1115,36 +1270,23 @@ async def async_search_crtsh(
                 source_family="ct",
                 elapsed_s=time.monotonic() - start,
             )
-        if resp.status >= 500:
+        if status >= 500:
             # F219E: Enter cooldown on 5xx (explicit bounded cooldown for resilience)
-            _enter_cooldown(domain_candidate, f"http_{resp.status}", time.monotonic())
+            _enter_cooldown(domain_candidate, f"http_{status}", time.monotonic())
             return DiscoveryBatchResult(
                 hits=(),
-                error=f"http_{resp.status}",
+                error=f"http_{status}",
                 error_type="http_5xx",
                 provider_name="crtsh",
                 provider_chain=("crtsh",),
                 source_family="ct",
                 elapsed_s=time.monotonic() - start,
             )
-        if resp.status >= 400:
+        if status >= 400:
             return DiscoveryBatchResult(
                 hits=(),
-                error=f"http_{resp.status}",
+                error=f"http_{status}",
                 error_type="http_4xx",
-                provider_name="crtsh",
-                provider_chain=("crtsh",),
-                source_family="ct",
-                elapsed_s=time.monotonic() - start,
-            )
-
-        try:
-            data = await resp.json(content_type=None)
-        except Exception as e:
-            return DiscoveryBatchResult(
-                hits=(),
-                error=f"parse_error:{e}",
-                error_type="parse_error",
                 provider_name="crtsh",
                 provider_chain=("crtsh",),
                 source_family="ct",

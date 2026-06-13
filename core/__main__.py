@@ -1218,9 +1218,9 @@ async def dry_run_sprint(query: str, duration_s: float = 300.0) -> None:
     verdict = "OK"
 
     # ── 1. Config validation ─────────────────────────────────────────────────
-    _WINDUP_MIN = 30.0  # noqa: N806
-    _WINDUP_MAX = 180.0  # noqa: N806
-    _WINDUP_RATIO = 0.30  # noqa: N806
+    _WINDUP_MIN = 15.0  # noqa: N806
+    _WINDUP_MAX = 60.0  # noqa: N806
+    _WINDUP_RATIO = 0.10  # noqa: N806
     effective_windup = max(_WINDUP_MIN, min(_WINDUP_MAX, duration_s * _WINDUP_RATIO))
     synthesis_budget = 60.0
     active_budget = max(0.0, duration_s - effective_windup - synthesis_budget)
@@ -1450,22 +1450,22 @@ async def run_sprint(
 
     # F221-ABORT: Pre-flight guard — enforce minimum active-window budget.
     # MUST run BEFORE LMDB init (DuckDBShadowStore below) to avoid orphaned
-    # lock files when the config is rejected up front. Replicates F250 logic
-    # from SprintSchedulerConfig.effective_windup_lead_s (30% of duration,
-    # clamp [30, 180]) so the guard rejects only what the scheduler would
+    # lock files when the config is rejected up front. Replicates F272A logic
+    # from SprintSchedulerConfig.effective_windup_lead_s (10% of duration,
+    # clamp [15, 60]) so the guard rejects only what the scheduler would
     # actually treat as zero-active-budget. sys.exit(2) = config error,
     # distinguishable from exit(1) runtime failure.
     #
-    # Sprint F271C: Named constants (F250 clamp bounds extracted) and
+    # Sprint F271C: Named constants (F272A clamp bounds extracted) and
     # invariant assert make the F221 guarantee observable. Without the assert
     # a stale hardcoded `windup_lead_s=180` (post-F260 regression) silently
     # produced `active_window_budget_s=-90.0` and skipped the guard.
-    _F250_WINDUP_CLAMP_MIN_S: float = 30.0  # noqa: N806
-    _F250_WINDUP_CLAMP_MAX_S: float = 180.0  # noqa: N806
-    _F250_WINDUP_LEAD_FRAC: float = 0.30  # noqa: N806
-    _raw_windup = float(duration_s) * _F250_WINDUP_LEAD_FRAC
+    _F272A_WINDUP_CLAMP_MIN_S: float = 15.0  # noqa: N806
+    _F272A_WINDUP_CLAMP_MAX_S: float = 60.0  # noqa: N806
+    _F272A_WINDUP_LEAD_FRAC: float = 0.10  # noqa: N806
+    _raw_windup = float(duration_s) * _F272A_WINDUP_LEAD_FRAC
     _effective_windup_s = float(
-        max(_F250_WINDUP_CLAMP_MIN_S, min(_F250_WINDUP_CLAMP_MAX_S, _raw_windup))
+        max(_F272A_WINDUP_CLAMP_MIN_S, min(_F272A_WINDUP_CLAMP_MAX_S, _raw_windup))
     )
     _active_window_s = float(duration_s) - _effective_windup_s
     # Sprint F271C: fail-loud invariant — if we somehow compute a negative

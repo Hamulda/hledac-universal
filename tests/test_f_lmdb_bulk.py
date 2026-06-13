@@ -369,7 +369,20 @@ def _scan_peritem_in_loops(path: _Path) -> list[tuple[int, str]]:
                     isinstance(anc, _ast.AsyncFunctionDef)
                     for anc in ancestors
                 )
-                if not has_inner_loop and not in_async_fn:
+                # GHOST_INVARIANT fix (Sprint 6.9): cursor.putmulti() inside
+                # the with-block is the CORRECT bulk-write pattern — even if the
+                # with is inside a for-loop (batching). The anti-pattern is
+                # per-item txn.put() calls. Detect cursor.putmulti presence.
+                has_putmulti = False
+                for child in _ast.walk(node):
+                    if (
+                        isinstance(child, _ast.Call)
+                        and isinstance(getattr(child.func, "attr", None), str)
+                        and child.func.attr == "putmulti"
+                    ):
+                        has_putmulti = True
+                        break
+                if not has_inner_loop and not in_async_fn and not has_putmulti:
                     findings.append((lineno, snippet))
                 break
         # Recurse into nested with/for

@@ -492,7 +492,7 @@ async def call_lookup_passive_dns(
             session = await async_get_aiohttp_session()
             http_timeout = aiohttp.ClientTimeout(total=15)
 
-            resp, err = await checked_aiohttp_get(
+            text, status, err = await checked_aiohttp_get(
                 session,
                 url,
                 headers={"User-Agent": "Hledac/1.0 (research bot)"},
@@ -514,8 +514,7 @@ async def call_lookup_passive_dns(
                 await asyncio.sleep(CIRCL_RATE_LIMIT_SLEEP)
                 return [], outcome
 
-            assert resp is not None
-            if resp.status == 404:
+            if status == 404:
                 elapsed = time.monotonic() - start
                 outcome = PassiveDNSOutcome(
                     attempted=True,
@@ -526,21 +525,20 @@ async def call_lookup_passive_dns(
                 )
                 await asyncio.sleep(CIRCL_RATE_LIMIT_SLEEP)
                 return [], outcome
-            if resp.status != 200:
+            if status != 200:
                 elapsed = time.monotonic() - start
                 outcome = PassiveDNSOutcome(
                     attempted=True,
                     query=domain_stripped,
                     result_count=0,
-                    error=f"http_{resp.status}",
+                    error=f"http_{status}",
                     duration_s=elapsed,
                 )
                 await asyncio.sleep(CIRCL_RATE_LIMIT_SLEEP)
                 return [], outcome
-            text = await resp.text()
 
         # F229: Parse NDJSON CIRCL response using shared parser
-        records = parse_circl_pdns_text(text, max_results=50)
+        records = parse_circl_pdns_text(str(text), max_results=50)
         ips = [record.ip for record in records]
 
     except TimeoutError:

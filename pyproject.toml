@@ -87,7 +87,6 @@ dependencies = [
     "trafilatura",
     "markdownify",
     "feedparser",
-    "duckduckgo-search>=8.0.0",
     # ── Dokumenty / OCR ───────────────────────────────────────────────────────
     "pymupdf>=1.27.2.3",
     "pypdf2",
@@ -152,6 +151,7 @@ dependencies = [
     "mlx-embeddings",
     "outlines>=1.3.0",
     "dspy>=3.2.1",
+    "ddgs>=9.14.4",
 ]
 
 [project.scripts]

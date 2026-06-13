@@ -170,6 +170,9 @@ class LMDBKVStore:
         """
         Batch write multiple key-value pairs with batching.
 
+        GHOST_INVARIANTS: LMDB bulk write always via cursor.putmulti() —
+        never per-item env.begin(write=True) in loop.
+
         Args:
             items: List of (key, value) tuples
 
@@ -180,23 +183,24 @@ class LMDBKVStore:
             return True
 
         try:
-            # Batch items
             for i in range(0, len(items), LMDB_WRITE_BATCH_SIZE):
                 batch = items[i:i + LMDB_WRITE_BATCH_SIZE]
                 try:
                     with self._env.begin(write=True) as txn:
-                        # Check key count limit
                         current_entries = txn.stat()["entries"]
                         if current_entries + len(batch) > self._max_keys:
                             logger.warning(f"Max keys ({self._max_keys}) would be exceeded")
                             return False
 
-                        for key, value in batch:
-                            serialized = encode(value)
-                            txn.put(key.encode("utf-8"), serialized)
+                        # GHOST_INVARIANT: cursor.putmulti() for atomic bulk write.
+                        # putmulti expects [(key_bytes, value_bytes)] — encode all first.
+                        encoded: list[tuple[bytes, bytes]] = [
+                            (key.encode("utf-8"), encode(value)) for key, value in batch
+                        ]
+                        cursor = txn.cursor()
+                        cursor.putmulti(encoded)
                 except Exception as batch_err:
-                    logger.warning(f"Batch write failed, falling back to single transaction: {batch_err}")
-                    # Fallback: single transaction for all items in batch (P2-7 fix)
+                    logger.warning(f"putmulti batch failed, falling back to single-txn: {batch_err}")
                     try:
                         with self._env.begin(write=True) as txn:
                             for key, value in batch:

@@ -1,7 +1,7 @@
 """
 DuckDuckGo public web discovery adapter.
 
-Backend: duckduckgo_search v8.1.1 (sync-only; async via asyncio.to_thread compatibility fallback)
+Backend: ddgs v9+ (sync-only; async via asyncio.to_thread compatibility fallback)
 
 INVARIANTS (Sprint 8AC):
 - Public/passive-only; no auth, no cookies, no credentials
@@ -39,13 +39,9 @@ from hledac.universal.transport.circuit_breaker import (
 
 _PUBLIC_REPLAY_ADAPTER = "public_duckduckgo"
 
-# Backend: ddgs v9+ (primary) or duckduckgo_search v8.x (fallback)
-# Both provide DDGS.text() — async via asyncio.to_thread compatibility wrapper
+# Backend: ddgs v9+ (sync-only; async via asyncio.to_thread compatibility wrapper)
 if TYPE_CHECKING:
-    try:
-        from ddgs import DDGS  # noqa: F401
-    except ImportError:
-        from duckduckgo_search import DDGS  # noqa: F401
+    from ddgs import DDGS  # noqa: F401
 
 
 # ---------------------------------------------------------------------------
@@ -229,8 +225,8 @@ def backend_version() -> str:  # noqa: D102
             _backend_version = getattr(ddgs, "__version__", "unknown")
         except Exception:
             try:
-                import duckduckgo_search
-                _backend_version = getattr(duckduckgo_search, "__version__", "unknown")
+                import ddgs
+                _backend_version = getattr(ddgs, "__version__", "unknown")
             except Exception:  # pragma: no cover — defensive
                 _backend_version = "unknown"
     return _backend_version  # type: ignore[return-value]
@@ -608,7 +604,7 @@ async def _ddgs_text_search(
     """
     Compatibility async wrapper around synchronous DDGS.text().
 
-    Uses asyncio.to_thread() because duckduckgo_search v8.1.1 does NOT
+    Uses asyncio.to_thread() because ddgs v9+ does NOT
     provide an AsyncDDGS class — only a sync DDGS class.
 
     Per-request httpx timeouts are passed directly to the DDGS backend so
@@ -624,11 +620,8 @@ async def _ddgs_text_search(
     global _last_error
 
     def _sync_search() -> list[dict]:
-        # Lazy import: ddgs v9+ (primary) or duckduckgo_search v8.x (fallback)
-        try:
-            from ddgs import DDGS  # noqa: F401
-        except ImportError:
-            from duckduckgo_search import DDGS  # noqa: T1009
+        # Lazy import: ddgs v9+
+        from ddgs import DDGS  # noqa: F401
 
         backend: DDGS = DDGS(timeout=int(timeout_s))
         try:
@@ -1276,7 +1269,7 @@ async def _scrape_mojeek(
     results = []
     try:
         async with aiohttp.ClientSession() as s:
-            resp, err = await checked_aiohttp_get(
+            text, status, err = await checked_aiohttp_get(
                 s,
                 "https://www.mojeek.com/search",
                 params={"q": query},
@@ -1288,9 +1281,9 @@ async def _scrape_mojeek(
             if err:
                 logger.debug(f"[Mojeek] {err}")
                 return []
-            if resp.status != 200:
+            if status != 200:
                 return []
-            soup = BeautifulSoup(await resp.text(), "html.parser")
+            soup = BeautifulSoup(str(text), "html.parser")
             for li in soup.select("ul.results-standard li")[:n]:
                 a = li.select_one("a.ob")
                 p = li.select_one("p.s")
@@ -1342,7 +1335,7 @@ async def _search_commoncrawl_cdx(
     results = []
     try:
         async with aiohttp.ClientSession() as s:
-            resp, err = await checked_aiohttp_get(
+            text, status, err = await checked_aiohttp_get(
                 s,
                 "https://index.commoncrawl.org/CC-MAIN-2024-51-index",
                 params={
@@ -1357,9 +1350,9 @@ async def _search_commoncrawl_cdx(
             if err:
                 logger.warning(f"[CommonCrawl CDX] {err}")
                 return []
-            if resp.status != 200:
+            if status != 200:
                 return []
-            for line in (await resp.text()).strip().split("\n")[:max_results]:
+            for line in str(text).strip().split("\n")[:max_results]:
                 try:
                     rec = _json.loads(line)
                     results.append({
@@ -1385,7 +1378,7 @@ async def _query_shodan_internetdb(ip: str) -> dict:
     REMOVAL CONDITION: po přechodu všech call-sites na registry/shodan_internetdb_lookup()."""
     try:
         async with aiohttp.ClientSession() as s:
-            resp, err = await checked_aiohttp_get(
+            data, status, err = await checked_aiohttp_get(
                 s,
                 f"https://internetdb.shodan.io/{ip}",
                 timeout=aiohttp.ClientTimeout(total=8),
@@ -1394,13 +1387,12 @@ async def _query_shodan_internetdb(ip: str) -> dict:
             if err:
                 logger.debug(f"[ShodanInternetDB] {err}")
                 return {}
-            data = await resp.json()
             return {
                 "ip":        ip,
-                "ports":     data.get("ports", []),
-                "cves":      data.get("cves", []),
-                "hostnames": data.get("hostnames", []),
-                "tags":      data.get("tags", []),
+                "ports":     data.get("ports", []) if isinstance(data, dict) else [],
+                "cves":      data.get("cves", []) if isinstance(data, dict) else [],
+                "hostnames": data.get("hostnames", []) if isinstance(data, dict) else [],
+                "tags":      data.get("tags", []) if isinstance(data, dict) else [],
                 "source":    "shodan_internetdb"
             }
     except Exception as e:
