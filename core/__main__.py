@@ -1218,12 +1218,13 @@ async def dry_run_sprint(query: str, duration_s: float = 300.0) -> None:
     verdict = "OK"
 
     # ── 1. Config validation ─────────────────────────────────────────────────
-    _WINDUP_MIN = 15.0  # noqa: N806
-    _WINDUP_MAX = 60.0  # noqa: N806
-    _WINDUP_RATIO = 0.10  # noqa: N806
+    _WINDUP_MIN = 30.0  # noqa: N806
+    _WINDUP_MAX = 180.0  # noqa: N806
+    _WINDUP_RATIO = 0.30  # noqa: N806
     effective_windup = max(_WINDUP_MIN, min(_WINDUP_MAX, duration_s * _WINDUP_RATIO))
-    synthesis_budget = 60.0
-    active_budget = max(0.0, duration_s - effective_windup - synthesis_budget)
+    # Synthesis budget handled separately by scheduler via hermes_budget_s (35%
+    # of active window). Guard uses pure active_budget = duration - windup.
+    active_budget = max(0.0, duration_s - effective_windup)
 
     report["windup_lead"] = effective_windup
     report["active_budget"] = active_budget
@@ -1318,7 +1319,6 @@ async def dry_run_sprint(query: str, duration_s: float = 300.0) -> None:
         "duration": duration_s,
         "windup_lead": effective_windup,
         "active_budget": active_budget,
-        "synthesis_budget": synthesis_budget,
         "phases": [
             {
                 "phase": "WINDUP",
@@ -1452,17 +1452,17 @@ async def run_sprint(
     # MUST run BEFORE LMDB init (DuckDBShadowStore below) to avoid orphaned
     # lock files when the config is rejected up front. Replicates F272A logic
     # from SprintSchedulerConfig.effective_windup_lead_s (10% of duration,
-    # clamp [15, 60]) so the guard rejects only what the scheduler would
+    # clamp [30, 180]) so the guard rejects only what the scheduler would
     # actually treat as zero-active-budget. sys.exit(2) = config error,
     # distinguishable from exit(1) runtime failure.
     #
-    # Sprint F271C: Named constants (F272A clamp bounds extracted) and
-    # invariant assert make the F221 guarantee observable. Without the assert
-    # a stale hardcoded `windup_lead_s=180` (post-F260 regression) silently
-    # produced `active_window_budget_s=-90.0` and skipped the guard.
-    _F272A_WINDUP_CLAMP_MIN_S: float = 15.0  # noqa: N806
-    _F272A_WINDUP_CLAMP_MAX_S: float = 60.0  # noqa: N806
-    _F272A_WINDUP_LEAD_FRAC: float = 0.10  # noqa: N806
+    # Sprint F278A: Raised from 10%/[15,60] to 30%/[30,180] to match
+    # SprintSchedulerConfig.effective_windup_lead_s (30%/[30,180]). Guard
+    # and scheduler now use identical formula. Non-MLX sprints get reduced
+    # windup via final_windup_lead_s (30s floor) in the scheduler.
+    _F272A_WINDUP_CLAMP_MIN_S: float = 30.0  # noqa: N806
+    _F272A_WINDUP_CLAMP_MAX_S: float = 180.0  # noqa: N806
+    _F272A_WINDUP_LEAD_FRAC: float = 0.30  # noqa: N806
     _raw_windup = float(duration_s) * _F272A_WINDUP_LEAD_FRAC
     _effective_windup_s = float(
         max(_F272A_WINDUP_CLAMP_MIN_S, min(_F272A_WINDUP_CLAMP_MAX_S, _raw_windup))

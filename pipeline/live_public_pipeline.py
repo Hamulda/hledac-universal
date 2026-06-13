@@ -100,7 +100,7 @@ _FETCH_BUDGET_SKIP: float = 0.0       # SKIP_WEAK — dead until Fix A in F150J
 
 # Sprint F161B: pre-fetch text-length gate — BEFORE budget is spent
 # Previously this check happened post-fetch in _score_page_quality (wasteful)
-_PRE_FETCH_TEXT_MIN_CHARS: int = 150
+_PRE_FETCH_TEXT_MIN_CHARS: int = 80  # F275: lowered from 150 to catch metadata-rich thin pages
 """Minimum extracted text chars to consider fetch worthwhile."""
 
 # Sprint F163B: low-entropy gate — detect repetitive placeholder noise
@@ -1261,6 +1261,7 @@ def _score_page_quality(
 
     Returns one of:
       SKIP_WEAK: below minimum — skip immediately
+      RETRY_JS: thin text but strong discovery signal — retry with JS rendering (F275)
       weak_low_signal: poor signals even after fetch
       ok: acceptable but not exceptional
       good: strong multi-dimensional signals
@@ -1278,10 +1279,31 @@ def _score_page_quality(
     query_lower = query.lower()
     query_terms = frozenset(query_lower.split())
 
+    # --- Title query-term density FIRST (F275) ---
+    # Moved before text-length gate so title-rich pages with thin body bypass the gate
+    title_words = frozenset(hit_title.lower().split())
+    title_query_hits = len(query_terms & title_words)
+    title_has_query = title_query_hits > 0
+
+    # --- Snippet query-term density ---
+    snippet_words = frozenset(hit_snippet.lower().split())
+    snippet_query_hits = len(query_terms & snippet_words)
+    snippet_has_query = snippet_query_hits > 0
+
     # --- Pre-filter: skip pages with almost no content BEFORE signal scoring ---
     # Sprint F163B: apply text-length gate first — avoids wasting compute on dead pages
+    # F275: Relaxed gate — title-rich pages (query terms in title) bypass text gate
+    title_rich = title_has_query and title_query_hits >= 1
+    snippet_rich = snippet_has_query and snippet_query_hits >= 2
     if len(extracted_text) < _PRE_FETCH_TEXT_MIN_CHARS:
-        return "SKIP_WEAK:very_low_text"
+        # F275: title/snippet-rich pages survive even with thin body (metadata pages)
+        if title_rich or snippet_rich:
+            pass  # proceed to scoring
+        # F275: RETRY_JS — thin page but strong discovery signal → try JS rendering
+        elif strong_discovery:
+            return "RETRY_JS:thin_text_strong_signal"
+        else:
+            return "SKIP_WEAK:very_low_text"
 
     # --- Signalless gate: very low word-level entropy = spam/placeholder ---
     # Sprint F163B: detect "lorem ipsum" / repetitive filler / template noise
@@ -1291,16 +1313,6 @@ def _score_page_quality(
         unique_ratio = len(frozenset(w.lower() for w in words)) / len(words)
         if unique_ratio < 0.25:
             return "SKIP_WEAK:low_entropy"
-
-    # --- Title query-term density --------------------------------
-    title_words = frozenset(hit_title.lower().split())
-    title_query_hits = len(query_terms & title_words)
-    title_has_query = title_query_hits > 0
-
-    # --- Snippet query-term density -----------------------------
-    snippet_words = frozenset(hit_snippet.lower().split())
-    snippet_query_hits = len(query_terms & snippet_words)
-    snippet_has_query = snippet_query_hits > 0
 
     # --- URL structural signal -----------------------------------
     url_has_path = "/" in hit_url and len(hit_url.split("/")) > 3
@@ -1426,6 +1438,15 @@ def _compute_page_usable_fields(
         false_pos = False
         waste_cat = "structural"
         structural = "thin"
+        return False, tier, reason, false_pos, waste_cat, structural
+
+    # F275: RETRY_JS verdict — in-flight JS retry attempt, not yet resolved
+    if quality_reason is not None and quality_reason.startswith("RETRY_JS"):
+        tier = "medium"
+        reason = f"js_retry_pending:{quality_reason}"
+        false_pos = False
+        waste_cat = ""
+        structural = "thin" if extracted_text_len < _PRE_FETCH_TEXT_MIN_CHARS else "healthy"
         return False, tier, reason, false_pos, waste_cat, structural
 
     # Final fallback
@@ -1945,6 +1966,72 @@ async def _fetch_and_process_page(
                 terminal_reason=_terminal_reason,  # F208G-A
             )
             return ppr
+
+        # F275: RETRY_JS — thin page with strong discovery signal → retry with JS rendering
+        if quality_reason is not None and quality_reason.startswith("RETRY_JS"):
+            try:
+                js_result = await _ASYNC_FETCH_PUBLIC_TEXT(
+                    hit_url, effective_timeout, fetch_max_bytes,
+                    use_stealth=policy.use_stealth,
+                    use_js=True,  # Force JS rendering
+                    use_doh=policy.use_doh,
+                )
+            except Exception:
+                js_result = None
+            if js_result is not None and js_result.text and len(js_result.text) >= _PRE_FETCH_TEXT_MIN_CHARS:
+                # JS render produced better text — replace extracted_text
+                loop = asyncio.get_running_loop()
+                try:
+                    extracted_text = await loop.run_in_executor(
+                        None, _html_to_text, js_result.text
+                    )
+                except Exception:
+                    extracted_text = js_result.text or ""
+                if len(extracted_text) > MAX_EXTRACTED_TEXT_CHARS:
+                    extracted_text = extracted_text[:MAX_EXTRACTED_TEXT_CHARS]
+                # Re-score with JS-rendered text
+                quality_reason = _score_page_quality(
+                    hit_url=hit_url,
+                    hit_title=hit_title or "",
+                    hit_snippet=hit_snippet or "",
+                    hit_rank=hit_rank,
+                    query=query,
+                    extracted_text=extracted_text,
+                    discovery_score=discovery_score,
+                    discovery_reason=discovery_reason,
+                )
+                # If still weak after JS, give up
+                if quality_reason.startswith("SKIP_WEAK"):
+                    usable_signal, value_tier, resolution_reason, discovery_false_positive, waste_category, structural_quality = _compute_page_usable_fields(
+                        fetched=True, matched_patterns=0, stored_findings=0,
+                        quality_reason=quality_reason, discovery_signal=has_signal,
+                        discovery_score=discovery_score,
+                        error=None,
+                        extracted_text_len=len(extracted_text),
+                    )
+                    ppr = PipelinePageResult(
+                        url=hit_url, fetched=True, matched_patterns=0,
+                        accepted_findings=0, stored_findings=0,
+                        error=None, quality_reason=quality_reason,
+                        discovery_score=discovery_score,
+                        discovery_reason=discovery_reason,
+                        discovery_signal=has_signal,
+                        usable_signal=usable_signal,
+                        value_tier=value_tier,
+                        resolution_reason=resolution_reason,
+                        discovery_false_positive=discovery_false_positive,
+                        waste_category=waste_category,
+                        structural_quality=structural_quality,
+                        failure_stage=None,
+                        redirected=getattr(js_result, "redirected", False),
+                        redirect_target=getattr(js_result, "redirect_target", None),
+                        js_renderer_skipped_reason=getattr(js_result, "js_renderer_skipped_reason", None),
+                        rejection_reason="js_retry_thin",
+                        terminal_reason="rejected_js_retry_thin",
+                    )
+                    return ppr
+                # JS produced good text — continue to pattern scan with updated extracted_text
+            # else: JS retry failed or still thin → fall through to pattern scan with original thin text
 
         # Sprint F150I: enrich extracted text with discovery metadata
         # This gives pattern scanner better signal (title/snippet hints present)
@@ -4785,6 +4872,7 @@ async def async_run_live_public_pipeline(
 
             hypo_engine = HypothesisEngine()
             tot_layer = TotIntegrationLayer()
+            tot_layer.attach_hypothesis_engine(hypo_engine)  # wire epistemic engine
 
             # Query real persisted findings as hypothesis input
             recent_findings = await store.async_get_recent_findings(limit=20)
@@ -4871,6 +4959,19 @@ async def async_run_live_public_pipeline(
 
         except Exception:
             pass  # P12: fail-soft, hypothesis generation is optional
+
+        # Sprint F217E: wire ToT epistemic branches into NonfeedCandidateLedger
+        try:
+            _epistemic_branches = tot_layer.get_epistemic_branches()
+            if _epistemic_branches and hasattr(self, "_nonfeed_ledger"):
+                for _branch in _epistemic_branches[:10]:
+                    self._nonfeed_ledger.ingest_text_for_candidates(
+                        text=_branch,
+                        source_url=None,
+                        source_family="TOT_EPISTEMIC",
+                    )
+        except Exception:
+            pass  # fail-soft
 
     # Sprint F198C: Document discovery — extract text from PDF/image files
     # Produces CanonicalFinding(source_type="document") findings.

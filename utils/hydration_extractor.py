@@ -42,6 +42,15 @@ _REASON_SUFFICIENT_JSON_LD = "json_ld_sufficient"
 _REASON_SUFFICIENT_METADATA = "metadata_sufficient"
 _REASON_FOUND_INSUFFICIENT = "hydration_found_but_insufficient"
 _REASON_NONE = "no_hydration_found"
+# F265C: body-content regexes for HTML-level content depth check
+_RE_BODY_TAGS: re.Pattern = re.compile(
+    r"<(?:p|article|main|section|div[^>]*|ul|ol|dl|table|blockquote|h[2-6])[^>]*>",
+    re.IGNORECASE,
+)
+_RE_SKIP_TAGS: re.Pattern = re.compile(
+    r"<script[^>]*>|<style[^>]*>|<noscript[^>]*>|<svg[^>]*>|<canvas[^>]*>",
+    re.IGNORECASE,
+)
 # Reserved for future telemetry (not currently emitted by extract_static_hydration):
 # _REASON_PARSE_ERROR = "parse_error"
 # _REASON_MAX_BYTES = "max_bytes_exceeded"
@@ -330,6 +339,26 @@ def _has_metadata_signal(info: dict) -> bool:
     )
 
 
+def _has_body_content_html(html: str) -> bool:
+    """
+    F265C: Check if raw HTML contains actual body content elements.
+
+    This is the content-depth check that prevents metadata-only pages
+    (OpenSearch JSON, JSON-LD without article body, etc.) from being
+    marked as sufficient. Pages with only <meta> tags but no <p>,
+    <article>, <main>, <section>, <ul>, <ol>, <dl>, <table>, <blockquote>,
+    or heading tags are NOT sufficient — they need JS rendering.
+
+    Returns True if at least one body-content tag is found after
+    stripping skip tags (script/style/noscript/svg/canvas).
+    """
+    if not html or len(html) < 100:
+        return False
+    # Remove skip tags to avoid false positives from template code
+    stripped = _RE_SKIP_TAGS.sub("", html)
+    return bool(_RE_BODY_TAGS.search(stripped))
+
+
 def _compute_hydration_score(info: dict, input_truncated: bool = False) -> tuple[float, tuple[str, ...]]:
     """
     Compute conservative hydration quality score (0.0–1.0).
@@ -396,10 +425,14 @@ def _compute_hydration_score(info: dict, input_truncated: bool = False) -> tuple
     return (max(0.0, min(1.0, score)), tuple(signals))
 
 
-def _is_sufficient(info: dict) -> tuple[bool, str]:
+def _is_sufficient(info: dict, html: str = "") -> tuple[bool, str]:
     """
     Conservative sufficiency check.
     Returns (sufficient, reason_str).
+
+    F265C: body-content depth check — pages with only metadata (title + canonical/feed)
+    but no actual body content elements in HTML are NOT sufficient. They need JS
+    rendering to extract real article content. Pass raw html for the depth check.
     """
     has_title = _has_meaningful_title(info)
     has_body = _has_meaningful_body(info)
@@ -410,14 +443,21 @@ def _is_sufficient(info: dict) -> tuple[bool, str]:
         if has_json_ld_content:
             return True, _REASON_SUFFICIENT_JSON_LD
         if has_body:
-            # Title + body is sufficient
+            # Title + body from info dict is sufficient
             return True, info.get("_body_source", _REASON_SUFFICIENT_METADATA)
-        return True, _REASON_SUFFICIENT_METADATA
+        # F265C: has_meta_signal=True but has_body=False — title + meta only
+        # Require actual body content in HTML or this is a metadata-only page
+        if _has_body_content_html(html):
+            return True, _REASON_SUFFICIENT_METADATA
+        return False, ""
     if has_json_ld_content and (has_title or has_meta_signal):
         return True, _REASON_SUFFICIENT_JSON_LD
     if has_title and has_meta_signal:
-        return True, _REASON_SUFFICIENT_METADATA
-
+        # F265C: title + canonical/feed is NOT sufficient without body content
+        # Check raw HTML for body elements — metadata-only pages need JS rendering
+        if _has_body_content_html(html):
+            return True, _REASON_SUFFICIENT_METADATA
+        return False, ""
     return False, ""
 
 
@@ -656,7 +696,7 @@ def extract_static_hydration(
 
     # ---- Sufficiency check ----
     if found:
-        sufficient, reason = _is_sufficient(info)
+        sufficient, reason = _is_sufficient(info, html)
         if sufficient:
             # Build composite text: title + body
             parts: list[str] = []

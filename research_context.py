@@ -36,9 +36,12 @@ from __future__ import annotations
 from dataclasses import dataclass as pydantic_dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from pydantic import BaseModel, ConfigDict, Field, field_serializer, field_validator
+if TYPE_CHECKING:
+    from brain.research_hypothesis_engine import HypothesisEngine
+
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, field_serializer, field_validator
 
 # =============================================================================
 # CONTEXT HANDOFF METADATA — Sprint F11C: Bounded Handoff Surface
@@ -83,6 +86,7 @@ class ContextHandoffMetadata:
     iteration_snapshot: int | None = None
     source_component: str | None = None
     target_components: list[str] | None = None
+    frontiers_count: int = 0
     ttl_seconds: int | None = None  # None = no expiry, 0 = expired
 
     def to_correlation_dict(self) -> dict[str, str | None]:
@@ -303,6 +307,9 @@ class ResearchContext(BaseModel):
     key_findings: list[str] = Field(default_factory=list)
     open_questions: list[str] = Field(default_factory=list)
     context_metadata: dict[str, Any] = Field(default_factory=dict)
+
+    # HypothesisEngine ref (attached by caller via attach_hypothesis_engine)
+    _hypothesis_engine: HypothesisEngine | None = PrivateAttr(default=None)
 
     # =============================================================================
     # CONTEXT HANDOFF HELPERS — Sprint F1100B: Typed Handoff Surface
@@ -585,6 +592,184 @@ class ResearchContext(BaseModel):
                 "total": self.total_errors,
                 "has_critical": self.has_critical_errors(),
             },
+            "frontiers_count": len(self.get_knowledge_frontiers()),
             "created_at": self.created_at.isoformat(),
             "updated_at": self.updated_at.isoformat(),
         }
+
+    # ===========================================================================
+    # HYPOTHESIS ENGINE BRIDGE — DS confidence, contradictions, frontiers
+    # ===========================================================================
+
+    def attach_hypothesis_engine(self, engine: HypothesisEngine) -> None:
+        """
+        Store engine ref for use by get_confidence_scores, get_contradictions,
+        and get_knowledge_frontiers. No validation performed.
+        """
+        try:
+            self._hypothesis_engine = engine
+        except Exception:
+            pass
+
+    def get_confidence_scores(self) -> dict[str, float]:
+        """
+        Return {hypothesis_id: confidence_float} for all hypotheses.
+
+        Priority:
+          1. HypothesisEngine.get_ds_belief('support') if engine attached
+          2. Hypothesis.evidence_balance() fallback for pending/confirmed hyps
+
+        Never raises — returns {} on any error.
+        """
+        try:
+            result: dict[str, float] = {}
+            engine = getattr(self, '_hypothesis_engine', None)
+            for hyp in self.hypotheses:
+                if hyp.status not in (
+                    ResearchContextStatus.PENDING,
+                    ResearchContextStatus.CONFIRMED,
+                ):
+                    continue
+                if engine is not None:
+                    try:
+                        belief = engine.get_ds_belief(hyp.hypothesis_id)
+                        if belief is not None:
+                            result[hyp.hypothesis_id] = belief
+                            continue
+                    except Exception:
+                        pass
+                # Fallback: evidence_balance mapped to [0.0, 1.0]
+                balance = hyp.evidence_balance
+                result[hyp.hypothesis_id] = max(0.0, min(1.0, 0.5 + balance * 0.1))
+            return result
+        except Exception:
+            return {}
+
+    def get_contradictions(self) -> list[tuple[str, str, float]]:
+        """
+        Return list of (hyp_a_id, hyp_b_id, conflict_mass) tuples.
+
+        Source: HypothesisEngine.detect_contradiction_ds() if engine attached,
+        else derive from hypothesis pairs with opposing evidence_balance signs.
+
+        Never raises — returns [] on any error.
+        """
+        try:
+            engine = getattr(self, '_hypothesis_engine', None)
+            if engine is not None:
+                try:
+                    has_contr = engine.has_contradiction
+                    if has_contr and self.hypotheses:
+                        # Return all pairwise conflicts among pending/confirmed hyps
+                        hyps = [
+                            h for h in self.hypotheses
+                            if h.status
+                            in (ResearchContextStatus.PENDING, ResearchContextStatus.CONFIRMED)
+                        ]
+                        result: list[tuple[str, str, float]] = []
+                        for i, ha in enumerate(hyps):
+                            for hb in hyps[i + 1 :]:
+                                try:
+                                    conflict = engine.get_ds_belief("conflict")
+                                    if conflict is not None and conflict > 0:
+                                        result.append(
+                                            (ha.hypothesis_id, hb.hypothesis_id, conflict)
+                                        )
+                                except Exception:
+                                    pass
+                        return result
+                except Exception:
+                    pass
+            # Fallback: opposing evidence_balance signs
+            hyps = [
+                h for h in self.hypotheses
+                if h.status
+                in (ResearchContextStatus.PENDING, ResearchContextStatus.CONFIRMED)
+            ]
+            result = []
+            for i, ha in enumerate(hyps):
+                for hb in hyps[i + 1 :]:
+                    if ha.evidence_balance != 0 and hb.evidence_balance != 0:
+                        if (ha.evidence_balance > 0) != (hb.evidence_balance > 0):
+                            mass = min(
+                                abs(ha.evidence_balance),
+                                abs(hb.evidence_balance),
+                            ) * 0.1
+                            result.append((ha.hypothesis_id, hb.hypothesis_id, mass))
+            return result
+        except Exception:
+            return []
+
+    def get_knowledge_frontiers(self) -> list[dict]:
+        """
+        Scan self.hypotheses for epistemic gaps:
+          - single-evidence hypotheses (unverified frontier)
+          - hypotheses with 0 confirmed + 0 rejected evidence (absent frontier)
+          - hypotheses where has_contradiction is True (active conflict frontier)
+
+        Return list of dicts:
+          {
+            "hypothesis_id": str,
+            "frontier_type": "unverified" | "absent" | "conflict",
+            "recommended_lane": "archive" | "dark_surface" | "standard",
+            "priority": float  # 0.0-1.0, higher = investigate sooner
+          }
+
+        Never raises — returns [] on any error.
+        """
+        try:
+            engine = getattr(self, '_hypothesis_engine', None)
+            has_contr = False
+            if engine is not None:
+                try:
+                    has_contr = engine.has_contradiction
+                except Exception:
+                    pass
+
+            frontiers: list[dict] = []
+            for hyp in self.hypotheses:
+                if hyp.status not in (
+                    ResearchContextStatus.PENDING,
+                    ResearchContextStatus.CONFIRMED,
+                ):
+                    continue
+
+                frontier_type: str | None = None
+                priority = 0.5
+
+                if has_contr:
+                    frontier_type = "conflict"
+                    priority = 0.9
+                elif (
+                    len(hyp.supporting_evidence) + len(hyp.contradicting_evidence)
+                ) == 1:
+                    frontier_type = "unverified"
+                    priority = 0.6
+                elif (
+                    len(hyp.supporting_evidence) == 0
+                    and len(hyp.contradicting_evidence) == 0
+                ):
+                    frontier_type = "absent"
+                    priority = 0.4
+
+                if frontier_type is None:
+                    continue
+
+                # Map frontier_type to recommended_lane
+                if frontier_type == "conflict":
+                    lane = "dark_surface"
+                elif frontier_type == "unverified":
+                    lane = "archive"
+                else:
+                    lane = "standard"
+
+                frontiers.append({
+                    "hypothesis_id": hyp.hypothesis_id,
+                    "frontier_type": frontier_type,
+                    "recommended_lane": lane,
+                    "priority": priority,
+                })
+
+            return frontiers
+        except Exception:
+            return []

@@ -393,14 +393,14 @@ class HTNPlanner:
     # Estimation methods — wired to AdaptiveCostModel                     #
     # ------------------------------------------------------------------ #
 
-    def _estimate_cost(self, task: dict) -> float:
+    def _estimate_cost(self, task: dict, epistemic_weight: float = 1.0) -> float:
         """Odhad nákladů úkolu (čas v sekundách). Always > 0."""
         cost, _, _, _, _ = self._safe_predict(task)
         # Apply time-aware multiplier for low remaining time
         mult = self._time_multiplier(task)
         if mult == 0.0:
             return _MIN_COST  # hard prune — return minimal cost so task gets de-prioritized
-        return max(_MIN_COST, cost * mult)
+        return max(_MIN_COST, cost * mult * epistemic_weight)
 
     def _estimate_ram(self, task: dict) -> float:
         """Odhad RAM (MB). Always > 0."""
@@ -857,6 +857,15 @@ class HTNPlanner:
         # Rezervujeme zdroje pro plánování (může být náročné)
         async with self.governor.reserve({'ram_mb': 200, 'gpu': True}, Priority.HIGH):
             # 1. Rozklad cíle na podúkoly pomocí SLM
+            _evidence_strength = (
+                self.evidence_log.get_surface_tension()
+                if self.evidence_log is not None else 1.0
+            )
+            logger.debug(
+                "[HTNPlanner] epistemic_weight=%.3f for goal=%s",
+                1.0 - _evidence_strength * 0.5,
+                goal,
+            )
             tasks = await self.decomposer.decompose(goal, context)
             if not tasks:
                 logger.warning("SLM decomposer nevrátil žádné úkoly, končím.")
@@ -970,3 +979,35 @@ class HTNPlanner:
                 logger.info(f"Plánovaná akce: {action}")
 
             return plan
+
+    def plan_with_epistemic_cost(
+        self,
+        task: dict,
+        evidence_strength: float,
+    ) -> list[dict] | None:
+        """
+        Wrapper around existing plan() or decompose() method.
+        Converts evidence_strength to epistemic_weight:
+          epistemic_weight = 1.0 - (evidence_strength * 0.5)
+          # Strong evidence → 0.5 weight (half cost), weak → 1.0 (full cost)
+        Then calls existing planning method with adjusted cost.
+        """
+        try:
+            epistemic_weight = max(0.0, min(1.0, 1.0 - (evidence_strength * 0.5)))
+            # Clamp: strong evidence (1.0) → 0.5, weak (0.0) → 1.0
+            adjusted_task = dict(task)
+            # Inject epistemic_weight into task for _estimate_cost to pick up
+            adjusted_task['_epistemic_weight'] = epistemic_weight
+            # Call decompose() — plan() is async and calls decompose internally
+            # We pass the adjusted task so cost estimation uses the weight
+            result = self.decomposer.decompose(
+                adjusted_task.get('goal', adjusted_task.get('type', 'other')),
+                adjusted_task.get('context', {})
+            )
+            # If decompose is async, handle both sync and async
+            if hasattr(result, '__await__'):
+                import asyncio
+                return asyncio.get_event_loop().run_until_complete(result)
+            return result
+        except Exception:
+            return None

@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from typing import TYPE_CHECKING
 
 """
@@ -33,8 +35,6 @@ Invariants table (for test_deep_probe_canonical_ingest.py):
   invariant_8 | LocalSearchSeam checked before network fetch (cache-first)
   invariant_9 | Successful network results indexed to LocalSearchSeam
 """
-
-from __future__ import annotations
 
 import asyncio
 import hashlib

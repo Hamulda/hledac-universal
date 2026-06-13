@@ -1683,11 +1683,56 @@ class EvidenceLog:
             "top_reasons": top_reasons,
         }
 
+    def get_surface_tension(self) -> float:
+        """
+        Ratio: confirmed_decisions / (confirmed_decisions + error_events)
+        Use existing get_error_rate() and get_decision_summary() to compute.
+        Returns float in [0.0, 1.0]. Returns 1.0 (healthy) when no events yet.
+        Used by escalation logic to trigger deep archive search.
+        """
+        try:
+            decision_summary = self.get_decision_summary()
+            error_rate = self.get_error_rate()
+
+            confirmed = decision_summary.get("count", 0)
+            errors = error_rate.get("error_count", 0)
+            total = confirmed + errors
+
+            if total == 0:
+                return 1.0
+            return confirmed / total
+        except Exception:
+            return 1.0
+
+    def get_evidence_by_finding_id(
+        self,
+        finding_id: str,
+        event_types: list[str] | None = None
+    ) -> list[EvidenceEvent]:
+        """
+        Return all EvidenceEvents whose payload contains finding_id.
+        Lookup key: check payload.get('finding_id') OR payload.get('id')
+        Optional filter: only return events where event_type in event_types.
+        Uses existing self.query() or iterates self._events — whichever is
+        the correct internal access pattern (read the class first).
+        Returns [] on any error or when no match.
+        """
+        try:
+            results = []
+            # Iterate ring buffer directly — no query() needed for payload field access
+            for event in self._log:
+                if event_types and event.event_type not in event_types:
+                    continue
+                payload = event.payload or {}
+                if payload.get("finding_id") == finding_id or payload.get("id") == finding_id:
+                    results.append(event)
+            return results
+        except Exception:
+            return []
+
     def get_error_rate(self) -> dict[str, Any]:
         """
         Vrací error rate a low-confidence event breakdown.
-
-        Praktický signál pro sprint kvalitu:
         - error_count + error_rate
         - low_confidence_count (< 0.7)
         - recent_error_types (posledních 10 errors)

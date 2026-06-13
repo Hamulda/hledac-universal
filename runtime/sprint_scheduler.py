@@ -425,6 +425,7 @@ from hledac.universal.runtime.acquisition_strategy import (  # noqa: E402
 # F217E: Nonfeed candidate evidence ledger
 from hledac.universal.runtime.nonfeed_candidate_ledger import (  # noqa: E402
     NonfeedCandidateLedger,
+    extract_domain_candidates_from_text,
 )
 from hledac.universal.runtime.pivot_planner import generate_pivot_candidates_from_query  # noqa: E402
 from hledac.universal.runtime.shadow_inputs import (  # noqa: E402
@@ -451,6 +452,7 @@ from hledac.universal.utils.pivot_seed_extractor import (  # noqa: E402
 
 if TYPE_CHECKING:
     from hledac.universal.knowledge.duckdb_store import CanonicalFinding  # noqa: F401
+    from hledac.universal.research_context import ResearchContext  # noqa: F401
 
     class IntCounterLayoutProto(Protocol):
         """Minimal duck-typed interface for IntCounterLayout (used in hot-path properties)."""
@@ -1581,6 +1583,30 @@ class SprintSchedulerConfig:
         cap = 60.0 if self.sprint_duration_s <= 300 else 120.0
         return float(max(30.0, min(cap, raw)))
 
+    @property
+    def final_windup_lead_s(self) -> float:
+        """
+        Adaptive windup: MLX sprints get uncapped 30% windup for model
+        warmup + synthesis. Non-MLX sprints get reduced windup (30s floor).
+
+        MLX: Model loads in prewarm, synthesis runs in windup phase.
+        Use uncapped 30% ratio (no F288 60s cap) so 300s sprint gets 90s.
+        Bounded [30, 180].
+
+        Non-MLX: Hermes never loads, no synthesis lane needed.
+        Reduce windup to 30s floor, freeing 30-60s for acquisition.
+        Bounded [30, 180].
+        """
+        hermes_enabled = _env_flag("HLEDAC_ENABLE_HERMES_SYNTHESIS") == "1"
+        if hermes_enabled:
+            # MLX: use uncapped 30% ratio (ignore F288 60s cap for MLX sprints)
+            ratio = 0.15 if self.aggressive_mode else 0.30
+            raw = self.sprint_duration_s * ratio
+            return float(max(30.0, min(180.0, raw)))
+        # Non-MLX: reduce to 30s floor (DuckDB export is fast, no MLX overhead)
+        base = self.effective_windup_lead_s
+        return float(max(30.0, min(180.0, base - 30.0)))
+
     def windup_for_cycle(self, cycle_time_ema: float) -> float:
         """
         F273B + F278A: Cycle-time-adaptive windup lead.
@@ -1635,7 +1661,7 @@ class SprintSchedulerConfig:
 
         Fail-safe: if active <= 0, returns 0.5s (minimum).
         """
-        active = max(0.0, self.sprint_duration_s - self.effective_windup_lead_s)
+        active = max(0.0, self.sprint_duration_s - self.final_windup_lead_s)
         if active <= 0:
             return 0.5
         # Scale: 0.5s for 30s active, 5.0s for 1500s+ active
@@ -1649,12 +1675,15 @@ class SprintSchedulerConfig:
         floored at 30s. Prevents short sprints from starving the synthesis
         lane while ensuring long sprints reserve enough budget.
 
+        Uses final_windup_lead_s (which reflects MLX vs non-MLX adaptive logic).
+
         Examples:
           - 60s quick (active=30s) -> 30 (floor)
-          - 300s deep   (active=210s) -> 73 (35%)
+          - 300s deep non-MLX (active=270s) -> 94 (35%)
+          - 300s deep MLX     (active=210s) -> 73 (35%)
           - 600s thoro  (active=420s) -> 147 (35%)
         """
-        active = max(0, self.sprint_duration_s - self.effective_windup_lead_s)
+        active = max(0, self.sprint_duration_s - self.final_windup_lead_s)
         return max(30, int(active * 0.35))
 
     # F223A: Explicit acquisition profile -- overrides env var / profile-name inference
@@ -3080,9 +3109,10 @@ class SprintSchedulerResult:
     nonfeed_passive_dns_candidates: list[str] = field(default_factory=list)
 
 
+    # F265C: ResearchContext for epistemic bonus in RL policy
+    research_context: ResearchContext | None = None
 
     # F226C: Canonical acquisition plan telemetry for prelude
-
     acquisition_plan_present_for_prelude: bool = False
 
     acquisition_plan_lanes_for_prelude: tuple[str, ...] = ()
@@ -7261,7 +7291,7 @@ class SprintScheduler:
 
                         self._cycle_time_ema = 0.7 * self._cycle_time_ema + 0.3 * _elapsed
 
-                        _active = max(0.0, self._config.sprint_duration_s - self._config.effective_windup_lead_s)
+                        _active = max(0.0, self._config.sprint_duration_s - self._config.final_windup_lead_s)
 
                         if _active > 0 and self._cycle_time_ema > 0:
 
@@ -12699,6 +12729,20 @@ class SprintScheduler:
 
             # Sprint F233D: Run nonfeed prelude lanes via extracted class methods
 
+            # [P0-1] Query-seed extractor: extract domain candidates from raw query string
+            # BEFORE build_acquisition_plan() so lanes are enabled correctly.
+            # Uses extract_domain_candidates_from_text() which handles defanged markers.
+            _query_domain_candidates: list[str] = []
+            if query and isinstance(query, str) and query.strip():
+                _candidates = extract_domain_candidates_from_text(
+                    query,
+                    source_url=None,
+                    source_family="query",
+                    min_confidence=0.3,
+                )
+                _query_domain_candidates = [c.domain for c in _candidates if c.confidence >= 0.3]
+
+
             # F228A / F235C: Build NonfeedSeedContext from pivot seeds + next_seeds_ioc values.
 
             _seed_ctx: NonfeedSeedContext | None = None
@@ -12733,7 +12777,10 @@ class SprintScheduler:
                     pass  # fail-soft: DuckPGQ unavailable
 
                 _seed_ctx = NonfeedSeedContext(
-                    domains=tuple((self._result.pivot_seed_domains or ()) + (self._result.next_seeds_ioc_domains or ())),  # noqa: E501
+                    # [P0-1] Prepend query-extracted domains so build_lane_query() returns them first
+                    domains=tuple(_query_domain_candidates
+                                  + (self._result.pivot_seed_domains or ())
+                                  + (self._result.next_seeds_ioc_domains or ())),  # noqa: E501
                     ips=tuple((self._result.pivot_seed_ips or ()) + (self._result.next_seeds_ioc_ips or ())),
                     urls=tuple((self._result.pivot_seed_urls or ()) + (self._result.next_seeds_ioc_urls or ())),
                     hashes=tuple((self._result.pivot_seed_hashes or ()) + (self._result.next_seeds_ioc_hashes or ())),
@@ -14384,6 +14431,18 @@ class SprintScheduler:
         # after the public branch completed.
         _seed_ctx = None
 
+        # [P0-1] Query-seed extractor: extract domain candidates from raw query string
+        # so NonfeedSeedContext enables CT/DOH/WAYBACK even when query has no explicit domain.
+        _query_domain_candidates: list[str] = []
+        if query and isinstance(query, str) and query.strip():
+            _candidates = extract_domain_candidates_from_text(
+                query,
+                source_url=None,
+                source_family="query",
+                min_confidence=0.3,
+            )
+            _query_domain_candidates = [c.domain for c in _candidates if c.confidence >= 0.3]
+
         # Sprint F250: StealthLayer rotate_fingerprint before each cycle (opt-in advisory)
 
         if _env_flag("HLEDAC_ENABLE_LAYERS") == "1":
@@ -14794,17 +14853,14 @@ class SprintScheduler:
                     if _pivot_has_seeds or _next_seeds_has_iocs:
 
                         _seed_ctx = NonfeedSeedContext(
-
-                            domains=tuple((self._result.pivot_seed_domains or ()) + (self._result.next_seeds_ioc_domains or ())),  # noqa: E501
-
+                            # [P0-1] Prepend query-extracted domains so build_lane_query() returns them first
+                            domains=tuple(_query_domain_candidates
+                                          + (self._result.pivot_seed_domains or ())
+                                          + (self._result.next_seeds_ioc_domains or ())),  # noqa: E501
                             ips=tuple((self._result.pivot_seed_ips or ()) + (self._result.next_seeds_ioc_ips or ())),
-
                             urls=tuple((self._result.pivot_seed_urls or ()) + (self._result.next_seeds_ioc_urls or ())),
-
                             hashes=tuple((self._result.pivot_seed_hashes or ()) + (self._result.next_seeds_ioc_hashes or ())),  # noqa: E501
-
                             cves=tuple((self._result.pivot_seed_cves or ()) + (self._result.next_seeds_ioc_cves or ())),
-
                         )
 
                     # F265C: Lazy-init graph_accumulator before passing to lane runners
@@ -24027,6 +24083,15 @@ class SprintScheduler:
             from hledac.universal.brain.research_hypothesis_engine import HypothesisEngine
 
             hyp_eng = HypothesisEngine()
+
+            # F265C: Attach ResearchContext to result for epistemic bonus
+            try:
+                from hledac.universal.research_context import ResearchContext
+                _rc = ResearchContext()
+                _rc.attach_hypothesis_engine(hyp_eng)
+                self._result.research_context = _rc
+            except Exception:
+                pass  # fail-soft: epistemic bonus will return 0.0
 
             dark_queries = await hyp_eng.generate_dark_surface_queries(
 

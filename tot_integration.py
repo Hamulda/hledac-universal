@@ -24,10 +24,13 @@ import os
 import re
 import time
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 # Import types
 from .project_types import ComplexityAnalysis, ResearchResult
+
+if TYPE_CHECKING:
+    from .brain.research_hypothesis_engine import ResearchHypothesisEngine
 
 # Lazy import ToT components to avoid heavy loading
 TOT_AVAILABLE = False
@@ -208,10 +211,20 @@ class TotIntegrationLayer:
         """
         self.config = config or TotConfig()
         self._tot_orchestrator: Any | None = None
+        self._hypothesis_engine: ResearchHypothesisEngine | None = None
+        self._pending_epistemic_branches: list[str] = []
         self._last_memory_check: float = 0.0
         self._memory_check_interval: float = 5.0  # seconds
 
         logger.info("TotIntegrationLayer initialized (v1.1.0 - Czech language support)")
+
+    def attach_hypothesis_engine(self, engine: ResearchHypothesisEngine) -> None:
+        """Store ref for use in should_activate_tot. No validation."""
+        self._hypothesis_engine = engine
+
+    def get_epistemic_branches(self) -> list[str]:
+        """Return HypothesisEngine-suggested query branches (max 3, or [])."""
+        return list(getattr(self, '_pending_epistemic_branches', []))
 
     def _detect_language(self, query: str) -> str:
         """
@@ -362,6 +375,21 @@ class TotIntegrationLayer:
             should_use = False
             confidence = 1.0 - score
             logger.debug(f"ToT not needed (score: {score:.2f} below threshold)")
+
+        # Epistemic override: if HypothesisEngine has pending queries
+        # that suggest further exploration, boost complexity score
+        if getattr(self, '_hypothesis_engine', None) is not None:
+            try:
+                next_queries = self._hypothesis_engine.suggest_next_queries(
+                    findings=[query], context={}, max_queries=5
+                )
+                if next_queries and len(next_queries) > 0:
+                    score = min(1.0, score + 0.2)
+                    self._pending_epistemic_branches = [
+                        q["query"] for q in next_queries[:3]
+                    ]
+            except Exception:
+                pass  # fail-soft
 
         return should_use, confidence
 

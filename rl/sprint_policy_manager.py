@@ -21,7 +21,10 @@ import math
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    pass
 
 import numpy as np
 
@@ -88,6 +91,8 @@ class SprintPolicyState:
     epsilon_history: list[float] = field(default_factory=list)
     last_train_step_sprint: int = 0
     training_steps_completed: int = 0
+    # F265EPISTEMIC: epistemic quality bonus history — bounded FIFO max 100
+    epistemic_strength_history: list[float] = field(default_factory=list)
 
 
 def _serialize_weights(weights: Any) -> dict[str, Any]:
@@ -507,6 +512,7 @@ class SprintPolicyManager:
                 "epsilon_history": list(getattr(self._state, "epsilon_history", []))[-100:],
                 "last_train_step_sprint": int(getattr(self._state, "last_train_step_sprint", 0)),
                 "training_steps_completed": int(getattr(self._state, "training_steps_completed", 0)),
+                "epistemic_strength_history": list(getattr(self._state, "epistemic_strength_history", []))[-100:],
             }
             encoded = json.dumps(payload, ensure_ascii=False).encode("utf-8")
             if ZSTD_AVAILABLE and _zstd:
@@ -632,7 +638,52 @@ class SprintPolicyManager:
             )
 
             # Clamp to [-1.0, 5.0] per F257 spec
+            epistemic_bonus = self._compute_epistemic_bonus(result)
+            reward = reward + epistemic_bonus
+            # Record epistemic strength for observability (bounded FIFO 100)
+            _ep_hist = list(getattr(self._state, "epistemic_strength_history", []))
+            _ep_hist.append(epistemic_bonus)
+            if len(_ep_hist) > 100:
+                _ep_hist = _ep_hist[-100:]
+            self._state.epistemic_strength_history = _ep_hist
             return max(-1.0, min(5.0, reward))
+        except Exception:
+            return 0.0
+
+    def _compute_epistemic_bonus(self, result: SprintSchedulerResult) -> float:
+        """
+        F265EPISTEMIC: Compute epistemic quality bonus from ResearchContext.
+
+        Formula:
+            bonus = (confirmed_hyps / max(total_hyps, 1)) * 0.3
+                  + (1.0 - contradiction_ratio) * 0.2
+                  - frontier_gap_penalty * 0.1
+
+        Where:
+            confirmed_hyps        = len(context.get_confirmed_hypotheses()) if context else 0
+            total_hyps             = len(confirmed) + len(pending)
+            contradiction_ratio    = len(context.get_contradictions()) / max(total_hyps, 1)
+            frontier_gap_penalty   = len(context.get_knowledge_frontiers()) / 10.0, capped at 1.0
+
+        Returns float in [0.0, 0.5]. Returns 0.0 if context unavailable or on any error.
+        Never raises.
+        """
+        try:
+            context = getattr(result, "research_context", None)
+            if context is None:
+                return 0.0
+            confirmed = context.get_confirmed_hypotheses()
+            pending = context.get_pending_hypotheses() if hasattr(context, "get_pending_hypotheses") else []
+            total_hyps = len(confirmed) + len(pending)
+            if total_hyps == 0:
+                return 0.0
+            confirmed_ratio = len(confirmed) / max(total_hyps, 1)
+            contradictions = context.get_contradictions()
+            contradiction_ratio = len(contradictions) / max(total_hyps, 1)
+            frontiers = context.get_knowledge_frontiers()
+            frontier_gap_penalty = min(len(frontiers) / 10.0, 1.0)
+            bonus = (confirmed_ratio * 0.3) + ((1.0 - contradiction_ratio) * 0.2) - (frontier_gap_penalty * 0.1)
+            return max(0.0, min(0.5, bonus))
         except Exception:
             return 0.0
 
@@ -741,6 +792,10 @@ class SprintPolicyManager:
         # F261QMIX: reset per-sprint training throttle at end of each sprint
         self._train_steps_this_sprint = 0
 
+        _ebm = self.get_qmix_stats().get("epistemic_bonus_mean")
+        if _ebm is not None:
+            log.info("[SprintPolicyManager] sprint=%d epistemic_bonus_mean=%.4f",
+                     self._state.sprint_sequence_number, _ebm)
         self._save()
 
     def _run_qmix_training(self) -> None:
@@ -1093,6 +1148,10 @@ class SprintPolicyManager:
             "replay_size": self._replay_buffer.size if self._replay_buffer else 0,
             "last_train_sprint": self._state.last_train_sprint,
             "rl_train_mode": self._rl_train_mode,
+            "epistemic_bonus_mean": (
+                sum(self._state.epistemic_strength_history[-10:]) /
+                max(len(self._state.epistemic_strength_history[-10:]), 1)
+            ),
             "qmix_available": self._qmix_trainer is not None,
         }
 
