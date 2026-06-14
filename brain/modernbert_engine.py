@@ -96,7 +96,7 @@ class ModernBertEngine:
         # 1. mlx-embeddings (primary, M1 Metal-accelerated)
         if _mlx_embeddings_ok:
             try:
-                from core.mlx_embeddings import MLXEmbeddingManager
+                from hledac.universal.core._mlx_embeddings import MLXEmbeddingManager
                 self._manager = MLXEmbeddingManager(lazy_load=True)
                 # Trigger lazy load
                 if not self._manager.is_loaded:
@@ -198,6 +198,66 @@ class ModernBertEngine:
     async def is_ready(self) -> bool:
         """True if a backend is loaded."""
         return self._loaded
+
+    # ── P0-3: Pivot similarity scoring via embeddings ─────────────────────────
+
+    async def score_pivots_by_similarity(
+        self,
+        pivot_candidates: list[dict],
+        finding_texts: list[str],
+        top_k: int = 10,
+    ) -> list[tuple[dict, float]]:
+        """
+        Rank pivot candidates by cosine similarity to finding embeddings.
+
+        Args:
+            pivot_candidates: List of dicts with at least 'query' or 'pivot_type' key.
+            finding_texts: List of finding description strings to embed as reference.
+            top_k: Maximum number of pivots to return.
+
+        Returns:
+            List of (pivot_dict, similarity_score) tuples sorted by descending score.
+            Fails soft: returns empty list on any error.
+        """
+        if not pivot_candidates or not finding_texts:
+            return []
+
+        try:
+            # Truncate for embedding efficiency
+            finding_emb = self._embed_sync([str(f)[:500] for f in finding_texts if f])
+            if finding_emb.shape[0] == 0:
+                return []
+
+
+            # Compute centroid of findings (mean embedding)
+            finding_centroid = finding_emb.mean(axis=0, keepdims=True)  # (1, 768)
+            # L2-normalize for cosine similarity
+            f_norm = finding_centroid / (np.linalg.norm(finding_centroid, axis=1, keepdims=True) + 1e-8)
+
+
+            # Embed pivot texts
+            pivot_texts = []
+            for p in pivot_candidates:
+                txt = p.get("query") or p.get("pivot_type") or p.get("reason") or str(p)
+                pivot_texts.append(str(txt)[:200])
+
+            if not pivot_texts:
+                return []
+
+            pivot_emb = self._embed_sync(pivot_texts)  # (M, 768)
+            if pivot_emb.shape[0] == 0:
+                return []
+
+            # Cosine similarity: each pivot vs finding centroid
+            p_norm = pivot_emb / (np.linalg.norm(pivot_emb, axis=1, keepdims=True) + 1e-8)
+            sims = (p_norm @ f_norm.T).flatten()  # (M,)
+
+            # Pair with pivots, sort descending
+            scored = sorted(zip(pivot_candidates, sims), key=lambda x: x[1], reverse=True)
+            return scored[:top_k]
+        except Exception as e:
+            logger.debug("[ModernBertEngine] score_pivots_by_similarity failed: %s", e)
+            return []
 
     # ── Private: extractive summary ────────────────────────────────────────────
 

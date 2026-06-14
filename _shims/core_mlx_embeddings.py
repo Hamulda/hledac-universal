@@ -9,7 +9,7 @@ import sys
 from pathlib import Path
 
 _SELF_DIR = Path(__file__).parent.resolve()
-_MLX_PATH = _SELF_DIR.parent / "core" / "mlx_embeddings.py"
+_MLX_PATH = _SELF_DIR.parent / "core" / "_mlx_embeddings.py"
 
 # Set up hledac.core namespace so relative imports in sibling resolve
 if "hledac.core" not in sys.modules:

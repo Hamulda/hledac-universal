@@ -60,8 +60,13 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 # ─── Bounded constants (M1 8GB safety) ──────────────────────────────
-MAX_BATCH_SIZE_M1: int = 6  # 3B model + speculative + KV 0.75 GB; headroom at 4→6 with RAM guard 85%
-MEMORY_GUARD_PCT: float = 85.0  # tighter — allows batch 6 when headroom, drops to 4 near limit
+MAX_BATCH_SIZE_M1: int = 8  # P1-1: 6→8 on M1 8GB; single-thread MLX lock means batches serialize anyway, 8 is safe at idle
+# F265C: Memory guard — M1 8GB real-world: macOS ~4GB used at idle, ~1.6GB headroom at 90% vs ~800MB at 80%.
+# 90% pct threshold = ~720MB free → still too tight for batch accumulation (KV cache 0.75GB).
+# Use 92% for pct guard (≈320MB free) OR use absolute available GB threshold.
+# Absolute threshold: 1.5GB available = safe for batch (KV cache fits in Metal memory).
+MEMORY_GUARD_PCT: float = 92.0  # 80→92: M1 8GB with macOS ~4GB used leaves ~800MB at 80%; batch accumulation needs headroom
+MEMORY_GUARD_ABSOLUTE_GB: float = 1.5  # M1 8GB: Metal cache 1.5GiB + KV cache 0.75GB = 2.25GB reserved; 1.5GB available = safe
 DEFAULT_FLUSH_INTERVAL_S: float = 1.0
 MAX_QUEUE_DEPTH: int = 256
 SHUTDOWN_TIMEOUT_S: float = 3.0
@@ -260,8 +265,19 @@ class MLXBatchedExecutor:
                 )
 
             # Memory guard: disable batching when EMA is above the tighter threshold
+            # OR when absolute available GB is below safe minimum for batch accumulation.
+            # F265C: Two-dimensional guard — pct guard catches gradual leak, absolute guard
+            # catches acute pressure (e.g. after other processes claimed RAM).
+            memory_ok = True
             if self._memory_ema > MEMORY_GUARD_PCT:
                 self._stats["memory_guard_disabled"] += 1
+                memory_ok = False
+            # Absolute available GB check (M1 8GB Metal budget: 1.5GiB cache + 0.75GiB KV)
+            available_gb = psutil.virtual_memory().available / (1024**3)
+            if available_gb < MEMORY_GUARD_ABSOLUTE_GB:
+                self._stats["memory_guard_disabled"] += 1
+                memory_ok = False
+            if not memory_ok:
                 return False
         except Exception:
             # psutil missing or transient error → fail-open, allow batching

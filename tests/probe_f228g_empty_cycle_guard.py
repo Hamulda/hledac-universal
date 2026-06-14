@@ -170,7 +170,8 @@ class TestHealthReportBlockingOk(unittest.TestCase):
     """HealthReport must have blocking_ok field separate from overall_ok."""
 
     def test_blocking_ok_field_exists(self):
-        field_names = {f.name for f in fields(HealthReport)}
+        # Sprint F300: msgspec.Struct uses __struct_fields__ (tuple of field names)
+        field_names = set(HealthReport.__struct_fields__)
         assert "blocking_ok" in field_names
 
     def test_blocking_ok_default_false(self):

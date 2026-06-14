@@ -147,6 +147,9 @@ class FeedPipelineRunResult(msgspec.Struct, frozen=True, gc=False):
     findings_from_rich_feed: int = 0                 # Findings where feed-native content carried the hit
     findings_from_fallback: int = 0                  # Findings where article fallback was the winning source
     feed_branch_hint: str = "unknown"                # "feed_strong" | "feed_weak" | "mixed" | "unknown" — next-sprint signal  # noqa: E501
+    # Sprint F300: raw/built counts for normalizeSourceFamilyOutcome telemetry
+    raw_count: int = 0           # Total entries fetched from feed (= entries_seen)
+    built_count: int = 0        # Findings built pre-store (= findings_built_pre_store)
     # Sprint F150I: condensed economics verdict (analogous to public branch economics)
     feed_economics_verdict: tuple[str, int, int, int, int] = ("", 0, 0, 0, 0)
     # (verdict_tag, feed_branch_signal_present_int, fallback_useful, fallback_waste, feed_signal_quality)
@@ -914,19 +917,46 @@ class _EntryDeduper:
 
     STORAGE-FIX-5: bounded LRU (OrderedDict, max _DEDUP_MAX) to protect M1 8GB
     against unbounded growth. Evicts oldest 10% on overflow.
+
+    Sprint F300: Confidence-gated dedup — high-confidence hits use strict
+    threshold (exact match), low-confidence hits use lenient threshold
+    (skip dedup below 0.5 confidence to avoid false-positive dedup).
     """
 
     # Bounded: 50K IOC triples per sprint
     _DEDUP_MAX: int = 50_000
+    # Sprint F300: confidence thresholds
+    _HIGH_CONF_THRESHOLD: float = 0.70  # >= 0.70 = high confidence
+    _LOW_CONF_DEDUP_THRESHOLD: float = 0.80  # low confidence: 0.80 threshold
+    _SKIP_DEDUP_CONFIDENCE: float = 0.50  # below 0.50: skip dedup entirely
 
     def __init__(self) -> None:
         self._seen: OrderedDict[tuple[str, str, str], None] = OrderedDict()
 
-    def is_new(self, label: str, pattern: str, value: str) -> bool:
+    def is_new(
+        self, label: str, pattern: str, value: str, confidence: float = 1.0
+    ) -> bool:
+        """Check if (label, pattern, value) is new for this run.
+
+        Args:
+            label: IOC label
+            pattern: pattern string
+            value: IOC value
+            confidence: hit confidence in [0.0, 1.0]. Below _SKIP_DEDUP_CONFIDENCE,
+                dedup is skipped entirely (allow duplicates). Above
+                _HIGH_CONF_THRESHOLD, exact match is required. Between the two,
+                _LOW_CONF_DEDUP_THRESHOLD (0.80) fuzzy threshold is applied.
+        """
         key = (label or "", pattern, value)
         if key in self._seen:
             self._seen.move_to_end(key)
             return False
+
+        # Sprint F300: Skip dedup for very low confidence hits
+        if confidence < self._SKIP_DEDUP_CONFIDENCE:
+            # Low confidence: don't record in dedup set, treat as always-new
+            return True
+
         self._seen[key] = None
         if len(self._seen) > self._DEDUP_MAX:
             evict_count = self._DEDUP_MAX // 10
@@ -938,6 +968,46 @@ class _EntryDeduper:
 # ---------------------------------------------------------------------------
 # Pattern scan — offloaded, bounded concurrency
 # ---------------------------------------------------------------------------
+
+
+def _keyword_filter_entries(entries: list, query_context: str) -> list:
+    """
+    P0-4: Keyword fallback for feed lanes.
+
+    When query is a concept term (not a domain/URL), filter feed entries to only
+    those whose title or summary contains at least one keyword derived from the
+    query. Substring match, case-insensitive.
+
+    Bounds:
+    - MAX_KEYWORDS=20 (ignore excess keywords)
+    - keyword min_len=2 (skip single-char tokens)
+    - MAX_FEED_KEYWORD_FILTER=2000 entries (skip filter when entries > 2K to avoid O(n*m))
+    - MAX_KEYWORD_SKIP_REPORT=5 (telemetry sample)
+
+    Fail-safe: returns original entries list on any error.
+    """
+    try:
+        if len(entries) > 2000:
+            return entries  # skip filter for large feeds
+        # Extract keywords from query: split on whitespace, filter short/common
+        # OR semantics: entry matches if ANY keyword found in title+summary
+        _raw_kw = query_context.split()
+        _keywords = [k.lower() for k in _raw_kw if len(k) >= 2][:20]
+        if not _keywords:
+            return entries
+        _skip_reported = 0
+        _filtered: list = []
+        for _entry in entries:
+            _title = getattr(_entry, "title", "") or ""
+            _summary = getattr(_entry, "summary", "") or ""
+            _text = f"{_title} {_summary}".lower()
+            if any(k in _text for k in _keywords):
+                _filtered.append(_entry)
+            elif _skip_reported < 5:
+                _skip_reported += 1
+        return _filtered if _filtered else entries  # preserve all if no match
+    except Exception:
+        return entries  # fail-safe: never crash pipeline
 
 
 async def _async_scan_feed_text(text: str) -> list:
@@ -1225,6 +1295,7 @@ async def _entry_to_pattern_findings(
     feed_url: str,
     entry: Any,
     query_context: str | None,
+    entry_deduper: _EntryDeduper,
 ) -> tuple[
     list[dict],
     int,
@@ -1421,13 +1492,15 @@ async def _entry_to_pattern_findings(
         )
 
     # Per-entry dedup by (label, pattern, value)
-    entry_deduper = _EntryDeduper()
+    # Sprint F300: entry_deduper is now passed from run level (cross-entry dedup)
+    # Confidence from quality_signal (0-100 int) normalized to 0.0-1.0
+    _confidence: float = (quality_signal.quality_score / 100.0) if quality_signal else 1.0
     findings: list[dict] = []
     for hit in hits:
         label = hit.label or ""
         pattern = hit.pattern
         value = hit.value
-        if not entry_deduper.is_new(label, pattern, value):
+        if not entry_deduper.is_new(label, pattern, value, _confidence):
             continue
         finding = _pattern_hit_to_finding(
             feed_url, entry_url, hit, query_context, scan_text
@@ -1605,6 +1678,14 @@ async def async_run_live_feed_pipeline(
     entries = batch.entries
     fetched_count = len(entries)
 
+    # P0-4: keyword fallback — filter entries by query keyword substring match
+    # when query_context is a concept (non-domain) term. Feeds return ALL entries
+    # with no keyword context; this narrows to relevant entries and boosts precision.
+    if query_context:
+        entries = _keyword_filter_entries(entries, query_context)
+
+    fetched_count = len(entries)
+
     # Handle empty but valid response
     if fetched_count == 0:
         # F170C: source_accessibility_error from adapter carries source-level truth
@@ -1650,6 +1731,8 @@ async def async_run_live_feed_pipeline(
 
     # Step 3: Per-entry processing — pattern-backed
     run_deduper = _RunDeduper()
+    # Sprint F300: Cross-entry dedup — one _EntryDeduper instance per run (not per entry)
+    entry_deduper = _EntryDeduper()
     pages: list[FeedPipelineEntryResult] = []
     total_accepted = 0
     total_stored = 0
@@ -1731,7 +1814,7 @@ async def async_run_live_feed_pipeline(
              quality_signal, fallback_decision, assembly_tier,
              pre_fallback_hits, post_fallback_hits, findings_lost_to_dedup,
              article_decode_replacement_count) = await _entry_to_pattern_findings(
-                feed_url, entry, query_context
+                feed_url, entry, query_context, entry_deduper
             )
         except asyncio.CancelledError:
             raise  # never swallow
@@ -2028,6 +2111,9 @@ async def async_run_live_feed_pipeline(
         entries_with_hits=entries_with_hits,
         total_pattern_hits=total_pattern_hits,
         findings_built_pre_store=findings_built_pre_store,
+        # Sprint F300: wire raw/built counts for normalizeSourceFamilyOutcome telemetry
+        raw_count=entries_seen,
+        built_count=findings_built_pre_store,
         assembled_text_chars_total=assembled_text_chars_total,
         avg_assembled_text_len=avg_text_len,
         signal_stage=signal_stage,

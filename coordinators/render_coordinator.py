@@ -10,7 +10,7 @@ import logging
 import time
 from collections import OrderedDict
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Literal
+from typing import Literal
 
 from hledac.universal.utils.capability_prober import get_prober
 
@@ -32,10 +32,6 @@ CAPTCHA_PATTERNS = [
     'select all images',
     'grid captcha',
 ]
-
-if TYPE_CHECKING:
-    from playwright.async_api import Browser, Playwright
-
 
 @dataclass
 class RenderResult:
@@ -76,142 +72,6 @@ class PyObjCWKWebViewRenderer(RenderBackend):
     pass
 
 
-class PlaywrightWebKitRenderer(RenderBackend):
-    """Fallback - Playwright with WebKit."""
-    MAX_HTML_SIZE = 4 * 1024 * 1024  # 4 MB
-
-    def __init__(self):
-        self._playwright: Playwright | None = None
-        self._browser: Browser | None = None
-        self._render_count = 0
-        self._max_renders_per_browser = 50  # Recreate browser every 50 renders
-
-    async def _ensure_browser(self):
-        """Ensure browser is available, create if needed or if count exceeded."""
-        if self._browser is None or self._render_count >= self._max_renders_per_browser:
-            await self._close_browser()
-            try:
-                from playwright.async_api import async_playwright
-                self._playwright = await async_playwright().start()
-                self._browser = await self._playwright.webkit.launch(headless=True)
-                self._render_count = 0
-                logger.info("Playwright WebKit browser launched")
-            except Exception as e:
-                logger.warning(f"Failed to launch Playwright: {e}")
-                self._browser = None
-                self._playwright = None
-                raise
-
-    async def _close_browser(self):
-        """Close browser and playwright."""
-        if self._browser:
-            try:
-                await self._browser.close()
-            except Exception as e:
-                logger.debug(f"Error closing browser: {e}")
-            self._browser = None
-        if self._playwright:
-            try:
-                await self._playwright.stop()
-            except Exception as e:
-                logger.debug(f"Error stopping playwright: {e}")
-            self._playwright = None
-
-    def _make_route_handler(self, blocked_types: list[str]):
-        """Create route handler for blocking assets."""
-        async def route_handler(route):
-            if route.request.resource_type in blocked_types:
-                await route.abort()
-            else:
-                await route.continue_()
-        return route_handler
-
-    async def render(
-        self,
-        url: str,
-        deadline_ms: int,
-        mode: str = "text"
-    ) -> RenderResult:
-        """Render URL with Playwright WebKit."""
-        await self._ensure_browser()
-
-        if self._browser is None:
-            return RenderResult(None, "no_backend", {"reason": "browser unavailable"})
-
-        # Create context with stealth settings
-        try:
-            context = await self._browser.new_context(
-                viewport={"width": 1280, "height": 720},
-                user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15",  # noqa: E501
-                locale="en-US",
-                extra_http_headers={"Accept-Language": "en-US,en;q=0.9"},
-                bypass_csp=True,
-                java_script_enabled=True
-            )
-        except Exception as e:
-            return RenderResult(None, "error", {"reason": f"context creation failed: {str(e)[:100]}"})
-
-        # Single idempotent init script
-        try:
-            await context.add_init_script("""
-                if (!window.__patched) {
-                    Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
-                    Object.defineProperty(navigator, 'plugins', {get: () => [1,2,3,4,5]});
-                    Object.defineProperty(navigator, 'languages', {get: () => ['en-US', 'en']});
-                    window.__patched = true;
-                }
-            """)
-        except Exception as e:
-            logger.debug(f"Init script failed: {e}")
-
-        # Block assets based on mode
-        blocked = ["image", "media", "font"]
-        if mode == "text":
-            blocked.append("stylesheet")
-        route_handler = self._make_route_handler(blocked)
-        try:
-            await context.route("**/*", route_handler)
-        except Exception as e:
-            logger.debug(f"Route setup failed: {e}")
-
-        page = await context.new_page()
-        start_time = time.time()
-
-        try:
-            await page.goto(url, timeout=deadline_ms, wait_until="domcontentloaded")
-            html = await page.content()
-
-            # Sprint 71: Check for CAPTCHA
-            if self._is_captcha_page(html):
-                return await self._handle_captcha(url)
-
-            if len(html) > self.MAX_HTML_SIZE:
-                html = html[:self.MAX_HTML_SIZE] + "\n<!-- truncated -->"
-
-            self._render_count += 1
-            elapsed_ms = (time.time() - start_time) * 1000
-
-            return RenderResult(html, "ok", {"elapsed_ms": round(elapsed_ms)})
-
-        except asyncio.CancelledError:
-            return RenderResult(None, "timeout", {"reason": "cancelled"})
-        except Exception as e:
-            error_str = str(e)[:100]
-            if "timeout" in error_str.lower():
-                return RenderResult(None, "timeout", {"reason": error_str})
-            return RenderResult(None, "error", {"reason": error_str})
-        finally:
-            # Always close page and context
-            try:
-                await page.close()
-            except Exception as e:
-                logger.debug(f"Error closing page: {e}")
-            try:
-                await context.close()
-            except Exception as e:
-                logger.debug(f"Error closing context: {e}")
-
-
 class CDPRenderer(RenderBackend):
     """Fallback - connection to running Chrome via CDP."""
     pass
@@ -222,7 +82,6 @@ class RenderCoordinator:
         self._caps = get_prober()
         self._backends = [
             PyObjCWKWebViewRenderer(),
-            PlaywrightWebKitRenderer(),
             CDPRenderer(),
         ]
         self._cache: OrderedDict[str, tuple[RenderResult, float]] = OrderedDict()

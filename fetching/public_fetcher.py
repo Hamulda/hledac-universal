@@ -2175,6 +2175,8 @@ async def async_fetch_public_text(
     use_stealth: bool = False,
     use_js: bool = False,
     use_doh: bool = False,
+    js_confidence: float = 0.8,
+    priority: int = 5,
 ) -> FetchResult:
     """
     Fetch a public URL using the shared aiohttp session.
@@ -2305,55 +2307,69 @@ async def async_fetch_public_text(
 
     # --- P7: Explicit JS rendering mode ---
     if use_js:
-        logger.info(f"JS rendering requested for {url}")
-        js_html = await _fetch_with_camoufox(url, timeout=timeout_s)
-        if not js_html:
-            logger.warning(f"Camoufox failed, trying nodriver: {url}")
-            js_html = await _fetch_with_nodriver(url)
-        if js_html:
-            js_text, _, js_meta = await process_html_payload(js_html, url)
+        from fetching.memory_budget_gate import decide
+
+        _mem = decide(js_confidence=js_confidence, priority=priority)
+        if not _mem.allowed:
+            logger.warning(
+                "BROWSER_DEFERRED url=%s rss_gib=%.2f priority=%d js_confidence=%.2f — %s",
+                url,
+                _mem.rss_gib,
+                priority,
+                js_confidence,
+                _mem.reason,
+            )
+            # Fall through: return curl_cffi result even if thin (partial > OOM crash)
+        else:
+            logger.info(f"JS rendering requested for {url}")
+            js_html = await _fetch_with_camoufox(url, timeout=timeout_s)
+            if not js_html:
+                logger.warning(f"Camoufox failed, trying nodriver: {url}")
+                js_html = await _fetch_with_nodriver(url)
+            if js_html:
+                js_text, _, js_meta = await process_html_payload(js_html, url)
+                elapsed_ms = (time.monotonic() - t0) * 1000
+                _tc.js_renderer_count += 1
+                _meta_sources = list(js_meta.get("ga_gtm_ids", ()))
+                if js_meta.get("og_tags"):
+                    _meta_sources.append("og_tags")
+                if js_meta.get("comments"):
+                    _meta_sources.append("html_comments")
+                if js_text:
+                    _store_body_hash(url, _compute_body_hash(js_text.encode("utf-8", errors="replace")))
+                return FetchResult(
+                    url=url,
+                    final_url=url,
+                    status_code=200,
+                    content_type="text/html",
+                    text=js_text,
+                    fetched_bytes=len(js_html),
+                    declared_length=-1,
+                    elapsed_ms=elapsed_ms,
+                    error=None,
+                    selected_transport="js",
+                    transport_policy_reason="js_required",
+                    transport_counters=_tc,
+                    hydration_sources=tuple(_meta_sources),
+                )
+            # JS rendering completely failed
             elapsed_ms = (time.monotonic() - t0) * 1000
             _tc.js_renderer_count += 1
-            _meta_sources = list(js_meta.get("ga_gtm_ids", ()))
-            if js_meta.get("og_tags"):
-                _meta_sources.append("og_tags")
-            if js_meta.get("comments"):
-                _meta_sources.append("html_comments")
-            if js_text:
-                _store_body_hash(url, _compute_body_hash(js_text.encode("utf-8", errors="replace")))
             return FetchResult(
                 url=url,
                 final_url=url,
-                status_code=200,
-                content_type="text/html",
-                text=js_text,
-                fetched_bytes=len(js_html),
+                status_code=0,
+                content_type="",
+                text=None,
+                fetched_bytes=0,
                 declared_length=-1,
                 elapsed_ms=elapsed_ms,
-                error=None,
+                error="js_render_failed",
+                failure_stage="fetching",
                 selected_transport="js",
                 transport_policy_reason="js_required",
                 transport_counters=_tc,
-                hydration_sources=tuple(_meta_sources),
             )
-        # JS rendering completely failed
-        elapsed_ms = (time.monotonic() - t0) * 1000
-        _tc.js_renderer_count += 1
-        return FetchResult(
-            url=url,
-            final_url=url,
-            status_code=0,
-            content_type="",
-            text=None,
-            fetched_bytes=0,
-            declared_length=-1,
-            elapsed_ms=elapsed_ms,
-            error="js_render_failed",
-            failure_stage="fetching",
-            selected_transport="js",
-            transport_policy_reason="js_required",
-            transport_counters=_tc,
-        )
 
     # -------------------------------------------------------------------------
     # PHASE 4: Transport routing (lines 1423-1444)
@@ -2406,6 +2422,15 @@ async def async_fetch_public_text(
             _httpx_status = _httpx_resp.status
             _httpx_content_type = _httpx_resp.headers.get("Content-Type", "")
             _httpx_raw_ct = _httpx_content_type.split(";")[0].strip().lower()
+
+            # F273G+H3-FIX: prime H3 LRU from httpx_h2 lane too.
+            # Previously only curl_cffi_stealth primed the LRU; the H2 lane
+            # was H3-dark. The probe is fire-and-forget so it never blocks
+            # the H2 fast path.
+            try:
+                probe_altsvc_speculative(url)
+            except Exception:
+                pass
 
             # Detect HTTP version from response
             _http_ver: str | None = None
@@ -2554,6 +2579,13 @@ async def async_fetch_public_text(
             # host hasn't been seen yet, the probe primes the LRU in the
             # background so a later fetch (e.g. follow-up SERP pages in
             # the same sprint) can use HttpVersion.v3 on the FIRST hit.
+            # F273G+H3-FIX: probe_altsvc_speculative is called for ALL clearnet
+            # lanes, not only curl_cffi_stealth. The httpx_h2 lane previously
+            # had zero H3 awareness — the LRU was never primed from that path.
+            # Fire-and-forget, fail-soft, never blocks the hot path. The
+            # _pre_probe blocking path (F265C, _pre_probe=True in curl_cffi_stealth)
+            # handles the cold-start case synchronously so the first fetch can
+            # use H3 immediately.
             try:
                 probe_altsvc_speculative(url)
             except Exception:
@@ -2583,6 +2615,126 @@ async def async_fetch_public_text(
             else:
                 _curl_text = None
 
+            # P0-2: curl_cffi fallback — after fast lane success, check JS sufficiency
+            # before returning. Re-use curl_cffi result if static HTML is sufficient;
+            # otherwise try WKWebView → heavy browser. Eliminates 40-50% of nodriver
+            # calls (~100 MB RAM saved on M1 8GB).
+            if _curl_text and _needs_js_fetch(_curl_text):
+                # Static hydration check — fastest first
+                from hledac.universal.utils.hydration_extractor import (
+                    extract_static_hydration as _extract_static_hydration,
+                )
+                _hydration = _extract_static_hydration(_curl_text)
+                _tc.static_hydration_attempted += 1
+                if _hydration.sufficient:
+                    _tc.static_hydration_sufficient += 1
+                    logger.info(f"curl_cffi static hydration sufficient for {url}")
+                    _curl_elapsed_ms = (time.monotonic() - t0) * 1000
+                    _tc.curl_cffi_count += 1
+                    return FetchResult(
+                        url=url,
+                        final_url=_curl_final_url,
+                        status_code=_curl_result.get("status_code", 0),
+                        content_type=_curl_result.get("content_type", ""),
+                        text=_hydration.text if _hydration.text else _curl_text,
+                        fetched_bytes=len(_curl_bytes),
+                        declared_length=-1,
+                        elapsed_ms=_curl_elapsed_ms,
+                        error=_curl_error,
+                        decode_replaced=_curl_decode_replaced,
+                        decode_replacement_count=_curl_decode_replacement_count,
+                        redirected=_curl_redirected,
+                        redirect_target=_curl_redirect_target,
+                        failure_stage=_curl_result.get("failure_stage", None),
+                        network_error_kind=_curl_result.get("network_error_kind", None),
+                        selected_transport="curl_cffi",
+                        http_version=None,
+                        transport_policy_reason=_router_reason,
+                        transport_fallback_reason=None,
+                        transport_counters=_tc,
+                        js_renderer_skipped_reason=f"static_hydration_sufficient:{_hydration.reason}",
+                        hydration_score=_hydration.hydration_score,
+                        hydration_sources=tuple(_hydration.sources) if hasattr(_hydration, "sources") else (),
+                    )
+                elif _hydration.found:
+                    _tc.static_hydration_insufficient += 1
+
+                # WKWebView before heavy browser — ~0 RAM cost if unavailable
+                from hledac.universal.rendering.macos_webkit_renderer import fetch_with_macos_webkit
+
+                _wkr = await fetch_with_macos_webkit(url, timeout_s=timeout_s)
+                if _wkr.ok and _wkr.html:
+                    _wkr_text, _wkr_matches, _wkr_meta = await process_html_payload(_wkr.html, url)
+                    _wkr_elapsed_ms = (time.monotonic() - t0) * 1000
+                    _tc.js_renderer_count += 1
+                    _tc.macos_webkit_count += 1
+                    _wkr_sources = list(_wkr_meta.get("ga_gtm_ids", ()))
+                    if _wkr_meta.get("og_tags"):
+                        _wkr_sources.append("og_tags")
+                    if _wkr_meta.get("comments"):
+                        _wkr_sources.append("html_comments")
+                    logger.info(f"WKWebView succeeded for {url} (curl_cffi fallback)")
+                    return FetchResult(
+                        url=url,
+                        final_url=url,
+                        status_code=200,
+                        content_type="text/html",
+                        text=_wkr_text,
+                        fetched_bytes=_wkr.rendered_bytes,
+                        declared_length=-1,
+                        elapsed_ms=_wkr_elapsed_ms,
+                        error=None,
+                        selected_transport="js",
+                        transport_policy_reason="js_required",
+                        transport_counters=_tc,
+                        hydration_sources=tuple(_wkr_sources),
+                    )
+
+                # WKWebView unavailable → heavy browser (camoufox → nodriver)
+                if not _all_js_renderers_unavailable():
+                    _js_html = await _fetch_with_camoufox(url, timeout=timeout_s)
+                    if _js_html:
+                        _js_text, _js_matches = await process_html_payload(_js_html, url)
+                        _js_elapsed_ms = (time.monotonic() - t0) * 1000
+                        _tc.js_renderer_count += 1
+                        logger.info(f"Camoufox succeeded for {url} (curl_cffi fallback)")
+                        return FetchResult(
+                            url=url,
+                            final_url=url,
+                            status_code=200,
+                            content_type="text/html",
+                            text=_js_text,
+                            fetched_bytes=len(_js_html),
+                            declared_length=-1,
+                            elapsed_ms=_js_elapsed_ms,
+                            error=None,
+                            selected_transport="js",
+                            transport_policy_reason="js_required",
+                            transport_counters=_tc,
+                        )
+                    # Camoufox failed → nodriver fallback
+                    _js_html = await _fetch_with_nodriver(url)
+                    if _js_html:
+                        _js_text, _js_matches = await process_html_payload(_js_html, url)
+                        _js_elapsed_ms = (time.monotonic() - t0) * 1000
+                        _tc.js_renderer_count += 1
+                        logger.info(f"nodriver succeeded for {url} (curl_cffi fallback)")
+                        return FetchResult(
+                            url=url,
+                            final_url=url,
+                            status_code=200,
+                            content_type="text/html",
+                            text=_js_text,
+                            fetched_bytes=len(_js_html),
+                            declared_length=-1,
+                            elapsed_ms=_js_elapsed_ms,
+                            error=None,
+                            selected_transport="js",
+                            transport_policy_reason="js_required",
+                            transport_counters=_tc,
+                        )
+
+            # curl_cffi result returned (either no JS need, or JS rendering failed → return static)
             elapsed_ms = (time.monotonic() - t0) * 1000
             _curl_final_url = _curl_result.get("final_url", url)
             _curl_redirected, _curl_redirect_target = _derive_redirect_fields(url, _curl_final_url)

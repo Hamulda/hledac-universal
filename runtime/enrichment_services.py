@@ -17,8 +17,6 @@ import logging
 from pathlib import Path
 from typing import Any
 
-import lmdb
-
 from hledac.universal.utils.async_helpers import safe_gather
 
 log = logging.getLogger(__name__)
@@ -373,10 +371,11 @@ class EnrichmentServices:
             self._forensics_enricher = None
 
         try:
+            from hledac.universal.knowledge.lmdb_boot_guard import open_lmdb_with_guard
             db_path = _get_forensics_lmdb_path()
             db_path.parent.mkdir(parents=True, exist_ok=True)
-            self._forensics_lmdb_env = lmdb.open(
-                str(db_path),
+            self._forensics_lmdb_env = open_lmdb_with_guard(
+                db_path,
                 map_size=50 * 1024 * 1024,  # 50MB max for enrichment data
                 max_dbs=1,
                 writemap=False,
@@ -421,10 +420,11 @@ class EnrichmentServices:
             self._multimodal_enricher = None
 
         try:
+            from hledac.universal.knowledge.lmdb_boot_guard import open_lmdb_with_guard
             db_path = _get_multimodal_lmdb_path()
             db_path.parent.mkdir(parents=True, exist_ok=True)
-            self._multimodal_lmdb_env = lmdb.open(
-                str(db_path),
+            self._multimodal_lmdb_env = open_lmdb_with_guard(
+                db_path,
                 map_size=50 * 1024 * 1024,  # 50MB max
                 max_dbs=1,
                 writemap=False,

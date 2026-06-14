@@ -111,6 +111,8 @@ fn hledac_rust_extensions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<bloom::BloomFilter>()?;
     // F266-U1: file-backed mmap Bloom filter (persists across restart).
     bloom::register(m)?;
+    // P3-3: ephemeral batch Bloom filter check.
+    m.add_function(wrap_pyfunction!(bloom::bloom_check_batch, m)?)?;
     m.add_class::<rolling_hash::RollingHashEngine>()?;
     m.add_class::<rolling_hash::FastHasher>()?;
 

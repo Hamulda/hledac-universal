@@ -45,7 +45,7 @@ def test_uses_curl_when_explicit_stealth():
         with patch("hledac.universal.fetching.public_fetcher.should_use_curl_cffi") as mock_should:
             mock_should.return_value = (True, "explicit_stealth")
 
-            with patch("hledac.universal.fetching.public_fetcher.fetch_via_curl_cffi") as mock_fetch:
+            with patch("hledac.universal.fetching.public_fetcher.fetch_via_curl_cffi_cached") as mock_fetch:
                 mock_fetch.return_value = _make_curl_result()
 
                 from hledac.universal.fetching.public_fetcher import async_fetch_public_text
@@ -71,7 +71,7 @@ def test_does_not_use_curl_by_default():
             # Even if should_use returns True (env enabled), use_stealth=False means curl not used
             mock_should.return_value = (False, "default_aiohttp")
 
-            with patch("hledac.universal.fetching.public_fetcher.fetch_via_curl_cffi") as mock_fetch:
+            with patch("hledac.universal.fetching.public_fetcher.fetch_via_curl_cffi_cached") as mock_fetch:
                 mock_fetch.return_value = _make_curl_result()
 
                 from hledac.universal.fetching.public_fetcher import async_fetch_public_text
@@ -92,7 +92,7 @@ def test_does_not_use_curl_for_js():
         with patch("hledac.universal.fetching.public_fetcher.should_use_curl_cffi") as mock_should:
             mock_should.return_value = (False, "js_required")
 
-            with patch("hledac.universal.fetching.public_fetcher.fetch_via_curl_cffi") as mock_fetch:
+            with patch("hledac.universal.fetching.public_fetcher.fetch_via_curl_cffi_cached") as mock_fetch:
                 mock_fetch.return_value = _make_curl_result()
 
                 from hledac.universal.fetching.public_fetcher import async_fetch_public_text
@@ -110,7 +110,7 @@ def test_does_not_use_curl_for_onion():
     with patch("hledac.universal.fetching.public_fetcher.should_use_curl_cffi") as mock_should:
         mock_should.return_value = (False, "darknet_url")
 
-        with patch("hledac.universal.fetching.public_fetcher.fetch_via_curl_cffi") as mock_fetch:
+        with patch("hledac.universal.fetching.public_fetcher.fetch_via_curl_cffi_cached") as mock_fetch:
             mock_fetch.return_value = _make_curl_result()
 
             from hledac.universal.fetching.public_fetcher import async_fetch_public_text
@@ -131,7 +131,7 @@ def test_does_not_use_curl_for_i2p():
     with patch("hledac.universal.fetching.public_fetcher.should_use_curl_cffi") as mock_should:
         mock_should.return_value = (False, "darknet_url")
 
-        with patch("hledac.universal.fetching.public_fetcher.fetch_via_curl_cffi") as mock_fetch:
+        with patch("hledac.universal.fetching.public_fetcher.fetch_via_curl_cffi_cached") as mock_fetch:
             mock_fetch.return_value = _make_curl_result()
 
             from hledac.universal.fetching.public_fetcher import async_fetch_public_text
@@ -152,7 +152,7 @@ def test_does_not_use_curl_for_freenet():
     with patch("hledac.universal.fetching.public_fetcher.should_use_curl_cffi") as mock_should:
         mock_should.return_value = (False, "freenet_not_supported")
 
-        with patch("hledac.universal.fetching.public_fetcher.fetch_via_curl_cffi") as mock_fetch:
+        with patch("hledac.universal.fetching.public_fetcher.fetch_via_curl_cffi_cached") as mock_fetch:
             mock_fetch.return_value = _make_curl_result()
 
             from hledac.universal.fetching.public_fetcher import async_fetch_public_text
@@ -207,7 +207,7 @@ def test_curl_failure_sets_curl_fallback_reason_var():
     # Runtime verification: curl failure sets the variable
     with patch("hledac.universal.fetching.public_fetcher.should_use_curl_cffi") as mock_should:
         mock_should.return_value = (True, "explicit_stealth")
-        with patch("hledac.universal.fetching.public_fetcher.fetch_via_curl_cffi") as mock_fetch:
+        with patch("hledac.universal.fetching.public_fetcher.fetch_via_curl_cffi_cached") as mock_fetch:
             mock_fetch.side_effect = RuntimeError("curl failed")
             from hledac.universal.fetching.public_fetcher import async_fetch_public_text
             # aiohttp will fail too (circuit breaker) but curl failure is recorded

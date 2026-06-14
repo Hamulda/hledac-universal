@@ -75,6 +75,7 @@ dependencies = [
     "hnswlib>=0.8.0",
     "usearch>=2.25.3",
     "datasketch>=1.10.0",
+    "python-dotenv>=1.0.0",
     "rank-bm25>=0.2.2",
     "rustworkx>=0.17.1",
     "networkx>=3.6.1",
@@ -255,7 +256,7 @@ allowed-unresolved-imports = [
     "stem",
     "duckduckgo_search", "ddgs",
     "camoufox",
-    "nodriver",
+    "nodriver<0.50",  # F265C: >=0.50 has UTF-8 bug in cdp/network.py on Py 3.14
     "stix2",
     "scapy",
     "pyvis",

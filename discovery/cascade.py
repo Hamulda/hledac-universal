@@ -83,7 +83,7 @@ async def _search_all_providers(
                     "reason": "cascade_timeout",
                 }],
             )
-        if isinstance(result, Exception):
+        if isinstance(result, BaseException):
             return DiscoveryBatchResult(
                 hits=(),
                 error=f"{name}_error",

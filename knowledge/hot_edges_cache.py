@@ -112,10 +112,10 @@ def _open_env():
     if _ENV_OPEN_FAILED:
         return None
     try:
-        import lmdb
+        from hledac.universal.knowledge.lmdb_boot_guard import open_lmdb_with_guard
         _LMDB_PATH.parent.mkdir(parents=True, exist_ok=True)
-        _ENV = lmdb.open(
-            str(_LMDB_PATH),
+        _ENV = open_lmdb_with_guard(
+            _LMDB_PATH,
             map_size=_LMDB_MAP_SIZE,
             readahead=False,
             writemap=False,  # safer for M1 UMA

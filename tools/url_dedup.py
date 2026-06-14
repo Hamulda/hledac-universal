@@ -347,6 +347,30 @@ class MmapBloomFilterAdapter:
             except Exception:
                 return False  # fail-soft
 
+    def put_many(self, items: list[str]) -> list[bool]:
+        """
+        Bulk add items to the mmap-backed filter.
+
+        Args:
+            items: List of URL/fingerprint strings to add
+
+        Returns:
+            List[bool] — True for each new item, False for duplicates.
+
+        Uses Rust add_batch (parallel xxHash3-64, rayon-powered).
+        Single msync at the end amortizes sync overhead.
+        Thread-safe via threading.Lock.
+        """
+        if not items:
+            return []
+        with self._lock:
+            try:
+                if _bloom_ready(self._filter):
+                    return list(self._filter.add_batch(items))
+                return [False] * len(items)
+            except Exception:
+                return [False] * len(items)  # fail-soft
+
     def __contains__(self, item: str) -> bool:
         # Read path: no lock needed for single-writer/many-reader (GIL holds
         # off concurrent writers in CPython). For strict multi-thread semantics

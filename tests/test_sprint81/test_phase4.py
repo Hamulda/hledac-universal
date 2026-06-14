@@ -16,12 +16,12 @@ class TestModernBERTMLXEmbedder:
 
     def test_mlx_embeddings_import(self):
         """Test MLXEmbeddingManager can be imported."""
-        from hledac.core.mlx_embeddings import MLXEmbeddingManager
+        from hledac.universal.core._mlx_embeddings import MLXEmbeddingManager
         assert MLXEmbeddingManager is not None
 
     def test_mlx_embedding_manager_creation(self):
         """Test MLXEmbeddingManager can be created."""
-        from hledac.core.mlx_embeddings import MLXEmbeddingManager
+        from hledac.universal.core._mlx_embeddings import MLXEmbeddingManager
         # lazy_load=True to avoid actual model loading in test
         manager = MLXEmbeddingManager(lazy_load=True)
         assert manager is not None

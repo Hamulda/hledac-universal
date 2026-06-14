@@ -406,17 +406,12 @@ class DSPyOptimizer:
 
             program = dspy.Predict(OSINTAnalyze)
 
-            # lokální LM — mlx-lm.server endpoint (HLEDAC_LLM_MODEL env var or default)
-            model_id = os.getenv(
-                "HLEDAC_LLM_MODEL",
-                "/Users/" + os.getenv("USER", "root") + "/.hledac/models/DeepHermes-3-Llama-3-3B-Preview-4bit",
-            )
-            lm = dspy.LM(
-                model=model_id,
-                base_url="http://localhost:8080/v1",  # mlx_lm.server endpoint
-                api_key="none",
-                custom_llm_provider="openai",  # mlx-lm server speaks OpenAI-compatible API
-            )
+            # lokální LM — Hermes3DSPyLM (přímý MLX, žádný HTTP server)
+            from hledac.universal.brain.dspy_service import get_hermes_dspy_lm
+            lm = get_hermes_dspy_lm()
+            if lm is None:
+                logger.warning("DSPy MIPROv2: Hermes3DSPyLM unavailable — skipping optimization")
+                return {}
 
             # better metric: JSON validity + length + key presence
             def _osint_metric(example, pred, trace=None):

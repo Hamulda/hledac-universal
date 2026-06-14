@@ -115,7 +115,7 @@ def main():
         sys.exit(1)
 
     try:
-        from hledac.universal.core.mlx_embeddings import get_embedding_manager
+        from hledac.universal.core._mlx_embeddings import get_embedding_manager
 
         manager = get_embedding_manager()
 

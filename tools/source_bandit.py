@@ -150,10 +150,10 @@ class SourceBandit:
                 metasync=True
             )
         else:
-            # Sprint 3D fallback: direct lmdb.open for backward compat
-            import lmdb
-            self._env = lmdb.open(
-                str(lmdb_path),
+            # Sprint 3D fallback: use guard for lock recovery
+            from hledac.universal.knowledge.lmdb_boot_guard import open_lmdb_with_guard
+            self._env = open_lmdb_with_guard(
+                lmdb_path,
                 map_size=self.LMDB_MAP_SIZE,
                 max_dbs=1,
                 writemap=False,

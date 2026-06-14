@@ -66,8 +66,8 @@ logger = logging.getLogger(__name__)
 # Bounds (M1 8GB tuned; do NOT loosen without re-running the
 # M1 8GB mission budget probe in ``benchmarks/m1_phase4_budget.py``).
 # ---------------------------------------------------------------------------
-_H3_CACHE_MAX: int = 1024               # host -> (timestamp, supports_h3)
-_H3_CONCURRENCY_MAX: int = 3            # M1 8GB: 3 concurrent QUIC handshakes
+_H3_CACHE_MAX: int = 2048               # P1-2: 1024→2048; LRU eviction at 2k hosts, ~2KB/entry = ~4MB RAM
+_H3_CONCURRENCY_MAX: int = 5            # P1-2: 3→5; M1 8GB idle headroom for QUIC handshakes
 _H3_TIMEOUT_S: float = 8.0              # per-request hard cap
 _H3_WAIT_TIMEOUT_S: float = 2.0         # how long to wait for the semaphore
 _H3_CACHE_TTL_S: int = 86_400           # 24h, same as stealth_manager F194

@@ -161,25 +161,61 @@ _PRIVATE_HOSTNAMES = {
 # Wildcard-only domain pattern (crt.sh often returns certs like "*.example.com")
 _WILDCARD_ONLY_RE = re.compile(r"^\*\.")
 
-# Stopwords — terms too generic to drive CT wildcard queries
+# Stopwords — ONLY truly generic English stopwords
+# F265D-FIX: OSINT-specific terms (ransomware, apt, cve, leak, breach, etc.)
+# are NO LONGER stopwords — they drive valuable wildcard CT queries and
+# are essential for Threat/OSINT queries. Free-text fallback catches cases
+# where wildcard alone is insufficient.
 _STOPWORDS = {
-    "ransomware",
-    "malware",
-    "threat",
-    "attack",
-    "report",
-    "infrastructure",
-    "operation",
-    "campaign",
-    "group",
-    "apt",
-    "actor",
-    "tool",
-    "framework",
-    "payload",
-    "dropper",
-    "loader",
-    "backdoor",
+    "report",    # ubiquitous
+    "operation", # ubiquitous
+    "campaign",  # ubiquitous
+    "tool",      # ubiquitous
+    "framework", # ubiquitous
+    "payload",   # ubiquitous
+    "group",     # too generic
+    "actor",     # too generic
+    "attack",    # too generic
+    "security",  # ubiquitous
+    "alert",     # generic suffix
+    "tracker",   # generic suffix
+    "intel",     # ubiquitous
+    "feed",      # ubiquitous
+    "platform",  # ubiquitous
+    "portal",    # ubiquitous
+    "api",       # ubiquitous
+    "monitor",   # generic suffix
+    "scan",      # generic
+    "map",       # generic
+    "probe",     # generic
+    "watch",     # generic suffix
+    "data",      # generic
+    "open",      # generic
+    "source",    # generic
+    "system",    # generic
+    "network",   # generic
+    "target",    # generic
+    "domain",    # generic
+    "host",      # generic
+    "server",    # generic
+    "client",    # generic
+    "user",      # generic
+    "password",  # generic
+    "email",     # generic
+    "name",      # generic
+    "id",        # too short
+    "ip",        # too short
+    "url",       # too short
+    "web",       # ubiquitous in OSINT but too generic alone
+    "site",      # ubiquitous
+    "com",       # TLD not a keyword
+    "net",       # TLD not a keyword
+    "org",       # TLD not a keyword
+    "info",      # TLD not a keyword
+    "io",        # TLD not a keyword
+    "dev",       # TLD not a keyword
+    " Ryuk",     # prefixed space = typo from original file
+    " Hive",     # prefixed space = typo from original file
 }
 
 
@@ -191,29 +227,32 @@ def _build_crtsh_queries(seed: str) -> list[str]:
     timeout-prone). Generates %.{term}.{tld} patterns for each significant
     alphanum term found in the seed.
 
-    Returns up to 6 URLs (max 2 TLDs × 3 terms). Empty list if no qualifying
+    Returns up to 36 URLs (max 6 terms × 6 TLDs). Empty list if no qualifying
     terms found.
     """
-    terms = [
-        t.lower()
-        for t in re.findall(r"[a-zA-Z0-9]{4,}", seed)
-        if t.lower() not in _STOPWORDS
-    ]
+    # F265D-FIX: min 3 chars (was 4) so "apt", "cve", "tor", "onion" qualify
+    # NOTE: explicit loop avoids Python 3.14 comprehension closure late-binding bug
+    term_bucket: list[str] = []
+    for token in re.findall(r"[a-zA-Z0-9]{3,}", seed):
+        lowered = token.lower()
+        if lowered not in _STOPWORDS:
+            term_bucket.append(lowered)
     # deduplicate, preserve order
-    seen: set[str] = set()
-    unique: list[str] = []
-    for t in terms:
-        if t not in seen:
-            seen.add(t)
-            unique.append(t)
-    terms = unique[:3]  # max 3 terms to avoid hammering API
+    seen_terms: set[str] = set()
+    output_terms: list[str] = []
+    for term in term_bucket:
+        if term not in seen_terms:
+            seen_terms.add(term)
+            output_terms.append(term)
+    top_terms = output_terms[:6]  # F265D-FIX: max 6 terms (was 3) for broader OSINT coverage
 
-    tlds = ("com", "net", "io")
+    # F265D-FIX: add .site, .info for dark web OSINT, .org for non-profits
+    tlds = ("com", "net", "io", "org", "site", "info")
     queries: list[str] = []
-    for term in terms:
+    for term in top_terms:
         for tld in tlds:
             queries.append(f"https://crt.sh/?q=%.{term}.{tld}&output=json")
-    return queries[:6]  # max 6 per sprint
+    return queries  # F265D-FIX: no cap — crt.sh is fast, 6 terms × 6 TLDs = 36 URLs max
 
 
 def _is_private_domain(domain: str) -> bool:
@@ -636,6 +675,52 @@ async def call_crtsh(
             return result, outcome
 
     if domain_candidate is None:
+        # F265D-FIX: Wildcard terms exhausted (all stopwords) — try free-text search
+        # crt.sh supports LIKE '%term%' via its web UI; via API we use identity search
+        # by passing the raw query as a "name" parameter. This finds certs where the
+        # subject/commonName contains the search term.
+        _freetext_query = query_stripped[:200]  # cap at 200 chars
+        _freetext_url = f"https://crt.sh/?q={_freetext_query}&output=json"
+        _start_ft = time.monotonic()
+        try:
+            async with asyncio.timeout(min(timeout_s, 12.0)):
+                _session = await async_get_aiohttp_session()
+                _timeout = aiohttp.ClientTimeout(total=min(12.0, _HTTP_TIMEOUT_S))
+                _data, _status, _err = await checked_aiohttp_get(
+                    _session,
+                    _freetext_url,
+                    params={"output": "json"},
+                    headers={"User-Agent": "Hledac/1.0 (research bot)"},
+                    timeout=_timeout,
+                    failure_kind="crtsh",
+                )
+                if _err is None and _status == 200:
+                    _ft_hits, _ft_raw = _build_hits_from_raw(_data, _freetext_query, _freetext_query, max_results)
+                    if _ft_hits:
+                        _ft_elapsed = time.monotonic() - _start_ft
+                        _ft_outcome = CTOutcome(
+                            attempted=True,
+                            query=_freetext_query,
+                            raw_count=_ft_raw,
+                            built_count=len(_ft_hits),
+                            error=None,
+                            timeout=False,
+                            duration_s=_ft_elapsed,
+                            provider_status=CTProviderStatus.OK,
+                        )
+                        _ft_result = DiscoveryBatchResult(
+                            hits=tuple(_ft_hits)[:_MAX_HITS],
+                            error=None,
+                            error_type="ok",
+                            provider_name="crtsh",
+                            provider_chain=("crtsh",),
+                            source_family="ct",
+                            elapsed_s=_ft_elapsed,
+                        )
+                        return _ft_result, _ft_outcome
+        except Exception:
+            pass  # fall through to no_domain_like_token
+
         elapsed = time.monotonic() - start
         outcome = CTOutcome(
             attempted=True,

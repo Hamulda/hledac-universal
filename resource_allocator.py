@@ -307,7 +307,7 @@ def get_recommended_concurrency() -> dict[str, int]:
         import gc; gc.collect()  # noqa: E702
     return {
         "normal":   {"fetch": 20, "parse_workers": 4, "ml_jobs": 1, "browser": 1},
-        "warn":     {"fetch": 8,  "parse_workers": 2, "ml_jobs": 0, "browser": 0},
+        "warn":     {"fetch": 8,  "parse_workers": 2, "ml_jobs": 1, "browser": 0},
         "critical": {"fetch": 2,  "parse_workers": 1, "ml_jobs": 0, "browser": 0},
     }[level]
 

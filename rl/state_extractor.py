@@ -24,30 +24,45 @@ if TYPE_CHECKING:
     from hledac.universal.runtime.sprint_scheduler import SprintSchedulerResult
 
 
+# F265LANE: Known lane names for telemetry extraction
+_KNOWN_LANES = ("PUBLIC", "CT", "WAYBACK", "DOH", "PASSIVE_DNS")
+
+
 class StateExtractor:
     """
-    Builder 12-dim observation vector from sprint state.
+    Builder 27-dim observation vector from sprint state (F265LANE).
 
-    Feature vector layout (12 dim):
-      [0] findings_accepted_norm     — normalized findings accepted (0-1, cap 50)
-      [1] runtime_seconds_norm        — normalized runtime (0-1, cap 3600s)
-      [2] cycles_completed_norm      — normalized cycles (0-1, cap 50)
-      [3] acceptance_ratio            — accepted/total findings (0-1)
-      [4] new_iocs_norm              — normalized new IOC count (0-1, cap 100)
-      [5] source_quality_avg         — avg source quality (0-1)
-      [6] queue_size_norm            — normalized pending count (0-1, cap 200)
-      [7] memory_pressure_norm        — normalized RAM pressure (0-1)
-      [8] graph_entropy_norm          — normalized graph entropy (0-1)
-      [9] time_since_last_finding_norm — normalized time (0-1, cap 300s)
-      [10] resource_concurrency_norm — normalized concurrency (0-1)
-      [11] reward_ema                — exponential moving avg reward (bounded)
+    Feature vector layout (27 dim):
+      [0-11] Base features (12 dim, backward compatible):
+        [0] findings_accepted_norm     — normalized findings accepted (0-1, cap 50)
+        [1] runtime_seconds_norm      — normalized runtime (0-1, cap 3600s)
+        [2] cycles_completed_norm     — normalized cycles (0-1, cap 50)
+        [3] acceptance_ratio           — accepted/total findings (0-1)
+        [4] new_iocs_norm             — normalized new IOC count (0-1, cap 100)
+        [5] source_quality_avg        — avg source quality (0-1)
+        [6] queue_size_norm           — normalized pending count (0-1, cap 200)
+        [7] memory_pressure_norm       — normalized RAM pressure (0-1)
+        [8] graph_entropy_norm         — normalized graph entropy (0-1)
+        [9] time_since_last_finding_norm — normalized time (0-1, cap 300s)
+        [10] resource_concurrency_norm — normalized concurrency (0-1)
+        [11] reward_ema               — exponential moving avg reward (bounded)
+      [12-16] Lane yield vector (5 dim): yield = accepted_findings / max(duration_s, 0.001)
+        [12] PUBLIC_yield, [13] CT_yield, [14] WAYBACK_yield, [15] DOH_yield, [16] PASSIVE_DNS_yield
+      [17-21] Lane quality vector (5 dim): quality = accepted / max(accepted + rejected, 1)
+        [17] PUBLIC_quality, [18] CT_quality, [19] WAYBACK_quality, [20] DOH_quality, [21] PASSIVE_DNS_quality
+      [22-26] Lane recency vector (5 dim): sprints since last used (0-1, cap 20 sprints)
+        [22] sprints_since_PUBLIC, [23] sprints_since_CT, [24] sprints_since_WAYBACK,
+        [25] sprints_since_DOH, [26] sprints_since_PASSIVE_DNS
     """
 
-    def __init__(self, state_dim: int = 12, gnn_predictor: Optional = None):
+    def __init__(self, state_dim: int = 27, gnn_predictor: Optional = None):
         self.state_dim = state_dim
         self.gnn_predictor = gnn_predictor
         self._reward_ema = 0.0
         self._ema_alpha = 0.1
+        # F265LANE: Per-lane sprint history for recency computation
+        self._sprints_since_lane: dict[str, int] = dict.fromkeys(_KNOWN_LANES, 0)
+        self._sprint_count: int = 0
 
     def extract(self, result: SprintSchedulerResult) -> np.ndarray:
         """
@@ -78,6 +93,49 @@ class StateExtractor:
                 if total_findings > 0 else 0.0
             )
 
+            # F265LANE: Extract lane performance from acquisition_lane_outcomes
+            lane_yields = []
+            lane_qualities = []
+            lanes_in_result: set[str] = set()
+
+            outcomes = getattr(result, 'acquisition_lane_outcomes', None) or ()
+            for outcome in outcomes:
+                lane_name = getattr(outcome, 'lane', None) or ""
+                if lane_name not in _KNOWN_LANES:
+                    continue
+                lanes_in_result.add(lane_name)
+
+                accepted = getattr(outcome, 'accepted_findings', 0) or 0
+                rejected = getattr(outcome, 'rejected_count', 0) or 0
+                duration = getattr(outcome, 'duration_s', 0.0) or 0.0
+
+                # Yield: findings per second (cap at 10 findings/s)
+                yield_val = accepted / max(duration, 0.001)
+                lane_yields.append(min(yield_val / 10.0, 1.0))
+
+                # Quality: acceptance ratio (cap at 1.0)
+                quality = accepted / max(accepted + rejected, 1)
+                lane_qualities.append(quality)
+
+            # Pad lane vectors to full length (missing lanes = 0)
+            while len(lane_yields) < len(_KNOWN_LANES):
+                lane_yields.append(0.0)
+            while len(lane_qualities) < len(_KNOWN_LANES):
+                lane_qualities.append(0.0)
+
+            # F265LANE: Recency vector — increment all, set used lanes to 0
+            self._sprint_count += 1
+            for lane in _KNOWN_LANES:
+                if lane not in lanes_in_result:
+                    self._sprints_since_lane[lane] = self._sprints_since_lane.get(lane, 0) + 1
+                else:
+                    self._sprints_since_lane[lane] = 0
+
+            recency_vec = [
+                min(self._sprints_since_lane.get(lane, 0) / 20.0, 1.0)
+                for lane in _KNOWN_LANES
+            ]
+
             features = [
                 min(findings_accepted / 50.0, 1.0),          # [0] findings_accepted_norm
                 min(runtime / 3600.0, 1.0),                  # [1] runtime_seconds_norm
@@ -91,6 +149,10 @@ class StateExtractor:
                 min(time_since_finding / 300.0, 1.0),       # [9] time_since_last_finding_norm
                 min(resource_conc, 1.0),                    # [10] resource_concurrency_norm
                 self._reward_ema,                            # [11] reward_ema
+                # F265LANE: Lane vectors [12-26]
+                *lane_yields,      # [12-16] Lane yield vector
+                *lane_qualities,  # [17-21] Lane quality vector
+                *recency_vec,     # [22-26] Lane recency vector
             ]
 
             # Update EMA for reward tracking

@@ -196,7 +196,7 @@ class EmbeddingRouter:
             return legacy
         # ANEEmbedder not loaded — fall back to MLXEmbeddingManager
         legacy = None
-        from hledac.universal.core.mlx_embeddings import MLXEmbeddingManager
+        from hledac.universal.core._mlx_embeddings import MLXEmbeddingManager
         try:
             manager = MLXEmbeddingManager(lazy_load=True)
             if manager.is_loaded:
@@ -276,7 +276,7 @@ class EmbeddingRouter:
             logger.W(f"[EMBED:ROUTER] ModernBERT sync load failed: {e}")
 
         # Final fallback: MLXEmbeddingManager
-        from hledac.universal.core.mlx_embeddings import get_embedding_manager
+        from hledac.universal.core._mlx_embeddings import get_embedding_manager
         return get_embedding_manager()
 
     async def get_embedder(self):
@@ -314,7 +314,7 @@ class EmbeddingRouter:
             logger.warning(f"[EMBED:ROUTER] ModernBERT load failed: {e}")
 
         # Final fallback: MLXEmbeddingManager (CPU sentence-transformers)
-        from hledac.universal.core.mlx_embeddings import get_embedding_manager
+        from hledac.universal.core._mlx_embeddings import get_embedding_manager
         embedder = get_embedding_manager()
         t0 = time.monotonic()
         _ = embedder.embed("warmup")

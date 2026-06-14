@@ -432,7 +432,28 @@ _DUCKDB_MAX_TEMP: str = os.environ.get("GHOST_DUCKDB_MAX_TEMP", "1GB")
 _ARROW_INGEST_ENABLED: bool = os.environ.get("HLEDAC_ARROW_INGEST", "1") != "0"
 # Sprint P0-4: Arrow path break-even vs executemany is roughly N=20-50 on M1 8GB.
 # Below 20, executemany wins on per-call overhead; above, Arrow register+INSERT dominates.
-_ARROW_MIN_BATCH: int = int(os.environ.get("HLEDAC_ARROW_MIN_BATCH", "50"))  # M1: Arrow amortized overhead from ~50 rows
+# F265C: Lowered from 50→20 — most sprints produce 0-30 findings; 50 was too high.
+# Telemetry: _ARROW_PATH_SELECTED counter tracks path selection.
+_ARROW_MIN_BATCH: int = int(os.environ.get("HLEDAC_ARROW_MIN_BATCH", "20"))  # M1: Arrow amortized from ~20 rows
+
+# Sprint P1-3: Arrow path telemetry — tracks path selection for observability.
+# Metrics: arrow_selected, arrow_fallback_env, arrow_fallback_batch,
+#          arrow_fallback_pyarrow, arrow_fallback_init, arrow_fallback_executor,
+#          arrow_fallback_empty, arrow_fallback_all_fail, arrow_success_count,
+#          arrow_success_lmdb_count, arrow_success_duckdb_count
+_ARROW_METRICS: dict[str, int] = {
+    "arrow_selected": 0,
+    "arrow_fallback_env": 0,
+    "arrow_fallback_batch": 0,
+    "arrow_fallback_pyarrow": 0,
+    "arrow_fallback_init": 0,
+    "arrow_fallback_executor": 0,
+    "arrow_fallback_empty": 0,
+    "arrow_fallback_all_fail": 0,
+    "arrow_success_count": 0,
+    "arrow_success_lmdb_count": 0,
+    "arrow_success_duckdb_count": 0,
+}
 
 
 # ---------------------------------------------------------------------------
@@ -2247,7 +2268,7 @@ class DuckDBShadowStore:
             return True
 
         # Sprint F259: Embedding dimension assertion — canonical MRL = 256d
-        from hledac.universal.core.mlx_embeddings import MLXEmbeddingManager
+        from hledac.universal.core._mlx_embeddings import MLXEmbeddingManager
         _EMBEDDING_DIM = getattr(MLXEmbeddingManager, 'EMBEDDING_DIM', 256)  # noqa: N806
         assert _EMBEDDING_DIM == 256, (
             f"Embedding dimension mismatch: MLXEmbeddingManager.EMBEDDING_DIM={_EMBEDDING_DIM}, expected 256 (MRL canonical)"  # noqa: E501
@@ -2435,6 +2456,31 @@ class DuckDBShadowStore:
 
         self._startup_ready.set()
         return True
+
+    async def async_initialize_schema(self) -> bool:
+        """
+        F275: Explicit schema initialization — creates/touches the DB file and
+        runs CREATE TABLE IF NOT EXISTS for all canonical tables.
+
+        Safe to call multiple times (idempotent). Does NOT run full
+        async_initialize() — no WAL replay, no DedupManager init.
+        This is the minimal init path for the zero-findings case.
+
+        Returns True if schema is ready, False on error.
+        """
+        if self._closed:
+            return False
+        try:
+            # Ensure path is resolved
+            if self._db_path is None:
+                self._resolve_path()
+            loop = asyncio.get_running_loop()
+            await loop.run_in_executor(self._executor, self._init_connection)
+            self._initialized = True
+            self._startup_ready.set()
+            return True
+        except Exception:
+            return False
 
     async def async_record_shadow_run(
         self,
@@ -4740,7 +4786,7 @@ class DuckDBShadowStore:
         3-stupňový fallback na legacy `async_record_canonical_findings_batch`:
           1. pyarrow chybí (try/except import) → legacy
           2. `HLEDAC_ARROW_INGEST == "0"` (env gate, default ON, opt-out) → legacy
-          3. `len(findings) < _ARROW_MIN_BATCH` (default 100) → legacy
+          3. `len(findings) < _ARROW_MIN_BATCH` (default 20, F265C lowered from 50) → legacy
           4. sync helper vrátí 0 (jakýkoliv error v Table build / register / INSERT) → legacy
 
         Při úspěchu: WAL first (LMDB put_many) + DuckDB Arrow register+INSERT (one roundtrip).
@@ -4760,6 +4806,7 @@ class DuckDBShadowStore:
 
         # Fallback gate 1: env opt-in
         if not _ARROW_INGEST_ENABLED:
+            _ARROW_METRICS["arrow_fallback_env"] += len(findings)
             logger.debug(
                 "[D7-arrow-fallback] HLEDAC_ARROW_INGEST=0, using legacy path "
                 f"for {len(findings)} findings"
@@ -4768,6 +4815,7 @@ class DuckDBShadowStore:
 
         # Fallback gate 2: batch size — executemany is faster for small N
         if len(findings) < _ARROW_MIN_BATCH:
+            _ARROW_METRICS["arrow_fallback_batch"] += len(findings)
             logger.debug(
                 f"[D7-arrow-fallback] batch size {len(findings)} < "
                 f"_ARROW_MIN_BATCH({_ARROW_MIN_BATCH}), using legacy path"
@@ -4778,6 +4826,7 @@ class DuckDBShadowStore:
         try:
             import pyarrow  # noqa: F401
         except ImportError:
+            _ARROW_METRICS["arrow_fallback_pyarrow"] += len(findings)
             logger.debug(
                 "[D7-arrow-fallback] pyarrow not available, using legacy path "
                 f"for {len(findings)} findings"
@@ -4794,6 +4843,7 @@ class DuckDBShadowStore:
                 async with asyncio.timeout(30.0):
                     await self._startup_ready.wait()
             except TimeoutError:
+                _ARROW_METRICS["arrow_fallback_init"] += len(findings)
                 return await self.async_record_canonical_findings_batch(findings)
 
         loop = asyncio.get_running_loop()
@@ -4806,6 +4856,7 @@ class DuckDBShadowStore:
         except Exception as exc:
             # Any executor-side failure (pyarrow missing at worker import, etc.)
             # → fall back to proven executemany path. This is the 4th fallback gate.
+            _ARROW_METRICS["arrow_fallback_executor"] += len(findings)
             logger.warning(
                 f"[D7-arrow-fallback] executor error ({exc}), using legacy path "
                 f"for {len(findings)} findings"
@@ -4816,6 +4867,7 @@ class DuckDBShadowStore:
         # error, register error, INSERT error). Empty list = legacy returns
         # [] only for empty input, which we already filtered above.
         if not results:
+            _ARROW_METRICS["arrow_fallback_empty"] += len(findings)
             _logger.error(
                 "[D7] Arrow path returned 0 results for %d findings — "
                 "falling back to legacy executemany. "
@@ -4827,6 +4879,7 @@ class DuckDBShadowStore:
         # Fallback gate 5: complete DuckDB failure (all duckdb_success=False)
         # despite non-empty results → fall back so canonical write is guaranteed.
         if results and all(r.get("duckdb_success") is False for r in results):
+            _ARROW_METRICS["arrow_fallback_all_fail"] += len(results)
             logger.error(
                 "[D7] Arrow path: all %d findings failed DuckDB write — "
                 "falling back to legacy executemany.",
@@ -4843,6 +4896,18 @@ class DuckDBShadowStore:
 
         accepted_total = sum(1 for r in results if r.get("lmdb_success"))
         self._quality_state._accepted_count += accepted_total
+
+        # Sprint P1-3: Arrow path success telemetry
+        _ARROW_METRICS["arrow_selected"] += len(findings)
+        _ARROW_METRICS["arrow_success_count"] += len(findings)
+        lmdb_ok = sum(1 for r in results if r.get("lmdb_success"))
+        duckdb_ok = sum(1 for r in results if r.get("duckdb_success"))
+        _ARROW_METRICS["arrow_success_lmdb_count"] += lmdb_ok
+        _ARROW_METRICS["arrow_success_duckdb_count"] += duckdb_ok
+        logger.info(
+            f"[D7-arrow] path=arrow batch={len(findings)} "
+            f"lmdb_ok={lmdb_ok} duckdb_ok={duckdb_ok}"
+        )
 
         return [
             ActivationResult(
@@ -5552,6 +5617,27 @@ class DuckDBShadowStore:
             entropy = _compute_entropy(normalized)
             fingerprint = _compute_dedup_fingerprint(normalized)
 
+        # P0-2: Feed source bypass for hot cache write.
+        # P1-2: Detailed instrumentation — log source_type + entropy + fp_len for diagnostics
+        _is_feed_source: bool = finding.source_type == "rss_atom_pipeline"
+        _logger.debug(
+            "[QUALITY-GATE] assessing source_type=%s is_feed=%s url_fp=%s entropy=%.3f fp_len=%d finding_id=%s",
+            finding.source_type,
+            _is_feed_source,
+            bool(url_fingerprint),
+            entropy,
+            len(fingerprint),
+            finding.finding_id[:16] if finding.finding_id else "",
+        )
+        # Feed findings (source_type="rss_atom_pipeline") are high-volume, high-overlap:
+        # - Hot cache fills rapidly with feed fingerprints → LRU eviction loses cross-run dedup
+        # - Feed items with same IOC but different entry URLs produce legitimate unique findings
+        # - Hot cache false positives block legitimate new feed content
+        # Fix: feed findings skip hot cache write; LMDB remains authority for cross-run dedup.
+        # Hot cache lookup (Tier 1) still applies — existing feed duplicates within same run
+        # are correctly rejected by hot cache; only the hot cache WRITE is bypassed.
+        _is_feed_source: bool = finding.source_type == "rss_atom_pipeline"
+
         # Sprint 8AK: Separate counter semantics for persistent vs in-memory duplicates
         # - Hot cache hit (in-memory, same process) → _quality_duplicate_count
         # - Persistent LMDB hit (cross-source, survives restarts) → _persistent_duplicate_count
@@ -5561,6 +5647,11 @@ class DuckDBShadowStore:
         if duplicate:
             self._quality_state._quality_duplicate_count += 1
             reason = "persistent_duplicate" if url_fingerprint else "duplicate_detected"
+            _logger.debug(
+                "[QUALITY-GATE] rejected=hot_cache_duplicate fp=%s finding_id=%s",
+                fingerprint[:16] if fingerprint else "",
+                finding.finding_id[:16] if finding.finding_id else "",
+            )
             return FindingQualityDecision(
                 accepted=False,
                 reason=reason,
@@ -5572,10 +5663,17 @@ class DuckDBShadowStore:
         # Tier 2: persistent LMDB (authority)
         stored_finding_id = self._lookup_persistent_dedup(fingerprint)
         if stored_finding_id is not None:
-            # Miss in hot cache but hit in LMDB — populate hot cache, reject
-            self._add_to_hot_cache(fingerprint, stored_finding_id)
+            # Miss in hot cache but hit in LMDB — populate hot cache (non-feed only), reject
+            if not _is_feed_source:
+                self._add_to_hot_cache(fingerprint, stored_finding_id)
             self._quality_state._persistent_duplicate_count += 1
             reason = "persistent_duplicate" if url_fingerprint else "duplicate_detected"
+            _logger.debug(
+                "[QUALITY-GATE] rejected=lmdb_duplicate fp=%s finding_id=%s stored_id=%s",
+                fingerprint[:16] if fingerprint else "",
+                finding.finding_id[:16] if finding.finding_id else "",
+                stored_finding_id[:16] if stored_finding_id else "",
+            )
             return FindingQualityDecision(
                 accepted=False,
                 reason=reason,
@@ -5588,7 +5686,9 @@ class DuckDBShadowStore:
         # _accepted_count is incremented by async_record_canonical_findings_batch — NOT here
         if url_fingerprint:
             self._store_persistent_dedup(fingerprint, finding.finding_id)
-            self._add_to_hot_cache(fingerprint, finding.finding_id)
+            # P0-2: feed bypass — hot cache write skipped for feed sources
+            if not _is_feed_source:
+                self._add_to_hot_cache(fingerprint, finding.finding_id)
             return FindingQualityDecision(
                 accepted=True,
                 reason=None,
@@ -5608,7 +5708,11 @@ class DuckDBShadowStore:
                 try:
                     text_for_embed = url_from_provenance or (finding.payload_text or finding.query)
                     if text_for_embed and len(text_for_embed) >= 16:
-                        is_dup = dedup_cache.check_and_cache(text_for_embed, threshold=0.95)
+                        # P1-2: Relaxed threshold for feed sources — feed text is IOC-heavy
+                        # and structurally similar across entries (same malware family,
+                        # same C2 pattern). Use 0.85 for feed vs 0.95 for others.
+                        _semantic_thresh = 0.85 if _is_feed_source else 0.95
+                        is_dup = dedup_cache.check_and_cache(text_for_embed, threshold=_semantic_thresh)
                         if is_dup:
                             self._quality_state._quality_duplicate_count += 1
                             return FindingQualityDecision(
@@ -5623,7 +5727,9 @@ class DuckDBShadowStore:
                     _logger.warning(f"Quality gate error (short_string path): {e}")
             # Short string + no semantic duplicate → store and accept
             self._store_persistent_dedup(fingerprint, finding.finding_id)
-            self._add_to_hot_cache(fingerprint, finding.finding_id)
+            # P0-2: feed bypass — hot cache write skipped for feed sources
+            if not _is_feed_source:
+                self._add_to_hot_cache(fingerprint, finding.finding_id)
             return FindingQualityDecision(
                 accepted=True,
                 reason="short_string_skip",
@@ -5633,8 +5739,21 @@ class DuckDBShadowStore:
             )
 
         # Entropy threshold check
-        if entropy < _QUALITY_ENTROPY_THRESHOLD:
+        # P1-2: Feed-adaptive threshold — feed sources generate short, IOC-heavy
+        # text with structurally low entropy (URLs, patterns, hashes). Use a lower
+        # threshold for feed sources to avoid rejecting legitimate findings.
+        _effective_threshold = (
+            0.3 if _is_feed_source else _QUALITY_ENTROPY_THRESHOLD
+        )
+        if entropy < _effective_threshold:
             self._quality_state._quality_rejected_count += 1
+            _logger.debug(
+                "[QUALITY-GATE] rejected=low_entropy threshold=%.2f entropy=%.2f finding_id=%s is_feed=%s",
+                _effective_threshold,
+                entropy,
+                finding.finding_id[:16] if finding.finding_id else "",
+                _is_feed_source,
+            )
             return FindingQualityDecision(
                 accepted=False,
                 reason="low_entropy_rejected",
@@ -5653,9 +5772,15 @@ class DuckDBShadowStore:
                 dedup_cache_ref = dedup_cache
                 text_for_embed = url_from_provenance or (finding.payload_text or finding.query)
                 if text_for_embed and len(text_for_embed) >= 16:
-                    is_dup = dedup_cache_ref.check_and_cache(text_for_embed, threshold=0.95)
+                    # P1-2: Relaxed threshold for feed sources (0.85 vs 0.95)
+                    _semantic_thresh = 0.85 if _is_feed_source else 0.95
+                    is_dup = dedup_cache_ref.check_and_cache(text_for_embed, threshold=_semantic_thresh)
                     if is_dup:
                         self._quality_state._quality_duplicate_count += 1
+                        _logger.debug(
+                            "[QUALITY-GATE] rejected=semantic_duplicate finding_id=%s",
+                            finding.finding_id[:16] if finding.finding_id else "",
+                        )
                         return FindingQualityDecision(
                             accepted=False,
                             reason="semantic_duplicate",
@@ -5669,9 +5794,11 @@ class DuckDBShadowStore:
                 _logger.warning(f"Quality gate error (entropy path): {e}")
 
         # Only reach here if semantic dedup passed or was skipped (fail-open)
-        # Now safe to commit to LMDB + hot cache
+        # Now safe to commit to LMDB + hot cache (hot cache skipped for feed sources)
         self._store_persistent_dedup(fingerprint, finding.finding_id)
-        self._add_to_hot_cache(fingerprint, finding.finding_id)
+        # P0-2: feed bypass — hot cache write skipped for feed sources
+        if not _is_feed_source:
+            self._add_to_hot_cache(fingerprint, finding.finding_id)
 
 
         return FindingQualityDecision(
@@ -5744,9 +5871,24 @@ class DuckDBShadowStore:
         Each entry is FindingQualityDecision (rejected/duplicate) or ActivationResult (accepted).
         """
         if not findings:
+            # F275: Even with zero findings, ensure schema is initialized so the
+            # DB file is created/touched. This fixes the "DuckDB empty after sprint"
+            # bug where 0-findings sprints never touched the schema, leaving an
+            # empty .duckdb file (or :memory: with no writes).
+            # Schema init is cheap (CREATE TABLE IF NOT EXISTS × 10 tables).
+            await self.async_initialize_schema()
             return []
 
         n = len(findings)
+        # P1-2: Entry instrumentation — log at entry to diagnose silent-0-write path
+        _logger.debug(
+            "[INGEST-BATCH] entry len(findings)=%d  quality_state=_accepted:%d _rejected:%d _dup:%d _persist_dup:%d",
+            n,
+            self._quality_state._accepted_count,
+            self._quality_state._quality_rejected_count,
+            self._quality_state._quality_duplicate_count,
+            self._quality_state._persistent_duplicate_count,
+        )
         results: list[FindingQualityDecision | ActivationResult | None] = [None] * n
         accepted_findings: list[CanonicalFinding] = []
         accepted_indices: list[int] = []
@@ -5822,6 +5964,20 @@ class DuckDBShadowStore:
                 self._schedule_graph_update(accepted_findings)
 
         assert None not in results, "Internal error: 1:1 invariant violated"
+
+        # P1-2: Exit instrumentation — log len(results) + accepted count to diagnose
+        # entry > 0 but exit = 0 pattern (write path broken)
+        accepted_total = sum(
+            1 for r in results
+            if getattr(r, "accepted", None) is True
+            or (isinstance(r, dict) and r.get("accepted") is True)
+        )
+        _logger.debug(
+            "[INGEST-BATCH] exit len(results)=%d  accepted=%d  _accepted_count=%d",
+            len(results),
+            accepted_total,
+            self._quality_state._accepted_count,
+        )
         return results  # type: ignore[annotation-unchecked]
 
     # --------------------------------------------------------------------------

@@ -126,8 +126,8 @@ class TestF273BWindupRatio(unittest.TestCase):
 
     def test_windup_ratio_is_30_percent(self):
         cfg = _import_sprint_scheduler_config()(sprint_duration_s=300)
-        # 0.30 * 300 = 90, capped at 60 -> 60
-        self.assertEqual(cfg.effective_windup_lead_s, 60.0)
+        # P0-1: F288 cap removed. 0.30 * 300 = 90 (no cap, within [30, 180])
+        self.assertEqual(cfg.effective_windup_lead_s, 90.0)
 
     def test_windup_60s_uses_floor_30(self):
         """60s sprint: 0.30*60=18, clamped up to 30."""
@@ -139,20 +139,20 @@ class TestF273BWindupRatio(unittest.TestCase):
         cfg = _import_sprint_scheduler_config()(sprint_duration_s=120)
         self.assertEqual(cfg.effective_windup_lead_s, 36.0)
 
-    def test_windup_1800s_capped_at_120(self):
-        """1800s sprint: 0.30*1800=540, capped at 120."""
+    def test_windup_1800s_uses_ceiling_180(self):
+        """1800s sprint: 0.30*1800=540, clamped to 180 (max ceiling)."""
         cfg = _import_sprint_scheduler_config()(sprint_duration_s=1800)
-        self.assertEqual(cfg.effective_windup_lead_s, 120.0)
+        self.assertEqual(cfg.effective_windup_lead_s, 180.0)
 
-    def test_windup_600s_uses_ceiling_120(self):
-        """600s sprint: 0.30*600=180, capped at 120."""
+    def test_windup_600s_uses_ceiling_180(self):
+        """600s sprint: 0.30*600=180, clamped to 180 (max ceiling)."""
         cfg = _import_sprint_scheduler_config()(sprint_duration_s=600)
-        self.assertEqual(cfg.effective_windup_lead_s, 120.0)
+        self.assertEqual(cfg.effective_windup_lead_s, 180.0)
 
-    def test_windup_300s_capped_at_60(self):
-        """300s sprint: 0.30*300=90, capped at 60 (≤300s cap)."""
+    def test_windup_300s_uses_90_no_cap(self):
+        """P0-1: 300s sprint: 0.30*300=90 (F288 cap removed)."""
         cfg = _import_sprint_scheduler_config()(sprint_duration_s=300)
-        self.assertEqual(cfg.effective_windup_lead_s, 60.0)
+        self.assertEqual(cfg.effective_windup_lead_s, 90.0)
 
     def test_windup_aggressive_300s_uses_45(self):
         """Aggressive 300s: 0.15*300=45."""
@@ -160,7 +160,7 @@ class TestF273BWindupRatio(unittest.TestCase):
         self.assertEqual(cfg.effective_windup_lead_s, 45.0)
 
     def test_windup_aggressive_600s_uses_90(self):
-        """Aggressive 600s: 0.15*600=90 (< 120 cap)."""
+        """Aggressive 600s: 0.15*600=90 (within [30, 180] ceiling)."""
         cfg = _import_sprint_scheduler_config()(sprint_duration_s=600, aggressive_mode=True)
         self.assertEqual(cfg.effective_windup_lead_s, 90.0)
 
@@ -176,13 +176,13 @@ class TestF273BWindupRatio(unittest.TestCase):
 
     def test_windup_for_cycle_adaptive_bonus(self):
         """Slow cycles get +0.5s per s over 8s, capped at +30s."""
-        cfg = _import_sprint_scheduler_config()(sprint_duration_s=300)  # base=60
-        # cycle_ema=20s -> bonus = 0.5 * (20 - 8) = 6s -> total 66s
-        self.assertEqual(cfg.windup_for_cycle(20.0), 66.0)
-        # cycle_ema=68s -> bonus = 0.5 * 60 = 30 (capped) -> total 90s
-        self.assertEqual(cfg.windup_for_cycle(68.0), 90.0)
-        # cycle_ema=200s -> bonus capped at 30 -> total 90s
-        self.assertEqual(cfg.windup_for_cycle(200.0), 90.0)
+        cfg = _import_sprint_scheduler_config()(sprint_duration_s=300)  # P0-1: base=90 (no F288 cap)
+        # cycle_ema=20s -> bonus = 0.5 * (20 - 8) = 6s -> total 96s
+        self.assertEqual(cfg.windup_for_cycle(20.0), 96.0)
+        # cycle_ema=68s -> bonus = 0.5 * 60 = 30 (capped) -> total 120s
+        self.assertEqual(cfg.windup_for_cycle(68.0), 120.0)
+        # cycle_ema=200s -> bonus capped at 30 -> total 120s
+        self.assertEqual(cfg.windup_for_cycle(200.0), 120.0)
 
     def test_windup_for_cycle_floor_protects_short_sprints(self):
         """Short sprint (60s, base=30) keeps a usable active window under adapt."""
@@ -194,7 +194,8 @@ class TestF273BWindupRatio(unittest.TestCase):
     def test_windup_for_cycle_negative_ema_returns_base(self):
         """Negative cycle EMA (defensive) returns base — fail-safe."""
         cfg = _import_sprint_scheduler_config()(sprint_duration_s=300)
-        self.assertEqual(cfg.windup_for_cycle(-1.0), 60.0)
+        # P0-1: base=90 (no F288 cap), negative EMA returns base
+        self.assertEqual(cfg.windup_for_cycle(-1.0), 90.0)
 
 
 # ===========================================================================
@@ -515,14 +516,14 @@ class TestF273IBackwardCompat(unittest.TestCase):
     """
 
     def test_f278a_replaces_f273b_contract(self):
-        """F288: 0.30 ratio with [30, 60/120] cap -- standard mode."""
+        """P0-1: 0.30 ratio with [30, 180] ceiling -- F288 cap removed."""
         for dur, expected in [
             (60, 30.0),    # floor (0.30*60=18, clamped to 30)
             (100, 30.0),  # floor (0.30*100=30)
             (150, 45.0),  # 0.30 * 150
-            (300, 60.0),  # cap 60 (0.30*300=90, capped)
-            (600, 120.0), # cap 120 (0.30*600=180, capped)
-            (1800, 120.0), # cap 120
+            (300, 90.0),  # P0-1: no F288 cap (0.30*300=90)
+            (600, 180.0), # P0-1: no F288 cap (0.30*600=180, clamped to 180)
+            (1800, 180.0), # P0-1: no F288 cap (clamped to 180)
         ]:
             cfg = _import_sprint_scheduler_config()(sprint_duration_s=float(dur))
             self.assertEqual(
@@ -531,13 +532,13 @@ class TestF273IBackwardCompat(unittest.TestCase):
             )
 
     def test_f288_aggressive_mode_windup(self):
-        """F288: aggressive mode uses 0.15 ratio, ≤300s capped at 60s."""
+        """P0-1: aggressive mode uses 0.15 ratio, [30, 180] ceiling (F288 cap removed)."""
         for dur, expected in [
             (120, 30.0),   # floor (0.15*120=18, clamped to 30)
             (180, 30.0),   # floor (0.15*180=27, clamped to 30)
             (300, 45.0),   # 0.15 * 300
-            (600, 90.0),   # cap 120 but 0.15*600=90 < 120
-            (1800, 120.0),  # cap 120 (0.15*1800=270, capped)
+            (600, 90.0),   # 0.15*600=90 (< 180 ceiling)
+            (1800, 180.0),  # P0-1: no F288 cap (clamped to 180)
         ]:
             cfg = _import_sprint_scheduler_config()(
                 sprint_duration_s=float(dur), aggressive_mode=True

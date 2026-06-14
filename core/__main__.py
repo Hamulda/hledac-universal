@@ -56,7 +56,9 @@ import aiohttp
 # M1 8GB friendly.
 import msgspec
 import orjson
+from dotenv import load_dotenv
 
+from evidence_log import EvidenceLog
 from hledac.universal.core import memory_cycle as _memory_cycle  # F266-U2/U3
 from hledac.universal.core.resource_governor import sample_uma_status
 from hledac.universal.export.sprint_exporter import export_sprint
@@ -1530,15 +1532,29 @@ async def run_sprint(
     sprint_id = _make_sprint_id()
     _phase_times["WARMUP"] = time.monotonic()
 
-    # Initialize stores
+    # P0-2: Pipeline parallelization — start duckdb_store init in parallel with CoreML.
+    # duckdb_store.async_initialize() is I/O bound (ThreadPoolExecutor → DB file create + WAL).
+    # Starting it as background task overlaps with CoreML (~10-20s saved from critical path).
     store = DuckDBShadowStore()
-    await store.async_initialize()
+    store_init_task = asyncio.create_task(store.async_initialize())
 
     # CoreML sidecar — must be first, otherwise SemanticStore fails at init
     from utils.coreml import CoreMLServiceManager
     _coreml_manager = CoreMLServiceManager()
     await asyncio.to_thread(_coreml_manager.ensure_running)
     logger.info("[startup] CoreML sidecar ready on port 8765")
+
+    # P0-2: Await duckdb_store init before passing to scheduler.
+    # If init is not yet done, this awaits the remaining time.
+    # If already done (fast path), this is a no-op await.
+    try:
+        async with asyncio.timeout(60.0):
+            await store_init_task
+    except TimeoutError:
+        logger.warning("[P0-2] duckdb_store async_initialize timed out after 60s — continuing")
+    except asyncio.CancelledError:
+        # Store init was cancelled (e.g. sprint cancelled) — re-raise
+        raise
 
     # Scheduler config
     # F221: windup_lead_s param + active-budget guard for 'default' profile
@@ -1600,6 +1616,13 @@ async def run_sprint(
     # so _prewarm_hermes_for_sprint can override HLEDAC_ENABLE_HERMES_SYNTHESIS.
 
     scheduler = SprintScheduler(config, flags=flags)
+
+    # Sprint F11C: Wire EvidenceLog — fail-safe, M1 8GB safe
+    try:
+        _elog = EvidenceLog(run_id=sprint_id, enable_persist=True)
+        scheduler.inject_evidence_log(_elog)
+    except Exception as _elog_err:
+        logger.warning(f"[F11C] EvidenceLog wiring failed (non-fatal): {_elog_err}")
 
     # Sprint F153: Lifecycle receives explicit runtime params — duration authority propagated
     lifecycle = SprintLifecycleManager(
@@ -1834,16 +1857,27 @@ async def run_sprint(
             hits_per_source=result.hits_per_source,
         )
 
+        # Sprint F11C: EvidenceLog teardown — fail-safe
+        try:
+            if _elog is not None:
+                _elog.finalize()
+                _elog.freeze()
+        except Exception as _elog_teardown_err:
+            logger.warning(f"[F11C] EvidenceLog teardown failed (non-fatal): {_elog_teardown_err}")
+
         _phase_times["TEARDOWN"] = time.monotonic()
 
         # Sprint 8SA: Phase timing profile — uses _PHASE_ORDER from sprint_lifecycle
         phases = _PHASE_ORDER
         for i, ph in enumerate(phases):
-            if ph in _phase_times:
-                next_ph = phases[i + 1] if i + 1 < len(phases) else "END"
-                if next_ph in _phase_times:
-                    elapsed = _phase_times[next_ph] - _phase_times[ph]
-                    logger.info(f"[{sprint_id}] {ph}→{next_ph}: {elapsed:.1f}s")
+            ph_name = ph.name  # SprintPhase enum -> string key
+            if ph_name in _phase_times:
+                next_ph = phases[i + 1] if i + 1 < len(phases) else None
+                if next_ph is not None:
+                    next_name = next_ph.name
+                    if next_name in _phase_times:
+                        elapsed = _phase_times[next_name] - _phase_times[ph_name]
+                        logger.info(f"[{sprint_id}] {ph_name}→{next_name}: {elapsed:.1f}s")
 
         # --- Timing truth (Sprint F160E) -------------------------------------------
         # Canonical surfaces that distinguish:
@@ -2282,8 +2316,8 @@ async def run_sprint(
             "verdict": verdict,
             "next_hint": next_hint,
             "phase_timing": {
-                ph: round(_phase_times.get(ph, 0) - _phase_times.get("BOOT", 0), 2)
-                for ph in phases if ph in _phase_times
+                ph.name: round(_phase_times.get(ph.name, 0) - _phase_times.get("BOOT", 0), 2)
+                for ph in phases if ph.name in _phase_times
             },
             "runtime_truth": runtime_truth,
             # Sprint F150H: Scheduler intelligence propagated fail-soft (additive)
@@ -2410,20 +2444,19 @@ async def run_sprint(
                     "gnn_predicted_links": 0,
                     "top_graph_nodes": top_seed_nodes,
                     "phase_duration_seconds": {
-                        ph: round(_phase_times.get(ph, 0) - _phase_times.get("BOOT", 0), 2)
-                        for ph in phases if ph in _phase_times
+                        ph.name: round(_phase_times.get(ph.name, 0) - _phase_times.get("BOOT", 0), 2)
+                        for ph in phases if ph.name in _phase_times
                     },
                     # [F223D] runtime_accepted_findings — full truth from all lanes at windup time.
-                    # This is the authoritative runtime total and is used by product_value_summary
-                    # to populate runtime_accepted_findings. The normalized accepted_findings
-                    # in source_family_outcomes reflects per-lane breakdown; this field provides
-                    # the ground-truth total so PVS is never contradictory with runtime_truth.
-                    "runtime_accepted_findings": result.accepted_findings,
+                    # F265B fix: use result.accepted_findings + result.public_accepted_findings
+                    # since PUBLIC findings are tracked separately from FEED findings.
+                    "runtime_accepted_findings": (result.accepted_findings or 0) + (result.public_accepted_findings or 0),
                     # F220F: findings_per_minute — computed from all-lanes total / active window.
                     # PVS uses scorecard.findings_per_minute directly; adding here ensures PVS
                     # never shows 0.0 for a productive sprint where phase_timings.WINDUP is 0.0.
-                    "findings_per_minute": round(result.accepted_findings / (actual_duration / 60.0), 2)
-                    if actual_duration > 0 else 0.0,
+                    "findings_per_minute": round(
+                        ((result.accepted_findings or 0) + (result.public_accepted_findings or 0)) / (actual_duration / 60.0), 2
+                    ) if actual_duration > 0 else 0.0,
                     # Sprint F202B: Identity stitching sidecar counters
                     "identity_candidates_found": result.identity_candidates_found,
                     "identity_findings_produced": result.identity_findings_produced,
@@ -2432,8 +2465,8 @@ async def run_sprint(
                 },
                 top_nodes=top_seed_nodes,
                 phase_durations={
-                    ph: round(_phase_times.get(ph, 0) - _phase_times.get("BOOT", 0), 2)
-                    for ph in phases if ph in _phase_times
+                    ph.name: round(_phase_times.get(ph.name, 0) - _phase_times.get("BOOT", 0), 2)
+                    for ph in phases if ph.name in _phase_times
                 },
                 # Sprint F155: Canonical truth enrichment — additive, derived-only
                 runtime_truth=runtime_truth,
@@ -2739,6 +2772,8 @@ def main() -> None:
 
 
 def _main_dispatch() -> None:
+    # F265ENV: Load .env file before any ENV access
+    load_dotenv()
     parser = argparse.ArgumentParser(description="Hledac Sprint 8RA Runner")
     parser.add_argument("--sprint", action="store_true", help="Run in sprint mode")
     parser.add_argument("--query", type=str, default="OSINT default query")

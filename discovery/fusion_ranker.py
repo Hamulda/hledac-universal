@@ -79,10 +79,13 @@ def fuse_discovery_hits(
         )
 
     # Collect all hits with provenance
+    # F271D: attribute access through .result for CascadeResult wrapper
     all_hits: list[_FusableHit] = []
     for batch in provider_results:
-        if batch.hits:
-            all_hits.extend(_FusableHit(hit=h, batch=batch) for h in batch.hits)
+        _result = getattr(batch, 'result', batch)
+        _batch_hits = getattr(_result, 'hits', None) or getattr(batch, 'hits', ())
+        if _batch_hits:
+            all_hits.extend(_FusableHit(hit=h, batch=batch) for h in _batch_hits)
 
     if not all_hits:
         return _empty_fused_result(provider_results)
@@ -114,9 +117,12 @@ def fuse_discovery_hits(
 
     # F265C: Collect provider_status_debug from batches that had hits
     # so _extract_provider_surface knows which providers were selected
+    # F271D: attribute access through .result for CascadeResult wrapper
     psd: list[dict] = []
     for batch in provider_results:
-        if batch.hits and batch.provider_status_debug:
+        _result = getattr(batch, 'result', batch)
+        _batch_hits = getattr(_result, 'hits', None) or getattr(batch, 'hits', ())
+        if _batch_hits and batch.provider_status_debug:
             for entry in batch.provider_status_debug:
                 if isinstance(entry, dict):
                     psd.append({
@@ -323,10 +329,13 @@ def _tokenize(text: str) -> list[str]:
 
 def _combine_provider_chains(batches: list[DiscoveryBatchResult]) -> tuple[str, ...]:
     """Combine unique ordered provider chains from all batches."""
+    # F271D: attribute access through .result for CascadeResult wrapper
     seen: set[str] = set()
     result: list[str] = []
     for batch in batches:
-        for provider in batch.provider_chain or ():
+        _result = getattr(batch, 'result', batch)
+        _chain = getattr(_result, 'provider_chain', None) or getattr(batch, 'provider_chain', ()) or ()
+        for provider in _chain:
             if provider not in seen:
                 seen.add(provider)
                 result.append(provider)
@@ -335,7 +344,14 @@ def _combine_provider_chains(batches: list[DiscoveryBatchResult]) -> tuple[str, 
 
 def _infer_combined_source_family(batches: list[DiscoveryBatchResult]) -> str | None:
     """Infer a combined source_family label."""
-    families = {b.source_family for b in batches if b.source_family and b.hits}
+    # F271D: attribute access through .result for CascadeResult wrapper
+    families = set()
+    for b in batches:
+        _result = getattr(b, 'result', b)
+        _family = getattr(_result, 'source_family', None) or getattr(b, 'source_family', None)
+        _hits = getattr(_result, 'hits', None) or getattr(b, 'hits', ())
+        if _family and _hits:
+            families.add(_family)
     if not families:
         return None
     if len(families) == 1:
@@ -352,9 +368,12 @@ def _empty_fused_result(batches: list[DiscoveryBatchResult]) -> DiscoveryBatchRe
     # is None (e.g. cache-hit DDG results).
     psd: list[dict] = []
     for batch in batches:
-        if batch.provider_name:
+        # F271D: attribute access through .result for CascadeResult wrapper
+        _result = getattr(batch, 'result', batch)
+        _provider_name = getattr(_result, 'provider_name', None) or getattr(batch, 'provider_name', None)
+        if _provider_name:
             psd.append({
-                "provider": batch.provider_name,
+                "provider": _provider_name,
                 "state": "production",
                 "selected": True,
                 "reason": "fusion_zero_hits",

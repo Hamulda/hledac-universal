@@ -48,7 +48,11 @@ _DEFAULT_EPSILON = 0.1
 # QMIX training interval (every N sprints) — overridable via HLEDAC_RL_TRAIN_INTERVAL
 _QMIX_TRAIN_INTERVAL = int(os.environ.get("HLEDAC_RL_TRAIN_INTERVAL", "10"))
 # Replay buffer minimum size before training
-_MIN_REPLAY_SIZE = 64
+# F268FIX: Raised from 64 to 256 — QMIX needs sufficient samples for stable
+# value decomposition. With 5 agents and 11 actions, 64 samples gives
+# statistically insignificant gradient signal. 256 = 5x capacity of one
+# training batch, ensuring the mixer sees diverse (s,a,r,s') tuples.
+_MIN_REPLAY_SIZE = 256
 # Batch size for QMIX training
 _TRAIN_BATCH_SIZE = 32
 # F261QMIX: Memory pressure gate — skip train_step when system RAM exceeds this
@@ -59,6 +63,10 @@ _RAM_GATE_DISABLED = os.environ.get("HLEDAC_RL_SKIP_RAM_GATE", "0") == "1"
 _TRAIN_COOLDOWN_S = 1.0
 # F261QMIX: Maximum training steps per sprint (1 = once per interval sprint)
 _MAX_TRAIN_STEPS_PER_SPRINT = 1
+# F268FIX: Q-value cache TTL — avoids Metal kernel launch on every get_action()
+# during the cooldown window. Cache stores per-agent Q-values computed after
+# the last training step; invalidated after _Q_CACHE_TTL_S seconds.
+_Q_CACHE_TTL_S = 5.0
 
 # QMIX field names in policy state JSON
 _QMIX_FIELD = "qmix_weights"
@@ -160,7 +168,7 @@ class SprintPolicyManager:
         epsilon: float = _DEFAULT_EPSILON,
         exploration_interval: int = _EXPLORATION_INTERVAL,
         qmix_train_interval: int | None = None,
-        rl_train_mode: bool = False,
+        rl_train_mode: bool = os.environ.get("HLEDAC_RL_TRAIN") == "1",
     ) -> None:
         """
         Args:
@@ -170,7 +178,12 @@ class SprintPolicyManager:
             exploration_interval: Every N sprints is exploration (default 5)
             qmix_train_interval: Every N sprints run QMIX training step (default 10,
                 overridable via HLEDAC_RL_TRAIN_INTERVAL env var)
-            rl_train_mode: If True, QMIX training is active; if False, inference-only (default)
+            rl_train_mode: If True, QMIX training is active; if False, inference-only (default).
+                Can also be auto-enabled via HLEDAC_RL_TRAIN=auto warmup (see below).
+
+        Auto-warmup: When HLEDAC_RL_TRAIN=auto (or unset with replay >= 512 after sprint 10+),
+            training auto-enables after the first training interval check passes.
+            This prevents the "zero learning" state where rl_train_mode=False forever.
         """
         self._enabled = enabled
         # F261OPT: distinguish "explicit path" (continue session) from "default path"
@@ -199,6 +212,13 @@ class SprintPolicyManager:
         self._agents: Any = None
         # F261QMIX: reward_history accessible even without inject_scheduler (used in update() and get_reward_stats())
         self._reward_history: list[float] = []
+        # F265LANE: lane performance history for get_lane_config()
+        self._lane_performance: dict[str, dict[str, float]] = {}
+        # F268FIX: Q-value cache — populated after each training step, consumed in
+        # get_action() to avoid Metal kernel launch overhead during cooldown window.
+        # Structure: {agent_id: float(q_value)} — argmax over these gives best_action.
+        self._q_value_cache: dict[str, float] = {}
+        self._q_cache_timestamp: float = 0.0
         # F261QMIX: load state from disk eagerly so _state is populated even without inject_scheduler
         # F261OPT: disabled managers must NOT read persisted state — invariant is
         # "no effect on sprint behavior", and a stale loaded seq would leak through.
@@ -384,22 +404,25 @@ class SprintPolicyManager:
             from rl.replay_buffer import MARLReplayBuffer
             from rl.state_extractor import StateExtractor
 
-            self._state_extractor = StateExtractor(state_dim=12)
+            # F265LANE: state_dim=27 for lane-aware features (was 12)
+            _STATE_DIM = 27
+
+            self._state_extractor = StateExtractor(state_dim=_STATE_DIM)
 
             self._replay_buffer = MARLReplayBuffer(
                 capacity=50000,
-                state_dim=12,
+                state_dim=_STATE_DIM,
                 n_agents=5,
             )
 
             # 5 agents: one per action type
             self._agents = {
-                str(i): QMIXAgent(agent_id=str(i), state_dim=12, hidden_dim=64)
+                str(i): QMIXAgent(agent_id=str(i), state_dim=_STATE_DIM, hidden_dim=64)
                 for i in range(5)
             }
 
-            mixer = QMixer(n_agents=5, state_dim=12, embedding_dim=32)
-            target_mixer = QMixer(n_agents=5, state_dim=12, embedding_dim=32)
+            mixer = QMixer(n_agents=5, state_dim=_STATE_DIM, embedding_dim=32)
+            target_mixer = QMixer(n_agents=5, state_dim=_STATE_DIM, embedding_dim=32)
             self._qmix_trainer = QMIXJointTrainer(
                 agents=self._agents,
                 mixer=mixer,
@@ -687,6 +710,40 @@ class SprintPolicyManager:
         except Exception:
             return 0.0
 
+    def _update_lane_performance(self, result: Any) -> None:
+        """
+        F265LANE: Extract lane performance from acquisition_lane_outcomes and update history.
+
+        Populates self._lane_performance dict:
+            {lane_name: {"yield": float, "quality": float, "count": int, "last_sprint": int}}
+        """
+        try:
+            outcomes = getattr(result, 'acquisition_lane_outcomes', None) or ()
+            for outcome in outcomes:
+                lane_name = getattr(outcome, 'lane', None) or ""
+                if not lane_name or lane_name not in ("PUBLIC", "CT", "WAYBACK", "DOH", "PASSIVE_DNS"):
+                    continue
+
+                accepted = getattr(outcome, 'accepted_findings', 0) or 0
+                rejected = getattr(outcome, 'rejected_count', 0) or 0
+                duration = getattr(outcome, 'duration_s', 0.0) or 0.0
+
+                # Yield: findings per second
+                lane_yield = accepted / max(duration, 0.001)
+                # Quality: acceptance ratio
+                lane_quality = accepted / max(accepted + rejected, 1)
+
+                if lane_name not in self._lane_performance:
+                    self._lane_performance[lane_name] = {"yield": 0.0, "quality": 0.0, "count": 0, "last_sprint": 0}
+
+                perf = self._lane_performance[lane_name]
+                perf["yield"] = (perf["yield"] * perf["count"] + lane_yield) / (perf["count"] + 1)
+                perf["quality"] = (perf["quality"] * perf["count"] + lane_quality) / (perf["count"] + 1)
+                perf["count"] += 1
+                perf["last_sprint"] = self._state.sprint_sequence_number
+        except Exception:
+            pass
+
     # ── Public API ──────────────────────────────────────────────────────────
 
     def update(self, result: SprintSchedulerResult) -> None:
@@ -723,6 +780,9 @@ class SprintPolicyManager:
             _eps_hist = _eps_hist[-100:]
         self._state.epsilon_history = _eps_hist
         reward = self._compute_reward(result)
+
+        # F265LANE: Extract lane performance from acquisition_lane_outcomes
+        self._update_lane_performance(result)
 
         # Accumulate reward stats
         self._state.total_reward += reward
@@ -767,6 +827,31 @@ class SprintPolicyManager:
                 )
             except Exception as e:
                 log.debug("[SprintPolicyManager] replay buffer push failed: %s", e)
+
+        # ── Auto-warmup: enable training when replay is rich enough ───────────────
+        # F268WARMUP: If rl_train_mode was left as default (False) and the env var
+        # is not explicitly "0", auto-enable training once replay buffer is deep
+        # enough and we have completed enough sprints. This prevents the "zero
+        # learning" state where rl_train_mode=False forever without any signal.
+        _env_train = os.environ.get("HLEDAC_RL_TRAIN", "")
+        if (
+            not self._rl_train_mode
+            and _env_train != "0"
+            and self._replay_buffer is not None
+            and self._state.sprint_sequence_number > 0
+            and self._state.sprint_sequence_number % self._qmix_train_interval == 0
+            and self._replay_buffer.size >= _MIN_REPLAY_SIZE
+            and self._qmix_trainer is not None
+        ):
+            # Log the transition so operators can see it happened
+            log.info(
+                "[SprintPolicyManager] AUTO-WARMUP: enabling rl_train_mode=True "
+                "(sprint=%d, replay=%d, min=%d)",
+                self._state.sprint_sequence_number,
+                self._replay_buffer.size,
+                _MIN_REPLAY_SIZE,
+            )
+            self._rl_train_mode = True
 
         # ── QMIX training step ────────────────────────────────────────────────
         if (
@@ -949,6 +1034,26 @@ class SprintPolicyManager:
             self._last_train_at = now
             self._train_steps_this_sprint += 1
 
+            # F268FIX: Populate Q-value cache after successful training step.
+            # Stores per-agent Q-values computed on the training batch states.
+            # get_action() uses this cache during _Q_CACHE_TTL_S window instead of
+            # running Metal inference — eliminates ~1-2ms kernel launch overhead.
+            try:
+                import time as _time_module
+
+                import mlx.core as mx
+                cache_states = batch.get("states")
+                if cache_states is not None and self._agents is not None:
+                    self._q_value_cache = {}
+                    for _aid, _agent in self._agents.items():
+                        _q_vals = _agent.q_net(cache_states)  # (batch, action_dim)
+                        _mean_q = float(mx.mean(_q_vals).item())
+                        self._q_value_cache[_aid] = _mean_q
+                    self._q_cache_timestamp = _time_module.monotonic()
+            except Exception:
+                self._q_value_cache = {}
+                self._q_cache_timestamp = 0.0
+
             # GHOST_INVARIANTS I11: mx.eval([]) BEFORE mx.metal.clear_cache()
             try:
                 import mlx.core as mx
@@ -1019,6 +1124,9 @@ class SprintPolicyManager:
         Return the RL action hint for the next sprint.
 
         Only valid to call when enabled; otherwise returns ACTION_CONTINUE.
+
+        F265LANE: Extended action space includes lane selection (actions 10-15).
+        QMIX agents 0-4 map to base actions, agents 5-10 map to lane combos.
         """
         if not self._enabled:
             from rl.actions import ACTION_CONTINUE
@@ -1030,24 +1138,61 @@ class SprintPolicyManager:
 
         # QMIX inference: if weights loaded and agents available, use argmax Q
         # Note: requires a result to extract state from — fallback to epsilon-greedy
+        # F268FIX: Q-value cache — use cached per-agent mean-Q values (populated
+        # after training step) when within _Q_CACHE_TTL_S window. Falls back to
+        # live Metal inference if cache is stale or empty.
         if self._qmix_trainer is not None and self._agents is not None and self._state_extractor is not None:
             try:
                 # Try to get state from attached scheduler's current result
                 if hasattr(self, '_scheduler') and self._scheduler is not None:
                     result = getattr(self._scheduler, '_result', None)
                     if result is not None:
-                        state = self._state_extractor.extract(result)
-                        best_action = 0
-                        best_q = float("-inf")
-                        for agent_id, agent in self._agents.items():
-                            q_val = float(agent.q_net(state)[0].item())
-                            if q_val > best_q:
-                                best_q = q_val
-                                best_action = int(agent_id)
-                        # Map to action constants
-                        from rl.actions import ACTION_BRANCH, ACTION_CONTINUE, ACTION_FETCH_MORE, ACTION_YIELD
-                        ACTION_MAP = {0: ACTION_CONTINUE, 1: ACTION_FETCH_MORE, 2: ACTION_BRANCH, 3: ACTION_YIELD, 4: ACTION_CONTINUE}  # noqa: E501
-                        return ACTION_MAP.get(best_action, ACTION_CONTINUE)
+                        # F268FIX: Check cache freshness first — ~0.01ms vs ~1-2ms Metal
+                        import time as _time_mod
+                        _cache_valid = (
+                            self._q_value_cache
+                            and (self._q_cache_timestamp > 0)
+                            and ((_time_mod.monotonic() - self._q_cache_timestamp) < _Q_CACHE_TTL_S)
+                        )
+                        if _cache_valid:
+                            # Use cached Q-values — argmax over per-agent mean-Q
+                            best_action = 0
+                            best_q = float("-inf")
+                            for _aid, _q in self._q_value_cache.items():
+                                if _q > best_q:
+                                    best_q = _q
+                                    best_action = int(_aid)
+                        else:
+                            # Live Metal inference — extract state and forward all agents
+                            state = self._state_extractor.extract(result)
+                            best_action = 0
+                            best_q = float("-inf")
+                            for agent_id, agent in self._agents.items():
+                                q_val = float(agent.q_net(state)[0].item())
+                                if q_val > best_q:
+                                    best_q = q_val
+                                    best_action = int(agent_id)
+                        # F265LANE: Map to action constants (base actions 0-4, lane combos 10-15)
+                        from rl.actions import (
+                            ACTION_BRANCH,
+                            ACTION_CONTINUE,
+                            ACTION_FETCH_MORE,
+                            ACTION_YIELD,
+                            action_from_lane_combo,
+                        )
+                        # Agents 0-4: base actions; Agents 5-10: lane selection combos
+                        if best_action < 5:
+                            ACTION_MAP = {
+                                0: ACTION_CONTINUE, 1: ACTION_FETCH_MORE,
+                                2: ACTION_BRANCH, 3: ACTION_YIELD, 4: ACTION_CONTINUE
+                            }
+                            return ACTION_MAP.get(best_action, ACTION_CONTINUE)
+                        else:
+                            # Lane selection: agent 5 → combo 0 (action 10), etc.
+                            combo_idx = best_action - 5
+                            if 0 <= combo_idx < 6:
+                                return action_from_lane_combo(combo_idx)
+                            return ACTION_CONTINUE
             except Exception:
                 pass
 
@@ -1139,6 +1284,20 @@ class SprintPolicyManager:
             )
         except Exception as e:
             log.debug("[SprintPolicyManager] update_with_quality_decisions failed: %s", e)
+
+    def get_src_quality_weights(self) -> dict[str, float]:
+        """
+        F228A: Return per-source quality weights for acquisition plan weighting.
+
+        Returns source_family → weight mapping (default 1.0, clamped [0.3, 2.5]).
+        Weights are adapted by update_with_quality_decisions() based on
+        accepted/total ratio per source over sprints.
+
+        Fail-soft: returns empty dict when no weights accumulated yet.
+        """
+        if not hasattr(self, "_src_quality_weights"):
+            return {}
+        return dict(self._src_quality_weights)
 
     def get_qmix_stats(self) -> dict[str, Any]:
         """Return QMIX training stats for observability."""
@@ -1250,6 +1409,45 @@ class SprintPolicyManager:
             "last_10": last_10,
             "count": len(self._reward_history),
         }
+
+    def get_lane_config(self) -> dict[str, dict[str, float]]:
+        """
+        F265LANE: Return adaptive lane configuration from RL policy.
+
+        Returns a dict mapping lane name → {timeout, weight} config.
+        Called by SprintScheduler when building acquisition plan.
+
+        Fail-soft: returns empty dict when disabled or no lane history.
+        """
+        if not self._enabled:
+            return {}
+
+        # F265LANE: Compute lane config from lane performance history
+        # Default timeouts and weights — RL will adapt these over time
+        default_config = {
+            "PUBLIC": {"timeout": 30.0, "weight": 1.0},
+            "CT": {"timeout": 45.0, "weight": 1.0},
+            "WAYBACK": {"timeout": 20.0, "weight": 0.8},
+            "DOH": {"timeout": 15.0, "weight": 0.5},
+            "PASSIVE_DNS": {"timeout": 20.0, "weight": 0.7},
+        }
+
+        # If we have lane performance data, adapt based on yield/quality
+        if hasattr(self, '_lane_performance') and self._lane_performance:
+            for lane, perf in self._lane_performance.items():
+                if lane in default_config:
+                    # Boost weight for high-yield lanes, reduce for low-yield
+                    yield_val = perf.get('yield', 0.0)
+                    if yield_val > 0.5:  # High yield
+                        default_config[lane]["weight"] = min(
+                            default_config[lane].get("weight", 1.0) * 1.2, 1.5
+                        )
+                    elif yield_val < 0.1:  # Low yield
+                        default_config[lane]["weight"] = max(
+                            default_config[lane].get("weight", 1.0) * 0.8, 0.3
+                        )
+
+        return default_config
 
     def attach_scheduler(self, scheduler) -> None:
         """Attach scheduler reference for state extraction in get_action()."""

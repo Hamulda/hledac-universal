@@ -29,6 +29,8 @@ import traceback
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
+from dotenv import load_dotenv
+
 # TYPE_CHECKING block: imports only for static analysis (ruff, mypy)
 # At runtime these are strings due to `from __future__ import annotations`
 if TYPE_CHECKING:
@@ -3177,6 +3179,9 @@ def main() -> None:
     2. Async runtime via asyncio.run()
     3. AsyncExitStack-backed teardown happens inside async context
     """
+    # F265ENV: Load .env file before any ENV access
+    load_dotenv()
+
     # Configure basic logging
     logging.basicConfig(
         level=logging.INFO,

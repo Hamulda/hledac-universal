@@ -28,7 +28,6 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-import lmdb
 import numpy as np
 import orjson
 
@@ -655,9 +654,10 @@ class LanceDBIdentityStore:
     def _init_cache(self) -> None:
         """Initialize LMDB cache for embeddings with float16 quantization."""
         try:
+            from hledac.universal.knowledge.lmdb_boot_guard import open_lmdb_with_guard
             cache_path = Path(self.uri).parent / 'embedding_cache'
             cache_path.mkdir(parents=True, exist_ok=True)
-            self._cache_env = lmdb.open(str(cache_path), map_size=self._MAX_CACHE_SIZE)
+            self._cache_env = open_lmdb_with_guard(cache_path, map_size=self._MAX_CACHE_SIZE)
             # F273F: tell Darwin not to cache LMDB mmap pages — they compete with Metal budget
             madv_free_reusable_on_path(cache_path)
             apply_nocache_to_path(cache_path)

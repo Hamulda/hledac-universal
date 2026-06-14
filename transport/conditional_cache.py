@@ -278,6 +278,8 @@ class _Backend:
                 logger.debug("conditional_cache: mkdir %s failed: %s", _LMDB_DIR, e)
                 return
             try:
+                from hledac.universal.knowledge.lmdb_boot_guard import cleanup_stale_lmdb_lock
+                cleanup_stale_lmdb_lock(_LMDB_DIR)
                 self._lmdb_env = lmdb.open(
                     str(_LMDB_DIR / _LMDB_DB),
                     map_size=_LMDB_MAP_SIZE,

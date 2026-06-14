@@ -75,6 +75,11 @@ class SprintLifecycleManager:
     _abort_reason: str = field(default="", repr=False)
     _last_checkpoint_at: float | None = field(default=None, repr=False)
 
+    # F288: Pre-loop cost measured at runtime — subtracted from windup_lead_s
+    # so should_enter_windup() does not fire prematurely when init is slow.
+    # Set by scheduler after first_cycle_started is captured.
+    pre_loop_cost_s: float = 0.0
+
     # ── start ────────────────────────────────────────────────────────────────
 
     def start(self, now_monotonic: float | None = None) -> None:
@@ -137,10 +142,20 @@ class SprintLifecycleManager:
     # ── should_enter_windup ───────────────────────────────────────────────────
 
     def should_enter_windup(self, now_monotonic: float | None = None) -> bool:
-        """True when remaining time is at or below the windup lead threshold."""
+        """
+        True when remaining time is at or below the windup lead threshold.
+
+
+        F288: When pre_loop_cost_s is set (measured at runtime), the effective
+        windup trigger is raised to max(windup_lead_s, pre_loop_cost_s). This
+        prevents windup from firing before at least one acquisition cycle has
+        had a chance to run — even when pre_loop cost exceeded windup_lead_s.
+        """
         now = _now(now_monotonic)
         remaining = self._remaining_time_unlocked(now)
-        return remaining <= self.windup_lead_s
+        # F288: Adaptive trigger — don't enter windup before pre_loop cost is paid
+        _effective_trigger = max(self.windup_lead_s, self.pre_loop_cost_s)
+        return remaining <= _effective_trigger
 
     # ── request_abort ───────────────────────────────────────────────────────
 

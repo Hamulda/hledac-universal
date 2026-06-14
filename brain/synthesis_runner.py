@@ -28,7 +28,6 @@ import logging
 import re
 import time
 import urllib.request
-from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -452,7 +451,8 @@ class SynthesisRunner:
                  "_lifecycle_gate_source", "_lifecycle_gate_mode", "_lifecycle_adapter",
                  "_stix_graph", "_last_synthesis_outcome",
                  "_compression_threshold", "_compressor",
-                 "_hypothesis_engine")
+                 "_hypothesis_engine",
+                 "_hermes_engine")  # P2-1: cached Hermes3Engine for continuous batching
 
     def __init__(self, lifecycle: ModelLifecycle) -> None:
         self._lifecycle = lifecycle
@@ -493,6 +493,9 @@ class SynthesisRunner:
         # F214: HypothesisEngine — optional synthesis step
         self._hypothesis_engine: Any | None = None
 
+        # P2-1: Hermes3Engine for continuous batching via MLXBatchedExecutor
+        self._hermes_engine: Any | None = None
+
     def inject_graph(self, graph: Any) -> None:
         """Inject IOCGraph instance from 8QA for STIX context injection."""
         self._ioc_graph = graph
@@ -524,6 +527,30 @@ class SynthesisRunner:
         Also accepts direct runtime SprintLifecycleManager instances.
         """
         self._lifecycle_adapter = adapter
+
+    # ------------------------------------------------------------------
+    # P2-1: Hermes3Engine lazy init for continuous batching
+    # ------------------------------------------------------------------
+
+    def _get_hermes_engine(self) -> Any:
+        """
+        P2-1: Get or create Hermes3Engine instance for continuous batching.
+
+        Uses MLXBatchedExecutor (P0-2) for adaptive batching + MLXWorkerThread (P0-3)
+        for non-blocking inference. Lazy init — first call triggers model load.
+
+        Returns:
+            DeepHermes3Engine instance (always-on, fail-soft on errors)
+        """
+        if self._hermes_engine is not None:
+            return self._hermes_engine
+        try:
+            from .deephermes3_engine import DeepHermes3Engine
+            self._hermes_engine = DeepHermes3Engine()
+            logger.debug("[P2-1] Hermes3Engine created for continuous batching")
+        except Exception as e:
+            logger.warning("[P2-1] Hermes3Engine init failed: %s", e)
+        return self._hermes_engine
 
     # ------------------------------------------------------------------
     # F214: HypothesisEngine injection
@@ -1455,63 +1482,37 @@ class SynthesisRunner:
         tokenizer=None,
     ) -> list[str]:
         """
-        Decompose query into 3-5 sub-queries. Max 80 tokens.
+        P2-1: Decompose query into 3-5 sub-queries. Max 80 tokens.
 
-        Identity fallback if model is None.
-        Uses CPU_EXECUTOR for sync MLX inference.
+        Routes through Hermes3Engine.generate() → MLXBatchedExecutor (P0-2)
+        for continuous batching. Falls back to identity if Hermes unavailable.
         """
-        if model is None or tokenizer is None:
-            logger.debug("decompose_query: no model → identity fallback")
-            return [query]
-
-        PROMPT = (  # noqa: N806
-            "You are a security OSINT assistant. "
-            f"Generate 3-5 specific search queries for: {query}\n"
-            "Output ONLY a JSON array of strings, no explanation.\n"
-            'Example: ["LockBit IOCs 2026","LockBit C2 infra","LockBit victims list"]'
-        )
-
-        def _gen() -> list[str]:
+        # P2-1: Try Hermes3Engine with continuous batching first
+        hermes = self._get_hermes_engine()
+        if hermes is not None:
             try:
+                PROMPT = (
+                    "You are a security OSINT assistant. "
+                    f"Generate 3-5 specific search queries for: {query}\n"
+                    "Output ONLY a JSON array of strings, no explanation.\n"
+                    'Example: ["LockBit IOCs 2026","LockBit C2 infra","LockBit victims list"]'
+                )
+                out = await hermes.generate(PROMPT, max_tokens=80, thinking=False)
                 import json
                 import re
-
-                import mlx_lm
-                msgs = [{"role": "user", "content": PROMPT}]
-                prompt_str = tokenizer.apply_chat_template(
-                    msgs, tokenize=False, add_generation_prompt=True,
-                )
-                out = mlx_lm.generate(
-                    model, tokenizer,
-                    prompt=prompt_str,
-                    max_tokens=80,
-                    verbose=False,
-                )
                 m = re.search(r'\[.*?\]', out, re.DOTALL)
                 if m:
                     parsed = json.loads(m.group())
                     if isinstance(parsed, list) and parsed:
-                        return [str(s) for s in parsed[:5]]
+                        result = [str(s) for s in parsed[:5]]
+                        logger.info(f"decompose_query '{query[:40]}' → {len(result)} sub-queries [batched]")
+                        return result
             except Exception as e:
-                logger.warning(f"decompose_query generate: {e}")
-            finally:
-                # Sprint 8UD B.2: Clear MLX Metal cache after inference
-                try:
-                    import mlx.core as _mx
-                    if _mx.metal.is_available():
-                        _mx.metal.clear_cache()
-                except Exception:
-                    pass  # Non-fatal
-            return [query]
+                logger.warning(f"decompose_query hermes failed: {e} — fallback to identity")
 
-        loop = asyncio.get_running_loop()
-        _CPU_EXECUTOR = ThreadPoolExecutor(max_workers=1)  # noqa: N806
-        try:
-            result = await loop.run_in_executor(_CPU_EXECUTOR, _gen)
-        finally:
-            _CPU_EXECUTOR.shutdown(wait=False)
-        logger.info(f"decompose_query '{query[:40]}' → {len(result)} sub-queries")
-        return result
+        # Fallback: identity (no model available)
+        logger.debug("decompose_query: no hermes → identity fallback")
+        return [query]
 
     # ── Sprint 8TB: Ghost Global Context ─────────────────────────────────
 

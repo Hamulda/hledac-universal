@@ -268,12 +268,12 @@ class TestMLXBatchedExecutorExecute(unittest.TestCase):
         self.assertIsInstance(executor._mlx_lock, asyncio.Lock)
 
     def test_bm6_max_batch_size_bounded(self):
-        """B.M6: max_batch_size = 6 for M1 8GB safety."""
-        self.assertEqual(MAX_BATCH_SIZE_M1, 6)
+        """B.M6: max_batch_size = 8 for M1 8GB safety."""
+        self.assertEqual(MAX_BATCH_SIZE_M1, 8)
 
     def test_memory_guard_threshold(self):
-        """B.M5: threshold = 85% — verify constant value."""
-        self.assertEqual(MEMORY_GUARD_PCT, 85.0)
+        """B.M5: threshold = 80% — verify constant value."""
+        self.assertEqual(MEMORY_GUARD_PCT, 80.0)
 
 
 class TestMLXBatchedExecutorShutdown(unittest.TestCase):

@@ -29,7 +29,10 @@ from hledac.universal.runtime.sprint_scheduler import (  # type: ignore
 
 
 class TestF272AWindupAmendment:
-    """F288: Floor 30s, cap 60s/120s, formula 30% (standard) / 15% (aggressive)."""
+    """P0-1: Floor 30s, ceiling 180s, formula 30% (standard) / 15% (aggressive).
+
+    F288 cap (60s for ≤300s, 120s for >300s) removed — no longer needed.
+    """
 
     def test_60s_sprint_uses_30s_floor(self):
         """60s duration: 0.30*60=18, clamped to 30s floor."""
@@ -41,20 +44,20 @@ class TestF272AWindupAmendment:
         cfg = SprintSchedulerConfig(sprint_duration_s=150.0)
         assert cfg.effective_windup_lead_s == 45.0
 
-    def test_300s_sprint_capped_at_60s(self):
-        """300s * 0.30 = 90s, capped at 60s (≤300s cap)."""
+    def test_300s_sprint_uses_90s_no_cap(self):
+        """P0-1: 300s * 0.30 = 90s (F288 cap removed)."""
         cfg = SprintSchedulerConfig(sprint_duration_s=300.0)
-        assert cfg.effective_windup_lead_s == 60.0
+        assert cfg.effective_windup_lead_s == 90.0
 
-    def test_600s_sprint_caps_at_120s(self):
-        """600s * 0.30 = 180s, capped at 120s (>300s cap)."""
+    def test_600s_sprint_uses_180s_ceiling(self):
+        """P0-1: 600s * 0.30 = 180s, clamped to 180s ceiling."""
         cfg = SprintSchedulerConfig(sprint_duration_s=600.0)
-        assert cfg.effective_windup_lead_s == 120.0
+        assert cfg.effective_windup_lead_s == 180.0
 
-    def test_1800s_sprint_caps_at_120s(self):
-        """1800s * 0.30 = 540s, capped at 120s."""
+    def test_1800s_sprint_uses_180s_ceiling(self):
+        """P0-1: 1800s * 0.30 = 540s, clamped to 180s ceiling."""
         cfg = SprintSchedulerConfig(sprint_duration_s=1800.0)
-        assert cfg.effective_windup_lead_s == 120.0
+        assert cfg.effective_windup_lead_s == 180.0
 
     def test_active_window_preserved_for_short_sprints(self):
         """60s sprint: 30s windup → 30s active (≥30s floor, F221-ABORT compatible)."""

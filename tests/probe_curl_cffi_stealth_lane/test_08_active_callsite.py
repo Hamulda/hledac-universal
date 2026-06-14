@@ -21,9 +21,9 @@ def test_fetch_via_curl_cffi_has_active_callsite_in_public_fetcher():
     src = pf_path.read_text()
 
     # Must be imported at top level
-    assert "from hledac.universal.transport.curl_cffi_fetch import fetch_via_curl_cffi" in src, \
+    assert "from hledac.universal.transport.curl_cffi_fetch import fetch_via_curl_cffi_cached" in src, \
         "fetch_via_curl_cffi must be imported at top level in public_fetcher.py"
-    assert "fetch_via_curl_cffi" in src, \
+    assert "fetch_via_curl_cffi_cached" in src, \
         "fetch_via_curl_cffi must appear in public_fetcher.py"
 
     # Must be called (not just imported)
@@ -32,12 +32,12 @@ def test_fetch_via_curl_cffi_has_active_callsite_in_public_fetcher():
     calls = []
     for node in ast.walk(tree):
         if isinstance(node, ast.Call):
-            if isinstance(node.func, ast.Name) and node.func.id == "fetch_via_curl_cffi":
+            if isinstance(node.func, ast.Name) and node.func.id == "fetch_via_curl_cffi_cached":
                 calls.append(node.func.id)
-            elif isinstance(node.func, ast.Attribute) and node.func.attr == "fetch_via_curl_cffi":
+            elif isinstance(node.func, ast.Attribute) and node.func.attr == "fetch_via_curl_cffi_cached":
                 calls.append(f"attr.{node.func.attr}")
 
-    assert "fetch_via_curl_cffi" in calls, (
+    assert "fetch_via_curl_cffi_cached" in calls, (
         f"fetch_via_curl_cffi must be called in public_fetcher.py, "
         f"found nodes: {calls}"
     )

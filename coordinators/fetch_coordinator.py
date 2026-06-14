@@ -24,8 +24,6 @@ import time
 from collections import deque
 from collections.abc import Callable
 
-import lmdb
-
 # Sprint T1: OpenTelemetry instrumentation (always-on, M1 8GB safe, fail-soft)
 try:
     from otel import (  # type: ignore
@@ -640,8 +638,9 @@ class FetchCoordinator(UniversalCoordinator):
         # F272: fail-soft LMDB init — on open error, session persistence disabled
         # but fetch coordinator stays functional (health check uses _session_manager)
         try:
-            self._session_lmdb_env = lmdb.open(
-                str(lmdb_path),
+            from hledac.universal.knowledge.lmdb_boot_guard import open_lmdb_with_guard
+            self._session_lmdb_env = open_lmdb_with_guard(
+                lmdb_path,
                 map_size=10*1024*1024,
                 readahead=False,
                 sync=False,
@@ -1105,30 +1104,56 @@ class FetchCoordinator(UniversalCoordinator):
             return None
 
     async def _fetch_with_curl(self, url: str, proxy: str | None = None):
-        """Fetch URL with curl_cffi (fallback)."""
-        # Sprint F3/F8/F9: also populates status_code/content_type/headers for corpus ingest
+        """Fetch URL via curl_cffi with HTTP/3 Alt-Svc support (F265C).
+
+        Replaced StealthWebScraper (aiohttp) with public_fetcher's
+        fetch_via_curl_cffi_cached() which has full H3 Alt-Svc LRU priming,
+        conditional cache (ETag/Last-Modified), and prewarm pool support.
+        """
         try:
-            from ..intelligence.stealth_crawler import StealthWebScraper
-            scraper = StealthWebScraper()
-            if not await scraper.initialize():
-                return {'url': url, 'content': b'', 'error': 'scraper_init_failed'}
-            result = await scraper.scrape(url)
-            if result.success:
-                return {
-                    'url': url,
-                    'final_url': url,
-                    'content': _ZERO_ATTR_ENGINE.strip_metadata(
-                        (result.content or '').encode('utf-8', errors='replace'),
-                        (result.headers or {}).get('content-type', 'text/html'),
-                    ),
-                    'status_code': result.status_code or 200,
-                    'content_type': (result.headers or {}).get('content-type', 'text/html'),
-                    # Sprint F214: rotate HTTP headers for zero-attribution
-                    'headers': _ZERO_ATTR_ENGINE.fingerprint_rotate_headers(result.headers or {}),
-                    'js_rendered': False,
-                    'success': True,
-                }
-            return {'url': url, 'content': b'', 'error': f'scrape_failed status={result.status_code}'}
+            from hledac.universal.fetching.public_fetcher import (
+                _altsvc_extract_host,
+                _altsvc_http_version_for,
+                _altsvc_record_from_result,
+                fetch_via_curl_cffi_cached,
+            )
+            # F265C: Probe Alt-Svc speculatively (fire-and-forget, primes H3 LRU)
+            try:
+                from hledac.universal.transport.http3_lane import probe_altsvc_speculative
+                probe_altsvc_speculative(url)
+            except Exception:
+                pass
+            # Determine HTTP/3 version hint from Alt-Svc cache
+            _curl_http_version = _altsvc_http_version_for(_altsvc_extract_host(url))
+            _curl_result = await fetch_via_curl_cffi_cached(
+                url=url,
+                headers=None,
+                timeout_s=30.0,
+                max_bytes=10 * 1024 * 1024,
+                profile="chrome110",
+                http_version=_curl_http_version,
+                _pre_probe=False,
+            )
+            # Record Alt-Svc h3 advertisement for future fetches
+            _altsvc_record_from_result(url, _curl_result.get("headers"))
+            _curl_bytes = _curl_result.get("content", b"")
+            _curl_error = _curl_result.get("error", None)
+            if _curl_bytes:
+                _curl_text = _curl_bytes.decode("utf-8", errors="replace")
+            else:
+                _curl_text = None
+            return {
+                'url': url,
+                'final_url': _curl_result.get("final_url", url),
+                'content': _curl_bytes,
+                'text': _curl_text,
+                'status_code': _curl_result.get("status_code", 0),
+                'content_type': _curl_result.get("content_type", ""),
+                'headers': _curl_result.get("headers", {}),
+                'js_rendered': False,
+                'success': _curl_error is None,
+                'error': _curl_error,
+            }
         except TimeoutError:
             logger.debug(f"[CURL] Timeout for {url}")
             self._aimd_release_failure()

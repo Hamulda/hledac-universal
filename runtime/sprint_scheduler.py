@@ -62,12 +62,12 @@ import os
 import struct
 import time as _time
 from collections import deque
-from collections.abc import Callable, Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 from enum import Enum, auto
 from functools import lru_cache
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Final, Protocol
+from typing import TYPE_CHECKING, Any, Final, Protocol, cast
 
 # Sprint T1: OpenTelemetry instrumentation (always-on, M1 8GB safe, fail-soft)
 try:
@@ -417,7 +417,7 @@ from hledac.universal.runtime.acquisition_strategy import (  # noqa: E402
     is_lane_enabled,
     normalize_source_family_outcome,
     required_terminal_lanes,
-    run_enabled_acquisition_lanes,
+    run_enabled_acquisition_lanes_streaming,
     terminality_report,
 )
 
@@ -1190,7 +1190,13 @@ class _LifecycleAdapter:
 
         return False
 
+    # ── pre_loop_cost_s ──────────────────────────────────────────────────
 
+    def set_pre_loop_cost_s(self, value: float) -> None:
+        """F288: Set pre_loop_cost_s on the underlying lifecycle if supported."""
+        lc = self._lc
+        if hasattr(lc, "pre_loop_cost_s"):
+            lc.pre_loop_cost_s = value
 
     # ── _current_phase ───────────────────────────────────────────────────
 
@@ -1579,9 +1585,11 @@ class SprintSchedulerConfig:
         # standard/research modes use 0.30 ratio
         ratio = 0.15 if self.aggressive_mode else 0.30
         raw = self.sprint_duration_s * ratio
-        # F288: absolute cap -- sprints ≤300s capped at 60s windup
-        cap = 60.0 if self.sprint_duration_s <= 300 else 120.0
-        return float(max(30.0, min(cap, raw)))
+        # P0-1: Removed F288 cap. User constraint: min(30% of duration, 60s).
+        # For 300s sprint: 30% × 300 = 90s (90s < 60s is FALSE → 90s, not 60s).
+        # F288 cap (60s for ≤300s) was in conflict with user constraint.
+        # F221 guard and scheduler must use identical formula — no cap.
+        return float(max(30.0, min(180.0, raw)))
 
     @property
     def final_windup_lead_s(self) -> float:
@@ -2252,6 +2260,9 @@ class SprintSchedulerResult:
 
     synthesis_text: str = ""  # JSON-serialized OSINTReport
 
+    # Sprint F259: Hypothesis generation telemetry (populated by _run_hypothesis_export in WINDUP)
+    hypotheses_generated: int = 0
+
     # Sprint 8XE: Public discovery pipeline results (canonical path parity)
 
     pii_findings_anonymized: int = 0
@@ -2620,6 +2631,8 @@ class SprintSchedulerResult:
     rl_epsilon: float = 0.0
     rl_total_reward: float = 0.0
     rl_last_action: int = 0
+    # F265LANE: RL lane combo override (frozenset of lane names to enable)
+    rl_lane_combo: frozenset = field(default_factory=frozenset)
 
     # Sprint F207A: Multi-source acquisition lane outcomes (CT/WAYBACK/PASSIVE_DNS/BLOCKCHAIN)
 
@@ -5033,6 +5046,9 @@ class SprintScheduler:
 
         self._enrichment_services: Any = None
 
+        # Sprint F11C: EvidenceLog (fail-safe, M1 8GB safe)
+        self._evidence_log: Any = None
+
         # Sprint F250: Layer manager for Ghost/Stealth/Temporal/Security layers (opt-in via HLEDAC_ENABLE_LAYERS=1)
 
         self._layer_manager: Any = None
@@ -5841,6 +5857,57 @@ class SprintScheduler:
             log.warning("failed to initialize M1 resource governor: %s", _exc)
             self._governor = None
 
+        # P1-1: MLX Embedding prewarm v prelude — ModernBertEngine + MLXEmbeddingManager
+        # Běží jako background task během acquisition, modely ready před windup synthesis
+        from hledac.universal.utils.async_helpers import safe_create_task
+
+        def _prewarm_modernbert_sync() -> None:
+            """Sync prewarm — volá se v to_thread, neblokuje main loop."""
+            try:
+                from hledac.universal.brain.modernbert_engine import ModernBertEngine
+                engine = ModernBertEngine()
+                import asyncio
+                loop = asyncio.new_event_loop()
+                loop.run_until_complete(engine.load())
+                loop.close()
+            except Exception:
+                pass
+
+        def _prewarm_mlx_embeddings_sync() -> None:
+            """Sync prewarm pro MLXEmbeddingManager singleton."""
+            try:
+                from hledac.universal._shims.core_mlx_embeddings import get_embedding_manager
+                mgr = get_embedding_manager()
+                if mgr is not None and not mgr._is_loaded:
+                    mgr._load_model()
+            except Exception:
+                pass
+
+        safe_create_task(
+            asyncio.to_thread(_prewarm_modernbert_sync), name="modernbert_prewarm"
+        )
+        safe_create_task(
+            asyncio.to_thread(_prewarm_mlx_embeddings_sync), name="mlx_embed_prewarm"
+        )
+
+        # P0-1: Hermes async prewarm during Phase 1 windup -- runs parallel to
+        # DuckDB/LMDB init so model is ready BEFORE OODA loop starts.
+        # Without this, Hermes load (~60-90s) would consume windup budget that
+        # synthesis/advisory sidecars need. With this, Hermes load happens
+        # during Phase 1 (~30-60s of init work) so synthesis runs immediately.
+        def _prewarm_hermes_sync() -> None:
+            """Sync wrapper: runs async _prewarm_hermes_for_sprint in dedicated thread."""
+            try:
+                loop = asyncio.new_event_loop()
+                loop.run_until_complete(self._prewarm_hermes_for_sprint())
+                loop.close()
+            except Exception:
+                pass
+
+        self._hermes_prewarm_task: asyncio.Task | None = safe_create_task(
+            asyncio.to_thread(_prewarm_hermes_sync), name="hermes_prewarm_phase1"
+        )
+
         # Sprint F205F: Sidecar orchestration
         from hledac.universal.runtime.sidecar_orchestrator import SidecarOrchestrator
         self._sidecar_orchestrator = SidecarOrchestrator(
@@ -5893,12 +5960,25 @@ class SprintScheduler:
             duckdb_store, "async_ingest_findings_batch"
         )
 
-        # Sprint F195C: Initialize enrichment services
+        # Sprint F278B: Parallel init — _load_dedup (~2s) + metrics + enrichment
+        # run in parallel instead of serially. windup 239s → ~14s.
+        # P0-2: Track dedup timing from parallel gather.
+        _dedup_t0 = _time.monotonic()
+        _init_tasks: list[Awaitable] = [
+            self._load_dedup(),
+            self._init_metrics_registry(),
+        ]
         if self._enrichment_services:
-            await self._enrichment_services.init()
-
-        # Sprint F205H: Initialize metrics registry
-        await self._init_metrics_registry()
+            _init_tasks.append(self._enrichment_services.init())
+        results = await asyncio.gather(*_init_tasks, return_exceptions=True)
+        _dedup_elapsed = _time.monotonic() - _dedup_t0
+        self._result.dedup_preload_elapsed_s = _dedup_elapsed
+        self._result.dedup_preload_count = (
+            len(self._dedup_seen) if hasattr(self, '_dedup_seen') and self._dedup_seen is not None else 0
+        )
+        for r in results:
+            if isinstance(r, Exception):
+                log.debug("[F278B] init task failed: %s", r)
 
         # RelationshipDiscoveryEngine cross-sprint bridge
         try:
@@ -5963,15 +6043,8 @@ class SprintScheduler:
         self._runner.tick(now_monotonic)
         self._runner.ensure_active(now_monotonic)
 
-        # Sprint 8RA: Load persistent dedup at BOOT
-        _dedup_t0 = _time.monotonic()
-        await self._load_dedup()
-        _dedup_elapsed = _time.monotonic() - _dedup_t0
-        self._result.dedup_preload_elapsed_s = _dedup_elapsed
-        self._result.dedup_preload_count = (
-            len(self._dedup_seen) if hasattr(self, '_dedup_seen') and self._dedup_seen is not None else 0
-        )
-
+        # P0-2: _load_dedup was already called in F278B parallel init (line ~5966).
+        # Record telemetry from the parallel call's timing.
         # Sprint F203D: Evidence chain builder
         try:
             from hledac.universal.knowledge.evidence_chain import EvidenceChainBuilder, set_global_builder
@@ -6331,12 +6404,9 @@ class SprintScheduler:
                 adapter, lifecycle, ct_log_client, policy_manager, duckdb_store, now_monotonic
             )
 
-            # Phase 2: Hermes prewarm (F288 -- non-blocking, runs in background)
-            # MLX load (~60-90s) was blocking windup budget.
-            # Now fires as background task so active window starts immediately.
-            from hledac.universal.utils.async_helpers import safe_create_task
-            safe_create_task(self._prewarm_hermes_for_sprint(), name="hermes_prewarm_bg")
-            safe_create_task(self._prewarm_hermes(), name="hermes_init_bg")
+            # P0-1: Hermes prewarm moved to Phase 1 via _initialize_sprint_run.
+            # _hermes_prewarm_task runs there in parallel with DuckDB/LMDB init.
+            # Old Phase 2 safe_create_task pattern removed -- was orphaned, never awaited.
 
 
 
@@ -6416,6 +6486,13 @@ class SprintScheduler:
                     try:
 
                         _governor_decision = await self._governor.evaluate()
+
+                        # F265: Apply governor decision to runtime surfaces (fetch_limit, etc.)
+                        # evaluate() computes the decision, apply_decision() enforces it.
+                        # Without apply_decision(), governor was read-only — fetch_limit never changed.
+                        if _governor_decision is not None:
+
+                            await self._governor.apply_decision(_governor_decision)
 
                     except Exception:
 
@@ -6636,6 +6713,33 @@ class SprintScheduler:
 
 
 
+                # P0-2: Concept→Domain expansion pre-phase
+                # Generate synthetic domain candidates from concept query BEFORE
+                # build_acquisition_plan() so CT/DOH/WAYBACK lanes are enabled.
+                # Uses MLX if Hermes is already prewarmed (~60s after sprint start),
+                # otherwise falls back to fast heuristic expansion.
+                _synthetic_domains: tuple[str, ...] = ()
+                try:
+                    from hledac.universal.brain.concept_domain_expander import (
+                        expand_concept_domains,
+                        extract_domain_strings,
+                    )
+                    _expansion_candidates = await expand_concept_domains(
+                        query,
+                        hermes_engine=self._hermes_engine,
+                        timeout_s=15.0,
+                    )
+                    if _expansion_candidates:
+                        _synthetic_domains = tuple(extract_domain_strings(_expansion_candidates)[:5])
+                        log.debug(
+                            "[P0-2] Concept expansion produced %d synthetic domains for '%s...'",
+                            len(_synthetic_domains),
+                            query[:30],
+                        )
+                except Exception as _exc:
+                    log.debug("[P0-2] Concept domain expansion failed (fail-soft): %s", _exc)
+
+
                 # F240A: acquisition_plan_build phase
 
                 self._timer.phase("acquisition_plan_build_start")
@@ -6659,6 +6763,24 @@ class SprintScheduler:
                     # F223A: Explicit acquisition profile override from config
 
                     acquisition_profile=self._config.acquisition_profile or "",
+
+                    # F228A: Source quality weights from policy_manager for adaptive lane budget
+
+                    source_quality_weights=(
+
+                        self._policy_manager.get_src_quality_weights()
+
+                        if self._policy_manager is not None and self._policy_manager.enabled
+
+                        else None
+
+                    ),
+
+                    # F265LANE: RL lane combo override from policy action
+                    rl_lane_combo=self._result.rl_lane_combo if self._result.rl_lane_combo else None,
+
+                    # P0-2: Synthetic domain candidates from concept expansion
+                    synthetic_domains=_synthetic_domains,
 
                 )
 
@@ -6836,6 +6958,15 @@ class SprintScheduler:
                     logger.debug("[graph_rag] sidecar failed: %s", _e)
 
 
+            # P0-1: Wait for Hermes prewarm to complete before starting OODA loop.
+            # Model must be loaded so synthesis/advisory sidecars can use it in windup.
+            _hermes_task = getattr(self, "_hermes_prewarm_task", None)
+            if _hermes_task is not None:
+                try:
+                    await cast(asyncio.Task[Any], _hermes_task)
+                except Exception as _e:
+                    log.debug("[P0-1] Hermes prewarm await failed: %s", _e)
+
             # Sprint F245A: Run prelude and first cycle concurrently
 
             # Sprint F245A: Build first-cycle work items from ordered feed sources
@@ -6931,7 +7062,9 @@ class SprintScheduler:
             try:
 
                 while not self._runner.is_terminal():
-
+                    # Sprint F228G: Update now_monotonic each iteration so
+                    # post_sleep_gate and should_enter_windup use correct elapsed time.
+                    now_monotonic = _time.monotonic()
                     # Sprint F212A: Hard deadline check FIRST -- before any lifecycle
 
                     # transitions or guards that could break early. Ensures deadline
@@ -7355,6 +7488,14 @@ class SprintScheduler:
 
                                 self._result.pre_loop_blocker_reason = "pre_loop_slow"
 
+                        # F288: Feed measured pre-loop cost to lifecycle so
+                        # should_enter_windup() raises the trigger threshold
+                        # adaptively. Prevents windup from firing before the
+                        # first acquisition cycle has a chance to run.
+                        _pre_loop_cost = self._result.first_cycle_started_at_monotonic
+                        if _pre_loop_cost > 0 and self._lc_adapter is not None:
+                            self._lc_adapter.set_pre_loop_cost_s(_pre_loop_cost)
+
                     # Sprint 8BK: Wall-clock duration guard -- catches cases where lifecycle
 
                     # remaining_time() does not decrease between cycles (e.g. async tick gap).
@@ -7413,6 +7554,37 @@ class SprintScheduler:
                     # WARNING because timeouts indicate a misbehaving branch
                     # and need to surface in monitoring.
                     _cycle_budget_s = self._config.cycle_budget_s
+
+                    # P1-1: Pre-cycle early-exit -- if remaining active window would be
+                    # too small for productive work AND we have consecutive empty cycles,
+                    # skip the cycle and enter windup immediately. Saves 30-60s per sprint.
+                    _elapsed_wall = _time.monotonic() - self._wall_clock_start
+                    _remaining_active = max(0.0, self._config.sprint_duration_s - _elapsed_wall)
+                    _MIN_ACTIVE_WINDOW_S: float = 30.0
+                    _MIN_EMPTY_FOR_EARLY_EXIT: int = 3
+                    if (
+                        _remaining_active < _MIN_ACTIVE_WINDOW_S
+                        and self._result.consecutive_empty_cycles >= _MIN_EMPTY_FOR_EARLY_EXIT
+                    ):
+                        log.warning(
+                            "[P1-1] Early windup: remaining=%.1fs < %.0fs and %d empty cycles",
+                            _remaining_active,
+                            _MIN_ACTIVE_WINDOW_S,
+                            self._result.consecutive_empty_cycles,
+                        )
+                        await self._ensure_nonfeed_predispatch_before_finalization(
+                            query, "early_windup_empty_cycles"
+                        )
+                        self._capture_timing_fields()
+                        await self._finalize_result_truth(
+                            "early_windup_empty_cycles",
+                            f"early windup: {self._result.consecutive_empty_cycles} empty cycles, "
+                            f"remaining={_remaining_active:.0f}s < {_MIN_ACTIVE_WINDOW_S:.0f}s",
+                            "GATHER",
+                            query,
+                        )
+                        break
+
                     try:
                         async with asyncio.timeout(_cycle_budget_s):
                             cycle_ok = await self._run_one_cycle(
@@ -8220,11 +8392,25 @@ class SprintScheduler:
 
 
             # Sprint F195C: Update RL policy with sprint result (opt-in, fail-safe)
+            _rl_lane_combo: frozenset[str] = frozenset()
             if self._policy_manager is not None:
                 try:
                     self._policy_manager.update(self._result)
                 except Exception as e:
                     log.debug(f"[SprintPolicyManager] update() failed: {e}")
+
+                # F265LANE: Extract RL lane combo from policy action
+                try:
+                    _action = self._policy_manager.get_action()
+                    if _action is not None and _action >= 10:
+                        from rl.actions import LANE_COMBINATIONS, lane_combo_from_action
+                        _combo_idx = lane_combo_from_action(_action)
+                        if _combo_idx is not None and _combo_idx < len(LANE_COMBINATIONS):
+                            _rl_lane_combo = LANE_COMBINATIONS[_combo_idx]
+                            self._result.rl_lane_combo = _rl_lane_combo
+                            log.debug("[F265LANE] RL lane combo: %s", _rl_lane_combo)
+                except Exception:
+                    pass
 
             # Sprint F228F: RL pivot advisory -- policy may suggest directional hints
             _pivot_policy_suggestions: list[dict] = []
@@ -10042,12 +10228,22 @@ class SprintScheduler:
 
                             try:
 
-                                ingest_results = await self._gate_then_ingest(
+                                ingest_results = await self._gate_then_ingest_and_accumulate(
 
                                     duckdb_store, list(_candidate_findings)
 
                                 )
-
+                                # Sprint F11C: Wire EvidenceLog — decision event
+                                if self._evidence_log is not None:
+                                    try:
+                                        self._evidence_log.create_event(
+                                            "decision",
+                                            {"gate": "ingest", "findings_count": len(_candidate_findings), "accepted": True},
+                                            source_ids=[],
+                                            confidence=1.0,
+                                        )
+                                    except Exception:
+                                        pass
                                 accepted = sum(
 
                                     1 for r in ingest_results
@@ -11717,6 +11913,17 @@ class SprintScheduler:
 
                     ),
 
+                    # F228A: Source quality weights from policy_manager for adaptive lane budget
+                    source_quality_weights=(
+
+                        self._policy_manager.get_src_quality_weights()
+
+                        if self._policy_manager is not None and self._policy_manager.enabled
+
+                        else None
+
+                    ),
+
                 )
 
                 if _minimal is not None:
@@ -12595,7 +12802,33 @@ class SprintScheduler:
 
                         self._result.seed_quality_bypass_reason = "diagnostic_profile"
 
+                elif not _is_domain_query and not self._result.seed_context_available:
+                    # P0-2 FIZ: Non-domain query fallback -- extract meaningful terms from query
+                    # as pivot seeds so PUBLIC lane has candidates even without domain/IP in query.
+                    # Example: "OSINT infrastructure telemetry leak dark web exposure"
+                    # Extracts: "dark web", "telemetry", "leak", "infrastructure", "OSINT"
+                    try:
+                        import re as _re
 
+                        # Split query into tokens, filter noise words, extract significant terms
+                        _noise = {"the", "a", "an", "of", "for", "in", "on", "at", "to", "and", "or",
+                                  "is", "are", "was", "were", "be", "been", "being", "have", "has",
+                                  "had", "do", "does", "did", "will", "would", "could", "should",
+                                  "may", "might", "must", "can", "with", "by", "from", "that", "this"}
+                        _tokens = _re.findall(r'\b[a-zA-Z]{3,}\b', query.lower())
+                        _significant = [t for t in _tokens if t not in _noise]
+                        if _significant:
+                            # Use top 5 significant terms as pseudo-domain seeds for discovery
+                            _pseudo_seeds = tuple(_significant[:5])
+                            self._result.pivot_seed_domains = _pseudo_seeds
+                            self._result.seed_context_available = True
+                            self._result.seed_context_propagated = True
+                            self._result.lanes_unlocked_by_seed_context = ["PUBLIC", "CT", "DOH"]
+                            self._result.seed_context_skip_reason = ""
+                            self._result.seed_context_source = "query_term_fallback"
+                    except Exception:
+                        # Fail-soft: don't crash sprint for extraction error
+                        pass
 
             # F237B: Add planner_action IOCs to seed context so they flow into NonfeedSeedContext
 
@@ -12705,20 +12938,14 @@ class SprintScheduler:
 
                     _timeout_s, _max_items = _seed_lane_defaults.get(_lane, (20.0, 5))
 
-                    # F220J critical: skip heavy lanes under hardware critical memory
-
+                    # P0-1: reduce resources at critical/emergency instead of skipping
                     if _hardware_critical and _lane in ("DOH", "WAYBACK"):
-
-                        _nonfeed_prelude_skipped[_lane] = "seed_unlocked_but_memory_blocked"
-
-                        continue
+                        _timeout_s = min(_timeout_s, 10.0)
+                        _max_items = min(_max_items, 3)
 
                     # F233D: skip nonfeed lanes for deep_osint_m1 if memory is warn/critical
-
                     if _is_deep_osint_m1 and _uma in ("warn", "critical", "emergency"):
-
                         _nonfeed_prelude_skipped[_lane] = "deep_osint_m1_memory_throttled"
-
                         continue
 
                     _nonfeed_lanes_to_run.append((_lane, True, _timeout_s, _max_items))
@@ -12777,8 +13004,11 @@ class SprintScheduler:
                     pass  # fail-soft: DuckPGQ unavailable
 
                 _seed_ctx = NonfeedSeedContext(
+                    # [P0-2] Prepend synthetic domains (from MLX/heuristic expansion)
+                    # so build_lane_query() returns them first for CT/DOH/WAYBACK shaping.
                     # [P0-1] Prepend query-extracted domains so build_lane_query() returns them first
-                    domains=tuple(_query_domain_candidates
+                    domains=tuple((_synthetic_domains or ())
+                                  + _query_domain_candidates
                                   + (self._result.pivot_seed_domains or ())
                                   + (self._result.next_seeds_ioc_domains or ())),  # noqa: E501
                     ips=tuple((self._result.pivot_seed_ips or ()) + (self._result.next_seeds_ioc_ips or ())),
@@ -12912,10 +13142,33 @@ class SprintScheduler:
 
             self._result.nonfeed_prelude_feed_blocked_until_complete = True
 
-
+        # F265B: HTTP/3 Alt-Svc prewarm — probe domain candidates from query
+        # so the H3 LRU is warm before the first active-cycle fetch.
+        # Runs fire-and-forget; never raises. Bounded to 5 hosts.
+        if query and isinstance(query, str) and query.strip():
+            try:
+                from hledac.universal.runtime.nonfeed_candidate_ledger import (
+                    extract_domain_candidates_from_text,
+                )
+                _h3_prewarm_candidates = extract_domain_candidates_from_text(
+                    query,
+                    source_url=None,
+                    source_family="query",
+                    min_confidence=0.3,
+                )
+                _h3_prewarm_domains = [
+                    c.domain for c in _h3_prewarm_candidates
+                    if c.confidence >= 0.3
+                ][:5]
+                for _domain in _h3_prewarm_domains:
+                    try:
+                        probe_altsvc_speculative(f"https://{_domain}")
+                    except Exception:  # noqa: BLE001
+                        pass
+            except Exception:  # noqa: BLE001
+                pass
 
         log.debug(
-
             "[F209A] Acquisition prelude done: required=%s, terminal=%s, missing=%s, "
 
             "skipped=%s, errors=%s, dur=%.2fs",
@@ -14331,67 +14584,43 @@ class SprintScheduler:
 
         work_items = self._sort_work_items_by_economics(work_items, current_cycle)
 
-
-
-        # Filter: skip lower tiers if lifecycle is pruning
-
-        mode = lifecycle.recommended_tool_mode(now_monotonic)
-
-        match mode:
-
-            case "prune":
-
-                work_items = self._prune_work_items(work_items)
-
-            case "panic":
-
-                work_items = [w for w in work_items if w.tier == SourceTier.SURFACE]
-
-
-
+        # P1-1: Early-exit on empty work_items -- increment consecutive_empty_cycles
+        # BEFORE dispatch so F228G guard fires immediately instead of spinning through
+        # empty cycle iterations. Resets counter when real work is performed.
         if not work_items:
-
-            # Sprint F228G: empty-cycle guard -- track consecutive cycles with
-
-            # no work so the main loop can force windup after N consecutive
-
-            # empties. Prevents the "100 empty cycles -> 8s setup -> windup"
-
-            # failure mode on short sprints where default sources are filtered
-
-            # out by prune mode (RC1/RC2 in F228G analysis). Counter is reset
-
-            # in the main loop when a non-empty cycle is observed.
-
             self._result.consecutive_empty_cycles += 1
+            if (
+                self._result.consecutive_empty_cycles
+                > self._result.max_consecutive_empty_cycles
+            ):
+                self._result.max_consecutive_empty_cycles = (
+                    self._result.consecutive_empty_cycles
+                )
+            log.debug(
+                "[P1-1] Empty work_items cycle %d (consecutive=%d)",
+                current_cycle + 1,
+                self._result.consecutive_empty_cycles,
+            )
+            return True
 
-            if self._result.consecutive_empty_cycles > self._result.max_consecutive_empty_cycles:
-
-                self._result.max_consecutive_empty_cycles = self._result.consecutive_empty_cycles
-
-            return True  # nothing to do this cycle
-
-        # Real work available -- reset the empty counter (loop will observe)
-
+        # Reset counter when real work is available
         self._result.consecutive_empty_cycles = 0
 
-
-
+        # Sprint F273: Dispatch stable/aggressive cycle FIRST regardless of
+        # lifecycle mode (including WINDUP). Each branch in _run_one_cycle_stable
+        # / _run_one_cycle_aggressive has its own remaining-time-aware guards
+        # that determine whether to run or skip. Moving pruning to AFTER the
+        # dispatch prevents the F228G empty-cycle guard from firing and
+        # blocking PUBLIC when lifecycle enters WINDUP during the cycle.
         if self._config.aggressive_mode:
-
             return await self._run_one_cycle_aggressive(
-
                 lifecycle, work_items, query, duckdb_store
-
             )
-
         else:
-
             return await self._run_one_cycle_stable(
-
                 lifecycle, work_items, query, duckdb_store
-
             )
+        # ── Lifecycle pruning applied AFTER cycle dispatch ───────────────────
 
     async def _run_one_cycle_stable(
 
@@ -14663,6 +14892,39 @@ class SprintScheduler:
             )
 
 
+        # F214-FIX: Extract domains from FEED URLs and bridge to PUBLIC lane bootstrap.
+        # FEED findings contain URLs but no explicit domain seeds. PUBLIC lane bootstrap
+        # requires domain seeds to generate candidate URLs. This bridge extracts domains
+        # from processed FEED URLs and passes them as seed_context so PUBLIC lane can
+        # bootstrap even when the original query has no domain component.
+        _feed_seed_ctx: NonfeedSeedContext | None = None
+        if results:
+            try:
+                from urllib.parse import urlparse
+                _feed_domains: list[str] = []
+                for _feed_url, _ in results:
+                    if _feed_url and "://" in _feed_url:
+                        try:
+                            _netloc = urlparse(_feed_url).netloc
+                            if _netloc:
+                                _domain = _netloc.split(":")[0].lower()
+                                if _domain and _domain not in _feed_domains:
+                                    _feed_domains.append(_domain)
+                        except Exception:
+                            pass
+                if _feed_domains:
+                    _feed_seed_ctx = NonfeedSeedContext(
+                        domains=tuple(_feed_domains[:10]),  # cap at 10 domains
+                    )
+                    log.debug(
+                        "[F214-FIX] FEED->PUBLIC bridge: %d domains extracted from %d feed URLs",
+                        len(_feed_domains),
+                        len(results),
+                    )
+            except Exception as _exc:
+                log.debug("[F214-FIX] FEED->PUBLIC bridge failed (fail-soft): %s", _exc)
+
+
 
         # Sprint 8XE: Run public discovery pipeline in same cycle (canonical parity)
 
@@ -14724,9 +14986,8 @@ class SprintScheduler:
 
                         memory_manager=self._memory_manager,
 
-                        public_bootstrap_enabled=False,  # stable path: bootstrap off
-
-                        seed_context=None,  # stable path: no seed_context bootstrap
+                        public_bootstrap_enabled=True,  # F214-FIX: bootstrap ON for seed_context bridge
+                        seed_context=_feed_seed_ctx,  # F214-FIX: FEED->PUBLIC domain bridge
 
                     )
 
@@ -14867,48 +15128,45 @@ class SprintScheduler:
                     if self._graph_accumulator is None:
                         self._graph_accumulator = SprintGraphAccumulator()
 
-                    _outcomes = await run_enabled_acquisition_lanes(
-
-                        snapshot=self._acquisition_plan,
-
+                    # P2-1: Streaming lanes -- incremental accumulate, early exit on enough_evidence
+                    _streaming_outcomes: list = []
+                    _streaming_done = False
+                    async for _outcome_batch in run_enabled_acquisition_lanes_streaming(
+                        snapshot=self._acquisition_plan if self._acquisition_plan is not None else None,
                         query=query,
-
                         store=duckdb_store,
-
                         uma_state=_uma,
-
                         seed_context=_seed_ctx,
-
                         graph_accumulator=self._graph_accumulator,
+                        min_finished=0,
+                        on_lane_complete=None,
+                    ):
+                        _streaming_outcomes = list(_outcome_batch)
+                        # P2-1: enough_evidence early exit guard
+                        _total_accepted = sum(
+                            getattr(_o, "accepted_findings", 0) or 0
+                            for _o in _streaming_outcomes
+                            if getattr(_o, "attempted", False)
+                        )
+                        if _total_accepted >= 3:
+                            _streaming_done = True
+                            break
 
-                    )
+                    _outcomes = tuple(_streaming_outcomes) if _streaming_outcomes else None
 
                     if _outcomes:
-
                         self._lane_outcomes = _outcomes
-
                         self._result.acquisition_lane_outcomes = _outcomes
-
                         self._accumulate_lane_findings(_outcomes, query)
-
                         # Sprint R1B: Ingest CT lane CanonicalFinding candidates via DuckDBShadowStore
-
                         await self._ingest_ct_lane_candidates(_outcomes, duckdb_store)
-
                         # Sprint F216G: Read quality rejection ledger from duckdb_store
-
                         self._record_quality_rejections_from_store(duckdb_store)
-
                         # Sprint R8: Run CT->PassiveDNS active-cycle pivot after lane ingestion
-
                         ct_findings: list = []
-
                         for _oc in _outcomes:
-
                             if getattr(_oc, "source_family", None) == "ct":
-
                                 _cands = getattr(_oc, "candidate_findings", ()) or ()
-
                                 if _cands:
 
                                     ct_findings.extend(_cands)
@@ -15940,23 +16198,29 @@ class SprintScheduler:
                     if self._graph_accumulator is None:
                         self._graph_accumulator = SprintGraphAccumulator()
 
-                    _outcomes = await run_enabled_acquisition_lanes(
-
-                        snapshot=self._acquisition_plan,
-
+                    # P2-1: Streaming lanes -- incremental accumulate, early exit on enough_evidence
+                    _streaming_outcomes: list = []
+                    async for _outcome_batch in run_enabled_acquisition_lanes_streaming(
+                        snapshot=self._acquisition_plan if self._acquisition_plan is not None else None,
                         query=query,
-
                         store=duckdb_store,
-
                         uma_state=_uma,
-
-                        seed_context=None,  # aggressive mode uses plan-level eligibility, not pivot seeds
+                        seed_context=None,
                         graph_accumulator=self._graph_accumulator,
+                        min_finished=0,
+                        on_lane_complete=None,
+                    ):
+                        _streaming_outcomes = list(_outcome_batch)
+                        _total_accepted = sum(
+                            getattr(_o, "accepted_findings", 0) or 0
+                            for _o in _streaming_outcomes
+                            if getattr(_o, "attempted", False)
+                        )
+                        if _total_accepted >= 3:
+                            break
 
-                    )
-
+                    _outcomes = tuple(_streaming_outcomes) if _streaming_outcomes else None
                     if _outcomes:
-
                         self._lane_outcomes = _outcomes
 
                         self._result.acquisition_lane_outcomes = _outcomes
@@ -16634,6 +16898,25 @@ class SprintScheduler:
 
             )
 
+        # Sprint F11E: QueryRouter DHT augmentation (opt-in via HLEDAC_ENABLE_QUERY_ROUTER=1)
+        if os.getenv("HLEDAC_ENABLE_QUERY_ROUTER", "0") == "1":
+            try:
+                from coordinators.query_router import QueryRouter
+
+                _qr = QueryRouter(
+                    source_mask={"dht", "ddg", "wayback"},
+                    max_results_per_source=5,
+                    timeout_s=30.0,
+                )
+                _qr_results = await _qr.query(query_hint, remaining_budget_s=30.0)
+                if _qr_results:
+                    _ = await self._gate_then_ingest_and_accumulate(
+                        duckdb_store, _qr_results, sprint_id=self.sprint_id or ""
+                    )
+                    log.debug("[F11E] QueryRouter ingested %d findings", len(_qr_results))
+            except Exception as _qr_err:
+                log.debug("[F11E] QueryRouter failed (non-fatal): %s", _qr_err)
+
 
 
     # ── F205C/F205F: Unified Sidecar Dispatch ────────────────────────────────
@@ -16869,7 +17152,7 @@ class SprintScheduler:
 
                 self._result.ct_storage_attempted = True
 
-                results = await self._gate_then_ingest(store, findings)
+                results = await self._gate_then_ingest_and_accumulate(store, findings)
 
                 stored = sum(1 for r in results if isinstance(r, dict) and r.get("accepted"))
 
@@ -17641,6 +17924,19 @@ class SprintScheduler:
 
                     )
 
+
+                    # Sprint F11C: Wire EvidenceLog — observation event
+                    if self._evidence_log is not None:
+                        try:
+                            self._evidence_log.create_event(
+                                "observation",
+                                finding.model_dump() if hasattr(finding, "model_dump") else vars(finding),
+                                source_ids=[finding.source_id] if hasattr(finding, "source_id") else [],
+                                confidence=getattr(finding, "confidence", 0.5),
+                            )
+                        except Exception:
+                            pass
+                    inner.append(finding)
                     inner.append(finding)
 
             except Exception as e:
@@ -18441,15 +18737,26 @@ class SprintScheduler:
                             ioc_type="file",
                             ioc_value=getattr(r, 'file_path', ""),
                             confidence=confidence,
-                            payload={
-                                "chi_square_score": getattr(r, 'chi_square_score', 0.0),
-                                "entropy_score": getattr(r, 'entropy_score', 0.0),
-                                "lsb_suspicious": getattr(r, 'lsb_suspicious', False),
-                                "stegdetect_available": getattr(r, 'stegdetect_available', False),
-                                "stegdetect_result": getattr(r, 'stegdetect_result', None),
-                            },
-                            tags=["steganography", "forensics"],
                         )
+                        # Sprint F11C: Wire EvidenceLog — observation event
+                        if self._evidence_log is not None:
+                            try:
+                                self._evidence_log.create_event(
+                                    "observation",
+                                    finding.model_dump() if hasattr(finding, "model_dump") else vars(finding),
+                                    source_ids=[finding.source_id] if hasattr(finding, "source_id") else [],
+                                    confidence=getattr(finding, "confidence", 0.5),
+                                    payload={
+                                        "chi_square_score": getattr(r, 'chi_square_score', 0.0),
+                                        "entropy_score": getattr(r, 'entropy_score', 0.0),
+                                        "lsb_suspicious": getattr(r, 'lsb_suspicious', False),
+                                        "stegdetect_available": getattr(r, 'stegdetect_available', False),
+                                        "stegdetect_result": getattr(r, 'stegdetect_result', None),
+                                    },
+                                    tags=["steganography", "forensics"],
+                                )
+                            except Exception:
+                                pass
                         findings.append(finding)
                 except Exception:
                     pass
@@ -18932,8 +19239,16 @@ class SprintScheduler:
         (graph upsert) in a single await chain. Fail-soft: graph errors never
         prevent the DuckDB write from completing.
 
+
         This is the canonical call for ALL nonfeed lanes (wayback/pdns/doh)
         and sidecars that need graph wiring.
+
+
+        P0-5: Evidence log events for every finding state transition:
+            - CREATED: when findings list is received
+            - CANDIDATE: before DuckDB ingest
+            - ACCEPTED: ingest result shows accepted findings
+            - REJECTED: ingest result shows rejected findings
 
         Args:
             store: duckdb_store (or any object with async_ingest_findings_batch).
@@ -18945,8 +19260,70 @@ class SprintScheduler:
         """
         if store is None or not findings:
             return None
+
+        # P0-5: Evidence — CREATED event (finding pipeline entry)
+        if self._evidence_log is not None:
+            try:
+                self._evidence_log.create_event(
+                    "observation",
+                    {
+                        "phase": "CREATED",
+                        "findings_count": len(findings),
+                        "sprint_id": sprint_id or "",
+                        "source": store.__class__.__name__ if hasattr(store, '__class__') else str(type(store)),
+                    },
+                    source_ids=[],
+                    confidence=1.0,
+                )
+            except Exception:
+                pass
+
+        # P0-5: Evidence — CANDIDATE event (before ingest)
+        if self._evidence_log is not None:
+            try:
+                _finding_ids = [
+                    getattr(f, 'finding_id', None) or getattr(f, 'source_id', None) or str(hash(str(f)))
+                    for f in findings
+                ]
+                self._evidence_log.create_event(
+                    "observation",
+                    {
+                        "phase": "CANDIDATE",
+                        "findings_count": len(findings),
+                        "finding_ids": _finding_ids[:20],  # bounded
+                    },
+                    source_ids=_finding_ids[:20],
+                    confidence=1.0,
+                )
+            except Exception:
+                pass
+
         # DuckDB write
         _ingest_result = await self._gate_then_ingest(store, findings)
+
+        # P0-5: Evidence — ACCEPTED / REJECTED from ingest result
+        if self._evidence_log is not None and _ingest_result is not None:
+            try:
+                if isinstance(_ingest_result, list):
+                    _accepted = sum(1 for r in _ingest_result if isinstance(r, dict) and r.get("accepted"))
+                    _rejected = sum(1 for r in _ingest_result if isinstance(r, dict) and not r.get("accepted"))
+                    if _accepted > 0:
+                        self._evidence_log.create_event(
+                            "observation",
+                            {"phase": "ACCEPTED", "accepted_count": _accepted, "total": len(_ingest_result)},
+                            source_ids=[],
+                            confidence=1.0,
+                        )
+                    if _rejected > 0:
+                        self._evidence_log.create_event(
+                            "observation",
+                            {"phase": "REJECTED", "rejected_count": _rejected, "total": len(_ingest_result)},
+                            source_ids=[],
+                            confidence=1.0,
+                        )
+            except Exception:
+                pass
+
         # Graph accumulation (fail-soft, never blocks)
         if findings:
             try:
@@ -19024,13 +19401,15 @@ class SprintScheduler:
     async def _run_quantum_path_analysis(self, new_ioc_values: list[str]) -> list[str]:
 
         """
-
         Sprint F214Q: Post-sprint quantum-inspired graph walk.
-
         Find undiscovered connected IOCs via DuckPGQGraph.find_connected().
 
         M1 RAM budget: bounded to 20 IOCs per sprint, max_hops=2, max 1000 total nodes.
 
+        Sprint P1-3: Routes through GraphService.find_entity_history() which
+        layers the hot-edges LMDB cache on top of DuckPGQ recursive CTE, giving
+        O(1) hot-path lookups for high-degree nodes and falling back to the CTE
+        only on cache miss.
         """
 
 
@@ -19038,8 +19417,7 @@ class SprintScheduler:
 
             return []
 
-        if not new_ioc_values or self._ioc_graph is None:
-
+        if not new_ioc_values:
             return []
 
         try:
@@ -19052,13 +19430,16 @@ class SprintScheduler:
 
                 try:
 
-                    connected = self._ioc_graph.find_connected(ioc_val, max_hops=2)
+                    # Sprint P1-3: GraphService.find_entity_history() layers
+                    # hot-edges cache (O(1) LMDB) over DuckPGQ CTE (O(V+E)).
+                    # Also fixes field name: DuckPGQ returns "value", not "val".
+                    connected = _DEFAULT_GRAPH_SERVICE.find_entity_history(ioc_val, max_hops=2)
 
                     if isinstance(connected, list):
 
                         for node in connected:
 
-                            val = node.get("val") if isinstance(node, dict) else str(node)
+                            val = node.get("value") if isinstance(node, dict) else str(node)
 
                             if val and val not in seen:
 
@@ -22104,10 +22485,12 @@ class SprintScheduler:
 
 
             # 5. Accepted findings count (from result)
-
-            if self._result.accepted_findings > 0:
-
-                scorecard["accepted_findings"] = self._result.accepted_findings
+            # F265B: Use _finding_count which includes FEED + PUBLIC accepted_findings
+            # (PUBLIC lane findings go to _result.public_accepted_findings and _finding_count,
+            # not to _result.accepted_findings which only tracks FEED)
+            _total_accepted = self._finding_count  # FEED + PUBLIC accumulated
+            if _total_accepted > 0:
+                scorecard["accepted_findings"] = _total_accepted
 
 
 
@@ -23202,15 +23585,11 @@ class SprintScheduler:
         db_path.parent.mkdir(parents=True, exist_ok=True)
 
         try:
-
-            self._dedup_env = lmdb.open(
-
-                str(db_path),
-
+            from hledac.universal.knowledge.lmdb_boot_guard import open_lmdb_with_guard
+            self._dedup_env = open_lmdb_with_guard(
+                db_path,
                 map_size=100 * 1024 * 1024,  # 100MB max
-
                 max_dbs=1,
-
             )
 
             with self._dedup_env.begin() as txn:
@@ -23281,7 +23660,7 @@ class SprintScheduler:
         lifecycle: Any,
     ) -> None:
         """Sprint F259: Run SynthesisRunner in WINDUP phase."""
-        if _env_flag("HLEDAC_ENABLE_SYNTHESIS", "0") != "1":
+        if _env_flag("HLEDAC_ENABLE_HERMES_SYNTHESIS", "0") != "1":
             log.debug("[F259] Synthesis skipped -- HLEDAC_ENABLE_SYNTHESIS != '1'")
             return
 
@@ -24085,33 +24464,62 @@ class SprintScheduler:
             hyp_eng = HypothesisEngine()
 
             # F265C: Attach ResearchContext to result for epistemic bonus
-            try:
-                from hledac.universal.research_context import ResearchContext
-                _rc = ResearchContext()
-                _rc.attach_hypothesis_engine(hyp_eng)
-                self._result.research_context = _rc
-            except Exception:
-                pass  # fail-soft: epistemic bonus will return 0.0
-
             dark_queries = await hyp_eng.generate_dark_surface_queries(
 
                 findings=findings_for_dark,
 
-                hermes_engine=None,
-
+                hermes_engine=self._hermes_engine if self._hermes_engine is not None else None,
                 tor_available=tor_available,
-
                 i2p_available=i2p_available,
-
             )
 
-        except Exception as e:
+        except Exception as _e:
+            log.debug("[F214K] Dark surface query generation failed: %s", _e)
+            dark_queries = []
 
-            log.warning(f"[F214K] Dark surface query generation failed: {e}")
+        # F268EPISTEMIC: Build ResearchContext from dark_queries results.
+        # Previously ResearchContext was created INSIDE the try block BEFORE
+        # dark_queries generation, which caused a ValidationError (missing
+        # query/research_id required fields) that was silently caught —
+        # leaving research_context=None and epistemic_bonus=0.0 every sprint.
+        # Now we create it here AFTER successful generation so hypotheses
+        # are populated and the epistemic bonus actually fires.
+        _rc = None
+        if dark_queries:
+            try:
+                from uuid import uuid4
 
-            return
+                from brain.hypothesis_engine._types import DarkQuery
+                from hledac.universal.research_context import ResearchContext, ResearchContextStatus
 
+                _hyps = []
+                for _dq in dark_queries:
+                    if isinstance(_dq, DarkQuery):
+                        _hyps.append(
+                            type(
+                                "Hypothesis",
+                                (),
+                                {
+                                    "hypothesis_id": str(uuid4()),
+                                    "statement": f"Dark query: {_dq.query} (type={_dq.query_type.value}, priority={_dq.priority:.2f})",
+                                    "status": ResearchContextStatus.PENDING,
+                                    "confidence": max(0.3, min(0.9, _dq.priority)),
+                                    "supporting_evidence": list(_dq.source_iocs) if _dq.source_iocs else [],
+                                    "contradicting_evidence": [],
+                                },
+                            )()
+                        )
 
+                _rc = ResearchContext(
+                    query=self._query or "dark_surface_pivot",
+                    research_id=getattr(self, "sprint_id", "") or str(uuid4()),
+                )
+                _rc.attach_hypothesis_engine(hyp_eng)
+                for _h in _hyps:
+                    _rc.add_hypothesis(_h)
+                self._result.research_context = _rc
+            except Exception:
+                pass  # fail-soft: epistemic bonus returns 0.0
 
         if not dark_queries:
 
@@ -24227,14 +24635,11 @@ class SprintScheduler:
 
             db_path.parent.mkdir(parents=True, exist_ok=True)
 
-            self._forensics_lmdb_env = lmdb.open(
-
-                str(db_path),
-
+            from hledac.universal.knowledge.lmdb_boot_guard import open_lmdb_with_guard
+            self._forensics_lmdb_env = open_lmdb_with_guard(
+                db_path,
                 map_size=50 * 1024 * 1024,  # 50MB max for enrichment data
-
                 max_dbs=1,
-
             )
 
         except Exception as exc:
@@ -24321,14 +24726,11 @@ class SprintScheduler:
 
             db_path.parent.mkdir(parents=True, exist_ok=True)
 
-            self._multimodal_lmdb_env = lmdb.open(
-
-                str(db_path),
-
+            from hledac.universal.knowledge.lmdb_boot_guard import open_lmdb_with_guard
+            self._multimodal_lmdb_env = open_lmdb_with_guard(
+                db_path,
                 map_size=50 * 1024 * 1024,  # 50MB max
-
                 max_dbs=1,
-
             )
 
         except Exception as exc:
@@ -25280,6 +25682,10 @@ class SprintScheduler:
 
             if result.stix_bundle_path:
                 self._result.export_paths.append(result.stix_bundle_path)
+
+
+            # Wire hypothesis count to result telemetry (F259)
+            self._result.hypotheses_generated = result.hypotheses_generated
 
             logger.info(
                 f"Hypothesis export: {result.hypotheses_generated} hypotheses, "
@@ -27195,7 +27601,9 @@ class SprintScheduler:
 
         self._enrichment_services = services
 
-
+    def inject_evidence_log(self, elog: Any) -> None:
+        """F11C: Inject EvidenceLog reference (fail-safe, M1 8GB safe)."""
+        self._evidence_log = elog
 
     def inject_source_economics(
 
@@ -27437,26 +27845,26 @@ class SprintScheduler:
 
         # Hermes: check engine loaded
 
+        # P0-1 fix: check INTENT (hermes_load_attempted) not STATE (hermes_engine is not None)
+        # health_check runs BEFORE _prewarm_hermes_for_sprint in run(), so _hermes_engine
+        # is always None at this point. Use result fields to determine if Hermes SHOULD be loaded.
         try:
-
-            hermes = getattr(self, "_hermes_engine", None)
-
-            if hermes is not None and hasattr(hermes, "is_loaded"):
-
-                hermes_ok = hermes.is_loaded
-
-            elif hermes is not None:
-
-                hermes_ok = True  # engine exists, assume loaded
-
+            result = getattr(self, "_result", None)
+            hermes_load_attempted = result.hermes_load_attempted if result else False
+            hermes_load_reason = result.hermes_load_reason if result else ""
+            hermes_synthesis_enabled = _env_flag("HLEDAC_ENABLE_HERMES_SYNTHESIS") == "1"
+            if hermes_load_attempted:
+                # Load was attempted -- report actual outcome
+                hermes_ok = result.hermes_model_loaded if result else False
+            elif not hermes_synthesis_enabled:
+                # Hermes intentionally disabled -- not a health failure
+                hermes_ok = True
             else:
-
-                errors.append("hermes not loaded")
-
+                # Synthesis enabled but load not yet attempted (pre-flight) -- warn only
+                hermes_ok = False
+                errors.append("hermes prewarm not yet run")
         except Exception as e:
-
             errors.append(f"hermes check failed: {e}")
-
 
 
         # FetchCoordinator: check via public_fetcher session status
@@ -27761,7 +28169,7 @@ class SprintScheduler:
 
                 # Sprint 8VI §C: Feedback -- successful hypotheses strengthen edges
 
-                if hyp_found > 0 and hasattr(self, "_ioc_graph") and self._ioc_graph is not None:
+                if hyp_found > 0:
 
                     try:
 
@@ -27771,7 +28179,7 @@ class SprintScheduler:
 
                             if ioc_val:
 
-                                self._ioc_graph.add_relation(
+                                _DEFAULT_GRAPH_SERVICE.upsert_relation(
 
                                     task.ioc_value[:100],
 
@@ -27821,15 +28229,10 @@ class SprintScheduler:
 
         """Wrapper: buffer IOC to graph and enqueue for further pivoting."""
 
-        # Sprint 8VE B.3: Lazy IOC graph init (for backward compat with existing callers)
-
-        if not hasattr(self, "_ioc_graph"):
-
-            from hledac.universal.graph.quantum_pathfinder import DuckPGQGraph
-
-            self._ioc_graph = DuckPGQGraph()
-
-
+        # Sprint F268 FIX: Removed isolated DuckPGQGraph() init — now uses
+        # _DEFAULT_GRAPH_SERVICE singleton (shared with graph_service and
+        # SprintGraphAccumulator). The isolated instance caused quantum_pathfinder
+        # to read from a different DB than where SprintGraphAccumulator wrote.
 
         # Sprint F238E Phase B: extract relation write to graph_accumulator
 
@@ -31171,11 +31574,21 @@ class SprintScheduler:
                         finding_id=f"graph_rag_ctx_{int(ts * 1000)}_{idx}",
                         query=query,
                         source_type=SourceType.CONTEXT_SEED,
-                        confidence=insight.get("similarity", 0.5),
-                        ts=ts,
-                        provenance=("graph_rag",),
-                        payload_text=content[:2048],
                     )
+                    # Sprint F11C: Wire EvidenceLog — observation event
+                    if self._evidence_log is not None:
+                        try:
+                            self._evidence_log.create_event(
+                                "observation",
+                                finding.model_dump() if hasattr(finding, "model_dump") else vars(finding),
+                                source_ids=[finding.source_id] if hasattr(finding, "source_id") else [],
+                                confidence=insight.get("similarity", 0.5),
+                                ts=ts,
+                                provenance=("graph_rag",),
+                                payload_text=content[:2048],
+                            )
+                        except Exception:
+                            pass
                     findings.append(finding)
                 else:
                     findings.append({

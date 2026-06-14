@@ -619,7 +619,7 @@ async def test_scheduler_healthy_after_multiple_failsoft_paths(
 @pytest.mark.asyncio
 async def test_synthesis_sidecar_skipped_when_env_disabled(minimal_config):
     """
-    F259: HLEDAC_ENABLE_SYNTHESIS=0 (default) → synthesis skipped.
+    F259: HLEDAC_ENABLE_HERMES_SYNTHESIS=0 (default) → synthesis skipped.
     verify: _result fields remain at defaults.
     """
     SprintScheduler = _import_scheduler()  # noqa: N806
@@ -649,7 +649,7 @@ async def test_synthesis_sidecar_skipped_when_no_findings(minimal_config):
     # Return empty list - no findings
     sched._duckdb_store.get_top_findings = AsyncMock(return_value=[])
 
-    with patch.dict(os.environ, {"HLEDAC_ENABLE_SYNTHESIS": "1"}):
+    with patch.dict(os.environ, {"HLEDAC_ENABLE_HERMES_SYNTHESIS": "1"}):
         await sched._run_synthesis_sidecar("test query", sched._duckdb_store, None)
 
     # Should skip due to no findings
@@ -683,7 +683,7 @@ async def test_synthesis_sidecar_skipped_when_uma_emergency(minimal_config):
     from hledac.universal.runtime import sprint_scheduler as _ss_mod
     _ss_mod._env_flag.cache_clear()
 
-    with patch.dict(os.environ, {"HLEDAC_ENABLE_SYNTHESIS": "1"}):
+    with patch.dict(os.environ, {"HLEDAC_ENABLE_HERMES_SYNTHESIS": "1"}):
         with patch("hledac.universal.utils.uma_budget.get_uma_snapshot", return_value=mock_uma):
             await sched._run_synthesis_sidecar("test query", sched._duckdb_store, None)
 
@@ -716,7 +716,7 @@ async def test_synthesis_sidecar_graceful_on_error(minimal_config):
     from hledac.universal.runtime import sprint_scheduler as _ss_mod
     _ss_mod._env_flag.cache_clear()
 
-    with patch.dict(os.environ, {"HLEDAC_ENABLE_SYNTHESIS": "1"}):
+    with patch.dict(os.environ, {"HLEDAC_ENABLE_HERMES_SYNTHESIS": "1"}):
         with patch("hledac.universal.brain.synthesis_runner.SynthesisRunner", return_value=mock_runner):
             await sched._run_synthesis_sidecar("test query", sched._duckdb_store, None)
 
@@ -772,7 +772,7 @@ async def test_synthesis_sidecar_skipped_when_zero_accepted_findings(minimal_con
     # Mock SynthesisRunner — must NOT be instantiated
     mock_runner_cls = MagicMock()
 
-    with patch.dict(os.environ, {"HLEDAC_ENABLE_SYNTHESIS": "1"}):
+    with patch.dict(os.environ, {"HLEDAC_ENABLE_HERMES_SYNTHESIS": "1"}):
         with patch("hledac.universal.brain.synthesis_runner.SynthesisRunner", mock_runner_cls):
             await sched._run_synthesis_sidecar("test query", sched._duckdb_store, None)
 

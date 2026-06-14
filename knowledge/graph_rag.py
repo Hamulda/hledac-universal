@@ -133,7 +133,7 @@ class GraphRAGOrchestrator:
                 if self._embedder is None:
                     try:
                         # Sprint 81 Fáze 4: Sdílený singleton místo RAGEngine()
-                        from hledac.universal.core.mlx_embeddings import get_embedding_manager
+                        from hledac.universal.core._mlx_embeddings import get_embedding_manager
                         self._embedder = get_embedding_manager()
                         logger.debug("[EMBEDDER] graph_rag using shared MLXEmbeddingManager singleton")
                     except Exception as e:

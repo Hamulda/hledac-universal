@@ -47,13 +47,116 @@ TOKEN_BUCKET_BURST: int = 20
 BGP_EVENT_TYPES: frozenset[str] = frozenset({"announce", "withdraw", "unknown"})
 
 # ── DoH Resolvers ─────────────────────────────────────────────────────────────
+# F300: Fixed Quad9 port 5053→443 (5053 is DoT, not DoH - caused HTTP 505)
+# F300: Added ordered fallback chain with circuit breaker health tracking
 DOH_RESOLVERS: dict[str, str] = {
     "cloudflare": "https://cloudflare-dns.com/dns-query",
     "google": "https://dns.google/resolve",
-    "quad9": "https://dns.quad9.net:5053/dns-query",
+    "quad9": "https://dns.quad9.net/dns-query",  # was :5053 (DoT port - WRONG)
     "adguard": "https://dns.adguard.com/dns-query",
     "nextdns": "https://dns.nextdns.io/dns-query",
 }
+
+# F300: Ordered fallback chain — tried in order, early exit on success
+# Primary: cloudflare (most reliable), Fallback: google → quad9 → adguard → nextdns
+DOH_FALLBACK_CHAIN: list[tuple[str, str]] = [
+    ("cloudflare", "https://cloudflare-dns.com/dns-query"),
+    ("google", "https://dns.google/resolve"),
+    ("quad9", "https://dns.quad9.net/dns-query"),
+    ("adguard", "https://dns.adguard.com/dns-query"),
+    ("nextdns", "https://dns.nextdns.io/dns-query"),
+]
+
+# F300: Circuit breaker state per resolver — tracks failure count + last_failure_ts
+# Resolver removed from chain after MAX_CONSECUTIVE_FAILURES
+from dataclasses import dataclass
+
+
+@dataclass
+class _ResolverHealth:
+    """Per-resolver health state for circuit breaker."""
+    consecutive_failures: int = 0
+    last_failure_ts: float = 0.0
+    total_requests: int = 0
+    total_successes: int = 0
+
+    @property
+    def failure_rate(self) -> float:
+        if self.total_requests == 0:
+            return 0.0
+        return 1.0 - (self.total_successes / self.total_requests)
+
+    @property
+    def is_healthy(self) -> bool:
+        return self.consecutive_failures < _MAX_CONSECUTIVE_FAILURES
+
+
+_MAX_CONSECUTIVE_FAILURES: int = 5
+_RECOVERY_WINDOW_S: float = 60.0  # Reset failure count after 60s of success
+
+
+class _ResolverHealthTracker:
+    """Thread-safe resolver health tracker with recovery window."""
+    __slots__ = ("_health", "_lock")
+    _health: dict[str, _ResolverHealth]
+    _lock: asyncio.Lock
+
+    def __init__(self) -> None:
+        self._health = {name: _ResolverHealth() for name in DOH_RESOLVERS}
+        self._lock = asyncio.Lock()
+
+    async def record_success(self, resolver: str) -> None:
+        async with self._lock:
+            h = self._health.get(resolver)
+            if h:
+                h.total_requests += 1
+                h.total_successes += 1
+                h.consecutive_failures = 0
+
+    async def record_failure(self, resolver: str) -> None:
+        async with self._lock:
+            h = self._health.get(resolver)
+            if h:
+                h.total_requests += 1
+                h.consecutive_failures += 1
+                h.last_failure_ts = time.time()
+
+    async def get_healthy_resolvers(self) -> list[tuple[str, str]]:
+        """Return fallback chain with unhealthy resolvers filtered out."""
+        async with self._lock:
+            now = time.time()
+            result: list[tuple[str, str]] = []
+            for name, url in DOH_FALLBACK_CHAIN:
+                h = self._health.get(name)
+                if h and h.is_healthy:
+                    # Check recovery window
+                    if h.consecutive_failures > 0 and h.last_failure_ts > 0:
+                        if now - h.last_failure_ts > _RECOVERY_WINDOW_S:
+                            # Enough time passed, allow retry
+                            h.consecutive_failures = 0
+                            result.append((name, url))
+                        # else: still in recovery window
+                    else:
+                        result.append((name, url))
+                elif not h:
+                    result.append((name, url))
+            return result
+
+    def get_stats(self) -> dict[str, dict]:
+        """Return per-resolver health stats for telemetry."""
+        return {
+            name: {
+                "consecutive_failures": h.consecutive_failures,
+                "total_requests": h.total_requests,
+                "total_successes": h.total_successes,
+                "failure_rate": h.failure_rate,
+                "is_healthy": h.is_healthy,
+            }
+            for name, h in self._health.items()
+        }
+
+
+_resolver_health = _ResolverHealthTracker()
 
 # ── Token Bucket per resolver ─────────────────────────────────────────────────
 class _TokenBucket:
@@ -192,34 +295,45 @@ class PassiveDNSResolver:
         return answers
 
     async def resolve(self, name: str, rdtype: str = "A") -> list[str]:
-        """Resolve name via all available DoH resolvers, return merged results."""
-        tasks = [
-            self._do_query(name, rdtype, resolver, url)
-            for resolver, url in DOH_RESOLVERS.items()
-        ]
-        results = await safe_gather_dropin(*tasks, label="passive_dns:198")
-        merged: list[str] = []
-        for res in results:
-            if isinstance(res, list):
-                merged.extend(res)
-        # Deduplicate preserving order
-        seen: set[str] = set()
-        unique: list[str] = []
-        for a in merged:
-            if a not in seen:
-                seen.add(a)
-                unique.append(a)
-        return unique
+        """
+        Resolve name via DoH fallback chain — F300.
+
+        Tries resolvers in order (cloudflare → google → quad9 → adguard → nextdns).
+        Early exit on first successful resolution with results.
+        Records success/failure per resolver for circuit breaker health tracking.
+        """
+        healthy_resolvers = await _resolver_health.get_healthy_resolvers()
+        if not healthy_resolvers:
+            logger.warning("[DoH] All resolvers unhealthy, attempting recovery")
+            healthy_resolvers = DOH_FALLBACK_CHAIN  # Force attempt all
+
+        for resolver, url in healthy_resolvers:
+            result = await self._do_query(name, rdtype, resolver, url)
+            if result:
+                await _resolver_health.record_success(resolver)
+                return result
+            else:
+                await _resolver_health.record_failure(resolver)
+
+        return []
 
     async def resolve_https_rr(self, name: str) -> list[str]:
         """Query HTTPS RR (Type 65) via DoH."""
         return await self.resolve(name, rdtype="65")
 
     async def compare_resolvers(self, name: str, rdtype: str = "A") -> dict[str, list[str]]:
-        """Compare answers across all resolvers — detects censorship."""
+        """
+        Compare answers across all healthy resolvers — detects censorship.
+
+        F300: Uses health-aware resolver list. Unhealthy resolvers are excluded.
+        """
+        healthy_resolvers = await _resolver_health.get_healthy_resolvers()
+        if not healthy_resolvers:
+            return {}
+
         tasks = {
             resolver: self._do_query(name, rdtype, resolver, url)
-            for resolver, url in DOH_RESOLVERS.items()
+            for resolver, url in healthy_resolvers
         }
         results = await safe_gather_dropin(*tasks.values(), label="passive_dns:222")
         comparison: dict[str, list[str]] = {}

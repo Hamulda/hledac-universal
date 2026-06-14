@@ -78,7 +78,7 @@ def _try_get_lock_holder_pid(lock_path: pathlib.Path) -> int | None:
         return None
 
 
-def _is_lock_stale(lock_path: pathlib.Path) -> tuple[bool, str]:
+def _is_lock_stale(lock_path: pathlib.Path, data_path: pathlib.Path | None = None) -> tuple[bool, str]:
     """
     Determine if a lock file is safely considered stale.
 
@@ -88,12 +88,17 @@ def _is_lock_stale(lock_path: pathlib.Path) -> tuple[bool, str]:
 
     Strict check order:
     1. Lock file does not exist → not stale (nothing to do)
-    2. Try to read holder PID → if live process, NOT stale
-    3. Fallback: if PID unreadable AND file is old (> _LOCK_AGE_THRESHOLD_SECONDS) → stale
+    2. Crash-detection: data.mdb exists + lock.mdb missing → stale (clean post-crash)
+    3. Try to read holder PID → if live process, NOT stale
+    4. Fallback: if PID unreadable AND file is old (> _LOCK_AGE_THRESHOLD_SECONDS) → stale
 
     This function NEVER deletes anything — it only returns a recommendation.
     """
     if not lock_path.exists():
+        # P1-2: Crash-detection heuristic — data.mdb exists without lock.mdb
+        # This is a clean post-crash state: lock was held by dead process
+        if data_path is not None and data_path.exists():
+            return True, "crash_recovery(data_exists_no_lock)"
         return False, "lock_file_not_found"
 
     # Try to get holder PID from lock file header
@@ -129,7 +134,7 @@ class BootGuardError(Exception):
     pass
 
 
-def cleanup_stale_lmdb_lock(lmdb_dir: pathlib.Path) -> tuple[int, str]:
+def cleanup_stale_lmdb_lock(lmdb_dir: pathlib.Path, *, data_path: pathlib.Path | None = None) -> tuple[int, str]:
     """
     Safely clean a single stale LMDB lock.mdb from lmdb_dir.
 
@@ -137,6 +142,12 @@ def cleanup_stale_lmdb_lock(lmdb_dir: pathlib.Path) -> tuple[int, str]:
         1. The file exists
         2. The lock holder (if detectable) is confirmed dead
         3. OR the file is older than _LOCK_AGE_THRESHOLD_SECONDS AND holder is not confirmed alive
+        4. OR crash-detection: data.mdb exists without lock.mdb (post-crash clean state)
+
+    Args:
+        lmdb_dir: Path to LMDB directory containing lock.mdb
+        data_path: Optional explicit path to data.mdb for crash-detection heuristic.
+                   If None, defaults to lmdb_dir / "data.mdb".
 
     Returns (removed_count, last_reason):
         (0, reason) — nothing removed; reason explains why
@@ -146,8 +157,10 @@ def cleanup_stale_lmdb_lock(lmdb_dir: pathlib.Path) -> tuple[int, str]:
         BootGuardError: when a live lock holder is detected (unsafe state — abort boot).
     """
     lock_path = lmdb_dir / "lock.mdb"
+    if data_path is None:
+        data_path = lmdb_dir / "data.mdb"
 
-    is_stale, reason = _is_lock_stale(lock_path)
+    is_stale, reason = _is_lock_stale(lock_path, data_path)
     if not is_stale:
         return 0, reason
 
@@ -173,7 +186,7 @@ def open_lmdb_with_guard(
     """
     Open an LMDB environment with safe stale-lock guard.
 
-    This is a wrapper around paths.open_lmdb() that adds a pre-open
+    This is a wrapper around lmdb.open() that adds a pre-open
     stale-lock safety check to avoid blindly deleting locks from live processes.
 
     Args:
@@ -185,10 +198,11 @@ def open_lmdb_with_guard(
         lmdb.Environment instance.
 
     Lock recovery protocol:
-        1. First open attempt (via paths.open_lmdb)
-        2. On LockError: run cleanup_stale_lmdb_lock with strict liveness check
-        3. Single retry after cleanup
-        4. If still failing: propagate LockError (fail-soft, do not retry further)
+        1. Pre-open: crash-detection + stale-lock cleanup (strict liveness check)
+        2. First open attempt
+        3. On LockError: run cleanup_stale_lmdb_lock with strict liveness check
+        4. Single retry after cleanup
+        5. If still failing: propagate LockError (fail-soft, do not retry further)
     """
     import lmdb
 

@@ -317,6 +317,27 @@ class RotatingBloomFilter:
     def __contains__(self, item: str) -> bool:
         return bool(self._impl.__contains__(item))
 
+    def put_many(self, items: list[str]) -> list[bool]:
+        """
+        Bulk add items to the filter.
+
+
+        Args:
+            items: List of URL/fingerprint strings to add
+
+        Returns:
+            List[bool] — True for each new item, False for duplicates.
+
+        Uses Rust add_batch when available (3-5x faster than per-item).
+        Falls back to sequential add() for Python backend.
+        """
+        if not items:
+            return []
+        if self._is_rust:
+            return list(self._impl.add_batch(items))
+        # Python backend: sequential add.
+        return [self.add(item) for item in items]
+
     def contains(self, item: str) -> bool:
         return bool(self._impl.contains(item))
 

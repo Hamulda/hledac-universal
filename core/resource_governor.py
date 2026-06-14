@@ -217,6 +217,90 @@ class UMAStatus:
     last_error: str | None = None
 
 
+# ── P0-1: Governor Concurrency Decision ───────────────────────────────────────
+
+
+@dataclass(frozen=True, slots=True)
+class GovernorDecision:
+    """
+    P0-1: Returned by ResourceGovernor.evaluate() — canonical concurrency scaling
+    decision for the acquisition planner.
+
+    Replaces the old binary hardware_critical kill switch. Instead of disabling
+    lanes entirely at critical/emergency, the governor now returns per-transport
+    concurrency caps so lanes stay alive at reduced concurrency.
+
+    Invariants:
+        - clearnet_max >= 1  (PUBLIC, CT, DOH, WAYBACK, PASSIVE_DNS, etc.)
+        - stealth_max >= 1   (STEALTH, TOR, I2P)
+        - model_blocked: True means MLX model load should be deferred
+        - All fields bounded, fail-safe defaults always valid
+    """
+
+    clearnet_max: int    # max concurrent clearnet fetches
+    stealth_max: int     # max concurrent stealth fetches
+    model_blocked: bool  # True = defer MLX model load
+    uma_state: str       # "ok"|"soft_warn"|"warn"|"critical"|"emergency"
+    io_only: bool        # True = I/O-only mode active
+
+
+def make_governor_decision(uma_state: str, io_only: bool, swap_detected: bool) -> GovernorDecision:
+    """
+    P0-1: Pure factory for GovernorDecision — no side effects, no psutil.
+
+    Maps UMA state to concurrency caps calibrated for M1 8GB UMA.
+    The key insight: even at critical/emergency, M1 can still do 1 clearnet
+    fetch — we scale concurrency, we don't kill lanes.
+
+    M1 8GB calibration:
+        ok         → clearnet=5, stealth=3, model_blocked=False
+        soft_warn  → clearnet=3, stealth=2, model_blocked=False
+        warn       → clearnet=2, stealth=1, model_blocked=False
+        critical   → clearnet=1, stealth=1, model_blocked=True
+        emergency  → clearnet=1, stealth=1, model_blocked=True
+    """
+    if uma_state == "emergency" or (uma_state == "critical" and swap_detected):
+        return GovernorDecision(
+            clearnet_max=1,
+            stealth_max=1,
+            model_blocked=True,
+            uma_state=uma_state,
+            io_only=io_only,
+        )
+    if uma_state == "critical":
+        return GovernorDecision(
+            clearnet_max=1,
+            stealth_max=1,
+            model_blocked=True,
+            uma_state=uma_state,
+            io_only=io_only,
+        )
+    if uma_state == "warn":
+        return GovernorDecision(
+            clearnet_max=2,
+            stealth_max=1,
+            model_blocked=False,
+            uma_state=uma_state,
+            io_only=io_only,
+        )
+    if uma_state == "soft_warn":
+        return GovernorDecision(
+            clearnet_max=3,
+            stealth_max=2,
+            model_blocked=False,
+            uma_state=uma_state,
+            io_only=io_only,
+        )
+    # ok (default)
+    return GovernorDecision(
+        clearnet_max=5,
+        stealth_max=3,
+        model_blocked=False,
+        uma_state=uma_state,
+        io_only=io_only,
+    )
+
+
 class Priority(Enum):
     CRITICAL = "CRITICAL"   # musí se provést, vyšší tolerance (+20 % budget)
     HIGH = "HIGH"           # důležité, lze odložit
@@ -340,10 +424,39 @@ class ResourceGovernor:
 
         return _Reservation(self, cost_estimate, priority)
 
+    async def evaluate(self) -> GovernorDecision:
+        """
+        P0-1: Sample UMA and return GovernorDecision for acquisition planner.
+
+        This is the canonical entry point for the concurrency scaling decision.
+        Returns GovernorDecision with clearnet_max/stealth_max/model_blocked caps
+        instead of the old binary hardware_critical kill switch.
+
+        Fail-open: if sample_uma_status() fails, returns safe defaults
+        (clearnet=5, stealth=3, model_blocked=False, uma_state="ok", io_only=False).
+        """
+        try:
+            snap = sample_uma_status()
+            return make_governor_decision(
+                uma_state=snap.state,
+                io_only=snap.io_only,
+                swap_detected=snap.swap_detected,
+            )
+        except Exception:
+            # Fail-open: safe defaults that allow all lanes to run
+            return GovernorDecision(
+                clearnet_max=5,
+                stealth_max=3,
+                model_blocked=False,
+                uma_state="ok",
+                io_only=False,
+            )
+
 
 # =============================================================================
 # Sprint 8AB: Unified UMA Accountant Surface
 # =============================================================================
+
 
 def evaluate_uma_state(system_used_gib: float) -> str:
     """

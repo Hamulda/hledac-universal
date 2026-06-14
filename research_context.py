@@ -284,9 +284,11 @@ class ResearchContext(BaseModel):
     a slouží jako primární datová struktura pro HermesCommander.
     """
 
-    # Základní identifikace
-    query: str = Field(..., description="Původní výzkumný dotaz")
-    research_id: str = Field(..., description="Unikátní ID výzkumu")
+    # Základní identifikace — F268EPISTEMIC: made optional (default_factory) so
+    # ResearchContext() can be created without args in sprint_scheduler when
+    # research_context is needed for epistemic bonus even without full context.
+    query: str = Field(default="", description="Původní výzkumný dotaz")
+    research_id: str = Field(default="", description="Unikátní ID výzkumu")
     iteration: int = Field(default=0, ge=0, description="Aktuální iterace")
 
     # Rozpočet a limity

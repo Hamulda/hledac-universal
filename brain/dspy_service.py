@@ -19,6 +19,8 @@ import os
 import time
 from pathlib import Path
 
+from hledac.universal.brain.mlx_worker_thread import MLXWorkerThread
+
 try:
     import orjson
 except ImportError:
@@ -101,22 +103,35 @@ class Hermes3DSPyLM:
         self._engine = None
         self._loaded = False
 
-    def __call__(self, prompt: str, **kwargs) -> str:
-        """Synchronous call — runs Hermes3Engine.generate_text() via executor."""
-        import asyncio
+    # Shared worker thread for thread-safe MLX inference
+    _worker: MLXWorkerThread | None = None
 
-        # Lazy load Hermes3Engine on first call
+    @classmethod
+    def _get_worker(cls) -> MLXWorkerThread:
+        """Get or create the shared MLXWorkerThread (singleton per process)."""
+        if cls._worker is None:
+            cls._worker = MLXWorkerThread(name="dspy-hermes-worker")
+            cls._worker.start()
+        return cls._worker
+
+    def __call__(self, prompt: str, **kwargs) -> str:
+        """
+        Synchronous call — routes through MLXWorkerThread to avoid deadlock.
+
+        DSPy calls LM providers synchronously from arbitrary threads.
+        Using loop.run_until_complete() directly risks deadlock when the
+        MLXWorkerThread is already running its own event loop.
+        MLXWorkerThread.submit() uses run_coroutine_threadsafe() which is
+        safe to call from any thread including the worker thread itself.
+        """
         if not self._loaded:
             self._load_engine()
 
-        # Run async inference in sync executor
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        try:
-            result = loop.run_until_complete(self._engine.generate(prompt, **kwargs))
-        finally:
-            loop.close()
-        return result
+        assert self._engine is not None, "Hermes3Engine not loaded"
+        worker = self._get_worker()
+        assert worker._loop is not None, "mlx_worker loop not ready"
+        coro = self._engine.generate(prompt, **kwargs)
+        return asyncio.run_coroutine_threadsafe(coro, worker._loop).result()
 
     def _load_engine(self) -> None:
         """Load Hermes3Engine with ANE mutex protection."""
@@ -220,21 +235,19 @@ def configure_dspy_with_hermes() -> bool:
 
 
 def _get_dspy_lm():
-    """Build DSPy LM instance using mlx_lm.server (same config as MIPROv2 setup)."""
-    model_id = os.getenv(
-        "HLEDAC_LLM_MODEL",
-        "/Users/" + os.getenv("USER", "root") + "/.hledac/models/DeepHermes-3-Llama-3-3B-Preview-4bit",
-    )
+    """
+    Build DSPy LM instance using Hermes3DSPyLM (direct MLX, no HTTP server).
+
+    Replaces mlx_lm.server HTTP proxy — ConnectionError was caused by
+    missing mlx_lm.server process on localhost:8080.
+    Uses MLXWorkerThread for thread-safe async execution (M1 crash-safe).
+    """
     try:
-        import dspy
-        lm = dspy.LM(
-            model=model_id,
-            base_url="http://localhost:8080/v1",
-            api_key="none",
-            custom_llm_provider="openai",
-            max_tokens=MAX_OUTPUT_TOKENS,
-        )
-        return lm
+        hermes_lm = get_hermes_dspy_lm()
+        if hermes_lm is None:
+            logger.warning("dspy_service: Hermes3DSPyLM unavailable (HLEDAC_ENABLE_LLM != '1')")
+            return None
+        return hermes_lm
     except Exception as e:
         logger.warning("dspy_service: failed to create DSPy LM: %s", e)
         return None
@@ -289,7 +302,7 @@ async def expand_query(query: str) -> list | None:
         program.signature.instructions = prompt_template
 
         async def _run():
-            with dspy.ctx(lm=lm):
+            with dspy.context(lm=lm):
                 pred = program(query=query.strip())
                 return str(pred.answer) if hasattr(pred, "answer") else None
 
@@ -398,7 +411,7 @@ async def score_findings(findings: list, min_score: float = 4.0) -> list | None:
         program.signature.instructions = prompt_template
 
         async def _run():
-            with dspy.ctx(lm=lm):
+            with dspy.context(lm=lm):
                 pred = program(query=findings_json[:500])
                 return str(pred.answer) if hasattr(pred, "answer") else None
 
@@ -498,7 +511,7 @@ async def suggest_pivots(findings: list, context: dict | None = None) -> list | 
         program.signature.instructions = prompt_template
 
         async def _run():
-            with dspy.ctx(lm=lm):
+            with dspy.context(lm=lm):
                 pred = program(query=findings_str[:400])
                 return str(pred.answer) if hasattr(pred, "answer") else None
 

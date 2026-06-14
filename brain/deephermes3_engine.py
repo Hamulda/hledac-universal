@@ -1393,10 +1393,11 @@ class DeepHermes3Engine:
 
 
         Returns True if no inference occurred within _idle_unload_timeout_s.
-        Fail-safe: returns False if _last_inference_at is None (never used).
+        Fail-safe: returns True if _last_inference_at is None (never used) —
+        unloaded models stay unloaded; keeping an UNUSED model warm wastes RAM.
         """
         if self._last_inference_at is None:
-            return False
+            return True
         try:
             import time as _time
             elapsed = _time.monotonic() - self._last_inference_at
@@ -1547,18 +1548,20 @@ class DeepHermes3Engine:
         """
         worker = self._ensure_mlx_worker_thread()
         if worker is not None and worker.is_active():
-            async with self._inference_semaphore:
-                try:
-                    coro = self._run_inference_async(fn, *args, **kwargs)
-                    return await worker.submit(coro, timeout=timeout)
-                except RuntimeError as _e:
-                    # Worker thread died or unavailable mid-flight (M.T3)
-                    logger.debug(
-                        "[P0-3] worker submit failed, falling back to executor: %s",
-                        _e,
-                    )
-                except TimeoutError:
-                    raise
+            # NOTE: No semaphore here — worker thread serializes via internal
+            # event loop. Adding semaphore would REDUNDANTLY block concurrent
+            # batch accumulation in MLXBatchedExecutor. (M.T3 fail-soft intact.)
+            try:
+                coro = self._run_inference_async(fn, *args, **kwargs)
+                return await worker.submit(coro, timeout=timeout)
+            except RuntimeError as _e:
+                # Worker thread died or unavailable mid-flight (M.T3)
+                logger.debug(
+                    "[P0-3] worker submit failed, falling back to executor: %s",
+                    _e,
+                )
+            except TimeoutError:
+                raise
 
         # Fallback: legacy ThreadPoolExecutor + wait_for path
         async with self._inference_semaphore:

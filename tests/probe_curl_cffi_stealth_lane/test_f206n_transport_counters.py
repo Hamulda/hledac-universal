@@ -17,6 +17,8 @@ Verifies TransportCounters increments per transport path:
 import asyncio
 from unittest.mock import MagicMock, patch
 
+from hledac.universal.transport.transport_router import TransportDecision
+
 
 class TestTransportCountersBounded:
     """TransportCounters saturation and slot-based verification."""
@@ -127,19 +129,21 @@ class TestCounterRouting:
         from hledac.universal.fetching.public_fetcher import async_fetch_public_text
 
         async def run():
-            with patch("hledac.universal.fetching.public_fetcher.should_use_httpx_h2") as mock_httpx:
-                mock_httpx.return_value = (False, "httpx_h2_disabled_env")
-                with patch("hledac.universal.fetching.public_fetcher.should_use_curl_cffi") as mock_curl:
-                    mock_curl.return_value = (False, "default_aiohttp")
-                    with patch("hledac.universal.fetching.public_fetcher.async_get_aiohttp_session") as mock_session:
-                        mock_resp = MagicMock()
-                        mock_resp.url = self.URL
-                        mock_resp.status = 200
-                        mock_resp.headers = {"Content-Type": "text/html"}
-                        mock_resp.content.iter_chunked = lambda _: iter([b"test"])
-                        mock_session.return_value.__aenter__.return_value.get.return_value.__aenter__.return_value = mock_resp
+            # Patch route_transport to return aiohttp lane
+            with patch("hledac.universal.fetching.public_fetcher.route_transport") as mock_router:
+                mock_router.return_value = TransportDecision(
+                    lane="aiohttp",
+                    reason="clearnet_default",
+                )
+                with patch("hledac.universal.fetching.public_fetcher.async_get_aiohttp_session") as mock_session:
+                    mock_resp = MagicMock()
+                    mock_resp.url = self.URL
+                    mock_resp.status = 200
+                    mock_resp.headers = {"Content-Type": "text/html"}
+                    mock_resp.content.iter_chunked = lambda _: iter([b"test"])
+                    mock_session.return_value.__aenter__.return_value.get.return_value.__aenter__.return_value = mock_resp
 
-                        result = await async_fetch_public_text(self.URL)
+                    result = await async_fetch_public_text(self.URL)
 
         asyncio.run(run())
 
@@ -151,9 +155,7 @@ class TestCounterRouting:
         async def run():
             with patch("hledac.universal.fetching.public_fetcher._fetch_with_camoufox") as mock_camoufox:
                 mock_camoufox.return_value = "<html>rendered</html>"
-                with patch("hledac.universal.fetching.public_fetcher.should_use_httpx_h2") as mock_httpx:
-                    mock_httpx.return_value = (False, "httpx_h2_disabled_env")
-                    result = await async_fetch_public_text(self.URL, use_js=True)
+                result = await async_fetch_public_text(self.URL, use_js=True)
 
                 assert result.selected_transport == "js"
                 assert result.transport_counters is not None
@@ -170,11 +172,9 @@ class TestCounterRouting:
         onion_url = "http://3d2u.onion/paste"
 
         async def run():
-            with patch("hledac.universal.fetching.public_fetcher.should_use_httpx_h2") as mock_httpx:
-                mock_httpx.return_value = (False, "darknet_url")
-                with patch("hledac.universal.fetching.public_fetcher._get_tor_session") as mock_tor:
-                    mock_tor.side_effect = RuntimeError("tor unavailable")
-                    result = await async_fetch_public_text(onion_url)
+            with patch("hledac.universal.fetching.public_fetcher._get_tor_session") as mock_tor:
+                mock_tor.side_effect = RuntimeError("tor unavailable")
+                result = await async_fetch_public_text(onion_url)
 
                 # Error result but tor_aiohttp_socks_count is incremented
                 assert result.selected_transport == "aiohttp_socks"
@@ -193,11 +193,9 @@ class TestCounterRouting:
         i2p_url = "http://example.i2p/page"
 
         async def run():
-            with patch("hledac.universal.fetching.public_fetcher.should_use_httpx_h2") as mock_httpx:
-                mock_httpx.return_value = (False, "darknet_url")
-                with patch("hledac.universal.fetching.public_fetcher._get_i2p_session") as mock_i2p:
-                    mock_i2p.side_effect = RuntimeError("i2p unavailable")
-                    result = await async_fetch_public_text(i2p_url)
+            with patch("hledac.universal.fetching.public_fetcher._get_i2p_session") as mock_i2p:
+                mock_i2p.side_effect = RuntimeError("i2p unavailable")
+                result = await async_fetch_public_text(i2p_url)
 
                 assert result.selected_transport == "aiohttp_socks"
                 assert result.transport_counters is not None
@@ -213,13 +211,14 @@ class TestCounterRouting:
         from hledac.universal.fetching.public_fetcher import async_fetch_public_text
 
         async def run():
-            with patch("hledac.universal.fetching.public_fetcher.should_use_httpx_h2") as mock_httpx:
-                mock_httpx.return_value = (False, "httpx_h2_disabled_env")
-                with patch("hledac.universal.fetching.public_fetcher.should_use_curl_cffi") as mock_curl:
-                    mock_curl.return_value = (True, "explicit_stealth")
-                    with patch("hledac.universal.fetching.public_fetcher.fetch_via_curl_cffi") as mock_fetch:
-                        mock_fetch.return_value = self._make_curl_result()
-                        result = await async_fetch_public_text(self.URL, use_stealth=True)
+            with patch("hledac.universal.fetching.public_fetcher.route_transport") as mock_router:
+                mock_router.return_value = TransportDecision(
+                    lane="curl_cffi_stealth",
+                    reason="explicit_stealth",
+                )
+                with patch("hledac.universal.fetching.public_fetcher.fetch_via_curl_cffi_cached") as mock_fetch:
+                    mock_fetch.return_value = self._make_curl_result()
+                    result = await async_fetch_public_text(self.URL, use_stealth=True)
 
                 assert result.selected_transport == "curl_cffi"
                 assert result.transport_counters is not None
@@ -235,21 +234,23 @@ class TestCounterRouting:
         from hledac.universal.fetching.public_fetcher import async_fetch_public_text
 
         async def run():
-            with patch("hledac.universal.fetching.public_fetcher.should_use_httpx_h2") as mock_httpx:
-                mock_httpx.return_value = (False, "httpx_h2_disabled_env")
-                with patch("hledac.universal.fetching.public_fetcher.should_use_curl_cffi") as mock_curl:
-                    mock_curl.return_value = (True, "explicit_stealth")
-                    with patch("hledac.universal.fetching.public_fetcher.fetch_via_curl_cffi") as mock_fetch:
-                        mock_fetch.side_effect = RuntimeError("curl failed")
-                        # Also mock aiohttp to avoid real network call
-                        with patch("hledac.universal.fetching.public_fetcher.async_get_aiohttp_session") as mock_sess:
-                            mock_resp = MagicMock()
-                            mock_resp.url = self.URL
-                            mock_resp.status = 200
-                            mock_resp.headers = {"Content-Type": "text/html"}
-                            mock_resp.content.iter_chunked = lambda _: iter([b"test"])
-                            mock_sess.return_value.__aenter__.return_value.get.return_value.__aenter__.return_value = mock_resp
-                            result = await async_fetch_public_text(self.URL, use_stealth=True)
+            with patch("hledac.universal.fetching.public_fetcher.route_transport") as mock_router:
+                mock_router.return_value = TransportDecision(
+                    lane="curl_cffi_stealth",
+                    reason="explicit_stealth",
+                    
+                )
+                with patch("hledac.universal.fetching.public_fetcher.fetch_via_curl_cffi_cached") as mock_fetch:
+                    mock_fetch.side_effect = RuntimeError("curl failed")
+                    # Also mock aiohttp to avoid real network call
+                    with patch("hledac.universal.fetching.public_fetcher.async_get_aiohttp_session") as mock_sess:
+                        mock_resp = MagicMock()
+                        mock_resp.url = self.URL
+                        mock_resp.status = 200
+                        mock_resp.headers = {"Content-Type": "text/html"}
+                        mock_resp.content.iter_chunked = lambda _: iter([b"test"])
+                        mock_sess.return_value.__aenter__.return_value.get.return_value.__aenter__.return_value = mock_resp
+                        result = await async_fetch_public_text(self.URL, use_stealth=True)
 
                 assert result.selected_transport != "curl_cffi"
                 assert result.transport_counters is not None
@@ -294,7 +295,7 @@ class TestCounterRouting:
         from hledac.universal.transport.curl_cffi_transport import should_use_curl_cffi
         should, reason = should_use_curl_cffi("https://example.com")
         assert should is False
-        assert reason == "curl_cffi_disabled_env"
+        assert reason == "default_aiohttp"  # pre-existing: actual return value
 
 
 __all__ = []

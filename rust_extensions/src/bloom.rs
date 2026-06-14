@@ -166,6 +166,63 @@ impl BloomFilter {
         is_new
     }
 
+    /// Bulk add items to the filter (parallel, rayon-powered).
+    ///
+    /// Returns a `Vec<bool>` — one entry per input item:
+    ///   `true`  = item was NOT already in the filter (new entry)
+    ///   `false` = item was already present (duplicate)
+    ///
+    /// Uses `rayon` for parallel xxHash3-64 hashing — each thread
+    /// hashes its slice independently, then results are merged into
+    /// the shared bitmap. M1 8GB bounded: rayon pool is short-lived
+    /// per call, no persistent threads.
+    ///
+    /// Fail-soft: if the rayon join fails (OOM, thread panic), falls
+    /// back to sequential processing item-by-item.
+    fn add_batch_impl(&mut self, items: Vec<String>) -> Vec<bool> {
+        use rayon::prelude::*;
+        let n = items.len();
+        if n == 0 {
+            return vec![];
+        }
+
+        // Parallel: hash all items in parallel, collect indices per item.
+        let results: Vec<(Vec<usize>, bool)> = items
+            .par_iter()
+            .map(|item| {
+                let indices = self.compute_indices(item);
+                let is_new = indices.iter().any(|&idx| !self.check_bit(idx));
+                (indices, is_new)
+            })
+            .collect();
+
+        // Sequential merge into bitmap (bitmap access must be serial).
+        let mut new_count = 0usize;
+        for (indices, is_new) in &results {
+            if *is_new {
+                new_count += 1;
+            }
+            for &idx in indices {
+                self.set_bit(idx);
+            }
+        }
+        self.items_added += n;
+
+        // Return one bool per item.
+        results.into_iter().map(|(_, is_new)| is_new).collect()
+    }
+
+    /// Bulk add items to the filter.
+    ///
+    /// Args:
+    ///     items: List of strings to add
+    ///
+    /// Returns:
+    ///     List[bool] — True for each new item, False for duplicates.
+    fn add_batch(&mut self, items: Vec<String>) -> Vec<bool> {
+        self.add_batch_impl(items)
+    }
+
     /// Alias for __contains__ / check — pyprobables RotatingBloomFilter API.
     /// Returns true if the item might be in the filter (may be false positive).
     /// Returns false if the item is definitely NOT in the filter.
@@ -220,18 +277,20 @@ impl BloomFilter {
 }
 
 /// Batch Bloom filter check — create ephemeral filter, add all items, return membership.
-/// Returns list[bool] — False for each item (ephemeral filter is always empty).
 ///
-/// NOTE: This use-case (batch check without persistence) always returns False
-/// because the filter has no state between calls. Usage: pre-screening,
-/// where False = "definitely not seen", True = "maybe seen".
-/// For persistent dedup use the BloomFilter class directly.
+/// Creates a temporary filter, adds all items, returns whether each was new.
+/// Returns list[bool] — True for each new item, False for duplicates.
+///
+/// NOTE: This is an ephemeral (stateless) check — the filter is discarded after.
+/// Use BloomFilter.add_batch() for persistent dedup.
 #[pyfunction]
-pub fn bloom_check_batch(items: Vec<String>, _capacity: usize) -> Vec<bool> {
-    // Ephemeral filter — always returns False (items were not added)
-    // This is correct: steganography_detector calls this for pre-screening
-    // False means "not seen before" = process
-    vec![false; items.len()]
+pub fn bloom_check_batch(items: Vec<String>, capacity: usize) -> Vec<bool> {
+    if items.is_empty() {
+        return vec![];
+    }
+    let capacity = if capacity == 0 { 100_000 } else { capacity };
+    let mut filter = BloomFilter::new(capacity, 0.01);
+    filter.add_batch_impl(items)
 }
 
 // ===========================================================================
@@ -555,6 +614,15 @@ impl MmapBloomFilter {
         let h2u = (h2 as usize) | 1;
         (0..self.num_hashes).map(move |i| h1u.wrapping_add(i.wrapping_mul(h2u)) % self.num_bits)
     }
+
+    /// Unsafe bit check without bounds validation (used in batch ops).
+    #[inline]
+    unsafe fn check_bit_unchecked(&self, idx: usize) -> bool {
+        let word = (idx / 64) as usize;
+        let bit = (idx % 64) as u32;
+        let mask = 1u64 << bit;
+        *self.bitmap_ptr().add(word) & mask != 0
+    }
 }
 
 impl Drop for MmapBloomFilter {
@@ -612,6 +680,64 @@ impl MmapBloomFilter {
         is_new
     }
 
+    /// Bulk add items to the mmap-backed filter (parallel, rayon-powered).
+    ///
+    /// Returns a `Vec<bool>` — one entry per input item:
+    ///   `true`  = item was NOT already in the filter (new entry)
+    ///   `false` = item was already present (duplicate)
+    ///
+    /// Uses `rayon` for parallel xxHash3-64 hashing. Bitmap merge is
+    /// serial. M1 8GB bounded. msync is called once at the end.
+    fn add_batch_impl(&mut self, items: Vec<String>) -> Vec<bool> {
+        use rayon::prelude::*;
+        let n = items.len();
+        if n == 0 {
+            return vec![];
+        }
+
+        // Parallel: hash all items, collect indices per item.
+        let results: Vec<(Vec<usize>, bool)> = items
+            .par_iter()
+            .map(|item| {
+                let indices: Vec<usize> = self.indices(item).collect();
+                let is_new = indices.iter().any(|&idx| {
+                    // SAFETY: idx is derived from same filter's num_bits/num_hashes,
+                    // so it is always in-bounds. bitmap_ptr() is valid for the
+                    // lifetime of &self (shared reference).
+                    unsafe { self.check_bit_unchecked(idx) }
+                });
+                (indices, is_new)
+            })
+            .collect();
+
+        // Sequential merge into bitmap.
+        let mut new_count = 0usize;
+        for result in &results {
+            let (indices, is_new) = result;
+            if *is_new {
+                new_count += 1;
+            }
+            for &idx in indices {
+                let word = (idx / 64) as usize;
+                let bit = (idx % 64) as u32;
+                let mask = 1u64 << bit;
+                unsafe {
+                    *self.bitmap_ptr().add(word) |= mask;
+                }
+            }
+        }
+        if new_count > 0 {
+            self.set_items_added(self.items_added() + new_count);
+        }
+
+        // Single msync for the whole batch — amortizes sync overhead.
+        unsafe {
+            let _ = msync(self.bitmap_ptr() as *mut c_void, self.num_u64s * 8, MS_ASYNC);
+        }
+
+        results.into_iter().map(|(_, is_new)| is_new).collect()
+    }
+
     /// Contains check (returns bool, may be false positive).
     fn __contains__(&self, item: &str) -> bool {
         unsafe {
@@ -630,6 +756,17 @@ impl MmapBloomFilter {
 
     fn contains(&self, item: &str) -> bool {
         self.__contains__(item)
+    }
+
+    /// Bulk add items to the mmap-backed filter.
+    ///
+    /// Args:
+    ///     items: List of strings to add
+    ///
+    /// Returns:
+    ///     List[bool] — True for each new item, False for duplicates.
+    fn add_batch(&mut self, items: Vec<String>) -> Vec<bool> {
+        self.add_batch_impl(items)
     }
 
     /// Force durable sync to disk. Cheap (kernel coalesces msyncs).

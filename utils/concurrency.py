@@ -61,16 +61,35 @@ FETCH_SEMAPHORE = _FetchSemaphoreProxy()
 
 async def adjust_fetch_workers(new_limit: int) -> None:
     """
-    Backward-compatible alias for production clearnet fetch concurrency.
+    Adjust BOTH _FETCH_SEMAPHORE and _clearnet_semaphore to new_limit atomically.
 
-    Adjusts BOTH _FETCH_SEMAPHORE and _clearnet_semaphore to new_limit.
+    Fix F265: Modifies existing semaphore _value in-place instead of replacing
+    the object. Previous pattern created a new asyncio.Semaphore object which
+    caused reference split — existing code holding the old semaphore reference
+    never saw the updated limit. Now we modify _value on the existing semaphore
+    instance so all existing references see the change immediately.
+
+    M1 8GB constraint: cap at 12 when swap > 2 GiB.
     """
     global _FETCH_SEMAPHORE, _clearnet_semaphore
+    try:
+        import psutil
+        swap_gib = psutil.swap_memory().used / 1e9
+        if swap_gib > 2.0:
+            new_limit = min(new_limit, 12)
+    except Exception:
+        pass  # fail-open: use new_limit as-is
+
     old_fetch = _FETCH_SEMAPHORE._value if _FETCH_SEMAPHORE else 0
     old_clearnet = _clearnet_semaphore._value if _clearnet_semaphore else 0
-    _FETCH_SEMAPHORE = asyncio.Semaphore(new_limit)
-    _clearnet_semaphore = asyncio.Semaphore(max(1, new_limit))
-    logger.info(f"[FETCH_WORKERS] Adjusted fetch {old_fetch}→{new_limit}, clearnet {old_clearnet}→{new_limit}")
+
+    # Modify existing semaphore objects in-place (not replace)
+    if _FETCH_SEMAPHORE is not None:
+        _FETCH_SEMAPHORE._value = new_limit
+    if _clearnet_semaphore is not None:
+        _clearnet_semaphore._value = max(1, new_limit)
+
+    logger.info(f"[FETCH_WORKERS] Adjusted fetch {old_fetch}→{new_limit}, clearnet {old_clearnet}→{max(1, new_limit)}")
 
 
 # =============================================================================

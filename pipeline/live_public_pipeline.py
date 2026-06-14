@@ -371,6 +371,23 @@ def _is_threat_query(query: str) -> bool:
     if THREAT_KW_PAT.match(q):
         return True
 
+    # P0-2: OSINT-related keywords — broad threat/discovery context queries
+    # that lack a domain but have rich search-term seeds for rescue URLs.
+    OSINT_KW_PAT = _re.compile(  # noqa: N806
+        r"^(?:"
+        r"osint|osint infrstructure|infrastructure|telemetry|leak|"
+        r"dark[_\s]?web|exposure|credential|breach|"
+        r"darkweb|onion|leakdb|intel|threat|hunting|"
+        r"recon|scanning|fingerprint|iot|ics|scada"
+        r")$",
+        _re.IGNORECASE,
+    )
+    if OSINT_KW_PAT.match(q):
+        return True
+    # Also check first token for OSINT keywords
+    if first_token and OSINT_KW_PAT.match(first_token):
+        return True
+
     return False
 
 
@@ -398,6 +415,8 @@ def generate_rescue_urls(query: str, max_urls: int = 5) -> list[DiscoveryHit]:
     """
     if not query or max_urls < 1:
         return []
+    # P0-2: Also trigger rescue for OSINT threat/discovery queries (non-domain but
+    # rich search terms) — _is_threat_query now covers OSINT keywords.
     if not _is_threat_query(query):
         return []
 
@@ -1180,6 +1199,23 @@ def _pattern_context(
     lo = max(0, start - radius)
     hi = min(len(text), end + radius)
     return text[lo:hi]
+
+
+def _js_confidence_from_verdict(
+    verdict: str,
+    status_code: int | None = None,
+    content_length: int | None = None,
+) -> float:
+    """Derive js_confidence from verdict string and response signals."""
+    if "RETRY_JS:thin_text_strong_signal" in verdict:
+        return 0.85
+    if "RETRY_JS" in verdict:
+        return 0.70
+    if status_code in (403, 429):
+        return 0.45
+    if content_length is not None and content_length < 500:
+        return 0.55
+    return 0.30
 
 
 # -----------------------------------------------------------------------------
@@ -1969,12 +2005,19 @@ async def _fetch_and_process_page(
 
         # F275: RETRY_JS — thin page with strong discovery signal → retry with JS rendering
         if quality_reason is not None and quality_reason.startswith("RETRY_JS"):
+            _js_conf = _js_confidence_from_verdict(
+                quality_reason,
+                status_code=getattr(result, "status_code", None),
+                content_length=len(result.text) if hasattr(result, "text") and bool(result.text) else None,
+            )
             try:
                 js_result = await _ASYNC_FETCH_PUBLIC_TEXT(
                     hit_url, effective_timeout, fetch_max_bytes,
                     use_stealth=policy.use_stealth,
                     use_js=True,  # Force JS rendering
                     use_doh=policy.use_doh,
+                    js_confidence=_js_conf,
+                    priority=3,  # RETRY_JS is explicit signal, elevated priority
                 )
             except Exception:
                 js_result = None
@@ -4159,10 +4202,10 @@ async def async_run_live_public_pipeline(
     public_candidates_discovered = total_discovered
     public_candidates_fetch_attempted = public_pages_fetched  # pages that entered fetch/parse
     public_candidates_fetch_success = sum(
-        1 for p in all_page_results if p.fetched and p.error and not p.error.startswith(("fetch_text_none_or_empty", "html_extract_failed"))  # noqa: E501
+        1 for p in all_page_results if p.fetched and not p.error and not p.error.startswith(("fetch_text_none_or_empty", "html_extract_failed"))  # noqa: E501
     )
     public_candidates_parse_success = sum(
-        1 for p in all_page_results if p.fetched and p.error not in ("fetch_text_none_or_empty", "html_extract_failed", None)  # noqa: E501
+        1 for p in all_page_results if p.fetched and not p.error  # noqa: E501
     )
     public_candidates_pattern_matched = sum(1 for p in all_page_results if p.fetched and p.matched_patterns > 0)
     public_candidates_built = sum(
@@ -4184,6 +4227,27 @@ async def async_run_live_public_pipeline(
     if public_candidates_store_attempted > 0 and public_candidates_stored == 0:
         _rej_sum["store_zero"] = public_candidates_store_attempted
     public_rejection_summary = _rej_sum
+
+    # Sprint 300s BUILT_FAIL diagnostic: log per-URL rejection reasons when built_count=0
+    _built_count = sum(
+        1 for p in all_page_results
+        if p.fetched and (p.matched_patterns > 0 or p.accepted_findings > 0)
+    )
+    if _built_count == 0 and public_candidates_fetch_success > 0:
+        _logger = __import__("logging").getLogger(__name__)
+        for p in all_page_results:
+            if not p.fetched:
+                continue
+            _text_len = getattr(p, "extracted_text_len", 0) or 0
+            _matched = p.matched_patterns or 0
+            _accepted = p.accepted_findings or 0
+            _err = p.error or ""
+            _reason = p.quality_reason or ""
+            if _matched == 0 and _accepted == 0:
+                _logger.warning(
+                    "[BUILT_FAIL] %s: no IoCs in %d chars, error=%r, quality_reason=%r",
+                    (p.url or "")[:120], _text_len, _err, _reason,
+                )
     # F231A: Derive canonical terminal stage
     if not public_candidates_discovered:
         public_terminal_stage = "discovery_empty"
