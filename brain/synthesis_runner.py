@@ -566,6 +566,12 @@ class SynthesisRunner:
         Fail-soft: hypothesis extraction failure does not affect synthesis result.
         """
         self._hypothesis_engine = engine
+        # F285: Wire Hermes3Engine into HypothesisEngine so generate_hypotheses_async
+        # can route through MLXBatchedExecutor (P0-2 wiring). Without this, the
+        # getattr() call in synthesize_findings returns None and hermes goes direct.
+        hermes = self._get_hermes_engine()
+        if hermes is not None and hasattr(engine, "_inference_engine"):
+            engine._inference_engine = hermes
 
     # ------------------------------------------------------------------
     # Sprint 8TD: Custom prompt injection
@@ -795,34 +801,44 @@ class SynthesisRunner:
             except Exception as e:
                 logger.debug(f"Sprint 8VA GraphRAG skipped: {e}")
 
-        # Sestavit prompt z top findings
-        findings_text = "\n".join(
-            f"- [{f.get('source_type', '?')}] {f.get('text', '')[:200]}"
-            for f in top
-        )
-
-        # Sprint 8VA B.2 + C.2: Sestavit synthesis prompt s RAG + GraphRAG context
-        context_parts = []
-        if episode_ctx:
-            context_parts.append(episode_ctx)
-        if rag_context:
-            context_parts.append(rag_context)
-        if graph_context:
-            context_parts.append(graph_context)
-
-        if context_parts:
+        # [P0-1] Zero-findings path: build query-focused prompt instead of findings-focused
+        if findings_count == 0:
+            findings_text = "[No findings collected during this sprint]"
             prompt = (
-                f"{chr(10).join(context_parts)}\n\n---\n"
                 f"Query: {query}{stix_context}\n"
                 f"Findings:\n{findings_text}\n"
-                f"Current timestamp: {time.time()}"
+                f"Current timestamp: {time.time()}\n"
+                f"Note: Provide a threat intelligence report based on the query and general knowledge."
             )
         else:
-            prompt = (
-                f"Query: {query}{stix_context}\n"
-                f"Findings:\n{findings_text}\n"
-                f"Current timestamp: {time.time()}"
+            # Sestavit prompt z top findings
+            findings_text = "\n".join(
+                f"- [{f.get('source_type', '?')}] {f.get('text', '')[:200]}"
+                for f in top
             )
+
+            # Sprint 8VA B.2 + C.2: Sestavit synthesis prompt s RAG + GraphRAG context
+            context_parts = []
+            if episode_ctx:
+                context_parts.append(episode_ctx)
+            if rag_context:
+                context_parts.append(rag_context)
+            if graph_context:
+                context_parts.append(graph_context)
+
+            if context_parts:
+                prompt = (
+                    f"{chr(10).join(context_parts)}\n\n---\n"
+                    f"Query: {query}{stix_context}\n"
+                    f"Findings:\n{findings_text}\n"
+                    f"Current timestamp: {time.time()}"
+                )
+            else:
+                prompt = (
+                    f"Query: {query}{stix_context}\n"
+                    f"Findings:\n{findings_text}\n"
+                    f"Current timestamp: {time.time()}"
+                )
 
         # Sprint F234: DSPy optimized prompts — try to load from cache first
         dspy_prompts = _get_dspy_prompts()

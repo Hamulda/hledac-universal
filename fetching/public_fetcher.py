@@ -1715,6 +1715,19 @@ atexit.register(_close_i2p_session_sync)
 # ---------------------------------------------------------------------------
 
 # JS detection patterns — trigger Camoufox retry
+# P0-FIX: SERP JS detection — known JS-heavy search/discovery domains.
+# These domains render via JavaScript but lack <noscript> tags,
+# so _NOSCRIPT_RE alone misses 100% of SERP pages.
+_SERP_HOST_RE = re.compile(
+    r"(google\.|bing\.|duckduckgo\.|yahoo\.|baidu\.|yandex\.|so\.|startpage\.|search\.|serp)"
+    r"|searchresults|webcache|googlesyndication|googletagmanager| DoubleClick"
+    r'|search\?q=|/search\?|\?q=|\&oq=|\&gs_l=',
+    re.IGNORECASE,
+)
+# Content-length ratio heuristic: if response is very small relative to
+# declared Content-Length, the real content is JS-rendered.
+_CONTENT_LENGTH_RE = re.compile(r"content-length\s*[=:]\s*(\d+)", re.IGNORECASE)
+
 _NOSCRIPT_RE = re.compile(r"<noscript[^>]*>|enable javascript", re.IGNORECASE)
 
 # F207F: Feed/RSS URL detection — skip JS renderer for XML-ish feeds
@@ -1770,21 +1783,19 @@ def _get_js_renderer_capability() -> dict[str, str | None]:
         except ImportError:
             _js_renderer_capability["camoufox"] = "camoufox_unavailable"
 
-    # nodriver check — requires env gate AND chrome binary
+    # nodriver check — primary on M1, no heavy_browser gate (uses Chrome directly)
+    # F265C: nodriver is stable on M1, prioritised over Camoufox
     if _js_renderer_capability["nodriver"] is None:
-        if not nodriver_enabled:
-            _js_renderer_capability["nodriver"] = "heavy_browser_disabled"
-        elif not _check_chrome_binary_exists():
+        if not _check_chrome_binary_exists():
             _js_renderer_capability["nodriver"] = "chrome_binary_missing"
         else:
-            # Check import separately
             try:
                 import nodriver as uc  # noqa: F401
                 _js_renderer_capability["nodriver"] = None  # available
             except ImportError:
                 _js_renderer_capability["nodriver"] = "nodriver_unavailable"
 
-    # playwright check
+    # playwright check — fallback only, requires heavy_browser gate
     if _js_renderer_capability["playwright"] is None:
         if not heavy_browser_enabled:
             _js_renderer_capability["playwright"] = "heavy_browser_disabled"
@@ -1857,9 +1868,37 @@ def _looks_like_feed_url(url: str) -> bool:
         return False
 
 
-def _needs_js_fetch(text: str) -> bool:
-    """Detect if response suggests JS-rendered content is needed."""
-    return bool(_NOSCRIPT_RE.search(text))
+def _needs_js_fetch(text: str, *, url: str = "", content_length: int = 0, declared_length: int = -1) -> bool:
+    """Detect if response suggests JS-rendered content is needed.
+    Enhanced P0-FIX: covers three failure modes of the original _NOSCRIPT_RE-only
+    detection that caused 10/10 SERP URLs to be rejected as empty_text:
+    1. <noscript> tag presence (original)
+    2. Known SERP/search engine hosts (new)
+    3. Content-length ratio: tiny body vs large declared Content-Length (new)
+    Args:
+        text: Decoded response text.
+        url: Source URL for SERP host detection.
+        content_length: Actual body byte length.
+        declared_length: Declared Content-Length header value (-1 if unknown).
+    """
+    if _NOSCRIPT_RE.search(text):
+        return True
+    # P0-FIX: SERP domain heuristic — bypass <noscript> check for known search engines
+    if url:
+        try:
+            from urllib.parse import urlparse
+            host = urlparse(url).hostname or ""
+            if host and _SERP_HOST_RE.search(host + "/" + url):
+                return True
+        except Exception:
+            pass
+    # P0-FIX: content-length ratio heuristic
+    # If declared_length >> content_length (e.g. declared 50KB, received <5KB),
+    # the server is telling us the real content is much larger and JS-rendered.
+    if declared_length > 0 and content_length > 0:
+        if declared_length > content_length * 3 and content_length < 20_000:
+            return True
+    return False
 
 
 # F226A: Adaptive MAX_BYTES cap — halves size on UMA critical (M1 8GB budget).
@@ -2095,20 +2134,20 @@ async def _camoufox_locked(url: str, timeout: float) -> str:
 
 async def _fetch_with_nodriver(url: str) -> str:
     """
-    Fallback JS fetch via nodriver (direct CDP, no WebDriver).
-    Requires HLEDAC_ENABLE_NODRIVER=1 AND Chrome binary present.
-    Otherwise returns "" with telemetry reason.
+    F265C: Primary JS fetch via nodriver (direct CDP, no WebDriver).
+    On M1, nodriver is more stable than Camoufox — used as first choice.
+    Requires Chrome binary present. Returns "" with telemetry on failure.
     """
-    import os
-
-    # Check env gate
-    if os.environ.get("HLEDAC_ENABLE_NODRIVER", "0") != "1":
-        logger.debug("nodriver skipped: HLEDAC_ENABLE_NODRIVER != 1")
-        return ""
-
     # Check chrome binary
     if not _check_chrome_binary_exists():
         logger.debug("nodriver skipped: chrome binary not found")
+        return ""
+
+    # F221-FIX: Block nodriver launch when M1 is in critical memory — Chrome
+    # ~400-600MB resident; running it under critical memory pressure causes OOM
+    # crashes that kill the entire sprint. Skip silently, let caller fall back.
+    if _is_uma_critical():
+        logger.debug("nodriver skipped: UMA critical memory pressure")
         return ""
 
     try:
@@ -2161,6 +2200,63 @@ async def _nodriver_locked(url: str) -> str:
     finally:
         if browser is not None:
             browser.stop()
+
+
+async def _fetch_with_playwright(url: str, timeout: float = 15.0) -> str:
+    """
+    F265C: Playwright fallback — last resort after nodriver fails.
+    Requires HLEDAC_ENABLE_HEAVY_BROWSER=1 AND playwright installed.
+    Returns "" with telemetry on any failure.
+    """
+    import os
+
+    if os.environ.get("HLEDAC_ENABLE_HEAVY_BROWSER", "0") != "1":
+        logger.debug("playwright skipped: HLEDAC_ENABLE_HEAVY_BROWSER != 1")
+        return ""
+
+    try:
+        from playwright.async_api import async_playwright
+    except ImportError:
+        logger.debug("playwright not installed, fallback unavailable")
+        return ""
+
+    async with _get_js_renderer_semaphore():
+        return await _playwright_locked(url, timeout)
+
+
+async def _playwright_locked(url: str, timeout: float) -> str:
+    """
+    F265C: Playwright body wrapped inside the shared _JS_RENDERER_SEMAPHORE.
+    Chromium via playwright — fails soft on all errors.
+    """
+    try:
+        from playwright.async_api import async_playwright
+    except ImportError:
+        return ""
+
+    browser = None
+    page = None
+    try:
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            page = await browser.new_page()
+            try:
+                await page.goto(url, wait_until="networkidle", timeout=timeout * 1000)
+                html = await page.content()
+            finally:
+                if page is not None:
+                    await page.close()
+            return html
+    except asyncio.CancelledError:
+        if browser is not None:
+            await browser.close()
+        raise
+    except Exception as e:
+        logger.warning(f"playwright fetch failed: {e}")
+        return ""
+    finally:
+        if browser is not None:
+            await browser.close()
 
 
 # ---------------------------------------------------------------------------
@@ -2322,10 +2418,14 @@ async def async_fetch_public_text(
             # Fall through: return curl_cffi result even if thin (partial > OOM crash)
         else:
             logger.info(f"JS rendering requested for {url}")
-            js_html = await _fetch_with_camoufox(url, timeout=timeout_s)
+            # F265C: nodriver primary (M1-stable), camoufox secondary, playwright last resort
+            js_html = await _fetch_with_nodriver(url)
             if not js_html:
-                logger.warning(f"Camoufox failed, trying nodriver: {url}")
-                js_html = await _fetch_with_nodriver(url)
+                logger.warning(f"nodriver failed, trying Camoufox: {url}")
+                js_html = await _fetch_with_camoufox(url, timeout=timeout_s)
+            if not js_html:
+                logger.warning(f"Camoufox failed, trying Playwright: {url}")
+                js_html = await _fetch_with_playwright(url, timeout=timeout_s)
             if js_html:
                 js_text, _, js_meta = await process_html_payload(js_html, url)
                 elapsed_ms = (time.monotonic() - t0) * 1000
@@ -2610,6 +2710,15 @@ async def async_fetch_public_text(
             _curl_decode_replaced = False
             _curl_decode_replacement_count = 0
             _curl_error = _curl_result.get("error", None)
+            # P0-FIX: extract declared_length from headers for JS detection heuristic
+            _curl_declared_length: int = -1
+            _curl_headers = _curl_result.get("headers", {}) or {}
+            if _curl_headers:
+                _cl = _curl_headers.get("content-length", _curl_headers.get("Content-Length", "-1"))
+                try:
+                    _curl_declared_length = int(_cl)
+                except (ValueError, TypeError):
+                    _curl_declared_length = -1
             if _curl_bytes:
                 _curl_text, _curl_decode_replaced, _curl_decode_replacement_count = _try_decode(_curl_bytes)
             else:
@@ -2619,7 +2728,12 @@ async def async_fetch_public_text(
             # before returning. Re-use curl_cffi result if static HTML is sufficient;
             # otherwise try WKWebView → heavy browser. Eliminates 40-50% of nodriver
             # calls (~100 MB RAM saved on M1 8GB).
-            if _curl_text and _needs_js_fetch(_curl_text):
+            if _curl_text and _needs_js_fetch(
+                _curl_text,
+                url=url,
+                content_length=len(_curl_bytes),
+                declared_length=_curl_declared_length,
+            ):
                 # Static hydration check — fastest first
                 from hledac.universal.utils.hydration_extractor import (
                     extract_static_hydration as _extract_static_hydration,
@@ -2690,8 +2804,29 @@ async def async_fetch_public_text(
                         hydration_sources=tuple(_wkr_sources),
                     )
 
-                # WKWebView unavailable → heavy browser (camoufox → nodriver)
+                # WKWebView unavailable → heavy browser (nodriver → camoufox → playwright)
                 if not _all_js_renderers_unavailable():
+                    _js_html = await _fetch_with_nodriver(url)
+                    if _js_html:
+                        _js_text, _js_matches = await process_html_payload(_js_html, url)
+                        _js_elapsed_ms = (time.monotonic() - t0) * 1000
+                        _tc.js_renderer_count += 1
+                        logger.info(f"nodriver succeeded for {url} (curl_cffi fallback)")
+                        return FetchResult(
+                            url=url,
+                            final_url=url,
+                            status_code=200,
+                            content_type="text/html",
+                            text=_js_text,
+                            fetched_bytes=len(_js_html),
+                            declared_length=-1,
+                            elapsed_ms=_js_elapsed_ms,
+                            error=None,
+                            selected_transport="js",
+                            transport_policy_reason="js_required",
+                            transport_counters=_tc,
+                        )
+                    # nodriver failed → camoufox fallback
                     _js_html = await _fetch_with_camoufox(url, timeout=timeout_s)
                     if _js_html:
                         _js_text, _js_matches = await process_html_payload(_js_html, url)
@@ -2712,13 +2847,13 @@ async def async_fetch_public_text(
                             transport_policy_reason="js_required",
                             transport_counters=_tc,
                         )
-                    # Camoufox failed → nodriver fallback
-                    _js_html = await _fetch_with_nodriver(url)
+                    # camoufox failed → playwright last resort
+                    _js_html = await _fetch_with_playwright(url, timeout=timeout_s)
                     if _js_html:
                         _js_text, _js_matches = await process_html_payload(_js_html, url)
                         _js_elapsed_ms = (time.monotonic() - t0) * 1000
                         _tc.js_renderer_count += 1
-                        logger.info(f"nodriver succeeded for {url} (curl_cffi fallback)")
+                        logger.info(f"Playwright succeeded for {url} (curl_cffi fallback)")
                         return FetchResult(
                             url=url,
                             final_url=url,
@@ -3201,7 +3336,12 @@ async def async_fetch_public_text(
                         # P7: Auto-detect JS need and retry via Camoufox → nodriver
                         # F207F: Skip JS retry for feed URLs, XML content-types, or when all JS renderers unavailable
                         skip_js_reason: str | None = None
-                        if text and not use_js and _needs_js_fetch(text):
+                        if text and not use_js and _needs_js_fetch(
+                            text,
+                            url=url,
+                            content_length=len(body_bytes) if body_bytes else 0,
+                            declared_length=declared_length,
+                        ):
                             if _all_js_renderers_unavailable():
                                 # Use first unavailable reason for telemetry
                                 cap = _get_js_renderer_capability()
@@ -3568,8 +3708,9 @@ __all__ = [
     "_close_i2p_session",
     # P7: JS rendering helpers
     "_needs_js_fetch",
-    "_fetch_with_camoufox",
     "_fetch_with_nodriver",
+    "_fetch_with_camoufox",
+    "_fetch_with_playwright",
     "_get_js_renderer_capability",
     "_all_js_renderers_unavailable",
     "reset_js_renderer_capability_cache",

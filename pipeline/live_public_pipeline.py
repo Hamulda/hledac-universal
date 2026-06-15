@@ -176,6 +176,7 @@ _SHOPPING_NOISE_DOMAINS: tuple[str, ...] = (
 )
 
 # Blocked URL path patterns for e-commerce/shopping/category pages
+# Used for non-threat queries (domain-only blocking for threat queries)
 _SHOPPING_NOISE_PATHS: tuple[str, ...] = (
     "/gp/bestsellers/",
     "/gp/bestsellers",
@@ -196,6 +197,17 @@ _SHOPPING_NOISE_PATHS: tuple[str, ...] = (
     "/home-and-garden",
 )
 
+# Strict subset: only unambiguous e-commerce checkout/transaction paths
+# Used for threat queries to avoid over-filtering legitimate CTI content
+# that happens to have generic paths like /product/ or /category/
+_SHOPPING_NOISE_PATHS_STRICT: tuple[str, ...] = (
+    "/cart/",
+    "/checkout/",
+    "/buy/",
+    "/sale/",
+    "/offers/",
+)
+
 # CTI/news domains that are always allowed (override noise filter for threat queries)
 _CTI_NEWS_ALLOWED_DOMAINS: tuple[str, ...] = (
     "cisa.gov",
@@ -212,6 +224,16 @@ _CTI_NEWS_ALLOWED_DOMAINS: tuple[str, ...] = (
     "threatpost.com",
     "therecord.media",
     "securityweek.com",
+    "inforisktoday.com",
+    "helpnetsecurity.com",
+    "ransomwarewiki.com",
+    "cybercrime-tracker.net",
+    "malware-traffic-analysis.net",
+    "unit42.paloaltonetworks.com",
+    "securityaffairs.com",
+    "thecyberwire.com",
+    "bleepinguid.com",
+    "ransomware.live",
 )
 
 
@@ -245,11 +267,13 @@ def _is_shopping_noise_url(url: str, is_threat_query: bool) -> tuple[bool, str]:
         if netloc.endswith(blocked_domain) or netloc == blocked_domain:
             return True, "public_noise_shopping"
 
-    # For threat queries, also check path patterns
+    # For threat queries, only block strict checkout/transaction paths
+    # to avoid over-filtering legitimate CTI content with generic paths
     if is_threat_query:
-        for blocked_path in _SHOPPING_NOISE_PATHS:
+        for blocked_path in _SHOPPING_NOISE_PATHS_STRICT:
             if blocked_path in path:
                 return True, "public_noise_unrelated_marketplace"
+    # Non-threat queries: no path-based blocking (only domain-level)
 
     return False, "public_relevance_pass"
 
@@ -1238,18 +1262,37 @@ def _enrich_text_with_metadata(
     matcher better context without any LLM or external call.
 
     The result is hard-capped at MAX_EXTRACTED_TEXT_CHARS.
+
+    FIX (F300): HTML-strip title and snippet before concatenation.
+    Discovery providers return raw HTML in title/snippet (e.g. <b>bold</b> terms).
+    Without stripping, HTML tag characters (<, >, /) create false word boundaries
+    in PatternMatcher's boundary_policy="word" check, causing zero matches.
     """
+    # FIX F300: Strip HTML from title and snippet before enrichment
+    # Uses the same proven function as the feed pipeline (pipeline/scoring.py)
+    try:
+        from hledac.universal.pipeline.scoring import _strip_html_tags_from_text
+    except ImportError:
+        def _strip_html_tags_from_text(text: str) -> str:
+            """Minimal fallback: strip <...> tags naively."""
+            if not text:
+                return ""
+            import re as _re
+            return _re.sub(r'<[^>]+>', ' ', text).strip()
+    title_clean = _strip_html_tags_from_text(title) if title else ""
+    snippet_clean = _strip_html_tags_from_text(snippet) if snippet else ""
+
     # Build metadata prefix bounded to MAX_METADATA_PREPEND_CHARS
     meta_parts: list[str] = []
     remaining_meta = MAX_METADATA_PREPEND_CHARS
 
-    if title:
-        title_trunc = title[:remaining_meta]
+    if title_clean:
+        title_trunc = title_clean[:remaining_meta]
         meta_parts.append(title_trunc)
         remaining_meta -= len(title_trunc)
 
-    if snippet and remaining_meta > 20:
-        snippet_trunc = snippet[:remaining_meta]
+    if snippet_clean and remaining_meta > 20:
+        snippet_trunc = snippet_clean[:remaining_meta]
         meta_parts.append(snippet_trunc)
 
     meta_prefix = "\n".join(meta_parts) + "\n---\n"
@@ -1880,70 +1923,79 @@ async def _fetch_and_process_page(
             fetched_text = None
 
         if not fetched_text:
-            usable_signal, value_tier, resolution_reason, discovery_false_positive, waste_category, structural_quality = _compute_page_usable_fields(  # noqa: E501
-                fetched=True, matched_patterns=0, stored_findings=0,
-                quality_reason=None, discovery_signal=has_signal,
-                discovery_score=discovery_score,
-                error="fetch_text_none_or_empty",
-                extracted_text_len=0,
-            )
-            ppr = PipelinePageResult(
-                url=hit_url, fetched=True, matched_patterns=0,
-                accepted_findings=0, stored_findings=0,
-                error="fetch_text_none_or_empty",
-                discovery_score=discovery_score,
-                discovery_reason=discovery_reason,
-                discovery_signal=has_signal,
-                usable_signal=usable_signal,
-                value_tier=value_tier,
-                resolution_reason=resolution_reason,
-                discovery_false_positive=discovery_false_positive,
-                waste_category=waste_category,
-                structural_quality=structural_quality,
-                failure_stage=None,
-                redirected=fetched_redirected,
-                redirect_target=fetched_redirect_target,
-                js_renderer_skipped_reason=fetched_js_skip_reason,  # F207F
-                rejection_reason="empty_text",  # F207J-C: fetched but text extraction returned nothing
-                terminal_reason="rejected_empty_text",  # F208G-A
-            )
-            return ppr
-
-        # ---- Extract ---------------------------------------------------------
-        loop = asyncio.get_running_loop()
-        try:
-            extracted_text: str = await loop.run_in_executor(
-                None, _html_to_text, fetched_text
-            )
-        except Exception as exc:
-            usable_signal, value_tier, resolution_reason, discovery_false_positive, waste_category, structural_quality = _compute_page_usable_fields(  # noqa: E501
-                fetched=True, matched_patterns=0, stored_findings=0,
-                quality_reason=None, discovery_signal=has_signal,
-                discovery_score=discovery_score,
-                error=f"html_extract_failed:{exc}",
-                extracted_text_len=0,
-            )
-            ppr = PipelinePageResult(
-                url=hit_url, fetched=True, matched_patterns=0,
-                accepted_findings=0, stored_findings=0,
-                error=f"html_extract_failed:{exc}",
-                discovery_score=discovery_score,
-                discovery_reason=discovery_reason,
-                discovery_signal=has_signal,
-                usable_signal=usable_signal,
-                value_tier=value_tier,
-                resolution_reason=resolution_reason,
-                discovery_false_positive=discovery_false_positive,
-                waste_category=waste_category,
-                structural_quality=structural_quality,
-                failure_stage=fetched_failure_stage,
-                redirected=fetched_redirected,
-                redirect_target=fetched_redirect_target,
-                js_renderer_skipped_reason=fetched_js_skip_reason,  # F207F
-                rejection_reason="extraction_failed",  # F207J-C: HTML text extraction failed
-                terminal_reason="rejected_extraction_failed",  # F208G-A
-            )
-            return ppr
+            # P0-FIX: Thin/empty text but strong discovery signal → RETRY_JS instead of immediate reject.
+            # This handles SERP pages where curl_cffi gets empty HTML shell but JS renderer
+            # can extract the actual search results. Only skip if there's no discovery signal.
+            if has_signal:
+                # Strong discovery signal: try JS rendering before giving up
+                # Skip HTML extraction (no text available), go directly to quality scoring
+                extracted_text = ""
+            else:
+                # No discovery signal: reject as weak
+                usable_signal, value_tier, resolution_reason, discovery_false_positive, waste_category, structural_quality = _compute_page_usable_fields(  # noqa: E501
+                    fetched=True, matched_patterns=0, stored_findings=0,
+                    quality_reason=None, discovery_signal=has_signal,
+                    discovery_score=discovery_score,
+                    error="fetch_text_none_or_empty",
+                    extracted_text_len=0,
+                )
+                ppr = PipelinePageResult(
+                    url=hit_url, fetched=True, matched_patterns=0,
+                    accepted_findings=0, stored_findings=0,
+                    error="fetch_text_none_or_empty",
+                    discovery_score=discovery_score,
+                    discovery_reason=discovery_reason,
+                    discovery_signal=has_signal,
+                    usable_signal=usable_signal,
+                    value_tier=value_tier,
+                    resolution_reason=resolution_reason,
+                    discovery_false_positive=discovery_false_positive,
+                    waste_category=waste_category,
+                    structural_quality=structural_quality,
+                    failure_stage=None,
+                    redirected=fetched_redirected,
+                    redirect_target=fetched_redirect_target,
+                    js_renderer_skipped_reason=fetched_js_skip_reason,  # F207F
+                    rejection_reason="empty_text",  # F207J-C: fetched but text extraction returned nothing
+                    terminal_reason="rejected_empty_text",  # F208G-A
+                )
+                return ppr
+        else:
+            # ---- Extract ---------------------------------------------------------
+            loop = asyncio.get_running_loop()
+            try:
+                extracted_text: str = await loop.run_in_executor(
+                    None, _html_to_text, fetched_text
+                )
+            except Exception as exc:
+                usable_signal, value_tier, resolution_reason, discovery_false_positive, waste_category, structural_quality = _compute_page_usable_fields(  # noqa: E501
+                    fetched=True, matched_patterns=0, stored_findings=0,
+                    quality_reason=None, discovery_signal=has_signal,
+                    discovery_score=discovery_score,
+                    error=f"html_extract_failed:{exc}",
+                    extracted_text_len=0,
+                )
+                ppr = PipelinePageResult(
+                    url=hit_url, fetched=True, matched_patterns=0,
+                    accepted_findings=0, stored_findings=0,
+                    error=f"html_extract_failed:{exc}",
+                    discovery_score=discovery_score,
+                    discovery_reason=discovery_reason,
+                    discovery_signal=has_signal,
+                    usable_signal=usable_signal,
+                    value_tier=value_tier,
+                    resolution_reason=resolution_reason,
+                    discovery_false_positive=discovery_false_positive,
+                    waste_category=waste_category,
+                    structural_quality=structural_quality,
+                    failure_stage=fetched_failure_stage,
+                    redirected=fetched_redirected,
+                    redirect_target=fetched_redirect_target,
+                    js_renderer_skipped_reason=fetched_js_skip_reason,  # F207F
+                    rejection_reason="extraction_failed",  # F207J-C: HTML text extraction failed
+                    terminal_reason="rejected_extraction_failed",  # F208G-A
+                )
+                return ppr
 
         # Hard cap
         if len(extracted_text) > MAX_EXTRACTED_TEXT_CHARS:
@@ -3704,15 +3756,18 @@ async def async_run_live_public_pipeline(
             pastebin_findings_count = 0
             github_secrets_count = 0
             if self.store is not None:
-                try:
-                    import re as _re
+                # Import at function scope (not inside try) so except handler
+                # can reference CanonicalFinding if the outer try body raises
+                # before the import executes (NameError would propagate here).
+                import re as _re
 
-                    from hledac.universal.knowledge.duckdb_store import (
-                        CanonicalFinding as _CanonicalFinding,
-                    )
-                    _DOMAIN_ORG_RE = _re.compile(  # noqa: N806
-                        r"(?:[a-zA-Z0-9](?:[a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}"
-                    )
+                from hledac.universal.knowledge.duckdb_store import (
+                    CanonicalFinding,
+                )
+                _DOMAIN_ORG_RE = _re.compile(  # noqa: N806
+                    r"(?:[a-zA-Z0-9](?:[a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}"
+                )
+                try:
                     _match = _DOMAIN_ORG_RE.search(self.query)
                     if _match:
                         target = _match.group()
@@ -3726,7 +3781,7 @@ async def async_run_live_public_pipeline(
                                     f"{self.query}\x00{pf.uri}\x00pastebin".encode()
                                 ).hexdigest()[:16]
                                 masked = pf.masked_secrets()
-                                p20_findings.append(_CanonicalFinding(
+                                p20_findings.append(CanonicalFinding(
                                     finding_id=pf_id,
                                     query=self.query,
                                     source_type=_SourceTypeEnum.PASTEBIN_MONITOR,
@@ -3745,40 +3800,40 @@ async def async_run_live_public_pipeline(
                                 await self.store.async_ingest_findings_batch(p20_findings)
                                 pastebin_findings_count = len(p20_findings)
 
-                        org_candidate = _match.group().rsplit(".", 1)[0]
-                        from hledac.universal.intelligence.github_secret_scanner import (
-                            search_org_secrets,
-                        )
-                        gh_findings: list[_CanonicalFinding] = []
-                        if org_candidate:
-                            try:
-                                gh_results = await search_org_secrets(org_candidate)
-                            except Exception:
-                                gh_results = []
-                            for gf in gh_results:
-                                gf_id = hashlib.sha256(
-                                    f"{self.query}\x00{gf.file_path}\x00{gf.pattern}\x00github".encode()
-                                ).hexdigest()[:16]
-                                gh_findings.append(_CanonicalFinding(
-                                    finding_id=gf_id,
-                                    query=self.query,
-                                    source_type=_SourceTypeEnum.GITHUB_SECRET_SCANNER,
-                                    confidence=0.55,
-                                    ts=time.time(),
-                                    provenance=("github", gf.pattern, org_candidate),
-                                    payload_text=(
-                                        f"pattern={gf.pattern}\n"
-                                        f"file={gf.file_path}\n"
-                                        f"line={gf.line}\n"
-                                        f"context={gf.context[:300]}"
-                                    ),
-                                ))
-                        if gh_findings:
-                            await self.store.async_ingest_findings_batch(gh_findings)
-                            github_secrets_count = len(gh_findings)
+                    org_candidate = _match.group().rsplit(".", 1)[0]
+                    from hledac.universal.intelligence.github_secret_scanner import (
+                        search_org_secrets,
+                    )
+                    gh_findings: list[CanonicalFinding] = []
+                    if org_candidate:
+                        try:
+                            gh_results = await search_org_secrets(org_candidate)
+                        except Exception:
+                            gh_results = []
+                        for gf in gh_results:
+                            gf_id = hashlib.sha256(
+                                f"{self.query}\x00{gf.file_path}\x00{gf.pattern}\x00github".encode()
+                            ).hexdigest()[:16]
+                            gh_findings.append(CanonicalFinding(
+                                finding_id=gf_id,
+                                query=self.query,
+                                source_type=_SourceTypeEnum.GITHUB_SECRET_SCANNER,
+                                confidence=0.55,
+                                ts=time.time(),
+                                provenance=("github", gf.pattern, org_candidate),
+                                payload_text=(
+                                    f"pattern={gf.pattern}\n"
+                                    f"file={gf.file_path}\n"
+                                    f"line={gf.line}\n"
+                                    f"context={gf.context[:300]}"
+                                ),
+                            ))
+                    if gh_findings:
+                        await self.store.async_ingest_findings_batch(gh_findings)
+                        github_secrets_count = len(gh_findings)
                 except Exception as e:
-                    import logging as _logging
-                    _logging.getLogger(__name__).warning(f"[P20] Pastebin/GitHub scan failed: {e}")
+                    _logger_p20 = logging.getLogger("hledac.universal.pipeline.live_public_pipeline")
+                    _logger_p20.warning("[P20] Pastebin/GitHub scan failed: %s", e)
 
             discovery_telemetry = {
                 'discovery_result': discovery_result,
@@ -4012,6 +4067,16 @@ async def async_run_live_public_pipeline(
     # F221H: Public Discovery Relevance / Shopping Noise Filter
     is_threat = _is_threat_query(query)
     hits, noise_rejections = _filter_public_noise(hits, is_threat)
+    # F265C: Debug logging for noise filter analysis — tracks why discovered_urls=0
+    if noise_rejections:
+        log.debug(
+            "[F265C] Noise filter rejected %d/%d hits for query='%s' (is_threat=%s): %s",
+            len(noise_rejections),
+            len(hits) + len(noise_rejections),
+            query[:80],
+            is_threat,
+            [f"{r}:{u[:60]}" for u, r in noise_rejections[:5]],
+        )
     # Track noise rejections separately (will merge into public_acceptance_reject_reasons later)
     public_noise_reject_reasons: dict[str, int] = {}
     for _noise_url, noise_reason in noise_rejections:

@@ -71,7 +71,7 @@ dependencies = [
     "xgrammar>=0.2.1",
     "onnxscript>=0.7.0",
     # ── Vektorové indexy ──────────────────────────────────────────────────────
-    "fastembed>=0.8.0",
+    # fastembed REMOVED P0-1: MLXEmbeddingManager is primary for M1; fastembed was fallback only
     "hnswlib>=0.8.0",
     "usearch>=2.25.3",
     "datasketch>=1.10.0",
@@ -153,6 +153,7 @@ dependencies = [
     "outlines>=1.3.0",
     "dspy>=3.2.1",
     "ddgs>=9.14.4",
+    "sentence-transformers>=5.5.1",
 ]
 
 [project.scripts]
@@ -260,7 +261,6 @@ allowed-unresolved-imports = [
     "stix2",
     "scapy",
     "pyvis",
-    "sentence_transformers",
     "mobileclip", "wasmtime", "spacy",
     "flashrank",
     "liboqs",
@@ -268,7 +268,7 @@ allowed-unresolved-imports = [
     "hnswlib",
     "usearch",
     "rustworkx",
-    "fastembed",
+    # fastembed REMOVED P0-1: MLXEmbeddingManager is primary for M1
     "mlx", "mlx.**",
     "mlx_embeddings", "mlx_lm",
     "ocrmac",

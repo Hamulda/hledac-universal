@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import hashlib
 import logging as _logging
+import re
 from collections import Counter, OrderedDict
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
@@ -94,6 +95,11 @@ except ImportError:
 _QUALITY_ENTROPY_THRESHOLD: float = 0.5
 # Strings shorter than this skip entropy filtering
 _QUALITY_MIN_ENTROPY_LEN: int = 8
+
+# Sprint-F265B P2: High-confidence IoC bypass — SHA256/MD5/Hash patterns skip
+# semantic dedup entirely (exact match = trust the hash as dedup key).
+# Pattern matches hex hashes of common IOC types (SHA256, MD5, SHA1, Blake2b).
+_HIGH_CONF_IOC_RE = re.compile(r"^[a-fA-F0-9]{32,128}$")
 
 
 def _normalize_for_quality(text: str) -> str:
@@ -461,7 +467,7 @@ class QualityAssessor:
     async_ingest_findings_batch() to keep canonical write path clean.
     """
 
-    __slots__ = ("_state", "_lmdb_lookup_fn", "_lmdb_store_fn", "_semantic_dedup_cache")
+    __slots__ = ("_state", "_lmdb_lookup_fn", "_lmdb_store_fn", "_semantic_dedup_cache", "_sprint_id")
 
     def __init__(
         self,
@@ -469,18 +475,21 @@ class QualityAssessor:
         lmdb_lookup_fn: callable | None = None,
         lmdb_store_fn: callable | None = None,
         semantic_dedup_cache: object | None = None,
-    ) -> None:
+        sprint_id: str | None = None,
+        ) -> None:
         """
         Args:
-            state: QualityAssessmentState instance (owned by DuckDBShadowStore)
-            lmdb_lookup_fn: fn(fingerprint) -> finding_id | None (from DuckDBShadowStore)
-            lmdb_store_fn: fn(fingerprint, finding_id) -> None (from DuckDBShadowStore)
+        state: QualityAssessmentState instance (owned by DuckDBShadowStore)
+        lmdb_lookup_fn: fn(fingerprint) -> finding_id | None (from DuckDBShadowStore)
+        lmdb_store_fn: fn(fingerprint, finding_id) -> None (from DuckDBShadowStore)
             semantic_dedup_cache: optional semantic dedup cache instance
+            sprint_id: sprint-scoped dedup namespace (Sprint-F265B P2)
         """
         self._state = state
         self._lmdb_lookup_fn = lmdb_lookup_fn
         self._lmdb_store_fn = lmdb_store_fn
         self._semantic_dedup_cache = semantic_dedup_cache
+        self._sprint_id = sprint_id
 
     def assess(self, finding: CanonicalFinding) -> FindingQualityDecision:
         """
@@ -562,12 +571,17 @@ class QualityAssessor:
         # Short strings (< 8 chars) skip entropy filter — accept immediately
         # WITHOUT storing to LMDB/hotcache. Storage deferred to after semantic dedup pass.
         if len(fingerprint) < _QUALITY_MIN_ENTROPY_LEN:
-            if self._semantic_dedup_cache is not None:
+            # Sprint-F265B P2: High-confidence IoC bypass — hex hashes skip semantic dedup
+            text_for_embed = url_from_provenance or (finding.payload_text or finding.query)
+            is_high_conf_ioc = (
+                text_for_embed is not None
+                and _HIGH_CONF_IOC_RE.match(text_for_embed.strip()) is not None
+            )
+            if self._semantic_dedup_cache is not None and not is_high_conf_ioc:
                 try:
-                    text_for_embed = url_from_provenance or (finding.payload_text or finding.query)
                     if text_for_embed and len(text_for_embed) >= 16:
                         is_dup = self._semantic_dedup_cache.check_and_cache(
-                            text_for_embed, threshold=0.80  # P0-2: was 0.85, too tight for complex queries
+                            text_for_embed, threshold=0.75  # Sprint-F265B: was 0.80, too tight for IOC data (caused 100% rejection in sprint 300s)
                         )
                         if is_dup:
                             self._state._quality_duplicate_count += 1
@@ -616,13 +630,15 @@ class QualityAssessor:
                 duplicate=False,
             )
 
-        # Sprint F197B: Semantic dedup BEFORE storing
-        if self._semantic_dedup_cache is not None:
+        # Sprint F197B + Sprint-F265B P2: Semantic dedup BEFORE storing
+        # High-confidence IoC (hex hash) bypass: hashes are exact-match dedup keys,
+        # semantic similarity is meaningless for cryptographic hashes.
+        if self._semantic_dedup_cache is not None and not is_high_conf_ioc:
             try:
                 text_for_embed = url_from_provenance or (finding.payload_text or finding.query)
                 if text_for_embed and len(text_for_embed) >= 16:
                     is_dup = self._semantic_dedup_cache.check_and_cache(
-                        text_for_embed, threshold=0.80  # P0-2: was 0.85, too tight for complex queries
+                        text_for_embed, threshold=0.75  # Sprint-F265B: was 0.80, too tight for IOC data (caused 100% rejection in sprint 300s)
                     )
                     if is_dup:
                         self._state._quality_duplicate_count += 1

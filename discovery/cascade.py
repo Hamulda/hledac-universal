@@ -22,6 +22,7 @@ from __future__ import annotations
 import asyncio
 import os
 import time
+from typing import cast
 
 from hledac.universal.discovery.duckduckgo_adapter import (
     DiscoveryBatchResult,
@@ -239,7 +240,12 @@ async def _async_search_sequential(
     timeout_s: float = 30.0,
 ) -> DiscoveryBatchResult:
     """
-    Sequential first-hit-wins cascade: DDG → Historical Frontier → Wayback CDX.
+    Concurrent limited-fallback cascade: DDG + Historical Frontier + Wayback CDX
+    run in parallel, results merged in priority order.
+
+    Uses priority allocation: DDG gets the most time (20s), HF 5s, WB 5s,
+    all running concurrently so the first provider to return hits wins
+    without waiting for sequential timeouts.
 
     Used when HLEDAC_ENABLE_PROVIDERLESS_DISCOVERY=0 (default).
     """
@@ -249,103 +255,104 @@ async def _async_search_sequential(
 
     start = time.monotonic()
 
-    try:
-        async with asyncio.timeout(min(timeout_s, 20.0)):
-            result = await async_search_public_web(query, max_results=max_results, timeout_s=timeout_s)
-    except TimeoutError:
-        result = DiscoveryBatchResult(
-            hits=(),
-            error="timeout",
-            error_type="timeout",
-            elapsed_s=min(timeout_s, 20.0),
-        )
+    # Concurrent launch: all 3 providers start simultaneously
+    # DDG: 20s timeout, HF: 5s timeout, WB: 5s timeout
+    # All run in parallel — first to return hits with content wins
+    ddg_task = asyncio.create_task(
+        async_search_public_web(query, max_results=max_results, timeout_s=min(timeout_s, 20.0))
+    )
+    hf_task = asyncio.create_task(
+        async_search_historical_frontier(query, max_results=max_results, timeout_s=5.0)
+    )
+    wb_task = asyncio.create_task(
+        async_search_wayback_cdx(query, max_results=max_results, timeout_s=5.0)
+    )
+
+    # Wait for all three with overall timeout
+    raw_results = await safe_gather_dropin(
+        ddg_task, hf_task, wb_task, label="cascade_sequential:250"
+    )
 
     elapsed = time.monotonic() - start
 
-    if result.hits and not result.error:
-        return DiscoveryBatchResult(
-            hits=result.hits,
-            error=result.error,
-            fallback_triggered=None,
-            provider_name="duckduckgo",
-            provider_chain=("duckduckgo",),
-            source_family="search",
-            elapsed_s=elapsed,
-            error_type=None,
-        )
+    # Coerce results — handle exceptions/timeout as empty results
+    # Also unwrap any Task objects that safe_gather_dropin may return
+    def _unwrap(result: DiscoveryBatchResult | BaseException | asyncio.Task) -> DiscoveryBatchResult | BaseException:
+        if isinstance(result, asyncio.Task):
+            return cast("DiscoveryBatchResult | BaseException", result.result())
+        if isinstance(result, BaseException):
+            return result
+        return result
 
-    remaining_timeout = max(1.0, timeout_s - elapsed)
-    try:
-        async with asyncio.timeout(min(remaining_timeout, 2.0)):
-            hf_result = await async_search_historical_frontier(
-                query, max_results=max_results, timeout_s=2.0
+    ddg_raw = _unwrap(raw_results[0])
+    hf_raw = _unwrap(raw_results[1])
+    wb_raw = _unwrap(raw_results[2])
+
+    results: list[DiscoveryBatchResult | BaseException] = [ddg_raw, hf_raw, wb_raw]
+
+    def _coerce(result: DiscoveryBatchResult | BaseException, name: str, chain: tuple[str, ...], family: str) -> DiscoveryBatchResult:
+        if isinstance(result, asyncio.TimeoutError):
+            return DiscoveryBatchResult(
+                hits=(), error=f"{name}_timeout", error_type="timeout",
+                provider_name=name, provider_chain=chain, source_family=family,
+                elapsed_s=elapsed,
+                provider_status_debug=[{"provider": name, "state": "production", "selected": False, "reason": f"{name}_timeout"}],
             )
-    except TimeoutError:
-        hf_result = DiscoveryBatchResult(
-            hits=(),
-            error="historical_frontier_timeout",
-            error_type="timeout",
-            elapsed_s=remaining_timeout,
-        )
-
-    elapsed = time.monotonic() - start
-
-    if hf_result.hits:
-        return DiscoveryBatchResult(
-            hits=hf_result.hits,
-            error=hf_result.error,
-            fallback_triggered="primary_backend_failed_fallback_succeeded",
-            provider_name="historical_frontier",
-            provider_chain=("duckduckgo", "historical_frontier"),
-            source_family="historical",
-            elapsed_s=elapsed,
-            error_type=hf_result.error_type or "none",
-        )
-
-    remaining_timeout = max(1.0, timeout_s - elapsed)
-    try:
-        async with asyncio.timeout(min(remaining_timeout, 5.0)):
-            wb_result = await async_search_wayback_cdx(
-                query, max_results=max_results, timeout_s=5.0
+        if isinstance(result, BaseException):
+            return DiscoveryBatchResult(
+                hits=(), error=f"{name}_error", error_type="provider_exception",
+                provider_name=name, provider_chain=chain, source_family=family,
+                elapsed_s=elapsed,
+                provider_status_debug=[{"provider": name, "state": "production", "selected": False, "reason": f"{name}_exception"}],
             )
-    except TimeoutError:
-        wb_result = DiscoveryBatchResult(
-            hits=(),
-            error="wayback_cdx_timeout",
-            error_type="timeout",
-            elapsed_s=remaining_timeout,
+        return result
+
+    ddg_r = _coerce(results[0], "duckduckgo", ("duckduckgo",), "search")
+    hf_r = _coerce(results[1], "historical_frontier", ("historical_frontier",), "historical")
+    wb_r = _coerce(results[2], "wayback_cdx", ("wayback_cdx",), "archive")
+
+    # Priority-based selection: DDG first, then HF, then WB, then DHT
+    # All providers ran concurrently so no time was wasted on timeouts
+    if ddg_r.hits and not ddg_r.error:
+        return DiscoveryBatchResult(
+            hits=ddg_r.hits, error=ddg_r.error, fallback_triggered=None,
+            provider_name="duckduckgo", provider_chain=("duckduckgo",),
+            source_family="search", elapsed_s=elapsed, error_type=None,
         )
 
-    elapsed = time.monotonic() - start
-
-    if wb_result.hits:
+    if hf_r.hits:
         return DiscoveryBatchResult(
-            hits=wb_result.hits,
-            error=wb_result.error,
+            hits=hf_r.hits, error=hf_r.error,
             fallback_triggered="primary_backend_failed_fallback_succeeded",
-            provider_name="wayback_cdx",
-            provider_chain=("duckduckgo", "historical_frontier", "wayback_cdx"),
-            source_family="archive",
-            elapsed_s=elapsed,
-            error_type=wb_result.error_type or "none",
+            provider_name="historical_frontier", provider_chain=("duckduckgo", "historical_frontier"),
+            source_family="historical", elapsed_s=elapsed, error_type=hf_r.error_type or "none",
+        )
+
+    if wb_r.hits:
+        return DiscoveryBatchResult(
+            hits=wb_r.hits, error=wb_r.error,
+            fallback_triggered="primary_backend_failed_fallback_succeeded",
+            provider_name="wayback_cdx", provider_chain=("duckduckgo", "historical_frontier", "wayback_cdx"),
+            source_family="archive", elapsed_s=elapsed, error_type=wb_r.error_type or "none",
         )
 
     # DHT last-resort — Sprint F214Q / F229
-    remaining = max(1.0, timeout_s - (time.monotonic() - start))
+    remaining = max(1.0, timeout_s - elapsed)
     if remaining >= 5.0:
         dht_result = await _run_dht(query, max_results, remaining)
         if dht_result.hits:
             return dht_result
 
+    # All providers returned empty — return DDG error or generic
     return DiscoveryBatchResult(
         hits=(),
-        error=result.error,
+        error=ddg_r.error or "all_providers_returned_empty",
         fallback_triggered="primary_backend_failed_fallback_failed",
         provider_name=None,
         provider_chain=("duckduckgo", "historical_frontier", "wayback_cdx"),
         source_family=None,
-        elapsed_s=time.monotonic() - start,
-        error_type=result.error_type or "unknown_backend_error",
+        elapsed_s=elapsed,
+        error_type=ddg_r.error_type or "unknown_backend_error",
     )
 
 

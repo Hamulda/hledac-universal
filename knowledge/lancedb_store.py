@@ -22,6 +22,7 @@ import contextlib
 import hashlib
 import logging
 import os
+import sys
 import time
 from collections import OrderedDict, defaultdict, deque
 from datetime import UTC, datetime
@@ -505,19 +506,41 @@ class LanceDBIdentityStore:
         return 'hybrid'
 
     def _rrf_fusion(self, fts_results: list[dict], vec_results: list[dict], top_k: int, k: int = 60) -> list[dict]:
-        """Reciprocal Rank Fusion with robust keying."""
+        """Reciprocal Rank Fusion with robust keying — NumPy vectorized."""
         scores: dict[str, float] = defaultdict(float)
         docs: dict[str, dict] = {}
 
+        # Build key lists and compute ranks
+        fts_keys, fts_ranks = [], []
         for rank, doc in enumerate(fts_results):
-            key = doc.get('id') or doc.get('_rowid') or hashlib.md5(doc.get('text', '').encode()).hexdigest()
-            scores[key] += 1.0 / (k + rank + 1)
+            key = doc.get('id') or doc.get('_rowid')
+            if key is None:
+                key = hashlib.md5(doc.get('text', '').encode()).hexdigest()
+            fts_keys.append(key)
+            fts_ranks.append(rank)
             docs[key] = doc
 
+        vec_keys, vec_ranks = [], []
         for rank, doc in enumerate(vec_results):
-            key = doc.get('id') or doc.get('_rowid') or hashlib.md5(doc.get('text', '').encode()).hexdigest()
-            scores[key] += 1.0 / (k + rank + 1)
+            key = doc.get('id') or doc.get('_rowid')
+            if key is None:
+                key = hashlib.md5(doc.get('text', '').encode()).hexdigest()
+            vec_keys.append(key)
+            vec_ranks.append(rank)
             docs[key] = doc
+
+        # NumPy vectorized RRF score computation
+        if fts_keys:
+            fts_arr = np.array(fts_ranks, dtype=float)
+            fts_arr = 1.0 / (k + fts_arr + 1)
+            for key, score in zip(fts_keys, fts_arr):
+                scores[key] += score
+
+        if vec_keys:
+            vec_arr = np.array(vec_ranks, dtype=float)
+            vec_arr = 1.0 / (k + vec_arr + 1)
+            for key, score in zip(vec_keys, vec_arr):
+                scores[key] += score
 
         sorted_keys = sorted(scores, key=scores.get, reverse=True)
         return [docs[key] for key in sorted_keys[:top_k]]
@@ -2037,20 +2060,13 @@ class LanceDBAcademicStore:
         except (ImportError, Exception):
             pass
 
-        # 2) sentence-transformers fallback
-        try:
-            from sentence_transformers import SentenceTransformer
-            self._embedder = SentenceTransformer(self._embed_model)
-            self._embedder_backend = "sentence_transformers"
-            return
-        except ImportError:
-            pass
-
-        # 3) Explicit failure — random vectors are FORBIDDEN (silent ANN corruption)
+        # 2) MLX-only: no sentence-transformers fallback
         raise RuntimeError(
-            "_init_embedder: no embedding backend available. "
-            "Install mlx-embeddings (preferred on M1) or sentence-transformers. "
-            "np.random.randn fallback is intentionally removed (caused silent ANN corruption)."
+            "_init_embedder: MLX backend unavailable.\n"
+            "  Likely cause: running via `python3` instead of `uv run python`.\n"
+            f"  sys.executable: {sys.executable!r}\n"
+            "  Fix: use `uv run python -m hledac.universal ...`\n"
+            "  Verify: `uv run python -c 'from mlx_embeddings import load; print(\"OK\")'`"
         )
 
     async def _embed_texts(self, texts: list[str]) -> list[list[float]]:
@@ -2058,8 +2074,7 @@ class LanceDBAcademicStore:
 
         ``self._embedder`` is guaranteed non-None by ``_init_embedder``,
         which raises ``RuntimeError`` on no backend (no silent fallback).
-        Both ``MLXEmbeddingManager`` and ``SentenceTransformer`` expose
-        ``.encode(texts)`` — the cascade keeps a single call site here.
+        ``MLXEmbeddingManager`` exposes ``.encode(texts)``.
         """
         if not texts:
             return []

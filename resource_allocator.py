@@ -268,9 +268,17 @@ def get_memory_pressure_level() -> str:
     Read memory pressure via psutil (ARM64 native, no subprocess overhead).
 
     Thresholds calibrated for M1 8GB UMA:
-      > 85% used  → warn      (~6.8 GB)
-      > 93% used  → critical  (~7.4 GB)
+      > 87% used  → warn      (~6.96 GB)
+      > 93% used  → critical  (~7.44 GB)
     Swap is used as a secondary signal.
+    F273H+: Adjusted thresholds to prevent premature ml_jobs=0 on M1 8GB
+    where macOS (~2.5GB) + orchestrator (~1GB) + LLM (~2GB) + KV (~0.75GB)
+    already consume ~6.25GB at baseline (78%).
+    F285: Warn threshold raised from 90→87 to leave headroom for the
+    MLXBatchedExecutor PID memory guard (MEMORY_GUARD_PCT=92 in batcher).
+    Without this gap, the batcher's is_batch_safe() returns False BEFORE
+    the resource allocator goes warn, so ml_jobs gets clamped to 0 by
+    the time the batcher could have handled the load.
     """
     try:
         _ps = _get_psutil()
@@ -281,7 +289,7 @@ def get_memory_pressure_level() -> str:
         sw = _ps.swap_memory()
         if pct > 93 or sw.percent > 50:
             return "critical"
-        if pct > 85 or sw.percent > 25:
+        if pct > 87 or sw.percent > 25:
             return "warn"
     except Exception:
         pass
@@ -305,11 +313,16 @@ def get_recommended_concurrency() -> dict[str, int]:
     level = get_memory_pressure_level()
     if level == "critical":
         import gc; gc.collect()  # noqa: E702
-    return {
+    concurrency = {
         "normal":   {"fetch": 20, "parse_workers": 4, "ml_jobs": 1, "browser": 1},
         "warn":     {"fetch": 8,  "parse_workers": 2, "ml_jobs": 1, "browser": 0},
         "critical": {"fetch": 2,  "parse_workers": 1, "ml_jobs": 0, "browser": 0},
     }[level]
+    # F221-FIX: Clamp fetch to minimum 4 so a critical-level misread never
+    # starves the entire acquisition lane to 2 workers.
+    if concurrency["fetch"] < 4:
+        concurrency["fetch"] = 4
+    return concurrency
 
 
 # ── Sprint 8VG-C: Adaptive Concurrency ─────────────────────────────────────────

@@ -14,6 +14,7 @@ Modular layers for the universal orchestrator:
 - ContentLayer: HTML cleaning, Markdown conversion, MLX-optimized
 - LayerManager: Centralized layer orchestration and lifecycle management
 """
+import functools
 
 from .communication_layer import CommunicationLayer
 from .content_layer import (
@@ -190,80 +191,62 @@ __all__ = [
 # ---------------------------------------------------------------------------
 
 
-def get_stealth_layer() -> StealthLayer | None:
-    """Lazy singleton StealthLayer accessor.
-
-    Returns None if layers are disabled or init fails (fail-soft).
-    Caller is responsible for calling .initialize() if returning a new instance.
-    """
+@functools.lru_cache(maxsize=1)
+def _stealth_layer_cached() -> StealthLayer | None:
+    """Cached StealthLayer instance — called only once, reused forever."""
     try:
         from hledac.universal.layers.stealth_layer import StealthLayer
-    except Exception:
-        return None
-    try:
-        instance = StealthLayer()
-        return instance
+        return StealthLayer()
     except Exception:
         return None
 
 
-def get_content_layer() -> ContentCleaner | None:
-    """Lazy singleton ContentCleaner accessor.
+def get_stealth_layer() -> StealthLayer | None:
+    """Lazy singleton StealthLayer accessor — module-level cached, init-once reuse."""
+    return _stealth_layer_cached()
 
-    Returns None if content_layer init fails (fail-soft).
-    ContentCleaner.clean_html() is sync — safe to call from async fetch pipeline.
-    """
+
+@functools.lru_cache(maxsize=1)
+def _content_layer_cached() -> ContentCleaner | None:
+    """Cached ContentCleaner instance — called only once, reused forever."""
     try:
         from hledac.universal.layers.content_layer import ContentCleaner
-    except Exception:
-        return None
-    try:
         return ContentCleaner()
     except Exception:
         return None
 
 
-def get_communication_layer() -> CommunicationLayer | None:
-    """Lazy singleton CommunicationLayer accessor (F26X-3).
+def get_content_layer() -> ContentCleaner | None:
+    """Lazy singleton ContentCleaner accessor — module-level cached, init-once reuse."""
+    return _content_layer_cached()
 
-    Returns None if CommunicationLayer import or init fails (fail-soft, M1 invariant).
-    Used by SprintScheduler hot-spot consumers (privacy gate, LMDB ingest, forensic fan-out).
-    Caller is responsible for calling .initialize() / .shutdown() if needed.
 
-    Sprint F26X-1 invariant: all config attribute reads in CommunicationLayer.__init__
-    are guarded by hasattr() — passing config=None is safe and yields defaults
-    (model_cache_size=100, model_cache_ttl=300, model_batch_size=5, model_batch_timeout=0.05).
-    """
+@functools.lru_cache(maxsize=1)
+def _communication_layer_cached() -> CommunicationLayer | None:
+    """Cached CommunicationLayer instance — called only once, reused forever."""
     try:
         from hledac.universal.layers.communication_layer import CommunicationLayer as _CL  # noqa: N814
+        from hledac.universal.project_types import CommunicationConfig
+        return _CL(config=CommunicationConfig())
     except Exception:
         return None
+
+
+def get_communication_layer() -> CommunicationLayer | None:
+    """Lazy singleton CommunicationLayer accessor — module-level cached, init-once reuse."""
+    return _communication_layer_cached()
+
+
+@functools.lru_cache(maxsize=1)
+def _ghost_layer_cached() -> GhostLayer | None:
+    """Cached GhostLayer instance — called only once, reused forever."""
     try:
-        instance = _CL(config=None)
-        return instance
+        from hledac.universal.layers.ghost_layer import GhostLayer as _GL  # noqa: N814
+        return _GL(config=None)
     except Exception:
         return None
 
 
 def get_ghost_layer() -> GhostLayer | None:
-    """Lazy singleton GhostLayer accessor (F260).
-
-    Returns None if GhostLayer import or init fails (fail-soft, M1 invariant).
-    Used by SprintScheduler advisory call sites (stealth mode activation pre-fetch,
-    anti-VM detection, neural cleanup). Caller is responsible for calling
-    .initialize() / .shutdown() if needed.
-
-    Sprint F260 invariant: GhostLayer.__init__(config=None) is safe and yields
-    a fully-wired instance exposing is_vm_environment() and force_neural_cleanup()
-    surfaces. Anti-loop and anti-VM protection are gated on M1 optimization
-    (default True) and a non-None SystemContext.
-    """
-    try:
-        from hledac.universal.layers.ghost_layer import GhostLayer as _GL  # noqa: N814
-    except Exception:
-        return None
-    try:
-        instance = _GL(config=None)
-        return instance
-    except Exception:
-        return None
+    """Lazy singleton GhostLayer accessor — module-level cached, init-once reuse."""
+    return _ghost_layer_cached()

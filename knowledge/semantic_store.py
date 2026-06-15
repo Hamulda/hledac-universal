@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from collections import deque
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -136,20 +137,35 @@ class SemanticStore:
                 logger.warning("[SEMSTORE] CoreMLEmbedder load failed: %s", e)
                 self._coreml_embedder = None
 
-        # CPU fallback: load FastEmbed (always works)
+        # MLX path: Use MLXEmbeddingManager singleton (modernbert-embed-base)
+        # This uses mlx_embeddings package, NOT mlx_embedding_models
+        self._mlx_embedder = None
         try:
-            from fastembed import TextEmbedding
+            from hledac.universal.core._mlx_embeddings import get_embedding_manager
 
-            self._model = TextEmbedding("BAAI/bge-small-en-v1.5")
-            # Warm-up embed
-            list(self._model.embed(["warmup"]))
-            logger.info("[SEMSTORE] FastEmbed loaded (CPU fallback)")
-        except ImportError:
-            logger.warning("[SEMSTORE] FastEmbed not available — ANE/hash only")
-            self._model = None
+            self._mlx_embedder = get_embedding_manager()
+            # Ensure loaded
+            if not self._mlx_embedder.is_loaded:
+                await asyncio.to_thread(self._mlx_embedder._load_model)
+            logger.info("[SEMSTORE] MLXEmbeddingManager loaded (ModernBERT, unified memory)")
         except Exception as e:
-            logger.warning("[SEMSTORE] FastEmbed load failed: %s", e)
-            self._model = None
+            logger.debug("[SEMSTORE] MLXEmbeddingManager not available: %s", e)
+            self._mlx_embedder = None
+
+        # CPU fallback: load FastEmbed (always works, if mlx-embeddings unavailable)
+        self._model = None
+        if self._mlx_embedder is None:
+            try:
+                from fastembed import TextEmbedding
+
+                self._model = TextEmbedding("BAAI/bge-small-en-v1.5")
+                # Warm-up embed
+                list(self._model.embed(["warmup"]))
+                logger.info("[SEMSTORE] FastEmbed loaded (CPU fallback)")
+            except ImportError:
+                logger.warning("[SEMSTORE] FastEmbed not available — MLX only")
+            except Exception as e:
+                logger.warning("[SEMSTORE] FastEmbed load failed: %s", e)
 
         # Open LanceDB
         try:
@@ -235,10 +251,32 @@ class SemanticStore:
         loop = asyncio.get_running_loop()
 
         t0 = time.monotonic()
-        backend_name = "unknown"
+        _backend_name = "unknown"
 
+        # MLX path preferred — Apple Silicon native, unified memory
+        # MLXEmbeddingManager.encode() takes list[str] and returns np.ndarray
+        mlx_mgr = self._mlx_embedder
+        if mlx_mgr is not None:
+            backend_name = "mlx"
+            try:
+                # Use encode() method which handles batch internally
+                def batch_encode(manager, txts: list[str]) -> np.ndarray:
+                    return manager.encode(txts, normalize=True)
+
+                embeddings = await loop.run_in_executor(
+                    None, lambda: batch_encode(mlx_mgr, texts)
+                )
+                logger.debug(
+                    "[SEMSTORE] Batch embed via MLXEmbeddingManager: %d texts", len(texts)
+                )
+            except Exception as e:
+                logger.warning("[SEMSTORE] MLXEmbeddingManager embed failed: %s", e)
+                embeddings = await loop.run_in_executor(
+                    None, lambda: list(self._model.embed(texts))
+                )
+                backend_name = "cpu_fallback"
         # Sprint F228B: ANE path preferred — use CoreMLEmbedder (sync, must run in executor)
-        if self._coreml_embedder is not None and self._coreml_embedder.is_loaded:
+        elif self._coreml_embedder is not None and self._coreml_embedder.is_loaded:
             backend_name = "ane"
             try:
                 embeddings = await loop.run_in_executor(
@@ -358,16 +396,32 @@ class SemanticStore:
 
     async def embed_query(self, query: str) -> np.ndarray:
         """
-        Embed a single query string — uses ANE path if available.
+        Embed a single query string — uses MLX path if available.
 
         Returns:
             ndarray dtype=float32, shape=(384,)
         """
         loop = asyncio.get_running_loop()
 
+        # MLX path preferred — Apple Silicon native (MLXEmbeddingManager)
+        mlx_mgr = self._mlx_embedder
+        if mlx_mgr is not None:
+            try:
+                def single_encode(manager, text: str) -> np.ndarray:
+                    return manager.encode([text], normalize=True)
+
+                result = await loop.run_in_executor(
+                    None, lambda: single_encode(mlx_mgr, query)
+                )
+                return result[0] if len(result) > 0 else np.zeros(384, dtype=np.float32)
+            except Exception:
+                pass
+
         if self._coreml_embedder is not None and self._coreml_embedder.is_loaded:
             try:
-                emb = await self._coreml_embedder.embed([query], batch_size=1)
+                emb = await loop.run_in_executor(
+                    None, lambda: self._coreml_embedder.embed([query], batch_size=1)
+                )
                 return emb[0]
             except Exception:
                 pass

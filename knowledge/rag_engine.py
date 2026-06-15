@@ -1008,42 +1008,29 @@ class RAGEngine:
         return results[:top_k]
 
     async def _generate_embeddings(self, texts: list[str]) -> list[list[float]]:
-        """Generate embeddings for texts using cached FastEmbed or MLXEmbeddingManager.
+        """Generate embeddings using UnifiedEmbeddingManager (MLX primary).
 
-        M1 8GB: TextEmbedding instance is cached in self._fastembed_embedder
-        to avoid repeated model loading (memory fragmentation prevention).
-        Falls back to MLXEmbeddingManager singleton if FastEmbed unavailable.
+        Priority: MLXEmbeddingManager (ModernBERT) → SHA256 hash fallback.
+        FastEmbed removed — unified MLX is faster on M1 8GB.
+
+        M1 8GB: MLXEmbeddingManager runs on GPU via unified memory, no CPU transfer.
         """
-        # Sprint 8TD: Cache FastEmbed instance to avoid repeated model loading
-        if not hasattr(self, '_fastembed_embedder') or self._fastembed_embedder is None:
+        # Try UnifiedEmbeddingManager (MLX backend) — Apple Silicon native
+        if not hasattr(self, '_mlx_embedder') or self._mlx_embedder is None:
             try:
-                from fastembed import TextEmbedding
-                self._fastembed_embedder = TextEmbedding(model_name="BAAI/bge-small-en-v1.5")
-                logger.debug("[FastEmbed] TextEmbedding instance cached in RAGEngine")
-            except ImportError:
-                self._fastembed_embedder = False  # Mark as unavailable
-                logger.debug("[FastEmbed] Not available, will use MLXEmbeddingManager fallback")
-
-        if self._fastembed_embedder:
-            try:
-                embeddings = list(self._fastembed_embedder.embed(texts))
-                return [list(e) for e in embeddings]
+                from hledac.universal.brain.unified_embedding_manager import get_unified_embedder
+                self._mlx_embedder = get_unified_embedder(dim=512)
             except Exception as e:
-                logger.warning(f"FastEmbed embed failed: {e}, falling back to MLXEmbeddingManager")
+                logger.debug("[MLX] UnifiedEmbeddingManager init failed: %s", e)
+                self._mlx_embedder = False
 
-        # Fallback to MLXEmbeddingManager singleton
-        try:
-            from hledac.universal.core._mlx_embeddings import get_embedding_manager
-            manager = get_embedding_manager()
-            results = []
-            for text in texts:
-                # Use embed_document (sync) via asyncio.to_thread
-                result = await asyncio.to_thread(manager.embed_document, text)
-                emb = result.tolist() if hasattr(result, 'tolist') else list(result)
-                results.append(emb)
-            return results
-        except Exception as e:
-            logger.warning(f"MLXEmbeddingManager fallback failed: {e}")
+        if self._mlx_embedder and hasattr(self._mlx_embedder, 'embed'):
+            try:
+                # UnifiedEmbeddingManager.embed() returns list[list[float]]
+                result = self._mlx_embedder.embed(texts)
+                return result
+            except Exception as e:
+                logger.warning("[MLX] embed failed: %s", e)
 
         # Last resort: stable SHA256-based deterministic embeddings
         # FIX F800A: hash(t) is process-salted (PYTHONHASHSEED), not cross-run deterministic.
@@ -1051,7 +1038,7 @@ class RAGEngine:
         return [
             [
                 float(digest[i % 32]) / 255.0
-                for i in range(384)
+                for i in range(512)
             ]
             for t in texts
             for digest in [hashlib.sha256(t.encode()).digest()]

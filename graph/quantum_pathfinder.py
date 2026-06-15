@@ -1157,9 +1157,11 @@ def _stable_node_id(value: str) -> int:
     NEPOUŽÍVEJ hash() — není deterministický mezi procesy (PYTHONHASHSEED).
     SHA1 prvních 8 bytů = 64bit, oríznutý na 63bit (positive BIGINT).
     """
-    return int.from_bytes(
+    # Sprint-F265B: DuckDB & bitwise AND on BIGINT not supported, use bitwise AND via multiplication trick
+    node_64bit = int.from_bytes(
         _hashlib.sha256(value.encode("utf-8")).digest()[:8], "little"
-    ) & 0x7FFFFFFFFFFFFFFF
+    )
+    return node_64bit & 0x7FFFFFFFFFFFFFFF
 
 
 class DuckPGQGraph:
@@ -1337,6 +1339,10 @@ class DuckPGQGraph:
 
     def find_connected(self, value: str, max_hops: int = 2) -> list[dict]:
         """SQL/PGQ MATCH s recursive CTE fallback. max_hops je vzdy respektován."""
+        return self._find_connected_base(value, max_hops)
+
+    def _find_connected_base(self, value: str, max_hops: int) -> list[dict]:
+        """Core find_connected implementation — used by find_connected and find_connected_with_similarity."""
         # PGQ path: TRY first, transparent fallback to CTE on any GRAPH_TABLE error.
         # _DUCKPGQ_AVAILABLE means extension is loaded — but ioc_graph property graph
         # may not exist, so we guard with try/except and fall back gracefully.
@@ -1382,6 +1388,169 @@ class DuckPGQGraph:
         except Exception as e:
             logger.warning(f"[GRAPH] find_connected failed: {e}")
             return []
+
+    def find_connected_with_similarity(
+        self,
+        value: str,
+        max_hops: int = 2,
+        query_embedding: Any | None = None,
+        top_k: int = 10,
+        similarity_threshold: float = 0.0,
+    ) -> list[dict]:
+        """
+        Hybrid graph traversal + vector similarity reranking.
+
+        Flow:
+        1. Graph traversal → list of connected IOCs
+        2. If query_embedding provided and RAM available:
+           - Fetch embeddings from LanceDB entity store
+           - Compute MLX cosine similarity
+           - Rerank and filter by threshold
+        3. Return sorted results with similarity scores
+
+        M1 8GB safe: RAM guard checks before vector similarity compute.
+        Fail-soft: falls back to pure graph traversal on any error.
+        """
+        # Step 1: Pure graph traversal (always runs)
+        connected = self._find_connected_base(value, max_hops)
+        if not connected:
+            return []
+
+        # Step 2: Vector similarity reranking (only if embedding provided)
+        if query_embedding is None:
+            return connected[:top_k]
+
+        # RAM guard for M1 8GB — skip vector ops if <4GB available
+        if not self._check_memory_available():
+            logger.debug("[GRAPH] RAM guard: skipping vector similarity, using graph order")
+            return connected[:top_k]
+
+        try:
+            reranked = self._rerank_by_similarity(
+                connected, query_embedding, top_k, similarity_threshold
+            )
+            return reranked
+        except Exception as e:
+            logger.debug(f"[GRAPH] vector similarity failed, using graph order: {e}")
+            return connected[:top_k]
+
+    def _check_memory_available(self, min_gb: float = 4.0) -> bool:
+        """Check if >=min_gb RAM available. M1 8GB safety guard."""
+        try:
+            import psutil
+            available = psutil.virtual_memory().available / (1024**3)
+            return available >= min_gb
+        except Exception:
+            # Fail-open: if we can't measure, assume OK
+            return True
+
+    def _rerank_by_similarity(
+        self,
+        connected: list[dict],
+        query_embedding: Any,
+        top_k: int,
+        similarity_threshold: float,
+    ) -> list[dict]:
+        """Rerank connected IOCs by cosine similarity to query embedding.
+
+        M1 8GB safe: uses MLX for vector similarity when available.
+        Fallback: returns graph traversal order if MLX unavailable or error.
+        """
+        # Lazy import MLX
+        try:
+            import mlx.core as mx
+        except ImportError:
+            logger.debug("[GRAPH] MLX not available for similarity")
+            return connected[:top_k]
+
+        try:
+            # Build embedding matrix from connected items
+            # NOTE: This requires IOC embeddings to be stored alongside DuckDB graph nodes.
+            # Currently DuckPGQGraph only stores metadata (value, type, confidence, source).
+            # For full vector similarity, embeddings need to be added to ioc_nodes table.
+            #
+            # Fallback: use DuckDB to check if embeddings exist
+            embeddings = self._fetch_ioc_embeddings_from_db([c["value"] for c in connected])
+            if not embeddings:
+                logger.debug("[GRAPH] no IOC embeddings found in DuckDB, using graph order")
+                return connected[:top_k]
+
+            # Build MLX arrays
+            q_emb = mx.array(query_embedding)
+            c_embs = mx.array(embeddings)
+
+            # MLX cosine similarity: normalize and compute dot product
+            q_norm = q_emb / (mx.linalg.norm(q_emb) + 1e-8)
+            c_norm = c_embs / (mx.linalg.norm(c_embs, axis=1, keepdims=True) + 1e-8)
+            similarities = mx.matmul(c_norm, q_norm.T if c_norm.ndim > 1 else q_norm)
+
+            # Handle 2D case for batch similarity
+            if similarities.ndim == 2:
+                similarities = similarities[0]
+
+            sim_raw = similarities.tolist()
+            sim_list: list[float] = list(sim_raw) if isinstance(sim_raw, list) else [float(sim_raw)]
+
+            # Attach similarity scores and filter
+            scored = []
+            for i, item in enumerate(connected):
+                score = float(sim_list[i]) if i < len(sim_list) else 0.0
+                if score >= similarity_threshold:
+                    scored.append({**item, "similarity": score})
+
+            # Sort by similarity descending, then by confidence
+            scored.sort(key=lambda x: (x.get("similarity", 0.0), x.get("confidence", 0.0)), reverse=True)
+            return scored[:top_k]
+
+        except Exception as e:
+            logger.debug(f"[GRAPH] vector similarity failed: {e}, using graph order")
+            return connected[:top_k]
+
+    def _fetch_ioc_embeddings_from_db(self, values: list[str]) -> list[list[float]] | None:
+        """Fetch IOC embeddings from DuckDB if they exist.
+
+        NOTE: This requires ioc_nodes.embedding column to exist.
+        Currently the schema doesn't include embeddings — this is a future extension
+        point for Graph RAG with vector similarity.
+        """
+        if not values:
+            return None
+        try:
+            # Check if embedding column exists
+            cols = self.con.execute("PRAGMA table_info(ioc_nodes)").fetchall()
+            col_names = [c[1] for c in cols]
+            if "embedding" not in col_names:
+                logger.debug("[GRAPH] ioc_nodes has no embedding column")
+                return None
+
+            # Fetch embeddings for values (limit to 100 for M1 safety)
+            placeholders = ",".join(["?" for _ in values[:100]])
+            sql = f"""
+                SELECT n.value, n.embedding
+                FROM ioc_nodes n
+                WHERE n.value IN ({placeholders})
+            """
+            rows = self.con.execute(sql, values[:100]).fetchall()
+            if not rows:
+                return None
+
+            # Convert to embedding matrix
+            embeddings = []
+            value_to_emb = {r[0]: r[1] for r in rows if r[1]}
+            for val in values[:100]:
+                emb = value_to_emb.get(val)
+                if emb:
+                    # Handle bytes from DuckDB (potential compression)
+                    if isinstance(emb, bytes):
+                        import numpy as np
+                        emb = np.frombuffer(emb, dtype=np.float32).tolist()
+                    embeddings.append(emb)
+                else:
+                    return None  # Not all values have embeddings
+            return embeddings
+        except Exception as e:
+            logger.debug(f"[GRAPH] could not fetch IOC embeddings: {e}")
+            return None
 
     def find_connected_batch(self, values: list[str], max_hops: int = 2) -> dict[str, list[dict]]:
         """

@@ -61,11 +61,13 @@ logger = logging.getLogger(__name__)
 
 # ─── Bounded constants (M1 8GB safety) ──────────────────────────────
 MAX_BATCH_SIZE_M1: int = 8  # P1-1: 6→8 on M1 8GB; single-thread MLX lock means batches serialize anyway, 8 is safe at idle
-# F265C: Memory guard — M1 8GB real-world: macOS ~4GB used at idle, ~1.6GB headroom at 90% vs ~800MB at 80%.
-# 90% pct threshold = ~720MB free → still too tight for batch accumulation (KV cache 0.75GB).
-# Use 92% for pct guard (≈320MB free) OR use absolute available GB threshold.
-# Absolute threshold: 1.5GB available = safe for batch (KV cache fits in Metal memory).
-MEMORY_GUARD_PCT: float = 92.0  # 80→92: M1 8GB with macOS ~4GB used leaves ~800MB at 80%; batch accumulation needs headroom
+# F285: Memory guard — aligned with resource_allocator.py warn threshold (87%).
+# The 5-point gap (87% warn → 93% critical) gives the PID controller time to
+# shrink batch size before ml_jobs gets clamped to 0 by the resource allocator.
+# Previously 92% was ABOVE the old warn (90%), so batcher short-circuited AFTER
+# resource_allocator already blocked MLX — leaving no room for adaptive batching.
+# 87% pct guard ≈ ~1.04GB free on M1 8GB → safe for batch accumulation.
+MEMORY_GUARD_PCT: float = 87.0  # 92→87: aligned with resource_allocator warn threshold
 MEMORY_GUARD_ABSOLUTE_GB: float = 1.5  # M1 8GB: Metal cache 1.5GiB + KV cache 0.75GB = 2.25GB reserved; 1.5GB available = safe
 DEFAULT_FLUSH_INTERVAL_S: float = 1.0
 MAX_QUEUE_DEPTH: int = 256

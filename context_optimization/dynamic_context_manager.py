@@ -1,14 +1,11 @@
 """
-Dynamic Context Manager with FastEmbed (ONNX)
-==========================================
+Dynamic Context Manager with MLX Embeddings (M1-primary)
+=============================================
 
-OPTIMIZED: PyTorch backend removed in favor of ONNX Runtime via FastEmbed
+MLXEmbeddingManager is primary for M1. FastEmbed removed P0-1.
 
-This module provides memory-efficient context management using FastEmbed
-with ONNX runtime, optimized for M1 MacBook Air (8GB RAM).
-
-FastEmbed uses quantized ONNX models for maximum inference speed
-and minimal memory footprint (~50MB vs ~420MB for PyTorch).
+This module provides memory-efficient context management using MLX embeddings
+with Metal backend, optimized for M1 MacBook Air (8GB RAM).
 """
 
 from __future__ import annotations
@@ -36,12 +33,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-try:
-    from fastembed import TextEmbedding
-    FASTEMBED_AVAILABLE = True
-except ImportError:
-    FASTEMBED_AVAILABLE = False
-    logger.warning("FastEmbed not installed. Install with: pip install fastembed")
+# fastembed REMOVED P0-1: MLXEmbeddingManager is primary for M1
+FASTEMBED_AVAILABLE = False  # kept for graceful degradation, no longer installed
 
 # MLX Embedding Manager (primary for M1)
 try:
@@ -226,17 +219,15 @@ class DynamicContextManager:
                 self._embedder_type = 'mlx'
                 logger.info(f"[EMBEDDER] Using shared MLXEmbeddingManager: {self._mlx_manager.model_path}, dim={self.embedding_dim}")  # noqa: E501
             except Exception as e:
-                logger.warning(f"MLXEmbeddingManager init failed: {e}, falling back to FastEmbed")
+                logger.warning(f"MLXEmbeddingManager init failed: {e}, using dummy embeddings")
                 self._mlx_manager = None
-                if FASTEMBED_AVAILABLE:
-                    self._initialize_embedder()
-                else:
-                    logger.warning("FastEmbed not available, using dummy embeddings")
-                    self.embedding_dim = 384
+                self.embedder = None
+                self.embedding_dim = 384
+                self._embedder_type = None
         elif FASTEMBED_AVAILABLE:
             self._initialize_embedder()
         else:
-            logger.warning("FastEmbed not available, using dummy embeddings")
+            logger.warning("MLXEmbeddingManager not available, using dummy embeddings")
             self.embedding_dim = 384
 
         # FAISS index for semantic search - lazy loaded
@@ -302,27 +293,6 @@ class DynamicContextManager:
                 'evidence': 0.7
             }
         }
-
-    def _initialize_embedder(self):
-        """Initialize FastEmbed embedder with minimal memory usage."""
-        try:
-            logger.info(f"Initializing FastEmbed embedder: {self.embedding_model}")
-
-            self.embedder = TextEmbedding(
-                model_name=self.embedding_model,
-                cache_dir=str(self.storage_path / "embeddings"),
-                threads=4  # Optimize for M1
-            )
-
-            self.embedding_dim = self.embedder.embedding_size
-            self._embedder_type = 'fastembed'
-            logger.info(f"✅ FastEmbed embedder loaded (model: ~50MB, dim: {self.embedding_dim})")
-
-        except Exception as e:
-            logger.error(f"Failed to initialize FastEmbed: {e}")
-            self.embedder = None
-            self.embedding_dim = 384
-            self._embedder_type = None
 
     def _get_embeddings(self, texts: list[str]) -> list[np.ndarray]:
         """Get embeddings for texts (uses query task for retrieval)."""

@@ -357,6 +357,11 @@ class DeepHermes3Engine:
 
         # F273H: Idle-based lazy unload — track last inference timestamp
         self._last_inference_at: float | None = None
+        # F273H+: Track whether model was ever loaded (prewarm) — if prewarmed but never
+        # used for inference (_last_inference_at=None), keep it warm until teardown.
+        # is_idle() returns False when _model_ever_loaded=True but _last_inference_at=None
+        # (model was prewarmed but not used — don't unload prematurely).
+        self._model_ever_loaded: bool = False
 
         # Sprint 75: Persistent system-prompt cache
         self._system_prompt = "You are a helpful research assistant."
@@ -455,8 +460,15 @@ class DeepHermes3Engine:
         # GPU memory tracking
         self._last_gpu_memory: int = 0
 
-        # GAP-3/1: Per-model inference circuit breaker
+        # GAP-3/1: Per-model inference circuit breaker — auto-init on model load
         self._model_breaker: ModelCircuitBreaker | None = None
+
+        # P0-2: Initialize model breaker immediately so GAP-3/1 guard always has a valid reference
+        try:
+            from transport.circuit_breaker import ModelCircuitBreaker
+            self._model_breaker = ModelCircuitBreaker(model_id="hermes")
+        except Exception:
+            pass  # fail-soft: breaker stays None, GAP-3/1 guard skipped
 
         # Sprint F259: PromptBandit integration — lazy init, not at __init__
         self._prompt_bandit = None
@@ -1391,11 +1403,15 @@ class DeepHermes3Engine:
         """
         F273H: Check if engine has been idle beyond threshold.
 
-
         Returns True if no inference occurred within _idle_unload_timeout_s.
-        Fail-safe: returns True if _last_inference_at is None (never used) —
-        unloaded models stay unloaded; keeping an UNUSED model warm wastes RAM.
+        F273H+: If model was prewarmed (_model_ever_loaded=True) but never used
+        for inference (_last_inference_at=None), returns True — unload unused prewarmed
+        model to reclaim ~2GB RAM. Keeping an UNUSED model warm wastes memory
+        with zero benefit since no inference history exists.
         """
+        # F273H+: Model was prewarmed but never used for inference — unload it
+        if self._model_ever_loaded and self._last_inference_at is None:
+            return True  # Safe to unload: never used, no warm-start benefit
         if self._last_inference_at is None:
             return True
         try:
@@ -1403,7 +1419,7 @@ class DeepHermes3Engine:
             elapsed = _time.monotonic() - self._last_inference_at
             return elapsed >= self._idle_unload_timeout_s
         except Exception:
-            return False
+            return True  # Fail-safe: unload on error
 
     def _run_inference(self, formatted_prompt: str, temp: float, max_tok: int, prefix_cache=None) -> str:
         """
@@ -2894,6 +2910,8 @@ Do not include any other text. Output valid JSON only."""
                 self._prompt_cache = None
                 self._kv_cache_enabled = False
             logger.info(f"✓ Model loaded: {model_id}")
+            # F273H+: Mark model as ever-loaded so is_idle() knows prewarm happened
+            self._model_ever_loaded = True
             return True
         except Exception as e:
             logger.warning(f"Model load failed for {model_id}: {e}")

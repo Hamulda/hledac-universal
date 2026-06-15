@@ -34,6 +34,8 @@ from enum import Enum
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urljoin, urlparse
 
+from hledac.universal.project_types import RiskLevel
+
 # Try to import socks for Tor support
 try:
     import aiohttp_socks

@@ -5,6 +5,9 @@ Sprint 8SC: CT log pivot pro doménový OSINT (SubjectAltNames, cert history).
 B3: Max 1 request per 5s rate limit, 24h cache.
 Sprint F264: Migrated orjson → msgspec facade (utils.msgspec_json).
 Cache file format (.json and .json.zst) is preserved for backward compat.
+F265C: Certstream Fallback — když crt.sh vrátí chybu (502, timeout, etc.),
+automaticky přepne na certstream.circulearning.com jako fallback provider.
+ct_provider_selected field vrací "crtsh" | "certstream" | "certstream_fallback_failed".
 """
 
 from __future__ import annotations
@@ -30,14 +33,21 @@ class CTLogClient:
     """Certificate Transparency log pivot přes crt.sh JSON API.
 
     NON-HOT-PATH surface — owns its session lifecycle when used standalone.
+    F265C: Dual-provider s certstream.circulearning.com fallback.
     """
 
     _CACHE_TTL = 86400  # 24h
     _RATE_LIMIT_S = 5.0  # per-source rate limit (crt.sh: 1 req / 5s)
+    _CERTSTREAM_RATE_LIMIT_S = 3.0  # certstream je rychlejší, 1 req / 3s
+
+    # Fallback CT providers (F265C)
+    _CRT_SH_URL = "https://crt.sh/?q=%25.{domain}&output=json"
+    _CERTSTREAM_URL = "https://certstream.circulearning.com/?q=.{domain}"
 
     def __init__(self, cache_dir: Path) -> None:
         self._cache_dir = cache_dir
         self._last_request: float = 0.0
+        self._last_certstream_request: float = 0.0
         self._lock = asyncio.Lock()  # serialize concurrent pivots to same source
 
     async def pivot_domain(
@@ -47,8 +57,8 @@ class CTLogClient:
 
         Serializes concurrent calls for the same domain via asyncio.Lock to prevent
         redundant crt.sh requests. Rate-limit guard is per-instance, not per-domain.
+        F265C: Automatic fallback na certstream.circulearning.com když crt.sh selže.
         """
-        import aiohttp
         import xxhash
 
         cache_path = self._cache_dir / f"{xxhash.xxh64(domain.encode()).hexdigest()}.json"
@@ -84,26 +94,21 @@ class CTLogClient:
                 if age < self._CACHE_TTL:
                     return decode(cache_path.read_bytes())
 
-            # Rate limit
-            elapsed = time.time() - self._last_request
-            if elapsed < self._RATE_LIMIT_S:
-                await asyncio.sleep(self._RATE_LIMIT_S - elapsed)
-
-            url = f"https://crt.sh/?q=%.{domain}&output=json"
+            # F265C: Try crt.sh first, fall back to certstream.circulearning.com on failure
             try:
-                async with session.get(url, timeout=aiohttp.ClientTimeout(total=20)) as resp:
-                    resp.raise_for_status()
-                    raw = await resp.json(content_type=None)
-            except Exception as e:
-                logger.warning(f"crt.sh {domain}: {e}")
-                return {
-                    "domain": domain,
-                    "san_names": [],
-                    "cert_count": 0,
-                    "issuers": [],
-                    "first_cert": 0.0,
-                    "last_cert": 0.0,
-                }
+                raw = await self._fetch_ct_with_fallback(domain, session)
+                if raw is None:
+                    # Both providers failed
+                    logger.warning(f"CT log {domain}: all providers failed")
+                    return {
+                        "domain": domain,
+                        "san_names": [],
+                        "cert_count": 0,
+                        "issuers": [],
+                        "first_cert": 0.0,
+                        "last_cert": 0.0,
+                        "ct_provider_selected": "certstream_fallback_failed",
+                    }
             finally:
                 self._last_request = time.time()
 
@@ -117,6 +122,53 @@ class CTLogClient:
         except (ImportError, Exception):
             cache_path.write_bytes(encode(result))
         return result
+
+    async def _fetch_ct_with_fallback(
+        self, domain: str, session: aiohttp.ClientSession
+    ) -> list | None:
+        """F265C: Try crt.sh first, fall back to certstream.circulearning.com on failure.
+
+        Returns raw CT log entries list from the first successful provider,
+        or None if both providers fail.
+        """
+        import aiohttp
+
+        # Try crt.sh primary
+        url = self._CRT_SH_URL.format(domain=domain)
+        try:
+            async with session.get(url, timeout=aiohttp.ClientTimeout(total=20)) as resp:
+                resp.raise_for_status()
+                raw = await resp.json(content_type=None)
+                if isinstance(raw, list) and len(raw) > 0:
+                    logger.info(f"CT log {domain}: crt.sh succeeded ({len(raw)} entries)")
+                    return raw
+        except Exception as e:
+            logger.warning(f"crt.sh {domain}: {e}, trying certstream fallback")
+
+        # Fallback: certstream.circulearning.com
+        elapsed = time.time() - self._last_certstream_request
+        if elapsed < self._CERTSTREAM_RATE_LIMIT_S:
+            await asyncio.sleep(self._CERTSTREAM_RATE_LIMIT_S - elapsed)
+
+        certstream_url = self._CERTSTREAM_URL.format(domain=domain)
+        try:
+            async with session.get(certstream_url, timeout=aiohttp.ClientTimeout(total=25)) as resp:
+                resp.raise_for_status()
+                raw = await resp.json(content_type=None)
+                if isinstance(raw, list) and len(raw) > 0:
+                    logger.info(f"CT log {domain}: certstream succeeded ({len(raw)} entries)")
+                    self._last_certstream_request = time.time()
+                    return raw
+                elif isinstance(raw, dict) and "data" in raw:
+                    data = raw["data"]
+                    if isinstance(data, list) and len(data) > 0:
+                        logger.info(f"CT log {domain}: certstream succeeded ({len(data)} entries)")
+                        self._last_certstream_request = time.time()
+                        return data
+        except Exception as e:
+            logger.warning(f"certstream {domain}: {e}, all providers failed")
+
+        return None
 
     def _parse_crt_response(self, domain: str, raw: list) -> dict:
         """Extrahovat SAN, issuers, timestamps z crt.sh JSON."""
@@ -171,14 +223,13 @@ class CTLogClient:
 
         Každý dict: subject_common_name, issuer, valid_from, valid_to, alt_names.
         Používá stejný rate-limit a cache jako pivot_domain().
+        F265C: Automatic fallback na certstream.circulearning.com.
         """
-        import aiohttp
         import xxhash
 
         cache_key = f"certs_{xxhash.xxh64(domain.encode()).hexdigest()}.json"
         cache_path = self._cache_dir / cache_key
         zst_path = self._cache_dir / (cache_key + ".zst")
-
         if zst_path.exists():
             age = time.time() - zst_path.stat().st_mtime
             if age < self._CACHE_TTL:
@@ -196,14 +247,12 @@ class CTLogClient:
             if elapsed < self._RATE_LIMIT_S:
                 await asyncio.sleep(self._RATE_LIMIT_S - elapsed)
 
-            url = f"https://crt.sh/?q=%.{domain}&output=json"
+            # F265C: Try crt.sh first, fall back to certstream on failure
             try:
-                async with session.get(url, timeout=aiohttp.ClientTimeout(total=20)) as resp:
-                    resp.raise_for_status()
-                    raw = await resp.json(content_type=None)
-            except Exception as e:
-                logger.warning(f"crt.sh fetch_certificates {domain}: {e}")
-                return []
+                raw = await self._fetch_certificates_with_fallback(domain, session)
+                if raw is None:
+                    logger.warning(f"fetch_certificates {domain}: all providers failed")
+                    return []
             finally:
                 self._last_request = time.time()
 
@@ -216,6 +265,45 @@ class CTLogClient:
         except (ImportError, Exception):
             cache_path.write_bytes(encode(certs))
         return certs
+
+    async def _fetch_certificates_with_fallback(
+        self, domain: str, session: aiohttp.ClientSession
+    ) -> list | None:
+        """F265C: Try crt.sh first, fall back to certstream for fetch_certificates."""
+        import aiohttp
+
+        # Try crt.sh primary
+        url = self._CRT_SH_URL.format(domain=domain)
+        try:
+            async with session.get(url, timeout=aiohttp.ClientTimeout(total=20)) as resp:
+                resp.raise_for_status()
+                raw = await resp.json(content_type=None)
+                if isinstance(raw, list) and len(raw) > 0:
+                    return raw
+        except Exception as e:
+            logger.warning(f"crt.sh fetch_certificates {domain}: {e}, trying certstream")
+
+        # Fallback: certstream.circulearning.com
+        elapsed = time.time() - self._last_certstream_request
+        if elapsed < self._CERTSTREAM_RATE_LIMIT_S:
+            await asyncio.sleep(self._CERTSTREAM_RATE_LIMIT_S - elapsed)
+
+        certstream_url = self._CERTSTREAM_URL.format(domain=domain)
+        try:
+            async with session.get(certstream_url, timeout=aiohttp.ClientTimeout(total=25)) as resp:
+                resp.raise_for_status()
+                raw = await resp.json(content_type=None)
+                if isinstance(raw, list) and len(raw) > 0:
+                    self._last_certstream_request = time.time()
+                    return raw
+                elif isinstance(raw, dict) and "data" in raw:
+                    data = raw["data"]
+                    if isinstance(data, list) and len(data) > 0:
+                        self._last_certstream_request = time.time()
+                        return data
+        except Exception as e:
+            logger.warning(f"certstream fetch_certificates {domain}: {e}")
+        return None
 
     def _parse_certs(self, raw: list) -> list[dict]:
         """Parsovat crt.sh JSON na per-cert záznamy s datovým kontraktem P20."""

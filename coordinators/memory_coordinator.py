@@ -2096,19 +2096,22 @@ class ContextOptimizationManager:
         logger.info(f"ContextOptimizationManager initialized (hot: {max_hot_tokens}, warm: {max_warm_tokens})")
 
     def _initialize_embedder(self):
-        """Initialize FastEmbed embedder (optional)."""
+        """Initialize MLXEmbedder (primary) — Apple Silicon native, M1 8GB optimal."""
+        # MLX path preferred — unified memory on M1
         try:
-            from fastembed import TextEmbedding
-            # Use ModernBERT instead of deprecated all-MiniLM
-            self.embedder = TextEmbedding(
-                model_name="nomic-ai/nomic-embed-text-v1.5",
-                cache_dir=str(self.storage_path / "embeddings"),
-                threads=2  # Low for M1
-            )
-            self.embedding_dim = self.embedder.dim
-            logger.info("FastEmbed initialized for semantic search")
-        except ImportError:
-            logger.warning("FastEmbed not available, semantic search disabled")
+            from hledac.universal.brain.mlx_embedder import MLXEmbedder
+
+            self.embedder = MLXEmbedder()
+            self._mlx_embedder = self.embedder
+            self.embedding_dim = 384  # BAAI/bge-small-en-v1.5 dim
+            logger.info("MLXEmbedder initialized for semantic search")
+            return
+        except Exception:
+            pass
+
+        # fastembed REMOVED P0-1: MLXEmbedder is primary; no fallback embedder
+        except Exception:
+            logger.warning("MLXEmbedder not available, semantic search disabled")
             self.enable_embeddings = False
 
     def add_context(
@@ -2542,19 +2545,9 @@ class MultiLevelContextCache:
             return []
 
     def _initialize_embedder(self):
-        """Initialize FastEmbed embedder."""
-        try:
-            from fastembed import TextEmbedding
-            self.embedder = TextEmbedding(
-                model_name=self.embedding_model,
-                cache_dir=str(self.l2_storage_path / "embeddings"),
-                threads=2
-            )
-            self.embedding_dim = self.embedder.dim
-            logger.info(f"Cache embedder loaded: {self.embedding_dim}d")
-        except ImportError:
-            logger.warning("FastEmbed not available")
-            self.embedder = None
+        """fastembed REMOVED P0-1: MLXEmbedder used elsewhere; cache uses dummy embeddings."""
+        self.embedder = None
+        self.embedding_dim = 384
 
     def _load_l2_cache(self):
         """Load L2 cache from disk. Prefer zstd-compressed .json.zst, fallback to .json."""
@@ -2619,9 +2612,17 @@ class MultiLevelContextCache:
             logger.warning(f"Could not rebuild semantic index: {e}")
 
     def _get_embedding(self, text: str) -> Any | None:
-        """Get embedding for text."""
+        """Get embedding for text using MLXEmbedder or FastEmbed."""
         if self.embedder:
             try:
+                # MLXEmbedder has encode_batch method
+                if hasattr(self.embedder, 'encode_batch'):
+                    import asyncio
+                    result = asyncio.get_event_loop().run_until_complete(
+                        self.embedder.encode_batch([text])
+                    )
+                    return result[0] if len(result) > 0 else None
+                # FastEmbed has embed method
                 embeddings = list(self.embedder.embed([text]))
                 if embeddings:
                     return np.array(embeddings[0])

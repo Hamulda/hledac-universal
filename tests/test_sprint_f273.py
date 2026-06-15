@@ -74,10 +74,10 @@ class TestF273ADynamicBranchFloor(unittest.TestCase):
         for ema, expected_floor in [
             (1.0, 2.0),    # initial default
             (5.0, 2.0),    # clamped to floor
-            (10.0, 3.0),   # 0.3 * 10 = 3.0
-            (20.0, 6.0),   # 0.3 * 20 = 6.0
-            (30.0, 9.0),   # 0.3 * 30 = 9.0 = cap
-            (60.0, 9.0),   # saturated at cap
+            (10.0, 2.0),   # 0.3 * 10 = 3.0, but look_ahead=2.0 caps it (no lifecycle)
+            (20.0, 2.0),   # 0.3 * 20 = 6.0, but look_ahead=2.0 caps it (no lifecycle)
+            (30.0, 2.0),   # 0.3 * 30 = 9.0, but look_ahead=2.0 caps it (no lifecycle)
+            (60.0, 2.0),   # saturated at look_ahead=2.0 (no lifecycle)
         ]:
             instance = SprintScheduler.__new__(SprintScheduler)
             instance._cycle_time_ema = ema
@@ -85,7 +85,7 @@ class TestF273ADynamicBranchFloor(unittest.TestCase):
             self.assertEqual(
                 instance._min_branch_remaining_s(),
                 expected_floor,
-                f"cycle_ema={ema} should give floor={expected_floor}",
+                f"cycle_ema={ema} should give floor={expected_floor} (look_ahead=2.0 when no lifecycle)",
             )
 
     def test_min_branch_remaining_s_bounded_2_to_9(self):
@@ -104,14 +104,14 @@ class TestF273ADynamicBranchFloor(unittest.TestCase):
         """_branch_timeout_s returns 0 only when remaining_s <= dynamic floor."""
         SprintScheduler = _import_min_branch()
         cfg = _import_sprint_scheduler_config()(sprint_duration_s=60)
-        # cycle_ema=10s -> floor=3s
+        # cycle_ema=10s -> base=3.0, but look_ahead=2.0 (no lifecycle) -> floor=2.0
         instance = SprintScheduler.__new__(SprintScheduler)
         instance._cycle_time_ema = 10.0
         instance._config = cfg
-        # 2.9s remaining -> below floor (3s) -> 0
-        self.assertEqual(instance._branch_timeout_s("PUBLIC", 2.9), 0.0)
-        # 3.1s remaining -> above floor -> positive timeout
-        self.assertGreater(instance._branch_timeout_s("PUBLIC", 3.1), 0.0)
+        # 1.9s remaining -> below floor (2.0) -> 0
+        self.assertEqual(instance._branch_timeout_s("PUBLIC", 1.9), 0.0)
+        # 2.1s remaining -> above floor (2.0) -> positive timeout
+        self.assertGreater(instance._branch_timeout_s("PUBLIC", 2.1), 0.0)
 
 
 # ===========================================================================

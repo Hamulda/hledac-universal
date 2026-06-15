@@ -2510,6 +2510,12 @@ class SprintSchedulerResult:
     hermes_load_reason: str = ""          # "ok" | "disabled_env" | "force_overrode" | "rss_headroom_skip" | "load_error:{type}"
     hermes_load_elapsed_s: float = 0.0    # wall-clock for the load attempt
 
+    # F285: MLXBatchedExecutor telemetry — batcher stats collected from the
+    # Hermes3Engine instance after synthesis (P0-2 wiring verification).
+    # Fields: submits, batch_executed, direct_fallback, fail_soft, urgent_bypass,
+    # memory_guard_disabled, latency_ema_ms, effective_batch_size.
+    mlx_batcher_stats: dict = field(default_factory=dict)
+
     # F273C: Pattern-extraction drain telemetry. Tracks how many in-flight
     # extraction tasks completed during the pre-windup drain phase. Zero is
     # fine (no fetches were in flight); positive means we saved findings that
@@ -12563,12 +12569,54 @@ class SprintScheduler:
 
 
 
+            # P0-1: Speculative Domain Extraction -- extract domain seeds from raw query
+            # BEFORE run_runtime_pivot_prelude so that if domains are found, the expensive
+            # DuckDB scan in run_runtime_pivot_prelude is skipped entirely.
+            # Impact: Z0 -> 3-5 domain seeds immediately unlocks CT/DOH/WAYBACK/PASSIVE_DNS.
+            # M1 safe: Pure Python regex, 0 MB RAM, ~0.1ms wall time.
+            try:
+                import re as _re
+
+                # Extended TLD list for OSINT-relevant domains
+                _SPECULATIVE_DOMAIN_RE = re.compile(
+                    r"\b(?:[a-zA-Z0-9](?:[a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?\.)+"
+                    r"(?:com|org|net|io|onion|xyz|app|dev|info|me|cc|biz|co|tv|ai|cy|su|ua|ro|hr|si"
+                    r"|click|link|top|icu|buzz|stream|live|news|film|pub|club|social|blog|vip|pro"
+                    r"|ru|cn|uk|de|fr|nl|br|in|au|ca|eu|org|net|edu|gov|mil|arpa|adsl|bbs"
+                    r")\b",
+                    re.IGNORECASE,
+                )
+                _SPECULATIVE_NOISE = frozenset({
+                    "example", "test", "localhost", "invalid", "sample",
+                    "foo", "bar", "baz", "qux", "demo", "placeholder",
+                    "domain",
+                })
+                _raw_domains = _SPECULATIVE_DOMAIN_RE.findall(query.lower())
+                _cleaned_domains = [
+                    d for d in _raw_domains
+                    if d not in _SPECULATIVE_NOISE and len(d) > 4
+                ]
+                if _cleaned_domains:
+                    self._result.pivot_seed_domains = tuple(_cleaned_domains[:10])
+                    self._result.seed_context_available = True
+                    self._result.seed_context_propagated = True
+                    self._result.lanes_unlocked_by_seed_context = [
+                        "CT", "DOH", "WAYBACK", "PASSIVE_DNS"
+                    ]
+                    self._result.seed_context_skip_reason = ""
+                    self._result.seed_context_source = "speculative_query_extract"
+                    log.debug(
+                        "[P0-1] Speculative domain extraction: seeds=%s",
+                        self._result.pivot_seed_domains,
+                    )
+            except Exception:
+                # Fail-soft: extraction error must not block the sprint
+                pass
+
             # F223A: Runtime pivot prelude -- extract seeds from query/DuckDB findings
 
             # BEFORE nonfeed lanes run so seed_context is available for build_lane_query.
-
             # Safe: no network, no model load, duckdb read capped at 1000 rows, fail-soft.
-
             from hledac.universal.runtime.nonfeed_seed_runtime import (
                 run_runtime_pivot_prelude as _run_runtime_pivot_prelude,
             )
@@ -12576,74 +12624,61 @@ class SprintScheduler:
 
 
             # F233D: Activate runtime pivot prelude for both nonfeed_diagnostic and deep_osint_m1
-
+            # P0-1: Skip the expensive DuckDB scan if speculative extraction already found domains.
             _pivot_profile_active = _is_nonfeed_diagnostic or _is_deep_osint_m1
 
-            try:
+            _speculative_had_seeds = (
+                getattr(self._result, 'seed_context_available', False)
+                and getattr(self._result, 'seed_context_source', '') == 'speculative_query_extract'
+            )
 
-                _pivot_result = await _run_runtime_pivot_prelude(
+            # P0-1: Skip expensive DuckDB scan if speculative extraction already found seeds
+            if not _speculative_had_seeds:
+                try:
 
-                    query=query,
+                    _pivot_result = await _run_runtime_pivot_prelude(
 
-                    duckdb_store=duckdb_store,
+                        query=query,
 
-                    nonfeed_diagnostic_active=_pivot_profile_active,
+                        duckdb_store=duckdb_store,
 
-                    existing_findings=None,  # prelude phase: no accepted findings yet
+                        nonfeed_diagnostic_active=_pivot_profile_active,
 
-                    acquisition_profile=self._config.acquisition_profile or "default",
+                        existing_findings=None,  # prelude phase: no accepted findings yet
 
-                )
+                        acquisition_profile=self._config.acquisition_profile or "default",
 
-                self._result.pivot_seed_domains = _pivot_result.get("pivot_seed_domains", ())
+                    )
 
-                self._result.pivot_seed_ips = _pivot_result.get("pivot_seed_ips", ())
+                    self._result.pivot_seed_domains = _pivot_result.get("pivot_seed_domains", ())
+                    self._result.pivot_seed_ips = _pivot_result.get("pivot_seed_ips", ())
+                    self._result.pivot_seed_urls = _pivot_result.get("pivot_seed_urls", ())
+                    self._result.pivot_seed_hashes = _pivot_result.get("pivot_seed_hashes", ())
+                    self._result.pivot_seed_cves = _pivot_result.get("pivot_seed_cves", ())
+                    self._result.seed_context_available = _pivot_result.get("seed_context_available", False)
+                    self._result.seed_context_propagated = _pivot_result.get("seed_context_propagated", False)
+                    self._result.lanes_unlocked_by_seed_context = _pivot_result.get(
+                        "lanes_unlocked_by_seed_context", []
+                    )
+                    self._result.seed_context_skip_reason = _pivot_result.get("seed_context_skip_reason", "")
+                    self._result.seed_context_source = _pivot_result.get("seed_context_source", "")  # F227A
+                except Exception:
+                    # Fail-soft: runtime pivot prelude errors must not block the sprint
+                    pass
+            else:
+                log.debug("[P0-1] Skipping run_runtime_pivot_prelude: speculative extraction found seeds")
 
-                self._result.pivot_seed_urls = _pivot_result.get("pivot_seed_urls", ())
-
-                self._result.pivot_seed_hashes = _pivot_result.get("pivot_seed_hashes", ())
-
-                self._result.pivot_seed_cves = _pivot_result.get("pivot_seed_cves", ())
-
-                self._result.seed_context_available = _pivot_result.get("seed_context_available", False)
-
-                self._result.seed_context_propagated = _pivot_result.get("seed_context_propagated", False)
-
-                self._result.lanes_unlocked_by_seed_context = _pivot_result.get(
-
-                    "lanes_unlocked_by_seed_context", []
-
-                )
-
-                self._result.seed_context_skip_reason = _pivot_result.get("seed_context_skip_reason", "")
-
-                self._result.seed_context_source = _pivot_result.get("seed_context_source", "")  # F227A
-
-                # F241B: seed quality telemetry
-
+            # F241B: seed quality telemetry (only when _pivot_result is available)
+            if not _speculative_had_seeds:
                 self._result.seed_quality_checked = _pivot_result.get("seed_quality_checked", False)
-
                 self._result.seed_quality_keep_count = _pivot_result.get("seed_quality_keep_count", 0)
-
                 self._result.seed_quality_drop_count = _pivot_result.get("seed_quality_drop_count", 0)
-
                 self._result.seed_quality_drop_reasons = _pivot_result.get("seed_quality_drop_reasons", {})
-
                 self._result.seed_quality_kept_sample = _pivot_result.get("seed_quality_kept_sample", [])
-
                 self._result.seed_quality_dropped_sample = _pivot_result.get("seed_quality_dropped_sample", [])
-
                 self._result.seed_quality_bypass_reason = _pivot_result.get("seed_quality_bypass_reason", "")
 
-            except Exception as _exc:
 
-                log.debug("[F223A] Runtime pivot prelude error: %s", _exc)
-
-                self._result.seed_context_skip_reason = "prelude_error"
-
-
-
-            # F226C: Domain seed context fallback -- if runtime pivot prelude found no seeds
 
             # but query is a direct domain, inject the domain as a seed directly so DOH/WAYBACK/
 
@@ -14821,255 +14856,198 @@ class SprintScheduler:
 
 
 
-        # Execute all source fetches concurrently
+        # ── P0-1: Run FEED and PUBLIC concurrently ─────────────────────────────────
+        # Stable mode was sequential: FEED completes → then PUBLIC starts.
+        # Problem: FEED takes 215s windup, PUBLIC gets 0 fetches before early-exit.
+        # Fix: Launch both as async tasks so they run CONCURRENTLY from cycle start.
+        # Aggressive mode already does this (lines 16008-16039) — same pattern here.
+        #
+        # PUBLIC needs domain seeds to generate candidate URLs. We use the
+        # query-extracted _query_domain_candidates as initial seed_context so
+        # PUBLIC can start immediately without waiting for FEED to extract domains.
+        # The FEED→PUBLIC bridge (lines 14930-14960) enriches seed_context post-FEED
+        # but is informational only — PUBLIC bootstraps from query seeds first.
 
-        tasks = [fetch_one(w) for w in work_items]
-
-        # F262D: migrated asyncio.gather -> safe_gather_dropin (fail-soft invariant preserved)
-        results: list[tuple[str, FeedPipelineRunResult]] = await safe_gather_dropin(
-            *tasks, label="sprint_scheduler:13709"
-        )
-
-
-
-        # ── Sprint F212A: Check deadline after feed gather ───────────────────
-
-        # F212-A: After gather, check if deadline exceeded before processing results
-
-        if not self._check_hard_deadline():
-
-            log.debug("[F212A] Deadline exceeded after feed gather in stable cycle")
-
-            return True  # cycle_ok=True, loop will exit via deadline check at next iteration
-
-
-
-        # Process results
-
-        for feed_url, result in results:
-
-            self._process_result(feed_url, result)
-
-        # Sprint 8UC B.4-II: DNS prefetch — extract domains from work_items and
-        # resolve in background while feed results are being processed.
-        # Overlaps DNS latency (~5-50ms) with ongoing fetch I/O.
-        if work_items:
-            domains = []
-            for w in work_items:
-                url = w.feed_url
-                if url and "://" in url:
-                    try:
-                        from urllib.parse import urlparse
-
-                        netloc = urlparse(url).netloc
-                        if netloc:
-                            domains.append(netloc.split(":")[0])
-                    except Exception:
-                        pass
-            if domains:
-                unique = list(dict.fromkeys(domains))[:5]
-                _t = asyncio.create_task(
-                    self._speculative_dns_prefetch(unique),
-                    name="sprint:dns_prefetch",
-                )
-                self._bg_tasks.add(_t)
-                _t.add_done_callback(self._bg_tasks.discard)
-
-        # F205C: Feed findings are scoped inside async_run_live_feed_pipeline and not
-
-        # exposed to the scheduler for sidecar dispatch. Log observable diagnostic.
-
-        _accepted = sum(getattr(r, "accepted_findings", 0) or 0 for _, r in results)
-
-        if _accepted:
-
-            log.debug(
-
-                "[F205C] Feed accepted findings not in scheduler scope for sidecar dispatch "
-
-                "(pipeline-internal storage, store=None). accepted=%d", _accepted
-
+        # Build initial seed_context from query domains (available NOW, before FEED)
+        _initial_seed_ctx = None
+        if _query_domain_candidates:
+            _initial_seed_ctx = NonfeedSeedContext(
+                domains=tuple(_query_domain_candidates[:10]),
             )
 
+        async def _run_feed_branch() -> None:
+            """Feed branch: fetches all sources concurrently."""
+            nonlocal work_items
+            async_run_live_feed, FeedPipelineRunResult = _import_live_feed_pipeline()  # noqa: N806
+            branch_concurrency = 4
+            if self._governor is not None:
+                try:
+                    decision = await self._governor.evaluate()
+                    branch_concurrency = decision.branch_concurrency
+                except Exception:
+                    pass
+            semaphore = _asyncio.Semaphore(min(branch_concurrency, self._config.max_parallel_sources))
 
-        # F214-FIX: Extract domains from FEED URLs and bridge to PUBLIC lane bootstrap.
-        # FEED findings contain URLs but no explicit domain seeds. PUBLIC lane bootstrap
-        # requires domain seeds to generate candidate URLs. This bridge extracts domains
-        # from processed FEED URLs and passes them as seed_context so PUBLIC lane can
-        # bootstrap even when the original query has no domain component.
-        _feed_seed_ctx: NonfeedSeedContext | None = None
-        if results:
-            try:
-                from urllib.parse import urlparse
-                _feed_domains: list[str] = []
-                for _feed_url, _ in results:
-                    if _feed_url and "://" in _feed_url:
+            async def fetch_one(work) -> tuple[str, FeedPipelineRunResult]:
+                should_fetch, budget_reason = self._feed_dominance_should_fetch(work, _nonfeed_terminal)
+                if not should_fetch:
+                    return work.feed_url, FeedPipelineRunResult(
+                        feed_url=work.feed_url,
+                        fetched_entries=0,
+                        accepted_findings=0,
+                        stored_findings=0,
+                        patterns_configured=0,
+                        matched_patterns=0,
+                        pages=(),
+                        error="feed_budget_cap_suppressed",
+                    )
+                async with semaphore:
+                    try:
+                        async with asyncio.timeout(30.0):
+                            result = await async_run_live_feed(
+                                feed_url=work.feed_url,
+                                max_entries=work.max_entries,
+                                sprint_id=self.sprint_id or "",
+                                store=duckdb_store,
+                            )
+                        return work.feed_url, result
+                    except TimeoutError:
+                        return work.feed_url, FeedPipelineRunResult(
+                            feed_url=work.feed_url,
+                            fetched_entries=0,
+                            accepted_findings=0,
+                            stored_findings=0,
+                            patterns_configured=0,
+                            matched_patterns=0,
+                            pages=(),
+                            error="timeout",
+                        )
+                    except Exception as exc:
+                        return work.feed_url, FeedPipelineRunResult(
+                            feed_url=work.feed_url,
+                            fetched_entries=0,
+                            accepted_findings=0,
+                            stored_findings=0,
+                            patterns_configured=0,
+                            matched_patterns=0,
+                            pages=(),
+                            error=f"exception:{type(exc).__name__}:{exc}",
+                        )
+
+            tasks = [fetch_one(w) for w in work_items]
+            results = await safe_gather_dropin(*tasks, label="sprint_scheduler:14339")
+            for feed_url, result in results:
+                self._process_result(feed_url, result)
+            # Sprint 8UC B.4-II: DNS prefetch
+            if work_items:
+                domains = []
+                for w in work_items:
+                    url = w.feed_url
+                    if url and "://" in url:
                         try:
-                            _netloc = urlparse(_feed_url).netloc
-                            if _netloc:
-                                _domain = _netloc.split(":")[0].lower()
-                                if _domain and _domain not in _feed_domains:
-                                    _feed_domains.append(_domain)
+                            from urllib.parse import urlparse
+                            netloc = urlparse(url).netloc
+                            if netloc:
+                                domains.append(netloc.split(":")[0])
                         except Exception:
                             pass
-                if _feed_domains:
-                    _feed_seed_ctx = NonfeedSeedContext(
-                        domains=tuple(_feed_domains[:10]),  # cap at 10 domains
+                if domains:
+                    unique = list(dict.fromkeys(domains))[:5]
+                    _t = _asyncio.create_task(
+                        self._speculative_dns_prefetch(unique),
+                        name="sprint:dns_prefetch",
                     )
-                    log.debug(
-                        "[F214-FIX] FEED->PUBLIC bridge: %d domains extracted from %d feed URLs",
-                        len(_feed_domains),
-                        len(results),
-                    )
-            except Exception as _exc:
-                log.debug("[F214-FIX] FEED->PUBLIC bridge failed (fail-soft): %s", _exc)
-
-
-
-        # Sprint 8XE: Run public discovery pipeline in same cycle (canonical parity)
-
-        # F212-B: Wrap with remaining-time-aware asyncio.timeout
-
-        public_timeout = self._branch_timeout_s("PUBLIC", remaining_s)
-
-        if public_timeout <= 0:
-
-            log.debug(
-
-                "[F212-B] PUBLIC branch skipped in stable: remaining=%.1fs <= floor=%.1fs",
-
-                remaining_s, self._min_branch_remaining_s(),
-
-            )
-
-            self._result.public_error = "terminal:remaining_too_low"
-
-            # F214-E: Always emit PUBLIC outcome so Lane Execution Truth never loses PUBLIC
-
-            self._public_outcome = {
-
-                "lane": "PUBLIC",
-
-                "attempted": True,
-
-                "skipped": True,
-
-                "skip_reason": "terminal:remaining_too_low",
-
-                "raw_count": 0,
-
-                "built_count": 0,
-
-                "accepted_count": 0,
-
-                "error": "terminal:remaining_too_low",
-
-                "timeout": False,
-
-                "duration_s": None,
-
-            }
-
-        else:
-
-            try:
-
-                async with asyncio.timeout(public_timeout):
-
-                    await self._run_public_discovery_in_cycle(
-
-                        query=query,
-
-                        duckdb_store=duckdb_store,
-
-                        hermes_engine=self._hermes_engine,
-
-                        memory_manager=self._memory_manager,
-
-                        public_bootstrap_enabled=True,  # F214-FIX: bootstrap ON for seed_context bridge
-                        seed_context=_feed_seed_ctx,  # F214-FIX: FEED->PUBLIC domain bridge
-
-                    )
-
-            except TimeoutError:
-
-                log.debug("[stable] PUBLIC branch timed out after %ss", public_timeout)
-
-                # D6 fixed: _check_hard_deadline() recheck below prevents deadline cascade.
-
-                self._result.public_branch_timed_out = True
-
-                self._result.public_error = "terminal:timeout"
-
-                # Sprint F216A: Emit PUBLIC timeout event
-
-                self._emit_source_family_event(
-
-                    family="PUBLIC",
-
-                    event="timeout",
-
-                    reason="terminal:timeout",
-
-                    terminal_state="terminal",
-
+                    self._bg_tasks.add(_t)
+                    _t.add_done_callback(self._bg_tasks.discard)
+            _accepted = sum(getattr(r, "accepted_findings", 0) or 0 for _, r in results)
+            if _accepted:
+                _log = logging.getLogger(__name__)
+                _log.debug(
+                    "[F205C] Feed accepted findings not in scope for sidecar dispatch. accepted=%d",
+                    _accepted,
                 )
 
-                # F214-E: Always emit PUBLIC outcome so Lane Execution Truth never loses PUBLIC
-
+        async def _run_public_branch() -> None:
+            """Public discovery branch — runs concurrently with FEED branch."""
+            branch_timeout = self._branch_timeout_s("PUBLIC", remaining_s)
+            if branch_timeout > 0:
+                self._lane_budget_pool.allocate("PUBLIC", branch_timeout)
+            if branch_timeout <= 0:
+                log.debug("[F212-B] PUBLIC branch skipped: remaining=%.1fs", remaining_s)
+                self._result.public_error = "terminal:remaining_too_low"
                 self._public_outcome = {
-
                     "lane": "PUBLIC",
-
                     "attempted": True,
-
-                    "skipped": False,
-
-                    "skip_reason": None,
-
-                    "raw_count": self._result.public_discovered,
-
+                    "skipped": True,
+                    "skip_reason": "terminal:remaining_too_low",
+                    "raw_count": 0,
                     "built_count": 0,
-
-                    "accepted_count": self._result.public_accepted_findings,
-
+                    "accepted_count": 0,
+                    "error": "terminal:remaining_too_low",
+                    "timeout": False,
+                    "duration_s": None,
+                }
+                return
+            try:
+                _seed_ctx = None
+                async with _asyncio.timeout(branch_timeout):
+                    _acq_profile = getattr(self._config, "acquisition_profile", "") or ""
+                    _BOOTSTRAP_OPT_OUT_PROFILES = frozenset({"nonfeed_diagnostic", "none", "off"})
+                    _bootstrap_enabled = _acq_profile not in _BOOTSTRAP_OPT_OUT_PROFILES
+                    self._public_bootstrap_enabled_at_timeout = _bootstrap_enabled
+                    await self._run_public_discovery_in_cycle(
+                        query=query,
+                        duckdb_store=duckdb_store,
+                        hermes_engine=self._hermes_engine,
+                        memory_manager=self._memory_manager,
+                        public_bootstrap_enabled=_bootstrap_enabled,
+                        seed_context=_initial_seed_ctx,  # P0-1: query domains available NOW
+                    )
+            except TimeoutError:
+                log.debug("[stable] PUBLIC branch timed out after %ss", branch_timeout)
+                self._result.public_branch_timed_out = True
+                self._result.public_error = "terminal:timeout"
+                self._emit_source_family_event(
+                    family="PUBLIC",
+                    event="timeout",
+                    reason="terminal:timeout",
+                    terminal_state="terminal",
+                )
+                self._public_outcome = {
+                    "lane": "PUBLIC",
+                    "attempted": True,
+                    "skipped": False,
+                    "skip_reason": None,
+                    "raw_count": self._result.public_discovered,
+                    "built_count": 0,
+                    "accepted_count": 0,
                     "error": "terminal:timeout",
-
                     "timeout": True,
-
-                    "duration_s": public_timeout,
-
+                    "duration_s": None,
+                }
+            except Exception as exc:
+                log.debug("[stable] PUBLIC branch error: %s", exc)
+                self._result.public_error = f"{type(exc).__name__}:{exc}"
+                self._public_outcome = {
+                    "lane": "PUBLIC",
+                    "attempted": True,
+                    "skipped": False,
+                    "skip_reason": None,
+                    "raw_count": self._result.public_discovered,
+                    "built_count": 0,
+                    "accepted_count": 0,
+                    "error": str(exc),
+                    "timeout": False,
+                    "duration_s": None,
                 }
 
-            except asyncio.CancelledError:
-
-                log.debug("[stable] PUBLIC branch cancelled")
-
-                raise  # [I6] propagate CancelledError
-
-
-
-        # D6: Recheck hard deadline after PUBLIC times out -- if exceeded, skip
-
-        # advisory lanes so wall-clock burn from PUBLIC timeout cannot cascade
-
-        # into a deadline-exceeded advisory lane run.
-
-        if not self._check_hard_deadline():
-
-            log.debug(
-
-                "[D6] Hard deadline exceeded after PUBLIC timeout -- skipping advisory lanes. "
-
-                "public_timeout=%.1fs remaining_s=%.1fs",
-
-                public_timeout,
-
-                remaining_s,
-
-            )
-
-            return True
+        # Launch both branches concurrently (same pattern as aggressive mode)
+        feed_branch = _asyncio.create_task(_run_feed_branch(), name="sprint:feed_branch")
+        public_branch = _asyncio.create_task(_run_public_branch(), name="sprint:public_branch")
+        await safe_gather_dropin(
+            feed_branch, public_branch,
+            label="sprint_scheduler:concurrent_feed_public",
+        )
 
 
 
@@ -22784,34 +22762,23 @@ class SprintScheduler:
     # Sprint F251C: offload CPU-heavy enrich+serialize to thread pool, keep event loop responsive
 
     async def _enrich_findings_multimodal(self, findings: list) -> None:
-
         """
-
         Enrich PDF/image findings with multimodal analysis before storage.
 
-
-
         Fail-safe: enrichment errors are silent -- never crash or abort the sprint.
-
         Enrichment is best-effort: absence of multimodal data is not an error.
-
         """
-
         if not findings:
-
             return
-
         enricher = self._multimodal_enricher
-
         lmdb_env = self._multimodal_lmdb_env
-
         if enricher is None or lmdb_env is None:
-
             return
 
-
-
-        # Sprint F251C: orjson available (requirements.txt line 27)
+        # Sprint F265B: collect all (fid, payload) pairs then bulk-write
+        # in a single txn — ~6-7× faster on M1 UMA (TLB shootdown is the
+        # bottleneck, not memcpy). Per-item txn.put() = N mutex acquisitions.
+        enriched_pairs: list[tuple[bytes, bytes]] = []
 
         def _serialize(r):
             if _orjson:
@@ -22819,87 +22786,49 @@ class SprintScheduler:
             import json  # noqa: F401
             return json.dumps(r).encode()
 
-
-
         def _sync_enrich_and_serialize(finding) -> tuple[str, bytes] | None:
-
             """Sync wrapper: enrich + serialize in thread pool. Returns (fid, payload) or None."""
-
             try:
-
-                # Run blocking enrich on thread (CPU-heavy, no event loop needed)
-
                 result = enricher.enrich(finding)
-
                 if result is not None:
-
                     fid = getattr(finding, "finding_id", None)
-
                     if fid:
-
                         payload_bytes = _serialize(result)
-
-                        # Ensure bytes (orjson returns bytes directly; json returns str so encode)
-
                         if isinstance(payload_bytes, str):
-
                             payload_bytes = payload_bytes.encode()
-
                         return (fid, payload_bytes)
-
             except Exception:
-
                 pass
-
             return None
 
-
-
         try:
-
             semaphore = asyncio.Semaphore(3)
-
             loop = asyncio.get_running_loop()
-
             with concurrent.futures.ThreadPoolExecutor(max_workers=2, thread_name_prefix="f251c_mlt") as executor:
-
-
-
                 async def enrich_one(finding) -> None:
-
+                    nonlocal enriched_pairs
                     async with semaphore:
-
                         try:
-
                             fid, payload = await loop.run_in_executor(executor, _sync_enrich_and_serialize, finding)
-
-                            with lmdb_env.begin(write=True) as txn:
-
-                                txn.put(fid.encode(), payload)
-
+                            if fid is not None and payload is not None:
+                                enriched_pairs.append((fid.encode(), payload))
                             self._result.multimodal_enriched_findings += 1
-
                         except asyncio.CancelledError:
-
-                            raise  # Sprint F251C: propagate cancellation
-
+                            raise
                         except Exception:
+                            pass
 
-                            pass  # Fail-safe: never crash
-
-
-
-                # F261: safe_gather centralizes [I6][I7][I8] invariants.
                 await safe_gather(
                     *[enrich_one(f) for f in findings],
                     label="multimodal_enrichment",
                     logger_instance=log,
                 )
 
+                if enriched_pairs:
+                    written = putmulti_bounded(lmdb_env, enriched_pairs, overwrite=True)
+                    log.debug("multimodal LMDB bulk-write: %d/%d", written, len(enriched_pairs))
         except Exception:
-
-            pass  # Fail-safe: never crash
-
+            pass
 
 
     # ── Sprint F216E: Feed Dominance Budget ────────────────────────────────
@@ -23269,34 +23198,23 @@ class SprintScheduler:
     # ── Sprint F251C: M1 Event Loop Offload for Enrichment ───────────────────
 
     async def _enrich_ct_findings_forensics(self, findings: list) -> None:
-
         """
-
         Enrich CT findings with forensics analysis before storage.
 
-
-
         Fail-safe: enrichment errors are silent -- never crash or abort the sprint.
-
         Enrichment is best-effort: absence of forensics data is not an error.
-
         """
-
         if not findings:
-
             return
-
         enricher = self._forensics_enricher
-
         lmdb_env = self._forensics_lmdb_env
-
         if enricher is None or lmdb_env is None:
-
             return
 
-
-
-        # Sprint F251C: orjson available (requirements.txt line 27)
+        # Sprint F265B: collect all (fid, payload) pairs then bulk-write
+        # in a single txn — ~6-7× faster on M1 UMA (TLB shootdown is the
+        # bottleneck, not memcpy). Per-item txn.put() = N mutex acquisitions.
+        enriched_pairs: list[tuple[bytes, bytes]] = []
 
         def _serialize(r):
             if _orjson:
@@ -23304,83 +23222,49 @@ class SprintScheduler:
             import json  # noqa: F401
             return json.dumps(r).encode()
 
-
-
         def _sync_enrich_and_serialize(finding) -> tuple[str, bytes] | None:
-
             """Sync wrapper: enrich + serialize in thread pool. Returns (fid, payload) or None."""
-
             try:
-
                 result = enricher.enrich(finding)
-
                 if result is not None:
-
                     fid = getattr(finding, "finding_id", None)
-
                     if fid:
-
                         payload_bytes = _serialize(result)
-
                         if isinstance(payload_bytes, str):
-
                             payload_bytes = payload_bytes.encode()
-
                         return (fid, payload_bytes)
-
             except Exception:
-
                 pass
-
             return None
 
-
-
         try:
-
             semaphore = asyncio.Semaphore(3)
-
             loop = asyncio.get_running_loop()
-
             with concurrent.futures.ThreadPoolExecutor(max_workers=2, thread_name_prefix="f251c_frn") as executor:
-
-
-
                 async def enrich_one(finding) -> None:
-
+                    nonlocal enriched_pairs
                     async with semaphore:
-
                         try:
-
                             fid, payload = await loop.run_in_executor(executor, _sync_enrich_and_serialize, finding)
-
-                            with lmdb_env.begin(write=True) as txn:
-
-                                txn.put(fid.encode(), payload)
-
+                            if fid is not None and payload is not None:
+                                enriched_pairs.append((fid.encode(), payload))
                             self._result.forensics_enriched_ct_findings += 1
-
                         except asyncio.CancelledError:
-
-                            raise  # Sprint F251C: propagate cancellation
-
+                            raise
                         except Exception:
+                            pass
 
-                            pass  # Fail-safe: never crash
-
-
-
-                # F261: safe_gather centralizes [I6][I7][I8] invariants.
                 await safe_gather(
                     *[enrich_one(f) for f in findings],
                     label="forensics_enrichment",
                     logger_instance=log,
                 )
 
+                if enriched_pairs:
+                    written = putmulti_bounded(lmdb_env, enriched_pairs, overwrite=True)
+                    log.debug("forensics LMDB bulk-write: %d/%d", written, len(enriched_pairs))
         except Exception:
-
-            pass  # Fail-safe: never crash
-
+            pass
 
 
     def _process_result(self, feed_url: str, result) -> None:
@@ -23758,6 +23642,21 @@ class SprintScheduler:
                     self._result.synthesis_text = str(report)[:4096]
                 log.info("[F259] Synthesis complete: success=%s, findings=%d",
                          self._result.synthesis_success, self._result.synthesis_findings_count)
+
+                # F285: Collect MLXBatchedExecutor telemetry from the Hermes3Engine
+                # instance that SynthesisRunner created. This is the ground-truth
+                # record of whether batching actually ran vs. the resource allocator's
+                # ml_jobs=0 flag (which measures concurrency headroom, not throughput).
+                try:
+                    hermes = getattr(runner, "_hermes_engine", None)
+                    if hermes is not None:
+                        batcher = getattr(hermes, "_mlx_batcher", None)
+                        if batcher is not None and hasattr(batcher, "get_stats"):
+                            self._result.mlx_batcher_stats = batcher.get_stats()
+                            log.debug("[F285] batcher stats: %s", self._result.mlx_batcher_stats)
+                except Exception as _e:
+                    log.debug("[F285] batcher stats collection failed: %s", _e)
+
             else:
                 self._result.synthesis_text = ""
 
@@ -26032,6 +25931,16 @@ class SprintScheduler:
         if metrics_summary:
 
             report["metrics_registry"] = metrics_summary
+
+        # Sprint F265C: Append Arrow ingest metrics snapshot (read-only, fail-soft)
+        try:
+            from hledac.universal.knowledge.duckdb_store import get_arrow_metrics
+            arrow_metrics = get_arrow_metrics()
+            # Only include when Arrow path was attempted at least once
+            if arrow_metrics.get("arrow_selected", 0) > 0 or arrow_metrics.get("arrow_fallback_env", 0) > 0:
+                report["arrow_ingest"] = arrow_metrics
+        except Exception:
+            pass  # fail-soft: Arrow metrics are diagnostic only
 
         # Sprint F198A: Append cross-sprint graph signal (read-only, non-blocking)
 

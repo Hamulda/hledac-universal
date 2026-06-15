@@ -773,6 +773,7 @@ def _scheduler_result_acquisition_payload(
                 "ct_storage_rejected": getattr(result, "ct_storage_rejected", 0),
                 "arrow_last_flush_error": getattr(result, "arrow_last_flush_error", ""),
                 "arrow_batch_dropped": getattr(result, "arrow_batch_dropped", 0),
+                "arrow_flush_failure_count": getattr(result, "arrow_flush_failure_count", 0),
                 "prewindup_barrier_errors": getattr(result, "prewindup_barrier_errors", None),
                 "return_guard_errors": getattr(result, "return_guard_errors", None),
                 "wayback_unchanged_rejected": getattr(result, "wayback_unchanged_rejected", 0),
@@ -1504,6 +1505,21 @@ async def run_sprint(
                 _required_duration_s,
             )
             sys.exit(2)  # exit(2) = config error, distinguishable from exit(1) runtime
+
+    # F289: windup_lead_s sanity check — warn if it would consume >90% of sprint
+    # This catches the "instant windup" bug where windup_lead_s is set too high.
+    if windup_lead_s is not None:
+        _windup_fraction = float(windup_lead_s) / float(duration_s)
+        if _windup_fraction > 0.90:
+            logger.warning(
+                "[F289-WINDUP-FRACTION] windup_lead_s=%.0fs is %.0f%% of duration=%ds. "
+                "This may cause the sprint to enter WINDUP immediately, leaving "
+                "almost no time for active acquisition. Consider reducing windup_lead_s "
+                "or increasing sprint duration.",
+                int(windup_lead_s),
+                _windup_fraction * 100,
+                int(duration_s),
+            )
 
     # F214Q: Remote debug OPSEC guard — strict exit if HLEDAC_REQUIRE_REMOTE_DEBUG_DISABLED=1
     # and PYTHON_DISABLE_REMOTE_DEBUG is not set. Python 3.14 activates safe-external-debugger by default.

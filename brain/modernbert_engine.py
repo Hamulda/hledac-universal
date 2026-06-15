@@ -12,20 +12,25 @@ modernbert-routed P14 calls. Uses extractive summarization via MLX embeddings:
   3. Concatenate top-k items as the "summary"
 
 M1 8GB: model loaded lazily on first call, Metal cache cleared on unload.
-MODERNBERT_AVAILABLE flag False if no backend (mlx-embeddings or sentence-transformers).
+MLX-only: no CPU fallback, no sentence-transformers.
+
+ENVIRONMENT REQUIREMENT: Must run via `uv run python` to use the correct
+.venv interpreter with mlx-embeddings installed. Direct `python3` may use
+system interpreter lacking mlx-embeddings.
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
+import sys
 from dataclasses import dataclass
 
 import numpy as np
 
 logger = logging.getLogger(__name__)
 
-# ── Backend availability flags ────────────────────────────────────────────────
+# ── MLX availability (lazy — no top-level import) ─────────────────────────────
 
 MODERNBERT_AVAILABLE = False
 _mlx_embeddings_ok = False
@@ -38,23 +43,14 @@ try:
 except Exception:
     _mlx_embeddings_ok = False
 
-_sentence_transformers_ok = False
-try:
-    from sentence_transformers import SentenceTransformer
-    _sentence_transformers_ok = True
-except ImportError:
-    _sentence_transformers_ok = False
-
 
 # ── Configuration ─────────────────────────────────────────────────────────────
 
 @dataclass
 class ModernBertConfig:
     """Configuration for ModernBertEngine."""
-    # mlx-embeddings primary model (retrieval-tuned)
+    # mlx-embeddings model (retrieval-tuned)
     mlx_model: str = "nomic-ai/modernbert-embed-base"
-    # sentence-transformers fallback
-    st_model: str = "nomic-ai/nomic-embed-text-v1.5"
     # Summarization
     summary_top_k: int = 5
     summary_max_chars: int = 3000
@@ -65,67 +61,62 @@ class ModernBertConfig:
 
 class ModernBertEngine:
     """
-    Extractive summarization via ModernBERT embeddings.
+    Extractive summarization via ModernBERT embeddings (MLX-only).
 
     Replaces generate_report() for modernbert-routed P14 calls.
-    Fail-soft: returns empty string if no backend is available.
+    Fail-soft: returns empty string if MLX backend is unavailable.
     """
 
     EMBEDDING_DIM = 768
 
     def __init__(self, config: ModernBertConfig | None = None):
         self.config = config or ModernBertConfig()
-        self._manager = None  # MLXEmbeddingManager or SentenceTransformer
+        self._manager = None  # MLXEmbeddingManager
         self._loaded = False
-        self._backend: str | None = None  # "mlx" | "st"
 
     # ── Public API ────────────────────────────────────────────────────────────
 
     async def load(self) -> bool:
         """
-        Lazy load — tries mlx-embeddings first, then sentence-transformers fallback.
+        Lazy load MLX embedding backend.
 
         Returns:
-            True if a backend is loaded and ready.
+            True if backend is loaded and ready.
         """
         global MODERNBERT_AVAILABLE
 
         if self._loaded:
             return True
 
-        # 1. mlx-embeddings (primary, M1 Metal-accelerated)
-        if _mlx_embeddings_ok:
-            try:
-                from hledac.universal.core._mlx_embeddings import MLXEmbeddingManager
-                self._manager = MLXEmbeddingManager(lazy_load=True)
-                # Trigger lazy load
-                if not self._manager.is_loaded:
-                    await asyncio.to_thread(self._manager._load_model)
-                self._loaded = True
-                self._backend = "mlx"
-                MODERNBERT_AVAILABLE = True
-                logger.info("[ModernBertEngine] Loaded via mlx-embeddings")
-                return True
-            except Exception as e:
-                logger.warning(f"[ModernBertEngine] mlx-embeddings failed: {e}")
+        if not _mlx_embeddings_ok:
+            # Actionable diagnostic message
+            logger.error(
+                "[ModernBertEngine] MLX backend unavailable.\n"
+                "  Likely cause: running via `python3` instead of `uv run python`.\n"
+                f"  sys.executable: {sys.executable!r}\n"
+                "  Fix: use `uv run python -m hledac.universal ...`\n"
+                "  Verify: `uv run python -c 'import mlx.core; print(mlx.core.__version__)'`"
+            )
+            MODERNBERT_AVAILABLE = False
+            return False
 
-        # 2. sentence-transformers (CPU fallback)
-        if _sentence_transformers_ok:
-            try:
-                self._manager = await asyncio.to_thread(
-                    SentenceTransformer, self.config.st_model
-                )
-                self._loaded = True
-                self._backend = "st"
-                MODERNBERT_AVAILABLE = True
-                logger.info("[ModernBertEngine] Loaded via sentence-transformers")
-                return True
-            except Exception as e:
-                logger.warning(f"[ModernBertEngine] sentence-transformers failed: {e}")
-
-        logger.error("[ModernBertEngine] No backend available (mlx-embeddings and sentence-transformers both failed)")
-        self._loaded = False
-        return False
+        try:
+            from hledac.universal.core.mlx_embeddings import MLXEmbeddingManager
+            self._manager = MLXEmbeddingManager(lazy_load=True)
+            if not self._manager.is_loaded:
+                await asyncio.to_thread(self._manager._load_model)
+            self._loaded = True
+            MODERNBERT_AVAILABLE = True
+            logger.info("[ModernBertEngine] MLX backend loaded")
+            return True
+        except Exception as e:
+            logger.error(
+                f"[ModernBertEngine] MLX load failed: {e}\n"
+                f"  sys.executable: {sys.executable!r}\n"
+                "  Verify mlx-embeddings: `uv run python -c 'from mlx_embeddings import load; print(\"OK\")'`"
+            )
+            self._loaded = False
+            return False
 
     async def summarize(self, context_items: list[str]) -> str:
         """
@@ -167,23 +158,15 @@ class ModernBertEngine:
         if not self._loaded:
             ok = await self.load()
             if not ok:
-                raise RuntimeError("ModernBertEngine: no backend available")
+                raise RuntimeError("ModernBertEngine: MLX backend unavailable")
 
-        # Safe: _loaded=True means _manager is set and _backend is set
-        manager = self._manager
-        backend = self._backend
-        if backend == "mlx":
-            return manager.encode(texts)
-        elif backend == "st":
-            return manager.encode(texts)
-        else:  # pragma: no cover — defensive
-            raise RuntimeError("ModernBertEngine: no backend loaded")
+        assert self._manager is not None
+        return self._manager.encode(texts)
 
     async def unload(self) -> None:
         """M1 memory: clear model and Metal cache."""
         self._manager = None
         self._loaded = False
-        self._backend = None
 
         if _mlx_embeddings_ok:
             try:
@@ -312,12 +295,7 @@ class ModernBertEngine:
         return "\n---\n".join(summary_parts)
 
     def _embed_sync(self, texts: list[str]) -> np.ndarray:
-        """Synchronous embed — dispatches to correct backend."""
-        manager = self._manager
-        backend = self._backend
-        if backend == "mlx":
-            return manager.encode(texts)
-        elif backend == "st":
-            return manager.encode(texts)
-        else:  # pragma: no cover — defensive
-            raise RuntimeError("ModernBertEngine: no backend")
+        """Synchronous embed via MLX backend."""
+        if self._manager is None:
+            raise RuntimeError("ModernBertEngine: MLX backend not loaded")
+        return self._manager.encode(texts)

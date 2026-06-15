@@ -227,12 +227,13 @@ class _ANNIndex:
                     )
                     self._ivfpq_trained = True  # mark as attempted
                     return
-                # LanceDB Python API: tbl.create_index(metric, index_type, num_partitions, num_sub_vectors)
+                # LanceDB Python API: tbl.create_index(metric, index_type, num_partitions, num_sub_vectors, vector_column_name)
                 self._table.create_index(
                     metric="cosine",
                     index_type="IVF_PQ",
                     num_partitions=getattr(self, "_ivfpq_num_partitions", 64),
                     num_sub_vectors=getattr(self, "_ivfpq_num_sub_vectors", 16),
+                    vector_column_name="vector",
                 )
                 self._ivfpq_trained = True
                 logger.info(

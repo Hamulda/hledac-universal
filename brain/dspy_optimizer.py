@@ -23,6 +23,22 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 
+def _check_dspy_version() -> tuple[bool, str]:
+    """
+    Sprint P0-1: Lazy DSPy version + MIPROv2 availability check.
+
+    Returns:
+        (has_mipro, version_str)
+    """
+    try:
+        import dspy
+        ver = getattr(dspy, '__version__', 'unknown')
+        has_mipro = hasattr(dspy.teleprompt, 'MIPROv2')
+        return has_mipro, ver
+    except Exception:
+        return False, 'unavailable'
+
+
 class DSPyOptimizer:
     def __init__(self, brain_manager):
         self._brain = brain_manager
@@ -433,7 +449,13 @@ class DSPyOptimizer:
                 logger.warning(f"DSPy MIPROv2: trainset is empty for task_key={task_key!r} — skipping optimization")
                 return {}
 
-            with dspy.context(lm=lm):
+            # F288: fail-soft if dspy.context not available (older DSPy versions)
+            if hasattr(dspy, "context"):
+                with dspy.context(lm=lm):
+                    optimizer = MIPROv2(metric=_osint_metric, auto=None, num_candidates=2)
+                    optimized = optimizer.compile(program, trainset=trainset, num_trials=2, minibatch=False)
+            else:
+                program.lm = lm
                 optimizer = MIPROv2(metric=_osint_metric, auto=None, num_candidates=2)
                 optimized = optimizer.compile(program, trainset=trainset, num_trials=2, minibatch=False)
 
@@ -547,6 +569,11 @@ Output as structured JSON with confidence scores.""",
         return False
 
     async def start(self):
+        # Sprint P0-1: Log DSPy version for diagnostics
+        has_mipro, ver = _check_dspy_version()
+        logger.info(f"[DSPy] version={ver}, has_mipro={has_mipro}")
+
+
         # F234: Guard — skip if optimization disabled or brain unavailable
         if os.getenv("HLEDAC_DSPY_OPTIMIZE") != "1":
             logger.info("[DSPy] HLEDAC_DSPY_OPTIMIZE not set — skipping optimization loop")

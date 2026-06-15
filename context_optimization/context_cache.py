@@ -69,12 +69,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-try:
-    from fastembed import TextEmbedding
-    FASTEMBED_AVAILABLE = True
-except ImportError:
-    FASTEMBED_AVAILABLE = False
-    logger.warning("FastEmbed not installed. Install with: pip install fastembed")
+# fastembed REMOVED P0-1: MLXEmbeddingManager is primary for M1
+FASTEMBED_AVAILABLE = False  # kept for graceful degradation, no longer installed
 
 # MLX Embedding Manager (primary path for M1)
 try:
@@ -366,17 +362,15 @@ class MultiLevelContextCache:
                 self._embedder_type = 'mlx'
                 logger.info(f"[EMBEDDER] Using shared MLXEmbeddingManager: {self._mlx_manager.model_path}, dim={self.embedding_dim}")  # noqa: E501
             except Exception as e:
-                logger.warning(f"MLXEmbeddingManager init failed: {e}, falling back to FastEmbed")
+                logger.warning(f"MLXEmbeddingManager init failed: {e}, using dummy embeddings")
                 self._mlx_manager = None
-                if FASTEMBED_AVAILABLE:
-                    self._initialize_embedder()
-                else:
-                    logger.warning("FastEmbed not available, using dummy embeddings")
-                    self.embedding_dim = 384
+                self.embedder = None
+                self.embedding_dim = 384
+                self._embedder_type = None
         elif FASTEMBED_AVAILABLE:
             self._initialize_embedder()
         else:
-            logger.warning("FastEmbed not available, using dummy embeddings")
+            logger.warning("MLXEmbeddingManager not available, using dummy embeddings")
             self.embedding_dim = 384
 
         # Cache configuration
@@ -427,28 +421,6 @@ class MultiLevelContextCache:
 
         # Initialize FAISS index with existing embeddings
         self._rebuild_semantic_index()
-
-    def _initialize_embedder(self):
-        """Initialize FastEmbed embedder with minimal memory usage."""
-        try:
-            logger.info(f"Initializing FastEmbed embedder: {self.embedding_model}")
-
-            # Use _temp_l2_path since l2_storage_path not set yet during init
-            cache_path = self._temp_l2_path if hasattr(self, '_temp_l2_path') else "cache_storage"
-            self.embedder = TextEmbedding(
-                model_name=self.embedding_model,
-                cache_dir=str(Path(cache_path) / "embeddings"),
-                threads=4  # Optimize for M1
-            )
-
-            self.embedding_dim = self.embedder.embedding_size
-            self._embedder_type = 'fastembed'
-            logger.info(f"✅ FastEmbed embedder loaded (model: ~50MB, dim: {self.embedding_dim})")
-
-        except Exception as e:
-            logger.error(f"Failed to initialize FastEmbed: {e}")
-            self.embedder = None
-            self.embedding_dim = 384
 
     def _load_l2_cache(self):
         """Load L2 cache from disk. Prefer zstd-compressed .json.zst, fallback to .json."""

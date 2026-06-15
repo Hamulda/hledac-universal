@@ -142,6 +142,61 @@ def _is_text_query_without_direct_seeds(query: str) -> bool:
     return True
 
 
+# P1-2: OSINT keywords for cross-sprint DuckDB search
+_OSINT_KEYWORDS: frozenset[str] = frozenset({
+    "ransomware", "ransom", "breach", "leak", "leaked", "exposed", "exposure",
+    "darkweb", "dark", "web", "tor", "onion", "threat", "intel", "intelligence",
+    "malware", "trojan", "virus", "infostealer", "stealer", "botnet", "apt",
+    "cve", "vulnerability", "exploit", "phishing", "spam", "scam", "fraud",
+    "credential", "password", "username", "db", "dump", "database",
+    "cybercrime", "hacker", "underground", "forum", "marketplace",
+    "osint", "recon", "scan", "fingerprint", "jarm", "tls",
+    "certificate", "cert", "ct", "transparency",
+})
+
+
+def _extract_keywords_for_search(query: str) -> list[str]:
+    """
+    P1-2: Extract OSINT-relevant keywords from a broad threat query for
+    keyword-based cross-sprint DuckDB search.
+
+    Filters out stopwords and short tokens, returns up to 8 meaningful
+    keywords that improve recall in cross-sprint seed extraction.
+
+    Args:
+        query: Broad threat query string.
+
+    Returns:
+        List of up to 8 OSINT-relevant keywords.
+    """
+    try:
+        tokens = query.lower().split()
+        keywords: list[str] = []
+        stopwords = frozenset({
+            "a", "an", "the", "and", "or", "but", "in", "on", "at", "to", "for",
+            "of", "with", "by", "from", "is", "are", "was", "were", "be", "been",
+            "being", "have", "has", "had", "do", "does", "did", "will", "would",
+            "could", "should", "may", "might", "can", "this", "that", "these",
+            "those", "i", "you", "he", "she", "it", "we", "they", "what", "which",
+            "who", "when", "where", "why", "how", "all", "each", "every", "both",
+            "few", "more", "most", "other", "some", "such", "no", "nor", "not",
+            "only", "own", "same", "so", "than", "too", "very", "just", "about",
+            "into", "over", "after", "before", "between", "under", "above",
+        })
+        for token in tokens:
+            cleaned = token.strip(".,!?;:()[]{}'\"")
+            if (len(cleaned) >= 3 and cleaned not in stopwords and
+                    cleaned not in _OSINT_KEYWORDS):
+                keywords.append(cleaned)
+            elif cleaned in _OSINT_KEYWORDS:
+                keywords.append(cleaned)
+            if len(keywords) >= 8:
+                break
+        return keywords
+    except Exception:
+        return []
+
+
 def _compute_lanes_unlocked(
     domains: tuple[str, ...],
     ips: tuple[str, ...],
@@ -283,13 +338,22 @@ async def run_runtime_pivot_prelude(
                     _cves_q.add(s.value)
         elif duckdb_store is not None:
             try:
-                # F251A: Use duckdb_store async method instead of inline :memory: connect.
-                # Search shadow_findings for rows matching the text query keyword.
-                # extract_nonfeed_seeds_from_findings() scans payload_text/title/query fields.
-                rows = await duckdb_store.async_query_findings_by_text(
-                    like_pattern=query,
-                    limit=_MAX_ROWS_FROM_DUCKDB,
-                )
+                # P1-2: Keyword-based cross-sprint search.
+                # Extract individual keywords from the broad query so "ransomware
+                # threat intelligence leak dark web exposure" matches findings
+                # containing ANY of those terms (not the full string).
+                keywords = _extract_keywords_for_search(query)
+                if keywords:
+                    rows = await duckdb_store.async_query_findings_by_keywords(
+                        keywords=keywords,
+                        limit=_MAX_ROWS_FROM_DUCKDB,
+                    )
+                else:
+                    # Fallback: original exact-match search
+                    rows = await duckdb_store.async_query_findings_by_text(
+                        like_pattern=query,
+                        limit=_MAX_ROWS_FROM_DUCKDB,
+                    )
                 # F251A: Explicit row-count check — no rows means offline memory had no seeds.
                 # Set skip reason so planner preserves diagnostic action (extract_more_seeds_from_duckdb).
                 if not rows:

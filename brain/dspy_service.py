@@ -18,6 +18,7 @@ import logging
 import os
 import time
 from pathlib import Path
+from typing import Any
 
 from hledac.universal.brain.mlx_worker_thread import MLXWorkerThread
 
@@ -31,6 +32,13 @@ try:
     AIOHTTP_AVAILABLE = True
 except ImportError:
     AIOHTTP_AVAILABLE = None
+
+# DSPy — lazy-loaded to avoid hard dependency at module import time.
+# The actual check (HLEDAC_ENABLE_DSPY) is at instantiation in get_hermes_dspy_lm().
+try:
+    import dspy
+except ImportError:
+    dspy = None  # type: ignore[assignment]
 
 logger = logging.getLogger("dspy_service")
 
@@ -76,35 +84,85 @@ def _load_programs() -> dict:
 # ---------------------------------------------------------------------------
 # Part A: Hermes3 ↔ DSPy Bridge (Sprint HERMES3_WIRING)
 # ---------------------------------------------------------------------------
-# Hermes3DSPyLM wraps Hermes3Engine.generate_text() as a dspy.LM interface.
+# Hermes3DSPyLM wraps Hermes3Engine as a proper dspy.BaseLM subclass.
 # Gate: HLEDAC_ENABLE_LLM=1 (default OFF to save RAM when not needed)
 # M1 constraint: lazy load, unload after synthesis, mx.metal.clear_cache() on finish
+#
+# DSPy 3.2.1 BaseLM contract:
+#   - Extend dspy.BaseLM and call super().__init__(model=..., model_type='chat')
+#   - Implement aforward(prompt, messages, **kwargs) -> OpenAI chat completion dict
+#   - ChatAdapter.format() produces list[{"role": "system"|"user"|"assistant", "content": str}]
+#   - We concatenate messages into prompt+system_msg and call Hermes3Engine.generate()
+#   - Return {"choices": [{"message": {"content": <str>}}]} — OpenAI chat format
 
 Hermes3LM_ENABLED = os.getenv("HLEDAC_ENABLE_LLM", "1") == "1"
 _HERMES_LM_INSTANCE: Hermes3DSPyLM | None = None
 
 
-class Hermes3DSPyLM:
+class _HermesChatResponse:
     """
-    DSPy LM wrapper around Hermes3Engine.
+    Mock OpenAI chat completion response for DSPy _process_completion.
 
-    Implements dspy.LM interface: __call__(prompt) → str.
+    _process_completion accesses response.choices[0].message.content.
+    _process_lm_response logs response.model.
+    The usage attribute is optional (None on cache hit).
+    """
+
+    def __init__(self, content: str, model: str = "hermes-3-llama"):
+        self.choices = [_HermesChoice(content)]
+        self.usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+        self.model = model  # type: ignore[attr-defined]  # accessed by BaseLM logging
+
+
+class _HermesChoice:
+    """Single choice in OpenAI chat completion response."""
+
+    def __init__(self, content: str):
+        self.message = _HermesMessage(content)
+        self.finish_reason = "stop"
+        self.index = 0
+
+
+class _HermesMessage:
+    """OpenAI chat message object."""
+
+    def __init__(self, content: str):
+        self.content = content
+        self.role = "assistant"
+        self.audio = None
+        self.function_call = None
+        self.tool_calls = None
+
+
+class Hermes3DSPyLM(dspy.BaseLM):
+    """
+    DSPy BaseLM wrapper around Hermes3Engine.
+
+    Properly extends dspy.BaseLM so DSPy 3.2.1 Predict._forward_preprocess
+    passes the isinstance(lm, BaseLM) check.
+
+    The call chain is:
+      Predict.__call__ → _forward_preprocess (isinstance check) →
+      Adapter.__call__ → lm(messages=[...], **lm_kwargs) →
+      BaseLM.__call__(messages=..., **kwargs) →
+      _process_lm_response(forward(...), ...) →
+      _process_completion(response.choices[0].message.content)
 
     M1 8GB constraints:
-    - Lazy load: Hermes3Engine only initialized on first __call__
-    - Unload after synthesis: mx.metal.clear_cache() called in __exit__
+    - Lazy load: Hermes3Engine only initialized on first inference
+    - Unload after synthesis: mx.metal.clear_cache() called in unload()
     - ANE/MLX mutex: acquire before loading, release after
+    - MLXWorkerThread.submit() for thread-safe async execution
     """
-    # Track if model is currently loaded to avoid redundant loads
+
     _loaded: bool = False
+    _worker: MLXWorkerThread | None = None
 
     def __init__(self, model_path: str | None = None):
+        super().__init__(model=model_path or "hermes-3-llama", model_type="chat")
         self._model_path = model_path
         self._engine = None
         self._loaded = False
-
-    # Shared worker thread for thread-safe MLX inference
-    _worker: MLXWorkerThread | None = None
 
     @classmethod
     def _get_worker(cls) -> MLXWorkerThread:
@@ -114,72 +172,160 @@ class Hermes3DSPyLM:
             cls._worker.start()
         return cls._worker
 
-    def __call__(self, prompt: str, **kwargs) -> str:
+    def _ensure_engine(self) -> None:
+        """Lazy-load Hermes3Engine with ANE mutex protection.
+
+        Initialization runs IN the MLXWorkerThread via submit() — never
+        on the main thread's event loop. This avoids the nested-loop M1 crash
+        (asyncio.run_coroutine_threadsafe().result() already uses the worker
+        loop; we must not create a second loop via new_event_loop()).
         """
-        Synchronous call — routes through MLXWorkerThread to avoid deadlock.
-
-        DSPy calls LM providers synchronously from arbitrary threads.
-        Using loop.run_until_complete() directly risks deadlock when the
-        MLXWorkerThread is already running its own event loop.
-        MLXWorkerThread.submit() uses run_coroutine_threadsafe() which is
-        safe to call from any thread including the worker thread itself.
-        """
-        if not self._loaded:
-            self._load_engine()
-
-        assert self._engine is not None, "Hermes3Engine not loaded"
-        worker = self._get_worker()
-        assert worker._loop is not None, "mlx_worker loop not ready"
-        coro = self._engine.generate(prompt, **kwargs)
-        return asyncio.run_coroutine_threadsafe(coro, worker._loop).result()
-
-    def _load_engine(self) -> None:
-        """Load Hermes3Engine with ANE mutex protection."""
         if self._loaded:
             return
-
         try:
-            # Acquire ANE/MLX mutex (ANEEmbedder and Hermes3 cannot be in RAM simultaneously)
             from hledac.universal.brain.ane_embedder import get_ane_mlx_mutex
             mutex = get_ane_mlx_mutex()
             mutex.acquire_mlx(model_size_mb=2000.0)
 
-            # Import and init Hermes3Engine
             from hledac.universal.brain.deephermes3_engine import DeepHermes3Engine
             self._engine = DeepHermes3Engine(
                 model_path=self._model_path,
-                sanitize_for_llm=None
+                sanitize_for_llm=None,
             )
-            import asyncio
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            try:
-                loop.run_until_complete(self._engine.initialize())
-            finally:
-                loop.close()
+
+            # P0-3 fix: run initialization IN the MLXWorkerThread.
+            # _get_worker() creates + starts the daemon thread on first call.
+            # submit() schedules the coroutine on the worker's loop and awaits
+            # it from the main thread — no new_event_loop(), no nested loop.
+            worker = self._get_worker()
+            assert worker._loop is not None, "mlx_worker loop not ready"
+            asyncio.run_coroutine_threadsafe(
+                self._engine.initialize(),
+                worker._loop,
+            ).result(timeout=120.0)
+
 
             self._loaded = True
         except Exception as e:
-            logger.warning("Hermes3DSPyLM load failed: %s", e)
+            logger.warning("Hermes3DSPyLM engine load failed: %s", e)
             self._loaded = False
+            self._engine = None
             raise
 
+    async def _async_generate(self, prompt: str, **kwargs) -> str:
+        """Async generation via Hermes3Engine.generate()."""
+        self._ensure_engine()
+        assert self._engine is not None, "Hermes3Engine not loaded"
+        return await self._engine.generate(prompt, **kwargs)
+
+    def forward(
+        self,
+        prompt: str | None = None,
+        messages: list[dict[str, str]] | None = None,
+        **kwargs: Any,
+    ) -> dict:
+        """
+        Synchronous forward pass — wraps asyncio call for DSPy compatibility.
+
+        Called by BaseLM.__call__ which expects a dict response matching the
+        OpenAI chat completion format (response.choices[0].message.content).
+        """
+        self._ensure_engine()
+
+        # Build prompt + system_msg from messages
+        system_msg: str | None = None
+        prompt_parts: list[str] = []
+
+        if messages:
+            for msg in messages:
+                role = msg.get("role", "user")
+                content = msg.get("content", "")
+                if role == "system":
+                    system_msg = content
+                elif role == "user":
+                    prompt_parts.append(f"User: {content}")
+                elif role == "assistant":
+                    prompt_parts.append(f"Assistant: {content}")
+            if prompt:
+                prompt_parts.append(f"User: {prompt}")
+            full_prompt = "\n\n".join(prompt_parts)
+        else:
+            full_prompt = prompt or ""
+
+        # Run via worker thread — synchronous result
+        worker = self._get_worker()
+        assert worker._loop is not None, "mlx_worker loop not ready"
+        text: str = asyncio.run_coroutine_threadsafe(
+            self._async_generate(full_prompt, system_msg=system_msg, **kwargs),
+            worker._loop,
+        ).result(timeout=60.0)
+
+        return _HermesChatResponse(text if text else "", model=self.model)  # type: ignore[return-value]
+
+    async def aforward(
+        self,
+        prompt: str | None = None,
+        messages: list[dict[str, str]] | None = None,
+        **kwargs: Any,
+    ) -> dict:
+        """
+        Async forward pass — called by BaseLM.acall.
+
+        ChatAdapter formats messages as:
+          [{"role": "system"|"user"|"assistant", "content": str}, ...]
+
+        We reconstruct a single prompt by concatenating role-prefixed content.
+        """
+        self._ensure_engine()
+
+        system_msg: str | None = None
+        prompt_parts: list[str] = []
+
+        if messages:
+            for msg in messages:
+                role = msg.get("role", "user")
+                content = msg.get("content", "")
+                if role == "system":
+                    system_msg = content
+                elif role == "user":
+                    prompt_parts.append(f"User: {content}")
+                elif role == "assistant":
+                    prompt_parts.append(f"Assistant: {content}")
+            if prompt:
+                prompt_parts.append(f"User: {prompt}")
+            full_prompt = "\n\n".join(prompt_parts)
+        else:
+            full_prompt = prompt or ""
+
+        worker = self._get_worker()
+        assert worker._loop is not None, "mlx_worker loop not ready"
+        text: str = await worker.submit(
+            self._async_generate(full_prompt, system_msg=system_msg, **kwargs),
+            timeout=60.0,
+        )
+
+        return _HermesChatResponse(text if text else "", model=self.model)  # type: ignore[return-value]
+
     def unload(self) -> None:
-        """Unload model and clear Metal cache (M1 RAM recovery)."""
+        """Unload model and clear Metal cache (M1 RAM recovery).
+        unload() runs IN the MLXWorkerThread via submit() — same fix as
+        _ensure_engine(). The worker loop is still running at this point;
+        creating a second loop with new_event_loop() causes nested-loop
+        crash on M1.
+        """
         if not self._loaded or self._engine is None:
             return
         try:
-            import asyncio
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            try:
-                loop.run_until_complete(self._engine.unload())
-            finally:
-                loop.close()
+            # P0-3 fix: run unload() IN the MLXWorkerThread.
+            worker = self._get_worker()
+            assert worker._loop is not None, "mlx_worker loop not ready"
+            asyncio.run_coroutine_threadsafe(
+                self._engine.unload(),
+                worker._loop,
+            ).result(timeout=60.0)
         except Exception:
             pass
         finally:
-            # F219B: mx.eval([]) + clear_cache
             try:
                 import mlx.core as _mx
                 _mx.eval([])
@@ -187,7 +333,6 @@ class Hermes3DSPyLM:
                     _mx.metal.clear_cache()
             except Exception:
                 pass
-            # Release ANE/MLX mutex
             try:
                 from hledac.universal.brain.ane_embedder import get_ane_mlx_mutex
                 get_ane_mlx_mutex().release("mlx")
@@ -226,7 +371,7 @@ def configure_dspy_with_hermes() -> bool:
         hermes_lm = get_hermes_dspy_lm()
         if hermes_lm is None:
             return False
-        dspy.configure(lm=hermes_lm)
+        dspy.settings.configure(lm=hermes_lm)
         logger.info("dspy_service: DSPy configured with Hermes3Engine")
         return True
     except Exception as e:
@@ -302,7 +447,14 @@ async def expand_query(query: str) -> list | None:
         program.signature.instructions = prompt_template
 
         async def _run():
-            with dspy.context(lm=lm):
+            # F288: fail-soft if dspy.context not available (older DSPy versions)
+            if hasattr(dspy, "context"):
+                with dspy.context(lm=lm):
+                    pred = program(query=query.strip())
+                    return str(pred.answer) if hasattr(pred, "answer") else None
+            else:
+                # Fallback: set lm directly on program
+                program.lm = lm
                 pred = program(query=query.strip())
                 return str(pred.answer) if hasattr(pred, "answer") else None
 
@@ -411,7 +563,13 @@ async def score_findings(findings: list, min_score: float = 4.0) -> list | None:
         program.signature.instructions = prompt_template
 
         async def _run():
-            with dspy.context(lm=lm):
+            # F288: fail-soft if dspy.context not available (older DSPy versions)
+            if hasattr(dspy, "context"):
+                with dspy.context(lm=lm):
+                    pred = program(query=findings_json[:500])
+                    return str(pred.answer) if hasattr(pred, "answer") else None
+            else:
+                program.lm = lm
                 pred = program(query=findings_json[:500])
                 return str(pred.answer) if hasattr(pred, "answer") else None
 
@@ -511,7 +669,13 @@ async def suggest_pivots(findings: list, context: dict | None = None) -> list | 
         program.signature.instructions = prompt_template
 
         async def _run():
-            with dspy.context(lm=lm):
+            # F288: fail-soft if dspy.context not available (older DSPy versions)
+            if hasattr(dspy, "context"):
+                with dspy.context(lm=lm):
+                    pred = program(query=findings_str[:400])
+                    return str(pred.answer) if hasattr(pred, "answer") else None
+            else:
+                program.lm = lm
                 pred = program(query=findings_str[:400])
                 return str(pred.answer) if hasattr(pred, "answer") else None
 
@@ -586,17 +750,12 @@ async def check_health() -> dict:
         health["status"] = "warn"
         return health
 
-    # Check if mlx_lm.server is reachable
-    if AIOHTTP_AVAILABLE:
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(
-                    "http://localhost:8080/health",
-                    timeout=aiohttp.ClientTimeout(total=3)
-                ) as resp:
-                    health["lm_available"] = resp.status == 200
-        except Exception:
-            pass
+    # Check Hermes3 LM availability via singleton state
+    health["lm_available"] = (
+        Hermes3LM_ENABLED
+        and _HERMES_LM_INSTANCE is not None
+        and _HERMES_LM_INSTANCE._loaded
+    )
 
     if not health["lm_available"]:
         health["status"] = "warn"

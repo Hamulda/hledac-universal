@@ -165,6 +165,7 @@ async def test_streaming_embedder_yields_batches(mock_finding_list):
     mock_uma_instance.is_emergency = False
     mock_uma_instance.is_warn = False
     mock_uma_instance.high_water = 0.0
+    mock_uma_instance.swap_detected = False
 
     with patch("hledac.universal.core.resource_governor.sample_uma_status", return_value=mock_uma_instance):
         with patch("hledac.universal.brain.model_lifecycle.get_model_lifecycle_status", return_value={"loaded": True}):
@@ -247,6 +248,7 @@ def test_streaming_embedder_ram_guard_ok_true():
     mock_uma.is_emergency = False
     mock_uma.is_warn = False
     mock_uma.high_water = 0.0
+    mock_uma.swap_detected = False
 
     with patch("hledac.universal.core.resource_governor.sample_uma_status", return_value=mock_uma):
         assert embedder._ram_guard_ok() is True
@@ -290,23 +292,30 @@ async def test_generate_embeddings_streaming_yields_batches():
 
     texts = [f"test text {i}" for i in range(40)]  # 3 batches of 16
 
+    # Mock embedder so _get_embedder().is_loaded doesn't raise AttributeError
+    mock_embedder = MagicMock()
+    mock_embedder.is_loaded = True
+
     # Patch _generate_embeddings_chunk to return valid embeddings
     def fake_chunk(t, bs=16):
         return np.zeros((len(t), 256), dtype=np.float32)
 
     with patch("hledac.universal.embedding_pipeline._generate_embeddings_chunk", side_effect=fake_chunk):
-        with patch("hledac.universal.embedding_pipeline.load_embedding_model", return_value=True):
-            with patch("hledac.universal.embedding_pipeline.unload_embedding_model", return_value=True):
-                batches = []
-                async for batch in generate_embeddings_streaming(texts, batch_size=16):
-                    ids, embs = batch
-                    batches.append(batch)
-                    assert isinstance(ids, list)
-                    assert isinstance(embs, np.ndarray)
-                    assert embs.shape[1] == 256  # 256d embedding
+        with patch("hledac.universal.embedding_pipeline._get_embedder", return_value=mock_embedder):
+            with patch("hledac.universal.embedding_pipeline.load_embedding_model", return_value=True):
+                with patch("hledac.universal.embedding_pipeline.unload_embedding_model", return_value=True):
+                    with patch("hledac.universal.embedding_pipeline._check_memory_guard", return_value=True):
+                        with patch("hledac.universal.embedding_pipeline._uma_guard_before_batch", return_value=(True, {})):
+                            batches = []
+                            async for batch in generate_embeddings_streaming(texts, batch_size=16):
+                                ids, embs = batch
+                                batches.append(batch)
+                                assert isinstance(ids, list)
+                                assert isinstance(embs, np.ndarray)
+                                assert embs.shape[1] == 256  # 256d embedding
 
-                # 40 texts / 16 = 3 batches (16+16+8)
-                assert len(batches) == 3
+                            # 40 texts / 16 = 3 batches (16+16+8)
+                            assert len(batches) == 3
 
 
 # ---------------------------------------------------------------------------
@@ -367,10 +376,11 @@ def test_ann_index_prewarm_fail_soft(tmp_path):
 # ---------------------------------------------------------------------------
 
 def test_sprint_scheduler_has_embedding_sidecar():
-    """SprintScheduler has _run_embedding_sidecar method."""
-    from hledac.universal.runtime.sprint_scheduler import SprintScheduler
+    """Embedding sidecar is registered in DEFAULT_SIDECAR_RUNNERS (via bus, not direct method)."""
+    from hledac.universal.runtime.sidecar_bus import DEFAULT_SIDECAR_RUNNERS
 
-    assert hasattr(SprintScheduler, "_run_embedding_sidecar")
+    names = [n for n, _ in DEFAULT_SIDECAR_RUNNERS]
+    assert "embedding" in names
 
 
 # ---------------------------------------------------------------------------

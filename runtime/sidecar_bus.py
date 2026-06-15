@@ -1049,14 +1049,20 @@ async def _embedding_runner(
     findings: list,
     store: DuckDBShadowStore,
     query: str,
-) -> None:
+) -> int | None:
     """F203I streaming embedding — heavy, RAM-guarded by bus."""
     if not findings or store is None:
-        return
+        _sidecarlogger.debug(
+            "[embedding] early-return: findings=%d store=%s",
+            len(findings) if findings else 0,
+            "None" if store is None else type(store).__name__,
+        )
+        return 0
     try:
         from hledac.universal.intelligence.streaming_embedder import StreamingEmbedder
     except Exception:
-        return
+        _sidecarlogger.debug("embedding_runner: StreamingEmbedder import failed")
+        return 0
 
     try:
         embedder = StreamingEmbedder()
@@ -1067,9 +1073,22 @@ async def _embedding_runner(
                 embeddable.append(f)
 
         if not embeddable:
-            return
+            _text_lens = [len(getattr(f, "payload_text", None) or getattr(f, "query", "") or "") for f in findings]
+            _sidecarlogger.debug(
+                "[embedding] no embeddable findings: total=%d embeddable=%d "
+                "payload_lens=%s sources=%s query_len=%d",
+                len(findings), len(embeddable), _text_lens[:5],
+                [getattr(f, "source_family", "?") for f in findings[:3]],
+                len(query),
+            )
+            return 0
 
-        async for ids, embeddings in embedder.embed_findings(embeddable, batch_size=16):
+        async for ids, embeddings in embedder.embed_findings(embeddable, batch_size=8):
+            if embedder.aborted:
+                _sidecarlogger.warning(
+                    "[embedding] aborted mid-stream due to memory pressure (aborted flag set)"
+                )
+                break
             if ids and embeddings is not None and embeddings.shape[0] > 0:
                 try:
                     from hledac.universal.knowledge.ann_index import get_ann_index
@@ -1077,7 +1096,7 @@ async def _embedding_runner(
                     import hashlib
                     for idx, finding_id in enumerate(ids):
                         emb = embeddings[idx]
-                        if emb.shape[0] == 256:
+                        if emb.shape[-1] == 256:
                             key = hashlib.blake2b(finding_id.encode(), digest_size=32).hexdigest()
                             text_hash = hashlib.sha256(finding_id.encode()).hexdigest()
                             ann.upsert(key, emb, text_hash)
@@ -1090,7 +1109,8 @@ async def _embedding_runner(
             ann.prewarm(top_k=128)
         except Exception:
             pass
-    except Exception:
+    except Exception as exc:
+        _sidecarlogger.debug("embedding_runner: exception during embed: %s: %s", type(exc).__name__, exc)
         pass  # Fail-soft
 
 

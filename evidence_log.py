@@ -243,6 +243,7 @@ class EvidenceLog:
     # Internal constant for fsync batching (no user toggle)
     # fsync every N events to avoid per-event IO bottleneck
     _FSYNC_EVERY_N_EVENTS = 25
+    _MANIFEST_EVERY_N_EVENTS = 50  # Write manifest every N events (batched, M1 8GB safe)
 
     # SQLite batching constants
     _SQLITE_BATCH_SIZE = 50
@@ -337,6 +338,7 @@ class EvidenceLog:
         self._db: aiosqlite.Connection | None = None
         self._initialized = False
         self._closing = False  # Flag: aclose in progress, block queue access
+        self._manifest_dirty: bool = False  # Flag: manifest needs update on next batch
 
     def __del__(self):
         """Cleanup - zavři persist file."""
@@ -647,6 +649,19 @@ class EvidenceLog:
                     self._fsync_counter = 0
             except Exception as e:
                 logger.error(f"Failed to persist event: {e}")
+
+        # ===== MANIFEST UPDATE (batched, fail-safe) =====
+        # Write manifest every N events to keep it in sync with JSONL.
+        # This mirrors the fsync batching pattern — avoids per-event IO.
+        # _manifest_dirty is set whenever chain_head / _total_count changes.
+        self._manifest_dirty = True
+        self._manifest_counter = getattr(self, '_manifest_counter', 0) + 1
+        if self._manifest_counter >= self._MANIFEST_EVERY_N_EVENTS:
+            try:
+                self.write_manifest()
+                self._manifest_counter = 0
+            except Exception as _mf_err:
+                logger.warning(f"[EVIDENCE] Manifest batch write failed: {_mf_err}")
 
         # Trim payload pro RAM šetření
         # NOTE: After trimming, content_hash must be RECOMPUTED to match the

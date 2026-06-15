@@ -16,7 +16,7 @@ TIER 1 — SPRINT FACTS (DuckDB, durable):
     source_hit_log     — per-sprint source attribution: source_type, hit_rate
 
 TIER 2 — SHADOW FINDINGS (DuckDB, durable):
-    shadow_findings    — finding-level records forwarded from EvidenceLog.append()
+    canonical_findings    — finding-level records forwarded from EvidenceLog.append()
     shadow_runs        — run-level metadata
 
 TIER 3 — GRAPH (Kuzu/LanceDB, injected):
@@ -43,14 +43,14 @@ DESIGN PRINCIPLES:
 SCHEMA (per tier):
 ------------------
 Tier 1:  sprint_delta, sprint_scorecard, source_hit_log
-Tier 2:  shadow_findings, shadow_runs
+Tier 2:  canonical_findings, shadow_runs
 
 ASYNC API SURFACE
 ----------------
 - async_initialize()       — async init wrapper
 - async_record_shadow_run(...)   — insert run record
 - async_record_shadow_finding(...)  — insert single finding
-- async_record_shadow_findings_batch(..., max_batch_size=500) — chunked batch
+- async_record_canonical_findings_batch(..., max_batch_size=500) — chunked batch
 - async_query_recent_findings(limit=10)  — query findings
 - async_healthcheck()      — returns True if healthy
 - aclose()            — async idempotent shutdown
@@ -83,7 +83,7 @@ ASYNC API SURFACE
           → async_record_canonical_findings_batch()
               → WALManager.append()          [write-ahead log, crash safety]
               → DedupManager.check()         [duplicate detection]
-              → DuckDB insert (sprint_delta, shadow_findings)
+              → DuckDB insert (sprint_delta, canonical_findings)
               → SemanticStoreBuffer.buffer()  [async FastEmbed + LanceDB index]
               → GraphAttachmentStore (optional, post-accumulation)
               → WALManager.flush()            [sync marker, allows replay]
@@ -440,7 +440,8 @@ _ARROW_MIN_BATCH: int = int(os.environ.get("HLEDAC_ARROW_MIN_BATCH", "20"))  # M
 # Metrics: arrow_selected, arrow_fallback_env, arrow_fallback_batch,
 #          arrow_fallback_pyarrow, arrow_fallback_init, arrow_fallback_executor,
 #          arrow_fallback_empty, arrow_fallback_all_fail, arrow_success_count,
-#          arrow_success_lmdb_count, arrow_success_duckdb_count
+#          arrow_success_lmdb_count, arrow_success_duckdb_count,
+#          arrow_error_table_build, arrow_error_duckdb_insert, arrow_error_partial
 _ARROW_METRICS: dict[str, int] = {
     "arrow_selected": 0,
     "arrow_fallback_env": 0,
@@ -453,7 +454,20 @@ _ARROW_METRICS: dict[str, int] = {
     "arrow_success_count": 0,
     "arrow_success_lmdb_count": 0,
     "arrow_success_duckdb_count": 0,
+    "arrow_error_table_build": 0,
+    "arrow_error_duckdb_insert": 0,
+    "arrow_error_partial": 0,
 }
+
+
+def get_arrow_metrics() -> dict[str, int]:
+    """
+    Sprint F265C: Expose Arrow ingest metrics for sprint telemetry.
+
+    Returns a snapshot of _ARROW_METRICS counters. Callers receive a copy —
+    the dict itself stays internal to this module.
+    """
+    return dict(_ARROW_METRICS)
 
 
 # ---------------------------------------------------------------------------
@@ -574,21 +588,22 @@ _DEDUP_LMDB_MAP_SIZE: int = 64 * 1024 * 1024  # 64MB dedicated dedup LMDB
 # ---------------------------------------------------------------------------
 
 _SCHEMA_SQL = """
-    CREATE TABLE IF NOT EXISTS shadow_findings (
+    CREATE TABLE IF NOT EXISTS canonical_findings (
         id              VARCHAR PRIMARY KEY,
         query           VARCHAR,
         source_type     VARCHAR,
         confidence      DOUBLE,
         ts              DOUBLE,
         provenance_json TEXT,
+        payload_text    TEXT,
         UNIQUE (id),
         UNIQUE (query, source_type)
     );
     -- Sprint STORAGE-FIX-1: time-range + per-query lookups
-    -- shadow_findings is queried with WHERE query LIKE ? ORDER BY ts DESC LIMIT N (6+ sites).
+    -- canonical_findings is queried with WHERE query LIKE ? ORDER BY ts DESC LIMIT N (6+ sites).
     -- Seq scan over 100K rows = ~50ms; with these indexes <1ms.
-    CREATE INDEX IF NOT EXISTS idx_shadow_findings_ts ON shadow_findings(ts DESC);
-    CREATE INDEX IF NOT EXISTS idx_shadow_findings_query ON shadow_findings(query);
+    CREATE INDEX IF NOT EXISTS idx_canonical_findings_ts ON canonical_findings(ts DESC);
+    CREATE INDEX IF NOT EXISTS idx_canonical_findings_query ON canonical_findings(query);
     CREATE TABLE IF NOT EXISTS shadow_runs (
         run_id      VARCHAR PRIMARY KEY,
         started_at  TIMESTAMP,
@@ -872,6 +887,10 @@ class DuckDBShadowStore:
 
         # Sprint 8SB: Semantic store (FastEmbed + LanceDB)
         self._semantic_store: Any | None = None
+
+        # Sprint 8SB: Semantic buffer — fail-open, no-op if no store injected
+        from hledac.universal.knowledge.semantic_store_buffer import SemanticStoreBuffer
+        self._semantic_buffer: SemanticStoreBuffer = SemanticStoreBuffer()
 
     # ── Test factory ───────────────────────────────────────────────────────────
 
@@ -1399,10 +1418,10 @@ class DuckDBShadowStore:
         # ── SQL Templates ──────────────────────────────────────────────────
 
         _SQL_INSERT_SHADOW_FINDING = (
-            "INSERT INTO shadow_findings "
+            "INSERT INTO canonical_findings "
             "(id, query, source_type, confidence, ts, provenance_json) "
             "VALUES (?, ?, ?, ?, ?, ?) "
-            "ON CONFLICT (query, source_type) DO NOTHING"
+            "ON CONFLICT (id) DO NOTHING"
         )
         _SQL_INSERT_SHADOW_RUN = (
             "INSERT INTO shadow_runs "
@@ -1445,7 +1464,7 @@ class DuckDBShadowStore:
 
         def _get_insert_stmt(self, conn: Any) -> Any:
             """
-            Sprint F264: Lazy-init prepared INSERT statement for shadow_findings.
+            Sprint F264: Lazy-init prepared INSERT statement for canonical_findings.
 
             Returns the cached prepared statement for `_SQL_INSERT_SHADOW_FINDING`
             if the underlying connection is unchanged. On reconnect the conn
@@ -1615,12 +1634,19 @@ class DuckDBShadowStore:
                 _logger.error(f"[D7] DuckDB bulk-as-tuples insert failed: {type(e).__name__}: {e}")
                 return 0
 
-        def insert_findings_bulk_arrow(self, table: Any) -> int:
+        def insert_findings_bulk_arrow(self, table: Any) -> tuple[int, str | None]:
             """
             Sprint P0-4: Zero-copy Arrow bulk insert via DuckDB register() + INSERT...SELECT.
 
             MUST be called on the worker thread (thread-affine connection).
-            Returns the input table row count on success, 0 on any failure (fail-soft).
+            Returns (row_count, error_type) on success: (n_rows, None).
+            On any failure returns (0, error_type) where error_type is one of:
+              "table_none"    — table is None
+              "num_rows_err"  — failed to read num_rows
+              "zero_rows"     — table has 0 rows
+              "no_conn"       — could not acquire connection
+              "pyarrow_build" — pa.Table.from_arrays failed (inside DuckDB register)
+              "duckdb_error"  — DuckDB register/execute/unregister failed
 
             Why: executemany with N prepared stmt.execute() Python calls has ~3-5x the
             per-row Python overhead of one Arrow register() + one INSERT...SELECT.
@@ -1636,16 +1662,16 @@ class DuckDBShadowStore:
             _logger = _logging.getLogger(__name__)
 
             if table is None:
-                return 0
+                return (0, "table_none")
             try:
                 n_rows = int(table.num_rows)
             except Exception:
-                return 0
+                return (0, "num_rows_err")
             if n_rows == 0:
-                return 0
+                return (0, "zero_rows")
             conn = self._conn()
             if conn is None:
-                return 0
+                return (0, "no_conn")
             # register() + INSERT...SELECT is the canonical zero-copy path.
             # DuckDB reads Arrow buffers via C++ Arrow C Data Interface — no Python copies.
             try:
@@ -1656,7 +1682,7 @@ class DuckDBShadowStore:
                 conn.register(reg_name, table)
                 try:
                     conn.execute(
-                        "INSERT INTO shadow_findings "
+                        "INSERT INTO canonical_findings "
                         "(id, query, source_type, confidence, ts, provenance_json) "
                         f"SELECT id, query, source_type, confidence, ts, provenance_json "
                         f"FROM {reg_name} "
@@ -1670,13 +1696,13 @@ class DuckDBShadowStore:
                         conn.unregister(reg_name)
                     except Exception:
                         pass
-                return n_rows
+                return (n_rows, None)
             except Exception as e:
                 _logger.error(
                     f"[P0-4 Arrow] DuckDB Arrow bulk insert failed: "
                     f"{type(e).__name__}: {e}"
                 )
-                return 0
+                return (0, "duckdb_error")
 
         def insert_run(
             self,
@@ -1746,7 +1772,7 @@ class DuckDBShadowStore:
                 return []
             sql = (
                 "SELECT id, query, source_type, confidence, ts, provenance_json "
-                "FROM shadow_findings ORDER BY ts DESC LIMIT ?"
+                "FROM canonical_findings ORDER BY ts DESC LIMIT ?"
             )
             try:
                 result = list(self.arrow_fetch_batch(conn, sql, [limit]))
@@ -1975,12 +2001,12 @@ class DuckDBShadowStore:
                 for row in result
             ]
         except Exception:
-            # Fall back: try querying shadow_findings if canonical_findings fails
+            # Fall back: try querying canonical_findings if canonical_findings fails
             try:
                 conn = self._file_conn if self._db_path else self._persistent_conn
                 if conn is None:
                     return []
-                # shadow_findings doesn't have sprint_id or payload_text — return empty for target filter
+                # canonical_findings doesn't have sprint_id or payload_text — return empty for target filter
                 return []
             except Exception:
                 return []
@@ -2558,7 +2584,7 @@ class DuckDBShadowStore:
         except Exception:
             return False
 
-    async def async_record_shadow_findings_batch(
+    async def async_record_canonical_findings_batch(
         self,
         findings: list[dict[str, Any]],
         max_batch_size: int = 500,
@@ -2635,14 +2661,14 @@ class DuckDBShadowStore:
         if sprint_id_filter is None:
             sql = (
                 "SELECT id, query, source_type, confidence, ts, provenance_json "
-                "FROM shadow_findings "
+                "FROM canonical_findings "
                 "ORDER BY ts DESC"
             )
             params: list[Any] | None = None
         else:
             sql = (
                 "SELECT id, query, source_type, confidence, ts, provenance_json "
-                "FROM shadow_findings "
+                "FROM canonical_findings "
                 "WHERE query LIKE ? "
                 "ORDER BY ts DESC"
             )
@@ -2805,6 +2831,8 @@ class DuckDBShadowStore:
         if hasattr(result, "fetch_record_batch"):
             try:
                 reader = result.fetch_record_batch(batch_size)
+                # result.description is stable — read once, reuse across all batches
+                columns = [col[0] for col in result.description]
                 while True:
                     try:
                         batch = reader.read_next_batch()
@@ -2813,7 +2841,10 @@ class DuckDBShadowStore:
                     if batch is None:
                         break
                     try:
-                        yield [tuple(row) for row in batch.to_pylist()]
+                        yield [
+                            tuple(row[c] for c in columns)
+                            for row in batch.to_pylist()
+                        ]
                     except Exception:
                         # Fallback: columnar unpickling for exotic types
                         cols = batch.columns
@@ -2964,7 +2995,7 @@ class DuckDBShadowStore:
         limit: int = 1000,
     ) -> list[dict[str, Any]]:
         """
-        F251A: Read shadow_findings rows matching a text/keyword pattern.
+        F251A: Read canonical_findings rows matching a text/keyword pattern.
         Used by run_runtime_pivot_prelude() for offline memory seed extraction
         when a text query has no direct IOC seeds.
 
@@ -2989,6 +3020,78 @@ class DuckDBShadowStore:
         except Exception:
             return []
 
+    async def async_query_findings_by_keywords(
+        self,
+        keywords: list[str],
+        limit: int = 1000,
+    ) -> list[dict[str, Any]]:
+        """
+        P1-2: Read canonical_findings rows matching ANY of the given keywords.
+        Uses OR across keywords so "ransomware breach" matches findings
+        containing either "ransomware" OR "breach".
+        Used by run_runtime_pivot_prelude() for cross-sprint seed extraction
+        when the full query string has no direct match.
+
+        Args:
+            keywords: List of keywords to search in query/title/payload_text.
+            limit: Max rows to return (default 1000).
+
+        Returns:
+            list[dict] with keys: id, query, source_type, title, payload_text, ts.
+            Fail-soft: returns [] on any error.
+        """
+        if not self._initialized or self._closed:
+            return []
+        if not keywords:
+            return []
+        loop = asyncio.get_running_loop()
+        try:
+            return await loop.run_in_executor(
+                self._executor,
+                self._sync_query_findings_by_keywords,
+                keywords,
+                limit,
+            )
+        except Exception:
+            return []
+
+    def _sync_query_findings_by_keywords(
+        self,
+        keywords: list[str],
+        limit: int,
+    ) -> list[dict]:
+        """Sync — MUST be called on worker thread."""
+        try:
+            conn = self._file_conn if self._db_path else self._persistent_conn
+            if conn is None:
+                return []
+            # Build OR conditions for each keyword
+            conditions = " OR ".join(["(query LIKE ? OR title LIKE ? OR payload_text LIKE ?)"] * len(keywords))
+            pattern = [f"%{kw}%" for kw in keywords for _ in range(3)]
+            sql = f"""
+                SELECT id, query, source_type, title, payload_text, ts
+                FROM canonical_findings
+                WHERE {conditions}
+                ORDER BY ts DESC
+                LIMIT ?
+                """
+            rows = list(self.arrow_fetch_batch(conn, sql, pattern + [limit]))
+            if not rows:
+                return []
+            return [
+                {
+                    "id": r[0],
+                    "query": r[1],
+                    "source_type": r[2],
+                    "title": r[3] or "",
+                    "payload_text": r[4] or "",
+                    "ts": r[5],
+                }
+                for r in rows
+            ]
+        except Exception:
+            return []
+
     def _sync_query_findings_by_text(
         self,
         like_pattern: str,
@@ -3002,7 +3105,7 @@ class DuckDBShadowStore:
             pattern = f"%{like_pattern}%"
             sql =                 """
                 SELECT id, query, source_type, title, payload_text, ts
-                FROM shadow_findings
+                FROM canonical_findings
                 WHERE query LIKE ?
                    OR title LIKE ?
                    OR payload_text LIKE ?
@@ -3039,7 +3142,7 @@ class DuckDBShadowStore:
                 return []
             sql =                 """
                 SELECT id, query, source_type, confidence, ts
-                FROM shadow_findings
+                FROM canonical_findings
                 WHERE query LIKE ('%' || ? || '%')
                    OR id LIKE ('%' || ? || '%')
                 ORDER BY ts DESC
@@ -3114,7 +3217,7 @@ class DuckDBShadowStore:
                 return []
             sql =                 """
                 SELECT id, query, source_type, ts
-                FROM shadow_findings
+                FROM canonical_findings
                 WHERE query LIKE ('%' || ? || '%')
                    OR id LIKE ('%' || ? || '%')
                 ORDER BY ts DESC
@@ -3209,7 +3312,7 @@ class DuckDBShadowStore:
                     AVG(confidence) as avg_confidence,
                     MIN(ts) as first_ts,
                     MAX(ts) as last_ts
-                FROM shadow_findings
+                FROM canonical_findings
                 WHERE query LIKE ('%' || ? || '%')
                    OR id LIKE ('%' || ? || '%')
                 """,
@@ -3273,7 +3376,7 @@ class DuckDBShadowStore:
                     source_type,
                     COUNT(*) as findings_count,
                     AVG(confidence) as avg_confidence
-                FROM shadow_findings
+                FROM canonical_findings
                 WHERE query LIKE ('%' || ? || '%')
                    OR id LIKE ('%' || ? || '%')
                 GROUP BY source_type
@@ -4880,6 +4983,16 @@ class DuckDBShadowStore:
         # despite non-empty results → fall back so canonical write is guaranteed.
         if results and all(r.get("duckdb_success") is False for r in results):
             _ARROW_METRICS["arrow_fallback_all_fail"] += len(results)
+            # Typed error telemetry — distinguish DuckDB insert failure from
+            # partial-write (ON CONFLICT DO NOTHING silently skipped rows).
+            errors_in_results = [r.get("error") for r in results if r.get("error")]
+            if errors_in_results and errors_in_results[0] == "duckdb_error":
+                _ARROW_METRICS["arrow_error_duckdb_insert"] += len(results)
+            elif errors_in_results and errors_in_results[0] == "table_build":
+                _ARROW_METRICS["arrow_error_table_build"] += len(results)
+            else:
+                # Partial write: some inserted, some silently skipped (ON CONFLICT)
+                _ARROW_METRICS["arrow_error_partial"] += len(results)
             logger.error(
                 "[D7] Arrow path: all %d findings failed DuckDB write — "
                 "falling back to legacy executemany.",
@@ -5459,12 +5572,25 @@ class DuckDBShadowStore:
         if not findings:
             return results
 
+        # F276: Diagnostic instrumentation — log at entry to diagnose silent-0-write path.
+        # Previous versions swallowed all errors fail-soft with no telemetry, making it
+        # impossible to distinguish: (a) store not initialized, (b) boot barrier timeout,
+        # (c) LMDB WAL failure, (d) DuckDB insert failure, (e) ON CONFLICT dedup.
+        _logger.debug(
+            "[F276-INGEST] entry n=%d  _initialized=%s  _closed=%s  _startup_ready=%s",
+            len(findings),
+            getattr(self, "_initialized", None),
+            getattr(self, "_closed", None),
+            getattr(self, "_startup_ready", None) and getattr(self._startup_ready, "is_set", lambda: None)(),
+        )
+
         # Step 1: LMDB WAL first — msgspec serialization
         lmdb_ok = False
         try:
             if not hasattr(self, "_wal_manager") or self._wal_manager is None:
                 _wal_root = self._db_path.parent if self._db_path else None
                 if _wal_root is None:
+                    _logger.error("[F276-INGEST] _db_path is None — WAL root unavailable, cannot persist findings")
                     for f in findings:
                         results.append({
                             "finding_id": f.finding_id,
@@ -5539,6 +5665,14 @@ class DuckDBShadowStore:
                 "duckdb_success": duckdb_success,
                 "error": None,
             })
+
+        # F276: Exit instrumentation — diagnose entry > 0 but exit = 0 pattern.
+        _logger.debug(
+            "[F276-INGEST] exit n=%d  lmdb_ok=%s  duckdb_ok=%s",
+            len(results),
+            lmdb_ok,
+            duckdb_all_ok,
+        )
         return results
 
     def _extract_url_from_provenance(self, provenance: tuple[str, ...]) -> str:
@@ -5881,7 +6015,7 @@ class DuckDBShadowStore:
 
         n = len(findings)
         # P1-2: Entry instrumentation — log at entry to diagnose silent-0-write path
-        _logger.debug(
+        logger.debug(
             "[INGEST-BATCH] entry len(findings)=%d  quality_state=_accepted:%d _rejected:%d _dup:%d _persist_dup:%d",
             n,
             self._quality_state._accepted_count,
@@ -5978,6 +6112,12 @@ class DuckDBShadowStore:
             accepted_total,
             self._quality_state._accepted_count,
         )
+        # P1-2: Operator-level confirmation — DuckDB canonical write confirmed
+        if accepted_total > 0:
+            _logger.info(
+                "[DuckDB] written %d records (sprint F265-P1-2 canonical write verification)",
+                accepted_total,
+            )
         return results  # type: ignore[annotation-unchecked]
 
     # --------------------------------------------------------------------------
@@ -6149,12 +6289,17 @@ class DuckDBShadowStore:
     def _sync_record_canonical_findings_batch_arrow(
         self,
         findings: list[CanonicalFinding],
-    ) -> int:
+    ) -> tuple[int, str | None]:
         """
         Sprint P0-4: Arrow zero-copy bulk insert for CanonicalFinding list.
 
         MUST be called on the worker thread (thread-affine connection).
-        Returns number of successfully inserted DuckDB rows (0 on any failure).
+        Returns (inserted_count, error_type):
+          - (n, None) on success where n = number of rows in input table
+          - (0, error_type) on any failure, where error_type is one of:
+              "pyarrow_not_installed" — pyarrow import failed
+              "table_build_failed"    — pa.Table.from_arrays failed
+              "duckdb_insert_failed" — QueryExecutor.insert_findings_bulk_arrow failed
 
         Distinct from the legacy `_canonical_findings_batch_to_activation_results`
         in three ways:
@@ -6164,16 +6309,16 @@ class DuckDBShadowStore:
              back to the legacy path which does both). This split keeps the Arrow
              path optional and side-effect-free at the WAL layer.
 
-        Fail-soft: any error returns 0 and the async wrapper falls back to legacy.
+        Fail-soft: any error returns (0, error_type) and the async wrapper falls back
+        to legacy. The error_type is used for typed telemetry.
         """
         if not findings:
-            return 0
+            return (0, None)
         try:
             import pyarrow as _pa
         except ImportError:
-            return 0  # pyarrow not installed — caller falls back to executemany
+            return (0, "pyarrow_not_installed")
 
-        len(findings)
         try:
             # Build columnar arrays — zero-copy for str/float, single alloc per column.
             # msgspec.encode returns bytes; we decode once per row, but the result is
@@ -6212,10 +6357,13 @@ class DuckDBShadowStore:
             _logging.getLogger(__name__).error(
                 f"[P0-4 Arrow] Table build failed: {type(e).__name__}: {e}"
             )
-            return 0
+            return (0, "table_build_failed")
 
         # Delegate to QueryExecutor — keeps SQL + register/unregister in one place.
-        return self._qe().insert_findings_bulk_arrow(table)
+        duckdb_count, duckdb_err = self._qe().insert_findings_bulk_arrow(table)
+        if duckdb_err is not None:
+            return (0, "duckdb_insert_failed")
+        return (duckdb_count, None)
 
     def _sync_record_canonical_findings_batch_arrow_full(
         self,
@@ -6293,21 +6441,3185 @@ class DuckDBShadowStore:
                 })
             return ret
 
-        # Step 2: DuckDB Arrow bulk — returns count, 0 on any failure (fail-soft).
-        duckdb_count = self._sync_record_canonical_findings_batch_arrow(findings)
-        duckdb_all_ok = duckdb_count >= len(findings)
-        if not duckdb_all_ok:
+        # Step 2: DuckDB Arrow bulk — returns (count, error_type), fail-soft.
+        duckdb_count, duckdb_err = self._sync_record_canonical_findings_batch_arrow(findings)
+        if duckdb_err is not None:
+            _logger.error(
+                f"[P0-4 Arrow] DuckDB Arrow bulk failed: {duckdb_err}"
+            )
+            duckdb_all_ok = False
+        elif duckdb_count < len(findings):
+            # Arrow bulk wrote some but not all — cannot determine which specific
+            # rows failed (ON CONFLICT DO NOTHING), treat as all-or-nothing.
             _logger.error(
                 f"[P0-4 Arrow] Partial DuckDB batch: {duckdb_count}/{len(findings)}"
             )
+            duckdb_all_ok = False
+        else:
+            duckdb_all_ok = True
 
         # Step 3: Build per-finding results (1:1, mirrors legacy).
+        # Propagate duckdb_err so async wrapper can do typed telemetry.
         for f in findings:
             ret.append({
                 "finding_id": f.finding_id,
                 "lmdb_success": lmdb_ok,
                 "duckdb_success": duckdb_all_ok,
+                "error": duckdb_err,
+            })
+        return ret
+
+
+    # ------------------------------------------------------------------
+    # Async shutdown (new in 8AS)
+    # ------------------------------------------------------------------
+
+    async def aclose(self) -> None:
+        """
+        Async idempotent shutdown — canonical async cleanup path.
+
+        Cleanup ordering:
+          1. Sets _closed=True + _initialized=False immediately
+          2. Clears boot barrier (_startup_ready)
+          3. Closes DuckDB connections via _sync_close_on_worker (worker thread)
+          4. Cancels bg tasks (graph ingest)
+          5. Closes truth_write_graph (flush_buffers + close)
+          6. Closes ioc_graph (DuckPGQGraph donor)
+          7. Closes semantic_store
+          8. Closes stix_graph
+          9. Closes WAL LMDB + dedup LMDB
+          10. Executor is NOT shut down — kept alive for re-init SAFETY
+
+        Executor keep-alive contract (Sprint 8L):
+          A new ThreadPoolExecutor cannot reuse the same worker thread.
+          Keeping the existing executor allows async_initialize() to re-attach
+          to the same thread on the same store instance after aclose().
+          This is the ONLY supported re-init path.
+
+        Idempotent: safe to call multiple times.
+        """
+        if self._closed:
+            return
+
+        self._closed = True
+        self._initialized = False
+
+        # Sprint 8L: reset boot barrier for re-initialize safety
+        # Use clear() instead of replacing the Event object — avoids loop-affinity issues
+        try:
+            self._startup_ready.clear()
+            self._startup_replay_done = False
+        except Exception:
+            pass
+
+        # Sprint 8H: close connections synchronously by calling the worker method
+        # directly. This is safe because DuckDB connections are owned by the
+        # worker thread and we are calling from the main thread — the single
+        # ThreadPoolExecutor(1 worker) ensures no concurrent access during
+        # the synchronous close call. We use submit() to wake the blocked worker.
+        try:
+            f = self._executor.submit(self._sync_close_on_worker)
+            f.result(timeout=5)  # wait for close to complete
+        except Exception:
+            pass
+
+        # Sprint 8QA: cancel pending background tasks
+        # F233A fix: use getattr() instead of hasattr() — _bg_tasks is always set in __init__
+        # so hasattr always True; getattr correctly returns the empty set before first use
+        _bg = getattr(self, "_bg_tasks", None)
+        if _bg:
+            for t in _bg:
+                t.cancel()
+            await safe_gather_fire_and_forget(*_bg, label="duckdb_store:5746")
+            _bg.clear()
+
+        # Sprint 8WA: close truth-write graph (IOCGraph with buffer_ioc/flush_buffers)
+        # GUARD: flush_buffers is IOCGraph-only. DuckPGQGraph has no flush_buffers.
+        # Sprint F222: delegated to GraphAttachmentStore
+        gs = self._graph_store() if hasattr(self, "_DuckDBShadowStore__graph_store") and self.__graph_store is not None else None  # noqa: E501
+        truth_graph = gs.get_truth_write_graph() if gs else None
+        if truth_graph is not None:
+            try:
+                if callable(getattr(truth_graph, "flush_buffers", None)):
+                    await truth_graph.flush_buffers()
+            except Exception:
+                pass
+            try:
+                if callable(getattr(truth_graph, "close", None)):
+                    await truth_graph.close()
+            except Exception:
+                pass
+
+        # Sprint 8QA/8TF: close analytics/donor IOC graph (DuckPGQGraph)
+        # DuckPGQGraph has checkpoint() and close() but no flush_buffers.
+        ioc_graph = gs.get_analytics_graph_for_synthesis() if gs else None
+        if ioc_graph is not None:
+            try:
+                if callable(getattr(ioc_graph, "close", None)):
+                    await ioc_graph.close()
+            except Exception:
+                pass
+
+        # Sprint 8SB: close semantic store
+        if self._semantic_store is not None:
+            try:
+                await self._semantic_store.close()
+            except Exception:
+                pass
+            self._semantic_store = None
+
+        # Sprint 8VQ: close STIX-only graph slot
+        stix_graph = gs.get_stix_graph() if gs else None
+        if stix_graph is not None:
+            try:
+                if callable(getattr(stix_graph, "close", None)):
+                    await stix_graph.close()
+            except Exception:
+                pass
+
+        # Sprint 8L: Do NOT shutdown the executor — keep it alive for re-initialization.
+        # A new ThreadPoolExecutor cannot reuse the same thread, so we keep the
+        # existing one to allow async_initialize() to run again on the same store
+        # instance after aclose().
+        # Sprint 8L: close WAL LMDB to release lock files
+        # F233A: _wal_lmdb is declared in __init__ so getattr() is safe
+        _wal = getattr(self, "_wal_lmdb", None)
+        if _wal is not None:
+            try:
+                _wal.close()
+            except Exception:
+                pass
+            self._wal_lmdb = None
+
+        # Sprint 8AG: close dedup LMDB — mirrors _do_close() symmetry
+        # F233A: _dedup_lmdb is declared in __init__ so getattr() is safe
+        _dedup = getattr(self, "_dedup_lmdb", None)
+        if _dedup is not None:
+            try:
+                _dedup.close()
+            except Exception:
+                pass
+            self._dedup_lmdb = None
+
+    # ------------------------------------------------------------------
+    # Sprint 8UC B.2: research_episodes — sprint episode recall
+    # ------------------------------------------------------------------
+
+    def _execute_in_thread_sync(self, fn) -> Any:
+        """
+        Execute synchronous function on the duckdb executor and return its result.
+
+        MUST be called from the main thread. The callable fn runs on the
+        single-worker ThreadPoolExecutor and blocks until complete.
+
+        Returns:
+            The return value of fn(), or None if the executor raised an exception.
+
+        NOTE: This is a synchronous helper. Async callers MUST await the result:
+            result = await loop.run_in_executor(self._executor, self._execute_in_thread_sync, fn)
+        For direct async wrappers, prefer loop.run_in_executor() directly.
+        """
+        try:
+            f = self._executor.submit(fn)
+            return f.result()
+        except Exception:
+            return None
+
+    async def upsert_episode(self, data: dict) -> None:
+        """Sprint 8UC B.2: Zapsat sprint epizodu pro budoucí recall."""
+        import time as _t
+
+
+        def _sync():
+            conn = self._persistent_conn
+            if conn is None:
+                return
+            conn.execute(
+                """INSERT OR REPLACE INTO research_episodes
+                   (episode_id, sprint_id, query, summary, top_findings,
+                    ioc_clusters, source_yield, synthesis_engine, duration_s, ts)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                [
+                    data.get("sprint_id", ""),
+                    data.get("sprint_id", ""),
+                    data.get("query", ""),
+                    data.get("summary", "")[:300] if data.get("summary") else "",
+                    _json_dumps_str(data.get("top_findings", [])),
+                    _json_dumps_str(data.get("ioc_clusters", [])),
+                    _json_dumps_str(data.get("source_yield", {})),
+                    data.get("synthesis_engine", "unknown"),
+                    float(data.get("duration_s", 0.0)),
+                    float(data.get("ts", _t.time())),
+                ],
+            )
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(self._executor, _sync)
+
+    async def recall_episodes(
+        self,
+        query_embedding: list[float] | None,
+        limit: int = 5,
+    ) -> list[dict]:
+        """Sprint 8UC B.2: Načíst posledních `limit` epizod (recency-based)."""
+        def _sync():
+            conn = self._persistent_conn
+            if conn is None:
+                return []
+            try:
+                sql =                     """SELECT sprint_id, query, summary, top_findings, source_yield, ts
+                       FROM research_episodes
+                       ORDER BY ts DESC
+                       LIMIT ?"""
+                rows = conn.execute(sql, [limit])
+                rows = list(self.arrow_fetch_batch(conn, sql, [limit]))
+                if not rows:
+                    return []
+                cols = ["sprint_id", "query", "summary", "top_findings", "source_yield", "ts"]
+                return [dict(zip(cols, r, strict=False)) for r in rows]
+            except Exception:
+                return []
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(self._executor, _sync)
+
+    # ------------------------------------------------------------------
+    # Sprint F204D: target_memory — cross-sprint target state accumulation
+    # ------------------------------------------------------------------
+
+    async def upsert_target_memory(self, memory: TargetMemory) -> bool:
+        """
+        Sprint F204D: Upsert a TargetMemory record into DuckDB.
+
+        Serializes facets as JSON TEXT columns. Uses INSERT OR REPLACE.
+        GHOST_INVARIANT: runs on duckdb executor via run_in_executor.
+        """
+        if not self._initialized or self._closed:
+            return False
+        loop = asyncio.get_running_loop()
+        try:
+            return await loop.run_in_executor(
+                self._executor,
+                self._sync_upsert_target_memory,
+                memory,
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            return False
+
+    def _sync_upsert_target_memory(self, memory: TargetMemory) -> bool:
+        """Sync upsert target memory — MUST be called on worker thread."""
+        import logging as _logging
+
+        _logger = _logging.getLogger(__name__)
+
+        try:
+            conn = self._file_conn if self._db_path else self._persistent_conn
+            if conn is None:
+                return False
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO target_memory
+                (target_id, first_seen_ts, last_seen_ts, sprint_count,
+                 cumulative_finding_count, entity_facets_json, exposure_facets_json,
+                 pivot_facets_json, confidence_drift_json, updated_by_sprint_id,
+                 updated_ts)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                [
+                    memory.target_id,
+                    memory.first_seen_ts,
+                    memory.last_seen_ts,
+                    memory.sprint_count,
+                    memory.cumulative_finding_count,
+                    _json_dumps_str(memory.entity_facets),
+                    _json_dumps_str(memory.exposure_facets),
+                    _json_dumps_str(memory.pivot_facets),
+                    _json_dumps_str(memory.confidence_drift),
+                    memory.updated_by_sprint_id,
+                    _time.time(),
+                ],
+            )
+            return True
+        except Exception as _exc:
+            _logger.warning("_sync_upsert_target_memory failed: %s", _exc)
+            return False
+
+    async def read_target_memory(self, target_id: str) -> TargetMemory | None:
+        """
+        Sprint F204D: Read a TargetMemory record by target_id.
+        Returns None if not found. Deserializes JSON TEXT columns.
+        """
+        if not self._initialized or self._closed:
+            return None
+
+        def _sync() -> TargetMemory | None:
+
+            try:
+                conn = self._file_conn if self._db_path else self._persistent_conn
+                if conn is None:
+                    return None
+                sql =                     """
+                    SELECT target_id, first_seen_ts, last_seen_ts, sprint_count,
+                           cumulative_finding_count, entity_facets_json,
+                           exposure_facets_json, pivot_facets_json,
+                           confidence_drift_json, updated_by_sprint_id, updated_ts
+                    FROM target_memory
+                    WHERE target_id = ?
+                    """
+                rows = conn.execute(sql, [target_id])
+                rows = list(self.arrow_fetch_batch(conn, sql, [target_id]))
+                if not rows:
+                    return None
+                r = rows[0]
+                return TargetMemory(
+                    target_id=r[0],
+                    first_seen_ts=r[1],
+                    last_seen_ts=r[2],
+                    sprint_count=r[3],
+                    cumulative_finding_count=r[4],
+                    entity_facets=_json_loads_flexible(r[5]),
+                    exposure_facets=_json_loads_flexible(r[6]),
+                    pivot_facets=_json_loads_flexible(r[7]),
+                    confidence_drift=_json_loads_flexible(r[8]),
+                    updated_by_sprint_id=r[9],
+                )
+            except Exception:
+                return None
+
+        loop = asyncio.get_running_loop()
+        try:
+            return await loop.run_in_executor(self._executor, _sync)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            return None
+
+    # ------------------------------------------------------------------
+    # Sprint 8TA B.4: ghost_global cross-sprint entity accumulation (SQLite-backed)
+    # ------------------------------------------------------------------
+
+    async def upsert_global_entities(
+        self,
+        entities: list[tuple[str, str, float]],
+    ) -> int:
+        """
+        Sprint 8TA B.4: Upsert entities into ghost_global store.
+
+        Path: ~/.hledac/ghost_global.duckdb  (file named .duckdb but backed by SQLite)
+        filelock: ~/.hledac/ghost_global.lock
+        Engine: sqlite3 (NOT DuckDB) — legacy naming preserved for file identity
+        Schema: global_entities(entity_value TEXT PK, entity_type TEXT,
+                sprint_count INT, last_seen DOUBLE, confidence_cumulative REAL)
+        INSERT OR REPLACE with MAX(confidence) semantics.
+        Returns: int (count of upserted entities).
+        """
+        if not entities:
+            return 0
+        loop = asyncio.get_running_loop()
+        try:
+            return await loop.run_in_executor(
+                self._executor,
+                self._sync_upsert_global_entities,
+                entities,
+            )
+        except Exception:
+            return 0
+
+    def _sync_upsert_global_entities(
+        self,
+        entities: list[tuple[str, str, float]],
+    ) -> int:
+        """Sync upsert global entities — MUST be called on worker thread.
+
+        Sprint 8TA B.4 fix: Batch upsert eliminates N+1 query pattern.
+        Before: N SELECTs + N INSERTs (2000 ops for 1000 entities)
+        After:  Single transaction with batch INSERT OR REPLACE
+        """
+        import os as _os
+        import sqlite3
+        from pathlib import Path
+
+        ghost_home = Path.home() / ".hledac"
+        ghost_home.mkdir(parents=True, exist_ok=True)
+        db_path = ghost_home / "ghost_global.duckdb"
+        lock_path = ghost_home / "ghost_global.lock"
+
+        # Use file-based locking
+        import fcntl
+        lock_file = open(lock_path, "w")
+        try:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+            conn = sqlite3.connect(db_path)
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS global_entities (
+                    entity_value TEXT PRIMARY KEY,
+                    entity_type TEXT,
+                    sprint_count INT DEFAULT 0,
+                    last_seen DOUBLE,
+                    confidence_cumulative REAL DEFAULT 0
+                )
+                """
+            )
+            now = _time.time()
+
+            # Sprint 8TA B.4: Batch upsert — eliminates N+1 query pattern
+            # Use INSERT ... ON CONFLICT DO UPDATE for atomic increment/max semantics
+            # Before: N SELECTs + N INSERTs (2000 ops for 1000 entities)
+            # After:  Single executemany with ON CONFLICT handling (2 ops total)
+            conn.executemany(
+                """
+                INSERT INTO global_entities
+                    (entity_value, entity_type, sprint_count, last_seen, confidence_cumulative)
+                VALUES (?, ?, 1, ?, ?)
+                ON CONFLICT(entity_value) DO UPDATE SET
+                    sprint_count = sprint_count + 1,
+                    confidence_cumulative = MAX(confidence_cumulative, excluded.confidence_cumulative),
+                    last_seen = excluded.last_seen
+                """,
+                [(e, t, now, c) for e, t, c in entities],
+            )
+            conn.commit()
+            conn.close()
+            return len(entities)
+        finally:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+            lock_file.close()
+            try:
+                _os.remove(lock_path)
+            except Exception:
+                pass
+
+    async def async_query_source_leaderboard(self, days: int = 7) -> list[dict]:
+        """
+        Return top sources by hit rate for the last N days.
+        Thread-safe, non-blocking.
+        """
+        if not self._initialized or self._closed:
+            return []
+        loop = asyncio.get_running_loop()
+        try:
+            return await loop.run_in_executor(
+                self._executor,
+                self._sync_query_source_leaderboard,
+                _time.time() - days * 86400,
+            )
+        except Exception:
+            return []
+
+    async def async_query_sprint_source_stats(self) -> list[dict]:
+        """
+        Return per-source-type avg_hit_rate over the last 5 days.
+        Used by SprintScheduler.load_source_weights().
+        Thread-safe, non-blocking.
+        """
+        if not self._initialized or self._closed:
+            return []
+        loop = asyncio.get_running_loop()
+        try:
+            return await loop.run_in_executor(
+                self._executor,
+                self._sync_query_sprint_source_stats,
+            )
+        except Exception:
+            return []
+
+    # ------------------------------------------------------------------
+    # Sprint 8RC: sync convenience wrappers (called from SprintScheduler)
+    # ------------------------------------------------------------------
+
+    # Sprint F183D §2: These sync wrappers are DEPRECATED.
+    # export_sprint() now calls async_query_sprint_trend() / async_query_source_leaderboard()
+    # directly (primary path). These wrappers remain as COMPAT fallback for:
+    #   - tests/probe_8rc/ (intentional sync test consumers)
+    #   - Any sync-only callers not yet migrated to async context
+    # REMOVAL CONDITION: all callers migrated to async read seams
+
+    def get_sprint_trend(self, last_n: int = 10) -> list[dict]:
+        """
+        DEPRECATED (Sprint F183D) — use async_query_sprint_trend() instead.
+
+        Convenience sync wrapper — returns last N sprints ordered by ts DESC.
+        For use in sync contexts (e.g., report printing).
+
+        REMOVAL CONDITION: all callers migrated to async read seams.
+        """
+        if not self._initialized or self._closed:
+            return []
+        try:
+            fut = self._executor.submit(self._sync_query_sprint_trend, last_n)
+            return fut.result()
+        except Exception:
+            return []
+
+    def get_source_leaderboard(self, days: int = 7) -> list[dict]:
+        """
+        DEPRECATED (Sprint F183D) — use async_query_source_leaderboard() instead.
+
+        Convenience sync wrapper — returns top sources by hit rate.
+        For use in sync contexts (e.g., report printing).
+
+        REMOVAL CONDITION: all callers migrated to async read seams.
+        """
+        if not self._initialized or self._closed:
+            return []
+        try:
+            fut = self._executor.submit(
+                self._sync_query_source_leaderboard,
+                _time.time() - days * 86400,
+            )
+            return fut.result()
+        except Exception:
+            return []
+
+    # ------------------------------------------------------------------
+    # Sprint Delta Read Seams — output / delta truth (Sprint F150H)
+    # ------------------------------------------------------------------
+
+    def get_sprint_scorecard_trend(self, last_n: int = 6) -> list[dict]:
+        """
+        Sprint F150H: Convenience sync wrapper — returns last N scorecards
+        ordered by ts DESC. Covers ioc_density, semantic_novelty, accepted_findings,
+        findings_per_minute, and outlines_used. Fail-soft, bounded.
+
+        Use for: yield trend reporting, retrospektiva, sprint-to-sprint
+        quality comparison without ad-hoc SQL.
+        """
+        if not self._initialized or self._closed:
+            return []
+        try:
+            fut = self._executor.submit(self._sync_query_scorecard_trend, last_n)
+            return fut.result()
+        except Exception:
+            return []
+
+    def _sync_query_scorecard_trend(self, last_n: int) -> list[dict]:
+        """Sync — MUST be called on the worker thread."""
+        try:
+            conn = self._file_conn if self._db_path else self._persistent_conn
+            if conn is None:
+                return []
+            sql =                 """
+                SELECT sprint_id, ts, findings_per_minute, ioc_density,
+                       semantic_novelty, outlines_used, accepted_findings, ioc_nodes
+                FROM sprint_scorecard
+                ORDER BY ts DESC
+                LIMIT ?
+                """
+            rows = conn.execute(sql, [last_n])
+            rows = list(self.arrow_fetch_batch(conn, sql, [last_n]))
+            return [
+                {
+                    "sprint_id": r[0],
+                    "ts": r[1],
+                    "findings_per_minute": r[2] or 0.0,
+                    "ioc_density": r[3] or 0.0,
+                    "semantic_novelty": r[4] or 1.0,
+                    "outlines_used": bool(r[5]) if r[5] is not None else False,
+                    "accepted_findings": r[6] or 0,
+                    "ioc_nodes": r[7] or 0,
+                }
+                for r in rows
+            ]
+        except Exception:
+            return []
+
+    def get_sprint_delta_comparison(self, current_sprint_id: str, lookback: int = 4) -> dict:
+        """
+        Sprint F150H: Compare current sprint against the average of the last
+        `lookback` sprints. Returns a delta dict with absolute values of
+        current sprint and the delta vs the rolling mean of prior sprints.
+
+        Covers: new_findings, ioc_new_this_sprint, dedup_hits, findings_per_minute,
+        uma_peak_gib, synthesis_confidence.
+
+        Use for: "how is this sprint tracking vs history" without ad-hoc SQL.
+        Fail-soft — returns empty/near-zero fields on any error.
+        """
+        if not self._initialized or self._closed:
+            return {}
+        try:
+            fut = self._executor.submit(
+                self._sync_query_delta_comparison, current_sprint_id, lookback
+            )
+            return fut.result()
+        except Exception:
+            return {}
+
+    def _sync_query_delta_comparison(
+        self, current_sprint_id: str, lookback: int
+    ) -> dict:
+        """
+        Sync — MUST be called on the worker thread.
+
+        Sprint F192F §2: uses findings_per_minute (matches sprint_scorecard naming).
+        """
+        try:
+            conn = self._file_conn if self._db_path else self._persistent_conn
+            if conn is None:
+                return {}
+
+            sql =                 """
+                SELECT new_findings, ioc_new_this_sprint, dedup_hits,
+                       findings_per_minute, uma_peak_gib, synthesis_confidence
+                FROM sprint_delta
+                WHERE sprint_id = ?
+                """
+            current_rows = conn.execute(sql, [current_sprint_id])
+            current_rows = list(self.arrow_fetch_batch(conn, sql, [current_sprint_id]))
+
+            if not current_rows:
+                return {}
+
+            sql =                 """
+                SELECT new_findings, ioc_new_this_sprint, dedup_hits,
+                       findings_per_minute, uma_peak_gib, synthesis_confidence
+                FROM sprint_delta
+                WHERE sprint_id != ?
+                ORDER BY ts DESC
+                LIMIT ?
+                """
+            prior_rows = conn.execute(sql, [current_sprint_id, lookback])
+            prior_rows = list(self.arrow_fetch_batch(conn, sql, [current_sprint_id, lookback]))
+
+            cur = current_rows[0]
+            fields = [
+                "new_findings", "ioc_new_this_sprint", "dedup_hits",
+                "findings_per_minute", "uma_peak_gib", "synthesis_confidence",
+            ]
+            cur_vals = [cur[0] or 0, cur[1] or 0, cur[2] or 0,
+                        cur[3] or 0.0, cur[4] or 0.0, cur[5] or 0.0]
+
+            if prior_rows:
+                prior_avg = [0.0] * len(fields)
+                for pr in prior_rows:
+                    for i in range(len(fields)):
+                        v = pr[i] or (0 if i < 3 else 0.0)
+                        prior_avg[i] += v / len(prior_rows)
+                deltas = {
+                    f: round(cur_vals[i] - prior_avg[i], 4)
+                    for i, f in enumerate(fields)
+                }
+            else:
+                deltas = dict.fromkeys(fields, 0.0)
+
+            return {
+                "sprint_id": current_sprint_id,
+                "current": {f: cur_vals[i] for i, f in enumerate(fields)},
+                "vs_prior_mean": deltas,
+            }
+        except Exception:
+            return {}
+
+    def get_source_mix_trend(self, days: int = 14) -> list[dict]:
+        """
+        Sprint F150H: Convenience sync wrapper — returns source_type distribution
+        broken down by sprint for the last `days`. Each row contains
+        source_type, sprint_id, total_findings, and hit_rate.
+
+        Use for: source mix reporting — is web growing vs feed vs document,
+        and is each source getting more productive over time.
+        """
+        if not self._initialized or self._closed:
+            return []
+        try:
+            fut = self._executor.submit(
+                self._sync_query_source_mix_trend,
+                _time.time() - days * 86400,
+            )
+            return fut.result()
+        except Exception:
+            return []
+
+    def _sync_query_source_mix_trend(self, since_ts: float) -> list[dict]:
+        """Sync — MUST be called on the worker thread."""
+        try:
+            conn = self._file_conn if self._db_path else self._persistent_conn
+            if conn is None:
+                return []
+            sql =                 """
+                SELECT source_type, sprint_id,
+                       SUM(findings_count) as total_findings,
+                       AVG(hit_rate) as avg_hit_rate,
+                       SUM(ioc_count) as total_iocs
+                FROM source_hit_log
+                WHERE ts > ?
+                GROUP BY source_type, sprint_id
+                LIMIT 10000
+                ORDER BY sprint_id DESC, total_findings DESC
+                """
+            rows = conn.execute(sql, [since_ts])
+            rows = list(self.arrow_fetch_batch(conn, sql, [since_ts]))
+            return [
+                {
+                    "source_type": r[0],
+                    "sprint_id": r[1],
+                    "total_findings": r[2] or 0,
+                    "avg_hit_rate": r[3] or 0.0,
+                    "total_iocs": r[4] or 0,
+                }
+                for r in rows
+            ]
+        except Exception:
+            return []
+
+    def get_yield_trend(self, last_n: int = 8) -> list[dict]:
+        """
+        Sprint F150H: Derived yield metrics per sprint — new_findings / duration_s,
+        dedup_hits ratio (dedup_hits / new_findings), and ioc_rate
+        (ioc_new_this_sprint / new_findings). Returns last N sprints.
+
+        Use for: "are we getting better at extracting unique findings from sources"
+        — track yield improvement or degradation across sprints.
+        """
+        if not self._initialized or self._closed:
+            return []
+        try:
+            fut = self._executor.submit(self._sync_query_yield_trend, last_n)
+            return fut.result()
+        except Exception:
+            return []
+
+    def _sync_query_yield_trend(self, last_n: int) -> list[dict]:
+        """Sync — MUST be called on the worker thread."""
+        try:
+            conn = self._file_conn if self._db_path else self._persistent_conn
+            if conn is None:
+                return []
+            sql =                 """
+                SELECT sprint_id, ts, new_findings, duration_s,
+                       dedup_hits, ioc_new_this_sprint
+                FROM sprint_delta
+                ORDER BY ts DESC
+                LIMIT ?
+                """
+            rows = conn.execute(sql, [last_n])
+            rows = list(self.arrow_fetch_batch(conn, sql, [last_n]))
+            result = []
+            for r in rows:
+                new_findings = r[2] or 0
+                duration_s = r[3] or 0.0
+                dedup_hits = r[4] or 0
+                ioc_new = r[5] or 0
+                result.append({
+                    "sprint_id": r[0],
+                    "ts": r[1],
+                    "new_findings": new_findings,
+                    "duration_s": duration_s,
+                    "yield_per_min": round(new_findings / max(duration_s / 60, 0.001), 4),
+                    "dedup_ratio": round(dedup_hits / max(new_findings, 1), 4),
+                    "ioc_rate": round(ioc_new / max(new_findings, 1), 4),
+                })
+            return result
+        except Exception:
+            return []
+
+    # ------------------------------------------------------------------
+    # Sprint F150I: Variant B — high-value sprint ranking seams
+    # Reads: sprint_delta + sprint_scorecard (NO new tables, NO write-back)
+    # ------------------------------------------------------------------
+
+    def get_high_value_sprint_ranking(self, last_n: int = 8) -> list[dict]:
+        """
+        Sprint F150I: Rank last N sprints by a composite value score.
+        Composite = accepted_findings * semantic_novelty / max(duration_s, 1).
+        Higher is better. Returns sprint_id, composite_score, and component fields.
+
+        Use for: "which sprints delivered the most value per second".
+        Fail-soft, bounded.
+        """
+        if not self._initialized or self._closed:
+            return []
+        try:
+            fut = self._executor.submit(
+                self._sync_query_high_value_ranking, last_n
+            )
+            return fut.result()
+        except Exception:
+            return []
+
+    def _sync_query_high_value_ranking(self, last_n: int) -> list[dict]:
+        """Sync — MUST be called on the worker thread."""
+        try:
+            conn = self._file_conn if self._db_path else self._persistent_conn
+            if conn is None:
+                return []
+            sql =                 """
+                SELECT
+                    d.sprint_id,
+                    d.ts,
+                    d.new_findings,
+                    d.duration_s,
+                    c.accepted_findings,
+                    c.semantic_novelty,
+                    d.synthesis_confidence,
+                    ROUND(
+                        CAST(c.accepted_findings AS REAL)
+                        * COALESCE(c.semantic_novelty, 1.0)
+                        / MAX(d.duration_s, 1.0),
+                        4
+                    ) AS composite_score
+                FROM sprint_delta d
+                LEFT JOIN sprint_scorecard c ON d.sprint_id = c.sprint_id
+                ORDER BY d.ts DESC
+                LIMIT ?
+                """
+            rows = conn.execute(sql, [last_n])
+            rows = list(self.arrow_fetch_batch(conn, sql, [last_n]))
+            return [
+                {
+                    "sprint_id": r[0],
+                    "ts": r[1],
+                    "new_findings": r[2] or 0,
+                    "duration_s": r[3] or 0.0,
+                    "accepted_findings": r[4] or 0,
+                    "semantic_novelty": r[5] or 1.0,
+                    "synthesis_confidence": r[6] or 0.0,
+                    "composite_score": r[7] or 0.0,
+                }
+                for r in rows
+            ]
+        except Exception:
+            return []
+
+    def get_scorecard_consistency_check(self, sprint_id: str) -> dict:
+        """
+        Sprint F150I: Compare findings_per_minute from sprint_scorecard vs
+        findings_per_minute from sprint_delta for the same sprint.
+        Returns ratio and warns if divergence > 2x.
+
+        Use for: detecting scorecard / delta sync issues.
+        Fail-soft — returns empty dict on any error.
+
+        NOTE: As of Sprint F192F, both tables use findings_per_minute (renamed from
+        findings_per_min in sprint_delta). The JOIN now compares two same-named columns.
+        """
+        if not self._initialized or self._closed:
+            return {}
+        try:
+            fut = self._executor.submit(
+                self._sync_query_consistency_check, sprint_id
+            )
+            return fut.result()
+        except Exception:
+            return {}
+
+    def _sync_query_consistency_check(self, sprint_id: str) -> dict:
+        """
+        Sync — MUST be called on the worker thread.
+
+        Sprint F192F §2: both sprint_scorecard and sprint_delta now use findings_per_minute.
+        """
+        try:
+            conn = self._file_conn if self._db_path else self._persistent_conn
+            if conn is None:
+                return {}
+            # LIMIT 1000: consistency check only needs recent rows.
+            # ORDERED BY rowid DESC: get most recent entries.
+            sql =                 """
+                SELECT
+                    c.sprint_id,
+                    c.findings_per_minute,
+                    COALESCE(d.findings_per_minute, 0) AS delta_fpm,
+                    d.new_findings,
+                    d.duration_s
+                FROM sprint_scorecard c
+                LEFT JOIN sprint_delta d ON c.sprint_id = d.sprint_id
+                WHERE c.sprint_id = ?
+                ORDER BY rowid DESC
+                LIMIT 1000
+                """
+            rows = conn.execute(sql, [sprint_id])
+            rows = list(self.arrow_fetch_batch(conn, sql, [sprint_id]))
+            if not rows:
+                return {}
+            r = rows[0]
+            scorecard_fpm = r[1] or 0.0
+            delta_fpm = r[2] or 0.0
+            ratio = round(delta_fpm / max(scorecard_fpm, 0.001), 4)
+            return {
+                "sprint_id": r[0],
+                "scorecard_fpm": scorecard_fpm,
+                "delta_fpm": delta_fpm,
+                "ratio": ratio,
+                "diverges": ratio > 2.0 or ratio < 0.5,
+                "new_findings": r[3] or 0,
+                "duration_s": r[4] or 0.0,
+            }
+        except Exception:
+            return {}
+
+    def get_recent_best_sprints(self, last_n: int = 5) -> list[dict]:
+        """
+        Sprint F150I: Return the top N sprints by yield (new_findings / duration_s).
+        Reads from sprint_delta. Fail-soft, bounded.
+        """
+        if not self._initialized or self._closed:
+            return []
+        try:
+            fut = self._executor.submit(
+                self._sync_query_best_sprints, last_n
+            )
+            return fut.result()
+        except Exception:
+            return []
+
+    def _sync_query_best_sprints(self, last_n: int) -> list[dict]:
+        """
+        Sync — MUST be called on the worker thread.
+
+        Sprint F192F §2: uses findings_per_minute (matches sprint_scorecard naming).
+        """
+        try:
+            conn = self._file_conn if self._db_path else self._persistent_conn
+            if conn is None:
+                return []
+            sql =                 """
+                SELECT sprint_id, ts, new_findings, duration_s,
+                       findings_per_minute, synthesis_confidence,
+                       ROUND(new_findings / MAX(duration_s / 60, 0.001), 4)
+                       AS yield_per_min
+                FROM sprint_delta
+                WHERE new_findings > 0 AND duration_s > 0
+                ORDER BY yield_per_min DESC
+                LIMIT ?
+                """
+            rows = conn.execute(sql, [last_n])
+            rows = list(self.arrow_fetch_batch(conn, sql, [last_n]))
+            return [
+                {
+                    "sprint_id": r[0],
+                    "ts": r[1],
+                    "new_findings": r[2] or 0,
+                    "duration_s": r[3] or 0.0,
+                    "findings_per_minute": r[4] or 0.0,
+                    "synthesis_confidence": r[5] or 0.0,
+                    "yield_per_min": r[6] or 0.0,
+                }
+                for r in rows
+            ]
+        except Exception:
+            return []
+
+    def get_recent_worst_sprints(self, last_n: int = 5) -> list[dict]:
+        """
+        Sprint F150I: Return the bottom N sprints by yield (new_findings / duration_s).
+        Only sprints with new_findings > 0 are included (exclude zero-yield noise).
+        Reads from sprint_delta. Fail-soft, bounded.
+        """
+        if not self._initialized or self._closed:
+            return []
+        try:
+            fut = self._executor.submit(
+                self._sync_query_worst_sprints, last_n
+            )
+            return fut.result()
+        except Exception:
+            return []
+
+    def _sync_query_worst_sprints(self, last_n: int) -> list[dict]:
+        """
+        Sync — MUST be called on the worker thread.
+
+        Sprint F192F §2: uses findings_per_minute (matches sprint_scorecard naming).
+        """
+        try:
+            conn = self._file_conn if self._db_path else self._persistent_conn
+            if conn is None:
+                return []
+            sql =                 """
+                SELECT sprint_id, ts, new_findings, duration_s,
+                       findings_per_minute, synthesis_confidence,
+                       ROUND(new_findings / MAX(duration_s / 60, 0.001), 4)
+                       AS yield_per_min
+                FROM sprint_delta
+                WHERE new_findings > 0 AND duration_s > 0
+                ORDER BY yield_per_min ASC
+                LIMIT ?
+                """
+            rows = conn.execute(sql, [last_n])
+            rows = list(self.arrow_fetch_batch(conn, sql, [last_n]))
+            return [
+                {
+                    "sprint_id": r[0],
+                    "ts": r[1],
+                    "new_findings": r[2] or 0,
+                    "duration_s": r[3] or 0.0,
+                    "findings_per_min": r[4] or 0.0,
+                    "synthesis_confidence": r[5] or 0.0,
+                    "yield_per_min": r[6] or 0.0,
+                }
+                for r in rows
+            ]
+        except Exception:
+            return []
+
+    # ------------------------------------------------------------------
+    # Public Activation API — WAL-first async wrappers (Sprint 8B)
+    # ------------------------------------------------------------------
+
+    async def async_record_activation(
+        self,
+        finding_id: str,
+        query: str,
+        source_type: str,
+        confidence: float,
+    ) -> ActivationResult:
+        """
+        Record a single finding with WAL-first semantics.
+
+        Order: LMDB WAL first → DuckDB second.
+        If LMDB OK but DuckDB FAIL → desync=True, LMDB record preserved.
+        Caller always receives an ActivationResult.
+
+        Args:
+            finding_id:  Unique finding identifier
+            query:       Research query text
+            source_type: Source type (e.g., "web", "document", "synthetic")
+            confidence:  Confidence score [0.0, 1.0]
+
+        Returns:
+            ActivationResult with typed fields (never a raw dict)
+        """
+        if not self._initialized or self._closed:
+            return ActivationResult(
+                finding_id=finding_id,
+                lmdb_success=False,
+                duckdb_success=None,
+                lmdb_key=f"finding:{finding_id}",
+                desync=False,
+                error="store closed or not initialized",
+                accepted=False,
+            )
+
+        # Sprint 8L: Boot barrier — wait for startup replay to complete before accepting writes
+        if not self._startup_ready.is_set():
+            try:
+                async with asyncio.timeout(30.0):
+                    await self._startup_ready.wait()
+            except TimeoutError:
+                return ActivationResult(
+                    finding_id=finding_id,
+                    lmdb_success=False,
+                    duckdb_success=None,
+                    lmdb_key=f"finding:{finding_id}",
+                    desync=False,
+                    error="startup replay timeout",
+                    accepted=False,
+                )
+
+        loop = asyncio.get_running_loop()
+        try:
+            result = await loop.run_in_executor(
+                self._executor,
+                self._activation_record_finding,
+                finding_id, query, source_type, confidence,
+            )
+            # result is a dict from _activation_record_finding — normalize to ActivationResult
+            desync = bool(result.get("lmdb_success") and result.get("duckdb_success") is False)
+            return ActivationResult(
+                finding_id=str(finding_id),
+                lmdb_success=bool(result.get("lmdb_success")),
+                duckdb_success=result.get("duckdb_success"),
+                lmdb_key=f"finding:{finding_id}",
+                desync=desync,
+                error=None,
+                accepted=True,
+            )
+        except Exception as e:
+            return ActivationResult(
+                finding_id=str(finding_id),
+                lmdb_success=False,
+                duckdb_success=None,
+                lmdb_key=f"finding:{finding_id}",
+                desync=False,
+                error=str(e),
+                accepted=False,
+            )
+
+    async def async_record_activation_batch(
+        self,
+        findings: list[dict[str, Any]],
+    ) -> list[ActivationResult]:
+        """
+        Record multiple findings with WAL-first semantics.
+
+        Order: LMDB WAL first (via put_many) → DuckDB second (chunked batch).
+        Returns one ActivationResult per finding in input order.
+        Partial failure: if LMDB OK but DuckDB fails for some/all,
+        those entries get desync=True.
+
+        Args:
+            findings: List of dicts, each must contain:
+                      id, query, source_type, confidence
+
+        Returns:
+            list[ActivationResult] — one per finding
+        """
+        if not self._initialized or self._closed:
+            return [
+                ActivationResult(
+                    finding_id=str(f.get("id", "")),
+                    lmdb_success=False,
+                    duckdb_success=None,
+                    lmdb_key=f"finding:{f.get('id', '')}",
+                    desync=False,
+                    error="store closed or not initialized",
+                )
+                for f in findings
+            ]
+
+        # Sprint 8L: Boot barrier — wait for startup replay to complete before accepting writes
+        if not self._startup_ready.is_set():
+            try:
+                async with asyncio.timeout(30.0):
+                    await self._startup_ready.wait()
+            except TimeoutError:
+                return [
+                    ActivationResult(
+                        finding_id=str(f.get("id", "")),
+                        lmdb_success=False,
+                        duckdb_success=None,
+                        lmdb_key=f"finding:{f.get('id', '')}",
+                        desync=False,
+                        error="startup replay timeout",
+                    )
+                    for f in findings
+                ]
+
+        loop = asyncio.get_running_loop()
+        try:
+            result = await loop.run_in_executor(
+                self._executor,
+                self._activation_record_findings_batch,
+                findings,
+            )
+            # Map batch result back to per-finding ActivationResults
+            lmdb_ok = result.get("lmdb_success", False)
+            duckdb_ok = result.get("duckdb_success", False)
+            failed_ids = set(result.get("failed_ids", []))
+            [f.get("id") for f in findings if f.get("id")]
+
+            results: list[ActivationResult] = []
+            for f in findings:
+                fid = f.get("id", "")
+                lmdb_success = lmdb_ok and fid not in failed_ids
+                duckdb_success = None
+                if lmdb_ok:
+                    duckdb_success = duckdb_ok and fid not in failed_ids
+                desync = bool(lmdb_ok and duckdb_success is False)
+                results.append(ActivationResult(
+                    finding_id=str(fid),
+                    lmdb_success=lmdb_success,
+                    duckdb_success=duckdb_success,
+                    lmdb_key=f"finding:{fid}",
+                    desync=desync,
+                    error=None,
+                ))
+            return results
+        except Exception as e:
+            return [
+                ActivationResult(
+                    finding_id=str(f.get("id", "")),
+                    lmdb_success=False,
+                    duckdb_success=None,
+                    lmdb_key=f"finding:{f.get('id', '')}",
+                    desync=False,
+                    error=str(e),
+                )
+                for f in findings
+            ]
+
+
+    # ------------------------------------------------------------------
+    # Sprint 8P: CanonicalFinding DTO — typed ingest API
+    # ------------------------------------------------------------------
+
+    async def async_record_canonical_finding(
+        self,
+        finding: CanonicalFinding,
+    ) -> ActivationResult:
+        """
+        Sprint 8P: Typed ingest API for CanonicalFinding DTO.
+
+        Adapts DTO → existing WAL-first activation path.
+        Používá stejný single-thread write executor jako stávající API.
+
+        DTO → storage contract mapping:
+          finding.finding_id  → id
+          finding.query       → query
+          finding.source_type → source_type
+          finding.confidence  → confidence
+          finding.ts          → ts (in WAL only)
+          finding.provenance  → LMDB WAL payload (DuckDB nemá provenance sloupec)
+          finding.payload_text → LMDB WAL payload (DuckDB nemá payload_text sloupec)
+
+        Returns ActivationResult with same contract as async_record_activation.
+
+        Provenance: tvrdý invariant — stored in LMDB WAL payload only
+        (DuckDB schema nemá provenance_sloupec; backward-compatible,
+         probe_8l/probe_8h/probe_8f/probe_8b zůstávají kompatibilní)
+        """
+        # Sprint F262OBS: normalize source_type at ingest seam — unknown / legacy
+        # strings are routed via canonical_source_type() so DuckDB never sees
+        # an unregistered value. Forward-compat: unknown values are passed
+        # through unchanged (not dropped) so a finding recorded today still
+        # resolves on a future schema bump.
+        if canonical_source_type is not None and finding.source_type:
+            try:
+                _raw = (
+                    finding.source_type.value
+                    if isinstance(finding.source_type, SourceType)
+                    else str(finding.source_type)
+                )
+                if SourceType is not None and _raw not in SourceType._value2member_map_:
+                    finding.source_type = canonical_source_type(_raw)  # type: ignore[assignment]
+            except Exception:
+                # Fail-soft: never block ingest on a bad source_type string.
+                pass
+
+        if not self._initialized or self._closed:
+            return ActivationResult(
+                finding_id=finding.finding_id,
+                lmdb_success=False,
+                duckdb_success=None,
+                lmdb_key=f"finding:{finding.finding_id}",
+                desync=False,
+                error="store closed or not initialized",
+                accepted=False,
+            )
+
+        # Boot barrier (Sprint 8L)
+        if not self._startup_ready.is_set():
+            try:
+                async with asyncio.timeout(30.0):
+                    await self._startup_ready.wait()
+            except TimeoutError:
+                return ActivationResult(
+                    finding_id=finding.finding_id,
+                    lmdb_success=False,
+                    duckdb_success=None,
+                    lmdb_key=f"finding:{finding.finding_id}",
+                    desync=False,
+                    error="startup replay timeout",
+                    accepted=False,
+                )
+
+        loop = asyncio.get_running_loop()
+        try:
+            result = await loop.run_in_executor(
+                self._executor,
+                self._canonical_finding_to_activation_result,
+                finding,
+            )
+            desync = bool(result.get("lmdb_success") and result.get("duckdb_success") is False)
+            lmdb_ok = bool(result.get("lmdb_success"))
+            return ActivationResult(
+                finding_id=str(finding.finding_id),
+                lmdb_success=lmdb_ok,
+                duckdb_success=result.get("duckdb_success"),
+                lmdb_key=f"finding:{finding.finding_id}",
+                desync=desync,
+                error=result.get("error"),
+                accepted=lmdb_ok,
+            )
+        except Exception as e:
+            return ActivationResult(
+                finding_id=str(finding.finding_id),
+                lmdb_success=False,
+                duckdb_success=None,
+                lmdb_key=f"finding:{finding.finding_id}",
+                desync=False,
+                error=str(e),
+                accepted=False,
+            )
+
+    def _canonical_finding_to_activation_result(
+        self,
+        finding: CanonicalFinding,
+    ) -> dict:
+        """
+        Sync wrapper: CanonicalFinding DTO → ActivationResult dict.
+
+        Sprint 8R: DTO → storage contract mapping:
+          finding.finding_id  → id
+          finding.query       → query
+          finding.source_type → source_type
+          finding.confidence  → confidence
+          finding.ts          → ts (DOUBLE in DuckDB)
+          finding.provenance  → provenance_json (JSON TEXT in DuckDB via msgspec)
+          finding.payload_text → LMDB WAL payload only
+
+        LMDB WAL uses msgspec.json.encode for consistent serialization.
+        DuckDB insert uses tuple row (efficient, not dict list).
+        """
+        import logging as _logging
+
+        _logger = _logging.getLogger(__name__)
+        result = {
+            "lmdb_success": False,
+            "duckdb_success": None,
+            "error": None,
+        }
+
+        # Step 1: LMDB WAL first — msgspec serialization
+        try:
+            if not hasattr(self, "_wal_manager") or self._wal_manager is None:
+                _wal_root = self._db_path.parent if self._db_path else None
+                if _wal_root is None:
+                    result["error"] = "no wal root"
+                    return result
+                self._wal_manager = WALManager(wal_path=str(_wal_root / "shadow_wal.lmdb"))
+                self._wal_manager.initialize()
+
+            key = f"finding:{finding.finding_id}"
+            wal_payload = {
+                "id": finding.finding_id,
+                "query": finding.query,
+                "source_type": finding.source_type,
+                "confidence": finding.confidence,
+                "ts": finding.ts,
+                "provenance": finding.provenance,
+                "payload_text": finding.payload_text,
+            }
+            lmdb_ok = self._wal_manager.wal_put(key, wal_payload)
+            result["lmdb_success"] = lmdb_ok
+            if not lmdb_ok:
+                _logger.warning(f"[Sprint 8P] WAL failed for {finding.finding_id}")
+                return result
+        except Exception as e:
+            result["error"] = str(e)
+            _logger.error(f"[Sprint 8P] WAL exception for {finding.finding_id}: {e}")
+            return result
+
+        # Step 2: DuckDB second — serialize provenance to JSON and pass ts + provenance_json
+        try:
+            # Serialize provenance tuple to JSON for DuckDB storage
+            provenance_json = _CANONICAL_ENCODER.encode(finding.provenance).decode("utf-8")
+            duckdb_ok = self._sync_insert_finding(
+                finding.finding_id,
+                finding.query,
+                finding.source_type,
+                finding.confidence,
+                ts=finding.ts,
+                provenance_json=provenance_json,
+            )
+            result["duckdb_success"] = duckdb_ok
+            if not duckdb_ok:
+                _logger.error(f"[Sprint 8P] DuckDB failed for {finding.finding_id}, LMDB preserved")
+                self._wal_manager.wal_write_pending_sync_marker(
+                    finding.finding_id, finding.query, finding.source_type, finding.confidence,
+                )
+        except Exception as e:
+            result["duckdb_success"] = False
+            result["error"] = str(e)
+            _logger.error(f"[Sprint 8P] DuckDB exception for {finding.finding_id}: {e}, LMDB preserved")
+            self._wal_manager.wal_write_pending_sync_marker(
+                finding.finding_id, finding.query, finding.source_type, finding.confidence,
+            )
+
+        return result
+
+    async def _record_fail_open_batch(
+        self,
+        findings: list[CanonicalFinding],
+        results: list,
+        indices: list[int],
+    ) -> list[dict]:
+        """
+        Sprint D7: Batch fail-open path — process N findings whose quality gate threw.
+
+        Replaces N × async_record_canonical_finding() calls with one batch call.
+        Order: LMDB WAL first (per finding via wal_put_many) → DuckDB second (single executemany).
+
+        Returns list[dict] — one per finding in input order, indexed into results by indices.
+        """
+        import logging as _logging
+
+        _logger = _logging.getLogger(__name__)
+
+        if not findings:
+            return []
+
+        ret: list[dict] = []
+
+        # Step 1: LMDB WAL — batch via wal_put_many per finding
+        lmdb_ok = False
+        try:
+            if not hasattr(self, "_wal_manager") or self._wal_manager is None:
+                _wal_root = self._db_path.parent if self._db_path else None
+                if _wal_root is None:
+                    for f in findings:  # noqa: B007
+                        ret.append({
+                            "lmdb_success": False,
+                            "duckdb_success": None,
+                            "error": "no wal root",
+                        })
+                    return ret
+                self._wal_manager = WALManager(wal_path=str(_wal_root / "shadow_wal.lmdb"))
+                self._wal_manager.initialize()
+
+            items = []
+            for f in findings:
+                key = f"finding:{f.finding_id}"
+                wal_payload = {
+                    "id": f.finding_id,
+                    "query": f.query,
+                    "source_type": f.source_type,
+                    "confidence": f.confidence,
+                    "ts": f.ts,
+                    "provenance": f.provenance,
+                    "payload_text": f.payload_text,
+                }
+                items.append((key, wal_payload))
+
+            if items:
+                lmdb_ok = self._wal_manager.wal_put_many(items) if hasattr(
+                    self._wal_manager, "wal_put_many"
+                ) else False
+                if not lmdb_ok:
+                    _logger.warning(f"[D7] Batch WAL failed for {len(items)} items")
+                    for f in findings:  # noqa: B007
+                        ret.append({
+                            "lmdb_success": False,
+                            "duckdb_success": None,
+                            "error": "lmdb batch failed",
+                        })
+                    return ret
+        except Exception as e:
+            _logger.error(f"[D7] Batch WAL exception: {e}")
+            for f in findings:  # noqa: B007
+                ret.append({
+                    "lmdb_success": False,
+                    "duckdb_success": None,
+                    "error": str(e),
+                })
+            return ret
+
+        # Step 2: DuckDB — tuple rows via executemany (batch, ~10× faster than N individual inserts)
+        duckdb_all_ok = False
+        try:
+            rows: list[list] = []
+            for f in findings:
+                provenance_json = _CANONICAL_ENCODER.encode(f.provenance).decode("utf-8")
+                rows.append([
+                    f.finding_id, f.query, f.source_type, f.confidence,
+                    f.ts, provenance_json,
+                ])
+            inserted = self._sync_insert_findings_bulk_as_tuples(rows)
+            duckdb_all_ok = inserted >= len(findings)
+            if inserted < len(findings):
+                _logger.error(f"[D7] Partial DuckDB batch: {inserted}/{len(findings)}")
+        except Exception as e:
+            _logger.error(f"[D7] Batch DuckDB exception: {e}, LMDB preserved")
+            duckdb_all_ok = False
+
+        # Build per-finding results
+        accepted_total = 0
+        for f in findings:  # noqa: B007
+            lmdb_success = lmdb_ok
+            if lmdb_success:
+                accepted_total += 1
+            ret.append({
+                "lmdb_success": lmdb_success,
+                "duckdb_success": duckdb_all_ok,
                 "error": None,
+            })
+
+        if accepted_total:
+            self._quality_state._accepted_count += accepted_total
+
+        return ret
+
+    async def async_record_canonical_findings_batch(
+        self,
+        findings: list[CanonicalFinding],
+    ) -> list[ActivationResult]:
+        """
+        Sprint 8P: Batch typed ingest API for CanonicalFinding DTO list.
+
+        Adapts DTO list → existing WAL-first batch activation path.
+        Používá stejný single-thread write executor jako stávající API.
+
+        Returns list[ActivationResult] — 1:1 mapping, len(results) == len(findings).
+        Partial failure: pokud nějaký finding selže, ostatní jsou still processed.
+        Celý batch neshodí kvůli jednomu vadnému findingu.
+        """
+        if not findings:
+            return []
+
+        if not self._initialized or self._closed:
+            return [
+                ActivationResult(
+                    finding_id=str(f.finding_id),
+                    lmdb_success=False,
+                    duckdb_success=None,
+                    lmdb_key=f"finding:{f.finding_id}",
+                    desync=False,
+                    error="store closed or not initialized",
+                    accepted=False,
+                )
+                for f in findings
+            ]
+
+        # Boot barrier (Sprint 8L)
+        if not self._startup_ready.is_set():
+            try:
+                async with asyncio.timeout(30.0):
+                    await self._startup_ready.wait()
+            except TimeoutError:
+                return [
+                    ActivationResult(
+                        finding_id=str(f.finding_id),
+                        lmdb_success=False,
+                        duckdb_success=None,
+                        lmdb_key=f"finding:{f.finding_id}",
+                        desync=False,
+                        error="startup replay timeout",
+                        accepted=False,
+                    )
+                    for f in findings
+                ]
+
+        loop = asyncio.get_running_loop()
+        try:
+            results = await loop.run_in_executor(
+                self._executor,
+                self._canonical_findings_batch_to_activation_results,
+                findings,
+            )
+            # results is list[dict] — normalize to list[ActivationResult]
+            # Sprint 8QA/8TF: trigger graph ingest in background (fire-and-forget via _bg_tasks)
+            # GUARD: check capability before triggering — DuckPGQGraph does not have
+            # buffer_ioc/flush_buffers. Silent no-op would hide a miswired attachment.
+            if (
+                results
+                and any(r.get("lmdb_success") for r in results)
+                and self.truth_write_graph_supports_buffered_writes()
+            ):
+                self._graph_ingest_findings(findings)
+
+            # Sprint 8SB: trigger semantic buffer in background
+            if results and any(r.get("lmdb_success") for r in results):
+                self._semantic_buffer_findings(findings)
+
+            # Count accepted (lmdb_success) findings for _accepted_count
+            accepted_total = sum(1 for r in results if r.get("lmdb_success"))
+            self._quality_state._accepted_count += accepted_total
+
+            return [
+                ActivationResult(
+                    finding_id=str(r.get("finding_id", "")),
+                    lmdb_success=bool(r.get("lmdb_success")),
+                    duckdb_success=r.get("duckdb_success"),
+                    lmdb_key=f"finding:{r.get('finding_id', '')}",
+                    desync=bool(r.get("lmdb_success") and r.get("duckdb_success") is False),
+                    error=r.get("error"),
+                    accepted=bool(r.get("lmdb_success")),
+                )
+                for r in results
+            ]
+        except Exception as e:
+            return [
+                ActivationResult(
+                    finding_id=str(f.finding_id),
+                    lmdb_success=False,
+                    duckdb_success=None,
+                    lmdb_key=f"finding:{f.finding_id}",
+                    desync=False,
+                    error=str(e),
+                    accepted=False,
+                )
+                for f in findings
+            ]
+
+    async def async_record_canonical_findings_batch_arrow(
+        self,
+        findings: list[CanonicalFinding],
+    ) -> list[ActivationResult]:
+        """
+        Sprint P0-4: Arrow zero-copy batch ingest for CanonicalFinding DTO list.
+
+        3-stupňový fallback na legacy `async_record_canonical_findings_batch`:
+          1. pyarrow chybí (try/except import) → legacy
+          2. `HLEDAC_ARROW_INGEST == "0"` (env gate, default ON, opt-out) → legacy
+          3. `len(findings) < _ARROW_MIN_BATCH` (default 20, F265C lowered from 50) → legacy
+          4. sync helper vrátí 0 (jakýkoliv error v Table build / register / INSERT) → legacy
+
+        Při úspěchu: WAL first (LMDB put_many) + DuckDB Arrow register+INSERT (one roundtrip).
+        Zero-copy: pa.array() drží C++ buffery, DuckDB čte přes Arrow C Data Interface.
+
+        Invarianty (shodné s legacy):
+          - 1:1 result mapping (len(results) == len(findings))
+          - `self._quality_state._accepted_count` += count of lmdb_success
+          - graph + semantic buffer triggered for accepted findings
+          - thread-affine execution on `self._executor`
+          - LMDB WAL precedes DuckDB (recovery invariant)
+
+        Returns list[ActivationResult]. Empty list for empty findings input.
+        """
+        if not findings:
+            return []
+
+        # Fallback gate 1: env opt-in
+        if not _ARROW_INGEST_ENABLED:
+            _ARROW_METRICS["arrow_fallback_env"] += len(findings)
+            logger.debug(
+                "[D7-arrow-fallback] HLEDAC_ARROW_INGEST=0, using legacy path "
+                f"for {len(findings)} findings"
+            )
+            return await self.async_record_canonical_findings_batch(findings)
+
+        # Fallback gate 2: batch size — executemany is faster for small N
+        if len(findings) < _ARROW_MIN_BATCH:
+            _ARROW_METRICS["arrow_fallback_batch"] += len(findings)
+            logger.debug(
+                f"[D7-arrow-fallback] batch size {len(findings)} < "
+                f"_ARROW_MIN_BATCH({_ARROW_MIN_BATCH}), using legacy path"
+            )
+            return await self.async_record_canonical_findings_batch(findings)
+
+        # Fallback gate 3: pyarrow availability (lazy import)
+        try:
+            import pyarrow  # noqa: F401
+        except ImportError:
+            _ARROW_METRICS["arrow_fallback_pyarrow"] += len(findings)
+            logger.debug(
+                "[D7-arrow-fallback] pyarrow not available, using legacy path "
+                f"for {len(findings)} findings"
+            )
+            return await self.async_record_canonical_findings_batch(findings)
+
+        # Init / closed guards — mirror legacy semantics (mark all as failed)
+        if not self._initialized or self._closed:
+            return await self.async_record_canonical_findings_batch(findings)
+
+        # Boot barrier — same as legacy (30s timeout, fail-soft)
+        if not self._startup_ready.is_set():
+            try:
+                async with asyncio.timeout(30.0):
+                    await self._startup_ready.wait()
+            except TimeoutError:
+                _ARROW_METRICS["arrow_fallback_init"] += len(findings)
+                return await self.async_record_canonical_findings_batch(findings)
+
+        loop = asyncio.get_running_loop()
+        try:
+            results = await loop.run_in_executor(
+                self._executor,
+                self._sync_record_canonical_findings_batch_arrow_full,
+                findings,
+            )
+        except Exception as exc:
+            # Any executor-side failure (pyarrow missing at worker import, etc.)
+            # → fall back to proven executemany path. This is the 4th fallback gate.
+            _ARROW_METRICS["arrow_fallback_executor"] += len(findings)
+            logger.warning(
+                f"[D7-arrow-fallback] executor error ({exc}), using legacy path "
+                f"for {len(findings)} findings"
+            )
+            return await self.async_record_canonical_findings_batch(findings)
+
+        # Fallback gate 4: empty results from sync helper = failure (table build
+        # error, register error, INSERT error). Empty list = legacy returns
+        # [] only for empty input, which we already filtered above.
+        if not results:
+            _ARROW_METRICS["arrow_fallback_empty"] += len(findings)
+            _logger.error(
+                "[D7] Arrow path returned 0 results for %d findings — "
+                "falling back to legacy executemany. "
+                "Enable HLEDAC_ARROW_INGEST=0 to use legacy path only.",
+                len(findings),
+            )
+            return await self.async_record_canonical_findings_batch(findings)
+
+        # Fallback gate 5: complete DuckDB failure (all duckdb_success=False)
+        # despite non-empty results → fall back so canonical write is guaranteed.
+        if results and all(r.get("duckdb_success") is False for r in results):
+            _ARROW_METRICS["arrow_fallback_all_fail"] += len(results)
+            # Typed error telemetry — distinguish DuckDB insert failure from
+            # partial-write (ON CONFLICT DO NOTHING silently skipped rows).
+            errors_in_results = [r.get("error") for r in results if r.get("error")]
+            if errors_in_results and errors_in_results[0] == "duckdb_error":
+                _ARROW_METRICS["arrow_error_duckdb_insert"] += len(results)
+            elif errors_in_results and errors_in_results[0] == "table_build":
+                _ARROW_METRICS["arrow_error_table_build"] += len(results)
+            else:
+                # Partial write: some inserted, some silently skipped (ON CONFLICT)
+                _ARROW_METRICS["arrow_error_partial"] += len(results)
+            logger.error(
+                "[D7] Arrow path: all %d findings failed DuckDB write — "
+                "falling back to legacy executemany.",
+                len(results),
+            )
+            return await self.async_record_canonical_findings_batch(findings)
+
+        # Post-processing — identical to async_record_canonical_findings_batch
+        # (graph trigger, semantic buffer, _accepted_count, ActivationResult build).
+        if results and any(r.get("lmdb_success") for r in results):
+            if self.truth_write_graph_supports_buffered_writes():
+                self._graph_ingest_findings(findings)
+            self._semantic_buffer_findings(findings)
+
+        accepted_total = sum(1 for r in results if r.get("lmdb_success"))
+        self._quality_state._accepted_count += accepted_total
+
+        # Sprint P1-3: Arrow path success telemetry
+        _ARROW_METRICS["arrow_selected"] += len(findings)
+        _ARROW_METRICS["arrow_success_count"] += len(findings)
+        lmdb_ok = sum(1 for r in results if r.get("lmdb_success"))
+        duckdb_ok = sum(1 for r in results if r.get("duckdb_success"))
+        _ARROW_METRICS["arrow_success_lmdb_count"] += lmdb_ok
+        _ARROW_METRICS["arrow_success_duckdb_count"] += duckdb_ok
+        logger.info(
+            f"[D7-arrow] path=arrow batch={len(findings)} "
+            f"lmdb_ok={lmdb_ok} duckdb_ok={duckdb_ok}"
+        )
+
+        return [
+            ActivationResult(
+                finding_id=str(r.get("finding_id", "")),
+                lmdb_success=bool(r.get("lmdb_success")),
+                duckdb_success=r.get("duckdb_success"),
+                lmdb_key=f"finding:{r.get('finding_id', '')}",
+                desync=bool(r.get("lmdb_success") and r.get("duckdb_success") is False),
+                error=r.get("error"),
+                accepted=bool(r.get("lmdb_success")),
+            )
+            for r in results
+        ]
+
+    # ------------------------------------------------------------------
+    # Sprint F800A: Controller-facing async seam — thin adapters
+    # ------------------------------------------------------------------
+
+    async def async_get_recent_findings(
+        self,
+        limit: int = 10,
+    ) -> list[CanonicalFinding]:
+        """
+        Sprint F800A: Controller-facing async adapter for recent findings.
+
+        Thin wrapper around async_query_recent_findings — converts raw dict rows
+        to CanonicalFinding instances so callers receive typed DTOs.
+
+        Thread-safe, non-blocking — runs on duckdb_worker via run_in_executor.
+        Returns empty list if store is closed or uninitialized.
+
+        Args:
+            limit: Maximum number of findings to return (ordered by ts DESC).
+
+        Returns:
+            list[CanonicalFinding] — ordered by ts descending, most recent first.
+        """
+        if not self._initialized or self._closed:
+            return []
+
+        loop = asyncio.get_running_loop()
+        try:
+            rows: list[dict] = await loop.run_in_executor(
+                self._executor,
+                self._sync_query_findings,
+                limit,
+            )
+        except Exception:
+            return []
+
+        findings: list[CanonicalFinding] = []
+        for row in rows:
+            try:
+                # Reconstruct provenance tuple from stored JSON string
+                provenance: tuple[str, ...] = ()
+                raw_prov = row.get("provenance_json") or row.get("provenance")
+                if raw_prov:
+                    if isinstance(raw_prov, str):
+                        try:
+                            decoded = msgspec.json.decode(raw_prov.encode())
+                            if isinstance(decoded, list):
+                                provenance = tuple(str(v) for v in decoded)
+                        except Exception:
+                            provenance = ()
+                    elif isinstance(raw_prov, list):
+                        provenance = tuple(str(v) for v in raw_prov)
+
+                finding = CanonicalFinding(
+                    finding_id=str(row.get("id", row.get("finding_id", ""))),
+                    query=str(row.get("query", "")),
+                    source_type=str(row.get("source_type", "")),
+                    confidence=float(row.get("confidence", 0.0)),
+                    ts=float(row.get("ts", 0.0)),
+                    provenance=provenance,
+                    payload_text=row.get("payload_text"),
+                )
+                findings.append(finding)
+            except Exception:
+                # Malformed row — skip, do not crash
+                continue
+
+        return findings
+
+    # ── Sprint F202K: target_profiles async API ───────────────────────────────
+
+    async def async_upsert_target_profile(self, profile: TargetProfileSummary) -> None:
+        """
+        Sprint F202K: Insert or update a target profile.
+
+        Thread-safe, non-blocking — runs on duckdb_worker via run_in_executor.
+        Silently fails if store is closed or uninitialized.
+        """
+        if not self._initialized or self._closed:
+            return
+        loop = asyncio.get_running_loop()
+        try:
+            await loop.run_in_executor(
+                self._executor,
+                self._sync_upsert_target_profile,
+                profile,
+            )
+        except Exception:
+            pass
+
+    async def async_get_target_profile(self, target_id: str) -> TargetProfileSummary | None:
+        """
+        Sprint F202K: Get a target profile by target_id.
+
+        Thread-safe, non-blocking — runs on duckdb_worker via run_in_executor.
+        Returns None if not found or on error.
+        """
+        if not self._initialized or self._closed:
+            return None
+        loop = asyncio.get_running_loop()
+        try:
+            return await loop.run_in_executor(
+                self._executor,
+                self._sync_get_target_profile,
+                target_id,
+            )
+        except Exception:
+            return None
+
+    # ── Sprint F204D: target_memory async API ─────────────────────────────────
+
+    async def async_upsert_target_memory(self, memory: TargetMemory) -> None:
+        """
+        Sprint F204D: Insert or update target memory from a TargetMemory.
+
+        Thread-safe, non-blocking — runs on duckdb_worker via run_in_executor.
+        Silently fails if store is closed or uninitialized.
+
+        F206H FIX: Previously accepted TargetMemoryUpdate and silently failed
+        (type mismatch with _sync_upsert_target_memory which expects TargetMemory).
+        Now accepts TargetMemory directly — caller (SprintScheduler) passes
+        the already-merged memory from TargetMemoryService.merge_update().
+        """
+        if not self._initialized or self._closed:
+            return
+        loop = asyncio.get_running_loop()
+        try:
+            await loop.run_in_executor(
+                self._executor,
+                self._sync_upsert_target_memory,
+                memory,
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            pass
+
+    async def async_get_target_memory(self, target_id: str) -> TargetMemory | None:
+        """
+        Sprint F204D: Get target memory by target_id.
+
+        Thread-safe, non-blocking — runs on duckdb_worker via run_in_executor.
+        Returns None if not found or on error.
+        """
+        if not self._initialized or self._closed:
+            return None
+        loop = asyncio.get_running_loop()
+        try:
+            from hledac.universal.knowledge.target_memory import TargetMemory
+
+            def _sync_get():
+                conn = self._file_conn if self._db_path else self._persistent_conn
+                if conn is None:
+                    return None
+                result = conn.execute(
+                    "SELECT * FROM target_memory WHERE target_id = ?", [target_id]
+                ).fetchone()
+                if result is None:
+                    return None
+                return TargetMemory(
+                    target_id=result[0],
+                    first_seen_ts=result[1],
+                    last_seen_ts=result[2],
+                    sprint_count=result[3],
+                    cumulative_finding_count=result[4],
+                    entity_facets=_json_loads_flexible(result[5]),
+                    exposure_facets=_json_loads_flexible(result[6]),
+                    pivot_facets=_json_loads_flexible(result[7]),
+                    confidence_drift=_json_loads_flexible(result[8]),
+                    updated_by_sprint_id=result[9],
+                )
+
+            return await loop.run_in_executor(self._executor, _sync_get)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            return None
+
+    async def async_get_previous_findings_for_target(
+        self,
+        target_id: str,
+        before_sprint_id: str | None = None,
+        limit: int = 1000,
+    ) -> list[CanonicalFinding]:
+        """
+        Sprint F202K: Get previous findings for a target, optionally before a specific sprint.
+
+        Thread-safe, non-blocking — runs on duckdb_worker via run_in_executor.
+        Returns canonical findings ordered by ts DESC.
+
+        Args:
+            target_id: The target identifier to filter findings by.
+            before_sprint_id: Optional sprint ID to filter findings before this sprint.
+            limit: Maximum number of findings to return (default 1000).
+
+        Returns:
+            list[CanonicalFinding] — ordered by ts descending, most recent first.
+            Returns empty list if store is closed, uninitialized, or query fails.
+        """
+        if not self._initialized or self._closed:
+            return []
+        loop = asyncio.get_running_loop()
+        try:
+            rows: list[dict] = await loop.run_in_executor(
+                self._executor,
+                self._sync_get_previous_findings_for_target,
+                target_id,
+                before_sprint_id,
+                limit,
+            )
+        except Exception:
+            return []
+
+        findings: list[CanonicalFinding] = []
+        for row in rows:
+            try:
+                provenance: tuple[str, ...] = ()
+                raw_prov = row.get("provenance_json") or row.get("provenance")
+                if raw_prov:
+                    if isinstance(raw_prov, str):
+                        try:
+                            decoded = msgspec.json.decode(raw_prov.encode())
+                            if isinstance(decoded, list):
+                                provenance = tuple(str(v) for v in decoded)
+                        except Exception:
+                            provenance = ()
+                    elif isinstance(raw_prov, list):
+                        provenance = tuple(str(v) for v in raw_prov)
+
+                finding = CanonicalFinding(
+                    finding_id=str(row.get("finding_id", row.get("id", ""))),
+                    query=str(row.get("query", "")),
+                    source_type=str(row.get("source_type", "")),
+                    confidence=float(row.get("confidence", 0.0)),
+                    ts=float(row.get("ts", 0.0)),
+                    provenance=provenance,
+                    payload_text=row.get("payload_text"),
+                )
+                findings.append(finding)
+            except Exception:
+                continue
+        return findings
+
+    # ── Sprint F203G: hypothesis_feedback async API ───────────────────────────
+
+    async def async_record_hypothesis_feedback(
+        self,
+        record: Any,
+    ) -> bool:
+        """
+        Sprint F203G: Record a single hypothesis_feedback entry.
+
+        Thread-safe, non-blocking — runs on duckdb_worker via run_in_executor.
+        Silently fails if store is closed or uninitialized.
+
+        Args:
+            record: HypothesisFeedbackRecord (frozen dataclass) with fields:
+                id, target_id, pivot_type, ioc_type, produced_count,
+                accepted_count, signal_value, ts.
+
+        Returns:
+            True if recorded, False otherwise.
+        """
+        if not self._initialized or self._closed:
+            return False
+        loop = asyncio.get_running_loop()
+        try:
+            return await loop.run_in_executor(
+                self._executor,
+                self._sync_record_hypothesis_feedback,
+                record,
+            )
+        except Exception:
+            return False
+
+    async def async_get_hypothesis_feedback(
+        self,
+        target_id: str | None = None,
+        limit: int = 1000,
+    ) -> list[Any]:
+        """
+        Sprint F203G: Fetch aggregated hypothesis_feedback records.
+
+        Thread-safe, non-blocking — runs on duckdb_worker via run_in_executor.
+
+        Args:
+            target_id: If provided, filter by target_id. If None, returns all.
+            limit: Maximum records to return (default 1000).
+
+        Returns:
+            List of HypothesisFeedbackRecord instances ordered by ts DESC.
+            Returns empty list if store is closed or uninitialized.
+        """
+        if not self._initialized or self._closed:
+            return []
+        loop = asyncio.get_running_loop()
+        try:
+            rows: list[dict] = await loop.run_in_executor(
+                self._executor,
+                self._sync_get_hypothesis_feedback,
+                target_id,
+                limit,
+            )
+        except Exception:
+            return []
+
+        from hledac.universal.runtime.hypothesis_feedback import HypothesisFeedbackRecord
+        records: list[Any] = []
+        for row in rows:
+            try:
+                records.append(HypothesisFeedbackRecord(
+                    id=str(row["id"]),
+                    target_id=str(row["target_id"]),
+                    pivot_type=str(row["pivot_type"]),
+                    ioc_type=str(row["ioc_type"]),
+                    produced_count=int(row["produced_count"] or 0),
+                    accepted_count=int(row["accepted_count"] or 0),
+                    signal_value=float(row["signal_value"] or 0.0),
+                    ts=float(row["ts"] or 0.0),
+                ))
+            except Exception:
+                continue
+        return records
+
+    # ── F214: Hypothesis tracking (cross-sprint persistence) ───────────────
+
+    async def async_record_hypothesis_tracking(
+        self,
+        hypothesis_id: str,
+        sprint_id: str,
+        hypothesis_text: str,
+        status: str,
+        confidence: float,
+        falsification_result: str | None = None,
+        disproved_by_sprint_id: str | None = None,
+    ) -> bool:
+        """
+        F214: Persist a hypothesis tracking record for cross-sprint lineage.
+        Supports: "we hypothesized X in sprint N, disproved by sprint M."
+
+        Thread-safe, non-blocking — runs on duckdb_worker via run_in_executor.
+        Fail-soft: returns False silently on error.
+        """
+        if not self._initialized or self._closed:
+            return False
+        loop = asyncio.get_running_loop()
+        try:
+            await loop.run_in_executor(
+                self._executor,
+                self._sync_record_hypothesis_tracking,
+                hypothesis_id,
+                sprint_id,
+                hypothesis_text,
+                status,
+                confidence,
+                falsification_result,
+                disproved_by_sprint_id,
+            )
+            return True
+        except Exception:
+            return False
+
+    def _sync_record_hypothesis_tracking(
+        self,
+        hypothesis_id: str,
+        sprint_id: str,
+        hypothesis_text: str,
+        status: str,
+        confidence: float,
+        falsification_result: str | None,
+        disproved_by_sprint_id: str | None,
+    ) -> None:
+        """Sync writer for hypothesis_tracking."""
+        conn = self._get_conn()
+        if conn is None:
+            return
+        try:
+            conn.execute(
+                self._statements._SQL_INSERT_HYPOTHESIS_TRACKING,
+                (
+                    hypothesis_id,
+                    sprint_id,
+                    hypothesis_text,
+                    status,
+                    confidence,
+                    falsification_result,
+                    disproved_by_sprint_id,
+                    time.time(),
+                ),
+            )
+        except Exception:
+            pass
+
+    def _finding_id_of(self, f: CanonicalFinding | dict) -> str:
+        """Extract finding_id from CanonicalFinding or dict, safely."""
+        if isinstance(f, CanonicalFinding):
+            return f.finding_id
+        return str(f.get("finding_id", f.get("id", "")))
+
+    async def async_bulk_insert_findings(
+        self,
+        findings: list[CanonicalFinding | dict],
+    ) -> list[ActivationResult]:
+        """
+        Sprint F800A: Controller-facing async adapter for bulk findings insert.
+
+        Accepts CanonicalFinding instances OR plain dicts (controller dict format).
+        Dicts are converted to CanonicalFinding before delegating to the existing
+        async_record_canonical_findings_batch truth path.
+
+        Thread-safe, non-blocking — delegates to async_record_canonical_findings_batch
+        which uses the single-worker executor.
+
+        Args:
+            findings: List of CanonicalFinding or dict with keys:
+                      finding_id, query, source_type, confidence, ts, provenance.
+
+        Returns:
+            list[ActivationResult] — 1:1 mapping, len(results) == len(findings).
+            Empty list if input is empty or store is closed.
+        """
+        if not findings:
+            return []
+
+        if not self._initialized or self._closed:
+            return [
+                ActivationResult(
+                    finding_id=self._finding_id_of(f),
+                    lmdb_success=False,
+                    duckdb_success=None,
+                    lmdb_key=f"finding:{self._finding_id_of(f)}",
+                    desync=False,
+                    error="store closed or not initialized",
+                    accepted=False,
+                )
+                for f in findings
+            ]
+
+        # Normalize dicts → CanonicalFinding
+        canonical_findings: list[CanonicalFinding] = []
+        for f in findings:
+            if isinstance(f, CanonicalFinding):
+                canonical_findings.append(f)
+            elif isinstance(f, dict):
+                try:
+                    provenance: tuple[str, ...] = ()
+                    raw_prov = f.get("provenance")
+                    if raw_prov:
+                        if isinstance(raw_prov, (list, tuple)):
+                            provenance = tuple(str(v) for v in raw_prov)
+                        elif isinstance(raw_prov, str):
+                            try:
+                                decoded = msgspec.json.decode(raw_prov.encode())
+                                if isinstance(decoded, list):
+                                    provenance = tuple(str(v) for v in decoded)
+                            except Exception:
+                                provenance = ()
+                    canonical_findings.append(CanonicalFinding(
+                        finding_id=str(f.get("finding_id", f.get("id", ""))),
+                        query=str(f.get("query", "")),
+                        source_type=str(f.get("source_type", "")),
+                        confidence=float(f.get("confidence", 0.0)),
+                        ts=float(f.get("ts", 0.0)),
+                        provenance=provenance,
+                        payload_text=f.get("payload_text"),
+                    ))
+                except Exception:
+                    continue
+            else:
+                continue
+
+        if not canonical_findings:
+            return [
+                ActivationResult(
+                    finding_id=self._finding_id_of(f),
+                    lmdb_success=False,
+                    duckdb_success=None,
+                    lmdb_key=f"finding:{self._finding_id_of(f)}",
+                    desync=False,
+                    error="unconvertible input",
+                    accepted=False,
+                )
+                for f in findings
+            ]
+
+        # Delegate to truth path — returns list[ActivationResult]
+        raw_results = await self.async_record_canonical_findings_batch(canonical_findings)
+
+        # Normalize: async_record_canonical_findings_batch returns list[ActivationResult]
+        # async_record_canonical_findings_batch returns list[ActivationResult] at type level,
+        # but TypedDict is erased to dict at runtime. Normalize all results.
+        normalized: list[ActivationResult] = []
+        for r in raw_results:
+            # r is dict at runtime (TypedDict erasure); convert if not already ActivResult
+            if isinstance(r, dict) and "finding_id" in r:
+                # Already a properly-shaped ActivationResult dict — pass through
+                normalized.append(ActivationResult(
+                    finding_id=str(r.get("finding_id", "")),
+                    lmdb_success=bool(r.get("lmdb_success")),
+                    duckdb_success=r.get("duckdb_success"),
+                    lmdb_key=str(r.get("lmdb_key", "")),
+                    desync=bool(r.get("desync")),
+                    error=r.get("error"),
+                    accepted=bool(r.get("accepted", r.get("lmdb_success", False))),
+                ))
+            else:
+                # Fallback — shouldn't happen with truth path
+                normalized.append(ActivationResult(
+                    finding_id="",
+                    lmdb_success=False,
+                    duckdb_success=None,
+                    lmdb_key="",
+                    desync=False,
+                    error="unexpected result type",
+                    accepted=False,
+                ))
+        return normalized
+
+    def _canonical_findings_batch_to_activation_results(
+        self,
+        findings: list[CanonicalFinding],
+    ) -> list[dict]:
+        """
+        Sync batch: CanonicalFinding list → list[dict] (not ActivationResult, avoid circular import).
+
+        Returns one dict per finding in input order.
+        LMDB WAL uses msgspec.json.encode for provenance serialization.
+        DuckDB insert uses tuple rows (list of lists).
+        """
+        import logging as _logging
+
+        _logger = _logging.getLogger(__name__)
+        results: list[dict] = []
+
+        if not findings:
+            return results
+
+        # F276: Diagnostic instrumentation — log at entry to diagnose silent-0-write path.
+        # Previous versions swallowed all errors fail-soft with no telemetry, making it
+        # impossible to distinguish: (a) store not initialized, (b) boot barrier timeout,
+        # (c) LMDB WAL failure, (d) DuckDB insert failure, (e) ON CONFLICT dedup.
+        _logger.debug(
+            "[F276-INGEST] entry n=%d  _initialized=%s  _closed=%s  _startup_ready=%s",
+            len(findings),
+            getattr(self, "_initialized", None),
+            getattr(self, "_closed", None),
+            getattr(self, "_startup_ready", None) and getattr(self._startup_ready, "is_set", lambda: None)(),
+        )
+
+        # Step 1: LMDB WAL first — msgspec serialization
+        lmdb_ok = False
+        try:
+            if not hasattr(self, "_wal_manager") or self._wal_manager is None:
+                _wal_root = self._db_path.parent if self._db_path else None
+                if _wal_root is None:
+                    _logger.error("[F276-INGEST] _db_path is None — WAL root unavailable, cannot persist findings")
+                    for f in findings:
+                        results.append({
+                            "finding_id": f.finding_id,
+                            "lmdb_success": False,
+                            "duckdb_success": None,
+                            "error": "no wal root",
+                        })
+                    return results
+                self._wal_manager = WALManager(wal_path=str(_wal_root / "shadow_wal.lmdb"))
+                self._wal_manager.initialize()
+
+            items = []
+            for f in findings:
+                key = f"finding:{f.finding_id}"
+                wal_payload = {
+                    "id": f.finding_id,
+                    "query": f.query,
+                    "source_type": f.source_type,
+                    "confidence": f.confidence,
+                    "ts": f.ts,
+                    "provenance": f.provenance,
+                    "payload_text": f.payload_text,
+                }
+                items.append((key, wal_payload))
+
+            if items:
+                lmdb_ok = self._wal_manager.wal_put_many(items) if hasattr(self._wal_manager, 'wal_put_many') else False
+                if not lmdb_ok:
+                    _logger.warning(f"[Sprint 8P] Batch WAL failed for {len(items)} items")
+                    for f in findings:
+                        results.append({
+                            "finding_id": f.finding_id,
+                            "lmdb_success": False,
+                            "duckdb_success": None,
+                            "error": "lmdb batch failed",
+                        })
+                    return results
+        except Exception as e:
+            _logger.error(f"[Sprint 8P] Batch WAL exception: {e}")
+            for f in findings:
+                results.append({
+                    "finding_id": f.finding_id,
+                    "lmdb_success": False,
+                    "duckdb_success": None,
+                    "error": str(e),
+                })
+            return results
+
+        # Step 2: DuckDB second — tuple rows with ts and provenance_json (Sprint 8R)
+        try:
+            rows: list[list] = []
+            for f in findings:
+                provenance_json = _CANONICAL_ENCODER.encode(f.provenance).decode("utf-8")
+                rows.append([
+                    f.finding_id, f.query, f.source_type, f.confidence,
+                    f.ts, provenance_json,
+                ])
+            inserted = self._sync_insert_findings_bulk_as_tuples(rows)
+            duckdb_all_ok = inserted >= len(findings)
+            if inserted < len(findings):
+                _logger.error(f"[Sprint 8P] Partial DuckDB batch: {inserted}/{len(findings)}")
+        except Exception as e:
+            _logger.error(f"[Sprint 8P] Batch DuckDB exception: {e}, LMDB preserved")
+            duckdb_all_ok = False
+
+        # Build per-finding results
+        for _i, f in enumerate(findings):
+            duckdb_success = duckdb_all_ok  # simplified per-item model
+            results.append({
+                "finding_id": f.finding_id,
+                "lmdb_success": lmdb_ok,
+                "duckdb_success": duckdb_success,
+                "error": None,
+            })
+
+        # F276: Exit instrumentation — diagnose entry > 0 but exit = 0 pattern.
+        _logger.debug(
+            "[F276-INGEST] exit n=%d  lmdb_ok=%s  duckdb_ok=%s",
+            len(results),
+            lmdb_ok,
+            duckdb_all_ok,
+        )
+        return results
+
+    def _extract_url_from_provenance(self, provenance: tuple[str, ...]) -> str:
+        """
+        Sprint 8AK: Extract the first HTTP(S) URL from a provenance tuple.
+
+        Source-agnostic: scans all positions regardless of source type.
+        Returns empty string if no URL is found.
+        """
+        if not provenance:
+            return ""
+        for item in provenance:
+            if isinstance(item, str) and item.startswith("http"):
+                return item
+        return ""
+
+    # ── Sprint F216G: Quality Rejection Ledger ───────────────────────────────
+
+    def _record_quality_rejection(
+        self,
+        finding: CanonicalFinding,
+        decision: FindingQualityDecision,
+    ) -> None:
+        """
+        Sprint F216G: Record a quality gate rejection to the bounded ledger.
+
+        Delegates to QualityAssessmentState.record_rejection().
+        """
+        self._quality_state.record_rejection(finding, decision)
+
+    def get_quality_rejection_ledger(self) -> tuple[QualityRejectionRecord, ...]:
+        """
+        Sprint F216G: Expose the quality rejection ledger to callers (e.g. scheduler).
+
+        Returns a tuple (immutable view) of all recorded rejection records.
+        Delegates to QualityAssessmentState for backward compat.
+        """
+        return self._quality_state.get_rejection_history()
+
+    def _assess_finding_quality(self, finding: CanonicalFinding) -> FindingQualityDecision:
+        """
+        Sprint 8W + 8AG + 8AK: Assess a single finding's quality via entropy + dedup.
+
+        Sprint 8AK: URL-first fingerprint — if a canonical URL is present in
+        provenance, use it (normalized) as the primary dedup signal, independent
+        of source_type or payload position. Falls back to payload_text.
+
+        Sprint 8AG §6.17: Persistent dedup via LMDB with hot-cache read-through.
+        Lookup order: hot cache → persistent LMDB → store if miss.
+        LMDB is the authority; hot cache is a bounded read-through cache.
+
+        Returns FindingQualityDecision (frozen, immutable).
+        Fail-open: any exception → accept with reason="quality_check_error".
+
+        Text mapping: URL (if present) or payload_text (if exists and non-empty), else query.
+        If both are empty, falls back to query (may accept trivially).
+        """
+        import logging as _logging
+        _logger = _logging.getLogger(__name__)
+
+        # Sprint 8AK: URL-first fingerprint
+        url_from_provenance = self._extract_url_from_provenance(finding.provenance)
+        url_fingerprint = _compute_url_fingerprint(url_from_provenance) if url_from_provenance else ""
+
+        # Map text for quality checks (only needed for entropy when no URL)
+        if url_fingerprint:
+            # URL-first: use URL fingerprint for dedup, skip entropy (URL = identity)
+            fingerprint = url_fingerprint
+            entropy = 0.0  # not meaningful when URL is identity
+        else:
+            # Fallback: payload-based fingerprint
+            text = finding.payload_text if finding.payload_text else finding.query
+            if not text or not text.strip():
+                text = finding.query
+            normalized = _normalize_for_quality(text)
+            entropy = _compute_entropy(normalized)
+            fingerprint = _compute_dedup_fingerprint(normalized)
+
+        # P0-2: Feed source bypass for hot cache write.
+        # P1-2: Detailed instrumentation — log source_type + entropy + fp_len for diagnostics
+        _is_feed_source: bool = finding.source_type == "rss_atom_pipeline"
+        _logger.debug(
+            "[QUALITY-GATE] assessing source_type=%s is_feed=%s url_fp=%s entropy=%.3f fp_len=%d finding_id=%s",
+            finding.source_type,
+            _is_feed_source,
+            bool(url_fingerprint),
+            entropy,
+            len(fingerprint),
+            finding.finding_id[:16] if finding.finding_id else "",
+        )
+        # Feed findings (source_type="rss_atom_pipeline") are high-volume, high-overlap:
+        # - Hot cache fills rapidly with feed fingerprints → LRU eviction loses cross-run dedup
+        # - Feed items with same IOC but different entry URLs produce legitimate unique findings
+        # - Hot cache false positives block legitimate new feed content
+        # Fix: feed findings skip hot cache write; LMDB remains authority for cross-run dedup.
+        # Hot cache lookup (Tier 1) still applies — existing feed duplicates within same run
+        # are correctly rejected by hot cache; only the hot cache WRITE is bypassed.
+        _is_feed_source: bool = finding.source_type == "rss_atom_pipeline"
+
+        # Sprint 8AK: Separate counter semantics for persistent vs in-memory duplicates
+        # - Hot cache hit (in-memory, same process) → _quality_duplicate_count
+        # - Persistent LMDB hit (cross-source, survives restarts) → _persistent_duplicate_count
+
+        # Tier 1: hot cache (fast path, bounded)
+        duplicate = self._hot_cache_lookup(fingerprint) is not None
+        if duplicate:
+            self._quality_state._quality_duplicate_count += 1
+            reason = "persistent_duplicate" if url_fingerprint else "duplicate_detected"
+            _logger.debug(
+                "[QUALITY-GATE] rejected=hot_cache_duplicate fp=%s finding_id=%s",
+                fingerprint[:16] if fingerprint else "",
+                finding.finding_id[:16] if finding.finding_id else "",
+            )
+            return FindingQualityDecision(
+                accepted=False,
+                reason=reason,
+                entropy=entropy,
+                normalized_hash=fingerprint,
+                duplicate=True,
+            )
+
+        # Tier 2: persistent LMDB (authority)
+        stored_finding_id = self._lookup_persistent_dedup(fingerprint)
+        if stored_finding_id is not None:
+            # Miss in hot cache but hit in LMDB — populate hot cache (non-feed only), reject
+            if not _is_feed_source:
+                self._add_to_hot_cache(fingerprint, stored_finding_id)
+            self._quality_state._persistent_duplicate_count += 1
+            reason = "persistent_duplicate" if url_fingerprint else "duplicate_detected"
+            _logger.debug(
+                "[QUALITY-GATE] rejected=lmdb_duplicate fp=%s finding_id=%s stored_id=%s",
+                fingerprint[:16] if fingerprint else "",
+                finding.finding_id[:16] if finding.finding_id else "",
+                stored_finding_id[:16] if stored_finding_id else "",
+            )
+            return FindingQualityDecision(
+                accepted=False,
+                reason=reason,
+                entropy=entropy,
+                normalized_hash=fingerprint,
+                duplicate=True,
+            )
+
+        # URL-first path: short-circuit to store (no entropy check needed)
+        # _accepted_count is incremented by async_record_canonical_findings_batch — NOT here
+        if url_fingerprint:
+            self._store_persistent_dedup(fingerprint, finding.finding_id)
+            # P0-2: feed bypass — hot cache write skipped for feed sources
+            if not _is_feed_source:
+                self._add_to_hot_cache(fingerprint, finding.finding_id)
+            return FindingQualityDecision(
+                accepted=True,
+                reason=None,
+                entropy=entropy,
+                normalized_hash=fingerprint,
+                duplicate=False,
+            )
+
+        # Short strings (< 8 chars) skip entropy filter — accept immediately
+        # WITHOUT storing to LMDB/hotcache. Storage deferred to after semantic dedup pass.
+        # _accepted_count is incremented by async_record_canonical_findings_batch — NOT here
+        if len(fingerprint) < _QUALITY_MIN_ENTROPY_LEN:
+            # Sprint F197B: Check semantic dedup before storing short strings too
+            # Sprint F222: Now uses DedupManager's semantic dedup cache
+            dedup_cache = self._dedup_manager.semantic_dedup_cache if self._dedup_manager else None
+            if dedup_cache is not None:
+                try:
+                    text_for_embed = url_from_provenance or (finding.payload_text or finding.query)
+                    if text_for_embed and len(text_for_embed) >= 16:
+                        # P1-2: Relaxed threshold for feed sources — feed text is IOC-heavy
+                        # and structurally similar across entries (same malware family,
+                        # same C2 pattern). Use 0.85 for feed vs 0.95 for others.
+                        _semantic_thresh = 0.85 if _is_feed_source else 0.95
+                        is_dup = dedup_cache.check_and_cache(text_for_embed, threshold=_semantic_thresh)
+                        if is_dup:
+                            self._quality_state._quality_duplicate_count += 1
+                            return FindingQualityDecision(
+                                accepted=False,
+                                reason="semantic_duplicate",
+                                entropy=entropy,
+                                normalized_hash=fingerprint,
+                                duplicate=True,
+                            )
+                except Exception as e:
+                    # F196A: Quality gate error must not be silent — log warning.
+                    _logger.warning(f"Quality gate error (short_string path): {e}")
+            # Short string + no semantic duplicate → store and accept
+            self._store_persistent_dedup(fingerprint, finding.finding_id)
+            # P0-2: feed bypass — hot cache write skipped for feed sources
+            if not _is_feed_source:
+                self._add_to_hot_cache(fingerprint, finding.finding_id)
+            return FindingQualityDecision(
+                accepted=True,
+                reason="short_string_skip",
+                entropy=entropy,
+                normalized_hash=fingerprint,
+                duplicate=False,
+            )
+
+        # Entropy threshold check
+        # P1-2: Feed-adaptive threshold — feed sources generate short, IOC-heavy
+        # text with structurally low entropy (URLs, patterns, hashes). Use a lower
+        # threshold for feed sources to avoid rejecting legitimate findings.
+        _effective_threshold = (
+            0.3 if _is_feed_source else _QUALITY_ENTROPY_THRESHOLD
+        )
+        if entropy < _effective_threshold:
+            self._quality_state._quality_rejected_count += 1
+            _logger.debug(
+                "[QUALITY-GATE] rejected=low_entropy threshold=%.2f entropy=%.2f finding_id=%s is_feed=%s",
+                _effective_threshold,
+                entropy,
+                finding.finding_id[:16] if finding.finding_id else "",
+                _is_feed_source,
+            )
+            return FindingQualityDecision(
+                accepted=False,
+                reason="low_entropy_rejected",
+                entropy=entropy,
+                normalized_hash=fingerprint,
+                duplicate=False,
+            )
+
+        # Sprint F197B: Semantic dedup BEFORE storing — check before committing LMDB write
+        # Sprint F222: Now uses DedupManager's semantic dedup cache
+        # Skip if no semantic dedup cache (memory pressure or init failed)
+        # Fail-soft: returns duplicate=False on any error (finding accepted even on error)
+        dedup_cache = self._dedup_manager.semantic_dedup_cache if self._dedup_manager else None
+        if dedup_cache is not None:
+            try:
+                dedup_cache_ref = dedup_cache
+                text_for_embed = url_from_provenance or (finding.payload_text or finding.query)
+                if text_for_embed and len(text_for_embed) >= 16:
+                    # P1-2: Relaxed threshold for feed sources (0.85 vs 0.95)
+                    _semantic_thresh = 0.85 if _is_feed_source else 0.95
+                    is_dup = dedup_cache_ref.check_and_cache(text_for_embed, threshold=_semantic_thresh)
+                    if is_dup:
+                        self._quality_state._quality_duplicate_count += 1
+                        _logger.debug(
+                            "[QUALITY-GATE] rejected=semantic_duplicate finding_id=%s",
+                            finding.finding_id[:16] if finding.finding_id else "",
+                        )
+                        return FindingQualityDecision(
+                            accepted=False,
+                            reason="semantic_duplicate",
+                            entropy=entropy,
+                            normalized_hash=fingerprint,
+                            duplicate=True,
+                        )
+            except Exception as e:
+                # F196A: Quality gate error must not be silent — log warning.
+                # Fail-open: embedder/LMDB error → accept the finding anyway
+                _logger.warning(f"Quality gate error (entropy path): {e}")
+
+        # Only reach here if semantic dedup passed or was skipped (fail-open)
+        # Now safe to commit to LMDB + hot cache (hot cache skipped for feed sources)
+        self._store_persistent_dedup(fingerprint, finding.finding_id)
+        # P0-2: feed bypass — hot cache write skipped for feed sources
+        if not _is_feed_source:
+            self._add_to_hot_cache(fingerprint, finding.finding_id)
+
+
+        return FindingQualityDecision(
+            accepted=True,
+            reason=None,
+            entropy=entropy,
+            normalized_hash=fingerprint,
+            duplicate=False,
+        )
+
+    async def async_ingest_finding(
+        self,
+        finding: CanonicalFinding,
+    ) -> FindingQualityDecision | ActivationResult:
+        """
+        Sprint 8W: Quality-gated single-finding ingest.
+
+        Layer ABOVE async_record_canonical_finding — applies quality gate first,
+        then delegates to legacy storage path on accept.
+
+        Quality gate is CPU-only, deterministic, and cheap.
+        Fail-open: if quality helpers raise, the finding is stored via legacy path.
+
+        Returns FindingQualityDecision when rejected/duplicate.
+        Returns ActivationResult on accept or fail-open.
+        """
+        # Phase 1: quality check (fail-open on exception)
+        try:
+            decision = self._assess_finding_quality(finding)
+        except Exception:
+            # Fail-open: quality gate failed, but store anyway
+            # _accepted_count is NOT incremented here — async_record_canonical_finding
+            # handles it on success, and we don't double-count on the fail-open path
+            self._quality_state._quality_fail_open_count += 1
+            result = await self.async_record_canonical_finding(finding)
+            return result
+
+        if not decision.accepted:
+            # F216G: record quality gate rejection to bounded ledger
+            self._record_quality_rejection(finding, decision)
+            return decision
+
+        # Phase 2: legacy storage path (WAL-first)
+        result = await self.async_record_canonical_finding(finding)
+        # Increment _accepted_count if LMDB write succeeded
+        if isinstance(result, dict):
+            lmdb_ok = result.get("lmdb_success", False)
+        else:
+            lmdb_ok = bool(result.lmdb_success)
+        if lmdb_ok:
+            self._quality_state._accepted_count += 1
+        return result
+
+    @_otel_instrumented("duckdb.ingest_batch", component="storage")
+    async def async_ingest_findings_batch(
+        self,
+        findings: list[CanonicalFinding],
+    ) -> list[FindingQualityDecision | ActivationResult]:
+        """
+        Sprint 8W: Quality-gated batch ingest.
+
+        Layer ABOVE async_record_canonical_findings_batch — applies quality gate to each
+        finding, then delegates acceptable ones to legacy batch storage.
+
+        Quality gate is CPU-only, deterministic, and cheap.
+        Fail-open: if quality helpers raise for any finding, that finding is stored
+        via legacy path.
+
+        Returns list with len(results) == len(findings) — 1:1 invariant.
+        Each entry is FindingQualityDecision (rejected/duplicate) or ActivationResult (accepted).
+        """
+        if not findings:
+            # F275: Even with zero findings, ensure schema is initialized so the
+            # DB file is created/touched. This fixes the "DuckDB empty after sprint"
+            # bug where 0-findings sprints never touched the schema, leaving an
+            # empty .duckdb file (or :memory: with no writes).
+            # Schema init is cheap (CREATE TABLE IF NOT EXISTS × 10 tables).
+            await self.async_initialize_schema()
+            return []
+
+        n = len(findings)
+        # P1-2: Entry instrumentation — log at entry to diagnose silent-0-write path
+        logger.debug(
+            "[INGEST-BATCH] entry len(findings)=%d  quality_state=_accepted:%d _rejected:%d _dup:%d _persist_dup:%d",
+            n,
+            self._quality_state._accepted_count,
+            self._quality_state._quality_rejected_count,
+            self._quality_state._quality_duplicate_count,
+            self._quality_state._persistent_duplicate_count,
+        )
+        results: list[FindingQualityDecision | ActivationResult | None] = [None] * n
+        accepted_findings: list[CanonicalFinding] = []
+        accepted_indices: list[int] = []
+
+        # F223: Strict chunking to prevent OOM on M1 8GB
+        # Process in batches of 500 with event-loop yield between chunks
+        CHUNK_SIZE = 1024  # noqa: N806  # 2× fewer DuckDB roundtrips, M1-safe (~6 MB peak)
+        for chunk_start in range(0, n, CHUNK_SIZE):
+            chunk_end = min(chunk_start + CHUNK_SIZE, n)
+            chunk_findings = findings[chunk_start:chunk_end]
+
+            # Sprint D7: collect fail-open findings for batch processing
+            fail_open_chunk_findings: list[CanonicalFinding] = []
+            fail_open_chunk_indices: list[int] = []
+
+            for i_offset, f in enumerate(chunk_findings):
+                i = chunk_start + i_offset
+                try:
+                    decision = self._assess_finding_quality(f)
+                except Exception:
+                    self._quality_state._quality_fail_open_count += 1
+                    fail_open_chunk_findings.append(f)
+                    fail_open_chunk_indices.append(i)
+                    continue
+
+                if not decision.accepted:
+                    # F216G: record quality gate rejection to bounded ledger
+                    self._record_quality_rejection(f, decision)
+                    results[i] = decision
+                else:
+                    # Sprint F216K §1: TemporalAnonymizer — pre-write timestamp anonymization
+                    # Fail-soft: use original timestamp if anonymizer unavailable or throws
+                    if os.getenv("HLEDAC_ENABLE_ZERO_ATTRIBUTION") == "1":
+                        try:
+                            from hledac.universal.security.temporal_anonymizer import TemporalAnonymizer
+                            if not hasattr(self, "_temporal_anonymizer"):
+                                self._temporal_anonymizer = TemporalAnonymizer()
+                            f.timestamp = self._temporal_anonymizer.anonymize_timestamp(f.timestamp)
+                        except Exception:
+                            pass  # fail-soft: keep original timestamp
+                    accepted_findings.append(f)
+                    accepted_indices.append(i)
+
+            # Sprint D7: batch the fail-open chunk (was N individual async_record_canonical_finding calls)
+            if fail_open_chunk_findings:
+                batch_results = await self._record_fail_open_batch(
+                    fail_open_chunk_findings, results, fail_open_chunk_indices,
+                )
+                for idx, br in zip(fail_open_chunk_indices, batch_results, strict=False):
+                    if br is not None:
+                        results[idx] = br
+
+            # Yield to event loop between chunks to prevent event-loop starvation
+            if chunk_end < n:
+                await asyncio.sleep(0)
+
+        if accepted_findings:
+            # Sprint S1 wire-in: route through Arrow zero-copy path (P0-4) when
+            # env opt-in is set + N >= _ARROW_MIN_BATCH. Internal 4-stupňový
+            # fallback to legacy `async_record_canonical_findings_batch` on any
+            # failure, so default-off behavior is identical to pre-wire.
+            # Env gate: HLEDAC_ARROW_INGEST=1 (opt-in).
+            storage_results = await self.async_record_canonical_findings_batch_arrow(accepted_findings)
+            # NOTE: _accepted_count is incremented INSIDE both arrow wrapper
+            # and legacy batch. Do NOT increment here — would double-count.
+            for idx, sr in zip(accepted_indices, storage_results, strict=False):
+                results[idx] = sr
+
+            # Sprint F241: Graph real-time wire — fire graph update async after accepted write.
+            # Graph is ADVISORY ONLY — write path never blocks on graph success/failure.
+            # Guarded by HLEDAC_GRAPH_REALTIME_WIRE env var (default False, require explicit opt-in).
+            if os.getenv("HLEDAC_GRAPH_REALTIME_WIRE") == "true":
+                self._schedule_graph_update(accepted_findings)
+
+        assert None not in results, "Internal error: 1:1 invariant violated"
+
+        # P1-2: Exit instrumentation — log len(results) + accepted count to diagnose
+        # entry > 0 but exit = 0 pattern (write path broken)
+        accepted_total = sum(
+            1 for r in results
+            if getattr(r, "accepted", None) is True
+            or (isinstance(r, dict) and r.get("accepted") is True)
+        )
+        _logger.debug(
+            "[INGEST-BATCH] exit len(results)=%d  accepted=%d  _accepted_count=%d",
+            len(results),
+            accepted_total,
+            self._quality_state._accepted_count,
+        )
+        # P1-2: Operator-level confirmation — DuckDB canonical write confirmed
+        if accepted_total > 0:
+            _logger.info(
+                "[DuckDB] written %d records (sprint F265-P1-2 canonical write verification)",
+                accepted_total,
+            )
+        return results  # type: ignore[annotation-unchecked]
+
+    # --------------------------------------------------------------------------
+    # Sprint F202A: Evidence Envelope helpers
+    # --------------------------------------------------------------------------
+
+    def _envelope_to_payload(self, envelope: FindingEnvelope) -> str | None:
+        """
+        Sprint F202A §2: Serialize FindingEnvelope to payload_text string.
+
+        Fail-soft: returns None if serialization fails or size exceeds limit.
+        Caller degrades to plain finding when None is returned.
+        """
+        from hledac.universal.knowledge.finding_envelope import (
+            FindingEnvelope,
+            envelope_size_guard,
+            serialize_envelope,
+        )
+        if not isinstance(envelope, FindingEnvelope):
+            return None
+        if not envelope_size_guard(envelope):
+            return None
+        return serialize_envelope(envelope)
+
+    def _payload_to_envelope(self, payload_text: str | None) -> FindingEnvelope | None:
+        """
+        Sprint F202A §2: Deserialize FindingEnvelope from payload_text string.
+
+        Fail-soft: returns None if payload_text is None/empty, parsing fails,
+        or required audit_reason field is missing.
+        """
+        from hledac.universal.knowledge.finding_envelope import deserialize_envelope
+        return deserialize_envelope(payload_text)
+
+    def _store_envelope_payload(self, finding_id: str, payload_text: str) -> bool:
+        """
+        Sprint F202A §2: Update LMDB WAL entry with envelope payload_text.
+
+        Called after initial ingest when envelope is attached post-hoc.
+        Returns True if LMDB update succeeded.
+        """
+        try:
+            from hledac.universal.tools.lmdb_kv import LMDBKVStore
+            if not hasattr(self, "_wal_lmdb"):
+                _wal_root = self._db_path.parent if self._db_path else None
+                if _wal_root is None:
+                    return False
+                self._wal_lmdb = LMDBKVStore(path=str(_wal_root / "shadow_wal.lmdb"))
+            key = f"finding:{finding_id}"
+            # Read existing WAL entry and update payload_text
+            existing = self._wal_lmdb.get(key)
+            if existing is None:
+                return False
+            if isinstance(existing, dict):
+                existing["payload_text"] = payload_text
+            else:
+                return False
+            return self._wal_lmdb.put(key, existing)
+        except Exception:
+            return False
+
+    async def async_ingest_findings_with_envelope(
+        self,
+        findings: list[CanonicalFinding],
+        envelopes: list[FindingEnvelope],
+    ) -> list[ActivationResult | FindingQualityDecision]:
+        """
+        Sprint F202A §2: Ingest findings WITH pre-built evidence envelopes.
+
+        Envelope is serialized and stored in payload_text field of LMDB WAL.
+        Size guard: oversized envelope → degraded to plain finding (no crash).
+        Returns same 1:1 result list as async_ingest_findings_batch.
+
+        Args:
+            findings:  List of CanonicalFinding instances
+            envelopes: List of FindingEnvelope instances (same length as findings)
+        """
+        from hledac.universal.knowledge.finding_envelope import FindingEnvelope
+
+        if not findings:
+            return []
+        if len(envelopes) != len(findings):
+            # Fall back to plain ingest if length mismatch
+            return await self.async_ingest_findings_batch(findings)
+
+        # Build payload_text overrides using size guard
+        payload_overrides: dict[int, str | None] = {}
+        for i, env in enumerate(envelopes):
+            if not isinstance(env, FindingEnvelope):
+                payload_overrides[i] = None
+                continue
+            from hledac.universal.knowledge.finding_envelope import envelope_size_guard
+            if not envelope_size_guard(env):
+                payload_overrides[i] = None
+            else:
+                from hledac.universal.knowledge.finding_envelope import serialize_envelope
+                payload_overrides[i] = serialize_envelope(env)
+
+        # Run standard ingest
+        results = await self.async_ingest_findings_batch(findings)
+
+        # Patch LMDB payload_text for findings that got an envelope
+        for i, override in payload_overrides.items():
+            if override is None:
+                continue
+            if results[i].get("lmdb_success") if isinstance(results[i], dict) else False:
+                fid = results[i].get("finding_id", "")
+                if fid:
+                    self._store_envelope_payload(fid, override)
+
+        return results
+
+    def _sync_read_envelope(self, finding_id: str) -> FindingEnvelope | None:
+        """
+        Sprint F202A §3: Read and deserialize envelope from LMDB WAL entry.
+
+        Returns None if finding doesn't exist or has no valid envelope.
+        Fail-soft: does not raise.
+        """
+        try:
+            from hledac.universal.tools.lmdb_kv import LMDBKVStore
+            if not hasattr(self, "_wal_lmdb"):
+                _wal_root = self._db_path.parent if self._db_path else None
+                if _wal_root is None:
+                    return None
+                self._wal_lmdb = LMDBKVStore(path=str(_wal_root / "shadow_wal.lmdb"))
+            key = f"finding:{finding_id}"
+            entry = self._wal_lmdb.get(key)
+            if entry is None or not isinstance(entry, dict):
+                return None
+            payload_text = entry.get("payload_text")
+            return self._payload_to_envelope(payload_text)
+        except Exception:
+            return None
+
+    async def async_get_findings_with_envelope(
+        self,
+        limit: int = 20,
+    ) -> list[dict]:
+        """
+        Sprint F202A §3: Read recent findings with deserialized envelopes.
+
+        Returns list of dicts with envelope fields attached:
+          {finding_id, query, source_type, confidence, ts, provenance,
+           payload_text, envelope: FindingEnvelope | None}
+        Fail-soft: any finding without valid envelope has envelope=None.
+        """
+        raw_findings = await self.async_query_recent_findings(limit=limit)
+        result = []
+        for f in raw_findings:
+            fid = f.get("id", f.get("finding_id", ""))
+            env = self._sync_read_envelope(fid) if fid else None
+            item = dict(f)
+            item["envelope"] = env
+            result.append(item)
+        return result
+
+    def _sync_insert_findings_bulk_as_tuples(
+        self,
+        rows: list[list],
+    ) -> int:
+        """
+        Sprint 8R: Bulk insert using list[tuple] with 6 columns (id, query, source_type, confidence, ts, provenance_json).  # noqa: E501
+        MUST be called on the worker thread.
+        Returns number of successfully inserted records.
+        """
+        return self._qe().insert_findings_bulk_as_tuples(rows)
+
+    def _sync_record_canonical_findings_batch_arrow(
+        self,
+        findings: list[CanonicalFinding],
+    ) -> tuple[int, str | None]:
+        """
+        Sprint P0-4: Arrow zero-copy bulk insert for CanonicalFinding list.
+
+        MUST be called on the worker thread (thread-affine connection).
+        Returns (inserted_count, error_type):
+          - (n, None) on success where n = number of rows in input table
+          - (0, error_type) on any failure, where error_type is one of:
+              "pyarrow_not_installed" — pyarrow import failed
+              "table_build_failed"    — pa.Table.from_arrays failed
+              "duckdb_insert_failed" — QueryExecutor.insert_findings_bulk_arrow failed
+
+        Distinct from the legacy `_canonical_findings_batch_to_activation_results`
+        in three ways:
+          1. Builds a single pyarrow.Table with columnar zero-copy arrays.
+          2. Calls QueryExecutor.insert_findings_bulk_arrow (register + INSERT...SELECT).
+          3. Does NOT touch LMDB WAL — caller is responsible for that half (or falls
+             back to the legacy path which does both). This split keeps the Arrow
+             path optional and side-effect-free at the WAL layer.
+
+        Fail-soft: any error returns (0, error_type) and the async wrapper falls back
+        to legacy. The error_type is used for typed telemetry.
+        """
+        if not findings:
+            return (0, None)
+        try:
+            import pyarrow as _pa
+        except ImportError:
+            return (0, "pyarrow_not_installed")
+
+        try:
+            # Build columnar arrays — zero-copy for str/float, single alloc per column.
+            # msgspec.encode returns bytes; we decode once per row, but the result is
+            # a single pa.string() array (one contiguous buffer, no Python list of lists).
+            provenance_arr = _pa.array(
+                [
+                    _CANONICAL_ENCODER.encode(f.provenance).decode("utf-8")
+                    for f in findings
+                ],
+                type=_pa.string(),
+            )
+            id_arr = _pa.array(
+                [f.finding_id for f in findings], type=_pa.string()
+            )
+            query_arr = _pa.array(
+                [f.query for f in findings], type=_pa.string()
+            )
+            src_arr = _pa.array(
+                [f.source_type for f in findings], type=_pa.string()
+            )
+            conf_arr = _pa.array(
+                [f.confidence for f in findings], type=_pa.float64()
+            )
+            ts_arr = _pa.array(
+                [f.ts for f in findings], type=_pa.float64()
+            )
+            table = _pa.Table.from_arrays(
+                [id_arr, query_arr, src_arr, conf_arr, ts_arr, provenance_arr],
+                names=[
+                    "id", "query", "source_type", "confidence", "ts", "provenance_json",
+                ],
+            )
+        except Exception as e:
+            # Build failure (e.g. exotic provenance type) — caller falls back.
+            import logging as _logging
+            _logging.getLogger(__name__).error(
+                f"[P0-4 Arrow] Table build failed: {type(e).__name__}: {e}"
+            )
+            return (0, "table_build_failed")
+
+        # Delegate to QueryExecutor — keeps SQL + register/unregister in one place.
+        duckdb_count, duckdb_err = self._qe().insert_findings_bulk_arrow(table)
+        if duckdb_err is not None:
+            return (0, "duckdb_insert_failed")
+        return (duckdb_count, None)
+
+    def _sync_record_canonical_findings_batch_arrow_full(
+        self,
+        findings: list[CanonicalFinding],
+    ) -> list[dict]:
+        """
+        Sprint P0-4: Full Arrow batch — LMDB WAL first, then Arrow DuckDB.
+
+        Same shape as `_canonical_findings_batch_to_activation_results` but the
+        DuckDB step is the Arrow path. Returns list[dict] with 1:1 mapping.
+
+        MUST be called on the worker thread.
+        """
+        import logging as _logging
+
+        _logger = _logging.getLogger(__name__)
+        if not findings:
+            return []
+
+        ret: list[dict] = []
+
+        # Step 1: LMDB WAL first (mirror legacy path) — msgspec + per-finding key.
+        # Reuses the same fallback logic as _canonical_findings_batch_to_activation_results.
+        lmdb_ok = False
+        try:
+            if not hasattr(self, "_wal_manager") or self._wal_manager is None:
+                _wal_root = self._db_path.parent if self._db_path else None
+                if _wal_root is None:
+                    for _ in findings:
+                        ret.append({
+                            "lmdb_success": False,
+                            "duckdb_success": None,
+                            "error": "no wal root",
+                        })
+                    return ret
+                self._wal_manager = WALManager(wal_path=str(_wal_root / "shadow_wal.lmdb"))
+                self._wal_manager.initialize()
+
+            items = []
+            for f in findings:
+                key = f"finding:{f.finding_id}"
+                wal_payload = {
+                    "id": f.finding_id,
+                    "query": f.query,
+                    "source_type": f.source_type,
+                    "confidence": f.confidence,
+                    "ts": f.ts,
+                    "provenance": f.provenance,
+                    "payload_text": f.payload_text,
+                }
+                items.append((key, wal_payload))
+
+            if items:
+                lmdb_ok = self._wal_manager.wal_put_many(items) if hasattr(
+                    self._wal_manager, "wal_put_many"
+                ) else False
+                if not lmdb_ok:
+                    _logger.warning(
+                        f"[P0-4 Arrow] Batch WAL failed for {len(items)} items"
+                    )
+                    for _ in findings:
+                        ret.append({
+                            "lmdb_success": False,
+                            "duckdb_success": None,
+                            "error": "lmdb batch failed",
+                        })
+                    return ret
+        except Exception as e:
+            _logger.error(f"[P0-4 Arrow] Batch WAL exception: {e}")
+            for _ in findings:
+                ret.append({
+                    "lmdb_success": False,
+                    "duckdb_success": None,
+                    "error": str(e),
+                })
+            return ret
+
+        # Step 2: DuckDB Arrow bulk — returns (count, error_type), fail-soft.
+        duckdb_count, duckdb_err = self._sync_record_canonical_findings_batch_arrow(findings)
+        if duckdb_err is not None:
+            _logger.error(
+                f"[P0-4 Arrow] DuckDB Arrow bulk failed: {duckdb_err}"
+            )
+            duckdb_all_ok = False
+        elif duckdb_count < len(findings):
+            # Arrow bulk wrote some but not all — cannot determine which specific
+            # rows failed (ON CONFLICT DO NOTHING), treat as all-or-nothing.
+            _logger.error(
+                f"[P0-4 Arrow] Partial DuckDB batch: {duckdb_count}/{len(findings)}"
+            )
+            duckdb_all_ok = False
+        else:
+            duckdb_all_ok = True
+
+        # Step 3: Build per-finding results (1:1, mirrors legacy).
+        # Propagate duckdb_err so async wrapper can do typed telemetry.
+        for f in findings:
+            ret.append({
+                "finding_id": f.finding_id,
+                "lmdb_success": lmdb_ok,
+                "duckdb_success": duckdb_all_ok,
+                "error": duckdb_err,
             })
         return ret
 
@@ -6447,7 +9759,7 @@ class DuckDBShadowStore:
     # Sprint 8TC: RRF Fusion — Reciprocal Rank Fusion přes 4 signály
     # ------------------------------------------------------------------
 
-    async def rrf_rank_findings(self, sprint_id: str, k: int = 30) -> list[dict]:
+    async def rrf_rank_findings(self, query: str, k: int = 30) -> list[dict]:
         """
         Sprint 8TC B.1: Reciprocal Rank Fusion přes 4 signály.
 
@@ -6461,7 +9773,7 @@ class DuckDBShadowStore:
         Chybějící sloupce se přidávají dynamicky přes ALTER TABLE.
 
         Args:
-            sprint_id: Sprint identifier
+            query: Search query string to filter canonical_findings
             k: RRF constant (default 30 — snižuje vliv nízkých ranků)
 
         Returns:
@@ -6472,7 +9784,7 @@ class DuckDBShadowStore:
             return []
 
         # Dynamicky přidat chybějící sloupce do canonical_findings tabulky
-        # (pokud existuje, jinak používáme shadow_findings)
+        # (pokud existuje, jinak používáme canonical_findings)
         loop = asyncio.get_running_loop()
 
         def _sync_rrf_rank() -> list[dict]:
@@ -6481,90 +9793,59 @@ class DuckDBShadowStore:
                 if conn is None:
                     return []
 
-                # Pokusíme se přidat sloupce — fail safe
-                for col_sql in [
-                    "ALTER TABLE canonical_findings ADD COLUMN IF NOT EXISTS semantic_score REAL DEFAULT 0.0",
-                    "ALTER TABLE canonical_findings ADD COLUMN IF NOT EXISTS pattern_count INT DEFAULT 0",
-                    "ALTER TABLE canonical_findings ADD COLUMN IF NOT EXISTS ioc_degree INT DEFAULT 0",
-                ]:
-                    try:
-                        conn.execute(col_sql)
-                    except Exception:
-                        pass  # Sloupec již existuje nebo tabulka neexistuje
-
-                # RRF SQL — 4 signály, DuckDB window functions
-                # s1,s2,s3,s4 jsou ROW_NUMBER() window funkce pro každý signál
+                # RRF SQL — bulk VALUES approach: 3 signály v jednom VALUES clause
+                # namísto 3× CTE + UNION ALL — O(1) SQL length místo O(N)
+                # s1=confidence, s2=ts, s3=source_type ordinal
                 rrf_sql = """
                 WITH
-                  s1 AS (
-                      SELECT finding_id,
-                             ROW_NUMBER() OVER (ORDER BY COALESCE(semantic_score, 0) DESC) AS r
+                  ranked AS (
+                      SELECT id AS finding_id,
+                             ROW_NUMBER() OVER (ORDER BY COALESCE(confidence, 0) DESC) AS r1,
+                             ROW_NUMBER() OVER (ORDER BY COALESCE(ts, 0) DESC) AS r2,
+                             ROW_NUMBER() OVER (ORDER BY source_type ASC) AS r3
                         FROM canonical_findings
-                       WHERE sprint_id = ?1
-                  ),
-                  s2 AS (
-                      SELECT finding_id,
-                             ROW_NUMBER() OVER (ORDER BY COALESCE(pattern_count, 0) DESC) AS r
-                        FROM canonical_findings
-                       WHERE sprint_id = ?1
-                  ),
-                  s3 AS (
-                      SELECT finding_id,
-                             ROW_NUMBER() OVER (ORDER BY COALESCE(ioc_degree, 0) DESC) AS r
-                        FROM canonical_findings
-                       WHERE sprint_id = ?1
-                  ),
-                  s4 AS (
-                      SELECT finding_id,
-                             ROW_NUMBER() OVER (ORDER BY COALESCE(ts, 0) DESC) AS r
-                        FROM canonical_findings
-                       WHERE sprint_id = ?1
+                       WHERE query = ?1
                   ),
                   rrf AS (
-                      SELECT finding_id, r FROM s1
+                      SELECT finding_id, r1 AS r FROM ranked
                       UNION ALL
-                      SELECT finding_id, r FROM s2
+                      SELECT finding_id, r2 AS r FROM ranked
                       UNION ALL
-                      SELECT finding_id, r FROM s3
-                      UNION ALL
-                      SELECT finding_id, r FROM s4
+                      SELECT finding_id, r3 AS r FROM ranked
                   )
-                SELECT f.finding_id,
-                       f.content,
+                SELECT f.id AS finding_id,
+                       f.query AS content,
                        f.ts,
-                       f.semantic_score,
-                       f.pattern_count,
-                       f.ioc_degree,
+                       f.confidence AS semantic_score,
+                       f.source_type,
+                       f.confidence,
                        SUM(1.0 / (?2 + rrf.r)) AS rrf_score
                   FROM rrf
-                  JOIN canonical_findings f USING (finding_id)
-                 WHERE f.sprint_id = ?1
-                 GROUP BY f.finding_id, f.content, f.ts,
-                          f.semantic_score, f.pattern_count, f.ioc_degree
+                  JOIN canonical_findings f ON f.id = rrf.finding_id
+                 WHERE f.query = ?1
+                 GROUP BY f.id, f.query, f.ts, f.confidence, f.source_type
                  ORDER BY rrf_score DESC
                  LIMIT ?2
                 """
 
-                rows = list(self.arrow_fetch_batch(conn, rrf_sql, [sprint_id, k]))
+                rows = list(self.arrow_fetch_batch(conn, rrf_sql, [query, k]))
                 return [
                     {
                         "finding_id": str(r[0]),
                         "content": r[1] or "",
                         "ts": r[2] or 0.0,
                         "semantic_score": r[3] or 0.0,
-                        "pattern_count": r[4] or 0,
-                        "ioc_degree": r[5] or 0,
+                        "source_type": r[4] or "",
+                        "confidence": r[5] or 0.0,
                         "rrf_score": r[6] or 0.0,
                     }
-                    for r in rows
+                    for batch in rows
+                    for r in batch
                 ]
             except Exception:
                 return []
 
-        try:
-            return await loop.run_in_executor(self._executor, _sync_rrf_rank)
-        except Exception:
-            return []
+        return await loop.run_in_executor(self._executor, _sync_rrf_rank)
 
     # ------------------------------------------------------------------
     # Sprint 8L: Bounded Startup Replay
@@ -7376,7 +10657,7 @@ class DuckDBShadowStore:
                 # Note: read_only=False so WAL is flushed and visible
                 conn = duckdb.connect(str(self._db_path))
                 try:
-                    sql = "SELECT 1 FROM shadow_findings WHERE id = ? LIMIT 1"
+                    sql = "SELECT 1 FROM canonical_findings WHERE id = ? LIMIT 1"
                     result = conn.execute(sql, [finding_id])
                     result = list(self.arrow_fetch_batch(conn, sql, [finding_id]))
                     return len(result) > 0
@@ -7384,7 +10665,7 @@ class DuckDBShadowStore:
                     conn.close()
             else:
                 # :memory: mode — use persistent connection
-                sql = "SELECT 1 FROM shadow_findings WHERE id = ? LIMIT 1"
+                sql = "SELECT 1 FROM canonical_findings WHERE id = ? LIMIT 1"
                 result = self._persistent_conn.execute(sql, [finding_id])
                 result = list(self.arrow_fetch_batch(self._persistent_conn, sql, [finding_id]))
                 return len(result) > 0

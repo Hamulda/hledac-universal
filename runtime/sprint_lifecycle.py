@@ -80,6 +80,10 @@ class SprintLifecycleManager:
     # Set by scheduler after first_cycle_started is captured.
     pre_loop_cost_s: float = 0.0
 
+    # F290: First-cycle guarantee — windup cannot fire before at least one
+    # acquisition cycle has completed. Set by scheduler after first cycle ends.
+    first_cycle_ran: bool = False
+
     # ── start ────────────────────────────────────────────────────────────────
 
     def start(self, now_monotonic: float | None = None) -> None:
@@ -145,16 +149,33 @@ class SprintLifecycleManager:
         """
         True when remaining time is at or below the windup lead threshold.
 
+        F288: When pre_loop_cost_s > windup_lead_s (measured at runtime),
+        the effective trigger is raised to windup_lead_s + pre_loop_cost_s.
+        This ensures at least one full acquisition cycle completes before
+        windup fires — even when init cost exceeded the static windup_lead_s.
 
-        F288: When pre_loop_cost_s is set (measured at runtime), the effective
-        windup trigger is raised to max(windup_lead_s, pre_loop_cost_s). This
-        prevents windup from firing before at least one acquisition cycle has
-        had a chance to run — even when pre_loop cost exceeded windup_lead_s.
+        F289: HARD MINIMUM — never return True if remaining time would leave
+        less than 30s of active work. This prevents "instant windup" where
+        windup_lead_s is set too close to sprint_duration (e.g. 450s windup
+        lead on a 460s sprint leaves only 10s of actual work).
         """
         now = _now(now_monotonic)
         remaining = self._remaining_time_unlocked(now)
-        # F288: Adaptive trigger — don't enter windup before pre_loop cost is paid
-        _effective_trigger = max(self.windup_lead_s, self.pre_loop_cost_s)
+        # F289: Minimum active window guarantee — clamp trigger to never
+        # exceed sprint_duration - 30s (ensures at least 30s of active work)
+        _MIN_ACTIVE_WINDOW_S = 30.0
+        _max_windup_trigger = min(self.windup_lead_s, self.sprint_duration_s - _MIN_ACTIVE_WINDOW_S)
+        # F288: Adaptive trigger — ensure at least one full cycle runs before windup.
+        # When pre_loop_cost_s > windup_lead_s, delay windup entry by pre_loop_cost_s
+        # so the first acquisition cycle can complete its work.
+        # The +windup_lead_s term guarantees: windup fires only when remaining
+        # would leave < windup_lead_s of the sprint — matching the original intent.
+        _pre_loop_bonus = self.pre_loop_cost_s if self.pre_loop_cost_s > self.windup_lead_s else 0.0
+        _effective_trigger = min(self.windup_lead_s + _pre_loop_bonus, _max_windup_trigger)
+        # F290: HARD GUARANTEE — windup cannot fire before at least one acquisition
+        # cycle has completed. This is a safety net beyond F288's adaptive trigger.
+        if not self.first_cycle_ran:
+            return False
         return remaining <= _effective_trigger
 
     # ── request_abort ───────────────────────────────────────────────────────

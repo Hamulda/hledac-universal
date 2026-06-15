@@ -52,6 +52,7 @@ logger = logging.getLogger(__name__)
 MAX_EMBEDDING_BATCH: int = 16
 MAX_TEXT_BYTES_PER_FINDING: int = 4096
 _MODEL_LOADED_FETCH_LIMIT: int = 3  # F202H spec: FETCH_SEMAPHORE=3 while model loaded
+_SAMPLE_INTERVAL: int = 3  # sample memory every N batches (natural yield points)
 
 
 # ---------------------------------------------------------------------------
@@ -70,11 +71,18 @@ class StreamingEmbedder:
     Fail-open: any error yields empty, never raises.
     """
 
-    __slots__ = ("_loaded", "_embedding_depth")
+    __slots__ = ("_loaded", "_embedding_depth", "_abort", "_sample_counter")
 
     def __init__(self) -> None:
         self._loaded: bool = False
         self._embedding_depth: int = 0
+        self._abort: bool = False
+        self._sample_counter: int = 0
+
+    @property
+    def aborted(self) -> bool:
+        """True if embedding was aborted due to memory pressure."""
+        return self._abort
 
     # -------------------------------------------------------------------------
     # Model lifecycle helpers
@@ -130,16 +138,30 @@ class StreamingEmbedder:
             logger.debug(f"[StreamingEmbed] adjust_fetch_workers failed: {e}")
 
     def _ram_guard_ok(self) -> bool:
-        """Check if RAM allows embedding generation. Fail-soft: returns True."""
+        """
+        Check if RAM allows embedding generation.
+
+        Embedding model (~256d float32, ~1MB per batch) is dramatically smaller
+        than Hermes model (~2GB). M1 8GB can safely run embedding even in
+        critical state as long as:
+        - Not in emergency state (system memory >= 7.0 GiB)
+        - No active swap (swap_used_gib <= 1.5 GiB baseline)
+
+        F265B: Allow embedding in critical state — only emergency blocks it.
+        Fail-soft: returns True if check fails (embedding proceeds).
+        """
         try:
             from hledac.universal.core.resource_governor import sample_uma_status
 
             uma = sample_uma_status()
-            # Block heavy vision at >85% pressure (same threshold as MultimodalEnricher)
-            if uma.is_critical or uma.is_emergency:
+            state = getattr(uma, "state", "ok")
+            swap_detected = getattr(uma, "swap_detected", False)
+            # Embedding model is ~1MB — only emergency blocks it
+            # (critical means system >= 6.5 GiB used, still ~1.5 GiB available)
+            if state == "emergency":
                 return False
-            if uma.is_warn and hasattr(uma, "high_water") and uma.high_water > 0.85:
-                return False
+            if swap_detected:
+                return False  # Active swap = M1 UMA systemic pressure, block embedding
             return True
         except Exception:
             return True  # Fail-soft: allow if check fails
@@ -208,8 +230,16 @@ class StreamingEmbedder:
         findings: list[CanonicalFinding],
         batch_size: int,
     ) -> AsyncIterator[tuple[list[str], np.ndarray]]:
-        """Internal chunked embedder — model assumed already loaded."""
+        """
+        Internal chunked embedder — model assumed already loaded.
+
+        Samples memory state every _SAMPLE_INTERVAL batches (natural yield points).
+        Sets _abort=True when CRITICAL/EMERGENCY detected — caller checks .aborted.
+        """
         for i in range(0, len(findings), batch_size):
+            if self._abort:
+                logger.debug("[StreamingEmbed] aborting due to prior memory pressure")
+                break
             chunk = findings[i:i + batch_size]
             try:
                 ids, embs = await self._embed_batch(chunk)
@@ -218,6 +248,16 @@ class StreamingEmbedder:
             except Exception as e:
                 logger.debug(f"[StreamingEmbed] batch error at offset {i}: {e}")
                 continue
+
+            # ── Periodic memory sampling at natural yield points ──────────────
+            self._sample_counter += 1
+            if self._sample_counter >= _SAMPLE_INTERVAL:
+                self._sample_counter = 0
+                self._abort = not self._ram_guard_ok()
+                if self._abort:
+                    logger.warning(
+                        "[StreamingEmbed] memory pressure detected, will abort after remaining batches"
+                    )
 
     async def _embed_batch(
         self,

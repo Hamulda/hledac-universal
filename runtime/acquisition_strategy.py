@@ -65,6 +65,9 @@ from hledac.universal.runtime.acquisition_telemetry_reconcile import (  # noqa: 
     complete_source_family_outcomes_from_lane_details,
     reconcile_lane_detail_fields,
 )
+from hledac.universal.runtime.nonfeed_candidate_ledger import (  # noqa: E402
+    extract_domain_candidates_from_text,
+)
 from hledac.universal.runtime.source_finding_bridge import (  # noqa: E402
     MAX_SAMPLE_REJECTIONS,
     ct_results_to_findings,
@@ -1516,6 +1519,7 @@ def build_acquisition_report(
     ct_storage_rejected: int = 0,
     arrow_last_flush_error: str = "",
     arrow_batch_dropped: int = 0,
+    arrow_flush_failure_count: int = 0,
     prewindup_barrier_errors: dict | None = None,
     return_guard_errors: dict | None = None,
     wayback_unchanged_rejected: int = 0,
@@ -1834,6 +1838,7 @@ def build_acquisition_report(
         "ct_storage_rejected": ct_storage_rejected,
         "arrow_last_flush_error": arrow_last_flush_error or "",
         "arrow_batch_dropped": arrow_batch_dropped,
+        "arrow_flush_failure_count": arrow_flush_failure_count,
         "prewindup_barrier_errors": (
             sum(prewindup_barrier_errors.values()) if isinstance(prewindup_barrier_errors, dict) else int(prewindup_barrier_errors or 0)  # noqa: E501
         ),
@@ -2945,6 +2950,9 @@ def build_acquisition_plan(
     stealth_phase: dict | None = None,
     acquisition_profile: str = "default",
     source_quality_weights: dict | None = None,
+    rl_lane_combo: frozenset[str] | None = None,
+    feed_domain_seeds: tuple[str, ...] = (),
+    synthetic_domains: tuple[str, ...] = (),
 ) -> AcquisitionStrategySnapshot:
     """
     Build an acquisition strategy snapshot for the given sprint context.
@@ -2969,6 +2977,12 @@ def build_acquisition_plan(
             "default" = standard behavior.
             "nonfeed_diagnostic" = caps FEED at 25, enables nonfeed lanes for domain queries.
             Falls back to HLEDAC_ACQUISITION_PROFILE env var if not explicitly passed.
+        rl_lane_combo: F265LANE: Optional frozenset of lane names (e.g. {"CT","WAYBACK"})
+            from RL policy action. When set, overrides lane enabled/disabled decisions
+            to match the RL-chosen combination.
+        feed_domain_seeds: P0-8: Domain seeds extracted from accepted feed findings.
+            When query has no domain indicator but feed findings contain domains,
+            these seeds enable CT/DOH/WAYBACK lanes mid-sprint.
 
     Returns:
         AcquisitionStrategySnapshot with per-lane plans.
@@ -3011,6 +3025,9 @@ def build_acquisition_plan(
             stealth_phase=stealth_phase,
             acquisition_profile=acquisition_profile,
             feed_budget=feed_budget,
+            rl_lane_combo=rl_lane_combo,
+            feed_domain_seeds=feed_domain_seeds,
+            synthetic_domains=synthetic_domains,
         )
     except Exception:
         # Fail-soft: return minimal snapshot with all lanes disabled
@@ -3040,6 +3057,9 @@ def _build_plan_impl(
     stealth_phase: dict | None,
     acquisition_profile: str = "default",
     feed_budget: FeedDominanceBudget = FeedDominanceBudget(),  # noqa: B008
+    rl_lane_combo: frozenset[str] | None = None,
+    feed_domain_seeds: tuple[str, ...] = (),
+    synthetic_domains: tuple[str, ...] = (),
 ) -> AcquisitionStrategySnapshot:
     """Internal implementation — raises on error (caller catches)."""
 
@@ -3052,6 +3072,36 @@ def _build_plan_impl(
     has_long_duration = duration_s >= 300.0
     is_nonfeed_diagnostic = acquisition_profile == AcquisitionProfile.NONFEED_DIAGNOSTIC
     is_deep_osint_m1 = is_deep_osint_m1_profile(acquisition_profile)
+
+    # [F300S-P0] Feed domain candidate extraction for non-domain queries.
+    # If query has no FQDN but we have accepted findings, extract domains from
+    # query text to enable CT/DOH/WAYBACK lanes (they require has_fqdn=True).
+    # This is the primary fix for "Feed Dominance=1.0, weak_capability" where
+    # feed findings contain domains but nonfeed lanes were never planned.
+    # P0-8: Also use feed_domain_seeds passed from sprint_scheduler (extracted
+    # from accepted feed findings during the current sprint).
+    # P0-9: Also use synthetic_domains from concept expansion (MLX/heuristic).
+    _feed_domain_candidates: tuple[str, ...] = ()
+    _feed_domain_candidates_count = 0
+    if not has_domain and (accepted_findings_so_far > 0 or feed_domain_seeds or synthetic_domains):
+        # Priority: feed_domain_seeds (from feed findings) > synthetic_domains (from MLX expansion)
+        if feed_domain_seeds:
+            _feed_domain_candidates = feed_domain_seeds[:10]
+            _feed_domain_candidates_count = len(_feed_domain_candidates)
+            has_domain = True
+        elif synthetic_domains:
+            # Use synthetic domains from concept expansion (P0-9)
+            _feed_domain_candidates = synthetic_domains[:10]
+            _feed_domain_candidates_count = len(_feed_domain_candidates)
+            has_domain = True
+        elif accepted_findings_so_far > 0:
+            # Fallback: extract domain candidates from query text
+            _candidates = extract_domain_candidates_from_text(query)
+            if _candidates:
+                _feed_domains = tuple(c.domain for c in _candidates[:10])
+                _feed_domain_candidates = _feed_domains
+                _feed_domain_candidates_count = len(_feed_domains)
+                has_domain = True
     transport_degraded = False
     stealth_phase_num = 0
     stealth_breaker_ready = False
@@ -3111,6 +3161,32 @@ def _build_plan_impl(
             concurrency=rule.concurrency(ctx),
             risk_level=rule.spec.risk_level,
         ))
+
+    # F265LANE: RL lane combo override — when RL policy emits a lane combination,
+    # rebuild plans with the RL-chosen lane enabled/disabled.
+    # FEED, PUBLIC, STEALTH, ACADEMIC stay governed by normal rules (not RL-overridable).
+    if rl_lane_combo is not None:
+        _rl_lanes = frozenset(rl_lane_combo)
+        _protected = frozenset([
+            AcquisitionLane.FEED, AcquisitionLane.PUBLIC,
+            AcquisitionLane.STEALTH, AcquisitionLane.ACADEMIC,
+        ])
+        plans = [
+            (
+                AcquisitionLanePlan(
+                    lane=p.lane,
+                    enabled=p.lane in _rl_lanes,
+                    reason=f"rl_override:{p.lane}" if p.lane in _rl_lanes else f"rl_disabled:{p.lane}",
+                    max_items=p.max_items,
+                    timeout_s=p.timeout_s,
+                    concurrency=p.concurrency,
+                    risk_level=p.risk_level,
+                )
+                if p.lane not in _protected
+                else p
+            )
+            for p in plans
+        ]
 
     # [F207L] Build nonfeed_plan_debug for live KPI diagnosis
     # F216B: Updated to include nonfeed_diagnostic telemetry
@@ -4887,6 +4963,20 @@ def build_lane_query(base_query: str, lane: str, seed_context: NonfeedSeedContex
         return {"_disabled": True, "reason": "no_domain_seed"}
 
     elif lane == AcquisitionLane.PUBLIC:
+        # P1-1: Static OSINT query expansion — swap to best variant for coverage.
+        # For broad threat queries (e.g. "ransomware threat intelligence leak
+        # dark web exposure"), replacing with a tighter variant improves recall.
+        # M1 safe: pure Python dict, 0 MB RAM.
+        try:
+            from hledac.universal.runtime.osint_query_expander import (
+                expand_osint_query,
+            )
+            variants = expand_osint_query(base_query, max_variants=1)
+            if variants:
+                # Use expanded variant ( tighter terms) instead of broad original
+                return variants[0][:200]
+        except Exception:
+            pass
         trimmed = base_query[:200] if len(base_query) > 200 else base_query
         return trimmed
 
