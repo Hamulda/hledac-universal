@@ -349,11 +349,41 @@ def get_node_id_by_value(value: str) -> int | None:
         return None
 
 
+# P0-2: Reusable read-only DuckDB connection (avoids 5-10ms connect overhead per call)
+_DUCKDB_RO_CON: duckdb.DuckDBPyConnection | None = None
+
+
+def _get_duckdb_ro() -> duckdb.DuckDBPyConnection | None:
+    """Return a reusable read-only DuckDB connection.
+
+    P0-2 fix: Previously every lookup_ioc_values_by_ids() call opened a new
+    connection (5-10ms overhead). Now we reuse a single read-only connection
+    for the lifetime of the process.
+
+    Thread-safety: DuckDB read-only connections are safe for concurrent reads
+    from multiple threads (MVCC). The connection is opened lazily on first use.
+    """
+    global _DUCKDB_RO_CON
+    if _DUCKDB_RO_CON is None:
+        try:
+            import duckdb
+
+            from hledac.universal.paths import get_ioc_db_path
+            _DUCKDB_RO_CON = duckdb.connect(str(get_ioc_db_path()), read_only=True)
+        except Exception as e:
+            logger.debug(f"[HOT-EDGES] DuckDB read-only connect failed: {e}")
+            return None
+    return _DUCKDB_RO_CON
+
+
 def lookup_ioc_values_by_ids(
     node_ids: list[int]
 ) -> dict[int, dict]:
     """
     Batch-resolve node_ids → IOC value/type/confidence.
+
+    P0-2 FIX: Uses a reusable read-only DuckDB connection instead of opening
+    a new connection on every call. Eliminates 5-10ms connect overhead per call.
 
     Returns dict[int, {value, ioc_type, confidence, source}]. Missing
     ids are silently dropped. Used by read path to convert hot-edge
@@ -363,24 +393,19 @@ def lookup_ioc_values_by_ids(
     """
     if not node_ids:
         return {}
+    con = _get_duckdb_ro()
+    if con is None:
+        return {}
     try:
-        import duckdb
-
-        from hledac.universal.paths import get_ioc_db_path
-
-        con = duckdb.connect(str(get_ioc_db_path()), read_only=True)
-        try:
-            placeholders = ",".join(["?"] * len(node_ids))
-            sql = f"SELECT id, value, ioc_type, confidence, source FROM ioc_nodes WHERE id IN ({placeholders})"
-            # noqa: B608 — placeholders are integer-count-derived, node_ids are internal int list, read-only query
-            cur = con.execute(sql, node_ids)
-            cols = [c[0] for c in cur.description]
-            return {
-                int(row[0]): dict(zip(cols, row, strict=False))
-                for row in cur.fetchall()
-            }
-        finally:
-            con.close()
+        placeholders = ",".join(["?"] * len(node_ids))
+        sql = f"SELECT id, value, ioc_type, confidence, source FROM ioc_nodes WHERE id IN ({placeholders})"
+        # noqa: B608 — placeholders are integer-count-derived, node_ids are internal int list, read-only query
+        cur = con.execute(sql, node_ids)
+        cols = [c[0] for c in cur.description]
+        return {
+            int(row[0]): dict(zip(cols, row, strict=False))
+            for row in cur.fetchall()
+        }
     except Exception as e:
         logger.debug(f"[HOT-EDGES] lookup_ioc_values_by_ids failed: {e}")
         return {}

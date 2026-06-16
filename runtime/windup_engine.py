@@ -180,6 +180,8 @@ async def run_windup(
         from brain.synthesis_runner import SynthesisRunner
 
         runner = SynthesisRunner(ModelLifecycle())
+        # F234: Enable MLX-first context compression for M1 8GB safety
+        runner.set_compression_threshold(4000)
         if hasattr(scheduler, "_ioc_graph") and scheduler._ioc_graph is not None:
             runner.inject_graph(scheduler._ioc_graph)
         # Sprint 8VL: Inject lifecycle adapter — PREFERRED truth path for windup gate

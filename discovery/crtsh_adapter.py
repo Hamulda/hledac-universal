@@ -555,7 +555,7 @@ async def call_crtsh(
         strong_error: str | None = None
         strong_outcome_tag: CTProviderStatus = CTProviderStatus.DISABLED
         _start = time.monotonic()
-        _sem = asyncio.Semaphore(2)  # max 2 concurrent crt.sh requests
+        _sem = asyncio.Semaphore(4)  # P1: max 4 concurrent crt.sh wildcard requests (M1 8GB safe)
 
         async def _fetch_one(url: str) -> tuple[list[DiscoveryHit], str | None, CTProviderStatus]:
             async with _sem:

@@ -15,14 +15,16 @@ from __future__ import annotations
 
 import asyncio
 import atexit
+import functools
 import logging
 import os
 import random
 import re
 import time
 import urllib.parse
-from dataclasses import dataclass
 from typing import Any, Final
+
+import msgspec
 
 # psutil lazy import — only needed inside fetch function at runtime
 _psutil = None
@@ -85,6 +87,7 @@ def _get_url_ops() -> object | None:
         return None
 
 
+@functools.lru_cache(maxsize=512)
 def _classify_url_cached(url: str) -> tuple[str, str]:
     """Drop-in: returns (kind_str, lowercase_host) using Rust when available.
 
@@ -115,7 +118,6 @@ def _classify_url_cached(url: str) -> tuple[str, str]:
 
 # Sprint F206AL: Import canonical M1 8GB threshold from uma_budget.
 import aiohttp  # noqa: E402
-import msgspec  # noqa: E402
 
 from hledac.universal.network.session_runtime import async_get_aiohttp_session  # noqa: E402
 from hledac.universal.patterns.pattern_matcher import match_text  # noqa: E402
@@ -649,6 +651,8 @@ class FetchResult(msgspec.Struct, frozen=True):
     tls_cert_issuer: str | None = None  # Issuer CN from server cert
     tls_cert_sha256: str | None = None  # SHA-256 fingerprint of server cert
     server_header: str | None = None  # Server response header value
+    # Added in F274 — Pattern matches from HTML scan (carried from process_html_payload)
+    matched_patterns: tuple[str, ...] = ()  # (label, pattern, value) tuples from match_text scan
 
 
 # ---------------------------------------------------------------------------
@@ -1948,6 +1952,12 @@ def _compute_effective_max_bytes(requested: int) -> int:
 # getter guarantees a per-loop singleton.
 _JS_RENDERER_SEMAPHORE: asyncio.Semaphore | None = None
 
+# P14 FIX: Cooldown after browser.stop() before releasing semaphore.
+# On macOS, browser.stop() is async and returns before the child process is fully
+# reaped by the OS. Without this delay, the next renderer (camoufox→nodriver→playwright)
+# races with the dying process and sees TargetClosedError / "browser has been closed".
+_JSC_RENDERER_COOLDOWN_S = 0.15
+
 
 def _get_js_renderer_semaphore() -> asyncio.Semaphore:
     """F226A: Lazily-initialized, per-event-loop JS renderer Semaphore(1)."""
@@ -1957,13 +1967,22 @@ def _get_js_renderer_semaphore() -> asyncio.Semaphore:
     return _JS_RENDERER_SEMAPHORE
 
 
+async def _cooldown_after_browser_stop() -> None:
+    """
+    P14 FIX: Yield to event loop after browser.stop() so the OS can fully reap
+    the child process before the next renderer acquires the semaphore.
+    On macOS, browser processes (Chrome/Firefox) are multi-process — the main
+    process exits fast but sandbox/helper processes may linger for 50-100ms.
+    """
+    await asyncio.sleep(_JSC_RENDERER_COOLDOWN_S)
+
+
 # F226B: aiohttp body-cap helper — single source of truth for the chunked
 # read loop. Originally duplicated at public_fetcher.py ~2207-2294 alongside
 # the httpx_h2 inline copy (~1768-1796). Now both call into helpers in
 # transport.body_limiter; this wrapper adds the aiohttp-specific first-chunk
 # XML peek (used by content_type rejection recovery).
-@dataclass(frozen=True, slots=True)
-class AiohttpBodyOutcome:
+class AiohttpBodyOutcome(msgspec.Struct, frozen=True, gc=False):
     """F226B: aiohttp body read outcome with peek + size cap."""
     body: bytes
     total_read: int
@@ -2130,6 +2149,10 @@ async def _camoufox_locked(url: str, timeout: float) -> str:
         except Exception as e:
             logger.warning(f"Camoufox fetch failed for {url}: {e}")
             return ""
+        finally:
+            # P14 FIX: yield to event loop so OS can fully reap the browser process
+            # before the next renderer acquires the semaphore and races with it
+            await _cooldown_after_browser_stop()
 
 
 async def _fetch_with_nodriver(url: str) -> str:
@@ -2200,6 +2223,9 @@ async def _nodriver_locked(url: str) -> str:
     finally:
         if browser is not None:
             browser.stop()
+        # P14 FIX: yield to event loop so OS can fully reap the browser process
+        # before the next renderer acquires the semaphore and races with it
+        await _cooldown_after_browser_stop()
 
 
 async def _fetch_with_playwright(url: str, timeout: float = 15.0) -> str:
@@ -2257,6 +2283,9 @@ async def _playwright_locked(url: str, timeout: float) -> str:
     finally:
         if browser is not None:
             await browser.close()
+        # P14 FIX: yield to event loop so OS can fully reap the browser process
+        # before the next renderer acquires the semaphore and races with it
+        await _cooldown_after_browser_stop()
 
 
 # ---------------------------------------------------------------------------
@@ -2427,7 +2456,7 @@ async def async_fetch_public_text(
                 logger.warning(f"Camoufox failed, trying Playwright: {url}")
                 js_html = await _fetch_with_playwright(url, timeout=timeout_s)
             if js_html:
-                js_text, _, js_meta = await process_html_payload(js_html, url)
+                js_text, js_matches, js_meta = await process_html_payload(js_html, url)
                 elapsed_ms = (time.monotonic() - t0) * 1000
                 _tc.js_renderer_count += 1
                 _meta_sources = list(js_meta.get("ga_gtm_ids", ()))
@@ -2437,6 +2466,11 @@ async def async_fetch_public_text(
                     _meta_sources.append("html_comments")
                 if js_text:
                     _store_body_hash(url, _compute_body_hash(js_text.encode("utf-8", errors="replace")))
+                # F274: Carry matched_patterns so pipeline can process them
+                _matched: tuple[str, ...] = tuple(
+                    (m.label or "") + "|" + m.pattern + "|" + m.value
+                    for m in (js_matches or [])
+                )
                 return FetchResult(
                     url=url,
                     final_url=url,
@@ -2451,6 +2485,7 @@ async def async_fetch_public_text(
                     transport_policy_reason="js_required",
                     transport_counters=_tc,
                     hydration_sources=tuple(_meta_sources),
+                    matched_patterns=_matched,
                 )
             # JS rendering completely failed
             elapsed_ms = (time.monotonic() - t0) * 1000
@@ -2516,6 +2551,15 @@ async def async_fetch_public_text(
         logger.debug(f"[HTTPX] H2 lane selected for {url}: {_router_reason}")
         _original_policy_reason = _router_reason
         try:
+            # F273G+H3-FIX: prime H3 LRU BEFORE the httpx fetch.
+            # httpx does not support HTTP/3 natively (it is HTTP/2 only),
+            # but the LRU update benefits any subsequent curl_cffi request
+            # to the same host within the sprint. Fire-and-forget, never
+            # blocks the H2 fast path.
+            try:
+                probe_altsvc_speculative(url)
+            except Exception:
+                pass
 
             _httpx_resp = await fetch_via_httpx_h2(url, timeout_s=timeout_s)
             _httpx_final_url = str(_httpx_resp.url)
@@ -2523,14 +2567,10 @@ async def async_fetch_public_text(
             _httpx_content_type = _httpx_resp.headers.get("Content-Type", "")
             _httpx_raw_ct = _httpx_content_type.split(";")[0].strip().lower()
 
-            # F273G+H3-FIX: prime H3 LRU from httpx_h2 lane too.
-            # Previously only curl_cffi_stealth primed the LRU; the H2 lane
-            # was H3-dark. The probe is fire-and-forget so it never blocks
-            # the H2 fast path.
-            try:
-                probe_altsvc_speculative(url)
-            except Exception:
-                pass
+            # Note: probe_altsvc_speculative is called BEFORE the fetch
+            # (above) so the LRU is warm for any follow-up curl_cffi
+            # requests in the same sprint. httpx itself cannot use H3,
+            # so no blocking pre-probe is needed here.
 
             # Detect HTTP version from response
             _http_ver: str | None = None
@@ -2675,24 +2715,14 @@ async def async_fetch_public_text(
             # F260+: opportunistic HTTP/3 (QUIC) upgrade via Alt-Svc cache.
             # None when host has no h3 advertisement or feature disabled.
             _curl_http_version = _altsvc_http_version_for(_altsvc_extract_host(url))
-            # F265B: speculative Alt-Svc probe — fire-and-forget. If the
-            # host hasn't been seen yet, the probe primes the LRU in the
-            # background so a later fetch (e.g. follow-up SERP pages in
-            # the same sprint) can use HttpVersion.v3 on the FIRST hit.
-            # F273G+H3-FIX: probe_altsvc_speculative is called for ALL clearnet
-            # lanes, not only curl_cffi_stealth. The httpx_h2 lane previously
-            # had zero H3 awareness — the LRU was never primed from that path.
-            # Fire-and-forget, fail-soft, never blocks the hot path. The
-            # _pre_probe blocking path (F265C, _pre_probe=True in curl_cffi_stealth)
-            # handles the cold-start case synchronously so the first fetch can
-            # use H3 immediately.
-            try:
-                probe_altsvc_speculative(url)
-            except Exception:
-                pass
-            # F265B: conditional-cache wrapper. Uses ETag/Last-Modified
+            # F265B conditional-cache wrapper. Uses ETag/Last-Modified
             # from the cache to send If-None-Match/If-Modified-Since;
             # 304 responses return the cached body (0 bytes transferred).
+            # _pre_probe=True handles the cold-start H3 priming:
+            #   - LRU cold → blocking HEAD probe (~200-400ms) → LRU warm
+            #   - LRU warm → no-op, proceeds with cached http_version
+            # probe_altsvc_speculative is NOT needed here (would be redundant)
+            # because _pre_probe is synchronous and runs BEFORE fetch.
             _curl_result = await fetch_via_curl_cffi_cached(
                 url=url,
                 headers=_stealth_headers,
@@ -2808,10 +2838,11 @@ async def async_fetch_public_text(
                 if not _all_js_renderers_unavailable():
                     _js_html = await _fetch_with_nodriver(url)
                     if _js_html:
-                        _js_text, _js_matches = await process_html_payload(_js_html, url)
+                        _js_text, _js_matches, _ = await process_html_payload(_js_html, url)
                         _js_elapsed_ms = (time.monotonic() - t0) * 1000
                         _tc.js_renderer_count += 1
                         logger.info(f"nodriver succeeded for {url} (curl_cffi fallback)")
+                        _matched = tuple((m.label or "") + "|" + m.pattern + "|" + m.value for m in (_js_matches or []))
                         return FetchResult(
                             url=url,
                             final_url=url,
@@ -2825,14 +2856,16 @@ async def async_fetch_public_text(
                             selected_transport="js",
                             transport_policy_reason="js_required",
                             transport_counters=_tc,
+                            matched_patterns=_matched,
                         )
                     # nodriver failed → camoufox fallback
                     _js_html = await _fetch_with_camoufox(url, timeout=timeout_s)
                     if _js_html:
-                        _js_text, _js_matches = await process_html_payload(_js_html, url)
+                        _js_text, _js_matches, _ = await process_html_payload(_js_html, url)
                         _js_elapsed_ms = (time.monotonic() - t0) * 1000
                         _tc.js_renderer_count += 1
                         logger.info(f"Camoufox succeeded for {url} (curl_cffi fallback)")
+                        _matched = tuple((m.label or "") + "|" + m.pattern + "|" + m.value for m in (_js_matches or []))
                         return FetchResult(
                             url=url,
                             final_url=url,
@@ -2846,14 +2879,16 @@ async def async_fetch_public_text(
                             selected_transport="js",
                             transport_policy_reason="js_required",
                             transport_counters=_tc,
+                            matched_patterns=_matched,
                         )
                     # camoufox failed → playwright last resort
                     _js_html = await _fetch_with_playwright(url, timeout=timeout_s)
                     if _js_html:
-                        _js_text, _js_matches = await process_html_payload(_js_html, url)
+                        _js_text, _js_matches, _ = await process_html_payload(_js_html, url)
                         _js_elapsed_ms = (time.monotonic() - t0) * 1000
                         _tc.js_renderer_count += 1
                         logger.info(f"Playwright succeeded for {url} (curl_cffi fallback)")
+                        _matched = tuple((m.label or "") + "|" + m.pattern + "|" + m.value for m in (_js_matches or []))
                         return FetchResult(
                             url=url,
                             final_url=url,
@@ -2867,6 +2902,7 @@ async def async_fetch_public_text(
                             selected_transport="js",
                             transport_policy_reason="js_required",
                             transport_counters=_tc,
+                            matched_patterns=_matched,
                         )
 
             # curl_cffi result returned (either no JS need, or JS rendering failed → return static)
@@ -3079,7 +3115,7 @@ async def async_fetch_public_text(
                     async with session.get(url, **request_kwargs) as resp:
                         final_url = str(resp.url)
                         last_status_code = resp.status
-                        content_type = resp.headers.get("Content-Type", "")
+                        content_type = resp.headers.get("Content-Type", "") or ""
                         raw_content_type = content_type.split(";")[0].strip().lower()
 
                         # --- F206AJ: 403/429 one-shot curl_cffi escalation ---
@@ -3440,6 +3476,7 @@ async def async_fetch_public_text(
                                     _addl_sources.append("og_tags")
                                 if _cmts:
                                     _addl_sources.append("html_comments")
+                                _matched = tuple((m.label or "") + "|" + m.pattern + "|" + m.value for m in (js_matches or []))
                                 return FetchResult(
                                     url=url,
                                     final_url=url,
@@ -3454,6 +3491,7 @@ async def async_fetch_public_text(
                                     transport_policy_reason="js_required",
                                     transport_counters=_tc,
                                     hydration_sources=tuple(_addl_sources),
+                                    matched_patterns=_matched,
                                 )
 
                             # WKWebView unavailable or failed — fall through to heavy browser (camoufox → nodriver)
@@ -3471,9 +3509,10 @@ async def async_fetch_public_text(
                             js_html = await _fetch_with_camoufox(url, timeout=timeout_s)
                             if js_html:
                                 # Process JS-rendered HTML
-                                js_text, js_matches = await process_html_payload(js_html, url)
+                                js_text, js_matches, _ = await process_html_payload(js_html, url)
                                 elapsed_ms = (time.monotonic() - t0) * 1000
                                 _tc.js_renderer_count += 1
+                                _matched = tuple((m.label or "") + "|" + m.pattern + "|" + m.value for m in (js_matches or []))
                                 return FetchResult(
                                     url=url,
                                     final_url=url,
@@ -3487,14 +3526,16 @@ async def async_fetch_public_text(
                                     selected_transport="js",
                                     transport_policy_reason="js_required",
                                     transport_counters=_tc,
+                                    matched_patterns=_matched,
                                 )
                             # Camoufox failed → try nodriver fallback
                             logger.warning(f"Camoufox failed, trying nodriver: {url}")
                             js_html = await _fetch_with_nodriver(url)
                             if js_html:
-                                js_text, js_matches = await process_html_payload(js_html, url)
+                                js_text, js_matches, _ = await process_html_payload(js_html, url)
                                 elapsed_ms = (time.monotonic() - t0) * 1000
                                 _tc.js_renderer_count += 1
+                                _matched = tuple((m.label or "") + "|" + m.pattern + "|" + m.value for m in (js_matches or []))
                                 return FetchResult(
                                     url=url,
                                     final_url=url,
@@ -3508,6 +3549,7 @@ async def async_fetch_public_text(
                                     selected_transport="js",
                                     transport_policy_reason="js_required",
                                     transport_counters=_tc,
+                                    matched_patterns=_matched,
                                 )
                             # F207F: Both JS renders failed — update capability tracking
                                 if not js_html:

@@ -190,10 +190,21 @@ class TorTransport(Transport):
             self.onion_address = f"localhost:{self.http_port}"
             self.security_level = 'local'
 
-        # HTTP session
-        self._session_direct = self._aiohttp.ClientSession()
+        # HTTP session with bounded connector (F270: M1 8GB safe)
+        direct_connector = self._aiohttp.TCPConnector(
+            limit=10,           # total connection pool size (M1 safe)
+            limit_per_host=5,    # per-host limit (prevent starvation)
+            force_close=True,   # M1 memory safety
+        )
+        self._session_direct = self._aiohttp.ClientSession(connector=direct_connector)
         if self.security_level == 'tor':
-            connector = self._ProxyConnector.from_url(f'socks5://127.0.0.1:{self.socks_port}', rdns=True)
+            # F270: Bounded ProxyConnector for M1 8GB safety
+            connector = self._ProxyConnector.from_url(
+                f'socks5://127.0.0.1:{self.socks_port}',
+                rdns=True,
+                limit=10,           # total connection pool size (M1 safe)
+                limit_per_host=5,    # per-host limit (prevent starvation)
+            )
             self._session_tor = self._aiohttp.ClientSession(connector=connector)
         else:
             self._session_tor = self._session_direct  # fallback

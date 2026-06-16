@@ -576,7 +576,13 @@ def _lane_rule(
 def _disabled_reason(lane: str, ctx: AcquisitionContext) -> str:
     """Return the disabled-reason string for a lane, matching original inline logic."""
     if lane == AcquisitionLane.FEED:
-        return "hardware_critical"
+        # F266: FEED blocked only at critical/emergency (not swap_detected).
+        # Distinguish swap-only case for accurate telemetry.
+        if ctx.uma_state in ("critical", "emergency"):
+            return "hardware_critical"
+        if ctx.swap_detected:
+            return "swap_detected"
+        return "uma_warn_state"  # should not reach here if lambda matches
     if lane == AcquisitionLane.PUBLIC:
         if ctx.transport_degraded:
             return "transport_degraded"

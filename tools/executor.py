@@ -505,6 +505,9 @@ async def _python_execute_handler(
         "sorted": builtins.sorted, "str": builtins.str, "sum": builtins.sum,
         "tuple": builtins.tuple, "type": builtins.type, "zip": builtins.zip,
         "math": math, "json": json, "re": re,
+        # Security fix: explicitly block dangerous builtins not in whitelist
+        "__import__": None, "open": None, "eval": None, "exec": None,
+        "compile": None, "__loader__": None, "__spec__": None, "breakpoint": None,
     }
 
     stdout_capture = io.StringIO()
@@ -516,8 +519,17 @@ async def _python_execute_handler(
     try:
         sys.stdout = stdout_capture
         sys.stderr = stderr_capture
+        # Security fix: AST whitelist check before compile (defense-in-depth)
+        import ast
+        tree = ast.parse(code)
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.Import, ast.ImportFrom)):
+                raise ValueError("Import statements are not allowed in sandboxed code")
+            if isinstance(node, ast.Call):
+                if getattr(node.func, 'id', None) in ('eval', 'exec', 'compile', '__import__', 'open', 'breakpoint'):
+                    raise ValueError(f"Disallowed function call: {getattr(node.func, 'id', '')}")
         compiled = compile(code, "<restricted>", "exec")
-        exec(compiled, {"__builtins__": safe_builtins})  # noqa: S102  # sandboxed tool handler, safe_builtins whitelist, 30s timeout
+        exec(compiled, {"__builtins__": safe_builtins})  # noqa: S102  # sandboxed tool handler, safe_builtins whitelist, 30s timeout, AST validated
         if "result" in locals() or "result" in globals():
             result = locals().get("result") or globals().get("result")
         success = True

@@ -991,7 +991,13 @@ class FetchCoordinator(UniversalCoordinator):
                     import aiohttp_socks
                     # P3-6 fix: Use environment variable for Tor proxy, default to localhost:9050
                     tor_proxy = os.environ.get('TOR_PROXY', 'socks5://127.0.0.1:9050')
-                    connector = aiohttp_socks.SocksConnector.from_url(tor_proxy, rdns=True)
+                    # F270: Bounded connector limits for M1 8GB safety
+                    connector = aiohttp_socks.SocksConnector.from_url(
+                        tor_proxy,
+                        rdns=True,
+                        limit=10,           # total connection pool size (M1 safe)
+                        limit_per_host=5,    # per-host limit (prevent starvation)
+                    )
                     # Sprint 4B: Use TIMEOUT_TOR matrix constant
                     session = aiohttp.ClientSession(
                         connector=connector,

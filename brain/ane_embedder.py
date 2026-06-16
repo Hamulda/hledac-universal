@@ -321,29 +321,15 @@ class ANEEmbedder:
         self._fallback_embedder = fallback_func
 
     async def load(self) -> None:
-        """Pokusí se načíst CoreML model, pak MLX ModernBERT fallback."""
+        """Load MLX ModernBERT first (preferred), then CoreML (legacy), then hash fallback.
+
+        CoreML→MLX migration: MLX is now the primary path. CoreML is only attempted
+        if mlx-embeddings is unavailable (e.g. non-AppleSilicon).
+        """
         if self._loaded or self._mlx_model is not None:
             return
 
-        # Try CoreML first
-        if ANE_AVAILABLE and self.coreml_path.exists():
-            try:
-                url = _CoreML.NSURL.fileURLWithPath_(str(self.coreml_path))
-                model, err = _CoreML.MLModel.modelWithContentsOfURL_error_(url, None)
-                if err:
-                    raise RuntimeError(f"CoreML load failed: {err}")
-                self.model = model
-                self._loaded = True
-                self._last_load_error = None
-                # F234: ANE/MLX mutex — CoreML model acquired
-                get_ane_mlx_mutex().acquire_ane(model_size_mb=90.0)
-                logger.info(f"ANEEmbedder loaded CoreML: {self.model_name}")
-                return
-            except Exception as e:
-                self._last_load_error = str(e)
-                logger.warning(f"CoreML failed ({e}), trying MLX ModernBERT")
-
-        # MLX fallback — ModernBERT přes mlx-embeddings
+        # Path 1: MLX ModernBERT (primary — MLX-only on Apple Silicon)
         if MLX_EMBED_AVAILABLE:
             try:
                 model_path = "nomic-ai/modernbert-embed-base"
@@ -354,7 +340,24 @@ class ANEEmbedder:
                 return
             except Exception as e:
                 self._last_load_error = str(e)
-                logger.warning(f"MLX ModernBERT failed ({e}), using hash fallback")
+                logger.warning(f"MLX ModernBERT failed ({e}), trying CoreML fallback")
+
+        # Path 2: CoreML (legacy, only if MLX unavailable)
+        if ANE_AVAILABLE and self.coreml_path.exists():
+            try:
+                url = _CoreML.NSURL.fileURLWithPath_(str(self.coreml_path))
+                model, err = _CoreML.MLModel.modelWithContentsOfURL_error_(url, None)
+                if err:
+                    raise RuntimeError(f"CoreML load failed: {err}")
+                self.model = model
+                self._loaded = True
+                self._last_load_error = None
+                get_ane_mlx_mutex().acquire_ane(model_size_mb=90.0)
+                logger.info(f"ANEEmbedder loaded CoreML: {self.model_name}")
+                return
+            except Exception as e:
+                self._last_load_error = str(e)
+                logger.warning(f"CoreML failed ({e}), using hash fallback")
 
     async def initialize(self) -> None:
         """
@@ -517,12 +520,11 @@ _ANE_EMBEDDER: ANEEmbedder | None = None
 
 def get_ane_embedder() -> ANEEmbedder | None:
     """
-    Lazy init CoreML MiniLM-L6-v2 embedder, s MLX ModernBERT pokud CoreML není.
+    CoreML→MLX migration: ANEEmbedder is deprecated.
 
     .. deprecated::
-        ANEEmbedder is deprecated. Use MLXEmbeddingManager instead:
-        ``from _shims.core_mlx_embeddings import get_embedding_manager``
-        All embedding should go through the MLX singleton to avoid duplicate model loads.
+        Use ``get_embedding_manager()`` from ``_shims.core_mlx_embeddings`` instead.
+        This function now returns None and logs a deprecation warning.
     """
     warnings.warn(
         "get_ane_embedder() is deprecated. "
@@ -531,34 +533,15 @@ def get_ane_embedder() -> ANEEmbedder | None:
         DeprecationWarning,
         stacklevel=2,
     )
-    global _ANE_EMBEDDER
-    if _ANE_EMBEDDER is None:
-        _ANE_EMBEDDER = ANEEmbedder(model_name="minilm_ane", hidden_dim=384)
-    # Kick off async load — run synchronously via new event loop in background thread
-    if not _ANE_EMBEDDER._loaded and _ANE_EMBEDDER._mlx_model is None:
-        import threading
-        def _load_bg():
-            try:
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-                loop.run_until_complete(_ANE_EMBEDDER.load())
-                loop.close()
-            except Exception:
-                pass
-        t = threading.Thread(target=_load_bg, daemon=True)
-        t.start()
-    return _ANE_EMBEDDER
+    return None
 
 
 def unload_ane_embedder() -> None:
-    """Called by memory pressure governor at CRITICAL state."""
-    global _ANE_EMBEDDER
-    # F234: Release ANE mutex before clearing instance
+    """Release ANE mutex (no-op since ANE path is disabled)."""
     try:
         get_ane_mlx_mutex().release("ane")
     except Exception:
         pass
-    _ANE_EMBEDDER = None
 
 
 async def semantic_dedup_findings(

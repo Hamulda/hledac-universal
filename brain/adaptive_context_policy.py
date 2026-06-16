@@ -58,9 +58,15 @@ def get_available_memory_mb() -> float | None:
 
 
 # Budget thresholds for M1 8GB (in MB of available memory)
-_MEMORY_THRESHOLD_REDUCED = 2500
-_MEMORY_THRESHOLD_MINIMAL = 1500
-_MEMORY_THRESHOLD_REJECT = 800
+# FIX F266+: Raised to match actual M1 8GB memory budget.
+# Previous values (REDUCED=2500, MINIMAL=1500, REJECT=800) were too aggressive —
+# system_used_gib hits ~6.5 GiB (CRITICAL) leaving only ~1.5 GiB available.
+# At CRITICAL state, system has ~1.5 GiB free but REDUCED=2500 would still try
+# to run at 4096 tokens. New values: REDUCED=1800 (minimal 3B-4bit inference),
+# MINIMAL=1200 (ultra-safe), REJECT=600 (only when truly out of memory).
+_MEMORY_THRESHOLD_REDUCED = 1800
+_MEMORY_THRESHOLD_MINIMAL = 1200
+_MEMORY_THRESHOLD_REJECT = 600
 
 
 def decide_context_budget(

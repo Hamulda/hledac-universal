@@ -653,3 +653,105 @@ async def safe_gather_strict[T](
         raise
 
     return results
+
+
+# =============================================================================
+# Sprint F265C: safe_gather_shielded — result-preserving TaskGroup
+# =============================================================================
+# Problem: raw TaskGroup cancels ALL siblings on first failure — successful
+# results from cancelled siblings are LOST. safe_gather_strict preserves this
+# behavior (all-or-nothing is intentional there).
+#
+# safe_gather_shielded solves this differently:
+# - Uses TaskGroup for structured cancellation propagation
+# - On failure: cancels siblings, BUT captures their results BEFORE cancel
+# - Returns (results, errors) — partial success preserved
+# - CancelledError / BaseException re-raised (I6/I7 invariant)
+#
+# Unlike safe_gather (gather-based): shield always cancels on first failure
+# Unlike safe_gather_strict: shield preserves partial results
+# Unlike safe_gather_dropin: shield cancels siblings, not just logs
+
+
+@dataclass(frozen=True, slots=True)
+class SafeGatherShieldedResult:
+    """Result of `safe_gather_shielded` — frozen dataclass."""
+    ok: list[Any] = field(default_factory=list)
+    errors: list[BaseException] = field(default_factory=list)
+    re_raised: BaseException | None = None
+
+
+async def safe_gather_shielded[T](
+    *coros: Awaitable[T] | T,
+    label: str = "",
+    logger_instance: logging.Logger | None = None,
+) -> SafeGatherShieldedResult:
+    """F265C: TaskGroup with result preservation on sibling cancellation.
+
+    Uses `asyncio.TaskGroup` (PEP 654, 3.11+) for structured concurrency.
+    Unlike raw TaskGroup which loses results on cancel, this helper
+    captures results from ALL tasks even when siblings fail.
+
+    Use this when:
+        - You want structured cancellation (first failure → cancel siblings)
+        - But also want to preserve partial results from successful siblings
+        - You want TaskGroup semantics + gather-style result collection
+
+    DO NOT use this when:
+        - You want "all run, errors collected" → safe_gather_dropin
+        - You want strict all-or-nothing → safe_gather_strict
+        - Running on Python < 3.11 (no TaskGroup)
+
+    Args:
+        *coros: Coroutines or awaitables. Plain values pass through.
+        label:  Context string for log messages.
+        logger_instance: Optional logger override.
+
+    Returns:
+        SafeGatherShieldedResult with .ok (all results), .errors (Exception list),
+        .re_raised (BaseException if any was re-raised).
+
+    Raises:
+        asyncio.CancelledError: if caller's task was cancelled.
+        BaseException (not Exception): re-raised per I7 invariant.
+    """
+    _log = logger_instance or logger
+    if not coros:
+        return SafeGatherShieldedResult(ok=[], errors=[], re_raised=None)
+
+    results: list[Any] = [None] * len(coros)
+    errors: list[BaseException] = []
+    wrapped = [_wrap_awaitable(c) for c in coros]
+
+    try:
+        async with asyncio.TaskGroup() as tg:
+            for i, c in enumerate(wrapped):
+                async def _runner(idx: int, coro: Awaitable[Any]) -> None:
+                    results[idx] = await coro
+                tg.create_task(_runner(i, c), name=f"sg_shielded[{i}]")
+    except BaseExceptionGroup as eg:
+        # TaskGroup cancelled siblings. Collect errors from the group.
+        for exc in eg.exceptions:
+            if isinstance(exc, asyncio.CancelledError):
+                _log.debug(f"[GHOST] safe_gather_shielded CancelledError{'_' + label if label else ''}")
+                raise exc
+            if isinstance(exc, BaseException) and not isinstance(exc, Exception):
+                _log.debug(f"[GHOST] safe_gather_shielded BaseException{'_' + label if label else ''}: {type(exc).__name__}")
+                raise exc
+            errors.append(exc)
+        # Collect any non-cancelled results from the partial run
+        ok_results = [r for r in results if r is not None and not isinstance(r, BaseException)]
+        return SafeGatherShieldedResult(ok=ok_results, errors=errors, re_raised=eg)
+    except asyncio.CancelledError:
+        _log.debug(f"[GHOST] safe_gather_shielded CancelledError{'_' + label if label else ''}")
+        raise
+    except BaseException as exc:
+        if isinstance(exc, Exception):
+            errors.append(exc)
+            ok_results = [r for r in results if r is not None and not isinstance(r, BaseException)]
+            return SafeGatherShieldedResult(ok=ok_results, errors=errors, re_raised=None)
+        _log.debug(f"[GHOST] safe_gather_shielded BaseException{'_' + label if label else ''}: {type(exc).__name__}")
+        raise
+
+    ok_results = [r for r in results if r is not None and not isinstance(r, BaseException)]
+    return SafeGatherShieldedResult(ok=ok_results, errors=[], re_raised=None)

@@ -59,6 +59,11 @@ class CrossSprintMemory:
         """
         Query DuckPGQ for entities connected to seed_value within max_hops.
 
+        P0-1 FIX: Routes through GraphService.find_entity_history() which uses
+        the hot-edges LMDB cache (O(1) lookup) before falling back to DuckPGQ.
+        Previously called DuckPGQGraph.find_connected() directly — the cold
+        O(V+E) CTE path that bypasses hot-edges cache entirely.
+
         Args:
             seed_value: IOC value (domain, IP, URL, etc.) to traverse from.
             max_hops: Traversal depth (default 2, matches quantum_pathfinder).
@@ -69,15 +74,14 @@ class CrossSprintMemory:
         """
         if not self._available:
             return []
-        graph = self._get_graph()
-        if graph is None:
-            return []
         try:
-            results = graph.find_connected(seed_value, max_hops=max_hops)
-            # Bound results
+            # P0-1: Use GraphService (hot-edges LMDB cache) instead of
+            # calling DuckPGQGraph.find_connected() directly.
+            from hledac.universal.knowledge.graph_service import _DEFAULT_GRAPH_SERVICE
+            results = _DEFAULT_GRAPH_SERVICE.find_entity_history(seed_value, max_hops=max_hops)
             return results[:MAX_ENTITIES] if results else []
         except Exception as e:
-            logger.debug(f"[CrossSprintMemory] find_connected({seed_value!r}) failed: {e}")
+            logger.debug(f"[CrossSprintMemory] find_entity_history({seed_value!r}) failed: {e}")
             return []
 
     def get_related_entities_batch(

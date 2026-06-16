@@ -586,8 +586,11 @@ def _unload_model_legacy(
                 logger.debug(f"[LIFECYCLE] tokenizer eviction: {e}")
             tokenizer = None
 
-        # Krok 4: gc.collect()
-        gc.collect()
+        # Krok 4: gc.freeze() — M1-safe bez stop-the-world
+        try:
+            gc.freeze()
+        except Exception:
+            pass  # Python <3.12 or if freeze fails
 
         mx = _get_mlx_safe()
         if mx is not None:
@@ -616,13 +619,11 @@ def _unload_model_legacy(
                 except Exception:
                     pass
 
-        gc.collect()
         logger.info("[LIFECYCLE] Model lifecycle cleanup complete")
 
     except Exception as e:
         # Fail-open: nikdy nevyhazovat výjimku z lifecycle
         logger.warning(f"[LIFECYCLE] Unload error (non-critical): {e}")
-        gc.collect()
 
 
 def preload_model_hint(model_path: str) -> None:
@@ -902,8 +903,11 @@ class ModelLifecycle:
         self._tokenizer = None
         self._loaded = False
 
-        # 3. gc.collect()
-        gc.collect()
+        # 3. gc.freeze() — M1-safe bez stop-the-world
+        try:
+            gc.freeze()
+        except Exception:
+            pass  # Python <3.12
 
         # 4. B.9: QoS BACKGROUND
         self._set_qos_background()

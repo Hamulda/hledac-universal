@@ -15,7 +15,7 @@ regex = "1"
 url = "2"
 xxhash-rust = { version = "0.8", features = ["xxh3", "const_xxh3", "xxh64"] }
 once_cell = "1.19"
-sha2 = "0.10"
+sha2 = { version = "0.10", features = ["asm"] }
 ahash = "0.8"
 # Sprint ContentHasher: BLAKE3 for body-hash dedup.
 # Default (non-aarch64) is scalar fallback; aarch64 override below enables NEON SIMD
@@ -42,7 +42,8 @@ strip = "symbols"
 panic = "abort"
 
 # aarch64 (Apple Silicon incl. M1) — enable ARM NEON SIMD for BLAKE3.
-# Other targets get the scalar fallback from the [dependencies] block above.
+# xxhash-rust uses portable-simd automatically on aarch64 targets —
+# the compiler vectorizes via LLVM's NEON backend, no explicit feature needed.
 [target.'cfg(target_arch = "aarch64")'.dependencies]
 blake3 = { version = "1", features = ["neon"] }
 

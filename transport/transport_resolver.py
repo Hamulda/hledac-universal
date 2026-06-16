@@ -16,6 +16,7 @@ NOT AUTHORITY FOR:
   - Tor session pool management
 """
 
+import functools
 import logging
 from dataclasses import dataclass
 from enum import Enum, auto
@@ -24,6 +25,7 @@ from typing import Any, cast
 logger = logging.getLogger(__name__)
 
 
+@functools.lru_cache(maxsize=512)
 def _extract_host(url: str) -> str:
     """Extract hostname from URL. Returns lowercase host or empty string on parse failure."""
     try:
@@ -268,6 +270,7 @@ class TransportResolver:
 # =============================================================================
 
 
+@functools.lru_cache(maxsize=512)
 def get_transport_for_url(url: str) -> Transport:
     """
     Sprint 4A: Get Transport classification for a URL.
@@ -306,6 +309,7 @@ def get_transport_for_url(url: str) -> Transport:
     return Transport.DIRECT
 
 
+@functools.lru_cache(maxsize=512)
 def get_transport_hint_string(url: str) -> str:
     """
     F202H: Return transport hint string for opsec_policy.

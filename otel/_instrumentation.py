@@ -5,7 +5,6 @@ gets a NoOp span and continues unchanged.
 """
 from __future__ import annotations
 
-import contextlib
 import functools
 import inspect
 from collections.abc import Callable
@@ -22,16 +21,28 @@ _TRACER: Any = None
 
 
 def _reset_tracer_cache() -> None:
-    """Reset the cached tracer. Called by shutdown_telemetry."""
+    """Reset the cached tracer. Called by shutdown_telemetry only when initialized."""
     global _TRACER
-    _TRACER = None
+    # Only reset if OTel was actually initialized — otherwise we wipe
+    # the cache between tests and the next get_tracer() returns NoOp
+    # even though init_telemetry() will set a real tracer.
+    from otel._setup import is_initialized
+    if is_initialized():
+        _TRACER = None
 
 
 def get_tracer() -> Any:
     """Return the configured tracer (or NoOp if not initialized / OTel missing)."""
     global _TRACER
+    # If _TRACER is already cached, return it (fast path).
+    # However, if we are no longer initialized but _TRACER is set to
+    # a real tracer (from a previous shutdown), we must clear it
+    # and return NoOp instead.
     if _TRACER is not None:
-        return _TRACER
+        if is_initialized():
+            return _TRACER
+        # Was initialized before but got shut down — invalidate cache
+        _TRACER = None
     if not is_initialized():
         _TRACER = _NOOP_TRACER
         return _TRACER
@@ -99,29 +110,116 @@ def _filter_attrs(attrs: dict[str, Any] | None) -> dict[str, Any] | None:
 # ── Span context manager ──────────────────────────────────────────────────
 
 
-@contextlib.contextmanager
-def span(name: str, **attrs: Any):
-    """Open a span as a context manager. Fail-safe.
+class _SpanContextManager:
+    """Dual-mode span: supports BOTH sync `with` and `async with`.
+
+    Python 3.14+ enforces strict async/sync separation. This class
+    implements both protocols so span() works in sync code (threads,
+    sync tests) AND async code (async def, asyncio).
 
     Usage::
 
+        # Sync (threads, sync tests):
+        with span("sync.op"):
+            ...
+
+        # Async (async def, asyncio):
+        async with span("async.op"):
+            ...
+
+    GeneratorExit is properly handled in both modes — the sync __exit__
+    does NOT silently suppress GeneratorExit unlike a bare
+    @contextlib.contextmanager decorated function.
+    """
+
+    __slots__ = ("_name", "_attrs", "_tracer", "_span", "_acm")
+
+    def __init__(self, name: str, **attrs: Any) -> None:
+        self._name = name
+        self._attrs = attrs
+        self._tracer: Any = None
+        self._span: Any = None
+        self._acm: Any = None  # _AgnosticContextManager from OTel
+
+    # ── Sync context manager protocol ───────────────────────────────────
+
+    def __enter__(self) -> Any:
+        self._tracer = get_tracer()
+        if self._tracer is _NOOP_TRACER:
+            self._span = _NOOP_SPAN
+            return self._span
+        try:
+            filtered = _filter_attrs(self._attrs)
+            # start_as_current_span returns _AgnosticContextManager (generator CM).
+            # We must call __enter__() on it to get the actual _Span and properly
+            # hook the span lifecycle to our __exit__.
+            self._acm = self._tracer.start_as_current_span(
+                self._name, attributes=filtered
+            )
+            self._span = self._acm.__enter__()
+            return self._span
+        except Exception:
+            self._span = _NOOP_SPAN
+            return self._span
+
+    def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> bool:
+        # Never suppress BaseException (GeneratorExit, KeyboardInterrupt, SystemExit)
+        if exc_type is not None and issubclass(exc_type, BaseException) and not issubclass(exc_type, Exception):
+            return None  # False equivalent: don't suppress
+        if self._acm is not None:
+            # Delegate to OTel's _AgnosticContextManager to properly close the span
+            try:
+                self._acm.__exit__(exc_type, exc_val, exc_tb)
+            except Exception:
+                pass
+        elif self._span is not None and self._span is not _NOOP_SPAN:
+            try:
+                self._span.end()
+            except Exception:
+                pass
+        return False  # Don't suppress exceptions
+
+    # ── Async context manager protocol ─────────────────────────────────
+
+    async def __aenter__(self) -> Any:
+        # Re-use sync enter logic
+        return self.__enter__()
+
+    async def __aexit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> bool:
+        # Never suppress BaseException
+        if exc_type is not None and issubclass(exc_type, BaseException) and not issubclass(exc_type, Exception):
+            return None
+        if self._acm is not None:
+            try:
+                await self._acm.__aexit__(exc_type, exc_val, exc_tb)
+            except Exception:
+                pass
+        elif self._span is not None and self._span is not _NOOP_SPAN:
+            try:
+                self._span.end()
+            except Exception:
+                pass
+        return False
+
+
+def span(name: str, **attrs: Any) -> _SpanContextManager:
+    """Open a span as a dual-mode context manager. Fail-safe.
+
+    Usage::
+
+        # Sync (threads, sync tests):
         with span("sprint.run", sprint_id=id, mode="aggressive"):
             ...
 
-    On OTel missing or not initialized: yields a NoOp span; never raises.
-    """
-    tracer = get_tracer()
-    if tracer is _NOOP_TRACER:
-        yield _NOOP_SPAN
-        return
+        # Async (async def, asyncio):
+        async with span("sprint.run", sprint_id=id, mode="aggressive"):
+            ...
 
-    try:
-        filtered = _filter_attrs(attrs)
-        with tracer.start_as_current_span(name, attributes=filtered) as s:
-            yield s
-    except Exception:
-        # Never let tracing break the hot path
-        yield _NOOP_SPAN
+    On OTel missing or not initialized: yields a NoOp span; never raises.
+    Python 3.14+: both sync and async usage are fully supported.
+    GeneratorExit is properly re-raised in both modes.
+    """
+    return _SpanContextManager(name, **attrs)
 
 
 # ── Decorator: instrumented() ──────────────────────────────────────────────

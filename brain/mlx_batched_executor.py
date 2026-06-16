@@ -189,17 +189,22 @@ class MLXBatchedExecutor:
         system_msg: str | None = None,
         priority: float = 1.0,
         speculative: bool = False,
+        active_iteration_count: int = 0,
     ) -> bool:
         """
         Decide whether this request is eligible for batching.
 
         Returns False when:
             - executor not initialized (lazy init failed or shutdown)
-            - memory pressure > MEMORY_GUARD_PCT
+            - memory pressure > MEMORY_GUARD_PCT (unless force-enabled below)
             - priority == 0 (urgent, bypass — B.M9)
             - prompt is empty or whitespace-only
             - max_tokens > 1024 (long outputs serialized anyway, no batching win)
             - speculative=True (draft model extra RAM on M1 8GB — direct path)
+
+        P1-4: Force-enable batching when active_iteration_count >= 2
+        (multi-cycle sprint) — memory guard is bypassed to maximize
+        MLX utilization across consecutive inference calls.
         """
         # Speculative decoding: draft model consumes ~500MB extra on M1 8GB.
         # Route to direct path to keep headroom for batched main-model inference.
@@ -270,13 +275,17 @@ class MLXBatchedExecutor:
             # OR when absolute available GB is below safe minimum for batch accumulation.
             # F265C: Two-dimensional guard — pct guard catches gradual leak, absolute guard
             # catches acute pressure (e.g. after other processes claimed RAM).
+            # P1-4: Force-enable batching on multi-cycle sprints (>= 2 iterations).
+            # Memory guard is bypassed to maximize MLX utilization — the M1 8GB
+            # budget is already accounted for in the sprint planning phase.
             memory_ok = True
-            if self._memory_ema > MEMORY_GUARD_PCT:
+            force_batching = active_iteration_count >= 2
+            if self._memory_ema > MEMORY_GUARD_PCT and not force_batching:
                 self._stats["memory_guard_disabled"] += 1
                 memory_ok = False
             # Absolute available GB check (M1 8GB Metal budget: 1.5GiB cache + 0.75GiB KV)
             available_gb = psutil.virtual_memory().available / (1024**3)
-            if available_gb < MEMORY_GUARD_ABSOLUTE_GB:
+            if available_gb < MEMORY_GUARD_ABSOLUTE_GB and not force_batching:
                 self._stats["memory_guard_disabled"] += 1
                 memory_ok = False
             if not memory_ok:
@@ -370,23 +379,19 @@ class MLXBatchedExecutor:
         """
         BatchScheduler execute_callback contract.
 
-        Invoked sequentially per schema group inside the worker. Uses
-        self._mlx_lock to guarantee that even if execute() races with a
-        direct-path call, MLX is never invoked concurrently (B.M4).
+        Invoked sequentially per schema group inside the worker. Locking
+        is handled in _call_engine_direct/_call_engine_via_worker to avoid
+        double-lock deadlock (callback is already serialized by the worker's
+        sequential per-schema-group dispatch).
         """
         prompt = payload.get("prompt", "")
         temperature = payload.get("temperature")
         max_tokens = payload.get("max_tokens")
         system_msg = payload.get("system_msg")
         try:
-            if self._mlx_lock is None:
-                return await self._call_engine_direct(
-                    prompt, temperature, max_tokens, system_msg
-                )
-            async with self._mlx_lock:
-                return await self._call_engine_direct(
-                    prompt, temperature, max_tokens, system_msg
-                )
+            return await self._call_engine_direct(
+                prompt, temperature, max_tokens, system_msg
+            )
         except Exception as e:
             # Propagate so BatchScheduler can shatter the batch and retry
             # individually; final fallback to direct will happen in execute().
@@ -429,23 +434,19 @@ class MLXBatchedExecutor:
             except TimeoutError:
                 raise
         # Local path (no worker thread, or worker unavailable)
+        # NOTE: No self._mlx_lock here — Hermes3Engine.generate() serializes
+        # via its own _inference_semaphore (ThreadPoolExecutor path) or the
+        # worker thread's event loop (P0-3 path). Adding another lock would
+        # create a deadlock: generate() → _submit_inference() → worker.submit()
+        # → run_coroutine_threadsafe → awaits the same lock held by caller.
         t0 = time.monotonic()
         try:
-            if self._mlx_lock is None:
-                result = await self._engine.generate(
-                    prompt=prompt,
-                    temperature=temperature,
-                    max_tokens=max_tokens,
-                    system_msg=system_msg,
-                )
-            else:
-                async with self._mlx_lock:
-                    result = await self._engine.generate(
-                        prompt=prompt,
-                        temperature=temperature,
-                        max_tokens=max_tokens,
-                        system_msg=system_msg,
-                    )
+            result = await self._engine.generate(
+                prompt=prompt,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                system_msg=system_msg,
+            )
             elapsed_ms = (time.monotonic() - t0) * 1000.0
             self._stats["baseline_ema_ms"] = (
                 self._ema_alpha * elapsed_ms

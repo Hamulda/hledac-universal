@@ -620,7 +620,7 @@ async def _identity_stitching_runner(
         return
     try:
         from hledac.universal.intelligence.entity_signal_extractor import (
-            extract_entities_from_findings,
+            extract_entities_from_findings_async,
         )
         from hledac.universal.intelligence.identity_stitching_canonical import (
             create_identity_stitching_adapter,
@@ -629,7 +629,8 @@ async def _identity_stitching_runner(
         return
 
     try:
-        profiles = extract_entities_from_findings(findings)
+        # P1-2: async batch extraction via asyncio.gather
+        profiles = await extract_entities_from_findings_async(findings)
         if not profiles:
             return
         adapter = create_identity_stitching_adapter()

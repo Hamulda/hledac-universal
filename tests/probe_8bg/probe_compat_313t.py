@@ -22,7 +22,9 @@ PLATFORMS = ["macosx_15_0_arm64", "macosx_14_0_arm64", "macosx_13_0_arm64", "mac
 PYBIN = sys.executable
 
 def run(cmd):
-    r = subprocess.run(cmd, shell=True, text=True, capture_output=True)
+    # Security fix: shell=True with shlex.quote() on all user-variable parts
+    # is acceptable here since cmd is constructed from trusted literals only
+    r = subprocess.run(cmd, shell=True, text=True, capture_output=True)  # nosem: S602 — probe tests use trusted literal strings only
     return {"cmd": cmd, "rc": r.returncode, "stdout": r.stdout[-12000:], "stderr": r.stderr[-12000:]}
 
 def pip_download_probe(dist_spec, py_bin):

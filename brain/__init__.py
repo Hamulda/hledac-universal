@@ -60,6 +60,15 @@ except Exception:  # pragma: no cover — defensive lazy import
     MLXWorkerThread = None  # type: ignore[assignment,misc]
     MLX_WORKER_THREAD_AVAILABLE = False
 
+# Sprint P2-1b: Inference pipeliner with prompt preprocessing overlap.
+# Non-blocking submit API for overlapping next-prompt prep with current inference.
+try:
+    from .inference_pipeliner import InferencePipeliner
+    INFERENCE_PIPELINER_AVAILABLE = True
+except Exception:  # pragma: no cover — defensive lazy import
+    InferencePipeliner = None  # type: ignore[assignment,misc]
+    INFERENCE_PIPELINER_AVAILABLE = False
+
 try:
     from .insight_engine import (
         Anomaly,
@@ -256,6 +265,9 @@ __all__ = [
     # Sprint P0-3: Dedicated MLX worker thread
     "MLXWorkerThread",
     "MLX_WORKER_THREAD_AVAILABLE",
+    # Sprint P2-1b: Inference pipeliner with prompt preprocessing overlap
+    "InferencePipeliner",
+    "INFERENCE_PIPELINER_AVAILABLE",
     "DecisionType",
     # Insight
     "InsightEngine",

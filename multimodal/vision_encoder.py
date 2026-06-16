@@ -146,102 +146,45 @@ class VisionEncoder:
 
     async def load(self) -> None:
         """
-        Lazy one-time model loading.
-        1. If model file exists → load directly via CoreML MLModel
-        2. If not → attempt torch→CoreML conversion (one-time download)
-        3. If conversion fails → fall through to dummy mode (no crash)
+        CoreML→MLX migration: VisionEncoder now runs in dummy mode (pHash fallback).
+
+        The torch→CoreML conversion path has been removed. On first encode_batch() call,
+        if no CoreML model file exists at model_path, the encoder falls back to the
+        deterministic pHash pipeline which requires no model file and zero ML framework.
+
+        This eliminates the 200-400ms CoreML session startup and torch download/conversion.
         """
-        ct_mod, MLModel = _get_coremltools()  # noqa: N806
-        torch_ok, torchvision_ok = _check_torch()
+        model_file = Path(self.model_path)
 
-        # Reserve RAM for model load
-        async with self.governor.reserve({"ram_mb": 350, "gpu": True}, Priority.HIGH):
-            model_file = Path(self.model_path)
-
-            if not _COREML_AVAILABLE or MLModel is None:
-                logger.warning("CoreML not available; VisionEncoder runs in dummy mode.")
-                return
-
-            # PATH 1: model file already exists — load it
-            if model_file.exists():
-                logger.info("VisionEncoder: loading existing model at %s", model_file)
-                try:
-                    loop = asyncio.get_run_loop()
-
-                    def _load():
-                        return MLModel(str(model_file), compute_units=ct_mod.ComputeUnit.ALL)
-
-                    self._model = await loop.run_in_executor(_COREML_EXECUTOR, _load)
-                    spec = self._model.get_spec()
-                    self._input_name = spec.description.input[0].name
-                    self._output_name = spec.description.output[0].name
-                    self._load_projection_weights()
-                    logger.info("VisionEncoder: model loaded (ANE enabled), 960→1024 projection active.")
-                    return
-                except Exception as exc:
-                    logger.warning("VisionEncoder: failed to load existing model %s: %s — dummy mode.", model_file, exc)
-                    self._model = None
-                    return
-
-            # PATH 2: model file doesn't exist — attempt torch→CoreML conversion
-            if not torch_ok or not torchvision_ok:
-                logger.warning("torch/torchvision not available; VisionEncoder runs in dummy mode.")
-                return
-
-            logger.info("VisionEncoder: model not found at %s — attempting one-time conversion.", model_file)
-            self._ensure_model_cache_dir()
-
+        if model_file.exists():
+            # CoreML model file exists — try to load it
             try:
-                import coremltools as ct
-                import torch
-                import torchvision
+                ct_mod, MLModel = _get_coremltools()  # noqa: N806
+                if MLModel is None:
+                    logger.warning("CoreML not available; VisionEncoder runs in dummy mode.")
+                    return
 
-                # Load MobileNetV3-Large pretrained
-                mobilenet = torchvision.models.mobilenet_v3_large(weights="DEFAULT")
-                mobilenet.eval()
-
-                # Trace with proper input shape
-                example_input = torch.randn(1, 3, 224, 224)
-
-                def _forward_trace(x):
-                    # MobileNetV3 penultimate layer: features before classifier
-                    x = mobilenet.features(x)
-                    x = mobilenet.avgpool(x)
-                    x = torch.flatten(x, 1)
-                    return x
-
-                traced = torch.jit.trace(_forward_trace, example_input)
-
-                # Convert to CoreML — penultimate layer output (960d)
-                mlmodel = ct.convert(
-                    traced,
-                    inputs=[ct.ImageType("image", shape=(1, 3, 224, 224))]
-                )
-
-                # Compile for ANE
-                mlmodel = mlmodel.compute_unit = ct.ComputeUnit.ALL
-                compiled_path = str(model_file)
-                mlmodel.save(compiled_path)
-                logger.info("VisionEncoder: model converted and saved to %s", compiled_path)
-
-                # Now load the compiled model
-                loop = asyncio.get_run_loop()
+                loop = asyncio.get_running_loop()
 
                 def _load():
-                    return MLModel(compiled_path, compute_units=ct.ComputeUnit.ALL)
+                    return MLModel(str(model_file), compute_units=ct_mod.ComputeUnit.ALL)
 
                 self._model = await loop.run_in_executor(_COREML_EXECUTOR, _load)
                 spec = self._model.get_spec()
                 self._input_name = spec.description.input[0].name
                 self._output_name = spec.description.output[0].name
                 self._load_projection_weights()
-                logger.info("VisionEncoder: conversion complete, model loaded (ANE active).")
+                logger.info("VisionEncoder: model loaded (CoreML/ANE), 960→1024 projection active.")
                 return
-
             except Exception as exc:
-                logger.warning("VisionEncoder: conversion failed (%s) — dummy mode. Sprint continues.", exc)
+                logger.warning("VisionEncoder: failed to load existing model %s: %s — dummy mode.", model_file, exc)
                 self._model = None
                 return
+        else:
+            # No model file — dummy mode (pHash pipeline)
+            logger.info("VisionEncoder: no model file at %s — using dummy mode (pHash fallback).", model_file)
+            self._model = None
+            return
 
     def _preprocess_image(self, image_bytes: bytes) -> np.ndarray:
         """

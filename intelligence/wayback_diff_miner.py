@@ -325,46 +325,64 @@ class WaybackDiffMiner:
         all_events: list[CDXDiffEvent] = []
         gathered_errors: list[BaseException] = []
 
-        async def _fetch_one(target: str) -> list[CDXDiffEvent]:
+        # ── F265C: Two-stage pipeline ───────────────────────────────────────
+        # Stage 1: fetch with semaphore (rate-limited I/O)
+        # Stage 2: diff without semaphore (pure CPU, fully concurrent)
+        #
+        # Pattern: all fetch tasks start together under semaphore=2,
+        # then all diff tasks run concurrently without semaphore contention.
+        async def _rate_limited_fetch(target: str) -> tuple[str, list[dict[str, str]]]:
+            """Stage 1: fetch CDX (semaphore-bounded, rate-limited)."""
             if self._breaker.is_open():
                 self._stats["circuit_open"] += 1
-                return []
+                return (target, [])
 
-            # F206AX: canonical circuit breaker preflight
             archive_domain = _extract_archive_domain(WAYBACK_CDX_API)
             if not self._check_circuit_breaker(archive_domain):
-                return []
+                return (target, [])
 
-            # Rate limiting
             elapsed = time.monotonic() - self._last_request_at
             if elapsed < REQUEST_RATE_LIMIT:
-                import asyncio
                 await asyncio.sleep(REQUEST_RATE_LIMIT - elapsed)
             self._last_request_at = time.monotonic()
 
             async with self._semaphore:  # type: ignore[union-attr]
-                events = await self._fetch_and_diff(target)
-                return events
+                return await self._fetch_cdx(target)
 
-        # Batch process with gather
         try:
-            import asyncio
-            results = await asyncio.gather(
-                *[_fetch_one(t) for t in targets],
-                return_exceptions=True,
-            )
+            # Stage 1: launch all fetch tasks (semaphore caps concurrency at 2)
+            fetch_tasks = [asyncio.create_task(_rate_limited_fetch(t)) for t in targets]
+            fetch_results = await asyncio.gather(*fetch_tasks, return_exceptions=True)
 
-            # Collect exceptions
-            for res in results:
+            # Collect fetch exceptions and build snapshots map
+            snapshots_map: dict[str, list[dict[str, str]]] = {}
+            for res in fetch_results:
                 if isinstance(res, BaseException):
                     gathered_errors.append(res)
+                elif isinstance(res, tuple) and len(res) == 2:
+                    t, snaps = res
+                    snapshots_map[t] = snaps
 
-            for events in results:
-                if isinstance(events, list):
-                    all_events.extend(events)
+            # Stage 2: diff all targets concurrently (no semaphore, pure CPU)
+            # Each diff task is independent — runs at full CPU speed without
+            # waiting for I/O or contending for the semaphore slot.
+            diff_tasks = [
+                asyncio.create_task(
+                    asyncio.to_thread(self._diff_snapshots, t, snaps)
+                )
+                for t, snaps in snapshots_map.items()
+                if snaps
+            ]
+            if diff_tasks:
+                diff_results = await asyncio.gather(*diff_tasks, return_exceptions=True)
+                for res in diff_results:
+                    if isinstance(res, BaseException):
+                        gathered_errors.append(res)
+                    elif isinstance(res, list):
+                        all_events.extend(res)
 
         except Exception as e:
-            logger.error(f"WaybackDiffMiner gather error: {e}")
+            logger.error(f"WaybackDiffMiner pipeline error: {e}")
             self._stats["errors"] += 1
 
         # Check gathered errors
@@ -499,6 +517,96 @@ class WaybackDiffMiner:
             prev_digest = digest
 
         return events
+
+    async def _fetch_cdx(self, target: str) -> tuple[str, list[dict[str, str]]]:
+        """Stage 1 (fetch): Query CDX and return (target, snapshots) tuple.
+
+        Rate-limited and semaphore-bounded. Returns empty list on error.
+        """
+        if not target.startswith(("http://", "https://")):
+            query_url = f"*.{target}/*"
+        else:
+            query_url = target
+
+        try:
+            snapshots = await self._query_cdx(query_url)
+        except TimeoutError:
+            raise  # propagate to gather for timeout detection
+        except asyncio.CancelledError:
+            raise  # propagate to gather
+        except Exception as e:
+            logger.debug(f"CDX query failed for {target}: {e}")
+            self._stats["errors"] += 1
+            return (target, [])
+
+        if snapshots:
+            self._stats["cdx_snapshots_collected"] += len(snapshots)
+        return (target, snapshots)
+
+    def _diff_snapshots(
+        self, target: str, snapshots: list[dict[str, str]]
+    ) -> list[CDXDiffEvent]:
+        """Stage 2 (diff): Pure CPU diff — no I/O, no semaphore.
+
+        Detects add/change/disappear between consecutive CDX snapshots.
+        """
+        events: list[CDXDiffEvent] = []
+        prev_digest: str | None = None
+
+        for snap in snapshots:
+            digest = snap.get("digest", "")
+            ts = snap.get("timestamp", "")
+            status_str = snap.get("status_code", "")
+            status: int | None = int(status_str) if status_str else None
+
+            if not digest or not ts:
+                continue
+
+            evidence_url = f"{WAYBACK_BASE_URL}/web/{ts}/{target}"
+
+            if prev_digest is None:
+                change_type = "added"
+            elif digest != prev_digest:
+                change_type = "changed"
+            else:
+                change_type = "unchanged"
+
+            if change_type in ("added", "changed"):
+                event = CDXDiffEvent(
+                    url=target,
+                    timestamp=ts,
+                    digest=digest,
+                    status_code=status,
+                    change_type=change_type,
+                    evidence_url=evidence_url,
+                )
+                events.append(event)
+
+            prev_digest = digest
+
+        return events
+
+    async def _fetch_and_diff_pipeline(
+        self, target: str
+    ) -> list[CDXDiffEvent]:
+        """Two-stage pipeline: fetch (I/O) -> diff (CPU), fully overlapped.
+
+        Uses semaphore only for fetch stage. Diff runs without semaphore
+        contention so multiple diff tasks can run in parallel after their
+        fetches complete.
+        """
+        try:
+            _target, snapshots = await self._fetch_cdx(target)
+        except (TimeoutError, asyncio.CancelledError):
+            raise
+        except Exception:
+            return []
+
+        if not snapshots:
+            return []
+
+        # Diff stage: pure CPU, no I/O, no semaphore — runs fully concurrent
+        return self._diff_snapshots(target, snapshots)
 
     async def _query_cdx(self, url: str) -> list[dict[str, str]]:
         """Query Wayback CDX API for a URL pattern."""

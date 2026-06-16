@@ -277,8 +277,8 @@ class TestMLXBatchedExecutorExecute(unittest.TestCase):
         self.assertEqual(MAX_BATCH_SIZE_M1, 8)
 
     def test_memory_guard_threshold(self):
-        """B.M5: threshold = 92% — verify constant value (M1 8GB safe)."""
-        self.assertEqual(MEMORY_GUARD_PCT, 92.0)
+        """B.M5: threshold = 87% — aligned with resource_allocator warn threshold (F285)."""
+        self.assertEqual(MEMORY_GUARD_PCT, 87.0)
 
 
 class TestMLXBatchedExecutorShutdown(unittest.TestCase):
@@ -473,6 +473,97 @@ class TestMLXBatchedExecutorWorkerIntegration(unittest.TestCase):
         worker.shutdown()
         self.assertFalse(executor._initialized)
         self.assertFalse(worker.is_active())
+
+
+class TestP14ForceBatching(unittest.TestCase):
+    """
+    P1-4: Force-enable batching on multi-cycle sprints (active_iteration_count >= 2).
+
+    When the sprint has completed >= 2 cycles, the memory guard is bypassed
+    to maximize MLX utilization (2-4× improvement). This is critical for
+    sprints that run multiple inference calls across consecutive cycles.
+    """
+
+    def test_is_batch_safe_with_iteration_count_2(self):
+        """P1-4: active_iteration_count=2 bypasses memory guard."""
+        engine = _make_mock_engine()
+        executor = MLXBatchedExecutor(engine=engine)
+        _run(executor._ensure_initialized())
+
+        # Simulate high memory pressure (above 87% threshold)
+        fake_psutil = MagicMock()
+        fake_psutil.virtual_memory.return_value.percent = 95.0
+        fake_psutil.virtual_memory.return_value.available = 512 * (1024**2)
+        with patch.dict("sys.modules", {"psutil": fake_psutil}):
+            # Without force-batching: memory guard would block
+            self.assertFalse(
+                executor.is_batch_safe(
+                    prompt="test", active_iteration_count=0
+                )
+            )
+            # With force-batching (>= 2 cycles): memory guard bypassed
+            self.assertTrue(
+                executor.is_batch_safe(
+                    prompt="test", active_iteration_count=2
+                )
+            )
+
+    def test_is_batch_safe_with_iteration_count_1(self):
+        """P1-4: active_iteration_count=1 does NOT force-enable batching."""
+        engine = _make_mock_engine()
+        executor = MLXBatchedExecutor(engine=engine)
+        _run(executor._ensure_initialized())
+
+        fake_psutil = MagicMock()
+        fake_psutil.virtual_memory.return_value.percent = 95.0
+        fake_psutil.virtual_memory.return_value.available = 512 * (1024**2)
+        with patch.dict("sys.modules", {"psutil": fake_psutil}):
+            # Single cycle: memory guard blocks batching
+            self.assertFalse(
+                executor.is_batch_safe(
+                    prompt="test", active_iteration_count=1
+                )
+            )
+
+    def test_is_batch_safe_with_iteration_count_0(self):
+        """P1-4: active_iteration_count=0 (default) does NOT force-enable batching."""
+        engine = _make_mock_engine()
+        executor = MLXBatchedExecutor(engine=engine)
+        _run(executor._ensure_initialized())
+
+        fake_psutil = MagicMock()
+        fake_psutil.virtual_memory.return_value.percent = 95.0
+        fake_psutil.virtual_memory.return_value.available = 512 * (1024**2)
+        with patch.dict("sys.modules", {"psutil": fake_psutil}):
+            # Default: memory guard blocks batching
+            self.assertFalse(
+                executor.is_batch_safe(prompt="test")
+            )
+
+    def test_force_batching_still_checks_other_conditions(self):
+        """P1-4: Force-batching does NOT bypass other batch-safety checks."""
+        engine = _make_mock_engine()
+        executor = MLXBatchedExecutor(engine=engine)
+        _run(executor._ensure_initialized())
+
+        # Empty prompt should still return False even with force-batching
+        self.assertFalse(
+            executor.is_batch_safe(
+                prompt="", active_iteration_count=5
+            )
+        )
+        # Urgent priority (0) should still return False
+        self.assertFalse(
+            executor.is_batch_safe(
+                prompt="test", priority=0.0, active_iteration_count=5
+            )
+        )
+        # Speculative should still return False
+        self.assertFalse(
+            executor.is_batch_safe(
+                prompt="test", speculative=True, active_iteration_count=5
+            )
+        )
 
 
 if __name__ == "__main__":

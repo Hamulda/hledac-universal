@@ -13,9 +13,11 @@ Rules:
 
 from __future__ import annotations
 
+import functools
 from typing import Any, cast
 
 
+@functools.lru_cache(maxsize=128)
 def clamp_confidence(value: object, default: float = 0.5) -> float:
     """
     Clamp a value to [0.0, 1.0] range.
@@ -32,6 +34,7 @@ def clamp_confidence(value: object, default: float = 0.5) -> float:
     return max(0.0, min(1.0, f))
 
 
+@functools.lru_cache(maxsize=128)
 def sqs_to_confidence(score_0_90: object) -> float:
     """
     Map source_quality_score int [0, 90] → confidence float [0.0, 1.0].
@@ -54,6 +57,7 @@ def sqs_to_confidence(score_0_90: object) -> float:
     return score_i / 90.0
 
 
+@functools.lru_cache(maxsize=128)
 def normalize_source_quality(score: int | float | None) -> float:
     """
     F238A: Convert heterogeneous source quality / confidence signals into

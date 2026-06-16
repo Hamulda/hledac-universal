@@ -40,10 +40,9 @@ class BranchManager:
         self.seen_entities: set = set()
         self._entity_cache: dict[str, Any] = {}  # entity → exploration results
 
-        # ANE model
-        self.ane_model = None
-        if ANE_AVAILABLE and ane_model_path:
-            self.ane_model = self._load_ane_model(Path(ane_model_path))
+        # CoreML→MLX migration: ANE model is now lazy-loaded on first use
+        self._ane_model_path = Path(ane_model_path) if ane_model_path else None
+        self.ane_model = None  # lazy: loaded on first _predict_branch_ane call
 
         # Spiking síť pro impulzivní priority
         try:
@@ -52,19 +51,18 @@ class BranchManager:
         except ImportError:
             self.spike_net = None
 
-    def _load_ane_model(self, path: Path):
-        """Načte CoreML model pro ANE inferenci."""
-        if not path.exists():
-            logger.info(f"ANE model not found at {path}, using fallback rules")
-            return None
-
+    def _ensure_ane_model(self):
+        """CoreML→MLX migration: lazy-load ANE model on first use (was eager in __init__)."""
+        if self.ane_model is not None:
+            return  # already loaded
+        if not self._ane_model_path or not self._ane_model_path.exists():
+            return
         try:
-            model = ct.models.MLModel(str(path))
-            logger.info(f"Loaded ANE model from {path}")
-            return model
+            self.ane_model = ct.models.MLModel(str(self._ane_model_path))
+            logger.info(f"Loaded ANE model from {self._ane_model_path}")
         except Exception as e:
             logger.warning(f"Failed to load ANE model: {e}")
-            return None
+            self.ane_model = None
 
     async def on_finding(self, finding: dict[str, Any]):
         """
@@ -73,10 +71,8 @@ class BranchManager:
         features = self._extract_features(finding)
 
         # Rozhodnutí pomocí ANE nebo fallback pravidla
-        if self.ane_model is not None:
-            prob = self._predict_branch_ane(features)
-        else:
-            prob = self._predict_branch_fallback(features)
+        # CoreML→MLX migration: _predict_branch_ane handles lazy ANE load internally
+        prob = self._predict_branch_ane(features)
 
         # Pokud pravděpodobnost > 0.7, vytvoř větev
         if prob > 0.7:
@@ -120,9 +116,11 @@ class BranchManager:
         return [centrality, novelty, contradiction, source_type]
 
     def _predict_branch_ane(self, features: list[float]) -> float:
-        """Predikce pomocí ANE CoreML modelu."""
+        """Predikce pomocí ANE CoreML modelu (lazy-loaded)."""
+        # CoreML→MLX migration: ensure model is loaded on first use
+        self._ensure_ane_model()
         if self.ane_model is None:
-            return 0.0
+            return self._predict_branch_fallback(features)
 
         try:
             result = self.ane_model.predict({'features': features})

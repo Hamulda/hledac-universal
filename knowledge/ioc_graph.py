@@ -23,7 +23,7 @@ import json
 import re
 import time
 import uuid
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -118,6 +118,63 @@ def extract_iocs_from_text(
             seen.add(item)
             unique.append(item)
     return unique
+
+
+# Thread pool for parallel IOC extraction — M1 8GB: 4 workers
+_IOC_EXTRACTOR: ThreadPoolExecutor = ThreadPoolExecutor(
+    max_workers=4, thread_name_prefix="ioc_extractor"
+)
+
+MAX_EXTRACT_BATCH: int = 500  # max findings per extraction batch
+
+
+def extract_iocs_batch(
+    items: list[tuple[str, list[tuple[str, str]]]],
+) -> list[list[tuple[str, str]]]:
+    """
+    Batch extract IOCs from multiple texts in parallel using ThreadPoolExecutor.
+
+    Architecture:
+        - Parallel O(n) regex scans across N texts (4 worker threads)
+        - Bounded: MAX_EXTRACT_BATCH per call (memory guard)
+        - Fail-soft: individual text failures return [] not exceptions
+        - Returns: list of result lists, matching input order
+
+    Args:
+        items: List of (text, pattern_matches) tuples.
+
+    Returns:
+        List of (ioc_value, ioc_type) lists per input text.
+    """
+    if not items:
+        return []
+
+    # Memory guard: cap batch size
+    items = items[:MAX_EXTRACT_BATCH]
+
+    def _extract_one(
+        item: tuple[str, list[tuple[str, str]]],
+    ) -> list[tuple[str, str]]:
+        text, matches = item
+        try:
+            return extract_iocs_from_text(text, matches)
+        except Exception:
+            return []
+
+    results: list[list[tuple[str, str]] | None] = [None] * len(items)
+
+    futures = {
+        _IOC_EXTRACTOR.submit(_extract_one, item): i for i, item in enumerate(items)
+    }
+    for future in as_completed(futures):
+        idx = futures[future]
+        try:
+            results[idx] = future.result()
+        except Exception:
+            results[idx] = []
+
+    # Replace None placeholders with empty lists
+    return [r if r is not None else [] for r in results]
 
 
 # ---------------------------------------------------------------------------

@@ -7,11 +7,11 @@ Invariant table:
   Invariant                                   | Test method
   ─────────────────────────────────────────────────────────────────────
   Q4_K_M at CRITICAL/EMERGENCY             | test_q4_at_critical_emergency
-  Q5_K_M at WARN with free >= 1.5GiB     | test_q5_at_warn_sufficient_free
-  Q4_K_M at WARN with free < 1.5GiB      | test_q4_at_warn_insufficient_free
-  Q8_0 only when free >= 2.5GiB+safe       | test_q8_only_when_explicitly_safe
-  Q5_K_M at OK with free >= 1.5GiB        | test_q5_at_ok_sufficient_free
-  Q4_K_M at OK with free < 1.5GiB         | test_q4_at_ok_insufficient_free
+  Q5_K_M at WARN with free >= 2.0GiB     | test_q5_at_warn_sufficient_free
+  Q4_K_M at WARN with free < 2.0GiB      | test_q4_at_warn_insufficient_free
+  Q8_0 only when free >= 3.0GiB+safe       | test_q8_only_when_explicitly_safe
+  Q5_K_M at OK with free >= 2.0GiB        | test_q5_at_ok_sufficient_free
+  Q4_K_M at OK with free < 2.0GiB         | test_q4_at_ok_insufficient_free
   reject when governor denies               | test_reject_when_governor_denies
   fallback Q4_K_M on error                 | test_fallback_q4_on_error
   select() returns InferenceBudget         | test_select_returns_inference_budget
@@ -37,7 +37,7 @@ class TestQuantizationSelector:
         from hledac.universal.brain.quantization_selector import QuantizationSelector
         return QuantizationSelector()
 
-    def _uma(self, state="ok", system_available_gib=2.0, swap_detected=False, io_only=False):
+    def _uma(self, state="ok", system_available_gib=3.0, swap_detected=False, io_only=False):
         """Helper to create a mock UMA snapshot."""
         uma = MagicMock()
         uma.state = state
@@ -71,52 +71,52 @@ class TestQuantizationSelector:
 
     def test_q5_at_warn_sufficient_free(self, selector):
         """F203J-3: WARN + free >= 1.5 GiB → Q5_K_M."""
-        uma = self._uma(state="warn", system_available_gib=1.8)
+        uma = self._uma(state="warn", system_available_gib=2.2)
         budget = selector.select(uma)
-        assert budget.quantization == "q5_k_m", "warn + free >= 1.5 → q5_k_m"
+        assert budget.quantization == "q5_k_m", "warn + free >= 2.0 → q5_k_m"
         assert budget.max_tokens == 1024
         assert budget.max_latency_ms == 45000
 
     def test_q4_at_warn_insufficient_free(self, selector):
         """F203J-4: WARN + free < 1.5 GiB → Q4_K_M."""
-        uma = self._uma(state="warn", system_available_gib=1.0)
+        uma = self._uma(state="warn", system_available_gib=1.5)
         budget = selector.select(uma)
-        assert budget.quantization == "q4_k_m", "warn + free < 1.5 → q4_k_m"
+        assert budget.quantization == "q4_k_m", "warn + free < 2.0 → q4_k_m"
         assert budget.max_tokens == 512
 
     # ── Q8_0 only when explicitly safe ───────────────────────────────────
 
     def test_q8_only_when_explicitly_safe(self, selector):
         """F203J-5: OK + free >= 2.5 GiB + explicitly safe → Q8_0."""
-        uma = self._uma(state="ok", system_available_gib=3.0, io_only=False, swap_detected=False)
+        uma = self._uma(state="ok", system_available_gib=3.5, io_only=False, swap_detected=False)
         budget = selector.select(uma)
-        assert budget.quantization == "q8_0", "ok + free >= 2.5 + safe → q8_0"
+        assert budget.quantization == "q8_0", "ok + free >= 3.0 + safe → q8_0"
         assert budget.max_tokens == 2048
         assert budget.max_latency_ms == 60000
         assert "explicitly_safe" in budget.reason
 
     def test_q5_at_ok_sufficient_free(self, selector):
         """F203J-6: OK + free >= 1.5 GiB but not safe → Q5_K_M."""
-        uma = self._uma(state="ok", system_available_gib=2.0, io_only=False, swap_detected=False)
+        uma = self._uma(state="ok", system_available_gib=2.5, io_only=False, swap_detected=False)
         budget = selector.select(uma)
-        assert budget.quantization == "q5_k_m", "ok + free >= 1.5 + not_q8_safe → q5_k_m"
+        assert budget.quantization == "q5_k_m", "ok + free >= 2.0 + not_q8_safe → q5_k_m"
         assert budget.max_tokens == 1024
 
     def test_q4_at_ok_insufficient_free(self, selector):
         """F203J-7: OK + free < 1.5 GiB → Q4_K_M."""
-        uma = self._uma(state="ok", system_available_gib=1.0)
+        uma = self._uma(state="ok", system_available_gib=1.5)
         budget = selector.select(uma)
-        assert budget.quantization == "q4_k_m", "ok + free < 1.5 → q4_k_m"
+        assert budget.quantization == "q4_k_m", "ok + free < 2.0 → q4_k_m"
 
     def test_q4_when_io_only(self, selector):
         """F203J-8: io_only=True blocks Q8_0 even with free >= 2.5 GiB."""
-        uma = self._uma(state="ok", system_available_gib=3.0, io_only=True, swap_detected=False)
+        uma = self._uma(state="ok", system_available_gib=3.5, io_only=True, swap_detected=False)
         budget = selector.select(uma)
         assert budget.quantization in ("q4_k_m", "q5_k_m"), "io_only blocks q8_0"
 
     def test_q4_when_swap_detected(self, selector):
-        """F203J-9: swap_detected=True blocks Q8_0 even with free >= 2.5 GiB."""
-        uma = self._uma(state="ok", system_available_gib=3.0, io_only=False, swap_detected=True)
+        """F203J-9: swap_detected=True blocks Q8_0 even with free >= 3.0 GiB."""
+        uma = self._uma(state="ok", system_available_gib=3.5, io_only=False, swap_detected=True)
         budget = selector.select(uma)
         assert budget.quantization in ("q4_k_m", "q5_k_m"), "swap_detected blocks q8_0"
 
@@ -170,22 +170,22 @@ class TestQuantizationSelector:
             quantization="q5_k_m",
             max_tokens=1024,
             max_latency_ms=45000,
-            reason="uma_warn: free_uma=1.8GiB >= 1.5GiB",
-            free_uma_gib=1.8,
+            reason="uma_warn: free_uma=2.2GiB >= 2.0GiB",
+            free_uma_gib=2.2,
             allowed=True,
         )
         assert decision.quantization == "q5_k_m"
         assert decision.max_tokens == 1024
         assert decision.max_latency_ms == 45000
-        assert decision.reason == "uma_warn: free_uma=1.8GiB >= 1.5GiB"
-        assert decision.free_uma_gib == 1.8
+        assert decision.reason == "uma_warn: free_uma=2.2GiB >= 2.0GiB"
+        assert decision.free_uma_gib == 2.2
         assert decision.allowed is True
 
     def test_free_uma_hint(self, selector):
         """F203J-14: free_uma_hint() returns correct free UMA GiB."""
-        uma = self._uma(state="ok", system_available_gib=2.5)
+        uma = self._uma(state="ok", system_available_gib=3.0)
         hint = selector.free_uma_hint(uma)
-        assert hint == 2.5, "free_uma_hint returns system_available_gib"
+        assert hint == 3.0, "free_uma_hint returns system_available_gib"
 
     def test_free_uma_hint_from_governor_snapshot(self, selector):
         """F203J-15: free_uma_hint() works with GovernorSnapshot-like object."""

@@ -153,9 +153,12 @@ class I2PTransport(Transport):
         try:
             socks_ok = await loop.run_in_executor(None, _check_socks)
             if socks_ok:
-                # Create SOCKS5 proxy session
+                # Create SOCKS5 proxy session with bounded limits (F270: M1 8GB safe)
                 connector = self._aiohttp_socks.ProxyConnector.from_url(
-                    f"socks5://127.0.0.1:{self.socks_port}", rdns=True
+                    f"socks5://127.0.0.1:{self.socks_port}",
+                    rdns=True,
+                    limit=10,           # total connection pool size (M1 safe)
+                    limit_per_host=5,    # per-host limit (prevent starvation)
                 )
                 self._session_socks = self._aiohttp.ClientSession(connector=connector)
                 return True
@@ -242,10 +245,11 @@ class I2PTransport(Transport):
                 # HTTP mode is useful for Freenet FProxy compatibility or when the I2P
                 # router is configured to tunnel HTTP through its internal HTTP proxy.
                 # Note: plain aiohttp cannot resolve .i2p hostnames without SOCKS5.
+                # F270: Bounded HTTP proxy connector for M1 8GB safety
                 connector = self._aiohttp.TCPConnector(
-                    limit=10,
-                    limit_per_host=5,
-                    ttl_dns_cache=300,
+                    limit=10,           # total connection pool size (M1 safe)
+                    limit_per_host=5,    # per-host limit (prevent starvation)
+                    ttl_dns_cache=300,  # DNS cache TTL (reduce lookups)
                     enable_cleanup_closed=True,
                 )
                 self._session_http = self._aiohttp.ClientSession(
@@ -389,7 +393,7 @@ class I2PTransport(Transport):
 
         Fail-safe: returns TransportResult with `error` if I2P unavailable.
         """
-        if not self.is_running():
+        if not await self.is_running():
             return TransportResult(
                 url=config.url,
                 error="i2p_unavailable",

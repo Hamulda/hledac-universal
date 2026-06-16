@@ -18,10 +18,11 @@ and adds integration logic without duplicating code.
 from __future__ import annotations
 
 import hashlib
-import json
 import logging
 import subprocess
 from typing import Any
+
+import orjson
 
 from hledac.universal.project_types import (
     ActionResult,
@@ -375,7 +376,7 @@ class GhostLayer:
         try:
             # Generate unique ID
             data_hash = hashlib.sha256(
-                json.dumps(data, sort_keys=True, default=str).encode()
+                orjson.dumps(data, option=orjson.OPT_SORT_KEYS)
             ).hexdigest()[:16]
 
             vault_id = f"ghost_{data_hash}"
@@ -440,7 +441,7 @@ class GhostLayer:
     def _update_stagnation_tracking(self, result: dict[str, Any]) -> None:
         """Update stagnation tracking based on result"""
         # Hash the result for comparison
-        result_str = json.dumps(result, sort_keys=True, default=str)
+        result_str = orjson.dumps(result, option=orjson.OPT_SORT_KEYS).decode()
         result_hash = hashlib.md5(result_str.encode()).hexdigest()
 
         # Check if same as last

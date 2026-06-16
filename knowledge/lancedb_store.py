@@ -359,17 +359,8 @@ class LanceDBIdentityStore:
         except Exception as e:
             logger.debug(f"[EMBEDDER] MLXEmbeddingManager init failed: {e}")
 
-        # 2. CoreML on ANE (optional)
-        try:
-            import coremltools as ct
-            model_path = Path.home() / '.hledac' / 'models' / 'modernbert-embed.mlpackage'
-            if model_path.exists():
-                self._embedder = ct.models.MLModel(str(model_path), compute_units=ct.ComputeUnit.ALL)
-                self._embedder_type = 'coreml_ane'
-                logger.info("[EMBEDDER] CoreML ANE embedder initialized")
-                return True
-        except Exception as e:
-            logger.debug(f"[EMBEDDER] CoreML init failed: {e}")
+        # CoreML→MLX migration: CoreML ANE path removed — MLX is primary on Apple Silicon.
+        # Only numpy fallback remains if MLXEmbeddingManager is unavailable.
 
         # 3. Numpy random fallback (Sprint 81 Fáze 4 - minimal footprint)
         logger.warning("[EMBEDDER] No hardware acceleration, using numpy fallback")
@@ -380,6 +371,10 @@ class LanceDBIdentityStore:
     async def _embed_single(self, text: str) -> list[float]:
         """Embed single text via current embedder (for indexing - uses embed_document)."""
         # Sprint 81 Fáze 4: Support MLXEmbeddingManager, CoreML, and numpy fallback
+        # Lazy init guard — trigger embedder init on first use
+        if self._embedder_type is None:
+            await self._initialize_embedder()
+
         if self._embedder_type == 'numpy_fallback':
             # Minimal footprint fallback - random normalized embedding
             emb = np.random.randn(self._fallback_dim).astype(np.float32)
@@ -395,10 +390,6 @@ class LanceDBIdentityStore:
                 # MLXEmbeddingManager - use embed_document for indexing (task safety)
                 result = await asyncio.to_thread(self._embedder.embed_document, text)
                 emb = result.tolist() if hasattr(result, 'tolist') else list(result)
-            elif self._embedder_type == 'coreml_ane':
-                # CoreML model
-                result = await asyncio.to_thread(self._embedder.predict, {'text': text})
-                emb = result.get('embedding', [])
             else:
                 # sentence_transformers or unknown - use encode (will validate in MLX path)
                 result = await asyncio.to_thread(self._embedder.encode, text)
@@ -417,6 +408,10 @@ class LanceDBIdentityStore:
         # Sprint 81 Fáze 4: Support MLXEmbeddingManager, CoreML, and numpy fallback
         if not texts:
             return []
+
+        # Lazy init guard — trigger embedder init on first use
+        if self._embedder_type is None:
+            await self._initialize_embedder()
 
         if self._embedder_type == 'numpy_fallback':
             # Minimal footprint fallback - random normalized embeddings
@@ -446,17 +441,10 @@ class LanceDBIdentityStore:
                 try:
                     if self._embedder_type == 'mlx_gpu':
                         # MLXEmbeddingManager - use embed_document for indexing (task safety)
-                        # Use internal _embed_for_indexing for batch support
                         emb_result = await asyncio.to_thread(
                             self._embedder._embed_for_indexing, batch
                         )
                         batch_embs = emb_result.tolist() if hasattr(emb_result, 'tolist') else list(emb_result)
-                    elif self._embedder_type == 'coreml_ane':
-                        # CoreML batch
-                        result = await asyncio.to_thread(
-                            self._embedder.predict, {'text': batch}
-                        )
-                        batch_embs = result.get('embeddings', [])
                     else:
                         # sentence_transformers or unknown
                         embs = await asyncio.to_thread(self._embedder.encode, batch)
@@ -664,9 +652,12 @@ class LanceDBIdentityStore:
             except Exception:
                 pass
 
-        # Clear MLX memory
-        import gc
-        gc.collect()
+        # Clear MLX memory — gc.freeze() M1-safe, pak Metal clear
+        try:
+            import gc
+            gc.freeze()
+        except Exception:
+            pass  # Python <3.12
         try:
             import mlx.core as mx
             mx.eval([])

@@ -277,4 +277,7 @@ def classify_failure_kind(exc: Exception) -> str:
     if "inference" in msg or "generate" in msg or "mlx_lm" in msg:
         return "inference_error"
 
+    if isinstance(exc, IndexError) or isinstance(exc, KeyError):
+        return "internal_error"  # programming bug — trips GAP-3/1 breaker hard
+
     return "unknown_error"

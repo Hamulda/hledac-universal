@@ -708,7 +708,7 @@ class TestSprintT1M1Safety:
         )
 
         async def task(i: int) -> None:
-            with span("async.burst", i=i):
+            async with span("async.burst", i=i):
                 await asyncio.sleep(0.001)
 
         await asyncio.gather(*[task(i) for i in range(100)])

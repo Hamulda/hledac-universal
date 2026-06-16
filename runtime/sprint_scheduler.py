@@ -55,6 +55,8 @@ Key invariants:
 from __future__ import annotations
 
 import asyncio
+
+_asyncio = asyncio  # [FIX] alias used throughout the module
 import concurrent.futures
 import gc
 import logging
@@ -85,15 +87,23 @@ except ImportError:  # production fallback
         instrumented as _otel_instrumented,
     )
 
-# Sprint P0-1: SoA overlay for hot-path integer counters in SprintSchedulerResult
+# Sprint P0-1 / P1-5: SoA overlay for hot-path integer counters in SprintSchedulerResult
 # (see runtime/int_counter_layout.py). Lazy import pattern preserved.
+# Sprint P1-5: IntCounterLayoutRust preferred when Rust backend is available.
 try:
-    from runtime.int_counter_layout import IntCounterLayout  # type: ignore[import-not-found]
+    from runtime.int_counter_layout import (
+        IntCounterLayout,
+        IntCounterLayoutRust,
+    )  # type: ignore[import-not-found]
 except ImportError:  # pragma: no cover — fallback when run as a script
     try:
-        from hledac.universal.runtime.int_counter_layout import IntCounterLayout  # type: ignore[no-redef]
+        from hledac.universal.runtime.int_counter_layout import (  # type: ignore[no-redef]
+            IntCounterLayout,
+            IntCounterLayoutRust,
+        )
     except ImportError:
         IntCounterLayout: type | None = None  # type: ignore[assignment,misc,no-redef]
+        IntCounterLayoutRust: type | None = None  # type: ignore[assignment,misc,no-redef]
 
 
 
@@ -349,6 +359,10 @@ from hledac.universal.transport.circuit_breaker import (  # noqa: E402
     get_all_breaker_states,
 )
 
+# F266: Chunk-level parallelism (M1 8GB safe)
+_MAX_CHUNK_SIZE: int = 100  # DuckDB MAX_BATCH=500, chunk for parallel
+_MAX_CHUNK_CONCURRENCY: int = 2  # M1 8GB: 2 chunks in parallel
+
 MAX_LANE_REJECTIONS: int = 1000
 
 
@@ -420,9 +434,13 @@ from hledac.universal.runtime.acquisition_strategy import (  # noqa: E402
     run_enabled_acquisition_lanes_streaming,
     terminality_report,
 )
+from hledac.universal.runtime.cti.db.duckdb_domain_mv import (  # noqa: E402
+    get_domain_mv,
+)
 
 # F216F: Pivot candidate generation from query
 # F217E: Nonfeed candidate evidence ledger
+# P2-1: DuckDB domain-candidate MV
 from hledac.universal.runtime.nonfeed_candidate_ledger import (  # noqa: E402
     NonfeedCandidateLedger,
     extract_domain_candidates_from_text,
@@ -3235,7 +3253,10 @@ class SprintSchedulerResult:
         """
         if self._int_counter_layout is not None:
             return
-        if IntCounterLayout is None:  # type: ignore[truthy-bool]
+        # Sprint P1-5: prefer Rust backend for hot-path counters when available.
+        # Both classes share the same get/set/bump API (duck-typed via IntCounterLayoutProto).
+        _LayoutClass = IntCounterLayoutRust if IntCounterLayoutRust is not None else IntCounterLayout
+        if _LayoutClass is None:  # type: ignore[truthy-bool]
             # Defensive: import failed in this environment; counters
             # remain AoS but property delegations return 0 on read.
             return
@@ -3245,7 +3266,7 @@ class SprintSchedulerResult:
             object.__setattr__(
                 self,
                 "_int_counter_layout",
-                IntCounterLayout(INT_COUNTER_LAYOUT_NAMES),
+                _LayoutClass(INT_COUNTER_LAYOUT_NAMES),
             )
         except Exception:
             # L.2 fail-soft — leave as None; properties still return 0.
@@ -4915,6 +4936,9 @@ class SprintScheduler:
         # Sprint 8UC B.4: Speculative prefetch
 
         self._bg_tasks: set[asyncio.Task] = set()
+
+        # P0 overlap: synthesis windup task (set in windup barrier, joined in teardown)
+        self._synth_windup_task: asyncio.Task | None = None
         # Sprint F265C: Non-blocking sidecar tasks tracked separately from
         # speculative bg_tasks so teardown can await them with timeout
         # before hard-cancelling. Prevents findings loss on fast sprint exit.
@@ -5055,6 +5079,9 @@ class SprintScheduler:
         # Sprint F11C: EvidenceLog (fail-safe, M1 8GB safe)
         self._evidence_log: Any = None
 
+        # Sprint P1-5: Previous chain hash for BLAKE3+SHA256 evidence chain (cross-sprint persistence)
+        self._prev_chain_hash: str | None = None
+
         # Sprint F250: Layer manager for Ghost/Stealth/Temporal/Security layers (opt-in via HLEDAC_ENABLE_LAYERS=1)
 
         self._layer_manager: Any = None
@@ -5112,6 +5139,18 @@ class SprintScheduler:
             adaptive_priority_provider=lambda tt, base: self._get_adaptive_priority(tt, base),
             enqueue_pivot_provider=lambda **kw: self.enqueue_pivot(**kw),
         )
+        # Sprint F2.3: Prewarm BatchDNSResolver with common OSINT infrastructure domains.
+        # Runs async in background; cache is ready before first fetch batch.
+        # Fire-and-forget: failures are fail-soft, _fetch_coordinator._validate_fetch_target
+        # falls back to per-fetch DNS if cache misses.
+        try:
+            resolver = get_batch_dns_resolver()
+            safe_create_task(
+                resolver.prewarm(),
+                name="batch_dns_prewarm",
+            )
+        except Exception as _exc:
+            log.debug("[F2.3] BatchDNS prewarm init failed (non-critical): %s", _exc)
         # Sprint F250F: Privacy context ID -- created at STARTUP, closed at TEARDOWN
         self._privacy_context_id: str | None = None
 
@@ -6419,13 +6458,12 @@ class SprintScheduler:
             # ── Part D: DSPy Query Expansion at Sprint Start (Sprint HERMES3_WIRING)
             # Gate: HLEDAC_ENABLE_DSPY=1 -> expand original query -> add to next_seeds
             # Cap: max 3 additional expanded queries (M1 constraint)
+            # F265B-FIX: Use await directly — no run_until_complete nesting, no coroutine leak
             if _env_flag("HLEDAC_ENABLE_DSPY") == "1" and query:
                 try:
                     from hledac.universal.brain.dspy_service import expand_query
-                    # F260-A: Use run_until_complete instead of asyncio.run() in async context
-                    # asyncio.run() creates nested event loop -> M1 crash on ARM cores
-                    loop = asyncio.get_running_loop()
-                    expanded = loop.run_until_complete(expand_query(query))
+
+                    expanded = await expand_query(query)
                     if expanded and len(expanded) > 0:
                         # Add expanded queries to sprint seeds (cap at 3)
                         _expanded_capped = expanded[:3]
@@ -6433,15 +6471,6 @@ class SprintScheduler:
                                   len(_expanded_capped), query[:30])
                         # Store for acquisition plan: these become additional sub-queries
                         self._result.next_seeds_query_suggestions = tuple(_expanded_capped)
-                except RuntimeError:
-                    # No running loop -- fallback to asyncio.run() (safe when no loop exists)
-                    try:
-                        expanded = asyncio.run(expand_query(query))
-                        if expanded and len(expanded) > 0:
-                            _expanded_capped = expanded[:3]
-                            self._result.next_seeds_query_suggestions = tuple(_expanded_capped)
-                    except Exception as _exc:
-                        log.debug("[HERMES3_WIRING] DSPy expand_query failed: %s", _exc)
                 except Exception as _exc:
                     log.debug("[HERMES3_WIRING] DSPy expand_query failed: %s", _exc)
 
@@ -7005,6 +7034,11 @@ class SprintScheduler:
 
 
 
+            # P1-4: Update hermes engine active_iteration_count after first cycle.
+            # Force-enable batching when cycles_started >= 2.
+            if self._hermes_engine is not None:
+                self._hermes_engine._active_iteration_count = self._result.cycles_started
+
             # Sprint F214: Only record prelude_complete if prelude actually ran.
 
             if getattr(self._result, "acquisition_prelude_ran", False):
@@ -7241,7 +7275,7 @@ class SprintScheduler:
 
                         continue
 
-                    # F273C: Pre-windup drain of in-flight pattern extractions.
+                    # F273C + F273H: Pre-windup drain of in-flight pattern extractions.
                     # Runs at the windup_guard evaluation point so any HTML the
                     # public fetcher already submitted to CPU_EXECUTOR gets a
                     # bounded deadline to finish matching before the sprint
@@ -7249,7 +7283,11 @@ class SprintScheduler:
                     # fetched pages can land in CPU_EXECUTOR and never be
                     # matched because the windup transition aborts the
                     # awaiting branch before its extraction Future completes.
-                    await self._drain_pending_pattern_extractions()
+                    # F273H: Compute remaining_s from now_monotonic so the drain
+                    # deadline is adaptive: min(30s, remaining * 0.3).
+                    _sprint_elapsed = now_monotonic - self._wall_clock_start
+                    _remaining_s = max(0.0, self._config.sprint_duration_s - _sprint_elapsed)
+                    await self._drain_pending_pattern_extractions(_remaining_s)
 
                     # F273G: Single malloc pressure-relief syscall per windup
                     # decision. Cheaper than the background loop, keeps the
@@ -7312,8 +7350,14 @@ class SprintScheduler:
 
                         await self._flush_dedup()
 
-                        # Sprint F259: Run synthesis sidecar in WINDUP (if enabled + UMA headroom)
-                        await self._run_synthesis_sidecar(query, duckdb_store, lifecycle)
+                        # Sprint F259: Run synthesis sidecar in WINDUP — P0 overlap:
+                        # Launch as background task so export (I/O-bound) runs concurrently.
+                        # Synthesis is CPU/Metal-bound (MLX inference); export is disk-bound.
+                        # Overlap win: ~30-60s on M1 8GB when synthesis is active.
+                        self._synth_windup_task = _asyncio.create_task(
+                            self._run_synthesis_sidecar(query, duckdb_store, lifecycle),
+                            name="sprint:synthesis_windup",
+                        )
 
                         # Sprint F260: Run DS ↔ DSPy Bridge (epistemic gap + contradiction resolver)
                         await self._run_epistemic_gap_advisory(query, duckdb_store)
@@ -7472,6 +7516,11 @@ class SprintScheduler:
                             _elapsed, self._config.effective_windup_lead_s
                         )
                     self._result.cycles_started += 1
+
+                    # P1-4: Update hermes engine active_iteration_count for force-enable batching.
+                    # When >= 2, MLXBatchedExecutor bypasses memory guard for 2-4× MLX utilization.
+                    if self._hermes_engine is not None:
+                        self._hermes_engine._active_iteration_count = self._result.cycles_started
 
                     # Sprint F272E: Record cycle start for next-iteration EMA update.
                     self._last_cycle_start = _time.monotonic()
@@ -8037,6 +8086,17 @@ class SprintScheduler:
 
             self._runner.teardown()
 
+            # P2: shutdown entity_signal_extractor ThreadPoolExecutor (shared singleton)
+            try:
+                from hledac.universal.intelligence.entity_signal_extractor import (
+                    reset_extractor_stats,
+                    shutdown_executor,
+                )
+                shutdown_executor()
+                reset_extractor_stats()
+            except Exception:
+                pass
+
             if self._config.export_enabled:
 
                 # F238E Phase A: Timer instrumentation -- fail-soft, time.monotonic() only
@@ -8053,9 +8113,49 @@ class SprintScheduler:
 
 
 
+            # P0 overlap: join synthesis task that was launched concurrently with export.
+            # If synthesis is still running, we wait here. If it finished before export,
+            # this returns immediately (task already done). Net: synthesis + export overlap.
+            if getattr(self, "_synth_windup_task", None) is not None:
+                await self._synth_windup_task
+                self._synth_windup_task = None
+
             self._result.final_phase = self._runner.current_phase
 
-
+            # Sprint P1-5: Wire chain_hash_snapshot into evidence chain (BLAKE3+SHA256 dual-emit)
+            # IntCounterLayout snapshot hashed into evidence chain provides tamper-evident
+            # cross-sprint audit log of counter state. Fail-soft: no exception propagates.
+            if self._evidence_log is not None and self._result._int_counter_layout is not None:
+                try:
+                    from hledac_rust_extensions import chain_hash_snapshot  # type: ignore[import-not-found, misc]
+                    _snap = self._result._int_counter_layout.snapshot()
+                    _prev = self._prev_chain_hash or ""
+                    _event_id = f"sprint_end_{getattr(self, '_sprint_id', 'unknown')}"
+                    _blake3_hex, _sha256_hex = chain_hash_snapshot(  # type: ignore[call-arg]
+                        _snap, _prev, _event_id
+                    )
+                    self._evidence_log.create_event(
+                        "decision",
+                        {
+                            "phase": "CHAIN_SNAPSHOT",
+                            "blake3_hex": _blake3_hex,
+                            "sha256_hex": _sha256_hex,
+                            "counter_snapshot": _snap,
+                            "sprint_id": getattr(self, '_sprint_id', ""),
+                        },
+                        confidence=1.0,
+                    )
+                    self._prev_chain_hash = _blake3_hex  # persist for next sprint
+                except Exception as _e:
+                    if self._evidence_log is not None:
+                        try:
+                            self._evidence_log.create_event(
+                                "error",
+                                {"phase": "CHAIN_SNAPSHOT_FAILED", "error": str(_e)},
+                                confidence=0.0,
+                            )
+                        except Exception:
+                            pass
 
             # Sprint 8RA: Close persistent dedup at TEARDOWN
 
@@ -8810,6 +8910,13 @@ class SprintScheduler:
 
 
 
+            # [F300S-P1] domain_detected but no seeds -- distinct from generic error abort
+            if r.aborted and r.abort_reason == "domain_detected_no_seeds":
+                return (
+                    EarlyExitClass.EARLY_COMPLETE_NO_WORK_REMAINING,
+                    "domain_detected_no_seeds: no seeds for CT/DOH/WAYBACK lanes",
+                )
+
             if r.aborted or exit_path == "aborted_by_error":
 
                 return (
@@ -9182,7 +9289,8 @@ class SprintScheduler:
 
                         # Derive skip reason from acquisition plan
 
-                        _skip_reason = "hardware_critical"
+                        # Default: be specific rather than generic "hardware_critical"
+                        _skip_reason = "ct_required_not_attempted"
 
                         if self._acquisition_plan is not None:
 
@@ -9199,10 +9307,6 @@ class SprintScheduler:
                                     elif not getattr(_plan, "enabled", True):
 
                                         _skip_reason = _reason or "lane_disabled"
-
-                                    else:
-
-                                        _skip_reason = "ct_required_not_attempted"
 
                                     break
 
@@ -11071,15 +11175,27 @@ class SprintScheduler:
         for lane in required:
 
             if lane == "public" and _public_done:
-
-                skipped["public"] = "already_terminal"
-
+                # Distinguish: terminal by outcome vs timeout vs error
+                _pub_timeout = self._public_outcome.get("timeout", False) if self._public_outcome else False
+                _pub_error = self._public_outcome.get("error", None) if self._public_outcome else None
+                if _pub_timeout:
+                    skipped["public"] = "terminal_by_timeout"
+                elif _pub_error:
+                    skipped["public"] = "terminal_by_error"
+                else:
+                    skipped["public"] = "terminal_by_outcome"
                 continue
 
             if lane == "ct" and _ct_done:
-
-                skipped["ct"] = "already_terminal"
-
+                # [F228C] CT terminal: findings OR timeout OR explicit terminal stage
+                _ct_timeout = self._result.ct_request_timeout
+                _ct_error = self._result.ct_terminal_stage in ("error", "skipped")
+                if _ct_timeout:
+                    skipped["ct"] = "terminal_by_timeout"
+                elif _ct_error:
+                    skipped["ct"] = "terminal_by_error"
+                else:
+                    skipped["ct"] = "terminal_by_outcome"
                 continue
 
 
@@ -12989,11 +13105,9 @@ class SprintScheduler:
 
 
 
-            # Sprint F233D: Run nonfeed prelude lanes via extracted class methods
-
-            # [P0-1] Query-seed extractor: extract domain candidates from raw query string
-            # BEFORE build_acquisition_plan() so lanes are enabled correctly.
-            # Uses extract_domain_candidates_from_text() which handles defanged markers.
+            # B4: ALWAYS define _query_domain_candidates before use (NameError guard)
+            # [FIX] _query_domain_candidates is referenced inside `if _pivot_has_seeds`
+            # block at line ~13112, so it must be defined unconditionally
             _query_domain_candidates: list[str] = []
             if query and isinstance(query, str) and query.strip():
                 _candidates = extract_domain_candidates_from_text(
@@ -13003,6 +13117,25 @@ class SprintScheduler:
                     min_confidence=0.3,
                 )
                 _query_domain_candidates = [c.domain for c in _candidates if c.confidence >= 0.3]
+            # F289: [P0-1] If no domain candidates extracted from query, try MLX conceptual generation
+            # This handles "ransomware leak dark web exposure" style queries where regex finds nothing.
+            if not _query_domain_candidates and query and isinstance(query, str):
+                try:
+                    from hledac.universal.runtime.nonfeed_candidate_ledger import (
+                        generate_conceptual_domain_candidates,
+                    )
+                    _mlx_candidates = await generate_conceptual_domain_candidates(query)
+                    _query_domain_candidates = [c.domain for c in _mlx_candidates if c.domain]
+                except Exception:
+                    pass  # fail-soft: MLX unavailable or parse failure
+            # Also define _synthetic_domains unconditionally for same reason
+            _synthetic_domains: list[str] = []
+
+            # Sprint F233D: Run nonfeed prelude lanes via extracted class methods
+
+            # [P0-1] Query-seed extractor: extract domain candidates from raw query string
+            # BEFORE build_acquisition_plan() so lanes are enabled correctly.
+            # Uses extract_domain_candidates_from_text() which handles defanged markers.
 
 
             # F228A / F235C: Build NonfeedSeedContext from pivot seeds + next_seeds_ioc values.
@@ -13095,6 +13228,27 @@ class SprintScheduler:
 
             _nonfeed_prelude_done = True
 
+            # [F300S-P1] Early-abort guard: domain_detected but no seeds -- skip windup
+            # When domain was detected in query but ALL seed extraction attempts failed,
+            # CT/DOH/WAYBACK/PASSIVE_DNS lanes have no targets and will immediately timeout.
+            # This wastes 90-180s of windup. Instead, skip windup and exit with a
+            # diagnostic finding so the operator gets immediate feedback.
+            if (
+                _has_domain
+                and not self._result.seed_context_available
+                and _is_nonfeed_diagnostic
+            ):
+                log.critical(
+                    "[F300S-P1] domain_detected=True but seed_context_available=False "
+                    "(acquisition_profile=%s, query=%r) -- skipping windup, entering early-exit",
+                    self._config.acquisition_profile or "default",
+                    query[:80],
+                )
+                self._result.acquisition_prelude_ran = True
+                self._result.acquisition_prelude_reason = "domain_detected_no_seeds_early_abort"
+                self._result.acquisition_prelude_duration_s = _time.monotonic() - _t0
+                self._runner.request_abort("domain_detected_no_seeds")
+                return
 
 
         # Accumulate outcomes
@@ -14169,111 +14323,81 @@ class SprintScheduler:
 
 
 
-        # Try PUBLIC
+        # Sprint P1-1: Run PUBLIC and CT in parallel (was sequential: PUBLIC→CT).
+        # Each helper captures outcome and any exception, returned as (lane, outcome|exc).
+        # Post-gather side-effects match the original sequential logic.
 
-        if "public" in _unsatisfied:
-
+        async def _try_public():
+            if "public" not in _unsatisfied:
+                return None
             try:
-
-                outcome = await self._attempt_public_prewindup_barrier(query)
-
-                if outcome is None:
-
-                    _skipped["public"] = "adapter_error"
-
-                    _errors["public"] = "return_guard_public_adapter_error"
-
-                elif outcome.get("error"):
-
-                    _errors["public"] = outcome["error"]
-
-                    _attempted.append("public")
-
-                elif outcome.get("timeout"):
-
-                    _skipped["public"] = "timeout"
-
-                    _attempted.append("public")
-
-                else:
-
-                    _attempted.append("public")
-
+                return ("public", await self._attempt_public_prewindup_barrier(query))
             except Exception as exc:
+                return ("public", exc)
 
-                _skipped["public"] = f"exception:{type(exc).__name__}"
-
-                _errors["public"] = f"{type(exc).__name__}:{exc}"
-
-
-
-        # Try CT
-
-        if "ct" in _unsatisfied:
-
+        async def _try_ct():
+            if "ct" not in _unsatisfied:
+                return None
             try:
-
-                outcome = await self._attempt_ct_prewindup_barrier(query)
-
-                if outcome is None:
-
-                    _skipped["ct"] = "adapter_error"
-
-                    _errors["ct"] = "return_guard_ct_adapter_error"
-
-                elif outcome.get("timeout"):
-
-                    _skipped["ct"] = "timeout"
-
-                    _attempted.append("ct")
-
-                elif outcome.get("error"):
-
-                    _errors["ct"] = outcome["error"]
-
-                    _attempted.append("ct")
-
-                else:
-
-                    _attempted.append("ct")
-
-                    # F228E: Pre-windup barrier got raw CT but did not call bridge.
-
-                    # Set full telemetry so raw>0 + accepted=0 is truthfully explained.
-
-                    # Matches prelude path field completeness for RAW_NOT_BRIDGED exit.
-
-                    if outcome.get("raw_count", 0) > 0:
-
-                        self._result.ct_bridge_invoked = False
-
-                        self._result.ct_loss_stage = CTLossStage.RAW_NOT_BRIDGED.value
-
-                        self._result.ct_raw_count = outcome.get("raw_count", 0)
-
-                        self._result.ct_raw_sample_count = 0
-
-                        self._result.ct_candidates_built = 0
-
-                        self._result.ct_candidates_accumulated = 0
-
-                        self._result.ct_candidates_stored = 0
-
-                        self._result.ct_storage_rejected = 0
-
-                        self._result.ct_quarantine_count = 0
-
-                        self._result.ct_bridge_rejections_count = 0
-
-                        self._result.ct_bridge_rejection_reasons = ()
-
+                return ("ct", await self._attempt_ct_prewindup_barrier(query))
             except Exception as exc:
+                return ("ct", exc)
 
-                _skipped["ct"] = f"exception:{type(exc).__name__}"
-
-                _errors["ct"] = f"{type(exc).__name__}:{exc}"
-
-
+        _to_try = [_f for _f in (_try_public(), _try_ct()) if _f is not None]
+        if _to_try:
+            _results = await safe_gather_dropin(*_to_try, label="sprint_scheduler:_ensure_mandatory_nonfeed_return_guard")
+            for _r in _results:
+                if _r is None:
+                    continue
+                if isinstance(_r, BaseException):
+                    if isinstance(_r, asyncio.CancelledError):
+                        raise _r
+                    log.warning("return_guard gather exception: %s", _r)
+                    continue
+                _lane, _val = _r
+                if _lane == "public":
+                    if isinstance(_val, Exception):
+                        _skipped["public"] = f"exception:{type(_val).__name__}"
+                        _errors["public"] = f"{type(_val).__name__}:{_val}"
+                    elif _val is None:
+                        _skipped["public"] = "adapter_error"
+                        _errors["public"] = "return_guard_public_adapter_error"
+                    elif _val.get("error"):
+                        _errors["public"] = _val["error"]
+                        _attempted.append("public")
+                    elif _val.get("timeout"):
+                        _skipped["public"] = "timeout"
+                        _attempted.append("public")
+                    else:
+                        _attempted.append("public")
+                elif _lane == "ct":
+                    if isinstance(_val, Exception):
+                        _skipped["ct"] = f"exception:{type(_val).__name__}"
+                        _errors["ct"] = f"{type(_val).__name__}:{_val}"
+                    elif _val is None:
+                        _skipped["ct"] = "adapter_error"
+                        _errors["ct"] = "return_guard_ct_adapter_error"
+                    elif _val.get("timeout"):
+                        _skipped["ct"] = "timeout"
+                        _attempted.append("ct")
+                    elif _val.get("error"):
+                        _errors["ct"] = _val["error"]
+                        _attempted.append("ct")
+                    else:
+                        _attempted.append("ct")
+                        # F228E: Pre-windup barrier got raw CT but did not call bridge.
+                        if _val.get("raw_count", 0) > 0:
+                            self._result.ct_bridge_invoked = False
+                            self._result.ct_loss_stage = CTLossStage.RAW_NOT_BRIDGED.value
+                            self._result.ct_raw_count = _val.get("raw_count", 0)
+                            self._result.ct_raw_sample_count = 0
+                            self._result.ct_candidates_built = 0
+                            self._result.ct_candidates_accumulated = 0
+                            self._result.ct_candidates_stored = 0
+                            self._result.ct_storage_rejected = 0
+                            self._result.ct_quarantine_count = 0
+                            self._result.ct_bridge_rejections_count = 0
+                            self._result.ct_bridge_rejection_reasons = ()
 
         # Re-check terminal state after attempted barrier
 
@@ -14693,10 +14817,11 @@ class SprintScheduler:
         # try block. When the nonfeed prelude never assigns _seed_ctx
         # (e.g. no pivot seeds and no next_seeds_ioc), NameError was raised
         # after the public branch completed.
-        _seed_ctx = None
+        """
 
-        # [P0-1] Query-seed extractor: extract domain candidates from raw query string
-        # so NonfeedSeedContext enables CT/DOH/WAYBACK even when query has no explicit domain.
+        # [FIX BUG] _query_domain_candidates and _synthetic_domains must be defined
+        # OUTSIDE the docstring above (code inside docstring is never executed).
+        # These are used by _initial_seed_ctx and _seed_ctx building.
         _query_domain_candidates: list[str] = []
         if query and isinstance(query, str) and query.strip():
             _candidates = extract_domain_candidates_from_text(
@@ -14706,24 +14831,7 @@ class SprintScheduler:
                 min_confidence=0.3,
             )
             _query_domain_candidates = [c.domain for c in _candidates if c.confidence >= 0.3]
-
-        # Sprint F250: StealthLayer rotate_fingerprint before each cycle (opt-in advisory)
-
-        if _env_flag("HLEDAC_ENABLE_LAYERS") == "1":
-
-            try:
-
-                stealth = getattr(self._layer_manager, "stealth", None)
-
-                if stealth is not None and hasattr(stealth, "rotate_fingerprint"):
-
-                    stealth.rotate_fingerprint()
-
-            except Exception as _e:
-
-                log.warning("layers StealthLayer.rotate_fingerprint failed: %s", _e)
-
-        """
+        _synthetic_domains: list[str] = []
 
         async_run_live_feed, FeedPipelineRunResult = _import_live_feed_pipeline()  # noqa: N806
 
@@ -15006,6 +15114,7 @@ class SprintScheduler:
             except TimeoutError:
                 log.debug("[stable] PUBLIC branch timed out after %ss", branch_timeout)
                 self._result.public_branch_timed_out = True
+                self._result.branch_timeout_count += 1
                 self._result.public_error = "terminal:timeout"
                 self._emit_source_family_event(
                     family="PUBLIC",
@@ -15041,74 +15150,41 @@ class SprintScheduler:
                     "duration_s": None,
                 }
 
-        # Launch both branches concurrently (same pattern as aggressive mode)
-        feed_branch = _asyncio.create_task(_run_feed_branch(), name="sprint:feed_branch")
-        public_branch = _asyncio.create_task(_run_public_branch(), name="sprint:public_branch")
-        await safe_gather_dropin(
-            feed_branch, public_branch,
-            label="sprint_scheduler:concurrent_feed_public",
-        )
+        async def _run_advisory_branch() -> None:
+            """Advisory lanes branch — runs concurrently with FEED and PUBLIC."""
+            lanes_timeout = self._branch_timeout_s("ADVISORY", remaining_s)
+            if lanes_timeout <= 0:
+                log.debug("[F212-B] ADVISORY lanes skipped: remaining=%.1fs", remaining_s)
+                return
 
-
-
-        # Sprint F207A: Run enabled multi-source acquisition lanes (CT/WAYBACK/PASSIVE_DNS/BLOCKCHAIN)
-
-        # STEALTH excluded -- never auto-runs; FEED and PUBLIC already handled above
-
-        # F212-B: Skip if remaining time is below safety floor
-
-        lanes_timeout = self._branch_timeout_s("ADVISORY", remaining_s)
-
-        # F214R: Use governor.lane_admission() for authoritative uma_state on advisory lanes
-
-        if self._governor is not None:
-
-            _lane_check = self._governor.lane_admission("advisory", risk_level="high")
-
-            _uma = _lane_check.uma_state
-
-        else:
-
-            _uma = getattr(self._governor, "_uma_state", "ok") if self._governor else "ok"
-
-        if lanes_timeout > 0:
+            if self._governor is not None:
+                _lane_check = self._governor.lane_admission("advisory", risk_level="high")
+                _uma = _lane_check.uma_state
+            else:
+                _uma = getattr(self._governor, "_uma_state", "ok") if self._governor else "ok"
 
             try:
-
                 async with asyncio.timeout(lanes_timeout):
-
-                    # [F222I] Build NonfeedSeedContext from pivot seeds + next_seeds_ioc values (F235C)
-
                     _seed_ctx = None
-
                     _pivot_has_seeds = (self._result.pivot_seed_domains or self._result.pivot_seed_ips
-
                                         or self._result.pivot_seed_urls)
-
                     _next_seeds_has_iocs = (self._result.next_seeds_ioc_domains or self._result.next_seeds_ioc_ips
-
                                              or self._result.next_seeds_ioc_urls or self._result.next_seeds_ioc_hashes)
-
                     if _pivot_has_seeds or _next_seeds_has_iocs:
-
                         _seed_ctx = NonfeedSeedContext(
-                            # [P0-1] Prepend query-extracted domains so build_lane_query() returns them first
                             domains=tuple(_query_domain_candidates
                                           + (self._result.pivot_seed_domains or ())
-                                          + (self._result.next_seeds_ioc_domains or ())),  # noqa: E501
+                                          + (self._result.next_seeds_ioc_domains or ())),
                             ips=tuple((self._result.pivot_seed_ips or ()) + (self._result.next_seeds_ioc_ips or ())),
                             urls=tuple((self._result.pivot_seed_urls or ()) + (self._result.next_seeds_ioc_urls or ())),
-                            hashes=tuple((self._result.pivot_seed_hashes or ()) + (self._result.next_seeds_ioc_hashes or ())),  # noqa: E501
+                            hashes=tuple((self._result.pivot_seed_hashes or ()) + (self._result.next_seeds_ioc_hashes or ())),
                             cves=tuple((self._result.pivot_seed_cves or ()) + (self._result.next_seeds_ioc_cves or ())),
                         )
 
-                    # F265C: Lazy-init graph_accumulator before passing to lane runners
                     if self._graph_accumulator is None:
                         self._graph_accumulator = SprintGraphAccumulator()
 
-                    # P2-1: Streaming lanes -- incremental accumulate, early exit on enough_evidence
                     _streaming_outcomes: list = []
-                    _streaming_done = False
                     async for _outcome_batch in run_enabled_acquisition_lanes_streaming(
                         snapshot=self._acquisition_plan if self._acquisition_plan is not None else None,
                         query=query,
@@ -15120,99 +15196,66 @@ class SprintScheduler:
                         on_lane_complete=None,
                     ):
                         _streaming_outcomes = list(_outcome_batch)
-                        # P2-1: enough_evidence early exit guard
                         _total_accepted = sum(
                             getattr(_o, "accepted_findings", 0) or 0
                             for _o in _streaming_outcomes
                             if getattr(_o, "attempted", False)
                         )
                         if _total_accepted >= 3:
-                            _streaming_done = True
                             break
 
                     _outcomes = tuple(_streaming_outcomes) if _streaming_outcomes else None
-
                     if _outcomes:
                         self._lane_outcomes = _outcomes
                         self._result.acquisition_lane_outcomes = _outcomes
                         self._accumulate_lane_findings(_outcomes, query)
-                        # Sprint R1B: Ingest CT lane CanonicalFinding candidates via DuckDBShadowStore
                         await self._ingest_ct_lane_candidates(_outcomes, duckdb_store)
-                        # Sprint F216G: Read quality rejection ledger from duckdb_store
                         self._record_quality_rejections_from_store(duckdb_store)
-                        # Sprint R8: Run CT->PassiveDNS active-cycle pivot after lane ingestion
                         ct_findings: list = []
                         for _oc in _outcomes:
                             if getattr(_oc, "source_family", None) == "ct":
                                 _cands = getattr(_oc, "candidate_findings", ()) or ()
                                 if _cands:
-
                                     ct_findings.extend(_cands)
-
                         if ct_findings:
-
                             await self._run_ct_to_passivedns_active_pivot(
-
                                 ct_findings=ct_findings,
-
                                 duckdb_store=duckdb_store,
-
                                 remaining_s=remaining_s,
-
                             )
-
-                        # Sprint F217E: Mirror quality rejections in ledger (stable advisory)
-
                         for _rec in self._result.quality_rejection_ledger or ():
-
                             try:
-
                                 self._nonfeed_ledger.add_quality_rejection(
-
                                     source_family=_rec.source_family or "unknown",
-
                                     reason=_rec.reason or "unknown",
-
                                     sample_url=getattr(_rec, "url_sample", "") or "",
-
                                     sample_value=getattr(_rec, "finding_id", "")[:16],
-
                                 )
-
                             except Exception:
-
-                                pass  # fail-soft
-
-                        # F214: Bridge feed/PUBLIC findings -> nonfeed candidate ledger
-
-                        # Extract domain candidates from feed/public outcomes -> lane eligibility
-
+                                pass
                         self._ingest_feed_public_candidates_to_ledger()
 
             except TimeoutError:
-
                 log.debug("[stable] ADVISORY lanes timed out after %ss", lanes_timeout)
-
             except asyncio.CancelledError:
-
-                raise  # [I6] propagate CancelledError
-
+                raise
             except Exception as _exc:
-
                 _log_advisory_dedup(
                     log, f"stable_advisory_lane_fail:{type(_exc).__name__}",
                     "[stable] ADVISORY lane runner exception: %s: %s",
                     type(_exc).__name__, _exc,
                 )
 
-        else:
-
-            log.debug("[F212-B] ADVISORY lanes skipped: remaining=%.1fs", remaining_s)
-
-
+        # Launch all three branches concurrently (P0: FEED ∥ PUBLIC ∥ ADVISORY)
+        feed_branch = _asyncio.create_task(_run_feed_branch(), name="sprint:feed_branch")
+        public_branch = _asyncio.create_task(_run_public_branch(), name="sprint:public_branch")
+        advisory_branch = _asyncio.create_task(_run_advisory_branch(), name="sprint:advisory_branch")
+        await safe_gather_dropin(
+            feed_branch, public_branch, advisory_branch,
+            label="sprint_scheduler:concurrent_feed_public_advisory",
+        )
 
         return True
-
 
 
     # ── F212-B: Branch Timeout Envelope ───────────────────────────────────
@@ -15252,9 +15295,9 @@ class SprintScheduler:
         base = max(self._config._MIN_BRANCH_REMAINING_S_DEFAULT, 0.3 * cycle_ema)
         return float(min(self._config._MIN_BRANCH_REMAINING_S_CAP, base))
 
-    async def _drain_pending_pattern_extractions(self) -> None:
+    async def _drain_pending_pattern_extractions(self, remaining_s: float) -> None:
         """
-        F273C: Pre-windup drain of in-flight pattern-extraction Futures.
+        F273C + F273H: Pre-windup drain of in-flight pattern-extraction Futures.
 
         Calls into `public_fetcher.drain_pending_extractions(deadline_s)` to
         await any HTML the public fetcher has already submitted to
@@ -15262,13 +15305,22 @@ class SprintScheduler:
         matched patterns → 0 stored" failure mode where the windup transition
         cancelled the awaiting branch before its extraction Future resolved.
 
-        Always-on, bounded (deadline=30s by default), fail-soft: any error
+        F273H: Adaptive drain deadline. Before this fix the drain deadline was
+        a fixed 30s that could exceed the remaining sprint time, causing the
+        drain itself to consume nearly the entire active window on short
+        sprints (windup = 304.57s of 305s observed). Now bounded to
+        min(30s, remaining_s * 0.3) so the drain never consumes more than 30%
+        of whatever time remains. Also early-exits when the drain registry
+        is already empty, avoiding a pointless wait.
+
+        Always-on, bounded (adaptive deadline), fail-soft: any error
         in the drain path returns silently and the windup decision proceeds.
 
         Telemetry recorded on self._result:
           - pattern_extraction_drain_completed  (cumulative count)
           - pattern_extraction_drain_timed_out  (cumulative count)
           - pattern_extraction_drain_elapsed_s  (last drain wall-clock)
+          - effective_windup_lead_used_s  (actual windup lead applied)
         """
         import time as _t_f273c_drain
         _t0 = _t_f273c_drain.monotonic()
@@ -15283,8 +15335,18 @@ class SprintScheduler:
             return
         # Snapshot the stats before the drain so we can compute deltas
         pre = get_drain_stats()
+        # F273H: Early-exit when registry is already empty (nothing to drain)
+        if pre["registry_size"] == 0:
+            self._result.pattern_extraction_drain_completed += 0
+            self._result.pattern_extraction_drain_timed_out += 0
+            self._result.pattern_extraction_drain_elapsed_s = 0.0
+            return
+        # F273H: Adaptive deadline — drain never consumes more than 30% of remaining time
+        # For a 305s sprint with 304.57s consumed, remaining ≈ 0.43s → deadline ≈ 0.13s
+        # For a 300s sprint with 210s consumed, remaining ≈ 90s → deadline ≈ 27s (capped at 30)
+        _adaptive_deadline_s = min(30.0, max(0.1, remaining_s * 0.3))
         completed, timed_out, _elapsed = await drain_pending_extractions(
-            deadline_s=self._extraction_drain_deadline_s,
+            deadline_s=_adaptive_deadline_s,
         )
         post = get_drain_stats()
         # Cumulative telemetry
@@ -15296,9 +15358,9 @@ class SprintScheduler:
         if completed or timed_out:
             log.debug(
                 "[F273C] pattern-extraction drain: completed=%d timed_out=%d "
-                "elapsed=%.2fs registry_pre=%d registry_post=%d",
-                completed, timed_out, _elapsed, pre["registry_size"],
-                post["registry_size"],
+                "elapsed=%.2fs adaptive_deadline=%.2fs registry_pre=%d registry_post=%d",
+                completed, timed_out, _elapsed, _adaptive_deadline_s,
+                pre["registry_size"], post["registry_size"],
             )
 
     def _maybe_call_pressure_relief(self) -> None:
@@ -15365,7 +15427,7 @@ class SprintScheduler:
 
         floor = self._min_branch_remaining_s()
 
-        if remaining_s <= floor:
+        if remaining_s < floor:
 
             return 0.0
 
@@ -15769,6 +15831,7 @@ class SprintScheduler:
                 log.debug("[aggressive] Public branch timed out after %ss", branch_timeout)
 
                 self._result.public_branch_timed_out = True
+                self._result.branch_timeout_count += 1
 
                 # Sprint F221C: Derive precise terminal stage from bootstrap state
 
@@ -15921,9 +15984,8 @@ class SprintScheduler:
                 log.debug("[aggressive] CT branch timed out after %ss", branch_timeout)
 
                 self._result.ct_branch_timed_out = True
-
+                self._result.branch_timeout_count += 1
                 self._result.ct_request_timeout = True
-
                 self._result.ct_terminal_stage = "request_timeout"
 
                 self._result.ct_log_error = "terminal:timeout"
@@ -17756,7 +17818,7 @@ class SprintScheduler:
 
             singleton = get_i2p_transport_singleton()
 
-            if singleton is not None and singleton.is_running():
+            if singleton is not None and await singleton.is_running():
 
                 return
 
@@ -17764,7 +17826,7 @@ class SprintScheduler:
 
             i2p = I2PTransport()
 
-            if not i2p.is_running():
+            if not await i2p.is_running():
 
                 log.debug("[F2P] I2PTransport not running (is_running=False)")
 
@@ -19276,8 +19338,11 @@ class SprintScheduler:
             except Exception:
                 pass
 
-        # DuckDB write
-        _ingest_result = await self._gate_then_ingest(store, findings)
+        # F266: Chunk-level parallelism for large batches
+        if len(findings) > _MAX_CHUNK_SIZE:
+            _ingest_result = await self._parallel_ingest(findings, store)
+        else:
+            _ingest_result = await self._gate_then_ingest(store, findings)
 
         # P0-5: Evidence — ACCEPTED / REJECTED from ingest result
         if self._evidence_log is not None and _ingest_result is not None:
@@ -19302,8 +19367,8 @@ class SprintScheduler:
             except Exception:
                 pass
 
-        # Graph accumulation (fail-soft, never blocks)
-        if findings:
+        # Graph accumulation (fail-soft, never blocks) — for small batches only (large use _parallel_ingest)
+        if len(findings) <= _MAX_CHUNK_SIZE and findings:
             try:
                 if self._graph_accumulator is None:
                     self._graph_accumulator = SprintGraphAccumulator()
@@ -19311,6 +19376,70 @@ class SprintScheduler:
             except Exception as _e:
                 logger.debug("[F266] graph_accumulate failed: %s", _e)
         return _ingest_result
+
+    # ── F266: Chunk-level Parallelism ─────────────────────────────────────────
+
+    async def _process_chunk_parallel(
+        self,
+        chunk: list,
+        sem: asyncio.Semaphore,
+        sprint_id: str,
+    ) -> tuple[list, list | None]:
+        """Process one chunk: DuckDB + graph via bounded gather.
+
+        M1 8GB: semaphore limits to _MAX_CHUNK_CONCURRENCY concurrent chunks.
+        mx.eval([]) barrier between chunks to release Metal memory.
+        """
+        async with sem:
+            graph_result = None
+            # DuckDB + graph parallel
+            try:
+                duck_task = self._duckdb.async_ingest_findings_batch(chunk) if self._duckdb else None
+                graph_accum = self._accumulate_findings_to_graph(chunk, sprint_id=sprint_id) if self._graph_accumulator else None
+                results = await asyncio.gather(
+                    duck_task,
+                    graph_accum,
+                    return_exceptions=True,
+                )
+                duck_results = results[0] if duck_task else None
+                graph_result = results[1] if self._graph_accumulator else None
+            except Exception as e:
+                logger.debug("[F266] chunk parallel failed: %s", e)
+                duck_results = None
+            # Metal barrier between chunks
+            try:
+                import mlx.core as mx
+                mx.eval([])
+            except Exception:
+                pass
+            return duck_results or [], graph_result
+
+    async def _parallel_ingest(
+        self,
+        findings: list,
+        store: Any,
+        max_chunk: int = _MAX_CHUNK_SIZE,
+    ) -> list:
+        """Bounded parallel ingest: chunk → gather → mx.eval barrier.
+
+        M1 8GB: max 2 concurrent chunks, barrier between waves.
+        Returns canonical results (same as async_ingest_findings_batch).
+        """
+        if not findings:
+            return []
+        if len(findings) <= max_chunk:
+            # Small batch: sequential original path
+            return await self._gate_then_ingest_and_accumulate(store, findings)
+        # Chunk and process in parallel bounded
+        sem = asyncio.Semaphore(_MAX_CHUNK_CONCURRENCY)
+        chunks = [findings[i : i + max_chunk] for i in range(0, len(findings), max_chunk)]
+        all_results: list = []
+        sprint_id = self.sprint_id or ""
+        for chunk in chunks:
+            chunk_results, _ = await self._process_chunk_parallel(chunk, sem, sprint_id)
+            if chunk_results:
+                all_results.extend(chunk_results)
+        return all_results
 
     def _sync_latent_relationships_to_graph(self) -> None:
 
@@ -20531,6 +20660,8 @@ class SprintScheduler:
 
             # Record in ledger
 
+            mv = get_domain_mv()  # P2-1: DuckDB domain-candidate MV
+
             for tc in ranked:
 
                 try:
@@ -20548,6 +20679,47 @@ class SprintScheduler:
                         sample_context=tc.sample_context[:200] if tc.sample_context else "",
 
                     )
+
+                    # P2-1: upsert into DuckDB MV for cross-sprint persistence
+                    try:
+
+                        mv.upsert_candidate(
+
+                            domain=tc.domain,
+
+                            source_family=getattr(tc, "source_field", "") or "feed",
+
+                            ioc_type="domain",
+
+                            confidence=tc.confidence,
+
+                            rank_score=getattr(tc, "rank_score", None),
+
+                            nonfeed_eligible_ct=(
+                                eligibility.get("ct", {}).get("eligible", False)
+                                if isinstance(eligibility, dict) else False
+                            ),
+
+                            nonfeed_eligible_doh=(
+                                eligibility.get("doh", {}).get("eligible", False)
+                                if isinstance(eligibility, dict) else False
+                            ),
+
+                            nonfeed_eligible_wayback=(
+                                eligibility.get("wayback", {}).get("eligible", False)
+                                if isinstance(eligibility, dict) else False
+                            ),
+
+                            nonfeed_eligible_pdns=(
+                                eligibility.get("passive_dns", {}).get("eligible", False)
+                                if isinstance(eligibility, dict) else False
+                            ),
+
+                        )
+
+                    except Exception:
+
+                        pass  # fail-soft: MV errors never crash sprint
 
                 except Exception:
 
@@ -23598,6 +23770,11 @@ class SprintScheduler:
 
         try:
             runner = SynthesisRunner(ModelLifecycle())
+            # F234: Enable MLX-first context compression for M1 8GB safety.
+            # Triggers when prompt > 4000 chars (~1k tokens), compresses to
+            # max_critical_tokens=10k. ContextCompressor uses MLX embeddings
+            # (no llmlingua/dead-dep). Falls back to extractive summarization.
+            runner.set_compression_threshold(4000)
             runner._duckdb_store = duckdb_store
             if lifecycle is not None:
                 runner.inject_lifecycle_adapter(lifecycle)
@@ -27631,9 +27808,7 @@ class SprintScheduler:
 
 
 
-    @property
-
-    def _sensitive_query_transport(self) -> str:
+    async def _sensitive_query_transport(self) -> str:
 
         """
 
@@ -27686,7 +27861,7 @@ class SprintScheduler:
 
             singleton = get_i2p_transport_singleton()
 
-            if singleton is not None and singleton.is_running():
+            if singleton is not None and await singleton.is_running():
 
                 return "i2p"
 
@@ -27694,7 +27869,7 @@ class SprintScheduler:
 
             i2p = I2PTransport()
 
-            if i2p.is_running():
+            if await i2p.is_running():
 
                 return "i2p"
 
@@ -31184,6 +31359,9 @@ class SprintScheduler:
                     _quality_state.reset_hot_cache()
             except Exception:
                 pass  # Fail-soft — never break the per-sprint reset path
+
+        # P0 overlap: Clear synthesis windup task reference from previous sprint
+        self._synth_windup_task = None
 
         # Sprint F216E: Clear feed dominance budget state for new sprint
 

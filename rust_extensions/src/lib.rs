@@ -24,6 +24,7 @@ pub mod content_hasher;
 pub mod int_counter_layout;
 pub mod ioc_dedup;
 pub mod ioc_extract;
+pub mod ioc_extract_fast;
 pub mod madvise;
 pub mod quality_gate;
 pub mod rolling_hash;
@@ -45,12 +46,13 @@ pub mod xxhash_ext;
 // This helper returns a process-wide dedicated pool with bounded
 // resources that all batch_* functions share:
 //
-//   * `num_threads(2)` — bound parallelism to 2 workers (≈2 P-cores).
-//     2 × 8 MB = 16 MB stacks (75% less than the default 64 MB).
+//   * `num_threads(4)` — bound parallelism to 4 workers (≈4 P-cores).
+//     4 × 2 MiB = 8 MB stacks (87.5% less than the default 64 MB).
+//     With 4 workers the parallel threshold drops to 50 items (vs 100 for 2).
 //   * `stack_size(2 MiB)` — reduce per-worker stack to 2 MB. URL/string
 //     classification and fingerprint work is shallow — no recursive descent,
 //     no large stack frames. 2 MiB is the Rust default for release builds
-//     and is plenty here. Total: 2 × 2 MB = 4 MB (94% less than default).
+//     and is plenty here. Total: 4 × 2 MiB = 8 MB (87.5% less than default).
 //   * Named threads ("hledac-bulk-N") — visible in `ps`/Instruments for
 //     observability during long sprints.
 //   * `OnceLock` — lazy init, no startup cost. First call from any batch_*
@@ -71,13 +73,15 @@ pub mod xxhash_ext;
 
 /// Process-wide bounded rayon pool for batch operations.
 ///
-/// Shared by `url_ops::batch_classify` and `quality_gate::batch_*`.
+/// Shared by `url_ops::batch_classify`, `ioc_extract_fast::batch_ioc_extract`,
+/// `simhash_ext::batch_compute_simhash`, and `quality_gate::batch_*`.
+///
 /// Created lazily on first call; subsequent calls return the same instance.
 pub(crate) fn bulk_pool() -> &'static ThreadPool {
     static POOL: OnceLock<ThreadPool> = OnceLock::new();
     POOL.get_or_init(|| {
         ThreadPoolBuilder::new()
-            .num_threads(2)
+            .num_threads(4)
             .stack_size(2 * 1024 * 1024) // 2 MiB per worker stack
             .thread_name(|i| format!("hledac-bulk-{}", i))
             .build()
@@ -100,8 +104,8 @@ mod lib_tests {
     #[test]
     fn test_bulk_pool_thread_count() {
         let pool = bulk_pool();
-        // num_threads(2) — verify the pool honors the bound.
-        assert_eq!(pool.current_num_threads(), 2);
+        // num_threads(4) — verify the pool honors the bound.
+        assert_eq!(pool.current_num_threads(), 4);
     }
 }
 
@@ -121,6 +125,9 @@ fn hledac_rust_extensions(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     // IOC extraction + URL normalization
     ioc_extract::register_functions(m)?;
+    // Fast IOC extraction: unified Aho-Corasick automaton (single O(n) scan)
+    m.add_function(wrap_pyfunction!(ioc_extract_fast::ioc_extract_unified, m)?)?;
+    m.add_function(wrap_pyfunction!(ioc_extract_fast::batch_ioc_extract_unified, m)?)?;
     url_engine::register_functions(m)?;
     url_ops::register_functions(m)?;
 

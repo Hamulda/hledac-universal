@@ -158,6 +158,9 @@ def load_nx_graph_jsonl(path: str, max_nodes: int = DEFAULT_MAX_NODES) -> Any | 
                 return None
             import pickle  # lazy, only for legacy migration
 
+            # Security fix: F196B path already validated by _safe_path() above,
+            # add explicit assert as defense-in-depth for RCE prevention
+            assert _safe_path(path), f"Path traversal detected: {path}"
             with open(path, "rb") as f:
                 obj = pickle.load(f)
             return _bound_or_none(obj, max_nodes)

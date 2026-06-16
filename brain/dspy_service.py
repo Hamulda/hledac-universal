@@ -448,11 +448,13 @@ async def expand_query(query: str) -> list | None:
 
         async def _run():
             # F288: fail-soft if dspy.context not available (older DSPy versions)
-            if hasattr(dspy, "context"):
+            # F289: ALSO catch AttributeError when dspy.context exists but is broken
+            # (e.g. Python 3.14 where dspy.context raises AttributeError internally)
+            try:
                 with dspy.context(lm=lm):
                     pred = program(query=query.strip())
                     return str(pred.answer) if hasattr(pred, "answer") else None
-            else:
+            except (AttributeError, TypeError):
                 # Fallback: set lm directly on program
                 program.lm = lm
                 pred = program(query=query.strip())
@@ -564,11 +566,12 @@ async def score_findings(findings: list, min_score: float = 4.0) -> list | None:
 
         async def _run():
             # F288: fail-soft if dspy.context not available (older DSPy versions)
-            if hasattr(dspy, "context"):
+            # F289: ALSO catch AttributeError when dspy.context exists but is broken
+            try:
                 with dspy.context(lm=lm):
                     pred = program(query=findings_json[:500])
                     return str(pred.answer) if hasattr(pred, "answer") else None
-            else:
+            except (AttributeError, TypeError):
                 program.lm = lm
                 pred = program(query=findings_json[:500])
                 return str(pred.answer) if hasattr(pred, "answer") else None

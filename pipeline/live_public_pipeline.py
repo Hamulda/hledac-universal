@@ -3800,37 +3800,37 @@ async def async_run_live_public_pipeline(
                                 await self.store.async_ingest_findings_batch(p20_findings)
                                 pastebin_findings_count = len(p20_findings)
 
-                    org_candidate = _match.group().rsplit(".", 1)[0]
-                    from hledac.universal.intelligence.github_secret_scanner import (
-                        search_org_secrets,
-                    )
-                    gh_findings: list[CanonicalFinding] = []
-                    if org_candidate:
-                        try:
-                            gh_results = await search_org_secrets(org_candidate)
-                        except Exception:
-                            gh_results = []
-                        for gf in gh_results:
-                            gf_id = hashlib.sha256(
-                                f"{self.query}\x00{gf.file_path}\x00{gf.pattern}\x00github".encode()
-                            ).hexdigest()[:16]
-                            gh_findings.append(CanonicalFinding(
-                                finding_id=gf_id,
-                                query=self.query,
-                                source_type=_SourceTypeEnum.GITHUB_SECRET_SCANNER,
-                                confidence=0.55,
-                                ts=time.time(),
-                                provenance=("github", gf.pattern, org_candidate),
-                                payload_text=(
-                                    f"pattern={gf.pattern}\n"
-                                    f"file={gf.file_path}\n"
-                                    f"line={gf.line}\n"
-                                    f"context={gf.context[:300]}"
-                                ),
-                            ))
-                    if gh_findings:
-                        await self.store.async_ingest_findings_batch(gh_findings)
-                        github_secrets_count = len(gh_findings)
+                        org_candidate = _match.group().rsplit(".", 1)[0]
+                        from hledac.universal.intelligence.github_secret_scanner import (
+                            search_org_secrets,
+                        )
+                        gh_findings: list[CanonicalFinding] = []
+                        if org_candidate:
+                            try:
+                                gh_results = await search_org_secrets(org_candidate)
+                            except Exception:
+                                gh_results = []
+                            for gf in gh_results:
+                                gf_id = hashlib.sha256(
+                                    f"{self.query}\x00{gf.file_path}\x00{gf.pattern}\x00github".encode()
+                                ).hexdigest()[:16]
+                                gh_findings.append(CanonicalFinding(
+                                    finding_id=gf_id,
+                                    query=self.query,
+                                    source_type=_SourceTypeEnum.GITHUB_SECRET_SCANNER,
+                                    confidence=0.55,
+                                    ts=time.time(),
+                                    provenance=("github", gf.pattern, org_candidate),
+                                    payload_text=(
+                                        f"pattern={gf.pattern}\n"
+                                        f"file={gf.file_path}\n"
+                                        f"line={gf.line}\n"
+                                        f"context={gf.context[:300]}"
+                                    ),
+                                ))
+                        if gh_findings:
+                            await self.store.async_ingest_findings_batch(gh_findings)
+                            github_secrets_count = len(gh_findings)
                 except Exception as e:
                     _logger_p20 = logging.getLogger("hledac.universal.pipeline.live_public_pipeline")
                     _logger_p20.warning("[P20] Pastebin/GitHub scan failed: %s", e)
@@ -4866,14 +4866,15 @@ async def async_run_live_public_pipeline(
                 # Run one RL iteration
                 loop_result: ResearchResult = await research_loop.run_once(query)
 
-                # P17: Store findings to DuckDB if available
+                # P17: Store findings to DuckDB if available — batched (F265B)
                 if store is not None and loop_result.findings:
                     try:
+                        rl_finding_buffer: list[CanonicalFinding] = []
                         for finding_data in loop_result.findings:
                             finding_id = hashlib.sha256(
                                 f"{query}\x00{str(finding_data)}\x00rl".encode()
                             ).hexdigest()[:16]
-                            rl_finding = CanonicalFinding(
+                            rl_finding_buffer.append(CanonicalFinding(
                                 finding_id=finding_id,
                                 query=query,
                                 source_type=_SourceTypeEnum.RL_RESEARCH,
@@ -4881,10 +4882,11 @@ async def async_run_live_public_pipeline(
                                 ts=time.time(),
                                 provenance=("rl", loop_result.action),
                                 payload_text=str(finding_data)[:500],
-                            )
-                            await store.async_ingest_findings_batch([rl_finding])
+                            ))
+                        if rl_finding_buffer:
+                            await store.async_ingest_findings_batch(rl_finding_buffer)
                     except Exception as e:
-                        logger.warning(f"[P17] Failed to store RL finding: {e}")
+                        logger.warning(f"[P17] Failed to store RL findings: {e}")
 
                 # P17: Store RL result to memory manager
                 if memory_manager is not None and session_id is not None:
@@ -5053,13 +5055,14 @@ async def async_run_live_public_pipeline(
 
                     # Process results as they complete — first 3 successful results
                     # trigger immediate pivot enqueue (scheduler caps naturally limit to 3)
+                    tot_finding_buffer: list[CanonicalFinding] = []  # F265B: buffer batch
                     for coro in asyncio.as_completed(tasks):
                         tot_result = await coro
                         if tot_result:
                             tot_solution_count += 1
                             try:
                                 from hledac.universal.knowledge.duckdb_store import CanonicalFinding
-                                tot_finding = CanonicalFinding(
+                                tot_finding_buffer.append(CanonicalFinding(
                                     finding_id=f"tot_{hashlib.sha256(tot_result.encode()).hexdigest()[:16]}",
                                     query=query,
                                     source_type=_SourceTypeEnum.TOT_SYNTHESIS,
@@ -5067,8 +5070,7 @@ async def async_run_live_public_pipeline(
                                     ts=time.time(),
                                     provenance=("tot", hypo[:100]),
                                     payload_text=tot_result[:1000],
-                                )
-                                await store.async_ingest_findings_batch([tot_finding])
+                                ))
                             except Exception:
                                 pass  # Fail-soft
 
@@ -5085,6 +5087,9 @@ async def async_run_live_public_pipeline(
                                         )
                                 except Exception:
                                     pass  # Fail-soft
+                    # F265B: flush buffered ToT findings after loop completes
+                    if tot_finding_buffer and store is not None:
+                        await store.async_ingest_findings_batch(tot_finding_buffer)
 
         except Exception:
             pass  # P12: fail-soft, hypothesis generation is optional
@@ -5158,6 +5163,8 @@ async def async_run_live_public_pipeline(
                         # Initialize lifecycle for synthesis
                         lifecycle = ModelLifecycle()
                         runner = SynthesisRunner(lifecycle)
+                        # F234: Enable MLX-first context compression for M1 8GB safety
+                        runner.set_compression_threshold(4000)
 
                         # Run synthesis with 90s timeout
                         # NOTE: `asyncio` is module-scoped (line 14). Do NOT add a local

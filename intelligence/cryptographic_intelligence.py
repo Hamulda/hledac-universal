@@ -796,6 +796,7 @@ class HashAnalyzer:
         """Get Python hash function for type."""
         hash_map = {
             HashType.MD5: lambda x: hashlib.md5(x.encode()).hexdigest(),
+            # nosem: B303 — OSINT hash type detection only, not cryptographic use
             HashType.SHA1: lambda x: hashlib.sha1(x.encode()).hexdigest(),
             HashType.SHA256: lambda x: hashlib.sha256(x.encode()).hexdigest(),
             HashType.SHA512: lambda x: hashlib.sha512(x.encode()).hexdigest(),
@@ -1017,7 +1018,8 @@ class CertificateAnalyzer:
 
         # Fingerprints
         fingerprint_sha256 = cert.fingerprint(hashes.SHA256()).hex()
-        fingerprint_sha1 = cert.fingerprint(hashes.SHA1()).hex()
+        # nosem: B303 — OSINT display-only fingerprinting, not cryptographic authentication
+        fingerprint_sha1 = cert.fingerprint(hashes.SHA1()).hex()  # Legacy compat — display only
 
         # Public key info
         public_key = cert.public_key()

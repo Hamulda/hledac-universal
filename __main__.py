@@ -251,8 +251,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="F26X+: Enable encrypted vault export (AES-256-ZIP via VaultManager)",
     )
     parser.add_argument(
-        "--aggressive", action="store_true",
-        help="Sprint F195B: Enable aggressive mode with 8s branch budgets",
+        "--aggressive", action="store_true", default=True,
+        help="Sprint F195B: Enable aggressive mode with 8s branch budgets (default: ON)",
+    )
+    parser.add_argument(
+        "--no-aggressive", dest="aggressive", action="store_false",
+        help="Disable aggressive mode: stable sequential branches, 30 percent windup",
     )
     parser.add_argument(
         "--deep-probe", action="store_true",
@@ -3066,6 +3070,8 @@ async def _windup_synthesis(
     from hledac.universal.brain.synthesis_runner import SynthesisRunner, export_report
 
     runner = SynthesisRunner(ModelLifecycle())
+    # F234: Enable MLX-first context compression for M1 8GB safety
+    runner.set_compression_threshold(4000)
 
     # Sprint 8VQ: Priority 1 — dedicated STIX truth-store graph (IOCGraph/Kuzu)
     # Created in _run_sprint_mode WINDUP block and injected via store.inject_stix_graph()

@@ -62,9 +62,11 @@ MIGRATED_FILES: list[tuple[str, str]] = [
     # sprint_scheduler.py — 7 sites, checked by label existence
 ]
 
-# sprint_scheduler.py labels (F262D migration)
+# sprint_scheduler.py labels (F262D migration + F265C additions)
+# Note: Line numbers updated post-F262D as file evolved
 SPRINT_SCHEDULER_LABELS: list[str] = [
-    "sprint_scheduler:13709",
+    "sprint_scheduler:5979",   # F265C: _init_tasks gather (dedup preload)
+    "sprint_scheduler:7010",   # F265C: prelude + first_cycle gather
     "sprint_scheduler:14339",
     "sprint_scheduler:14651",
     "sprint_scheduler:17269",

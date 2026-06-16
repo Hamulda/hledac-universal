@@ -118,26 +118,27 @@ class CommonCrawlAdapter:
 
         findings = []
         try:
-            text = await self._stealth.get(url)
-            lines = text.strip().split("\n")
-            for line in lines:
-                if not line.strip():
-                    continue
-                try:
-                    import orjson
-                    data = orjson.loads(line)
-                    raw_url = data.get("url", "")
-                    # F192E: filter CDN/package noise before returning
-                    if not raw_url or self._is_noise_url(raw_url):
+            # F265C: Streaming NDJSON parse — O(1) memory instead of O(n) full load
+            async with self._stealth.session() as session:
+                response = await session.request('GET', url)
+                async for line in response.content.iter_lines():
+                    if not line.strip():
                         continue
-                    findings.append(RawFinding(
-                        text=raw_url,
-                        source=SOURCE_NAME,
-                        url=raw_url,
-                        metadata={"timestamp": data.get("timestamp")},
-                    ))
-                except Exception:
-                    continue
+                    try:
+                        import orjson
+                        data = orjson.loads(line)
+                        raw_url = data.get("url", "")
+                        # F192E: filter CDN/package noise before returning
+                        if not raw_url or self._is_noise_url(raw_url):
+                            continue
+                        findings.append(RawFinding(
+                            text=raw_url,
+                            source=SOURCE_NAME,
+                            url=raw_url,
+                            metadata={"timestamp": data.get("timestamp")},
+                        ))
+                    except Exception:
+                        continue
         except Exception as e:
             logger.warning(f"CommonCrawl fetch failed: {e}")
 

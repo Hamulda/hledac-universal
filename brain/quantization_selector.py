@@ -42,8 +42,11 @@ Q8_0 = "q8_0"
 Q4_K_M_FALLBACK = "q4_k_m"  # always-available fallback
 
 # F203J: Memory thresholds (GiB free UMA)
-_FREE_UMA_FOR_Q5: float = 1.5  # minimum free for Q5_K_M
-_FREE_UMA_FOR_Q8: float = 2.5  # minimum free for Q8_0
+# FIX F266+: Q5_K_M needs ~2.0 GiB free to leave room for KV cache workspace
+# (~512MB) in Metal cache (1.5 GiB total). Q5_K_M model ≈ 2.2-2.5 GiB Metal.
+# Previous 1.5 GiB threshold caused OOM when KV cache was allocated.
+_FREE_UMA_FOR_Q5: float = 2.0  # minimum free for Q5_K_M
+_FREE_UMA_FOR_Q8: float = 3.0  # minimum free for Q8_0 (higher due to KV workspace)
 # F203J: RSS budget guard — no single op > 1.5 GiB
 RSS_OP_BUDGET_GB: float = 1.5
 

@@ -142,14 +142,22 @@ class PassiveDNSOutcome:
 DOH_ENDPOINTS: dict[str, str] = {
     "cloudflare": "https://cloudflare-dns.com/dns-query",
     "google": "https://dns.google/resolve",
+    "opendns": "https://doh.opendns.com/resolve",
     "quad9": "https://dns.quad9.net/dns-query",
 }
+
+# Providers that use GET /resolve (query params: ?name=&type=)
+_DOH_GET_PROVIDERS: frozenset[str] = frozenset({"cloudflare", "google", "opendns"})
+# Providers that require POST with RFC 8484 application/dns-message
+_DOH_POST_PROVIDERS: frozenset[str] = frozenset({"quad9"})
+
 
 # F229: Randomized DoH provider rotation — eliminates per-request tracking.
 # Providers weighted equally; caller passes None to get_random_doh_provider().
 DOH_PROVIDER_WEIGHTS: dict[str, float] = {
     "cloudflare": 1.0,
     "google": 1.0,
+    "opendns": 1.0,
     "quad9": 1.0,
 }
 
@@ -220,6 +228,63 @@ def _try_domain_breaker_check(domain: str) -> Any:
     return None
 
 
+def _parse_dns_wire_response(wire: bytes) -> dict[str, Any] | None:
+    """
+    Parse RFC 8484 DNS wire format response into a dns-json-like dict.
+    Returns {"Answer": [{"type": 1, "ttl": N, "data": "IP"}]} or None on parse error.
+    """
+    import struct
+
+    if len(wire) < 12:
+        return None
+    try:
+        # DNS header: transaction_id(2), flags(2), questions(2), answers(2), authority(2), additional(2)
+        _, _, _, ancount = struct.unpack(">HHHH", wire[:8])
+        # Skip to question section (after 12-byte header)
+        offset = 12
+        # Skip QNAME
+        while offset < len(wire):
+            label_len = wire[offset]
+            if label_len == 0:
+                offset += 1
+                break
+            offset += 1 + label_len
+        offset += 4  # QTYPE (2) + QCLASS (2)
+
+        answers = []
+        for _ in range(ancount):
+            if offset + 12 > len(wire):
+                break
+            # Answer name: either pointer (0xC0 offset) or inline
+            if wire[offset] & 0xC0 == 0xC0:
+                offset += 2
+            else:
+                while offset < len(wire) and wire[offset] != 0:
+                    offset += 1 + wire[offset]
+                offset += 1
+            if offset + 10 > len(wire):
+                break
+            ans_type, _ans_class, ans_ttl = struct.unpack(">HHI", wire[offset : offset + 8])
+            offset += 8
+            rdlength = struct.unpack(">H", wire[offset : offset + 2])[0]
+            offset += 2
+            if offset + rdlength > len(wire):
+                break
+            rdata = wire[offset : offset + rdlength]
+            offset += rdlength
+
+            if ans_type == 1 and rdlength == 4:  # A record
+                ip = ".".join(str(b) for b in rdata)
+                answers.append({"type": 1, "ttl": ans_ttl, "data": ip})
+            elif ans_type == 28 and rdlength == 16:  # AAAA record
+                ip = ":".join(f"{(rdata[i] << 8) | rdata[i + 1]:x}" for i in range(0, 16, 2))
+                answers.append({"type": 28, "ttl": ans_ttl, "data": ip})
+
+        return {"Answer": answers}
+    except Exception:
+        return None
+
+
 async def resolve_doh(
     domain: str,
     provider: str = "cloudflare",
@@ -229,9 +294,12 @@ async def resolve_doh(
     """
     Resolve hostname via DNS-over-HTTPS (DoH).
 
+    Multi-provider fallback: cloudflare, google, opendns (GET) + quad9 (POST RFC 8484).
+    For quad9, the DNS query is encoded as RFC 8484 BASE64-URL wire format.
+
     Args:
         domain: Domain name to resolve (e.g. "example.com")
-        provider: DoH provider — "cloudflare" (default) or "google"
+        provider: DoH provider — "cloudflare" (default), "google", "opendns", or "quad9"
         session_provider: Optional pre-configured aiohttp.ClientSession.
             When provided, takes precedence over internal ephemeral session.
             Enables canonical transport seam (shared session, circuit breaker).
@@ -252,13 +320,6 @@ async def resolve_doh(
         logger.warning(f"Unknown DoH provider: {provider} — using cloudflare")
         provider = "cloudflare"
 
-    endpoint = DOH_ENDPOINTS[provider]
-    url = f"{endpoint}?name={domain}&type=A"
-
-    headers = {
-        "Accept": "application/dns-json",
-    }
-
     timeout = aiohttp.ClientTimeout(total=15)
     ips: list[str] = []
 
@@ -277,59 +338,135 @@ async def resolve_doh(
     else:
         transport_policy = "local_fallback"
 
-    try:
-        if fetch_func is not None:
-            # Use injected fetch function
-            result = await fetch_func(url, headers)
-            data = result if isinstance(result, dict) else {}
-        elif session_provider is not None:
-            # Use injected session
-            async with session_provider.get(url, headers=headers, allow_redirects=True) as resp:
-                if resp.status != 200:
-                    logger.warning(f"DoH {provider} failed for {domain}: HTTP {resp.status}")
-                    return []
-                text = await resp.text()
-                import json
-                try:
-                    data = json.loads(text)
-                except (json.JSONDecodeError, Exception):
-                    logger.warning(f"DoH {provider} invalid JSON for {domain}")
-                    return []
-        else:
-            # Local fallback: ephemeral session
-            async with aiohttp.ClientSession(timeout=timeout) as session:
-                async with session.get(url, headers=headers, allow_redirects=True) as resp:
-                    if resp.status != 200:
-                        logger.warning(
-                            f"DoH {provider} failed for {domain}: HTTP {resp.status}"
-                        )
-                        return []
+    # F265C + quad9 POST: Retry loop — try up to 2 providers on 5xx server errors.
+    # This handles cases where one DoH endpoint is degraded while others are healthy.
+    _providers_to_try = [provider]
+    if len(DOH_PROVIDER_WEIGHTS) > 1:
+        _fallback = [_p for _p in DOH_PROVIDER_WEIGHTS if _p != provider]
+        if _fallback:
+            _providers_to_try.append(_fallback[0])
 
-                    # DoH endpoints return JSON regardless of Content-Type header
-                    text = await resp.text()
-                    import json
-                    try:
-                        data = json.loads(text)
-                    except (json.JSONDecodeError, Exception):
-                        logger.warning(f"DoH {provider} invalid JSON for {domain}")
-                        return []
+    for _attempt_provider in _providers_to_try:
+        _attempt_endpoint = DOH_ENDPOINTS[_attempt_provider]
+        _use_post = _attempt_provider in _DOH_POST_PROVIDERS
 
-        answers = data.get("Answer", []) if isinstance(data, dict) else []
+        try:
+            if _use_post:
+                # quad9: RFC 8484 POST with BASE64-URL DNS wire format
+                import base64
 
-        for answer in answers:
-            # A records have type=1
-            if answer.get("type") == 1:
-                ip = answer.get("data", "")
-                if ip:
-                    ips.append(ip)
+                # Build DNS query (header + question) in wire format
+                # Transaction ID (2 bytes, random), flags (2 bytes, standard query),
+                # QDCOUNT (2 bytes, 1), QNAME (variable), QTYPE (2 bytes, A=1), QCLASS (2 bytes, IN=1)
+                import random
+                import struct
+                txn_id = random.randint(0, 0xFFFF)
+                # Build QNAME: labels prepended with length bytes
+                qname = b""
+                for label in domain.split("."):
+                    qname += bytes([len(label)]) + label.encode("ascii")
+                qname += b"\x00"  # Root label terminator
 
-        if not ips:
-            logger.debug(f"DoH {provider} returned no A records for {domain}")
+                dns_query = struct.pack(">HHHHH", txn_id, 0x0100, 1, 0, 0) + qname + struct.pack(">HH", 1, 1)
+                encoded_query = base64.urlsafe_b64encode(dns_query).rstrip(b"=").decode("ascii")
 
-    except TimeoutError:
-        logger.warning(f"DoH timeout for {domain}")
-    except Exception as e:
-        logger.warning(f"DoH error for {domain}: {e}")
+                post_headers = {
+                    "Content-Type": "application/dns-message",
+                    "Accept": "application/dns-message",
+                }
+                post_url = f"{_attempt_endpoint}?dns={encoded_query}"
+
+                if fetch_func is not None:
+                    result = await fetch_func(post_url, post_headers)
+                    data = result if isinstance(result, dict) else {}
+                elif session_provider is not None:
+                    async with session_provider.get(post_url, headers=post_headers, allow_redirects=True) as resp:
+                        if resp.status >= 500:
+                            logger.warning(f"DoH {_attempt_provider} returned HTTP {resp.status} for {domain}, retrying...")
+                            continue
+                        if resp.status != 200:
+                            logger.warning(f"DoH {_attempt_provider} failed for {domain}: HTTP {resp.status}")
+                            return []
+                        raw = await resp.read()
+                        data = _parse_dns_wire_response(raw)
+                        if data is None:
+                            logger.warning(f"DoH {_attempt_provider} invalid wire format for {domain}")
+                            return []
+                else:
+                    async with aiohttp.ClientSession(timeout=timeout) as session:
+                        async with session.get(post_url, headers=post_headers, allow_redirects=True) as resp:
+                            if resp.status >= 500:
+                                logger.warning(f"DoH {_attempt_provider} returned HTTP {resp.status} for {domain}, retrying...")
+                                continue
+                            if resp.status != 200:
+                                logger.warning(f"DoH {_attempt_provider} failed for {domain}: HTTP {resp.status}")
+                                return []
+                            raw = await resp.read()
+                            data = _parse_dns_wire_response(raw)
+                            if data is None:
+                                logger.warning(f"DoH {_attempt_provider} invalid wire format for {domain}")
+                                return []
+            else:
+                # GET providers: cloudflare, google, opendns
+                _attempt_url = f"{_attempt_endpoint}?name={domain}&type=A"
+                get_headers = {"Accept": "application/dns-json"}
+
+                if fetch_func is not None:
+                    result = await fetch_func(_attempt_url, get_headers)
+                    data = result if isinstance(result, dict) else {}
+                elif session_provider is not None:
+                    async with session_provider.get(_attempt_url, headers=get_headers, allow_redirects=True) as resp:
+                        if resp.status >= 500:
+                            logger.warning(f"DoH {_attempt_provider} returned HTTP {resp.status} for {domain}, retrying...")
+                            continue
+                        if resp.status != 200:
+                            logger.warning(f"DoH {_attempt_provider} failed for {domain}: HTTP {resp.status}")
+                            return []
+                        text = await resp.text()
+                        import json
+                        try:
+                            data = json.loads(text)
+                        except (json.JSONDecodeError, Exception):
+                            logger.warning(f"DoH {_attempt_provider} invalid JSON for {domain}")
+                            return []
+                else:
+                    async with aiohttp.ClientSession(timeout=timeout) as session:
+                        async with session.get(_attempt_url, headers=get_headers, allow_redirects=True) as resp:
+                            if resp.status >= 500:
+                                logger.warning(f"DoH {_attempt_provider} returned HTTP {resp.status} for {domain}, retrying...")
+                                continue
+                            if resp.status != 200:
+                                logger.warning(f"DoH {_attempt_provider} failed for {domain}: HTTP {resp.status}")
+                                return []
+                            text = await resp.text()
+                            import json
+                            try:
+                                data = json.loads(text)
+                            except (json.JSONDecodeError, Exception):
+                                logger.warning(f"DoH {_attempt_provider} invalid JSON for {domain}")
+                                return []
+
+            answers = data.get("Answer", []) if isinstance(data, dict) else []
+
+            for answer in answers:
+                # A records have type=1
+                if answer.get("type") == 1:
+                    ip = answer.get("data", "")
+                    if ip:
+                        ips.append(ip)
+
+            if ips:
+                break  # Got valid A records
+            else:
+                logger.debug(f"DoH {_attempt_provider} returned no A records for {domain}")
+                break  # No point retrying for NXDOMAIN / no records
+
+        except TimeoutError:
+            logger.warning(f"DoH timeout for {domain} (provider={_attempt_provider})")
+            continue  # Try next provider
+        except Exception as e:
+            logger.warning(f"DoH error for {domain} (provider={_attempt_provider}): {e}")
+            continue  # Try next provider
 
     return ips
 

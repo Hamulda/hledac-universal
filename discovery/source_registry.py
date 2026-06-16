@@ -11,6 +11,7 @@ Sprint F229 — SourceEntry dataclass with tier + acquisition_lane
 
 from __future__ import annotations
 
+import functools
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
@@ -69,6 +70,7 @@ def list_registered_source_types() -> list[str]:
     return sorted(_SOURCE_REGISTRY.keys())
 
 
+@functools.lru_cache(maxsize=64)
 def source_quality_score(
     parseable: bool,
     stable_schema: bool,
@@ -137,6 +139,7 @@ PIVOT_TYPE_MAP: dict[str, str] = {
 }
 
 
+@functools.lru_cache(maxsize=128)
 def get_pivot_type(ioc_type: str) -> str:
     """
     Get the appropriate pivot type for an IOC type.

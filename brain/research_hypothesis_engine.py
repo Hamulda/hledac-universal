@@ -389,6 +389,8 @@ class HypothesisEngine:
             ds_contradiction_threshold: Threshold for DS contradiction detection
         """
         self.inference_engine = inference_engine
+        # P2-1b: Optional InferencePipeliner for non-blocking overlapping generation
+        self._inference_pipeliner: Any | None = None
         self.max_hypotheses = max_hypotheses
         self.min_confidence_threshold = min_confidence_threshold
         self.memory_limit_mb = memory_limit_mb
@@ -974,12 +976,21 @@ Formát (pouze seznam, žádný další text):
 """
 
         try:
-            response = await hermes_engine.generate(
-                prompt=prompt,
-                temperature=0.4,
-                max_tokens=1024,
-                system_msg="Jsi OSINT research assistant. Navrhuj konkrétní a proveditelné hypotézy."
-            )
+            # P2-1b: Use InferencePipeliner if available for prompt preprocessing overlap
+            if self._inference_pipeliner is not None:
+                response = await self._inference_pipeliner.generate(
+                    prompt=prompt,
+                    temperature=0.4,
+                    max_tokens=1024,
+                    system_msg="Jsi OSINT research assistant. Navrhuj konkrétní a proveditelné hypotézy."
+                )
+            else:
+                response = await hermes_engine.generate(
+                    prompt=prompt,
+                    temperature=0.4,
+                    max_tokens=1024,
+                    system_msg="Jsi OSINT research assistant. Navrhuj konkrétní a proveditelné hypotézy."
+                )
 
             # DSPy integration: use compiled program if enabled and available.
             # Sprint F264: prefer the canonical project-local compiled/ location

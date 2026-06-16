@@ -112,10 +112,15 @@ class GraphRAGOrchestrator:
         """
         self.knowledge_layer = knowledge_layer
         # Shared thread pool for safe async execution (reused across calls)
-        self._thread_pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+        # M1 8GB: max_workers=2 (embedding computation is I/O-bound, Metal is serial)
+        self._thread_pool = concurrent.futures.ThreadPoolExecutor(max_workers=2)
         # Cached embedder for score_path (lazy initialization)
         self._embedder = None
         self._embedder_lock = None
+        # Semaphore for bounded parallel score_path execution (M1 8GB safe)
+        # 4 concurrent scorers × ~200MB each ≈ 800MB, within budget
+        self._score_semaphore: asyncio.Semaphore | None = None
+        self._score_semaphore_lock = None
         logger.info("GraphRAGOrchestrator initialized")
 
     async def _get_embedder(self):
@@ -140,6 +145,16 @@ class GraphRAGOrchestrator:
                         logger.warning(f"Failed to get shared embedder: {e}")
                         return None
         return self._embedder
+
+    async def _get_score_semaphore(self) -> asyncio.Semaphore:
+        """Lazy-init semaphore for bounded parallel scoring (M1 8GB safe)."""
+        if self._score_semaphore is None:
+            if self._score_semaphore_lock is None:
+                self._score_semaphore_lock = asyncio.Lock()
+            async with self._score_semaphore_lock:
+                if self._score_semaphore is None:
+                    self._score_semaphore = asyncio.Semaphore(4)
+        return self._score_semaphore
 
     async def score_path(
         self,
@@ -173,68 +188,132 @@ class GraphRAGOrchestrator:
         # 1. Path length score (shorter = better)
         length_score = 1.0 / max(1, len(path))
 
-        # 2. Relevance to hypothesis
+        # 2. Parallel node fetching with bounded concurrency
+        #    Reuses _score_semaphore (Semaphore(4)) for M1 8GB safety
+        semaphore = await self._get_score_semaphore()
+
+        async def fetch_node_with_semaphore(node_id: str) -> tuple[str, np.ndarray | None, float | None]:
+            """Fetch single node: returns (node_id, embedding, confidence)."""
+            async with semaphore:
+                try:
+                    node = await self.knowledge_layer.get_node(node_id)
+                    if node:
+                        emb = node.embedding if node.embedding else None
+                        conf = None
+                        if node.metadata and "confidence" in node.metadata:
+                            conf = float(node.metadata["confidence"])
+                        return (node_id, emb, conf)
+                except Exception:
+                    pass
+                return (node_id, None, None)
+
+        # Fire all node fetches in parallel (bounded by semaphore)
+        fetch_results: list[tuple[str, np.ndarray | None, float | None]] = await asyncio.gather(
+            *[fetch_node_with_semaphore(n) for n in nodes_to_score],
+            return_exceptions=True
+        )
+
+        # Collect embeddings and confidences from parallel results
+        node_embeddings: list[np.ndarray] = []
+        confidences: list[float] = []
+        for result in fetch_results:
+            if isinstance(result, Exception):
+                continue
+            _node_id, emb, conf = result
+            if emb is not None:
+                node_embeddings.append(emb)
+            if conf is not None:
+                confidences.append(conf)
+
+        # 3. Relevance to hypothesis (reuse pre-computed hypothesis_emb)
+        relevance_score = 0.5
         try:
-            embedder = await self._get_embedder()
-            if embedder is None:
+            if not node_embeddings:
                 relevance_score = 0.5
             else:
-                if hypothesis_emb is None:
-                    # MLXEmbeddingManager.embed_document is sync - use asyncio.to_thread
-                    try:
-                        emb_result = await asyncio.to_thread(embedder.embed_document, hypothesis)
-                        if emb_result is not None and len(emb_result) > 0:
-                            hypothesis_emb = emb_result.tolist() if hasattr(emb_result, 'tolist') else list(emb_result)
-                        else:
-                            hypothesis_emb = [0.0] * 384  # Fallback
-                    except Exception:
-                        hypothesis_emb = [0.0] * 384  # Fallback
-                else:
-                    hypothesis_emb = np.array(hypothesis_emb)
-
-                node_embeddings = []
-                for node_id in nodes_to_score:
-                    try:
-                        node = await self.knowledge_layer.get_node(node_id)
-                        if node and node.embedding:
-                            node_embeddings.append(node.embedding)
-                    except Exception:
-                        continue
-
-                if node_embeddings:
-                    # Cosine similarity
-                    norm_hyp = np.linalg.norm(hypothesis_emb)
-                    if norm_hyp > 0:
-                        sims = [
-                            np.dot(hypothesis_emb, emb) / (norm_hyp * np.linalg.norm(emb) + 1e-8)
-                            for emb in node_embeddings
-                        ]
-                        relevance_score = float(np.mean(sims))
-                    else:
-                        relevance_score = 0.5
-                else:
+                embedder = await self._get_embedder()
+                if embedder is None:
                     relevance_score = 0.5
+                else:
+                    # Compute hypothesis embedding if not provided
+                    if hypothesis_emb is None:
+                        try:
+                            emb_result = await asyncio.to_thread(embedder.embed_document, hypothesis)
+                            if emb_result is not None and len(emb_result) > 0:
+                                hypothesis_emb = emb_result.tolist() if hasattr(emb_result, 'tolist') else list(emb_result)
+                            else:
+                                hypothesis_emb = [0.0] * 384
+                        except Exception:
+                            hypothesis_emb = [0.0] * 384
+
+                    if hypothesis_emb:
+                        hypothesis_arr = np.array(hypothesis_emb)
+                        norm_hyp = np.linalg.norm(hypothesis_arr)
+                        if norm_hyp > 0:
+                            sims = [
+                                np.dot(hypothesis_arr, emb) / (norm_hyp * np.linalg.norm(emb) + 1e-8)
+                                for emb in node_embeddings
+                            ]
+                            relevance_score = float(np.mean(sims))
         except Exception as e:
             logger.debug(f"score_path relevance computation failed: {e}")
             relevance_score = 0.5
 
-        # 3. Node credibility
-        try:
-            scores = []
-            for node_id in nodes_to_score:
-                try:
-                    node = await self.knowledge_layer.get_node(node_id)
-                    if node and node.metadata and "confidence" in node.metadata:
-                        scores.append(node.metadata["confidence"])
-                except Exception:
-                    continue
-            credibility = sum(scores) / len(scores) if scores else 0.5
-        except Exception:
-            credibility = 0.5
+        # 4. Node credibility from parallel fetch results
+        credibility = sum(confidences) / len(confidences) if confidences else 0.5
 
         # Weighted final score
         final_score = 0.4 * length_score + 0.4 * relevance_score + 0.2 * credibility
         return float(max(0.0, min(1.0, final_score)))
+
+    async def score_paths_parallel(
+        self,
+        paths: list[list[str]],
+        hypothesis: str,
+        max_nodes: int = 10
+    ) -> list[float]:
+        """
+        Score multiple paths in parallel with bounded concurrency.
+
+        M1 8GB: Uses Semaphore(4) to limit concurrent scoring operations.
+        Each scoring operation fetches embeddings via MLX (I/O bound).
+
+        Args:
+            paths: List of paths (each path is a list of node IDs)
+            hypothesis: The hypothesis to score against
+            max_nodes: Maximum nodes to score per path (budget)
+
+        Returns:
+            List of scores (one per path), in same order as input
+        """
+        if not paths:
+            return []
+
+        # Pre-compute hypothesis embedding once (shared across all paths)
+        hypothesis_emb = None
+        try:
+            embedder = await self._get_embedder()
+            if embedder is not None:
+                emb_result = await asyncio.to_thread(embedder.embed_document, hypothesis)
+                if emb_result is not None and len(emb_result) > 0:
+                    hypothesis_emb = emb_result.tolist() if hasattr(emb_result, 'tolist') else list(emb_result)
+        except Exception as e:
+            logger.debug(f"score_paths_parallel: hypothesis embedding failed: {e}")
+
+        semaphore = await self._get_score_semaphore()
+
+        async def score_with_semaphore(path: list[str]) -> float:
+            async with semaphore:
+                return await self.score_path(path, hypothesis, hypothesis_emb, max_nodes)
+
+        # Execute all scorings in parallel with bounded semaphore
+        results = await asyncio.gather(
+            *[score_with_semaphore(path) for path in paths],
+            return_exceptions=True
+        )
+
+        # Convert exceptions to 0.0 scores (fail-safe)
+        return [float(r) if isinstance(r, (int, float)) else 0.0 for r in results]
 
     async def multi_hop_search(
         self,

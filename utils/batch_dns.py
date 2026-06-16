@@ -60,6 +60,33 @@ DEFAULT_PER_HOST_TIMEOUT_S = 5.0  # Per-host getaddrinfo timeout
 # for offline / DNS-blocked environments)
 ENV_OPT_OUT = "HLEDAC_BATCH_DNS_DISABLED"
 
+# Sprint F2.3: Common domains for pre-resolution
+# Top-level domains commonly seen in OSINT sprints — resolved eagerly
+# at startup so the first fetch batch hits the cache. Bounded set
+# avoids memory blowup on M1 8GB.
+DEFAULT_PREWARM_DOMAINS: tuple[str, ...] = (
+    "google.com",
+    "googleapis.com",
+    "github.com",
+    "githubusercontent.com",
+    "microsoft.com",
+    "cloudflare.com",
+    "amazonaws.com",
+    "akamai.com",
+    "fastly.net",
+    "cloudfront.net",
+    "facebook.com",
+    "twitter.com",
+    "reddit.com",
+    "stackoverflow.com",
+    "cdn.jsdelivr.net",
+    "unpkg.com",
+    "raw.githubusercontent.com",
+    "api.github.com",
+    "dns.google",
+    "resolver1.opendns.com",
+)
+
 
 class BatchDNSStats:
     """Bounded telemetry counter snapshot for BatchDNSResolver."""
@@ -109,6 +136,7 @@ class BatchDNSResolver:
         "_semaphore_max",
         "_stats",
         "_lock",
+        "_prewarm_done",
     )
 
     def __init__(
@@ -133,6 +161,7 @@ class BatchDNSResolver:
         # coroutines may reach the cache-update path interleaved with
         # eviction. Single lock is sufficient — dict ops are O(1).
         self._lock: asyncio.Lock | None = None  # lazy in async ctx
+        self._prewarm_done: bool = False  # guard against double prewarm
 
     # -- lazy async init ---------------------------------------------------
 
@@ -147,6 +176,78 @@ class BatchDNSResolver:
             self._semaphore = asyncio.Semaphore(self._semaphore_max)
         if self._lock is None:
             self._lock = asyncio.Lock()
+
+    async def prewarm(
+        self,
+        domains: tuple[str, ...] | None = None,
+        *,
+        timeout: float = DEFAULT_PER_HOST_TIMEOUT_S,
+    ) -> None:
+        """
+        Sprint F2.3: Pre-resolve common domains eagerly.
+
+        Call this at sprint startup to populate the LRU cache before
+        the first fetch batch arrives. Reduces first-batch DNS latency
+        to ~0 ms for common infrastructure domains.
+
+        Idempotent: subsequent calls are no-ops ( guarded by _prewarm_done).
+
+        Args:
+            domains: tuple of domain names to pre-resolve. Defaults to
+                DEFAULT_PREWARM_DOMAINS (20 common OSINT infrastructure domains).
+            timeout: per-host getaddrinfo timeout in seconds.
+        """
+        if self._prewarm_done or self._is_disabled():
+            return
+
+        targets = domains or DEFAULT_PREWARM_DOMAINS
+        if not targets:
+            return
+
+        self._ensure_async_primitives()
+        assert self._semaphore is not None
+
+        # Resolve in background — prewarm is fire-and-forget.
+        # Errors are logged but never raise (fail-soft invariant).
+        async def _prewarm_host(domain: str) -> None:
+            try:
+                async with self._semaphore:  # type: ignore[union-attr]
+                    raw = await async_getaddrinfo(
+                        domain,
+                        0,
+                        proto=socket.IPPROTO_TCP,
+                        timeout=timeout,
+                    )
+                    ips = sorted({str(r[4][0]) for r in raw})
+                    if ips:
+                        async with self._lock:  # type: ignore[union-attr]
+                            if domain not in self._cache:
+                                if (
+                                    self._cache_max > 0
+                                    and len(self._cache) >= self._cache_max
+                                ):
+                                    self._cache.popitem(last=False)
+                                    self._stats.evictions += 1
+                            self._cache[domain] = (ips, time.monotonic())
+                            self._stats.resolved_total += 1
+            except Exception as exc:  # noqa: BLE001 — fail-soft
+                logger.debug(
+                    "[BATCH_DNS] prewarm failed for %s: %s: %s",
+                    domain, type(exc).__name__, exc,
+                )
+                self._stats.errors += 1
+
+        # Fire-and-forget: prewarm runs in background without blocking sprint start.
+        await safe_gather(
+            *(_prewarm_host(d) for d in targets),
+            label="batch_dns_prewarm",
+            logger_instance=logger,
+        )
+        self._prewarm_done = True
+        logger.debug(
+            "[BATCH_DNS] prewarm complete: %d domains cached",
+            len(targets),
+        )
 
     # -- public API --------------------------------------------------------
 
@@ -362,6 +463,7 @@ __all__ = [
     "DEFAULT_CACHE_MAX",
     "DEFAULT_CONCURRENCY",
     "DEFAULT_PER_HOST_TIMEOUT_S",
+    "DEFAULT_PREWARM_DOMAINS",
     "DEFAULT_TTL_S",
     "ENV_OPT_OUT",
     "get_batch_dns_resolver",

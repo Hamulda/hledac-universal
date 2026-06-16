@@ -1078,6 +1078,10 @@ class DeepForensicsAnalyzer:
 
             # Copy binary
             import shutil
+            # Security fix: validate binary path is under ~/.hledac/bin (defense-in-depth)
+            _BIN_DIR = (Path.home() / '.hledac' / 'bin').resolve()
+            assert self._stegdetect_path.resolve().is_relative_to(_BIN_DIR), \
+                f"Binary path outside allowed directory: {self._stegdetect_path}"
             shutil.copy(src_dir / 'stegdetect', self._stegdetect_path)
             os.chmod(self._stegdetect_path, 0o755)
         except Exception as e:

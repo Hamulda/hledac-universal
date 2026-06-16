@@ -496,6 +496,9 @@ class SynthesisRunner:
         # P2-1: Hermes3Engine for continuous batching via MLXBatchedExecutor
         self._hermes_engine: Any | None = None
 
+        # P2-1b: Optional InferencePipeliner for non-blocking submit + prompt overlap
+        self._inference_pipeliner: Any | None = None
+
     def inject_graph(self, graph: Any) -> None:
         """Inject IOCGraph instance from 8QA for STIX context injection."""
         self._ioc_graph = graph
@@ -552,6 +555,40 @@ class SynthesisRunner:
             logger.warning("[P2-1] Hermes3Engine init failed: %s", e)
         return self._hermes_engine
 
+    def _get_inference_pipeliner(self) -> Any:
+        """
+        P2-1b: Get or create InferencePipeliner for non-blocking submit + prompt overlap.
+
+        Wraps DeepHermes3Engine with non-blocking submit() API that overlaps
+        prompt preprocessing with current inference. Lazy init.
+
+        Returns:
+            InferencePipeliner instance with generate() method (always-on, fail-soft)
+        """
+        if self._inference_pipeliner is not None:
+            return self._inference_pipeliner
+        try:
+            from .inference_pipeliner import InferencePipeliner
+            from .mlx_worker_thread import MLXWorkerThread
+
+            # Create worker thread for non-blocking dispatch
+            worker = MLXWorkerThread(name="mlx-pipeliner-worker")
+            worker.start()
+
+            # Create engine and pipeliner
+            engine = self._get_hermes_engine()
+            if engine is None:
+                return None
+
+            self._inference_pipeliner = InferencePipeliner(
+                engine=engine,
+                worker_thread=worker,
+            )
+            logger.debug("[P2-1b] InferencePipeliner created with MLXWorkerThread")
+        except Exception as e:
+            logger.warning("[P2-1b] InferencePipeliner init failed: %s", e)
+        return self._inference_pipeliner
+
     # ------------------------------------------------------------------
     # F214: HypothesisEngine injection
     # ------------------------------------------------------------------
@@ -572,6 +609,10 @@ class SynthesisRunner:
         hermes = self._get_hermes_engine()
         if hermes is not None and hasattr(engine, "_inference_engine"):
             engine._inference_engine = hermes
+        # P2-1b: Also inject InferencePipeliner for overlapping hypothesis generation
+        pipeliner = self._get_inference_pipeliner()
+        if pipeliner is not None and hasattr(engine, "_inference_pipeliner"):
+            engine._inference_pipeliner = pipeliner
 
     # ------------------------------------------------------------------
     # Sprint 8TD: Custom prompt injection
@@ -1038,6 +1079,12 @@ class SynthesisRunner:
 
     async def close(self) -> None:
         """Clean close — volá se po syntéze."""
+        # P2-1b: Shutdown InferencePipeliner first
+        if self._inference_pipeliner is not None:
+            try:
+                await self._inference_pipeliner.shutdown()
+            except Exception:
+                pass
         # Ensure any pending lifecycle resources are released
         try:
             await self._lifecycle.unload()
@@ -1229,9 +1276,11 @@ class SynthesisRunner:
                         )
                 finally:
                     # Sprint 8UD B.2: Clear MLX Metal cache after inference
+                    # F219B canonical order: mx.eval([]) BEFORE clear_cache()
                     try:
                         import mlx.core as _mx
                         if _mx.metal.is_available():
+                            _mx.eval([])  # barrier — forces lazy evaluation before cache clear
                             _mx.metal.clear_cache()
                     except Exception:
                         pass  # Non-fatal
@@ -1500,12 +1549,12 @@ class SynthesisRunner:
         """
         P2-1: Decompose query into 3-5 sub-queries. Max 80 tokens.
 
-        Routes through Hermes3Engine.generate() → MLXBatchedExecutor (P0-2)
-        for continuous batching. Falls back to identity if Hermes unavailable.
+        Routes through InferencePipeliner (P2-1b) for non-blocking submit
+        + prompt preprocessing overlap. Falls back to identity if unavailable.
         """
-        # P2-1: Try Hermes3Engine with continuous batching first
-        hermes = self._get_hermes_engine()
-        if hermes is not None:
+        # P2-1b: Try InferencePipeliner for overlapping inference
+        pipeliner = self._get_inference_pipeliner()
+        if pipeliner is not None:
             try:
                 PROMPT = (
                     "You are a security OSINT assistant. "
@@ -1513,7 +1562,7 @@ class SynthesisRunner:
                     "Output ONLY a JSON array of strings, no explanation.\n"
                     'Example: ["LockBit IOCs 2026","LockBit C2 infra","LockBit victims list"]'
                 )
-                out = await hermes.generate(PROMPT, max_tokens=80, thinking=False)
+                out = await pipeliner.generate(PROMPT, max_tokens=80, thinking=False)
                 import json
                 import re
                 m = re.search(r'\[.*?\]', out, re.DOTALL)
@@ -1521,13 +1570,13 @@ class SynthesisRunner:
                     parsed = json.loads(m.group())
                     if isinstance(parsed, list) and parsed:
                         result = [str(s) for s in parsed[:5]]
-                        logger.info(f"decompose_query '{query[:40]}' → {len(result)} sub-queries [batched]")
+                        logger.info(f"decompose_query '{query[:40]}' → {len(result)} sub-queries [pipelined]")
                         return result
             except Exception as e:
-                logger.warning(f"decompose_query hermes failed: {e} — fallback to identity")
+                logger.warning(f"decompose_query pipeliner failed: {e} — fallback to identity")
 
         # Fallback: identity (no model available)
-        logger.debug("decompose_query: no hermes → identity fallback")
+        logger.debug("decompose_query: no pipeliner → identity fallback")
         return [query]
 
     # ── Sprint 8TB: Ghost Global Context ─────────────────────────────────

@@ -37,17 +37,26 @@ except ImportError:
 _MODEL_ID = "BAAI/bge-small-en-v1.5"
 _EMBED_DIM = 384
 _BATCH_SIZE = 64  # MLX unified memory — higher batch than CoreML
+# Adaptive batching thresholds (Sprint F265D)
+_BATCH_SIZE_HIGH = 128  # NORMAL memory pressure
+_BATCH_SIZE_LOW = 32  # CRITICAL memory pressure
 
 
 class MLXEmbedder:
     """
     MLX-native embedder — runs directly in py3.14 on Apple Silicon.
     No subprocess, no HTTP bridge, no conversion.
+
+    Adaptive batch sizing (Sprint F265D):
+    - NORMAL memory: batch_size=128
+    - WARNING memory: batch_size=64
+    - CRITICAL memory: batch_size=32
     """
 
     def __init__(self) -> None:
         self._model: Any = None
         self._is_loaded = False
+        self._mlx_memory = None  # Lazy import for adaptive batching
 
     @property
     def is_available(self) -> bool:
@@ -72,20 +81,68 @@ class MLXEmbedder:
             logger.warning("[MLX] Load failed: %s", e)
             return False
 
+    def _get_mlx_memory(self):
+        """Lazy-load mlx_memory module for adaptive batching (Sprint F265D)."""
+        if self._mlx_memory is None:
+            try:
+                from hledac.universal.utils import mlx_memory
+                self._mlx_memory = mlx_memory
+            except ImportError:
+                self._mlx_memory = None
+        return self._mlx_memory
+
+    def _get_adaptive_batch_size(self) -> int:
+        """
+        Sprint F265D: Return adaptive batch size based on Metal memory pressure.
+
+        Memory pressure tiers:
+        - NORMAL (<80% of budget): _BATCH_SIZE_HIGH (128)
+        - WARNING (80-90%): _BATCH_SIZE (64)
+        - CRITICAL (>90%): _BATCH_SIZE_LOW (32)
+
+        Returns:
+            Adaptive batch size in range [_BATCH_SIZE_LOW, _BATCH_SIZE_HIGH].
+        """
+        mlx_mem = self._get_mlx_memory()
+        if mlx_mem is None:
+            return _BATCH_SIZE
+
+        try:
+            _, pressure_level = mlx_mem.get_mlx_memory_pressure()
+        except Exception:
+            return _BATCH_SIZE
+
+        if pressure_level == "NORMAL":
+            return _BATCH_SIZE_HIGH
+        elif pressure_level == "WARNING":
+            return _BATCH_SIZE
+        else:  # CRITICAL or UNKNOWN
+            return _BATCH_SIZE_LOW
+
     async def encode_batch(
         self,
         texts: str | list[str],
-        batch_size: int = _BATCH_SIZE,
+        batch_size: int | None = None,
     ) -> np.ndarray:
+        """
+        Encode batch with adaptive sizing based on Metal memory (Sprint F265D).
+
+        Args:
+            texts: Text(s) to encode.
+            batch_size: Override batch size. If None, uses adaptive sizing.
+        """
         if isinstance(texts, str):
             texts = [texts]
         if not texts or not self._is_loaded:
             return np.zeros((len(texts), _EMBED_DIM), dtype=np.float32)
 
+        # Sprint F265D: Use adaptive batch sizing if no override
+        effective_batch_size = batch_size if batch_size is not None else self._get_adaptive_batch_size()
+
         loop = asyncio.get_running_loop()
         all_embs: list[np.ndarray] = []
-        for i in range(0, len(texts), batch_size):
-            batch = texts[i : i + batch_size]
+        for i in range(0, len(texts), effective_batch_size):
+            batch = texts[i : i + effective_batch_size]
             embs = await loop.run_in_executor(
                 None,
                 lambda b=batch: np.array(self._model.encode(b)),

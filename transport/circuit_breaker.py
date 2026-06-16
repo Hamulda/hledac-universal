@@ -33,10 +33,12 @@ import logging
 import time
 from collections import OrderedDict
 from dataclasses import dataclass, field
+from dataclasses import field as _field
 from enum import Enum
 from typing import Final
 
 import aiohttp
+import msgspec
 
 logger = logging.getLogger(__name__)
 
@@ -63,8 +65,7 @@ def _metrics_safe_increment(metric_name: str) -> None:
         pass  # never interfere with CB
 
 
-@dataclass(frozen=True)
-class CircuitBreakerSnapshot:
+class CircuitBreakerSnapshot(msgspec.Struct, frozen=True, gc=False):
     """Immutable snapshot of circuit breaker state for diagnostics."""
     domain: str
     state: str
@@ -74,8 +75,7 @@ class CircuitBreakerSnapshot:
     last_failure_kind: str
 
 
-@dataclass(frozen=True)
-class CircuitDecision:
+class CircuitDecision(msgspec.Struct, frozen=True, gc=False):
     """Decision returned when checking a domain circuit breaker."""
     allowed: bool
     domain: str
@@ -432,7 +432,6 @@ async def checked_aiohttp_get(
 
 import time as _time  # noqa: E402
 from dataclasses import dataclass  # noqa: E402
-from dataclasses import field as _field  # noqa: E402
 
 
 @dataclass
@@ -492,6 +491,12 @@ class ModelCircuitBreaker:
             elapsed = _time.monotonic() - self._last_failure_time
             if elapsed >= self.recovery_timeout_s:
                 self._state = self._HALF_OPEN
+            return True
+        if self._state == self._HALF_OPEN:
+            # F288 FIX: HALF_OPEN never auto-transitions — requires explicit probe.
+            # Previously returned False (allowing inference), but HALF_OPEN means
+            # "probe allowed" not "already recovered". Blocking in HALF_OPEN is
+            # correct until a probe succeeds and calls record_success().
             return True
         return False
 

@@ -53,6 +53,42 @@ except ImportError:
 # Bounds
 MAX_PIVOTS: int = 20  # from pivot_planner.py
 
+# Sprint P2-4: Bounded concurrency for parallel advisory steps (M1 8GB safe)
+# Steps 3-6 in run_all_advisories() are independent and run in parallel.
+_ADVISORY_PARALLEL_SEMAPHORE_LIMIT: int = 4
+
+
+def _merge_outcomes(base: AdvisoryRunOutcome, other: AdvisoryRunOutcome) -> AdvisoryRunOutcome:
+    """
+    Merge two AdvisoryRunOutcome objects, taking the last-seen value for each field.
+
+    Used when parallel advisory steps return partial outcomes that need to be
+    combined into a single coherent result. Non-count fields (bool/str) use
+    the value from `other` if it differs from the base default.
+    """
+    return AdvisoryRunOutcome(
+        planned_pivots=base.planned_pivots or other.planned_pivots,
+        executed_pivots=base.executed_pivots or other.executed_pivots,
+        governor_recorded=base.governor_recorded or other.governor_recorded,
+        brief_generated=base.brief_generated or other.brief_generated,
+        local_search_attempted=base.local_search_attempted or other.local_search_attempted,
+        local_search_hits=base.local_search_hits or other.local_search_hits,
+        local_search_source=base.local_search_source if base.local_search_source != "none" else other.local_search_source,
+        local_search_indexed=base.local_search_indexed or other.local_search_indexed,
+        local_search_elapsed_ms=base.local_search_elapsed_ms or other.local_search_elapsed_ms,
+        local_search_top_results=base.local_search_top_results or other.local_search_top_results,
+        local_search_error=base.local_search_error or other.local_search_error,
+        federated_attempted=base.federated_attempted or other.federated_attempted,
+        federated_nodes=base.federated_nodes or other.federated_nodes,
+        federated_findings=base.federated_findings or other.federated_findings,
+        federated_bridge_updates=base.federated_bridge_updates or other.federated_bridge_updates,
+        federated_bridge_persists=base.federated_bridge_persists or other.federated_bridge_persists,
+        federated_mode=base.federated_mode if base.federated_mode != "none" else other.federated_mode,
+        federated_elapsed_ms=base.federated_elapsed_ms or other.federated_elapsed_ms,
+        federated_error=base.federated_error or other.federated_error,
+        error=base.error or other.error,
+    )
+
 
 def build_search_documents_from_findings(findings: list) -> list:
     """
@@ -204,15 +240,20 @@ class SprintAdvisoryRunner:
 
     async def run_all_advisories(self) -> AdvisoryRunOutcome:
         """
-        Run all 6 advisory steps in explicit order.
+        Run all 6 advisory steps with parallelization where safe.
 
-        Order:
+        Order (mandatory sequential):
           1. pivot_planner  → planned_pivots
-          2. pivot_executor → executed_pivots
+          2. pivot_executor → executed_pivots  [depends on 1]
+
+        Steps 3-6 run in PARALLEL (bounded semaphore, M1 8GB safe):
           3. resource_governor → governor_recorded
           4. analyst_brief → brief_generated
           5. local_search → local_search_*
           6. federated_research → federated_* (F350M-FED-P3-FOLLOWUP)
+
+        Parallel execution via safe_gather_dropin with _ADVISORY_PARALLEL_SEMAPHORE_LIMIT=4.
+        Each step is fail-soft; exceptions are collected and merged into outcome.error.
 
         CancelledError: re-raised to caller.
         Fail-soft: any step failure returns partial outcome with error message.
@@ -220,26 +261,59 @@ class SprintAdvisoryRunner:
         Returns:
             AdvisoryRunOutcome with counts/flags for each step.
         """
+        # Sprint P2-4: Import here to avoid circular / lazy import
+        try:
+            from hledac.universal.utils.async_helpers import safe_gather_dropin
+        except ImportError:
+            # Fallback: run sequentially if async_helpers unavailable
+            safe_gather_dropin = None
+
         outcome = AdvisoryRunOutcome()
 
         try:
-            # Step 1: Pivot planner advisory
+            # Steps 1-2: MUST be sequential (executor depends on planner output)
             outcome = await self._run_pivot_planner_advisory(outcome)
-
-            # Step 2: Pivot executor advisory (depends on planner output)
             outcome = await self._run_pivot_executor_advisory(outcome)
 
-            # Step 3: Resource governor advisory
-            outcome = await self._run_resource_governor_advisory(outcome)
+            # Steps 3-6: PARALLEL with bounded semaphore (M1 8GB safe)
+            if safe_gather_dropin is not None:
+                # Bounded semaphore ensures max 4 concurrent advisory steps
+                sem = asyncio.Semaphore(_ADVISORY_PARALLEL_SEMAPHORE_LIMIT)
 
-            # Step 4: Analyst brief advisory
-            outcome = await self._run_analyst_brief_advisory(outcome)
+                async def bounded_step(coro, step_name: str):
+                    """Run a step with semaphore-bounded concurrency."""
+                    async with sem:
+                        try:
+                            return await coro
+                        except asyncio.CancelledError:
+                            raise
+                        except Exception as e:
+                            log.debug(
+                                "[P2-4] advisory step %s failed (fail-soft): %s",
+                                step_name, e,
+                            )
+                            # Return partial outcome with error
+                            return AdvisoryRunOutcome(error=str(e))
 
-            # Step 5: Local search advisory (F228C)
-            outcome = await self._run_local_search_advisory(outcome)
+                # Run all 4 independent steps in parallel
+                parallel_results = await safe_gather_dropin(
+                    bounded_step(self._run_resource_governor_advisory(outcome), "resource_governor"),
+                    bounded_step(self._run_analyst_brief_advisory(outcome), "analyst_brief"),
+                    bounded_step(self._run_local_search_advisory(outcome), "local_search"),
+                    bounded_step(self._run_federated_research_advisory(outcome), "federated_research"),
+                    label="advisory_parallel:3-6",
+                )
 
-            # Step 6 (F350M-FED-P3-FOLLOWUP): Federated research advisory
-            outcome = await self._run_federated_research_advisory(outcome)
+                # Merge all partial outcomes into final outcome
+                for r in parallel_results:
+                    if isinstance(r, AdvisoryRunOutcome):
+                        outcome = _merge_outcomes(outcome, r)
+            else:
+                # Fallback: sequential execution if safe_gather_dropin unavailable
+                outcome = await self._run_resource_governor_advisory(outcome)
+                outcome = await self._run_analyst_brief_advisory(outcome)
+                outcome = await self._run_local_search_advisory(outcome)
+                outcome = await self._run_federated_research_advisory(outcome)
 
         except asyncio.CancelledError:
             raise  # [I6] propagate CancelledError — never swallowed

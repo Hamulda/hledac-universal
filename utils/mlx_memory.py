@@ -310,11 +310,25 @@ def set_cache_limit_with_debounce(limit_mb: int, min_interval_seconds: float = 1
 
 # -----------------------------------------------------------------------
 # F219L: Metal stream context helper — single source of truth for mx.stream guard
+# F288 FIX: Thread-aware stream creation — mx.stream(gpu) is tied to the
+# thread that creates it. Caching a single stream globally causes
+# "Stream(gpu,1) not in current thread" when MLX is called from a worker
+# thread (P0-3 MLXWorkerThread, asyncio.to_thread, ThreadPoolExecutor).
+# Fix: create stream per-thread via thread-local storage.
 # -----------------------------------------------------------------------
+import threading
+
+_thread_local = threading.local()
+
 
 def get_metal_stream_context():
     """
-    F219L: Return mx.stream(mx.gpu) or nullcontext if GPU unavailable.
+    F219L + F288: Return mx.stream(mx.gpu) or nullcontext if GPU unavailable.
+
+    Thread-aware: each thread gets its own mx.stream(gpu) instance.
+    mx.stream() is tied to the creating thread — a stream created in the
+    main thread cannot be used in a worker thread (causes
+    "Stream(gpu,1) not in current thread" Metal error).
 
     Guards against:
     - MLX not available
@@ -327,10 +341,24 @@ def get_metal_stream_context():
     Returns:
         context manager: mx.stream(mx.gpu) or nullcontext()
     """
-    _stream = nullcontext()
     try:
-        if _ensure_mlx() and hasattr(_get_mlx_core(), 'gpu') and _get_mlx_core().gpu is not None:
-            _stream = _get_mlx_core().stream(_get_mlx_core().gpu)
+        if not _ensure_mlx():
+            return nullcontext()
+        mx_core = _get_mlx_core()
+        if mx_core is None or not hasattr(mx_core, 'gpu') or mx_core.gpu is None:
+            return nullcontext()
+        # Thread-local stream: each thread gets its own mx.stream(gpu).
+        # This fixes "Stream(gpu,1) not in current thread" when MLX is
+        # called from MLXWorkerThread (P0-3) or asyncio.to_thread.
+        tid = threading.current_thread().ident
+        stream_obj = getattr(_thread_local, 'metal_stream', None)
+        stream_tid = getattr(_thread_local, 'metal_stream_tid', None)
+        if stream_obj is not None and stream_tid == tid:
+            return stream_obj
+        # Create fresh stream for this thread
+        new_stream = mx_core.stream(mx_core.gpu)
+        _thread_local.metal_stream = new_stream
+        _thread_local.metal_stream_tid = tid
+        return new_stream
     except Exception:
-        pass
-    return _stream
+        return nullcontext()

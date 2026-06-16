@@ -21,13 +21,31 @@ derived identity findings for async_ingest_findings_batch().
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any
+from typing import Any, cast
 
 logger = logging.getLogger(__name__)
+
+# ── Thread pool for parallel extraction ────────────────────────────────────────
+# M1 dual-core: 2 workers optimal (mem vs speed tradeoff on 8GB UMA)
+_NUM_EXTRACTION_WORKERS: int = 2
+_CHUNK_SIZE: int = 32  # findings per chunk — balances overhead vs. parallelism
+_executor: ThreadPoolExecutor | None = None
+
+
+def _get_executor() -> ThreadPoolExecutor:
+    global _executor
+    if _executor is None:
+        _executor = ThreadPoolExecutor(
+            max_workers=_NUM_EXTRACTION_WORKERS,
+            thread_name_prefix="entity_extract",
+        )
+    return _executor
 
 # ── Bounds ────────────────────────────────────────────────────────────────────
 
@@ -219,12 +237,28 @@ def extract_entities_from_finding(finding: Any) -> list[ExtractedEntity]:
     return entities
 
 
+def _extract_chunk(findings_chunk: list[Any]) -> list[tuple[str, Any, ExtractedEntity]]:
+    """
+    Extract entities from a chunk of findings.
+    Returns list of (finding_id, finding, entity) tuples for profile building.
+    """
+    results: list[tuple[str, Any, ExtractedEntity]] = []
+    for finding in findings_chunk:
+        fid = getattr(finding, 'finding_id', None)
+        if not fid:
+            continue
+        entities = extract_entities_from_finding(finding)
+        for ent in entities:
+            results.append((fid, finding, ent))
+    return results
+
+
 def extract_entities_from_findings(
     findings: list[Any],
     max_profiles: int = MAX_PROFILES,
 ) -> list[EntitySignalProfile]:
     """
-    Extract entity signals from a batch of CanonicalFinding objects.
+    Extract entity signals from a batch of CanonicalFinding objects (sync version).
 
     Groups entities by normalized value to build lightweight EntitySignalProfile
     objects. Each profile is keyed by normalized email or primary identifier.
@@ -239,59 +273,185 @@ def extract_entities_from_findings(
     Returns:
         List of EntitySignalProfile objects, bounded to max_profiles
     """
-    # Group entities by normalized email or value
+    if not findings:
+        return []
+
+    # Parallel extraction via ThreadPoolExecutor
+    chunks: list[list[Any]] = [
+        findings[i:i + _CHUNK_SIZE]
+        for i in range(0, len(findings), _CHUNK_SIZE)
+    ]
+
+    executor = _get_executor()
+    futures = [executor.submit(_extract_chunk, chunk) for chunk in chunks]
+
+    # Collect results
+    all_results: list[tuple[str, Any, ExtractedEntity]] = []
+    for f in futures:
+        try:
+            all_results.extend(f.result())
+        except Exception as exc:
+            logger.warning(f"Entity extraction chunk failed: {exc}")
+
+    # Group into profiles (sequential — cheap dict ops)
     profile_map: dict[str, EntitySignalProfile] = {}
-
-    for finding in findings:
-        entities = extract_entities_from_finding(finding)
-        fid = getattr(finding, 'finding_id', f"fid_{len(profile_map)}") or f"fid_{len(profile_map)}"
-
-        for ent in entities:
-            if len(profile_map) >= max_profiles:
-                break
-
-            if ent.entity_type == "email":
-                key = f"email:{ent.value}"
-                if key not in profile_map:
-                    profile_map[key] = EntitySignalProfile(
-                        id=key,
-                        primary_name=ent.value.split('@')[0],
-                        emails=[ent.raw_value],
-                        finding_ids=[fid],
-                        confidence=ent.confidence,
-                    )
-                else:
-                    prof = profile_map[key]
-                    if ent.raw_value not in prof.emails:
-                        prof.emails.append(ent.raw_value)
-                    if fid not in prof.finding_ids:
-                        prof.finding_ids.append(fid)
-                    prof.platforms.add(ent.platform)
-
-            elif ent.entity_type in ("username", "domain_handle"):
-                key = f"handle:{ent.value}"
-                if key not in profile_map:
-                    profile_map[key] = EntitySignalProfile(
-                        id=key,
-                        primary_name=ent.raw_value,
-                        usernames=[ent.raw_value],
-                        domain_handles=[ent.raw_value] if ent.entity_type == "domain_handle" else [],
-                        finding_ids=[fid],
-                        confidence=ent.confidence,
-                    )
-                else:
-                    prof = profile_map[key]
-                    if ent.raw_value not in prof.usernames:
-                        prof.usernames.append(ent.raw_value)
-                    if ent.entity_type == "domain_handle" and ent.raw_value not in prof.domain_handles:
-                        prof.domain_handles.append(ent.raw_value)
-                    if fid not in prof.finding_ids:
-                        prof.finding_ids.append(fid)
-                    prof.platforms.add(ent.platform)
-                    prof.confidence = max(prof.confidence, ent.confidence)
-
+    for fid, _finding, ent in all_results:
         if len(profile_map) >= max_profiles:
             break
+
+        if ent.entity_type == "email":
+            key = f"email:{ent.value}"
+            if key not in profile_map:
+                profile_map[key] = EntitySignalProfile(
+                    id=key,
+                    primary_name=ent.value.split('@')[0],
+                    emails=[ent.raw_value],
+                    finding_ids=[fid],
+                    confidence=ent.confidence,
+                )
+            else:
+                prof = profile_map[key]
+                if ent.raw_value not in prof.emails:
+                    prof.emails.append(ent.raw_value)
+                if fid not in prof.finding_ids:
+                    prof.finding_ids.append(fid)
+                prof.platforms.add(ent.platform)
+
+        elif ent.entity_type in ("username", "domain_handle"):
+            key = f"handle:{ent.value}"
+            if key not in profile_map:
+                profile_map[key] = EntitySignalProfile(
+                    id=key,
+                    primary_name=ent.raw_value,
+                    usernames=[ent.raw_value],
+                    domain_handles=[ent.raw_value] if ent.entity_type == "domain_handle" else [],
+                    finding_ids=[fid],
+                    confidence=ent.confidence,
+                )
+            else:
+                prof = profile_map[key]
+                if ent.raw_value not in prof.usernames:
+                    prof.usernames.append(ent.raw_value)
+                if ent.entity_type == "domain_handle" and ent.raw_value not in prof.domain_handles:
+                    prof.domain_handles.append(ent.raw_value)
+                if fid not in prof.finding_ids:
+                    prof.finding_ids.append(fid)
+                prof.platforms.add(ent.platform)
+                prof.confidence = max(prof.confidence, ent.confidence)
+
+    logger.debug(f"EntitySignalExtractor: {len(profile_map)} profiles from {len(findings)} findings")
+    return list(profile_map.values())
+
+
+async def extract_entities_from_findings_async(
+    findings: list[Any],
+    max_profiles: int = MAX_PROFILES,
+    max_concurrency: int = 4,
+) -> list[EntitySignalProfile]:
+    """
+    P1-2: Async batch entity signal extraction via asyncio.gather.
+
+    Extract entity signals from a batch of CanonicalFinding objects using
+    asyncio.to_thread for concurrent regex extraction without blocking the event loop.
+
+    Groups entities by normalized value to build lightweight EntitySignalProfile
+    objects. Each profile is keyed by normalized email or primary identifier.
+
+    Bounded: max_profiles caps the number of profiles returned.
+    Comparisons are capped at MAX_COMPARISONS in the stitching adapter.
+
+    Architecture:
+      findings → chunks (size=_CHUNK_SIZE)
+               → asyncio.gather with asyncio.to_thread per chunk
+               → results merged and grouped into profiles
+
+    M1 8GB: max_concurrency=4 keeps thread pool bounded.
+
+    Args:
+        findings: List of CanonicalFinding objects
+        max_profiles: Maximum number of profiles to return (default MAX_PROFILES)
+        max_concurrency: Max concurrent chunk extractions (default 4, M1 8GB safe)
+
+    Returns:
+        List of EntitySignalProfile objects, bounded to max_profiles
+    """
+    if not findings:
+        return []
+
+    # Chunk findings for concurrent extraction
+    chunks: list[list[Any]] = [
+        findings[i:i + _CHUNK_SIZE]
+        for i in range(0, len(findings), _CHUNK_SIZE)
+    ]
+
+    # P1-2: asyncio.gather with asyncio.to_thread — concurrent extraction
+    # each to_thread call runs sync _extract_chunk in thread pool without blocking event loop
+    # Semaphore bounds concurrency to max_concurrency for M1 8GB safety
+    loop = asyncio.get_running_loop()
+    semaphore = asyncio.Semaphore(max_concurrency)
+
+    async def _run_chunk_with_sem(chunk: list[Any]) -> list[tuple[str, Any, ExtractedEntity]]:
+        async with semaphore:
+            return await loop.run_in_executor(None, _extract_chunk, chunk)
+
+    tasks = [_run_chunk_with_sem(chunk) for chunk in chunks]
+    gathered_results = await asyncio.gather(*tasks, return_exceptions=True)
+
+    # Collect results (handle exceptions from individual chunks)
+    all_results: list[tuple[str, Any, ExtractedEntity]] = []
+    for item in gathered_results:
+        if isinstance(item, Exception):
+            logger.warning(f"Entity extraction chunk failed: {item}")
+        else:
+            # Cast needed: pyright doesn't narrow union from isinstance check in else branch
+            chunk_results = cast(list[tuple[str, Any, ExtractedEntity]], item)
+            all_results.extend(chunk_results)
+
+    # Group into profiles (sequential — cheap dict ops)
+    profile_map: dict[str, EntitySignalProfile] = {}
+    for fid, _finding, ent in all_results:
+        if len(profile_map) >= max_profiles:
+            break
+
+        if ent.entity_type == "email":
+            key = f"email:{ent.value}"
+            if key not in profile_map:
+                profile_map[key] = EntitySignalProfile(
+                    id=key,
+                    primary_name=ent.value.split('@')[0],
+                    emails=[ent.raw_value],
+                    finding_ids=[fid],
+                    confidence=ent.confidence,
+                )
+            else:
+                prof = profile_map[key]
+                if ent.raw_value not in prof.emails:
+                    prof.emails.append(ent.raw_value)
+                if fid not in prof.finding_ids:
+                    prof.finding_ids.append(fid)
+                prof.platforms.add(ent.platform)
+
+        elif ent.entity_type in ("username", "domain_handle"):
+            key = f"handle:{ent.value}"
+            if key not in profile_map:
+                profile_map[key] = EntitySignalProfile(
+                    id=key,
+                    primary_name=ent.raw_value,
+                    usernames=[ent.raw_value],
+                    domain_handles=[ent.raw_value] if ent.entity_type == "domain_handle" else [],
+                    finding_ids=[fid],
+                    confidence=ent.confidence,
+                )
+            else:
+                prof = profile_map[key]
+                if ent.raw_value not in prof.usernames:
+                    prof.usernames.append(ent.raw_value)
+                if ent.entity_type == "domain_handle" and ent.raw_value not in prof.domain_handles:
+                    prof.domain_handles.append(ent.raw_value)
+                if fid not in prof.finding_ids:
+                    prof.finding_ids.append(fid)
+                prof.platforms.add(ent.platform)
+                prof.confidence = max(prof.confidence, ent.confidence)
 
     logger.debug(f"EntitySignalExtractor: {len(profile_map)} profiles from {len(findings)} findings")
     return list(profile_map.values())
@@ -318,13 +478,23 @@ def get_extractor_stats() -> dict[str, int]:
     }
 
 
+def shutdown_executor() -> None:
+    """Shutdown thread pool executor. Call at sprint teardown."""
+    global _executor
+    if _executor is not None:
+        _executor.shutdown(wait=False)
+        _executor = None
+
+
 __all__ = [
     "ExtractedEntity",
     "EntitySignalProfile",
     "extract_entities_from_finding",
     "extract_entities_from_findings",
+    "extract_entities_from_findings_async",
     "reset_extractor_stats",
     "get_extractor_stats",
+    "shutdown_executor",
     "MAX_PROFILES",
     "MAX_COMPARISONS",
 ]

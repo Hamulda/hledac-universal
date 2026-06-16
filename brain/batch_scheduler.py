@@ -320,7 +320,7 @@ class BatchScheduler:
                     # Gather up to max_size items with boundary checks
                     while len(items) < self._max_size:
                         try:
-                            async with asyncio.timeout(0.01):
+                            async with asyncio.timeout(0.05):
                                 item = await self._batch_queue.get_nowait()
                             item_schema = item[2]
                             item_payload = item[3]

@@ -2025,49 +2025,11 @@ def merge_feed_sources(
 # =============================================================================
 # Sprint 8VE D.1: CPU-heavy HTML parsing via ProcessPoolExecutor (GIL bypass)
 # =============================================================================
+# Sprint 8VE D.2: Replaced inline PPE with centralized utils.html_parse_pool
 
-import atexit as _atexit  # noqa: E402
-import concurrent.futures as _cf  # noqa: E402
-
-_PARSE_POOL: _cf.ProcessPoolExecutor | None = None
-
-
-def _get_parse_pool() -> _cf.ProcessPoolExecutor:
-    global _PARSE_POOL
-    if _PARSE_POOL is None:
-        _PARSE_POOL = _cf.ProcessPoolExecutor(max_workers=3)
-        _atexit.register(_PARSE_POOL.shutdown, wait=False)  # cisty cleanup
-    return _PARSE_POOL
-
-
-def _parse_html_sync(html: str) -> list[dict]:
-    """
-    CPU-bound HTML parse — spouští se v process pool (GIL bypass).
-    Primárně: selectolax (Rust-based, ARM64 native, 10-50× rychlejší než BS4).
-    Fallback: BeautifulSoup pokud selectolax není dostupný.
-    """
-    results = []
-    try:
-        from selectolax.parser import HTMLParser
-        tree = HTMLParser(html)
-        for node in tree.css("a[href]"):
-            href  = node.attributes.get("href", "")
-            text  = node.text(strip=True)
-            if href.startswith("http"):
-                results.append({"url": href, "title": text[:200]})
-        return results
-    except ImportError:
-        pass
-    # Fallback: BeautifulSoup
-    from bs4 import BeautifulSoup
-    soup = BeautifulSoup(html, "html.parser")
-    for a in soup.find_all("a", href=True):
-        if a["href"].startswith("http"):
-            results.append({"url": a["href"], "title": a.get_text(strip=True)[:200]})
-    return results
+from hledac.universal.utils.html_parse_pool import parse_html_links as _parse_html_links
 
 
 async def parse_html_async(html: str) -> list[dict]:
-    """Async wrapper kolem _parse_html_sync — spoustí v process pool."""
-    loop = asyncio.get_running_loop()
-    return await loop.run_in_executor(_get_parse_pool(), _parse_html_sync, html)
+    """Async wrapper — uses centralized M1-safe ProcessPoolExecutor from html_parse_pool."""
+    return await _parse_html_links(html)

@@ -782,6 +782,15 @@ def get_extraction_status() -> dict:
 import math as _math  # noqa: E402
 import re as _re  # noqa: E402
 
+# ── Pre-compiled patterns for _guess_entity_type ──────────────────────────
+# Note: "St" must appear before "Street" in alternation so \bSt\b matches first
+_GUESS_PATTERNS: tuple[tuple[_re.Pattern, str], ...] = (
+    (_re.compile(r'\b(?:Corp|LLC|Inc|Ltd|Technologies|Software|Systems|Security)\b', _re.IGNORECASE), "organization"),
+    (_re.compile(r'\b(?:Mr|Mrs|Ms|Dr|Prof)\.\s+\w+', _re.IGNORECASE), "person"),
+    (_re.compile(r'\b(?:St|Street|City|Town|Country|Road|Ave|Boulevard)\b', _re.IGNORECASE), "location"),
+    (_re.compile(r'\b[A-Fa-f0-9]{32,64}\b'), "hash"),
+)
+
 # ── Regex patterns — PRIMARY for technical IOC ──────────────────────────
 _IOC_PATTERNS: list[tuple[str, _re.Pattern]] = [
     ("cve",    _re.compile(r'\bCVE-\d{4}-\d{4,7}\b')),
@@ -946,16 +955,11 @@ def _guess_entity_type(ioc_type: str | None, raw_text: str) -> str:
     """Guess entity type from IOC type or text patterns."""
     if ioc_type:
         return ioc_type
-    # Fallback heuristics
-    raw_text.lower()
-    if _re.search(r'\b(?:Corp|LLC|Inc|Ltd|Technologies|Software|Systems|Security)\b', raw_text):
-        return "organization"
-    if _re.search(r'\b(?:Mr|Mrs|Ms|Dr|Prof)\.\s+\w+', raw_text):
-        return "person"
-    if _re.search(r'\b(?:St|City|Town|Country|Road|Ave|Boulevard)\b', raw_text):
-        return "location"
-    if _re.search(r'\b[A-Fa-f0-9]{32,64}\b', raw_text):
-        return "hash"
+    # Fallback heuristics — use pre-compiled patterns
+    text_lower = raw_text.lower()
+    for pattern, entity_type in _GUESS_PATTERNS:
+        if pattern.search(text_lower):
+            return entity_type
     return "unknown"
 
 

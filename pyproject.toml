@@ -154,6 +154,8 @@ dependencies = [
     "dspy>=3.2.1",
     "ddgs>=9.14.4",
     "sentence-transformers>=5.5.1",
+    "ijson>=3.5.0",
+    "flashrank>=0.2.10",
 ]
 
 [project.scripts]

@@ -1091,6 +1091,16 @@ def run_pre_sprint_checks() -> bool:
     """
     checks_passed = True
 
+    # F273G: macOS malloc pressure relief — release fragmented pages before any allocation.
+    # Must run FIRST, before MLX buffers or any memory-heavy init.
+    try:
+        from hledac.universal.core.memory_cycle import malloc_zone_pressure_relief
+        released = malloc_zone_pressure_relief()
+        if released > 0:
+            logger.debug("[BOOT] malloc_zone_pressure_relief released %d bytes", released)
+    except Exception:
+        pass  # fail-soft
+
     # MLX wired limit — fail-soft (Sprint F207D)
     # MLX is optional. Skip Metal limit config when unavailable.
     if not mlx_cache.MLX_AVAILABLE:
@@ -1548,28 +1558,20 @@ async def run_sprint(
     sprint_id = _make_sprint_id()
     _phase_times["WARMUP"] = time.monotonic()
 
-    # P0-2: Pipeline parallelization — start duckdb_store init in parallel with CoreML.
-    # duckdb_store.async_initialize() is I/O bound (ThreadPoolExecutor → DB file create + WAL).
-    # Starting it as background task overlaps with CoreML (~10-20s saved from critical path).
-    store = DuckDBShadowStore()
-    store_init_task = asyncio.create_task(store.async_initialize())
+    # CoreML→MLX migration: CoreML sidecar removed — MLX is process-native, no subprocess.
+    # DuckDB init now runs alone in ~1-2s (was sequential with 60s CoreML timeout).
+    # Start both in parallel: DuckDB + (former CoreML parallel slot now eliminated).
 
-    # CoreML sidecar — must be first, otherwise SemanticStore fails at init
-    from utils.coreml import CoreMLServiceManager
-    _coreml_manager = CoreMLServiceManager()
-    await asyncio.to_thread(_coreml_manager.ensure_running)
-    logger.info("[startup] CoreML sidecar ready on port 8765")
+    store = DuckDBShadowStore()
 
     # P0-2: Await duckdb_store init before passing to scheduler.
-    # If init is not yet done, this awaits the remaining time.
-    # If already done (fast path), this is a no-op await.
+    # Reduced from 60s to 10s because DuckDB init is ~1-2s (no longer blocked by CoreML).
     try:
-        async with asyncio.timeout(60.0):
-            await store_init_task
+        async with asyncio.timeout(10.0):
+            await store.async_initialize()
     except TimeoutError:
-        logger.warning("[P0-2] duckdb_store async_initialize timed out after 60s — continuing")
+        logger.warning("[startup] duckdb_store async_initialize timed out after 10s — continuing")
     except asyncio.CancelledError:
-        # Store init was cancelled (e.g. sprint cancelled) — re-raise
         raise
 
     # Scheduler config
@@ -2583,12 +2585,6 @@ async def run_sprint(
                 _dashboard.finish(result, elapsed_s)
             except Exception as e:
                 logger.warning(f"Dashboard finish failed: {e}")  # fail-safe
-        # CoreML sidecar teardown
-        try:
-            _coreml_manager.stop()
-        except Exception as e:
-            logger.debug(f"[TEARDOWN] CoreML sidecar stop failed: {e}")  # fail-soft
-
         await store.aclose()
         # Sprint F206K: Close HTTPX client if it was lazily instantiated
         try:
@@ -2936,6 +2932,29 @@ def _main_dispatch() -> None:
         level=logging.INFO,
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     )
+
+    # P2-SILENCE: Suppress coremltools warnings about missing native libs.
+    # coremltools 8.x/9.x on py3.14 tries to dlopen libcoremlpython / libmilstoragepython
+    # which are part of macOS SDK / Xcode toolchain — not bundled in py3.14 wheels.
+    # Warnings are benign; coremltools falls back gracefully.
+    # Only suppress the specific "Failed to load" / "Fail to import" messages.
+    class _CoremlNativeLibFilter(logging.Filter):
+        def filter(self, record: logging.LogRecord) -> bool:
+            if record.name == "coremltools" and record.levelno == logging.WARNING:
+                msg = record.getMessage()
+                if (
+                    "Failed to load _ML" in msg
+                    or "Failed to load '" in msg
+                    or "Fail to import Blob" in msg
+                ):
+                    return False
+            return True
+
+    _coreml_logger = logging.getLogger("coremltools")
+    _coreml_logger.propagate = False
+    _coreml_handler = logging.NullHandler()
+    _coreml_handler.addFilter(_CoremlNativeLibFilter())
+    _coreml_logger.addHandler(_coreml_handler)
 
     # P1E-A: Set acquisition profile env var so build_acquisition_plan picks it up
     os.environ["HLEDAC_ACQUISITION_PROFILE"] = args.acquisition_profile

@@ -36,8 +36,9 @@ from urllib.parse import urljoin, urlparse
 
 from hledac.universal.project_types import RiskLevel
 
-# Try to import socks for Tor support
+# Try to import aiohttp for Tor support
 try:
+    import aiohttp
     import aiohttp_socks
     TOR_AVAILABLE = True
 except ImportError:

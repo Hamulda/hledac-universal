@@ -368,8 +368,19 @@ def try_install_uvloop() -> bool:
     """
     global _uvloop_enabled, _last_error
 
+    # Python 3.14+: asyncio is highly optimized, uvloop provides marginal benefit
+    # but may cause issues. Use uvloop only for Python < 3.14 unless explicitly enabled.
+    import sys as _sys
+
     try:
         import uvloop
+        # uvloop 0.22+ supports Python 3.14, but we prefer native asyncio on 3.14+
+        # for better compatibility with Metal/GPU subsystems on M1
+        if _sys.version_info >= (3, 14):
+            _uvloop_enabled = False
+            _last_error = "Python 3.14+ — using native asyncio (better Metal compatibility)"
+            logger.debug("[RUNTIME] Skipping uvloop on Python 3.14+ — native asyncio preferred")
+            return False
         uvloop.install()
         _uvloop_enabled = True
         logger.info("[RUNTIME] uvloop installed successfully")

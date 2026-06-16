@@ -93,20 +93,31 @@ class SimpleNodeAblationExplainer:
         except Exception:
             return {}
 
-        importances = {}
+        # Build all ablation paths for parallel execution
+        ablation_tasks = []
+        ablation_indices = []
         for i in range(n_nodes):
             if i == 0 or i >= len(path) - 1:
                 continue  # Skip start/end nodes
-
             # Create path with node removed
             new_path = path[:i] + path[i+1:]
+            ablation_tasks.append(
+                self.graph_rag.score_path(new_path, hypothesis, hypothesis_emb=hypothesis_emb)
+            )
+            ablation_indices.append(i)
 
+        # Execute all ablation scorings in parallel (bounded by graph_rag semaphore)
+        from utils.async_helpers import safe_gather_dropin
+        ablation_scores = await safe_gather_dropin(*ablation_tasks, label="explain_path:105")
+
+        # Map results back to importance scores
+        importances = {}
+        for idx, score_result in zip(ablation_indices, ablation_scores, strict=False):
+            if isinstance(score_result, Exception):
+                continue
             try:
-                new_score = await self.graph_rag.score_path(
-                    new_path, hypothesis, hypothesis_emb=hypothesis_emb
-                )
-                importances[str(i)] = original_score - new_score
-            except Exception:
+                importances[str(idx)] = original_score - float(score_result)
+            except (TypeError, ValueError):
                 continue
 
         # Filter out non-positive importances

@@ -450,11 +450,12 @@ class DSPyOptimizer:
                 return {}
 
             # F288: fail-soft if dspy.context not available (older DSPy versions)
-            if hasattr(dspy, "context"):
+            # F289: ALSO catch AttributeError when dspy.context exists but is broken
+            try:
                 with dspy.context(lm=lm):
                     optimizer = MIPROv2(metric=_osint_metric, auto=None, num_candidates=2)
                     optimized = optimizer.compile(program, trainset=trainset, num_trials=2, minibatch=False)
-            else:
+            except (AttributeError, TypeError):
                 program.lm = lm
                 optimizer = MIPROv2(metric=_osint_metric, auto=None, num_candidates=2)
                 optimized = optimizer.compile(program, trainset=trainset, num_trials=2, minibatch=False)

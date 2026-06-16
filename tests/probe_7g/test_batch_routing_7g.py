@@ -29,8 +29,8 @@ class TestBatchSafeEligibility(unittest.TestCase):
     """Tests for _is_batch_safe() routing decision."""
 
     def setUp(self):
-        from hledac.universal.brain.hermes3_engine import Hermes3Engine
-        self.engine = Hermes3Engine()
+        from hledac.universal.brain.deephermes3_engine import DeepHermes3Engine
+        self.engine = DeepHermes3Engine()
 
     def test_stream_false_allows_batching(self):
         """Streaming=False allows batching."""
@@ -131,8 +131,8 @@ class TestLengthBinBinning(unittest.TestCase):
     """Tests for _compute_length_bin()."""
 
     def setUp(self):
-        from hledac.universal.brain.hermes3_engine import Hermes3Engine
-        self.engine = Hermes3Engine()
+        from hledac.universal.brain.deephermes3_engine import DeepHermes3Engine
+        self.engine = DeepHermes3Engine()
 
     def test_short_bin(self):
         """Short prompts (<256 tokens) get 'short' bin."""
@@ -157,8 +157,8 @@ class TestSystemPromptHash(unittest.TestCase):
     """Tests for _compute_system_prompt_hash()."""
 
     def setUp(self):
-        from hledac.universal.brain.hermes3_engine import Hermes3Engine
-        self.engine = Hermes3Engine()
+        from hledac.universal.brain.deephermes3_engine import DeepHermes3Engine
+        self.engine = DeepHermes3Engine()
 
     def test_none_returns_default(self):
         """None system_msg returns 'default'."""
@@ -187,8 +187,8 @@ class TestAdaptiveFlushInterval(unittest.TestCase):
     """Tests for _current_flush_interval()."""
 
     def setUp(self):
-        from hledac.universal.brain.hermes3_engine import Hermes3Engine
-        self.engine = Hermes3Engine()
+        from hledac.universal.brain.deephermes3_engine import DeepHermes3Engine
+        self.engine = DeepHermes3Engine()
 
     def test_default_flush_interval(self):
         """Sprint 7I: Default flush interval is 2.0s."""
@@ -217,8 +217,8 @@ class TestTelemetryCounters(unittest.TestCase):
     """Tests for batch routing telemetry counters."""
 
     def setUp(self):
-        from hledac.universal.brain.hermes3_engine import Hermes3Engine
-        self.engine = Hermes3Engine()
+        from hledac.universal.brain.deephermes3_engine import DeepHermes3Engine
+        self.engine = DeepHermes3Engine()
 
     def test_counters_exist_and_init_to_zero(self):
         """All telemetry counters initialized to 0."""
@@ -241,8 +241,8 @@ class TestBatchQueueEntryStructure(unittest.TestCase):
     """Tests that batch queue entries carry all required metadata."""
 
     def setUp(self):
-        from hledac.universal.brain.hermes3_engine import Hermes3Engine
-        self.engine = Hermes3Engine()
+        from hledac.universal.brain.deephermes3_engine import DeepHermes3Engine
+        self.engine = DeepHermes3Engine()
 
     def test_submit_structured_batch_includes_all_fields(self):
         """_submit_structured_batch payload includes all required fields."""
@@ -281,8 +281,8 @@ class TestMsgspecPydanticDispatch(unittest.TestCase):
     """Tests for dual-dispatch between msgspec and pydantic schemas."""
 
     def setUp(self):
-        from hledac.universal.brain.hermes3_engine import Hermes3Engine
-        self.engine = Hermes3Engine()
+        from hledac.universal.brain.deephermes3_engine import DeepHermes3Engine
+        self.engine = DeepHermes3Engine()
 
     def test_hasattr_struct_fields_for_msgspec_class(self):
         """Msgspec class has __struct_fields__."""
@@ -325,8 +325,8 @@ class TestGenerateStructuredRouting(unittest.TestCase):
     """Tests for generate_structured() routing decision."""
 
     def setUp(self):
-        from hledac.universal.brain.hermes3_engine import Hermes3Engine
-        self.engine = Hermes3Engine()
+        from hledac.universal.brain.deephermes3_engine import DeepHermes3Engine
+        self.engine = DeepHermes3Engine()
 
     def test_generate_structured_accepts_priority_param(self):
         """generate_structured() accepts priority parameter."""
@@ -346,8 +346,8 @@ class TestBatchShattering(unittest.TestCase):
     """Tests for batch shattering on malformed output."""
 
     def setUp(self):
-        from hledac.universal.brain.hermes3_engine import Hermes3Engine
-        self.engine = Hermes3Engine()
+        from hledac.universal.brain.deephermes3_engine import DeepHermes3Engine
+        self.engine = DeepHermes3Engine()
 
     def test_process_structured_batch_handles_exceptions(self):
         """_process_structured_batch catches batch-level exceptions."""
@@ -406,8 +406,8 @@ class TestSchemaAwareSegregation(unittest.TestCase):
     """Tests that batch worker separates by schema_key."""
 
     def setUp(self):
-        from hledac.universal.brain.hermes3_engine import Hermes3Engine
-        self.engine = Hermes3Engine()
+        from hledac.universal.brain.deephermes3_engine import DeepHermes3Engine
+        self.engine = DeepHermes3Engine()
 
     def test_batch_worker_checks_schema_boundary(self):
         """Batch worker puts back items with different schema_key."""
@@ -437,8 +437,8 @@ class TestAgeBumpQueue(unittest.TestCase):
     """Tests for age bump anti-starvation mechanism."""
 
     def setUp(self):
-        from hledac.universal.brain.hermes3_engine import Hermes3Engine
-        self.engine = Hermes3Engine()
+        from hledac.universal.brain.deephermes3_engine import DeepHermes3Engine
+        self.engine = DeepHermes3Engine()
 
     def test_age_bump_decreases_priority(self):
         """Age bump decreases priority by 1, minimum 0."""
@@ -491,8 +491,8 @@ class TestFlushAll(unittest.TestCase):
     """Tests for flush_all() drain functionality."""
 
     def setUp(self):
-        from hledac.universal.brain.hermes3_engine import Hermes3Engine
-        self.engine = Hermes3Engine()
+        from hledac.universal.brain.deephermes3_engine import DeepHermes3Engine
+        self.engine = DeepHermes3Engine()
 
     def test_flush_all_drains_queue(self):
         """flush_all() drains all pending items."""
@@ -533,8 +533,8 @@ class TestGenerateStructuredBatchContract(unittest.TestCase):
     """Tests that batch path returns same contract as single path."""
 
     def setUp(self):
-        from hledac.universal.brain.hermes3_engine import Hermes3Engine
-        self.engine = Hermes3Engine()
+        from hledac.universal.brain.deephermes3_engine import DeepHermes3Engine
+        self.engine = DeepHermes3Engine()
 
     def test_submit_returns_future(self):
         """_submit_structured_batch returns a Future."""

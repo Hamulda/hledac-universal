@@ -53,6 +53,7 @@ expose telemetry from a single counter dictionary.
 from __future__ import annotations
 
 import asyncio
+import functools
 import logging
 import os
 import time
@@ -296,6 +297,7 @@ def _altsvc_advertises_h3(headers: Any) -> bool:
     return "h3=" in s or 'h3 "' in s or 'h3="' in s
 
 
+@functools.lru_cache(maxsize=2048)
 def extract_host(url: str) -> str:
     """Return lowercased hostname from URL, or empty string on parse failure."""
     try:

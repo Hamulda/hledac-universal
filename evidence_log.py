@@ -50,7 +50,6 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-import json
 import logging
 import os
 import secrets
@@ -62,6 +61,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 import aiosqlite
+import orjson
 from pydantic import BaseModel, Field, field_validator
 
 # =============================================================================
@@ -154,7 +154,7 @@ class EvidenceEvent(BaseModel):
             "run_id": self.run_id,
         }
         # Serializuj do JSON s konzistentním řazením klíčů
-        json_str = json.dumps(data, sort_keys=True, separators=(',', ':'))
+        json_str = orjson.dumps(data, option=orjson.OPT_SORT_KEYS).decode()
         return hashlib.sha256(json_str.encode('utf-8')).hexdigest()
 
     def _normalize_payload(self, payload: dict[str, Any]) -> dict[str, Any]:
@@ -218,7 +218,7 @@ class EvidenceEvent(BaseModel):
 
     def to_jsonl_line(self) -> str:
         """Převede událost na JSONL řádek"""
-        return json.dumps(self.to_dict(), ensure_ascii=False, separators=(',', ':'))
+        return orjson.dumps(self.to_dict()).decode()
 
 
 class EvidenceLog:
@@ -405,10 +405,10 @@ class EvidenceLog:
                     line = line.strip()
                     if not line:
                         continue
-                    data = json.loads(line)
+                    data = orjson.loads(line)
                     timestamp = datetime.fromisoformat(data['timestamp']).timestamp()
                     event_type = data['event_type']
-                    event_data = json.dumps(data)
+                    event_data = orjson.dumps(data).decode()
                     content_hash = data.get('content_hash', '')
 
                     await self._db.execute(
@@ -475,7 +475,7 @@ class EvidenceLog:
         for event_data in batch:
             timestamp = event_data.get('timestamp', datetime.now().timestamp())  # noqa: DTZ005
             event_type = event_data.get('event_type', 'unknown')
-            data = json.dumps(event_data)
+            data = orjson.dumps(event_data).decode()
             content_hash = event_data.get('content_hash', '')
 
             records.append((timestamp, event_type, data, content_hash))
@@ -1328,7 +1328,7 @@ class EvidenceLog:
             with open(path, encoding='utf-8') as f:
                 first_line = f.readline().strip()
                 if first_line:
-                    data = json.loads(first_line)
+                    data = orjson.loads(first_line)
                     detected_run_id = data.get("run_id", "unknown")
 
         # Vytvoř log bez persistence (pouze čtení)
@@ -1358,7 +1358,7 @@ class EvidenceLog:
                 line = line.strip()
                 if not line:
                     continue
-                data = json.loads(line)
+                data = orjson.loads(line)
                 event = EvidenceEvent.from_dict(data)
                 # Přidej přímo do _log (skip append pro rychlost při načítání)
                 index = len(log._log)
@@ -1404,7 +1404,8 @@ class EvidenceLog:
         try:
             manifest_path.parent.mkdir(parents=True, exist_ok=True)
             with open(manifest_path, 'w', encoding='utf-8') as f:
-                json.dump(manifest, f, indent=2, ensure_ascii=False)
+                import json as _json_dump
+                _json_dump.dump(manifest, f, indent=2, ensure_ascii=False)
             logger.info(f"[EVIDENCE] Manifest written: {manifest_path}")
             return manifest_path
         except Exception as e:

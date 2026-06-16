@@ -27,14 +27,97 @@ from __future__ import annotations
 import asyncio as _asyncio
 import concurrent.futures as _concurrent
 import json as _json  # noqa: F401
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from hledac.universal.project_types import ExportHandoff
 
-__all__ = ["export_sprint_streaming", "SprintStreamingResult"]
+__all__ = ["export_sprint_streaming", "SprintStreamingResult", "stream_to_thread", "stream_transform"]
+
+
+# ---------------------------------------------------------------------
+# P2-2: asyncio.stream helpers for async generator pipeline composition
+# Python 3.14+ — falls back gracefully on older Python versions
+# ---------------------------------------------------------------------
+
+try:
+    import asyncio.stream as _stream
+    HAS_ASYNCIO_STREAM = True
+except ImportError:
+    HAS_ASYNCIO_STREAM = False
+
+
+async def stream_to_thread(
+    source: AsyncGenerator[Any],
+    func: Callable[[Any], Any],
+    *,
+    max_concurrent: int = 4,
+) -> AsyncGenerator[Any]:
+    """Offload blocking sync func to thread pool while consuming async generator.
+
+    P2-2: Wraps asyncio.stream.to_thread() for Python 3.14+ with graceful
+    fallback. Each yielded item from *source* is transformed via *func*
+    running in a thread pool — keeps event loop free for other I/O.
+
+    Args:
+        source: AsyncGenerator producing items.
+        func: Sync callable (Any -> Any) to run in thread.
+        max_concurrent: Max concurrent thread tasks. Default 4 (M1 8GB safe).
+
+    Yields:
+        Transformed items in source order.
+
+    Example:
+        async for chunk in stream_to_thread(stream_ioc_table_section(findings), process_chunk):
+            write(chunk)
+    """
+    if not HAS_ASYNCIO_STREAM:
+        # Fallback: run func in thread per item
+        semaphore = _asyncio.Semaphore(max_concurrent)
+
+        async def _run_in_thread(item: Any) -> Any:
+            async with semaphore:
+                return await _asyncio.to_thread(func, item)
+
+        async for item in source:
+            yield await _run_in_thread(item)
+    else:
+        # Python 3.14+: use built-in stream.to_thread
+        async for item in _stream.to_thread(source, func):
+            yield item
+
+
+async def stream_transform(
+    source: AsyncGenerator[Any],
+    *transforms: Callable[[Any], Any],
+) -> AsyncGenerator[Any]:
+    """Apply a pipeline of transforms to each item from an async generator.
+
+    P2-2: Composable transform chain — each item from *source* is passed
+    through *transforms* in order. No intermediate accumulation.
+
+    Args:
+        source: AsyncGenerator producing items.
+        *transforms: Sync callables to apply in sequence.
+
+    Yields:
+        Fully transformed items.
+
+    Example:
+        async for line in stream_transform(
+            stream_ioc_table_section(findings),
+            str.strip,
+            sanitize_markdown,
+        ):
+            write(line)
+    """
+    async for item in source:
+        result = item
+        for transform in transforms:
+            result = transform(result)
+        yield result
 
 
 class SprintStreamingResult:

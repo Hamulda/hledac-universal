@@ -21,6 +21,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
+import orjson
+
 from hledac.universal.project_types import (
     BrowserType,
     CaptchaSolution,
@@ -1893,7 +1895,6 @@ class FingerprintRandomizer:
     def get_fingerprint_hash(self) -> str:
         """Get hash of current fingerprint (for tracking detection)"""
         import hashlib
-        import json
 
         profile = self.get_profile()
 
@@ -1906,7 +1907,7 @@ class FingerprintRandomizer:
             'hardware': f"{profile.hardware_concurrency}c{profile.device_memory}g",
         }
 
-        fingerprint_str = json.dumps(fingerprint_data, sort_keys=True)
+        fingerprint_str = orjson.dumps(fingerprint_data, option=orjson.OPT_SORT_KEYS).decode()
         return hashlib.sha256(fingerprint_str.encode()).hexdigest()[:16]
 
     def rotate(self) -> BrowserProfile:

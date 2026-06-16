@@ -413,6 +413,10 @@ class TestGovernorRSSTracking:
         scheduler._planned_pivots = []
         scheduler._pivot_execution_results = []
         scheduler._analyst_brief = None
+        # F222 fix: mock orchestrator with _dispatcher._sidecars_skipped
+        scheduler._sidecar_orchestrator = MagicMock()
+        scheduler._sidecar_orchestrator._dispatcher = MagicMock()
+        scheduler._sidecar_orchestrator._dispatcher._sidecars_skipped = {"sidecar_a", "sidecar_b"}
         return scheduler
 
     @pytest.mark.asyncio

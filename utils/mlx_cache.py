@@ -406,10 +406,10 @@ def mlx_cleanup_sync() -> None:
         # Krok 3: clear_cache — uvolní Metal cache
         # F185C: metal.clear_cache is canonical MLX API; check it FIRST, reuse mx ref
         mx = _get_mx()
-        if hasattr(mx.metal, 'clear_cache'):
-            mx.metal.clear_cache()
-        elif hasattr(mx, 'clear_cache'):
+        if hasattr(mx, 'clear_cache'):
             mx.clear_cache()
+        elif hasattr(mx.metal, 'clear_cache'):
+            mx.metal.clear_cache()
     except Exception as e:
         logger.debug(f"MLX cleanup non-critical: {e}")
 

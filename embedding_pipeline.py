@@ -32,9 +32,7 @@ import gc
 import inspect
 import logging
 import threading
-import time
 from collections.abc import AsyncIterator
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -47,13 +45,11 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# CoreML availability flag — used by CoreMLEmbedder and smoke tests
-try:
-    import coremltools as ct  # noqa: F401
-
-    COREML_AVAILABLE = True
-except ImportError:
-    COREML_AVAILABLE = False
+# CoreML→MLX migration:
+# OLD: CoreMLEmbedder (bge-small-en-v1.5.mlpackage on ANE) + _ANE_EMBEDDER singleton
+# NEW: MLXEmbeddingManager / ModernBERTEmbedder only — no CoreML subprocess
+# Boot impact: was eager+blocking (mlpackage load at first embed call); now fully lazy
+COREML_AVAILABLE = False  # CoreML removed — MLX only
 
 # MRL dimension (Matryoshka Representation Learning) - 256d output
 _EMBEDDING_DIM = 256
@@ -72,46 +68,14 @@ _ENV_ALLOW_LARGE_BATCH_VAR = "HLEDAC_ALLOW_LARGE_MLX_BATCH"
 
 class EmbeddingRouter:
     """
-    Priority routing: ANE (CoreML) → MLX ModernBERT → CPU sentence-transformers.
+    MLX-only priority routing: MLX ModernBERT → MLXEmbeddingManager.
 
-    M1 8GB UMA constraint: ANE and MLX ModernBERT are never loaded simultaneously.
-    ANE uses ~300MB CoreML model; MLX ModernBERT uses ~500MB.
-    Loading both would exceed the 5.5GB working limit.
-
-    Wiring: Replaces _get_embedder() singleton in embedding_pipeline.py.
-    Lazy initialization — no models loaded at construction.
+    CoreML ANE path removed per CoreML→MLX migration.
+    All inference is in-process on M1 Metal — no subprocess, no blocking.
     """
 
     def __init__(self):
-        self._ane = None
         self._modernbert: ModernBERTEmbedder | None = None
-        self._ane_available = False
-        self._initialized = False
-
-    def _ensure_initialized(self):
-        """Deferred import to avoid circular deps at module load."""
-        if self._initialized:
-            return
-        self._initialized = True
-        try:
-            from hledac.universal.brain.ane_embedder import ANE_AVAILABLE
-            self._ane_available = ANE_AVAILABLE
-        except ImportError:
-            self._ane_available = False
-
-    async def _load_ane(self) -> bool:
-        """Load ANE embedder. Returns True if ANE is ready."""
-        self._ensure_initialized()
-        if not self._ane_available:
-            return False
-
-        from hledac.universal.brain.ane_embedder import ANEEmbedder
-
-        if self._ane is None:
-            self._ane = ANEEmbedder()
-        if not self._ane.is_loaded:
-            await self._ane.load()
-        return self._ane.is_loaded
 
     def _load_modernbert(self) -> ModernBERTEmbedder:
         """Load MLX ModernBERT embedder. Raises on failure."""
@@ -128,216 +92,84 @@ class EmbeddingRouter:
             from hledac.universal.brain.model_manager import ModelManager
             mm = ModelManager.instance()
             current = mm.get_current_model()
-            # MLX model loaded means ANE would compete for UMA
-            return current is not None and current != "ane"
+            return current is not None
         except Exception:
             return False
 
     def encode(self, texts: str | list[str], **kwargs) -> np.ndarray:
         """
-        Encode texts using the selected embedder (ANE or ModernBERT).
+        Encode texts using MLX ModernBERT or MLXEmbeddingManager.
 
-        Implements the .encode() interface expected by generate_embeddings().
-        Delegated to the underlying embedder's native method:
-          - ANEEmbedder.embed()        (async)
-          - ModernBERTEmbedder.embed_batch()  (sync)
-          - MLXEmbeddingManager.encode()       (sync)
-
-        Args:
-            texts: Single text or list of texts.
-            kwargs: Passed through to the underlying embedder.
-
-        Returns:
-            np.ndarray of shape (len(texts), 256) or (len(texts), 768).
+        MLX-only: CoreML ANE path removed per CoreML→MLX migration.
         """
-        # Use sync path — determine which embedder is active
         embedder = self._get_embedder_sync()
         if embedder is None:
             return np.zeros((len(texts) if isinstance(texts, list) else 1, _EMBEDDING_DIM), dtype=np.float32)
 
-        # MLXEmbeddingManager already has .encode()
         if hasattr(embedder, 'encode'):
             return embedder.encode(texts, **kwargs)
-
-        # ModernBERTEmbedder — use .embed_batch()
         if hasattr(embedder, 'embed_batch'):
             if isinstance(texts, str):
                 texts = [texts]
             return embedder.embed_batch(texts, **kwargs)
-
-        # ANEEmbedder — use .embed() (async)
-        if hasattr(embedder, 'embed'):
-            if isinstance(texts, str):
-                texts = [texts]
-            if inspect.iscoroutinefunction(embedder.embed):
-                # asyncio.run() creates its own loop — correct for executor thread
-                return asyncio.run(embedder.embed(texts))
-            else:
-                return embedder.embed(texts)
-
-        # Fallback
         return np.zeros((len(texts) if isinstance(texts, list) else 1, _EMBEDDING_DIM), dtype=np.float32)
-
-    def _get_legacy_ane_embedder(self) -> CoreMLEmbedder | None:
-        """
-        F218A: Load legacy AllMiniLML6V2 ANE embedder as fallback.
-
-        Called when bge-small-en-v1.5.mlpackage is unavailable but
-        AllMiniLML6V2.mlmodel exists. Falls back to MLX if ANEEmbedder
-        reports is_loaded == False.
-
-        Returns:
-            ANEEmbedder instance or None.
-        """
-        from hledac.universal.brain.ane_embedder import ANEEmbedder
-
-        legacy = ANEEmbedder()
-        if legacy.is_loaded:
-            return legacy
-        # ANEEmbedder not loaded — fall back to MLXEmbeddingManager
-        legacy = None
-        from hledac.universal.core._mlx_embeddings import MLXEmbeddingManager
-        try:
-            manager = MLXEmbeddingManager(lazy_load=True)
-            if manager.is_loaded:
-                return manager
-        except Exception:
-            pass
-        return None  # Will trigger zero-array in generate_embeddings
 
     def _get_embedder_sync(self):
         """
-        Internal sync embedder selection — returns the raw embedder instance.
-
-        Priority: ANE (if already loaded) → MLX ModernBERT → MLXEmbeddingManager.
-        Does NOT attempt to load ANE asynchronously — that happens via get_embedder() async.
-
-        M1 memory rule: When MLX is in UMA, ANE doesn't add to Metal buffers (separate
-        hardware), so if ANE is already cached, prefer it. ModernBERT is only chosen
-        when ANE is not yet loaded.
-
-        F218A: Memory-adaptive — at RAM >= 80% skip ANE entirely, go direct to MLX.
-        Legacy AllMiniLML6V2.mlmodel is fallback if bge mlpackage is missing.
-
-        Returns:
-            Embedder instance with .encode() / .embed() / .embed_batch() methods.
+        MLX-only embedder selection (CoreML ANE path removed).
+        Priority: MLX ModernBERT (if already in UMA) → MLX ModernBERT → MLXEmbeddingManager.
+        No ANE/CoreML subprocess — all inference in-process on M1 Metal.
         """
-        import psutil as _psutil
-
-        self._ensure_initialized()
-        _ram_pct = _psutil.virtual_memory().percent
-
-        # === F218A: RAM >= 80% — skip ANE, continue to legacy/MLX paths ===
-        if _ram_pct >= 80.0:
-            logger.debug("[EMBED:ROUTER] RAM %.1f%% >= 80%%, skipping ANE", _ram_pct)
-            pass  # Fall through to legacy ANE / MLX fallback chain
-
-        # === F216B: Try BGE CoreMLEmbedder (ANE primary) first ===
-        _mlpkg = Path.home() / ".hledac/models/bge-small-en-v1.5.mlpackage"
-        if _mlpkg.exists() and _ram_pct < 75.0:
-            bge = get_ane_embedder()
-            if bge is not None and bge.is_loaded:
-                t0 = time.monotonic()
-                _ = bge.embed(["warmup"])
-                elapsed = time.monotonic() - t0
-                logger.debug(f"[EMBED] backend={type(bge).__name__} time={elapsed*1000:.1f}ms warmup")
-                logger.debug("[EMBED:ROUTER] sync: using BGE CoreML/ANE")
-                return bge
-
-        # === F218A: Try legacy AllMiniLML6V2 if bge mlpackage missing ===
-        if not _mlpkg.exists():
-            _legacy_mlmodel = Path.home() / ".hledac/models/AllMiniLML6V2.mlmodel"
-            if _legacy_mlmodel.exists():
-                return self._get_legacy_ane_embedder()
-
-        # ANE not loaded but MLX is loaded → stick with MLX (don't load another model)
         if self._check_mlx_loaded():
             try:
                 mb = self._load_modernbert()
-                t0 = time.monotonic()
-                _ = mb.embed(["warmup"])
-                elapsed = time.monotonic() - t0
-                logger.debug(f"[EMBED] backend={type(mb).__name__} time={elapsed*1000:.1f}ms warmup")
                 logger.debug("[EMBED:ROUTER] sync: MLX in UMA, using ModernBERT")
                 return mb
             except Exception:
                 pass
-
-        # Fallback to MLX ModernBERT (normal path when nothing loaded)
         try:
             mb = self._load_modernbert()
-            t0 = time.monotonic()
-            _ = mb.embed(["warmup"])
-            elapsed = time.monotonic() - t0
-            logger.debug(f"[EMBED] backend={type(mb).__name__} time={elapsed*1000:.1f}ms warmup")
-            logger.debug("[EMBED:ROUTER] sync: falling back to MLX ModernBERT")
+            logger.debug("[EMBED:ROUTER] sync: MLX ModernBERT loaded")
             return mb
         except Exception as e:
-            logger.W(f"[EMBED:ROUTER] ModernBERT sync load failed: {e}")
-
-        # Final fallback: MLXEmbeddingManager
+            logger.debug(f"[EMBED:ROUTER] ModernBERT sync load failed: {e}")
         from hledac.universal.core._mlx_embeddings import get_embedding_manager
         return get_embedding_manager()
 
     async def get_embedder(self):
         """
-        Priority: ANE → MLX ModernBERT → CPU fallback.
-
-        M1 memory rule: If MLX model is already loaded, prefer ANE (doesn't
-        compete with MLX Metal buffers). If no MLX model loaded, prefer ANE
-        since it's cheaper on UMA than MLX ModernBERT.
-
-        Returns:
-            embedder with .embed(texts) → np.ndarray and .is_loaded property
+        MLX-only embedder (CoreML ANE path removed).
+        Priority: MLX ModernBERT → MLXEmbeddingManager.
         """
-        self._ensure_initialized()
-
-        # Try ANE first
-        if self._ane_available:
-            ane_ready = await self._load_ane()
-            if ane_ready:
-                # M1 guard: if MLX model is loaded, ANE doesn't add UMA pressure
-                if self._check_mlx_loaded():
-                    logger.debug("[EMBED:ROUTER] ANE ready, MLX already loaded — using ANE")
-                    return self._ane
-                # No MLX loaded: prefer ANE (300MB CoreML vs 500MB MLX)
-                if not self._check_mlx_loaded():
-                    logger.debug("[EMBED:ROUTER] ANE ready, no MLX loaded — using ANE")
-                    return self._ane
-
-        # Fallback to MLX ModernBERT
+        if self._check_mlx_loaded():
+            try:
+                mb = self._load_modernbert()
+                logger.debug("[EMBED:ROUTER] async: MLX in UMA, using ModernBERT")
+                return mb
+            except Exception:
+                pass
         try:
             mb = self._load_modernbert()
-            logger.debug("[EMBED:ROUTER] Falling back to MLX ModernBERT")
+            logger.debug("[EMBED:ROUTER] async: MLX ModernBERT loaded")
             return mb
         except Exception as e:
             logger.warning(f"[EMBED:ROUTER] ModernBERT load failed: {e}")
-
-        # Final fallback: MLXEmbeddingManager (CPU sentence-transformers)
         from hledac.universal.core._mlx_embeddings import get_embedding_manager
-        embedder = get_embedding_manager()
-        t0 = time.monotonic()
-        _ = embedder.embed("warmup")
-        elapsed = time.monotonic() - t0
-        logger.debug(f"[EMBED] backend={type(embedder).__name__} time={elapsed*1000:.1f}ms warmup")
-        return embedder
+        return get_embedding_manager()
 
     async def warmup(self):
-        """Warmup the selected embedder. Called after model selection."""
+        """Warmup the selected embedder."""
         embedder = await self.get_embedder()
         if embedder is None:
             return
-        if hasattr(embedder, 'warmup') and inspect.iscoroutinefunction(embedder.warmup):
-            await embedder.warmup()
-        elif hasattr(embedder, 'warmup'):
-            embedder.warmup()
+        if hasattr(embedder, 'warmup'):
+            if inspect.iscoroutinefunction(embedder.warmup):
+                await embedder.warmup()
+            else:
+                embedder.warmup()
 
     def unload_all(self):
-        """Release all embedders from memory."""
-        if self._ane is not None:
-            self._ane._loaded = False
-            self._ane.model = None
-            self._ane = None
+        """Release all embedders from memory (MLX-only)."""
         if self._modernbert is not None:
             try:
                 self._modernbert.unload()
@@ -346,174 +178,23 @@ class EmbeddingRouter:
             self._modernbert = None
         logger.info("[EMBED:ROUTER] All embedders unloaded")
 
+# === MLX-only embedder (CoreML ANE removed per CoreML→MLX migration) ===
+# All embedding now via MLXEmbeddingManager / ModernBERTEmbedder — no CoreML subprocess.
 
-# === CoreMLEmbedder (BGE on ANE via CoreML) ===
-
-_MODELS_DIR = Path.home() / ".hledac" / "models"
-
-
-class CoreMLEmbedder:
-    """
-    CoreML embedder using bge-small-en-v1.5.mlpackage on ANE.
-
-    Compute units: ALL (ANE + GPU + CPU)
-    Fallback: raises RuntimeError if mlpackage not found or CoreML unavailable.
-
-    Data contract: embed(texts) → np.ndarray float32 shape (N, 384)
-    """
-
-    def __init__(self, mlpackage_path: Path | None = None):
-        self._model = None
-        self._available = False
-        self._loaded = False
-
-        if not COREML_AVAILABLE:
-            self._last_error = "CoreML not available (coremltools not installed)"
-            return
-
-        try:
-            import coremltools as ct
-            import psutil
-
-            # RAM guard: skip ANE load if RAM > 80%
-            if psutil.virtual_memory().percent > 80:
-                self._last_error = "RAM >80%, skipping ANE load"
-                self._available = False
-                self._loaded = False
-                return
-
-            if mlpackage_path is None:
-                mlpackage_path = _MODELS_DIR / "bge-small-en-v1.5.mlpackage"
-
-            if not mlpackage_path.exists():
-                self._last_error = f"mlpackage not found: {mlpackage_path}"
-                return
-
-            self._mlpackage_path = mlpackage_path
-            self._model = ct.models.MLModel(str(mlpackage_path))
-            self._available = True
-            self._loaded = True
-            self._last_error = None
-            logger.info(f"[CoreMLEmbedder] Loaded: {mlpackage_path}")
-        except Exception as e:
-            self._last_error = str(e)
-            self._available = False
-            self._loaded = False
-
-    @property
-    def is_loaded(self) -> bool:
-        return self._loaded and self._available
-
-    @property
-    def available(self) -> bool:
-        return self._available
-
-    def embed(self, texts: list[str]) -> np.ndarray:
-        """Encode texts via CoreML predict. Sync (no async needed for ANE)."""
-        if not self._available:
-            raise RuntimeError(f"CoreMLEmbedder unavailable: {self._last_error}")
-
-        # Tokenize via ONNX input name — bge-small uses "input_ids" + "attention_mask"
-        # For mlpackage, input spec varies — try generic dict approach first
-        try:
-            # CoreML mlpackage: call predict with dict input
-            # Text tokenization happens inside the mlmodel — provide text as string/list
-            if isinstance(texts, str):
-                texts = [texts]
-
-            # The mlmodel input spec determines exact key names
-            # bge-small-en-v1.5.mlpackage typically has "text" input for sentence-transformers
-            result = self._model.predict({"text": texts})
-            # Output is typically "sentence_embedding" or similar
-            for key in result:
-                arr = result[key]
-                if hasattr(arr, "shape"):
-                    return np.array(arr, dtype=np.float32)
-
-            raise RuntimeError(f"No array output from CoreML predict, keys: {list(result.keys())}")
-        except Exception as e:
-            raise RuntimeError(f"CoreML embed failed: {e}") from e
-
-    def unload(self):
-        """Release CoreML model from memory."""
-        self._model = None
-        self._loaded = False
-        # mx.eval() + clear_cache() per GHOST_INVARIANT I11
-        try:
-            import mlx.core as mx
-
-            mx.eval([])
-            mx.metal.clear_cache()
-        except Exception:
-            pass
-        # Free memory after ANE unload
-        import gc
-        gc.collect()
-        logger.debug("[CoreMLEmbedder] Unloaded")
-
-
-# === ANE_EMBEDDER singleton (lazy init) ===
-
-_ANE_EMBEDDER: CoreMLEmbedder | None = None
-_ANE_INIT_LOCK = threading.Lock()
-
-
-def get_ane_embedder() -> CoreMLEmbedder | None:
-    """
-    Get or create the ANE embedder singleton.
-
-    Initialized once at first call, thread-safe.
-    Returns None if CoreML or mlpackage unavailable.
-    """
-    global _ANE_EMBEDDER
-    if _ANE_EMBEDDER is not None:
-        return _ANE_EMBEDDER
-
-    with _ANE_INIT_LOCK:
-        if _ANE_EMBEDDER is not None:
-            return _ANE_EMBEDDER
-
-        # Try to load CoreMLEmbedder
-        impl = CoreMLEmbedder()
-        if impl._available:
-            _ANE_EMBEDDER = impl
-            logger.info("[ANE_EMBEDDER] CoreMLEmbedder initialized")
-        else:
-            logger.debug(f"[ANE_EMBEDDER] Not available: {impl._last_error}")
-
-        return _ANE_EMBEDDER
-
-
-def unload_ane_embedder() -> None:
-    """Unload the ANE embedder singleton."""
-    global _ANE_EMBEDDER
-    if _ANE_EMBEDDER is not None:
-        _ANE_EMBEDDER.unload()
-        _ANE_EMBEDDER = None
-
-
-# === Fallback routing via EmbeddingRouter ===
-
-_embedding_router: EmbeddingRouter | None = None
+_embedding_router = None
 
 
 def _get_embedder():
     """
-    Get the embedding manager via EmbeddingRouter (ANE → MLX → CPU).
-
-    P20: Changed to local import to break circular dependency on hledac.config.
-    Sprint F228B: Now uses EmbeddingRouter for ANE-aware priority routing.
-
-    Note: EmbeddingRouter.get_embedder() is async but this sync wrapper handles
-    model selection inline to avoid blocking the event loop for callers that
-    call _get_embedder() from sync contexts (embedding_pipeline.py callers).
-    ANE loading is done via asyncio.run() here — it only happens once per
-    EmbeddingRouter instance at first embed call.
+    Get the embedding manager via EmbeddingRouter (MLX-only).
+    CoreML ANE path removed — all inference in-process on M1 Metal.
     """
     global _embedding_router
     if _embedding_router is None:
         _embedding_router = EmbeddingRouter()
     return _embedding_router._get_embedder_sync()
+
+
 
 
 def _is_swap_detected() -> bool:
@@ -981,7 +662,6 @@ _embed_max_rss_gb: float = 5.5
 # loaded embedding model on M1 Air 8GB. BROKEN check in public_fetcher used
 # semaphore._value which is always <= max, causing the guard to always fire.
 # Increment before model load attempt, decrement after unload — balanced per call.
-import threading  # noqa: E402
 
 _embedding_depth: int = 0
 _embedding_depth_lock = threading.Lock()

@@ -6,6 +6,7 @@ Provides:
 - Symmetric/asymmetric embedding support (search_query vs search_document prefixes)
 - M1 Metal cache cleanup on unload
 - Fallback: sentence-transformers (CPU) if mlx-embeddings unavailable
+- Adaptive batch sizing based on available Metal memory (Sprint F265D)
 
 Canonical import path: from hledac.universal.embeddings.modernbert_embedder import ModernBERTEmbedder
 Replaces: utils/semantic.py ModernBERTEmbedding (DEPRECATED)
@@ -62,6 +63,11 @@ class ModernBERTConfig:
     embed_dim: int = 768
     batch_size: int = 8
     normalize: bool = True
+    # Adaptive batching thresholds (Sprint F265D + P3-1)
+    batch_size_high: int = 16  # NORMAL memory pressure (60-80% MLX budget)
+    batch_size_low: int = 4  # CRITICAL memory pressure (>90% MLX budget)
+    # P3-1: Abundant memory headroom (<50% MLX budget) → full throughput
+    batch_size_max: int = 32
 
 
 class ModernBERTEmbedder:
@@ -86,6 +92,9 @@ class ModernBERTEmbedder:
         lazy_load: bool = True,
         normalize: bool = True,
         batch_size: int = 8,
+        batch_size_high: int = 16,
+        batch_size_low: int = 4,
+        batch_size_max: int = 32,
     ):
         """
         Initialize ModernBERT embedder.
@@ -94,16 +103,23 @@ class ModernBERTEmbedder:
             model_path: HuggingFace model ID or local path. Defaults to nomic-ai/modernbert-embed-base.
             lazy_load: If True, defer model load until first embed() call.
             normalize: L2-normalize embeddings (default True for retrieval).
-            batch_size: Max batch size for encoding.
+            batch_size: Default batch size (WARNING memory pressure, default 8).
+            batch_size_high: Max batch size when Metal memory 50-80% (default 16).
+            batch_size_low: Min batch size when Metal memory >90% (default 4).
+            batch_size_max: Max batch size when Metal memory <50% (P3-1, default 32).
         """
         self.config = ModernBERTConfig(
             model_path=model_path or "nomic-ai/modernbert-embed-base",
             batch_size=batch_size,
             normalize=normalize,
+            batch_size_high=batch_size_high,
+            batch_size_low=batch_size_low,
+            batch_size_max=batch_size_max,
         )
         self._model = None
         self._tokenizer = None
         self._is_loaded = False
+        self._mlx_memory = None  # Lazy import for adaptive batching
 
         if not lazy_load:
             self._load_model()
@@ -205,6 +221,11 @@ class ModernBERTEmbedder:
         """
         Encode a batch of texts to embedding matrix.
 
+        Uses adaptive batch sizing based on Metal memory pressure (Sprint F265D):
+        - NORMAL (<80% Metal budget): batch_size_high (default 16)
+        - WARNING (80-90%): batch_size (default 8)
+        - CRITICAL (>90%): batch_size_low (default 4)
+
         Args:
             texts: List of texts to encode.
             task: Task type (see embed()).
@@ -218,12 +239,15 @@ class ModernBERTEmbedder:
         if not texts:
             return np.array([])
 
+        # Sprint F265D: Get adaptive batch size based on memory pressure
+        effective_batch_size = self._get_adaptive_batch_size()
+
         # Apply prefixes
         prefixed = [self._apply_prefix(t, task) for t in texts]
 
         all_embeddings = []
-        for i in range(0, len(prefixed), self.config.batch_size):
-            batch = prefixed[i:i + self.config.batch_size]
+        for i in range(0, len(prefixed), effective_batch_size):
+            batch = prefixed[i:i + effective_batch_size]
 
             inputs = self._tokenizer(
                 batch,
@@ -271,6 +295,48 @@ class ModernBERTEmbedder:
             return get_metal_stream_context()
         except ImportError:
             return _NoOpContext()
+
+    def _get_mlx_memory(self):
+        """Lazy-load mlx_memory module for adaptive batching (Sprint F265D)."""
+        if self._mlx_memory is None:
+            try:
+                from hledac.universal.utils import mlx_memory
+                self._mlx_memory = mlx_memory
+            except ImportError:
+                self._mlx_memory = None
+        return self._mlx_memory
+
+    def _get_adaptive_batch_size(self) -> int:
+        """
+        P3-1: Return adaptive batch size based on Metal memory pressure.
+
+        Memory pressure tiers (using mlx_memory.get_mlx_memory_pressure()):
+        - ABUNDANT (<50% of MLX budget): batch_size_max (default 32) — P3-1
+        - NORMAL (50-80% of budget): batch_size_high (default 16)
+        - WARNING (80-90%): batch_size (default 8)
+        - CRITICAL (>90%): batch_size_low (default 4)
+
+        Returns:
+            Adaptive batch size in range [batch_size_low, batch_size_max].
+        """
+        mlx_mem = self._get_mlx_memory()
+        if mlx_mem is None:
+            return self.config.batch_size
+
+        try:
+            usage_pct, pressure_level = mlx_mem.get_mlx_memory_pressure()
+        except Exception:
+            return self.config.batch_size
+
+        # P3-1: ABUNDANT — Metal memory <50% → full throughput batch size
+        if pressure_level == "NORMAL" and usage_pct < 50:
+            return self.config.batch_size_max
+        if pressure_level == "NORMAL":
+            return self.config.batch_size_high
+        elif pressure_level == "WARNING":
+            return self.config.batch_size
+        else:  # CRITICAL or UNKNOWN
+            return self.config.batch_size_low
 
     def unload(self) -> None:
         """Explicitly unload model and clear Metal cache."""
