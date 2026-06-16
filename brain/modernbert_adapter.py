@@ -36,7 +36,7 @@ from .modernbert_engine import ModernBertEngine
 
 logger = logging.getLogger(__name__)
 
-T = TypeVar('T', bound=BaseModel)
+T = TypeVar('T', bound=BaseModel, default=BaseModel)  # PEP 696: TypeVar with default
 
 
 class ModernBertModelAdapter:

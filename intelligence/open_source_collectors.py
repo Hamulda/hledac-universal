@@ -49,7 +49,7 @@ if TYPE_CHECKING:
 from hledac.universal.fetching.public_fetcher import FetchResult, async_fetch_public_text
 from hledac.universal.network.session_runtime import async_get_aiohttp_session
 from hledac.universal.runtime.resource_governor import M1ResourceGovernor
-from hledac.universal.utils.async_helpers import safe_gather
+from hledac.universal.utils.async_helpers import safe_gather, safe_gather_dropin
 
 logger = logging.getLogger(__name__)
 
@@ -638,16 +638,26 @@ async def search_paste_sites(query: str, max_results: int = MAX_PASTE_RESULTS) -
                     pid = href.rstrip("/").split("/")[-1]
                     if pid:
                         paste_ids.append(pid)
-            results: list[PasteFinding] = []
-            for paste_id in paste_ids[:10]:
-                text = await _scrape_pastebin_raw(paste_id)
+            paste_id_list = paste_ids[:10]
+
+            async def _scrape_one(pid: str) -> PasteFinding | None:
+                text = await _scrape_pastebin_raw(pid)
                 if not text:
-                    continue
+                    return None
                 emails, ips, secrets = _extract_secrets(text)
-                if emails or ips or secrets:
-                    results.append(PasteFinding(uri=f"https://pastebin.com/{paste_id}", source="pastebin",
-                                               extracted_secrets=secrets, emails=emails, ip_addresses=ips,
-                                               context_snippet=text[:200]))
+                if not (emails or ips or secrets):
+                    return None
+                return PasteFinding(
+                    uri=f"https://pastebin.com/{pid}", source="pastebin",
+                    extracted_secrets=secrets, emails=emails, ip_addresses=ips,
+                    context_snippet=text[:200],
+                )
+
+            scraped = await safe_gather_dropin(
+                *tuple(_scrape_one(pid) for pid in paste_id_list),
+                label="pastebin_scrape",
+            )
+            results = [r for r in scraped if r is not None]
             return results
         except Exception as e:
             logger.debug(f"pastebin search failed: {e}")
@@ -665,17 +675,27 @@ async def search_paste_sites(query: str, max_results: int = MAX_PASTE_RESULTS) -
                     return []
                 data = await resp.json()
             items = (data.get("data") or {}).get("pasties") or []
-            results: list[PasteFinding] = []
-            for item in items[:10]:
+            item_list = items[:10]
+
+            async def _scrape_one(item: dict) -> PasteFinding | None:
                 paste_id = item.get("id", "")
                 text = await _scrape_paste_gg(paste_id)
                 if not text:
-                    continue
+                    return None
                 emails, ips, secrets = _extract_secrets(text)
-                if emails or ips or secrets:
-                    results.append(PasteFinding(uri=f"https://paste.gg/{paste_id}", source="paste_gg",
-                                               extracted_secrets=secrets, emails=emails, ip_addresses=ips,
-                                               context_snippet=text[:200]))
+                if not (emails or ips or secrets):
+                    return None
+                return PasteFinding(
+                    uri=f"https://paste.gg/{paste_id}", source="paste_gg",
+                    extracted_secrets=secrets, emails=emails, ip_addresses=ips,
+                    context_snippet=text[:200],
+                )
+
+            scraped = await safe_gather_dropin(
+                *tuple(_scrape_one(item) for item in item_list),
+                label="paste_gg_scrape",
+            )
+            results = [r for r in scraped if r is not None]
             return results
         except Exception as e:
             logger.debug(f"paste.gg search failed: {e}")
@@ -701,16 +721,26 @@ async def search_paste_sites(query: str, max_results: int = MAX_PASTE_RESULTS) -
                 href = a.attributes.get("href", "")
                 if href.startswith("/") and len(href) > 2:
                     raw_paths.append(href.lstrip("/"))
-            results: list[PasteFinding] = []
-            for raw_path in raw_paths[:10]:
-                text = await _scrape_rentry(raw_path)
+            path_list = raw_paths[:10]
+
+            async def _scrape_one(path: str) -> PasteFinding | None:
+                text = await _scrape_rentry(path)
                 if not text:
-                    continue
+                    return None
                 emails, ips, secrets = _extract_secrets(text)
-                if emails or ips or secrets:
-                    results.append(PasteFinding(uri=f"https://rentry.co/{raw_path}", source="rentry",
-                                               extracted_secrets=secrets, emails=emails, ip_addresses=ips,
-                                               context_snippet=text[:200]))
+                if not (emails or ips or secrets):
+                    return None
+                return PasteFinding(
+                    uri=f"https://rentry.co/{path}", source="rentry",
+                    extracted_secrets=secrets, emails=emails, ip_addresses=ips,
+                    context_snippet=text[:200],
+                )
+
+            scraped = await safe_gather_dropin(
+                *tuple(_scrape_one(p) for p in path_list),
+                label="rentry_scrape",
+            )
+            results = [r for r in scraped if r is not None]
             return results
         except Exception as e:
             logger.debug(f"rentry search failed: {e}")

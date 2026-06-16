@@ -366,11 +366,31 @@ async def scan_repo(repo_full_name: str) -> list[SecretFinding]:
             query_str = f"{repo_q}{pattern_label}"
             items = await _gh_search(query_str, session, max_results=30)
 
-            for item in items:
+            # Parallelize file content fetches with bounded concurrency
+            # M1 8GB: 5 concurrent = ~50MB extra, respects rate limit via _rate_lock
+            _fetch_sem = asyncio.Semaphore(5)
+
+            async def _fetch_one(item: dict) -> tuple[dict, str | None]:
+                async with _fetch_sem:
+                    file_path = item.get("path") or item.get("name") or "unknown"
+                    content = await _fetch_file_content(item.get("url"), session)
+                    return (item, content)
+
+            fetched: list[tuple[dict, str | None]] = []
+            gather_results = await asyncio.gather(
+                *[_fetch_one(item) for item in items],
+                return_exceptions=True,
+            )
+            for result in gather_results:
+                if isinstance(result, Exception):
+                    logger.debug(f"GitHub file fetch exception: {result}")
+                    continue
+                fetched.append(result)
+
+            for item, content in fetched:
                 file_path = item.get("path") or item.get("name") or "unknown"
                 html_url = item.get("html_url") or ""
 
-                content = await _fetch_file_content(item.get("url"), session)
                 if content:
                     for line_no, line in enumerate(content.splitlines(), start=1):
                         matches = compiled_re.findall(line)

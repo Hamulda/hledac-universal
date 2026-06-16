@@ -2820,8 +2820,8 @@ async def _generate_and_store_report(
                 payload_text=report_text,
             )
 
-            # Store using existing async API
-            await store.async_ingest_findings_batch([report_finding])
+            # Store using existing async API (coalescer path — fire-and-forget)
+            await store.submit_findings([report_finding])
             import logging
             logging.getLogger(__name__).info(f"[REPORT] Stored report {report_id[:8]} for query: {query[:50]}")
 
@@ -2891,7 +2891,7 @@ async def _generate_and_store_report(
                     provenance=("source_family:public", "hermes_inference", hermes_engine.__class__.__name__),
                     payload_text=json.dumps(hermes_output.to_dict(), ensure_ascii=False)[:4096],
                 )
-                await store.async_ingest_findings_batch([hermes_finding])
+                await store.submit_findings([hermes_finding])
                 import logging as _log
                 _log.getLogger(__name__).info(f"[F256] Stored hermes_inference {hermes_output.output_id[:8]}")
             except Exception as _e:
@@ -3251,7 +3251,7 @@ async def _inject_onion_hits(
 
     if findings and store is not None:
         try:
-            await store.async_ingest_findings_batch(findings)
+            await store.submit_findings(findings)
             logger.info(f"[F193A] Stored {len(findings)} onion findings")
         except Exception as e:
             logger.debug(f"[F193A] Onion findings persist failed: {e}")
@@ -3727,8 +3727,8 @@ async def async_run_live_public_pipeline(
                                 all_findings.extend(findings)
 
                             if all_findings:
-                                # Ingest directly (findings already CanonicalFinding)
-                                await self.store.async_ingest_findings_batch(all_findings)
+                                # Ingest via coalescer (fire-and-forget)
+                                await self.store.submit_findings(all_findings)
                                 academic_findings_count = len(all_findings)
                                 logger.info(f"[F259] Academic lane: {academic_findings_count} findings from {len(academic_results)} sources")  # noqa: E501
                 except Exception as e:
@@ -3797,7 +3797,7 @@ async def async_run_live_public_pipeline(
                                     ),
                                 ))
                             if p20_findings:
-                                await self.store.async_ingest_findings_batch(p20_findings)
+                                await self.store.submit_findings(p20_findings)
                                 pastebin_findings_count = len(p20_findings)
 
                         org_candidate = _match.group().rsplit(".", 1)[0]
@@ -3829,7 +3829,7 @@ async def async_run_live_public_pipeline(
                                     ),
                                 ))
                         if gh_findings:
-                            await self.store.async_ingest_findings_batch(gh_findings)
+                            await self.store.submit_findings(gh_findings)
                             github_secrets_count = len(gh_findings)
                 except Exception as e:
                     _logger_p20 = logging.getLogger("hledac.universal.pipeline.live_public_pipeline")
@@ -4884,7 +4884,7 @@ async def async_run_live_public_pipeline(
                                 payload_text=str(finding_data)[:500],
                             ))
                         if rl_finding_buffer:
-                            await store.async_ingest_findings_batch(rl_finding_buffer)
+                            await store.submit_findings(rl_finding_buffer)
                     except Exception as e:
                         logger.warning(f"[P17] Failed to store RL findings: {e}")
 
@@ -5089,7 +5089,7 @@ async def async_run_live_public_pipeline(
                                     pass  # Fail-soft
                     # F265B: flush buffered ToT findings after loop completes
                     if tot_finding_buffer and store is not None:
-                        await store.async_ingest_findings_batch(tot_finding_buffer)
+                        await store.submit_findings(tot_finding_buffer)
 
         except Exception:
             pass  # P12: fail-soft, hypothesis generation is optional

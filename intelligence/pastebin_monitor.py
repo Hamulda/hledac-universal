@@ -191,8 +191,9 @@ _RATERLIMIT_S = 1.0  # 1 req/s across all paste sources
 _last_request: float = 0.0
 _rate_lock = asyncio.Lock()
 
-# Bounded: max 10 pastes per source
+# Bounded: max 10 pastes per source, max 5 concurrent scrapes per source
 _MAX_PASTES_PER_SOURCE = 10
+_SCRAPE_CONCURRENCY = 5
 
 
 async def run(query: str) -> list[PasteFinding]:
@@ -267,22 +268,31 @@ async def _search_pastebin(query: str, session: ClientSession) -> list[PasteFind
                 if pid:
                     paste_links.append(pid)
 
-        # Bounded: max 10 pastes
-        for paste_id in paste_links[:_MAX_PASTES_PER_SOURCE]:
-            text = await _scrape_pastebin_raw(paste_id, session)
-            if text is None:
-                continue
+        # Bounded: max 10 pastes, scrape up to 5 concurrently
+        paste_ids = paste_links[:_MAX_PASTES_PER_SOURCE]
+        sem = asyncio.Semaphore(_SCRAPE_CONCURRENCY)
 
+        async def _scrape_one(pid: str) -> PasteFinding | None:
+            async with sem:
+                text = await _scrape_pastebin_raw(pid, session)
+            if text is None:
+                return None
             emails, ips, secrets = _extract_secrets(text)
-            if emails or ips or secrets:
-                findings.append(PasteFinding(
-                    uri=f"https://pastebin.com/{paste_id}",
-                    source="pastebin",
-                    extracted_secrets=secrets,
-                    emails=emails,
-                    ip_addresses=ips,
-                    context_snippet=_make_snippet(text),
-                ))
+            if not (emails or ips or secrets):
+                return None
+            return PasteFinding(
+                uri=f"https://pastebin.com/{pid}",
+                source="pastebin",
+                extracted_secrets=secrets,
+                emails=emails,
+                ip_addresses=ips,
+                context_snippet=_make_snippet(text),
+            )
+
+        results = await asyncio.gather(*[_scrape_one(p) for p in paste_ids], return_exceptions=True)
+        for r in results:
+            if isinstance(r, PasteFinding):
+                findings.append(r)
 
     except Exception as e:
         logger.debug(f"pastebin search failed: {e}")
@@ -307,22 +317,32 @@ async def _search_paste_gg(query: str, session: ClientSession) -> list[PasteFind
             data = await resp.json()
 
         items = (data.get("data") or {}).get("pasties") or []
-        for item in items[:_MAX_PASTES_PER_SOURCE]:
-            paste_id = item.get("id") or ""
-            text = await _scrape_paste_gg(paste_id, session)
-            if text is None:
-                continue
+        # Bounded: max 10 pastes, scrape up to 5 concurrently
+        items_batch = items[:_MAX_PASTES_PER_SOURCE]
+        sem = asyncio.Semaphore(_SCRAPE_CONCURRENCY)
 
+        async def _scrape_one(item: dict) -> PasteFinding | None:
+            paste_id = item.get("id") or ""
+            async with sem:
+                text = await _scrape_paste_gg(paste_id, session)
+            if text is None:
+                return None
             emails, ips, secrets = _extract_secrets(text)
-            if emails or ips or secrets:
-                findings.append(PasteFinding(
-                    uri=f"https://paste.gg/{paste_id}",
-                    source="paste_gg",
-                    extracted_secrets=secrets,
-                    emails=emails,
-                    ip_addresses=ips,
-                    context_snippet=_make_snippet(text),
-                ))
+            if not (emails or ips or secrets):
+                return None
+            return PasteFinding(
+                uri=f"https://paste.gg/{paste_id}",
+                source="paste_gg",
+                extracted_secrets=secrets,
+                emails=emails,
+                ip_addresses=ips,
+                context_snippet=_make_snippet(text),
+            )
+
+        results = await asyncio.gather(*[_scrape_one(it) for it in items_batch], return_exceptions=True)
+        for r in results:
+            if isinstance(r, PasteFinding):
+                findings.append(r)
 
     except Exception as e:
         logger.debug(f"paste.gg search failed: {e}")
@@ -354,21 +374,31 @@ async def _search_rentry(query: str, session: ClientSession) -> list[PasteFindin
             if href.startswith("/") and len(href) > 2:
                 raw_paths.append(href.lstrip("/"))
 
-        for raw_path in raw_paths[:_MAX_PASTES_PER_SOURCE]:
-            text = await _scrape_rentry(raw_path, session)
-            if text is None:
-                continue
+        # Bounded: max 10 pastes, scrape up to 5 concurrently
+        raw_paths_batch = raw_paths[:_MAX_PASTES_PER_SOURCE]
+        sem = asyncio.Semaphore(_SCRAPE_CONCURRENCY)
 
+        async def _scrape_one(path: str) -> PasteFinding | None:
+            async with sem:
+                text = await _scrape_rentry(path, session)
+            if text is None:
+                return None
             emails, ips, secrets = _extract_secrets(text)
-            if emails or ips or secrets:
-                findings.append(PasteFinding(
-                    uri=f"https://rentry.co/{raw_path}",
-                    source="rentry",
-                    extracted_secrets=secrets,
-                    emails=emails,
-                    ip_addresses=ips,
-                    context_snippet=_make_snippet(text),
-                ))
+            if not (emails or ips or secrets):
+                return None
+            return PasteFinding(
+                uri=f"https://rentry.co/{path}",
+                source="rentry",
+                extracted_secrets=secrets,
+                emails=emails,
+                ip_addresses=ips,
+                context_snippet=_make_snippet(text),
+            )
+
+        results = await asyncio.gather(*[_scrape_one(p) for p in raw_paths_batch], return_exceptions=True)
+        for r in results:
+            if isinstance(r, PasteFinding):
+                findings.append(r)
 
     except Exception as e:
         logger.debug(f"rentry search failed: {e}")

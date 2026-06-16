@@ -405,6 +405,67 @@ class LeakSentinelSidecarAdapter(BaseSidecarAdapter):
         return targets[:10]
 
 
+# ── TV News Sidecar ─────────────────────────────────────────────────────────────
+
+@SidecarRegistry.register("tvnews")
+class TVNewsSidecarAdapter(BaseSidecarAdapter):
+    """
+    Internet Archive TV News Sidecar.
+
+    Searches TV News Archive for broadcast content matching OSINT queries.
+    Uses Archive.org Advanced Search API with collection:tv filter.
+
+    Env: HLEDAC_ENABLE_TV_NEWS=1
+    RAM: 40MB budget
+    Priority: 5 (medium priority, research/academic profiles)
+    """
+
+    sidecar_id: str = "tvnews"
+    env_gate: str = "HLEDAC_ENABLE_TV_NEWS"
+    ram_budget_mb: int = 40
+    priority: int = 5
+
+    async def run_async(self, ctx: SidecarContext) -> list[Any]:
+        """Search TV News Archive for broadcast content matching query."""
+        if not ctx.query:
+            return []
+
+        try:
+            from hledac.universal.discovery.tvnews_adapter import (
+                search_tvnews_for_query,
+            )
+        except Exception:
+            logger.debug("TVNewsSidecarAdapter: import failed")
+            return []
+
+        try:
+            results = await search_tvnews_for_query(
+                query=ctx.query,
+                max_results=20,
+                timeout_s=20.0,
+            )
+
+            findings = []
+            for result in results[:20]:  # Cap at 20
+                finding = {
+                    "source_type": "tvnews",
+                    "query": ctx.query,
+                    "sprint_id": ctx.sprint_id,
+                    "ioc_type": result.get("ioc_type", "tv_broadcast"),
+                    "ioc_value": result.get("ioc_value", ""),
+                    "confidence": result.get("confidence", 0.6),
+                    "payload_text": f"Title: {result.get('title', '')}\nSnippet: {result.get('snippet', '')}",
+                }
+                if finding["ioc_value"]:
+                    findings.append(finding)
+
+            return findings
+
+        except Exception:
+            logger.warning("TVNewsSidecarAdapter.run: fail-soft", exc_info=True)
+            return []
+
+
 # ── Federated Research Sidecar (F350M-FED) ───────────────────────────────────
 
 @SidecarRegistry.register("federated_research")
@@ -747,4 +808,222 @@ class LanceDBRAGSidecarAdapter(BaseSidecarAdapter):
         except Exception:
             logger.debug("LanceDBRAGSidecarAdapter.run: fail-soft", exc_info=True)
             return []
+
+
+@SidecarRegistry.register("github_gist")
+class GitHubGistSidecarAdapter(BaseSidecarAdapter):
+    """
+    GitHub Gist Archive Discovery Sidecar.
+
+    Searches public GitHub Gists for OSINT signals matching the query
+    or related IoCs from sprint findings. Uses the existing
+    search_github_gists() function from ti_feed_adapter.
+
+    Env: HLEDAC_ENABLE_GITHUB_GIST=1
+    RAM: 30MB budget
+    Priority: 5 (medium)
+    """
+
+    sidecar_id: str = "github_gist"
+    env_gate: str = "HLEDAC_ENABLE_GITHUB_GIST"
+    ram_budget_mb: int = 30
+    priority: int = 5
+
+    async def run_async(self, ctx: SidecarContext) -> list[Any]:
+        """Search GitHub Gists for OSINT signals based on query and findings."""
+        if not ctx.findings and not ctx.query:
+            return []
+
+        try:
+            from hledac.universal.discovery.ti_feed_adapter import (
+                search_github_gists,
+            )
+        except Exception:
+            logger.debug("GitHubGistSidecarAdapter: import failed")
+            return []
+
+        try:
+            # Extract search terms from findings
+            search_terms = self._extract_search_terms(ctx)
+            if not search_terms:
+                search_terms = [ctx.query] if ctx.query else []
+
+            # Limit for M1 safety
+            search_terms = search_terms[:5]
+
+            findings = []
+            for term in search_terms:
+                try:
+                    results = await search_github_gists(term, max_results=10)
+                    for gist in results:
+                        findings.append({
+                            "source_type": "github_gist",
+                            "query": ctx.query,
+                            "sprint_id": ctx.sprint_id,
+                            "ioc_type": "gist",
+                            "ioc_value": gist.get("url", ""),
+                            "title": gist.get("title", ""),
+                            "confidence": 0.6,
+                            "payload_text": gist.get("snippet", ""),
+                        })
+                except Exception:
+                    pass  # Fail-soft per term
+
+            return findings[:50]  # Cap at 50 findings
+
+        except Exception:
+            logger.warning(
+                "GitHubGistSidecarAdapter.run: fail-soft", exc_info=True
+            )
+            return []
+
+    def _extract_search_terms(self, ctx: SidecarContext) -> list[str]:
+        """Extract domain/IOC terms from findings for Gist search."""
+        terms: list[str] = []
+        for finding in ctx.findings[:20]:
+            ioc_value = getattr(finding, "ioc_value", None)
+            if ioc_value and len(ioc_value) < 100:
+                terms.append(ioc_value)
+        return terms[:10]
+
+
+@SidecarRegistry.register("whois")
+class WhoisSidecarAdapter(BaseSidecarAdapter):
+    """
+    Historical WHOIS/RDAP Intelligence Sidecar.
+
+    Consolidated async WHOIS/RDAP client providing domain registration
+    intelligence with historical data support. Replaces fragmented
+    network_reconnaissance.WHOISLookup, rir_correlator._whois_lookup_domain,
+    and ipv6_recon WHOIS fallback.
+
+    Features:
+      - RDAP (RFC 9224) primary — structured JSON, RIR bootstrap
+      - WHOIS port 43 fallback for legacy TLDs
+      - ipwhois RDAP fallback (blocking, last resort)
+      - Historical WHOIS API opt-in (whoisxmlapi, domainiq, whoisology)
+      - Bounded TTL cache (500 entries, 1h)
+      - Circuit breakers on all external calls
+
+    Env: HLEDAC_ENABLE_WHOIS=1
+    Env (historical): HLEDAC_WHOIS_API + HLEDAC_WHOIS_API_KEY
+    RAM: 30MB budget
+    Priority: 5 (medium, runs alongside passive DNS and CT lanes)
+    """
+
+    sidecar_id: str = "whois"
+    env_gate: str = "HLEDAC_ENABLE_WHOIS"
+    ram_budget_mb: int = 30
+    priority: int = 5
+
+    async def run_async(self, ctx: SidecarContext) -> list[Any]:
+        """Perform WHOIS lookups for domain findings."""
+        import os as _os
+
+        if not ctx.findings and not ctx.query:
+            return []
+
+        try:
+            from hledac.universal.intelligence.whois_service import (
+                WhoisService,
+            )
+        except Exception:
+            logger.debug("WhoisSidecarAdapter: import failed")
+            return []
+
+        try:
+            # Configure historical API if env vars present
+            hist_api = _os.environ.get("HLEDAC_WHOIS_API")
+            hist_key = _os.environ.get("HLEDAC_WHOIS_API_KEY")
+            if hist_api and hist_key:
+                from hledac.universal.intelligence.whois_service import (
+                    configure_historical_api,
+                )
+                configure_historical_api(hist_api, hist_key)
+
+            service = WhoisService(
+                historical_api=hist_api,
+                historical_api_key=hist_key,
+            )
+
+            # Extract domain IOCs from findings
+            domains = self._extract_domains(ctx)
+            if not domains:
+                domains = [ctx.query] if ctx.query else []
+            domains = domains[:50]  # Cap at MAX_TARGETS
+
+            results = await service.lookup_batch(domains)
+
+            findings = []
+            for res in results:
+                if not res.registrar and not res.creation_date:
+                    continue  # Skip failed lookups
+
+                # Build payload text
+                lines = [
+                    f"Registrar: {res.registrar or 'N/A'}",
+                    f"Created: {res.creation_date or 'N/A'}",
+                    f"Expires: {res.expiration_date or 'N/A'}",
+                    f"Updated: {res.updated_date or 'N/A'}",
+                ]
+                if res.name_servers:
+                    lines.append(f"Nameservers: {', '.join(res.name_servers[:5])}")
+                if res.asn:
+                    lines.append(f"ASN: {res.asn} ({res.asn_name or ''})")
+                if res.org:
+                    lines.append(f"Org: {res.org}")
+                if res.dnssec:
+                    lines.append("DNSSEC: signed")
+                if res.historical:
+                    lines.append("(historical record)")
+
+                findings.append({
+                    "source_type": "whois",
+                    "query": ctx.query,
+                    "sprint_id": ctx.sprint_id,
+                    "ioc_type": "domain",
+                    "ioc_value": res.domain,
+                    "confidence": 0.75 if res.source == "rdap" else 0.65,
+                    "payload_text": "\n".join(lines),
+                    "whois_registrar": res.registrar,
+                    "whois_created": res.creation_date,
+                    "whois_expires": res.expiration_date,
+                    "whois_updated": res.updated_date,
+                    "whois_nameservers": res.name_servers,
+                    "whois_dnssec": res.dnssec,
+                    "whois_asn": res.asn,
+                    "whois_org": res.org,
+                    "whois_source": res.source,
+                    "whois_historical": res.historical,
+                })
+
+            return findings[:100]
+
+        except Exception:
+            logger.warning("WhoisSidecarAdapter.run: fail-soft", exc_info=True)
+            return []
+
+    def _extract_domains(self, ctx: SidecarContext) -> list[str]:
+        """Extract domain IOCs from findings."""
+        domains: list[str] = []
+        for finding in ctx.findings[:50]:
+            ioc_value = getattr(finding, "ioc_value", "")
+            ioc_type = getattr(finding, "ioc_type", "")
+            if ioc_type == "domain" and ioc_value:
+                domains.append(ioc_value)
+            elif ioc_type == "url":
+                # Extract domain from URL
+                try:
+                    from urllib.parse import urlparse
+
+                    parsed = urlparse(ioc_value)
+                    if parsed.netloc:
+                        domain = parsed.netloc.split(":")[0]
+                        parts = domain.split(".")
+                        if len(parts) >= 2:
+                            domains.append(".".join(parts[-2:]))
+                except Exception:
+                    pass
+        return domains[:50]
+
 

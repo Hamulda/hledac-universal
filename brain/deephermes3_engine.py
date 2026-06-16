@@ -46,7 +46,7 @@ from typing import Any, TypeVar
 
 from pydantic import BaseModel, Field
 
-T = TypeVar('T', bound=BaseModel)
+T = TypeVar('T', bound=BaseModel, default=BaseModel)  # PEP 696: TypeVar with default
 
 # SECURITY: Import fallback sanitizer for LLM input sanitization (failsafe)
 try:

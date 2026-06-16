@@ -940,8 +940,8 @@ class AcademicSearchEngine:
             else:
                 deduplicated = self._simple_deduplicate(all_results)
 
-            # Phase 5: Ranking
-            ranked_results = self._rank_results(deduplicated, query)[:max_results]
+            # Phase 5: Ranking (P1-3: now async for parallel scoring)
+            ranked_results = (await self._rank_results(deduplicated, query))[:max_results]
 
             execution_time = (time.time() - start_time) * 1000
 
@@ -1078,18 +1078,52 @@ class AcademicSearchEngine:
         if not results or not self.dedup_engine:
             return results
 
-        # Convert to QueryItems
-        items = []
-        for result in results:
-            item = DedupItem(
-                id=hashlib.md5(f"{result.title}{result.url}".encode()).hexdigest()[:12],
-                title=result.title,
-                content=result.snippet,
-                url=result.url,
-                source=result.source,
-                metadata=result.metadata
-            )
-            items.append(item)
+        # P1-3: Parallelize DedupItem construction with bounded asyncio.gather
+        async def make_dedup_item(result: SearchResult) -> DedupItem:
+            """Build DedupItem from SearchResult (CPU-bound hashlib)."""
+            try:
+                item_id = await asyncio.to_thread(
+                    hashlib.md5,
+                    f"{result.title}{result.url}".encode()
+                )
+                return DedupItem(
+                    id=item_id.hexdigest()[:12],
+                    title=result.title,
+                    content=result.snippet,
+                    url=result.url,
+                    source=result.source,
+                    metadata=result.metadata
+                )
+            except Exception:
+                # Fallback: use URL as ID without hash
+                return DedupItem(
+                    id=result.url[:12] if result.url else "",
+                    title=result.title,
+                    content=result.snippet,
+                    url=result.url,
+                    source=result.source,
+                    metadata=result.metadata
+                )
+
+        # Batch into chunks of 50 to stay within M1 8GB bounds
+        batch_size = 50
+        items: list[DedupItem] = []
+        for i in range(0, len(results), batch_size):
+            batch = results[i:i + batch_size]
+            try:
+                batch_items = await safe_gather_dropin(
+                    *[make_dedup_item(r) for r in batch],
+                    label=f"academic_dedup:{i}"
+                )
+                # Filter out None/exceptions
+                items.extend(
+                    item for item in batch_items
+                    if isinstance(item, DedupItem)
+                )
+            except Exception:
+                # Fail-soft: fall back to sequential on batch failure
+                for r in batch:
+                    items.append(await make_dedup_item(r))
 
         # Run deduplication
         dedup_result = await self.dedup_engine.deduplicate(items)
@@ -1125,15 +1159,19 @@ class AcademicSearchEngine:
 
         return unique_results
 
-    def _rank_results(
+    async def _rank_results(
         self,
         results: list[SearchResult],
         query: str
     ) -> list[SearchResult]:
-        """Rank results by relevance."""
+        """Rank results by relevance (P1-3: parallel scoring with asyncio.to_thread)."""
         query_terms = set(query.lower().split())
 
-        for result in results:
+        # P1-3: Batched parallel scoring — CPU-bound set ops offloaded to thread pool
+        batch_size = 50
+
+        def score_one(result: SearchResult) -> tuple[SearchResult, float]:
+            """Compute relevance_score for one result (CPU-bound)."""
             title_terms = set(result.title.lower().split())
             snippet_terms = set(result.snippet.lower().split())
 
@@ -1157,9 +1195,35 @@ class AcademicSearchEngine:
             citation_count = result.metadata.get("citation_count", 0)
             citation_score = min(citation_count / 100, 1.0) * citation_weight
 
-            result.relevance_score = match_score + source_score + citation_score
+            score = match_score + source_score + citation_score
+            return (result, score)
 
-        return sorted(results, key=lambda r: r.relevance_score, reverse=True)
+        # Process in batches to stay within M1 8GB bounds
+        # P1-3: safe_gather_dropin preserves order, isolates per-item exceptions
+        scored: list[tuple[SearchResult, float]] = []
+        for i in range(0, len(results), batch_size):
+            batch = results[i:i + batch_size]
+            try:
+                batch_scored = await safe_gather_dropin(
+                    *[asyncio.to_thread(score_one, r) for r in batch],
+                    label=f"academic_rank:{i}",
+                )
+                # Filter out exceptions (each item is a tuple or an Exception)
+                scored.extend(
+                    item for item in batch_scored
+                    if isinstance(item, tuple) and len(item) == 2
+                )
+            except Exception:
+                # Fail-soft: fall back to sequential on batch failure
+                for r in batch:
+                    scored.append(score_one(r))
+
+        # Assign scores and sort
+        for result, score in scored:
+            result.relevance_score = score
+
+        scored_results = [r for r, _ in scored]
+        return sorted(scored_results, key=lambda r: r.relevance_score, reverse=True)
 
     def _normalize_url(self, url: str) -> str:
         """Normalize URL for deduplication."""

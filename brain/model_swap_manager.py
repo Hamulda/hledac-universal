@@ -39,7 +39,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 # Type variable for lifecycle protocol
-T = TypeVar("T")
+T = TypeVar("T", default=Any)  # PEP 696: TypeVar with default
 
 
 # =============================================================================

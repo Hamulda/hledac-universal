@@ -31,13 +31,13 @@ import logging
 import random
 import sys
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
-from typing import TypeVar, cast
+from typing import Any, TypeVar, cast
 
 from .async_helpers import safe_gather_dropin, safe_gather_strict
 
 logger = logging.getLogger(__name__)
 
-T = TypeVar('T')
+T = TypeVar('T', default=Any)  # PEP 696: TypeVar with default
 
 
 class TaskResult:

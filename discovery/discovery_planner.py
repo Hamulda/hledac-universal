@@ -226,6 +226,20 @@ async def _run_wayback_cdx(
         return _timeout_result("wayback_cdx", timeout_s)
 
 
+# Sprint P2-2: Wayback Machine Sitemap runner
+async def _run_wayback_sitemap(
+    query: str,
+    max_results: int,
+    timeout_s: float,
+) -> DiscoveryBatchResult:
+    from hledac.universal.discovery.wayback_sitemap_adapter import async_search_wayback_sitemap
+    try:
+        async with asyncio.timeout(min(timeout_s, 30.0)):
+            return await async_search_wayback_sitemap(query, max_results=max_results, timeout_s=timeout_s)
+    except TimeoutError:
+        return _timeout_result("wayback_sitemap", timeout_s)
+
+
 async def _run_commoncrawl_cdx(
     query: str,
     max_results: int,
@@ -333,6 +347,7 @@ _RUNNERS: dict[str, _ProviderRunner] = {
     "ddg_mojeek": _run_ddg_mojeek,
     "historical_frontier": _run_historical_frontier,
     "wayback_cdx": _run_wayback_cdx,
+    "wayback_sitemap": _run_wayback_sitemap,  # Sprint P2-2
     "commoncrawl_cdx": _run_commoncrawl_cdx,
     "feed_pivots": _run_feed_pivots,
     "ct_pivots": _run_ct_pivots,

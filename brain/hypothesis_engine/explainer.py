@@ -94,21 +94,36 @@ class SimpleNodeAblationExplainer:
             return {}
 
         # Build all ablation paths for parallel execution
-        ablation_tasks = []
+        ablation_paths = []
         ablation_indices = []
         for i in range(n_nodes):
             if i == 0 or i >= len(path) - 1:
                 continue  # Skip start/end nodes
             # Create path with node removed
             new_path = path[:i] + path[i+1:]
-            ablation_tasks.append(
-                self.graph_rag.score_path(new_path, hypothesis, hypothesis_emb=hypothesis_emb)
-            )
+            ablation_paths.append(new_path)
             ablation_indices.append(i)
 
-        # Execute all ablation scorings in parallel (bounded by graph_rag semaphore)
-        from utils.async_helpers import safe_gather_dropin
-        ablation_scores = await safe_gather_dropin(*ablation_tasks, label="explain_path:105")
+        if not ablation_paths:
+            return {}
+
+        # P3-4: Use score_paths_parallel for batch parallel scoring
+        # This is more efficient than individual score_path calls as it:
+        # 1. Pre-computes hypothesis embedding once (shared across all paths)
+        # 2. Uses Semaphore(4) for M1 8GB safety on concurrent MLX embedding fetches
+        # 3. Batches all ablation scorings in single gather call
+        try:
+            ablation_scores = await self.graph_rag.score_paths_parallel(
+                ablation_paths, hypothesis, max_nodes=max_nodes
+            )
+        except Exception:
+            # Fail-safe: run sequentially if parallel method fails
+            from utils.async_helpers import safe_gather_dropin
+            ablation_tasks = [
+                self.graph_rag.score_path(p, hypothesis, hypothesis_emb=hypothesis_emb)
+                for p in ablation_paths
+            ]
+            ablation_scores = await safe_gather_dropin(*ablation_tasks, label="explain_path:fallback")
 
         # Map results back to importance scores
         importances = {}

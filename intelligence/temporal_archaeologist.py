@@ -798,7 +798,8 @@ class TemporalArchaeologist:
                 if len(lines) <= 1:
                     return versions
 
-                # Parse CDX results
+                # Parse CDX results - collect entries first
+                cdx_entries: list[tuple[datetime, str, dict[str, str]]] = []
                 for line in lines[1:]:  # Skip header
                     try:
                         parts = line.split(" ")
@@ -817,32 +818,79 @@ class TemporalArchaeologist:
                             if snapshot_key in self._fetched_snapshots:
                                 continue
 
-                            # HEAD check before fetching (Fix 1)
-                            content = None
-                            if include_content:
-                                if not await self._check_snapshot_available(wayback_url):
-                                    logger.debug(f"Wayback snapshot unavailable: {wayback_url}")
-                                    continue
-                                content = await self._fetch_wayback_content(wayback_url)
+                            cdx_entries.append((
+                                timestamp,
+                                wayback_url,
+                                {
+                                    "status_code": parts[2],
+                                    "mimetype": parts[2] if len(parts) > 2 else "",
+                                    "length": parts[5] if len(parts) > 5 else "0",
+                                    "content_hash": parts[3] if len(parts) > 3 else "",
+                                },
+                            ))
+                    except Exception as e:
+                        logger.debug(f"Failed to parse Wayback line: {e}")
+                        continue
 
-                            version = ArchivedVersion(
+                if not cdx_entries:
+                    return versions
+
+                # P1-1: Parallelize content fetching across CDX entries
+                if include_content:
+                    semaphore = asyncio.Semaphore(self.max_concurrent_requests)
+
+                    async def fetch_snapshot(
+                        entry: tuple[datetime, str, dict[str, str]],
+                    ) -> ArchivedVersion | None:
+                        timestamp, wayback_url, meta = entry
+                        async with semaphore:
+                            # Rate limit per wayback domain
+                            snapshot_domain = urlparse(wayback_url).netloc
+                            await self._rate_limiter.acquire(domain=snapshot_domain)
+
+                            if not await self._check_snapshot_available(wayback_url):
+                                logger.debug(f"Wayback snapshot unavailable: {wayback_url}")
+                                return None
+                            content = await self._fetch_wayback_content(wayback_url)
+                            if content is None:
+                                return None
+                            return ArchivedVersion(
                                 url=wayback_url,
                                 timestamp=timestamp,
-                                content_hash=parts[3] if len(parts) > 3 else "",
+                                content_hash=meta["content_hash"],
                                 content=content,
                                 source="wayback",
                                 is_deleted=False,
                                 metadata={
-                                    "status_code": parts[2],
-                                    "mimetype": parts[2] if len(parts) > 2 else "",
-                                    "length": parts[5] if len(parts) > 5 else "0",
+                                    "status_code": meta["status_code"],
+                                    "mimetype": meta["mimetype"],
+                                    "length": meta["length"],
                                 },
                             )
-                            versions.append(version)
 
-                    except Exception as e:
-                        logger.debug(f"Failed to parse Wayback line: {e}")
-                        continue
+                    # Fetch all snapshots in parallel (bounded by semaphore)
+                    tasks = [fetch_snapshot(entry) for entry in cdx_entries]
+                    results = await safe_gather_dropin(*tasks, label="temporal_archaeologist:_recover_from_wayback")
+
+                    for result in results:
+                        if result is not None and isinstance(result, ArchivedVersion):
+                            versions.append(result)
+                else:
+                    # No content fetching - just build version objects from CDX metadata
+                    for timestamp, wayback_url, meta in cdx_entries:
+                        versions.append(ArchivedVersion(
+                            url=wayback_url,
+                            timestamp=timestamp,
+                            content_hash=meta["content_hash"],
+                            content=None,
+                            source="wayback",
+                            is_deleted=False,
+                            metadata={
+                                "status_code": meta["status_code"],
+                                "mimetype": meta["mimetype"],
+                                "length": meta["length"],
+                            },
+                        ))
 
         except Exception as e:
             logger.warning(f"Wayback recovery failed: {e}")

@@ -28,7 +28,7 @@ MLX_AVAILABLE = False
 _last_eval_time: float = 0.0
 MIN_EVAL_INTERVAL: float = 0.1  # 100 ms throttle
 
-T = TypeVar('T')
+T = TypeVar('T', default=Any)  # PEP 696: TypeVar with default
 
 
 def _get_mlx_safe():

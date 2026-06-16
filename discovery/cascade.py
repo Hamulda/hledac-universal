@@ -8,9 +8,10 @@ Fallback order (legacy sequential mode):
 1. DuckDuckGo (primary, via duckduckgo_adapter)
 2. Historical Frontier (DuckDB shadow_findings)
 3. Wayback CDX (Internet Archive)
+4. Wayback Sitemap (Internet Archive Sitemaps — Sprint P2-2)
 
 Fusion mode (when HLEDAC_ENABLE_PROVIDERLESS_DISCOVERY=1):
-  - Runs all 3 providers concurrently
+  - Runs all 3+ providers concurrently
   - Fuses results via fusion_ranker.fuse_discovery_hits
   - Enforces RRF ranking, diversity caps, dedup
 

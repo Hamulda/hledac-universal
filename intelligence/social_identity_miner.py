@@ -689,8 +689,10 @@ class SocialIdentityMiner:
                 )
                 findings.append(finding)
 
-            # Canonical write path
-            if hasattr(store, "async_ingest_findings_batch"):
+            # Canonical write path (coalescer path — fire-and-forget)
+            if hasattr(store, "submit_findings"):
+                await store.submit_findings(findings)
+            elif hasattr(store, "async_ingest_findings_batch"):
                 await store.async_ingest_findings_batch(findings)
             elif hasattr(store, "ingest_findings"):
                 await store.ingest_findings(findings)

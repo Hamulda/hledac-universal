@@ -6524,6 +6524,63 @@ class DuckDBShadowStore:
             )
         return results  # type: ignore[annotation-unchecked]
 
+    async def submit_findings(
+        self,
+        findings: list[CanonicalFinding],
+    ) -> None:
+        """
+        Sprint DuckDB Write Coalescer: submit findings to the coalescer for batched write.
+
+        This is the preferred write path from concurrent lanes — findings are coalesced
+        into large batches before being passed to async_ingest_findings_batch().
+
+        NOTE: findings list must not be mutated after this call returns.
+        Caller is responsible for ensuring this.
+
+        Fail-safe: if coalescer is not available (not initialized, or failed to start),
+        falls back to direct async_ingest_findings_batch() call.
+
+        Returns: None (fire-and-forget async write through coalescer).
+        """
+        if not findings:
+            return
+        if self._coalescer is not None:
+            await self._coalescer.submit(findings)
+        else:
+            # Coalescer not available — direct write (fail-safe fallback)
+            try:
+                await self.async_ingest_findings_batch(findings)
+            except Exception:
+                pass
+
+    async def drain_and_get_accepted(
+        self,
+        findings: list[CanonicalFinding],
+    ) -> list[Any]:
+        """
+        Flush pending coalescer items and ingest new findings, returning merged results.
+
+        This is the merge-path alternative to submit_findings() for call sites
+        that need the accepted/stored counts from async_ingest_findings_batch().
+
+        Args:
+            findings: new findings to submit alongside any pending items in the queue.
+
+        Returns:
+            Merged list of FindingQualityDecision/ActivationResult objects,
+            one per finding submitted. Empty list on failure or if coalescer
+            is not running.
+        """
+        if not findings:
+            return []
+        if self._coalescer is not None:
+            return await self._coalescer.drain_and_get_accepted(findings)
+        # Coalescer not available — direct write (fail-safe fallback)
+        try:
+            return await self.async_ingest_findings_batch(findings)
+        except Exception:
+            return []
+
     # --------------------------------------------------------------------------
     # Sprint F202A: Evidence Envelope helpers
     # --------------------------------------------------------------------------

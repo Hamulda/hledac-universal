@@ -21,7 +21,7 @@ from typing import Any, TypeVar
 
 from pydantic import BaseModel
 
-T = TypeVar('T', bound=BaseModel)
+T = TypeVar('T', bound=BaseModel, default=BaseModel)  # PEP 696: TypeVar with default
 
 
 class ModelEngine:

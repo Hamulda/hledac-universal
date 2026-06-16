@@ -21,7 +21,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Generic type variables for better type safety
-T = TypeVar('T')
+T = TypeVar('T', default=Any)  # PEP 696: TypeVar with default
 ValidationResult = dict[str, Any]
 
 

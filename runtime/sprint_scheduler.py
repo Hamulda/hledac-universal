@@ -5162,6 +5162,10 @@ class SprintScheduler:
 
         self._prefetch_oracle: Any = None
 
+        # Sprint P3-3: Continuous prefetch pipeline
+
+        self._prefetch_pipeline: Any = None
+
         # Sprint 8VM: Shadow pre-decision consumer -- read-only, no mutable state
 
         self._shadow_pd_summary: Any = None
@@ -6195,6 +6199,14 @@ class SprintScheduler:
                 log.debug("privacy_context closed: %s", self._privacy_context_id)
         except Exception as _e:
             log.debug("privacy_context close failed: %s", _e)
+
+        # P3-3: Stop continuous prefetch pipeline at teardown
+        if self._prefetch_pipeline is not None:
+            try:
+                await self._prefetch_pipeline.stop()
+                log.debug("[P3-3] Prefetch pipeline stopped")
+            except Exception as _e:
+                log.debug("[P3-3] Prefetch pipeline stop failed: %s", _e)
     # ── Public API ─────────────────────────────────────────────────────────
 
 
@@ -6327,6 +6339,14 @@ class SprintScheduler:
 
         except Exception as _adapter_exc:
             logger.debug(f"[LIFECYCLE] adapter init failed: {_adapter_exc}")
+
+        # P3-3: Start continuous prefetch pipeline after lifecycle init
+        if self._prefetch_pipeline is not None:
+            try:
+                await self._prefetch_pipeline.start()
+                logger.debug("[P3-3] Prefetch pipeline started")
+            except Exception as _e:
+                logger.debug("[P3-3] Prefetch pipeline start failed: %s", _e)
 
         # Sprint F210A: Store query for terminality recompute at export time
 
@@ -17136,10 +17156,15 @@ class SprintScheduler:
                 # Sprint F195C: Enrich findings before storage (fail-safe -- never crashes)
 
                 if self._enrichment_services:
-
-                    await self._enrichment_services.enrich_ct_findings(findings, self._result)
-
-                    await self._enrichment_services.enrich_findings_multimodal(findings, self._result)
+                    # Pipeline F266B: fire both enrichment tasks concurrently (not sequentially).
+                    # Both write to independent LMDB namespaces — no shared state conflict.
+                    # safe_gather_fire_and_forget: fail-soft, never blocks, logs errors.
+                    await safe_gather_fire_and_forget(
+                        self._enrichment_services.enrich_ct_findings(findings, self._result),
+                        self._enrichment_services.enrich_findings_multimodal(findings, self._result),
+                        label="enrichment_ct_multimodal_parallel",
+                        logger_instance=log,
+                    )
 
                 # Sprint F198A: Accumulate findings to cross-sprint graph (fail-soft)
 
@@ -27568,6 +27593,34 @@ class SprintScheduler:
         """
 
         self._prefetch_oracle = oracle
+
+    def inject_prefetch_pipeline(self, pipeline: Any) -> None:
+
+        """
+
+        P3-3: Inject ContinuousPrefetchPipeline reference.
+
+
+
+        Pipeline runs producer-consumer pattern for speculative IOC prefetching.
+        Starts automatically with sprint if injected.
+        """
+
+        self._prefetch_pipeline = pipeline
+
+    def get_prefetch_pipeline_stats(self) -> dict[str, Any] | None:
+
+        """
+
+        P3-3: Return pipeline statistics if pipeline is injected.
+
+        """
+
+        if self._prefetch_pipeline is None:
+
+            return None
+
+        return self._prefetch_pipeline.get_stats()
 
 
 

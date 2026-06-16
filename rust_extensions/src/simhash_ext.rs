@@ -17,7 +17,16 @@
 //! - `SimHashStore(threshold=3, ngram_size=2)` → mutable store
 
 use pyo3::prelude::*;
+use rayon::prelude::*;
 use std::collections::HashMap;
+
+// ---------------------------------------------------------------------------
+// Batch parallel configuration (shared with quality_gate.rs)
+// ---------------------------------------------------------------------------
+
+const BATCH_HARD_CAP: usize = 4096;
+const BATCH_PARALLEL_THRESHOLD: usize = 100;
+const BATCH_PARALLEL_MIN_CHUNK: usize = 64;
 
 // ===== FNV-1a 64-bit hash (no external deps) =====
 
@@ -111,6 +120,9 @@ pub fn compute_simhash(text: &str, ngram_size: usize) -> u64 {
 /// Computes SimHash fingerprints for a batch of texts.
 /// Returns vector of fingerprints in same order as input.
 ///
+/// Parallel branch uses `crate::bulk_pool()` (4 workers, 2 MiB stacks).
+/// Threshold: >100 items switch from sequential to parallel.
+///
 /// ## Example
 /// ```python
 /// from hledac_rust_extensions import batch_compute_simhash
@@ -119,7 +131,27 @@ pub fn compute_simhash(text: &str, ngram_size: usize) -> u64 {
 #[pyfunction]
 #[pyo3(signature = (texts, ngram_size=2))]
 pub fn batch_compute_simhash(texts: Vec<String>, ngram_size: usize) -> Vec<u64> {
-    texts.into_iter().map(|t| simhash(&t, ngram_size)).collect()
+    let slice = cap_slice(&texts);
+    if slice.len() > BATCH_PARALLEL_THRESHOLD {
+        crate::bulk_pool().install(|| {
+            slice
+                .par_iter()
+                .map(|t| simhash(t, ngram_size))
+                .with_min_len(BATCH_PARALLEL_MIN_CHUNK)
+                .collect()
+        })
+    } else {
+        slice.iter().map(|t| simhash(t, ngram_size)).collect()
+    }
+}
+
+#[inline]
+fn cap_slice<T>(items: &[T]) -> &[T] {
+    if items.len() > BATCH_HARD_CAP {
+        &items[..BATCH_HARD_CAP]
+    } else {
+        items
+    }
 }
 
 /// Computes SimHash fingerprint from weighted tokens.
@@ -418,5 +450,36 @@ mod tests {
         assert_eq!(store.len(), restored.len());
         assert_eq!(store.threshold, restored.threshold);
         assert_eq!(store.ngram_size, restored.ngram_size);
+    }
+
+    #[test]
+    fn test_batch_compute_simhash_matches_single() {
+        let texts = vec!["hello world".to_string(), "foo bar".to_string(), "".to_string()];
+        let batched = batch_compute_simhash(texts.clone(), 2);
+        let singles: Vec<u64> = texts.iter().map(|t| simhash(t, 2)).collect();
+        assert_eq!(batched, singles, "batch must produce same result as sequential");
+    }
+
+    #[test]
+    fn test_batch_compute_simhash_par_sequential_equivalence() {
+        // Verify parallel and sequential produce same results
+        let texts: Vec<String> = (0..200).map(|i| format!("text item {}", i)).collect();
+        let batched = batch_compute_simhash(texts.clone(), 2);
+        let sequential: Vec<u64> = texts.iter().map(|t| simhash(t, 2)).collect();
+        assert_eq!(batched, sequential);
+    }
+
+    #[test]
+    fn test_batch_compute_simhash_empty() {
+        let result = batch_compute_simhash(vec![], 2);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_batch_compute_simhash_under_threshold_sequential() {
+        // 50 items < 100 threshold should use sequential path
+        let texts: Vec<String> = (0..50).map(|i| format!("item {}", i)).collect();
+        let result = batch_compute_simhash(texts.clone(), 2);
+        assert_eq!(result.len(), 50);
     }
 }

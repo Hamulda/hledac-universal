@@ -1705,6 +1705,15 @@ async def run_sprint(
         except Exception as _e:
             logger.debug("F26X+: SecurityCoordinator injection failed (fail-soft): %s", _e)
 
+    # Sprint F200A: PrefetchOracleIntegration injection (advisory, default-ON)
+    # Oracle suggests source fetch order; scheduler retains all authority.
+    # All oracle calls are fail-soft -- exception or None oracle -> no-op.
+    try:
+        from hledac.universal.prefetch.prefetch_oracle_integration import PrefetchOracleIntegration
+        _prefetch_oracle = PrefetchOracleIntegration()
+        scheduler.inject_prefetch_oracle(_prefetch_oracle)
+    except Exception as _e:
+        logger.debug("F200A: PrefetchOracleIntegration injection failed (fail-soft): %s", _e)
 
     # F228F CRITICAL: inject duckdb_store before health_check so health_check
     # reads self._duckdb_store (not always None). run() also sets it from param,

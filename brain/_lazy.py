@@ -40,7 +40,7 @@ from typing import Any, TypeVar
 
 logger = logging.getLogger(__name__)
 
-T = TypeVar("T")
+T = TypeVar("T", default=Any)  # PEP 696: TypeVar with default
 
 _MEMORY_GUARD_THRESHOLD_MB = 1024  # 1GB free → refuse new model loads
 
