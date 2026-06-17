@@ -94,16 +94,19 @@ try:
     from runtime.int_counter_layout import (
         IntCounterLayout,
         IntCounterLayoutRust,
+        batch_compute_scores,
     )  # type: ignore[import-not-found]
 except ImportError:  # pragma: no cover — fallback when run as a script
     try:
         from hledac.universal.runtime.int_counter_layout import (  # type: ignore[no-redef]
             IntCounterLayout,
             IntCounterLayoutRust,
+            batch_compute_scores,
         )
     except ImportError:
         IntCounterLayout: type | None = None  # type: ignore[assignment,misc,no-redef]
         IntCounterLayoutRust: type | None = None  # type: ignore[assignment,misc,no-redef]
+        batch_compute_scores: Any = None  # type: ignore[assignment,misc]
 
 
 
@@ -1563,7 +1566,7 @@ class SprintSchedulerConfig:
     # F228G `cycle_sleep_s` minimum) and slow cycles (>= 30s) preserve a 9s
     # floor so public/CT don't drop into the 5s danger zone mid-fetch.
     _MIN_BRANCH_REMAINING_S_DEFAULT: float = 2.0  # base floor (no cycles seen yet)
-    _MIN_BRANCH_REMAINING_S_CAP: float = 9.0     # max floor -- never let a branch starve
+    _MIN_BRANCH_REMAINING_S_CAP: float = 5.0     # max floor -- never let a branch starve
 
     # Sprint F273A kept the legacy constant name as an alias for back-compat
     # (some tests + sidecar adapters read this attribute directly).
@@ -1599,15 +1602,23 @@ class SprintSchedulerConfig:
         Used by tests/test_f272_windup_amendment.py, test_f273, and the F228F
         family. For the cycle-adaptive variant see `windup_for_cycle()`.
         """
-        # F288: aggressive mode uses 0.15 ratio (target 45s windup for 300s sprint)
-        # standard/research modes use 0.30 ratio
-        ratio = 0.15 if self.aggressive_mode else 0.30
+        # P0-3: For sprints >= 180s, use 15% ratio with 120s cap to avoid
+        # spending 3+ cycles on windup with no acquisition.
+        # - 300s sprint -> 45s windup (vs 90s before, saves 1-2 cycles)
+        # - 600s sprint -> 90s windup (vs 180s before)
+        # - 1800s sprint -> 120s windup (vs 180s before)
+        # Shorter sprints (< 180s) keep existing behavior for safety.
+        if self.sprint_duration_s >= 180.0:
+            ratio = 0.15
+            cap = 120.0
+        elif self.aggressive_mode:
+            ratio = 0.15
+            cap = 180.0
+        else:
+            ratio = 0.30
+            cap = 180.0
         raw = self.sprint_duration_s * ratio
-        # P0-1: Removed F288 cap. User constraint: min(30% of duration, 60s).
-        # For 300s sprint: 30% × 300 = 90s (90s < 60s is FALSE → 90s, not 60s).
-        # F288 cap (60s for ≤300s) was in conflict with user constraint.
-        # F221 guard and scheduler must use identical formula — no cap.
-        return float(max(30.0, min(180.0, raw)))
+        return float(max(30.0, min(cap, raw)))
 
     @property
     def final_windup_lead_s(self) -> float:
@@ -2621,6 +2632,12 @@ class SprintSchedulerResult:
     peak_rss_gib: float = 0.0  # peak RSS observed during sprint
 
     budget_violations: int = 0  # number of times RSS exceeded MISSION_PEAK_RSS_GIB
+
+    # F265H: Governor telemetry snapshot at TEARDOWN for hardware_critical diagnostics
+    governor_uma_state: str = ""
+    governor_system_used_gib: float = 0.0
+    governor_swap_detected: bool = False
+    governor_io_only: bool = False
 
     # Sprint F193B: CommonCrawl + academic discovery additive truth
 
@@ -4878,6 +4895,14 @@ class SprintScheduler:
 
         self._novelty_bonuses: dict[str, float] = {}  # source_type -> novelty multiplier
 
+        # F285: DuckDB write pipeline -- producer-consumer queue for overlapping
+        # writes with next cycle's acquisition. maxsize=5 bounds memory to
+        # ~5 batches × 100 findings × 2KB ≈ 1MB. Writer drains sequentially
+        # to preserve WAL ordering guarantees.
+        self._duckdb_write_queue: asyncio.Queue[tuple[Any, list, str]] = asyncio.Queue(maxsize=5)
+        self._duckdb_writer_task: asyncio.Task | None = None
+        self._duckdb_writer_shutdown: bool = False
+
         # Sprint F199A: Per-source quality feedback for reward-driven weight adaptation
 
         # Bounded accumulation: feed_url -> {fetched, accepted} -- reset per sprint via _reset_result
@@ -5001,7 +5026,7 @@ class SprintScheduler:
 
         self._hard_deadline_checked_count: int = 0
 
-        self._ARROW_FLUSH_N: int = 1000
+        self._ARROW_FLUSH_N: int = 1000  # Fallback; property resolves dynamically
 
         # P12: Bounded Hermes lifecycle -- loaded at sprint start, released at teardown
 
@@ -5166,6 +5191,10 @@ class SprintScheduler:
 
         self._prefetch_pipeline: Any = None
 
+        # Sprint P3-2: Temporal IOC predictor (time-of-day patterns)
+
+        self._temporal_predictor: Any = None
+
         # Sprint 8VM: Shadow pre-decision consumer -- read-only, no mutable state
 
         self._shadow_pd_summary: Any = None
@@ -5265,6 +5294,11 @@ class SprintScheduler:
         # Sprint F234A: DOH adapter
 
         self._doh_adapter: Any = None
+
+        # Sprint F26X-E: Circuit breaker for PUBLIC/CT lanes
+        # After N consecutive timeouts, skip the lane to avoid wasting time
+        self._public_consecutive_timeouts: int = 0
+        self._ct_consecutive_timeouts: int = 0
 
         # Sprint F202G: Pivot planner (advisory, advisory ordering input only)
 
@@ -6207,6 +6241,15 @@ class SprintScheduler:
                 log.debug("[P3-3] Prefetch pipeline stopped")
             except Exception as _e:
                 log.debug("[P3-3] Prefetch pipeline stop failed: %s", _e)
+
+        # Sprint P2-3: Flush KuzuGraphBridge buffers at teardown
+        kuzu_bridge = getattr(self, "_kuzu_bridge", None)
+        if kuzu_bridge is not None:
+            try:
+                await kuzu_bridge.flush_buffers()
+                log.debug("[P2-3] KuzuGraphBridge flushed")
+            except Exception as _e:
+                log.debug("[P2-3] KuzuGraphBridge flush failed: %s", _e)
     # ── Public API ─────────────────────────────────────────────────────────
 
 
@@ -6260,6 +6303,10 @@ class SprintScheduler:
             raise RecursionError(f"SprintScheduler recursion depth exceeded: {self._sprint_depth}")
 
         try:
+            # F285: Start DuckDB background writer before any cycles run.
+            # Writer is lightweight (just dequeues and calls _gate_then_ingest_and_accumulate).
+            # Stops in _run_internal's finally block.
+            self._duckdb_writer_task = asyncio.create_task(self._duckdb_background_writer())
 
             return await self._run_internal(
 
@@ -8145,10 +8192,12 @@ class SprintScheduler:
             # Sprint P1-5: Wire chain_hash_snapshot into evidence chain (BLAKE3+SHA256 dual-emit)
             # IntCounterLayout snapshot hashed into evidence chain provides tamper-evident
             # cross-sprint audit log of counter state. Fail-soft: no exception propagates.
-            if self._evidence_log is not None and self._result._int_counter_layout is not None:
+            # [FIX BUG 1] Use getattr guard to handle _int_counter_layout=None on teardown crash.
+            _layout = getattr(self._result, '_int_counter_layout', None)
+            if self._evidence_log is not None and _layout is not None:
                 try:
                     from hledac_rust_extensions import chain_hash_snapshot  # type: ignore[import-not-found, misc]
-                    _snap = self._result._int_counter_layout.snapshot()
+                    _snap = _layout.snapshot()
                     _prev = self._prev_chain_hash or ""
                     _event_id = f"sprint_end_{getattr(self, '_sprint_id', 'unknown')}"
                     _blake3_hex, _sha256_hex = chain_hash_snapshot(  # type: ignore[call-arg]
@@ -8771,6 +8820,25 @@ class SprintScheduler:
                     pass
         except Exception as _broadcast_layer_exc:
             logger.debug(f"[F26X-3] communication layer post-sprint broadcast failed: {_broadcast_layer_exc}")
+
+        # F285: Shutdown DuckDB background writer -- drain queue then stop.
+        # Runs in finally block so it executes on ALL exit paths: normal return,
+        # exception re-raised, CancelledError propagated.
+        try:
+            self._duckdb_writer_shutdown = True
+            if self._duckdb_writer_task is not None:
+                try:
+                    self._duckdb_write_queue.put_nowait((None, [], ""))
+                except asyncio.QueueFull:
+                    pass
+                try:
+                    await asyncio.wait_for(self._duckdb_writer_task, timeout=10.0)
+                except (TimeoutError, asyncio.CancelledError):
+                    pass
+                if not self._duckdb_writer_task.done():
+                    self._duckdb_writer_task.cancel()
+        except Exception as _writer_shutdown_exc:
+            logger.debug("[F285] writer shutdown failed: %s", _writer_shutdown_exc)
 
         return self._result
 
@@ -13668,17 +13736,20 @@ class SprintScheduler:
 
             if _wb_cands and duckdb_store and hasattr(duckdb_store, "async_ingest_findings_batch"):
 
+                _ing = None
                 try:
-
-                    _ing = await self._gate_then_ingest_and_accumulate(duckdb_store, list(_wb_cands), sprint_id=self.sprint_id or "")
-
-                    _wb_acc = sum(1 for r in _ing if isinstance(r, dict) and r.get("accepted"))
+                    # F285: Enqueue for background write -- overlaps with next cycle.
+                    # Fall back to sync if queue full.
+                    if not self._enqueue_duckdb_write(duckdb_store, list(_wb_cands), self.sprint_id or ""):
+                        _ing = await self._gate_then_ingest_and_accumulate(duckdb_store, list(_wb_cands), sprint_id=self.sprint_id or "")
+                    _wb_acc = sum(1 for r in _ing if isinstance(r, dict) and r.get("accepted")) if _ing else 0
                 except Exception as _exc:
                     log.warning(
                         "sprint %s: wayback ledger write failed -- %s: %s",
                         getattr(self._result, "sprint_id", "?"),
                         type(_exc).__name__, _exc,
                     )
+                    _wb_acc = 0
 
 
             nonfeed_prelude_accepted["WAYBACK"] = _wb_acc
@@ -13758,9 +13829,10 @@ class SprintScheduler:
             if _pdns_cands and duckdb_store and hasattr(duckdb_store, "async_ingest_findings_batch"):
 
                 try:
-
-                    _ing = await self._gate_then_ingest_and_accumulate(duckdb_store, list(_pdns_cands), sprint_id=self.sprint_id or "")
-                    _pdns_acc = sum(1 for r in _ing if isinstance(r, dict) and r.get("accepted"))
+                    # F285: Enqueue for background write -- overlaps with next cycle.
+                    if not self._enqueue_duckdb_write(duckdb_store, list(_pdns_cands), self.sprint_id or ""):
+                        _ing = await self._gate_then_ingest_and_accumulate(duckdb_store, list(_pdns_cands), sprint_id=self.sprint_id or "")
+                        _pdns_acc = sum(1 for r in _ing if isinstance(r, dict) and r.get("accepted")) if _ing else 0
                 except Exception:
                     pass
 
@@ -13996,10 +14068,10 @@ class SprintScheduler:
                 if _doh_cands and duckdb_store and hasattr(duckdb_store, "async_ingest_findings_batch"):
 
                     try:
-
-                        _ing = await self._gate_then_ingest_and_accumulate(duckdb_store, list(_doh_cands), sprint_id=self.sprint_id or "")
-
-                        _doh_acc = sum(1 for r in _ing if isinstance(r, dict) and r.get("accepted"))
+                        # F285: Enqueue for background write -- overlaps with next cycle.
+                        if not self._enqueue_duckdb_write(duckdb_store, list(_doh_cands), self.sprint_id or ""):
+                            _ing = await self._gate_then_ingest_and_accumulate(duckdb_store, list(_doh_cands), sprint_id=self.sprint_id or "")
+                            _doh_acc = sum(1 for r in _ing if isinstance(r, dict) and r.get("accepted")) if _ing else 0
                     except Exception:
                         pass
 
@@ -15282,37 +15354,43 @@ class SprintScheduler:
 
 
 
-    def _min_branch_remaining_s(self) -> float:
+    def _min_branch_remaining_s(self, remaining_s: float | None = None) -> float:
         """
-        F273A: Dynamic branch-remaining safety floor.
+        F273B: Dynamic branch-remaining safety floor based on remaining time.
 
         Returns the safety floor (in seconds) below which a branch is skipped
-        with `terminal:remaining_too_low`. Replaces the static 5.0s floor that
-        was the root cause of PUBLIC + CT branches being killed during windup
-        transitions on 60-120s sprints.
+        with `terminal:remaining_too_low`. Replaces the cycle-ema-based formula
+        (0.2 * cycle_ema) that was too low for 300s+ sprints where 25 cycles
+        over-commit the timeline.
 
-        Formula (always-on, bounded [2.0, 9.0]):
-          cycle_ema = self._cycle_time_ema (defaults to 1.0s pre-loop)
-          base = max(2.0, 0.3 * cycle_ema)
-          return min(9.0, base)
+        Formula (always-on, bounded [2.0, 5.0]):
+          remaining_s = time left in sprint (passed as argument)
+          base = max(2.0, 0.15 * remaining_s)
+          return min(5.0, base)
 
-        Examples:
-          - cycle_ema=1.0s (initial)  -> 2.0s (floor)
-          - cycle_ema=5.0s (quick)    -> 2.0s (clamped to floor)
-          - cycle_ema=10.0s (normal)  -> 3.0s
-          - cycle_ema=20.0s (slow)    -> 6.0s
-          - cycle_ema=30.0s+ (hermes) -> 9.0s (ceiling)
+        Examples (300s sprint):
+          - remaining_s=150s (50% left) -> floor = 5.0s (capped)
+          - remaining_s=90s  (30% left) -> floor = 5.0s (capped)
+          - remaining_s=60s  (20% left) -> floor = 5.0s (capped)
+          - remaining_s=30s  (10% left) -> floor = 4.5s
+          - remaining_s=15s  (5% left)  -> floor = 2.25s
 
-        Why 0.3 * cycle_ema: each branch needs ~30% of one cycle to flush
-        its in-flight pattern matcher work. Quick cycles need only 2s; slow
-        cycles (with Hermes synthesis) need more.
+        Why 0.15 * remaining_s: floor scales with remaining time so branches
+        get adequate time in long sprints while staying low in short sprints.
+        The 5.0s cap ensures constant floor for sprints >33s remaining,
+        preventing 300s sprints from losing all branches to terminal:remaining_too_low.
 
-        Fail-safe: if cycle_ema is missing, returns the static 2.0s default.
+        Fail-safe: if remaining_s is None or <= 0, falls back to cycle-ema-based
+        formula (0.1 * cycle_ema, bounded [2.0, 5.0]) for backward compatibility.
         """
-        cycle_ema = float(getattr(self, "_cycle_time_ema", 0.0) or 0.0)
-        if cycle_ema <= 0.0:
-            return self._config._MIN_BRANCH_REMAINING_S_DEFAULT
-        base = max(self._config._MIN_BRANCH_REMAINING_S_DEFAULT, 0.3 * cycle_ema)
+        if remaining_s is None or remaining_s <= 0.0:
+            # Fallback to cycle-ema-based formula for backward compatibility
+            cycle_ema = float(getattr(self, "_cycle_time_ema", 0.0) or 0.0)
+            if cycle_ema <= 0.0:
+                return self._config._MIN_BRANCH_REMAINING_S_DEFAULT
+            base = max(self._config._MIN_BRANCH_REMAINING_S_DEFAULT, 0.1 * cycle_ema)
+            return float(min(self._config._MIN_BRANCH_REMAINING_S_CAP, base))
+        base = max(self._config._MIN_BRANCH_REMAINING_S_DEFAULT, 0.15 * remaining_s)
         return float(min(self._config._MIN_BRANCH_REMAINING_S_CAP, base))
 
     async def _drain_pending_pattern_extractions(self, remaining_s: float) -> None:
@@ -15441,11 +15519,11 @@ class SprintScheduler:
 
         - Returns 0 when remaining_s <= MIN_BRANCH_REMAINING_S (safety floor)
 
-        F273A: Floor is now dynamic via self._min_branch_remaining_s().
+        F273B: Floor is remaining-time-aware via self._min_branch_remaining_s(remaining_s).
 
         """
 
-        floor = self._min_branch_remaining_s()
+        floor = self._min_branch_remaining_s(remaining_s)
 
         if remaining_s < floor:
 
@@ -15519,9 +15597,9 @@ class SprintScheduler:
 
 
 
-        # F212-B: Safety floor -- skip entire aggressive cycle if time too low
+        # F212-B + F273B: Safety floor -- skip entire aggressive cycle if time too low
 
-        floor = self._min_branch_remaining_s()
+        floor = self._min_branch_remaining_s(remaining_s)
 
         if remaining_s <= floor:
 
@@ -15801,6 +15879,24 @@ class SprintScheduler:
 
                 return
 
+            # Sprint F26X-E: Circuit breaker -- skip PUBLIC branch after 3 consecutive timeouts
+            if self._public_consecutive_timeouts >= 3:
+                log.debug("[F26X-E] PUBLIC branch skipped: %d consecutive timeouts", self._public_consecutive_timeouts)
+                self._result.public_error = "terminal:circuit_breaker"
+                self._public_outcome = {
+                    "lane": "PUBLIC",
+                    "attempted": True,
+                    "skipped": True,
+                    "skip_reason": "terminal:circuit_breaker",
+                    "raw_count": 0,
+                    "built_count": 0,
+                    "accepted_count": 0,
+                    "error": "terminal:circuit_breaker",
+                    "timeout": False,
+                    "duration_s": None,
+                }
+                return
+
             try:
 
                 # P1.5-fix 2026-06-07: initialize _seed_ctx to None for the public
@@ -15897,6 +15993,9 @@ class SprintScheduler:
 
                 )
 
+                # Sprint F26X-E: Increment consecutive timeout counter for circuit breaker
+                self._public_consecutive_timeouts += 1
+
                 # F214-E: Always emit PUBLIC outcome so Lane Execution Truth never loses PUBLIC
 
                 self._public_outcome = {
@@ -15961,6 +16060,34 @@ class SprintScheduler:
 
                 }
 
+            else:
+                # Sprint F26X-E: Reset consecutive timeout counter on success
+                self._public_consecutive_timeouts = 0
+
+                self._public_outcome = {
+
+                    "lane": "PUBLIC",
+
+                    "attempted": True,
+
+                    "skipped": False,
+
+                    "skip_reason": None,
+
+                    "raw_count": self._result.public_discovered,
+
+                    "built_count": 0,
+
+                    "accepted_count": self._result.public_accepted_findings,
+
+                    "error": f"{type(exc).__name__}:{exc}",
+
+                    "timeout": False,
+
+                    "duration_s": branch_timeout,
+
+                }
+
 
 
         async def _run_ct_branch() -> None:
@@ -15989,6 +16116,13 @@ class SprintScheduler:
 
                 return
 
+            # Sprint F26X-E: Circuit breaker -- skip CT branch after 3 consecutive timeouts
+            if self._ct_consecutive_timeouts >= 3:
+                log.debug("[F26X-E] CT branch skipped: %d consecutive timeouts", self._ct_consecutive_timeouts)
+                self._result.ct_log_error = "terminal:circuit_breaker"
+                self._result.ct_terminal_stage = "circuit_breaker"
+                return
+
             try:
 
                 # F232: ct_request_attempted -- HTTP request was made
@@ -16010,6 +16144,9 @@ class SprintScheduler:
 
                 self._result.ct_log_error = "terminal:timeout"
 
+                # Sprint F26X-E: Increment consecutive timeout counter for circuit breaker
+                self._ct_consecutive_timeouts += 1
+
             except _asyncio.CancelledError:
 
                 log.debug("[aggressive] CT branch cancelled")
@@ -16027,6 +16164,10 @@ class SprintScheduler:
                 # The error was an attempted request that failed, not "no candidates"
 
                 self._result.ct_terminal_stage = "error"
+
+            else:
+                # Sprint F26X-E: Reset consecutive timeout counter on success
+                self._ct_consecutive_timeouts = 0
 
 
 
@@ -16502,7 +16643,7 @@ class SprintScheduler:
 
             )
 
-        except* ExceptionGroup as eg:
+        except ExceptionGroup as eg:
             _had_error = True
 
             # F196A: safe_gather_strict ExceptionGroup handler (PEP 654).
@@ -19292,6 +19433,46 @@ class SprintScheduler:
             logger.debug("gate_then_ingest failed: %s", _e)
             return None
 
+    # ─── F285: DuckDB Background Writer ─────────────────────────────────────────
+
+    async def _duckdb_background_writer(self) -> None:
+        """F285: Background writer that drains _duckdb_write_queue sequentially.
+
+        This enables overlapping DuckDB writes with the next cycle's acquisition.
+        Sequential draining preserves WAL ordering guarantees. Fail-soft: any
+        exception is logged but never propagates.
+        """
+        while not self._duckdb_writer_shutdown:
+            try:
+                store, findings, sprint_id = await asyncio.wait_for(
+                    self._duckdb_write_queue.get(),
+                    timeout=5.0,
+                )
+            except TimeoutError:
+                continue
+            except Exception as _e:
+                logger.debug("[F285] writer queue get failed: %s", _e)
+                continue
+
+            try:
+                await self._gate_then_ingest_and_accumulate(store, findings, sprint_id)
+            except Exception as _e:
+                logger.debug("[F285] writer ingest failed: %s", _e)
+            finally:
+                try:
+                    self._duckdb_write_queue.task_done()
+                except Exception:
+                    pass
+
+    def _enqueue_duckdb_write(self, store: Any, findings: list, sprint_id: str) -> bool:
+        """F285: Enqueue a DuckDB write batch. Returns True if enqueued, False if queue full."""
+        try:
+            self._duckdb_write_queue.put_nowait((store, findings, sprint_id))
+            return True
+        except asyncio.QueueFull:
+            logger.debug("[F285] write queue full, falling back to synchronous")
+            return False
+
     async def _gate_then_ingest_and_accumulate(
         self,
         store: Any,
@@ -19400,6 +19581,12 @@ class SprintScheduler:
                 self._graph_accumulator.accumulate_findings(findings, sprint_id=sprint_id or "")
             except Exception as _e:
                 logger.debug("[F266] graph_accumulate failed: %s", _e)
+        # P3-2: Feed findings to temporal predictor for pattern learning
+        try:
+            if self._temporal_predictor is not None:
+                self._temporal_predictor.observe_findings(chunk)
+        except Exception as _e:
+            logger.debug("[P3-2] temporal_predictor observe failed: %s", _e)
         return _ingest_result
 
     # ── F266: Chunk-level Parallelism ─────────────────────────────────────────
@@ -19553,43 +19740,42 @@ class SprintScheduler:
             return []
 
         try:
+            # P1-1: Batch query — single DuckDB round-trip instead of N individual calls.
+            # DuckPGQGraph.find_connected_batch uses CTE with IN(values) → O(1) vs N×O(V+E).
+            batch_map = _DEFAULT_GRAPH_SERVICE.find_connected_batch(
+                new_ioc_values[:20], max_hops=2
+            )
 
-            discovered: list[str] = []
+            seen_connections: dict[str, int] = {}
 
-            seen = set(new_ioc_values)
+            for ioc_val, connected in batch_map.items():
 
-            for ioc_val in new_ioc_values[:20]:
+                if not isinstance(connected, list):
+                    continue
 
-                try:
+                for node in connected:
 
-                    # Sprint P1-3: GraphService.find_entity_history() layers
-                    # hot-edges cache (O(1) LMDB) over DuckPGQ CTE (O(V+E)).
-                    # Also fixes field name: DuckPGQ returns "value", not "val".
-                    connected = _DEFAULT_GRAPH_SERVICE.find_entity_history(ioc_val, max_hops=2)
+                    val = node.get("value") if isinstance(node, dict) else str(node)
 
-                    if isinstance(connected, list):
+                    if val and val != ioc_val:
+                        seen_connections[val] = seen_connections.get(val, 0) + 1
 
-                        for node in connected:
+                        if len(seen_connections) >= 100:
+                            break
 
-                            val = node.get("value") if isinstance(node, dict) else str(node)
-
-                            if val and val not in seen:
-
-                                seen.add(val)
-
-                                discovered.append(val)
-
-                                if len(discovered) >= 10:
-
-                                    break
-
-                except Exception:
-
-                    pass
-
-                if len(discovered) >= 100:
-
+                if len(seen_connections) >= 100:
                     break
+
+            # Sprint F229A: rank by connection frequency — deduplicate + sort by degree
+            ranked = sorted(
+                seen_connections.keys(), key=lambda v: seen_connections[v], reverse=True
+            )
+
+            return ranked[:20]
+
+        except Exception as e:
+            logger.debug(f"[SPRINT] quantum_path find_connected_batch failed: {e}")
+            return []
 
             # Sprint F229A: rank by connection frequency -- deduplicate + sort by degree
 
@@ -19817,16 +20003,10 @@ class SprintScheduler:
 
 
 
-        # F273A: Use dynamic floor via scheduler instance (R8 may run before
-        # _cycle_time_ema is set -- fall back to 3.0s defensive floor in that case).
+        # F273B: Use remaining-time-aware floor (falls back to cycle-ema formula
+        # if _min_branch_remaining_s doesn't accept remaining_s).
 
-        if self._config and hasattr(self, "_min_branch_remaining_s"):
-
-            min_remaining = self._min_branch_remaining_s()
-
-        else:
-
-            min_remaining = 3.0
+        min_remaining = self._min_branch_remaining_s(remaining_s)
 
         if remaining_s <= min_remaining:
 
@@ -23741,7 +23921,7 @@ class SprintScheduler:
         lifecycle: Any,
     ) -> None:
         """Sprint F259: Run SynthesisRunner in WINDUP phase."""
-        if _env_flag("HLEDAC_ENABLE_HERMES_SYNTHESIS", "0") != "1":
+        if _env_flag("HLEDAC_ENABLE_HERMES_SYNTHESIS", "1") != "1":
             log.debug("[F259] Synthesis skipped -- HLEDAC_ENABLE_SYNTHESIS != '1'")
             return
 
@@ -27270,6 +27450,50 @@ class SprintScheduler:
 
 
 
+    # ── Sprint P2-2: Pure-Python fallback for _adapt_source_weights_from_feedback ──
+
+    @staticmethod
+    def _adapt_source_weights_from_feedback_python(
+        source_quality_feedback: dict[str, dict[str, int]],
+        config: Any,
+        source_weights: dict[str, float],
+        log: logging.Logger,
+    ) -> None:
+        """
+        Pure-Python implementation of source weight adaptation.
+        Extracted to a standalone function so it can be used as a fallback
+        when the Rust NEON backend is unavailable.
+
+        Matches exactly the F199A adaptation rules:
+          - ratio >= 0.7  -> delta 1.10 (+10%)
+          - ratio >= 0.4  -> delta 1.05 (+5%)
+          - ratio >= 0.15 -> delta 1.00 (neutral)
+          - ratio <  0.15 -> delta 0.95 (-5%)
+        Clamped to [0.3, 2.5] per B.6.
+        """
+        for feed_url, fb in source_quality_feedback.items():
+            total = fb.get("fetched", 0)
+            accepted = fb.get("accepted", 0)
+            if total == 0:
+                continue
+            source_type = config.tier_of(feed_url).name.lower()
+            current = source_weights.get(source_type, 1.0)
+            ratio = accepted / total
+            if ratio >= 0.7:
+                delta = 1.10
+            elif ratio >= 0.4:
+                delta = 1.05
+            elif ratio >= 0.15:
+                delta = 1.00
+            else:
+                delta = 0.95
+            new_weight = max(0.3, min(2.5, current * delta))
+            source_weights[source_type] = new_weight
+            log.debug(
+                f"[F199A][Python] Source weight adaptation: {source_type} "
+                f"({accepted}/{total}={ratio:.2%}) {current:.3f} -> {new_weight:.3f}"
+            )
+
     # ── Sprint F199A: Reward-driven source weight adaptation ─────────────
 
 
@@ -27308,60 +27532,49 @@ class SprintScheduler:
 
         """
 
+        # Sprint P2-2: Batch compute via ARM NEON when Rust backend is available.
+        # Build stats list for batch_compute_scores: each entry is a dict with
+        # fetched/accepted/current_weight/novelty keys.
+        source_type_map: list[tuple[str, str]] = []  # (source_type, feed_url) in insertion order
+        stats_list: list[dict[str, float]] = []
+
         for feed_url, fb in self._source_quality_feedback.items():
-
             total = fb.get("fetched", 0)
-
             accepted = fb.get("accepted", 0)
-
             if total == 0:
-
                 continue
-
-
-
-            ratio = accepted / total
-
-            # Derive source_type from feed_url via tier config
-
             source_type = self._config.tier_of(feed_url).name.lower()
-
-
-
             current = self._source_weights.get(source_type, 1.0)
+            source_type_map.append((source_type, feed_url))
+            stats_list.append({
+                "fetched": float(total),
+                "accepted": float(accepted),
+                "current_weight": current,
+                "novelty": False,
+            })
 
-            if ratio >= 0.7:
-
-                delta = 1.10  # +10%
-
-            elif ratio >= 0.4:
-
-                delta = 1.05  # +5%
-
-            elif ratio >= 0.15:
-
-                delta = 1.00  # neutral
-
-            else:
-
-                delta = 0.95  # -5%
-
-
-
-            new_weight = current * delta
-
-            # B.6: clamp to [0.3, 2.5]
-
-            new_weight = max(0.3, min(2.5, new_weight))
-
-            self._source_weights[source_type] = new_weight
-
-            log.debug(
-
-                f"[F199A] Source weight adaptation: {source_type} "
-
-                f"({accepted}/{total}={ratio:.2%}) {current:.3f} -> {new_weight:.3f}"
-
+        # P2-2: NEON-accelerated batch scoring when Rust backend is available.
+        if batch_compute_scores is not None and stats_list:
+            try:
+                new_weights: list[float] = batch_compute_scores(stats_list)
+                for i, (source_type, feed_url) in enumerate(source_type_map):
+                    new_weight = new_weights[i]
+                    self._source_weights[source_type] = new_weight
+                    fb = self._source_quality_feedback[feed_url]
+                    log.debug(
+                        f"[F199A][NEON] Source weight adaptation: {source_type} "
+                        f"({int(fb['accepted'])}/{int(fb['fetched'])}) "
+                        f"{stats_list[i]['current_weight']:.3f} -> {new_weight:.3f}"
+                    )
+            except Exception as e:
+                log.debug(f"[F199A][NEON] batch_compute_scores failed: {e} -- falling back to Python")
+                SprintScheduler._adapt_source_weights_from_feedback_python(
+                    self._source_quality_feedback, self._config, self._source_weights, log
+                )
+        elif stats_list:
+            # Fallback: same logic as the Rust path, Python scalar version.
+            SprintScheduler._adapt_source_weights_from_feedback_python(
+                self._source_quality_feedback, self._config, self._source_weights, log
             )
 
 
@@ -27515,10 +27728,36 @@ class SprintScheduler:
 
 
     def inject_ioc_graph(self, ioc_graph: Any) -> None:
+        """Inject IOCGraph reference for pivot operations.
 
-        """Inject IOCGraph reference for pivot operations."""
+        Sprint P2-3: If Kuzu is available and enabled, wraps the provided
+        DuckPGQGraph in a KuzuGraphBridge so IOC operations go to Kuzu
+        while analytics stays on DuckPGQGraph.
+        """
+        try:
+            import os as _os
 
+            from hledac.universal.knowledge.kuzu_graph_bridge import _KUZU_AVAILABLE, get_kuzu_graph_bridge
+            if _KUZU_AVAILABLE and _os.environ.get("HLEDAC_KUZU_ENABLED") == "1":
+                bridge_loop = asyncio.get_event_loop()
+                if bridge_loop.is_running():
+                    async def _try_get_bridge():
+                        return await get_kuzu_graph_bridge()
+                    asyncio.create_task(_try_get_bridge())
+                    self._pivot_ioc_graph = None
+                    self._kuzu_bridge: Any = None
+                    return
+                else:
+                    bridge = bridge_loop.run_until_complete(get_kuzu_graph_bridge())
+                    if bridge is not None:
+                        self._pivot_ioc_graph = bridge
+                        self._kuzu_bridge = bridge
+                        log.debug("[P2-3] KuzuGraphBridge injected")
+                        return
+        except Exception:
+            pass
         self._pivot_ioc_graph = ioc_graph
+        self._kuzu_bridge: Any = None
 
 
 
@@ -27607,6 +27846,15 @@ class SprintScheduler:
         """
 
         self._prefetch_pipeline = pipeline
+
+    def inject_temporal_predictor(self, predictor: Any) -> None:
+        """
+        P3-2: Inject TemporalIOCPredictor reference.
+
+        Predictor observes findings for time-of-day pattern learning
+        and provides predict_next_iocs() for ContinuousPrefetchPipeline.
+        """
+        self._temporal_predictor = predictor
 
     def get_prefetch_pipeline_stats(self) -> dict[str, Any] | None:
 
@@ -28667,7 +28915,25 @@ class SprintScheduler:
 
     # ── Sprint 8VD §B: Arrow / Parquet columnar buffer ────────────────────
 
+    @property
+    def _arrow_flush_n(self) -> int:
+        """Dynamically resolve Arrow flush N based on UMA state.
 
+        F26X-I: critical/emergency = 2500, warn = 1500, ok = 1000.
+        Read from _governor at call time (not init), so late binding is safe.
+        """
+        try:
+            raw = _env_flag("HLEDAC_ARROW_FLUSH_N", "")
+            if raw:
+                return max(100, min(int(raw), 10000))
+        except (ValueError, TypeError):
+            pass
+        uma_state = getattr(self._governor, "_uma_state", "ok") if self._governor else "ok"
+        if uma_state in ("critical", "emergency"):
+            return 2500
+        elif uma_state == "warn":
+            return 1500
+        return 1000
 
     def _resolve_arrow_batch_hard_cap(self) -> int:
 
@@ -28697,7 +28963,7 @@ class SprintScheduler:
 
             pass
 
-        return max(2 * self._ARROW_FLUSH_N, 2000)
+        return max(2 * self._arrow_flush_n, 2000)
 
 
 
@@ -28719,7 +28985,7 @@ class SprintScheduler:
 
         if (
 
-            len(self._arrow_batch) < self._ARROW_FLUSH_N
+            len(self._arrow_batch) < self._arrow_flush_n
 
             and now - self._arrow_last_flush < self._ARROW_FLUSH_S
 

@@ -401,7 +401,7 @@ class MoERouter:
         try:
             import mlx.core as mx
             if hasattr(mx, 'metal') and hasattr(mx.metal, 'get_active_memory'):
-                peak = mx.metal.get_active_memory()
+                peak = mx.get_active_memory()
                 total_bytes = 8 * 1024**3  # 8GB total
                 return max(0.5, (total_bytes - peak) / 1024**3)
         except Exception:
@@ -951,7 +951,7 @@ def route(query: str, context: dict) -> str:
     try:
         import mlx.core as mx
         if hasattr(mx, 'metal') and hasattr(mx.metal, 'get_active_memory'):
-            active_bytes = mx.metal.get_active_memory()
+            active_bytes = mx.get_active_memory()
             active_gb = active_bytes / (1024**3)
             if active_gb > 3.0:
                 # Under memory pressure, use smaller model

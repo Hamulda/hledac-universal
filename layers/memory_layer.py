@@ -535,7 +535,7 @@ class MemoryLayer:
             mx = _get_mlx()
             try:
                 if mx is not None and hasattr(mx, 'metal'):
-                    mx.metal.reset_peak_memory()
+                    mx.reset_peak_memory()
                     logger.info("✅ MLX Metal available")
                 else:
                     logger.warning("⚠️ MLX not available - running in CPU mode")

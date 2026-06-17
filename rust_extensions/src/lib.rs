@@ -21,6 +21,7 @@ pub mod aho_corasick;
 pub mod bloom;
 pub mod compress;
 pub mod content_hasher;
+pub mod graph_traverse;
 pub mod int_counter_layout;
 pub mod ioc_dedup;
 pub mod ioc_extract;
@@ -28,6 +29,7 @@ pub mod ioc_extract_fast;
 pub mod madvise;
 pub mod quality_gate;
 pub mod rolling_hash;
+pub mod signal_batch;
 pub mod simhash_ext;
 pub mod url_engine;
 pub mod url_ops;
@@ -74,7 +76,8 @@ pub mod xxhash_ext;
 /// Process-wide bounded rayon pool for batch operations.
 ///
 /// Shared by `url_ops::batch_classify`, `ioc_extract_fast::batch_ioc_extract`,
-/// `simhash_ext::batch_compute_simhash`, and `quality_gate::batch_*`.
+/// `simhash_ext::batch_compute_simhash`, `quality_gate::batch_*`,
+/// and `graph_traverse::batch_graph_traverse`.
 ///
 /// Created lazily on first call; subsequent calls return the same instance.
 pub(crate) fn bulk_pool() -> &'static ThreadPool {
@@ -165,6 +168,16 @@ fn hledac_rust_extensions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Sprint F265B-III: LMDB page compression (lz4 + zstd) for hot-edges cache.
     // Wire format: [marker=0x00/0x01/0x02][payload] — lz4 fast path, zstd fallback.
     compress::register_functions(m)?;
+
+    // Sprint P2-1: Parallel DuckPGQ graph traversal via rayon.
+    // batch_graph_traverse: parallel across root IOCs, rayon ThreadPool.
+    // Each worker opens its own read-only DuckDB connection (thread-safe).
+    graph_traverse::register_functions(m)?;
+
+    // Sprint P2-2: Batch signal aggregation — ARM NEON-accelerated source weight
+    // computation and signal vector aggregation for F199A reward-driven adaptation.
+    // Fallback: scalar Rust on non-aarch64.
+    signal_batch::register_functions(m)?;
 
     Ok(())
 }

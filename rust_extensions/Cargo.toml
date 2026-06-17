@@ -33,6 +33,16 @@ lz4_flex = "0.10"
 zstd = "0.13"
 # F273F: madvise syscalls — libc provides madvise/open/close on Darwin
 libc = "0.2"
+# P2-1: duckdb — DuckDB Rust bindings for parallel graph traversal.
+# Read-only connections safe across rayon worker threads. default=dbapi+core.
+#
+# BUNDLED STATIC BUILD (M1 8GB): Use DuckDB's bundled SQLite amalgamation source.
+# - Avoids external `libduckdb.dylib` dependency → no Homebrew version mismatch.
+# - DuckDB source compiles into the .dylib → zero external runtime deps.
+# - Increases .dylib size by ~25 MB but stays within M1 8GB RAM budget.
+# - `default-features = false` drops dynamic extensions (parquet, json, etc.)
+#   which are not needed for read-only DuckPGQ graph traversal.
+duckdb = { version = "1.105", default-features = false, features = ["bundled"] }
 
 [profile.release]
 opt-level = 3

@@ -427,9 +427,9 @@ def get_mlx_memory_mb() -> float:
     try:
         import mlx.core as mx
         if hasattr(mx.metal, "get_cache_memory"):
-            return mx.metal.get_cache_memory() / (1024 * 1024)
+            return mx.get_cache_memory() / (1024 * 1024)
         elif hasattr(mx.metal, "get_active_memory"):
-            return mx.metal.get_active_memory() / (1024 * 1024)
+            return mx.get_active_memory() / (1024 * 1024)
     except Exception:
         pass
     return 0.0

@@ -1,5 +1,16 @@
-# M1 ARM64 dynamic Python loading — resolved at extension import time
-# by Python's framework dylib. The equivalent `-undefined dynamic_lookup`
-# flag is also emitted by `build.rs` for maturin-driven builds.
-[target.arm64-apple-darwin]
-rustflags = ["-C", "link-arg=-undefined", "-C", "link-arg=dynamic_lookup"]
+# .cargo/config.toml — macOS aarch64 build configuration for maturin
+#
+# With duckdb = { version = "1.105", features = ["bundled"] } in Cargo.toml,
+# DuckDB source is compiled directly into the extension — no external libduckdb.dylib
+# dependency, no version mismatch with Homebrew, and no -L/opt/homebrew/lib needed.
+#
+# These rustflags supplement maturin's own link args (-undefined dynamic_lookup).
+# build.rs also emits the same flags as a fallback for non-maturin builds.
+
+[target.aarch64-apple-darwin]
+rustflags = [
+  "-C",
+  "link-arg=-undefined",
+  "-C",
+  "link-arg=dynamic_lookup",
+]

@@ -34,7 +34,7 @@ import time
 import aiohttp
 
 from hledac.universal.network.session_runtime import async_get_aiohttp_session
-from utils.async_helpers import safe_gather_dropin
+from utils.async_helpers import _check_gathered
 
 logger = logging.getLogger(__name__)
 
@@ -48,24 +48,30 @@ BGP_EVENT_TYPES: frozenset[str] = frozenset({"announce", "withdraw", "unknown"})
 
 # ── DoH Resolvers ─────────────────────────────────────────────────────────────
 # F300: Fixed Quad9 port 5053→443 (5053 is DoT, not DoH - caused HTTP 505)
-# F300: Added ordered fallback chain with circuit breaker health tracking
+# P1-3: Added OpenDNS + retry on 5xx server errors
 DOH_RESOLVERS: dict[str, str] = {
     "cloudflare": "https://cloudflare-dns.com/dns-query",
     "google": "https://dns.google/resolve",
+    "opendns": "https://doh.opendns.com/resolve",
     "quad9": "https://dns.quad9.net/dns-query",  # was :5053 (DoT port - WRONG)
     "adguard": "https://dns.adguard.com/dns-query",
     "nextdns": "https://dns.nextdns.io/dns-query",
 }
 
 # F300: Ordered fallback chain — tried in order, early exit on success
-# Primary: cloudflare (most reliable), Fallback: google → quad9 → adguard → nextdns
+# Primary: cloudflare (most reliable), Fallback: google → opendns → quad9 → adguard → nextdns
 DOH_FALLBACK_CHAIN: list[tuple[str, str]] = [
     ("cloudflare", "https://cloudflare-dns.com/dns-query"),
     ("google", "https://dns.google/resolve"),
+    ("opendns", "https://doh.opendns.com/resolve"),
     ("quad9", "https://dns.quad9.net/dns-query"),
     ("adguard", "https://dns.adguard.com/dns-query"),
     ("nextdns", "https://dns.nextdns.io/dns-query"),
 ]
+
+# P1-3: Retry config for 5xx server errors
+_MAX_DOH_RETRIES: int = 2  # max retries per resolver on 5xx
+_DOH_RETRY_DELAY_S: float = 0.5  # initial delay, doubles on each retry
 
 # F300: Circuit breaker state per resolver — tracks failure count + last_failure_ts
 # Resolver removed from chain after MAX_CONSECUTIVE_FAILURES
@@ -122,24 +128,38 @@ class _ResolverHealthTracker:
                 h.last_failure_ts = time.time()
 
     async def get_healthy_resolvers(self) -> list[tuple[str, str]]:
-        """Return fallback chain with unhealthy resolvers filtered out."""
+        """Return fallback chain with unhealthy resolvers filtered out.
+
+        Recovery window: resolvers with consecutive_failures > 0 but within
+        _RECOVERY_WINDOW_S are temporarily excluded so a transient DoH outage
+        doesn't permanently blacklist a provider. After recovery window expires
+        the resolver is re-added (failure count is reset to 0).
+        """
         async with self._lock:
             now = time.time()
             result: list[tuple[str, str]] = []
             for name, url in DOH_FALLBACK_CHAIN:
                 h = self._health.get(name)
-                if h and h.is_healthy:
-                    # Check recovery window
+                if h is None:
+                    # Unknown resolver — always include
+                    result.append((name, url))
+                    continue
+
+                if h.is_healthy:
                     if h.consecutive_failures > 0 and h.last_failure_ts > 0:
                         if now - h.last_failure_ts > _RECOVERY_WINDOW_S:
-                            # Enough time passed, allow retry
                             h.consecutive_failures = 0
                             result.append((name, url))
-                        # else: still in recovery window
+                        # else: still in recovery window — skip
                     else:
                         result.append((name, url))
-                elif not h:
-                    result.append((name, url))
+                else:
+                    # Unhealthy (consecutive_failures >= MAX). Check recovery window:
+                    # if enough time has passed, allow one retry attempt.
+                    if h.last_failure_ts > 0 and now - h.last_failure_ts > _RECOVERY_WINDOW_S:
+                        h.consecutive_failures = 0
+                        result.append((name, url))
+                    # else: still in recovery window — skip
             return result
 
     def get_stats(self) -> dict[str, dict]:
@@ -270,20 +290,32 @@ class PassiveDNSResolver:
 
         session = await self._ensure_session()
         import aiohttp
-        try:
-            params = {"name": name, "type": rdtype}
-            async with session.get(
-                url,
-                params=params,
-                timeout=aiohttp.ClientTimeout(total=10.0),
-                headers={"Accept": "application/dns-json"},
-            ) as resp:
-                if resp.status != 200:
-                    return []
-                data = await resp.json()
-        except Exception as e:
-            logger.debug(f"[DoH] Query failed for {resolver}: {e}")
-            return []
+        for _retry_i in range(_MAX_DOH_RETRIES + 1):
+            try:
+                params = {"name": name, "type": rdtype}
+                async with session.get(
+                    url,
+                    params=params,
+                    timeout=aiohttp.ClientTimeout(total=10.0),
+                    headers={"Accept": "application/dns-json"},
+                ) as resp:
+                    # P1-3: Retry on 5xx server errors (transient DoH degradation)
+                    if resp.status >= 500:
+                        if _retry_i < _MAX_DOH_RETRIES:
+                            await asyncio.sleep(_DOH_RETRY_DELAY_S * (2 ** _retry_i))
+                            continue
+                        return []
+                    if resp.status != 200:
+                        return []
+                    data = await resp.json()
+            except Exception as e:
+                if _retry_i < _MAX_DOH_RETRIES:
+                    await asyncio.sleep(_DOH_RETRY_DELAY_S * (2 ** _retry_i))
+                    continue
+                logger.debug(f"[DoH] Query failed for {resolver}: {e}")
+                return []
+            # Success — break retry loop
+            break
 
         answers: list[str] = []
         for item in data.get("Answer", []) or []:
@@ -298,7 +330,7 @@ class PassiveDNSResolver:
         """
         Resolve name via DoH fallback chain — F300.
 
-        Tries resolvers in order (cloudflare → google → quad9 → adguard → nextdns).
+        Tries resolvers in order (cloudflare → google → opendns → quad9 → adguard → nextdns).
         Early exit on first successful resolution with results.
         Records success/failure per resolver for circuit breaker health tracking.
         """
@@ -335,13 +367,12 @@ class PassiveDNSResolver:
             resolver: self._do_query(name, rdtype, resolver, url)
             for resolver, url in healthy_resolvers
         }
-        results = await safe_gather_dropin(*tasks.values(), label="passive_dns:222")
+        raw = await asyncio.gather(*tasks.values(), return_exceptions=True)
+        _ok_results, _errors = _check_gathered(raw, logger, "compare_resolvers")
+        # Re-associate: results align with original task keys (same order)
         comparison: dict[str, list[str]] = {}
-        for resolver, res in zip(tasks.keys(), results, strict=False):
-            if isinstance(res, list):
-                comparison[resolver] = res
-            else:
-                comparison[resolver] = []
+        for (resolver, _coro), res in zip(tasks.items(), _ok_results, strict=False):
+            comparison[resolver] = res if isinstance(res, list) else []
         return comparison
 
     async def close(self) -> None:

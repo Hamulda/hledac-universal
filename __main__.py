@@ -63,8 +63,10 @@ try:
         _uvloop_installed = True
         logging.info("[RUNTIME] uvloop installed successfully")
 except ImportError:
-    # Fail-open: fall back to default asyncio loop
-    logging.warning("[RUNTIME] uvloop not available, using default asyncio loop")
+    # uvloop not installed — use stdlib asyncio. On Python 3.14+ this is the
+    # expected path (no nightly wheel for M1). kqueue-based SelectorEventLoop is
+    # used on M1, same performance as uvloop for I/O-bound workloads.
+    _uvloop_installed = False
 
 # =============================================================================
 # Sprint F177D: Canonical Owner Freeze / Alternate Entrypoint Verdict
@@ -708,9 +710,9 @@ async def _run_public_passive_once(
         # Sprint 8AM C.3: Store ownership
         if owned_store and exit_stack is not None:
             try:
-                from hledac.universal.knowledge.duckdb_store import create_owned_store
+                from hledac.universal.knowledge.duckdb_store import DuckDBShadowStore
                 # Create owned store (uses paths.py RAMDisk SSOT)
-                store_instance = create_owned_store()
+                store_instance = DuckDBShadowStore()
                 # Async init
                 await store_instance.async_initialize()
                 # Register store.close() via AsyncExitStack callback
@@ -1674,11 +1676,11 @@ async def _run_observed_default_feed_batch_once(
     # C.1 + C.2: Acquire owned resources first
     try:
         from hledac.universal.discovery.rss_atom_adapter import get_default_feed_seeds
-        from hledac.universal.knowledge.duckdb_store import create_owned_store
+        from hledac.universal.knowledge.duckdb_store import DuckDBShadowStore
         from hledac.universal.network.session_runtime import async_get_aiohttp_session
         from hledac.universal.pipeline.live_feed_pipeline import async_run_live_feed_pipeline
 
-        store_instance = create_owned_store()
+        store_instance = DuckDBShadowStore()
         await store_instance.async_initialize()
 
         # Sprint 8AV C.2: Reset counters BEFORE BEFORE snapshot if surface exists
@@ -2840,13 +2842,13 @@ async def _run_sprint_mode(
         _mark_phase("ACTIVE")
 
         # ---- ACTIVE: pipeline runs every 60s while remaining > 3min ----
-        from hledac.universal.knowledge.duckdb_store import create_owned_store
+        from hledac.universal.knowledge.duckdb_store import DuckDBShadowStore
         from hledac.universal.pipeline.live_feed_pipeline import async_run_default_feed_batch
         from hledac.universal.pipeline.live_public_pipeline import async_run_live_public_pipeline
 
         store_instance = None
         try:
-            store_instance = create_owned_store()
+            store_instance = DuckDBShadowStore()
             await store_instance.async_initialize()
         except Exception as e:
             logger.warning(f"[SPRINT] Store init failed (continuing without store): {e}")
@@ -2917,7 +2919,7 @@ async def _run_sprint_mode(
                             label="main:pipeline_pair",
                         )
                         _boot_record("sprint_mode", "pipeline_run_ok")
-                    except* ExceptionGroup as eg:
+                    except ExceptionGroup as eg:
                         _boot_record("sprint_mode", "pipeline_run_error", error="; ".join(str(e) for e in eg.exceptions))  # noqa: E501
                     else:
                         _active_pipeline_iterations += 1

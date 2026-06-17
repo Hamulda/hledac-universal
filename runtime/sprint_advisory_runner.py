@@ -577,6 +577,13 @@ class SprintAdvisoryRunner:
             result.sidecars_skipped = tuple(sorted(sidecars_skipped))
             result.peak_rss_gib = peak_rss_gib
 
+        # F265H: Record governor telemetry snapshot at TEARDOWN for hardware_critical diagnostics
+        if decision is not None and result is not None:
+            result.governor_uma_state = getattr(decision, "uma_state", "")
+            result.governor_system_used_gib = getattr(decision, "system_used_gib", 0.0)
+            result.governor_swap_detected = getattr(decision, "swap_detected", False)
+            result.governor_io_only = getattr(decision, "io_only", False)
+
         return AdvisoryRunOutcome(
             planned_pivots=outcome.planned_pivots,
             executed_pivots=outcome.executed_pivots,

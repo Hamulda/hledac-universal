@@ -148,6 +148,9 @@ class GovernorDecision:
     model_denied_count: int = 0
     # F203J: Free UMA GiB hint for QuantizationSelector
     free_uma_gib: float = 0.0
+    # F265H:UMA telemetry for hardware_critical diagnostics
+    system_used_gib: float = 0.0
+    swap_detected: bool = False
 
 
 @dataclass
@@ -163,6 +166,8 @@ class GovernorSnapshot:
     io_only: bool
     # F203J: Free UMA GiB hint for QuantizationSelector
     free_uma_gib: float = 0.0
+    # F265H:UMA telemetry for hardware_critical diagnostics
+    swap_detected: bool = False
 
 
 class M1ResourceGovernor:
@@ -197,14 +202,20 @@ class M1ResourceGovernor:
         - branch_concurrency: recommended branch parallelism
         - reason: human-readable decision rationale
         - free_uma_gib: available UMA GiB for QuantizationSelector
+        - system_used_gib: system memory used in GiB (F265H)
+        - swap_detected: True if swap > 3.5 GiB (F265H)
 
         Fails soft: returns safe defaults on any error.
         """
         async with self._lock:
             free_uma_gib = 0.0
+            system_used_gib = 0.0
+            swap_detected = False
             try:
                 uma = sample_uma_status()
                 self._uma_state = uma.state
+                system_used_gib = uma.system_used_gib
+                swap_detected = uma.swap_detected
                 # F203J: Extract free UMA GiB for QuantizationSelector
                 free_uma_gib = uma.system_available_gib
             except Exception as exc:
@@ -231,6 +242,16 @@ class M1ResourceGovernor:
                 allow_renderer = False
                 allow_model_load = False
                 branch_concurrency = 1
+                # F265H: detailed hardware_critical trigger logging
+                logger.info(
+                    "[Governor] hardware_critical triggered: uma_state=%s system_used_gib=%.2f swap_detected=%s "
+                    "→ fetch_limit=%d branch_concurrency=%d",
+                    self._uma_state,
+                    system_used_gib,
+                    swap_detected,
+                    fetch_limit,
+                    branch_concurrency,
+                )
                 reason = f"UMA {self._uma_state}: safe mode"
             # Model loaded → cap fetch concurrency
             elif self._model_loaded:
@@ -264,6 +285,8 @@ class M1ResourceGovernor:
                 renderer_denied_count=self._renderer_denied_count,
                 model_denied_count=self._model_denied_count,
                 free_uma_gib=free_uma_gib,
+                system_used_gib=system_used_gib,
+                swap_detected=swap_detected,
             )
 
     def sidecar_admission(self, sidecar_name: str, estimated_mb: int = SIDECAR_DEFAULT_ESTIMATE_MB) -> SidecarAdmission:
@@ -580,11 +603,17 @@ class M1ResourceGovernor:
 
     def snapshot(self) -> GovernorSnapshot:
         """Current state snapshot for dashboard rendering."""
-        # F203J: Get free_uma_gib from live sample for snapshot
+        # F265H: capture full UmaStatus from live sample for snapshot telemetry
         free_uma_gib = 0.0
+        system_used_gib = 0.0
+        swap_detected = False
+        io_only = False
         try:
             uma = sample_uma_status()
             free_uma_gib = uma.system_available_gib
+            system_used_gib = uma.system_used_gib
+            swap_detected = uma.swap_detected
+            io_only = uma.io_only
         except Exception:
             pass
         return GovernorSnapshot(
@@ -594,9 +623,10 @@ class M1ResourceGovernor:
             branch_concurrency=4,
             renderer_denied_count=self._renderer_denied_count,
             model_denied_count=self._model_denied_count,
-            system_used_gib=0.0,
-            io_only=False,
+            system_used_gib=system_used_gib,
+            io_only=io_only,
             free_uma_gib=free_uma_gib,
+            swap_detected=swap_detected,
         )
 
     async def apply_decision(self, decision: GovernorDecision) -> None:

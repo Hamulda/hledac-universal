@@ -373,6 +373,87 @@ def bloom_check_batch(items: list[str], capacity: int) -> list[bool]:
     """Ephemeral batch Bloom filter check. Returns True for each new item."""
     ...
 
+# ---------------------------------------------------------------------------
+# Graph traverse — Parallel DuckPGQ graph traversal (P2-1)
+# ---------------------------------------------------------------------------
+
+def batch_graph_traverse(
+    db_path: str,
+    values: list[str],
+    max_hops: int = 2,
+) -> dict[str, list[dict[str, object]]]:
+    """
+    P2-1: Parallel batch graph traversal via rayon (4 threads).
+
+    Traverses IOC graph for each root value in parallel using the shared
+    bulk_pool(). Each worker opens its own DuckDB read-only connection.
+    Returns dict mapping each input value to its list of connected nodes.
+
+    Args:
+        db_path: Path to DuckDB database file.
+        values: List of root IOC values to traverse from.
+        max_hops: Maximum traversal depth (default 2, max 10).
+
+    Returns:
+        Dict mapping root value -> list of connected node dicts with keys:
+        value, ioc_type, confidence, source.
+    """
+    ...
+
+def graph_traverse_single(
+    db_path: str,
+    value: str,
+    max_hops: int = 2,
+) -> list[dict[str, object]]:
+    """
+    Single IOC graph traversal — one root, returns connected nodes.
+
+    Args:
+        db_path: Path to DuckDB database file.
+        value: Root IOC value to traverse from.
+        max_hops: Maximum traversal depth (default 2, max 10).
+
+    Returns:
+        List of connected node dicts with keys: value, ioc_type, confidence, source.
+    """
+    ...
+
+def graph_stats(
+    db_path: str,
+    top_k: int = 20,
+) -> dict[str, object]:
+    """
+    Graph statistics — node/edge counts and top-K nodes by degree.
+
+    Args:
+        db_path: Path to DuckDB database file.
+        top_k: Number of top nodes to return (default 20, max 100).
+
+    Returns:
+        Dict with keys: total_nodes, total_edges, top_nodes (list of dicts
+        with keys: value, ioc_type, degree).
+    """
+    ...
+
+# ---------------------------------------------------------------------------
+# Signal batch — ARM NEON SIMD (P2-2)
+# ---------------------------------------------------------------------------
+
+def batch_compute_scores(
+    stats: list[dict[str, object]],
+    default_weight: float = 1.0,
+) -> list[float]:
+    """Batch source quality scores via ARM NEON. Returns weights clamped [0.3, 2.5]."""
+    ...
+
+def batch_aggregate_signals(
+    signals: list[list[float]],
+    weights: list[float],
+    normalize: bool = True,
+) -> list[float]:
+    """Batch signal aggregation via ARM NEON. Returns weighted average or sum."""
+    ...
+
 def chain_hash_snapshot(snap: dict[str, int], prev_chain_hex: str, event_id: str) -> tuple[str, str]:
     """BLAKE3-256 + SHA-256 dual-emit over snapshot dict. Returns (blake3_hex, sha256_hex)."""
     ...

@@ -28,7 +28,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import math
 import time
 from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
@@ -49,6 +48,18 @@ def _get_duckdb():
         _dduckdb = _dd
     return _dduckdb
 
+# P0-2: Lazy Rust import — batch_compute_scores via ARM NEON
+_rust_batch_scores: Any = None
+def _get_rust_batch_scores():
+    global _rust_batch_scores
+    if _rust_batch_scores is None:
+        try:
+            from hledac_rust_extensions import batch_compute_scores
+            _rust_batch_scores = batch_compute_scores
+        except Exception:
+            _rust_batch_scores = None
+    return _rust_batch_scores
+
 # F200A: Bounded constants
 MAX_CANDIDATES = 100
 MAX_SOURCE_HISTORY = 200
@@ -58,7 +69,7 @@ MAX_URL_SEEN = 50_000
 SCORE_NEUTRAL = 1.0
 SCORE_HOT = 1.3
 SCORE_WARM = 1.1
-SCORE_LUKEWARMewarm = 1.0
+SCORE_LUKEWARM = 1.0
 SCORE_MARGINAL = 0.8
 SCORE_COLD = 0.6
 SCORE_UNKNOWN = 1.0
@@ -131,10 +142,15 @@ class PrefetchOracleIntegration:
         self._duckdb_executor: ThreadPoolExecutor | None = None
         self._duckdb_conn: Any = None  # Injected via inject_duckdb_conn()
 
-        # P1-3: InterpreterPoolExecutor fallback for pure-Python CPU-bound scoring
-        # normalize_text_for_score, compute_signal_diversity, aggregate_signals
-        # Python 3.14+ InterpreterPoolExecutor; fallback to ThreadPoolExecutor on older Python
-        self._interp_pool: Any = None
+        # P3-1: IOC graph and DuckDB store for speculative prefetch
+        # Injected via inject_ioc_graph() / inject_duckdb_store()
+        self._ioc_graph: Any = None
+        self._duckdb_store: Any = None
+
+        # P3-1: Cache of recently-fetched IOC values to avoid re-prefetching
+        self._prefetched_iocs: OrderedDict[str, float] = OrderedDict()  # ioc_value -> last_prefetch_ts
+        self._max_prefetched_iocs: int = 5000
+        self._prefetch_ttl_s: float = 300.0  # 5 min TTL before IOC is eligible again
 
         # Statistics
         self._stats = {
@@ -142,7 +158,9 @@ class PrefetchOracleIntegration:
             "cache_hits": 0,
             "cache_misses": 0,
             "duckdb_historical_queries": 0,
-            "interp_pool_batches": 0,
+            "predict_next_iocs_calls": 0,
+            "predict_next_iocs_items": 0,
+            "graph_traversals": 0,
         }
 
     # ── Public API ─────────────────────────────────────────────────────────
@@ -198,56 +216,35 @@ class PrefetchOracleIntegration:
             items_to_score = work_items[: self.max_candidates]
             scores: dict[str, float] = {}
 
-            # P1-1: Batch items and score in parallel via safe_gather_dropin
-            # batch_size=8 tuned for M1 8GB — avoids Metal memory pressure
-            batch_size = 8
-            batches: list[list[Any]] = [
-                items_to_score[i : i + batch_size]
-                for i in range(0, len(items_to_score), batch_size)
-            ]
+            # P0-2: Extract feed_urls, split cached vs uncached
+            uncached_urls: list[str] = []
+            for item in items_to_score:
+                feed_url = getattr(item, "feed_url", None)
+                if not feed_url:
+                    continue
+                if feed_url in self._score_cache:
+                    scores[feed_url] = self._score_cache[feed_url]
+                    self._stats["cache_hits"] += 1
+                else:
+                    uncached_urls.append(feed_url)
 
-            async def _score_batch(batch: list[Any]) -> dict[str, float]:
-                """Score a single batch sequentially (same source, no lock needed)."""
-                result: dict[str, float] = {}
-                for item in batch:
-                    feed_url = getattr(item, "feed_url", None)
-                    if not feed_url:
-                        continue
-                    if feed_url in self._score_cache:
-                        result[feed_url] = self._score_cache[feed_url]
-                        self._stats["cache_hits"] += 1
-                        continue
-                    score = self._compute_source_score(feed_url, current_cycle)
-                    result[feed_url] = score
-                    self._score_cache[feed_url] = score
-                    self._stats["cache_misses"] += 1
-                return result
-
-            try:
-                from utils.async_helpers import safe_gather_dropin
-
-                gathered = await safe_gather_dropin(
-                    *[_score_batch(batch) for batch in batches],
-                    label="P1-1:oracle_score_batch",
-                )
-                for batch_scores in gathered:
-                    if isinstance(batch_scores, dict):
-                        scores.update(batch_scores)
-            except Exception as e:
-                # Fail-safe: fall back to sequential scoring
-                logger.debug(f"[P1-1] safe_gather_dropin failed, sequential fallback: {e}")
-                for item in items_to_score:
-                    feed_url = getattr(item, "feed_url", None)
-                    if not feed_url:
-                        continue
-                    if feed_url in self._score_cache:
-                        scores[feed_url] = self._score_cache[feed_url]
-                        self._stats["cache_hits"] += 1
-                        continue
-                    score = self._compute_source_score(feed_url, current_cycle)
-                    scores[feed_url] = score
-                    self._score_cache[feed_url] = score
-                    self._stats["cache_misses"] += 1
+            # P0-2: Batch scoring — single call for all uncached URLs
+            # Rust NEON path when available, pure-Python fallback otherwise
+            if uncached_urls:
+                try:
+                    batch_scores = self._compute_source_score_batch(uncached_urls, current_cycle)
+                    for feed_url, score in batch_scores.items():
+                        scores[feed_url] = score
+                        self._score_cache[feed_url] = score
+                        self._stats["cache_misses"] += 1
+                except Exception as e:
+                    # Fail-safe: fall back to per-source scoring
+                    logger.debug(f"[P0-2] batch scoring failed, sequential fallback: {e}")
+                    for feed_url in uncached_urls:
+                        score = self._compute_source_score(feed_url, current_cycle)
+                        scores[feed_url] = score
+                        self._score_cache[feed_url] = score
+                        self._stats["cache_misses"] += 1
 
             self._stats["suggestions_made"] += 1
             return scores
@@ -369,12 +366,15 @@ class PrefetchOracleIntegration:
         self._seen_urls.clear()
         self._score_cache.clear()
         self._cache_cycle = -1
+        self._prefetched_iocs.clear()
         self._stats = {
             "suggestions_made": 0,
             "cache_hits": 0,
             "cache_misses": 0,
             "duckdb_historical_queries": 0,
-            "interp_pool_batches": 0,
+            "predict_next_iocs_calls": 0,
+            "predict_next_iocs_items": 0,
+            "graph_traversals": 0,
         }
 
     def inject_duckdb_conn(self, conn: Any) -> None:
@@ -387,6 +387,277 @@ class PrefetchOracleIntegration:
         Called by SprintScheduler during initialization.
         """
         self._duckdb_conn = conn
+
+    def inject_ioc_graph(self, ioc_graph: Any) -> None:
+        """
+        P3-1: Inject IOC graph (DuckPGQGraph) for speculative prefetch.
+
+        Graph provides find_connected(value, max_hops) for predicting
+        next likely IOCs based on entity relationships.
+
+        Called by SprintScheduler during initialization.
+        """
+        self._ioc_graph = ioc_graph
+
+    def inject_duckdb_store(self, store: Any) -> None:
+        """
+        P3-1: Inject DuckDB store for recent findings lookup.
+
+        Store provides async_get_recent_findings(limit) for retrieving
+        the latest accepted IOCs to traverse from.
+
+        Called by SprintScheduler during initialization.
+        """
+        self._duckdb_store = store
+
+    # ── P3-1: IOC Graph speculative prefetch ──────────────────────────────
+
+    async def predict_next_iocs(self, top_k: int = 10) -> list[dict]:
+        """
+        P3-1: Predict next likely IOCs using graph traversal.
+
+        Strategy:
+        1. Get recent accepted findings from DuckDB (last 1000)
+        2. Extract unique IOC values and their types
+        3. For each recent IOC, traverse graph to find connected entities
+        4. Score candidates by: confidence × recency × degree
+        5. Filter out recently prefetched IOCs (TTL 5 min)
+        6. Return top_k candidates as dicts
+
+        Args:
+            top_k: Maximum number of predictions to return.
+
+        Returns:
+            List of dicts with keys: ioc_value, ioc_type, confidence,
+            source_node, prediction_method.
+            Empty list on any error (fail-soft).
+        """
+        try:
+            self._stats["predict_next_iocs_calls"] += 1
+
+            # Step 1: Get recent findings from DuckDB
+            recent_findings: list[Any] = []
+            try:
+                store = getattr(self, "_duckdb_store", None)
+                if store is not None and hasattr(store, "async_get_recent_findings"):
+                    recent_findings = await store.async_get_recent_findings(limit=1000)
+                elif store is not None and hasattr(store, "get_recent_findings"):
+                    # Sync fallback via thread
+                    recent_findings = await asyncio.to_thread(
+                        store.get_recent_findings, limit=1000
+                    )
+            except Exception as e:
+                logger.debug(f"[P3-1] Failed to get recent findings: {e}")
+                return []
+
+            if not recent_findings:
+                return []
+
+            # Step 2: Extract IOC candidates from findings
+            candidates: dict[str, dict] = {}
+            now = time.time()
+
+            for finding in recent_findings:
+                # CanonicalFinding has: finding_id, query, source_type, confidence, ts, provenance
+                ioc_value: str | None = None
+                ioc_type: str = "unknown"
+
+                # Try common IOC field names (frozen Struct — use getattr)
+                for attr in ("value", "ioc_value", "domain", "url", "ip", "hash", "finding_id"):
+                    val = getattr(finding, attr, None)
+                    if isinstance(val, str) and val:
+                        ioc_value = val
+                        break
+
+                if not ioc_value:
+                    continue
+
+                # Determine IOC type from source_type or value pattern
+                source_type = getattr(finding, "source_type", "")
+                if "domain" in source_type or (ioc_type == "unknown" and "." in ioc_value and not ioc_value.startswith("http")):
+                    ioc_type = "domain"
+                elif "url" in source_type or ioc_value.startswith(("http://", "https://")):
+                    ioc_type = "url"
+                elif "ip" in source_type:
+                    ioc_type = "ip"
+                elif "hash" in source_type:
+                    ioc_type = "hash"
+
+                # Skip already prefetched recently (TTL check)
+                if ioc_value in self._prefetched_iocs:
+                    last_ts = self._prefetched_iocs[ioc_value]
+                    if now - last_ts < self._prefetch_ttl_s:
+                        continue
+
+                confidence = float(getattr(finding, "confidence", 0.5))
+                found_ts = float(getattr(finding, "ts", now))
+
+                if ioc_value not in candidates or candidates[ioc_value]["confidence"] < confidence:
+                    candidates[ioc_value] = {
+                        "ioc_value": ioc_value,
+                        "ioc_type": ioc_type,
+                        "confidence": confidence,
+                        "source_node": "duckdb_recent",
+                        "prediction_method": "duckdb_recent",
+                        "found_ts": found_ts,
+                    }
+
+            # Step 3: Graph traversal for connected IOCs (async, non-blocking)
+            graph_candidates: dict[str, dict] = {}
+            try:
+                graph = getattr(self, "_ioc_graph", None)
+                if graph is not None and hasattr(graph, "find_connected"):
+                    self._stats["graph_traversals"] += 1
+
+                    # Traverse from top-confidence candidates (limit graph queries to avoid OOM)
+                    top_sources = sorted(
+                        candidates.values(),
+                        key=lambda x: x["confidence"],
+                        reverse=True
+                    )[:20]  # Max 20 graph traversals
+
+                    # P3-1: Use asyncio.to_thread for non-blocking graph traversal
+                    # Check for Rust batch path first (fastest via rayon parallelization)
+                    db_path = getattr(graph, "db_path", None)
+                    if db_path and hasattr(graph, "find_connected_batch"):
+                        # Rust batch path: parallel via rayon, non-blocking via to_thread
+                        source_values = [src["ioc_value"] for src in top_sources]
+
+                        def _batch_traverse_sync() -> dict[str, list[dict]]:
+                            """Sync batch traversal — runs in thread pool via asyncio.to_thread."""
+                            try:
+                                # Try Rust batch_graph_traverse first (fastest)
+                                from hledac_rust_extensions import batch_graph_traverse
+                                raw = batch_graph_traverse(db_path, source_values, 2)
+                                if raw is not None:
+                                    return dict(raw)
+                            except Exception:
+                                pass
+                            # Fallback: Python batch (same-db connection)
+                            return graph.find_connected_batch(source_values, max_hops=2)
+
+                        batch_results: dict[str, list[dict]] = await asyncio.to_thread(
+                            _batch_traverse_sync
+                        )
+
+                        for src in top_sources:
+                            src_value = src["ioc_value"]
+                            connected = batch_results.get(src_value, [])
+                            for node in connected[:5]:  # Max 5 per source
+                                node_value = node.get("value") or node.get("ioc_value")
+                                node_type = node.get("type", src["ioc_type"])
+                                node_conf = float(node.get("confidence", 0.5))
+
+                                if not node_value or node_value in self._prefetched_iocs:
+                                    continue
+                                if now - self._prefetched_iocs.get(node_value, 0) < self._prefetch_ttl_s:
+                                    continue
+
+                                # Score: source confidence × node confidence × recency bonus
+                                recency_bonus = 1.0 + max(0, (now - src["found_ts"]) / 86400) * 0.1
+                                score = src["confidence"] * node_conf * recency_bonus
+
+                                if (node_value not in graph_candidates or
+                                        graph_candidates[node_value]["confidence"] < score):
+                                    graph_candidates[node_value] = {
+                                        "ioc_value": node_value,
+                                        "ioc_type": node_type,
+                                        "confidence": min(score, 1.0),
+                                        "source_node": src_value,
+                                        "prediction_method": "graph_traversal",
+                                        "found_ts": now,
+                                    }
+                    else:
+                        # Legacy Python batch path — find_connected_batch avoids N sequential calls
+                        legacy_source_values = [src["ioc_value"] for src in top_sources]
+
+                        def _legacy_batch_sync() -> dict[str, list[dict]]:
+                            """Python batch traversal — no Rust dependency."""
+                            try:
+                                return graph.find_connected_batch(legacy_source_values, max_hops=2)
+                            except Exception:
+                                return {}
+
+                        batch_results: dict[str, list[dict]] = await asyncio.to_thread(
+                            _legacy_batch_sync
+                        )
+
+                        for src in top_sources:
+                            src_value = src["ioc_value"]
+                            connected = batch_results.get(src_value, [])
+                            for node in connected[:5]:  # Max 5 per source
+                                node_value = node.get("value") or node.get("ioc_value")
+                                node_type = node.get("type", src["ioc_type"])
+                                node_conf = float(node.get("confidence", 0.5))
+
+                                if not node_value or node_value in self._prefetched_iocs:
+                                    continue
+                                if now - self._prefetched_iocs.get(node_value, 0) < self._prefetch_ttl_s:
+                                    continue
+
+                                # Score: source confidence × node confidence × recency bonus
+                                recency_bonus = 1.0 + max(0, (now - src["found_ts"]) / 86400) * 0.1
+                                score = src["confidence"] * node_conf * recency_bonus
+
+                                if (node_value not in graph_candidates or
+                                        graph_candidates[node_value]["confidence"] < score):
+                                    graph_candidates[node_value] = {
+                                        "ioc_value": node_value,
+                                        "ioc_type": node_type,
+                                        "confidence": min(score, 1.0),
+                                        "source_node": src_value,
+                                        "prediction_method": "graph_traversal",
+                                        "found_ts": now,
+                                    }
+            except Exception as e:
+                logger.debug(f"[P3-1] Graph access failed: {e}")
+
+            # Step 4: Merge candidates (graph candidates override duckdb candidates for same key)
+            all_candidates = {**candidates, **graph_candidates}
+
+            # Step 5: Sort by confidence and return top_k
+            sorted_candidates = sorted(
+                all_candidates.values(),
+                key=lambda x: x["confidence"],
+                reverse=True
+            )[:top_k]
+
+            # Step 6: Mark as recently seen (LRU eviction)
+            for cand in sorted_candidates:
+                self._prefetched_iocs[cand["ioc_value"]] = now
+                if len(self._prefetched_iocs) > self._max_prefetched_iocs:
+                    self._prefetched_iocs.popitem(last=False)
+
+            self._stats["predict_next_iocs_items"] += len(sorted_candidates)
+            return sorted_candidates
+
+        except Exception as e:
+            logger.debug(f"[P3-1] predict_next_iocs failed: {e}")
+            return []
+
+    def record_prefetch_outcome(
+        self,
+        ioc_value: str,
+        _success: bool = True,
+        _bytes_downloaded: int = 0,
+    ) -> None:
+        """
+        P3-1: Record the outcome of a prefetch attempt.
+
+        Called by ContinuousPrefetchPipeline._prefetch_item() after fetch.
+
+        Args:
+            ioc_value: The IOC that was prefetched.
+            success: True if fetch succeeded and data was cached.
+            bytes_downloaded: Bytes downloaded (for bandwidth accounting).
+        """
+        try:
+            # Always update timestamp to avoid hammering failing IOCs
+            self._prefetched_iocs[ioc_value] = time.time()
+            if len(self._prefetched_iocs) > self._max_prefetched_iocs:
+                self._prefetched_iocs.popitem(last=False)
+        except Exception:
+            pass
 
     # ── P1-2: DuckDB historical queries in ThreadPool ─────────────────────
 
@@ -445,134 +716,61 @@ class PrefetchOracleIntegration:
         except Exception:
             return -1.0
 
-    # ── P1-3: InterpreterPoolExecutor pure-Python scoring ─────────────────
-
-    def _get_interp_pool(self) -> Any:
-        """
-        P1-3: Lazily get or create InterpreterPoolExecutor.
-
-        Python 3.14+ has InterpreterPoolExecutor in concurrent.futures.
-        Falls back to ThreadPoolExecutor for older Python versions.
-
-        M1 8GB safe: max_workers=2 (CPU-bound pure-Python scoring is lightweight).
-        """
-        if self._interp_pool is not None:
-            return self._interp_pool
-        try:
-            from concurrent.futures import InterpreterPoolExecutor
-            self._interp_pool = InterpreterPoolExecutor(max_workers=2)
-        except (ImportError, AttributeError):
-            self._interp_pool = ThreadPoolExecutor(
-                max_workers=2, thread_name_prefix="oracle_interp"
-            )
-        return self._interp_pool
-
-    def _normalize_text_for_score(self, text: str) -> str:
-        """
-        P1-3: Normalize text for scoring — lowercase, strip, remove punctuation.
-
-        Pure Python CPU-bound function suitable for InterpreterPoolExecutor.
-        """
-        import re
-        text = text.lower().strip()
-        text = re.sub(r"[^\w\s]", "", text)
-        text = re.sub(r"\s+", " ", text).strip()
-        return text
-
-    def _compute_signal_diversity(self, signals: list) -> float:
-        """
-        P1-3: Compute signal diversity score across sources (entropy-based).
-
-        Pure Python CPU-bound function suitable for InterpreterPoolExecutor.
-
-        Returns:
-            float diversity score in range [0.0, 1.0]
-        """
-        if not signals:
-            return 0.0
-        type_counts: dict[str, int] = {}
-        for sig in signals:
-            key = f"accepted_{min(sig.accepted, 10)}"
-            type_counts[key] = type_counts.get(key, 0) + 1
-        if len(type_counts) <= 1:
-            return 0.0
-        total = len(signals)
-        entropy = 0.0
-        for count in type_counts.values():
-            p = count / total
-            if p > 0:
-                entropy -= p * math.log2(p)
-        max_entropy = math.log2(len(type_counts)) if type_counts else 1.0
-        return entropy / max_entropy if max_entropy > 0 else 0.0
-
-    def _aggregate_signals(
-        self,
-        feed_url: str,
-        yield_score: float,
-        recency_bonus: float,
-        novelty_bonus: float,
-    ) -> float:
-        """
-        P1-3: Aggregate all signals into final score using weighted combination.
-
-        Pure Python CPU-bound function suitable for InterpreterPoolExecutor.
-
-        Returns:
-            float final score in range [0.1, 3.0]
-        """
-        del feed_url  # Reserved for future per-URL weighting
-        total_bonus = recency_bonus * 0.5 + novelty_bonus * 0.5
-        score = yield_score * (1.0 + total_bonus)
-        return max(0.1, min(score, 3.0))
-
-    async def _score_batch_pure_python(
-        self,
-        items: list[Any],
-        current_cycle: int,
+    async def query_historical_yield_batch_async(
+        self, feed_urls: list[str], cycles_back: int = 20
     ) -> dict[str, float]:
         """
-        P1-3: Score a batch of items using pure-Python functions.
+        P1-2: Bulk DuckDB query for historical yield across multiple sources.
 
-        Uses InterpreterPoolExecutor (Python 3.14+) or ThreadPoolExecutor fallback.
+        Single round-trip to DuckDB for N sources (vs N round-trips in N+1 pattern).
+        Uses DuckDB IN-clause with placeholders for bulk lookup.
 
         Returns:
-            {feed_url: float} score dict
+            {feed_url: yield_ratio} for sources with data; -1.0 if unavailable.
         """
+        if not feed_urls:
+            return {}
         try:
-            pool = self._get_interp_pool()
-            self._stats["interp_pool_batches"] += 1
+            conn = getattr(self, "_duckdb_conn", None)
+            if conn is None:
+                return {}
 
-            def _score_item(item: Any) -> tuple[str, float]:
-                """Score a single item — runs in thread/interp pool."""
-                feed_url = getattr(item, "feed_url", None) or getattr(item, "url", None)
-                if not feed_url:
-                    return ("", 0.0)
-                score = self._compute_source_score(feed_url, current_cycle)
-                _ = self._normalize_text_for_score(feed_url)
-                active_sigs = list(self._source_signals.values())[:50]
-                diversity = self._compute_signal_diversity(active_sigs)
-                final_score = self._aggregate_signals(
-                    feed_url,
-                    score * (1 + diversity * 0.1),
-                    0.0,
-                    0.0,
+            if self._duckdb_executor is None:
+                self._duckdb_executor = ThreadPoolExecutor(
+                    max_workers=2, thread_name_prefix="oracle_duckdb"
                 )
-                return (feed_url, final_score)
+
+            def _query_sync() -> dict[str, float]:
+                """Single blocking DuckDB query for all sources — runs in thread pool."""
+                try:
+                    _get_duckdb()
+                    placeholders = ",".join(["?"] * len(feed_urls))
+                    q = f"""
+                    SELECT
+                        feed_url,
+                        COALESCE(
+                            SUM(CASE WHEN finding_id IS NOT NULL THEN 1 ELSE 0 END)::DOUBLE
+                                / NULLIF(SUM(CASE WHEN feed_url IS NOT NULL THEN 1 ELSE 0 END), 0),
+                            -1.0
+                        ) AS yield_ratio
+                    FROM sprint_findings
+                    WHERE feed_url IN ({placeholders})
+                      AND cycle_ts > NOW() - INTERVAL '1 hours' * ?
+                    GROUP BY feed_url;
+                    """
+                    rows = conn.execute(q, [*feed_urls, cycles_back]).fetchall()
+                    return {
+                        row[0]: float(row[1]) if row[1] is not None else -1.0
+                        for row in rows
+                    }
+                except Exception:
+                    return {}
 
             loop = asyncio.get_running_loop()
-            futures = [
-                loop.run_in_executor(pool, _score_item, item) for item in items
-            ]
-            results = await asyncio.gather(*futures, return_exceptions=True)
-            scores: dict[str, float] = {}
-            for result in results:
-                if isinstance(result, tuple) and len(result) == 2:
-                    url, sc = result
-                    if url:
-                        scores[url] = sc
-            return scores
-        except Exception as e:
-            logger.debug(f"[P1-3] _score_batch_pure_python failed: {e}")
+            result = await loop.run_in_executor(self._duckdb_executor, _query_sync)
+            self._stats["duckdb_historical_queries"] += 1
+            return result
+        except Exception:
             return {}
 
     # ── Internal scoring ───────────────────────────────────────────────────
@@ -628,3 +826,70 @@ class PrefetchOracleIntegration:
         # Combine: yield_score is the base multiplier, bonuses are additive
         score = yield_score + recency_bonus + novelty_bonus
         return max(0.1, min(score, 3.0))  # Clamp to [0.1, 3.0]
+
+    def _compute_source_score_batch(
+        self, feed_urls: list[str], current_cycle: int
+    ) -> dict[str, float]:
+        """
+        P0-2: Batch source scoring — all signals in one pass.
+
+        Builds stats list for Rust batch_compute_scores (F199A NEON path) when
+        Rust is available; falls back to pure-Python loop when not.
+        Single ThreadPoolExecutor call replaces N sequential _compute_source_score calls.
+
+        Args:
+            feed_urls: list of feed URLs to score
+            current_cycle: current sprint cycle (for recency bonus)
+
+        Returns:
+            {feed_url: score} for all feed_urls with known signals;
+            unknown URLs use SCORE_UNKNOWN.
+        """
+        rust_fn = _get_rust_batch_scores()
+        if rust_fn is not None:
+            # Build stats list for Rust NEON batch path (F199A formula)
+            # Maps feed_url -> index in stats list
+            url_order: list[str] = []
+            stats_list: list[dict[str, object]] = []
+            for feed_url in feed_urls:
+                signal = self._source_signals.get(feed_url)
+                if signal is None:
+                    continue
+                url_order.append(feed_url)
+                # batch_compute_scores dict format: fetched, accepted, current_weight, novelty
+                # NOTE: must use int for fetched/accepted — Rust extracts as u32, float→u32 fails
+                stats_list.append({
+                    "fetched": int(signal.fetched),
+                    "accepted": int(signal.accepted),
+                    "current_weight": 1.0,  # unused by oracle formula but required by Rust API
+                    "novelty": signal.seen_urls > 0 and signal.cycles_active > 0
+                    and (signal.seen_urls / max(1, signal.cycles_active)) > 5,
+                })
+
+            if not stats_list:
+                return dict.fromkeys(feed_urls, SCORE_UNKNOWN)
+
+            try:
+                # Rust NEON path: returns F199A weights [0.3, 2.5]
+                # Convert F199A weight back to oracle score space
+                raw_weights: list[float] = rust_fn(stats_list)
+                result: dict[str, float] = {}
+                for i, feed_url in enumerate(url_order):
+                    # Map F199A [0.3, 2.5] → oracle [0.1, 3.0] approximately
+                    # F199A delta multiplier × oracle base → oracle score
+                    delta = raw_weights[i]  # already clamped [0.3, 2.5]
+                    base = SCORE_NEUTRAL  # use neutral as base multiplier
+                    result[feed_url] = max(0.1, min(delta * base, 3.0))
+                # Unknown URLs
+                for feed_url in feed_urls:
+                    if feed_url not in result:
+                        result[feed_url] = SCORE_UNKNOWN
+                return result
+            except Exception:
+                pass  # Fall through to pure-Python
+
+        # Pure-Python batch: single pass over all feed_urls
+        result: dict[str, float] = {}
+        for feed_url in feed_urls:
+            result[feed_url] = self._compute_source_score(feed_url, current_cycle)
+        return result

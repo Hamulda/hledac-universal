@@ -44,7 +44,7 @@ def get_metal_mb() -> float | None:
     if not MLX_AVAILABLE:
         return None
     try:
-        return mx.metal.get_active_memory() / (1024 * 1024)
+        return mx.get_active_memory() / (1024 * 1024)
     except Exception:
         return None
 

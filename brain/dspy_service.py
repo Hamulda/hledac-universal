@@ -450,14 +450,23 @@ async def expand_query(query: str) -> list | None:
             # F288: fail-soft if dspy.context not available (older DSPy versions)
             # F289: ALSO catch AttributeError when dspy.context exists but is broken
             # (e.g. Python 3.14 where dspy.context raises AttributeError internally)
+            # F290 FIX: program(query=...) may return a coroutine in DSPy 3.2+ or
+            # Python 3.14 where async predict signatures exist — guard with
+            # inspect.iscoroutinefunction / asyncio.iscoroutine to prevent
+            # "coroutine was never awaited" RuntimeWarning and memory leak.
             try:
                 with dspy.context(lm=lm):
                     pred = program(query=query.strip())
+                    # Guard: coroutine leak if DSPy/Python version changed behavior
+                    if asyncio.iscoroutine(pred):
+                        pred = await pred
                     return str(pred.answer) if hasattr(pred, "answer") else None
             except (AttributeError, TypeError):
                 # Fallback: set lm directly on program
                 program.lm = lm
                 pred = program(query=query.strip())
+                if asyncio.iscoroutine(pred):
+                    pred = await pred
                 return str(pred.answer) if hasattr(pred, "answer") else None
 
         async with asyncio.timeout(TIMEOUT_SECONDS):

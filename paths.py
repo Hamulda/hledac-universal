@@ -283,9 +283,6 @@ RUNTIME_STATE: Path = RUNTIME_BASE / "state"
 EMBEDDING_CACHE: Path = RUNTIME_BASE / "embeddings"
 BENCHMARK_CACHE: Path = RUNTIME_BASE / "benchmarks"
 
-# Backward-compat alias (RAMDISK_ROOT was the old CTI export root)
-RAMDISK_ROOT: Path = CTI_EXPORT_DIR
-
 # Initialize runtime directories at import time
 for _dir in (CTI_EXPORT_DIR, RUNS_ROOT, RUNTIME_STATE, EMBEDDING_CACHE, BENCHMARK_CACHE):
     _dir.mkdir(parents=True, exist_ok=True)
@@ -293,8 +290,9 @@ for _dir in (CTI_EXPORT_DIR, RUNS_ROOT, RUNTIME_STATE, EMBEDDING_CACHE, BENCHMAR
 
 # ---------------------------------------------------------------------------
 # Runtime Path Constants (legacy paths, still used by other subsystems)
-# These use RAMDISK_ROOT which is now CTI_EXPORT_DIR (project-local)
-# Kept for backward compat with existing code that references DB_ROOT, LMDB_ROOT, etc.
+# These use RAMDISK_ROOT which is now set dynamically by the ramdisk detection
+# logic above (Step 1-3) — DO NOT redeclare here.
+# DB_ROOT, LMDB_ROOT, EVIDENCE_ROOT, etc. are computed from RAMDISK_ROOT
 # ---------------------------------------------------------------------------
 
 DB_ROOT: Path = RAMDISK_ROOT / "db"
@@ -473,33 +471,6 @@ for _dir in [DB_ROOT, LMDB_ROOT, SPRINT_LMDB_ROOT, EVIDENCE_ROOT, RUNS_ROOT, SOC
 # Initialize security-sensitive directories with 0o700
 for _dir in [KEYS_ROOT, TOR_ROOT, NYM_ROOT, I2P_ROOT]:
     _ensure_dir(_dir, mode=0o700)
-
-
-# ---------------------------------------------------------------------------
-# Project-Local Runtime Paths (Sprint F208A)
-# All runtime data lives under hledac/universal/runtime/
-# GHOST_EXPORT_DIR env var overrides CTI_EXPORT_DIR (downstream compat)
-# ---------------------------------------------------------------------------
-
-_PROJECT_ROOT: Path = Path(__file__).parent  # hledac/universal/
-
-RUNTIME_BASE: Path = _PROJECT_ROOT / "runtime"
-
-# CTI and diagnostic export paths
-CTI_EXPORT_DIR: Path = RUNTIME_BASE / "cti"
-RUNS_ROOT: Path = RUNTIME_BASE / "runs"  # diagnostic/markdown/stix bundle runs
-
-# State and cache paths
-RUNTIME_STATE: Path = RUNTIME_BASE / "state"
-EMBEDDING_CACHE: Path = RUNTIME_BASE / "embeddings"
-BENCHMARK_CACHE: Path = RUNTIME_BASE / "benchmarks"
-
-# Backward-compat alias (RAMDISK_ROOT was the old CTI export root)
-RAMDISK_ROOT: Path = CTI_EXPORT_DIR
-
-# Initialize runtime directories at import time
-for _dir in (CTI_EXPORT_DIR, RUNS_ROOT, RUNTIME_STATE, EMBEDDING_CACHE, BENCHMARK_CACHE):
-    _dir.mkdir(parents=True, exist_ok=True)
 
 
 # ---------------------------------------------------------------------------

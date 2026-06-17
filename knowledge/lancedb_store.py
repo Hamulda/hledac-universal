@@ -273,7 +273,7 @@ class LanceDBIdentityStore:
             8, min(256, int(os.environ.get("HLEDAC_LANCEDB_IVFPQ_NUM_PARTITIONS", "64")))
         )
         self._ivfpq_num_sub_vectors: int = max(
-            4, min(64, int(os.environ.get("HLEDAC_LANCEDB_IVFPQ_NUM_SUB_VECTORS", "16")))
+            4, min(64, int(os.environ.get("HLEDAC_LANCEDB_IVFPQ_NUM_SUB_VECTORS", "12")))
         )
         self._ivfpq_trained: bool = False
         self._ivfpq_lock: asyncio.Lock = asyncio.Lock()

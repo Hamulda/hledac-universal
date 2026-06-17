@@ -197,11 +197,7 @@ impl BloomFilter {
             .collect();
 
         // Sequential merge into bitmap (bitmap access must be serial).
-        let mut new_count = 0usize;
-        for (indices, is_new) in &results {
-            if *is_new {
-                new_count += 1;
-            }
+        for (indices, _is_new) in &results {
             for &idx in indices {
                 self.set_bit(idx);
             }

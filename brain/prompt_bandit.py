@@ -197,7 +197,7 @@ class PromptBandit:
                 if hasattr(mx, 'get_active_memory'):
                     gpu_load = min(1.0, mx.get_active_memory() / (4 * 1024**3))
                 elif hasattr(mx.metal, 'get_active_memory'):
-                    gpu_load = min(1.0, mx.metal.get_active_memory() / (4 * 1024**3))
+                    gpu_load = min(1.0, mx.get_active_memory() / (4 * 1024**3))
                 else:
                     gpu_load = 0.0
             except Exception:

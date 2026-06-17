@@ -358,6 +358,39 @@ class GraphService:
             logger.warning(f"[GraphService] find_entity_history failed for {value}: {e}")
             return []
 
+    def find_connected_batch(self, values: list[str], max_hops: int = 2) -> dict[str, list[dict]]:
+        """
+        P1-1: Batch version of find_entity_history — single DuckDB round-trip.
+
+        Args:
+            values: List of IOC values to query.
+            max_hops: Maximum traversal depth (default 2).
+
+        Returns:
+            Dict mapping each input value to its list of connected node dicts.
+            Falls back to individual find_entity_history calls on error.
+        """
+        if not values:
+            return {}
+        graph = _get_graph()
+        if graph is None:
+            return {}
+        try:
+            # DuckPGQGraph.find_connected_batch does one CTE with IN(values) — O(1) vs N×O(V+E)
+            batch_result = graph.find_connected_batch(values, max_hops)
+            if batch_result:
+                return batch_result
+        except Exception as e:
+            logger.debug(f"[GraphService] find_connected_batch failed, falling back: {e}")
+        # Fallback: individual calls (fail-soft)
+        result: dict[str, list[dict]] = {v: [] for v in values}
+        for v in values:
+            try:
+                result[v] = self.find_entity_history(v, max_hops)
+            except Exception:
+                pass
+        return result
+
     def graph_stats(self) -> dict:
         """Return graph node/edge statistics. Returns empty dict on error."""
         graph = _get_graph()
@@ -582,6 +615,10 @@ def upsert_identity_edge(
 
 def find_entity_history(value: str, max_hops: int = 2) -> list[dict]:
     return _DEFAULT_GRAPH_SERVICE.find_entity_history(value, max_hops)
+
+
+def find_connected_batch(values: list[str], max_hops: int = 2) -> dict[str, list[dict]]:
+    return _DEFAULT_GRAPH_SERVICE.find_connected_batch(values, max_hops)
 
 
 def graph_stats() -> dict:

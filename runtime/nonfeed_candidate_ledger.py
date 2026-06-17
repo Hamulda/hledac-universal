@@ -1036,6 +1036,19 @@ def extract_domain_candidates_from_finding(
 # Uses MLX (DeepHermes3Engine) to generate plausible infrastructure domains
 # when regex-based extraction finds nothing. Bounded: MAX_CONCEPTUAL_DOMAINS.
 
+# P1-4: Cached DeepHermes3Engine singleton (reused across calls, avoids reload per call)
+_cached_mlx_engine: Any = None
+_cached_mlx_engine_initialized: bool = False
+
+
+def _get_cached_mlx_engine() -> Any:
+    """Get or create cached DeepHermes3Engine instance (P1-4 optimization)."""
+    global _cached_mlx_engine
+    if _cached_mlx_engine is None:
+        from hledac.universal.brain.deephermes3_engine import DeepHermes3Engine
+        _cached_mlx_engine = DeepHermes3Engine()
+    return _cached_mlx_engine
+
 
 async def _generate_conceptual_domains_mlx(
     query: str,
@@ -1056,15 +1069,17 @@ async def _generate_conceptual_domains_mlx(
     Returns:
         List of DomainCandidate with confidence=0.5 (lower than extracted).
     """
+    global _cached_mlx_engine_initialized
+
     if not query or not isinstance(query, str) or len(query.strip()) < 4:
         return []
 
     try:
-        # Lazy import to avoid early MLX load
-        from hledac.universal.brain.deephermes3_engine import DeepHermes3Engine
-
-        engine = DeepHermes3Engine()
-        await engine.initialize()
+        # P1-4: Reuse cached engine instead of creating new one per call
+        engine = _get_cached_mlx_engine()
+        if not _cached_mlx_engine_initialized:
+            await engine.initialize()
+            _cached_mlx_engine_initialized = True
 
         system_prompt = (
             "You are an OSINT infrastructure researcher. Given an OSINT query topic, "
@@ -1129,12 +1144,7 @@ async def _generate_conceptual_domains_mlx(
                 )
             )
 
-        # Cleanup
-        try:
-            engine.unload()
-        except Exception:
-            pass
-
+        # P1-4: No unload() — engine is cached and reused across calls
         return results
 
     except Exception:

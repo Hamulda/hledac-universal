@@ -44,6 +44,9 @@ PREFETCH_BATCH_SIZE = 10
 PREFETCH_INTERVAL_S = 15.0  # Producer poll interval
 PREFETCH_TIMEOUT_S = 30.0  # Per-item fetch timeout
 MAX_CONCURRENT_PREFETCHES = 3
+# P3-1: Idle-cycle pre-warm settings
+IDLE_PREFETCH_INTERVAL_S = 5.0  # Check for idle pre-warm every 5s
+IDLE_PREFETCH_THRESHOLD = 3  # Number of consecutive idle cycles before pre-warm
 
 
 @dataclass
@@ -262,17 +265,8 @@ class ContinuousPrefetchPipeline:
                 if not self._running:
                     break
 
-                # Call oracle.predict_next_iocs() in thread to avoid blocking
+                # Call oracle.predict_next_iocs() — non-blocking via await
                 try:
-                    loop = asyncio.get_running_loop()
-
-                    def _sync_predict():
-                        # Run sync version if available
-                        if hasattr(self._oracle, "predict_next_iocs"):
-                            # It's async, will be awaited below
-                            return None
-                        return None
-
                     # Check if oracle has predict_next_iocs
                     if hasattr(self._oracle, "predict_next_iocs"):
                         try:
@@ -303,7 +297,14 @@ class ContinuousPrefetchPipeline:
         Background executor: consumes from queue and performs prefetch fetch.
 
         Uses pre-warmed connections from transport/prewarm_pool.py.
+
+        P3-1: Idle-cycle pre-warm — when queue is empty for consecutive
+        IDLE_PREFETCH_THRESHOLD cycles, triggers pre-warm of connections
+        for predicted IOCs to reduce latency during actual fetching.
         """
+        idle_cycles = 0
+        prewarmed_hosts: set[str] = set()
+
         try:
             while not self._stop_event.is_set():
                 item: PrefetchItem | None = None
@@ -311,15 +312,22 @@ class ContinuousPrefetchPipeline:
                     # Wait for item with timeout
                     item = await asyncio.wait_for(
                         self._queue.get(),
-                        timeout=5.0
+                        timeout=IDLE_PREFETCH_INTERVAL_S
                     )
                 except TimeoutError:
+                    # P3-1: Idle-cycle pre-warm logic
+                    if self._queue.empty():
+                        idle_cycles += 1
+                        if idle_cycles >= IDLE_PREFETCH_THRESHOLD:
+                            # Trigger pre-warm for predicted IOCs
+                            await self._prewarm_connections_for_predictions(prewarmed_hosts)
+                            idle_cycles = 0  # Reset after pre-warm attempt
                     continue
                 except asyncio.CancelledError:
                     raise
 
-                if item is None:
-                    continue
+                # Item received — reset idle counter
+                idle_cycles = 0
 
                 # Check if item is too old (TTL)
                 age = time.time() - item.enqueued_at
@@ -343,18 +351,87 @@ class ContinuousPrefetchPipeline:
             logger.debug(f"[P3-3] Executor-{worker_id} loop cancelled")
             raise
 
+    async def _prewarm_connections_for_predictions(self, prewarmed_hosts: set[str]) -> None:
+        """
+        P3-1: Pre-warm connections for predicted IOCs during idle cycles.
+
+        Uses asyncio.to_thread to avoid blocking the event loop.
+        Tracks pre-warmed hosts to avoid redundant pre-warming.
+
+        Args:
+            prewarmed_hosts: Set of already-prewarmed hosts (modified in-place)
+        """
+        try:
+            if not hasattr(self._oracle, "predict_next_iocs"):
+                return
+
+            # Get predictions without blocking event loop
+            predictions = await asyncio.wait_for(
+                self._oracle.predict_next_iocs(top_k=PREFETCH_BATCH_SIZE),
+                timeout=10.0
+            )
+
+            if not predictions:
+                return
+
+            # Extract hosts to pre-warm (deduplicated)
+            hosts_to_prewarm: list[str] = []
+            for pred in predictions:
+                ioc_type = pred.get("ioc_type", "domain")
+                ioc_value = pred.get("ioc_value", "")
+                if ioc_type == "domain" and ioc_value:
+                    if ioc_value not in prewarmed_hosts:
+                        hosts_to_prewarm.append(ioc_value)
+                        prewarmed_hosts.add(ioc_value)
+
+            if not hosts_to_prewarm:
+                return
+
+            # Pre-warm connections in thread pool (non-blocking)
+            async def _prewarm_async() -> None:
+                """Pre-warm curl_cffi sessions for hosts."""
+                try:
+                    from transport.prewarm_pool import acquire_session
+                    for _host in hosts_to_prewarm[:5]:  # Max 5 hosts per pre-warm
+                        try:
+                            await acquire_session("ja3_fingerprint")
+                        except Exception:
+                            pass
+                except ImportError:
+                    pass
+
+            # Run async prewarm without blocking event loop
+            # P3-1 FIX: asyncio.run() in thread is M1 crash vector (CLAUDE.md invariant).
+            # Use loop.run_until_complete() via asyncio.to_thread() instead.
+            loop = asyncio.get_running_loop()
+            await asyncio.to_thread(loop.run_until_complete, _prewarm_async())
+            logger.debug(f"[P3-3] Pre-warmed connections for {len(hosts_to_prewarm)} hosts")
+
+        except TimeoutError:
+            logger.debug("[P3-3] Pre-warm predictions timed out")
+        except Exception as e:
+            logger.debug(f"[P3-3] Pre-warm failed: {e}")
+
     async def _prefetch_item(self, item: PrefetchItem) -> bool:
         """
         Prefetch a single IOC item.
 
         Returns True on success, False on failure.
         """
+        bytes_downloaded = 0
+
         # Check cache first
         if self._cache is not None:
             try:
                 cached = await self._cache.get(item.ioc_value)
                 if cached is not None:
                     self._stats["cache_hits"] += 1
+                    # P3-1: Record cache hit in oracle feedback loop
+                    try:
+                        if hasattr(self._oracle, "record_prefetch_outcome"):
+                            self._oracle.record_prefetch_outcome(item.ioc_value, True, 0)
+                    except Exception:
+                        pass
                     return True
             except Exception as e:
                 logger.debug(f"[P3-3] Cache check failed: {e}")
@@ -365,12 +442,14 @@ class ContinuousPrefetchPipeline:
             return False
 
         # Fetch with timeout
+        success = False
         try:
             result = await asyncio.wait_for(
                 self._fetch_url(url),
                 timeout=self._fetch_timeout
             )
             if result:
+                bytes_downloaded = len(result.get("content", ""))
                 # Store in cache
                 if self._cache is not None:
                     try:
@@ -385,13 +464,20 @@ class ContinuousPrefetchPipeline:
                         )
                     except Exception as e:
                         logger.debug(f"[P3-3] Cache put failed: {e}")
-                return True
+                success = True
         except TimeoutError:
             logger.debug(f"[P3-3] Prefetch timeout for {item.ioc_value}")
         except Exception as e:
             logger.debug(f"[P3-3] Prefetch failed for {item.ioc_value}: {e}")
 
-        return False
+        # P3-1: Record outcome in oracle feedback loop
+        try:
+            if hasattr(self._oracle, "record_prefetch_outcome"):
+                self._oracle.record_prefetch_outcome(item.ioc_value, success, bytes_downloaded)
+        except Exception:
+            pass
+
+        return success
 
     def _ioc_to_url(self, ioc_value: str, ioc_type: str) -> str | None:
         """Convert IOC value to URL for fetching."""
@@ -412,7 +498,7 @@ class ContinuousPrefetchPipeline:
         # Try to use prewarmed session from pool
         try:
             from transport.prewarm_pool import acquire_session
-            success, session, profile = await acquire_session("ja3_fingerprint")
+            success, session, _profile = await acquire_session("ja3_fingerprint")
             if success and session is not None:
                 try:
                     resp = session.get(url, timeout=self._fetch_timeout)

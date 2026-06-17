@@ -74,10 +74,19 @@ IntCounterLayoutRust: type | None = None  # type: ignore[assignment]
 bulk_bump_aggregate: Any = None
 bulk_snapshot_dict: Any = None
 build_layout_rust: Any = None
+chain_hash_snapshot: Any = None
+batch_compute_scores: Any = None  # P2-2: NEON-accelerated source weight scoring
+batch_aggregate_signals: Any = None  # P2-2: NEON-accelerated signal aggregation
 
 try:
     from hledac_rust_extensions import (  # type: ignore[import-not-found]
         IntCounterLayoutRust as _RustLayout,
+    )
+    from hledac_rust_extensions import (
+        batch_aggregate_signals as _batch_agg,
+    )
+    from hledac_rust_extensions import (
+        batch_compute_scores as _batch_scores,
     )
     from hledac_rust_extensions import (
         build_layout as _build_rust,
@@ -88,10 +97,16 @@ try:
     from hledac_rust_extensions import (
         bulk_snapshot_dict as _bulk_snap,
     )
+    from hledac_rust_extensions import (
+        chain_hash_snapshot as _chain_hash,
+    )
     IntCounterLayoutRust = _RustLayout
     bulk_bump_aggregate = _bulk_bump
     bulk_snapshot_dict = _bulk_snap
     build_layout_rust = _build_rust
+    chain_hash_snapshot = _chain_hash
+    batch_compute_scores = _batch_scores
+    batch_aggregate_signals = _batch_agg
     _RUST_AVAILABLE = True  # noqa: F841 — read by is_rust_available() at module bottom
     logger.debug(
         "[IntCounterLayout] Rust backend available (hledac_rust_extensions)"
@@ -342,7 +357,11 @@ __all__ = [
     "bulk_bump_aggregate",
     "bulk_snapshot_dict",
     "build_layout_rust",
+    "chain_hash_snapshot",
     "is_rust_available",
+    # Sprint P2-2: NEON-accelerated signal aggregation
+    "batch_compute_scores",
+    "batch_aggregate_signals",
 ]
 
 

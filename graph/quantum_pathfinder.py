@@ -1554,12 +1554,41 @@ class DuckPGQGraph:
 
     def find_connected_batch(self, values: list[str], max_hops: int = 2) -> dict[str, list[dict]]:
         """
-        P1-1 fix: Batch version of find_connected for N+1 query optimization.
+        P2-1: Batch version of find_connected for N+1 query optimization.
+        Primary path: Rust batch_graph_traverse (parallel via rayon, 4 threads).
+        Fallback: existing Python CTE impl.
+
         Returns dict mapping each input value to its connected nodes.
-        Falls back to individual find_connected calls on error.
         """
         if not values:
             return {}
+
+        # P2-1: Try Rust parallel path first (rayon bulk_pool, 4 workers).
+        # Each worker opens its own DuckDB connection on-pool threads.
+        # Connection is !Send so all access stays inside bulk_pool().install().
+        try:
+            from hledac_rust_extensions import batch_graph_traverse
+            raw = batch_graph_traverse(self.db_path, values, max_hops)
+            # Rust returns dict[str, list[dict]] — same shape as our return type.
+            # Non-empty dict means Rust path succeeded; empty dict means
+            # DB had no data (legitimate zero results, not an error).
+            if raw is not None:
+                return raw
+        except ImportError:
+            logger.debug("[GRAPH] Rust batch_graph_traverse not available, using Python fallback")
+        except Exception as e:
+            logger.debug(f"[GRAPH] Rust batch_graph_traverse failed, falling back: {e}")
+
+        # Fallback: Python CTE implementation (unchanged behavior).
+        return self._find_connected_batch_python(values, max_hops)
+
+    def _find_connected_batch_python(
+        self, values: list[str], max_hops: int = 2
+    ) -> dict[str, list[dict]]:
+        """
+        Fallback batch traversal when Rust extension is unavailable.
+        Uses CTE with IN clause — same as the original find_connected_batch.
+        """
         # Use CTE with IN clause for batch query
         sql = """  # noqa: UP031
             WITH RECURSIVE paths(src_value, dst_id, depth) AS (
@@ -1582,7 +1611,6 @@ class DuckPGQGraph:
         params = list(values) + [max_hops]
         try:
             # Polars native ARM64, zero-copy Arrow → 5-20× faster than pandas.
-            # .iter_rows(named=True) is 5-10× faster than pandas .iterrows().
             import polars as pl
             arrow_tbl = self.con.execute(sql, params).fetch_arrow_table()
             df = pl.from_arrow(arrow_tbl)
@@ -1600,8 +1628,8 @@ class DuckPGQGraph:
         except ImportError:
             return {v: [] for v in values}
         except Exception as e:
-            logger.warning(f"[GRAPH] find_connected_batch failed, falling back: {e}")
-            # Fallback: individual calls
+            logger.warning(f"[GRAPH] _find_connected_batch_python failed: {e}")
+            # Final fallback: individual calls
             result = {}
             for v in values:
                 result[v] = self.find_connected(v, max_hops=max_hops)

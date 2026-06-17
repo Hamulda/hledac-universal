@@ -193,17 +193,22 @@ class UMAStatus:
         system_used_gib: (total - available) in GiB (THRESHOLD DRIVER).
         system_available_gib: Available system memory in GiB.
         swap_used_gib: Swap usage in GiB (diagnostic only — F163F).
-        swap_detected: True if swap > 0.05 GiB (active swap = systemic pressure).
+        swap_detected: True if swap > 3.5 GiB (active swap = systemic pressure).
         metal_cache_limit_bytes: Metal cache limit from 8T surface (or None).
         metal_wired_limit_bytes: Metal wired limit from 8T surface (or None).
-        state: "ok" | "warn" | "critical" | "emergency".
+        state: "ok" | "soft_warn" | "warn" | "critical" | "emergency".
         io_only: True if I/O-only mode should be active.
         last_error: Error message if sampling failed (None = OK).
 
-    F163F CHANGE: swap_detected added — any active swap indicates M1 UMA
+    F163F CHANGE: swap_detected added — active swap indicates M1 UMA
     pressure that is SYSTEMIC (not process-bound). On M1 8GB, swap is a
-    critical diagnostic signal that confirms memory pressure is real,
-    not an artifact of measurement timing.
+    critical diagnostic signal that confirms memory pressure is real.
+    F265C: Threshold raised from 0.05 to 3.5 GiB — baseline M1 8GB idle
+    swap is 1.0-1.2 GiB; 3.5 GiB threshold = ~3x baseline, aligned with
+    HARD_BLOCK_SWAP_GIB=4.0 in the swap tiered policy (0.5 GiB margin).
+    Note: swap tiered policy (CLEAN/DIAGNOSTIC/HARD_BLOCK) and swap_detected
+    are independent signals — tiered policy applies to prelive/cockpit,
+    swap_detected applies to io_only acceleration and governor decisions.
     """
     rss_gib: float
     system_used_gib: float
@@ -602,7 +607,12 @@ def sample_uma_status() -> UMAStatus:
     # F166F: swap_detected computed BEFORE latch so it can propagate into the decision
     # F221: Raised from 0.05 to 1.5 GiB — macOS M1 8GB baseline uses 1.0-1.2 GiB swap at rest;
     # 1.5 GiB absorbs normal UMA variance while preserving genuine pressure signal (>2x baseline).
-    swap_detected = swap_used_gib > 1.5
+    # F265C: Raised from 1.5 to 3.5 GiB — M1 8GB baseline swap at idle is 1.0-1.2 GiB;
+    # 3.5 GiB threshold = 2.3-2.5 GiB above baseline, aligns with HARD_BLOCK_SWAP_GIB=4.0
+    # in the swap tiered policy (0.5 GiB margin before hard block). This prevents
+    # premature io_only acceleration under normal workload variance while still
+    # catching genuine systemic pressure (>3x baseline).
+    swap_detected = swap_used_gib > 3.5
 
     # Sprint 8AK: Shared hysteresis latch — thread-safe, prevents state thrashing
     # F166F: swap_detected accelerates io_only entry to WARN threshold (6.0 GiB)

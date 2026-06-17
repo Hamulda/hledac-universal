@@ -1009,11 +1009,8 @@ class DeepHermes3Engine:
         try:
             import mlx.core as mx
             # Try to get active memory
-            # Sprint 8AE: prefer top-level mx API (MLX 0.31+)
             if hasattr(mx, "get_active_memory"):
                 return mx.get_active_memory()
-            elif hasattr(mx.metal, "get_active_memory"):
-                return mx.metal.get_active_memory()
         except Exception:
             pass
 
@@ -1470,7 +1467,7 @@ class DeepHermes3Engine:
         Sprint F214Q + F265C-METAL: Dynamické KV cache řízení dle Metal memory tier (M1 8GB).
 
         F265C-METAL FIX: KV cache žije v Metal/GPU paměti, ne v systémové RAM.
-        Používá mx.metal.get_active_memory() přímo — měří skutečnou GPU memory pressure.
+        Používá mx.get_active_memory() přímo — měří skutečnou GPU memory pressure.
         10× rychlejší decode na druhém tokenu s KV cache ON.
 
         Metal tier thresholds (fraction of 1.5 GiB Metal cache limit set in mlx_cache.py):
@@ -1496,9 +1493,7 @@ class DeepHermes3Engine:
             _METAL_CACHE_LIMIT = 1_610_612_736  # 1.5 GiB
 
             active = 0
-            if hasattr(mx, "get_active_memory"):
-                active = int(mx.get_active_memory())
-            elif hasattr(mx, "metal") and mx.metal is not None:
+            if hasattr(mx.metal, "get_active_memory"):
                 active = int(mx.get_active_memory())
 
             fraction = active / _METAL_CACHE_LIMIT if _METAL_CACHE_LIMIT > 0 else 0
@@ -1532,7 +1527,7 @@ class DeepHermes3Engine:
         Sprint F265C + F265C-METAL: Adaptive KV quantization bits based on Metal memory pressure.
 
         F265C-METAL FIX: KV cache quantized bits should scale with Metal/GPU memory
-        pressure, not system RAM. Uses mx.metal.get_active_memory() directly.
+        pressure, not system RAM. Uses mx.get_active_memory() directly.
 
         Metal memory tier → kv_bits mapping:
         - < 1.5 GiB active → kv_bits=4  (default, low GPU pressure)
@@ -1551,8 +1546,6 @@ class DeepHermes3Engine:
 
             active = 0
             if hasattr(mx, "get_active_memory"):
-                active = int(mx.get_active_memory())
-            elif hasattr(mx, "metal") and mx.metal is not None:
                 active = int(mx.get_active_memory())
 
             active_giB = active / (1024 ** 3)

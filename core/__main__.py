@@ -1720,6 +1720,45 @@ async def run_sprint(
     # but health_check runs BEFORE run(), so injection must happen here first.
     scheduler.inject_duckdb_store(store)
 
+    # P3-1: Wire duckdb_store + IOC graph into oracle AFTER store is available.
+    # Must happen here (before health_check) so graph is ready for predict_next_iocs.
+    try:
+        _oracle = getattr(scheduler, "_prefetch_oracle", None)
+        if _oracle is not None:
+            _oracle.inject_duckdb_store(store)
+            # IOC graph: get from the graph_service singleton (same pattern as OODA wiring)
+            try:
+                from hledac.universal.knowledge.graph_service import _get_graph
+                _ioc_graph = _get_graph()
+                _oracle.inject_ioc_graph(_ioc_graph)
+            except Exception as _e:
+                logger.debug("P3-1: IOC graph injection failed (fail-soft): %s", _e)
+    except Exception as _e:
+        logger.debug("P3-1: Oracle store/graph injection failed (fail-soft): %s", _e)
+
+    # P3-2: TemporalIOCPredictor — time-of-day pattern-based prefetch
+    # P3-1: ContinuousPrefetchPipeline injection (speculative prefetch).
+    # Pipeline runs advisory graph-based prefetch alongside the normal fetch cycle.
+    # Pipeline is fully fail-soft: errors logged, never propagate.
+    try:
+        from hledac.universal.layers import get_temporal_signal_layer
+        from hledac.universal.prefetch.prefetch_pipeline import ContinuousPrefetchPipeline
+        from hledac.universal.prefetch.temporal_predictor import TemporalIOCPredictor
+        _temporal_predictor = TemporalIOCPredictor(
+            temporal_layer=get_temporal_signal_layer(),
+            duckdb_store=getattr(scheduler, "_duckdb_store", None),
+        )
+        _prefetch_pipeline = ContinuousPrefetchPipeline(
+            prefetch_oracle=_temporal_predictor,
+            prefetch_cache=None,  # P3-1: no cache yet — pipeline fetches directly
+            queue_depth=50,
+            concurrent_fetches=3,
+        )
+        scheduler.inject_prefetch_pipeline(_prefetch_pipeline)
+        scheduler.inject_temporal_predictor(_temporal_predictor)
+    except Exception as _e:
+        logger.debug("P3-1: ContinuousPrefetchPipeline injection failed (fail-soft): %s", _e)
+
     # Sprint F228F: Pre-run health check — verify critical dependencies
     # SprintScheduler is top architectural chokepoint (degree 398).
     # If it fails silently, nothing writes to DuckDB and nothing accumulates to graph.

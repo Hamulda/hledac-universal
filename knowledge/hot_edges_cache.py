@@ -131,6 +131,48 @@ def _open_env():
         return None
 
 
+_COUNTER_KEY: bytes = b"nodes:count"
+
+# ---------------------------------------------------------------------------
+# Node counter helpers (enforces MAX_HOT_NODES)
+# ---------------------------------------------------------------------------
+
+def _get_node_count(env) -> int:
+    """Return current unique src_id count. Returns 0 on error/miss."""
+    try:
+        with env.begin(db=env.open_db(b"_meta")) as txn:
+            blob = txn.get(_COUNTER_KEY)
+            if blob:
+                return int.from_bytes(blob, "little")
+    except Exception:
+        pass
+    return 0
+
+def _inc_node_count(env) -> int:
+    """Atomically increment node count. Returns new count. Fails silently."""
+    try:
+        with env.begin(write=True, db=env.open_db(b"_meta")) as txn:
+            old_blob = txn.get(_COUNTER_KEY)
+            old_count = int.from_bytes(old_blob, "little") if old_blob else 0
+            new_count = old_count + 1
+            txn.put(_COUNTER_KEY, new_count.to_bytes(8, "little"))
+            return new_count
+    except Exception:
+        return -1
+
+def _dec_node_count(env) -> int:
+    """Atomically decrement node count. Returns new count. Fails silently."""
+    try:
+        with env.begin(write=True, db=env.open_db(b"_meta")) as txn:
+            old_blob = txn.get(_COUNTER_KEY)
+            old_count = int.from_bytes(old_blob, "little") if old_blob else 0
+            new_count = max(0, old_count - 1)
+            txn.put(_COUNTER_KEY, new_count.to_bytes(8, "little"))
+            return new_count
+    except Exception:
+        return -1
+
+
 # ---------------------------------------------------------------------------
 # Encoding helpers
 # ---------------------------------------------------------------------------
@@ -143,14 +185,22 @@ _compress_available = False
 _decompress_available = False
 
 try:
+    from hledac_rust_extensions import batch_compress_pages as _rust_batch_compress
+    from hledac_rust_extensions import batch_decompress_pages as _rust_batch_decompress
     from hledac_rust_extensions import compress_page as _rust_compress
     from hledac_rust_extensions import decompress_page as _rust_decompress
 
     _compress_available = True
     _decompress_available = True
+    _batch_compress_available = True
+    _batch_decompress_available = True
 except Exception:
     _rust_compress = None
     _rust_decompress = None
+    _rust_batch_compress = None
+    _rust_batch_decompress = None
+    _batch_compress_available = False
+    _batch_decompress_available = False
 
 
 def _make_key(src_id: int) -> bytes:
@@ -191,6 +241,70 @@ def _encode_neighbors(neighbors: list[tuple[int, int]]) -> bytes:
     except Exception:
         # Compression failed — store uncompressed.
         return encoded
+
+
+# ---------------------------------------------------------------------------
+# Batch helpers — Rust batch compression (Sprint P3-2)
+# ---------------------------------------------------------------------------
+
+def _decode_neighbors_batch(
+    blobs: list[bytes],
+) -> list[list[tuple[int, int]]]:
+    """
+    Batch-decode a list of msgspec blobs → list[list[(dst_id, count)]].
+
+    Uses Rust `batch_decompress_pages` when available (rayon-parallel,
+    ~3-5× faster than sequential single-item decompress for ≥4 items).
+    Falls back to sequential _decode_neighbors per blob on error.
+
+    Args:
+        blobs: list of wire-format bytes (compressed or raw msgspec)
+
+    Returns:
+        list of decoded neighbor lists, same length as input
+    """
+    if not blobs:
+        return []
+    if _HOT_EDGES_COMPRESS and _batch_decompress_available and len(blobs) > 1:
+        try:
+            decompressed = _rust_batch_decompress(blobs)
+            return [_decode_neighbors(d) for d in decompressed]
+        except Exception:
+            # Fall through to sequential
+            pass
+    return [_decode_neighbors(b) for b in blobs]
+
+
+def _encode_neighbors_batch(
+    neighbors_list: list[list[tuple[int, int]]],
+) -> list[bytes]:
+    """
+    Batch-encode a list of neighbor lists → list of wire-format bytes.
+
+    Uses Rust `batch_compress_pages` when available (rayon-parallel,
+    ~3-5× faster than sequential single-item compress for ≥4 items).
+    Falls back to sequential _encode_neighbors per item on error.
+
+    Args:
+        neighbors_list: list of neighbor lists to encode
+
+    Returns:
+        list of wire-format bytes (compressed or raw msgspec), same length
+    """
+    if not neighbors_list:
+        return []
+    # Encode to msgspec first (CPU-bound, no parallelism benefit)
+    encoded_list: list[bytes] = [
+        _msgspec_encode([list(pair) for pair in neighbors])
+        for neighbors in neighbors_list
+    ]
+    if _HOT_EDGES_COMPRESS and _batch_compress_available and len(encoded_list) > 1:
+        try:
+            return _rust_batch_compress(encoded_list)
+        except Exception:
+            # Fall through to sequential
+            pass
+    return [_encode_neighbors(neighbors) for neighbors in neighbors_list]
 
 
 # ---------------------------------------------------------------------------
@@ -468,4 +582,7 @@ __all__ = [
     "lookup_ioc_values_by_ids",
     "clear_all",
     "stats",
+    # Sprint P3-2: Rust batch compression helpers
+    "_decode_neighbors_batch",
+    "_encode_neighbors_batch",
 ]
