@@ -139,6 +139,50 @@ def _render_phase_timings(phase: dict[str, float]) -> str:
     return "\n".join(lines)
 
 
+# Sprint F265C: Arrow ingest telemetry rendering
+
+def _render_arrow_metrics(arrow_m: dict[str, int]) -> str:
+    """
+    Render Arrow ingest telemetry as a markdown section.
+
+    Shows path selection (arrow_selected vs legacy), success counts, and
+    fallback/error breakdown so silent Arrow-path failures are visible in
+    the sprint markdown report.
+    """
+    if not arrow_m or not isinstance(arrow_m, dict):
+        return ""
+    if all(v == 0 for v in arrow_m.values()):
+        return ""
+
+    sel = arrow_m.get("arrow_selected", 0)
+    ok = arrow_m.get("arrow_success_count", 0)
+    lmdb_ok = arrow_m.get("arrow_success_lmdb_count", 0)
+    duckdb_ok = arrow_m.get("arrow_success_duckdb_count", 0)
+    fallbacks = {
+        k: v for k, v in arrow_m.items()
+        if ("fallback" in k or "error" in k) and v > 0
+    }
+
+    lines = [
+        "## Arrow Ingest",
+        "",
+        "| Metric | Value |",
+        "|:-------|------:|",
+        f"| Selected (Arrow path) | {sel} |",
+        f"| Arrow success | {ok} |",
+        f"| LMDB WAL ok | {lmdb_ok} |",
+        f"| DuckDB insert ok | {duckdb_ok} |",
+    ]
+    if fallbacks:
+        lines.append("")
+        lines.append("**Fallbacks / Errors:**")
+        for k, v in sorted(fallbacks.items(), key=lambda x: -x[1]):
+            label = k.replace("arrow_", "").replace("_", " ").title()
+            lines.append(f"- {label}: **{v}**")
+    lines.append("")
+    return "\n".join(lines)
+
+
 # ---------------------------------------------------------------------------
 # Main renderer
 # ---------------------------------------------------------------------------
@@ -229,6 +273,13 @@ def render_sprint_markdown(
     timings = _render_phase_timings(phase)
     if timings:
         parts.append(timings)
+
+    # Sprint F265C: render Arrow ingest telemetry section
+    arrow_m = scorecard.get("arrow_metrics")
+    if arrow_m:
+        arrow_section = _render_arrow_metrics(arrow_m)
+        if arrow_section:
+            parts.append(arrow_section)
 
     # Sprint F202A §5: render evidence envelope findings section
     env_findings = scorecard.get("envelope_findings", [])

@@ -2590,6 +2590,9 @@ async def _print_scorecard_report(
         "synthesis_engine_used": "unknown",
         "phase_duration_seconds": phase_timings,
         "cb_open_domains": [],
+        # Sprint F265C: Arrow ingest telemetry — surfaces _ARROW_METRICS in scorecard
+        # so 678 fallback events are visible in sprint output instead of silent 0-findings
+        "arrow_metrics": {},
     }
 
     # Sprint 8VD §F: Compute peak RSS
@@ -2634,7 +2637,31 @@ async def _print_scorecard_report(
     print(f"  Outlines used:    {outlines_used}")
     print(f"  Peak RSS (MB):    {peak_rss_mb:.1f}")
     print(f"  Phase timings:    {phase_timings}")
+    # Sprint F265C: Show Arrow ingest metrics in sprint output
+    arrow_m = scorecard_data.get("arrow_metrics", {})
+    if arrow_m and isinstance(arrow_m, dict) and any(v > 0 for v in arrow_m.values()):
+        arrow_sel = arrow_m.get("arrow_selected", 0)
+        arrow_ok = arrow_m.get("arrow_success_count", 0)
+        arrow_fb = {k: v for k, v in arrow_m.items() if "fallback" in k or "error" in k}
+        print(f"  Arrow ingest:     selected={arrow_sel} ok={arrow_ok}")
+        if arrow_fb:
+            print(f"  Arrow fallback:   {arrow_fb}")
     print("=" * 60 + "\n")
+
+    # Sprint F265C: Populate arrow_metrics from DuckDB store — surfaces Arrow ingest
+    # telemetry (fallback counts, success counts, error breakdown) in sprint scorecard.
+    # Without this, 678 Arrow fallbacks were invisible (silent 0-findings in output).
+    if store is not None and hasattr(store, "_arrow_metrics"):
+        try:
+            scorecard_data["arrow_metrics"] = store._arrow_metrics
+        except Exception:
+            pass
+    elif store is not None and hasattr(store, "get_arrow_metrics"):
+        try:
+            from hledac.universal.knowledge.duckdb_store import get_arrow_metrics
+            scorecard_data["arrow_metrics"] = get_arrow_metrics()
+        except Exception:
+            pass
 
     # Persist to DuckDB
     if store is not None and hasattr(store, "upsert_scorecard"):

@@ -229,6 +229,30 @@ def looks_like_feed_url(url: str) -> bool:
     """Heuristic: ends in .rss/.atom/.xml or path contains /feed or /rss."""
     ...
 
+def canonical_url(url: str) -> str:
+    """Canonicalize URL: lowercase scheme/host, strip default port, drop fragment, sort query, remove trailing slash."""
+    ...
+
+def url_dedup_key(url: str) -> str:
+    """BLAKE3-64 hex key of canonical URL (16-char hex)."""
+    ...
+
+def url_dedup_hash(url: str) -> int:
+    """FNV-1a 64-bit hash of canonical URL (tracking params stripped). Returns u64 as Python int."""
+    ...
+
+# ---------------------------------------------------------------------------
+# Memory probe — sysinfo (rust_extensions/src/memory.rs, feature=sysinfo)
+# ---------------------------------------------------------------------------
+
+def get_process_rss_gib() -> float:
+    """Current process RSS in GiB via sysinfo. Returns 0.0 on error or when sysinfo feature is not built."""
+    ...
+
+def get_available_memory_gib() -> float:
+    """Available system memory in GiB via sysinfo. Returns 0.0 on error."""
+    ...
+
 # ---------------------------------------------------------------------------
 # IOC extract (rust_extensions/src/ioc_extract.rs)
 # ---------------------------------------------------------------------------

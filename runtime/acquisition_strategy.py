@@ -3070,7 +3070,11 @@ def _build_plan_impl(
     """Internal implementation — raises on error (caller catches)."""
 
     # ── Derive AcquisitionContext ─────────────────────────────────────────────
-    hardware_critical = uma_state in ("critical", "emergency") or swap_detected
+    # F266: hardware_critical derived ONLY from uma_state — swap_detected is handled
+    # by Governor layer (make_governor_decision: critical+swap→emergency,
+    # should_enter_io_only: warn+swap→accelerated io_only). Acquisition planner
+    # should not conflate swap pressure with critical/emergency state.
+    hardware_critical = uma_state in ("critical", "emergency")
     has_domain = _has_domain_or_ip(query)
     has_ip = bool(_DOMAIN_OR_IP_RE.search(query) and re.search(r'\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b', query))
     has_url = _has_url(query)

@@ -44,6 +44,13 @@ libc = "0.2"
 #   which are not needed for read-only DuckPGQ graph traversal.
 duckdb = { version = "1.105", default-features = false, features = ["bundled"] }
 
+# 3A: Native RSS + available-memory probe. Cross-platform, no subprocess.
+sysinfo = { version = "0.31", optional = true, default-features = false, features = ["apple-app-store"] }
+
+[features]
+default = []
+sysinfo = ["dep:sysinfo"]
+
 [profile.release]
 opt-level = 3
 lto = "fat"

@@ -3423,23 +3423,58 @@ Do not include any other text. Output valid JSON only."""
                             pass
 
             # Run generation with max_tokens=1 to populate KV cache
-            # Route through _submit_inference for proper Metal stream context
+            # BUG 4 fix: Metal stream context must be from the SAME thread that holds
+            # the model. Route through _mlx_worker_thread if alive (has proper context).
+            # If worker not yet up, use get_metal_stream_context() on current thread —
+            # this works during bootstrap in the main thread (model.load() context).
             from mlx_lm import generate as mlx_generate
             from mlx_lm.sample_utils import make_sampler
 
             from ..utils.mlx_memory import get_metal_stream_context
 
-            with get_metal_stream_context():
-                mlx_generate(
-                    model=self._model,
-                    tokenizer=self._tokenizer,
-                    prompt=warmup_prompt,
-                    sampler=make_sampler(temp=0.3),
-                    max_tokens=1,
-                    kv_bits=kv_bits,
-                    prompt_cache=self._warmup_cache,
-                    verbose=False,
-                )
+            _worker = getattr(self, "_mlx_worker_thread", None)
+            _worker_live = _worker is not None and _worker.is_active()
+
+            # Wrap sync mlx_generate in a sync function to call via worker or inline
+            def _do_generate() -> None:
+                with get_metal_stream_context():
+                    mlx_generate(
+                        model=self._model,
+                        tokenizer=self._tokenizer,
+                        prompt=warmup_prompt,
+                        sampler=make_sampler(temp=0.3),
+                        max_tokens=1,
+                        kv_bits=kv_bits,
+                        prompt_cache=self._warmup_cache,
+                        verbose=False,
+                    )
+
+            if _worker_live:
+                # Worker has Metal context — dispatch to worker thread via run_in_executor
+                # so the sync call runs on the worker thread where mx.stream(gpu) is valid.
+                try:
+                    _loop = asyncio.get_running_loop()
+                    await _loop.run_in_executor(_worker._thread, _do_generate)
+                except RuntimeError as _no_loop:
+                    # No running loop during bootstrap — use inline fallback
+                    logger.debug(f"[WARMUP] No running loop ({_no_loop}), using inline fallback")
+                    try:
+                        _do_generate()
+                    except Exception as _warmup_exc:
+                        logger.warning(f"[WARMUP] inline warmup failed ({_warmup_exc}), continuing")
+                        return True
+                except Exception as _warmup_exc:
+                    # Failsafe: warmup is advisory — log and continue without cache.
+                    logger.warning(f"[WARMUP] Worker thread warmup failed ({_warmup_exc}), continuing")
+                    return True
+            else:
+                # Fallback: inline Metal stream context (main thread bootstrap path)
+                try:
+                    _do_generate()
+                except Exception as _warmup_exc:
+                    # Failsafe: warmup is advisory — log and continue.
+                    logger.warning(f"[WARMUP] inline warmup failed ({_warmup_exc}), continuing")
+                    return True
 
             # F219B: eval barrier + clear after prefill
             _safe_mlx_eval_and_clear_cache("warmup_prefill")

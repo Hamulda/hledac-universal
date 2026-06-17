@@ -48,6 +48,7 @@ from hledac.universal.transport.http3_lane import (  # type: ignore[import-not-f
 )
 from hledac.universal.transport.http3_lane import (  # noqa: E402
     fetch_http3_aioquic,
+    is_dark_web_url,
     record_h3_support,
 )
 
@@ -572,15 +573,16 @@ class StealthSession:
     async def _http3_request(self, method: str, url: str, headers: dict | None = None) -> bytes | None:
         """Make HTTP/3 request via the shared ``http3_lane``.
 
-        P1-2 refactor: delegates to ``fetch_http3_aioquic`` which owns
-        the bounded LRU cache, the 3-connection semaphore (M1 8GB),
-        the 8s per-request ``asyncio.wait_for`` timeout, and the psutil
-        RSS memory guard at 5.5 GiB. This wrapper is a thin shim kept
-        for the existing call site in ``self.request()``.
+        Dark web URLs are skipped: QUIC/UDP cannot be tunneled through
+        Tor TransPort or I2P HTTP proxy. The caller should fall back
+        to the dedicated tor_socks / i2p_socks transport lanes.
         """
-        # We only need GET semantics here (request() only calls this on
-        # method == "GET"); the lane always issues a GET. HEAD is treated
-        # the same way since stealth only ever uses the result body.
+        # Dark web URLs never use H3 — route to dedicated transport.
+        # fetch_http3_aioquic has its own is_dark_web_url early-return,
+        # but we guard here too so stealth_manager logs the skip.
+        if is_dark_web_url(url):
+            logger.debug("stealth_manager: dark web URL, skipping H3 lane: %s", url)
+            return None
         return await fetch_http3_aioquic(url=url, headers=headers)
 
     async def _get_session(self) -> aiohttp.ClientSession:

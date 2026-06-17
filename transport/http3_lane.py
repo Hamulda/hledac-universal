@@ -307,6 +307,27 @@ def extract_host(url: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Dark web URL detection.
+# ---------------------------------------------------------------------------
+_DARK_WEB_TLDS: frozenset[str] = frozenset({".onion", ".i2p", ".b32.i2p"})
+
+
+def is_dark_web_url(url: str) -> bool:
+    """Return True if ``url`` targets a dark web host (.onion, .i2p, .b32.i2p).
+
+    Used by transport_router to skip H3 lane entirely for dark web URLs.
+    QUIC/UDP cannot be tunneled through Tor TransPort or I2P HTTP proxy,
+    so HTTP/3 is never attempted for dark web destinations.
+    Never raises.
+    """
+    try:
+        host = extract_host(url)
+        return any(host.endswith(tld) for tld in _DARK_WEB_TLDS)
+    except Exception:
+        return False
+
+
+# ---------------------------------------------------------------------------
 # Public API: opportunistic (curl_cffi HttpVersion.v3)
 # ---------------------------------------------------------------------------
 def http_version_for_curl_cffi(url: str) -> Any:
@@ -530,6 +551,11 @@ async def fetch_http3_aioquic(
     """
     if not _resolve_enabled():
         return None
+    # Dark web URLs cannot use QUIC/UDP over Tor TransPort or I2P HTTP proxy.
+    # Route to tor_socks / i2p_socks via transport_router instead.
+    if is_dark_web_url(url):
+        logger.debug("http3_lane: dark web URL skipped (not H3-capable): %s", url)
+        return None
     # Memory guard runs BEFORE the aioquic availability probe: the guard
     # is an M1 8GB mission-budget invariant, not a feature flag, so it
     # must be evaluated regardless of whether aioquic is installed.
@@ -552,12 +578,14 @@ async def fetch_http3_aioquic(
 
     _stats["http3_aioquic_attempts"] += 1
     sem = _get_semaphore()
+    acquired = False
     try:
         # Non-blocking acquire with wall-clock timeout: if all 3
         # handshakes are in flight, return None rather than queue.
         _stats["http3_semaphore_waits"] += 1
         try:
             await asyncio.wait_for(sem.acquire(), timeout=_H3_WAIT_TIMEOUT_S)
+            acquired = True
         except TimeoutError:
             _stats["http3_semaphore_timeouts"] += 1
             logger.debug("http3_lane: semaphore saturated, skipping %s", host)
@@ -623,18 +651,17 @@ async def fetch_http3_aioquic(
             logger.debug("http3_lane: aioquic request failed for %s: %s", host, e)
             return None
     except asyncio.CancelledError:
-        # Honour cooperative cancellation: don't swallow it.
         raise
     except Exception as e:
         _stats["http3_aioquic_failures"] += 1
         logger.debug("http3_lane: unexpected aioquic error (fail-soft): %s", e)
         return None
     finally:
-        try:
-            sem.release()
-        except Exception:
-            # Already-released or uninitialized; fail-soft.
-            pass
+        if acquired:
+            try:
+                sem.release()
+            except Exception:
+                pass
 
 
 # ---------------------------------------------------------------------------
@@ -658,6 +685,7 @@ __all__ = [
     "record_from_curl_cffi_result",
     "record_h3_support",
     "extract_host",
+    "is_dark_web_url",
     "is_enabled",
     "get_stats",
     "reset_stats",

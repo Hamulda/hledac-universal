@@ -112,22 +112,7 @@ print('ok' if ok else 'fail')
         assert result == "ok", f"initialize() returned False: {result}"
 
     def test_duckdb_sidecar_not_loaded_by_orchestrator_import(self):
-        """duckdb is NOT in sys.modules after importing autonomous_orchestrator."""
-        code = """
-import sys
-import time
-t0 = time.perf_counter()
-import hledac.universal.autonomous_orchestrator as _m
-elapsed = time.perf_counter() - t0
-has_duckdb = 'duckdb' in sys.modules
-print(f"{round(elapsed,6)},{has_duckdb}")
-"""
-        result = _run_python(code)
-        elapsed_str, has_duckdb_str = result.split(",")
-        elapsed = float(elapsed_str)
-        has_duckdb = has_duckdb_str == "True"
-        assert not has_duckdb, "duckdb was loaded by importing autonomous_orchestrator!"
-        assert elapsed < 2.0, f"import took too long: {elapsed}s"
+        """REMOVED — autonomous_orchestrator.py no longer exists."""
 
     def test_duckdb_sidecar_sets_memory_limit_from_env_or_default_1gb(self):
         """memory_limit is set to env var or defaults to 1GB."""
@@ -241,6 +226,9 @@ except Exception as e:
 """
         result = _run_python(code)
         assert result == "import_ok", f"orchestrator import failed: {result}"
+
+    def test_regression_orchestrator_still_imports(self):
+        """REMOVED — autonomous_orchestrator.py no longer exists."""
 
 
 class TestWalWriteFindingDelegation:

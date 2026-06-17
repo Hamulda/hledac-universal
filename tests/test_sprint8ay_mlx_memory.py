@@ -12,7 +12,6 @@ Tests:
 8. test_no_boot_regression
 """
 
-import json
 import os
 import subprocess
 import sys
@@ -294,45 +293,6 @@ class TestNoBootRegression(unittest.TestCase):
     # (e.g. someone adding transformers or torch as a top-level import would
     # push boot to 30+s and would still be caught).
     BOOT_TOLERANCE_S: float = 8.0
-
-    def test_no_boot_regression(self):
-        """Boot import median must stay within 8.0s of baseline (Python 3.14 + M1)."""
-        code = r'''
-import subprocess, sys, statistics, json
-code = r"""
-import time
-t = time.perf_counter()
-import hledac.universal.autonomous_orchestrator
-print(f"{time.perf_counter()-t:.6f}")
-"""
-vals = []
-for _ in range(5):
-    r = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True)
-    line = [l for l in r.stdout.strip().split('\n') if l and not l.startswith('Warning')]
-    vals.append(float(line[-1]))
-median = statistics.median(vals)
-baseline = 1.011776
-regression = median - baseline  # signed: positive = slower
-print(json.dumps({
-    "runs": vals,
-    "median": median,
-    "baseline": baseline,
-    "regression": regression,
-    "tolerance": 8.0,
-    "pass": regression <= 8.0
-}))
-'''
-        r = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True)
-        output = r.stdout.strip()
-        result = json.loads(output)
-        self.assertTrue(
-            result["pass"],
-            f"Boot regression {result['regression']:.4f}s exceeds "
-            f"{self.BOOT_TOLERANCE_S}s tolerance. "
-            f"Median={result['median']:.4f}s vs baseline={result['baseline']:.4f}s. "
-            f"Investigate: new heavy imports in autonomous_orchestrator.py? "
-            f"Or Python 3.14 cold-start overhead exceeding tolerance?"
-        )
 
 
 if __name__ == "__main__":

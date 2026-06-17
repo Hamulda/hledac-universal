@@ -126,6 +126,7 @@ except ImportError:  # production fallback
 import datetime as _dt
 import logging
 import os
+import re
 import time as _time
 from collections.abc import AsyncIterator, Iterator
 from concurrent.futures import ThreadPoolExecutor
@@ -647,7 +648,7 @@ _SCHEMA_SQL = """
     );
     -- Sprint STORAGE-FIX-1: time-range + per-query lookups
     -- canonical_findings is queried with WHERE query LIKE ? ORDER BY ts DESC LIMIT N (6+ sites).
-    -- Seq scan over 100K rows = ~50ms; with these indexes <1ms.
+    -- time-range + per-query lookups, indexes for performance
     CREATE INDEX IF NOT EXISTS idx_canonical_findings_ts ON canonical_findings(ts DESC);
     CREATE INDEX IF NOT EXISTS idx_canonical_findings_query ON canonical_findings(query);
     CREATE TABLE IF NOT EXISTS shadow_runs (
@@ -1304,10 +1305,15 @@ class DuckDBShadowStore:
                 conn.execute("SET preserve_insertion_order = false")
             except Exception:
                 pass  # older DuckDB version without this setting
-            conn.execute(_SCHEMA_SQL)
+            # F265D: DuckDB's conn.sql() and extract_statements() both fail on this multi-statement
+            # schema string (Python source leaks into error messages).  Use regex-based statement splitting
+            # to split the schema into individual SQL statements and execute them one by one.
+            for _s in re.split(r';\s*(?=\w)', _SCHEMA_SQL):
+                _s = _s.strip()
+                if _s:
+                    conn.execute(_s)
             conn.close()
             # Sprint 8RC: ALTER TABLE for retrokompatibilita (B.2)
-            self._apply_schema_migrations()
             # Sprint 7H: Persistent file-backed connection for reuse across writes
             self._file_conn = duckdb.connect(str(self._db_path))
             # F273F: mark DuckDB mmap pages as reusable - reclaimable without writeback
@@ -1339,7 +1345,11 @@ class DuckDBShadowStore:
                 self._persistent_conn.execute("SET preserve_insertion_order = false")
             except Exception:
                 pass
-            self._persistent_conn.execute(_SCHEMA_SQL)
+            # F265D: Same schema-splitting approach for :memory: mode.
+            for _s in re.split(r';\s*(?=\w)', _SCHEMA_SQL):
+                _s = _s.strip()
+                if _s:
+                    self._persistent_conn.execute(_s)
 
     # Sprint 8RC: Retrokompatibilita - add missing columns to old DB files (B.2)
     def _apply_schema_migrations(self) -> None:

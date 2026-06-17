@@ -193,7 +193,7 @@ class UMAStatus:
         system_used_gib: (total - available) in GiB (THRESHOLD DRIVER).
         system_available_gib: Available system memory in GiB.
         swap_used_gib: Swap usage in GiB (diagnostic only — F163F).
-        swap_detected: True if swap > 3.5 GiB (active swap = systemic pressure).
+        swap_detected: True if swap > 3.8 GiB (active swap = systemic pressure).
         metal_cache_limit_bytes: Metal cache limit from 8T surface (or None).
         metal_wired_limit_bytes: Metal wired limit from 8T surface (or None).
         state: "ok" | "soft_warn" | "warn" | "critical" | "emergency".
@@ -206,6 +206,8 @@ class UMAStatus:
     F265C: Threshold raised from 0.05 to 3.5 GiB — baseline M1 8GB idle
     swap is 1.0-1.2 GiB; 3.5 GiB threshold = ~3x baseline, aligned with
     HARD_BLOCK_SWAP_GIB=4.0 in the swap tiered policy (0.5 GiB margin).
+    F265D: Raised to 3.8 GiB — 3x above baseline, 0.2 GiB below HARD_BLOCK,
+    allows normal 2.0-2.5 GiB workload spikes without triggering.
     Note: swap tiered policy (CLEAN/DIAGNOSTIC/HARD_BLOCK) and swap_detected
     are independent signals — tiered policy applies to prelive/cockpit,
     swap_detected applies to io_only acceleration and governor decisions.
@@ -612,7 +614,10 @@ def sample_uma_status() -> UMAStatus:
     # in the swap tiered policy (0.5 GiB margin before hard block). This prevents
     # premature io_only acceleration under normal workload variance while still
     # catching genuine systemic pressure (>3x baseline).
-    swap_detected = swap_used_gib > 3.5
+    # F265D: Raised to 3.8 GiB — 3x above 1.0-1.2 GiB baseline, 0.2 GiB below
+    # HARD_BLOCK_SWAP_GIB=4.0 (preserves margin), allows 2.0-2.5 GiB load spikes
+    # without triggering, catches genuine systemic pressure.
+    swap_detected = swap_used_gib > 3.8
 
     # Sprint 8AK: Shared hysteresis latch — thread-safe, prevents state thrashing
     # F166F: swap_detected accelerates io_only entry to WARN threshold (6.0 GiB)

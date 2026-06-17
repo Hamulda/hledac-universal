@@ -1,7 +1,7 @@
 """
 Sprint M3 — Granular eval/clear during token streaming.
 
-Verifies that Hermes3Engine._stream_tokens issues mx.eval([]) every
+Verifies that DeepHermes3Engine._stream_tokens issues mx.eval([]) every
 EVAL_GRANULARITY_TOKENS (50) and mx.metal.clear_cache() every
 CLEAR_GRANULARITY_TOKENS (200) when Metal memory pressure is high.
 Fail-soft: any mlx exception during eval/clear must NOT break the stream.
@@ -25,7 +25,7 @@ if _ROOT not in sys.path:
 
 
 def _setup_mlx_stubs() -> tuple[types.ModuleType, MagicMock]:
-    """Stub mlx_lm + mlx.core so hermes3_engine imports succeed and
+    """Stub mlx_lm + mlx.core so deephermes3_engine imports succeed and
     stream_generate / make_prompt_cache are mockable.
 
     Returns (hermes_mod, mx_mock) where mx_mock is the patched
@@ -55,7 +55,7 @@ def _setup_mlx_stubs() -> tuple[types.ModuleType, MagicMock]:
     if "mlx.core" not in sys.modules:
         sys.modules["mlx.core"] = types.ModuleType("mlx.core")
 
-    from hledac.universal.brain import hermes3_engine as hermes_mod  # type: ignore
+    from hledac.universal.brain import deephermes3_engine as hermes_mod  # type: ignore
 
     # Default mx_mock: low memory, no clear
     mx_mock = MagicMock(name="mlx.core")
@@ -149,7 +149,7 @@ class TestM3StreamGranularity(unittest.TestCase):
         sys.modules["mlx"].core = mx_mock
 
         # Direct unbound call — bypasses MagicMock's auto-binding
-        stream_fn = hermes_mod.Hermes3Engine._stream_tokens
+        stream_fn = hermes_mod.DeepHermes3Engine._stream_tokens
         try:
             tokens = list(stream_fn(fake_self, "hello", max_tok=10, temp=0.1))
         except Exception as e:
@@ -239,7 +239,7 @@ class TestM3MetalAPICompat(unittest.TestCase):
         mlx_lm_mod.stream_generate = MagicMock(return_value=_stream_n_tokens(n_tokens))
         sys.modules["mlx.core"] = mx_mock
         sys.modules["mlx"].core = mx_mock
-        return list(self.mod.Hermes3Engine._stream_tokens(fake_self, "x", max_tok=10, temp=0.1))
+        return list(self.mod.DeepHermes3Engine._stream_tokens(fake_self, "x", max_tok=10, temp=0.1))
 
     def test_m3_9_uses_top_level_get_active_memory_when_present(self) -> None:
         """Prefer mx.get_active_memory() (newer MLX) over mx.metal.*."""

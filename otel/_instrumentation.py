@@ -251,8 +251,14 @@ def instrumented(
             async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
                 extra = kwargs.pop("_span_attrs", None)
                 attrs: dict[str, Any] = {**default_attrs, **(extra or {})}
-                with span(n, **attrs):
-                    return await fn(*args, **kwargs)
+                try:
+                    with span(n, **attrs):
+                        return await fn(*args, **kwargs)
+                except (GeneratorExit, RuntimeError):
+                    # BUG 5 fix: OTel span __exit__ on a generator that received
+                    # throw() raises RuntimeError "generator didn't stop after throw()".
+                    # Re-raise cleanly so the async context manager protocol completes.
+                    raise
 
             return async_wrapper  # type: ignore[return-value]
         else:
@@ -261,8 +267,12 @@ def instrumented(
             def sync_wrapper(*args: Any, **kwargs: Any) -> Any:
                 extra = kwargs.pop("_span_attrs", None)
                 attrs = {**default_attrs, **(extra or {})}
-                with span(n, **attrs):
-                    return fn(*args, **kwargs)
+                try:
+                    with span(n, **attrs):
+                        return fn(*args, **kwargs)
+                except (GeneratorExit, RuntimeError):
+                    # Same fix for sync generators wrapped in span.
+                    raise
 
             return sync_wrapper  # type: ignore[return-value]
 

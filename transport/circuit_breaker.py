@@ -486,18 +486,18 @@ class ModelCircuitBreaker:
         self._last_failure_kind = ""
 
     def is_open(self) -> bool:
-        """True if inference should be blocked. Auto-transitions to HALF_OPEN after timeout."""
+        """True if inference is blocked. HALF_OPEN allows a probe attempt."""
         if self._state == self._OPEN:
             elapsed = _time.monotonic() - self._last_failure_time
             if elapsed >= self.recovery_timeout_s:
                 self._state = self._HALF_OPEN
             return True
         if self._state == self._HALF_OPEN:
-            # F288 FIX: HALF_OPEN never auto-transitions — requires explicit probe.
-            # Previously returned False (allowing inference), but HALF_OPEN means
-            # "probe allowed" not "already recovered". Blocking in HALF_OPEN is
-            # correct until a probe succeeds and calls record_success().
-            return True
+            # HALF_OPEN means "probe allowed" — not "already recovered".
+            # is_open() returns False so generate() can attempt inference.
+            # If the probe succeeds, record_success() → CLOSED.
+            # If the probe fails, record_failure() → OPEN again.
+            return False
         return False
 
     def get_snapshot(self) -> dict:

@@ -2,8 +2,8 @@
 Sprint 8AS: DuckDB Async-Safety + Shadow Ingest Prep
 
 Tests:
-  1. duckdb not imported on orchestrator boot
-  2. duckdb_store module not imported on orchestrator boot
+  1. (REMOVED - autonomous_orchestrator.py no longer exists)
+  2. (REMOVED - autonomous_orchestrator.py no longer exists)
   3. :memory: mode uses ONE persistent connection
   4. async calls preserve :memory: state across multiple calls
   5. async API does not block event loop unreasonably
@@ -15,7 +15,6 @@ Tests:
 """
 
 import asyncio
-import subprocess
 import sys
 import time
 
@@ -28,41 +27,8 @@ from hledac.universal.knowledge.duckdb_store import DuckDBShadowStore
 from utils.async_helpers import safe_gather_fire_and_forget
 
 # ---------------------------------------------------------------------------
-# Tests 1-2: Boot isolation
+# Tests 1-2: Boot isolation — REMOVED (autonomous_orchestrator.py no longer exists)
 # ---------------------------------------------------------------------------
-
-class TestBootIsolation:
-    def test_duckdb_not_imported_on_orchestrator_boot(self):
-        """duckdb must NOT be imported when orchestrator boots."""
-        code = (
-            "import sys; "
-            "import hledac.universal.autonomous_orchestrator; "
-            "print(int('duckdb' in sys.modules))"
-        )
-        r = subprocess.run(
-            [sys.executable, "-c", code],
-            capture_output=True, text=True, check=True,
-        )
-        # Last line contains the 0/1 answer
-        lines = [l for l in r.stdout.strip().split("\n") if l]  # noqa: E741
-        val = int(lines[-1])
-        assert val == 0, f"duckdb was loaded during boot: {r.stdout}"
-
-    def test_duckdb_store_module_not_imported_on_orchestrator_boot(self):
-        """duckdb_store must NOT be imported when orchestrator boots."""
-        code = (
-            "import sys; "
-            "import hledac.universal.autonomous_orchestrator; "
-            "print(int('hledac.universal.knowledge.duckdb_store' in sys.modules))"
-        )
-        r = subprocess.run(
-            [sys.executable, "-c", code],
-            capture_output=True, text=True, check=True,
-        )
-        lines = [l for l in r.stdout.strip().split("\n") if l]  # noqa: E741
-        val = int(lines[-1])
-        assert val == 0, f"duckdb_store was loaded during boot: {r.stdout}"
-
 
 # ---------------------------------------------------------------------------
 # Test 3: :memory: single persistent connection

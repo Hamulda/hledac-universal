@@ -213,20 +213,20 @@ def get_mlx_memory_stats() -> dict:
     stats: dict[str, Any] = {'available': True}
 
     try:
-        if hasattr(mx.metal, 'get_active_memory'):
-            stats['active_mb'] = mx.metal.get_active_memory() / (1024 ** 2)
+        if hasattr(mx, 'get_active_memory'):
+            stats['active_mb'] = mx.get_active_memory() / (1024 ** 2)
     except Exception:
         stats['active_mb'] = None
 
     try:
         if hasattr(mx.metal, 'get_peak_memory'):
-            stats['peak_mb'] = mx.metal.get_peak_memory() / (1024 ** 2)
+            stats['peak_mb'] = mx.get_peak_memory() / (1024 ** 2)
     except Exception:
         stats['peak_mb'] = None
 
     try:
         if hasattr(mx.metal, 'get_cache_memory'):
-            stats['cache_mb'] = mx.metal.get_cache_memory() / (1024 ** 2)
+            stats['cache_mb'] = mx.get_cache_memory() / (1024 ** 2)
     except Exception:
         stats['cache_mb'] = None
 
@@ -240,7 +240,9 @@ def reset_metal_peak() -> None:
         return
 
     try:
-        if hasattr(mx.metal, 'reset_peak_memory'):
+        if hasattr(mx, 'reset_peak_memory'):
+            mx.reset_peak_memory()
+        elif hasattr(mx.metal, 'reset_peak_memory'):
             mx.metal.reset_peak_memory()
     except Exception as e:
         logger.debug(f"reset_peak_memory() failed: {e}")

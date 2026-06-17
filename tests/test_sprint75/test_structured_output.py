@@ -13,9 +13,9 @@ class TestStructuredOutput:
 
     def test_generate_structured_exists(self):
         """Test generate_structured method exists."""
-        from hledac.universal.brain.hermes3_engine import Hermes3Engine
+        from hledac.universal.brain.deephermes3_engine import DeepHermes3Engine
 
-        engine = Hermes3Engine()
+        engine = DeepHermes3Engine()
         assert hasattr(engine, 'generate_structured')
         assert asyncio.iscoroutinefunction(engine.generate_structured)
 
@@ -24,13 +24,13 @@ class TestStructuredOutput:
         """Test structured output fallback on failure."""
         from pydantic import BaseModel
 
-        from hledac.universal.brain.hermes3_engine import Hermes3Engine
+        from hledac.universal.brain.deephermes3_engine import DeepHermes3Engine
 
         class TestSchema(BaseModel):
             name: str = "test"
             value: int = 0
 
-        engine = Hermes3Engine()
+        engine = DeepHermes3Engine()
         engine._model = None  # Force fallback path
         engine._outlines_model = None
 
@@ -50,12 +50,12 @@ class TestStructuredOutput:
         """Test max_retries parameter is accepted."""
         from pydantic import BaseModel
 
-        from hledac.universal.brain.hermes3_engine import Hermes3Engine
+        from hledac.universal.brain.deephermes3_engine import DeepHermes3Engine
 
         class TestSchema(BaseModel):
             name: str
 
-        engine = Hermes3Engine()
+        engine = DeepHermes3Engine()
         engine._model = None
         engine._outlines_model = None
 
@@ -79,9 +79,9 @@ class TestJSONRetry:
         """Test max_retries parameter is in signature."""
         import inspect
 
-        from hledac.universal.brain.hermes3_engine import Hermes3Engine
+        from hledac.universal.brain.deephermes3_engine import DeepHermes3Engine
 
-        sig = inspect.signature(Hermes3Engine.generate_structured)
+        sig = inspect.signature(DeepHermes3Engine.generate_structured)
         params = list(sig.parameters.keys())
         assert 'max_retries' in params
 

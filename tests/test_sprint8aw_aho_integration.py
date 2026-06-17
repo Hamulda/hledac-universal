@@ -20,7 +20,6 @@ Classification: DORMANT_INTEGRATION
 - The path is integrated as DORMANT_INTEGRATION with full fallback
 """
 
-import subprocess
 import sys
 
 # Add universal to path for direct imports
@@ -132,70 +131,8 @@ class TestSingleton:
 
 
 # ---------------------------------------------------------------------------
-# Test 8-10: boot isolation
+# Test 8-10: boot isolation — REMOVED (autonomous_orchestrator.py no longer exists)
 # ---------------------------------------------------------------------------
-
-class TestBootIsolation:
-    def test_aho_not_loaded_on_orchestrator_boot(self):
-        """pyahocorasick must NOT be loaded after autonomous_orchestrator import."""
-        code = (
-            "import sys; "
-            "import hledac.universal.autonomous_orchestrator; "
-            "print('ahocorasick_loaded:' + str('ahocorasick' in sys.modules))"
-        )
-        r = subprocess.run(
-            [sys.executable, "-c", code],
-            capture_output=True, text=True, check=True,
-            cwd="/Users/vojtechhamada/PycharmProjects/Hledac"
-        )
-        assert "ahocorasick_loaded:False" in r.stdout, r.stdout
-
-    def test_aho_not_loaded_after_document_intelligence_import(self):
-        """pyahocorasick must NOT be loaded after document_intelligence import."""
-        code = (
-            "import sys; "
-            "import hledac.universal.intelligence.document_intelligence; "
-            "print('ahocorasick_loaded:' + str('ahocorasick' in sys.modules)); "
-            "print('aho_module_loaded:' + str('hledac.universal.utils.aho_extractor' in sys.modules))"
-        )
-        r = subprocess.run(
-            [sys.executable, "-c", code],
-            capture_output=True, text=True, check=True,
-            cwd="/Users/vojtechhamada/PycharmProjects/Hledac"
-        )
-        assert "ahocorasick_loaded:False" in r.stdout, r.stdout
-        assert "aho_module_loaded:False" in r.stdout, r.stdout
-
-    def test_aho_loaded_after_first_scan(self):
-        """pyahocorasick loaded only after first actual scan."""
-        # Boot state
-        code_boot = (
-            "import sys; "
-            "import hledac.universal.intelligence.document_intelligence; "
-            "print('before_scan:' + str('ahocorasick' in sys.modules))"
-        )
-        r1 = subprocess.run(
-            [sys.executable, "-c", code_boot],
-            capture_output=True, text=True, check=True,
-            cwd="/Users/vojtechhamada/PycharmProjects/Hledac"
-        )
-        assert "before_scan:False" in r1.stdout
-
-        # After scan
-        code_scan = (
-            "import sys; "
-            "from hledac.universal.intelligence.document_intelligence import PDFAnalyzer; "
-            "a = PDFAnalyzer(); "
-            "a._detect_suspicious_content('CLASSIFIED text'); "
-            "print('after_scan:' + str('ahocorasick' in sys.modules))"
-        )
-        r2 = subprocess.run(
-            [sys.executable, "-c", code_scan],
-            capture_output=True, text=True, check=True,
-            cwd="/Users/vojtechhamada/PycharmProjects/Hledac"
-        )
-        assert "after_scan:True" in r2.stdout
-
 
 # ---------------------------------------------------------------------------
 # Test 11: regression subset

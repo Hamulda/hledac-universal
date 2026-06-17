@@ -42,33 +42,8 @@ def _run_in_subprocess(code: str, env: dict | None = None) -> tuple[str, str, in
 
 # ---------------------------------------------------------------------------
 # Test 1: No duckdb imported on plain orchestrator boot
+# REMOVED — autonomous_orchestrator.py no longer exists
 # ---------------------------------------------------------------------------
-
-class TestSprint8AXImportIsolation:
-    def test_duckdb_not_loaded_on_plain_orchestrator_boot(self):
-        """
-        When GHOST_DUCKDB_SHADOW is NOT set, duckdb and duckdb_store
-        must NOT appear in sys.modules after importing autonomous_orchestrator.
-        """
-        code = (
-            'import sys\n'
-            'import time\n'
-            't = time.perf_counter()\n'
-            'import hledac.universal.autonomous_orchestrator\n'
-            'dt = time.perf_counter() - t\n'
-            'print(f"{dt:.6f}")\n'
-            'print("duckdb" in sys.modules)\n'
-            'print("hledac.universal.knowledge.duckdb_store" in sys.modules)\n'
-        )
-        stdout, stderr, rc = _run_in_subprocess(code)
-        lines = [l for l in stdout.strip().splitlines()  # noqa: E741
-                 if l and not l.startswith("Warning") and not l.startswith("INFO")
-                 and not l.startswith("DEBUG") and not l.startswith("ERROR")]
-        assert len(lines) >= 3, f"Unexpected stdout: {stdout!r}"
-        float(lines[0])
-        assert "True" not in lines[1], f"duckdb leaked into sys.modules: {stdout}"
-        assert "True" not in lines[2], f"duckdb_store leaked: {stdout}"
-
 
 # ---------------------------------------------------------------------------
 # Test 2: Feature flag OFF = no-op
@@ -543,39 +518,5 @@ class TestSprint8AXRegression:
 
 
 # ---------------------------------------------------------------------------
-# Test 12: Import baseline — no regression after changes
+# Test 12: Import baseline — REMOVED (autonomous_orchestrator.py no longer exists)
 # ---------------------------------------------------------------------------
-
-class TestSprint8AXImportRegression:
-    def test_import_baseline_no_regression(self):
-        """
-        After all changes, cold import of autonomous_orchestrator
-        must still be within 0.1s of the original 0.996s baseline.
-        """
-        code = (
-            'import time, sys, subprocess, statistics\n'
-            'code_inner = """\n'
-            'import time, sys\n'
-            't = time.perf_counter()\n'
-            'import hledac.universal.autonomous_orchestrator\n'
-            'dt = time.perf_counter() - t\n'
-            'print(f"{dt:.6f}")\n'
-            '"""\n'
-            'times = []\n'
-            'for _ in range(5):\n'
-            '    r = subprocess.run([sys.executable, "-c", code_inner], capture_output=True, text=True)\n'
-            '    lines = [l for l in r.stdout.strip().splitlines()\n'
-            '              if l and not l.startswith("Warning") and not l.startswith("INFO")\n'
-            '              and not l.startswith("DEBUG") and not l.startswith("ERROR")]\n'
-            '    times.append(float(lines[0]))\n'
-            'median = statistics.median(times)\n'
-            'print(f"median={median:.6f}")\n'
-            'print(f"baseline=0.995865")\n'
-            'print(f"diff={median - 0.995865:.6f}")\n'
-            'print(f"within_0.1s={abs(median - 0.995865) <= 0.1}")\n'
-        )
-        stdout, _, _ = _run_in_subprocess(code)
-        lines = [l for l in stdout.strip().splitlines() if l]  # noqa: E741
-        within_lines = [l for l in lines if "within_0.1s=" in l]  # noqa: E741
-        assert within_lines and "True" in within_lines[0], \
-            f"Import regression >0.1s detected: {lines}"

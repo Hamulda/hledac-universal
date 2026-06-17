@@ -129,19 +129,19 @@ class UnifiedMemoryMonitor:
         if MLX_AVAILABLE and IS_DARWIN:
             try:
                 if hasattr(mx.metal, 'get_active_memory'):
-                    metal_active_gb = mx.metal.get_active_memory() / (1024 ** 3)
+                    metal_active_gb = mx.get_active_memory() / (1024 ** 3)
             except Exception:
                 pass
 
             try:
                 if hasattr(mx.metal, 'get_peak_memory'):
-                    metal_peak_gb = mx.metal.get_peak_memory() / (1024 ** 3)
+                    metal_peak_gb = mx.get_peak_memory() / (1024 ** 3)
             except Exception:
                 pass
 
             try:
                 if hasattr(mx.metal, 'get_cache_memory'):
-                    metal_cache_gb = mx.metal.get_cache_memory() / (1024 ** 3)
+                    metal_cache_gb = mx.get_cache_memory() / (1024 ** 3)
             except Exception:
                 pass
 

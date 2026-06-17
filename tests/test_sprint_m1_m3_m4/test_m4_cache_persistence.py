@@ -28,7 +28,7 @@ if _ROOT not in sys.path:
 
 
 def _setup_mlx_stubs():
-    """Stub mlx + mlx_lm so hermes3_engine imports succeed."""
+    """Stub mlx + mlx_lm so deephermes3_engine imports succeed."""
     if "mlx_lm" not in sys.modules:
         mlx_lm_stub = types.ModuleType("mlx_lm")
         mlx_lm_stub.load = MagicMock()
@@ -52,7 +52,7 @@ def _setup_mlx_stubs():
     if not hasattr(sys.modules["mlx"], "core"):
         sys.modules["mlx"].core = sys.modules["mlx.core"]
 
-    from hledac.universal.brain import hermes3_engine as hermes_mod  # type: ignore
+    from hledac.universal.brain import deephermes3_engine as hermes_mod  # type: ignore
 
     return hermes_mod
 
@@ -105,9 +105,9 @@ def _make_engine_with_cache(hermes_mod, layers, offset: int = 0):
     # accessing it through the instance — Python's descriptor protocol
     # binds self automatically.
     cls = type("FakeEngine", (), {
-        "_save_cache": hermes_mod.Hermes3Engine._save_cache,
-        "_load_cache": hermes_mod.Hermes3Engine._load_cache,
-        "_init_system_prompt_cache": hermes_mod.Hermes3Engine._init_system_prompt_cache,
+        "_save_cache": hermes_mod.DeepHermes3Engine._save_cache,
+        "_load_cache": hermes_mod.DeepHermes3Engine._load_cache,
+        "_init_system_prompt_cache": hermes_mod.DeepHermes3Engine._init_system_prompt_cache,
     })
     inst = cls()
     inst._system_prompt_cache = engine._system_prompt_cache
@@ -184,7 +184,7 @@ class TestM4SaveCacheStructure(unittest.TestCase):
         cache = _FakePromptCache([_FakeKVLayer("k0", "v0")])
         del cache.offset
         engine = type("E", (), {
-            "_save_cache": self.mod.Hermes3Engine._save_cache,
+            "_save_cache": self.mod.DeepHermes3Engine._save_cache,
         })()
         engine._system_prompt_cache = cache
         saved: dict = {}
@@ -196,7 +196,7 @@ class TestM4SaveCacheStructure(unittest.TestCase):
 
     def test_m4_4_save_no_cache_is_noop(self) -> None:
         engine = type("E", (), {
-            "_save_cache": self.mod.Hermes3Engine._save_cache,
+            "_save_cache": self.mod.DeepHermes3Engine._save_cache,
         })()
         engine._system_prompt_cache = None
         saved: dict = {}
@@ -269,7 +269,7 @@ class TestM4LoadCacheRestores(unittest.TestCase):
 
     def test_m4_9_load_with_none_cache_returns_false(self) -> None:
         engine = type("E", (), {
-            "_load_cache": self.mod.Hermes3Engine._load_cache,
+            "_load_cache": self.mod.DeepHermes3Engine._load_cache,
         })()
         engine._system_prompt_cache = None
         from unittest.mock import patch
@@ -303,7 +303,7 @@ class TestM4InitOrder(unittest.TestCase):
         from unittest.mock import patch
 
         engine = type("E", (), {
-            "_init_system_prompt_cache": self.mod.Hermes3Engine._init_system_prompt_cache,
+            "_init_system_prompt_cache": self.mod.DeepHermes3Engine._init_system_prompt_cache,
             "supports_stream_generate": True,
         })()
         engine._model = MagicMock()
@@ -340,7 +340,7 @@ class TestM4InitOrder(unittest.TestCase):
         from unittest.mock import patch
 
         engine = type("E", (), {
-            "_init_system_prompt_cache": self.mod.Hermes3Engine._init_system_prompt_cache,
+            "_init_system_prompt_cache": self.mod.DeepHermes3Engine._init_system_prompt_cache,
         })()
         engine._model = MagicMock()
         engine._tokenizer = MagicMock()
@@ -361,7 +361,7 @@ class TestM4InitOrder(unittest.TestCase):
         _patch_mx_core({})
 
         from pathlib import Path
-        # Force KV_CACHE_AVAILABLE = True in the hermes3_engine module so
+        # Force KV_CACHE_AVAILABLE = True in the deephermes3_engine module so
         # the function proceeds past its first guard. Use patch.object on
         # the module attribute to make the change visible inside the
         # function (it reads the module-level name, not an instance attr).

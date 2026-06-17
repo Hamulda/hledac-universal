@@ -16,7 +16,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 # Import tested classes
-from hledac.universal.brain.hermes3_engine import Hermes3Engine
+from hledac.universal.brain.deephermes3_engine import DeepHermes3Engine
 from hledac.universal.intelligence.document_intelligence import StegdetectServer
 from hledac.universal.layers.communication_layer import CommunicationLayer
 from hledac.universal.project_types import CommunicationConfig
@@ -176,12 +176,12 @@ class TestSprint47(unittest.IsolatedAsyncioTestCase):
 
     async def test_prefix_cache_hit(self):
         """Cache hit should skip tokenization."""
-        # Create a minimal mock for Hermes3Engine
+        # Create a minimal mock for DeepHermes3Engine
         class MockTokenizer:
             def encode(self, text):
                 return [1, 2, 3, 4, 5]
 
-        engine = Hermes3Engine.__new__(Hermes3Engine)
+        engine = DeepHermes3Engine.__new__(DeepHermes3Engine)
         engine._prefix_cache = {}
         engine._tokenizer = MockTokenizer()
 

@@ -1,20 +1,29 @@
 # fetching/memory_budget_gate.py
+"""
+Memory budget gate for M1 MacBook Air 8GB unified memory.
+Single target: darwin-arm64 (Apple Silicon). psutil is the sole RSS backend.
+"""
 from __future__ import annotations
 
 import asyncio
 import logging
 import os
-import resource
 from dataclasses import dataclass
 from typing import Literal
 
+import psutil
+
 logger = logging.getLogger(__name__)
+
+_PLATFORM = "darwin-arm64"  # M1 MacBook Air 8GB, single-target build
 
 # M1 8GB unified memory thresholds
 # Soft: camoufox allowed only for high-confidence JS + high-priority requests
 # Hard: no browser launch regardless of request priority
-_SOFT_GIB = float(os.environ.get("HLEDAC_MEM_SOFT_GIB", "3.5"))
-_HARD_GIB = float(os.environ.get("HLEDAC_MEM_HARD_GIB", "5.5"))
+_SOFT_GIB = float(os.environ.get("HLEDAC_MEM_SOFT_GIB", "4.5"))
+_HARD_GIB = float(os.environ.get("HLEDAC_MEM_HARD_GIB", "6.0"))
+_BROWSER_THRESHOLD_GIB = float(os.environ.get("HLEDAC_BROWSER_MEM_THRESHOLD_GIB", "1.5"))
+_CURL_CFFI_POOL_SIZE = int(os.environ.get("HLEDAC_CURL_CFFI_POOL_SIZE", "4"))
 
 BrowserTier = Literal["camoufox", "nodriver", "deferred", "skip_js"]
 
@@ -32,16 +41,24 @@ _rss_lock = asyncio.Lock()
 
 
 def _rss_gib() -> float:
-    """RSS in GiB. /proc/self/status on Linux, ru_maxrss on macOS."""
+    """
+    RSS in GiB. Priority:
+      0. Rust extension (sysinfo) — cross-platform, no subprocess.
+         Returns 0.0 when the sysinfo feature is not built.
+      1. psutil — darwin-arm64 primary path.
+    """
+    # Priority 0: Rust extension via sysinfo (no subprocess, cross-platform).
     try:
-        with open("/proc/self/status") as fh:
-            for line in fh:
-                if line.startswith("VmRSS:"):
-                    return int(line.split()[1]) / (1024**2)
-    except FileNotFoundError:
-        # macOS: ru_maxrss is bytes
-        return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / (1024**3)
-    return 0.0
+        from hledac_rust_extensions import get_process_rss_gib
+
+        val = get_process_rss_gib()
+        if val > 0.0:
+            return val
+    except ImportError:
+        pass
+
+    # Priority 1: psutil on darwin-arm64.
+    return psutil.Process(os.getpid()).memory_info().rss / (1024**3)
 
 
 def decide(

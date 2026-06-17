@@ -14,7 +14,6 @@ Tests:
   10. benchmark: build time + scan time vs regex
 """
 
-import subprocess
 import sys
 import time
 
@@ -132,40 +131,8 @@ class TestParityWithGroundTruth:
 
 
 # ---------------------------------------------------------------------------
-# Test 7-8: boot isolation
+# Test 7-8: boot isolation — REMOVED (autonomous_orchestrator.py no longer exists)
 # ---------------------------------------------------------------------------
-
-class TestBootIsolation:
-    def test_py_ahocorasick_not_imported_on_orchestrator_boot(self):
-        """pyahocorasick must NOT be imported when orchestrator boots."""
-        code = (
-            "import sys; "
-            "import hledac.universal.autonomous_orchestrator; "
-            "print(int('ahocorasick' in sys.modules))"
-        )
-        r = subprocess.run(
-            [sys.executable, "-c", code],
-            capture_output=True, text=True, check=True,
-        )
-        lines = [l for l in r.stdout.strip().split("\n") if l]  # noqa: E741
-        val = int(lines[-1])
-        assert val == 0, f"ahocorasick was loaded during boot: {r.stdout}"
-
-    def test_aho_extractor_module_not_imported_on_orchestrator_boot(self):
-        """aho_extractor must NOT be imported when orchestrator boots."""
-        code = (
-            "import sys; "
-            "import hledac.universal.autonomous_orchestrator; "
-            "print(int('hledac.universal.utils.aho_extractor' in sys.modules))"
-        )
-        r = subprocess.run(
-            [sys.executable, "-c", code],
-            capture_output=True, text=True, check=True,
-        )
-        lines = [l for l in r.stdout.strip().split("\n") if l]  # noqa: E741
-        val = int(lines[-1])
-        assert val == 0, f"aho_extractor was loaded during boot: {r.stdout}"
-
 
 # ---------------------------------------------------------------------------
 # Test 10: benchmark (scan time vs regex, build time)

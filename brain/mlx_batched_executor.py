@@ -10,14 +10,14 @@ multiple waiters amortize cold-start and warm-up cost.
 Why this exists (Sprint P0-2):
     - BatchScheduler (brain/batch_scheduler.py) is implemented and tested
       but had ZERO production callers in the codebase — a wiring gap.
-    - Hermes3Engine.generate() is called from at least 4 sites
+    - DeepHermes3Engine.generate() is called from at least 4 sites
       (research_hypothesis_engine, model_manager, dspy_service, synthesis_runner),
       none of which can batch.
     - This module bridges: it implements the scheduler's `execute_callback`
       contract and turns `engine.generate(prompt, ...)` into a batch-safe call.
 
 Architecture:
-    Hermes3Engine.generate()
+    DeepHermes3Engine.generate()
         └── if _mlx_batcher initialized AND is_batch_safe():
                 await self._mlx_batcher.execute(...)
                     └── BatchScheduler.submit(payload)
@@ -28,11 +28,11 @@ Architecture:
                 # existing direct path (unchanged)
 
 Invariants (P0-2):
-    B.M1  Zero top-level MLX imports (lazy via Hermes3Engine)
+    B.M1  Zero top-level MLX imports (lazy via DeepHermes3Engine)
     B.M2  BatchScheduler instantiated lazily (not at import time)
     B.M3  Fail-soft: any submit/future error → caller falls back to direct
     B.M4  MLX execution lock: asyn semaphore(1) — no concurrent MLX.generate
-          on the same Hermes3Engine instance
+          on the same DeepHermes3Engine instance
     B.M5  Memory guard: psutil.virtual_memory().percent > 90% → disable batching
     B.M6  max_batch_size = 6 (3B model on M1 8GB, KV cache 0.75 GB, headroom for speculative); memory guard at 85% RSS
           for parallel calls)
@@ -55,7 +55,7 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from hledac.universal.brain.batch_scheduler import BatchScheduler
-    from hledac.universal.brain.hermes3_engine import Hermes3Engine
+    from hledac.universal.brain.deephermes3_engine import DeepHermes3Engine
 
 logger = logging.getLogger(__name__)
 
@@ -79,7 +79,7 @@ ADAPTIVE_CONTEXT_PREFLIGHT: bool = True
 
 class MLXBatchedExecutor:
     """
-    Smart router that wraps Hermes3Engine + BatchScheduler.
+    Smart router that wraps DeepHermes3Engine + BatchScheduler.
 
     Public API:
         is_batch_safe(prompt, system_msg) → bool
@@ -96,12 +96,12 @@ class MLXBatchedExecutor:
 
     def __init__(
         self,
-        engine: Hermes3Engine,
+        engine: DeepHermes3Engine,
         worker_thread: Any = None,
     ) -> None:
         """
         Args:
-            engine: Hermes3Engine instance (must be loaded; model state shared)
+            engine: DeepHermes3Engine instance (must be loaded; model state shared)
             worker_thread: Optional MLXWorkerThread (P0-3) — when provided and
                 active, MLX inference is dispatched through its persistent
                 event loop instead of the local ThreadPoolExecutor. The main
@@ -111,7 +111,7 @@ class MLXBatchedExecutor:
             Does NOT instantiate BatchScheduler here — lazy on first execute()
             so cold-start cost is paid once, at first use, not at import.
         """
-        self._engine: Hermes3Engine = engine
+        self._engine: DeepHermes3Engine = engine
         self._worker_thread = worker_thread  # Optional MLXWorkerThread (P0-3)
         self._scheduler: BatchScheduler | None = None
         self._mlx_lock: asyncio.Lock | None = None
@@ -406,7 +406,7 @@ class MLXBatchedExecutor:
         system_msg: str | None,
     ) -> str:
         """
-        Direct call to Hermes3Engine.generate() — single MLX execution.
+        Direct call to DeepHermes3Engine.generate() — single MLX execution.
 
         Bounded to the lock if available, so direct path can never race
         with batched path (B.M4).
@@ -434,7 +434,7 @@ class MLXBatchedExecutor:
             except TimeoutError:
                 raise
         # Local path (no worker thread, or worker unavailable)
-        # NOTE: No self._mlx_lock here — Hermes3Engine.generate() serializes
+        # NOTE: No self._mlx_lock here — DeepHermes3Engine.generate() serializes
         # via its own _inference_semaphore (ThreadPoolExecutor path) or the
         # worker thread's event loop (P0-3 path). Adding another lock would
         # create a deadlock: generate() → _submit_inference() → worker.submit()
@@ -454,7 +454,7 @@ class MLXBatchedExecutor:
             )
             return result
         except Exception:
-            # Re-raise — caller decides. Hermes3Engine already has fail-safe
+            # Re-raise — caller decides. DeepHermes3Engine already has fail-safe
             # telemetry; we don't double-record.
             raise
 

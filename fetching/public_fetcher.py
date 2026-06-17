@@ -1977,6 +1977,52 @@ async def _cooldown_after_browser_stop() -> None:
     await asyncio.sleep(_JSC_RENDERER_COOLDOWN_S)
 
 
+async def _teardown_browser_pool() -> None:
+    """
+    Teardown camoufox/nodriver shared state at sprint winddown.
+
+    Called from sprint_scheduler run_winddown(). Fail-soft — any error is
+    swallowed at DEBUG level. Must be idempotent (safe to call multiple times).
+
+    Browser instances are self-contained per fetch call (created and torn down
+    inline); this function resets the lazy singletons:
+    - _JS_RENDERER_SEMAPHORE: released and cleared so next sprint re-initializes
+      in the correct event loop
+    - _js_renderer_capability: reset to None so next sprint re-probes availability
+    - yields cooldown to let any in-flight browser.stop() calls finish
+    """
+    global _JS_RENDERER_SEMAPHORE
+
+    # Release + clear the shared semaphore so next sprint re-initializes cleanly
+    try:
+        _sem = _JS_RENDERER_SEMAPHORE
+        if _sem is not None:
+            try:
+                # Drain the semaphore in case a browser is still alive inside it
+                for _ in range(_sem._value + 1):  # type: ignore[attr-defined]
+                    await asyncio.sleep(0)
+            except Exception:
+                pass
+            _JS_RENDERER_SEMAPHORE = None
+    except Exception as _e:
+        logger.debug("[browser_pool] semaphore teardown skipped: %s", _e)
+
+    # Reset renderer capability map so next sprint re-probes availability
+    try:
+        global _js_renderer_capability
+        _js_renderer_capability = {"camoufox": None, "nodriver": None, "playwright": None}
+    except Exception as _e:
+        logger.debug("[browser_pool] capability reset skipped: %s", _e)
+
+    # Cooldown so OS can fully reap any lingering browser processes
+    try:
+        await asyncio.sleep(_JSC_RENDERER_COOLDOWN_S)
+    except Exception:
+        pass
+
+    logger.debug("[winddown] browser pool torn down")
+
+
 # F226B: aiohttp body-cap helper — single source of truth for the chunked
 # read loop. Originally duplicated at public_fetcher.py ~2207-2294 alongside
 # the httpx_h2 inline copy (~1768-1796). Now both call into helpers in

@@ -27,6 +27,7 @@ pub mod ioc_dedup;
 pub mod ioc_extract;
 pub mod ioc_extract_fast;
 pub mod madvise;
+pub mod memory;
 pub mod quality_gate;
 pub mod rolling_hash;
 pub mod signal_batch;
@@ -173,6 +174,9 @@ fn hledac_rust_extensions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // batch_graph_traverse: parallel across root IOCs, rayon ThreadPool.
     // Each worker opens its own read-only DuckDB connection (thread-safe).
     graph_traverse::register_functions(m)?;
+
+    // 3A: Native RSS + available-memory probe via sysinfo.
+    memory::register_functions(m)?;
 
     // Sprint P2-2: Batch signal aggregation — ARM NEON-accelerated source weight
     // computation and signal vector aggregation for F199A reward-driven adaptation.

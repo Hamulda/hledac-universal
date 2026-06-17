@@ -249,6 +249,30 @@ def looks_like_feed_url(url: str) -> bool:
     """Heuristic: ends in .rss/.atom/.xml or path contains /feed or /rss."""
     ...
 
+def canonical_url(url: str) -> str:
+    """Canonicalize URL: lowercase scheme/host, strip default port, drop fragment, strip tracking params, sort query, remove trailing slash."""
+    ...
+
+def url_dedup_key(url: str) -> str:
+    """BLAKE3-64 hex key of canonical URL (16-char hex)."""
+    ...
+
+def url_dedup_hash(url: str) -> int:
+    """FNV-1a 64-bit hash of canonical URL (tracking params stripped). Returns u64 as Python int."""
+    ...
+
+# ---------------------------------------------------------------------------
+# Memory probe — sysinfo (rust_extensions/src/memory.rs, feature=sysinfo)
+# ---------------------------------------------------------------------------
+
+def get_process_rss_gib() -> float:
+    """Current process RSS in GiB via sysinfo. Returns 0.0 when sysinfo feature is not built."""
+    ...
+
+def get_available_memory_gib() -> float:
+    """Available system memory in GiB via sysinfo. Returns 0.0 on error."""
+    ...
+
 # ---------------------------------------------------------------------------
 # IOC extract (rust_extensions/src/ioc_extract.rs)
 # ---------------------------------------------------------------------------
@@ -389,8 +413,93 @@ def build_layout(capacity: int) -> IntCounterLayoutRust:
     """Allocate a fresh bounded IntCounterLayoutRust of given capacity."""
     ...
 
-def chain_hash_snapshot(layout: IntCounterLayoutRust) -> str:
-    """BLAKE3 hash of the current layout snapshot, hex-encoded."""
+def chain_hash_snapshot(snap: dict[str, int], prev_chain_hex: str, event_id: str) -> tuple[str, str]:
+    """
+    Hash a SoA snapshot dict into the evidence chain. Deterministic ordering via sorted keys.
+
+    Returns (blake3_hex, sha256_hex) — dual-emit format.
+    """
+    ...
+
+# ---------------------------------------------------------------------------
+# Graph traverse — Parallel DuckPGQ graph traversal (P2-1)
+# ---------------------------------------------------------------------------
+
+def batch_graph_traverse(
+    db_path: str,
+    values: list[str],
+    max_hops: int = 2,
+) -> dict[str, list[dict[str, object]]]:
+    """
+    P2-1: Parallel batch graph traversal via rayon (4 threads).
+
+    Traverses IOC graph for each root value in parallel using the shared
+    bulk_pool(). Each worker opens its own DuckDB read-only connection.
+    Returns dict mapping each input value to its list of connected nodes.
+
+    Args:
+        db_path: Path to DuckDB database file.
+        values: List of root IOC values to traverse from.
+        max_hops: Maximum traversal depth (default 2, max 10).
+
+    Returns:
+        Dict mapping root value -> list of connected node dicts with keys:
+        value, ioc_type, confidence, source.
+    """
+    ...
+
+def graph_traverse_single(
+    db_path: str,
+    value: str,
+    max_hops: int = 2,
+) -> list[dict[str, object]]:
+    """
+    Single IOC graph traversal — one root, returns connected nodes.
+
+    Args:
+        db_path: Path to DuckDB database file.
+        value: Root IOC value to traverse from.
+        max_hops: Maximum traversal depth (default 2, max 10).
+
+    Returns:
+        List of connected node dicts with keys: value, ioc_type, confidence, source.
+    """
+    ...
+
+def graph_stats(
+    db_path: str,
+    top_k: int = 20,
+) -> dict[str, object]:
+    """
+    Graph statistics — node/edge counts and top-K nodes by degree.
+
+    Args:
+        db_path: Path to DuckDB database file.
+        top_k: Number of top nodes to return (default 20, max 100).
+
+    Returns:
+        Dict with keys: total_nodes, total_edges, top_nodes (list of dicts
+        with keys: value, ioc_type, degree).
+    """
+    ...
+
+# ---------------------------------------------------------------------------
+# Signal batch — ARM NEON SIMD (P2-2)
+# ---------------------------------------------------------------------------
+
+def batch_compute_scores(
+    stats: list[dict[str, object]],
+    default_weight: float = 1.0,
+) -> list[float]:
+    """Batch source quality scores via ARM NEON. Returns weights clamped [0.3, 2.5]."""
+    ...
+
+def batch_aggregate_signals(
+    signals: list[list[float]],
+    weights: list[float],
+    normalize: bool = True,
+) -> list[float]:
+    """Batch signal aggregation via ARM NEON. Returns weighted average or sum."""
     ...
 
 # ---------------------------------------------------------------------------

@@ -3056,6 +3056,9 @@ class SprintSchedulerResult:
 
     arrow_last_flush_error: str = ""
 
+    # Sprint F265C: Arrow ingest metrics snapshot (populated at sprint end)
+    arrow_metrics: dict = field(default_factory=dict)
+
     # Sprint F215D: Early exit semantics -- canonical classification of WHY run ended early
 
     # Populated by _compute_early_exit_class() called in _finalize_result_truth()
@@ -8164,6 +8167,15 @@ class SprintScheduler:
             except Exception:
                 pass
 
+            # Teardown nodriver/camoufox lazy state at sprint winddown
+            if os.environ.get("HLEDAC_ENABLE_NODRIVER") == "1":
+                try:
+                    from fetching.public_fetcher import _teardown_browser_pool
+                    await _teardown_browser_pool()
+                    logger.debug("[winddown] browser pool torn down")
+                except Exception as _e:
+                    logger.debug("[winddown] browser pool teardown skipped: %s", _e)
+
             if self._config.export_enabled:
 
                 # F238E Phase A: Timer instrumentation -- fail-soft, time.monotonic() only
@@ -8752,6 +8764,13 @@ class SprintScheduler:
             except Exception:
 
                 self._result.timer_events = None
+
+            # Sprint F265C: Attach Arrow ingest metrics snapshot to result
+            try:
+                from hledac.universal.knowledge.duckdb_store import get_arrow_metrics
+                self._result.arrow_metrics = get_arrow_metrics()
+            except Exception:
+                self._result.arrow_metrics = {}
 
         except Exception as _run_err:
 
@@ -15538,6 +15557,24 @@ class SprintScheduler:
             else self._config.aggressive_branch_timeout_s
 
         )
+
+        # F273G: UMA-aware timeout clamp — reduce branch budget under memory pressure
+        try:
+            from hledac.universal.core.resource_governor import (
+                sample_uma_status as _sample_uma,
+            )
+
+            uma = _sample_uma()
+            if uma.state in ("critical", "emergency"):
+                base = min(base, 15.0)
+                log.debug(
+                    "[F273G] %s branch timeout clamped to %.1fs (uma_state=%s)",
+                    branch_name,
+                    base,
+                    uma.state,
+                )
+        except Exception as _exc:
+            log.debug("[F273G] could not sample UMA state: %s", _exc)
 
         bounded = min(base, remaining_s * 0.5, self._config._MAX_BRANCH_TIMEOUT_CAP)
 
@@ -28928,7 +28965,7 @@ class SprintScheduler:
                 return max(100, min(int(raw), 10000))
         except (ValueError, TypeError):
             pass
-        uma_state = getattr(self._governor, "_uma_state", "ok") if self._governor else "ok"
+        uma_state = getattr(self, "_governor", None) and getattr(self._governor, "_uma_state", "ok") or "ok"
         if uma_state in ("critical", "emergency"):
             return 2500
         elif uma_state == "warn":

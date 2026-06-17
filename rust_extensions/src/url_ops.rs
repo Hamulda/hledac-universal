@@ -266,14 +266,35 @@ fn matches_any_word(haystack: &str, needle: &str) -> bool {
     false
 }
 
+/// Tracking parameter prefixes and names stripped during canonicalization.
+/// Covers utm_*, fbclid, gclid, mc_*, yclid, ref, and common ad/analytics params.
+const TRACKING_PARAM_PREFIXES: &[&str] = &["utm_"];
+const TRACKING_PARAMS: &[&str] = &[
+    "fbclid", "gclid", "gclsrc", "dclid", "msclkid", "twclid",
+    "mc_cid", "mc_eid", "_ga", "_gl", "ref", "yclid",
+];
+
+/// Returns true if `key` is a tracking parameter (prefix or exact match).
+#[inline]
+fn is_tracking_param(key: &str) -> bool {
+    let key_lower = key.to_ascii_lowercase();
+    TRACKING_PARAMS.contains(&key_lower.as_str())
+        || TRACKING_PARAM_PREFIXES.iter().any(|p| key_lower.starts_with(p))
+}
+
 /// Normalize a URL to canonical form for deduplication.
 ///
-/// Strips: default ports (80/443), fragments, trailing slashes from path.
-/// Sorts query parameters (stable order).
+/// Strips:
+///   - default ports (80/443)
+///   - fragments
+///   - trailing slashes from path
+///   - tracking query params (utm_*, fbclid, gclid, mc_*, ref, etc.)
+/// Sorts remaining query parameters alphabetically.
 /// Lowercases scheme and host.
 ///
-/// Used by `url_dedup_key()` to produce a stable canonical form before hashing.
-/// Falls back to the raw URL string on parse failure (never raises).
+/// Used by `url_dedup_key()` and `url_dedup_hash()` to produce a stable
+/// canonical form before hashing. Falls back to the raw URL string on
+/// parse failure (never raises).
 #[pyfunction]
 pub fn canonical_url(url: &str) -> String {
     let trimmed = url.trim();
@@ -314,18 +335,17 @@ pub fn canonical_url(url: &str) -> String {
         path.trim_end_matches('/').to_ascii_lowercase()
     };
 
-    // Sort query params.
+    // Sort query params, dropping tracking parameters.
     let query = match parsed.query() {
         None => String::new(),
         Some(q) => {
-            // Parse and re-sort query string — stable sort by key.
             let mut params: Vec<(String, String)> = q
                 .split('&')
                 .filter_map(|pair| {
                     let kv: Vec<&str> = pair.splitn(2, '=').collect();
                     let k = urlencoding_decode(kv.get(0).unwrap_or(&""));
-                    let v = kv.get(1).map(|v| urlencoding_decode(v)).unwrap_or_default();
-                    if k.is_empty() {
+                    let v = kv.get(1).map(urlencoding_decode).unwrap_or_default();
+                    if k.is_empty() || is_tracking_param(&k) {
                         None
                     } else {
                         Some((k, v))
@@ -379,6 +399,32 @@ fn blake3_fallback(url: &str) -> String {
     format!("{:016x}", u64::from_le_bytes(bytes))
 }
 
+/// Compute a 64-bit deduplication fingerprint for a URL.
+///
+/// Canonicalizes the URL first via `canonical_url()` (stripping tracking
+/// params), then computes FNV-1a hash of the canonical form.
+///
+/// FNV-1a is fast, non-cryptographic, and well-distributed — ideal for
+/// BloomFilter/RotatingBloomFilter dedup keys. Returns a raw `u64` as
+/// Python `int`. Fail-safe: on any error returns `u64::MAX`.
+///
+/// Use when you need a raw u64 hash to add to an external BloomFilter
+/// rather than the hex-string key from `url_dedup_key()`.
+#[pyfunction]
+pub fn url_dedup_hash(url: &str) -> u64 {
+    let canonical = canonical_url(url);
+    if canonical.is_empty() {
+        return u64::MAX;
+    }
+    // FNV-1a: fast, non-crypto, good distribution for dedup.
+    let mut hash: u64 = 14695981039346656037;
+    for byte in canonical.bytes() {
+        hash ^= byte as u64;
+        hash = hash.wrapping_mul(1099511628211);
+    }
+    hash
+}
+
 /// Decode %-encoded string (URL encoding). Used by canonical_url for query params.
 fn urlencoding_decode(s: &str) -> String {
     let mut result = String::with_capacity(s.len());
@@ -418,6 +464,7 @@ pub fn register_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(looks_like_feed_url, m)?)?;
     m.add_function(wrap_pyfunction!(canonical_url, m)?)?;
     m.add_function(wrap_pyfunction!(url_dedup_key, m)?)?;
+    m.add_function(wrap_pyfunction!(url_dedup_hash, m)?)?;
     Ok(())
 }
 
@@ -541,6 +588,51 @@ mod tests {
     fn test_canonical_url_trims_trailing_slash() {
         assert_eq!(canonical_url("https://example.com/path///"), "https://example.com/path");
         assert_eq!(canonical_url("https://example.com/"), "https://example.com/");
+    }
+
+    #[test]
+    fn test_canonical_url_strips_tracking_params() {
+        // utm_* params stripped.
+        assert_eq!(
+            canonical_url("https://example.com/page?utm_source=google&utm_medium=cpc"),
+            "https://example.com/page"
+        );
+        // fbclid, gclid, etc. stripped.
+        assert_eq!(
+            canonical_url("https://example.com/?fbclid=abc123&q=test"),
+            "https://example.com/?q=test"
+        );
+        // mc_* params stripped.
+        assert_eq!(
+            canonical_url("https://example.com/?mc_cid=x&page=1"),
+            "https://example.com/?page=1"
+        );
+        // Mixed — non-tracking preserved, sorted.
+        assert_eq!(
+            canonical_url("https://example.com/?z=1&fbclid=x&a=2"),
+            "https://example.com/?a=2&z=1"
+        );
+    }
+
+    #[test]
+    fn test_url_dedup_hash_deterministic() {
+        let h1 = url_dedup_hash("https://Example.COM/?fbclid=abc&q=test");
+        let h2 = url_dedup_hash("https://Example.COM/?fbclid=xyz&q=test");
+        // Same canonical form (fbclid stripped, params sorted) → same hash.
+        assert_eq!(h1, h2);
+    }
+
+    #[test]
+    fn test_url_dedup_hash_different_for_different_urls() {
+        let h1 = url_dedup_hash("https://example.com/page1");
+        let h2 = url_dedup_hash("https://example.com/page2");
+        assert_ne!(h1, h2);
+    }
+
+    #[test]
+    fn test_url_dedup_hash_returns_u64() {
+        let h = url_dedup_hash("https://google.com");
+        assert!(h > 0 || h == u64::MAX); // u64::MAX is valid on error path
     }
 
     #[test]

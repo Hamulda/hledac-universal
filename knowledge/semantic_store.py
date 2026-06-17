@@ -86,6 +86,7 @@ class SemanticStore:
         "_table",
         "_model",
         "_coreml_embedder",
+        "_mlx_embedder",
         "_pending_texts",
         "_pending_meta",
         "_embed_dim",
@@ -138,10 +139,10 @@ class SemanticStore:
                 self._coreml_embedder = None
 
         # MLX path: Use MLXEmbeddingManager singleton (modernbert-embed-base)
-        # This uses mlx_embeddings package, NOT mlx_embedding_models
+        # This uses mlx_embeddings package via _shims/core_mlx_embeddings shim
         self._mlx_embedder = None
         try:
-            from hledac.universal.core._mlx_embeddings import get_embedding_manager
+            from _shims.core_mlx_embeddings import get_embedding_manager
 
             self._mlx_embedder = get_embedding_manager()
             # Ensure loaded

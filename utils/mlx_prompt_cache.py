@@ -30,7 +30,7 @@ class MLXPromptCache:
         if max_size_gb is None:
             try:
                 import mlx.core as mx
-                active = mx.metal.get_active_memory()
+                active = mx.get_active_memory()
                 free = 4 * 1024**3 - active
                 self._max_size_bytes = int(free * 0.5)
             except Exception:

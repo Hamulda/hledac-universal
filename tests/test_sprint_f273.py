@@ -2,8 +2,8 @@
 
 This test file covers all 8 sub-fixes of Sprint F273:
 
-  F273A — Dynamic branch floor (kills `terminal:remaining_too_low` in windup)
-  F273B — Windup ratio 0.20 + adaptive by cycle size
+  F273A — Dynamic branch floor based on cycle-ema (kills `terminal:remaining_too_low` in windup)
+  F273B — Remaining-time-aware branch floor (remaining_s * 0.15, cap 5.0s) for 300s+ sprints
   F273C — Pattern extraction decoupled from branch lifecycle
   F273D — --force-hermes CLI + SprintFlags.hermes_force + diagnostic
   F273E — aiofiles for hot file I/O (streaming exporter)
@@ -54,7 +54,7 @@ class TestF273ADynamicBranchFloor(unittest.TestCase):
         cfg = _import_sprint_scheduler_config()(sprint_duration_s=60)
         self.assertEqual(cfg._MIN_BRANCH_REMAINING_S, 2.0)
         self.assertEqual(cfg._MIN_BRANCH_REMAINING_S_DEFAULT, 2.0)
-        self.assertEqual(cfg._MIN_BRANCH_REMAINING_S_CAP, 9.0)
+        self.assertEqual(cfg._MIN_BRANCH_REMAINING_S_CAP, 5.0)
 
     def test_min_branch_remaining_s_floor_when_no_cycles_seen(self):
         """When _cycle_time_ema is 0 (pre-loop), returns the default 2.0s floor."""
@@ -65,40 +65,49 @@ class TestF273ADynamicBranchFloor(unittest.TestCase):
         # Use a config to access the constants
         cfg = _import_sprint_scheduler_config()(sprint_duration_s=60)
         instance._config = cfg
-        self.assertEqual(instance._min_branch_remaining_s(), 2.0)
+        self.assertEqual(instance._min_branch_remaining_s(None), 2.0)
 
-    def test_min_branch_remaining_s_scales_with_cycle_ema(self):
-        """Floor scales with observed cycle time: 0.3 * cycle_ema, clamped [2, 9]."""
+    def test_min_branch_remaining_s_fallback_cycle_ema_formula(self):
+        """Fallback (no remaining_s arg) uses 0.1 * cycle_ema, clamped [2, 5].
+        This tests backward compatibility when remaining_s is None."""
         SprintScheduler = _import_min_branch()
         cfg = _import_sprint_scheduler_config()(sprint_duration_s=60)
         for ema, expected_floor in [
             (1.0, 2.0),    # initial default
             (5.0, 2.0),    # clamped to floor
-            (10.0, 2.0),   # 0.3 * 10 = 3.0, but look_ahead=2.0 caps it (no lifecycle)
-            (20.0, 2.0),   # 0.3 * 20 = 6.0, but look_ahead=2.0 caps it (no lifecycle)
-            (30.0, 2.0),   # 0.3 * 30 = 9.0, but look_ahead=2.0 caps it (no lifecycle)
-            (60.0, 2.0),   # saturated at look_ahead=2.0 (no lifecycle)
+            (10.0, 2.0),   # clamped to floor
+            (20.0, 2.0),   # 0.1 * 20 = 2.0, clamped to floor
+            (30.0, 3.0),   # 0.1 * 30 = 3.0
+            (60.0, 5.0),   # capped at 5.0
         ]:
             instance = SprintScheduler.__new__(SprintScheduler)
             instance._cycle_time_ema = ema
             instance._config = cfg
             self.assertEqual(
-                instance._min_branch_remaining_s(),
+                instance._min_branch_remaining_s(None),
                 expected_floor,
-                f"cycle_ema={ema} should give floor={expected_floor} (look_ahead=2.0 when no lifecycle)",
+                f"cycle_ema={ema} should give floor={expected_floor}",
             )
 
-    def test_min_branch_remaining_s_bounded_2_to_9(self):
-        """Floor is always in [2.0, 9.0] for any non-negative cycle_ema."""
+    def test_min_branch_remaining_s_bounded_2_to_5(self):
+        """Floor is always in [2.0, 5.0] for any remaining_s or cycle_ema."""
         SprintScheduler = _import_min_branch()
         cfg = _import_sprint_scheduler_config()(sprint_duration_s=60)
+        # Test with remaining_s argument (primary formula)
+        for remaining_s in (0.0, -1.0, 10.0, 30.0, 60.0, 150.0, 1000.0):
+            instance = SprintScheduler.__new__(SprintScheduler)
+            instance._config = cfg
+            floor = instance._min_branch_remaining_s(remaining_s)
+            self.assertGreaterEqual(floor, 2.0, f"remaining_s={remaining_s} below floor")
+            self.assertLessEqual(floor, 5.0, f"remaining_s={remaining_s} above cap")
+        # Test fallback with cycle_ema
         for ema in (0.0, 0.5, 1.0, 3.0, 10.0, 50.0, 100.0, 1000.0):
             instance = SprintScheduler.__new__(SprintScheduler)
             instance._cycle_time_ema = ema
             instance._config = cfg
-            floor = instance._min_branch_remaining_s()
+            floor = instance._min_branch_remaining_s(None)
             self.assertGreaterEqual(floor, 2.0, f"ema={ema} below floor")
-            self.assertLessEqual(floor, 9.0, f"ema={ema} above cap")
+            self.assertLessEqual(floor, 5.0, f"ema={ema} above cap")
 
     def test_branch_timeout_returns_zero_only_below_dynamic_floor(self):
         """_branch_timeout_s returns 0 only when remaining_s <= dynamic floor."""

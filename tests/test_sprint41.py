@@ -16,7 +16,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from hledac.universal.brain.hermes3_engine import Hermes3Engine
+from hledac.universal.brain.deephermes3_engine import DeepHermes3Engine
 from hledac.universal.coordinators.fetch_coordinator import FetchCoordinator, ZstdCompressor
 
 # Import the modules under test
@@ -188,7 +188,7 @@ class TestSprint41C_SharedPrefixCache(unittest.IsolatedAsyncioTestCase):  # noqa
 
     async def test_prefix_cache_hit(self):
         """Test same system_msg → tokenization cached."""
-        engine = Hermes3Engine()
+        engine = DeepHermes3Engine()
         engine._tokenizer = MagicMock()
         engine._tokenizer.encode = MagicMock(return_value=[1, 2, 3])
         engine._model = MagicMock()
@@ -212,7 +212,7 @@ class TestSprint41C_SharedPrefixCache(unittest.IsolatedAsyncioTestCase):  # noqa
 
     async def test_prefix_cache_miss(self):
         """Test different system_msg → separate cache entries."""
-        engine = Hermes3Engine()
+        engine = DeepHermes3Engine()
         engine._tokenizer = MagicMock()
         engine._tokenizer.encode = MagicMock(return_value=[1, 2, 3])
         engine._model = MagicMock()
@@ -233,7 +233,7 @@ class TestSprint41C_SharedPrefixCache(unittest.IsolatedAsyncioTestCase):  # noqa
 
     async def test_cache_invalidation(self):
         """Test invalidate_prefix_cache() clears cache."""
-        engine = Hermes3Engine()
+        engine = DeepHermes3Engine()
         engine._tokenizer = MagicMock()
         engine._tokenizer.encode = MagicMock(return_value=[1, 2, 3])
         engine._model = MagicMock()
