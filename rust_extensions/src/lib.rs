@@ -33,6 +33,7 @@ pub mod ip_parse;
 pub mod quality_gate;
 pub mod rolling_hash;
 pub mod signal_batch;
+pub mod simd_similarity;
 pub mod simhash_ext;
 pub mod text_norm;
 pub mod url_engine;
@@ -198,6 +199,10 @@ fn hledac_rust_extensions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // computation and signal vector aggregation for F199A reward-driven adaptation.
     // Fallback: scalar Rust on non-aarch64.
     signal_batch::register_functions(m)?;
+
+    // PAR-1 P1: SIMD-accelerated batch cosine similarity for embedding re-ranking.
+    // Fallback for environments without MLX (CI, testing). NEON on AArch64.
+    simd_similarity::register_functions(m)?;
 
     Ok(())
 }

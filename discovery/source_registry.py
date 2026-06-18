@@ -70,7 +70,7 @@ def list_registered_source_types() -> list[str]:
     return sorted(_SOURCE_REGISTRY.keys())
 
 
-@functools.lru_cache(maxsize=64)
+@functools.lru_cache(maxsize=512)  # 360-key space: 3×bool × ~9 tier values; 64 was thrashing
 def source_quality_score(
     parseable: bool,
     stable_schema: bool,

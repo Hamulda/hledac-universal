@@ -373,21 +373,21 @@ async def test_hermes_prewarm_failsoft_continues_without_ToT(  # noqa: N802
     SprintScheduler = _import_scheduler()  # noqa: N806
     sched = SprintScheduler(minimal_config, ct_log_client=None)
 
-    # Simulate _prewarm_hermes_for_sprint failure
-    async def broken_prewarm():
+    # Simulate _prewarm_hermes_for_sprint failure using patch.object
+    # (required because SprintScheduler uses __slots__ and doesn't allow attribute assignment)
+    async def broken_prewarm(self):
         raise RuntimeError("Hermes load failed")
 
-    sched._prewarm_hermes_for_sprint = broken_prewarm
-
-    try:
-        sched._timer = MagicMock()
-        sched._timer.phase = MagicMock()
-        await sched._prewarm_hermes_for_sprint()
-    except Exception as e:
-        log = MagicMock()
-        log.debug = MagicMock()
-        log.debug(f"[P12] Hermes prewarm failed, ToT will be skipped: {e}")
-        sched._hermes_engine = None
+    with patch.object(SprintScheduler, '_prewarm_hermes_for_sprint', broken_prewarm):
+        try:
+            sched._timer = MagicMock()
+            sched._timer.phase = MagicMock()
+            await sched._prewarm_hermes_for_sprint()
+        except Exception as e:
+            log = MagicMock()
+            log.debug = MagicMock()
+            log.debug(f"[P12] Hermes prewarm failed, ToT will be skipped: {e}")
+            sched._hermes_engine = None
 
     # Hermes unavailable but sprint continues
     assert sched._hermes_engine is None

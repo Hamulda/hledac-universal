@@ -482,6 +482,29 @@ def graph_traverse_single(
     """
     ...
 
+def batch_graph_traverse_flat(
+    db_path: str,
+    values: list[str],
+    max_hops: int = 2,
+    max_per_root: int = 20,
+) -> list[dict[str, object]]:
+    """
+    PAR-1 P0: Flattened batch graph traversal — single rayon call.
+
+    Eliminates Python-side N+1 loop by returning flat list with source attribution.
+
+    Args:
+        db_path: Path to DuckDB database file.
+        values: List of root IOC values to traverse from.
+        max_hops: Maximum traversal depth (default 2, max 10).
+        max_per_root: Maximum results per root (default 20, hard cap 100).
+
+    Returns:
+        Flat list of dicts with keys: value, ioc_type, confidence, source, depth.
+        source = the root value that found this node.
+    """
+    ...
+
 def graph_stats(
     db_path: str,
     top_k: int = 20,
@@ -520,6 +543,20 @@ def batch_aggregate_signals(
 
 def chain_hash_snapshot(snap: dict[str, int], prev_chain_hex: str, event_id: str) -> tuple[str, str]:
     """BLAKE3-256 + SHA-256 dual-emit over snapshot dict. Returns (blake3_hex, sha256_hex)."""
+    ...
+
+# ---------------------------------------------------------------------------
+# SIMD similarity (rust_extensions/src/simd_similarity.rs)
+# ---------------------------------------------------------------------------
+
+def batch_cosine_scores(
+    query_flat: list[float],
+    candidates_flat: list[float],
+    num_queries: int,
+    num_candidates: int,
+    dim: int,
+) -> list[list[float]]:
+    """PAR-1 P1: Batch cosine similarity. CPU fallback for non-MLX envs."""
     ...
 
 # ---------------------------------------------------------------------------

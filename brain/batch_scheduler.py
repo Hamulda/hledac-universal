@@ -182,7 +182,7 @@ class BatchScheduler:
         if self._worker_task is None:
             await self.start()
 
-        schema_key = response_model.__name__ if hasattr(response_model, '__name__') else 'unknown'
+        schema_key = self._compute_schema_key(response_model, temperature)
         future: asyncio.Future = asyncio.get_event_loop().create_future()
 
         tie = next(self._batch_tie_breaker)
@@ -496,6 +496,32 @@ class BatchScheduler:
         elif tokens_est < 1024:
             return 'medium'
         return 'long'
+
+    def _compute_schema_key(self, response_model: type, temperature: float) -> str:
+        """
+        Compute schema key with temperature stratification for FreeText.
+
+        FreeTextSchema (synthetic virtual schema) is split by temperature range
+        so requests with different temperatures don't batch together — different
+        temperature = different sampling behavior = different output distribution.
+
+        Temperature bands:
+            - 0.0-0.3  → "FreeText:low"
+            - 0.3-0.7  → "FreeText:medium"
+            - 0.7+     → "FreeText:high"
+            - unknown  → "FreeText:medium"
+
+        For real schemas (msgspec/pydantic), use the class name directly.
+        """
+        name = getattr(response_model, '__name__', None) if isinstance(response_model, type) else None
+        if name == 'FreeText':
+            if temperature <= 0.3:
+                return 'FreeText:low'
+            elif temperature <= 0.7:
+                return 'FreeText:medium'
+            else:
+                return 'FreeText:high'
+        return name if name else 'unknown'
 
     def _compute_system_prompt_hash(self, system_msg: str | None) -> str:
         """Hash of system prompt for segregation."""

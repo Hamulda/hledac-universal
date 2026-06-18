@@ -93,7 +93,7 @@ def _run(coro):
 
 def _shutdown(executor: MLXBatchedExecutor) -> None:
     """Bounded shutdown of executor — uses fresh event loop."""
-    if executor._initialized:
+    if executor._init_event.is_set():
         asyncio.run(executor.shutdown())
 
 
@@ -123,8 +123,7 @@ class TestMLXBatchedExecutorInvariants(unittest.TestCase):
         engine = _make_mock_engine()
         executor = MLXBatchedExecutor(engine=engine)
         self.assertIsNone(executor._scheduler)
-        self.assertIsNone(executor._mlx_lock)
-        self.assertFalse(executor._initialized)
+        self.assertFalse(executor._init_event.is_set())
 
 
 class TestMLXBatchedExecutorRouting(unittest.TestCase):
@@ -140,7 +139,7 @@ class TestMLXBatchedExecutorRouting(unittest.TestCase):
     def test_bm9_urgent_priority_bypasses_batch(self):
         """B.M9: priority=0 → is_batch_safe returns False."""
         # Force initialized flag (in real flow via _ensure_initialized)
-        self.executor._initialized = True
+        self.executor._init_event.set()
         self.executor._scheduler = MagicMock()  # type: ignore[assignment]
         result = self.executor.is_batch_safe(
             prompt="hello", system_msg=None, priority=0.0
@@ -150,7 +149,7 @@ class TestMLXBatchedExecutorRouting(unittest.TestCase):
 
     def test_empty_prompt_bypasses_batch(self):
         """Empty/whitespace prompt → bypass."""
-        self.executor._initialized = True
+        self.executor._init_event.set()
         self.executor._scheduler = MagicMock()  # type: ignore[assignment]
         self.assertFalse(self.executor.is_batch_safe(prompt="", priority=1.0))
         self.assertFalse(self.executor.is_batch_safe(prompt="   ", priority=1.0))
@@ -163,7 +162,7 @@ class TestMLXBatchedExecutorRouting(unittest.TestCase):
 
     def test_bm5_memory_guard_disables_batching(self):
         """B.M5: memory EMA > 92% (MEMORY_GUARD_PCT) → bypass."""
-        self.executor._initialized = True
+        self.executor._init_event.set()
         self.executor._scheduler = MagicMock()  # type: ignore[assignment]
         # Patch the lazy import inside is_batch_safe
         fake_psutil = MagicMock()
@@ -179,7 +178,7 @@ class TestMLXBatchedExecutorRouting(unittest.TestCase):
 
     def test_bm5_memory_guard_failopen(self):
         """B.M5: psutil exception → fail-open (batching allowed)."""
-        self.executor._initialized = True
+        self.executor._init_event.set()
         self.executor._scheduler = MagicMock()  # type: ignore[assignment]
         with patch.dict("sys.modules", {"psutil": None}):
             # Importing None raises ImportError → fail-open
@@ -189,7 +188,7 @@ class TestMLXBatchedExecutorRouting(unittest.TestCase):
 
     def test_long_system_msg_bypasses(self):
         """system_msg > 8192 chars → bypass (length bin would shatter)."""
-        self.executor._initialized = True
+        self.executor._init_event.set()
         self.executor._scheduler = MagicMock()  # type: ignore[assignment]
         long_msg = "x" * 10_000
         result = self.executor.is_batch_safe(
@@ -265,12 +264,8 @@ class TestMLXBatchedExecutorExecute(unittest.TestCase):
         # We just need: result is the direct path output
         self.assertEqual(result, "direct")
 
-    def test_bm4_lock_serializes_mlx_callbacks(self):
-        """B.M4: mlx_lock is asyncio.Lock — guarantees no concurrent MLX."""
-        engine = _make_mock_engine()
-        executor = MLXBatchedExecutor(engine=engine)
-        _run(executor._ensure_initialized())
-        self.assertIsInstance(executor._mlx_lock, asyncio.Lock)
+    # B.M4 (lock removed F285): DeepHermes3Engine serializes via its own
+    # _inference_semaphore. No external lock — avoids P0-3 deadlock.
 
     def test_bm6_max_batch_size_bounded(self):
         """B.M6: max_batch_size = 8 for M1 8GB safety."""
@@ -297,16 +292,15 @@ class TestMLXBatchedExecutorShutdown(unittest.TestCase):
         _run(executor.shutdown())
         # Second call must not raise
         _run(executor.shutdown())
-        self.assertFalse(executor._initialized)
+        self.assertFalse(executor._init_event.is_set())
         self.assertIsNone(executor._scheduler)
-        self.assertIsNone(executor._mlx_lock)
 
     def test_bm8_shutdown_uninitialized(self):
         """Shutdown on uninitialized executor is safe no-op."""
         engine = _make_mock_engine()
         executor = MLXBatchedExecutor(engine=engine)
         _run(executor.shutdown())  # must not raise
-        self.assertFalse(executor._initialized)
+        self.assertFalse(executor._init_event.is_set())
 
 
 class TestMLXBatchedExecutorStats(unittest.TestCase):
@@ -471,7 +465,7 @@ class TestMLXBatchedExecutorWorkerIntegration(unittest.TestCase):
         # Both should be safe to call again
         _run(executor.shutdown())
         worker.shutdown()
-        self.assertFalse(executor._initialized)
+        self.assertFalse(executor._init_event.is_set())
         self.assertFalse(worker.is_active())
 
 

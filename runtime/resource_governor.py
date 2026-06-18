@@ -49,6 +49,14 @@ logger = logging.getLogger(__name__)
 # Default concurrency limits
 DEFAULT_FETCH_LIMIT = 25
 MODEL_LOADED_FETCH_LIMIT = 3  # F202H spec: limit=3 while model loaded
+# F265H: CRITICAL fetch_limit = 6 (not 3) — at 6.7 GiB CRITICAL the system has
+# 1.3 GiB headroom before EMERGENCY; fetch_limit=3 is too aggressive.
+# Model loaded path still uses 3 (M1 Metal GPU context is active, truly memory-constrained).
+CRITICAL_FETCH_LIMIT = 6
+CRITICAL_BRANCH_CONCURRENCY = 1
+MODEL_LOADED_BRANCH_CONCURRENCY = 2
+CRITICAL_ALLOW_RENDERER = False
+CRITICAL_ALLOW_MODEL_LOAD = False
 
 # F204J: Mission budget constants
 MISSION_PEAK_RSS_GIB: float = 5.5
@@ -237,11 +245,14 @@ class M1ResourceGovernor:
             branch_concurrency = 4
 
             # CRITICAL/EMERGENCY memory → force low concurrency
+            # F265H: CRITICAL uses fetch_limit=6 (not 3) — at 6.7 GiB CRITICAL the
+            # system has 1.3 GiB headroom before EMERGENCY, so 6 workers is safe.
+            # Model-loaded path still uses 3 (Metal GPU context is active, truly constrained).
             if self._uma_state in (UMA_STATE_CRITICAL, UMA_STATE_EMERGENCY):
-                fetch_limit = MODEL_LOADED_FETCH_LIMIT
-                allow_renderer = False
-                allow_model_load = False
-                branch_concurrency = 1
+                fetch_limit = CRITICAL_FETCH_LIMIT
+                allow_renderer = CRITICAL_ALLOW_RENDERER
+                allow_model_load = CRITICAL_ALLOW_MODEL_LOAD
+                branch_concurrency = CRITICAL_BRANCH_CONCURRENCY
                 # F265H: detailed hardware_critical trigger logging
                 logger.info(
                     "[Governor] hardware_critical triggered: uma_state=%s system_used_gib=%.2f swap_detected=%s "

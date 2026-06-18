@@ -28,7 +28,7 @@ Orchestrátor běží v tzv. "sprint" cyklech — každý sprint zpracovává vy
 5. **DuckDB write přes `async_ingest_findings_batch()`** — jediná canonical write path, nikdy ne přímo
 6. **LMDB bulk write přes `cursor.putmulti()`** — nikdy ne per-item `env.begin(write=True)` v loopu
 7. **RotatingBloomFilter pro URL dedup** — nikdy `Set[str]` nebo `ScalableBloomFilter`
-8. **M1 Metal cache limit 1.5 GiB** — `mx.metal.set_cache_limit(1_610_612_736)` v `init_mlx_buffers()`
+8. **M1 Metal cache limit dynamický (MEM-2)** — `min(max(available*0.2, 512MiB), 1GiB)` přes `get_dynamic_metal_cache_limit()` v `_ensure_metal_memory_limits()` — ceiling 1 GiB na M1 8GB; wired limit fixní 1.5 GiB
 9. **Fail-safe everywhere** — sidecary vrací `[]` při chybách, nikdy nehazují exceptions
 10. **Žádné bare `except:`** — vždy `except Exception:` nebo konkrétní typ
 

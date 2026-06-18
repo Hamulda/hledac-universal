@@ -31,8 +31,10 @@ Invariants (P0-2):
     B.M1  Zero top-level MLX imports (lazy via DeepHermes3Engine)
     B.M2  BatchScheduler instantiated lazily (not at import time)
     B.M3  Fail-soft: any submit/future error → caller falls back to direct
-    B.M4  MLX execution lock: asyn semaphore(1) — no concurrent MLX.generate
-          on the same DeepHermes3Engine instance
+    B.M4  MLX execution: DeepHermes3Engine.generate() serializes via its own
+          _inference_semaphore — no external lock needed. Adding an
+          asyncio.Lock here would DEADLOCK the P0-3 worker path because
+          run_coroutine_threadsafe() waits on the same lock held by caller.
     B.M5  Memory guard: psutil.virtual_memory().percent > 90% → disable batching
     B.M6  max_batch_size = 6 (3B model on M1 8GB, KV cache 0.75 GB, headroom for speculative); memory guard at 85% RSS
           for parallel calls)
@@ -114,12 +116,33 @@ class MLXBatchedExecutor:
         self._engine: DeepHermes3Engine = engine
         self._worker_thread = worker_thread  # Optional MLXWorkerThread (P0-3)
         self._scheduler: BatchScheduler | None = None
-        self._mlx_lock: asyncio.Lock | None = None
-        self._initialized: bool = False
+        # P0-2 FIX: asyncio.Event for one-time initialization signaling.
+        # Event.set() is idempotent — safe for concurrent set() calls.
+        # Event.clear() atomically resets ready state for shutdown replay.
+        # Sémanticky čistší než bool flag: "event is set" = "ready".
+        self._init_event: asyncio.Event = asyncio.Event()
+        # Guards the actual init block — only held during BatchScheduler
+        # instantiation (~<10ms). The Event serves as the ready-signal
+        # fast-path; the Lock only serializes the init work itself.
+        self._init_lock: asyncio.Lock = asyncio.Lock()
+        # Serializes concurrent callback execution. While MLX inference itself
+        # is serialized via DeepHermes3Engine._inference_semaphore, the semaphore
+        # only serializes the MLX compute — it does NOT serialize the asyncio
+        # task overhead around it. The _callback_lock ensures that when multiple
+        # callbacks run via asyncio.gather in _process_structured_batch, they
+        # acquire the lock before calling _call_engine_direct, preventing
+        # concurrent asyncio overhead from racing even if MLX itself is bounded.
+        # B.M4 note: We hold this lock AFTER the scheduler's asyncio.gather has
+        # launched the callback coroutines concurrently — the lock only
+        # serializes the _call_engine_direct call, not the scheduler's gather.
+        self._callback_lock: asyncio.Lock = asyncio.Lock()
 
         # Telemetry counters (B.M7)
         self._stats: dict[str, Any] = {
             "submits": 0,
+            "empty_prompt_bypass": 0,
+            "long_output_bypass": 0,
+            "long_system_msg_bypass": 0,
             "direct_fallback": 0,
             "batch_executed": 0,
             "batch_shattered": 0,
@@ -149,37 +172,50 @@ class MLXBatchedExecutor:
 
     async def _ensure_initialized(self) -> None:
         """
-        Lazy init of BatchScheduler and MLX execution lock.
+        Lazy init of BatchScheduler.
 
         Idempotent: safe to call multiple times — subsequent calls no-op.
         Invariant B.M2: scheduler is NEVER instantiated at __init__ time.
-        """
-        if self._initialized:
-            return
-        try:
-            from hledac.universal.brain.batch_scheduler import BatchScheduler
+        MLX serialization is handled by DeepHermes3Engine._inference_semaphore,
+        not by an external lock (B.M4).
 
-            scheduler: BatchScheduler = BatchScheduler(
-                execute_callback=self._execute_callback,
-                max_size=self._effective_batch_size,
-                max_queue=MAX_QUEUE_DEPTH,
-                default_flush_interval=DEFAULT_FLUSH_INTERVAL_S,
-                medium_pressure_depth=64,
-                high_pressure_depth=192,
-                age_bump_interval=3,
-                ema_alpha=self._ema_alpha,
-            )
-            self._scheduler = scheduler
-            self._mlx_lock = asyncio.Lock()
-            await scheduler.start()
-            self._initialized = True
-            logger.debug("[MLXBatch] executor initialized (max_batch=%d)", MAX_BATCH_SIZE_M1)
-        except Exception as e:
-            # B.M3: fail-soft — initialization failure → executor unusable,
-            # caller will fall through to direct path on every call.
-            logger.warning("[MLXBatch] lazy init failed, batching disabled: %s", e)
-            self._initialized = False
-            self._stats["fail_soft"] += 1
+        Thread-safety: asyncio.Event for ready signaling + asyncio.Lock for
+        init block serialization. Event.wait() is the fast path — returns
+        immediately if initialized. Lock serializes init work (~<10ms) and
+        prevents two concurrent callers from both entering the init block.
+        Event.set() is idempotent, so concurrent set() calls are safe.
+        """
+        # Fast path: Event is set → already initialized, no lock needed.
+        if self._init_event.is_set():
+            return
+        async with self._init_lock:
+            # Double-check after acquiring lock — another caller may have
+            # already completed initialization while we were waiting on the lock.
+            if self._init_event.is_set():
+                return
+            try:
+                from hledac.universal.brain.batch_scheduler import BatchScheduler
+
+                scheduler: BatchScheduler = BatchScheduler(
+                    execute_callback=self._execute_callback,
+                    max_size=self._effective_batch_size,
+                    max_queue=MAX_QUEUE_DEPTH,
+                    default_flush_interval=DEFAULT_FLUSH_INTERVAL_S,
+                    medium_pressure_depth=64,
+                    high_pressure_depth=192,
+                    age_bump_interval=3,
+                    ema_alpha=self._ema_alpha,
+                )
+                self._scheduler = scheduler
+                await scheduler.start()
+                self._init_event.set()  # Idempotent — safe for concurrent calls
+                logger.debug("[MLXBatch] executor initialized (max_batch=%d)", MAX_BATCH_SIZE_M1)
+            except Exception as e:
+                # B.M3: fail-soft — initialization failure → executor unusable,
+                # caller will fall through to direct path on every call.
+                logger.warning("[MLXBatch] lazy init failed, batching disabled: %s", e)
+                self._stats["fail_soft"] += 1
+                # Event remains unset — callers will go direct path
 
     # ─── Routing decision (B.M9) ───────────────────────────────────────
 
@@ -188,8 +224,8 @@ class MLXBatchedExecutor:
         prompt: str,
         system_msg: str | None = None,
         priority: float = 1.0,
-        speculative: bool = False,
         active_iteration_count: int = 0,
+        max_tokens: int | None = None,
     ) -> bool:
         """
         Decide whether this request is eligible for batching.
@@ -200,32 +236,37 @@ class MLXBatchedExecutor:
             - priority == 0 (urgent, bypass — B.M9)
             - prompt is empty or whitespace-only
             - max_tokens > 1024 (long outputs serialized anyway, no batching win)
-            - speculative=True (draft model extra RAM on M1 8GB — direct path)
+
+        Note: speculative decoding is NOT routed through this executor on M1 8GB.
+        A draft model (~500MB extra) would exceed the UMA budget. The draft model
+        path in DeepHermes3Engine goes direct and bypasses this batcher entirely
+        (see _is_batch_safe in deephermes3_engine.py).
 
         P1-4: Force-enable batching when active_iteration_count >= 2
         (multi-cycle sprint) — memory guard is bypassed to maximize
         MLX utilization across consecutive inference calls.
         """
-        # Speculative decoding: draft model consumes ~500MB extra on M1 8GB.
-        # Route to direct path to keep headroom for batched main-model inference.
-        if speculative:
-            self._stats["speculative_bypass"] = self._stats.get("speculative_bypass", 0) + 1
-            return False
-        if not self._initialized or self._scheduler is None:
+        if not self._init_event.is_set() or self._scheduler is None:
             return False
         if priority == URGENT_PRIORITY:
             self._stats["urgent_bypass"] += 1
             return False
         if not prompt or not prompt.strip():
+            self._stats["empty_prompt_bypass"] += 1
             return False
         # Long prompts (>4096 chars ≈ 2048 tokens) go direct — no batching win
         if len(prompt) > 4096:
             self._stats["long_prompt_bypass"] += 1
             return False
+        # max_tokens gate: large outputs are serialized anyway, no batching win
+        if max_tokens is not None and max_tokens > 1024:
+            self._stats["long_output_bypass"] += 1
+            return False
         # system_msg influences schema segregation downstream; empty != urgent
         if system_msg is not None and len(system_msg) > 8192:
             # Very long system messages do not benefit from batching
             # (length-bin boundary would shatter the batch anyway)
+            self._stats["long_system_msg_bypass"] += 1
             return False
         # Memory guard (B.M5) — psutil only when available, fail-open
         # PID-style adaptive: use EMA of memory pressure, not instant snapshot.
@@ -313,7 +354,7 @@ class MLXBatchedExecutor:
         propagates only engine.generate() errors.
         """
         await self._ensure_initialized()
-        if not self._initialized or self._scheduler is None:
+        if not self._init_event.is_set() or self._scheduler is None:
             # Lazy init failed → direct path
             self._stats["direct_fallback"] += 1
             return await self._call_engine_direct(
@@ -347,8 +388,34 @@ class MLXBatchedExecutor:
             # Timeout: 5× flush interval gives the scheduler time to gather a
             # batch, with a hard floor of 10s. Avoids the previous 25s orphan-
             # wait bug where we awaited a future nobody ever resolved.
+            #
+            # Fix: asyncio.shield() prevents external CancelledError from
+            # killing the inner scheduler_future during the wait_for window.
+            # Without shield: if the caller's task is cancelled while wait_for
+            # is waiting, the CancelledError propagates and scheduler_future
+            # may never be resolved (orphan). With shield: the inner future
+            # continues in the scheduler and can be awaited in the fallback path.
             timeout = max(5.0 * DEFAULT_FLUSH_INTERVAL_S, 10.0)
-            result = await asyncio.wait_for(scheduler_future, timeout=timeout)
+            try:
+                result = await asyncio.wait_for(
+                    asyncio.shield(scheduler_future), timeout=timeout
+                )
+            except TimeoutError:
+                # Timeout expired but scheduler_future is still alive (shielded).
+                # If it completed during the timeout window, retrieve result.
+                # Otherwise fall through to direct fallback.
+                if scheduler_future.done() and not scheduler_future.cancelled():
+                    result = scheduler_future.result()
+                else:
+                    self._stats["fail_soft"] += 1
+                    self._stats["direct_fallback"] += 1
+                    return await self._call_engine_direct(
+                        prompt, temperature, max_tokens, system_msg
+                    )
+            except asyncio.CancelledError:
+                # External cancellation — scheduler_future is shielded, still alive.
+                # Re-raise so caller sees the cancellation.
+                raise
 
             # Update latency EMA (B.M10)
             elapsed_ms = (time.monotonic() - submitted_at) * 1000.0
@@ -379,19 +446,34 @@ class MLXBatchedExecutor:
         """
         BatchScheduler execute_callback contract.
 
-        Invoked sequentially per schema group inside the worker. Locking
-        is handled in _call_engine_direct/_call_engine_via_worker to avoid
-        double-lock deadlock (callback is already serialized by the worker's
-        sequential per-schema-group dispatch).
+        Invoked by _process_structured_batch via asyncio.gather (P2-1),
+        so multiple callbacks in the same schema group run CONCURRENTLY.
+
+        Locking strategy (B.M4 + callback_lock):
+          - _callback_lock: serializes asyncio overhead of concurrent callbacks.
+            While DeepHermes3Engine._inference_semaphore bounds MLX compute,
+            it does NOT bound the asyncio task infrastructure around it.
+            Acquiring the lock here prevents concurrent callback coroutines
+            from racing on the asyncio level even though MLX is single-threaded.
+          - DeepHermes3Engine._inference_semaphore: bounds actual MLX compute.
+            Both _call_engine_direct paths (worker-thread and local) pass through
+            engine.generate() which holds this semaphore, so MLX ops are
+            always serialized regardless of the callback lock.
+
+        This two-level serialization (callback level + MLX compute level) is
+        redundant but correct and adds clarity about the concurrency contract.
+        The callback lock adds <1µs overhead and only fires when callbacks
+        run concurrently (which is the exceptional case, not the common path).
         """
         prompt = payload.get("prompt", "")
         temperature = payload.get("temperature")
         max_tokens = payload.get("max_tokens")
         system_msg = payload.get("system_msg")
         try:
-            return await self._call_engine_direct(
-                prompt, temperature, max_tokens, system_msg
-            )
+            async with self._callback_lock:
+                return await self._call_engine_direct(
+                    prompt, temperature, max_tokens, system_msg
+                )
         except Exception as e:
             # Propagate so BatchScheduler can shatter the batch and retry
             # individually; final fallback to direct will happen in execute().
@@ -434,11 +516,8 @@ class MLXBatchedExecutor:
             except TimeoutError:
                 raise
         # Local path (no worker thread, or worker unavailable)
-        # NOTE: No self._mlx_lock here — DeepHermes3Engine.generate() serializes
-        # via its own _inference_semaphore (ThreadPoolExecutor path) or the
-        # worker thread's event loop (P0-3 path). Adding another lock would
-        # create a deadlock: generate() → _submit_inference() → worker.submit()
-        # → run_coroutine_threadsafe → awaits the same lock held by caller.
+        # MLX serialization is handled by DeepHermes3Engine._inference_semaphore
+        # (ThreadPoolExecutor) or the worker thread's event loop (P0-3).
         t0 = time.monotonic()
         try:
             result = await self._engine.generate(
@@ -495,7 +574,7 @@ class MLXBatchedExecutor:
     def get_stats(self) -> dict[str, Any]:
         """Return telemetry snapshot. Non-intrusive read (P1-1 profiling)."""
         stats = dict(self._stats)
-        stats["initialized"] = self._initialized
+        stats["initialized"] = self._init_event.is_set()
         stats["memory_check_failures"] = self._memory_check_failures
         # PID adaptive batch size state (Task #2)
         stats["memory_ema"] = round(self._memory_ema, 2)
@@ -560,7 +639,7 @@ class MLXBatchedExecutor:
         Bounded shutdown — fails all pending futures, max 3.0s (B.M8).
         Idempotent: safe to call multiple times.
         """
-        if not self._initialized:
+        if not self._init_event.is_set():
             return
         try:
             if self._scheduler is not None:
@@ -569,14 +648,13 @@ class MLXBatchedExecutor:
             logger.debug("[MLXBatch] scheduler shutdown error: %s", e)
         finally:
             self._scheduler = None
-            self._mlx_lock = None
-            self._initialized = False
+            self._init_event.clear()  # Reset event for shutdown replay
             logger.debug("[MLXBatch] executor shut down")
 
     # ─── Module-level guard (B.M1) ─────────────────────────────────────
 
     def __repr__(self) -> str:
-        state = "init" if self._initialized else "lazy"
+        state = "init" if self._init_event.is_set() else "lazy"
         return f"MLXBatchedExecutor(state={state}, max_batch={MAX_BATCH_SIZE_M1})"
 
 

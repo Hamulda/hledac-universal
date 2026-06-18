@@ -283,6 +283,23 @@ _DECOMPOSE_RULES: tuple[tuple[frozenset[str], list[str]], ...] = (
 )
 
 
+# F300S-P1: Fallback seeds for dark web queries when all domain extraction fails.
+# These are ALL clearnet-compatible (no .onion) so CT/DOH lanes can query them.
+# .onion seeds are added ONLY for PUBLIC lane which can handle them.
+_DARK_WEB_CLEARNET_SEEDS: tuple[str, ...] = (
+    "ransomware.live",       # Ransomware leak sites aggregator
+    "ransomwatch.onion",     # TOR-hidden service, PUBLIC-only
+    "ransomlook.onion",      # TOR-hidden service, PUBLIC-only
+    "ransomwaretracker.nl",  # Abuse.ch ransomware tracker
+    "threatfox.abuse.ch",    # Abuse.ch threat fox
+    "urlhaus.abuse.ch",      # URLhaus malware URLs
+    "bazaar.abuse.ch",       # Bazaar malware repo
+    "abuse.ch",              # General abuse.ch
+    "alienvault.com",        # AlienVault OTX
+    "otx.alienvault.com",    # AlienVault OTX
+)
+
+
 def _decompose_query_keywords_to_seeds(query: str) -> list[str]:
     """
     P3-1: Rule-based query decomposition for complex OSINT threat queries.
@@ -323,8 +340,10 @@ def _decompose_query_keywords_to_seeds(query: str) -> list[str]:
                     matched_domains.append((score, domain))
 
         if not matched_domains:
-            # Fallback: generic surface seeds for ANY OSINT query
-            return list(_DEAD_SURFACE_DOMAINS)[:5]
+            # F300S-P1: Fallback to clearnet-compatible seeds for any OSINT query.
+            # _DEAD_SURFACE_DOMAINS may contain .onion which CT/DOH lanes reject.
+            # Use _DARK_WEB_CLEARNET_SEEDS which are all PUBLIC/DOH/WAYBACK compatible.
+            return list(_DARK_WEB_CLEARNET_SEEDS)[:5]
 
         # Sort by score descending, dedupe, return top 5
         matched_domains.sort(key=lambda x: x[0], reverse=True)

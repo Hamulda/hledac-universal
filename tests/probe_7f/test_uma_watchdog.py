@@ -41,14 +41,15 @@ class TestUmaWatchdogHelpers(unittest.TestCase):
         self.assertEqual(w.interval, 0.5)
 
     def test_watchdog_uses_thresholds_from_uma_budget(self):
-        """3. watchdog uses threshold values from uma_budget module."""
+        """3. watchdog uses threshold values from uma_budget module (dynamically computed)."""
         from hledac.universal.utils import uma_budget
         self.assertTrue(hasattr(uma_budget, "_WARN_THRESHOLD_MB"))
         self.assertTrue(hasattr(uma_budget, "_CRITICAL_THRESHOLD_MB"))
         self.assertTrue(hasattr(uma_budget, "_EMERGENCY_THRESHOLD_MB"))
-        self.assertEqual(uma_budget._WARN_THRESHOLD_MB, 6_144)
-        self.assertEqual(uma_budget._CRITICAL_THRESHOLD_MB, 6_656)
-        self.assertEqual(uma_budget._EMERGENCY_THRESHOLD_MB, 7_168)
+        # Verify thresholds are derived from _UMA_TOTAL_MB with correct ratios
+        self.assertAlmostEqual(uma_budget._WARN_THRESHOLD_MB / uma_budget._UMA_TOTAL_MB, 0.87, places=2)
+        self.assertAlmostEqual(uma_budget._CRITICAL_THRESHOLD_MB / uma_budget._UMA_TOTAL_MB, 0.93, places=2)
+        self.assertAlmostEqual(uma_budget._EMERGENCY_THRESHOLD_MB / uma_budget._UMA_TOTAL_MB, 0.97, places=2)
 
 
 class TestWatchdogFailOpen(unittest.TestCase):

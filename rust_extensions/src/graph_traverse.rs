@@ -263,10 +263,102 @@ pub fn graph_stats<'py>(
     Ok(dict)
 }
 
+/// PAR-1 P0: Flattened batch graph traversal — single Rayon-parallel call.
+///
+/// Returns a flat list of ALL connected nodes across all root values with
+/// source attribution. Eliminates Python-side N+1 loop in prefetch_oracle
+/// where each source_value was passed as a single-element vec.
+///
+/// Unlike `batch_graph_traverse` which returns {root_value: [results...]},
+/// this returns [{value, ioc_type, confidence, source, depth}, ...]
+/// where `source` = the root value that found this node.
+///
+/// M1 8GB: 4 rayon workers, 5000 hard cap on total results.
+const MAX_FLAT_RESULTS: usize = 5000;
+
+/// Flat traversal result with source attribution.
+#[derive(Clone)]
+struct FlatTraversalResult {
+    dst_value: String,
+    ioc_type: String,
+    confidence: f64,
+    source: String,
+    depth: usize,
+}
+
+/// Parallel flattened batch graph traversal.
+///
+/// Single rayon call returns all connected nodes with their source attribution.
+/// Python side gets: [{value, ioc_type, confidence, source, depth}, ...]
+///
+/// # Arguments
+/// * `db_path` - DuckDB database path
+/// * `values` - List of root IOC values to traverse from
+/// * `max_hops` - Maximum traversal depth (default 2)
+/// * `max_per_root` - Maximum results per root (default 20, hard cap 100)
+///
+/// # Returns
+/// Flat list of dicts with keys: value, ioc_type, confidence, source, depth
+#[pyfunction]
+#[pyo3(signature = (db_path, values, max_hops = 2, max_per_root = 20))]
+pub fn batch_graph_traverse_flat<'py>(
+    py: Python<'py>,
+    db_path: String,
+    values: Vec<String>,
+    max_hops: usize,
+    max_per_root: usize,
+) -> PyResult<Bound<'py, PyList>> {
+    if values.is_empty() {
+        return Ok(PyList::empty(py));
+    }
+
+    if values.len() > MAX_BATCH_VALUES {
+        return Err(pyo3::exceptions::PyValueError::new_err(format!(
+            "batch_graph_traverse_flat: too many values ({} > {})",
+            values.len(),
+            MAX_BATCH_VALUES
+        )));
+    }
+
+    let max_hops = if max_hops == 0 { 1 } else { max_hops.min(MAX_HOPS) };
+    let max_per_root = max_per_root.min(MAX_RESULTS_PER_ROOT);
+    let db_path_clone = db_path.clone();
+
+    // Parallel traversal across all root values via rayon.
+    let flat_results: Vec<FlatTraversalResult> = bulk_pool().install(|| {
+        values.par_iter().flat_map(|root_value| {
+            let results = traverse_single(&db_path_clone, root_value, max_hops);
+            results.into_iter().take(max_per_root).map(|r| FlatTraversalResult {
+                dst_value: r.dst_value,
+                ioc_type: r.ioc_type,
+                confidence: r.confidence,
+                source: root_value.clone(),
+                depth: 1,
+            }).collect::<Vec<_>>()
+        }).collect()
+    });
+
+    let flat_results = flat_results.into_iter().take(MAX_FLAT_RESULTS).collect::<Vec<_>>();
+
+    let list = PyList::empty(py);
+    for item in flat_results {
+        let item_dict = PyDict::new(py);
+        let _ = item_dict.set_item("value", &item.dst_value);
+        let _ = item_dict.set_item("ioc_type", &item.ioc_type);
+        let _ = item_dict.set_item("confidence", item.confidence);
+        let _ = item_dict.set_item("source", &item.source);
+        let _ = item_dict.set_item("depth", item.depth);
+        let _ = list.append(item_dict);
+    }
+
+    Ok(list)
+}
+
 /// Register graph_traverse functions with a Python module.
 pub fn register_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(batch_graph_traverse, m)?)?;
     m.add_function(wrap_pyfunction!(graph_traverse_single, m)?)?;
+    m.add_function(wrap_pyfunction!(batch_graph_traverse_flat, m)?)?;
     m.add_function(wrap_pyfunction!(graph_stats, m)?)?;
     Ok(())
 }
@@ -292,5 +384,25 @@ mod tests {
         };
         let r2 = r.clone();
         assert_eq!(r.dst_value, r2.dst_value);
+    }
+
+    #[test]
+    fn test_flat_traversal_constants() {
+        assert_eq!(MAX_FLAT_RESULTS, 5000);
+    }
+
+    #[test]
+    fn test_flat_result_struct_clone() {
+        let r = FlatTraversalResult {
+            dst_value: "evil.com".to_string(),
+            ioc_type: "domain".to_string(),
+            confidence: 0.9,
+            source: "source.com".to_string(),
+            depth: 1,
+        };
+        let r2 = r.clone();
+        assert_eq!(r.dst_value, r2.dst_value);
+        assert_eq!(r.source, r2.source);
+        assert_eq!(r.depth, r2.depth);
     }
 }

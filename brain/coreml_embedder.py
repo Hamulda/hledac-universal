@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import threading
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
@@ -57,22 +56,35 @@ _ONNX_FALLBACK_PATH = _MODELS_DIR / "bge-small-ort.onnx"
 # ThreadPoolExecutor for sync inference paths (GHOST_INVARIANTS: no asyncio.to_thread)
 _INFERENCE_EXECUTOR = ThreadPoolExecutor(max_workers=1, thread_name_prefix="coreml_infer")
 
-# ── Singleton ─────────────────────────────────────────────────────────────────
+# ── Singleton (DCLP — Double-Checked Locking Pattern) ──────────────────────────
+# Lock ONLY during init to prevent multiple threads/coroutines from creating
+# multiple instances. After _coreml_embedder_instance is set, the lock is
+# NEVER taken — DCLP acquire-release semantics, lock-free hot path.
+# asyncio.Lock is cooperative and event-loop friendly (vs blocking threading.Lock).
 _coreml_embedder_instance: CoreMLEmbedder | None = None
-_coreml_embedder_lock = threading.Lock()
+_coreml_embedder_lock = asyncio.Lock()
 
 
-def get_coreml_embedder() -> CoreMLEmbedder:
-    """Get or create the CoreMLEmbedder singleton."""
+async def get_coreml_embedder() -> CoreMLEmbedder:
+    """Get or create the CoreMLEmbedder singleton (async DCLP).
+
+    DCLP with acquire-release semantics: the lock is released before the
+    second check, so after _coreml_embedder_instance is set, subsequent calls
+    are lock-free (no contention on every embed call).
+
+    The actual serialization bottleneck is _INFERENCE_EXECUTOR (single thread
+    for all ONNX/CoreML inference), NOT this init-only lock.
+    """
     global _coreml_embedder_instance
     if _coreml_embedder_instance is None:
-        with _coreml_embedder_lock:
+        async with _coreml_embedder_lock:
+            # Re-check after acquiring lock (DCLP safe publication)
             if _coreml_embedder_instance is None:
                 _coreml_embedder_instance = CoreMLEmbedder()
     return _coreml_embedder_instance
 
 
-def ANE_AVAILABLE() -> bool:  # noqa: N802
+def is_ane_available() -> bool:
     """Check if ANE compute unit is available on this machine."""
     # Proxy by checking architecture — M-series chips have ANE.
     try:
@@ -410,9 +422,9 @@ class CoreMLEmbedder:
                 pooled = (arr * mask).sum(axis=1) / (mask.sum(axis=1) + 1e-8)
                 return pooled.astype(np.float32)
 
-            # Fallback: treat outputs as flat embedding list
-            val = outputs.get("embedding", outputs) if isinstance(outputs, dict) else outputs
-            return np.array(val, dtype=np.float32)
+            # CoreML microservice always returns {"last_hidden_state": [...]} — no fallback needed
+            # If format differs, service is misconfigured → raise so caller gets hash fallback
+            raise RuntimeError(f"[CoreML] Unexpected outputs format: {type(outputs)}")
 
         except Exception as e:
             logger.warning("[CoreML] Microservice inference failed: %s", e)
@@ -490,9 +502,9 @@ _ANE_EMBEDDER: CoreMLEmbedder | None = None
 _GLOBAL_TOKENIZER = None  # type: ignore[assignment]
 
 
-def get_ane_embedder() -> CoreMLEmbedder | None:
+async def get_ane_embedder() -> CoreMLEmbedder | None:
     """Lazy init CoreML embedder (alias for get_coreml_embedder)."""
-    return get_coreml_embedder()
+    return await get_coreml_embedder()
 
 
 def unload_ane_embedder() -> None:
@@ -512,7 +524,7 @@ async def semantic_dedup_findings(
     CoreML path: microservice batch inference → cosine similarity matrix.
     Hash fallback: url+title hash (zero RAM, always works).
     """
-    embedder = get_coreml_embedder()
+    embedder = await get_coreml_embedder()
 
     if embedder is None or not embedder.is_loaded:
         seen: set[int] = set()

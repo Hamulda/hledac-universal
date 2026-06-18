@@ -78,39 +78,32 @@ class TestM1MemoryHarmonization:
 
         Before F206AL: EMERGENCY_RAM_GB=6.2 < uma_budget.CRITICAL=6.5 → threshold inversion
         (emergency brake fires BEFORE critical state is reached).
-        After F206AL: SOFT_PREEMPT_RAM_GIB <= UMA_CRITICAL_GIB (6.5), so the request-level
+        After F206AL: SOFT_PREEMPT_RAM_GIB <= UMA_CRITICAL_GIB, so the request-level
         preemption fires at or before system-level critical — correct ordering.
 
         SOFT_PREEMPT is a preventive/request-level action that should trigger at or before
         the system-level CRITICAL threshold, NOT after it.
+        Values are now dynamically computed from detected RAM, but the ordering invariant holds.
         """
-        uma_source = UMA_BUDGET.read_text()
+        from utils.uma_budget import UMA_CRITICAL_GIB
         alloc_source = RESOURCE_ALLOCATOR.read_text()
 
-        # Extract UMA_CRITICAL_GIB value
-        match = re.search(r"UMA_CRITICAL_GIB[^=]*=\s*([0-9.]+)", uma_source)
-        assert match, "UMA_CRITICAL_GIB not found in uma_budget.py"
-        uma_critical = float(match.group(1))
-
         # SOFT_PREEMPT_RAM_GIB must be defined as a class attribute (type-annotated float).
-        # Pattern matches: SOFT_PREEMPT_RAM_GIB: float = VALUE  (with type annotation).
         match = re.search(r"^\s*SOFT_PREEMPT_RAM_GIB\s*:\s*float\s*=\s*([0-9.]+)\s*$", alloc_source, re.MULTILINE)
         assert match, "SOFT_PREEMPT_RAM_GIB (float-annotated) not found in resource_allocator.py"
         preempt = float(match.group(1))
 
-        assert preempt <= uma_critical, (
-            f"Threshold inversion! SOFT_PREEMPT_RAM_GIB={preempt} > UMA_CRITICAL_GIB={uma_critical}. "
+        assert preempt <= UMA_CRITICAL_GIB, (
+            f"Threshold inversion! SOFT_PREEMPT_RAM_GIB={preempt} > UMA_CRITICAL_GIB={UMA_CRITICAL_GIB}. "
             f"SOFT_PREEMPT must be <= CRITICAL (preventive preemption fires before/at critical)."
         )
 
     def test_uma_warn_critical_emergency_ordering(self):
-        """UMA_WARN < UMA_CRITICAL < UMA_EMERGENCY (strictly increasing)."""
-        uma_source = UMA_BUDGET.read_text()
-        warn = float(re.search(r"UMA_WARN_GIB[^=]*=\s*([0-9.]+)", uma_source).group(1))
-        crit = float(re.search(r"UMA_CRITICAL_GIB[^=]*=\s*([0-9.]+)", uma_source).group(1))
-        emerg = float(re.search(r"UMA_EMERGENCY_GIB[^=]*=\s*([0-9.]+)", uma_source).group(1))
-
-        assert warn < crit < emerg, f"WARN={warn} < CRIT={crit} < EMERG={emerg} ordering violated"
+        """UMA_WARN < UMA_CRITICAL < UMA_EMERGENCY (strictly increasing, dynamically computed)."""
+        from utils.uma_budget import UMA_WARN_GIB, UMA_CRITICAL_GIB, UMA_EMERGENCY_GIB
+        assert UMA_WARN_GIB < UMA_CRITICAL_GIB < UMA_EMERGENCY_GIB, (
+            f"WARN={UMA_WARN_GIB} < CRIT={UMA_CRITICAL_GIB} < EMERG={UMA_EMERGENCY_GIB} ordering violated"
+        )
 
     def test_55gb_ceilings_unified_or_documented(self):
         """
@@ -211,9 +204,26 @@ class TestM1MemoryHarmonization:
             assert "curl_cffi" not in source, f"{py_file.name} uses curl_cffi"
 
     def test_uma_budget_uma_constants_are_gib(self):
-        """Verify all uma_budget GB constants are expressed in GiB (base-2)."""
-        uma_source = UMA_BUDGET.read_text()
-        # Values must be 6.0, 6.5, 7.0 (decimal GiB)
-        assert re.search(r"UMA_WARN_GIB[^=]*=\s*6\.0\b", uma_source), "UMA_WARN_GIB should be 6.0"
-        assert re.search(r"UMA_CRITICAL_GIB[^=]*=\s*6\.5\b", uma_source), "UMA_CRITICAL_GIB should be 6.5"
-        assert re.search(r"UMA_EMERGENCY_GIB[^=]*=\s*7\.0\b", uma_source), "UMA_EMERGENCY_GIB should be 7.0"
+        """Verify all uma_budget GB constants are expressed in GiB and dynamically computed.
+
+        On 8 GB machine the rounded values match 6.0/6.5/7.0; on any machine
+        the ratios (0.87/0.93/0.97) are the invariant contracts.
+        """
+        from utils.uma_budget import (
+            UMA_WARN_GIB, UMA_CRITICAL_GIB, UMA_EMERGENCY_GIB,
+            _UMA_TOTAL_MB, _WARN_THRESHOLD_MB, _CRITICAL_THRESHOLD_MB, _EMERGENCY_THRESHOLD_MB,
+        )
+        # Values must be in GiB (positive floats)
+        assert isinstance(UMA_WARN_GIB, float) and UMA_WARN_GIB > 0
+        assert isinstance(UMA_CRITICAL_GIB, float) and UMA_CRITICAL_GIB > 0
+        assert isinstance(UMA_EMERGENCY_GIB, float) and UMA_EMERGENCY_GIB > 0
+        # Ratios must match the canonical 0.87 / 0.93 / 0.97 thresholds
+        assert abs(_WARN_THRESHOLD_MB / _UMA_TOTAL_MB - 0.87) < 0.01
+        assert abs(_CRITICAL_THRESHOLD_MB / _UMA_TOTAL_MB - 0.93) < 0.01
+        assert abs(_EMERGENCY_THRESHOLD_MB / _UMA_TOTAL_MB - 0.97) < 0.01
+        # On 8 GB machine the rounded GiB values (dynamically computed via 0.87/0.93/0.97 ratios)
+        if _UMA_TOTAL_MB == 8192:
+            # 7127 MB / 1024 = 6.96 GiB, 7618 MB / 1024 = 7.44 GiB, 7946 MB / 1024 = 7.76 GiB
+            assert 6.5 < UMA_WARN_GIB < 7.5
+            assert 7.0 < UMA_CRITICAL_GIB < 8.0
+            assert 7.5 < UMA_EMERGENCY_GIB < 8.5

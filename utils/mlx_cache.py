@@ -15,6 +15,8 @@ import threading
 from collections import OrderedDict
 from typing import Any
 
+import psutil
+
 logger = logging.getLogger(__name__)
 
 # ── MLX Availability Detection ──────────────────────────────────────────────
@@ -220,6 +222,31 @@ def _format_limit_mib(value: int | None) -> str:
     return f"{value // 1024 ** 2} MiB"
 
 
+# MEM-2: Dynamic Metal cache sizing for M1 8GB stability
+def get_dynamic_metal_cache_limit() -> int:
+    """
+    Compute Metal cache limit dynamically based on available system memory.
+
+    Formula: min(max(available * 0.2, 512 MiB), 1 GiB)
+    - 20% of available memory (adaptive to workload)
+    - Floor: 512 MiB (ensures minimum caching even under memory pressure)
+    - Ceiling: 1 GiB (M1 8GB safe upper bound)
+
+    Called inside _ensure_metal_memory_limits() so it reflects memory state
+    at init time (~5.5 GiB available on 8GB M1 at boot), not at module import.
+    At 5.5 GiB available: cache_limit ≈ 1 GiB → model(2GB) + cache(1GB) + KV(0.75GB)
+    = ~3.75GB total MLX footprint, leaving ~4.25GB for macOS → stays in warn zone.
+    """
+    try:
+        available = psutil.virtual_memory().available
+        limit = available * 0.2
+        limit = max(limit, 512 * 1024 * 1024)  # floor: 512 MiB
+        limit = min(limit, 1_073_741_824)       # ceiling: 1 GiB
+        return int(limit)
+    except Exception:
+        return 1_073_741_824  # fallback: 1 GiB
+
+
 def _ensure_metal_memory_limits() -> bool:
     """
     Ensure Metal memory limits are set exactly once per process (thread-safe).
@@ -228,8 +255,8 @@ def _ensure_metal_memory_limits() -> bool:
       1. Fast path: check _MLX_METAL_LIMITS_CONFIGURED without lock
       2. Slow path: acquire lock, re-check, then call set_cache_limit + set_wired_limit
 
-    Limiting to 2.5 GiB each prevents Metal from hogging the unified-memory bus
-    and leaves headroom for mlx-lm to lazy-load model weights on demand.
+    Cache limit is DYNAMIC (MEM-2): min(max(available*0.2, 512MiB), 1GiB).
+    Wired limit stays fixed at 1.5 GiB (conservative pinned-memory ceiling).
 
     Returns:
         True if limits are now configured (or were already configured), False on failure.
@@ -262,20 +289,22 @@ def _ensure_metal_memory_limits() -> bool:
             return False
 
         errors = []
+        # MEM-2: dynamic cache limit computed at call time, not at module load
+        dynamic_cache_limit = get_dynamic_metal_cache_limit()
 
         # ── set_cache_limit ───────────────────────────────────────────────────
         if hasattr(mx, 'set_cache_limit'):
             try:
-                mx.set_cache_limit(_METAL_CACHE_LIMIT_BYTES)
-                _cache_limit_actual = _METAL_CACHE_LIMIT_BYTES
+                mx.set_cache_limit(dynamic_cache_limit)
+                _cache_limit_actual = dynamic_cache_limit
             except Exception as e:
                 _last_setter_error = f"set_cache_limit failed: {e}"
                 errors.append(_last_setter_error)
                 logger.warning(f"[Sprint 8T] _ensure_metal_memory_limits: {_last_setter_error}")
         elif hasattr(mx.metal, 'set_cache_limit'):
             try:
-                mx.metal.set_cache_limit(_METAL_CACHE_LIMIT_BYTES)
-                _cache_limit_actual = _METAL_CACHE_LIMIT_BYTES
+                mx.metal.set_cache_limit(dynamic_cache_limit)
+                _cache_limit_actual = dynamic_cache_limit
             except Exception as e:
                 _last_setter_error = f"set_cache_limit failed: {e}"
                 errors.append(_last_setter_error)

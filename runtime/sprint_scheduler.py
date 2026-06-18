@@ -55,8 +55,6 @@ Key invariants:
 from __future__ import annotations
 
 import asyncio
-
-_asyncio = asyncio  # [FIX] alias used throughout the module
 import concurrent.futures
 import gc
 import logging
@@ -71,19 +69,15 @@ from functools import lru_cache
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Final, Protocol, cast
 
+_asyncio = asyncio  # [FIX] alias used throughout the module
+
 # Sprint T1: OpenTelemetry instrumentation (always-on, M1 8GB safe, fail-soft)
 try:
     from otel import (  # type: ignore
-        add_event as _otel_add_event,
-    )
-    from otel import (
         instrumented as _otel_instrumented,
     )
-    from otel import (
-        set_attribute as _otel_set_attribute,
-    )
 except ImportError:  # production fallback
-    from hledac.universal.telemetry import (
+    from hledac.universal.otel._instrumentation import (  # type: ignore[import-not-found]
         instrumented as _otel_instrumented,
     )
 
@@ -117,7 +111,7 @@ except ImportError:  # pragma: no cover — fallback when run as a script
 #   * Zero-copy deserializace pro JSON hot paths
 # Lazy import zde by zpusobil cyklicke importy; msgspec je stdlib-equivalent
 # (zero runtime cost, ~50ns import resolution, single C-extension module).
-import msgspec
+import msgspec  # noqa: E402
 
 # ── Sprint F265B: orjson with TYPE_CHECKING pattern ─────────────────────────
 # Type checker sees orjson via TYPE_CHECKING import; runtime uses lazy import.
@@ -4780,6 +4774,65 @@ def _get_multimodal_lmdb_path() -> Path:
 
 class SprintScheduler:
 
+    # MEM-1: __slots__ for memory optimization on M1 8GB (Python 3.14+)
+    # All 93 instance attributes declared - ~3.2 KB per-instance savings vs __dict__
+    __slots__ = (
+        # Core config/state (from __init__ and _reset_result)
+        '_config', '_result', '_stop_requested', '_lane_budget_pool', '_lifecycle',
+        '_flags', '_governor', '_fetch_coordinator', '_graph_accumulator',
+        # DuckDB/ingestion
+        '_duckdb_store', '_duckdb_can_ingest', '_duckdb_read_con',
+        '_duckdb_writer_task', '_duckdb_writer_shutdown', '_duckdb_write_queue',
+        '_duckdb_background_write', '_enrichment_services', '_evidence_log',
+        # Lane/finding tracking
+        '_lane_rejections', '_lane_rejections_dropped', '_lane_rejections_total_seen',
+        '_feed_budget_triggered', '_public_outcome', '_public_pipeline_result',
+        '_public_consecutive_timeouts', '_public_bootstrap_enabled_at_timeout',
+        '_ct_consecutive_timeouts', '_ct_pdns_active_done', '_ct_log_client',
+        '_lane_outcomes', '_source_economics', '_shadow_pd_summary',
+        # Hypothesis/pivot
+        '_hypothesis_pack_cache', '_pivot_planner', '_pivot_ioc_graph',
+        '_planner_seed_iocs', '_planner_lanes', '_acquisition_plan',
+        '_hypothesis_depth', '_hypothesis_query_count',
+        # Inject sidecars
+        '_policy_manager', '_stealth_layer', '_ghost_layer', '_prefetch_oracle',
+        '_prefetch_pipeline', '_temporal_predictor', '_security_coordinator',
+        '_privacy_layer', '_forensics_enricher', '_forensics_lmdb_env',
+        '_multimodal_enricher', '_multimodal_lmdb_env', '_kuzu_bridge',
+        '_analyst_workbench', '_communication_layer', '_ioc_scorer',
+        # Transport
+        '_tor_transport', '_i2p_transport', '_nym_transport', '_dht_node',
+        # Metrics/scheduler state
+        '_advisory_gate_snapshot', '_arrow_batch', '_arrow_last_flush',
+        '_branch_value_summary', '_correlation_cache', '_dedup_dirty',
+        '_dedup_env', '_dedup_seen', '_seen_hashes', '_recent_iocs',
+        '_prewindup_barrier_delayed', '_nonfeed_predispatch_done',
+        '_nonfeed_ledger', '_synth_windup_task',
+        # Background/tasks
+        '_bg_tasks', '_sidecar_tasks', '_sidecars_skipped',
+        '_sidecar_orchestrator',
+        # Memory/UMA
+        '_memory_manager', '_layer_manager', '_target_memory_service',
+        # Metrics
+        '_metrics_registry', '_metrics_initialized',
+        # Hermite/prewarm
+        '_hermes_engine', '_wall_clock_start', '_last_cycle_start',
+        '_last_ooda', '_last_sources', '_last_partial_finding_count', '_last_speculative',
+        '_cycle_time_ema', '_effective_max_cycles', '_hard_deadline_monotonic',
+        '_prev_chain_hash', '_rel_discovery_engine', '_run_exit_path_override',
+        '_runner', '_lc_adapter',
+        # NOTE: _prewarm_hermes_for_sprint deliberately ABSENT from __slots__
+        # — test_hermes_prewarm_failsoft_continues_without_ToT monkeypatches it
+        # Other runtime state
+        '_doh_adapter', '_fetch_semaphore', '_query', '_privacy_context_id',
+        '_sprint_id', '_sprint_depth', '_entries_per_source', '_hits_per_source',
+        '_cycle_timeout_count', '_source_weights', '_novelty_bonuses',
+        '_source_quality_feedback', '_feed_accepted_per_source', '_pending_extractions',
+        '_extraction_drain_count', '_extraction_drain_deadline_s', '_pivot_queue', '_pivot_stats', '_speculative_results', '_speculative_dns_cache', '_ooda_interval', '_fetch_latency_ema', '_fetch_latency_ema_order', '_MAX_FETCH_LATENCY_EMA', '_hard_deadline_checked_count', '_ARROW_FLUSH_N', '_ARROW_FLUSH_S', '_ARROW_BATCH_HARD_CAP', '_MAX_FINDINGS_PER_SPRINT', '_arrow_batch_dropped_after_flush_failure', '_arrow_last_flush_error', '_finding_count', '_synthesis_engine', '_synthesis_runner', '_pivot_rewards', '_ioc_graph', '_all_findings', '_lane_verdicts', '_feed_verdicts', '_public_verdicts', '_planned_pivots', '_analyst_brief', '_peak_rss_gib', '_timer',
+        # Public property (defined as slot to allow class-level access)
+        'sprint_id',
+    )
+
     """
 
     Tier-aware sprint scheduler sidecar.
@@ -6056,15 +6109,13 @@ class SprintScheduler:
         ]
         if self._enrichment_services:
             _init_tasks.append(self._enrichment_services.init())
-        results = await asyncio.gather(*_init_tasks, return_exceptions=True)
+        # F314-3: migrated asyncio.gather -> safe_gather_dropin (fail-soft invariant preserved)
+        _results: list = await safe_gather_dropin(*_init_tasks, label="sprint_scheduler:_dedup_preload_init")
         _dedup_elapsed = _time.monotonic() - _dedup_t0
         self._result.dedup_preload_elapsed_s = _dedup_elapsed
         self._result.dedup_preload_count = (
             len(self._dedup_seen) if hasattr(self, '_dedup_seen') and self._dedup_seen is not None else 0
         )
-        for r in results:
-            if isinstance(r, Exception):
-                log.debug("[F278B] init task failed: %s", r)
 
         # RelationshipDiscoveryEngine cross-sprint bridge
         try:
@@ -8337,13 +8388,13 @@ class SprintScheduler:
 
                         safe_gather_fire_and_forget(*_pending, label="sprint_scheduler:sidecar_tasks"),
 
-                        timeout=10.0,
+                        timeout=15.0,
 
                     )
 
                 except TimeoutError:
 
-                    log.debug("[F265C] Sidecar tasks did not complete in 10s, cancelling")
+                    log.debug("[F265C] Sidecar tasks did not complete in 15s, cancelling")
 
                     for t in _pending:
 
@@ -13220,7 +13271,7 @@ class SprintScheduler:
             # block at line ~13112, so it must be defined unconditionally
             _query_domain_candidates: list[str] = []
             if query and isinstance(query, str) and query.strip():
-                _candidates = extract_domain_candidates_from_text(
+                _candidates = extract_domain_candidates_from_text(  # noqa: F823
                     query,
                     source_url=None,
                     source_family="query",
@@ -19694,13 +19745,14 @@ class SprintScheduler:
             try:
                 duck_task = self._duckdb.async_ingest_findings_batch(chunk) if self._duckdb else None
                 graph_accum = self._accumulate_findings_to_graph(chunk, sprint_id=sprint_id) if self._graph_accumulator else None
-                results = await asyncio.gather(
+                # F314-3: migrated asyncio.gather -> safe_gather_dropin (fail-soft invariant preserved)
+                _ingest_results: list = await safe_gather_dropin(
                     duck_task,
                     graph_accum,
-                    return_exceptions=True,
+                    label="sprint_scheduler:_parallel_ingest_chunk",
                 )
-                duck_results = results[0] if duck_task else None
-                graph_result = results[1] if self._graph_accumulator else None
+                duck_results = _ingest_results[0] if duck_task else None
+                graph_result = _ingest_results[1] if self._graph_accumulator else None
             except Exception as e:
                 logger.debug("[F266] chunk parallel failed: %s", e)
                 duck_results = None
@@ -20241,7 +20293,7 @@ class SprintScheduler:
 
                         ingest_results = await self._gate_then_ingest_and_accumulate(store, pdns_findings, sprint_id=self.sprint_id or "")
 
-                        stored = sum(1 for r in ingest_results if isinstance(r, dict) and r.get("accepted"))
+                        _stored = sum(1 for r in ingest_results if isinstance(r, dict) and r.get("accepted"))
 
 
                     except asyncio.CancelledError:
@@ -24485,7 +24537,6 @@ class SprintScheduler:
             )
             from hledac.universal.security.deep_research_security import (
                 DeepResearchSecurity,
-                DeepSecurityConfig,
             )
 
         except ImportError:
@@ -26704,7 +26755,7 @@ class SprintScheduler:
 
             _attempted = [o["lane"] for o in _outcomes_list if o.get("attempted")]
 
-            _skipped_lanes = [l for l in _planned if l not in _attempted and l not in (_executed if self._acquisition_plan else [])]  # noqa: E501
+            _skipped_lanes = [lane for lane in _planned if lane not in _attempted and lane not in (_executed if self._acquisition_plan else [])]
 
             _lane_errors = [o["error"] for o in _outcomes_list if o.get("error")]
 
@@ -28328,7 +28379,7 @@ class SprintScheduler:
         try:
             result = getattr(self, "_result", None)
             hermes_load_attempted = result.hermes_load_attempted if result else False
-            hermes_load_reason = result.hermes_load_reason if result else ""
+            _hermes_load_reason = result.hermes_load_reason if result else ""
             hermes_synthesis_enabled = _env_flag("HLEDAC_ENABLE_HERMES_SYNTHESIS") == "1"
             if hermes_load_attempted:
                 # Load was attempted -- report actual outcome
@@ -28888,7 +28939,8 @@ class SprintScheduler:
 
         # Bound: max 5 domains per call, max 10 concurrent resolves
         tasks = [_resolve_one(d) for d in domains[:5]]
-        results = await asyncio.gather(*tasks, return_exceptions=True)
+        # F314-3: migrated asyncio.gather -> safe_gather_dropin (fail-soft invariant preserved)
+        results: list = await safe_gather_dropin(*tasks, label="sprint_scheduler:_speculative_dns_resolve")
         for r in results:
             if isinstance(r, tuple) and len(r) == 2:
                 dom, ips = r

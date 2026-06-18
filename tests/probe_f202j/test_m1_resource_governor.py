@@ -170,12 +170,14 @@ class TestM1ResourceGovernor:
     async def test_critical_memory_forces_safe_mode(self, governor):
         """
         F202J-9: CRITICAL UMA state forces safe low-concurrency mode.
+        F265H: CRITICAL fetch_limit=6 (not 3) — at 6.7 GiB the system has
+        1.3 GiB headroom before EMERGENCY; 6 workers is safe and not too aggressive.
         """
         with patch.object(governor, "_get_model_status", return_value={"loaded": False, "current_model": None, "initialized": False, "last_error": None}):
             with patch("hledac.universal.runtime.resource_governor.sample_uma_status") as mock_uma:
-                mock_uma.return_value = MagicMock(state="critical", system_used_gib=6.5, io_only=False)
+                mock_uma.return_value = MagicMock(state="critical", system_used_gib=6.7, io_only=False)
                 decision = await governor.evaluate()
-                assert decision.fetch_limit == 3
+                assert decision.fetch_limit == 6  # F265H: was 3, raised to 6 for proactive offload
                 assert decision.allow_renderer is False
                 assert decision.branch_concurrency == 1
 

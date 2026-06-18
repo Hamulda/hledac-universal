@@ -23,6 +23,7 @@ import time
 import unittest
 from unittest.mock import patch
 from pathlib import Path
+
 from typing import Any, Dict, List
 
 import sys
@@ -41,8 +42,8 @@ class TestCanonicalFindingDTO(unittest.TestCase):
         # duckdb_store schema which expects: id, query, source_type, confidence
         # This is the closest production storage contract we can verify.
         from hledac.universal.knowledge.duckdb_store import _SCHEMA_SQL
-        # Schema confirms the finding contract
-        self.assertIn("shadow_findings", _SCHEMA_SQL)
+        # Schema confirms the finding contract (canonical_findings = renamed from shadow_findings at 41db8f0f)
+        self.assertIn("canonical_findings", _SCHEMA_SQL)
         self.assertIn("id", _SCHEMA_SQL)
         self.assertIn("query", _SCHEMA_SQL)
         self.assertIn("source_type", _SCHEMA_SQL)
@@ -104,24 +105,25 @@ class TestDuckDBWrite(unittest.TestCase):
                 ok = store.initialize()
             self.assertTrue(ok)
 
-            # Bulk write — use the async batch API via executor directly
-            findings = [
-                {
-                    "id": f"synthetic-finding-{i}",
-                    "query": f"synthetic query {i}",
-                    "source_type": "synthetic",
-                    "confidence": 0.9 + i * 0.01,
-                }
-                for i in range(10)
-            ]
+            # Bulk write — loop over async_record_shadow_finding (writes to DuckDB via WAL)
+            async def bulk_insert():
+                tasks = [
+                    store.async_record_shadow_finding(
+                        f"synthetic-finding-{i}",
+                        f"synthetic query {i}",
+                        "synthetic",
+                        0.9 + i * 0.01,
+                    )
+                    for i in range(10)
+                ]
+                return await asyncio.gather(*tasks)
 
-            inserted = asyncio.get_event_loop().run_until_complete(
-                store.async_record_shadow_findings_batch(findings)
-            )
-            self.assertEqual(inserted, 10)
+            results: list[bool] = asyncio.run(bulk_insert())
+            self.assertEqual(len(results), 10)
+            self.assertTrue(all(results))
 
             # Read back
-            rows: List[Dict[str, Any]] = asyncio.get_event_loop().run_until_complete(
+            rows: List[Dict[str, Any]] = asyncio.run(
                 store.async_query_recent_findings(limit=10)
             )
             self.assertEqual(len(rows), 10)
@@ -137,7 +139,7 @@ class TestDuckDBWrite(unittest.TestCase):
             self.assertAlmostEqual(id_to_conf["synthetic-finding-9"], 0.99, places=2)
 
             # Shutdown
-            asyncio.get_event_loop().run_until_complete(store.aclose())
+            asyncio.run(store.aclose())
 
     def test_duckdb_lock_released_after_close(self):
         """13. DuckDB write lock is released after aclose()."""
@@ -154,14 +156,14 @@ class TestDuckDBWrite(unittest.TestCase):
             self.assertTrue(ok)
 
             # Insert one record
-            asyncio.get_event_loop().run_until_complete(
+            asyncio.run(
                 store.async_record_shadow_finding(
                     "lock-test-001", "lock query", "synthetic", 0.88
                 )
             )
 
             # Close
-            asyncio.get_event_loop().run_until_complete(store.aclose())
+            asyncio.run(store.aclose())
 
             # Re-open should succeed (lock released)
             store2 = DuckDBShadowStore()
@@ -171,14 +173,14 @@ class TestDuckDBWrite(unittest.TestCase):
                 ok2 = store2.initialize()
             self.assertTrue(ok2)
 
-            rows: List[Dict[str, Any]] = asyncio.get_event_loop().run_until_complete(
+            rows: List[Dict[str, Any]] = asyncio.run(
                 store2.async_query_recent_findings(limit=5)
             )
             # Record persists and is readable — no write lock
             self.assertEqual(len(rows), 1)
             self.assertEqual(rows[0]["id"], "lock-test-001")
 
-            asyncio.get_event_loop().run_until_complete(store2.aclose())
+            asyncio.run(store2.aclose())
 
 
 class TestMinimalActivationFlow(unittest.TestCase):
@@ -219,7 +221,7 @@ class TestMinimalActivationFlow(unittest.TestCase):
                 duck_ok = duckdb_store.initialize()
             self.assertTrue(duck_ok)
 
-            duck_inserted = asyncio.get_event_loop().run_until_complete(
+            duck_inserted = asyncio.run(
                 duckdb_store.async_record_shadow_finding(
                     finding_id, "minimal activation query", "synthetic", 0.92
                 )
@@ -232,7 +234,7 @@ class TestMinimalActivationFlow(unittest.TestCase):
             self.assertEqual(lmdb_result["id"], finding_id)
             self.assertEqual(lmdb_result["confidence"], 0.92)
 
-            duckdb_rows: List[Dict[str, Any]] = asyncio.get_event_loop().run_until_complete(
+            duckdb_rows: List[Dict[str, Any]] = asyncio.run(
                 duckdb_store.async_query_recent_findings(limit=5)
             )
             self.assertEqual(len(duckdb_rows), 1)
@@ -240,10 +242,8 @@ class TestMinimalActivationFlow(unittest.TestCase):
             self.assertAlmostEqual(duckdb_rows[0]["confidence"], 0.92, places=2)
 
             # Cleanup
-            asyncio.get_event_loop().run_until_complete(duckdb_store.aclose())
-            asyncio.get_event_loop().run_until_complete(
-                asyncio.sleep(0)  # allow executor shutdown
-            )
+            asyncio.run(duckdb_store.aclose())
+            asyncio.run(asyncio.sleep(0))  # allow executor shutdown
             lmdb_store.close()
 
 
@@ -329,7 +329,7 @@ class TestReadBackContentVerification(unittest.TestCase):
                 store.initialize()
 
             # Insert with known confidence
-            asyncio.get_event_loop().run_until_complete(
+            asyncio.run(
                 store.async_record_shadow_finding(
                     "content-verify-001",
                     "content verification query",
@@ -338,7 +338,7 @@ class TestReadBackContentVerification(unittest.TestCase):
                 )
             )
 
-            rows: List[Dict[str, Any]] = asyncio.get_event_loop().run_until_complete(
+            rows: List[Dict[str, Any]] = asyncio.run(
                 store.async_query_recent_findings(limit=1)
             )
             self.assertEqual(len(rows), 1)
@@ -349,7 +349,7 @@ class TestReadBackContentVerification(unittest.TestCase):
             self.assertEqual(row["source_type"], "synthetic")
             self.assertAlmostEqual(row["confidence"], 0.654, places=3)
 
-            asyncio.get_event_loop().run_until_complete(store.aclose())
+            asyncio.run(store.aclose())
 
 
 if __name__ == "__main__":

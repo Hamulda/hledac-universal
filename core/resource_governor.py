@@ -69,15 +69,19 @@ def _get_mx():
 logger = logging.getLogger(__name__)
 
 # Sprint 8AB: M1 8GB calibrated thresholds (GiB = bytes / 1024**3)
-# Threshold ladder for M1 8GB UMA:
+# F265H: Revised threshold ladder for M1 8GB UMA (proactive escalation):
 #   5.5 GiB → soft ceiling (fetch hard-cap, see uma_budget.py M1_FETCH_SOFT_CEILING_GB)
 #   5.8 GiB → SOFT_WARN (reduce concurrency 50%)
 #   6.0 GiB → WARN (reduce concurrency 75%)
-#   6.5 GiB → CRITICAL (stop new fetches)
+#   6.7 GiB → CRITICAL (proactive offload BEFORE crash, 83.75% system)
 #   7.0 GiB → EMERGENCY (flush + GC)
+#
+# CRITICAL at 6.7 GiB (not 6.5) — at 6.5 GiB (81.25%) the system is already
+# severely constrained. 6.7 GiB gives ~0.3 GiB headroom before EMERGENCY,
+# enabling proactive MLX offload before cascade failure.
 _THRESHOLD_SOFT_WARN_GIB: float = 5.8  # F220K: new — between soft ceiling and WARN
-_THRESHOLD_WARN_GIB: float = 6.0
-_THRESHOLD_CRITICAL_GIB: float = 6.5
+_THRESHOLD_WARN_GIB: float = 6.0  # F265H: lowered to 6.0 (from 6.2) for wider WARN band
+_THRESHOLD_CRITICAL_GIB: float = 6.7  # F265H: raised from 6.5 — CRITICAL at 6.5 is too late (87% system), proactive trigger at 6.7 GiB (83.75%) gives headroom before EMERGENCY
 _THRESHOLD_EMERGENCY_GIB: float = 7.0
 _HYSTERESIS_EXIT_GIB: float = 5.8
 
@@ -473,7 +477,7 @@ def evaluate_uma_state(system_used_gib: float) -> str:
         < 5.8 GiB → "ok"
         >= 5.8   → "soft_warn"  (F220K: approaching WARN, reduce 50%)
         >= 6.0   → "warn"
-        >= 6.5   → "critical"
+        >= 6.7   → "critical"   (F265H: raised from 6.5, proactive at 83.75%)
         >= 7.0   → "emergency"
 
     Args:
@@ -499,12 +503,12 @@ def should_enter_io_only_mode(system_used_gib: float, previous_io_only: bool = F
 
     F165E CHANGE: swap_detected optional param.
     When swap is present (systemic pressure signal), enter io_only one tier sooner
-    (WARN threshold 6.0 GiB) instead of waiting for CRITICAL threshold (6.5 GiB).
+    (WARN threshold 6.0 GiB) instead of waiting for CRITICAL threshold (6.7 GiB).
     This reflects the M1 8GB reality: any active swap means memory pressure is
     real and systemic, not a measurement artifact.
 
     Contract:
-        - Enter io_only when >= CRITICAL (6.5 GiB) and swap_detected=False
+        - Enter io_only when >= CRITICAL (6.7 GiB) and swap_detected=False
         - Enter io_only when >= WARN (6.0 GiB) and swap_detected=True (accelerated)
         - Stay in io_only while system_used_gib > HYSTERESIS_EXIT (5.8 GiB)
         - Exit io_only only when system_used_gib <= 5.8 GiB (and previous_io_only == True)

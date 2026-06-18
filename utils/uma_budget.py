@@ -62,26 +62,48 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Sprint F214Q: L2 cache size guard (context cache load protection)
-MAX_L2_CACHE_SIZE_MB: int = 50  # context L2 cache max load size
+# ---------------------------------------------------------------------------
+# Dynamic UMA budget — detects real RAM at import time.
+# Falls back to 8 192 MB (M1 8GB) if psutil unavailable.
+# ---------------------------------------------------------------------------
 
-# M1 8GB UMA budget thresholds
-_UMA_TOTAL_MB: int = 8_192  # 8 GB total
-_WARN_THRESHOLD_MB: int = 6_144  # 6.0 GB - Sprint 6B
-_CRITICAL_THRESHOLD_MB: int = 6_656  # 6.5 GB - Sprint 6B
-_EMERGENCY_THRESHOLD_MB: int = 7_168  # 7.0 GB - Sprint 6B
+def _detect_total_memory_mb() -> int:
+    """Detect real system RAM. Floor 4 GB, ceil 64 GB, fallback 8 GB."""
+    try:
+        import psutil as _ps_init
+        mem = _ps_init.virtual_memory()
+        detected = mem.total // (1024 * 1024)
+        return max(4_096, min(65_536, detected))
+    except Exception:
+        return 8_192  # M1 8GB fallback
 
-# Sprint F206AL: Canonical GB aliases — single source of truth for all M1 8GB UMA thresholds.
-# These are mirrors of the MB constants above; do not change independently.
-# Components that need these values should import from utils.uma_budget, not hardcode.
-UMA_WARN_GIB: float = 6.0
-UMA_CRITICAL_GIB: float = 6.5
-UMA_EMERGENCY_GIB: float = 7.0
-# Fetch/concurrency soft ceiling — independent of UMA sampler thresholds.
-# Named _GB suffix to distinguish from concurrent semaphore limits (which use percent).
-M1_FETCH_SOFT_CEILING_GB: float = 5.5
-# High-water ratio for general RAM pressure (used by resource_governor etc.).
+
+_UMA_TOTAL_MB: int = _detect_total_memory_mb()
+
+# Thresholdy odvozeny jako poměry — automaticky se přepočítají na každém stroji.
+# Poměry jsou kalibrované pro UMA (CPU+GPU sdílí RAM):
+#   87% warn  — dává ~1 GB buffer před OOM na 8 GB stroji
+#   93% critical — ještě 500 MB pro cleanup
+#   97% emergency — poslední záchrana před OOM killer
+_WARN_THRESHOLD_MB:      int = int(_UMA_TOTAL_MB * 0.87)   # ~6 144 MB na 8 GB
+_CRITICAL_THRESHOLD_MB:  int = int(_UMA_TOTAL_MB * 0.93)   # ~6 656 MB na 8 GB
+_EMERGENCY_THRESHOLD_MB: int = int(_UMA_TOTAL_MB * 0.97)   # ~7 168 MB na 8 GB
+
+# Sprint F206AL: Canonical GB aliases — odvozeny z _UMA_TOTAL_MB dynamicky.
+# Exportovány pro zpětnou kompatibilitu — importující kód dostane správné hodnoty.
+UMA_WARN_GIB:      float = round(_WARN_THRESHOLD_MB / 1024, 2)
+UMA_CRITICAL_GIB:  float = round(_CRITICAL_THRESHOLD_MB / 1024, 2)
+UMA_EMERGENCY_GIB: float = round(_EMERGENCY_THRESHOLD_MB / 1024, 2)
+
+# Fetch/concurrency soft ceiling: 88% celkové RAM.
+# Na 8 GB: 7.04 GB | Na 7 GB: 6.16 GB | Na 16 GB: 14.08 GB
+M1_FETCH_SOFT_CEILING_GB: float = round(_UMA_TOTAL_MB / 1024 * 0.88, 2)
+
+# Obecný high-water ratio — relativní, nemění se.
 GENERAL_HIGH_WATER_RATIO: float = 0.85
+
+# Sprint F214Q: L2 cache size guard (zachováno beze změny)
+MAX_L2_CACHE_SIZE_MB: int = 50
 
 # psutil lazy import
 _psutil: ModuleType | None = None
@@ -202,6 +224,14 @@ def get_uma_usage_mb() -> int | None:
     return sys_used + mlx_active
 
 
+def _swap_pct(ps) -> float:
+    """Helper: vrátí swap usage %, fail-open 0.0."""
+    try:
+        return ps.swap_memory().percent
+    except Exception:
+        return 0.0
+
+
 def get_uma_pressure_level() -> tuple[int, str]:
     """
     Calculate UMA pressure percentage and level.
@@ -210,21 +240,38 @@ def get_uma_pressure_level() -> tuple[int, str]:
         (usage_pct: int, level: str)
         level: "normal" / "warn" / "critical" / "emergency"
 
-    Uses total 8GB as denominator.
+    Uses dynamically detected _UMA_TOTAL_MB as denominator.
+    Swap signal: adaptive thresholds based on total swap size.
     Fails open to (0, "normal") if measurement unavailable.
     """
+    ps = _get_psutil()
     total_mb = get_uma_usage_mb()
     if total_mb is None:
         return 0, "normal"
 
-    # UMA is 8GB total
     usage_pct = int((total_mb / _UMA_TOTAL_MB) * 100)
 
+    # --- Swap signal ---
+    swap_crit_pct = 100   # default: swap signal disabled
+    swap_warn_pct = 100
+    if ps is not None:
+        try:
+            sw = ps.swap_memory()
+            swap_total_gb = sw.total / (1024 ** 3)
+            if swap_total_gb >= 0.5:   # ignoruj swap < 512 MB (prakticky žádný swap)
+                # Malý swap (< 4 GB): přísné thresholdy — brzy přijde tlak
+                # Velký swap (>= 4 GB): uvolnit — 85% 7GB swapu = ~6 GB = OK
+                swap_warn_pct = 30 if swap_total_gb < 4 else 60
+                swap_crit_pct = 55 if swap_total_gb < 4 else 85
+        except Exception:
+            pass   # fail-open: swap signal ignorován
+
+    # Klasifikace: RAM pressure OR swap pressure → horší z obou
     if total_mb >= _EMERGENCY_THRESHOLD_MB:
         return usage_pct, "emergency"
-    elif total_mb >= _CRITICAL_THRESHOLD_MB:
+    elif total_mb >= _CRITICAL_THRESHOLD_MB or usage_pct > 93 or (ps is not None and _swap_pct(ps) > swap_crit_pct):
         return usage_pct, "critical"
-    elif total_mb >= _WARN_THRESHOLD_MB:
+    elif total_mb >= _WARN_THRESHOLD_MB or (ps is not None and _swap_pct(ps) > swap_warn_pct):
         return usage_pct, "warn"
     else:
         return usage_pct, "normal"
@@ -283,6 +330,12 @@ def get_uma_snapshot() -> dict:
         "is_critical": is_uma_critical(),
         "is_emergency": is_uma_emergency(),
         "platform": platform.system(),
+        # Dynamická detekce — nová pole
+        "uma_total_detected_mb": _UMA_TOTAL_MB,
+        "warn_threshold_pct": 87,
+        "critical_threshold_pct": 93,
+        "emergency_threshold_pct": 97,
+        "fetch_soft_ceiling_gb": M1_FETCH_SOFT_CEILING_GB,
     }
 
 
@@ -334,6 +387,19 @@ def format_uma_budget_report() -> str:
     ]
 
     return "\n".join(lines)
+
+
+# Startup diagnostic — loguje detekovanou RAM při prvním importu modulu
+logger.debug(
+    "[UMA-INIT] Detected RAM: %d MB | WARN: %d MB (%.0f%%) | "
+    "CRITICAL: %d MB (%.0f%%) | EMERGENCY: %d MB (%.0f%%) | "
+    "FETCH_CEILING: %.2f GB",
+    _UMA_TOTAL_MB,
+    _WARN_THRESHOLD_MB, 87.0,
+    _CRITICAL_THRESHOLD_MB, 93.0,
+    _EMERGENCY_THRESHOLD_MB, 97.0,
+    M1_FETCH_SOFT_CEILING_GB,
+)
 
 
 # =============================================================================
