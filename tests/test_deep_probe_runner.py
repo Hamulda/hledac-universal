@@ -302,6 +302,6 @@ class TestDeepProbeProbeRunnerImports:
 
         dorks = generate_ipfs_dorks("test query")
         assert isinstance(dorks, list)
-        assert len(dorks) > 0
+        assert dorks
         assert all(isinstance(d, str) for d in dorks)
         assert all("test query" in d or "ipfs" in d.lower() for d in dorks)

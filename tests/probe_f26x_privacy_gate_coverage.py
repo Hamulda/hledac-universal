@@ -252,7 +252,7 @@ class TestF26XGateBehavior:
         with patch.dict(os.environ, env, clear=True):
             await stub._gate_then_ingest(store, findings)
 
-        assert len(privacy.detect_calls) == 0
+        assert not privacy.detect_calls
         assert findings[0]["payload_text"] == "Email: a@b.com"
         store.async_ingest_findings_batch.assert_awaited_once()
 
@@ -325,7 +325,7 @@ class TestF26XInjectPriority:
 
         # Only the injected layer should have been called
         assert len(injected.detect_calls) == 1
-        assert len(layer_mgr_priv.detect_calls) == 0
+        assert not layer_mgr_priv.detect_calls
 
     @pytest.mark.asyncio
     async def test_fallback_to_layer_manager_when_no_inject(self):

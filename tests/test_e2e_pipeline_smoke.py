@@ -50,7 +50,7 @@ async def test_pipeline_produces_findings_for_known_feed():
         raise
 
     sources = batch_result.sources
-    assert len(sources) > 0, "No feed sources were processed"
+    assert sources, "No feed sources were processed"
 
     non_empty_registry: list[str] = []
     empty_registry: list[str] = []
@@ -95,7 +95,7 @@ async def test_pipeline_produces_findings_for_known_feed():
     log.info("=" * 60)
 
     # Assert: at least 1 feed returned non-empty_registry
-    assert len(non_empty_registry) > 0, (
+    assert non_empty_registry, (
         f"ALL feeds returned 'empty_registry' signal stage.\n"
         f"This means bootstrap patterns are likely not configured or not loading.\n"
         f"Empty feeds ({len(empty_registry)}): {empty_registry}\n"

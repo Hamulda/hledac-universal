@@ -40,7 +40,7 @@ import logging
 import time
 from collections import OrderedDict, defaultdict
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -249,9 +249,9 @@ class Relationship:
             except ValueError:
                 self.type = RelationshipType.RELATED_TO
         if self.first_seen is None:
-            self.first_seen = datetime.now()  # noqa: DTZ005
+            self.first_seen = datetime.now(UTC)  # noqa: DTZ005
         if self.last_seen is None:
-            self.last_seen = datetime.now()  # noqa: DTZ005
+            self.last_seen = datetime.now(UTC)  # noqa: DTZ005
 
     def to_dict(self) -> dict[str, Any]:
         """Convert relationship to dictionary."""
@@ -810,7 +810,7 @@ class RelationshipDiscoveryEngine:
             logger.debug(f"Entity {entity.id} already exists, updating")
             self._entities[entity.id].attributes.update(entity.attributes)
             self._entities[entity.id].sources.extend(entity.sources)
-            self._entities[entity.id].updated_at = datetime.now()  # noqa: DTZ005
+            self._entities[entity.id].updated_at = datetime.now(UTC)  # noqa: DTZ005
             return False
 
         self._entities[entity.id] = entity
@@ -926,7 +926,7 @@ class RelationshipDiscoveryEngine:
                     existing.strength = max(existing.strength, relationship.strength)
                     existing.confidence = max(existing.confidence, relationship.confidence)
                     existing.evidence.extend(relationship.evidence)
-                    existing.last_seen = datetime.now()  # noqa: DTZ005
+                    existing.last_seen = datetime.now(UTC)  # noqa: DTZ005
             # F26X: mark as recently used in LRU
             self._relationship_index.move_to_end(rel_key)
             return False
@@ -1032,7 +1032,7 @@ class RelationshipDiscoveryEngine:
         communication_counts: dict[tuple[str, str], int] = defaultdict(int)
         communication_evidence: dict[tuple[str, str], list[str]] = defaultdict(list)
 
-        now = datetime.now()  # noqa: DTZ005
+        now = datetime.now(UTC)  # noqa: DTZ005
 
         for comm in communications:
             # Filter by time window
@@ -1503,7 +1503,7 @@ class RelationshipDiscoveryEngine:
 
     def _mlx_batch_centrality(self, scores: dict[str, float]) -> dict[str, float]:
         """Apply MLX acceleration to centrality scores."""
-        if not MLX_AVAILABLE or len(scores) == 0:
+        if not MLX_AVAILABLE or not scores:
             return scores
 
         try:

@@ -66,7 +66,7 @@ import time
 import warnings
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from enum import Enum, auto
 from typing import Any
 
@@ -1014,7 +1014,7 @@ class UnifiedResearchEngine:
                         url=r.url,
                         source='academic_search',
                         source_type='academic',
-                        timestamp=datetime.now(),  # noqa: DTZ005
+                        timestamp=datetime.now(UTC),  # noqa: DTZ005
                         relevance_score=r.relevance_score,
                         credibility_score=0.8 if r.source in ['arxiv', 'crossref'] else 0.6,
                         metadata={
@@ -1041,7 +1041,7 @@ class UnifiedResearchEngine:
                         url=r.url,
                         source='stealth_crawler',
                         source_type='web',
-                        timestamp=datetime.now(),  # noqa: DTZ005
+                        timestamp=datetime.now(UTC),  # noqa: DTZ005
                         relevance_score=0.5,  # Will be re-ranked
                         credibility_score=0.5,
                         metadata={'rank': r.rank}
@@ -1346,7 +1346,7 @@ class UnifiedResearchEngine:
                     url=None,
                     source='advanced_rag',
                     source_type='rag',
-                    timestamp=datetime.now(),  # noqa: DTZ005
+                    timestamp=datetime.now(UTC),  # noqa: DTZ005
                     relevance_score=sim,
                     credibility_score=0.7,
                     metadata={
@@ -1432,7 +1432,7 @@ class UnifiedResearchEngine:
                     url=url,
                     source='stealth_browser',
                     source_type='web_stealth',
-                    timestamp=datetime.now(),  # noqa: DTZ005
+                    timestamp=datetime.now(UTC),  # noqa: DTZ005
                     relevance_score=0.6,
                     credibility_score=0.7,
                     metadata={
@@ -1543,7 +1543,7 @@ class UnifiedResearchEngine:
                         url=ent.url or url,
                         source="structured_extractor",
                         source_type=ent.ioc_kind,
-                        timestamp=datetime.now(),  # noqa: DTZ005
+                        timestamp=datetime.now(UTC),  # noqa: DTZ005
                         relevance_score=0.6,
                         credibility_score=0.7,
                         metadata={
@@ -1632,7 +1632,7 @@ class UnifiedResearchEngine:
 
         # Add year for recent results
         if 'temporal_analysis' in context:
-            current_year = datetime.now().year  # noqa: DTZ005
+            current_year = datetime.now(UTC).year  # noqa: DTZ005
             enhancements.append(str(current_year))
 
         if enhancements:

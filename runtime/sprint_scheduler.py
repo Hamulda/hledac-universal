@@ -6534,7 +6534,7 @@ class SprintScheduler:
                     from hledac.universal.brain.dspy_service import expand_query
 
                     expanded = await expand_query(query)
-                    if expanded and len(expanded) > 0:
+                    if expanded and expanded:
                         # Add expanded queries to sprint seeds (cap at 3)
                         _expanded_capped = expanded[:3]
                         log.debug("[HERMES3_WIRING] DSPy expanded %d queries for '%s...'",
@@ -7749,8 +7749,9 @@ class SprintScheduler:
                     # Threshold scales with sprint duration: short sprints
 
                     # tolerate fewer empty cycles than long ones.
-
-                    _empty_cycle_limit = max(2, min(8, int(self._config.sprint_duration_s / 30.0)))
+                    # P0-2: Floor raised from 2→4 to avoid premature windup on short sprints
+                    # where P1-1 early-exit (remaining < 30s + >= 3 empty) handles the guard.
+                    _empty_cycle_limit = max(4, min(8, int(self._config.sprint_duration_s / 30.0)))
 
                     if self._result.consecutive_empty_cycles >= _empty_cycle_limit:
 
@@ -9622,10 +9623,12 @@ class SprintScheduler:
             from hledac.universal.transport.prewarm_pool import get_stats as _pw_stats
 
             self._result.transport_efficiency = {
+                "http3_enabled": _h3_stats().get("enabled", 0),
                 "http3_altsvc_hits": _h3_stats().get("altsvc_hits", 0),
                 "http3_altsvc_misses": _h3_stats().get("altsvc_misses", 0),
                 "http3_altsvc_records": _h3_stats().get("altsvc_records", 0),
                 "http3_cache_size": _h3_stats().get("cache_size", 0),
+                "http3_cache_hits": _h3_stats().get("cache_hit", 0),
                 "conditional_cache_hits": _cc_stats().get("lookup_hits", 0),
                 "conditional_cache_misses": _cc_stats().get("lookup_misses", 0),
                 "conditional_cache_errors": _cc_stats().get("lookup_errors", 0),
@@ -10153,7 +10156,7 @@ class SprintScheduler:
 
                     _feed_accepted = max(0, _feed_accepted)
 
-                    if isinstance(_raw, list) and len(_raw) > 0:
+                    if isinstance(_raw, list) and _raw:
 
                         _first = _raw[0]
 
@@ -12408,9 +12411,9 @@ class SprintScheduler:
                     ct_results_to_findings,
                 )
 
-
-
-                _shaped = build_lane_query(query, AcquisitionLane.CT)
+                # P3-2: Pass _seed_ctx so build_lane_query uses pivot/speculative
+                # domain seeds instead of falling back to empty query text.
+                _shaped = build_lane_query(query, AcquisitionLane.CT, seed_context=_seed_ctx)
 
                 if isinstance(_shaped, dict) or not _shaped:
 
@@ -13235,6 +13238,19 @@ class SprintScheduler:
                     _query_domain_candidates = [c.domain for c in _mlx_candidates if c.domain]
                 except Exception:
                     pass  # fail-soft: MLX unavailable or parse failure
+
+            # P3-1: Rule-based decomposition fallback — fires when MLX produced nothing.
+            # This handles complex queries like "APT nation-state ransomware" where
+            # regex finds no domains AND MLX is unavailable/failed.
+            # Uses keyword-pattern → dark-web surface query mapping to synthesize seeds.
+            if not _query_domain_candidates and query and isinstance(query, str):
+                from hledac.universal.runtime.nonfeed_seed_runtime import (
+                    _decompose_query_keywords_to_seeds,
+                )
+                _rule_seeds: list[str] = _decompose_query_keywords_to_seeds(query)
+                if _rule_seeds:
+                    _query_domain_candidates = _rule_seeds
+
             # Also define _synthetic_domains unconditionally for same reason
             _synthetic_domains: list[str] = []
 
@@ -13606,6 +13622,41 @@ class SprintScheduler:
                                 seed_context=seed_context,
 
                             )
+
+                        elif _lane_name == "CT":
+                            # P3-2: Run CT via _get_ct_adapter + build_lane_query
+                            # with seed_context so pivot/speculative domain seeds are used.
+                            from hledac.universal.runtime.acquisition_strategy import (
+                                AcquisitionLane,
+                                build_lane_query,
+                            )
+                            _ct_shaped = build_lane_query(
+                                query, AcquisitionLane.CT, seed_context=seed_context,
+                            )
+                            if isinstance(_ct_shaped, dict) or not _ct_shaped:
+                                nonfeed_prelude_skipped["CT"] = "empty_ct_query"
+                                return ("CT", 0)
+                            _ct_adapter = _get_ct_adapter()
+                            try:
+                                async with asyncio.timeout(min(_lane_timeout, 20.0)):
+                                    _ct_result, _ct_outcome = await _ct_adapter(
+                                        query=_ct_shaped,
+                                        max_results=_lane_max_items,
+                                        timeout_s=min(_lane_timeout, 15.0),
+                                    )
+                                nonfeed_prelude_attempted.append("CT")
+                                nonfeed_prelude_terminal.append("CT")
+                                _accepted_ct = getattr(_ct_outcome, "accepted_count", 0) or 0
+                                nonfeed_prelude_accepted["CT"] = _accepted_ct
+                                return ("CT", _accepted_ct)
+                            except TimeoutError:
+                                nonfeed_prelude_errors["CT"] = "prelude_timeout"
+                                nonfeed_prelude_skipped["CT"] = "prelude_timeout"
+                                return ("CT", 0)
+                            except Exception as _ct_exc:
+                                nonfeed_prelude_errors["CT"] = f"{type(_ct_exc).__name__}:{_ct_exc}"
+                                nonfeed_prelude_skipped["CT"] = f"prelude_error:{type(_ct_exc).__name__}"
+                                return ("CT", 0)
 
                         elif _lane_name == "PIVOT_EXECUTOR":
 
@@ -18151,7 +18202,7 @@ class SprintScheduler:
 
                     finding = CanonicalFinding(
 
-                        finding_id=f"i2p-{addr}-{int(datetime.now().timestamp() * 1000)}",  # noqa: DTZ005
+                        finding_id=f"i2p-{addr}-{int(datetime.now(UTC).timestamp() * 1000)}",  # noqa: DTZ005
 
                         query="i2p_discovery",
 
@@ -18159,7 +18210,7 @@ class SprintScheduler:
 
                         confidence=0.5,
 
-                        ts=datetime.now().isoformat(),  # noqa: DTZ005
+                        ts=datetime.now(UTC).isoformat(),  # noqa: DTZ005
 
                         provenance=["i2p_transport"],
 
@@ -18727,24 +18778,22 @@ class SprintScheduler:
             if cids:
 
                 # Fetch specified CIDs via Tor transport
-
+                # F265B: Parallel fetch with bounded semaphore — was sequential (20×120s = 2400s worst case)
                 self._result.ipfs_cids_attempted = len(cids)
 
-                for cid in cids[:20]:  # Cap at 20 CIDs for M1 safety
 
+                async def _fetch_cid(cid: str) -> list:
                     try:
-
-                        results = await ipfs_fetch_as_findings(cid, query_context, timeout=120)
-
-                        if results:
-
-                            findings.extend(results)
-
+                        return await ipfs_fetch_as_findings(cid, query_context, timeout=120) or []
                     except Exception as e:
-
                         log.debug("[F218Z] CID fetch failed for %s: %s", cid, e)
+                        return []
 
-                        continue
+                _cid_tasks = [_fetch_cid(cid) for cid in cids[:20]]
+                _cid_results = await safe_gather_dropin(*_cid_tasks, label="sprint_scheduler:ipfs_cid_fetch")
+                for _r in _cid_results:
+                    if _r and isinstance(_r, list):
+                        findings.extend(_r)
 
             elif query_context:
 
@@ -18863,7 +18912,7 @@ class SprintScheduler:
                 if r is None or isinstance(r, Exception):
                     continue
                 try:
-                    if hasattr(r, 'ghost_signals') and len(r.ghost_signals) > 0:
+                    if hasattr(r, 'ghost_signals') and r.ghost_signals:
                         finding = CanonicalFinding(
                             source_type=SourceType.DIGITAL_GHOST_DETECTION,
                             ioc_type="file",
@@ -19210,7 +19259,7 @@ class SprintScheduler:
 
                 prov = finding.provenance
 
-                if isinstance(prov, tuple) and len(prov) > 0:
+                if isinstance(prov, tuple) and prov:
 
                     first = str(prov[0])
 
@@ -22151,16 +22200,20 @@ class SprintScheduler:
                         self._result.bgp_advisory_findings_produced = len(findings)
 
                 if pdns_adapter is not None and unique_domains and store is not None:
-                    pdns_findings = []
-                    for domain in unique_domains[:5]:  # Cap at 5 domains
+                    # F265B: Parallel PDNS queries — was sequential (5×~100ms = 500ms total)
+                    async def _query_one(domain: str) -> list:
                         try:
-                            records = await pdns_adapter.query_pdns(domain)
-                            for rec in records:
-                                cf = rec.to_canonical_finding(self._query)
-                                if cf:
-                                    pdns_findings.append(cf)
+                            recs = await pdns_adapter.query_pdns(domain)
+                            return [rec.to_canonical_finding(self._query) for rec in recs if rec.to_canonical_finding(self._query)]
                         except Exception:
-                            pass
+                            return []
+
+                    _pdns_tasks = [_query_one(d) for d in unique_domains[:5]]
+                    _pdns_results = await safe_gather_dropin(*_pdns_tasks, label="sprint_scheduler:pdns_query")
+                    pdns_findings = []
+                    for _pr in _pdns_results:
+                        if _pr and isinstance(_pr, list):
+                            pdns_findings.extend(_pr)
                     if pdns_findings:
                         _ = await self._gate_then_ingest_and_accumulate(store, pdns_findings, sprint_id=self.sprint_id or "")
                         self._result.pdns_advisory_findings_produced = len(pdns_findings)
@@ -26352,11 +26405,13 @@ class SprintScheduler:
             report["metrics_registry"] = metrics_summary
 
         # Sprint F265C: Append Arrow ingest metrics snapshot (read-only, fail-soft)
+        # P1-2 fix: always include when arrow_metrics dict is populated, even if all
+        # zeros — zeros are diagnostic (Arrow enabled but sprint produced 0 findings,
+        # or pyarrow not installed, or all batches fell below ARROW_MIN_BATCH threshold).
         try:
             from hledac.universal.knowledge.duckdb_store import get_arrow_metrics
             arrow_metrics = get_arrow_metrics()
-            # Only include when Arrow path was attempted at least once
-            if arrow_metrics.get("arrow_selected", 0) > 0 or arrow_metrics.get("arrow_fallback_env", 0) > 0:
+            if arrow_metrics:  # non-empty dict = at least one counter was initialized
                 report["arrow_ingest"] = arrow_metrics
         except Exception:
             pass  # fail-soft: Arrow metrics are diagnostic only
@@ -27289,7 +27344,7 @@ class SprintScheduler:
 
                 _surf_pdns = {"terminal_state": "not_scheduled"}
 
-            _surf_complete = len(_missing) == 0
+            _surf_complete = not _missing
 
 
 

@@ -108,7 +108,7 @@ class VisionAnalyzer:
 
             # Check feature print
             feature_results = feature_request.results() or []
-            feature_present = len(feature_results) > 0
+            feature_present = feature_results
 
             return {
                 "text": text,

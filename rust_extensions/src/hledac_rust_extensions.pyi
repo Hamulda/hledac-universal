@@ -253,6 +253,22 @@ def get_available_memory_gib() -> float:
     """Available system memory in GiB via sysinfo. Returns 0.0 on error."""
     ...
 
+def current_rss_bytes() -> int:
+    """Current process RSS in bytes via proc_pidinfo(PROC_PIDTASKINFO) on macOS. Returns 0 on error."""
+    ...
+
+def peak_rss_bytes() -> int:
+    """Peak RSS in bytes observed since process start. Updated on every current_rss_bytes() call."""
+    ...
+
+def memory_pressure_level() -> int:
+    """Memory pressure level 0-2: 0=normal (<4GiB), 1=elevated (4-5.5GiB), 2=critical (>5.5GiB)."""
+    ...
+
+def advise_free(ptr: int, len: int) -> bool:
+    """Apply MADV_FREE_REUSABLE to a memory region via madvise(2). Returns True on success, False on failure."""
+    ...
+
 # ---------------------------------------------------------------------------
 # IOC extract (rust_extensions/src/ioc_extract.rs)
 # ---------------------------------------------------------------------------
@@ -370,6 +386,30 @@ def batch_url_fingerprints(urls: list[str]) -> list[str]:
     ...
 
 # ---------------------------------------------------------------------------
+# Text norm — Sprint F265B-III (rust_extensions/src/text_norm.rs)
+# ---------------------------------------------------------------------------
+
+def nfc_normalize(text: str) -> str:
+    """Unicode NFC normalization — canonical decomposition + composition."""
+    ...
+
+def nfd_normalize(text: str) -> str:
+    """Unicode NFD normalization — canonical decomposition only."""
+    ...
+
+def batch_nfc_normalize(texts: list[str]) -> list[str]:
+    """Bounded batch NFC normalization via rayon. Raises ValueError if >50 000 items."""
+    ...
+
+def strip_diacritics(text: str) -> str:
+    """Strip diacritics: NFD decompose, filter combining marks (Mn/Mc/Me)."""
+    ...
+
+def batch_strip_diacritics(texts: list[str]) -> list[str]:
+    """Bounded batch diacritic stripping via rayon. Raises ValueError if >50 000 items."""
+    ...
+
+# ---------------------------------------------------------------------------
 # IOC dedup store helpers (rust_extensions/src/ioc_dedup.rs)
 # ---------------------------------------------------------------------------
 
@@ -480,4 +520,52 @@ def batch_aggregate_signals(
 
 def chain_hash_snapshot(snap: dict[str, int], prev_chain_hex: str, event_id: str) -> tuple[str, str]:
     """BLAKE3-256 + SHA-256 dual-emit over snapshot dict. Returns (blake3_hex, sha256_hex)."""
+    ...
+
+# ---------------------------------------------------------------------------
+# IP parse — Sprint P2-3 (rust_extensions/src/ip_parse.rs)
+# ---------------------------------------------------------------------------
+
+def parse_ip_fast(s: str) -> str | None:
+    """Parse IPv4 or IPv6 from string, return canonical form or None."""
+    ...
+
+def is_private_ip(s: str) -> bool:
+    """Return true for RFC1918 (10/8, 172.16/12, 192.168/16), loopback, link-local."""
+    ...
+
+def is_public_ip(s: str) -> bool:
+    """Opposite of is_private_ip; false for invalid input."""
+    ...
+
+def batch_ip_classify(ips: list[str]) -> bytes:
+    """Batch classify IPs. Returns bytes where each byte is: 0=invalid, 1=private, 2=public, 3=loopback, 4=link-local. Caps at 100_000 items."""
+    ...
+
+def cidr_contains(cidr: str, ip: str) -> bool:
+    """Parse CIDR like '192.168.0.0/16' and test if ip is in range. Return false on any parse error."""
+    ...
+
+# ---------------------------------------------------------------------------
+# HTML parse — Sprint F266 (rust_extensions/src/html_parse.rs)
+# ---------------------------------------------------------------------------
+
+def extract_links(html: str, base_url: str) -> list[str]:
+    """Extract <a href>, <link href>, <script src>, <img src> URLs resolved against base_url. Deduplicated, sorted."""
+    ...
+
+def extract_emails(html: str) -> list[str]:
+    """Extract email addresses from HTML text content. Deduplicated, sorted."""
+    ...
+
+def extract_meta_description(html: str) -> str | None:
+    """Extract <meta name=\"description\" content=\"...\">. Returns None if not found."""
+    ...
+
+def extract_title(html: str) -> str | None:
+    """Extract <title> tag text content. Returns None if not found."""
+    ...
+
+def batch_extract_links(items: list[tuple[str, str]]) -> list[list[str]]:
+    """Batch extract_links. items is list of (html, base_url). Caps at 1_000 items. rayon parallel."""
     ...

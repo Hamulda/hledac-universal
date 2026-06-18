@@ -498,7 +498,7 @@ def _check_f231_artifacts(repo_root: Path, profile: str) -> tuple[bool, list[str
             warnings.append(f"f231_blocking:{probe_dir} {detail}")
             missing_blocking.append(probe_dir)
 
-    core_ready = len(missing_blocking) == 0 if is_blocking_profile else True
+    core_ready = not missing_blocking if is_blocking_profile else True
     return core_ready, warnings, missing_blocking, checked_local
 
 

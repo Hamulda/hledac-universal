@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from enum import Enum
 
 import numpy as np
@@ -172,7 +172,7 @@ class TemporalAnalyzer:
 
         result = TemporalAnalysisResult(
             query=query,
-            timestamp=datetime.now()  # noqa: DTZ005
+            timestamp=datetime.now(UTC)  # noqa: DTZ005
         )
 
         if len(timestamps) < self.min_data_points:
@@ -582,7 +582,7 @@ class TemporalAnalyzer:
 
         # Generate predictions
         predictions = []
-        last_diff = diff[-1] if len(diff) > 0 else 0
+        last_diff = diff[-1] if diff else 0
         last_level = y[-1]
 
         for _ in range(0, horizon_days, 7):

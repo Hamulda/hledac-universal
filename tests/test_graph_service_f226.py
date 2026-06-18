@@ -102,8 +102,8 @@ class TestGraphServiceFacadeBackwardCompat:
 
         reset_session()
 
-        assert len(_DEFAULT_GRAPH_SERVICE._seen_iocs) == 0
-        assert len(_DEFAULT_GRAPH_SERVICE._seen_rels) == 0
+        assert not _DEFAULT_GRAPH_SERVICE._seen_iocs
+        assert not _DEFAULT_GRAPH_SERVICE._seen_rels
 
     def test_module_seen_iocs_clear_works(self):
         """_SEEN_IOCS.clear() clears the default instance's _seen_iocs."""

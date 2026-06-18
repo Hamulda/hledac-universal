@@ -1536,7 +1536,7 @@ def _run_self_test(repo_root: Path, profile: str, query: str) -> SelfTestResult:
         cwd_contract_ok
         and assertion_contract_ok
         and command_contract_ok
-        and len(blocking_reasons) == 0
+        and not blocking_reasons
     )
 
     return SelfTestResult(

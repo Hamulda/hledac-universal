@@ -198,7 +198,7 @@ class AdversarialVerifier:
         # Step 8: Generate path explanations (if graph_rag available)
         metadata = {}
         graph_rag = context.get("graph_rag") if context else None
-        if graph_rag and len(contradictions) > 0:
+        if graph_rag and contradictions:
             try:
                 # Extract path from contradictions
                 path = []
@@ -332,7 +332,7 @@ class AdversarialVerifier:
         if source in self._source_credibility:
             cached = self._source_credibility[source]
             # Refresh if older than 24 hours
-            if datetime.now() - cached.last_updated < timedelta(hours=24):  # noqa: DTZ005
+            if datetime.now(UTC) - cached.last_updated < timedelta(hours=24):  # noqa: DTZ005
                 # Move to end (update LRU order)
                 self._source_credibility.move_to_end(source)
                 return cached
@@ -440,7 +440,7 @@ class AdversarialVerifier:
                     )
                     contradictions.append(contradiction)
 
-        is_consistent = len(contradictions) == 0
+        is_consistent = not contradictions
         return is_consistent, contradictions
 
     def detect_contradictions(self, evidence_list: list[Evidence]) -> list[Contradiction]:

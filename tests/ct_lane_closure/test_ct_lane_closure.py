@@ -346,7 +346,7 @@ def test_raw_hits_rejected_by_bridge_all_rejected():
         batch, outcome, "example.com", "probe-r1b"
     )
 
-    assert len(candidates) == 0, f"Expected 0 candidates (all rejected), got {len(candidates)}"
+    assert not candidates, f"Expected 0 candidates (all rejected), got {len(candidates)}"
     assert len(rejections) == 2, f"Expected 2 rejections, got {len(rejections)}"
     all_rejected = len(candidates) == 0 and outcome.raw_count > 0
     assert all_rejected is True
@@ -535,7 +535,7 @@ def test_no_mlx_model_load_in_ct_path():
     after = {m for m in sys.modules if "mlx" in m.lower()}
     new_modules = after - before
     # Should not load new MLX modules just by importing acquisition_strategy
-    assert len(new_modules) == 0, f"CT path loaded new MLX modules: {new_modules}"
+    assert not new_modules, f"CT path loaded new MLX modules: {new_modules}"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -546,7 +546,7 @@ def test_no_browser_launch():
     import sys
 
     browser_modules = {m for m in sys.modules if "nodriver" in m or "selenium" in m or "playwright" in m}
-    assert len(browser_modules) == 0, f"Browser modules loaded: {browser_modules}"
+    assert not browser_modules, f"Browser modules loaded: {browser_modules}"
 
 
 # ─────────────────────────────────────────────────────────────────────────────

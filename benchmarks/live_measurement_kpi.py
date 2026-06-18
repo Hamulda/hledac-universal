@@ -386,7 +386,7 @@ def _derive_live_kpi_from_input(inp: LiveKpiInput) -> dict:
         if _fam != "feed" and _data.get("accepted_count", 0) > 0:
             source_family_counts[_fam] = _data["accepted_count"]
 
-    _sfo_has_canonical = isinstance(_sfo_list, list) and len(_sfo_list) > 0
+    _sfo_has_canonical = isinstance(_sfo_list, list) and _sfo_list
     if _sfo_has_canonical:
         _lec_lower_keys = {k.lower(): k for k in lane_execution_counts.keys()}
         _seen_lower = set()

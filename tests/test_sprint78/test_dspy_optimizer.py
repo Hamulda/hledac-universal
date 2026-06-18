@@ -50,7 +50,7 @@ class TestDSPyOptimizerDefaultPrompts:
         prompt = optimizer.get_prompt('analysis', {'complexity': 'medium'})
 
         assert isinstance(prompt, str)
-        assert len(prompt) > 0
+        assert prompt
 
 
 class TestDSPyOptimizerPerformance:

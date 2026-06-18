@@ -379,7 +379,7 @@ async def test_e2e_first_persisted_finding(
     has_content = getattr(finding, "content", None)
     payload_val = has_payload or has_content
     if payload_val is not None:
-        assert isinstance(payload_val, str) and len(payload_val) > 0, (
+        assert isinstance(payload_val, str) and payload_val, (
             f"Finding payload/content is empty: {payload_val!r}"
         )
 
@@ -391,13 +391,13 @@ async def test_e2e_first_persisted_finding(
 
     # provenance: non-empty tuple
     prov = getattr(finding, "provenance", ())
-    assert isinstance(prov, (tuple, list)) and len(prov) > 0, (
+    assert isinstance(prov, (tuple, list)) and prov, (
         f"provenance is empty: {prov!r} — every finding must have at least one provenance entry"
     )
 
     # query: should be preserved from pipeline context
     query = getattr(finding, "query", None)
-    assert query and isinstance(query, str) and len(query) > 0, f"Finding has no/empty query: {query!r}"
+    assert query and isinstance(query, str) and query, f"Finding has no/empty query: {query!r}"
 
 
 @pytest.mark.hermetic
@@ -1033,7 +1033,7 @@ async def test_partial_branch_success_still_updates_runtime_truth(
         ]
 
         # Successful branch persists findings even if another branch fails
-        assert len(feed_findings) > 0 or result.accepted_findings >= 0, (
+        assert feed_findings or result.accepted_findings >= 0, (
             f"Feed branch succeeded but findings not persisted. "
             f"store_feed_findings={len(feed_findings)}, "
             f"accepted_findings={result.accepted_findings}"

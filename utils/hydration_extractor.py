@@ -689,7 +689,7 @@ def extract_static_hydration(
             quality_signals=(),
         )
 
-    found = len(sources) > 0 or bool(metadata)
+    found = sources or bool(metadata)
 
     # ---- Compute score (before sufficiency check) ----
     hydration_score, quality_signals = _compute_hydration_score(info, input_truncated)

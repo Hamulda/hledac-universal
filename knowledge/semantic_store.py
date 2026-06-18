@@ -414,7 +414,7 @@ class SemanticStore:
                 result = await loop.run_in_executor(
                     None, lambda: single_encode(mlx_mgr, query)
                 )
-                return result[0] if len(result) > 0 else np.zeros(384, dtype=np.float32)
+                return result[0] if result else np.zeros(384, dtype=np.float32)
             except Exception:
                 pass
 

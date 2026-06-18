@@ -17,7 +17,7 @@ class TestXXHash:
 
         result = fast_hash("test_url")
         assert isinstance(result, str)
-        assert len(result) > 0
+        assert result
 
     def test_fast_hash_deterministic(self):
         """Test fast_hash is deterministic."""

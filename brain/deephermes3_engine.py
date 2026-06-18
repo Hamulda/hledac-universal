@@ -1612,20 +1612,27 @@ class DeepHermes3Engine:
 
         # F288: Metal stream context per-thread (fixes Stream(gpu,1) error)
         with get_metal_stream_context():
-            # Always create new cache (thread-safe)
-            kv_cache = make_prompt_cache(self._model, max_kv_size=max_tok)
-
-            # Sprint 75: KV quantization (capability-based)
-            # F265C: Use adaptive kv_bits based on RSS pressure
+            # P2-2 FIX: Create KV cache only when enabled — avoid list index out of range
+            # when passing prompt_cache object to mlx_lm.generate with max_kv_size=0
+            # (happens when _kv_cache_enabled=False and _get_kv_cache_kwargs returns {}).
+            # The prompt_cache object creation itself is what triggers the error, not
+            # just the max_kv_size kwarg.
             kv_bits = self._get_adaptive_kv_bits()
-            if self._supports_kv_quant:
-                for layer in kv_cache:
-                    if hasattr(layer, 'quantize'):
-                        try:
-                            layer.quantize(group_size=64, bits=kv_bits)
-                            self._kv_cache_stats['quantized_count'] += 1
-                        except Exception:
-                            pass
+            if self._kv_cache_enabled:
+                kv_cache = make_prompt_cache(self._model, max_kv_size=max_tok)
+
+                # Sprint 75: KV quantization (capability-based)
+                # F265C: Use adaptive kv_bits based on RSS pressure
+                if self._supports_kv_quant:
+                    for layer in kv_cache:
+                        if hasattr(layer, 'quantize'):
+                            try:
+                                layer.quantize(group_size=64, bits=kv_bits)
+                                self._kv_cache_stats['quantized_count'] += 1
+                            except Exception:
+                                pass
+            else:
+                kv_cache = None
 
             generate_kwargs = {
                 "model": self._model,
@@ -1634,10 +1641,13 @@ class DeepHermes3Engine:
                 "sampler": make_sampler(temp=temp),
                 "max_tokens": max_tok,
                 "kv_bits": kv_bits,
-                "prompt_cache": kv_cache,
                 "verbose": False,
                 **self._get_kv_cache_kwargs(),
             }
+
+            # Sprint 37: Attach KV cache only when enabled
+            if kv_cache is not None:
+                generate_kwargs["prompt_cache"] = kv_cache
 
             # Sprint 75: Speculative decoding with memory guard
             # P1-1 FIX: num_draft_tokens passed as kwarg to stream_generate via **kwargs
@@ -1664,11 +1674,19 @@ class DeepHermes3Engine:
 
             response = mlx_generate(**generate_kwargs)
 
-            # F192B: mx.eval([]) barrier AFTER inference before clear_cache
-            # (consistent with canonical 7K order used in unload())
+            # F192B: mx.eval([]) + clear_cache AFTER inference
+            # F266 FIX: MUST call clear_cache after eval to actually reclaim
+            # GPU memory. Without clear_cache, eval() only evaluates pending ops
+            # but Metal memory remains allocated. This was the root cause of
+            # OOM cascades → metal_driver error → ModelCircuitBreaker OPEN.
             try:
                 import mlx.core as _mx
                 _mx.eval([])
+                # Modern-first: try mx.clear_cache(), fall back to mx.metal.clear_cache
+                if hasattr(_mx, "clear_cache"):
+                    _mx.clear_cache()
+                elif hasattr(_mx.metal, "clear_cache"):
+                    _mx.metal.clear_cache()
             except Exception:
                 pass
 
@@ -2180,20 +2198,24 @@ class DeepHermes3Engine:
 
         # F288: Metal stream context per-thread (fixes Stream(gpu,1) error)
         with get_metal_stream_context():
-            # Always create a fresh cache (mirrors _run_inference thread-safety)
-            kv_cache = make_prompt_cache(self._model, max_kv_size=max_tok)
-
-            # Sprint 75: KV quantisation (capability-gated, fail-soft)
-            # F265C: Use adaptive kv_bits based on RSS pressure
+            # P2-2 FIX: Create KV cache only when enabled — mirrors _run_inference fix.
+            # When _kv_cache_enabled=False, skip cache creation and quantization entirely.
             kv_bits = self._get_adaptive_kv_bits()
-            if self._supports_kv_quant:
-                for layer in kv_cache:
-                    if hasattr(layer, "quantize"):
-                        try:
-                            layer.quantize(group_size=64, bits=kv_bits)
-                        except Exception:
-                            # Per-layer failure is non-fatal — proceed without
-                            pass
+            if self._kv_cache_enabled:
+                kv_cache = make_prompt_cache(self._model, max_kv_size=max_tok)
+
+                # Sprint 75: KV quantisation (capability-gated, fail-soft)
+                # F265C: Use adaptive kv_bits based on RSS pressure
+                if self._supports_kv_quant:
+                    for layer in kv_cache:
+                        if hasattr(layer, "quantize"):
+                            try:
+                                layer.quantize(group_size=64, bits=kv_bits)
+                            except Exception:
+                                # Per-layer failure is non-fatal — proceed without
+                                pass
+            else:
+                kv_cache = None
 
             # CLAUDE.md invariant #2: kv_bits + max_kv_size=8192 in generate, NOT load
             stream_kwargs = {
@@ -2201,9 +2223,17 @@ class DeepHermes3Engine:
                 "sampler": make_sampler(temp=temp),
                 "kv_bits": kv_bits,
                 "max_kv_size": 8192,
-                "prompt_cache": kv_cache,
                 "verbose": False,
             }
+
+            # Sprint 37 + P2-2 FIX: Attach KV cache only when enabled
+            if kv_cache is not None:
+                stream_kwargs["prompt_cache"] = kv_cache
+
+            # Sprint 75: Speculative decoding with memory guard (P2-1 FIX)
+            if self._speculative_enabled and self._draft_model_obj is not None and self._supports_draft:
+                stream_kwargs["draft_model"] = self._draft_model_obj
+                stream_kwargs["num_draft_tokens"] = self._num_draft_tokens
 
             # M3: Token counter for granular eval/clear during streaming.
             # Peak Metal cache growth without this is O(N) for an N-token
@@ -3123,12 +3153,20 @@ Do not include any other text. Output valid JSON only."""
             self.config.model_path = model_id
             # F265C-EXT: Initialize prompt cache here so load_model() path
             # has the same KV-cache setup as initialize() path.
+            # P2-2 FIX: Attempt cache creation and let exceptions propagate the
+            # KV_CACHE_AVAILABLE flag naturally. If make_prompt_cache fails on this
+            # hardware, _kv_cache_enabled=False is set and downstream
+            # _run_inference/_stream_tokens skip cache creation (avoiding IndexError
+            # when max_kv_size=0 with a live prompt_cache object).
+            global KV_CACHE_AVAILABLE
             try:
                 self._prompt_cache = make_prompt_cache(self._model)
                 self._kv_cache_enabled = True
+                KV_CACHE_AVAILABLE = True
             except Exception:
                 self._prompt_cache = None
                 self._kv_cache_enabled = False
+                KV_CACHE_AVAILABLE = False
             logger.info(f"✓ Model loaded: {model_id}")
             # F273H+: Mark model as ever-loaded so is_idle() knows prewarm happened
             self._model_ever_loaded = True

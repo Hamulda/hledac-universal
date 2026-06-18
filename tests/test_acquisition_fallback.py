@@ -322,7 +322,7 @@ class TestEnvVarOverrideLogging:
                     c for c in mock_info.call_args_list
                     if c.args and "[F228B]" in str(c.args)
                 ]
-                assert len(f228b_calls) == 0, (
+                assert not f228b_calls, (
                     f"logger.info [F228B] must not be called when env var is absent/default, "
                     f"got calls: {f228b_calls}"
                 )

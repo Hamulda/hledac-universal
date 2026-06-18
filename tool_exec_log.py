@@ -400,7 +400,7 @@ class ToolExecLog:
             expected_head = event.chain_hash
 
         return {
-            "chain_valid": len(errors) == 0,
+            "chain_valid": not errors,
             "head_hash": self._chain_head,
             "event_count": len(events),
             "first_seq": events[0].seq_no if events else 0,

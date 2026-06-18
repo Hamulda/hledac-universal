@@ -388,7 +388,7 @@ class BlockchainForensics:
         async with self._cache_lock:
             if cache_key in self._cache:
                 cached = self._cache[cache_key]
-                if datetime.now() < cached.expires_at:  # noqa: DTZ005
+                if datetime.now(UTC) < cached.expires_at:  # noqa: DTZ005
                     # F184F: LRU — move to end (most recently used)
                     self._cache.move_to_end(cache_key)
                     logger.debug(f"Cache hit: {cache_key}")
@@ -410,8 +410,8 @@ class BlockchainForensics:
 
             self._cache[cache_key] = APIResponse(
                 data=data,
-                timestamp=datetime.now(),  # noqa: DTZ005
-                expires_at=datetime.now() + timedelta(seconds=self.cache_ttl),  # noqa: DTZ005
+                timestamp=datetime.now(UTC),  # noqa: DTZ005
+                expires_at=datetime.now(UTC) + timedelta(seconds=self.cache_ttl),  # noqa: DTZ005
             )
             # F184F: LRU — mark as most recently used
             self._cache.move_to_end(cache_key)
@@ -831,7 +831,7 @@ class BlockchainForensics:
         else:
             return Transaction(
                 tx_hash=str(tx_data.get("hash", "")),
-                timestamp=datetime.now(),  # noqa: DTZ005
+                timestamp=datetime.now(UTC),  # noqa: DTZ005
                 from_address="",
                 to_address="",
                 value=0.0,
@@ -1489,7 +1489,7 @@ class BlockchainForensics:
 
         # Age of wallet (newer = riskier)
         if analysis.first_seen:
-            age_days = (datetime.now() - analysis.first_seen).days  # noqa: DTZ005
+            age_days = (datetime.now(UTC) - analysis.first_seen).days  # noqa: DTZ005
             if age_days < 30:
                 score += 0.2
                 factors.append("new_wallet")

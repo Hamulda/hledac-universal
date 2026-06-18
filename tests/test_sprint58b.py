@@ -41,7 +41,7 @@ class TestPQCProvider(unittest.IsolatedAsyncioTestCase):
         public, secret = pqc.generate_kem_keypair()
 
         self.assertIsNotNone(public)
-        self.assertTrue(len(public) > 0)
+        self.assertTrue(public)
 
     async def test_pqc_encapsulate_decapsulate(self):
         """Test #4: PQCProvider – KEM encapsulate/decapsulate."""

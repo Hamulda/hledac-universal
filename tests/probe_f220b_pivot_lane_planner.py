@@ -143,7 +143,7 @@ def test_flags_disable_lanes():
     )
 
     lanes = _lane_names(plan)
-    assert len(lanes) == 0, f"All lanes disabled but got: {lanes}"
+    assert not lanes, f"All lanes disabled but got: {lanes}"
     assert plan.skipped == (), f"Nothing should be skipped: {plan.skipped}"
     print("  test_flags_disable_lanes PASS")
 
@@ -263,7 +263,7 @@ def test_hash_skipped():
     seeds = _seeds("hash", "deadbeef12345678deadbeef12345678", "md5", "abcd1234abcd1234abcd1234abcd1234")
     plan = plan_lanes_for_pivot_seeds(seeds)
 
-    assert len(plan.items) == 0, f"hash should produce no items: {len(plan.items)}"
+    assert not plan.items, f"hash should produce no items: {len(plan.items)}"
     assert len(plan.skipped) == 2, f"2 hashes should be skipped: {plan.skipped}"
     print("  test_hash_skipped PASS")
 

@@ -96,9 +96,9 @@ class UsernameEntry:
 
     def __post_init__(self):
         if self.first_seen is None:
-            self.first_seen = datetime.now()  # noqa: DTZ005
+            self.first_seen = datetime.now(UTC)  # noqa: DTZ005
         if self.last_seen is None:
-            self.last_seen = datetime.now()  # noqa: DTZ005
+            self.last_seen = datetime.now(UTC)  # noqa: DTZ005
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary."""
@@ -142,13 +142,13 @@ class IdentityProfile:
 
     def __post_init__(self):
         if self.updated_at is None:
-            self.updated_at = datetime.now()  # noqa: DTZ005
+            self.updated_at = datetime.now(UTC)  # noqa: DTZ005
 
     def add_username(self, platform: str, username: str, **kwargs) -> UsernameEntry:
         """Add a username entry for a platform."""
         entry = UsernameEntry(platform=platform, username=username, **kwargs)
         self.usernames.append(entry)
-        self.updated_at = datetime.now()  # noqa: DTZ005
+        self.updated_at = datetime.now(UTC)  # noqa: DTZ005
         return entry
 
     def get_username(self, platform: str) -> str | None:
@@ -403,7 +403,7 @@ class IdentityStitchingEngine:
         existing.emails = list(set(existing.emails + profile.emails))
         existing.usernames.extend(profile.usernames)
         existing.attributes.update(profile.attributes)
-        existing.updated_at = datetime.now()  # noqa: DTZ005
+        existing.updated_at = datetime.now(UTC)  # noqa: DTZ005
 
         # Re-index
         self._index_profile(existing)

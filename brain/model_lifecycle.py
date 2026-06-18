@@ -152,7 +152,7 @@ def is_safe_to_clear_emergency(engine) -> bool:
     F162F: Tracks _EMERGENCY_WAIT_ATTEMPTS. Returns True when ALL of:
     1. _batch_worker_task is None or done()
     2. _batch_queue is None
-    3. len(_pending_futures) == 0
+    3. not _pending_futures
     OR when _EMERGENCY_WAIT_ATTEMPTS >= _MAX_EMERGENCY_WAIT_ATTEMPTS (M1 bounded wait).
 
     This is the canonical check BEFORE clearing emergency flag.

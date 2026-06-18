@@ -33,7 +33,7 @@ if os.environ.get("HLEDAC_ENABLE_DSPY") == "1" and query:
         # asyncio.run() creates nested event loop → M1 crash on ARM cores
         loop = asyncio.get_running_loop()
         expanded = loop.run_until_complete(expand_query(query))
-        if expanded and len(expanded) > 0:
+        if expanded and expanded:
             _expanded_capped = expanded[:3]
             log.debug("[HERMES3_WIRING] DSPy expanded %d queries for '%s...'",
                       len(_expanded_capped), query[:30])

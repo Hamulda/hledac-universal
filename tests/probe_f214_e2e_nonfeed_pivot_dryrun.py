@@ -208,10 +208,10 @@ def step6_planner_inputs(ranked):
     print(f"  nonfeed_passive_dns_candidates={pdns_candidates}")
 
     # Verify non-empty
-    assert len(doh_domains) > 0, "doh_domains must not be empty"
-    assert len(ct_domains) > 0, "ct_domains must not be empty"
-    assert len(wayback_candidates) > 0, "wayback_candidates must not be empty"
-    assert len(pdns_candidates) > 0, "pdns_candidates must not be empty"
+    assert doh_domains, "doh_domains must not be empty"
+    assert ct_domains, "ct_domains must not be empty"
+    assert wayback_candidates, "wayback_candidates must not be empty"
+    assert pdns_candidates, "pdns_candidates must not be empty"
 
     # Verify target domains in each
     all_doh = set(doh_domains)
@@ -376,13 +376,13 @@ def run():
     print(f"Source host to filter: {SOURCE_HOST}")
 
     candidates = step1_extract_candidates()
-    assert len(candidates) > 0, "must extract at least 2 domain candidates"
+    assert candidates, "must extract at least 2 domain candidates"
 
     filtered, source_host_domains = step2_filter_source_host(candidates)
-    assert len(filtered) > 0, "must have filtered candidates after source host removal"
+    assert filtered, "must have filtered candidates after source host removal"
 
     ranked = step3_rank(filtered, source_host_domains)
-    assert len(ranked) > 0, "ranked candidates must not be empty"
+    assert ranked, "ranked candidates must not be empty"
 
     lane_eligibility = step4_lane_eligibility(ranked)
     ledger, ledger_summary = step5_ledger_integration(ranked)

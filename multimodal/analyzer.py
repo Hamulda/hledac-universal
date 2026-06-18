@@ -717,7 +717,7 @@ class DocumentExtractor:
                 text_content = await self._extract_image_text(file_path)
                 metadata["extracted_chars"] = len(text_content) if text_content else 0
 
-            text_content is not None and len(text_content) > 0
+            text_content is not None and text_content
         except Exception as exc:
             log.debug("DocumentExtractor: extraction failed for %s: %s", file_path, exc)
 

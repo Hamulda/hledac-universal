@@ -25,7 +25,7 @@ import urllib.parse
 import xml.etree.ElementTree as ET
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from enum import Enum, auto
 from pathlib import Path
 from typing import Any
@@ -220,7 +220,7 @@ class SourcePerformance:
         else:
             self.avg_response_time_ms = (self.avg_response_time_ms * 0.8) + (response_time_ms * 0.2)
 
-        self.last_used = datetime.now()  # noqa: DTZ005
+        self.last_used = datetime.now(UTC)  # noqa: DTZ005
 
 
 # =============================================================================

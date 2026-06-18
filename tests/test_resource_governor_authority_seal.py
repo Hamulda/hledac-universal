@@ -208,7 +208,7 @@ class TestSidecarAdmissionHotPath:
                 self.generic_visit(node)
 
         CallFinder().visit(tree)
-        assert len(calls) > 0, "sidecar_admission() has no caller in runtime/sidecar_bus.py"
+        assert calls, "sidecar_admission() has no caller in runtime/sidecar_bus.py"
 
 
 class TestLaneAdmissionHotPath:

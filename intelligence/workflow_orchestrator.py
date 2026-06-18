@@ -12,7 +12,7 @@ import json
 import logging
 import time
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 from utils.async_helpers import safe_gather_dropin
@@ -156,7 +156,7 @@ class ComprehensiveReport:
             "",
             f"**Verdict:** {self.verdict}",
             f"**Confidence:** {self.confidence:.2%}",
-            f"**Generated:** {datetime.now().isoformat()}",  # noqa: DTZ005
+            f"**Generated:** {datetime.now(UTC).isoformat()}",  # noqa: DTZ005
             "",
             "## Input Summary",
             ""
@@ -227,7 +227,7 @@ class ComprehensiveReport:
             <h1>Comprehensive Analysis Report</h1>
             <span class="verdict {verdict_class}">{self.verdict}</span>
             <p><strong>Confidence:</strong> {self.confidence:.2%}</p>
-            <p><strong>Generated:</strong> {datetime.now().isoformat()}</p>  # noqa: DTZ005
+            <p><strong>Generated:</strong> {datetime.now(UTC).isoformat()}</p>  # noqa: DTZ005
         </div>
 
         <div class="section">
@@ -379,7 +379,7 @@ class WorkflowOrchestrator:
             details: Event details
         """
         self._execution_timeline.append({
-            "timestamp": datetime.now().isoformat(),  # noqa: DTZ005
+            "timestamp": datetime.now(UTC).isoformat(),  # noqa: DTZ005
             "type": event_type,
             "details": details
         })
@@ -821,7 +821,7 @@ class WorkflowOrchestrator:
 
         if len(timestamps) > 1:
             # Check for future timestamps
-            now = datetime.now()  # noqa: DTZ005
+            now = datetime.now(UTC)  # noqa: DTZ005
             for module, ts in timestamps:
                 if ts > now:
                     anomalies.append(Anomaly(
@@ -881,7 +881,7 @@ class WorkflowOrchestrator:
         # Prepare export data
         export_data = {
             "version": "1.0",
-            "generated_at": datetime.now().isoformat(),  # noqa: DTZ005
+            "generated_at": datetime.now(UTC).isoformat(),  # noqa: DTZ005
             "total_modules": len(context.module_status),
             "successful_modules": len(results),
             "risk_score": correlations.risk_score

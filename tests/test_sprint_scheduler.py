@@ -703,7 +703,7 @@ async def test_synthesis_sidecar_graceful_on_error(minimal_config):
     sched._duckdb_store.get_top_findings = AsyncMock(return_value=[
         {"ioc": "1.2.3.4", "text": "malware test"}
     ])
-    sched._duckdb_store.get_stix_graph = AsyncMock(return_value=None)
+    sched._duckdb_store.get_stix_graph = MagicMock(return_value=None)
 
     # Mock SynthesisRunner that raises
     mock_runner = MagicMock()

@@ -610,7 +610,7 @@ class PatternMiningEngine:
         await _get_mamba_model()
         if _MAMBA_AVAILABLE:
             forecast = await forecast_mamba2(series)
-            if forecast and len(forecast) > 0:
+            if forecast and forecast:
                 last = series[-1] if series else 0
                 std = (max(series) - min(series)) / 2 if len(series) > 1 else 1.0
                 if abs(forecast[0] - last) > 0.5 * std:

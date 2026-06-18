@@ -1497,7 +1497,7 @@ class RAGEngine:
 
                 # Handle different shapes: [[[dim]]], [[dim]], or [dim]
                 embedding = []
-                while isinstance(output, list) and len(output) > 0:
+                while isinstance(output, list) and output:
                     if isinstance(output[0], list):
                         output = output[0]
                     else:

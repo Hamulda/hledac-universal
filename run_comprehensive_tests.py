@@ -12,7 +12,7 @@ import sys
 import threading
 import time
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 
 import psutil
@@ -160,7 +160,7 @@ class MemoryMonitor:
                 self._peak_memory = max(self._peak_memory, memory_mb)
                 self.snapshots.append(MemorySnapshot(
                     phase="monitoring",
-                    timestamp=datetime.now(),  # noqa: DTZ005
+                    timestamp=datetime.now(UTC),  # noqa: DTZ005
                     memory_mb=memory_mb,
                     rss_mb=memory_info.rss / (1024 * 1024),
                     vms_mb=memory_info.vms / (1024 * 1024),
@@ -177,7 +177,7 @@ class MemoryMonitor:
             self._peak_memory = max(self._peak_memory, memory_mb)
             self.snapshots.append(MemorySnapshot(
                 phase=phase,
-                timestamp=datetime.now(),  # noqa: DTZ005
+                timestamp=datetime.now(UTC),  # noqa: DTZ005
                 memory_mb=memory_mb,
                 rss_mb=memory_info.rss / (1024 * 1024),
                 vms_mb=memory_info.vms / (1024 * 1024),
@@ -293,7 +293,7 @@ class TestSuiteRunner:
 
     def _generate_html_report(self, result: SuiteResult) -> Path:
         """Generate HTML report for a test suite."""
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")  # noqa: DTZ005
+        timestamp = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")  # noqa: DTZ005
         html_file = self.report_dir / f"{result.file.replace('.py', '')}_{timestamp}.html"
 
         html_content = f"""<!DOCTYPE html>
@@ -459,7 +459,7 @@ class TestSuiteRunner:
 
         {f'<div class="output-section"><h3>Error Output</h3><pre>{self._escape_html(result.error_output)}</pre></div>' if result.error_output else ''}  # noqa: E501
 
-        <p class="timestamp">Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</p>  # noqa: DTZ005
+        <p class="timestamp">Generated: {datetime.now(UTC).strftime('%Y-%m-%d %H:%M:%S')}</p>  # noqa: DTZ005
     </div>
 </body>
 </html>"""
@@ -478,7 +478,7 @@ class TestSuiteRunner:
 
     def _generate_json_summary(self) -> Path:
         """Generate JSON summary of all test results."""
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")  # noqa: DTZ005
+        timestamp = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")  # noqa: DTZ005
         json_file = self.report_dir / f"test_summary_{timestamp}.json"
 
         summary = {
@@ -688,18 +688,18 @@ class TestSuiteRunner:
     def run_suite(self, name: str, file: str, timeout: int) -> SuiteResult:
         """Run a single test suite."""
         result = SuiteResult(name=name, file=file)
-        result.start_time = datetime.now()  # noqa: DTZ005
+        result.start_time = datetime.now(UTC)  # noqa: DTZ005
 
         # Discover test file
         test_file = self._discover_test_file(file)
         if not test_file:
             result.status = "skipped"
             result.error_output = f"Test file not found: {file}"
-            result.end_time = datetime.now()  # noqa: DTZ005
+            result.end_time = datetime.now(UTC)  # noqa: DTZ005
             return result
 
         # Generate report paths
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")  # noqa: DTZ005
+        timestamp = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")  # noqa: DTZ005
         html_path = self.report_dir / f"{file.replace('.py', '')}_{timestamp}.html"
         json_path = self.report_dir / f"{file.replace('.py', '')}_{timestamp}.json"
 
@@ -762,7 +762,7 @@ class TestSuiteRunner:
         self.memory_snapshots.extend(self.memory_monitor.snapshots)
 
         # Record end time
-        result.end_time = datetime.now()  # noqa: DTZ005
+        result.end_time = datetime.now(UTC)  # noqa: DTZ005
 
         # Generate HTML report
         if result.status != "skipped":
@@ -773,7 +773,7 @@ class TestSuiteRunner:
 
     def run_all(self) -> bool:
         """Run all test suites."""
-        self.start_time = datetime.now()  # noqa: DTZ005
+        self.start_time = datetime.now(UTC)  # noqa: DTZ005
         self._print_header()
 
         # Record initial memory
@@ -793,7 +793,7 @@ class TestSuiteRunner:
             # Record memory after suite
             self.memory_monitor.record_phase(f"After {name}")
 
-        self.end_time = datetime.now()  # noqa: DTZ005
+        self.end_time = datetime.now(UTC)  # noqa: DTZ005
 
         # Print all reports
         self._print_summary()
@@ -873,12 +873,12 @@ Examples:
         # Find suite
         for name, file, timeout in SUITES:
             if name == args.suite:
-                runner.start_time = datetime.now()  # noqa: DTZ005
+                runner.start_time = datetime.now(UTC)  # noqa: DTZ005
                 runner._print_header()
                 result = runner.run_suite(name, file, timeout)
                 runner.results.append(result)
                 runner._print_suite_result(result)
-                runner.end_time = datetime.now()  # noqa: DTZ005
+                runner.end_time = datetime.now(UTC)  # noqa: DTZ005
                 runner._print_summary()
                 return 0 if result.status == "passed" else 1
         print(red(f"Suite not found: {args.suite}"))

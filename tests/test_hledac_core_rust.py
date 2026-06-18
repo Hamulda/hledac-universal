@@ -390,7 +390,7 @@ class TestRollingHashEngine:
         data = b"0123456789"
         hashes = engine.hashes(data)
         assert isinstance(hashes, list)
-        assert len(hashes) > 0
+        assert hashes
 
     @pytest.mark.skipif(not _RUST_AVAILABLE or RollingHashEngine is None, reason="Rust not available")
     def test_roll_method(self):
@@ -486,7 +486,7 @@ def test_python_fallback_available():
     """Python fallback path is always available."""
     # Test pure Python paths work even when Rust unavailable
     iocs = _python_extract_iocs("192.168.1.1")
-    assert len(iocs) > 0
+    assert iocs
 
     url = _python_normalize("HTTP://Example.COM/")
     assert url.startswith("http://example.com")

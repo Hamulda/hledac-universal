@@ -37,7 +37,7 @@ import os
 import threading
 import time
 from collections import deque
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -121,7 +121,7 @@ def _get_trace_root() -> Path:
 def _get_trace_paths() -> tuple[Path, Path]:
     """Get JSONL and summary paths."""
     root = _get_trace_root()
-    ts = datetime.now().strftime("%Y%m%d_%H%M%S")  # noqa: DTZ005
+    ts = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")  # noqa: DTZ005
     pid = os.getpid()
     run_suffix = f"{_run_id or 'unknown'}_{ts}_{pid}"
     jsonl_path = root / f"flow_{run_suffix}.jsonl"

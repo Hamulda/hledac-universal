@@ -2621,7 +2621,7 @@ class MultiLevelContextCache:
                     result = asyncio.get_event_loop().run_until_complete(
                         self.embedder.encode_batch([text])
                     )
-                    return result[0] if len(result) > 0 else None
+                    return result[0] if result else None
                 # FastEmbed has embed method
                 embeddings = list(self.embedder.embed([text]))
                 if embeddings:

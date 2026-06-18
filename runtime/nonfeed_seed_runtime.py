@@ -219,6 +219,128 @@ def _compute_lanes_unlocked(
     return sorted(lanes)
 
 
+# P3-1: Rule-based query decomposition for complex threat queries.
+# Maps OSINT keyword patterns → surface-level domain seeds for PUBLIC/DOH/WAYBACK lanes.
+# Fires when regex finds no domains AND MLX is unavailable.
+#
+# Examples:
+#   "APT nation-state ransomware" → ["ransomware.onion", "apt39.darkweb.ai", ...]
+#   "data breach leak exposure"  → ["breachforum.onion", "exposed.me", ...]
+_DEAD_SURFACE_DOMAINS: frozenset[str] = frozenset({
+    # Ransomware leak sites
+    "ransomware.onion", "lockbit3.onion", "contitour.onion", "alphv.onion",
+    "malwareclub.onion", "badblocks.onion", "hunters.onion", "bianlian.onion",
+    # Dark web forums / marketplaces (generic surface patterns)
+    "breachforum.onion", "exploit.onion", "ramp.onion", "befitter.onion",
+    "undersea.onion", "lanzas.onion", "anomalous.onion", "blackforums.onion",
+    # OSINT aggregators & radar
+    "ransomware.live", "ransomwatch.onion", "ransomlook.onion",
+    "darkwebdict.onion", "deepweb.onion", "darksearch.onion",
+    # Threat intel & feeds
+    "abuse.ch", "ransomwaretracker.nl", "threatfox.abuse.ch",
+    "urlhaus.abuse.ch", "bazaar.abuse.ch",
+    # IOC aggregation
+    "alienvault.com", "otx.alienvault.com", "threatconnect.com",
+    "misinfosec.ai", "misinformationtracker.ai",
+    # Dark web recon (surface .com sites, not actual .onion)
+    "intelbroker.onion", "breachinsider.onion", "泄漏.onion",
+})
+
+# Keyword → surface domain mapping (most specific wins)
+_DECOMPOSE_RULES: tuple[tuple[frozenset[str], list[str]], ...] = (
+    # Ransomware-specific
+    (frozenset({"ransomware", "ransom", "lockbit", "conti", "alphv", "royal",
+                "clop", "hive", "blackcat", "bellacat", "bianlian", "PLAY",
+                "7even", "Qilin", "Cactus", "DarkRace", "Eking", "icefire"}),
+     ["ransomware.live", "ransomlook.onion", "ransomwaretracker.nl",
+      "threatfox.abuse.ch", "ransomware.onion"]),
+    # Nation-state APT
+    (frozenset({"apt", "nation-state", "apt29", "apt41", "lazarus", "lazarusgroup",
+                "kimsuky", "group72", "darkhotel", "mudged", "platinum", "winnti",
+                "tick", "menuPass", "Tonto", "muddywater", "cobaltstrike"}),
+     ["threatconnect.com", "otx.alienvault.com", "abuse.ch",
+      "ransomware.live", "ransomlook.onion"]),
+    # Data breach / leak
+    (frozenset({"breach", "leak", "exposed", "exposure", "dump", "database",
+                "credential", "password", "combolist", "carding", "cvv"}),
+     ["breachforum.onion", "bazaar.abuse.ch", "urlhaus.abuse.ch",
+      "abuse.ch", "alienvault.com"]),
+    # Dark web / TOR
+    (frozenset({"darkweb", "dark", "tor", "onion", "deepweb", "underground",
+                "hacker", "cybercrime", "blackhat", "exploit", "zeroday",
+                "vulnerability", "exploitdb", "cve"}),
+     ["exploit.onion", "ransomware.live", "abuse.ch",
+      "threatfox.abuse.ch", "ransomwaretracker.nl", "urlhaus.abuse.ch"]),
+    # Malware / infostealer
+    (frozenset({"malware", "infostealer", "stealer", "botnet", "triton",
+                "emotet", "icedid", "qakbot", "raccoon", "mStealer"}),
+     ["urlhaus.abuse.ch", "threatfox.abuse.ch", "abuse.ch",
+      "ransomware.live", "bazaar.abuse.ch"]),
+    # Phishing / fraud
+    (frozenset({"phishing", "scam", "fraud", "phishingkit", "phish", "typosquat"}),
+     ["urlhaus.abuse.ch", "phishstats.info", "abuse.ch",
+      "threatfox.abuse.ch"]),
+)
+
+
+def _decompose_query_keywords_to_seeds(query: str) -> list[str]:
+    """
+    P3-1: Rule-based query decomposition for complex OSINT threat queries.
+
+    Maps keyword patterns to surface-level domain seeds when:
+    1. Regex found no domains (no direct IOC in query)
+    2. MLX is unavailable or produced nothing
+
+    Returns up to 5 domain seeds from _DEAD_SURFACE_DOMAINS matched by query
+    keywords. These are intentionally broad/generic surface seeds — the actual
+    pivoting happens via DOH/WAYBACK/CT lanes that query these seeds.
+
+    This is NOT MLX-dependent — pure keyword matching with bounded output.
+
+    Args:
+        query: Sprint query string (e.g. "APT nation-state ransomware leak")
+
+    Returns:
+        List of domain strings (max 5), sorted by specificity match.
+        Empty list if no rules matched.
+    """
+    try:
+        tokens = frozenset(
+            t.strip(".,!?;:()[]{}'\"-").lower()
+            for t in query.split()
+            if len(t.strip(".,!?;:()[]{}'\"")) >= 3
+        )
+        if not tokens:
+            return []
+
+        matched_domains: list[tuple[int, str]] = []  # (score, domain)
+
+        for keywords, domains in _DECOMPOSE_RULES:
+            overlap = tokens & keywords
+            if overlap:
+                score = len(overlap)  # more keywords = higher score
+                for domain in domains:
+                    matched_domains.append((score, domain))
+
+        if not matched_domains:
+            # Fallback: generic surface seeds for ANY OSINT query
+            return list(_DEAD_SURFACE_DOMAINS)[:5]
+
+        # Sort by score descending, dedupe, return top 5
+        matched_domains.sort(key=lambda x: x[0], reverse=True)
+        seen: set[str] = set()
+        result: list[str] = []
+        for _, domain in matched_domains:
+            if domain not in seen:
+                seen.add(domain)
+                result.append(domain)
+            if len(result) >= 5:
+                break
+        return result
+    except Exception:
+        return []
+
+
 async def run_runtime_pivot_prelude(
     query: str,
     duckdb_store: DuckDBShadowStore | None,
@@ -291,11 +413,8 @@ async def run_runtime_pivot_prelude(
         "seed_quality_bypass_reason": "",
     }
 
-    if not nonfeed_diagnostic_active:
-        result["seed_context_skip_reason"] = "profile_not_nonfeed_diagnostic_or_deep_osint"
-        return result
-
-    # Collect ALL extracted seeds (before quality gate) for classification
+    # Step 1: direct extraction from query — runs for ALL profiles (P3-1: rule-based fallback)
+    # This is profile-independent: just regex extraction from the query string.
     _all_seeds: list = []
     _domains_q: set[str] = set()
     _ips_q: set[str] = set()
@@ -303,7 +422,6 @@ async def run_runtime_pivot_prelude(
     _hashes_q: set[str] = set()
     _cves_q: set[str] = set()
 
-    # Step 1: direct extraction from query
     query_seeds = extract_nonfeed_seeds_from_text(query, max_seeds=_MAX_SEEDS_FROM_QUERY)
     _all_seeds.extend(query_seeds)
     for s in query_seeds:

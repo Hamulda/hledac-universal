@@ -115,8 +115,10 @@ def _ja3_log(*, profile: str, url: str, used_profile: str) -> None:
 
 # ---------------------------------------------------------------------------
 # F265C: blocking Alt-Svc pre-probe for first-fetch H3 priming.
-# Runs synchronously before the cached fetch when _pre_probe=True.
-# Bounded: ~200-400ms; fail-soft; never raises.
+# F265B P2-3 FIX: Made async (fire-and-forget via create_task in caller).
+# Prevents 4s blocking on cold start when H3 LRU is empty.
+# The probe result is written to the same LRU the reactive path uses,
+# so subsequent calls to http_version_for_curl_cffi() benefit immediately.
 # ---------------------------------------------------------------------------
 async def _blocking_altsvc_probe_for_url(url: str) -> Any:
     """Perform a blocking HEAD probe to prime the H3 LRU before first fetch.
@@ -533,17 +535,29 @@ async def fetch_via_curl_cffi_cached(
         store as _cc_store,
     )
 
-    # F265C: optional blocking pre-probe — primes H3 LRU before first fetch.
-    # Runs only when: _pre_probe=True, LRU is cold, feature is enabled.
-    # Bounded: ~200-400ms overhead max; never raises.
+    # F265B P2-3 FIX: Fire-and-forget pre-probe via create_task.
+    # The blocking version (await _blocking_altsvc_probe_for_url) cost 4s on
+    # cold LRU — too expensive for single-shot sprints. Now we hand off the
+    # HEAD probe to a detached task and immediately proceed with HTTP/1.1/2.
+    # If the probe detects h3 it populates the LRU; the NEXT fetch to this
+    # host benefits from H3. This is a net improvement even for single-shot
+    # sprints because the main fetch is no longer blocked.
+    # P2-3 ADDITION: skip probe for onion/Tor URLs — QUIC/UDP cannot be
+    # tunneled through Tor SOCKS5H and dark web hosts never advertise h3.
     if _pre_probe and http_version is None and not _force_refresh:
-        try:
-            _resolved_h3 = await _blocking_altsvc_probe_for_url(url)
-            if _resolved_h3 is not None:
-                http_version = _resolved_h3
-        except Exception:  # noqa: BLE001
-            # Probe failed — fall through with http_version=None (HTTP/1.1/2).
-            pass
+        _url_lower = url.lower() if url else ""
+        _is_dark = _url_lower.endswith(".onion") or ".i2p" in _url_lower or ".b32.i2p" in _url_lower
+        if not _is_dark:
+            try:
+                asyncio.create_task(
+                    _blocking_altsvc_probe_for_url(url),
+                    name=f"curl_cffi:altsvc_probe:{url[:60]}",
+                )
+            except RuntimeError:
+                # No event loop — probe silently skipped (acceptable for single-shot).
+                pass
+            except Exception:  # noqa: BLE001
+                pass
 
     merged_headers: dict[str, str] = dict(headers) if headers else {}
     sent_conditional = False

@@ -108,7 +108,7 @@ async def test_cooccurrence_min_support_filter():
 
     # unique123xyz.com + 99.99.99.99 only co-occurred once (below MIN_SUPPORT=2)
     unique_edges = [e for e in edges if "unique123xyz.com" in e.source_ioc or "unique123xyz.com" in e.target_ioc]
-    assert len(unique_edges) == 0
+    assert not unique_edges
 
 
 def test_cooccurrence_pair_scoring():
@@ -156,7 +156,7 @@ async def test_cooccurrence_persistence():
         await miner2.load(db_path)
 
         # Check pairs were loaded
-        assert len(miner2._pairs) > 0
+        assert miner2._pairs
 
 
 @pytest.mark.asyncio

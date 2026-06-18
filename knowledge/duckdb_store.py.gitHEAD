@@ -6616,7 +6616,7 @@ class DuckDBShadowStore:
                         "SELECT 1 FROM shadow_findings WHERE id = ? LIMIT 1",
                         [finding_id],
                     ).fetchall()
-                    return len(result) > 0
+                    return result
                 finally:
                     conn.close()
             else:

@@ -84,7 +84,7 @@ class TestCausalEngine:
         engine = CausalEngine()
         entities = engine.extract_entities(sample_findings)
 
-        assert len(entities) > 0, "Should extract at least one entity"
+        assert entities, "Should extract at least one entity"
         assert any(e.entity_type == "ip" for e in entities), "Should extract IP entity"
         assert any(e.entity_type == "domain" for e in entities), "Should extract domain entity"
         assert any(e.entity_type == "email" for e in entities), "Should extract email entity"
@@ -168,7 +168,7 @@ class TestCausalEngine:
 
         assert isinstance(hypotheses, list), "Should return list of hypotheses"
         # Verify pipeline completed all steps
-        assert len(engine._entities) > 0, "Should have extracted entities"
+        assert engine._entities, "Should have extracted entities"
         assert len(engine._sequences) >= 0, "Should have built sequences"
 
     @pytest.mark.asyncio

@@ -398,13 +398,13 @@ class UniversalSwarmCoordinator(UniversalCoordinator):
             raise ImportError("numpy required for swarm metrics computation — pip install 'hledac[dev]'")
 
         # Calculate diversity
-        positions = [a.position for a in self.agents.values() if len(a.position) > 0]
+        positions = [a.position for a in self.agents.values() if a.position]
         if positions:
             positions_array = np.array(positions)
             metrics.diversity = float(np.std(positions_array, axis=0).mean())
 
         # Calculate convergence
-        best_positions = [a.best_position for a in self.agents.values() if len(a.best_position) > 0]
+        best_positions = [a.best_position for a in self.agents.values() if a.best_position]
         if best_positions:
             best_array = np.array(best_positions)
             metrics.convergence = float(1.0 - (np.std(best_array, axis=0).mean() / 10.0))
@@ -536,14 +536,14 @@ class UniversalSwarmCoordinator(UniversalCoordinator):
 
             elif action == "inject_randomness":
                 for agent in list(self.agents.values())[:5]:
-                    if len(agent.velocity) > 0:
+                    if agent.velocity:
                         agent.velocity = np.random.uniform(-1, 1, len(agent.velocity)).tolist()
 
             elif action == "reinitialize_particles":
                 ratio = params.get('reinit_ratio', 0.3)
                 num_reinit = max(1, int(len(self.agents) * ratio))
                 for agent in list(self.agents.values())[:num_reinit]:
-                    if len(agent.position) > 0:
+                    if agent.position:
                         agent.position = np.random.uniform(-5, 5, len(agent.position)).tolist()
                         agent.best_fitness = float('-inf')
 

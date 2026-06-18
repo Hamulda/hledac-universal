@@ -846,7 +846,7 @@ class AutonomousAnalyzer:
         try:
             # Test basic analysis
             test_profile = self.analyze("test query")
-            return test_profile is not None and len(test_profile.tools) > 0
+            return test_profile is not None and test_profile.tools
         except Exception as e:
             logger.error(f"Health check failed: {e}")
             return False

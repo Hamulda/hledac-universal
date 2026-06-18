@@ -2689,7 +2689,7 @@ def network_recon_result_to_findings(
         findings = findings[:max_findings]
 
         # Low information check
-        if built == 0 and len(rejections) == 0:
+        if built == 0 and not rejections:
             rejections.append(REJECTION_LOW_INFORMATION)
             rejected = 1
 

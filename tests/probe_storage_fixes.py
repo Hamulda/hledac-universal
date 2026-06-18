@@ -185,7 +185,7 @@ def test_fix4_decode_response_bytes_basic():
     raw_latin1 = b"\x80\x81\x82 caf\xc3\xa9"  # bytes only, no Python source non-ASCII
     result = decode_response_bytes(raw_latin1)
     assert isinstance(result, str)
-    assert len(result) > 0
+    assert result
     print(f"OK fix4: latin-1 fallback -> {result!r}")
 
 

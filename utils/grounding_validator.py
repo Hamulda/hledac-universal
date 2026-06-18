@@ -101,7 +101,7 @@ def validate_strings_grounded(
             missing.append(item)
 
     checked = len(items_to_check)
-    all_grounded = len(missing) == 0
+    all_grounded = not missing
 
     reason = REASON_ALL_ITEMS_GROUNDED if all_grounded else REASON_MISSING_ITEMS
 

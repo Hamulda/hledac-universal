@@ -167,7 +167,7 @@ class TestUnifiedMemoryMonitor:
         summary = monitor.get_summary()
 
         assert isinstance(summary, str)
-        assert len(summary) > 0
+        assert summary
 
     def test_convenience_function(self):
         """Test get_unified_snapshot convenience function."""

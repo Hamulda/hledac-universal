@@ -83,7 +83,7 @@ async def main():
             results = await client.search(query, max_results=10)
             q_elapsed = (time.time() - q_start) * 1000
 
-            non_empty = len(results) > 0
+            non_empty = results
             provider_hits.append({"query": query, "hit": non_empty, "count": len(results), "ms": round(q_elapsed)})
 
             print(f"  [{elapsed:.0f}s] Q{qi+1}: {query[:40]:<40} → {len(results):>3} results {'✓' if non_empty else '✗'} ({q_elapsed:.0f}ms)")  # noqa: E501

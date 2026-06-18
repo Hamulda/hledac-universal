@@ -11,7 +11,7 @@ import subprocess
 import time as time_module
 from collections import deque
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from enum import Enum
 from typing import Any
 
@@ -458,7 +458,7 @@ class IntelligentResourceAllocator:
             allocation = ResourceAllocation(
                 task_id=request.task_id,
                 allocated_resources=allocated_resources,
-                start_time=datetime.now(),  # noqa: DTZ005
+                start_time=datetime.now(UTC),  # noqa: DTZ005
                 end_time=None,
                 actual_usage={},
                 efficiency_score=0.0
@@ -511,7 +511,7 @@ class IntelligentResourceAllocator:
         """Release allocated resources"""
         if task_id in self.active_allocations:
                 allocation = self.active_allocations[task_id]
-                allocation.end_time = datetime.now()  # noqa: DTZ005
+                allocation.end_time = datetime.now(UTC)  # noqa: DTZ005
 
             # Calculate efficiency score
                 duration = (allocation.end_time - allocation.start_time).total_seconds()
@@ -530,7 +530,7 @@ class IntelligentResourceAllocator:
                 # Update resource history
                 capacity = await self.get_current_capacity()
                 self.resource_history.append({
-                    'timestamp': datetime.now(),  # noqa: DTZ005
+                    'timestamp': datetime.now(UTC),  # noqa: DTZ005
                     'cpu_usage': capacity.cpu_usage,
                     'memory_usage': capacity.memory_usage,
                     'gpu_usage': capacity.gpu_usage,
@@ -688,7 +688,7 @@ class IntelligentResourceAllocator:
     def export_allocation_report(self, filepath: str):
         """Export detailed allocation report"""
         report = {
-            'timestamp': datetime.now().isoformat(),  # noqa: DTZ005
+            'timestamp': datetime.now(UTC).isoformat(),  # noqa: DTZ005
             'statistics': self.get_allocation_statistics(),
             'active_allocations': [
                 {

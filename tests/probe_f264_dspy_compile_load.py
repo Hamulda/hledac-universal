@@ -323,7 +323,7 @@ def test_sp10_brain_compiled_takes_priority(tmp_path: Path, monkeypatch: pytest.
     # Verify the PRIMARY (brain/compiled/) was used by checking demos list.
     target = getattr(result, "program", result)
     demos = getattr(target, "demos", None) or []
-    assert len(demos) == 0, "Expected 0 demos from primary, not legacy"
+    assert not demos, "Expected 0 demos from primary, not legacy"
 
 
 # ── SP11 / SP12: _inject_demos edge cases ───────────────────────────────────

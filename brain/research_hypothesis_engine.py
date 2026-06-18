@@ -39,7 +39,7 @@ import uuid
 from collections import OrderedDict
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 from brain.evidence_fusion import DempsterShafer
@@ -153,13 +153,13 @@ class Hypothesis:
             likelihood_ratio * prior + (1 - prior)
         )
         self.posterior_probability = max(0.0, min(1.0, posterior))
-        self.updated_at = datetime.now()  # noqa: DTZ005
+        self.updated_at = datetime.now(UTC)  # noqa: DTZ005
 
     def add_test_result(self, result: TestResult) -> None:
         """Add a test result and update confidence."""
         self.test_results.append(result)
         self._recalculate_confidence()
-        self.updated_at = datetime.now()  # noqa: DTZ005
+        self.updated_at = datetime.now(UTC)  # noqa: DTZ005
 
     def add_supporting_evidence(self, evidence_id: str, weight: float = 1.0) -> None:
         """Add supporting evidence with optional weight."""
@@ -172,7 +172,7 @@ class Hypothesis:
             ds_engine = getattr(self, '_ds_engine', None)
             if ds_engine is not None:
                 ds_engine.add_evidence('support', mass=min(1.0, weight * 0.5), source_weight=1.0)
-        self.updated_at = datetime.now()  # noqa: DTZ005
+        self.updated_at = datetime.now(UTC)  # noqa: DTZ005
 
     def add_conflicting_evidence(self, evidence_id: str, weight: float = 1.0) -> None:
         """Add conflicting evidence with optional weight."""
@@ -184,7 +184,7 @@ class Hypothesis:
             ds_engine = getattr(self, '_ds_engine', None)
             if ds_engine is not None:
                 ds_engine.add_evidence('conflict', mass=min(1.0, weight * 0.5), source_weight=1.0)
-        self.updated_at = datetime.now()  # noqa: DTZ005
+        self.updated_at = datetime.now(UTC)  # noqa: DTZ005
 
     def _recalculate_confidence(self) -> None:
         """Recalculate confidence based on test results."""
@@ -1257,7 +1257,7 @@ Formát (pouze seznam, žádný další text):
 
             # Determine result based on evidence quality
             evidence_quality = sum(
-                self._evidence.get(eid, Evidence("", "", "", datetime.now())).reliability  # noqa: DTZ005
+                self._evidence.get(eid, Evidence("", "", "", datetime.now(UTC))).reliability  # noqa: DTZ005
                 for eid in evidence_ids
             ) / len(evidence_ids) if evidence_ids else 0.5
 
@@ -1559,7 +1559,7 @@ Formát (pouze seznam, žádný další text):
 
         # Evidence diversity score
         unique_sources = len({
-            self._evidence.get(eid, Evidence("", "unknown", "", datetime.now())).source  # noqa: DTZ005
+            self._evidence.get(eid, Evidence("", "unknown", "", datetime.now(UTC))).source  # noqa: DTZ005
             for eid in hypothesis.supporting_evidence
         })
         diversity_score = min(1.0, unique_sources / 3)

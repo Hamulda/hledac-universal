@@ -54,7 +54,7 @@ def _child_check_registry(child_conn, task_name_check):
     # So _TASK_REGISTRY will be empty ({}).
     import __main__
     main_dict = dir(__main__)
-    '_TASK_REGISTRY' in main_dict and len(main_dict) > 0
+    '_TASK_REGISTRY' in main_dict and main_dict
 
     # Re-import THIS module in child to check state
     import importlib

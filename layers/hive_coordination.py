@@ -26,7 +26,7 @@ import logging
 import sqlite3
 from contextlib import closing
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from enum import Enum
 from typing import Any
 
@@ -254,7 +254,7 @@ class ConnectedCoordinationSystem:
         """
         Process a task through the connected coordination system
         """
-        task_id = f"task_{datetime.now().strftime('%Y%m%d_%H%M%S')}"  # noqa: DTZ005
+        task_id = f"task_{datetime.now(UTC).strftime('%Y%m%d_%H%M%S')}"  # noqa: DTZ005
 
         # Create coordination task
         task = CoordinationTask(
@@ -615,7 +615,7 @@ class ConnectedCoordinationSystem:
         cursor.execute('''
             INSERT OR REPLACE INTO unified_memory (namespace, layer, key, value, timestamp)
             VALUES (?, ?, ?, ?, ?)
-        ''', (namespace, layer, key, json.dumps(value), datetime.now()))  # noqa: DTZ005
+        ''', (namespace, layer, key, json.dumps(value), datetime.now(UTC)))  # noqa: DTZ005
         self.memory_db.commit()
 
     def _store_coordination_event(self, event_type: str, source_layer: str,

@@ -366,7 +366,7 @@ def _extract_terminality_fields(data: dict) -> tuple:
         if satisfied is None:
             ml = terminality.get("missing_lanes")
             if isinstance(ml, list):
-                satisfied = (len(ml) == 0)
+                satisfied = (not ml)
         if missing_lanes is None:
             missing_lanes = terminality.get("missing_lanes")
     # Final live_kpi fallback
@@ -443,7 +443,7 @@ def _extract_acquisition_prelude(data: dict) -> dict:
 
         if prelude_terminal_lanes is None:
             tl = prelude.get("prelude_terminal_lanes")
-            if isinstance(tl, list) and len(tl) > 0:
+            if isinstance(tl, list) and tl:
                 prelude_terminal_lanes = tl
 
         # Stop once we have all three fields
@@ -599,7 +599,7 @@ def _failures_from_dict(data: dict, profile: str, query_type: str, allow_hardwar
             ))
 
         # Rule 2: prelude_checked true + prelude_missing_lanes non-empty → PRELUDE_MISSING_LANES
-        if prelude_checked is True and prelude_missing_lanes and len(prelude_missing_lanes) > 0:
+        if prelude_checked is True and prelude_missing_lanes and prelude_missing_lanes:
             failures_append(ValidationFailure(
                 Verdict.FAIL_ACQUISITION_PRELUDE_MISSING_LANES,
                 f"acquisition_prelude.prelude_missing_lanes = {prelude_missing_lanes}, expected []",
@@ -609,7 +609,7 @@ def _failures_from_dict(data: dict, profile: str, query_type: str, allow_hardwar
         # Rule 3: prelude terminal lanes contains PUBLIC/CT but final terminality missing_lanes
         # contains PUBLIC/CT → TERMINALITY_STALE_AFTER_PRELUDE
         if (prelude_checked is True
-                and prelude_missing_lanes is not None and len(prelude_missing_lanes) == 0
+                and prelude_missing_lanes is not None and not prelude_missing_lanes
                 and prelude_terminal_lanes is not None and missing_lanes is not None):
             MUST_TERMINAL = frozenset(["PUBLIC", "CT"])  # noqa: N806
             prelude_has_mandatory = MUST_TERMINAL.intersection(
@@ -714,7 +714,7 @@ def _failures_from_dict(data: dict, profile: str, query_type: str, allow_hardwar
             f"source_family_outcomes is {sf_outcomes!r}, expected non-empty dict",
             "acquisition_report.source_family_outcomes",
         ))
-    elif isinstance(sf_outcomes, dict) and len(sf_outcomes) == 0:
+    elif isinstance(sf_outcomes, dict) and not sf_outcomes:
         failures_append(ValidationFailure(
             Verdict.FAIL_MISSING_SOURCE_OUTCOMES,
             "source_family_outcomes is empty dict",

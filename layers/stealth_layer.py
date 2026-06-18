@@ -2616,7 +2616,7 @@ class Chameleon:
 
             except ImportError:
                 # Fallback: modify argv[0]
-                if len(sys.argv) > 0:
+                if sys.argv:
                     sys.argv[0] = target_name
                     self._masqueraded = True
 

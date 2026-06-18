@@ -11,7 +11,7 @@ Run: ``uv run pytest tests/probe_hypothesis_types_extraction.py -v``
 from __future__ import annotations
 
 import sys
-from datetime import datetime
+from datetime import UTC, datetime
 
 sys.path.insert(0, "hledac/universal")
 
@@ -113,7 +113,7 @@ class TestHypothesisBehaviour:
             evidence_id="e1",
             source="unit",
             content="c",
-            timestamp=datetime.now(),  # noqa: DTZ005
+            timestamp=datetime.now(UTC),  # noqa: DTZ005
             reliability=0.9,
             relevance=0.8,
         )

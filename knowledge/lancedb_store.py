@@ -652,6 +652,22 @@ class LanceDBIdentityStore:
             except Exception:
                 pass
 
+        # F265FIX: Release MLX GPU tensors BEFORE eval/clear_cache
+        # _mlx_embeddings holds entire embedding table in GPU for process lifetime
+        # Only released on shutdown — without this, Metal memory stays allocated
+        if self._mlx_embeddings is not None:
+            del self._mlx_embeddings
+            self._mlx_embeddings = None
+        if self._binary_embeddings is not None:
+            del self._binary_embeddings
+            self._binary_embeddings = None
+        self._mlx_ids = None
+        self._mlx_id_to_idx = {}
+        self._mlx_embeddings_total_count = 0
+
+        # Clear compiled similarity function
+        self._compiled_similarity = None
+
         # Clear MLX memory — gc.freeze() M1-safe, pak Metal clear
         try:
             import gc
@@ -819,15 +835,42 @@ class LanceDBIdentityStore:
         P6-fix: original loaded ALL embeddings at once (~400MB+ for 100k rows).
         Now streams in chunks of _mlx_load_chunk_size rows, building index incrementally.
         Memory budget: 10k rows × 256 dims × 4 bytes ≈ 10MB per chunk.
+        F265FIX: Added RAM guard before loading — skip MLX path when available memory < 3GB.
         """
         if self._table is None:
             return
         try:
             import mlx.core as mx
 
+            # F265FIX: RAM guard — skip MLX path when memory is low
+            # This prevents OOM on M1 8GB when table has >50k rows
+            try:
+                if self._orch and hasattr(self._orch, '_memory_mgr'):
+                    available_gb = self._orch._memory_mgr.get_available_memory_gb()
+                else:
+                    available_gb = 8.0  # Default assumption
+                if available_gb < 3.0:
+                    logger.debug(
+                        f"[LANCEDB_MLX] Skipping MLX load — only {available_gb:.1f}GB available "
+                        f"(need >3GB for embedding table)"
+                    )
+                    return
+            except Exception:
+                pass  # Fall through with guard disabled
+
             total_count = self._table.count_rows()
             if total_count == 0:
                 return
+
+            # F265FIX: Hard cap on total rows loaded to GPU
+            # 50k rows × 256 dims × 1 byte (binary packed) ≈ 200MB GPU
+            MAX_MLX_ROWS = 50_000
+            if total_count > MAX_MLX_ROWS:
+                logger.debug(
+                    f"[LANCEDB_MLX] Capping load from {total_count} to {MAX_MLX_ROWS} rows "
+                    f"(M1 8GB GPU memory budget)"
+                )
+                total_count = MAX_MLX_ROWS
 
             chunk_size = self._mlx_load_chunk_size
             all_embeddings: list[mx.array] = []
@@ -908,7 +951,7 @@ class LanceDBIdentityStore:
 
     async def _mlx_rerank(self, query_emb: list[float], candidates: list[dict], top_k: int) -> list[dict]:
         """Rerank candidates using MLX cosine similarity."""
-        if len(candidates) == 0:
+        if not candidates:
             return candidates[:top_k]
         # P6 fix: lazy-load MLX embeddings on first use (dead code was never wired)
         if self._mlx_embeddings is None:

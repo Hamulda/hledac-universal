@@ -88,7 +88,7 @@ class TestSprint59Prefetch:
 
         # Ověříme, že mock vrací správná data
         neighbors = oracle._get_common_neighbors('test_entity', 10)
-        assert len(neighbors) > 0
+        assert neighbors
 
         candidates = oracle._generate_candidates(
             url='http://test.com/page',

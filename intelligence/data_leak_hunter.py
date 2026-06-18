@@ -20,7 +20,7 @@ import logging
 import time
 import uuid
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from enum import Enum
 from pathlib import Path
 from typing import Any
@@ -271,7 +271,7 @@ class DataLeakHunter:
             value=value,
             target_type=target_type,
             description=description,
-            added_at=datetime.now()  # noqa: DTZ005
+            added_at=datetime.now(UTC)  # noqa: DTZ005
         )
 
         self._targets[target_id] = target
@@ -323,7 +323,7 @@ class DataLeakHunter:
                     for alert in alerts:
                         await self._process_alert(alert)
 
-                    target.last_check = datetime.now()  # noqa: DTZ005
+                    target.last_check = datetime.now(UTC)  # noqa: DTZ005
 
                 self._checks_performed += len(self._targets)
 
@@ -438,7 +438,7 @@ class DataLeakHunter:
                     for breach in breaches:
                         alert = LeakAlert(
                             alert_id=str(uuid.uuid4()),
-                            timestamp=datetime.now(),  # noqa: DTZ005
+                            timestamp=datetime.now(UTC),  # noqa: DTZ005
                             target=email,
                             target_type="email",
                             source=LeakSource.BREACH_API,
@@ -506,7 +506,7 @@ class DataLeakHunter:
                         for source in data.get("sources", []):
                             alert = LeakAlert(
                                 alert_id=str(uuid.uuid4()),
-                                timestamp=datetime.now(),  # noqa: DTZ005
+                                timestamp=datetime.now(UTC),  # noqa: DTZ005
                                 target=value,
                                 target_type=target_type,
                                 source=LeakSource.BREACH_API,
@@ -549,7 +549,7 @@ class DataLeakHunter:
                     for entry in data.get("matches", []):
                         alert = LeakAlert(
                             alert_id=str(uuid.uuid4()),
-                            timestamp=datetime.now(),  # noqa: DTZ005
+                            timestamp=datetime.now(UTC),  # noqa: DTZ005
                             target=value,
                             target_type=target_type,
                             source=LeakSource.BREACH_API,
@@ -749,7 +749,7 @@ class DataLeakHunter:
                             if value.lower() in result.get("text", "").lower():
                                 alert = LeakAlert(
                                     alert_id=str(uuid.uuid4()),
-                                    timestamp=datetime.now(),  # noqa: DTZ005
+                                    timestamp=datetime.now(UTC),  # noqa: DTZ005
                                     target=value,
                                     target_type=target_type,
                                     source=LeakSource.PASTE_SITE,

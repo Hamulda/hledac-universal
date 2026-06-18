@@ -306,7 +306,7 @@ class TorTransport(Transport):
                     ctrl.authenticate()
                     circuits = ctrl.get_circuits()
                     built = [c for c in circuits if c.status == "BUILT"]
-                    return len(built) > 0
+                    return built
             except Exception:
                 return True  # stem unavailable → SOCKS check sufficient
 

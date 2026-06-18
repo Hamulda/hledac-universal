@@ -189,10 +189,10 @@ def probe(benchmark_json_path: str, report_json_path: str | None = None) -> Prob
         sprint_id_match = False
 
     # Check runtime_truth presence
-    runtime_truth_present = isinstance(runtime_truth, dict) and len(runtime_truth) > 0
+    runtime_truth_present = isinstance(runtime_truth, dict) and runtime_truth
 
     # Check scheduler_exit presence
-    scheduler_exit_present = isinstance(scheduler_exit, dict) and len(scheduler_exit) > 0
+    scheduler_exit_present = isinstance(scheduler_exit, dict) and scheduler_exit
 
     # Build evidence
     evidence = {

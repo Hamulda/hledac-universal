@@ -426,7 +426,7 @@ class EvidenceLog:
     async def _flush_worker(self) -> None:
         """Background worker that flushes events in batches."""
         batch = []
-        last_flush = datetime.now()  # noqa: DTZ005
+        last_flush = datetime.now(UTC)  # noqa: DTZ005
 
         while True:
             try:
@@ -442,7 +442,7 @@ class EvidenceLog:
 
                 # Flush if batch full or timeout reached
                 if len(batch) >= self._SQLITE_BATCH_SIZE or \
-                   (batch and (datetime.now() - last_flush).total_seconds() >= self._SQLITE_FLUSH_INTERVAL):  # noqa: DTZ005
+                   (batch and (datetime.now(UTC) - last_flush).total_seconds() >= self._SQLITE_FLUSH_INTERVAL):  # noqa: DTZ005
                     flush_start = time.perf_counter()
                     # Run directly — _db was created in the event loop thread,
                     # and _flush_batch is an async I/O call.
@@ -450,7 +450,7 @@ class EvidenceLog:
                     flush_latency_ms = (time.perf_counter() - flush_start) * 1000
                     trace_evidence_flush(len(batch), flush_latency_ms, "ok", len(batch))
                     batch = []
-                    last_flush = datetime.now()  # noqa: DTZ005
+                    last_flush = datetime.now(UTC)  # noqa: DTZ005
 
             except asyncio.CancelledError:
                 break
@@ -473,7 +473,7 @@ class EvidenceLog:
 
         records = []
         for event_data in batch:
-            timestamp = event_data.get('timestamp', datetime.now().timestamp())  # noqa: DTZ005
+            timestamp = event_data.get('timestamp', datetime.now(UTC).timestamp())  # noqa: DTZ005
             event_type = event_data.get('event_type', 'unknown')
             data = orjson.dumps(event_data).decode()
             content_hash = event_data.get('content_hash', '')
@@ -1618,7 +1618,7 @@ class EvidenceLog:
             "invalid_events": len(invalid),
             "integrity_percentage": (valid / total * 100) if total > 0 else 100.0,
             "invalid_details": invalid[:10],  # Bounded output
-            "all_valid": len(invalid) == 0,
+            "all_valid": not invalid,
             # Chain verification results
             "chain_valid": chain_valid,
             "chain_invalid_reason": chain_invalid_reason,

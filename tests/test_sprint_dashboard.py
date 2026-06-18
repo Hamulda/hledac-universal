@@ -337,7 +337,7 @@ class TestSprintDashboardLifecycle:
                 update_calls.append(1)
             fake_live.update = tracking_update
             dash.update(result, "WINDUP", 150.0)
-            assert len(update_calls) == 0
+            assert not update_calls
 
     def test_elapsed_time_shown_correctly(self):
         """Elapsed time is reflected in the progress percentage."""

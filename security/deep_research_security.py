@@ -22,7 +22,7 @@ import logging
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 from .audit import AuditConfig, AuditEventType, AuditLevel, AuditLogger
@@ -288,7 +288,7 @@ class SecureSession:
     def __init__(self, security: DeepResearchSecurity, name: str):
         self.security = security
         self.name = name
-        self.session_id = f"{name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"  # noqa: DTZ005
+        self.session_id = f"{name}_{datetime.now(UTC).strftime('%Y%m%d_%H%M%S')}"  # noqa: DTZ005
         self._temp_files = []
         self._encrypted_data = []
 

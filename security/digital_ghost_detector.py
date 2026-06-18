@@ -20,7 +20,7 @@ from __future__ import annotations
 import logging
 import re
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -133,7 +133,7 @@ class DigitalGhostDetector:
         file_path = Path(file_path)
         result = DigitalGhostAnalysis(
             target=str(file_path),
-            timestamp=datetime.now()  # noqa: DTZ005
+            timestamp=datetime.now(UTC)  # noqa: DTZ005
         )
 
         try:
@@ -208,7 +208,7 @@ class DigitalGhostDetector:
         """
         result = DigitalGhostAnalysis(
             target=source,
-            timestamp=datetime.now()  # noqa: DTZ005
+            timestamp=datetime.now(UTC)  # noqa: DTZ005
         )
 
         # Detect ghost signals in text
@@ -541,6 +541,6 @@ def detect_digital_ghosts(file_path: str | Path) -> dict[str, Any]:
         'recovered_fragments': len(result.recovered_content),
         'deletion_indicators': result.deletion_indicators,
         'overall_confidence': result.overall_confidence,
-        'has_ghosts': len(result.ghost_signals) > 0,
+        'has_ghosts': result.ghost_signals,
         'recommendations': result.recommendations
     }

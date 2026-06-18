@@ -321,7 +321,7 @@ def _is_thin_delegation(node: ast.FunctionDef) -> bool:
     - call target may be ast.Name or ast.Attribute (e.g. _qm._helper)
     - no other logic allowed
     """
-    if len(node.body) == 0:
+    if not node.body:
         return False
     # Strip optional leading docstring (Expr(Constant(str)))
     body = node.body

@@ -25,7 +25,7 @@ def test_no_false_positive_cid():
     """Krátké hash strings nejsou detekovány jako CID."""
     test_content = "SHA256: abc123def456 — not a CID"
     matches = extract_cids_from_text(test_content)
-    assert len(matches) == 0
+    assert not matches
 
 
 def test_no_false_positive_short_qm():

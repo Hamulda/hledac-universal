@@ -1011,7 +1011,7 @@ def extract_domain_candidates_from_finding(
 
     # ── 3. provenance tuple for source URL ────────────────────────────────────
     prov = getattr(finding, "provenance", None) or ()
-    if isinstance(prov, (list, tuple)) and len(prov) > 0:
+    if isinstance(prov, (list, tuple)) and prov:
         source_url = str(prov[0]) if prov else ""
         if source_url and ("://" in source_url or _DEDUP_DOMAIN_RE.search(source_url)):
             hostname = _extract_hostname(source_url)
@@ -1195,7 +1195,7 @@ def compute_lane_eligibility(
         for c in candidates
     )
     has_ip = any(c.domain[0].isdigit() for c in candidates if c.domain)
-    has_any = len(candidates) > 0
+    has_any = candidates
 
     return {
         "ct": bool(has_domain),

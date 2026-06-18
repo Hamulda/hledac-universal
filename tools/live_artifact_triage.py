@@ -756,7 +756,7 @@ def triage_live_artifact(data: dict, allow_high_swap: bool = False) -> TriageRes
     skipped_providers = _discovery_skipped_providers(data)
 
     # DISCOVERY_NO_PROVIDER_SELECTED — selected providers list empty
-    if len(selected_providers) == 0 and len(skipped_providers) > 0:
+    if not selected_providers and skipped_providers:
         return TriageResult(
             root_cause_class=RootCause.DISCOVERY_NO_PROVIDER_SELECTED,
             confidence=0.88,
@@ -782,7 +782,7 @@ def triage_live_artifact(data: dict, allow_high_swap: bool = False) -> TriageRes
 
     # DISCOVERY_PROVIDER_NOT_WIRED — NOT_WIRED providers with nonfeed=0
     nonfeed_acc = _nonfeed_accepted(data)
-    if len(not_wired_providers) > 0 and nonfeed_acc == 0:
+    if not_wired_providers and nonfeed_acc == 0:
         return TriageResult(
             root_cause_class=RootCause.DISCOVERY_PROVIDER_NOT_WIRED,
             confidence=0.88,

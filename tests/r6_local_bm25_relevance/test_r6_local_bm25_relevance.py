@@ -103,7 +103,7 @@ def test_findings_without_payload_text_are_skipped():
     ]
 
     docs = build_search_documents_from_findings(findings)
-    assert len(docs) == 0
+    assert not docs
 
 
 def test_duplicate_url_does_not_explode_metadata():
@@ -242,7 +242,7 @@ def test_no_mlx_import_in_advisory():
         content = f.read()
 
     mlx_imports = [line for line in content.split("\n") if "mlx" in line.lower() and not line.strip().startswith("#")]
-    assert len(mlx_imports) == 0, f"MLX import found: {mlx_imports}"
+    assert not mlx_imports, f"MLX import found: {mlx_imports}"
 
 
 # ── 11. No browser/stealth ─────────────────────────────────────────────────────
@@ -261,7 +261,7 @@ def test_no_browser_or_stealth_import():
     forbidden = ["nodriver", "stealth", "chromium", "browser"]
     for term in forbidden:
         lines = [l.strip() for l in content.split("\n") if term in l.lower() and not l.strip().startswith("#")]  # noqa: E741
-        assert len(lines) == 0, f"Forbidden import '{term}' found: {lines}"
+        assert not lines, f"Forbidden import '{term}' found: {lines}"
 
 
 # ── 12. MAX_RESULT_SET is enforced ─────────────────────────────────────────────

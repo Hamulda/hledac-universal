@@ -344,7 +344,7 @@ pub fn canonical_url(url: &str) -> String {
                 .filter_map(|pair| {
                     let kv: Vec<&str> = pair.splitn(2, '=').collect();
                     let k = urlencoding_decode(kv.get(0).unwrap_or(&""));
-                    let v = kv.get(1).map(urlencoding_decode).unwrap_or_default();
+                    let v = kv.get(1).map(|s| urlencoding_decode(s)).unwrap_or_default();
                     if k.is_empty() || is_tracking_param(&k) {
                         None
                     } else {

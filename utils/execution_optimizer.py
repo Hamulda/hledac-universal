@@ -15,7 +15,7 @@ from collections import OrderedDict, defaultdict, deque
 from collections.abc import Callable
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from enum import Enum
 
 # Machine learning for optimization - lazy imports to reduce cold-start
@@ -415,7 +415,7 @@ class ParallelExecutionOptimizer:
                 strategy=strategy,
                 max_workers=max_workers,
                 resource_allocation=await self._calculate_resource_allocation(tasks, max_workers),
-                created_at=datetime.now()  # noqa: DTZ005
+                created_at=datetime.now(UTC)  # noqa: DTZ005
             )
 
             self.add_parallel_group(group_id, {"payload": group, "strategy": strategy})
@@ -921,7 +921,7 @@ class ParallelExecutionOptimizer:
             X.append(features)
             y.append(metrics.execution_time)
 
-        if len(X) > 0:
+        if X:
             X = np.array(X)  # noqa: N806
             y = np.array(y)
 
@@ -1086,7 +1086,7 @@ class ParallelExecutionOptimizer:
             group = stored.get("payload", stored)
             # Fallback: if still a dict (legacy path), use stored['ts'] as start_time
             if isinstance(group, dict):
-                _start_time = stored.get("ts", datetime.now())  # noqa: DTZ005
+                _start_time = stored.get("ts", datetime.now(UTC))  # noqa: DTZ005
             else:
                 _start_time = group.created_at
             # Create aggregate metrics
@@ -1094,7 +1094,7 @@ class ParallelExecutionOptimizer:
                 task_id=group_id,
                 task_type=TaskType.MIXED,
                 start_time=_start_time,
-                end_time=datetime.now(),  # noqa: DTZ005
+                end_time=datetime.now(UTC),  # noqa: DTZ005
                 cpu_usage=psutil.cpu_percent(),
                 memory_usage=psutil.virtual_memory().percent / 100,
                 execution_time=execution_time,
@@ -1137,7 +1137,7 @@ class ParallelExecutionOptimizer:
     def export_performance_report(self, filepath: str):
         """Export detailed performance report"""
         report = {
-            'timestamp': datetime.now().isoformat(),  # noqa: DTZ005
+            'timestamp': datetime.now(UTC).isoformat(),  # noqa: DTZ005
             'statistics': self.get_performance_statistics(),
             'parallel_groups': {
                 group_id: {
@@ -1506,7 +1506,7 @@ class IntelligentResourceAllocator:
 
         # Record allocation
         self.allocation_history.append({
-            "timestamp": datetime.now(),  # noqa: DTZ005
+            "timestamp": datetime.now(UTC),  # noqa: DTZ005
             "priority": task_priority,
             "cpu_intensity": cpu_intensity,
             "allocation": allocation.copy()

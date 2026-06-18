@@ -385,8 +385,8 @@ class PrivacyLayer:
         if self._audit:
             from datetime import datetime, timedelta
             return await self._audit.generate_compliance_report(
-                start_date=datetime.now() - timedelta(days=days),  # noqa: DTZ005
-                end_date=datetime.now()  # noqa: DTZ005
+                start_date=datetime.now(UTC) - timedelta(days=days),  # noqa: DTZ005
+                end_date=datetime.now(UTC)  # noqa: DTZ005
             )
         return None
 
@@ -546,7 +546,7 @@ class PrivacyLayer:
         if self.config.enable_audit_log and not self._audit:
             issues.append("Audit log not available")
 
-        return len(issues) == 0, issues
+        return not issues, issues
 
 
 # Factory function

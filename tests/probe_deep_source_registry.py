@@ -37,7 +37,7 @@ from hledac.universal.discovery.deep_source_registry import (
 def test_registry_loads_without_network():
     """Registry builds entirely in-memory — no I/O."""
     registry = DeepSourceRegistry()
-    assert len(registry) > 0
+    assert registry
     # Each entry must be a frozen DeepSource.
     for src in registry:
         assert isinstance(src, DeepSource)

@@ -533,7 +533,7 @@ class TestLaneTableDrift:
         for rule in LANE_RULES:
             reason = _disabled_reason(rule.lane, ctx)
             assert isinstance(reason, str), f"{rule.lane}: disabled_reason returned {type(reason)}"
-            assert len(reason) > 0, f"{rule.lane}: disabled_reason is empty string"
+            assert reason, f"{rule.lane}: disabled_reason is empty string"
 
     def test_enabled_fn_returns_bool(self):
         """Each rule's enabled_fn returns a bool for any ctx."""

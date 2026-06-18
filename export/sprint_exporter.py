@@ -1040,7 +1040,7 @@ def _generate_next_sprint_seeds(
         planner_actions = None
         if investigation_packet and isinstance(investigation_packet, dict):
             pa = investigation_packet.get("planner_actions")
-            if pa and isinstance(pa, list) and len(pa) > 0:
+            if pa and isinstance(pa, list) and pa:
                 planner_actions = pa
 
         if planner_actions:
@@ -2467,7 +2467,7 @@ def _compute_provider_yield_signals(
     if sfo_list:
         feed_entry = next((e for e in sfo_list if isinstance(e, dict) and e.get("family") == "feed"), None)
         nonfeed_attempted = [e for e in sfo_list if isinstance(e, dict) and e.get("family") in nonfeed_families and e.get("attempted")]  # noqa: E501
-        _feed_only = (feed_entry is not None and (feed_entry.get("accepted_count") or 0) > 0) and len(nonfeed_attempted) == 0  # noqa: E501
+        _feed_only = (feed_entry is not None and (feed_entry.get("accepted_count") or 0) > 0) and not nonfeed_attempted  # noqa: E501
 
     # 1. dependency_gap_families — from doh_provider_errors
     _dep_gaps: list[str] = []
@@ -2925,7 +2925,7 @@ def _reconcile_acquisition_terminality_from_source_outcomes(report_dict: dict) -
 
     # Update acquisition_terminality_satisfied
     if "acquisition_terminality_satisfied" in report_dict:
-        report_dict["acquisition_terminality_satisfied"] = len(new_missing) == 0
+        report_dict["acquisition_terminality_satisfied"] = not new_missing
 
     return report_dict
 
@@ -3679,7 +3679,7 @@ def _derive_best_first_move(  # noqa: F811
     # 1. High-risk first (critical findings take operational priority)
     if correlation:
         high_risk = correlation.get("high_risk_branch") or correlation.get("high_risk") or []
-        if high_risk and len(high_risk) > 0:
+        if high_risk and high_risk:
             return "investigate high-risk branch — critical findings present"
 
     # 2. sprint_verdict recommended action
@@ -3715,7 +3715,7 @@ def _derive_best_first_move(  # noqa: F811
     # 6. Correlation operator shortlist
     if correlation:
         shortlist = correlation.get("operator_shortlist") or []
-        if shortlist and isinstance(shortlist, list) and len(shortlist) > 0:
+        if shortlist and isinstance(shortlist, list) and shortlist:
             first = shortlist[0]
             if isinstance(first, dict):
                 action = first.get("action", "")

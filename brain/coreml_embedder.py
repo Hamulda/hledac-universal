@@ -399,7 +399,7 @@ class CoreMLEmbedder:
             if isinstance(outputs, dict) and "last_hidden_state" in outputs:
                 hs = outputs["last_hidden_state"]
                 # Handle nested list structure
-                if isinstance(hs, list) and len(hs) > 0 and isinstance(hs[0], list):
+                if isinstance(hs, list) and hs and isinstance(hs[0], list):
                     arr = np.array(hs, dtype=np.float32)
                 else:
                     arr = np.array(hs, dtype=np.float32)

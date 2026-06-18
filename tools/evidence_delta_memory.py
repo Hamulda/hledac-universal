@@ -590,7 +590,7 @@ def _get_ct_public_info(kpi: dict) -> tuple[bool, bool]:
     ar = kpi.get("acquisition_report") or {}
     ar_sfo = ar.get("source_family_outcomes") if ar else None
     # Use acquisition_report SFO only if it's a non-empty list
-    if isinstance(ar_sfo, list) and len(ar_sfo) > 0:
+    if isinstance(ar_sfo, list) and ar_sfo:
         sfo = ar_sfo
     else:
         sfo = kpi.get("source_family_outcomes", [])

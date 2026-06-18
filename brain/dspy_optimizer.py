@@ -445,7 +445,7 @@ class DSPyOptimizer:
                     # Penalize non‑JSON but long answers
                     return 0.3 if len(answer) > 100 else 0.0
 
-            if not trainset or len(trainset) == 0:
+            if not trainset or not trainset:
                 logger.warning(f"DSPy MIPROv2: trainset is empty for task_key={task_key!r} — skipping optimization")
                 return {}
 

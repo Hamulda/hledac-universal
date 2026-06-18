@@ -210,7 +210,7 @@ def _compute_fusion_score(fhit: _FusableHit) -> float:
         query_terms = _tokenize(hit.query)
         title_lower = hit.title.lower()
         matched = sum(1 for t in query_terms if t in title_lower)
-        if matched == len(query_terms) and len(query_terms) > 0:
+        if matched == len(query_terms) and query_terms:
             score += _BOOST_QUERY_TITLE_EXACT
 
     # 5. IOC/domain match boost

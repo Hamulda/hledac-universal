@@ -46,7 +46,7 @@ class TestIPFSClient:
         """Test CID extraction with no CIDs."""
         text = "This is just regular text without any CIDs"
         cids = ipfs_client.extract_cids_from_text(text)
-        assert len(cids) == 0
+        assert not cids
 
     def test_cid_extraction_empty(self, ipfs_client):
         """Test CID extraction with empty input (fail-safe)."""
@@ -208,7 +208,7 @@ Regular text here.
         """Test gemtext link extraction with no links."""
         gemtext = "Just regular text\nNo links here"
         links = gemini.extract_gemini_links(gemtext)
-        assert len(links) == 0
+        assert not links
 
     def test_constants(self, gemini):
         """Test protocol constants."""
@@ -556,7 +556,7 @@ class TestTorrentMetadataFetcher:
         fetcher._cache["test"] = "value"
         assert len(fetcher._cache) == 1
         fetcher.clear_cache()
-        assert len(fetcher._cache) == 0
+        assert not fetcher._cache
 
 
 # =============================================================================

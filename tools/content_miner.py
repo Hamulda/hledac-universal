@@ -1094,7 +1094,7 @@ class MetadataExtractor:
                 }
 
                 # Extract text preview (first page only, limited)
-                if len(doc) > 0:
+                if doc:
                     text = doc[0].get_text()[:2000]  # Limit for M1 8GB
                     result['text_preview'] = text
 

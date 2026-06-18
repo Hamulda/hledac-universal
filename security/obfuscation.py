@@ -15,7 +15,7 @@ import asyncio
 import logging
 import random
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -220,7 +220,7 @@ class ResearchObfuscator:
             if all_chaff:
                 query = random.choice(all_chaff)
                 # Přidat timestamp pro unikátnost
-                query = f"{query} {datetime.now().strftime('%H:%M')}"  # noqa: DTZ005
+                query = f"{query} {datetime.now(UTC).strftime('%H:%M')}"  # noqa: DTZ005
                 chaff.append(query)
                 self._chaff_queries_generated += 1
 

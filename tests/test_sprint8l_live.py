@@ -578,8 +578,8 @@ def print_live_results(results: LiveBenchmarkResults) -> bool:
     criteria = [
         ("iterations > 0", results.iterations > 0),
         ("findings_total > 0", results.findings_total > 0),
-        ("handler latency captured", len(results.handler_latency) > 0),
-        ("action distribution captured", len(results.action_selection_counts) > 0),
+        ("handler latency captured", results.handler_latency),
+        ("action distribution captured", results.action_selection_counts),
         ("promotion_score_max > 0.25", results.promotion_score_max > 0.25),
         (">=3 action families", len(results.action_families_with_findings) >= 3),
         ("memory guard NOT triggered", not results.memory_guard_triggered),

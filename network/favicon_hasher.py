@@ -20,7 +20,7 @@ class _FaviconHasher:
         if not favicon_bytes:
             return None
 
-        if MMH3_AVAILABLE and len(favicon_bytes) > 0:
+        if MMH3_AVAILABLE and favicon_bytes:
             hash_val = mmh3.hash(favicon_bytes)
             return f"mmh3:{hash_val}"
         else:

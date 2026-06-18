@@ -315,7 +315,7 @@ class EntityExtractor:
         all_entities = self.extract_all(text)
         critical = [e for e in all_entities if e.pattern_type in critical_types]
 
-        return len(critical) > 0, critical
+        return critical, critical
 
     def get_stats(self) -> dict[str, Any]:
         """Get extraction statistics."""

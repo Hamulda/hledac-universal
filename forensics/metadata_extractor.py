@@ -32,7 +32,7 @@ import re
 import sqlite3
 import zipfile
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -756,7 +756,7 @@ class MetadataCache:
                     """INSERT OR REPLACE INTO metadata_cache
                    (file_hash, mod_time, file_size, metadata, extracted_at)
                    VALUES (?, ?, ?, ?, ?)""",
-                    (file_hash, mod_time, file_size, json.dumps(metadata), datetime.now().timestamp())  # noqa: DTZ005
+                    (file_hash, mod_time, file_size, json.dumps(metadata), datetime.now(UTC).timestamp())  # noqa: DTZ005
                 )
             )
             await asyncio.to_thread(lambda: self._conn.commit())

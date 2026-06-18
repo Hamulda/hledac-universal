@@ -357,7 +357,7 @@ def _check_public_query_variants(data: dict) -> tuple[bool, str]:
     """public_query_variants present for domain query."""
     # Check live_kpi for public_query_variants (set during live run)
     variants = _get(data, "live_kpi", "public_query_variants", default=None)
-    if variants is not None and len(variants) > 0:
+    if variants is not None and variants:
         # Check mozilla.org presence
         has_domain = any("mozilla.org" in v for v in variants)
         return True, f"public_query_variants present ({len(variants)}), mozilla.org={has_domain}"

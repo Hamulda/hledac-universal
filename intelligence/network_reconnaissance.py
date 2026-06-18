@@ -763,7 +763,7 @@ class NetworkReconnaissance:
         # - At least 2/3 consistent → wildcard_suspected=True
         # - Error/timeout/ambiguous → wildcard_suspected=False (conservative)
 
-        if len(non_none_responses) == 0:
+        if not non_none_responses:
             # All probes returned nothing → likely not wildcard (real subdomains would resolve)
             self._confirmed_non_wildcard.add(domain)
             return {

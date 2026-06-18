@@ -578,7 +578,7 @@ class TestImportPathGuards:
             p for p in ACTIVE_RUNTIME_FILES
             if "legacy" in p or "autonomous_orchestrator" in p
         ]
-        assert len(legacy_paths) == 0, f"Legacy paths in ACTIVE_RUNTIME_FILES: {legacy_paths}"
+        assert not legacy_paths, f"Legacy paths in ACTIVE_RUNTIME_FILES: {legacy_paths}"
 
     def test_assertion_13_no_deep_probe_import(self):
         """Assertion 13: No deep_probe import in sprint_scheduler."""
@@ -589,7 +589,7 @@ class TestImportPathGuards:
             l for l in lines  # noqa: E741
             if "deep_probe" in l.lower() and not l.strip().startswith("#") and "import" in l.lower()
         ]
-        assert len(active_deep_lines) == 0, f"deep_probe in sprint_scheduler: {active_deep_lines}"
+        assert not active_deep_lines, f"deep_probe in sprint_scheduler: {active_deep_lines}"
 
     def test_assertion_14_no_dht_import(self):
         """Assertion 14: No dht import in sprint_scheduler."""
@@ -600,7 +600,7 @@ class TestImportPathGuards:
             l for l in lines  # noqa: E741
             if "dht" in l.lower() and not l.strip().startswith("#") and "import" in l.lower()
         ]
-        assert len(dht_lines) == 0, f"DHT in sprint_scheduler: {dht_lines}"
+        assert not dht_lines, f"DHT in sprint_scheduler: {dht_lines}"
 
     def test_assertion_15_no_stealth_browser_enabled(self):
         """Assertion 15: STEALTH lane is disabled by default."""

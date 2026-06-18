@@ -27,7 +27,7 @@ import asyncio
 import json
 import logging
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from enum import Enum
 from typing import Any
 
@@ -134,7 +134,7 @@ class SmartSpawnedCoordinationIntegration:
         """
         Process a task using smart-spawned agents integrated with the connected coordination system
         """
-        task_start_time = datetime.now()  # noqa: DTZ005
+        task_start_time = datetime.now(UTC)  # noqa: DTZ005
 
         # Step 1: Smart Coordinator Analysis
         coordinator_result = await self._coordinate_task_analysis(task_description, priority)
@@ -163,7 +163,7 @@ class SmartSpawnedCoordinationIntegration:
             "implementation_results": implementation_results,
             "validation_results": validation_results,
             "performance_analysis": performance_analysis,
-            "total_processing_time": (datetime.now() - task_start_time).total_seconds()  # noqa: DTZ005
+            "total_processing_time": (datetime.now(UTC) - task_start_time).total_seconds()  # noqa: DTZ005
         }
 
     async def _coordinate_task_analysis(self, task_description: str, priority: str) -> dict[str, Any]:
@@ -179,7 +179,7 @@ class SmartSpawnedCoordinationIntegration:
             "performance_targets": self._set_performance_targets(priority)
         }
 
-        coordinator.current_task = f"analysis_{datetime.now().strftime('%Y%m%d_%H%M%S')}"  # noqa: DTZ005
+        coordinator.current_task = f"analysis_{datetime.now(UTC).strftime('%Y%m%d_%H%M%S')}"  # noqa: DTZ005
         coordinator.performance_metrics["coordination_efficiency"] = 0.92
 
         # Store coordination event
@@ -310,7 +310,7 @@ class SmartSpawnedCoordinationIntegration:
     async def _analyze_performance(self, task_start_time: datetime, task_id: str,
                                  validation_results: dict[str, Any]) -> dict[str, Any]:
         """Analyze overall performance and provide optimization recommendations"""
-        total_time = (datetime.now() - task_start_time).total_seconds()  # noqa: DTZ005
+        total_time = (datetime.now(UTC) - task_start_time).total_seconds()  # noqa: DTZ005
 
         performance_analysis = {
             "execution_metrics": {
@@ -507,7 +507,7 @@ class SmartSpawnedCoordinationIntegration:
     def _store_coordination_event(self, event_type: str, source: str, target: str, data: Any):
         """Store coordination events for tracking and analysis"""
         event = {
-            "timestamp": datetime.now().isoformat(),  # noqa: DTZ005
+            "timestamp": datetime.now(UTC).isoformat(),  # noqa: DTZ005
             "event_type": event_type,
             "source": source,
             "target": target,

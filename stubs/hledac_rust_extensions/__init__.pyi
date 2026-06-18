@@ -273,6 +273,22 @@ def get_available_memory_gib() -> float:
     """Available system memory in GiB via sysinfo. Returns 0.0 on error."""
     ...
 
+def current_rss_bytes() -> int:
+    """Current process RSS in bytes via proc_pidinfo(PROC_PIDTASKINFO) on macOS. Returns 0 on error."""
+    ...
+
+def peak_rss_bytes() -> int:
+    """Peak RSS in bytes observed since process start. Updated on every current_rss_bytes() call."""
+    ...
+
+def memory_pressure_level() -> int:
+    """Memory pressure level 0-2: 0=normal (<4GiB), 1=elevated (4-5.5GiB), 2=critical (>5.5GiB)."""
+    ...
+
+def advise_free(ptr: int, len: int) -> bool:
+    """Apply MADV_FREE_REUSABLE to a memory region via madvise(2). Returns True on success, False on failure."""
+    ...
+
 # ---------------------------------------------------------------------------
 # IOC extract (rust_extensions/src/ioc_extract.rs)
 # ---------------------------------------------------------------------------

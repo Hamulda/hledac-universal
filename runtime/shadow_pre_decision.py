@@ -1370,7 +1370,7 @@ def _compose_provider_readiness_preview(
     # has_recommendation: provider_recommend fact exists (from precursor)
     has_recommendation_fact = precursor.has_provider_recommend and precursor.provider_recommend is not None
     # has_facts: model availability from analyzer (from model_control.models_needed)
-    has_facts = model_control.models_needed is not None and len(model_control.models_needed) > 0
+    has_facts = model_control.models_needed is not None and model_control.models_needed
 
     # Sprint F3.13: Runtime facts — read-only runtime model state
     runtime_loaded = runtime_facts.is_loaded if runtime_facts else False
@@ -1852,7 +1852,7 @@ def build_execution_context_readiness(
     for gap in dispatch_preview.capability_gaps.values():
         if not gap.is_satisfied:
             capability_missing.extend(sorted(gap.missing_capabilities))
-    capability_ready = len(capability_missing) == 0
+    capability_ready = not capability_missing
 
     # 2. Correlation readiness
     run_id_present = False
@@ -2028,7 +2028,7 @@ def preview_dispatch_parity(
 
         required = tool.required_capabilities
         missing = required - available_capabilities if required else set()
-        is_satisfied = len(missing) == 0
+        is_satisfied = not missing
 
         # Check network/high-memory
         is_network = tool.cost_model.network

@@ -77,7 +77,7 @@ def normalize_text(text: str) -> str:
 def _levenshtein_distance(s1: str, s2: str) -> int:
     if len(s1) < len(s2):
         s1, s2 = s2, s1
-    if len(s2) == 0:
+    if not s2:
         return len(s1)
     prev_row = list(range(len(s2) + 1))
     curr_row = [0] * (len(s2) + 1)

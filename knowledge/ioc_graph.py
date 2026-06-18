@@ -562,27 +562,90 @@ class IOCGraph:
         iocs: list[tuple[str, str, float]],
         now: float,
     ) -> list[str]:
-        """Synchronous batch upsert — runs on _executor thread."""
+        """Synchronous batch upsert — runs on _executor thread.
+
+        N+1 elimination via UNWIND batch queries:
+          Phase 1: 1 query — UNWIND batch existence check
+          Phase 3: 1 query — UNWIND batch CREATE for new nodes
+          Phase 4: 1 query — UNWIND batch SET last_seen for existing nodes
+        Total: 3 queries regardless of batch size (was 2N+1).
+        """
         conn = self._conn
         assert conn is not None
+        if not node_ids:
+            return []
+
+        # Phase 1: batch existence check — 1 query for all IDs
+        res = conn.execute(
+            "UNWIND $ids AS nid MATCH (n:IOC) WHERE n.id = nid RETURN n.id",
+            {"ids": node_ids},
+        )
+        existing_ids: set[str] = set()
+        try:
+            while res.has_next():
+                row = res.get_next()
+                existing_ids.add(row[0])
+        except Exception:
+            existing_ids = set()
+
+        # Phase 2: partition into new vs existing (pure Python, no I/O)
+        new_nodes: list[tuple[str, tuple[str, str, float]]] = [
+            (node_id, ioc) for node_id, ioc in zip(node_ids, iocs, strict=False)
+            if node_id not in existing_ids
+        ]
+        existing_to_update: list[str] = [
+            node_id for node_id, _ in zip(node_ids, iocs, strict=False)
+            if node_id in existing_ids
+        ]
+
+        # Phase 3: batch CREATE new nodes — 1 query via UNWIND
         created: list[str] = []
-        for node_id, (ioc_type, value, confidence) in zip(node_ids, iocs, strict=False):
-            res = conn.execute(
-                "MATCH (n:IOC) WHERE n.id = $id RETURN n.first_seen",
-                {"id": node_id},
-            )
-            if not res.has_next():
+        if new_nodes:
+            try:
+                data = [
+                    {"id": nid, "t": t, "v": v, "c": c, "ts": now}
+                    for nid, (t, v, c) in new_nodes
+                ]
                 conn.execute(
-                    "CREATE (:IOC {id: $id, ioc_type: $t, value: $v, "
-                    "first_seen: $ts, last_seen: $ts, confidence: $c})",
-                    {"id": node_id, "t": ioc_type, "v": value, "ts": now, "c": confidence},
+                    "UNWIND $data AS row "
+                    "CREATE (:IOC {id: row.id, ioc_type: row.t, value: row.v, "
+                    "first_seen: row.ts, last_seen: row.ts, confidence: row.c})",
+                    {"data": data},
                 )
-                created.append(node_id)
-            else:
+                created = [nid for nid, _ in new_nodes]
+            except Exception:
+                # Fallback: per-item CREATE (schema error rare, keep safety net)
+                for node_id, (ioc_type, value, confidence) in new_nodes:
+                    try:
+                        conn.execute(
+                            "CREATE (:IOC {id: $id, ioc_type: $t, value: $v, "
+                            "first_seen: $ts, last_seen: $ts, confidence: $c})",
+                            {"id": node_id, "t": ioc_type, "v": value, "ts": now, "c": confidence},
+                        )
+                        created.append(node_id)
+                    except Exception:
+                        pass
+
+        # Phase 4: batch SET last_seen for existing nodes — 1 query via UNWIND
+        if existing_to_update:
+            try:
                 conn.execute(
-                    "MATCH (n:IOC) WHERE n.id = $id SET n.last_seen = $ts",
-                    {"id": node_id, "ts": now},
+                    "UNWIND $ids AS nid "
+                    "MATCH (n:IOC) WHERE n.id = nid "
+                    "SET n.last_seen = $ts",
+                    {"ids": existing_to_update, "ts": now},
                 )
+            except Exception:
+                # Fallback: per-item SET (schema error rare, keep safety net)
+                for node_id in existing_to_update:
+                    try:
+                        conn.execute(
+                            "MATCH (n:IOC) WHERE n.id = $id SET n.last_seen = $ts",
+                            {"id": node_id, "ts": now},
+                        )
+                    except Exception:
+                        pass
+
         return created
 
     # -------------------------------------------------------------------------
@@ -613,36 +676,106 @@ class IOCGraph:
         self,
         observations: list[tuple[str, str, str, float, str]],
     ) -> None:
-        """Synchronous batch observation — runs on _executor thread."""
+        """Synchronous batch observation — runs on _executor thread.
+
+        N+1 elimination via UNWIND batch queries:
+          Phase 1: 1 query — UNWIND batch existence check for all edges
+          Phase 3: 1 query — UNWIND batch CREATE for missing edges
+          Phase 4: 1 query — UNWIND batch SET last_seen for existing edges
+        Total: 3 queries regardless of batch size (was 2N+1).
+        """
         conn = self._conn
         assert conn is not None
+        if not observations:
+            return
 
-        for ioc_id_a, ioc_id_b, fid, ts, src in observations:
-            res = conn.execute(
-                "MATCH (a:IOC)-[r:OBSERVED]->(b:IOC) "
-                "WHERE a.id = $ida AND b.id = $idb "
-                "RETURN r.first_seen",
-                {"ida": ioc_id_a, "idb": ioc_id_b},
-            )
-            if not res.has_next():
-                try:
-                    conn.execute(
-                        "MATCH (a:IOC), (b:IOC) "
-                        "WHERE a.id = $ida AND b.id = $idb "
-                        "CREATE (a)-[r:OBSERVED {finding_id: $fid, source_type: $st, "
-                        "first_seen: $ts, last_seen: $ts}]->(b)",
-                        {"ida": ioc_id_a, "idb": ioc_id_b, "fid": fid, "st": src, "ts": ts},
-                    )
-                except Exception:
-                    # duplicate edge race — ignore
-                    pass
-            else:
+        # Phase 1: batch existence check — 1 query for all edges
+        obs_pairs: list[list[str]] = [
+            [ioc_id_a, ioc_id_b] for ioc_id_a, ioc_id_b, _, _, _ in observations
+        ]
+        res = conn.execute(
+            "UNWIND $obs AS pair "
+            "MATCH (a:IOC)-[r:OBSERVED]->(b:IOC) "
+            "WHERE a.id = pair[0] AND b.id = pair[1] "
+            "RETURN pair[0], pair[1]",
+            {"obs": obs_pairs},
+        )
+        existing: set[tuple[str, str]] = set()
+        try:
+            while res.has_next():
+                row = res.get_next()
+                existing.add((row[0], row[1]))
+        except Exception:
+            existing = set()
+
+        # Phase 2: partition into missing edges (CREATE) vs existing edges (SET)
+        missing: list[tuple[str, str, str, float, str]] = [
+            (a, b, f, t, s) for a, b, f, t, s in observations
+            if (a, b) not in existing
+        ]
+        existing_obs: list[tuple[str, str, float]] = [
+            (a, b, t) for a, b, _, t, _ in observations
+            if (a, b) in existing
+        ]
+
+        # Phase 3: batch CREATE missing edges — 1 query via UNWIND
+        if missing:
+            try:
+                data = [
+                    {"ida": a, "idb": b, "fid": f, "st": s, "ts": t}
+                    for a, b, f, t, s in missing
+                ]
                 conn.execute(
-                    "MATCH (a:IOC)-[r:OBSERVED]->(b:IOC) "
-                    "WHERE a.id = $ida AND b.id = $idb "
-                    "SET r.last_seen = $ts",
-                    {"ida": ioc_id_a, "idb": ioc_id_b, "ts": ts},
+                    "UNWIND $data AS row "
+                    "MATCH (a:IOC), (b:IOC) "
+                    "WHERE a.id = row.ida AND b.id = row.idb "
+                    "CREATE (a)-[r:OBSERVED {finding_id: row.fid, source_type: row.st, "
+                    "first_seen: row.ts, last_seen: row.ts}]->(b)",
+                    {"data": data},
                 )
+            except Exception:
+                # Fallback: per-item CREATE (schema error rare, keep safety net)
+                for ioc_id_a, ioc_id_b, fid, ts, src in missing:
+                    try:
+                        conn.execute(
+                            "MATCH (a:IOC), (b:IOC) "
+                            "WHERE a.id = $ida AND b.id = $idb "
+                            "CREATE (a)-[r:OBSERVED {finding_id: $fid, source_type: $st, "
+                            "first_seen: $ts, last_seen: $ts}]->(b)",
+                            {
+                                "ida": ioc_id_a,
+                                "idb": ioc_id_b,
+                                "fid": fid,
+                                "st": src,
+                                "ts": ts,
+                            },
+                        )
+                    except Exception:
+                        pass
+
+        # Phase 4: batch SET last_seen for existing edges — 1 query via UNWIND
+        if existing_obs:
+            try:
+                data = [{"ida": a, "idb": b, "ts": t} for a, b, t in existing_obs]
+                conn.execute(
+                    "UNWIND $data AS row "
+                    "MATCH (a:IOC)-[r:OBSERVED]->(b:IOC) "
+                    "WHERE a.id = row.ida AND b.id = row.idb "
+                    "SET r.last_seen = row.ts",
+                    {"data": data},
+                )
+            except Exception:
+                # Fallback: per-item SET (schema error rare, keep safety net)
+                for ioc_id_a, ioc_id_b, ts in existing_obs:
+                    try:
+                        conn.execute(
+                            "MATCH (a:IOC)-[r:OBSERVED]->(b:IOC) "
+                            "WHERE a.id = $ida AND b.id = $idb "
+                            "SET r.last_seen = $ts",
+                            {"ida": ioc_id_a, "idb": ioc_id_b, "ts": ts},
+                        )
+                    except Exception:
+                        pass
 
     # -------------------------------------------------------------------------
     # Pivot Query

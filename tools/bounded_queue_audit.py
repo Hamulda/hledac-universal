@@ -6,7 +6,7 @@ No imports with heavy side effects. Pure stdlib + pathlib.
 """
 import json
 import re
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -68,7 +68,7 @@ def to_markdown(results: list[dict[str, Any]]) -> str:
     """Render audit results as Markdown."""
     lines = [
         "# Bounded Queue Audit Report",
-        f"**Generated:** {datetime.now().isoformat()}",  # noqa: DTZ005
+        f"**Generated:** {datetime.now(UTC).isoformat()}",  # noqa: DTZ005
         f"**Repository:** {REPO_ROOT.name}",
         "",
     ]
@@ -114,7 +114,7 @@ if __name__ == "__main__":
 
     # JSON output
     report = {
-        "generated": datetime.now().isoformat(),  # noqa: DTZ005
+        "generated": datetime.now(UTC).isoformat(),  # noqa: DTZ005
         "repo": str(REPO_ROOT),
         "total_unbounded": len(results),
         "by_category": counts,

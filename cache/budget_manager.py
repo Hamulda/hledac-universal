@@ -17,7 +17,7 @@ Features:
 from __future__ import annotations
 
 import logging
-from datetime import datetime
+from datetime import UTC, datetime
 from enum import Enum
 from typing import Any
 
@@ -164,7 +164,7 @@ class BudgetManager:
             config: Budget configuration. Uses defaults if None.
         """
         self.config = config or BudgetConfig()
-        self.state = BudgetState(start_time=datetime.now())  # noqa: DTZ005
+        self.state = BudgetState(start_time=datetime.now(UTC))  # noqa: DTZ005
         # Sprint 32+33: RotatingBloomFilter instead of unbounded Set
         self._entities_seen = create_rotating_bloom_filter()
         self._sources_seen = create_rotating_bloom_filter()
@@ -246,7 +246,7 @@ class BudgetManager:
             )
 
         # Max time
-        elapsed = (datetime.now() - self.state.start_time).total_seconds()  # noqa: DTZ005
+        elapsed = (datetime.now(UTC) - self.state.start_time).total_seconds()  # noqa: DTZ005
         if elapsed >= self.config.max_time_sec:
             return (
                 True,
@@ -408,7 +408,7 @@ class BudgetManager:
         Returns:
             BudgetStatus with current state and utilization metrics
         """
-        elapsed = (datetime.now() - self.state.start_time).total_seconds()  # noqa: DTZ005
+        elapsed = (datetime.now(UTC) - self.state.start_time).total_seconds()  # noqa: DTZ005
 
         # Calculate utilization percentages
         utilization = {
@@ -452,7 +452,7 @@ class BudgetManager:
         Returns:
             Dictionary with summary statistics
         """
-        elapsed = (datetime.now() - self.state.start_time).total_seconds()  # noqa: DTZ005
+        elapsed = (datetime.now(UTC) - self.state.start_time).total_seconds()  # noqa: DTZ005
 
         return {
             "iterations": {
@@ -505,7 +505,7 @@ class BudgetManager:
         Returns:
             True if any budget is at or above threshold
         """
-        elapsed = (datetime.now() - self.state.start_time).total_seconds()  # noqa: DTZ005
+        elapsed = (datetime.now(UTC) - self.state.start_time).total_seconds()  # noqa: DTZ005
 
         checks = [
             self.state.iteration / self.config.max_iterations >= threshold,
@@ -518,7 +518,7 @@ class BudgetManager:
 
     def reset(self) -> None:
         """Reset budget manager to initial state"""
-        self.state = BudgetState(start_time=datetime.now())  # noqa: DTZ005
+        self.state = BudgetState(start_time=datetime.now(UTC))  # noqa: DTZ005
         # Sprint 32+33: Reinitialize RotatingBloomFilter instances
         self._entities_seen = create_rotating_bloom_filter()
         self._sources_seen = create_rotating_bloom_filter()

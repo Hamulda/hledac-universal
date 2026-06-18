@@ -26,6 +26,8 @@ from typing import Any, Final
 
 import msgspec
 
+from tools.regex_cache import collapse_whitespace, strip_html_tags
+
 # psutil lazy import — only needed inside fetch function at runtime
 _psutil = None
 
@@ -1956,7 +1958,7 @@ _JS_RENDERER_SEMAPHORE: asyncio.Semaphore | None = None
 # On macOS, browser.stop() is async and returns before the child process is fully
 # reaped by the OS. Without this delay, the next renderer (camoufox→nodriver→playwright)
 # races with the dying process and sees TargetClosedError / "browser has been closed".
-_JSC_RENDERER_COOLDOWN_S = 0.15
+_JSC_RENDERER_COOLDOWN_S = 0.5  # P2-4: increased from 0.15 — macOS browser helper processes may linger 200-400ms
 
 
 def _get_js_renderer_semaphore() -> asyncio.Semaphore:
@@ -2166,39 +2168,55 @@ async def _fetch_with_camoufox(url: str, timeout: float = 15.0) -> str:
         return await _camoufox_locked(url, timeout)
 
 
+_CAMOUFOX_OS_ROTATION: tuple[str, ...] = (
+    "macos",
+    "windows",
+    "linux",
+)
+_CAMOUFOX_MAX_RETRIES: int = 3
+
+
 async def _camoufox_locked(url: str, timeout: float) -> str:
     """
     F226A: Camoufox body inside the original _CAMOUFOX_LOCK + outer JS semaphore.
-
-    Split from _fetch_with_camoufox so the outer _JS_RENDERER_SEMAPHORE wrapper
-    can be honored even when nodriver races in. The original behavior (lock +
-    AsyncCamoufox context manager + fail-soft on exception) is preserved.
+    P2-4: Added os-rotation retry — each OS variant generates a different
+    auto-generated fingerprint, so dark web sites that block one fingerprint
+    may accept another. Retries up to 3 OS variants before giving up.
     """
     try:
         from camoufox.async_api import AsyncCamoufox
     except ImportError:
         return ""
     async with _CAMOUFOX_LOCK:
-        try:
-            async with AsyncCamoufox(
-                headless=True,
-                os="macos",
-                webgl_config=("Apple", "Apple M1, or similar"),
-            ) as browser:
-                page = await browser.new_page()
-                try:
-                    await page.goto(url, wait_until="networkidle", timeout=timeout * 1000)
-                    html = await page.content()
-                finally:
-                    await page.close()
-                return html
-        except Exception as e:
-            logger.warning(f"Camoufox fetch failed for {url}: {e}")
-            return ""
-        finally:
-            # P14 FIX: yield to event loop so OS can fully reap the browser process
-            # before the next renderer acquires the semaphore and races with it
-            await _cooldown_after_browser_stop()
+        last_error = ""
+        for attempt in range(_CAMOUFOX_MAX_RETRIES):
+            os_choice = _CAMOUFOX_OS_ROTATION[attempt % len(_CAMOUFOX_OS_ROTATION)]
+            try:
+                async with AsyncCamoufox(
+                    headless=True,
+                    os=os_choice,
+                    webgl_config=("Apple", "Apple M1, or similar"),
+                ) as browser:
+                    page = await browser.new_page()
+                    try:
+                        await page.goto(url, wait_until="networkidle", timeout=timeout * 1000)
+                        html = await page.content()
+                    finally:
+                        await page.close()
+                    return html
+            except Exception as e:
+                last_error = str(e)
+                logger.debug(
+                    f"Camoufox attempt {attempt + 1}/{_CAMOUFOX_MAX_RETRIES} "
+                    f"(os={os_choice}) failed for {url}: {e}"
+                )
+                # P2-4: cooldown between retries so OS can fully reap
+                await _cooldown_after_browser_stop()
+                continue
+        logger.warning(
+            f"Camoufox all {_CAMOUFOX_MAX_RETRIES} attempts failed for {url}: {last_error}"
+        )
+        return ""
 
 
 async def _fetch_with_nodriver(url: str) -> str:
@@ -2232,46 +2250,66 @@ async def _fetch_with_nodriver(url: str) -> str:
         return await _nodriver_locked(url)
 
 
+_NODRIVER_MAX_RETRIES: int = 2
+
+
 async def _nodriver_locked(url: str) -> str:
     """
     F226A: nodriver body wrapped inside the shared _JS_RENDERER_SEMAPHORE.
+    P2-4: Added Tor proxy routing + os-rotation retry for dark web resilience.
 
-    Original cleanup invariants preserved:
+    Cleanup invariants preserved:
     - page.close() in finally
     - browser.stop() on cancellation + finally
     - CancelledError re-raised (must propagate)
     """
     import nodriver as uc  # already imported by caller; here for isolation
 
+    _is_onion = _is_onion_url(url)
     browser = None
     page = None
-    try:
-        browser = await uc.start(
-            headless=True,
-            browser_args=["--no-sandbox", "--disable-dev-shm-usage"],
-        )
-        page = await browser.get(url)
+    last_error = ""
+    for attempt in range(_NODRIVER_MAX_RETRIES):
         try:
-            await asyncio.sleep(2)  # jitter for bot detection
-            html = await page.get_content()
+            browser_args = [
+                "--no-sandbox",
+                "--disable-dev-shm-usage",
+                # P2-4: anti-fingerprint hardening
+                "--disable-blink-features=AutomationControlled",
+            ]
+            # P2-4: Route .onion through Tor SOCKS5 proxy
+            if _is_onion:
+                browser_args.append(f"--proxy-server={TOR_SOCKS_PROXY}")
+            browser = await uc.start(
+                headless=True,
+                browser_args=browser_args,
+            )
+            page = await browser.get(url)
+            try:
+                await asyncio.sleep(2)  # jitter for bot detection
+                html = await page.get_content()
+            finally:
+                if page is not None:
+                    await page.close()
+            return html
+        except asyncio.CancelledError:
+            if browser is not None:
+                browser.stop()
+            raise
+        except Exception as e:
+            last_error = str(e)
+            logger.debug(f"nodriver attempt {attempt + 1} failed for {url}: {e}")
+            if browser is not None:
+                browser.stop()
+            await asyncio.sleep(0.2)  # brief pause between retries
         finally:
-            # CRITICAL: page cleanup guaranteed even on exception/cancellation
             if page is not None:
-                await page.close()
-        return html
-    except asyncio.CancelledError:
-        if browser is not None:
-            browser.stop()
-        raise  # Re-raise CancelledError — must propagate
-    except Exception as e:
-        logger.warning(f"nodriver fetch failed: {e}")
-        return ""
-    finally:
-        if browser is not None:
-            browser.stop()
-        # P14 FIX: yield to event loop so OS can fully reap the browser process
-        # before the next renderer acquires the semaphore and races with it
-        await _cooldown_after_browser_stop()
+                try:
+                    await page.close()
+                except Exception:
+                    pass
+    logger.warning(f"nodriver all {_NODRIVER_MAX_RETRIES} attempts failed for {url}: {last_error}")
+    return ""
 
 
 async def _fetch_with_playwright(url: str, timeout: float = 15.0) -> str:
@@ -3842,8 +3880,8 @@ def _sync_process_html(html: str) -> tuple[str, list, dict]:
         # Fail-soft: empty result on malformed HTML
         import html as _html
 
-        text = re.sub(r"<[^>]+>", " ", _html.unescape(html))
-        text = re.sub(r"\s{2,}", " ", text).strip()
+        text = strip_html_tags(_html.unescape(html))
+        text = collapse_whitespace(text).strip()
 
     # Pattern scan
     matches = match_text(text)

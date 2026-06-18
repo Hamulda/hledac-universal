@@ -856,21 +856,29 @@ class ImageAnalyzer:
             return self._basic_image_analysis(file_path)
 
         try:
+            # Read content first (needed for hashes regardless of image validity)
             if isinstance(file_path, str):
-                img = Image.open(file_path)
                 with open(file_path, "rb") as f:
                     content = f.read()
+                with Image.open(file_path) as img:
+                    exif_data = self._extract_exif(img)
+                    img_format = img.format
+                    img_mode = img.mode
+                    img_width = img.width
+                    img_height = img.height
             else:
-                img = Image.open(io.BytesIO(file_path))
                 content = file_path if isinstance(file_path, bytes) else file_path.read()
+                with Image.open(io.BytesIO(file_path if isinstance(file_path, bytes) else file_path)) as img:
+                    exif_data = self._extract_exif(img)
+                    img_format = img.format
+                    img_mode = img.mode
+                    img_width = img.width
+                    img_height = img.height
 
             # Calculate hashes
             md5_hash = hashlib.md5(content).hexdigest()
             sha1_hash = hashlib.sha256(content).hexdigest()  # upgraded from sha1
             sha256_hash = hashlib.sha256(content).hexdigest()
-
-            # Extract EXIF
-            exif_data = self._extract_exif(img)
 
             metadata = DocumentMetadata(
                 file_hash_md5=md5_hash,
@@ -878,14 +886,12 @@ class ImageAnalyzer:
                 file_hash_sha256=sha256_hash,
                 file_size_bytes=len(content),
                 file_type=DocumentType.IMAGE,
-                file_extension=f".{img.format.lower()}" if img.format else ".unknown",
-                image_width=img.width,
-                image_height=img.height,
+                file_extension=f".{img_format.lower()}" if img_format else ".unknown",
+                image_width=img_width,
+                image_height=img_height,
                 gps_coordinates=exif_data.gps_location if exif_data else None,
-                raw_metadata={"format": img.format, "mode": img.mode}
+                raw_metadata={"format": img_format, "mode": img_mode}
             )
-
-            img.close()
 
             return DocumentAnalysis(
                 metadata=metadata,
@@ -1189,28 +1195,29 @@ class DeepForensicsAnalyzer:
         from PIL import Image
 
         try:
-            # Load image
-            img = Image.open(io.BytesIO(content)).convert('RGB')
+            # Load image with context manager to prevent handle leaks
+            with Image.open(io.BytesIO(content)) as img:
+                img = img.convert('RGB')
 
-            # Size limit - resize if needed
-            if img.width > MAX_IMAGE_SIZE or img.height > MAX_IMAGE_SIZE:
-                ratio = min(MAX_IMAGE_SIZE / img.width, MAX_IMAGE_SIZE / img.height)
-                new_size = (int(img.width * ratio), int(img.height * ratio))
-                img = img.resize(new_size, Image.Resampling.LANCZOS)
-                logger.debug(f"Image resized to {new_size} for MPS ELA")
+                # Size limit - resize if needed
+                if img.width > MAX_IMAGE_SIZE or img.height > MAX_IMAGE_SIZE:
+                    ratio = min(MAX_IMAGE_SIZE / img.width, MAX_IMAGE_SIZE / img.height)
+                    new_size = (int(img.width * ratio), int(img.height * ratio))
+                    img = img.resize(new_size, Image.Resampling.LANCZOS)
+                    logger.debug(f"Image resized to {new_size} for MPS ELA")
 
-            # Convert to tensor and move to MPS
-            tensor = torch.from_numpy(np.array(img)).float().permute(2, 0, 1).unsqueeze(0) / 255.0
-            tensor = tensor.to('mps')
+                # Convert to tensor and move to MPS
+                tensor = torch.from_numpy(np.array(img)).float().permute(2, 0, 1).unsqueeze(0) / 255.0
+                tensor = tensor.to('mps')
 
-            with torch.no_grad():
-                # Simulate JPEG compression via avg pool and upscale
-                compressed = torch.nn.functional.avg_pool2d(tensor, 2)
-                upscaled = torch.nn.functional.interpolate(compressed, scale_factor=2, mode='nearest')
-                diff = torch.abs(tensor - upscaled)
-                ela_score = diff.mean().item()
+                with torch.no_grad():
+                    # Simulate JPEG compression via avg pool and upscale
+                    compressed = torch.nn.functional.avg_pool2d(tensor, 2)
+                    upscaled = torch.nn.functional.interpolate(compressed, scale_factor=2, mode='nearest')
+                    diff = torch.abs(tensor - upscaled)
+                    ela_score = diff.mean().item()
 
-            return ela_score
+                return ela_score
         except Exception as e:
             logger.warning(f"MPS ELA failed, falling back to CPU: {e}")
             # Fallback to CPU on error
@@ -1240,23 +1247,22 @@ class DeepForensicsAnalyzer:
     def _ela_analysis_cpu_sync(self, content: bytes) -> float:
         """Synchronous CPU implementation of ELA."""
         # Import here for thread safety
+        import numpy as np
         from PIL import Image, ImageChops
 
-        img = Image.open(io.BytesIO(content))
+        with Image.open(io.BytesIO(content)) as img:
+            # Save with JPEG quality 95
+            tmp = io.BytesIO()
+            img.save(tmp, format='JPEG', quality=95)
+            tmp.seek(0)
+            with Image.open(tmp) as compressed:
+                # Difference image
+                diff = ImageChops.difference(img, compressed)
+                diff_np = np.array(diff.convert('L'))
 
-        # Save with JPEG quality 95
-        tmp = io.BytesIO()
-        img.save(tmp, format='JPEG', quality=95)
-        tmp.seek(0)
-        compressed = Image.open(tmp)
-
-        # Difference image
-        diff = ImageChops.difference(img, compressed)
-        diff_np = np.array(diff.convert('L'))
-
-        # Normalize
-        ela_score = np.mean(diff_np) / 255.0
-        return ela_score
+            # Normalize
+            ela_score = np.mean(diff_np) / 255.0
+            return ela_score
 
     async def _stegdetect(self, content: bytes) -> float:
         """Run stegdetect on image using persistent server."""
@@ -1907,7 +1913,7 @@ class MLXLongContextAnalyzer:
                 tokens_mx = mx.array(tokens, dtype=mx.float32)
 
                 # Normalize
-                if len(tokens) > 0:
+                if tokens:
                     embedding = mx.mean(tokens_mx) / 255.0
                     embeddings.append(embedding)
                 else:

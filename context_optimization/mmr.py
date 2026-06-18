@@ -53,7 +53,7 @@ def maximal_marginal_relevance(
         >>> selected = maximal_marginal_relevance(query, candidates, top_k=2)
         >>> # Should pick one similar + one diverse
     """
-    if len(candidate_vectors) == 0:
+    if not candidate_vectors:
         return []
 
     if len(candidate_vectors) <= top_k:

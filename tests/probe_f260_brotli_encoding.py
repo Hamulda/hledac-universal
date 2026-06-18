@@ -193,7 +193,7 @@ def test_decode_failsoft_on_truncated_gzip():
         result = decode_response_body(truncated, "gzip")
     # truncated body may decode to partial output or original — either way must not raise
     assert isinstance(result, bytes)
-    assert len(result) > 0
+    assert result
 
 
 def test_decode_failsoft_on_corrupt_deflate():

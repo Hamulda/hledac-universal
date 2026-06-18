@@ -168,7 +168,7 @@ class TestFOCAMacroExtraction:
         assert result.pptx is not None
         assert result.pptx.has_macros is True
         # Fallback extraction should find the URL
-        assert len(result.pptx.macro_urls) > 0 or result.pptx.has_macros is True
+        assert result.pptx.macro_urls or result.pptx.has_macros is True
 
 
 class TestFOCABounds:

@@ -851,7 +851,7 @@ class CommunicationLayer:
         if not self._initialized:
             issues.append("Not initialized")
 
-        return len(issues) == 0, issues
+        return not issues, issues
 
 
 # Factory function

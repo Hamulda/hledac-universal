@@ -22,16 +22,19 @@ pub mod bloom;
 pub mod compress;
 pub mod content_hasher;
 pub mod graph_traverse;
+pub mod html_parse;
 pub mod int_counter_layout;
 pub mod ioc_dedup;
 pub mod ioc_extract;
 pub mod ioc_extract_fast;
 pub mod madvise;
 pub mod memory;
+pub mod ip_parse;
 pub mod quality_gate;
 pub mod rolling_hash;
 pub mod signal_batch;
 pub mod simhash_ext;
+pub mod text_norm;
 pub mod url_engine;
 pub mod url_ops;
 pub mod url_set;
@@ -163,8 +166,18 @@ fn hledac_rust_extensions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // LMDB-persisted fingerprints remain valid (no migration).
     quality_gate::register_functions(m)?;
 
+    // Sprint F265B-III: Unicode NFC/NFD normalization + diacritic stripping.
+    text_norm::register_functions(m)?;
+
     // F273F: Darwin madvise — MADV_FREE_REUSABLE for LMDB/DuckDB mmap regions
     madvise::register_functions(m)?;
+
+    // Sprint P2-3: IP address parsing, classification, and CIDR containment.
+    m.add_function(wrap_pyfunction!(ip_parse::parse_ip_fast, m)?)?;
+    m.add_function(wrap_pyfunction!(ip_parse::is_private_ip, m)?)?;
+    m.add_function(wrap_pyfunction!(ip_parse::is_public_ip, m)?)?;
+    m.add_function(wrap_pyfunction!(ip_parse::batch_ip_classify, m)?)?;
+    m.add_function(wrap_pyfunction!(ip_parse::cidr_contains, m)?)?;
 
     // Sprint F265B-III: LMDB page compression (lz4 + zstd) for hot-edges cache.
     // Wire format: [marker=0x00/0x01/0x02][payload] — lz4 fast path, zstd fallback.
@@ -174,6 +187,9 @@ fn hledac_rust_extensions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // batch_graph_traverse: parallel across root IOCs, rayon ThreadPool.
     // Each worker opens its own read-only DuckDB connection (thread-safe).
     graph_traverse::register_functions(m)?;
+
+    // Sprint F266: Streaming HTML parsing via lol_html — link/email/title/meta extraction.
+    html_parse::register_functions(m)?;
 
     // 3A: Native RSS + available-memory probe via sysinfo.
     memory::register_functions(m)?;

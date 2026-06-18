@@ -429,7 +429,7 @@ class UniversalExecutionCoordinator(UniversalCoordinator):
 
         return ExecutionResult(
             task_id=f"ray_{decision.decision_id}",
-            success=len(results) > 0,
+            success=results,
             summary=f'Distributed execution: {len(results)} tasks across cluster',
             executor='ray',
             execution_time=execution_time,

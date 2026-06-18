@@ -2447,7 +2447,7 @@ async def _fetch_and_process_page(
                         model_manager = get_model_manager()
                         async with model_manager.embedding_lifecycle():
                             embeddings = await generate_embeddings_async(accepted_texts, keep_loaded=True)
-                        if embeddings is not None and len(embeddings) > 0:
+                        if embeddings is not None and embeddings:
                             import numpy as np
                             vec_array = np.asarray(embeddings, dtype=np.float32)
                             vector_store.add_vectors(
@@ -3605,7 +3605,7 @@ async def async_run_live_public_pipeline(
                     _pub_bootstrap_order = "before_discovery"
                     _pub_bootstrap_first_fetch_attempted = True
                     _disc_hits = discovery_result.hits if hasattr(discovery_result, "hits") else ()
-                    if len(_disc_hits) == 0:
+                    if not _disc_hits:
                         _pub_bootstrap_prevented_discovery_timeout = True
 
                 # Sprint F220C: Append rescue hits if no bootstrap candidates

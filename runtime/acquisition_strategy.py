@@ -2660,7 +2660,7 @@ class NonfeedMissionController:
             elif status == "provider_failure":
                 provider_failure_families.append(family)
 
-        snapshot.any_accepted = len(accepted_families) > 0
+        snapshot.any_accepted = accepted_families
         snapshot.provider_failures = tuple(provider_failure_families)
 
         # All required terminal: every required family is terminal/accepted/memory_skip/provider_failure

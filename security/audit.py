@@ -18,7 +18,7 @@ import logging
 import os
 import sqlite3
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from enum import Enum
 from pathlib import Path
 from typing import Any
@@ -204,7 +204,7 @@ class AuditLogger:
             return True
 
         event = AuditEvent(
-            timestamp=datetime.now(),  # noqa: DTZ005
+            timestamp=datetime.now(UTC),  # noqa: DTZ005
             event_type=event_type,
             action=action,
             resource=resource,

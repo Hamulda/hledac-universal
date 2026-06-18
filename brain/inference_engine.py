@@ -1251,7 +1251,7 @@ class InferenceEngine:
             return 1.0
 
         # Use MLX for similarity if available
-        if self.use_mlx and len(a) > 0 and len(b) > 0:
+        if self.use_mlx and a and len(b) > 0:
             try:
                 return self._mlx_string_similarity(a, b)
             except Exception as e:

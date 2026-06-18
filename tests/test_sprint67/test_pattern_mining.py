@@ -146,7 +146,7 @@ class TestPatternMiningEngine:
         result = await engine.detect_change_points([])
 
         assert isinstance(result, list)
-        assert len(result) == 0
+        assert not result
 
     @pytest.mark.asyncio
     async def test_detect_change_points_short(self):

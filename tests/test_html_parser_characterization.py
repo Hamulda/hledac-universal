@@ -96,7 +96,7 @@ class TestRSSAtomAdapterFeedDiscovery:
         result = discover_feed_urls_from_html("https://example.com", minimal_html)
         # No feed links in minimal_html — this exercises the selectolax parse path
         assert isinstance(result.hits, tuple)
-        assert len(result.hits) == 0  # no feed links in this fixture
+        assert not result.hits  # no feed links in this fixture
 
 
 # ---------------------------------------------------------------------------

@@ -136,8 +136,8 @@ class TestSprintFADVS_A:  # noqa: N801
         html = '''<script type="application/ld+json">{ broken json }</script>'''
         r = ext.extract(html, source_url="https://x.com")
         assert r.jsonld_blocks == 1  # block found
-        assert len(r.entities) == 0
-        assert len(r.parse_errors) > 0
+        assert not r.entities
+        assert r.parse_errors
 
     def test_jsonld_type_array_normalized(self) -> None:
         """@type can be string or array — both forms must work."""

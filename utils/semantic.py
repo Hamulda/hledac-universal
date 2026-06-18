@@ -378,7 +378,7 @@ class SemanticFilter:
             self._embedding = ModernBERTEmbedding()
 
             test_vec = self._embedding.encode("test")
-            if not test_vec or len(test_vec) == 0:
+            if not test_vec or not test_vec:
                 raise RuntimeError("ModernBERT returned empty vector")
 
             if len(test_vec) != ModernBERTEmbedding.EMBEDDING_DIM:
@@ -428,7 +428,7 @@ class SemanticFilter:
             tokens2 = self._tokenizer.tokenize(text2)
             common_tokens = set(tokens1) & set(tokens2)
 
-            if len(tokens2) > 0:
+            if tokens2:
                 overlap_ratio = len(common_tokens) / len(tokens2)
                 similarity = similarity / (1 - 0.3 * overlap_ratio)
 

@@ -126,7 +126,7 @@ class TokenizedPromptCache:
                 None, self._tokenize_sync, prompt
             )
 
-            if tokens is None or len(tokens) == 0:
+            if tokens is None or not tokens:
                 logger.debug("PromptCache: tokenization returned empty")
                 return
 

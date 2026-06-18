@@ -225,7 +225,7 @@ class TestWritebackBuffer:
 
         await store._flush_writeback()
 
-        assert len(store._writeback_buffer) == 0
+        assert not store._writeback_buffer
 
     @pytest.mark.asyncio
     async def test_writeback_overflow(self):

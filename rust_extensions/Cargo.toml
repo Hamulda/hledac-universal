@@ -13,6 +13,7 @@ pyo3 = { version = "0.28", features = ["extension-module"] }
 rayon = "1.10"
 regex = "1"
 url = "2"
+lol_html = "2.1"
 xxhash-rust = { version = "0.8", features = ["xxh3", "const_xxh3", "xxh64"] }
 once_cell = "1.19"
 sha2 = { version = "0.10", features = ["asm"] }
@@ -26,6 +27,8 @@ blake3 = "1"
 # backward compatibility with existing LMDB-persisted fingerprints. Tiny crate
 # (~30KB compiled), zero deps, NEON-vectorized on aarch64.
 blake2 = "0.10"
+# Sprint F265B-III: Unicode NFC/NFD normalization + diacritic stripping for text.
+unicode-normalization = "0.1"
 # Sprint F265B-III: Page compression for LMDB hot-edges cache.
 # lz4_flex = pure-Rust lz4, no C deps, M1-safe.
 # zstd = higher ratio (~3:1), stdlib zlib fallback in conditional_cache.py.
@@ -43,6 +46,9 @@ libc = "0.2"
 # - `default-features = false` drops dynamic extensions (parquet, json, etc.)
 #   which are not needed for read-only DuckPGQ graph traversal.
 duckdb = { version = "1.105", default-features = false, features = ["bundled"] }
+
+# Sprint P2-3: IP address parsing, classification, and CIDR containment.
+ipnetwork = "0.20"
 
 # 3A: Native RSS + available-memory probe. Cross-platform, no subprocess.
 sysinfo = { version = "0.31", optional = true, default-features = false, features = ["apple-app-store"] }

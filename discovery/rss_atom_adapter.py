@@ -1207,7 +1207,7 @@ async def async_fetch_feed_entries(
 
     # ---- F150J: Score + pre-filter + deterministic rerank ----
     scored: list[tuple[FeedEntryHit, float, float, str, str, float, float, str, str, float, str]] = []
-    all_filtered_out: bool = len(deduped) > 0  # True if we had entries but all got pre-filtered
+    all_filtered_out: bool = deduped  # True if we had entries but all got pre-filtered
 
     for entry in deduped:
         # Light pre-filter: skip obvious noise

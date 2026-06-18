@@ -304,7 +304,7 @@ class StreamingEmbedder:
             embeddings = await loop.run_in_executor(
                 None, _sync_embed_batch, texts, len(texts)
             )
-            if len(embeddings) > 0 and len(ids) == len(embeddings):
+            if embeddings and len(ids) == len(embeddings):
                 yield (ids, embeddings)
 
     # -------------------------------------------------------------------------

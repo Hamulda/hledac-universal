@@ -297,7 +297,7 @@ class TestScheduleGraphUpdate:
         # We are explicitly NOT in an event loop. Should not raise.
         store._schedule_graph_update(sample_findings)
         # Tasks set should be empty (loop was absent, so no task created).
-        assert len(store._bg_tasks) == 0
+        assert not store._bg_tasks
 
     def test_inflight_cap_enforced(self, store, sample_findings):
         """In-flight task set is bounded by _MAX_INFLIGHT_GRAPH_UPDATES."""

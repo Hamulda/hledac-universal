@@ -165,7 +165,7 @@ async def test_detect_temporal_anomalies_empty(temp_duckdb):
     anomalies = await mem._detect_temporal_anomalies()
 
     assert isinstance(anomalies, list)
-    assert len(anomalies) == 0
+    assert not anomalies
 
 
 # ── Part D: DuckDB dht_metadata Tests ────────────────────────────────────────

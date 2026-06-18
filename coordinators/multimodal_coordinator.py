@@ -781,7 +781,7 @@ class UniversalMultimodalCoordinator(UniversalCoordinator):
         ]
 
         # Simple spectral features
-        if len(audio) > 0:
+        if audio:
             fft = np.abs(np.fft.fft(audio[:min(len(audio), 1024)]))
             features.extend(fft[:20])
 

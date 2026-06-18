@@ -312,23 +312,23 @@ class StatisticalStegoDetector:
 
             from PIL import Image
 
-            img = Image.open(io.BytesIO(image_bytes))
-            if img.mode != 'L':
-                img = img.convert('L')
+            with Image.open(io.BytesIO(image_bytes)) as img:
+                if img.mode != 'L':
+                    img = img.convert('L')
 
-            img_array = np.array(img)
-            lsbs = (img_array & 1).flatten()
+                img_array = np.array(img)
+                lsbs = (img_array & 1).flatten()
 
-            count_0 = np.sum(lsbs == 0)
-            count_1 = np.sum(lsbs == 1)
-            total = count_0 + count_1
+                count_0 = np.sum(lsbs == 0)
+                count_1 = np.sum(lsbs == 1)
+                total = count_0 + count_1
 
-            if total == 0:
-                return {"score": 0.0, "chi_square_flag": False, "method": "cpu_chi_square"}
+                if total == 0:
+                    return {"score": 0.0, "chi_square_flag": False, "method": "cpu_chi_square"}
 
-            expected = total / 2.0
-            chi_sq = ((count_0 - expected) ** 2) / expected + ((count_1 - expected) ** 2) / expected
-            score = min(1.0, chi_sq / 1000.0)
+                expected = total / 2.0
+                chi_sq = ((count_0 - expected) ** 2) / expected + ((count_1 - expected) ** 2) / expected
+                score = min(1.0, chi_sq / 1000.0)
         except Exception as e:
             logger.warning(f"CPU stego detection failed: {e}")
             score = 0.0
@@ -712,7 +712,7 @@ class StatisticalStegoDetector:
 
             # Identify suspicious coefficients (simplified)
             # In real DCT, we'd check for characteristic patterns
-            if len(block_anomalies) > 0:
+            if block_anomalies:
                 avg_anomaly = np.mean(block_anomalies)
                 max_anomaly = np.max(block_anomalies)
 

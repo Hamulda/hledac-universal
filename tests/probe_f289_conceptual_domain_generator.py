@@ -48,7 +48,7 @@ class TestExtractDomainCandidatesEmpty:
         candidates = extract_domain_candidates_from_text(
             query, source_family="PUBLIC", min_confidence=0.3
         )
-        assert len(candidates) > 0, "Expected at least one domain candidate"
+        assert candidates, "Expected at least one domain candidate"
         assert any("evil.com" in c.domain for c in candidates), "Should extract evil.com"
 
 

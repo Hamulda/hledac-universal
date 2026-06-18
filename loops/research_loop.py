@@ -503,7 +503,7 @@ class ResearchLoop:
         # Calculate reward based on new findings
         reward = len(findings) * 0.1  # Base reward per finding
         reward += 0.5 if state.tot_used else 0.0  # Bonus for using ToT
-        reward -= 0.1 if len(findings) == 0 else 0.0  # Penalty for no findings
+        reward -= 0.1 if not findings else 0.0  # Penalty for no findings
 
         return reward, findings
 

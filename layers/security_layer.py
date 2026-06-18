@@ -329,8 +329,8 @@ class SecurityLayer:
         try:
             from datetime import datetime, timedelta
             return await self._privacy_audit.generate_compliance_report(
-                start_date=datetime.now() - timedelta(days=days),  # noqa: DTZ005
-                end_date=datetime.now()  # noqa: DTZ005
+                start_date=datetime.now(UTC) - timedelta(days=days),  # noqa: DTZ005
+                end_date=datetime.now(UTC)  # noqa: DTZ005
             )
         except Exception as e:
             logger.warning(f"⚠️ Compliance report generation failed: {e}")
@@ -1047,7 +1047,7 @@ class MissionAudit:
 
     def _calculate_merkle_root(self, hashes: list[str]) -> str:
         """Calculate Merkle root from list of hashes."""
-        if len(hashes) == 0:
+        if not hashes:
             return "0" * 64
         if len(hashes) == 1:
             return hashes[0]

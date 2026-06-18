@@ -234,7 +234,7 @@ def sanitize_prompt_injection_patterns(
 
     return PromptInjectionValidationResult(
         safe_text=result,
-        suspicious=len(detected_tuple) > 0,
+        suspicious=detected_tuple,
         patterns=detected_tuple,
         original_chars=original_chars,
         final_chars=final_chars,

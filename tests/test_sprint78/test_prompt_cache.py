@@ -20,7 +20,7 @@ class TestPromptCacheBasic:
         from hledac.universal.brain.prompt_cache import PromptCache
 
         cache = PromptCache()
-        assert len(cache._cache) == 0
+        assert not cache._cache
         assert cache._max == 500
 
 

@@ -240,7 +240,7 @@ def _check_f224_artifacts(repo_root: str, profile: str) -> tuple[bool, list[str]
                 warnings.append(f"f224_blocking:{probe_dir} absent")
                 missing_blocking.append(probe_dir)
 
-    core_ready = len(missing_blocking) == 0 if is_blocking_profile else True
+    core_ready = not missing_blocking if is_blocking_profile else True
     return core_ready, missing_blocking, warnings
 
 

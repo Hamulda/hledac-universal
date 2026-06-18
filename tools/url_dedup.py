@@ -504,7 +504,7 @@ def create_rotating_bloom_filter(
                         path=mmap_path,
                         capacity=est_elements,
                         fp_rate=false_positive_rate,
-                        force_new=True,  # P1-3F: always fresh — avoids cross-test pollution
+                        force_new=False,  # P3-3: persist across sprints (cross-restart dedup)
                     ),
                 )
             except Exception:

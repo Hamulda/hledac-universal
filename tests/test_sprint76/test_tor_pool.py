@@ -67,7 +67,7 @@ class TestTorPool:
                 pass
         coord._tor_sessions.clear()
 
-        assert len(coord._tor_sessions) == 0
+        assert not coord._tor_sessions
 
 
 if __name__ == "__main__":

@@ -204,8 +204,8 @@ class ThreatIntelligenceAutomation:
                                 source=source_name,
                                 indicators=[entry.get('domain', '')],
                                 description=entry.get('description', f"Malware domain: {entry.get('domain', '')}"),
-                                first_seen=datetime.fromisoformat(entry.get('first_seen', datetime.now().isoformat())),  # noqa: DTZ005
-                                last_seen=datetime.fromisoformat(entry.get('last_seen', datetime.now().isoformat())),  # noqa: DTZ005
+                                first_seen=datetime.fromisoformat(entry.get('first_seen', datetime.now(UTC).isoformat())),  # noqa: DTZ005
+                                last_seen=datetime.fromisoformat(entry.get('last_seen', datetime.now(UTC).isoformat())),  # noqa: DTZ005
                                 confidence=0.9,
                                 tags=["malware", "domain", "c2"]
                             )
@@ -242,8 +242,8 @@ class ThreatIntelligenceAutomation:
                                     source=source_name,
                                     indicators=[indicator.get("indicator", "")],
                                     description=pulse.get("description", "IOC indicator"),
-                                    first_seen=datetime.fromisoformat(pulse.get("created", datetime.now().isoformat())),  # noqa: DTZ005
-                                    last_seen=datetime.now(),  # noqa: DTZ005
+                                    first_seen=datetime.fromisoformat(pulse.get("created", datetime.now(UTC).isoformat())),  # noqa: DTZ005
+                                    last_seen=datetime.now(UTC),  # noqa: DTZ005
                                     confidence=0.8,
                                     tags=pulse.get("tags", [])
                                 )
@@ -282,8 +282,8 @@ class ThreatIntelligenceAutomation:
                                 source=source_name,
                                 indicators=indicators,
                                 description=cve.get("descriptions", [{}])[0].get("value", ""),
-                                first_seen=datetime.fromisoformat(cve.get("published", datetime.now().isoformat())),  # noqa: DTZ005
-                                last_seen=datetime.fromisoformat(cve.get("lastModified", datetime.now().isoformat())),  # noqa: DTZ005
+                                first_seen=datetime.fromisoformat(cve.get("published", datetime.now(UTC).isoformat())),  # noqa: DTZ005
+                                last_seen=datetime.fromisoformat(cve.get("lastModified", datetime.now(UTC).isoformat())),  # noqa: DTZ005
                                 confidence=1.0,
                                 tags=["vulnerability", "cve"]
                             )
@@ -337,7 +337,7 @@ class ThreatIntelligenceAutomation:
                 for indicator in threat.indicators:
                     if self._matches_app_endpoint(indicator, app_endpoints):
                         alert = SecurityAlert(
-                            alert_id=f"app_{threat_id}_{datetime.now().strftime('%Y%m%d%H%M%S')}",  # noqa: DTZ005
+                            alert_id=f"app_{threat_id}_{datetime.now(UTC).strftime('%Y%m%d%H%M%S')}",  # noqa: DTZ005
                             threat_intelligence=threat,
                             affected_assets=app_endpoints,
                             recommended_actions=[
@@ -346,7 +346,7 @@ class ThreatIntelligenceAutomation:
                                 "Consider IP-based blocking if applicable"
                             ],
                             automated_response=self._get_automated_response(threat),
-                            timestamp=datetime.now(),  # noqa: DTZ005
+                            timestamp=datetime.now(UTC),  # noqa: DTZ005
                             status="new"
                         )
 
@@ -415,7 +415,7 @@ class ThreatIntelligenceAutomation:
                     for pattern in suspicious_patterns:
                         if re.search(pattern, line, re.IGNORECASE):
                             alert = SecurityAlert(
-                                alert_id=f"log_threat_{datetime.now().strftime('%Y%m%d%H%M%S')}_{line_num}",  # noqa: DTZ005
+                                alert_id=f"log_threat_{datetime.now(UTC).strftime('%Y%m%d%H%M%S')}_{line_num}",  # noqa: DTZ005
                                 threat_intelligence=ThreatIntelligence(
                                     threat_id=f"log_pattern_{hashlib.md5(pattern.encode()).hexdigest()[:8]}",
                                     threat_type="log_based_threat",
@@ -423,8 +423,8 @@ class ThreatIntelligenceAutomation:
                                     source="access_log",
                                     indicators=[pattern],
                                     description=f"Suspicious pattern detected in access log: {pattern}",
-                                    first_seen=datetime.now(),  # noqa: DTZ005
-                                    last_seen=datetime.now(),  # noqa: DTZ005
+                                    first_seen=datetime.now(UTC),  # noqa: DTZ005
+                                    last_seen=datetime.now(UTC),  # noqa: DTZ005
                                     confidence=0.6,
                                     tags=["log_analysis", "pattern_matching"]
                                 ),
@@ -435,7 +435,7 @@ class ThreatIntelligenceAutomation:
                                     "Consider rate limiting or blocking"
                                 ],
                                 automated_response="rate_limit",
-                                timestamp=datetime.now(),  # noqa: DTZ005
+                                timestamp=datetime.now(UTC),  # noqa: DTZ005
                                 status="new"
                             )
 
@@ -452,7 +452,7 @@ class ThreatIntelligenceAutomation:
 
             for anomaly in anomalies:
                 alert = SecurityAlert(
-                    alert_id=f"behavior_{datetime.now().strftime('%Y%m%d%H%M%S')}_{hashlib.md5(str(anomaly).encode()).hexdigest()[:8]}",  # noqa: DTZ005
+                    alert_id=f"behavior_{datetime.now(UTC).strftime('%Y%m%d%H%M%S')}_{hashlib.md5(str(anomaly).encode()).hexdigest()[:8]}",  # noqa: DTZ005
                     threat_intelligence=ThreatIntelligence(
                         threat_id=f"anomaly_{hashlib.md5(str(anomaly).encode()).hexdigest()[:8]}",
                         threat_type="behavioral_anomaly",
@@ -460,8 +460,8 @@ class ThreatIntelligenceAutomation:
                         source="behavior_analysis",
                         indicators=[str(anomaly)],
                         description=f"Behavioral anomaly detected: {anomaly}",
-                        first_seen=datetime.now(),  # noqa: DTZ005
-                        last_seen=datetime.now(),  # noqa: DTZ005
+                        first_seen=datetime.now(UTC),  # noqa: DTZ005
+                        last_seen=datetime.now(UTC),  # noqa: DTZ005
                         confidence=0.7,
                         tags=["behavior", "anomaly"]
                     ),
@@ -472,7 +472,7 @@ class ThreatIntelligenceAutomation:
                         "Consider temporary monitoring enhancement"
                     ],
                     automated_response="enhance_monitoring",
-                    timestamp=datetime.now(),  # noqa: DTZ005
+                    timestamp=datetime.now(UTC),  # noqa: DTZ005
                     status="new"
                 )
 
@@ -540,7 +540,7 @@ class ThreatIntelligenceAutomation:
             await self._enhance_monitoring(alert)
 
         defense_action = DefenseAction(
-            action_id=f"defense_{alert.alert_id}_{datetime.now().strftime('%Y%m%d%H%M%S')}",  # noqa: DTZ005
+            action_id=f"defense_{alert.alert_id}_{datetime.now(UTC).strftime('%Y%m%d%H%M%S')}",  # noqa: DTZ005
             action_type=action_type,
             target=",".join(alert.threat_intelligence.indicators),
             confidence=alert.threat_intelligence.confidence,
@@ -609,7 +609,7 @@ class ThreatIntelligenceAutomation:
                     "type": alert.threat_intelligence.threat_type,
                     "severity": alert.threat_intelligence.severity,
                     "indicators": alert.threat_intelligence.indicators,
-                    "last_seen": datetime.now().isoformat()  # noqa: DTZ005
+                    "last_seen": datetime.now(UTC).isoformat()  # noqa: DTZ005
                 }
 
                 with open(security_config_path, 'w') as f:
@@ -626,7 +626,7 @@ class ThreatIntelligenceAutomation:
     async def _cleanup_new_alerts(self):
         """Clean up new resolved alerts"""
         retention_days = self.config["threat_intelligence"]["retention_days"]
-        cutoff_date = datetime.now() - timedelta(days=retention_days)  # noqa: DTZ005
+        cutoff_date = datetime.now(UTC) - timedelta(days=retention_days)  # noqa: DTZ005
 
         new_alerts = [
             alert_id for alert_id, alert in self.active_alerts.items()
@@ -645,7 +645,7 @@ class ThreatIntelligenceAutomation:
         report_path.parent.mkdir(parents=True, exist_ok=True)
 
         report = {
-            "timestamp": datetime.now().isoformat(),  # noqa: DTZ005
+            "timestamp": datetime.now(UTC).isoformat(),  # noqa: DTZ005
             "summary": {
                 "total_threats": len(self.threat_intel_db),
                 "active_alerts": len([a for a in self.active_alerts.values() if a.status == "new"]),
@@ -717,7 +717,7 @@ class ThreatIntelligenceAutomation:
             recommendations.append("Review and optimize domain blocking policies")
 
         recent_actions = [a for a in self.defense_actions
-                        if a.action_id.startswith(f"defense_{datetime.now().strftime('%Y%m%d')}")]  # noqa: DTZ005
+                        if a.action_id.startswith(f"defense_{datetime.now(UTC).strftime('%Y%m%d')}")]  # noqa: DTZ005
         if len(recent_actions) > 20:
             recommendations.append("High defensive activity detected - investigate potential attack patterns")
 

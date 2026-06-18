@@ -748,8 +748,8 @@ class ResearchContext(BaseModel):
                     frontier_type = "unverified"
                     priority = 0.6
                 elif (
-                    len(hyp.supporting_evidence) == 0
-                    and len(hyp.contradicting_evidence) == 0
+                    not hyp.supporting_evidence
+                    and not hyp.contradicting_evidence
                 ):
                     frontier_type = "absent"
                     priority = 0.4

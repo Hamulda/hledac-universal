@@ -199,7 +199,7 @@ class RAGOrchestrator:
                 "processing_time": time.monotonic() - started,
                 "validation_score": None,
                 "compressed": False,
-                "fallback_used": len(sources) == 0 and len(results or []) == 0,
+                "fallback_used": not sources and len(results or []) == 0,
             },
         }
 

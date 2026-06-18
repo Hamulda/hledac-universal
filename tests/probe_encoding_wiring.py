@@ -59,7 +59,7 @@ def test_f261_decode_response_bytes_latin1_no_replacement():
     # No replacement chars (U+FFFD = �) — the smoking gun of mis-decode
     assert "�" not in out, f"replacement char in: {out!r}"
     # Must contain some smart-quote-looking glyphs (latin-1 char >= 0x80 maps to a unicode char)
-    assert len(out) > 0
+    assert out
     print(f"OK f261-2: latin-1 hint -> {out!r} (no U+FFFD)")
 
 
@@ -237,7 +237,7 @@ def test_f261_end_to_end_latin1_payload_text():
 
     # CanonicalFinding.payload_text would receive the decoded text
     payload_text = text_aiohttp
-    assert len(payload_text) > 0
+    assert payload_text
     assert "OSINT" in payload_text
     assert "Europe" in payload_text
     assert "2026-06-03" in payload_text

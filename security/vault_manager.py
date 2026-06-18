@@ -2,7 +2,7 @@ import logging
 import os
 import tempfile
 import zipfile
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -331,7 +331,7 @@ class LootManager:
         output_path.mkdir(parents=True, exist_ok=True)
 
         if archive_name is None:
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")  # noqa: DTZ005
+            timestamp = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")  # noqa: DTZ005
             archive_name = f"ghostvault_{timestamp}.enc"
 
         output_file = output_path / archive_name

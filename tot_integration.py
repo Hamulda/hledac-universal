@@ -383,7 +383,7 @@ class TotIntegrationLayer:
                 next_queries = self._hypothesis_engine.suggest_next_queries(
                     findings=[query], context={}, max_queries=5
                 )
-                if next_queries and len(next_queries) > 0:
+                if next_queries and next_queries:
                     score = min(1.0, score + 0.2)
                     self._pending_epistemic_branches = [
                         q["query"] for q in next_queries[:3]

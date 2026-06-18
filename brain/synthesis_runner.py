@@ -134,7 +134,7 @@ def validate_report_semantics(report: OSINTReport) -> tuple[bool, list[str]]:
             errors.append(f"timestamp {ts} invalid (must be positive unix epoch)")
 
         ioc_entities = getattr(report, 'ioc_entities', None) or []
-        if len(ioc_entities) == 0 and sc is not None and int(sc) > 0:
+        if not ioc_entities and sc is not None and int(sc) > 0:
             errors.append(
                 f"ioc_entities empty but sources_count={sc} — possible generation failure")
 
@@ -147,7 +147,7 @@ def validate_report_semantics(report: OSINTReport) -> tuple[bool, list[str]]:
         logger.debug(f"validate_report_semantics exception (fail-soft): {e}")
         return (True, [])  # fail-soft on introspection error
 
-    return (len(errors) == 0, errors)
+    return (not errors, errors)
 
 
 _GRAMMAR_CACHE: dict[str, object] = {}
@@ -452,7 +452,8 @@ class SynthesisRunner:
                  "_stix_graph", "_last_synthesis_outcome",
                  "_compression_threshold", "_compressor",
                  "_hypothesis_engine",
-                 "_hermes_engine")  # P2-1: cached Hermes3Engine for continuous batching
+                 "_hermes_engine",  # P2-1: cached Hermes3Engine for continuous batching
+                 "_inference_pipeliner")  # P2-1b: InferencePipeliner for non-blocking submit + prompt overlap
 
     def __init__(self, lifecycle: ModelLifecycle) -> None:
         self._lifecycle = lifecycle
@@ -832,7 +833,7 @@ class SynthesisRunner:
                     conn_texts = []
                     for ioc in top_iocs[:3]:
                         try:
-                            conns = _grag.find_connections(ioc, ioc, max_hops=2)
+                            conns = await _grag.find_connections(ioc, ioc, max_hops=2)
                             if conns:
                                 conn_texts.append(f"IOC {ioc}: {'; '.join(str(c)[:80] for c in conns[:3])}")
                         except Exception:
@@ -1635,7 +1636,7 @@ class SynthesisRunner:
                 findings = []
             ep_query = ep.get("query", "")[:60]
             lines.append(f"  Sprint {ep.get('sprint_id','')}: query='{ep_query}'")
-            if findings and isinstance(findings, list) and len(findings) > 0:
+            if findings and isinstance(findings, list) and findings:
                 lines.append(f"    Key finding: {findings[0][:120]}")
         return "\n".join(lines)
 

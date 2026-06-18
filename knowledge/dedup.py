@@ -47,6 +47,9 @@ _DEDUP_LMDB_MAP_SIZE: int = 64 * 1024 * 1024  # 64MB
 # Sprint F216G: Same constant imported from quality_assessment for hot cache cap
 _DEDUP_HOT_CACHE_MAX: int = 10000  # will be overridden by quality_assessment import
 
+# Sprint P1-3: Env override for explicit dedup LMDB path
+_DEDUP_LMDB_PATH: str | None = os.environ.get("HLEDAC_DEDUP_LMDB_PATH")
+
 
 def _load_dedup_hot_cache_max() -> int:
     """Lazy-load DEDUP_HOT_CACHE_MAX from quality_assessment."""
@@ -300,12 +303,17 @@ class DedupManager:
     ) -> None:
         """
         Args:
-            dedup_lmdb_path: Path to dedup LMDB. If None, resolved from LMDB_ROOT.
+            dedup_lmdb_path: Path to dedup LMDB. If None, resolved from HLEDAC_DEDUP_LMDB_PATH env
+                or LMDB_ROOT/dedup.lmdb fallback.
             semantic_lmdb_path: Path to semantic dedup LMDB. If None, uses default.
             map_size: LMDB map size in bytes for dedup store.
             max_keys: Max keys in dedup LMDB.
         """
-        self._dedup_lmdb_path_str: str | None = dedup_lmdb_path
+        # P1-3: HLEDAC_DEDUP_LMDB_PATH env var takes precedence over explicit arg
+        if _DEDUP_LMDB_PATH:
+            self._dedup_lmdb_path_str: str | None = _DEDUP_LMDB_PATH
+        else:
+            self._dedup_lmdb_path_str: str | None = dedup_lmdb_path
         self._semantic_lmdb_path: str | None = semantic_lmdb_path
         self._map_size = map_size
         self._max_keys = max_keys
@@ -323,6 +331,10 @@ class DedupManager:
         self._semantic_dedup_cache: Any | None = None
         self._semantic_dedup_boot_error: str | None = None
 
+        # P1-4: Rust BloomFilter pre-check (fast negative dedup)
+        self._bloom_filter: Any | None = None
+        self._bloom_filter_error: str | None = None
+
         self._initialized: bool = False
 
     # ------------------------------------------------------------------
@@ -330,16 +342,29 @@ class DedupManager:
     # ------------------------------------------------------------------
 
     def initialize(self) -> None:
-        """Initialize persistent dedup LMDB and semantic dedup cache."""
+        """Initialize persistent dedup LMDB, Rust BloomFilter pre-check, and semantic dedup cache."""
         if self._initialized:
             return
 
         self._init_persistent_dedup_lmdb()
+        self._init_bloom_filter_precheck()
         self._init_semantic_dedup_cache()
         self._initialized = True
 
     def close(self) -> None:
-        """Close all LMDB stores."""
+        """Close all LMDB stores and Bloom filter."""
+        # P1-4: Close Bloom filter first
+        if self._bloom_filter is not None:
+            try:
+                sync = getattr(self._bloom_filter, "sync", None)
+                if sync:
+                    sync()
+            except Exception:
+                pass
+            self._bloom_filter = None
+        self._bloom_previous = None
+        self._bloom_filter_error = None
+
         if self._dedup_lmdb is not None:
             try:
                 self._dedup_lmdb.close()
@@ -361,10 +386,14 @@ class DedupManager:
         """
         try:
             if self._dedup_lmdb_path_str is None:
-                from hledac.universal.paths import LMDB_ROOT
-                dedup_path = LMDB_ROOT / "dedup.lmdb"
-                dedup_path.mkdir(parents=True, exist_ok=True)
-                self._dedup_lmdb_path_str = str(dedup_path)
+                # P1-3: HLEDAC_DEDUP_LMDB_PATH env var takes precedence
+                if _DEDUP_LMDB_PATH:
+                    self._dedup_lmdb_path_str = _DEDUP_LMDB_PATH
+                else:
+                    from hledac.universal.paths import LMDB_ROOT
+                    dedup_path = LMDB_ROOT / "dedup.lmdb"
+                    dedup_path.mkdir(parents=True, exist_ok=True)
+                    self._dedup_lmdb_path_str = str(dedup_path)
 
             from hledac.universal.tools.lmdb_kv import LMDBKVStore
             self._dedup_lmdb = LMDBKVStore(
@@ -380,6 +409,54 @@ class DedupManager:
             self._dedup_lmdb_boot_error = str(e)
             self._dedup_lmdb_last_error = str(e)
 
+    def _init_bloom_filter_precheck(self) -> None:
+        """
+        Initialize Rust MmapBloomFilter pre-check for fast negative dedup.
+
+        P1-4: Bloom filter sits in front of LMDB for O(1) negative dedup —
+        if Bloom says "not seen", skip LMDB entirely. If Bloom says "seen",
+        verify against LMDB (authoritative).
+
+        Fails softly: any exception stored in _bloom_filter_error.
+        """
+        try:
+            # Lazy import to avoid early M1 crash
+            from hledac_rust_extensions import MmapBloomFilter
+
+            # Resolve mmap file directory from dedup LMDB path
+            if self._dedup_lmdb_path_str:
+                import os
+                base_dir = os.path.dirname(self._dedup_lmdb_path_str) or str(
+                    __import__("hledac.universal.paths", fromlist=["LMDB_ROOT"]).LMDB_ROOT
+                )
+            else:
+                from hledac.universal.paths import LMDB_ROOT
+                base_dir = str(LMDB_ROOT)
+
+            import os as _os
+            _os.makedirs(base_dir, exist_ok=True)
+            active_path = _os.path.join(base_dir, "dedup_bloom_active.mmap")
+            previous_path = _os.path.join(base_dir, "dedup_bloom_previous.mmap")
+
+            # Two-generation Bloom: active + previous
+            self._bloom_filter = MmapBloomFilter(
+                active_path, 100_000, 0.001, force_new=False
+            )
+            # Previous generation (reuse if exists)
+            if _os.path.exists(previous_path):
+                self._bloom_previous = MmapBloomFilter(
+                    previous_path, 100_000, 0.001, force_new=False
+                )
+            else:
+                self._bloom_previous = MmapBloomFilter(
+                    previous_path, 100_000, 0.001, force_new=True
+                )
+            self._bloom_filter_error = None
+        except Exception as e:
+            self._bloom_filter = None
+            self._bloom_previous = None
+            self._bloom_filter_error = str(e)
+
     def _dedup_key_from_fingerprint(self, fp: str) -> bytes:
         """Build dedup namespace key from BLAKE2b fingerprint."""
         return f"{self.DEDUP_NAMESPACE}{fp}".encode()
@@ -392,7 +469,8 @@ class DedupManager:
         """
         Lookup a fingerprint in the persistent dedup LMDB.
 
-        LMDB remains authoritative.
+        P1-4: Bloom filter pre-check — O(1) negative dedup, skip LMDB if Bloom says "not seen".
+        LMDB remains authoritative for positive matches.
 
         Args:
             fp: 32-char BLAKE2b fingerprint hex string
@@ -400,6 +478,22 @@ class DedupManager:
         Returns:
             finding_id string if found, None otherwise (miss or LMDB unavailable)
         """
+        # P1-4: Bloom pre-check — fast negative dedup
+        if self._bloom_filter is not None:
+            try:
+                # Check both active and previous generations using .contains() method
+                _bloom_contains = getattr(self._bloom_filter, "contains", None)
+                in_active = _bloom_contains(fp) if _bloom_contains else False
+                in_previous = False
+                if hasattr(self, "_bloom_previous") and self._bloom_previous is not None:
+                    _prev_contains = getattr(self._bloom_previous, "contains", None)
+                    in_previous = _prev_contains(fp) if _prev_contains else False
+                if not in_active and not in_previous:
+                    # Bloom says "definitely not seen" — skip LMDB entirely
+                    return None
+            except Exception:
+                pass  # Bloom error — fall through to LMDB
+
         if self._dedup_lmdb is None:
             return None
         try:
@@ -417,10 +511,19 @@ class DedupManager:
         """
         Store a fingerprint → finding_id mapping in persistent dedup LMDB.
 
+        P1-4: Also update Bloom filter for fast negative dedup.
+
         Args:
             fp: 32-char BLAKE2b fingerprint hex string
             finding_id: canonical finding ID
         """
+        # P1-4: Update Bloom filter first (O(1), in-memory)
+        if self._bloom_filter is not None:
+            try:
+                self._bloom_filter.add(fp)
+            except Exception:
+                pass  # Bloom update failure is non-fatal
+
         if self._dedup_lmdb is None:
             return
         try:
@@ -517,6 +620,8 @@ class DedupManager:
         """
         return {
             "persistent_dedup_enabled": self._dedup_lmdb is not None,
+            "bloom_filter_enabled": self._bloom_filter is not None,
+            "bloom_filter_error": self._bloom_filter_error,
             "last_boot_cleanup_error": self._dedup_lmdb_boot_error,
             "last_dedup_error": self._dedup_lmdb_last_error,
             "dedup_lmdb_path": self._dedup_lmdb_path_str or "",

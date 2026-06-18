@@ -32,6 +32,10 @@ _URL_PATTERN = get_compiled_pattern(
 _EMAIL_PATTERN = get_compiled_pattern(r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b')
 _DOMAIN_PATTERN = get_compiled_pattern(r'\b(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}\b')
 
+# HTML/text extraction patterns (F265B)
+_HTML_TAG_RE = get_compiled_pattern(r'<[^>]+>')
+_MULTI_WHITESPACE_RE = get_compiled_pattern(r'\s{2,}')
+
 
 def check_ip(text: str) -> bool:
     """Check if text contains an IP address."""
@@ -71,3 +75,13 @@ def extract_emails(text: str) -> list:
 def extract_domains(text: str) -> list:
     """Extract all domain names from text."""
     return _DOMAIN_PATTERN.findall(text)
+
+
+def strip_html_tags(text: str) -> str:
+    """Remove HTML tags from text (single pass, compiled pattern)."""
+    return _HTML_TAG_RE.sub(" ", text)
+
+
+def collapse_whitespace(text: str) -> str:
+    """Collapse multiple whitespace to single space (single pass, compiled pattern)."""
+    return _MULTI_WHITESPACE_RE.sub(" ", text)

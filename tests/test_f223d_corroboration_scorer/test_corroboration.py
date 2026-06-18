@@ -178,7 +178,7 @@ class TestScoreSeedsByCorroboration:
             {"value": "reject.me", "kind": "domain", "source": "body", "confidence": 0.5, "quality_decision": "reject", "quality_score": 0.0},  # noqa: E501
         ]
         scores = score_seeds_by_corroboration(seeds)
-        assert len(scores) == 0
+        assert not scores
 
     def test_seed_source_mapping(self):
         assert _seed_source_to_family("feed") == "feed"

@@ -185,7 +185,7 @@ class TestSprintT1BoundedRing:
         r: BoundedRing[str, int] = BoundedRing(capacity=4)
         r.put("a", 1)
         r.clear()
-        assert len(r) == 0
+        assert not r
         assert r.get("a") is None
 
 

@@ -893,7 +893,7 @@ class AnalystWorkbench:
             # Prior feed dominance inferred from high entity count + low nonfeed evidence
             prior_feed_heavy = (
                 len(entity_facets) > 5
-                and len(exposure_facets) == 0
+                and not exposure_facets
                 and mem_findings > 10
                 and current_feed_ratio >= 0.8
             )

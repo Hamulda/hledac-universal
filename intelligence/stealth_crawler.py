@@ -229,7 +229,7 @@ def get_stealth_crawler_transport_telemetry() -> dict:
     high_risk = [s for s in STEALTH_CRAWLER_NETWORK_SURFACES if s["risk"] == "high"]
     medium_risk = [s for s in STEALTH_CRAWLER_NETWORK_SURFACES if s["risk"] == "medium"]
 
-    m1_risk = "high" if len(high_risk) > 0 else ("medium" if len(medium_risk) > 3 else "low")
+    m1_risk = "high" if high_risk else ("medium" if len(medium_risk) > 3 else "low")
 
     # Per-transport breakdown
     transport_counts = {}
@@ -1926,7 +1926,7 @@ class StealthWebScraper:
             success_rate = proxy.success_count / total
             time_penalty = 0.0
             if proxy.last_used:
-                seconds_since = (datetime.now() - proxy.last_used).total_seconds()  # noqa: DTZ005
+                seconds_since = (datetime.now(UTC) - proxy.last_used).total_seconds()  # noqa: DTZ005
                 time_penalty = min(seconds_since / 60, 1.0)
             return success_rate - time_penalty * 0.3
 
@@ -2013,7 +2013,7 @@ class StealthWebScraper:
             bypass_method_used=BypassMethod.DIRECT,
             headers={},
             cookies={},
-            timestamp=datetime.now(),  # noqa: DTZ005
+            timestamp=datetime.now(UTC),  # noqa: DTZ005
             duration=time.time() - start_time,
             error="Max retries exceeded"
         )
@@ -2042,7 +2042,7 @@ class StealthWebScraper:
             if proxy.username and proxy.password:
                 auth = f"{proxy.username}:{proxy.password}@"
             proxy_url = f"http://{auth}{proxy.host}:{proxy.port}"
-            proxy.last_used = datetime.now()  # noqa: DTZ005
+            proxy.last_used = datetime.now(UTC)  # noqa: DTZ005
 
         try:
             # Phase 2 breaker preflight
@@ -2059,7 +2059,7 @@ class StealthWebScraper:
                     bypass_method_used=BypassMethod.DIRECT,
                     headers={},
                     cookies={},
-                    timestamp=datetime.now(),  # noqa: DTZ005
+                    timestamp=datetime.now(UTC),  # noqa: DTZ005
                     duration=time.time() - start_time,
                     proxy_used=proxy_url,
                     error=f"circuit_breaker_blocked:{reason}"
@@ -2094,7 +2094,7 @@ class StealthWebScraper:
                     bypass_method_used=BypassMethod.DIRECT,
                     headers=dict(resp.headers),
                     cookies={k: v.value for k, v in resp.cookies.items()},
-                    timestamp=datetime.now(),  # noqa: DTZ005
+                    timestamp=datetime.now(UTC),  # noqa: DTZ005
                     duration=time.time() - start_time,
                     proxy_used=proxy_url
                 )
@@ -2113,7 +2113,7 @@ class StealthWebScraper:
                 bypass_method_used=BypassMethod.DIRECT,
                 headers=headers,
                 cookies={},
-                timestamp=datetime.now(),  # noqa: DTZ005
+                timestamp=datetime.now(UTC),  # noqa: DTZ005
                 duration=time.time() - start_time,
                 proxy_used=proxy_url,
                 error=str(e)
@@ -2214,7 +2214,7 @@ class StealthWebScraper:
                 bypass_method_used=BypassMethod.CLOUDSCRAPER,
                 headers=dict(response.headers),
                 cookies=dict(response.cookies),
-                timestamp=datetime.now(),  # noqa: DTZ005
+                timestamp=datetime.now(UTC),  # noqa: DTZ005
                 duration=0.0,
                 proxy_used=proxy.host if proxy else None
             )
@@ -2430,7 +2430,7 @@ class StreamingMonitor:
             await self.initialize()
 
         self._running = True
-        self._stats['start_time'] = datetime.now()  # noqa: DTZ005
+        self._stats['start_time'] = datetime.now(UTC)  # noqa: DTZ005
         self._monitor_task = asyncio.create_task(self._monitor_loop())
         logger.info("🚀 Streaming monitoring started")
 
@@ -2457,7 +2457,7 @@ class StreamingMonitor:
         while self._running:
             try:
                 # Get sources that need checking
-                now = datetime.now()  # noqa: DTZ005
+                now = datetime.now(UTC)  # noqa: DTZ005
                 sources_to_check = [
                     s for s in self._sources.values()
                     if s.is_active and (
@@ -2513,7 +2513,7 @@ class StreamingMonitor:
         if not self._session:
             return None
 
-        source.last_check = datetime.now()  # noqa: DTZ005
+        source.last_check = datetime.now(UTC)  # noqa: DTZ005
         self._stats['checks_performed'] += 1
 
         try:
@@ -2567,7 +2567,7 @@ class StreamingMonitor:
             event = StreamEvent(
                 event_id=self._generate_id(),
                 source_id=source.source_id,
-                timestamp=datetime.now(),  # noqa: DTZ005
+                timestamp=datetime.now(UTC),  # noqa: DTZ005
                 content=content[:10000],  # Limit content size (M1 optimization)
                 extracted_entities=entities,
                 matched_keywords=matched_keywords,
@@ -2886,7 +2886,7 @@ class StreamingMonitor:
                     event=event,
                     rule_matched=rule.rule_id,
                     severity=rule.get_severity(event),
-                    timestamp=datetime.now(),  # noqa: DTZ005
+                    timestamp=datetime.now(UTC),  # noqa: DTZ005
                 )
                 self._alerts.append(alert)
                 self._stats['alerts_generated'] += 1
@@ -2963,7 +2963,7 @@ class StreamingMonitor:
         for alert in self._alerts:
             if alert.alert_id == alert_id:
                 alert.acknowledged = True
-                alert.acknowledged_at = datetime.now()  # noqa: DTZ005
+                alert.acknowledged_at = datetime.now(UTC)  # noqa: DTZ005
                 alert.acknowledged_by = acknowledged_by
                 return True
         return False
@@ -2997,7 +2997,7 @@ class StreamingMonitor:
         """Get monitoring statistics"""
         uptime = timedelta(0)
         if self._stats['start_time']:
-            uptime = datetime.now() - self._stats['start_time']  # noqa: DTZ005
+            uptime = datetime.now(UTC) - self._stats['start_time']  # noqa: DTZ005
 
         return {
             **self._stats,

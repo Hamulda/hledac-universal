@@ -230,7 +230,7 @@ class UnifiedEmbeddingManager:
         result = np.array(embeddings, dtype=np.float32)
 
         if single:
-            return result[0] if len(result) > 0 else np.array([])
+            return result[0] if result else np.array([])
         return result
 
 

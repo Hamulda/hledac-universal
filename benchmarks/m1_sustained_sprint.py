@@ -31,7 +31,7 @@ import json
 import sys
 import time
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -256,7 +256,7 @@ async def run_hermetic_sprint(duration_s: float = DEFAULT_DURATION_S) -> Benchma
         renderer_denied_count=snap.renderer_denied_count,
         fetch_limit_at_end=fetch_limit,
         findings_per_minute=findings_per_min,
-        timestamp=datetime.now().isoformat(),  # noqa: DTZ005
+        timestamp=datetime.now(UTC).isoformat(),  # noqa: DTZ005
     )
 
 

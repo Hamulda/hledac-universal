@@ -442,14 +442,14 @@ def _check_feed_only_accepted_nonfeed_attempted(
     outcomes = _get_sfo_canonical(b, v)
 
     # Check canonical SFO for attempted signals
-    ct_attempted = any(
-        o.get("family", "").lower() == "ct" and o.get("attempted")
-        for o in outcomes
-    )
-    public_attempted = any(
-        o.get("family", "").lower() == "public" and o.get("attempted")
-        for o in outcomes
-    )
+    # F265B: cache .lower() — avoid repeated string allocation in any() loops
+    family_attempted: dict[str, bool] = {}
+    for o in outcomes:
+        fam = o.get("family", "").lower()
+        if fam not in family_attempted:
+            family_attempted[fam] = bool(o.get("attempted"))
+    ct_attempted = family_attempted.get("ct", False)
+    public_attempted = family_attempted.get("public", False)
 
     # F221E: Terminal signals can override an explicit attempted=False in SFO
     # CT terminal signals
@@ -524,9 +524,11 @@ def _check_ct_loss_stage_present(
         ct_data = lane_execution.get("ct") or lane_execution.get("CT")
     elif isinstance(lane_execution, list):
         for entry in lane_execution:
-            if isinstance(entry, dict) and entry.get("family", "").lower() == "ct":
-                ct_data = entry
-                break
+            if isinstance(entry, dict):
+                fam = entry.get("family", "").lower()
+                if fam == "ct":
+                    ct_data = entry
+                    break
 
     if ct_data is None:
         return True, None  # No CT lane, nothing to check
@@ -587,10 +589,9 @@ def _check_public_surface_present(
     # F221E: Check acquisition_report.source_family_outcomes (canonical) first
     ar_sfo = ar.get("source_family_outcomes") if ar else None
     if isinstance(ar_sfo, list):
-        public_present = any(
-            isinstance(o, dict) and o.get("family", "").lower() == "public"
-            for o in ar_sfo
-        )
+        # F265B: build once, reuse — avoid repeated .lower() in any()
+        sfo_families = {o.get("family", "").lower() for o in ar_sfo if isinstance(o, dict)}
+        public_present = "public" in sfo_families
         if public_present:
             return True, None
         # PUBLIC attempted (canonical stage) but no outcome entry — fail
@@ -606,10 +607,8 @@ def _check_public_surface_present(
             if isinstance(lane_execution, dict):
                 public_present = "public" in lane_execution or "PUBLIC" in lane_execution
             elif isinstance(lane_execution, list):
-                public_present = any(
-                    isinstance(o, dict) and o.get("family", "").lower() == "public"
-                    for o in lane_execution
-                )
+                le_families = {e.get("family", "").lower() for e in lane_execution if isinstance(e, dict)}
+                public_present = "public" in le_families
             if not public_present:
                 return False, (
                     "public_fetch_attempted=True but PUBLIC absent from lane_execution_counts"
@@ -622,10 +621,8 @@ def _check_public_surface_present(
     if isinstance(lane_execution, dict):
         public_present = "public" in lane_execution or "PUBLIC" in lane_execution
     elif isinstance(lane_execution, list):
-        for entry in lane_execution:
-            if isinstance(entry, dict) and entry.get("family", "").lower() == "public":
-                public_present = True
-                break
+        le_families = {e.get("family", "").lower() for e in lane_execution if isinstance(e, dict)}
+        public_present = "public" in le_families
 
     if not public_present and (public_attempted_canonical or public_attempted_legacy):
         return False, (

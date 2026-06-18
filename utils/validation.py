@@ -12,7 +12,7 @@ import logging
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from enum import Enum
 from typing import Any, TypeVar
 
@@ -107,7 +107,7 @@ class DataValidator:
                 field="email",
                 message="Email must be a non-empty string",
                 severity=ValidationSeverity.ERROR,
-                timestamp=datetime.now()
+                timestamp=datetime.now(UTC)
             ))
                 return self._create_result(False, errors, cache_key)
 
@@ -117,7 +117,7 @@ class DataValidator:
                 field="email",
                 message="Email address exceeds maximum length of 254 characters",
                 severity=ValidationSeverity.ERROR,
-                timestamp=datetime.now()
+                timestamp=datetime.now(UTC)
             ))
 
         # Pattern validation
@@ -126,7 +126,7 @@ class DataValidator:
                 field="email",
                 message="Email address format is invalid",
                 severity=ValidationSeverity.ERROR,
-                timestamp=datetime.now()
+                timestamp=datetime.now(UTC)
             ))
 
         # Additional strict validation
@@ -137,7 +137,7 @@ class DataValidator:
                     field="email",
                     message="Email cannot contain consecutive dots",
                     severity=ValidationSeverity.WARNING,
-                    timestamp=datetime.now()
+                    timestamp=datetime.now(UTC)
                 ))
 
             # Check domain validity
@@ -147,7 +147,7 @@ class DataValidator:
                     field="email",
                     message="Email domain is invalid or too short",
                     severity=ValidationSeverity.ERROR,
-                    timestamp=datetime.now()
+                    timestamp=datetime.now(UTC)
                 ))
 
         success = len([e for e in errors if e.severity == ValidationSeverity.ERROR]) == 0
@@ -180,7 +180,7 @@ class DataValidator:
                 field="url",
                 message="URL must be a non-empty string",
                 severity=ValidationSeverity.ERROR,
-                timestamp=datetime.now()
+                timestamp=datetime.now(UTC)
             ))
                 return self._create_result(False, errors, cache_key)
 
@@ -190,7 +190,7 @@ class DataValidator:
                 field="url",
                 message="URL format is invalid",
                 severity=ValidationSeverity.ERROR,
-                timestamp=datetime.now()
+                timestamp=datetime.now(UTC)
             ))
 
         # Scheme validation
@@ -200,7 +200,7 @@ class DataValidator:
                 field="url",
                 message=f"URL scheme '{scheme}' is not allowed. Allowed schemes: {allowed_schemes}",
                 severity=ValidationSeverity.ERROR,
-                timestamp=datetime.now()
+                timestamp=datetime.now(UTC)
             ))
 
         # Length validation
@@ -209,7 +209,7 @@ class DataValidator:
                 field="url",
                 message="URL exceeds maximum length of 2048 characters",
                 severity=ValidationSeverity.WARNING,
-                timestamp=datetime.now()
+                timestamp=datetime.now(UTC)
             ))
 
         success = len([e for e in errors if e.severity == ValidationSeverity.ERROR]) == 0
@@ -240,7 +240,7 @@ class DataValidator:
                     field="data",
                     message="Data must be a dictionary/object",
                     severity=ValidationSeverity.ERROR,
-                    timestamp=datetime.now()
+                    timestamp=datetime.now(UTC)
                 ))
                     return self._create_result(False, errors, cache_key)
 
@@ -252,7 +252,7 @@ class DataValidator:
                         field=field,
                         message=f"Required field '{field}' is missing",
                         severity=ValidationSeverity.ERROR,
-                        timestamp=datetime.now()
+                        timestamp=datetime.now(UTC)
                     ))
 
             # Type validation for each field
@@ -265,7 +265,7 @@ class DataValidator:
                             field=field,
                             message=f"Field '{field}' must be of type {expected_type}, got {type(value).__name__}",
                             severity=ValidationSeverity.ERROR,
-                            timestamp=datetime.now()
+                            timestamp=datetime.now(UTC)
                         ))
 
                         # Add value preview for debugging
@@ -274,7 +274,7 @@ class DataValidator:
                                 field=f"{field}_preview",
                                 message=f"Invalid value preview: '{value[:50]}{'...' if len(value) > 50 else ''}'",
                                 severity=ValidationSeverity.INFO,
-                                timestamp=datetime.now()
+                                timestamp=datetime.now(UTC)
                             ))
 
             # String format validation
@@ -290,7 +290,7 @@ class DataValidator:
                                 field=field,
                                 message=f"Field '{field}' contains invalid email format",
                                 severity=ValidationSeverity.ERROR,
-                                timestamp=datetime.now()
+                                timestamp=datetime.now(UTC)
                             ))
 
                         elif field_format == 'uri':
@@ -300,7 +300,7 @@ class DataValidator:
                                 field=field,
                                 message=f"Field '{field}' contains invalid URL format",
                                 severity=ValidationSeverity.ERROR,
-                                timestamp=datetime.now()
+                                timestamp=datetime.now(UTC)
                             ))
 
         except Exception as e:
@@ -308,7 +308,7 @@ class DataValidator:
                 field="validation",
                 message=f"Validation error: {str(e)}",
                 severity=ValidationSeverity.CRITICAL,
-                timestamp=datetime.now()
+                timestamp=datetime.now(UTC)
             ))
 
         success = len([e for e in errors if e.severity == ValidationSeverity.ERROR]) == 0
@@ -344,7 +344,7 @@ class DataValidator:
                     field="validator",
                     message=f"Custom validator '{validator_name}' not found",
                     severity=ValidationSeverity.ERROR,
-                    timestamp=datetime.now()
+                    timestamp=datetime.now(UTC)
                 ))
                     continue
 
@@ -360,7 +360,7 @@ class DataValidator:
                                 field=error.get('field', 'unknown'),
                                 message=error.get('message', 'Unknown error'),
                                 severity=ValidationSeverity(error.get('severity', 'error')),
-                                timestamp=datetime.now()
+                                timestamp=datetime.now(UTC)
                             ))
                         elif isinstance(error, ValidationError):
                                 all_errors.append(error)
@@ -370,7 +370,7 @@ class DataValidator:
                     field=validator_name,
                     message=f"Custom validator '{validator_name}' failed: {str(e)}",
                     severity=ValidationSeverity.CRITICAL,
-                    timestamp=datetime.now()
+                    timestamp=datetime.now(UTC)
                 ))
 
         success = len([e for e in all_errors if e.severity == ValidationSeverity.ERROR]) == 0
@@ -408,7 +408,7 @@ class DataValidator:
             'error_count': len(errors),
             'warning_count': len([e for e in errors if e.severity == ValidationSeverity.WARNING]),
             'critical_count': len([e for e in errors if e.severity == ValidationSeverity.CRITICAL]),
-            'timestamp': datetime.now().isoformat()
+            'timestamp': datetime.now(UTC).isoformat()
         }
 
         # Cache management with LRU eviction
@@ -545,11 +545,11 @@ def demonstrate_validator() -> None:
                 field="phone",
                 message="Invalid US phone number format",
                 severity=ValidationSeverity.ERROR,
-                timestamp=datetime.now()
+                timestamp=datetime.now(UTC)
             ))
 
                 return {
-            'valid': len(errors) == 0,
+            'valid': not errors,
             'errors': [error.to_dict() for error in errors]
         }
 

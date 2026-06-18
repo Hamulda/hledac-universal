@@ -19,7 +19,7 @@ M1 8GB UMA: 0 KB runtime overhead. Imports happen once at module load.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from enum import Enum
 from typing import TYPE_CHECKING, Any, Protocol
 
@@ -243,7 +243,7 @@ class SourceCredibility:
             self.historical_accuracy * 0.7 +
             (1.0 - min(1.0, self.contradiction_count / 10)) * 0.3
         )
-        self.last_updated = datetime.now()  # noqa: DTZ005
+        self.last_updated = datetime.now(UTC)  # noqa: DTZ005
 
 
 @dataclass(slots=True)

@@ -322,7 +322,7 @@ class TestMmapBloomFilterAdapter:
         # Every adapter method must degrade safely, never raise.
         assert bf.add("x") is False
         assert ("x" in bf) is False
-        assert len(bf) == 0
+        assert not bf
         assert isinstance(bf.sync(), bool)
         bf.reset()  # must not raise
         # byte_size also fail-soft (uses _filter.byte_size which raises).

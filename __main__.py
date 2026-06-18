@@ -3148,7 +3148,7 @@ async def _windup_synthesis(
     )
 
     # Sprint 8VA D: HypothesisEngine closed loop — generate hypotheses from findings
-    if findings and len(findings) > 0:
+    if findings and findings:
         try:
             from hledac.universal.brain.research_hypothesis_engine import HypothesisEngine
             _hyp_engine = HypothesisEngine()

@@ -298,7 +298,7 @@ class TestHTNPlanner:
         )
 
         assert planner.governor is not None
-        assert len(planner._task_types) == 0
+        assert not planner._task_types
 
     def test_register_task_type(self, mock_components):
         """Test registrace typu úkolu."""
@@ -458,7 +458,7 @@ class TestSLMDecomposer:
         result = decomposer._rule_based_fallback("test task", {"context": "data"})
 
         assert isinstance(result, list)
-        assert len(result) > 0
+        assert result
         assert result[0]['type'] == 'fetch'
 
     def test_cache_key(self, decomposer):

@@ -257,7 +257,7 @@ class TestNoUnawaitedCoroutines:
                 and "coroutine" in str(x.message)
                 and "never awaited" in str(x.message)
             ]
-            assert len(coro_warnings) == 0, \
+            assert not coro_warnings, \
                 f"RuntimeWarning: {coro_warnings[0].message if coro_warnings else ''}"
 
         scheduler.shutdown()

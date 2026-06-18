@@ -58,7 +58,7 @@ async def test_a_prelude_ran_false_no_finalize():
 
     calls = await _replay_guard(result, prelude_ran=False)
 
-    assert len(calls) == 0, f"Expected no calls, got: {calls}"
+    assert not calls, f"Expected no calls, got: {calls}"
     print("Test A PASS: no false prelude_complete when prelude_ran=False")
 
 

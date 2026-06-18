@@ -157,7 +157,7 @@ class CTLogClient:
         )
         if err:
             logger.warning(f"crt.sh {domain}: {err}, trying certstream fallback")
-        elif isinstance(raw, list) and len(raw) > 0:
+        elif isinstance(raw, list) and raw:
             logger.info(f"CT log {domain}: crt.sh succeeded ({len(raw)} entries)")
             return raw
 

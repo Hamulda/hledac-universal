@@ -795,7 +795,7 @@ class ArchiveResurrector:
         min_quality = min_quality or self.min_quality
         self._resurrections_attempted += 1
 
-        request_id = hashlib.sha256(f"{url}:{datetime.now()}".encode()).hexdigest()[:16]  # noqa: DTZ005
+        request_id = hashlib.sha256(f"{url}:{datetime.now(UTC)}".encode()).hexdigest()[:16]  # noqa: DTZ005
 
         request = ResurrectionRequest(
             request_id=request_id,
@@ -803,7 +803,7 @@ class ArchiveResurrector:
             target_date=target_date,
             min_quality=min_quality,
             extract_metadata=True,
-            created_at=datetime.now()  # noqa: DTZ005
+            created_at=datetime.now(UTC)  # noqa: DTZ005
         )
 
         self._active_requests[request_id] = request
@@ -1021,7 +1021,7 @@ class ArchiveResurrector:
                             ).hexdigest()[:16],
                             url=url,
                             archived_url=cache_full_url,
-                            timestamp=datetime.now(),  # noqa: DTZ005
+                            timestamp=datetime.now(UTC),  # noqa: DTZ005
                             source=ContentSource.SEARCH_CACHE,
                             content_type=ContentType.HTML,
                             status_code=200,
@@ -1053,7 +1053,7 @@ class ArchiveResurrector:
                         snapshot_id=f"politwoops:{tweet_id}",
                         url=url,
                         archived_url=f"{self.SOCIAL_ARCHIVES['politwoops']}{tweet_id}",
-                        timestamp=datetime.now(),  # noqa: DTZ005
+                        timestamp=datetime.now(UTC),  # noqa: DTZ005
                         source=ContentSource.SOCIAL_ARCHIVE,
                         content_type=ContentType.HTML,
                         status_code=200,

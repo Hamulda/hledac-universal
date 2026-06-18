@@ -972,7 +972,7 @@ def cached_context(
         @wraps(f)
         async def wrapper(*args, **kwargs):
             # Exclude self from cache key if requested
-            if exclude_self and len(args) > 0:
+            if exclude_self and args:
                 # For methods, args[0] is self
                 cache_args = (f.__name__,) + args[1:] + (kwargs,)
             else:

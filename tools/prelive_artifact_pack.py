@@ -152,7 +152,7 @@ def scan_probe_artifacts(repo_root: Path) -> SprintCollisionReport:
             ))
 
     return SprintCollisionReport(
-        has_collisions=len(collisions) > 0,
+        has_collisions=collisions,
         collisions=collisions,
         total_probes_scanned=len(probe_dirs_found),
     )
